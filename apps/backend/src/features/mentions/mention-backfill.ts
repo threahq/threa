@@ -75,8 +75,6 @@ function selectRowsQuery(table: BackfillTable, workspaceId: string, ids: string[
       WHERE s.workspace_id = ${workspaceId} AND v.id = ANY(${ids}) AND v.content_json IS NOT NULL
     `
   }
-  // `messages` carries no `workspace_id` of its own — it scopes through its
-  // stream, the same way `MessageRepository.findByIdsInWorkspace` does.
   if (table === "messages") {
     return sql`
       SELECT id, content_json FROM messages

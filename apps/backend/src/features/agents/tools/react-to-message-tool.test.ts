@@ -41,7 +41,7 @@ function fakeMessage(overrides?: Partial<Message>): Message {
 }
 
 function mockFindById(message: Message | null) {
-  spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map(message ? [[message.id, message]] : []))
+  spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map(message ? [[message.id, message]] : []))
 }
 
 describe("react_to_message tool", () => {
@@ -110,7 +110,7 @@ describe("react_to_message tool", () => {
   })
 
   it("rejects an unrecognized emoji without touching the message", async () => {
-    const findSpy = spyOn(MessageRepository, "findByIdsInWorkspace")
+    const findSpy = spyOn(MessageRepository, "findByIds")
     const { reactions, addReaction } = makeReactions()
     const tool = createReactToMessageTool(makeWorkspace(), reactions)
 

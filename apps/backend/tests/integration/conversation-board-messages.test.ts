@@ -99,7 +99,7 @@ describe("ConversationService.getBoardMessages", () => {
         storagePath: `${testWorkspaceId}/public.png`,
       })
       await AttachmentRepository.attachToMessage(client, [liveAttachment.id], liveMessageId, testStreamId)
-      await MessageRepository.softDelete(client, deletedMessageId)
+      await MessageRepository.softDelete(client, testWorkspaceId, deletedMessageId)
       await ConversationRepository.insert(client, {
         id: convId,
         streamId: testStreamId,
@@ -117,7 +117,7 @@ describe("ConversationService.getBoardMessages", () => {
         authorType: "user",
         ...testMessageContent("wholly deleted conversation"),
       })
-      await MessageRepository.softDelete(client, allDeletedMessageId)
+      await MessageRepository.softDelete(client, testWorkspaceId, allDeletedMessageId)
       await ConversationRepository.insert(client, {
         id: allDeletedConvId,
         streamId: testStreamId,

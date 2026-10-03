@@ -277,7 +277,7 @@ async function setupTestData(
   // `resolveBagForStream` path.
   if (input.asideHost && hostStreamId) {
     await seedConversationHistory(hostStreamId, input.asideHost.conversationHistory, input.currentTime)
-    const hostMessages = await MessageRepository.list(pool, hostStreamId, { limit: 100 })
+    const hostMessages = await MessageRepository.list(pool, ctx.workspaceId, hostStreamId, { limit: 100 })
     const visibleMessageIds = (input.asideHost.visibleIndices ?? hostMessages.map((_, i) => i)).map(
       (index, position) => {
         const message = hostMessages[index]
@@ -547,7 +547,7 @@ async function runCompanionTask(input: CompanionInput, ctx: EvalContext): Promis
     // Read back messages sent by the agent.
     // Mention-triggered responses are posted in the spawned thread stream.
     const responseStreamId = input.trigger === "mention" && createdThreadId ? createdThreadId : streamId
-    const allMessages = await MessageRepository.list(ctx.pool, responseStreamId, { limit: 100 })
+    const allMessages = await MessageRepository.list(ctx.pool, ctx.workspaceId, responseStreamId, { limit: 100 })
     const agentMessages = allMessages.filter((m) => m.authorId === personaId)
 
     const messages: CompanionMessage[] = agentMessages.map((m) => ({

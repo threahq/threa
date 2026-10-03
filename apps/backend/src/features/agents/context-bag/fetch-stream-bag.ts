@@ -146,7 +146,7 @@ export async function fetchStreamBag(
   const refStreamIds = [...new Set(visibleRefs.map(effectiveStreamId).filter((id): id is string => id !== null))]
   const [sourceStreams, itemCounts] = await Promise.all([
     StreamRepository.findByIds(db, workspaceId, refStreamIds),
-    MessageRepository.countByStreams(db, refStreamIds),
+    MessageRepository.countByStreams(db, workspaceId, refStreamIds),
   ])
   const streamById = new Map(sourceStreams.map((s) => [s.id, s]))
 

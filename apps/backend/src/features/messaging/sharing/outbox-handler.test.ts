@@ -62,7 +62,7 @@ function stubShares(fixtures: ShareFixture[]) {
     })
     bodies.set(shareMessageId, nodes)
   })
-  spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(
+  spyOn(MessageRepository, "findByIds").mockImplementation(
     async (_db: unknown, _ws: string, ids: string[]) =>
       new Map(
         ids
@@ -127,6 +127,10 @@ describe("invalidatePointersForEvent", () => {
       {} as any,
       io
     )
+    expect(MessageRepository.findByIds).toHaveBeenCalledWith(expect.anything(), "ws_1", [
+      "msg_share_stream_t1",
+      "msg_share_stream_t2",
+    ])
     expect(emits.map((e) => e.room).sort()).toEqual(["ws:ws_1:stream:stream_t1", "ws:ws_1:stream:stream_t2"])
     expect(emits[0].event).toBe(POINTER_INVALIDATED_EVENT)
     expect(emits[0].payload).toMatchObject({
@@ -192,7 +196,7 @@ describe("invalidatePointersForEvent", () => {
     spyOn(SharedMessageRepository, "listBySourceMessageIds").mockResolvedValue([
       { sourceMessageId: "msg_a", targetStreamId: "stream_t1", shareMessageId: "msg_gone" },
     ] as any)
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
     const { io, emits } = fakeIo()
     await invalidatePointersForEvent(
       {

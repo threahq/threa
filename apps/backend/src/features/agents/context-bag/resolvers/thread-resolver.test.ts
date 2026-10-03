@@ -391,7 +391,7 @@ describe("ThreadResolver.fetch — DISCUSS_THREAD windowing", () => {
     const focal = seq("msg_focal", 51)
     const after = Array.from({ length: 50 }, (_, i) => seq(`msg_a${i}`, i + 52))
     const surrounding = [...before, focal, ...after]
-    spyOn(MessageRepository, "findSurrounding").mockResolvedValue(surrounding)
+    const findSurrounding = spyOn(MessageRepository, "findSurrounding").mockResolvedValue(surrounding)
 
     const result = await ThreadResolver.fetch(
       {} as any,
@@ -400,6 +400,7 @@ describe("ThreadResolver.fetch — DISCUSS_THREAD windowing", () => {
       { intent: ContextIntents.DISCUSS_THREAD }
     )
 
+    expect(findSurrounding).toHaveBeenCalledWith(expect.anything(), "ws_1", "msg_focal", "stream_source", 50, 50)
     // 50-total window: 24 before + focal + 25 after (or 25/24, depending on
     // halving — what matters is total === 50 and focal is included).
     expect(result.items).toHaveLength(50)
@@ -457,7 +458,7 @@ describe("ThreadResolver.fetch — DISCUSS_THREAD windowing", () => {
     )
 
     expect(findSurrounding).not.toHaveBeenCalled()
-    expect(list).toHaveBeenCalledWith(expect.anything(), "stream_source", { limit: 50 })
+    expect(list).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_source", { limit: 50 })
     expect(result.items).toHaveLength(50)
     expect(result.focalMessageId).toBeNull()
   })
@@ -642,7 +643,7 @@ describe("ThreadResolver.fetch — DISCUSS_THREAD windowing", () => {
     )
 
     // Recent tail, not the deletion-skewed window.
-    expect(list).toHaveBeenCalledWith(expect.anything(), "stream_source", { limit: 50 })
+    expect(list).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_source", { limit: 50 })
     expect(result.items.map((i) => i.messageId)).toEqual(["msg_recent_1", "msg_recent_2"])
     expect(result.focalMessageId).toBeNull()
   })

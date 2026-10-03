@@ -368,7 +368,7 @@ export class AgentFollowUpService {
       if (!pending) return { fired: false }
       const sourceSession = await AgentSessionRepository.findById(client, pending.sessionId)
       const triggerMessage = sourceSession
-        ? await MessageRepository.findById(client, sourceSession.triggerMessageId)
+        ? await MessageRepository.findById(client, params.workspaceId, sourceSession.triggerMessageId)
         : null
       if (!sourceSession || !triggerMessage || triggerMessage.authorType !== AuthorTypes.USER) {
         logger.warn({ ...params }, "agent follow-up fire rejected without an initiating user")

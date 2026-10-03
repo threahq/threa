@@ -36,7 +36,7 @@ export async function resolveSavedView(
   // Batch fetch messages and streams (INV-56). Access resolution uses root
   // streams for threads; fetch those in a second pass.
   const [messages, streams] = await Promise.all([
-    MessageRepository.findByIds(db, messageIds),
+    MessageRepository.findByIds(db, workspaceId, messageIds),
     StreamRepository.findByIds(db, workspaceId, streamIds),
   ])
 

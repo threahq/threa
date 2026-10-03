@@ -315,7 +315,7 @@ export class LinkPreviewService {
       const messageIds = await LinkPreviewRepository.findMessageIdsByPreviewId(client, workspaceId, previewId)
       if (messageIds.length === 0) return { applied: true }
 
-      const streamIds = await MessageRepository.findStreamIdsByIds(client, messageIds)
+      const streamIds = await MessageRepository.findStreamIdsByIds(client, workspaceId, messageIds)
       const previewsByMessage = await LinkPreviewRepository.findByMessageIds(client, workspaceId, messageIds)
 
       // Build every message's full completed-preview set first, then a single
@@ -522,7 +522,7 @@ export class LinkPreviewService {
 
     // Collapse all failure modes (not found, deleted, wrong stream) into one
     // response to avoid leaking message existence across streams.
-    const message = await MessageRepository.findById(this.deps.pool, targetMessageId)
+    const message = await MessageRepository.findById(this.deps.pool, workspaceId, targetMessageId)
     if (!message || message.deletedAt || message.streamId !== targetStreamId) {
       return { kind: "message", accessTier: "full", deleted: true }
     }

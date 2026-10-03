@@ -5,7 +5,7 @@ import { ScheduledMessagesService } from "./service"
 import { ScheduledMessagesRepository, type ScheduledMessage } from "./repository"
 import { StreamRepository, StreamMemberRepository } from "../streams"
 import * as streamsModule from "../streams"
-import type { EventService } from "../messaging"
+import { MessageRepository, type EventService } from "../messaging"
 import { OutboxRepository } from "../../lib/outbox"
 import { QueueRepository } from "../../lib/queue"
 import * as dbModule from "../../db"
@@ -186,6 +186,30 @@ describe("ScheduledMessagesService.schedule", () => {
         clientMessageId: null,
       })
     ).rejects.toThrow(/member/i)
+  })
+
+  it("should reject with PARENT_UNAVAILABLE when the parent message is not in the caller's workspace", async () => {
+    const service = setupService()
+    const findParent = spyOn(MessageRepository, "findById").mockResolvedValue(null)
+    const insertSpy = spyOn(ScheduledMessagesRepository, "insert")
+
+    await expect(
+      service.schedule({
+        workspaceId: WORKSPACE_ID,
+        userId: USER_ID,
+        streamId: STREAM_ID,
+        parentMessageId: "msg_parent",
+        contentJson: { type: "doc", content: [] },
+        contentMarkdown: "x",
+        attachmentIds: [],
+        metadata: null,
+        conversationDirective: null,
+        scheduledFor: FUTURE,
+        clientMessageId: null,
+      })
+    ).rejects.toMatchObject({ status: 404, code: "SCHEDULED_MESSAGE_PARENT_UNAVAILABLE" })
+    expect(findParent).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "msg_parent")
+    expect(insertSpy).not.toHaveBeenCalled()
   })
 
   it("returns the existing row when the same clientMessageId was already scheduled (idempotent)", async () => {

@@ -426,7 +426,7 @@ export class ActivityService {
     const { workspaceId, streamId, messageId, emoji, actorId, actorType } = params
 
     return withClient(this.pool, async (client) => {
-      const message = await MessageRepository.findById(client, messageId)
+      const message = await MessageRepository.findById(client, workspaceId, messageId)
       if (!message) return []
 
       const stream = await StreamRepository.findById(client, workspaceId, streamId)
@@ -727,7 +727,7 @@ export class ActivityService {
       let contentMarkdown: string | null = null
       let encrypted = false
       if (stream && activity.messageId && MESSAGE_ACTIVITY_TYPES.has(activity.activityType)) {
-        const message = (await MessageRepository.findByIdsInWorkspace(client, workspaceId, [activity.messageId])).get(
+        const message = (await MessageRepository.findByIds(client, workspaceId, [activity.messageId])).get(
           activity.messageId
         )
         if (!message || message.deletedAt !== null) return invalid("gone")

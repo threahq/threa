@@ -58,7 +58,7 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
     const titleRevision = stream.displayNameRevision ?? 0
     if (params.expectedTitleRevision !== undefined && params.expectedTitleRevision !== titleRevision) return null
 
-    const stats = await MessageRepository.getNamingStats(client, stream.id)
+    const stats = await MessageRepository.getNamingStats(client, params.workspaceId, stream.id)
     return {
       workspaceId: stream.workspaceId,
       targetKind: "stream",
@@ -77,7 +77,9 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
       const stream = await StreamRepository.findById(client, target.workspaceId, target.targetId)
       if (!stream) return null
       if (await E2eStreamsRepository.isE2eStream(client, target.workspaceId, target.targetId)) return null
-      const replies = await MessageRepository.list(client, stream.id, { limit: DYNAMIC_NAMING_MAX_MESSAGES })
+      const replies = await MessageRepository.list(client, target.workspaceId, stream.id, {
+        limit: DYNAMIC_NAMING_MAX_MESSAGES,
+      })
       const messages = await prependThreadNamingAnchor(client, stream, replies)
       const sameType = await StreamRepository.list(client, stream.workspaceId, { types: [stream.type] })
       // Aside titles are private to their creator; only the creator's own asides

@@ -101,14 +101,15 @@ function setup(options: { source: Conversation; primaries: Record<string, string
     return conv
   })
 
-  spyOn(MessageRepository, "findByIdsForUpdate").mockImplementation(async (_c, ids: string[]) =>
+  spyOn(MessageRepository, "findByIdsForUpdate").mockImplementation(async (_c, workspaceId, ids: string[]) =>
     ids
-      .filter((id) => MESSAGES[id])
+      .filter((id) => workspaceId === WORKSPACE_ID && MESSAGES[id])
       .map(message)
       .sort((a, b) => (a as unknown as { sequence: number }).sequence - (b as unknown as { sequence: number }).sequence)
   )
   spyOn(MessageRepository, "findByIds").mockImplementation(
-    async (_c, ids: string[]) => new Map(ids.filter((id) => MESSAGES[id]).map((id) => [id, message(id)]))
+    async (_c, workspaceId, ids: string[]) =>
+      new Map(ids.filter((id) => workspaceId === WORKSPACE_ID && MESSAGES[id]).map((id) => [id, message(id)]))
   )
 
   spyOn(delivery, "resolveConversationDelivery").mockResolvedValue({

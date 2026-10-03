@@ -42,10 +42,11 @@ export function buildConversationEmbeddingText(input: ConversationEmbeddingTextI
  */
 export async function loadConversationEmbeddingTexts(
   db: Querier,
+  workspaceId: string,
   conversations: Conversation[]
 ): Promise<Map<string, string>> {
   const openingIds = conversations.map((conversation) => conversation.messageIds[0]).filter((id) => id !== undefined)
-  const openers = await MessageRepository.findByIds(db, openingIds)
+  const openers = await MessageRepository.findByIds(db, workspaceId, openingIds)
 
   const texts = new Map<string, string>()
   for (const conversation of conversations) {

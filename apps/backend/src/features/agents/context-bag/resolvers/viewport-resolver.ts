@@ -35,7 +35,7 @@ export async function resolveViewportWindow(
   stream: Stream,
   ref: ViewportContextRef
 ): Promise<ViewportWindow | null> {
-  const byId = await MessageRepository.findByIdsInWorkspace(db, stream.workspaceId, ref.visibleMessageIds)
+  const byId = await MessageRepository.findByIds(db, stream.workspaceId, ref.visibleMessageIds)
   const inHost = [...byId.values()]
     .filter((m) => m.streamId === ref.streamId && m.deletedAt === null)
     .sort((a, b) => Number(a.sequence - b.sequence))
@@ -45,7 +45,8 @@ export async function resolveViewportWindow(
   const anchorVisible = anchor !== null && ref.visibleMessageIds.includes(anchor.id)
   if (inHost.length === 0 && !anchorVisible) return null
 
-  const window = inHost.length > 0 ? await fetchPaddedWindow(db, ref.streamId, inHost, ref.capturedAt) : []
+  const window =
+    inHost.length > 0 ? await fetchPaddedWindow(db, stream.workspaceId, ref.streamId, inHost, ref.capturedAt) : []
   const root = anchor && !window.some((m) => m.id === anchor.id) ? anchor : null
   const visible = anchorVisible && root ? [root, ...inHost] : inHost
   return { stream, visible, window, root }
@@ -124,6 +125,7 @@ export const ViewportResolver: Resolver<ViewportContextRef> = {
  */
 async function fetchPaddedWindow(
   db: Querier,
+  workspaceId: string,
   streamId: string,
   visible: Message[],
   capturedAt: string
@@ -132,6 +134,7 @@ async function fetchPaddedWindow(
   const last = visible[visible.length - 1]
   const surrounding = await MessageRepository.findSurrounding(
     db,
+    workspaceId,
     first.id,
     streamId,
     VIEWPORT_WINDOW_PAD,

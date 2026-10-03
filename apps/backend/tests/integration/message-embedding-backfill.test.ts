@@ -434,7 +434,7 @@ describe("message-embeddings-context backfill against the real schema", () => {
       return row.rows[0]
     }
 
-    const first = await MessageRepository.updateEmbeddings(pool, [
+    const first = await MessageRepository.updateEmbeddings(pool, wsId, [
       { id: message.id, embedding: unitVector(0), sourceHash: "hash-a", expectedSourceHash: null },
     ])
     expect({ first, row: await readRow() }).toEqual({
@@ -442,10 +442,10 @@ describe("message-embeddings-context backfill against the real schema", () => {
       row: { embedding: `[${unitVector(0).join(",")}]`, embedding_source_hash: "hash-a" },
     })
 
-    const stale = await MessageRepository.updateEmbeddings(pool, [
+    const stale = await MessageRepository.updateEmbeddings(pool, wsId, [
       { id: message.id, embedding: unitVector(1), sourceHash: "hash-b", expectedSourceHash: null },
     ])
-    const same = await MessageRepository.updateEmbeddings(pool, [
+    const same = await MessageRepository.updateEmbeddings(pool, wsId, [
       { id: message.id, embedding: unitVector(1), sourceHash: "hash-a", expectedSourceHash: "hash-a" },
     ])
     expect({ stale, same, row: await readRow() }).toEqual({
@@ -454,7 +454,7 @@ describe("message-embeddings-context backfill against the real schema", () => {
       row: { embedding: `[${unitVector(0).join(",")}]`, embedding_source_hash: "hash-a" },
     })
 
-    const current = await MessageRepository.updateEmbeddings(pool, [
+    const current = await MessageRepository.updateEmbeddings(pool, wsId, [
       { id: message.id, embedding: unitVector(1), sourceHash: "hash-b", expectedSourceHash: "hash-a" },
     ])
     expect({ current, row: await readRow() }).toEqual({

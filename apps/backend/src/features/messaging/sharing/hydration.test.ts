@@ -158,7 +158,7 @@ describe("pinned hydration", () => {
   }
 
   function stubSource() {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([["msg_a", makeMessage({ id: "msg_a", revision: 2, contentJson: currentDoc })]])
     )
     spyOn(MessageVersionRepository, "findByMessageVersions").mockResolvedValue(
@@ -224,9 +224,7 @@ describe("hydrateSharedMessageRefs", () => {
   })
 
   it("returns ok-state payloads when viewer can access the source stream", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
-      new Map([["msg_a", makeMessage({ id: "msg_a" })]])
-    )
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map([["msg_a", makeMessage({ id: "msg_a" })]]))
     spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_author", name: "Ada" } as any])
     spyOn(PersonaRepository, "findByIds").mockResolvedValue([])
     stubFullAccess()
@@ -242,7 +240,7 @@ describe("hydrateSharedMessageRefs", () => {
 
   it("returns deleted payloads for soft-deleted accessible sources", async () => {
     const deletedAt = new Date("2026-02-01")
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([["msg_a", makeMessage({ id: "msg_a", deletedAt })]])
     )
     stubAuthorLookups()
@@ -252,7 +250,7 @@ describe("hydrateSharedMessageRefs", () => {
   })
 
   it("returns missing payloads for ids that resolve to no row", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
     stubAuthorLookups()
     stubFullAccess()
     const result = await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_missing")])
@@ -260,9 +258,7 @@ describe("hydrateSharedMessageRefs", () => {
   })
 
   it("returns a private placeholder when viewer can't access the source stream", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
-      new Map([["msg_a", makeMessage({ id: "msg_a" })]])
-    )
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map([["msg_a", makeMessage({ id: "msg_a" })]]))
     stubAuthorLookups()
     stubNoAccess()
     spyOn(StreamRepository, "findByIds").mockResolvedValue([
@@ -285,9 +281,7 @@ describe("hydrateSharedMessageRefs", () => {
   })
 
   it("for thread sources, the private placeholder reports the parent's kind/visibility", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
-      new Map([["msg_a", makeMessage({ id: "msg_a" })]])
-    )
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map([["msg_a", makeMessage({ id: "msg_a" })]]))
     stubAuthorLookups()
     stubNoAccess()
     const findStreams = spyOn(StreamRepository, "findByIds")
@@ -320,9 +314,7 @@ describe("hydrateSharedMessageRefs", () => {
   })
 
   it("presents an aside source as scratchpad in the private placeholder", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
-      new Map([["msg_a", makeMessage({ id: "msg_a" })]])
-    )
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map([["msg_a", makeMessage({ id: "msg_a" })]]))
     stubAuthorLookups()
     stubNoAccess()
     spyOn(StreamRepository, "findByIds").mockResolvedValue([
@@ -345,9 +337,7 @@ describe("hydrateSharedMessageRefs", () => {
   })
 
   it("presents a thread inside an aside as scratchpad in the private placeholder", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
-      new Map([["msg_a", makeMessage({ id: "msg_a" })]])
-    )
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map([["msg_a", makeMessage({ id: "msg_a" })]]))
     stubAuthorLookups()
     stubNoAccess()
     spyOn(StreamRepository, "findByIds")
@@ -379,9 +369,7 @@ describe("hydrateSharedMessageRefs", () => {
   })
 
   it("treats source-via-share-grant as accessible even when not a stream member", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
-      new Map([["msg_a", makeMessage({ id: "msg_a" })]])
-    )
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map([["msg_a", makeMessage({ id: "msg_a" })]]))
     stubAuthorLookups()
     spyOn(streamsBarrel, "listAccessibleStreamIds").mockResolvedValue(new Set()) // not a member
     spyOn(SharedMessageRepository, "listSourcesGrantedToViewer").mockResolvedValue(new Set(["msg_a"])) // but has share grant
@@ -399,7 +387,7 @@ describe("hydrateSharedMessageRefs", () => {
     // a post-move state where the cached attr went stale). The truncated
     // payload must report the live streamId, not the cached one — otherwise
     // the "open in source stream" link drops the user on the wrong stream.
-    const findByIds = spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(async (_db, _ws, ids) => {
+    const findByIds = spyOn(MessageRepository, "findByIds").mockImplementation(async (_db, _ws, ids) => {
       const map = new Map<string, any>()
       for (const id of ids) {
         const next = id.replace(/^msg_(\d+)$/, (_m, n) => `msg_${Number(n) + 1}`)
@@ -440,7 +428,7 @@ describe("hydrateSharedMessageRefs", () => {
   })
 
   it("emits deleted (not truncated) when a past-cap source has been tombstoned", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(async (_db, _ws, ids) => {
+    spyOn(MessageRepository, "findByIds").mockImplementation(async (_db, _ws, ids) => {
       const map = new Map<string, any>()
       for (const id of ids) {
         const next = id.replace(/^msg_(\d+)$/, (_m, n) => `msg_${Number(n) + 1}`)
@@ -474,7 +462,7 @@ describe("hydrateSharedMessageRefs", () => {
   })
 
   it("emits missing when a past-cap source row is gone entirely", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(async (_db, _ws, ids) => {
+    spyOn(MessageRepository, "findByIds").mockImplementation(async (_db, _ws, ids) => {
       const map = new Map<string, any>()
       for (const id of ids) {
         // Simulate the past-cap source being deleted from the row set.
@@ -510,7 +498,7 @@ describe("hydrateSharedMessageRefs", () => {
     // can only read the streams reachable along the BFS chain. Surfacing
     // the live `stream_private` without an access check would leak the
     // existence of the new private stream the viewer has no rights to.
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(async (_db, _ws, ids) => {
+    spyOn(MessageRepository, "findByIds").mockImplementation(async (_db, _ws, ids) => {
       const map = new Map<string, any>()
       for (const id of ids) {
         const next = id.replace(/^msg_(\d+)$/, (_m, n) => `msg_${Number(n) + 1}`)
@@ -554,7 +542,7 @@ describe("hydrateSharedMessageRefs", () => {
   it("skips truncated emission for a private inner pointer (no extra access leak)", async () => {
     // A two-hop chain where the viewer can read msg_outer but not msg_inner.
     // The plan says inner should render as `private`, not as `truncated`.
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(async (_db, _ws, ids) => {
+    spyOn(MessageRepository, "findByIds").mockImplementation(async (_db, _ws, ids) => {
       const map = new Map<string, any>()
       for (const id of ids) {
         if (id === "msg_outer") {
@@ -596,9 +584,7 @@ describe("hydrateSharedMessageRefs", () => {
   })
 
   it("inlines attachments on ok-state payloads", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
-      new Map([["msg_a", makeMessage({ id: "msg_a" })]])
-    )
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map([["msg_a", makeMessage({ id: "msg_a" })]]))
     stubAuthorLookups()
     stubFullAccess()
     spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(
@@ -633,9 +619,7 @@ describe("hydrateSharedMessageRefs", () => {
   })
 
   it("emits an empty attachments array when the source has none", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
-      new Map([["msg_a", makeMessage({ id: "msg_a" })]])
-    )
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map([["msg_a", makeMessage({ id: "msg_a" })]]))
     stubAuthorLookups()
     stubFullAccess()
     // Default beforeEach stub returns an empty map, but be explicit here.
@@ -646,7 +630,7 @@ describe("hydrateSharedMessageRefs", () => {
   })
 
   it("batches attachment lookups across every ok-state message in one round-trip (INV-56)", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([
         ["msg_a", makeMessage({ id: "msg_a" })],
         ["msg_b", makeMessage({ id: "msg_b" })],
@@ -663,7 +647,7 @@ describe("hydrateSharedMessageRefs", () => {
   })
 
   it("does not fetch attachments when no ok-state messages survive", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
     stubAuthorLookups()
     stubFullAccess()
     const findAttachments = spyOn(AttachmentRepository, "findByMessageIds").mockResolvedValue(new Map())
@@ -677,7 +661,7 @@ describe("hydrateSharedMessageRefs", () => {
 describe("hydrateSharedMessageRefsForRoom", () => {
   it("hydrates depth-1 grants uniformly without viewer access", async () => {
     const deletedAt = new Date("2026-02-01")
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([
         ["msg_ok", makeMessage({ id: "msg_ok", streamId: "stream_private" })],
         ["msg_deleted", makeMessage({ id: "msg_deleted", streamId: "stream_private", deletedAt })],
@@ -708,7 +692,7 @@ describe("hydrateSharedMessageRefsForRoom", () => {
   })
 
   it("hydrates a nested pointer into a public stream as ok with no grant rows", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(async (_db, _ws, ids) => {
+    spyOn(MessageRepository, "findByIds").mockImplementation(async (_db, _ws, ids) => {
       const map = new Map<string, any>()
       for (const id of ids) {
         if (id === "msg_outer") {
@@ -746,7 +730,7 @@ describe("hydrateSharedMessageRefsForRoom", () => {
   })
 
   it("renders a nested pointer into a private stream as a private placeholder reporting the root's kind/visibility", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(async (_db, _ws, ids) => {
+    spyOn(MessageRepository, "findByIds").mockImplementation(async (_db, _ws, ids) => {
       const map = new Map<string, any>()
       for (const id of ids) {
         if (id === "msg_outer") {
@@ -791,7 +775,7 @@ describe("hydrateSharedMessageRefsForRoom", () => {
   })
 
   it("emits truncated with the live streamId for a public chain past MAX_HYDRATION_DEPTH", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockImplementation(async (_db, _ws, ids) => {
+    spyOn(MessageRepository, "findByIds").mockImplementation(async (_db, _ws, ids) => {
       const map = new Map<string, any>()
       for (const id of ids) {
         const next = id.replace(/^msg_(\d+)$/, (_m, n) => `msg_${Number(n) + 1}`)
@@ -831,7 +815,7 @@ describe("hydrateSharedMessageRefsForRoom", () => {
 
 describe("hydrateSharedMessages", () => {
   it("scans input messages' contentJson and hydrates referenced ids in one pass", async () => {
-    const findByIds = spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    const findByIds = spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
     stubAuthorLookups()
     stubFullAccess()
     await hydrateSharedMessages({} as any, "ws_1", VIEWER_ID, [
@@ -855,8 +839,9 @@ describe("hydrateSharedMessages", () => {
     ])
 
     expect(findByIds).toHaveBeenCalledTimes(1)
-    const ids = (findByIds as any).mock.calls[0][2].sort()
-    expect(ids).toEqual(["msg_a", "msg_b"])
+    const [, workspaceId, ids] = (findByIds as any).mock.calls[0]
+    expect(workspaceId).toBe("ws_1")
+    expect([...ids].sort()).toEqual(["msg_a", "msg_b"])
   })
 })
 
@@ -901,9 +886,7 @@ describe("toDualSlotMaps", () => {
 
 describe("hydrateSharedMessageRefsForAccessibleSet", () => {
   it("hydrates a source directly readable in the accessible set as ok", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
-      new Map([["msg_a", makeMessage({ id: "msg_a" })]])
-    )
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map([["msg_a", makeMessage({ id: "msg_a" })]]))
     spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_author", name: "Ada" } as any])
     spyOn(PersonaRepository, "findByIds").mockResolvedValue([])
     const grantSpy = spyOn(SharedMessageRepository, "listSourcesGrantedToAnyStream").mockResolvedValue(new Set())
@@ -916,7 +899,7 @@ describe("hydrateSharedMessageRefsForAccessibleSet", () => {
   })
 
   it("hydrates a source reachable only via a share grant into a readable stream", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([["msg_a", makeMessage({ id: "msg_a", streamId: "stream_other" })]])
     )
     spyOn(UserRepository, "findByIds").mockResolvedValue([])
@@ -931,7 +914,7 @@ describe("hydrateSharedMessageRefsForAccessibleSet", () => {
   })
 
   it("renders a private placeholder when the source is neither readable nor granted", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([["msg_a", makeMessage({ id: "msg_a", streamId: "stream_other" })]])
     )
     stubAuthorLookups()
@@ -953,7 +936,7 @@ describe("hydrateSharedMessageRefsForAccessibleSet", () => {
   })
 
   it("issues one grant lookup per level, not per source id (INV-56)", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([
         ["msg_a", makeMessage({ id: "msg_a" })],
         ["msg_b", makeMessage({ id: "msg_b" })],

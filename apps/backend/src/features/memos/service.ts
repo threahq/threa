@@ -332,7 +332,7 @@ export class MemoService implements MemoServiceLike {
         const conv = await ConversationRepository.findById(client, convId)
         if (conv) {
           conversations.set(convId, conv)
-          const msgs = await MessageRepository.findByIds(client, conv.messageIds)
+          const msgs = await MessageRepository.findByIds(client, workspaceId, conv.messageIds)
           conversationMessages.set(convId, msgs)
           const existingMemos = await MemoRepository.findActiveBySourceConversation(client, convId)
           existingConversationMemos.set(convId, existingMemos)
@@ -888,7 +888,7 @@ export class MemoService implements MemoServiceLike {
     const targetStreamId = stream.rootStreamId ?? stream.id
 
     const allSourceIds = [...new Set(memos.flatMap((memo) => memo.sourceMessageIds))]
-    const sourceMessages = await MessageRepository.findByIdsInWorkspace(client, workspaceId, allSourceIds)
+    const sourceMessages = await MessageRepository.findByIds(client, workspaceId, allSourceIds)
 
     const rows: NewStreamContextItem[] = []
     for (const memo of memos) {

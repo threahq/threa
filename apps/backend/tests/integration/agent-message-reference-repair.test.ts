@@ -72,7 +72,7 @@ describe("agent message reference repair", () => {
         contentJson: parseMarkdown(createdMarkdown),
         contentMarkdown: createdMarkdown,
       })
-      expect((await MessageRepository.findById(client, created.id))?.contentMarkdown).toBe(
+      expect((await MessageRepository.findById(client, ws, created.id))?.contentMarkdown).toBe(
         `See [${source.id}](shared-message:${sourceStreamId}/${source.id})`
       )
 
@@ -85,7 +85,7 @@ describe("agent message reference repair", () => {
         contentJson: parseMarkdown(editedMarkdown),
         contentMarkdown: editedMarkdown,
       })
-      expect((await MessageRepository.findById(client, created.id))?.contentMarkdown).toBe(
+      expect((await MessageRepository.findById(client, ws, created.id))?.contentMarkdown).toBe(
         `[source](shared-message:${sourceStreamId}/${source.id})`
       )
     })
@@ -169,7 +169,7 @@ describe("agent message reference repair", () => {
       const inaccessible = await createSource(ws, inaccessibleId, actor.id, "inaccessible")
       const deleted = await createSource(ws, rootId, actor.id, "deleted")
       const foreign = await createSource(foreignWs, foreignStreamId, foreignActor.id, "foreign")
-      await MessageRepository.softDelete(client, deleted.id)
+      await MessageRepository.softDelete(client, ws, deleted.id)
 
       const accessible = await listAccessibleStreamIds(client, ws, actor.id, [rootId, threadId, inaccessibleId])
       expect(accessible).toEqual(new Set([rootId, threadId]))
