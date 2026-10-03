@@ -13,8 +13,8 @@ export async function setComposerTarget(workspaceId: string, host: string, scope
   await db.composerTarget.put({ host, workspaceId, scope })
 }
 
-export async function clearComposerTarget(host: string): Promise<void> {
-  await db.composerTarget.delete(host)
+export async function clearComposerTarget(workspaceId: string, host: string): Promise<void> {
+  await db.composerTarget.delete([workspaceId, host])
 }
 
 export interface ComposerTargetState {
@@ -27,12 +27,19 @@ export interface ComposerTargetState {
 const UNRESOLVED: ComposerTargetState = { scope: null, isResolved: false }
 
 /**
- * The target row for `host`. The host is carried through the query result and
- * compared on read, so a stream switch can never render the previous stream's
- * target for the frame before the new subscription emits.
+ * The target row for `host`. The host and workspace are carried through the query
+ * result and compared on read, so a stream or workspace switch can never render
+ * the previous stream's target for the frame before the new subscription emits.
  */
-export function useComposerTarget(host: string): ComposerTargetState {
-  const row = useLiveQuery(async () => ({ host, scope: (await db.composerTarget.get(host))?.scope ?? null }), [host])
-  if (!row || row.host !== host) return UNRESOLVED
+export function useComposerTarget(workspaceId: string, host: string): ComposerTargetState {
+  const row = useLiveQuery(
+    async () => ({
+      workspaceId,
+      host,
+      scope: (await db.composerTarget.get([workspaceId, host]))?.scope ?? null,
+    }),
+    [workspaceId, host]
+  )
+  if (!row || row.workspaceId !== workspaceId || row.host !== host) return UNRESOLVED
   return { scope: row.scope, isResolved: true }
 }

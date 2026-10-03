@@ -155,9 +155,9 @@ export async function deleteLocalDraft(
     const row = await database.drafts.get(id)
     if (!row) return
     removed = row
-    const loaded = await database.composerLoaded.get(row.scope)
+    const loaded = await database.composerLoaded.get([workspaceId, row.scope])
     if (loaded?.draftId === id) {
-      await database.composerLoaded.delete(row.scope)
+      await database.composerLoaded.delete([workspaceId, row.scope])
       clearedScope = row.scope
     }
     await database.drafts.delete(id)
@@ -210,9 +210,9 @@ export async function migrateLocalDraftScope(
   let movedToScope: string | null = null
   await database.transaction("rw", database.drafts, database.composerLoaded, async () => {
     await database.drafts.put(toRow)
-    const loaded = await database.composerLoaded.get(fromScope)
+    const loaded = await database.composerLoaded.get([workspaceId, fromScope])
     if (loaded?.draftId === toRow.id) {
-      await database.composerLoaded.delete(fromScope)
+      await database.composerLoaded.delete([workspaceId, fromScope])
       await database.composerLoaded.put({ scope: toRow.scope, workspaceId, draftId: toRow.id })
       movedToScope = toRow.scope
     }
@@ -252,7 +252,7 @@ export async function migrateLocalDraftId(
     const live = await database.drafts.get(fromId)
     finalRow = live ? { ...live, id: toRow.id, baseVersion: toRow.baseVersion } : toRow
     await database.drafts.put(finalRow)
-    const loaded = await database.composerLoaded.get(finalRow.scope)
+    const loaded = await database.composerLoaded.get([workspaceId, finalRow.scope])
     if (loaded?.draftId === fromId) {
       await database.composerLoaded.put({ ...loaded, draftId: finalRow.id })
       repointedScope = finalRow.scope
@@ -830,7 +830,7 @@ export async function reconcileStagedDrafts(workspaceId: string): Promise<void> 
 
 async function applyStagedDraft(workspaceId: string, entry: StagedDraft): Promise<void> {
   if (isEmptyContent(entry.contentJson)) return
-  const loadedId = (await db.composerLoaded.get(entry.scope))?.draftId ?? null
+  const loadedId = (await db.composerLoaded.get([workspaceId, entry.scope]))?.draftId ?? null
   const existing = loadedId ? await db.drafts.get(loadedId) : undefined
 
   // Never apply plaintext over a sealed row (E2EE-4). Staging is plaintext-only,

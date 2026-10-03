@@ -121,7 +121,7 @@ describe("v48 composer target + conversation messageIds index", () => {
 
     // The new device-local target store opens and round-trips.
     await db.composerTarget.put({ host: "stream:stream_1", workspaceId: "ws_1", scope: "board:reply:conv_1" })
-    expect(await db.composerTarget.get("stream:stream_1")).toEqual({
+    expect(await db.composerTarget.get(["ws_1", "stream:stream_1"])).toEqual({
       host: "stream:stream_1",
       workspaceId: "ws_1",
       scope: "board:reply:conv_1",
