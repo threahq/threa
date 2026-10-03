@@ -21,16 +21,16 @@ function cachedEvent(overrides: Partial<CachedEvent> & Pick<CachedEvent, "id" | 
   }
 }
 
-async function seedV50(name: string, seed: (legacy: Dexie) => Promise<void>): Promise<void> {
+async function seedV51(name: string, seed: (legacy: Dexie) => Promise<void>): Promise<void> {
   const legacy = new Dexie(name)
-  legacy.version(50).stores({ events: V47_EVENTS })
+  legacy.version(51).stores({ events: V47_EVENTS })
   await legacy.open()
   await seed(legacy)
   legacy.close()
 }
 
-describe("v51 events keyed by workspace", () => {
-  it("should carry rows that name a workspace to the new keys and drop the rest when upgrading from v50", async () => {
+describe("v52 events keyed by workspace", () => {
+  it("should carry rows that name a workspace to the new keys and drop the rest when upgrading from v51", async () => {
     const name = `threa_test_${Math.random().toString(36).slice(2)}`
     const second = cachedEvent({ id: "evt_2", workspaceId: "ws_1", _sequenceNum: 2 })
     const first = cachedEvent({ id: "evt_1", workspaceId: "ws_1", _sequenceNum: 1 })
@@ -41,7 +41,7 @@ describe("v51 events keyed by workspace", () => {
       _status: "pending",
     })
     const { workspaceId: _omitted, ...withoutWorkspace } = cachedEvent({ id: "evt_orphan", workspaceId: "ws_1" })
-    await seedV50(name, async (legacy) => {
+    await seedV51(name, async (legacy) => {
       await legacy.table("events").bulkPut([second, first, otherWorkspace, withoutWorkspace])
     })
 
@@ -83,7 +83,7 @@ describe("v51 events keyed by workspace", () => {
       workspaceId: "ws_b",
       payload: { messageId: "msg_copied", contentMarkdown: "in b" },
     })
-    await seedV50(name, async (legacy) => {
+    await seedV51(name, async (legacy) => {
       await legacy.table("events").put(inA)
     })
 
