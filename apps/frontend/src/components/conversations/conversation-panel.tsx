@@ -406,7 +406,7 @@ export function ConversationPanel({ workspaceId, onClose, className }: Conversat
   }, [onClose])
 
   const anchorStreamId = post?.conversation.streamId
-  const hostStream = useStreamFromStore(anchorStreamId)
+  const hostStream = useStreamFromStore(workspaceId, anchorStreamId)
   const hostStreamType = hostStream?.type
   const locator = useStreamName(workspaceId, anchorStreamId ?? "", "generic") ?? "Conversation"
   // Archived conversations are read-only (INV-62): the anchor stream's own

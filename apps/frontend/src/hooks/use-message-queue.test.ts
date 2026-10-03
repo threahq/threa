@@ -278,6 +278,7 @@ describe("useMessageQueue", () => {
     vi.spyOn(dbModule.db.draftScratchpads, "delete").mockImplementation((async () => {
       order.push("deleteDraft")
     }) as never)
+    const deleteStream = vi.spyOn(dbModule.db.streams, "delete")
     mockDelete.mockImplementation((id: string) => {
       order.push("deleteQueueRow")
       mockPendingMessages = mockPendingMessages.filter((m) => m.clientId !== id)
@@ -314,6 +315,7 @@ describe("useMessageQueue", () => {
       },
     ])
     expect(order).toEqual(["emit", "deleteDraft", "markSentAt", "deleteQueueRow"])
+    expect(deleteStream).toHaveBeenCalledWith(["ws_1", "draft_pad"])
   })
 
   it("re-scopes card-thread stashes from the canonical anchor when promoting", async () => {
@@ -896,7 +898,7 @@ describe("useMessageQueue", () => {
     // covered by its own tests.) The card was seeded at composer-clear under the
     // draft ids; the drain rewrites it to the real ones.
     const realStream = { id: "stream_real", type: "scratchpad", rootStreamId: null }
-    vi.spyOn(dbModule.db.streams, "get").mockResolvedValue(realStream as never)
+    const getStream = vi.spyOn(dbModule.db.streams, "get").mockResolvedValue(realStream as never)
     mockCreate.mockResolvedValue({
       message: {
         id: "msg_1",
@@ -945,6 +947,7 @@ describe("useMessageQueue", () => {
       }),
       dbModule.getActiveDb()
     )
+    expect(getStream).toHaveBeenCalledWith(["ws_1", "stream_real"])
   })
 
   it("does not touch a board card for an ordinary send that declared no new conversation", async () => {

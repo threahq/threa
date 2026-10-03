@@ -78,9 +78,9 @@ const MAX_JUMP_PAGES = 10
 
 export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   const { workspaceId, streamId, onClose, onJumpToMessage, onOpenThread, onOpenMemo, onOpenGallery } = props
-  const stream = useStreamFromStore(streamId)
+  const stream = useStreamFromStore(workspaceId, streamId)
   const rootStreamId = stream?.rootStreamId ?? streamId
-  const rootStream = useStreamFromStore(rootStreamId)
+  const rootStream = useStreamFromStore(workspaceId, rootStreamId)
   const isOnline = useIsOnline()
   const users = useWorkspaceUsers(workspaceId)
 

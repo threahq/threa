@@ -38,7 +38,7 @@ function wrapper() {
 }
 
 async function readSlotMap(streamId: string): Promise<SlotMap> {
-  const rows = await db.slots.where("streamId").equals(streamId).toArray()
+  const rows = await db.slots.where("[workspaceId+streamId]").equals(["ws_1", streamId]).toArray()
   const map: SlotMap = {}
   for (const row of rows) map[row.slotKey] = row.value
   return map

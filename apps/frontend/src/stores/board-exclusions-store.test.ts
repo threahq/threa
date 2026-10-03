@@ -18,10 +18,10 @@ describe("board-exclusions-store", () => {
     })
 
     expect((await db.boardHiddenConversations.get("conv_1"))?.hiddenAt).toBe(Date.parse("2026-07-05T00:00:00.000Z"))
-    expect(await db.boardMutedStreams.get("stream_1")).toBeDefined()
+    expect(await db.boardMutedStreams.get(["ws_1", "stream_1"])).toBeDefined()
     // Rows the server no longer returns are gone.
     expect(await db.boardHiddenConversations.get("conv_stale")).toBeUndefined()
-    expect(await db.boardMutedStreams.get("stream_stale")).toBeUndefined()
+    expect(await db.boardMutedStreams.get(["ws_1", "stream_stale"])).toBeUndefined()
   })
 
   it("round-trips optimistic put/delete for both grains", async () => {
@@ -31,8 +31,24 @@ describe("board-exclusions-store", () => {
     expect(await db.boardHiddenConversations.get("conv_1")).toBeUndefined()
 
     await putMuted("ws_1", "stream_1")
-    expect(await db.boardMutedStreams.get("stream_1")).toBeDefined()
-    await deleteMuted("stream_1")
-    expect(await db.boardMutedStreams.get("stream_1")).toBeUndefined()
+    expect(await db.boardMutedStreams.get(["ws_1", "stream_1"])).toBeDefined()
+    await deleteMuted("ws_1", "stream_1")
+    expect(await db.boardMutedStreams.get(["ws_1", "stream_1"])).toBeUndefined()
+  })
+
+  it("keeps a workspace's mute when the same stream id is unmuted or reseeded in another workspace", async () => {
+    await putMuted("ws_a", "stream_shared")
+    await putMuted("ws_b", "stream_shared")
+
+    await deleteMuted("ws_a", "stream_shared")
+    expect(await db.boardMutedStreams.toArray()).toEqual([
+      expect.objectContaining({ workspaceId: "ws_b", id: "stream_shared" }),
+    ])
+
+    await putMuted("ws_a", "stream_shared")
+    await seedBoardExclusions("ws_a", { hiddenConversations: [], mutedStreamIds: [] })
+    expect(await db.boardMutedStreams.toArray()).toEqual([
+      expect.objectContaining({ workspaceId: "ws_b", id: "stream_shared" }),
+    ])
   })
 })

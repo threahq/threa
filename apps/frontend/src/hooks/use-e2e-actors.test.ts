@@ -102,7 +102,10 @@ describe("revokeActorFromStream", () => {
   it("rolls the key to whoever is left and drops the revoked actor from the local row", async () => {
     vi.spyOn(e2eActorsApi, "revoke").mockResolvedValue({
       stream: revokedStream,
-      keyRoll: { nextGeneration: 4, recipients: [{ kind: "bot", actorId: "bot_keep", keyId: "rek_keep", publicKey: "pk" }] },
+      keyRoll: {
+        nextGeneration: 4,
+        recipients: [{ kind: "bot", actorId: "bot_keep", keyId: "rek_keep", publicKey: "pk" }],
+      },
     } as never)
     const rekey = vi.spyOn(streamKeyCache, "rekeyStream").mockResolvedValue(undefined as never)
 
@@ -119,13 +122,16 @@ describe("revokeActorFromStream", () => {
     expect(rekey).toHaveBeenCalledWith(
       expect.objectContaining({ streamId: "stream_1", nextGeneration: 4, ownerKeyId: "uik_owner" })
     )
-    expect((await db.streams.get("stream_1"))?.e2eActors).toEqual(remaining)
+    expect((await db.streams.get(["ws_1", "stream_1"]))?.e2eActors).toEqual(remaining)
   })
 
   it("reports the un-rolled revoke when the session is locked, so the caller can say the key still stands", async () => {
     vi.spyOn(e2eActorsApi, "revoke").mockResolvedValue({
       stream: revokedStream,
-      keyRoll: { nextGeneration: 4, recipients: [{ kind: "bot", actorId: "bot_keep", keyId: "rek_keep", publicKey: "pk" }] },
+      keyRoll: {
+        nextGeneration: 4,
+        recipients: [{ kind: "bot", actorId: "bot_keep", keyId: "rek_keep", publicKey: "pk" }],
+      },
     } as never)
     const rekey = vi.spyOn(streamKeyCache, "rekeyStream")
 
@@ -141,7 +147,7 @@ describe("revokeActorFromStream", () => {
     expect(result).toBe("revoked-unrolled")
     expect(rekey).not.toHaveBeenCalled()
     // The actor row is gone either way — the backend already deleted it.
-    expect((await db.streams.get("stream_1"))?.e2eActors).toEqual(remaining)
+    expect((await db.streams.get(["ws_1", "stream_1"]))?.e2eActors).toEqual(remaining)
   })
 
   it("skips the roll when nobody is left holding a key", async () => {

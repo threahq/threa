@@ -1564,8 +1564,13 @@ describe("BoardCard backfill arming", () => {
 
 describe("BoardCard — archived is read-only (INV-62)", () => {
   it("replaces the reply affordance with the archived notice", async () => {
-    spyOnExport(streamStoreModule, "useStreamFromStore").mockReturnValue(((id: string | undefined) =>
-      id === STREAM ? { id: STREAM, type: "channel", archivedAt: "2026-06-23T12:00:00.000Z" } : undefined) as never)
+    spyOnExport(streamStoreModule, "useStreamFromStore").mockReturnValue(((
+      workspaceId: string | undefined,
+      id: string | undefined
+    ) =>
+      workspaceId === WS && id === STREAM
+        ? { id: STREAM, workspaceId: WS, type: "channel", archivedAt: "2026-06-23T12:00:00.000Z" }
+        : undefined) as never)
     mountCard()
     expect(
       await screen.findByText("This conversation has been archived. It can be read but not extended.")

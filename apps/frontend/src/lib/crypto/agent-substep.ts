@@ -17,7 +17,7 @@ export async function decryptAgentSubstepText(
   if (session.status !== "unlocked" || !session.privateKey || !session.keyId) return null
   // The substep's stream may be a thread, which shares its root's SSK —
   // resolve the key against the root.
-  const rootStreamId = (await db.streams.get(payload.streamId))?.rootStreamId ?? undefined
+  const rootStreamId = (await db.streams.get([context.workspaceId, payload.streamId]))?.rootStreamId ?? undefined
   const decrypted = await tryDecryptMessagePayload(
     { contentMarkdown: "", ciphertext: payload.ciphertext, envelope: payload.envelope },
     {

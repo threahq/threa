@@ -263,7 +263,7 @@ describe("LiveCommitBatch", () => {
       // land in the SAME bootstrap replacement, so the cache-side preview must
       // advance too, not just db.streams.
       cachePreview: bootstrapOf(queryClient)?.streams.find((s) => s.id === "stream_1")?.lastMessagePreview?.content,
-      idbPreview: (await db.streams.get("stream_1"))?.lastMessagePreview?.content,
+      idbPreview: (await db.streams.get([WORKSPACE_ID, "stream_1"]))?.lastMessagePreview?.content,
     }).toEqual({
       transactions: 1,
       publications: 1,
@@ -289,7 +289,7 @@ describe("LiveCommitBatch", () => {
       transactions: transaction.mock.calls.length,
       publications: setQueryData.mock.calls.length,
       unread: bootstrapOf(queryClient)?.unreadCounts.stream_1,
-      preview: (await db.streams.get("stream_1"))?.lastMessagePreview?.content,
+      preview: (await db.streams.get([WORKSPACE_ID, "stream_1"]))?.lastMessagePreview?.content,
       cachePreview: bootstrapOf(queryClient)?.streams.find((s) => s.id === "stream_1")?.lastMessagePreview?.content,
       ordinal: (await db.unreadState.get(WORKSPACE_ID))?.latestOrdinals?.stream_1,
     }).toEqual({
@@ -396,7 +396,7 @@ describe("LiveCommitBatch", () => {
     expect({
       unread: bootstrapOf(queryClient)?.unreadCounts.stream_1,
       cachePreview: bootstrapOf(queryClient)?.streams.find((s) => s.id === "stream_1")?.lastMessagePreview?.content,
-      idbPreview: (await db.streams.get("stream_1"))?.lastMessagePreview?.content,
+      idbPreview: (await db.streams.get([WORKSPACE_ID, "stream_1"]))?.lastMessagePreview?.content,
       ordinal: (await db.unreadState.get(WORKSPACE_ID))?.latestOrdinals?.stream_1,
       logged: consoleError.mock.calls.length,
     }).toEqual({ unread: 2, cachePreview: "message 7", idbPreview: "message 7", ordinal: 7, logged: 1 })
@@ -612,7 +612,7 @@ describe("LiveCommitBatch", () => {
     expect({
       bootstrapUnchanged: bootstrapOf(queryClient) === before,
       idbOrdinal: (await db.unreadState.get(WORKSPACE_ID))?.latestOrdinals?.stream_1,
-      preview: (await db.streams.get("stream_1"))?.lastMessagePreview,
+      preview: (await db.streams.get([WORKSPACE_ID, "stream_1"]))?.lastMessagePreview,
     }).toEqual({ bootstrapUnchanged: true, idbOrdinal: 5, preview: null })
 
     harness.cleanup()
@@ -641,7 +641,7 @@ describe("LiveCommitBatch", () => {
       afterLiveFlush,
       ordinal: (await db.unreadState.get(WORKSPACE_ID))?.latestOrdinals?.stream_1,
       unread: (await db.unreadState.get(WORKSPACE_ID))?.unreadCounts.stream_1,
-      preview: (await db.streams.get("stream_1"))?.lastMessagePreview?.content,
+      preview: (await db.streams.get([WORKSPACE_ID, "stream_1"]))?.lastMessagePreview?.content,
     }).toEqual({ afterLiveFlush: 6, ordinal: 7, unread: 2, preview: "message 7" })
 
     harness.cleanup()
@@ -682,7 +682,7 @@ describe("LiveCommitBatch", () => {
     expect({
       bootstrapUnchanged: bootstrapOf(queryClient) === before,
       idbOrdinal: (await db.unreadState.get(WORKSPACE_ID))?.latestOrdinals?.stream_1,
-      preview: (await db.streams.get("stream_1"))?.lastMessagePreview,
+      preview: (await db.streams.get([WORKSPACE_ID, "stream_1"]))?.lastMessagePreview,
     }).toEqual({ bootstrapUnchanged: true, idbOrdinal: 5, preview: null })
 
     harness.cleanup()

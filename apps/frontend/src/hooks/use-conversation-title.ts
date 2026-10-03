@@ -19,7 +19,7 @@ export function useConversationTitleDetails(
   workspaceId: string,
   conversation: Pick<Conversation, "streamId" | "topicSummary">
 ): ConversationTitleDetails {
-  const stream = useStreamFromStore(conversation.streamId)
+  const stream = useStreamFromStore(workspaceId, conversation.streamId)
   const nameKey =
     stream?.e2eEnabled && stream.sealedNameCiphertext
       ? streamNameCacheKey(workspaceId, stream.id, stream.sealedNameCiphertext)

@@ -309,10 +309,10 @@ export function useArchiveStream(workspaceId: string) {
       // Invalidate lists as fallback
       queryClient.invalidateQueries({ queryKey: streamKeys.lists() })
 
-      db.streams.delete(streamId)
+      db.streams.delete([workspaceId, streamId])
       // Evict the archived stream's slots; a later reopen rehydrates them from
       // the bootstrap (Amendment A4).
-      void deleteStreamSlots(db, streamId)
+      void deleteStreamSlots(db, workspaceId, streamId)
     },
   })
 }
@@ -340,10 +340,10 @@ export function useUnarchiveStream(workspaceId: string) {
           : old
       )
       await db.transaction("rw", db.streams, async () => {
-        const current = await db.streams.get(streamId)
+        const current = await db.streams.get([workspaceId, streamId])
         // An archive delivered while the request was in flight owns the newer local state.
         if (current && current.archivedAt === observed.cachedArchivedAt) {
-          await db.streams.update(streamId, { archivedAt: null })
+          await db.streams.update([workspaceId, streamId], { archivedAt: null })
         }
       })
       queryClient.invalidateQueries({ queryKey: streamKeys.lists() })

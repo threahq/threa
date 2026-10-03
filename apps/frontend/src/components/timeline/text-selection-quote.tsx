@@ -92,7 +92,7 @@ export function TextSelectionQuote({ streamId, containerRef }: TextSelectionQuot
   // Sharing a sealed message decrypts it whole, which is the row menu's
   // confirmed path — a span of one has nothing to pin, so the toolbar offers
   // Quote only there.
-  const selectionStream = useStreamFromStore(selection?.streamId ?? streamId)
+  const selectionStream = useStreamFromStore(workspaceId, selection?.streamId ?? streamId)
   // A row whose stream is not in the store (a thread on a board card) still
   // offers Share: the sealed case it guards is refused server-side with
   // SHARE_E2E_NOT_ALLOWED, so guessing wrong here costs a rejected send, while
