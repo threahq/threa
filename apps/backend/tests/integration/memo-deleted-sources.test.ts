@@ -534,7 +534,7 @@ describe("memo sources: deleted and edited messages", () => {
 
     async function edit(seeded: Seeded, text: string): Promise<void> {
       const { contentJson, contentMarkdown } = testMessageContent(text)
-      await MessageRepository.updateContent(pool, seeded.messageIds[0], contentJson, contentMarkdown)
+      await MessageRepository.updateContent(pool, testWorkspaceId, seeded.messageIds[0], contentJson, contentMarkdown)
       await editMessage(seeded, seeded.messageIds[0])
     }
 
