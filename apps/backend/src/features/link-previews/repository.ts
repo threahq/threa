@@ -354,7 +354,7 @@ export const LinkPreviewRepository = {
   async findByMessageId(querier: Querier, workspaceId: string, messageId: string): Promise<LinkPreview[]> {
     const result = await querier.query(
       sql`SELECT lp.* FROM link_previews lp
-          JOIN message_link_previews mlp ON mlp.link_preview_id = lp.id
+          JOIN message_link_previews mlp ON mlp.link_preview_id = lp.id AND mlp.workspace_id = lp.workspace_id
           WHERE mlp.workspace_id = $1 AND mlp.message_id = $2
           ORDER BY mlp.position ASC`,
       [workspaceId, messageId]
@@ -371,7 +371,7 @@ export const LinkPreviewRepository = {
 
     const result = await querier.query(
       sql`SELECT lp.*, mlp.message_id, mlp.position FROM link_previews lp
-          JOIN message_link_previews mlp ON mlp.link_preview_id = lp.id
+          JOIN message_link_previews mlp ON mlp.link_preview_id = lp.id AND mlp.workspace_id = lp.workspace_id
           WHERE mlp.workspace_id = $1 AND mlp.message_id = ANY($2)
           ORDER BY mlp.message_id, mlp.position ASC`,
       [workspaceId, messageIds]

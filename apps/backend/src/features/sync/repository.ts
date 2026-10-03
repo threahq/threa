@@ -179,7 +179,7 @@ export const SyncLogRepository = {
         SELECT sm.stream_id, COALESCE(jb.join_sync_id, 0) AS bound
         FROM stream_members sm
         LEFT JOIN join_bounds jb ON jb.stream_id = sm.stream_id
-        WHERE sm.member_id = ${userId}
+        WHERE sm.workspace_id = ${workspaceId} AND sm.member_id = ${userId}
         UNION ALL
         -- Inherited access: any stream whose EFFECTIVE ROOT is readable —
         -- public, or one the user is a member of. The readable test is shared
@@ -192,7 +192,7 @@ export const SyncLogRepository = {
                CASE WHEN root.visibility = ${Visibilities.PUBLIC} THEN 0
                     ELSE COALESCE(jb.join_sync_id, 0) END AS bound
         FROM streams s
-        JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id)
+        JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id
         LEFT JOIN join_bounds jb ON jb.stream_id = root.id
         WHERE s.workspace_id = ${workspaceId}
           AND ${rootReadableConditionSql(workspaceId, userId, "root")}
@@ -299,6 +299,7 @@ export const SyncLogRepository = {
     db: Querier,
     params: { cutoff: Date; minKeep: number; limit: number }
   ): Promise<{ prunedThrough: Map<string, bigint>; deletedCount: number }> {
+    // eslint-disable-next-line threa/workspace-scoped-sql -- retention sweep across every workspace; the DELETE matches on ctid
     const result = await db.query<{ workspace_id: string; pruned_through: string; pruned_count: string }>(sql`
       WITH heads AS (
         SELECT workspace_id, next_sequence - 1 AS head
@@ -399,6 +400,7 @@ export const SyncLogRepository = {
     db: Querier,
     params: { since: Date; until: Date; limit: number }
   ): Promise<Array<{ id: bigint; eventType: string; payload: unknown; createdAt: Date }>> {
+    // eslint-disable-next-line threa/workspace-scoped-sql -- reconciliation across every workspace; outbox has no workspace_id
     const result = await db.query<{ id: string; event_type: string; payload: unknown; created_at: Date }>(sql`
       SELECT o.id, o.event_type, o.payload, o.created_at
       FROM outbox o
