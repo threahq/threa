@@ -37,6 +37,7 @@ import {
   type StreamCallStartedOutboxPayload,
   type StreamCallEndedOutboxPayload,
   type StreamMessageCountOutboxPayload,
+  type StreamConnectionUpdatedOutboxPayload,
 } from "./repository"
 
 /**
@@ -94,6 +95,8 @@ const PERMISSION_SCOPED_EVENTS = {
     "invitation:link-created",
     "invitation:link-claimed",
   ],
+  // Public channels only: a private channel's change goes to its admin members, routed in resolveDeliveryGroups.
+  [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN]: ["stream_connection:updated"],
 } as const satisfies Partial<Record<WorkspacePermissionSlug, readonly OutboxEventType[]>>
 
 /** Permission scopes that get their own delivery group (keys of the routing map). */
@@ -110,6 +113,38 @@ const PERMISSION_GROUP_BY_EVENT = new Map<string, string>(
 export function permissionGroupsForRole(role: WorkspaceRoleSlug): string[] {
   const held = permissionsForRole(role)
   return DELIVERED_PERMISSION_SCOPES.filter((slug) => held.includes(slug)).map(permissionGroup)
+}
+
+/**
+ * Moves a member's live sockets into exactly the permission rooms `role`
+ * grants, so a role change takes effect without a rejoin. `null` (removed)
+ * leaves them all.
+ */
+export function syncPermissionRooms(
+  io: Server,
+  workspaceId: string,
+  userId: string,
+  role: WorkspaceRoleSlug | null
+): void {
+  const { held, stale } = permissionRoomsFor(workspaceId, role)
+  const sockets = io.in(groupToRoom(workspaceId, userGroup(userId)))
+  if (stale.length > 0) sockets.socketsLeave(stale)
+  if (held.length > 0) sockets.socketsJoin(held)
+}
+
+/** A workspace's permission rooms, split into those `role` grants and the rest. `null` holds none. */
+export function permissionRoomsFor(
+  workspaceId: string,
+  role: WorkspaceRoleSlug | null
+): { held: string[]; stale: string[] } {
+  const held = role ? permissionGroupsForRole(role) : []
+  const toRoom = (group: string) => groupToRoom(workspaceId, group)
+  return {
+    held: held.map(toRoom),
+    stale: DELIVERED_PERMISSION_SCOPES.map(permissionGroup)
+      .filter((group) => !held.includes(group))
+      .map(toRoom),
+  }
 }
 
 /**
@@ -375,6 +410,14 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     const payload = event.payload as MemoCreatedOutboxPayload
     if (payload.scopeUserId) return [userGroup(payload.scopeUserId)]
     return payload.streamId ? [streamGroup(payload.streamId)] : []
+  }
+
+  // A private channel's connection change must not reach admins outside it, so
+  // it goes to its admin members one by one; a public one falls through to the
+  // admin permission group below.
+  if (isOutboxEventType(event, "stream_connection:updated")) {
+    const payload = event.payload as StreamConnectionUpdatedOutboxPayload
+    if (payload.streamVisibility !== Visibilities.PUBLIC) return payload.adminMemberUserIds.map(userGroup)
   }
 
   // Permission-scoped events (e.g. invitation lifecycle → members:write) go to

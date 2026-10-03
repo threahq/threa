@@ -6,7 +6,7 @@ import {
   readMediaEdgeEvidence,
   expectMediaProgressOnEveryEdge,
 } from "./calls-media-evidence"
-import { expectApiOk, generateTestId, loginAndCreateWorkspace, loginInNewContext } from "./helpers"
+import { enrollWorkspaceFlag, expectApiOk, generateTestId, loginAndCreateWorkspace, loginInNewContext } from "./helpers"
 import { CAMERA_PUBLISH_LADDER } from "../../apps/frontend/src/calls/config"
 
 const CALL_TILE = "[data-testid='call-tile']"
@@ -68,17 +68,7 @@ async function setUpGroup(browser: Browser, size: number): Promise<GroupFixture>
   const workspaceId = ownerPage.url().match(/\/w\/([^/]+)/)?.[1]
   if (!workspaceId) throw new Error("Could not resolve group workspace")
 
-  const backendPort = process.env.PLAYWRIGHT_BACKEND_PORT
-  if (!backendPort) throw new Error("PLAYWRIGHT_BACKEND_PORT is required for P2P enrollment")
-  const internalApiKey = process.env.PLAYWRIGHT_INTERNAL_API_KEY
-  if (!internalApiKey) throw new Error("PLAYWRIGHT_INTERNAL_API_KEY is required for P2P enrollment")
-  await expectApiOk(
-    await ownerPage.request.post(`http://localhost:${backendPort}/internal/feature-flags`, {
-      headers: { "x-internal-api-key": internalApiKey },
-      data: { workspaceId, subjectType: "workspace", subjectId: workspaceId, overrides: { callsP2p: "on" } },
-    }),
-    "Enroll group workspace in callsP2p"
-  )
+  await enrollWorkspaceFlag(ownerPage, workspaceId, "callsP2p")
   const streamResponse = await ownerPage.request.post(`/api/workspaces/${workspaceId}/streams`, {
     data: { type: "channel", slug: `p2p-group-${size}-${testId}`, visibility: "public" },
   })

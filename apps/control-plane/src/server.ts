@@ -68,6 +68,11 @@ import {
   type AISpendControlsSyncPayload,
 } from "./features/ai-spend-controls"
 import {
+  StreamConnectionService,
+  OUTBOX_STREAM_CONNECTION_SYNC,
+  type StreamConnectionSyncPayload,
+} from "./features/stream-connections"
+import {
   PlatformAdminSyncService,
   OUTBOX_PLATFORM_ADMIN_SYNC,
   type PlatformAdminSyncPayload,
@@ -172,6 +177,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
   const authzFanOut = new RegionalAuthzFanOut({ pool, regionalClient })
   const featureFlagService = new ControlPlaneFeatureFlagService({ pool, regionalClient })
   const aiSpendControlsService = new AISpendControlsService({ pool, regionalClient })
+  const streamConnectionService = new StreamConnectionService({ pool, regionalClient })
   const githubWebhookDispatch = new GithubWebhookDispatchService({ pool, regionalClient })
   const githubWebhookRetention = new GithubWebhookRetentionSweeper({ pool })
 
@@ -189,6 +195,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
             authzFanOut,
             featureFlagService,
             aiSpendControlsService,
+            streamConnectionService,
             platformAdminSync,
             githubWebhookDispatch,
           })
@@ -318,6 +325,7 @@ export async function startServer(): Promise<ControlPlaneInstance> {
       workosAuthzAdminService,
       featureFlagService,
       aiSpendControlsService,
+      streamConnectionService,
       authLogService,
       internalApiKey: config.internalApiKey,
       allowDevAuthRoutes: config.useStubAuth && !isProduction,
@@ -403,6 +411,7 @@ async function dispatchEvent(
     authzFanOut: RegionalAuthzFanOut
     featureFlagService: ControlPlaneFeatureFlagService
     aiSpendControlsService: AISpendControlsService
+    streamConnectionService: StreamConnectionService
     platformAdminSync: PlatformAdminSyncService
     githubWebhookDispatch: GithubWebhookDispatchService
   }
@@ -426,6 +435,9 @@ async function dispatchEvent(
       break
     case OUTBOX_AI_SPEND_CONTROLS_SYNC:
       await deps.aiSpendControlsService.syncToRegion(payload as AISpendControlsSyncPayload)
+      break
+    case OUTBOX_STREAM_CONNECTION_SYNC:
+      await deps.streamConnectionService.syncToRegions(payload as StreamConnectionSyncPayload)
       break
     case OUTBOX_PLATFORM_ADMIN_SYNC:
       await deps.platformAdminSync.syncToRegions(payload as PlatformAdminSyncPayload)

@@ -76,15 +76,32 @@ export const WorkspaceUserPermissionsRepository = {
     return row ? mapRow(row) : null
   },
 
-  async delete(
+  /**
+   * A removal leaves a `removed` row instead of deleting it. Readers already
+   * treat any non-`active` row as no membership, the kept `last_event_at`
+   * rejects an older membership event replayed after the removal, and a
+   * workspace whose last member is removed still reads as mirrored
+   * (`existsForWorkspace`).
+   */
+  async markRemoved(
     db: Querier,
     params: { workspaceId: string; workosUserId: string; eventCreatedAt: Date }
   ): Promise<boolean> {
     const result = await db.query(
-      `DELETE FROM workspace_user_permissions
-       WHERE workspace_id = $1
-         AND workos_user_id = $2
-         AND last_event_at < $3`,
+      `INSERT INTO workspace_user_permissions (
+         workspace_id,
+         workos_user_id,
+         role_slugs,
+         status,
+         last_event_at
+       )
+       VALUES ($1, $2, ARRAY[]::TEXT[], 'removed', $3)
+       ON CONFLICT (workspace_id, workos_user_id) DO UPDATE SET
+         role_slugs = EXCLUDED.role_slugs,
+         status = EXCLUDED.status,
+         last_event_at = EXCLUDED.last_event_at,
+         updated_at = NOW()
+       WHERE workspace_user_permissions.last_event_at < EXCLUDED.last_event_at`,
       [params.workspaceId, params.workosUserId, params.eventCreatedAt]
     )
     return (result.rowCount ?? 0) > 0
@@ -103,6 +120,14 @@ export const WorkspaceUserPermissionsRepository = {
     )
     const row = result.rows[0]
     return row ? mapRow(row) : null
+  },
+
+  async existsForWorkspace(db: Querier, workspaceId: string): Promise<boolean> {
+    const result = await db.query<{ exists: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM workspace_user_permissions WHERE workspace_id = $1) AS exists`,
+      [workspaceId]
+    )
+    return result.rows[0].exists
   },
 
   async listByWorkspace(db: Querier, workspaceId: string): Promise<WorkspaceUserPermissions[]> {

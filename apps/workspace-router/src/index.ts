@@ -48,6 +48,8 @@ const WAITLIST_ROUTE_RE = /^\/api\/waitlist\/?$/
  */
 const OAUTH_DEVICE_ROUTE_RE = /^\/api\/oauth\/(?:device_authorization|token)$/
 const BOT_CONNECT_ROUTE_RE = /^\/api\/bot-connect\/(?:lookup|approve|deny)$/
+/** Shared-channel invite lookup (control-plane): the invitee has not picked a workspace yet. */
+const STREAM_CONNECTION_LOOKUP_RE = /^\/api\/stream-connections\/lookup$/
 
 /** Matches /api/workspaces/:workspaceId with optional trailing path */
 const WORKSPACE_ROUTE_RE = /^\/api\/workspaces\/([^/]+)(?:\/.+)?$/
@@ -110,7 +112,8 @@ async function routeRequest(request: Request, env: Env): Promise<Response> {
       (INVITATION_CLAIM_RE.test(path) && method === "POST") ||
       (WAITLIST_ROUTE_RE.test(path) && (method === "POST" || method === "OPTIONS")) ||
       (OAUTH_DEVICE_ROUTE_RE.test(path) && method === "POST") ||
-      (BOT_CONNECT_ROUTE_RE.test(path) && (method === "GET" || method === "POST"))
+      (BOT_CONNECT_ROUTE_RE.test(path) && (method === "GET" || method === "POST")) ||
+      (STREAM_CONNECTION_LOOKUP_RE.test(path) && method === "GET")
     ) {
       try {
         return await proxyRequest(request, env.CONTROL_PLANE_URL)

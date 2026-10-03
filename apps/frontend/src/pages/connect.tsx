@@ -1,14 +1,14 @@
 import { useRef, useState } from "react"
 import { Link, useSearchParams } from "react-router-dom"
 import { useMutation, useQuery } from "@tanstack/react-query"
-import { Bot, Check, Hourglass, SearchX, type LucideIcon } from "lucide-react"
+import { Bot, Check, Hourglass, SearchX } from "lucide-react"
 import { BotTraits, WORKSPACE_PERMISSION_SCOPES, type Workspace } from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ThreaLogo } from "@/components/threa-logo"
+import { HaloIcon, StandalonePage } from "@/components/standalone-page"
 import { ApiError } from "@/api/client"
 import { botConnectApi, type BotConnectLookup } from "@/api/bot-connect"
 import { botsApi } from "@/api/bots"
@@ -165,34 +165,6 @@ export async function approveConnect(input: ApproveConnectInput): Promise<{
     throw new ConnectCodeGoneError()
   }
   return { slug: provisioned.botSlug, provisioned }
-}
-
-function Shell({ children }: { children?: React.ReactNode }) {
-  return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_-10%,hsl(var(--primary)/0.10),transparent_55%)]"
-      />
-      <div className="relative flex w-full max-w-md flex-col items-center gap-10 p-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
-        <ThreaLogo size="lg" />
-        {children}
-      </div>
-    </div>
-  )
-}
-
-function HaloIcon({ icon: Icon, tone = "muted" }: { icon: LucideIcon; tone?: "primary" | "muted" }) {
-  const haloClass = tone === "primary" ? "bg-primary/15" : "bg-muted/60"
-  const iconClass = tone === "primary" ? "text-primary" : "text-muted-foreground"
-  return (
-    <div className="relative mx-auto flex h-16 w-16 items-center justify-center">
-      <div aria-hidden className={`absolute inset-1 rounded-full ${haloClass} blur-xl`} />
-      <div className="relative flex h-14 w-14 items-center justify-center rounded-full border bg-background">
-        <Icon className={`h-6 w-6 ${iconClass}`} />
-      </div>
-    </div>
-  )
 }
 
 function CodeForm({ initial, onSubmit }: { initial: string; onSubmit: (code: string) => void }) {
@@ -379,11 +351,11 @@ export function ConnectPage() {
   const { user, loading: authLoading, login } = useAuth()
   const code = normalizeCode(params.get("code") ?? "")
 
-  if (authLoading) return <Shell />
+  if (authLoading) return <StandalonePage />
 
   if (!user) {
     return (
-      <Shell>
+      <StandalonePage>
         <div className="flex w-full flex-col items-center gap-6 text-center">
           <HaloIcon icon={Bot} tone="primary" />
           <h1 className="text-2xl font-medium leading-tight">Sign in to connect a bot</h1>
@@ -394,7 +366,7 @@ export function ConnectPage() {
             Sign in
           </Button>
         </div>
-      </Shell>
+      </StandalonePage>
     )
   }
 
@@ -417,19 +389,19 @@ function SignedInConnect() {
 
   if (done === "denied") {
     return (
-      <Shell>
+      <StandalonePage>
         <div className="flex flex-col items-center gap-4 text-center">
           <HaloIcon icon={SearchX} />
           <h1 className="text-2xl font-medium leading-tight">Request denied</h1>
           <p className="text-sm text-muted-foreground">The terminal that asked will see it was turned down.</p>
         </div>
-      </Shell>
+      </StandalonePage>
     )
   }
 
   if (done) {
     return (
-      <Shell>
+      <StandalonePage>
         <div className="flex flex-col items-center gap-4 text-center">
           <HaloIcon icon={Check} tone="primary" />
           <h1 className="text-2xl font-medium leading-tight">
@@ -442,13 +414,13 @@ function SignedInConnect() {
             Open Threa
           </Link>
         </div>
-      </Shell>
+      </StandalonePage>
     )
   }
 
   if (code.length !== 9) {
     return (
-      <Shell>
+      <StandalonePage>
         <div className="w-full space-y-8">
           <div className="flex flex-col items-center gap-3 text-center">
             <HaloIcon icon={Bot} tone="primary" />
@@ -456,21 +428,21 @@ function SignedInConnect() {
           </div>
           <CodeForm initial={code} onSubmit={(next) => setParams({ code: next })} />
         </div>
-      </Shell>
+      </StandalonePage>
     )
   }
 
   if (lookup.isLoading || workspacesLoading) {
     return (
-      <Shell>
+      <StandalonePage>
         <p className="text-sm text-muted-foreground">Looking up {code}…</p>
-      </Shell>
+      </StandalonePage>
     )
   }
 
   if (lookup.isError || !lookup.data) {
     return (
-      <Shell>
+      <StandalonePage>
         <div className="flex w-full flex-col items-center gap-4 text-center">
           <HaloIcon icon={Hourglass} />
           <h1 className="text-2xl font-medium leading-tight">No pending request for {code}</h1>
@@ -479,14 +451,14 @@ function SignedInConnect() {
           </p>
           <CodeForm initial="" onSubmit={(next) => setParams({ code: next })} />
         </div>
-      </Shell>
+      </StandalonePage>
     )
   }
 
   const list = workspaces ?? []
   if (list.length === 0) {
     return (
-      <Shell>
+      <StandalonePage>
         <div className="flex flex-col items-center gap-4 text-center">
           <HaloIcon icon={SearchX} />
           <h1 className="text-2xl font-medium leading-tight">You need a workspace first</h1>
@@ -494,13 +466,13 @@ function SignedInConnect() {
             Create or join one
           </Link>
         </div>
-      </Shell>
+      </StandalonePage>
     )
   }
 
   return (
-    <Shell>
+    <StandalonePage>
       <ApproveForm code={code} lookup={lookup.data} workspaces={list} onDone={setDone} />
-    </Shell>
+    </StandalonePage>
   )
 }

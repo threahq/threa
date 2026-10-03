@@ -110,6 +110,11 @@ export const ACCESS_LOG_OPERATIONS = [
   "streams.history",
   "streams.around",
   "streams.catchup",
+  "stream_connections.list",
+  "stream_connections.create_invite",
+  "stream_connections.can_accept",
+  "stream_connections.accept",
+  "stream_connections.revoke",
   // Search
   "search.messages",
   "search.memos",

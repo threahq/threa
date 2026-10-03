@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { StreamTypes, type Stream, type StreamBootstrap } from "@threahq/types"
+import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type Stream, type StreamBootstrap } from "@threahq/types"
+import * as hooksModule from "@/hooks"
 import { streamKeys } from "@/hooks"
+import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import { StreamSettingsDialog } from "./stream-settings-dialog"
 import * as useStreamSettingsModule from "./use-stream-settings"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as generalTabModule from "./general-tab"
 import * as companionTabModule from "./companion-tab"
 import * as membersTabModule from "./members-tab"
+import * as connectTabModule from "./connect-tab"
 import * as useCurrentWorkspaceUserIdModule from "@/hooks/use-current-workspace-user-id"
 
 const useStreamSettingsMock = vi.fn()
@@ -168,6 +171,46 @@ describe("StreamSettingsDialog", () => {
     expect(screen.queryByText(/Loading stream settings/i)).not.toBeInTheDocument()
   })
 
+  it.each([
+    { type: StreamTypes.CHANNEL, flag: "on", admin: true, shown: true },
+    { type: StreamTypes.CHANNEL, flag: "off", admin: true, shown: false },
+    { type: StreamTypes.CHANNEL, flag: "on", admin: false, shown: false },
+    { type: StreamTypes.SCRATCHPAD, flag: "on", admin: true, shown: false },
+    { type: StreamTypes.DM, flag: "on", admin: true, shown: false },
+    { type: StreamTypes.THREAD, flag: "on", admin: true, shown: false },
+  ] as const)(
+    "should offer Connect only on a channel, to an admin with the flag on ($type, $flag, admin $admin)",
+    async ({ type, flag, admin, shown }) => {
+      useStreamSettingsMock.mockReturnValue({
+        isOpen: true,
+        activeTab: "connect",
+        streamId: "stream_design",
+        closeStreamSettings,
+        setTab,
+      })
+      useWorkspaceStreamsMock.mockReturnValue([
+        makeStream({ id: "stream_design", type, displayName: null, slug: "design" }),
+      ])
+      vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue(flag as never)
+      vi.spyOn(useWorkspacesModule, "useCachedWorkspaceBootstrap").mockReturnValue({
+        viewerPermissions: admin ? [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN] : [],
+      } as unknown as ReturnType<typeof useWorkspacesModule.useCachedWorkspaceBootstrap>)
+      vi.spyOn(connectTabModule, "ConnectTab").mockImplementation((() => (
+        <div>Connect panel</div>
+      )) as unknown as typeof connectTabModule.ConnectTab)
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <StreamSettingsDialog workspaceId="ws_1" />
+        </QueryClientProvider>
+      )
+
+      expect(await screen.findByRole("button", { name: /General/i })).toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: /Connect/i }) !== null).toBe(shown)
+      expect(screen.queryByText(shown ? "Connect panel" : "General panel")).toBeVisible()
+    }
+  )
+
   it("titles a DM with the resolved peer name when the stream row has no displayName", async () => {
     // Raw DM rows arrive with displayName: null (viewer-specific names aren't
     // persisted), so the title must resolve through the shared resolver via the
@@ -200,5 +243,55 @@ describe("StreamSettingsDialog", () => {
     )
 
     expect(await screen.findByText("Ada Lovelace Settings")).toBeInTheDocument()
+  })
+
+  it("should keep a created invite link across tab switches and drop it once the dialog closes", async () => {
+    const settings = (overrides: { isOpen?: boolean; activeTab?: string }) =>
+      useStreamSettingsMock.mockReturnValue({
+        isOpen: true,
+        activeTab: "connect",
+        streamId: "stream_design",
+        closeStreamSettings,
+        setTab,
+        ...overrides,
+      })
+    settings({})
+    useWorkspaceStreamsMock.mockReturnValue([
+      makeStream({ id: "stream_design", type: StreamTypes.CHANNEL, displayName: null, slug: "design" }),
+    ])
+    vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue("on" as never)
+    vi.spyOn(useWorkspacesModule, "useCachedWorkspaceBootstrap").mockReturnValue({
+      viewerPermissions: [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN],
+    } as unknown as ReturnType<typeof useWorkspacesModule.useCachedWorkspaceBootstrap>)
+    let createLink!: () => void
+    vi.spyOn(connectTabModule, "ConnectTab").mockImplementation((({
+      inviteLinks,
+      onInviteLinkCreated,
+    }: Parameters<typeof connectTabModule.ConnectTab>[0]) => {
+      createLink = () => onInviteLinkCreated("strconn_1", "https://app.example/connections/tok")
+      return <div>{inviteLinks.get("strconn_1") ?? "No link"}</div>
+    }) as unknown as typeof connectTabModule.ConnectTab)
+    const dialog = () => (
+      <QueryClientProvider client={queryClient}>
+        <StreamSettingsDialog workspaceId="ws_1" />
+      </QueryClientProvider>
+    )
+
+    const { rerender } = render(dialog())
+    act(() => createLink())
+    settings({ activeTab: "general" })
+    rerender(dialog())
+    settings({})
+    rerender(dialog())
+    const afterTabSwitch = screen.getByText(/connections\/tok|No link/).textContent
+    settings({ isOpen: false })
+    rerender(dialog())
+    settings({})
+    rerender(dialog())
+
+    expect({ afterTabSwitch, afterReopen: (await screen.findByText(/connections\/tok|No link/)).textContent }).toEqual({
+      afterTabSwitch: "https://app.example/connections/tok",
+      afterReopen: "No link",
+    })
   })
 })

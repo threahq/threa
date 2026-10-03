@@ -4,13 +4,18 @@
  */
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http"
+import { streamConnectionSnapshotSchema, type StreamConnectionChannel } from "@threahq/types"
 
 export interface MockRegionalBackend {
   url: string
   port: number
   /** All requests received by the mock */
   requests: Array<{ method: string; url: string; body: unknown }>
-  /** Reset recorded requests */
+  /** Status the stream-connection sync endpoint answers a valid snapshot with; 204 by default. */
+  setStreamConnectionStatus: (status: number) => void
+  /** What the channel lookup answers, or "error" for a 503; a shareable channel named Launch by default. */
+  setStreamChannel: (answer: StreamConnectionChannel | "error") => void
+  /** Reset recorded requests and configured statuses */
   reset: () => void
   stop: () => Promise<void>
 }
@@ -32,6 +37,9 @@ function parseBody(req: IncomingMessage): Promise<unknown> {
 
 export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
   const requests: MockRegionalBackend["requests"] = []
+  let streamConnectionStatus = 204
+  const shareableChannel: StreamConnectionChannel = { shareable: true, slug: "launch", displayName: "Launch" }
+  let streamChannel: StreamConnectionChannel | "error" = shareableChannel
 
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const body = await parseBody(req)
@@ -63,6 +71,34 @@ export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
       return
     }
 
+    // POST /internal/stream-connections — snapshot fan-out from stream_connection_sync,
+    // validated against the same schema the region applies.
+    if (req.method === "POST" && url === "/internal/stream-connections") {
+      const status = streamConnectionSnapshotSchema.safeParse(body).success ? streamConnectionStatus : 400
+      res.writeHead(status)
+      res.end()
+      return
+    }
+
+    // GET /internal/stream-connections/channel — the host channel, for the invite page and before an accept.
+    // Requires the keys the region's channelQuerySchema requires.
+    if (req.method === "GET" && url.startsWith("/internal/stream-connections/channel?")) {
+      const query = new URL(url, "http://mock").searchParams
+      if (!["workspaceId", "streamId", "invitedBy"].every((key) => query.get(key))) {
+        res.writeHead(400, { "Content-Type": "application/json" })
+        res.end(JSON.stringify({ error: "Invalid query", code: "VALIDATION_ERROR" }))
+        return
+      }
+      if (streamChannel === "error") {
+        res.writeHead(503)
+        res.end()
+        return
+      }
+      res.writeHead(200, { "Content-Type": "application/json" })
+      res.end(JSON.stringify(streamChannel))
+      return
+    }
+
     // Fallback 404
     res.writeHead(404, { "Content-Type": "application/json" })
     res.end(JSON.stringify({ error: "Not found" }))
@@ -84,8 +120,16 @@ export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
     url: `http://localhost:${port}`,
     port,
     requests,
+    setStreamConnectionStatus: (status) => {
+      streamConnectionStatus = status
+    },
+    setStreamChannel: (answer) => {
+      streamChannel = answer
+    },
     reset: () => {
       requests.length = 0
+      streamConnectionStatus = 204
+      streamChannel = shareableChannel
     },
     stop: () =>
       new Promise<void>((resolve) => {

@@ -43,5 +43,6 @@ export type {
   CachedUploadJob,
   CachedSlot,
   CachedStreamContextItem,
+  CachedStreamConnection,
 } from "./database"
 export type { EventType } from "@threahq/types"

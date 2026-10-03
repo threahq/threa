@@ -90,6 +90,7 @@ import type {
   DraftUpsertedPayload,
   DraftDeletedPayload,
   PersonaListItem,
+  StreamConnectionUpdatedPayload,
 } from "@threahq/types"
 import { cachedPersonaFromListItem } from "@/lib/personas"
 import { persistSavedRows, removeSavedRow, savedKeys } from "@/hooks/use-saved"
@@ -104,6 +105,7 @@ import {
   removeBoardConversationsForStream,
 } from "@/stores/board-store"
 import { putHidden, deleteHidden, putMuted, deleteMuted } from "@/stores/board-exclusions-store"
+import { putStreamConnection } from "@/stores/stream-connections-store"
 import { activityKeys } from "@/hooks/use-activity"
 import { memoKeys } from "@/hooks/use-memos"
 import { invitationKeys } from "@/api/invitations"
@@ -2183,6 +2185,11 @@ export function registerWorkspaceSocketHandlers(
     else await deleteMuted(payload.streamId)
   }
 
+  const handleStreamConnectionUpdated = async (payload: StreamConnectionUpdatedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
+    await putStreamConnection(workspaceId, payload.connection)
+  }
+
   const handleSavedReminderFired = async (payload: SavedReminderFiredPayload) => {
     if (payload.workspaceId !== workspaceId) return
     // Update the cached row so the badge flips to "reminded" immediately. The
@@ -2513,6 +2520,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("saved_reminder:fired", handleSavedReminderFired)
   socket.on("board:conversation_hide_changed", handleBoardHideChanged)
   socket.on("board:stream_mute_changed", handleBoardMuteChanged)
+  socket.on("stream_connection:updated", handleStreamConnectionUpdated)
   socket.on("saved_suggestion:upserted", handleSavedSuggestionUpserted)
   socket.on("scheduled_message:upserted", handleScheduledUpserted)
   socket.on("scheduled_message:sent", handleScheduledSent)
@@ -2586,6 +2594,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("saved_reminder:fired", handleSavedReminderFired)
     socket.off("board:conversation_hide_changed", handleBoardHideChanged)
     socket.off("board:stream_mute_changed", handleBoardMuteChanged)
+    socket.off("stream_connection:updated", handleStreamConnectionUpdated)
     socket.off("saved_suggestion:upserted", handleSavedSuggestionUpserted)
     socket.off("scheduled_message:upserted", handleScheduledUpserted)
     socket.off("scheduled_message:sent", handleScheduledSent)

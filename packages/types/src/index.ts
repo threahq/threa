@@ -1426,3 +1426,26 @@ export {
   type PushTestDeviceProgress,
   type PushTestProgress,
 } from "./push"
+
+// Stream connections (Threa Connect: a channel shared with other workspaces)
+export {
+  StreamConnectionStates,
+  StreamConnectionErrorCodes,
+  streamConnectionIdSchema,
+  streamConnectionSnapshotSchema,
+  streamConnectionChannelSchema,
+  streamConnectionTokenSchema,
+  acceptStreamConnectionSchema,
+  type StreamConnectionState,
+  type StreamConnectionRole,
+  type StreamConnectionErrorCode,
+  type StreamConnectionSnapshot,
+  type StreamConnectionChannel,
+  type StreamConnection,
+  type StreamConnectionUpdatedPayload,
+  type CreateStreamConnectionInviteResponse,
+  type ListStreamConnectionsResponse,
+  type StreamConnectionResponse,
+  type AcceptStreamConnectionInput,
+  type StreamConnectionLookupResponse,
+} from "./stream-connections"

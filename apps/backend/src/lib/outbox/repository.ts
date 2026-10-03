@@ -33,6 +33,7 @@ import type {
   PersonaListItem,
   StreamReadFrontierSnapshot,
   CallTransferPhase,
+  StreamConnectionUpdatedPayload,
 } from "@threahq/types"
 
 export type OutboxEventType =
@@ -153,6 +154,7 @@ export type OutboxEventType =
   | "stream:call_ended"
   | "call:participants_changed"
   | "call:transport_transfer_changed"
+  | "stream_connection:updated"
 
 /** Events that are scoped to a stream (have streamId) */
 export type StreamScopedEventType =
@@ -1136,6 +1138,17 @@ export interface CallInvitationSettledOutboxPayload extends WorkspaceScopedPaylo
 }
 
 /**
+ * A Connect row of one of this workspace's streams changed. Only admins manage
+ * connections, so a public channel's change goes to the admin group and a
+ * private channel's to the admins among its members.
+ */
+export interface StreamConnectionUpdatedOutboxPayload extends WorkspaceScopedPayload, StreamConnectionUpdatedPayload {
+  streamVisibility: Visibility
+  /** Admins who are members of the stream, the audience when it is private. */
+  adminMemberUserIds: string[]
+}
+
+/**
  * Carries a `call_started` / `call_ended` timeline event (roadmap 1.4) to the
  * host stream's room. Same envelope shape as the delegation events: the full
  * stream event rides along so clients append it without a fetch (`call_started`
@@ -1511,6 +1524,7 @@ export interface OutboxEventPayloadMap {
   "stream:call_ended": StreamCallEndedOutboxPayload
   "call:participants_changed": CallParticipantsChangedOutboxPayload
   "call:transport_transfer_changed": CallTransportTransferChangedOutboxPayload
+  "stream_connection:updated": StreamConnectionUpdatedOutboxPayload
 }
 
 export type OutboxEventPayload<T extends OutboxEventType> = OutboxEventPayloadMap[T]

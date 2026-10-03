@@ -14,6 +14,8 @@ export {
   userGroup,
   permissionGroup,
   permissionGroupsForRole,
+  permissionRoomsFor,
+  syncPermissionRooms,
 } from "./delivery-groups"
 export { parseMessagePayload, type NormalizedMessagePayload } from "./payload-parsers"
 export {
@@ -77,6 +79,7 @@ export {
   type CallInvitationCreatedOutboxPayload,
   type CallInvitationSettledOutboxPayload,
   type StreamCallStartedOutboxPayload,
+  type StreamConnectionUpdatedOutboxPayload,
   type StreamCallEndedOutboxPayload,
   type CallParticipantsChangedOutboxPayload,
   type UserScopedEventType,

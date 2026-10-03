@@ -46,6 +46,10 @@ export async function seedWorkspaceUser(workspaceId: string, id: string, name = 
   await db.workspaceUsers.put(user)
 }
 
+export async function clearStreamConnections(): Promise<void> {
+  await db.streamConnections.clear()
+}
+
 /** Resolved at call time for the same reason as `workspaceUsersTable`. */
 export function streamsTable(): typeof db.streams {
   return db.streams

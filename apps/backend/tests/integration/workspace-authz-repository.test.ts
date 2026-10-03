@@ -106,8 +106,8 @@ describe("WorkspaceUserPermissionsRepository", () => {
     })
   })
 
-  describe("delete", () => {
-    test("removes a row when the deletion event is newer", async () => {
+  describe("markRemoved", () => {
+    test("should leave a removed row when the removal event is newer", async () => {
       const t0 = new Date("2026-01-01T00:00:00Z")
       const t1 = new Date("2026-01-01T00:00:30Z")
       await WorkspaceUserPermissionsRepository.upsert(pool, {
@@ -117,16 +117,25 @@ describe("WorkspaceUserPermissionsRepository", () => {
         status: "active",
         lastEventAt: t0,
       })
-      const removed = await WorkspaceUserPermissionsRepository.delete(pool, {
+      const removed = await WorkspaceUserPermissionsRepository.markRemoved(pool, {
         workspaceId: WORKSPACE_ID,
         workosUserId: USER_ID,
         eventCreatedAt: t1,
       })
-      expect(removed).toBe(true)
-      expect(await WorkspaceUserPermissionsRepository.getByWorkspaceAndUser(pool, WORKSPACE_ID, USER_ID)).toBeNull()
+      const persisted = await WorkspaceUserPermissionsRepository.getByWorkspaceAndUser(pool, WORKSPACE_ID, USER_ID)
+      expect({ removed, persisted }).toEqual({
+        removed: true,
+        persisted: {
+          workspaceId: WORKSPACE_ID,
+          workosUserId: USER_ID,
+          roleSlugs: [],
+          status: "removed",
+          lastEventAt: t1,
+        },
+      })
     })
 
-    test("preserves the row when a stale deletion arrives", async () => {
+    test("should preserve the row when a stale removal arrives", async () => {
       const t0 = new Date("2026-01-01T00:00:00Z")
       const tStale = new Date("2025-12-31T23:00:00Z")
       await WorkspaceUserPermissionsRepository.upsert(pool, {
@@ -136,13 +145,48 @@ describe("WorkspaceUserPermissionsRepository", () => {
         status: "active",
         lastEventAt: t0,
       })
-      const removed = await WorkspaceUserPermissionsRepository.delete(pool, {
+      const removed = await WorkspaceUserPermissionsRepository.markRemoved(pool, {
         workspaceId: WORKSPACE_ID,
         workosUserId: USER_ID,
         eventCreatedAt: tStale,
       })
-      expect(removed).toBe(false)
-      expect(await WorkspaceUserPermissionsRepository.getByWorkspaceAndUser(pool, WORKSPACE_ID, USER_ID)).not.toBeNull()
+      const persisted = await WorkspaceUserPermissionsRepository.getByWorkspaceAndUser(pool, WORKSPACE_ID, USER_ID)
+      expect({ removed, status: persisted?.status }).toEqual({ removed: false, status: "active" })
+    })
+
+    test("should reject a membership event older than the removal", async () => {
+      const t1 = new Date("2026-01-01T00:00:30Z")
+      const tOlder = new Date("2026-01-01T00:00:00Z")
+      await WorkspaceUserPermissionsRepository.markRemoved(pool, {
+        workspaceId: WORKSPACE_ID,
+        workosUserId: USER_ID,
+        eventCreatedAt: t1,
+      })
+      const replay = await WorkspaceUserPermissionsRepository.upsert(pool, {
+        workspaceId: WORKSPACE_ID,
+        workosUserId: USER_ID,
+        roleSlugs: [WORKSPACE_ROLE_SLUGS.ADMIN],
+        status: "active",
+        lastEventAt: tOlder,
+      })
+      const persisted = await WorkspaceUserPermissionsRepository.getByWorkspaceAndUser(pool, WORKSPACE_ID, USER_ID)
+      expect({ replay, status: persisted?.status }).toEqual({ replay: null, status: "removed" })
+    })
+
+    test("should keep the workspace mirrored after its last member is removed", async () => {
+      await WorkspaceUserPermissionsRepository.upsert(pool, {
+        workspaceId: WORKSPACE_ID,
+        workosUserId: USER_ID,
+        roleSlugs: [WORKSPACE_ROLE_SLUGS.ADMIN],
+        status: "active",
+        lastEventAt: new Date("2026-01-01T00:00:00Z"),
+      })
+      await WorkspaceUserPermissionsRepository.markRemoved(pool, {
+        workspaceId: WORKSPACE_ID,
+        workosUserId: USER_ID,
+        eventCreatedAt: new Date("2026-01-01T00:00:30Z"),
+      })
+      expect(await WorkspaceUserPermissionsRepository.existsForWorkspace(pool, WORKSPACE_ID)).toBe(true)
     })
   })
 

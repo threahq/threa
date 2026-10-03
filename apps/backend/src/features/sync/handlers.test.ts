@@ -91,7 +91,7 @@ describe("createSyncHandlers.catchUp", () => {
     })
   })
 
-  it("derives permission delivery groups from the member role (admin → members:write)", async () => {
+  it("derives permission delivery groups from the member role (admin → members:write, workspace:admin)", async () => {
     const catchUp = mock(async (_params: Parameters<SyncService["catchUp"]>[0]) => ({ entries: [], head: 0n }))
     const handlers = createSyncHandlers({ syncService: { catchUp } as unknown as SyncService })
 
@@ -101,7 +101,10 @@ describe("createSyncHandlers.catchUp", () => {
     expect(catchUp.mock.calls[0][0]).toEqual({
       workspaceId: "ws_1",
       userId: "usr_alice",
-      permissionGroups: [permissionGroup(WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE)],
+      permissionGroups: [
+        permissionGroup(WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE),
+        permissionGroup(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN),
+      ],
       after: 0n,
       limit: 200,
     })

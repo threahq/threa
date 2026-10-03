@@ -67,7 +67,7 @@ describe("WorkspaceAuthzService", () => {
   })
 
   describe("applyMembershipRemoval", () => {
-    test("removes the row when the deletion event is newer", async () => {
+    test("marks the row removed when the removal event is newer", async () => {
       const t0 = new Date("2026-01-01T00:00:00Z")
       const t1 = new Date("2026-01-01T00:00:30Z")
       await service.applyMembershipChange({
@@ -84,7 +84,7 @@ describe("WorkspaceAuthzService", () => {
         eventCreatedAt: t1,
       })
 
-      expect(await WorkspaceUserPermissionsRepository.getByWorkspaceAndUser(pool, WORKSPACE_ID, USER_ID)).toBeNull()
+      expect(await service.resolveActivePermissions(WORKSPACE_ID, USER_ID)).toBeNull()
     })
 
     test("ignores a stale removal event", async () => {
@@ -104,17 +104,19 @@ describe("WorkspaceAuthzService", () => {
         eventCreatedAt: tStale,
       })
 
-      expect(await WorkspaceUserPermissionsRepository.getByWorkspaceAndUser(pool, WORKSPACE_ID, USER_ID)).not.toBeNull()
+      const persisted = await WorkspaceUserPermissionsRepository.getByWorkspaceAndUser(pool, WORKSPACE_ID, USER_ID)
+      expect(persisted?.status).toBe("active")
     })
 
-    test("is a no-op when no row exists", async () => {
+    test("records the removal when no row exists", async () => {
       await service.applyMembershipRemoval({
         workspaceId: WORKSPACE_ID,
         workosUserId: USER_ID,
         eventCreatedAt: new Date("2026-01-01T00:00:00Z"),
       })
 
-      expect(await WorkspaceUserPermissionsRepository.getByWorkspaceAndUser(pool, WORKSPACE_ID, USER_ID)).toBeNull()
+      const persisted = await WorkspaceUserPermissionsRepository.getByWorkspaceAndUser(pool, WORKSPACE_ID, USER_ID)
+      expect(persisted?.status).toBe("removed")
     })
   })
 })

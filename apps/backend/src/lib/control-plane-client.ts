@@ -1,8 +1,22 @@
 import { logger } from "./logger"
 import { HttpError, INTERNAL_API_KEY_HEADER } from "@threahq/backend-common"
-import type { InvitationStatus, WorkspaceInvitableRole, WorkspaceRoleSlug } from "@threahq/types"
+import {
+  StreamConnectionErrorCodes,
+  streamConnectionSnapshotSchema,
+  type InvitationStatus,
+  type StreamConnectionSnapshot,
+  type Visibility,
+  type WorkspaceInvitableRole,
+  type WorkspaceRoleSlug,
+} from "@threahq/types"
+import { z } from "zod"
 
 const REQUEST_TIMEOUT_MS = 10_000
+
+const createdInviteSchema = z.object({ snapshot: streamConnectionSnapshotSchema, token: z.string() })
+const snapshotResponseSchema = z.object({ snapshot: streamConnectionSnapshotSchema })
+const snapshotsResponseSchema = z.object({ snapshots: z.array(streamConnectionSnapshotSchema) })
+const streamConnectionOutcomeCodes = new Set<string>(Object.values(StreamConnectionErrorCodes))
 
 // CP's shared error middleware always responds with `{ error, code? }` JSON.
 // Translate that into an HttpError carrying the CP's status + code so the
@@ -354,5 +368,78 @@ export class ControlPlaneClient {
       logger.error({ id, status: res.status, body }, "Failed to revoke invitation shadow")
       throw new Error(`Control-plane returned ${res.status}: ${body}`)
     }
+  }
+
+  async createStreamConnectionInvite(params: {
+    hostWorkspaceId: string
+    hostStreamId: string
+    invitedBy: string
+  }): Promise<z.infer<typeof createdInviteSchema>> {
+    const body = await this.postStreamConnection("/internal/stream-connections", params, "create share link")
+    return createdInviteSchema.parse(body)
+  }
+
+  async revokeStreamConnectionInvite(params: {
+    connectionId: string
+    hostWorkspaceId: string
+  }): Promise<StreamConnectionSnapshot> {
+    const body = await this.postStreamConnection(
+      `/internal/stream-connections/${encodeURIComponent(params.connectionId)}/revoke`,
+      { hostWorkspaceId: params.hostWorkspaceId },
+      "revoke share link"
+    )
+    return snapshotResponseSchema.parse(body).snapshot
+  }
+
+  async acceptStreamConnection(params: {
+    token: string
+    partnerWorkspaceId: string
+    visibility: Visibility
+    acceptedBy: string
+  }): Promise<StreamConnectionSnapshot> {
+    const body = await this.postStreamConnection("/internal/stream-connections/accept", params, "accept share link")
+    return snapshotResponseSchema.parse(body).snapshot
+  }
+
+  /** The workspace's current view of a shared channel: every live connection, plus `includeIds` in any state. */
+  async listStreamConnections(params: {
+    workspaceId: string
+    streamId: string
+    includeIds: string[]
+  }): Promise<StreamConnectionSnapshot[]> {
+    const body = await this.postStreamConnection("/internal/stream-connections/list", params, "read shared channel")
+    return snapshotsResponseSchema.parse(body).snapshots
+  }
+
+  private async postStreamConnection(path: string, payload: unknown, action: string): Promise<unknown> {
+    let res: Response
+    try {
+      res = await fetch(`${this.baseUrl}${path}`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+        headers: {
+          "Content-Type": "application/json",
+          [INTERNAL_API_KEY_HEADER]: this.internalApiKey,
+        },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      })
+    } catch (err) {
+      logger.error({ err, path }, `Failed to ${action}`)
+      throw new HttpError(`Failed to ${action}`, { status: 502, code: "CONTROL_PLANE_UNAVAILABLE" })
+    }
+    if (!res.ok) {
+      const body = await res.text().catch(() => "")
+      const error = toControlPlaneHttpError(res.status, body, `Failed to ${action}`)
+      // Only the invite's own outcomes reach the browser; a CP 401 forwarded as-is would sign the admin out.
+      if (error.code && streamConnectionOutcomeCodes.has(error.code)) {
+        logger.info({ path, status: res.status, code: error.code }, `Failed to ${action}`)
+        throw error
+      }
+      logger.error({ path, status: res.status, body }, `Failed to ${action}`)
+      // A 4xx is a key or contract mismatch, not an outage, so callers that tolerate an outage must not swallow it.
+      const code = res.status >= 500 ? "CONTROL_PLANE_UNAVAILABLE" : "CONTROL_PLANE_REJECTED"
+      throw new HttpError(`Failed to ${action}`, { status: 502, code })
+    }
+    return res.json()
   }
 }
