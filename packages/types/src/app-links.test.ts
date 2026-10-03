@@ -20,11 +20,13 @@ describe("app: links", () => {
         "app:moon",
         "app:settings",
         "app:settings/nope",
+        "app:settings/diagnostics",
+        "app:workspace-settings/feature-flags",
         "app:workspace-settings/bots/extra",
         "app:memory/extra",
         "https://threa.io",
         "",
       ].map(parseAppLinkHref)
-    ).toEqual([null, null, null, null, null, null, null])
+    ).toEqual([null, null, null, null, null, null, null, null, null])
   })
 })

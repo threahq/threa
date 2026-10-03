@@ -41,6 +41,13 @@ export type AppLinkDestination =
   | { kind: "settings"; tab: SettingsTab }
   | { kind: "workspace-settings"; tab: WorkspaceSettingsTab }
 
+/**
+ * Tabs an `app:` link may open. Diagnostics and feature flags show only for
+ * some viewers, and a link to a hidden tab silently opens another one.
+ */
+export const APP_LINK_SETTINGS_TABS = SETTINGS_TABS.filter((tab) => tab !== "diagnostics")
+export const APP_LINK_WORKSPACE_SETTINGS_TABS = WORKSPACE_SETTINGS_TABS.filter((tab) => tab !== "feature-flags")
+
 export const APP_LINK_SCHEME = "app:"
 
 function isOneOf<T extends string>(values: readonly T[], value: string | undefined): value is T {
@@ -52,9 +59,9 @@ export function parseAppLinkHref(href: string): AppLinkDestination | null {
   if (!href.startsWith(APP_LINK_SCHEME)) return null
   const [head, tab, ...rest] = href.slice(APP_LINK_SCHEME.length).split("/")
   if (rest.length > 0) return null
-  if (head === "settings") return isOneOf(SETTINGS_TABS, tab) ? { kind: "settings", tab } : null
+  if (head === "settings") return isOneOf(APP_LINK_SETTINGS_TABS, tab) ? { kind: "settings", tab } : null
   if (head === "workspace-settings") {
-    return isOneOf(WORKSPACE_SETTINGS_TABS, tab) ? { kind: "workspace-settings", tab } : null
+    return isOneOf(APP_LINK_WORKSPACE_SETTINGS_TABS, tab) ? { kind: "workspace-settings", tab } : null
   }
   return tab === undefined && isOneOf(APP_LINK_PAGES, head) ? { kind: "page", page: head } : null
 }

@@ -4,6 +4,9 @@ import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { MarkdownContent } from "@/components/ui/markdown-content"
+import { SettingsDialog } from "@/components/settings/settings-dialog"
+import * as notificationsSettingsModule from "@/components/settings/notifications-settings"
+import { SettingsProvider } from "@/contexts"
 import * as workspaceStore from "@/stores/workspace-store"
 
 function LocationProbe() {
@@ -17,7 +20,15 @@ function renderMarkdown(content: string, route = "/w/ws_1/s/stream_here?m=msg_1"
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[route]}>
         <Routes>
-          <Route path="/w/:workspaceId/*" element={<MarkdownContent content={content} />} />
+          <Route
+            path="/w/:workspaceId/*"
+            element={
+              <SettingsProvider>
+                <MarkdownContent content={content} />
+                <SettingsDialog />
+              </SettingsProvider>
+            }
+          />
           <Route path="/outside" element={<MarkdownContent content={content} />} />
         </Routes>
         <LocationProbe />
@@ -32,13 +43,17 @@ describe("app: links in markdown", () => {
     vi.spyOn(workspaceStore, "useWorkspaceStreams").mockReturnValue([])
     vi.spyOn(workspaceStore, "useWorkspaceUsers").mockReturnValue([])
     vi.spyOn(workspaceStore, "useWorkspaceDmPeers").mockReturnValue([])
+    vi.spyOn(notificationsSettingsModule, "NotificationsSettings").mockImplementation(() => (
+      <div>Notifications panel</div>
+    ))
   })
 
-  it("should open a settings tab over the current view when the chip is clicked", async () => {
+  it("should open the settings dialog on its tab over the current view when the chip is clicked", async () => {
     renderMarkdown("Change it in [Notifications](app:settings/notifications).")
 
     await userEvent.click(screen.getByRole("link", { name: "Notifications" }))
 
+    expect(await screen.findByText("Notifications panel")).toBeVisible()
     expect(screen.getByTestId("location")).toHaveTextContent("/w/ws_1/s/stream_here?m=msg_1&settings=notifications")
   })
 

@@ -1471,6 +1471,8 @@ export {
   WORKSPACE_SETTINGS_TABS,
   type WorkspaceSettingsTab,
   APP_LINK_PAGES,
+  APP_LINK_SETTINGS_TABS,
+  APP_LINK_WORKSPACE_SETTINGS_TABS,
   type AppLinkDestination,
   APP_LINK_SCHEME,
   parseAppLinkHref,
