@@ -452,7 +452,7 @@ function MessageInputComponent({
   // An aside's composer is a private thinking surface: nothing to schedule,
   // no stash pile (its drafts live in the aside's own dock), no fullscreen
   // document editor — the pane is the surface. Those three slots stay off.
-  const isAsideComposer = useStreamFromStore(streamId)?.type === StreamTypes.ASIDE
+  const isAsideComposer = useStreamFromStore(workspaceId, streamId)?.type === StreamTypes.ASIDE
 
   // Stashed drafts — explicit "Save for later" pile scoped to this stream.
   // Active DraftMessage stays one-per-scope; this hook manages the sibling

@@ -297,21 +297,6 @@ export function getWorkspaceTableRow<K extends WorkspaceTableKey>(
 }
 
 /**
- * The workspace whose entry currently holds `rowId`, or `undefined`.
- *
- * For consumers that know a row id but not its workspace (`useStreamFromStore`).
- */
-export function findSharedRowWorkspace(tableKey: WorkspaceTableKey, rowId: string): string | undefined {
-  // The ACTIVE account's entries only: another account's cached row must never
-  // answer "which workspace owns this stream" for this one.
-  for (const [, entry] of registry.activeEntries()) {
-    if (entry.tableKey !== tableKey) continue
-    if (entry.byId.has(rowId)) return entry.workspaceId
-  }
-  return undefined
-}
-
-/**
  * True when the (workspace, table) entry is live and has resolved.
  *
  * Lets a reader tell a row's genuine removal — that entry still answering, just

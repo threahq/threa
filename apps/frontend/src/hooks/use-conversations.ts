@@ -991,7 +991,7 @@ export function useMuteStream(workspaceId: string) {
       return { streamId }
     },
     onError: (_error, streamId) => {
-      void deleteMuted(streamId)
+      void deleteMuted(workspaceId, streamId)
       toast.error("Couldn't mute the stream")
     },
   })
@@ -1002,7 +1002,7 @@ export function useUnmuteStream(workspaceId: string) {
   return useMutation({
     mutationFn: (streamId: string) => conversationService.unmuteStream(workspaceId, streamId),
     onMutate: (streamId: string) => {
-      void deleteMuted(streamId)
+      void deleteMuted(workspaceId, streamId)
       return { streamId }
     },
     onError: (_error, streamId) => {

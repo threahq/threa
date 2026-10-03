@@ -971,7 +971,7 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
 
     await applyStreamBootstrap("ws_1", streamId, bootstrap)
 
-    const stream = await db.streams.get(streamId)
+    const stream = await db.streams.get(["ws_1", streamId])
     expect(stream).toBeDefined()
     expect(stream?.workspaceId).toBe("ws_1")
     expect(stream?.displayName).toBe("test")
@@ -3587,7 +3587,7 @@ describe("registerStreamSocketHandlers — shared-message slot ingestion (Amendm
   }
 
   async function readSlotMap(streamId: string): Promise<SlotMap> {
-    const rows = await db.slots.where("streamId").equals(streamId).toArray()
+    const rows = await db.slots.where("[workspaceId+streamId]").equals(["ws_1", streamId]).toArray()
     const map: SlotMap = {}
     for (const row of rows) map[row.slotKey] = row.value
     return map
@@ -4201,7 +4201,7 @@ describe("applyStreamBootstrap — slot store ingestion (Amendment A)", () => {
   }
 
   async function readSlotMap(streamId: string): Promise<SlotMap> {
-    const rows = await db.slots.where("streamId").equals(streamId).toArray()
+    const rows = await db.slots.where("[workspaceId+streamId]").equals(["ws_1", streamId]).toArray()
     const map: SlotMap = {}
     for (const row of rows) map[row.slotKey] = row.value
     return map
@@ -5210,7 +5210,7 @@ describe("registerStreamSocketHandlers — stream:activity is the single preview
 
     expect({
       persisted: (await db.events.get("evt_single"))?.sequence,
-      preview: (await db.streams.get(streamId))?.lastMessagePreview,
+      preview: (await db.streams.get(["ws_1", streamId]))?.lastMessagePreview,
       bootstrapUnchanged: queryClient.getQueryData(workspaceKeys.bootstrap("ws_1")) === bootstrapBefore,
     }).toEqual({ persisted: "10", preview: bootstrapPreview, bootstrapUnchanged: true })
 
@@ -5231,7 +5231,7 @@ describe("registerStreamSocketHandlers — stream:activity is the single preview
 
     expect({
       persisted: (await db.events.get("evt_no_engine"))?.sequence,
-      row: await db.streams.get(streamId),
+      row: await db.streams.get(["ws_1", streamId]),
     }).toEqual({ persisted: "10", row: undefined })
 
     cleanup()
@@ -5330,7 +5330,7 @@ describe("registerStreamSocketHandlers — stream:created never treats an aside 
       stream: anchored("stream_aside_1", "aside"),
     })
     expect((await db.events.get("evt_anchor"))?.payload).not.toHaveProperty("threadId")
-    expect(await db.streams.get("stream_aside_1")).toBeUndefined()
+    expect(await db.streams.get(["ws_1", "stream_aside_1"])).toBeUndefined()
 
     await emit("stream:created", {
       workspaceId: "ws_1",
@@ -5338,6 +5338,70 @@ describe("registerStreamSocketHandlers — stream:created never treats an aside 
       stream: anchored("stream_thread_1", "thread"),
     })
     expect((await db.events.get("evt_anchor"))?.payload).toMatchObject({ threadId: "stream_thread_1" })
+
+    cleanup()
+  })
+
+  it("should leave this workspace's anchor and stream rows untouched when stream:created or messages:moved arrives for another workspace", async () => {
+    const hostId = "stream_host_copied"
+    const anchor = {
+      ...makeEvent({ id: "evt_anchor_copied", streamId: hostId, sequence: "1", payload: { messageId: "msg_anchor" } }),
+      workspaceId: "ws_1",
+      _sequenceNum: 1,
+      _cachedAt: 1,
+    }
+    await db.events.put(anchor)
+    const queryClient = new QueryClient()
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerStreamSocketHandlers(socket, "ws_1", hostId, queryClient)
+    const foreignThread: Stream = {
+      id: "stream_thread_copied",
+      workspaceId: "ws_other",
+      type: "thread",
+      displayName: null,
+      slug: null,
+      description: null,
+      visibility: "private",
+      parentStreamId: hostId,
+      parentAnchorId: "msg_anchor",
+      rootStreamId: hostId,
+      companionMode: "off",
+      companionPersonaId: null,
+      createdBy: "user_1",
+      createdAt: "2026-08-20T10:00:00.000Z",
+      updatedAt: "2026-08-20T10:00:00.000Z",
+      archivedAt: null,
+    }
+
+    await emit("stream:created", { workspaceId: "ws_other", streamId: foreignThread.id, stream: foreignThread })
+    await emit("messages:moved", {
+      workspaceId: "ws_other",
+      streamId: hostId,
+      sourceStreamId: hostId,
+      destinationStreamId: foreignThread.id,
+      targetMessageId: "msg_anchor",
+      movedMessageIds: ["msg_anchor"],
+      thread: foreignThread,
+      events: [],
+      removedEventIds: [anchor.id],
+      sourceTombstoneEvent: {
+        id: "event_tomb_copied",
+        streamId: hostId,
+        sequence: "2",
+        eventType: "messages_moved",
+        payload: {},
+        actorId: "user_1",
+        actorType: "user",
+        createdAt: "2026-08-20T10:00:00.000Z",
+      },
+      parentReplyCount: 1,
+      parentThreadSummary: null,
+    })
+
+    expect({ events: await db.events.toArray(), streams: await db.streams.toArray() }).toEqual({
+      events: [anchor],
+      streams: [],
+    })
 
     cleanup()
   })

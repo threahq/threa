@@ -94,11 +94,11 @@ export async function putCountersIdb(workspaceId: string, mutators: CounterMutat
 
 /** Write the latest preview per stream to IDB. Must run inside an open `rw`
  *  transaction that includes `db.streams`. */
-async function putPreviewsIdb(previews: Map<string, LastMessagePreview | null>): Promise<void> {
+async function putPreviewsIdb(workspaceId: string, previews: Map<string, LastMessagePreview | null>): Promise<void> {
   if (previews.size === 0) return
   const now = Date.now()
   for (const [streamId, preview] of previews) {
-    await db.streams.update(streamId, { lastMessagePreview: preview, _cachedAt: now })
+    await db.streams.update([workspaceId, streamId], { lastMessagePreview: preview, _cachedAt: now })
   }
 }
 
@@ -124,7 +124,7 @@ export function commitStreamPreview(
   const previews = new Map([[streamId, preview]])
   applyPreviewsToCache(queryClient, workspaceId, previews)
   getPerfCapture().count("stream.idbTransaction")
-  void db.transaction("rw", [db.streams], () => putPreviewsIdb(previews))
+  void db.transaction("rw", [db.streams], () => putPreviewsIdb(workspaceId, previews))
 }
 
 /**
@@ -263,7 +263,7 @@ export class LiveCommitBatch {
         haveFrontiers ? [db.streams, db.unreadState, db.streamReadState] : [db.streams, db.unreadState],
         async () => {
           await putCountersIdb(this.workspaceId, mutators)
-          await putPreviewsIdb(previews)
+          await putPreviewsIdb(this.workspaceId, previews)
           if (haveFrontiers) {
             resolved = await resolveReadAllFrontiers(this.queryClient, this.workspaceId, snapshots)
             await putReadAllFrontiersIdb(this.workspaceId, resolved)
@@ -396,7 +396,7 @@ export class CatchUpBatch {
         haveFrontiers ? [db.unreadState, db.streams, db.streamReadState] : [db.unreadState, db.streams],
         async () => {
           await putCountersIdb(this.workspaceId, this.counterMutators)
-          await putPreviewsIdb(this.streamPreviews)
+          await putPreviewsIdb(this.workspaceId, this.streamPreviews)
           if (haveFrontiers) {
             resolvedFrontiers = await resolveReadAllFrontiers(this.queryClient, this.workspaceId, this.readAllSnapshots)
             await putReadAllFrontiersIdb(this.workspaceId, resolvedFrontiers)

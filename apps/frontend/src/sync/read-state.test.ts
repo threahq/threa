@@ -760,11 +760,11 @@ describe("replayed message:created entries and the preview write", () => {
     await emit("stream:activity", activity("last replayed", "2026-08-04T10:00:01.000Z"))
 
     // Buffered, not written — the replay must not touch the row per entry.
-    expect((await db.streams.get(streamId))?.lastMessagePreview).toBeNull()
+    expect((await db.streams.get(["ws_1", streamId]))?.lastMessagePreview).toBeNull()
 
     await batch.flush()
 
-    expect((await db.streams.get(streamId))?.lastMessagePreview).toEqual({
+    expect((await db.streams.get(["ws_1", streamId]))?.lastMessagePreview).toEqual({
       authorId: "user_1",
       authorType: "user",
       content: "last replayed",

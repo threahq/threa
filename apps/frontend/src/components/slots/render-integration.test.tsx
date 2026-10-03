@@ -43,8 +43,8 @@ function TimelineSlots({
   parentStreamId?: string
   messageIds: string[]
 }) {
-  const currentSlots = useStreamSlots(streamId)
-  const parentSlots = useStreamSlots(parentStreamId ?? null)
+  const currentSlots = useStreamSlots("ws_1", streamId)
+  const parentSlots = useStreamSlots("ws_1", parentStreamId ?? null)
   const mergedSlots = useMemo<SlotMap>(() => ({ ...parentSlots, ...currentSlots }), [parentSlots, currentSlots])
   return (
     <SlotsProvider map={mergedSlots}>

@@ -32,7 +32,7 @@ export function StreamContextGallery({
   onClose,
 }: StreamContextGalleryProps) {
   const events = useStreamEvents(streamId)
-  const stream = useStreamFromStore(streamId)
+  const stream = useStreamFromStore(workspaceId, streamId)
   const rootStreamId = stream?.rootStreamId ?? streamId
   // The panel's rows come from the server index under `scope: "tree"`, so they
   // routinely point at attachments outside the loaded event window (older, or in

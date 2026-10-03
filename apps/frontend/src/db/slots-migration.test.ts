@@ -32,7 +32,7 @@ describe("v42 slots migration", () => {
     await db.open()
 
     // Existing rows survive the no-op upgrade.
-    expect(await db.streams.get("stream_1")).toMatchObject({ id: "stream_1", workspaceId: "ws_1" })
+    expect(await db.streams.get(["ws_1", "stream_1"])).toMatchObject({ id: "stream_1", workspaceId: "ws_1" })
     expect(await db.events.get("event_1")).toMatchObject({ id: "event_1", streamId: "stream_1" })
 
     // The new table starts empty and is writable under its compound key.
@@ -44,7 +44,7 @@ describe("v42 slots migration", () => {
       value: { type: "sharedMessage", state: "missing", messageId: "msg_1" },
       _cachedAt: 2000,
     })
-    const rows = await db.slots.where("streamId").equals("stream_1").toArray()
+    const rows = await db.slots.where("[workspaceId+streamId]").equals(["ws_1", "stream_1"]).toArray()
     expect(rows).toHaveLength(1)
     expect(rows[0].slotKey).toBe("shared:msg_1")
 

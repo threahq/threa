@@ -75,7 +75,9 @@ async function loadBoardDraftContext(workspaceId: string, keys: ScopeKeys): Prom
   const forkMessageIds = new Set(subtopicMessageIdKey ? subtopicMessageIdKey.split(",") : [])
   const branchPosts = referenced.filter((row) => branchIds.has(row.id))
   const threadRows =
-    branchPosts.length > 0 ? await db.streams.bulkGet(branchPosts.map((row) => row.conversation.streamId)) : []
+    branchPosts.length > 0
+      ? await db.streams.bulkGet(branchPosts.map((row) => [workspaceId, row.conversation.streamId]))
+      : []
   const forkByBranchConversationId = new Map<string, string>()
   branchPosts.forEach((row, i) => {
     const forkAnchorId = threadRows[i]?.parentAnchorId ?? threadRows[i]?.parentMessageId

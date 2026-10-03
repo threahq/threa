@@ -2085,8 +2085,10 @@ describe("hasUnknownMembers — backfill invalidation gate", () => {
 describe("ConversationPanel — archived is read-only (INV-62)", () => {
   /** Per-id stream rows, so the anchor and its root can differ. */
   function seedStreams(rows: Record<string, Record<string, unknown>>) {
-    vi.spyOn(streamStoreModule, "useStreamFromStore").mockImplementation(((id: string | undefined) =>
-      id ? (rows[id] ?? undefined) : undefined) as never)
+    vi.spyOn(streamStoreModule, "useStreamFromStore").mockImplementation(((
+      workspaceId: string | undefined,
+      id: string | undefined
+    ) => (workspaceId === WORKSPACE_ID && id ? (rows[id] ?? undefined) : undefined)) as never)
     vi.spyOn(workspaceStoreModule, "useWorkspaceStreamIndex").mockReturnValue(new Map(Object.entries(rows)) as never)
   }
 

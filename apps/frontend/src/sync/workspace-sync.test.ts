@@ -216,9 +216,9 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     await applyWorkspaceBootstrap("ws_1", bootstrap, fetchStartedAt)
 
     // Stale stream should be gone
-    expect(await db.streams.get("stream_stale")).toBeUndefined()
+    expect(await db.streams.get(["ws_1", "stream_stale"])).toBeUndefined()
     // Current stream should exist
-    expect(await db.streams.get("stream_current")).toBeDefined()
+    expect(await db.streams.get(["ws_1", "stream_current"])).toBeDefined()
   })
 
   it("adds and removes streams in one commit, so a live query sees a single change", async () => {
@@ -249,8 +249,8 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     const first = new Promise<void>((resolve) => {
       resolveFirst = resolve
     })
-    const subscription = liveQuery(() => db.streams.orderBy("id").primaryKeys()).subscribe((ids) => {
-      seen.push(ids.map(String))
+    const subscription = liveQuery(() => db.streams.orderBy("[workspaceId+id]").primaryKeys()).subscribe((keys) => {
+      seen.push(keys.map(([, id]) => id))
       resolveFirst?.()
     })
     try {
@@ -291,7 +291,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     await applyWorkspaceBootstrap("ws_1", makeBootstrap(), fetchStartedAt)
 
     // Socket-handler stream MUST survive — _cachedAt > fetchStartedAt
-    expect(await db.streams.get("stream_socket")).toBeDefined()
+    expect(await db.streams.get(["ws_1", "stream_socket"])).toBeDefined()
   })
 
   it("persists the bootstrap streamReadState map to IDB — every member stream, present nulls included", async () => {
@@ -625,7 +625,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     // No fetchStartedAt → no cleanup (e.g., cache-seed path)
     await applyWorkspaceBootstrap("ws_1", makeBootstrap())
 
-    expect(await db.streams.get("stream_keep")).toBeDefined()
+    expect(await db.streams.get(["ws_1", "stream_keep"])).toBeDefined()
   })
 
   it("persists archived roots from bootstrap.archivedStreams and the sweep keeps them", async () => {
@@ -638,7 +638,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
 
     await applyWorkspaceBootstrap("ws_1", makeBootstrap({ archivedStreams: [archivedRoot] }), fetchStartedAt)
 
-    const row = await db.streams.get("stream_arch_root")
+    const row = await db.streams.get(["ws_1", "stream_arch_root"])
     expect(row).toBeDefined()
     expect(row?.archivedAt).toBe("2026-01-01T00:00:00Z")
   })
@@ -677,7 +677,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     // clobber the preview the live-archived row already carried.
     await applyWorkspaceBootstrap("ws_1", makeBootstrap({ archivedStreams: [archivedRoot] }), fetchStartedAt)
 
-    const row = await db.streams.get("stream_arch_root")
+    const row = await db.streams.get(["ws_1", "stream_arch_root"])
     expect(row?.lastMessagePreview?.content).toBe("kept")
   })
 
@@ -714,7 +714,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       Date.now()
     )
 
-    expect((await db.streams.get(streamId))?.id).toBe(streamId)
+    expect((await db.streams.get(["ws_1", streamId]))?.id).toBe(streamId)
   })
 
   it("keeps reconnect stream writes and call publication in their original account", async () => {
@@ -1103,8 +1103,8 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
 
       expect(await cachedAtSnapshot()).toEqual(before)
       expect(Object.values(before).every((value) => value === 1)).toBe(true)
-      expect(await db.streams.get("stream_d1")).toBeDefined()
-      expect(await db.streams.get("stream_d2")).toBeDefined()
+      expect(await db.streams.get(["ws_1", "stream_d1"])).toBeDefined()
+      expect(await db.streams.get(["ws_1", "stream_d2"])).toBeDefined()
     })
 
     it("a second identical bootstrap reports rowsWritten 0", async () => {
@@ -1134,7 +1134,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
         Date.now()
       )
 
-      expect(await db.streams.get("stream_d2")).toBeUndefined()
+      expect(await db.streams.get(["ws_1", "stream_d2"])).toBeUndefined()
       expect(rowConfirmedAt("ws_1", "streams", "stream_d2")).toBeUndefined()
     })
 
@@ -1148,9 +1148,9 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       })
       await applyWorkspaceBootstrap("ws_1", changed, Date.now())
 
-      expect((await db.streams.get("stream_d1"))?.displayName).toBe("Renamed")
-      expect((await db.streams.get("stream_d1"))?._cachedAt).toBeGreaterThan(1)
-      expect((await db.streams.get("stream_d2"))?._cachedAt).toBe(1)
+      expect((await db.streams.get(["ws_1", "stream_d1"]))?.displayName).toBe("Renamed")
+      expect((await db.streams.get(["ws_1", "stream_d1"]))?._cachedAt).toBeGreaterThan(1)
+      expect((await db.streams.get(["ws_1", "stream_d2"]))?._cachedAt).toBe(1)
       expect((await db.workspaceUsers.get("member_1"))?._cachedAt).toBe(1)
     })
 
@@ -1161,11 +1161,11 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       const fetchStartedAt = Date.now()
       await applyWorkspaceBootstrap("ws_1", diffBootstrap(), fetchStartedAt)
 
-      expect(await db.streams.get("stream_d1")).toBeDefined()
-      expect(await db.streams.get("stream_d2")).toBeDefined()
+      expect(await db.streams.get(["ws_1", "stream_d1"])).toBeDefined()
+      expect(await db.streams.get(["ws_1", "stream_d2"])).toBeDefined()
       expect(await db.workspaceUsers.get("member_1")).toBeDefined()
       expect(await db.streamMemberships.get("ws_1:stream_d1")).toBeDefined()
-      expect((await db.streams.get("stream_d1"))?._cachedAt).toBe(1)
+      expect((await db.streams.get(["ws_1", "stream_d1"]))?._cachedAt).toBe(1)
     })
 
     it("a stream written by a socket handler during the fetch window and absent from the snapshot still survives", async () => {
@@ -1174,7 +1174,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
 
       await applyWorkspaceBootstrap("ws_1", diffBootstrap(), fetchStartedAt)
 
-      expect(await db.streams.get("stream_socket_diff")).toBeDefined()
+      expect(await db.streams.get(["ws_1", "stream_socket_diff"])).toBeDefined()
     })
 
     it("a socket write during the fetch window that the snapshot contradicts is still healed by the snapshot", async () => {
@@ -1187,7 +1187,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
 
       await applyWorkspaceBootstrap("ws_1", diffBootstrap(), fetchStartedAt)
 
-      expect((await db.streams.get("stream_d1"))?.displayName).toBe("Stream stream_d1")
+      expect((await db.streams.get(["ws_1", "stream_d1"]))?.displayName).toBe("Stream stream_d1")
     })
 
     it("userPreferences does not false-diff on the seed-only sendMode field", async () => {
@@ -1242,7 +1242,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
 
       await applyWorkspaceBootstrap("ws_1", diffBootstrap({ archivedStreams: [archivedRoot] }), Date.now())
 
-      const row = await db.streams.get("stream_arch_diff")
+      const row = await db.streams.get(["ws_1", "stream_arch_diff"])
       expect(row?._cachedAt).toBe(1)
       expect(row?.lastMessagePreview?.content).toBe("kept")
     })
@@ -1322,7 +1322,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
         streams: base.streams.map((s) => (s.id === "stream_d1" ? { ...s, displayName: "Older Name" } : s)),
       })
 
-      expect((await db.streams.get("stream_d1"))?.displayName).toBe("Stream stream_d1")
+      expect((await db.streams.get(["ws_1", "stream_d1"]))?.displayName).toBe("Stream stream_d1")
     })
 
     it("a reconnect carrying an older notificationLevel cannot clobber a membership row the diff just confirmed", async () => {
@@ -1389,7 +1389,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       unsubscribe()
 
       expect(notifications).toBe(1)
-      expect(await db.streams.get("stream_d2")).toBeUndefined()
+      expect(await db.streams.get(["ws_1", "stream_d2"])).toBeUndefined()
       // The value sync-engine's setQueryData gate consults: false here would
       // leave the swept stream in the cached bootstrap forever.
       expect(applied.anyChanged).toBe(true)
@@ -1984,7 +1984,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       revision: 3,
     })
     expect(title()).toBe("newer")
-    await vi.waitFor(async () => expect((await db.streams.get(current.id))?.displayName).toBe("newer"))
+    await vi.waitFor(async () => expect((await db.streams.get(["ws_1", current.id]))?.displayName).toBe("newer"))
     cleanup()
   })
 
@@ -2021,7 +2021,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     expect(
       queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streams[0]?.messageCount
     ).toBe(12)
-    await vi.waitFor(async () => expect((await db.streams.get(current.id))?.messageCount).toBe(12))
+    await vi.waitFor(async () => expect((await db.streams.get(["ws_1", current.id]))?.messageCount).toBe(12))
     cleanup()
   })
 
@@ -2050,7 +2050,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     const returned = workspaceBootstrap.streams.find((stream) => stream.id === current.id)
     expect({
       returned: { count: returned?.messageCount, preview: returned?.lastMessagePreview },
-      stored: (await db.streams.get(current.id))?.messageCount,
+      stored: (await db.streams.get(["ws_1", current.id]))?.messageCount,
     }).toEqual({ returned: { count: 12, preview }, stored: 12 })
   })
 
@@ -2085,7 +2085,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streams[0]
     expect(cached).toMatchObject({ displayName: "new title", displayNameRevision: 4, description: "new description" })
     await vi.waitFor(async () =>
-      expect(await db.streams.get(current.id)).toMatchObject({
+      expect(await db.streams.get(["ws_1", current.id])).toMatchObject({
         displayName: "new title",
         displayNameRevision: 4,
         description: "new description",
@@ -2122,7 +2122,7 @@ describe("registerWorkspaceSocketHandlers", () => {
       displayNameRevision: 3,
       description: "from delayed fetch",
     })
-    expect(await db.streams.get(newer.id)).toMatchObject({
+    expect(await db.streams.get(["ws_1", newer.id])).toMatchObject({
       displayName: "socket title",
       displayNameRevision: 3,
       description: "from delayed fetch",
@@ -2972,7 +2972,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
     expect(cached?.streams.some((s) => s.id === "stream_persona_test")).toBe(false)
     expect(await db.streamMemberships.get("ws_1:stream_persona_test")).toBeUndefined()
-    expect(await db.streams.get("stream_persona_test")).toBeUndefined()
+    expect(await db.streams.get(["ws_1", "stream_persona_test"])).toBeUndefined()
     expect(subscribeStream).not.toHaveBeenCalledWith("stream_persona_test")
 
     cleanup()
@@ -3023,7 +3023,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
     expect(cached?.streams.some((s) => s.id === "stream_persona_test")).toBe(false)
     expect(cached?.streamMemberships.some((m) => m.streamId === "stream_persona_test")).toBe(false)
-    expect(await db.streams.get("stream_persona_test")).toBeUndefined()
+    expect(await db.streams.get(["ws_1", "stream_persona_test"])).toBeUndefined()
     expect(subscribeStream).not.toHaveBeenCalledWith("stream_persona_test")
 
     cleanup()
@@ -3186,7 +3186,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(subscribeStream).toHaveBeenCalledWith("stream_dm_1")
-    expect(await db.streams.get("stream_dm_1")).toMatchObject({
+    expect(await db.streams.get(["ws_1", "stream_dm_1"])).toMatchObject({
       id: "stream_dm_1",
       type: "dm",
       displayName: "Invitee",
@@ -3707,7 +3707,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     })
 
     await vi.waitFor(async () => {
-      const row = await db.streams.get("stream_unarch")
+      const row = await db.streams.get(["ws_1", "stream_unarch"])
       expect(row).toBeDefined()
       expect(row?.archivedAt).toBeNull()
       expect(row?.lastMessagePreview).toBeNull()
@@ -3715,6 +3715,36 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     cleanup()
   })
+
+  it.each(["stream:created", "stream:updated", "stream:archived", "stream:unarchived"])(
+    "should leave this workspace's copy untouched when %s arrives for another workspace",
+    async (event) => {
+      const own = { ...makeStream("stream_copied"), lastMessagePreview: null }
+      await db.streams.put({ ...own, _cachedAt: 1 })
+      const queryClient = new QueryClient()
+      queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap({ streams: [own] }))
+      const { socket, emit } = createTestSocket()
+      const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+      emit(event, {
+        workspaceId: "ws_other",
+        streamId: "stream_copied",
+        stream: makeStream("stream_copied", {
+          workspaceId: "ws_other",
+          displayName: "foreign copy",
+          archivedAt: "2026-01-01T00:00:00Z",
+        }),
+      })
+      await new Promise((r) => setTimeout(r, 20))
+
+      expect({
+        rows: await db.streams.toArray(),
+        bootstrapStreams: queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streams,
+      }).toEqual({ rows: [{ ...own, _cachedAt: 1 }], bootstrapStreams: [own] })
+
+      cleanup()
+    }
+  )
 
   it("carries stream:archived / stream:unarchived onto the board rows the stream covers", async () => {
     await db.conversations.clear()
@@ -3876,7 +3906,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     })
 
     await vi.waitFor(async () => {
-      expect((await db.streams.get("thread_inert"))?.archivedAt).toBeNull()
+      expect((await db.streams.get(["ws_1", "thread_inert"]))?.archivedAt).toBeNull()
     })
     expect(await db.conversations.get("conv_inert")).toMatchObject({ rootArchived: true })
     expect(
@@ -3910,7 +3940,7 @@ describe("registerWorkspaceSocketHandlers", () => {
     })
 
     await vi.waitFor(async () => {
-      const row = await db.streams.get("stream_unarch2")
+      const row = await db.streams.get(["ws_1", "stream_unarch2"])
       expect(row?.archivedAt).toBeNull()
       // Partial-merge upsert keeps the preview the socket payload never carries.
       expect(row?.lastMessagePreview?.content).toBe("kept")
@@ -5264,7 +5294,7 @@ describe("stream:activity is the single preview writer", () => {
     emit("stream:activity", activity(streamId))
 
     await vi.waitFor(async () => {
-      const stored = (await db.streams.get(streamId))?.lastMessagePreview
+      const stored = (await db.streams.get(["ws_1", streamId]))?.lastMessagePreview
       expect({ preview: stored, isString: typeof stored?.content === "string" }).toEqual({
         preview: serverPreview,
         isString: true,
@@ -5284,7 +5314,7 @@ describe("stream:activity is the single preview writer", () => {
     emit("stream:activity", activity(streamId))
 
     await vi.waitFor(async () => {
-      expect((await db.streams.get(streamId))?.lastMessagePreview).toEqual(serverPreview)
+      expect((await db.streams.get(["ws_1", streamId]))?.lastMessagePreview).toEqual(serverPreview)
     })
     expect(
       invalidateQueries.mock.calls.some(

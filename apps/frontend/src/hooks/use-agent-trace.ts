@@ -5,9 +5,7 @@ import { agentSessionsApi } from "@/api"
 import { debugBootstrap } from "@/lib/bootstrap-debug"
 import { joinRoomWithAck } from "@/lib/socket-room"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
-import { getE2eSessionState } from "@/stores/e2e-session-store"
-import { tryDecryptMessagePayload } from "@/lib/crypto/message-envelope"
-import { db } from "@/db"
+import { decryptAgentSubstepText } from "@/lib/crypto/agent-substep"
 import type {
   AgentSessionStep,
   AgentSession,
@@ -221,20 +219,13 @@ export function useAgentTrace(workspaceId: string, sessionId: string): UseAgentT
       // encrypted prompt). Decrypt it the same way message/step content is, then
       // apply. Silently skip if the session isn't unlocked.
       if (typeof payload.ciphertext === "string" && payload.envelope) {
-        const session = getE2eSessionState(workspaceId, userId ?? "")
-        if (session.status !== "unlocked" || !session.privateKey || !session.keyId) return
-        const { privateKey, keyId } = session
         const { ciphertext, envelope, streamId: substepStreamId, stepType, updatedAt } = payload
-        void (async () => {
-          // The substep's stream may be a thread, which shares its root's SSK —
-          // resolve the key against the root.
-          const rootStreamId = (await db.streams.get(substepStreamId))?.rootStreamId ?? undefined
-          const decrypted = await tryDecryptMessagePayload(
-            { contentMarkdown: "", ciphertext, envelope },
-            { privateKey, recipientKeyId: keyId, workspaceId, streamId: substepStreamId, rootStreamId }
-          ).catch(() => null)
-          if (decrypted?.contentMarkdown) appendSubstep(stepType, decrypted.contentMarkdown, updatedAt)
-        })()
+        void decryptAgentSubstepText(
+          { streamId: substepStreamId, ciphertext, envelope },
+          { workspaceId, userId: userId ?? "" }
+        ).then((text) => {
+          if (text) appendSubstep(stepType, text, updatedAt)
+        })
       }
     },
     [sessionId, workspaceId, userId, appendSubstep]

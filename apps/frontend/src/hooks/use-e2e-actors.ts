@@ -50,7 +50,7 @@ async function applyActorChange(params: {
 }): Promise<void> {
   const { workspaceId, streamId, stream, queryClient } = params
 
-  await db.streams.update(streamId, { e2eActors: stream.e2eActors })
+  await db.streams.update([workspaceId, streamId], { e2eActors: stream.e2eActors })
 
   queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
     if (!old || typeof old !== "object") return old
