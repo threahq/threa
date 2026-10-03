@@ -77,8 +77,11 @@ export const CallTransportPolicyRepository = {
   },
 
   async listDue(db: Querier, now: Date): Promise<CallTransportPolicyState[]> {
-    const result = await db.query(sql`SELECT ${sql.raw(COLUMNS)} FROM call_transport_policy_states
-      WHERE eligibility_deadline IS NOT NULL AND eligibility_deadline <= ${now} ORDER BY call_id`)
+    const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- policy-deadline sweep covers every workspace
+      sql`SELECT ${sql.raw(COLUMNS)} FROM call_transport_policy_states
+      WHERE eligibility_deadline IS NOT NULL AND eligibility_deadline <= ${now} ORDER BY call_id`
+    )
     return result.rows.map(map)
   },
 
@@ -87,7 +90,9 @@ export const CallTransportPolicyRepository = {
     afterCallId: string | null,
     limit: number
   ): Promise<Array<{ workspaceId: string; callId: string }>> {
-    const result = await db.query<{ workspace_id: string; call_id: string }>(sql`
+    const result = await db.query<{ workspace_id: string; call_id: string }>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- periodic transport re-evaluation walks every workspace's live calls
+      sql`
       SELECT c.workspace_id, c.id AS call_id
       FROM calls c
       LEFT JOIN call_transport_policy_states p
@@ -97,7 +102,8 @@ export const CallTransportPolicyRepository = {
         AND (${afterCallId}::text IS NULL OR c.id > ${afterCallId})
       ORDER BY c.id
       LIMIT ${limit}
-    `)
+    `
+    )
     return result.rows.map((row) => ({ workspaceId: row.workspace_id, callId: row.call_id }))
   },
 }

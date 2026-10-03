@@ -237,10 +237,13 @@ export const CallTransferRepository = {
     return result.rows[0] ? transfer(result.rows[0]) : null
   },
   async listExpired(db: Querier, now: Date): Promise<CallTransportTransferRow[]> {
-    const result = await db.query(sql`SELECT ${sql.raw(TRANSFER_COLUMNS)} FROM call_transport_transfers
+    const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- transfer-deadline sweep covers every workspace
+      sql`SELECT ${sql.raw(TRANSFER_COLUMNS)} FROM call_transport_transfers
       WHERE (phase = 'preparing' AND prepare_deadline <= ${now})
          OR (phase IN ('committing', 'draining', 'aborting') AND recovery_deadline <= ${now})
-      ORDER BY call_id, generation`)
+      ORDER BY call_id, generation`
+    )
     return result.rows.map(transfer)
   },
   async markRecoveryTimedOut(
