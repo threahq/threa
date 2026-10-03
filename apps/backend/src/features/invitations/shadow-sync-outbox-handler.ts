@@ -32,7 +32,7 @@ export class InvitationShadowSyncHandler extends DebouncedOutboxHandler {
 
     if (isOutboxEventType(event, "invitation:sent")) {
       const { invitationId, workspaceId, email, role, inviterWorkosUserId } = event.payload
-      const invitation = await InvitationRepository.findById(this.db, invitationId)
+      const invitation = await InvitationRepository.findById(this.db, workspaceId, invitationId)
       if (!invitation) {
         logger.warn({ invitationId }, "Invitation not found for shadow sync, skipping")
         return
@@ -51,7 +51,7 @@ export class InvitationShadowSyncHandler extends DebouncedOutboxHandler {
       })
     } else if (isOutboxEventType(event, "invitation:link-created")) {
       const { invitationId, workspaceId, tokenHash, role } = event.payload
-      const invitation = await InvitationRepository.findById(this.db, invitationId)
+      const invitation = await InvitationRepository.findById(this.db, workspaceId, invitationId)
       if (!invitation) {
         logger.warn({ invitationId }, "Link invitation not found for shadow sync, skipping")
         return
@@ -72,9 +72,9 @@ export class InvitationShadowSyncHandler extends DebouncedOutboxHandler {
         status: invitation.status,
       })
     } else if (isOutboxEventType(event, "invitation:link-claimed")) {
-      const { invitationId, parentInvitationId, email, inviterWorkosUserId } = event.payload
+      const { invitationId, workspaceId, parentInvitationId, email, inviterWorkosUserId } = event.payload
       if (!parentInvitationId || parentInvitationId === invitationId) {
-        const root = await InvitationRepository.findById(this.db, invitationId)
+        const root = await InvitationRepository.findById(this.db, workspaceId, invitationId)
         if (!root) throw new Error(`Invitation ${invitationId} not found for link-claimed delivery`)
         if (root.kind !== "link" || root.parentLinkId) {
           logger.warn({ invitationId }, "Link claim target is not a root link, skipping")
@@ -88,7 +88,7 @@ export class InvitationShadowSyncHandler extends DebouncedOutboxHandler {
         return
       }
 
-      const parent = await InvitationRepository.findById(this.db, parentInvitationId)
+      const parent = await InvitationRepository.findById(this.db, workspaceId, parentInvitationId)
       if (!parent) throw new Error(`Invitation parent ${parentInvitationId} not found for link-claimed delivery`)
       await this.controlPlaneClient.notifyInvitationLinkClaimed({
         parentInvitationId,
@@ -101,13 +101,14 @@ export class InvitationShadowSyncHandler extends DebouncedOutboxHandler {
         inviterWorkosUserId,
       })
     } else if (isOutboxEventType(event, "invitation:accepted")) {
-      const invitation = await InvitationRepository.findById(this.db, event.payload.invitationId)
+      const invitation = await InvitationRepository.findById(
+        this.db,
+        event.payload.workspaceId,
+        event.payload.invitationId
+      )
       if (!invitation) throw new Error(`Invitation ${event.payload.invitationId} not found for accepted delivery`)
       if (!invitation.acceptedAt) {
         throw new Error(`Invitation ${event.payload.invitationId} is not accepted for accepted delivery`)
-      }
-      if (invitation.workspaceId !== event.payload.workspaceId) {
-        throw new Error(`Invitation ${event.payload.invitationId} workspace does not match accepted delivery`)
       }
       if (!invitation.email || invitation.email.toLowerCase() !== event.payload.email.toLowerCase()) {
         throw new Error(`Invitation ${event.payload.invitationId} email does not match accepted delivery`)
@@ -115,18 +116,18 @@ export class InvitationShadowSyncHandler extends DebouncedOutboxHandler {
       if (invitation.acceptedWorkosUserId && invitation.acceptedWorkosUserId !== event.payload.workosUserId) {
         throw new Error(`Invitation ${event.payload.invitationId} acceptance identity does not match accepted delivery`)
       }
-      if (!(await UserRepository.isMember(this.db, invitation.workspaceId, event.payload.workosUserId))) {
+      if (!(await UserRepository.isMember(this.db, event.payload.workspaceId, event.payload.workosUserId))) {
         logger.warn(
           { invitationId: invitation.id },
           "Member row absent for accepted delivery; delivering on the accepted row's evidence"
         )
       }
       const parentId = invitation.parentLinkId ?? (invitation.kind === "link" ? invitation.id : null)
-      const parent = parentId ? await InvitationRepository.findById(this.db, parentId) : null
+      const parent = parentId ? await InvitationRepository.findById(this.db, event.payload.workspaceId, parentId) : null
       if (parentId && !parent) throw new Error(`Invitation parent ${parentId} not found for accepted delivery`)
       await this.controlPlaneClient.acknowledgeInvitationAccepted({
         invitationId: invitation.id,
-        workspaceId: invitation.workspaceId,
+        workspaceId: event.payload.workspaceId,
         email: invitation.email,
         workosUserId: event.payload.workosUserId,
         ...(parent
@@ -141,7 +142,11 @@ export class InvitationShadowSyncHandler extends DebouncedOutboxHandler {
           : {}),
       })
     } else if (isOutboxEventType(event, "invitation:revoked")) {
-      const invitation = await InvitationRepository.findById(this.db, event.payload.invitationId)
+      const invitation = await InvitationRepository.findById(
+        this.db,
+        event.payload.workspaceId,
+        event.payload.invitationId
+      )
       if (invitation?.kind === "link" && !invitation.parentLinkId) {
         await this.controlPlaneClient.updateInvitationLinkShadow({
           id: invitation.id,

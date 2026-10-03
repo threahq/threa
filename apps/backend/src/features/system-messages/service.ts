@@ -62,7 +62,7 @@ export class SystemMessageService {
   async sendInvitationAccepted(payload: InvitationAcceptedOutboxPayload): Promise<void> {
     const { workspaceId, invitationId, userName } = payload
 
-    const invitation = await InvitationRepository.findById(this.pool, invitationId)
+    const invitation = await InvitationRepository.findById(this.pool, workspaceId, invitationId)
     if (!invitation) {
       logger.warn({ invitationId }, "Invitation not found for accepted notification")
       return

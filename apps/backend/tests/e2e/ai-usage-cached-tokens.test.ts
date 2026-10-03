@@ -89,7 +89,9 @@ describe("ai_usage_records.cached_prompt_tokens", () => {
       })
     )
 
-    const readBack = await AIUsageRepository.findById(pool, inserted.id)
+    const readBack = (await AIUsageRepository.listRecent(pool, workspaceId, { limit: 10 })).find(
+      (row) => row.id === inserted.id
+    )
 
     expect(inserted.cachedPromptTokens).toBe(1024)
     expect(readBack?.cachedPromptTokens).toBe(1024)

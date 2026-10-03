@@ -473,15 +473,12 @@ export const UserRepository = {
 
     values.push(workspaceId)
     values.push(userId)
-    let whereClause = `WHERE workspace_id = $${paramIndex++} AND id = $${paramIndex}`
-    if (params.setupCompleted === true) {
-      whereClause += ` AND setup_completed = false`
-    }
+    const setupGuard = params.setupCompleted === true ? "AND setup_completed = false" : ""
 
     const query = `
       WITH updated AS (
         UPDATE users SET ${sets.join(", ")}
-        ${whereClause}
+        WHERE workspace_id = $${paramIndex++} AND id = $${paramIndex} ${setupGuard}
         RETURNING ${SELECT_FIELDS}
       )
       SELECT ${SELECT_FIELDS_WITH_ALIAS}
@@ -529,7 +526,7 @@ export const UserRepository = {
         WHERE workspace_id = ${workspaceId} AND id = ${userId}
           AND ${avatarUploadId} = (
             SELECT id FROM avatar_uploads
-            WHERE user_id = ${userId}
+            WHERE workspace_id = ${workspaceId} AND user_id = ${userId}
             ORDER BY created_at DESC, id DESC
             LIMIT 1
           )
