@@ -216,6 +216,11 @@ export class UserPreferencesService {
         }
       }
 
+      // Held until commit, so a device report in flight either lands before
+      // the delete below or sees the opt-out and writes nothing.
+      const sharingOff = updates.shareDeviceWithAgents === false
+      if (sharingOff) await UserDeviceContextRepository.lockUser(client, workspaceId, userId, "opt-out")
+
       if (toSet.length > 0) {
         await UserPreferencesRepository.bulkSetOverrides(client, userId, toSet)
       }
@@ -223,11 +228,7 @@ export class UserPreferencesService {
         await UserPreferencesRepository.bulkDeleteOverrides(client, userId, toDelete)
       }
 
-      // The stored device goes with the consent, atomically: a failed write
-      // must not leave sharing off while the last device is still stored.
-      if (updates.shareDeviceWithAgents === false) {
-        await UserDeviceContextRepository.delete(client, workspaceId, userId)
-      }
+      if (sharingOff) await UserDeviceContextRepository.delete(client, workspaceId, userId)
 
       if (updates.inboxClearMode === "read") {
         const held = await ReadStateRepository.listInboxHeldStreamIds(client, workspaceId, userId)

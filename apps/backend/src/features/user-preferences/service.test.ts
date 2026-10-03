@@ -305,26 +305,29 @@ describe("UserPreferencesService.updatePreferences shareDeviceWithAgents", () =>
     const bulkDelete = spyOn(UserPreferencesRepository, "bulkDeleteOverrides").mockResolvedValue(undefined as any)
     spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([])
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const lockUser = spyOn(UserDeviceContextRepository, "lockUser").mockResolvedValue(true)
     const deleteDevice = spyOn(UserDeviceContextRepository, "delete").mockResolvedValue(undefined)
-    return { bulkSet, bulkDelete, deleteDevice, service: new UserPreferencesService({} as any) }
+    return { bulkSet, bulkDelete, lockUser, deleteDevice, service: new UserPreferencesService({} as any) }
   }
 
   it("deletes the stored device in the same transaction when sharing is turned off", async () => {
-    const { bulkSet, deleteDevice, service } = setup()
+    const { bulkSet, lockUser, deleteDevice, service } = setup()
 
     await service.updatePreferences(WORKSPACE_ID, USER_ID, { shareDeviceWithAgents: false })
 
+    expect(lockUser).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, "opt-out")
     expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "shareDeviceWithAgents", value: false }])
     expect(deleteDevice).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID)
   })
 
   it("keeps the stored device when sharing is turned on", async () => {
-    const { bulkDelete, deleteDevice, service } = setup()
+    const { bulkDelete, lockUser, deleteDevice, service } = setup()
 
     await service.updatePreferences(WORKSPACE_ID, USER_ID, { shareDeviceWithAgents: true })
 
     // On is the default, so it clears the override rather than storing one.
     expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["shareDeviceWithAgents"])
+    expect(lockUser).not.toHaveBeenCalled()
     expect(deleteDevice).not.toHaveBeenCalled()
   })
 

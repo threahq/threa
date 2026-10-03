@@ -1,5 +1,5 @@
 import { sql, type Querier } from "../../db"
-import { parseDeviceContext, type DeviceContext } from "@threahq/types"
+import { parseDeviceContext, SHARE_DEVICE_KEY, type DeviceContext } from "@threahq/types"
 
 interface UserDeviceContextRow {
   layout: string
@@ -9,19 +9,31 @@ interface UserDeviceContextRow {
 
 export const UserDeviceContextRepository = {
   /**
-   * Stores the user's latest device, unless they turned sharing off or are no
-   * longer a member: a stale client can still report after either, and the
-   * delete that went with it must stay deleted.
+   * Locks the user's row until the transaction ends; false when they're no
+   * longer a member. A report holds it shared and an opt-out exclusively, and
+   * removal deletes it, so a report lands wholly before or after either.
+   */
+  async lockUser(db: Querier, workspaceId: string, userId: string, mode: "report" | "opt-out"): Promise<boolean> {
+    const result =
+      mode === "report"
+        ? await db.query(sql`SELECT 1 FROM users WHERE workspace_id = ${workspaceId} AND id = ${userId} FOR KEY SHARE`)
+        : await db.query(sql`SELECT 1 FROM users WHERE workspace_id = ${workspaceId} AND id = ${userId} FOR UPDATE`)
+    return result.rows.length > 0
+  },
+
+  /**
+   * Stores the user's latest device unless they turned sharing off. Call it
+   * after `lockUser(..., "report")` in the same transaction: the opt-out check
+   * reads from this statement's snapshot, which only that lock makes current.
    */
   async upsert(db: Querier, workspaceId: string, userId: string, device: DeviceContext): Promise<void> {
     await db.query(sql`
       INSERT INTO user_device_contexts (workspace_id, user_id, layout, os, installed)
       SELECT ${workspaceId}, ${userId}, ${device.layout}, ${device.os}, ${device.installed}
-      WHERE EXISTS (SELECT 1 FROM users WHERE workspace_id = ${workspaceId} AND id = ${userId})
-        AND NOT EXISTS (
-          SELECT 1 FROM user_preference_overrides
-          WHERE user_id = ${userId} AND key = 'shareDeviceWithAgents' AND value = 'false'::jsonb
-        )
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_preference_overrides
+        WHERE user_id = ${userId} AND key = ${SHARE_DEVICE_KEY} AND value = 'false'::jsonb
+      )
       ON CONFLICT (workspace_id, user_id) DO UPDATE SET
         layout = EXCLUDED.layout,
         os = EXCLUDED.os,

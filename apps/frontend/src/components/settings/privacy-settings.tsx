@@ -5,6 +5,7 @@ import { Switch } from "@/components/ui/switch"
 import { usePreferences } from "@/contexts"
 import { useWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { ApiError } from "@/api/client"
+import type { UpdateUserPreferencesInput } from "@threahq/types"
 
 export function PrivacySettings() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -15,9 +16,9 @@ export function PrivacySettings() {
 
   const replayOptIn = granted && preferences?.sessionReplayOptIn === true
 
-  async function save(...args: Parameters<typeof updatePreference>) {
+  async function save<K extends keyof UpdateUserPreferencesInput>(key: K, value: UpdateUserPreferencesInput[K]) {
     try {
-      await updatePreference(...args)
+      await updatePreference(key, value)
     } catch (err) {
       toast.error(ApiError.isApiError(err) ? err.message : "Failed to update the privacy preference")
     }

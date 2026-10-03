@@ -4,26 +4,36 @@ import type { DeviceContext } from "@threahq/types"
 import { storeHeartbeatDevice } from "./heartbeat"
 import { UserDeviceContextRepository } from "./repository"
 
-const pool = {} as Pool
+// A client stand-in: withTransaction runs the work under a savepoint on it.
+const pool = { query: async () => ({ rows: [] }), release() {} } as unknown as Pool
 const targets = [{ workspaceId: "ws_1", userId: "usr_1" }]
 const phone: DeviceContext = { layout: "mobile", os: "android", installed: true }
 
+const lockUser = spyOn(UserDeviceContextRepository, "lockUser")
 const upsert = spyOn(UserDeviceContextRepository, "upsert")
 
 function writes() {
   return upsert.mock.calls.map(([, workspaceId, userId, device]) => ({ workspaceId, userId, device }))
 }
 
-afterEach(() => upsert.mockReset())
-afterAll(() => upsert.mockRestore())
+afterEach(() => {
+  lockUser.mockReset()
+  upsert.mockReset()
+})
+afterAll(() => {
+  lockUser.mockRestore()
+  upsert.mockRestore()
+})
 
 describe("storeHeartbeatDevice", () => {
-  test("should write the device for every workspace when the heartbeat is interacted", () => {
+  test("should write the device for every workspace when the heartbeat is interacted", async () => {
+    lockUser.mockResolvedValue(true)
     upsert.mockResolvedValue(undefined)
     storeHeartbeatDevice(pool, { device: phone, interacted: true }, [
       ...targets,
       { workspaceId: "ws_2", userId: "usr_2" },
     ])
+    await Bun.sleep(0)
 
     expect(writes()).toEqual([
       { workspaceId: "ws_1", userId: "usr_1", device: phone },
@@ -35,9 +45,11 @@ describe("storeHeartbeatDevice", () => {
     ["the heartbeat has no interaction", { device: phone, interacted: false }],
     ["the device is absent", { device: undefined, interacted: true }],
     ["the device is off-shape", { device: { layout: "tablet", os: "ios", installed: true }, interacted: true }],
-  ])("should write nothing when %s", (_name, heartbeat) => {
+  ])("should write nothing when %s", async (_name, heartbeat) => {
+    lockUser.mockResolvedValue(true)
     upsert.mockResolvedValue(undefined)
     storeHeartbeatDevice(pool, heartbeat, targets)
+    await Bun.sleep(0)
 
     expect(writes()).toEqual([])
   })

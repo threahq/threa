@@ -161,6 +161,8 @@ export type AnalyticsConsent = (typeof ANALYTICS_CONSENT_OPTIONS)[number]
 /** The override key analytics consent is stored under; only this value grants it. */
 export const ANALYTICS_CONSENT_KEY = "analyticsConsent" satisfies keyof UserPreferences
 export const ANALYTICS_CONSENT_GRANTED = "granted" satisfies AnalyticsConsent
+/** The override key that turns off storing the user's device for agents, when set to false. */
+export const SHARE_DEVICE_KEY = "shareDeviceWithAgents" satisfies keyof UserPreferences
 
 // Code block collapse threshold - line count above which blocks start collapsed.
 // Blocks with fewer lines render expanded by default. A user can always toggle
