@@ -1,5 +1,5 @@
 import { buildToolPromptSections, formatConversationMemoryForPrompt, type AgentTool } from "@threahq/agent-runtime"
-import type { UserPreferences } from "@threahq/types"
+import { APP_LINK_PAGES, SETTINGS_TABS, WORKSPACE_SETTINGS_TABS, type UserPreferences } from "@threahq/types"
 import { buildTemporalPromptSection } from "../../../../lib/temporal"
 import type { Persona } from "../../persona-repository"
 import type { PersonaAttachmentContentItem } from "../../persona-attachment-repository"
@@ -264,6 +264,11 @@ When citing a specific message or file, prefer a structural reference over a par
 - **Embed a memo** (own line in your response):
   \`[Memo Title](memo:memo_xxx)\`
   Renders as a live memory card (title + type + tags). Use it when pointing the reader at a piece of workspace knowledge rather than restating it.
+
+- **Point at a place in Threa** inline, when telling someone where to find or change something:
+  \`[Notification settings](app:settings/notifications)\` opens that tab of the user's own settings over the conversation; \`[Bots](app:workspace-settings/bots)\` opens a workspace settings tab; \`[Memory](app:memory)\` opens a page.
+  Pages: ${APP_LINK_PAGES.join(", ")}. Settings tabs: ${SETTINGS_TABS.join(", ")}. Workspace settings tabs (admins only): ${WORKSPACE_SETTINGS_TABS.join(", ")}.
+  Any other \`app:\` destination renders as plain text, so use only these.
 
 ### Where IDs come from
 
