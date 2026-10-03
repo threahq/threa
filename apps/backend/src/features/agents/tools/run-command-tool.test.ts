@@ -122,7 +122,10 @@ describe("bindStreamSandbox", () => {
             calls.push(`mint ttl=${p.ttlSec} captured=${p.capturedStreamIds.join(",")}`)
             return { session: { id: "sbx_1" } as never, value: "threa_sk_1" }
           },
-          revoke: async (_ws, id) => void calls.push(`revoke ${id}`),
+          revoke: async (_ws, id) => {
+            calls.push(`revoke ${id}`)
+            return [{ streamId: "stream_2", title: "design" }]
+          },
         },
       },
       {
@@ -177,6 +180,21 @@ describe("bindStreamSandbox", () => {
     })
   })
 
+  test("reports the streams the command's token served once it is revoked", async () => {
+    const { deps, calls } = bind({
+      sealed: false,
+      run: async (p) => {
+        await p.api!()
+        return ok
+      },
+    })
+
+    expect({ result: await deps!.run(params), calls }).toEqual({
+      result: { ...ok, streamsRead: [{ streamId: "stream_2", title: "design" }] },
+      calls: ["run", "mint ttl=90 captured=stream_1,stream_2", "revoke sbx_1"],
+    })
+  })
+
   test("mints nothing when the run fails before the command starts", async () => {
     const { deps, calls } = bind({
       sealed: false,
@@ -214,6 +232,30 @@ describe("run_command prompt", () => {
       setup(async () => null, undefined, threaApi).tool.config.promptBlock!.includes("threa attachments upload")
 
     expect([teaches(true), teaches(false)]).toEqual([true, false])
+  })
+})
+
+describe("run_command sources", () => {
+  test("cites each stream the command read through Threa, and nothing when it read none", async () => {
+    const ran = { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, replaced: null }
+    const reading = setup(
+      async () => null,
+      async () => ({ ...ran, streamsRead: [{ streamId: "stream_2", title: "design" }] })
+    ).tool
+    const silent = setup(
+      async () => null,
+      async () => ran
+    ).tool
+    const sources = async (tool: typeof reading) =>
+      tool.config.trace.extractSources!(
+        { command: "threa search x" },
+        await tool.config.execute({ command: "threa search x" }, toolOpts)
+      )
+
+    expect({ reading: await sources(reading), silent: await sources(silent) }).toEqual({
+      reading: [{ type: "workspace", title: "design", url: "/w/ws_1/s/stream_2", streamId: "stream_2" }],
+      silent: [],
+    })
   })
 })
 

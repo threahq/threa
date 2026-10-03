@@ -36,7 +36,7 @@ import {
   resolveSealingContext,
 } from "../e2e-streams"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
-import { isSandboxStreamReadable, sandboxReadableStreamIds } from "../sandboxes"
+import { isSandboxStreamReadable, recordSandboxReads, sandboxReadableStreamIds } from "../sandboxes"
 import { failSessionWithLifecycleInTransaction, PersonaRepository } from "../agents"
 import { type Memo, type MemoExplorerService, type MemoExplorerDetail, type MemoExplorerResult } from "../memos"
 import {
@@ -1162,6 +1162,13 @@ export function createPublicApiHandlers({
     }
     await assertStreamAccessible(req, conversation.streamId)
     return conversation
+  }
+
+  /** A sandbox command's output carries the streams it read, so its turn digest stays access-checked. */
+  async function noteSandboxReads(req: Request, streamIds: Iterable<string | null>): Promise<void> {
+    if (!req.sandboxSession) return
+    const ids = [...new Set(streamIds)].filter((id): id is string => id !== null)
+    await recordSandboxReads(pool, req.sandboxSession, ids)
   }
 
   async function resolveAccessibleAttachment(req: Request, attachmentId: string): Promise<Attachment> {
@@ -2816,6 +2823,10 @@ export function createPublicApiHandlers({
         searchFlag,
       })
 
+      await noteSandboxReads(
+        req,
+        results.map((r) => r.streamId)
+      )
       setAuditSubjects(
         res,
         results.map((r) => ({ type: "message", id: r.id }))
@@ -2939,6 +2950,10 @@ export function createPublicApiHandlers({
         limit,
       })
 
+      await noteSandboxReads(
+        req,
+        attachments.map((a) => a.streamId)
+      )
       setAuditSubjects(
         res,
         attachments.map((a) => ({ type: "attachment", id: a.id }))
@@ -2949,6 +2964,7 @@ export function createPublicApiHandlers({
     async getAttachment(req: Request, res: Response) {
       const attachment = await resolveAccessibleAttachment(req, req.params.attachmentId)
       const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, attachment.id)
+      await noteSandboxReads(req, [attachment.streamId])
 
       setAuditSubjects(res, [{ type: "attachment", id: attachment.id }])
       res.json({ data: serializeAttachmentDetail(attachment, extraction) })
@@ -2967,6 +2983,7 @@ export function createPublicApiHandlers({
 
     async downloadAttachment(req: Request, res: Response) {
       const attachment = await resolveAccessibleAttachment(req, req.params.attachmentId)
+      await noteSandboxReads(req, [attachment.streamId])
       setAuditSubjects(res, [{ type: "attachment", id: attachment.id }])
       const object = await attachmentService.getContent(attachment)
 
@@ -3169,6 +3186,7 @@ export function createPublicApiHandlers({
       })
 
       const hasMore = messages.length > limit
+      if (messages.length > 0) await noteSandboxReads(req, [streamId])
       // afterSequence returns ASC from DB — extra probe is at the tail.
       // beforeSequence/default return DESC then reverse to ASC — extra probe is at the head.
       let page = messages

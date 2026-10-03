@@ -1,8 +1,9 @@
 import { createHash, randomBytes } from "crypto"
 import type { Pool } from "pg"
 import type { Querier } from "../../db"
+import { HttpError } from "../../lib/errors"
 import { sandboxSessionTokenId } from "../../lib/id"
-import { listAccessibleStreamIds } from "../streams"
+import { StreamRepository, getEffectiveDisplayName, listAccessibleStreamIds } from "../streams"
 import { resolveUserAccessibleStreamIds, type SearchFilters } from "../search"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { SandboxSessionTokenRepository, type SandboxSessionTokenRow } from "./session-token-repository"
@@ -13,6 +14,12 @@ const TOKEN_BYTE_LENGTH = 32
 const EXPIRED_RETENTION_SEC = 24 * 60 * 60
 
 export type SandboxSession = SandboxSessionTokenRow
+
+/** A stream whose messages or files a token served, named for the trace. */
+export interface SandboxReadStream {
+  streamId: string
+  title: string
+}
 
 function hashToken(value: string): string {
   return createHash("sha256").update(value).digest("hex")
@@ -57,8 +64,10 @@ export class SandboxSessionTokenService {
     return SandboxSessionTokenRepository.findLiveByHash(this.pool, hashToken(value))
   }
 
-  async revoke(workspaceId: string, id: string): Promise<void> {
-    await SandboxSessionTokenRepository.revoke(this.pool, workspaceId, id)
+  async revoke(workspaceId: string, id: string): Promise<SandboxReadStream[]> {
+    const readStreamIds = await SandboxSessionTokenRepository.revoke(this.pool, workspaceId, id)
+    const streams = await StreamRepository.findByIdsInWorkspace(this.pool, workspaceId, readStreamIds)
+    return streams.map((stream) => ({ streamId: stream.id, title: getEffectiveDisplayName(stream).displayName }))
   }
 }
 
@@ -98,4 +107,15 @@ function withoutE2e(db: Querier, workspaceId: string, streamIds: string[]): Prom
     db,
     streamIds.map((streamId) => ({ workspaceId, streamId }))
   )
+}
+
+/**
+ * Note the streams a response is about to serve. Throws once the token is
+ * revoked: the command has ended, and its output's provenance is already taken.
+ */
+export async function recordSandboxReads(db: Querier, session: SandboxSession, streamIds: string[]): Promise<void> {
+  if (streamIds.length === 0) return
+  if (!(await SandboxSessionTokenRepository.recordReads(db, session.workspaceId, session.id, streamIds))) {
+    throw new HttpError("Sandbox token revoked", { status: 401, code: "UNAUTHORIZED" })
+  }
 }

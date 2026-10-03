@@ -18,10 +18,13 @@ import {
   type SandboxService,
   type SandboxSessionTokenService,
   type SandboxFile,
+  type SandboxReadStream,
+  type SandboxRunResult,
   type SandboxReplacedReason,
 } from "../../sandboxes"
 import type { WorkspaceSettingsService } from "../../workspace-settings"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
+import { workspaceStreamUrl } from "../workspace-links"
 import type { RunCommandToolDeps, WorkspaceToolDeps } from "./tool-deps"
 
 const MAX_ATTACHMENTS_PER_CALL = 10
@@ -76,7 +79,8 @@ export interface StreamSandboxDeps {
  *
  * Each command gets its own API token, reading what this turn could read
  * (`capturedStreamIds`) as the invoking user, minted when the command is about
- * to start and revoked once it ends.
+ * to start and revoked once it ends. Revoking returns the streams it served,
+ * which become the command's sources.
  * A turn with no invoking user has nobody to read as, so its commands get none.
  */
 export function bindStreamSandbox(
@@ -116,15 +120,24 @@ export function bindStreamSandbox(
         tokenId = session.id
         return { token: value, workspaceId }
       }
-      try {
-        return await sandbox.service.run({ workspaceId, streamId, ...params, api })
-      } finally {
-        if (tokenId) {
-          await sandbox.sessionTokens.revoke(workspaceId, tokenId).catch((err) => {
-            logger.warn({ err, workspaceId, tokenId }, "Sandbox token not revoked; it expires with its TTL")
-          })
-        }
+      const revoke = async (): Promise<SandboxReadStream[]> => {
+        if (!tokenId) return []
+        return sandbox.sessionTokens.revoke(workspaceId, tokenId).catch((err) => {
+          logger.warn(
+            { err, workspaceId, tokenId },
+            "Sandbox token not revoked; it expires with its TTL, and the command's sources are lost"
+          )
+          return []
+        })
       }
+      let result: SandboxRunResult
+      try {
+        result = await sandbox.service.run({ workspaceId, streamId, ...params, api })
+      } catch (error) {
+        await revoke()
+        throw error
+      }
+      return { ...result, streamsRead: await revoke() }
     },
   }
 }
@@ -207,6 +220,7 @@ You have a \`run_command\` tool: a shell in a Linux box that belongs to this con
             internet,
             ...(result.replaced && { sandboxReplaced: REPLACED_NOTICES[result.replaced] }),
             ...(files.length > 0 && { files: files.map((f) => f.path) }),
+            ...(result.streamsRead?.length && { streamsRead: result.streamsRead }),
           }),
         }
       } catch (error) {
@@ -244,6 +258,17 @@ You have a \`run_command\` tool: a shell in a Linux box that belongs to this con
           parsed.stderr && { label: PiToolTraceSectionLabels.ERROR_OUTPUT, body: clip(parsed.stderr), lang: null },
         ].filter(Boolean)
         return JSON.stringify({ format: PI_TOOL_TRACE_FORMAT, headline, sections })
+      },
+      // Turn digests re-check these against access, so a command that read a stream
+      // the conversation later loses is not recalled from its digest.
+      extractSources: (_input, result) => {
+        const parsed = JSON.parse(result.output) as { streamsRead?: SandboxReadStream[] }
+        return (parsed.streamsRead ?? []).map(({ streamId, title }) => ({
+          type: "workspace" as const,
+          title,
+          url: workspaceStreamUrl(workspaceId, streamId),
+          streamId,
+        }))
       },
       // Only a box with internet can have written anywhere the user would have to go look.
       effects: (_input, result) => {
