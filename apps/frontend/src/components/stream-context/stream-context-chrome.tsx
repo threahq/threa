@@ -37,7 +37,8 @@ export interface StreamContextPanelProps {
   workspaceId: string
   streamId: string
   onClose: () => void
-  onJumpToMessage: (messageId: string) => void
+  /** `inStreamId` names the thread a root's overview found the message in. */
+  onJumpToMessage: (messageId: string, inStreamId?: string) => void
   onOpenThread: (threadId: string) => void
   onOpenMemo: (memoId: string) => void
   onOpenGallery: (key: string) => void

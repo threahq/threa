@@ -48,7 +48,15 @@ test("docks beside the stream, jumps in place, and docks a thread's overview bes
   await postMessage(page, workspaceId!, threadId, "thread link https://example.org/beta")
   await page.reload()
 
-  await page.getByRole("button", { name: "In this stream" }).click()
+  // Escape right after opening closes it, and focus goes back to the toggle.
+  const toggle = page.getByRole("button", { name: "In this stream" })
+  await toggle.click()
+  await expect(dock(page)).toBeFocused()
+  await page.keyboard.press("Escape")
+  await expect(dock(page)).toHaveCount(0)
+  await expect(toggle).toBeFocused()
+
+  await toggle.click()
   await expect(dock(page).getByText("example.com").first()).toBeVisible()
   await expect(page.getByRole("dialog")).toHaveCount(0)
 
@@ -65,6 +73,14 @@ test("docks beside the stream, jumps in place, and docks a thread's overview bes
   await expect(linkRow).toBeInViewport()
   await expect(dock(page)).toBeVisible()
   expect(new URL(page.url()).searchParams.get("context")).not.toBeNull()
+
+  // The root lists its threads' artifacts too; jumping to one opens the thread
+  // at the message.
+  const threadRow = dock(page).locator("div.group", { hasText: "example.org" }).first()
+  await threadRow.hover()
+  await threadRow.getByRole("button", { name: "Go to message", exact: true }).click()
+  await expect(page.getByTestId("panel").getByText("thread link")).toBeInViewport()
+  expect(new URL(page.url()).searchParams.get("panel")).toBe(threadId)
 
   // A thread's overview lists the thread alone and docks right of its panel.
   await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadId}`)

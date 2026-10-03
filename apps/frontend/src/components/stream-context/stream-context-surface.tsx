@@ -1,6 +1,8 @@
+import { useEffect, useRef, type ReactNode } from "react"
 import { createPortal } from "react-dom"
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer"
 import { useSidebar } from "@/contexts"
+import type { StreamContextPanelProps } from "./stream-context-chrome"
 import { useStreamContextDock } from "./stream-context-dock"
 import { StreamContextIndexPanel } from "./stream-context-index-panel"
 
@@ -9,7 +11,7 @@ interface StreamContextSurfaceProps {
   streamId: string
   open: boolean
   onClose: () => void
-  onJumpToMessage: (messageId: string) => void
+  onJumpToMessage: StreamContextPanelProps["onJumpToMessage"]
   onOpenThread: (threadId: string) => void
   onOpenMemo: (memoId: string) => void
   onOpenGallery: (key: string) => void
@@ -52,10 +54,31 @@ export function StreamContextSurface(props: StreamContextSurfaceProps) {
   }
 
   if (!open || !dock?.target) return null
-  return createPortal(
+  return createPortal(<DockedOverview onClose={onClose}>{panel}</DockedOverview>, dock.target)
+}
+
+function DockedOverview({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLElement>(null)
+  const opener = useRef<HTMLElement | null>(null)
+
+  // Focus comes in on open so Escape reaches the dock, and goes back to the
+  // opener on close unless the user already moved it somewhere else. A rerun
+  // (StrictMode) finds focus already inside and keeps the original opener.
+  useEffect(() => {
+    const active = document.activeElement
+    if (active instanceof HTMLElement && !ref.current?.contains(active)) opener.current = active
+    ref.current?.focus({ preventScroll: true })
+    return () => {
+      if (document.activeElement === document.body) opener.current?.focus({ preventScroll: true })
+    }
+  }, [])
+
+  return (
     <aside
+      ref={ref}
+      tabIndex={-1}
       aria-label="In this stream"
-      className="flex min-h-0 flex-1 flex-col"
+      className="flex min-h-0 flex-1 flex-col outline-none"
       onKeyDown={(e) => {
         if (e.key !== "Escape" || e.defaultPrevented) return
         // Claims the key so the stream's window-level Escape doesn't also settle it.
@@ -63,8 +86,7 @@ export function StreamContextSurface(props: StreamContextSurfaceProps) {
         onClose()
       }}
     >
-      {panel}
-    </aside>,
-    dock.target
+      {children}
+    </aside>
   )
 }

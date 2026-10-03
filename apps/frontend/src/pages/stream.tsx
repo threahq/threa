@@ -886,6 +886,7 @@ export function StreamPage() {
   const layout = panelTakeoverClasses(mobileTakeover)
 
   const panelInset = displayWidth + dock.layout.displayWidth
+  const panelInsetAnimates = shouldAnimate && dock.layout.shouldAnimate
 
   return (
     <StreamContextDockProvider value={{ target: dock.target }}>
@@ -923,12 +924,20 @@ export function StreamPage() {
             onResizeEnd={handleResizeEnd}
             onResizeKeyDown={handleResizeKeyDown}
             insetRight={panelInset}
+            insetAnimates={panelInsetAnimates}
             inert={asideStage}
           >
             <PanelHost workspaceId={workspaceId} onClose={closePanel} />
           </ThreadPanelSlot>
         )}
-        {!isMobile && <StreamContextDockSlot dock={dock} insetRight={panelInset} inert={asideStage} />}
+        {!isMobile && (
+          <StreamContextDockSlot
+            dock={dock}
+            insetRight={panelInset}
+            insetAnimates={panelInsetAnimates}
+            inert={asideStage}
+          />
+        )}
         <AsideSlot workspaceId={workspaceId} hostKey={asideHostKey} />
       </div>
       {/* A `fixed` overlay that would paint over a fullscreen panel, so a takeover

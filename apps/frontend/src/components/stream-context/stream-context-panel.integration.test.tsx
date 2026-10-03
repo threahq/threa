@@ -106,7 +106,6 @@ function renderPanel(
     outstandingCount: options.outcomes?.length ?? 0,
   })
   const onJumpToMessage = vi.fn()
-  const onOpenThread = vi.fn()
   const panel = (
     <>
       <LocationProbe />
@@ -115,7 +114,7 @@ function renderPanel(
         streamId={options.streamId ?? STREAM}
         onClose={vi.fn()}
         onJumpToMessage={onJumpToMessage}
-        onOpenThread={onOpenThread}
+        onOpenThread={vi.fn()}
         onOpenMemo={vi.fn()}
         onOpenGallery={vi.fn()}
       />
@@ -137,7 +136,7 @@ function renderPanel(
       </AuthContext.Provider>
     </MemoryRouter>
   )
-  return { onJumpToMessage, onOpenThread }
+  return { onJumpToMessage }
 }
 
 beforeEach(async () => {
@@ -466,7 +465,7 @@ describe("StreamContextPanel", () => {
     )
 
     await userEvent.click(screen.getByText("first share"))
-    expect(onJumpToMessage).toHaveBeenCalledWith("msg_a")
+    expect(onJumpToMessage).toHaveBeenCalledWith("msg_a", STREAM)
   })
 
   it("collapses a group into one feed row, and expanding it does not duplicate the row", async () => {
@@ -577,7 +576,7 @@ describe("StreamContextPanel", () => {
     const { onJumpToMessage } = renderPanel()
 
     await userEvent.click(await screen.findByRole("button", { name: /Go to delegation/ }))
-    expect(onJumpToMessage).toHaveBeenCalledWith("event_delegation_1")
+    expect(onJumpToMessage).toHaveBeenCalledWith("event_delegation_1", STREAM)
   })
 
   it("jumps the list to a picked date, landing on the nearest earlier day", async () => {
@@ -765,7 +764,7 @@ describe("StreamContextPanel", () => {
     expect(screen.queryByRole("button", { name: /Shared/ })).not.toBeInTheDocument()
   })
 
-  it("shows a thread-owned item's origin and opens the thread before jumping", async () => {
+  it("shows a thread-owned item's origin and jumps into the thread", async () => {
     await db.streamContextItems.put(
       cachedRow(
         serverItem({
@@ -779,12 +778,11 @@ describe("StreamContextPanel", () => {
     )
     vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse())
 
-    const { onJumpToMessage, onOpenThread } = renderPanel()
+    const { onJumpToMessage } = renderPanel()
 
     expect(await screen.findByText(/^in /)).toBeInTheDocument()
     await userEvent.click(screen.getByRole("button", { name: "Go to message" }))
-    expect(onOpenThread).toHaveBeenCalledWith(THREAD)
-    expect(onJumpToMessage).toHaveBeenCalledWith("msg_t")
+    expect(onJumpToMessage).toHaveBeenCalledWith("msg_t", THREAD)
   })
 
   it("lists only a thread's own rows when opened on the thread", async () => {

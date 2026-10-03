@@ -33,15 +33,17 @@ export function useStreamContextDockLayout(
   return { layout, target, setTarget }
 }
 
-export type StreamContextDockLayout = ReturnType<typeof useStreamContextDockLayout>
+type StreamContextDockLayout = ReturnType<typeof useStreamContextDockLayout>
 
 export function StreamContextDockSlot({
   dock,
   insetRight,
+  insetAnimates,
   inert,
 }: {
   dock: StreamContextDockLayout
   insetRight: number
+  insetAnimates: boolean
   inert?: boolean
 }) {
   const { layout } = dock
@@ -62,6 +64,7 @@ export function StreamContextDockSlot({
       onResizeEnd={layout.handleResizeEnd}
       onResizeKeyDown={layout.handleResizeKeyDown}
       insetRight={insetRight}
+      insetAnimates={insetAnimates}
       inert={inert}
     >
       <div ref={dock.setTarget} className="flex h-full min-h-0 flex-col bg-background" />

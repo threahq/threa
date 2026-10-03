@@ -533,7 +533,7 @@ function ContextRowWithOccurrences({
   streamId: string
   searchTerms: string[]
   filters: RowFilters
-  onJumpToMessage: (messageId: string) => void
+  onJumpToMessage: StreamContextPanelProps["onJumpToMessage"]
   onOpenThread: (threadId: string) => void
   onOpenMemo: (memoId: string) => void
   onOpenGallery: (key: string) => void
@@ -541,12 +541,9 @@ function ContextRowWithOccurrences({
   const [expanded, setExpanded] = useState(false)
   const expandable = row.occurrenceCount > 1 && row._status !== "pending"
 
-  // A thread's artifact is part of its root's context (INV-62), so opening it
-  // means opening the thread first — the message isn't in the root's timeline.
-  const jump = (messageId: string) => {
-    if (row.streamId !== streamId) onOpenThread(row.streamId)
-    onJumpToMessage(messageId)
-  }
+  // A thread's artifact is part of its root's context (INV-62); its message is
+  // in the thread's timeline, not the root's.
+  const jump = (messageId: string) => onJumpToMessage(messageId, row.streamId)
 
   return (
     <div>
@@ -581,7 +578,6 @@ function ContextRowWithOccurrences({
           filters={filters}
           searchTerms={searchTerms}
           onJump={onJumpToMessage}
-          onOpenThread={onOpenThread}
         />
       )}
     </div>
@@ -604,15 +600,13 @@ function OccurrenceList({
   filters,
   searchTerms,
   onJump,
-  onOpenThread,
 }: {
   row: CachedStreamContextItem
   workspaceId: string
   streamId: string
   filters: RowFilters
   searchTerms: string[]
-  onJump: (messageId: string) => void
-  onOpenThread: (threadId: string) => void
+  onJump: StreamContextPanelProps["onJumpToMessage"]
 }) {
   const groupRef = contextGroupRef(row)
   const { scope } = useStreamContextScope(streamId)
@@ -665,8 +659,7 @@ function OccurrenceList({
             onClick={() => {
               const target = occurrence.sourceMessageId ?? occurrence.anchorEventId
               if (!target) return
-              if (occurrence.streamId !== streamId) onOpenThread(occurrence.streamId)
-              onJump(target)
+              onJump(target, occurrence.streamId)
             }}
             className={cn(
               "flex w-full items-center gap-2 rounded px-1 py-0.5 text-left text-[11px] text-muted-foreground",
