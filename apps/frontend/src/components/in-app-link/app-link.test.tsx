@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
+import { MemoryRouter, Route, Routes, matchRoutes, useLocation } from "react-router-dom"
+import { APP_LINK_PAGES } from "@threahq/types"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { SettingsDialog } from "@/components/settings/settings-dialog"
 import * as notificationsSettingsModule from "@/components/settings/notifications-settings"
 import { SettingsProvider } from "@/contexts"
 import * as workspaceStore from "@/stores/workspace-store"
+import { router } from "@/routes"
 
 function LocationProbe() {
   const location = useLocation()
@@ -85,5 +87,35 @@ describe("app: links in markdown", () => {
 
     expect(screen.queryByRole("link", { name: "Memory" })).toBeNull()
     expect(screen.getByText("Memory")).toBeInTheDocument()
+  })
+
+  it("should keep settings chips inert without a settings provider", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={["/w/ws_1"]}>
+          <Routes>
+            <Route
+              path="/w/:workspaceId"
+              element={
+                <MarkdownContent content="[Notifications](app:settings/notifications) or [Memory](app:memory)" />
+              }
+            />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    )
+
+    expect(screen.queryByRole("link", { name: "Notifications" })).toBeNull()
+    expect(screen.getByRole("link", { name: "Memory" })).toBeInTheDocument()
+  })
+
+  it("should point every page destination at a workspace route", () => {
+    const unrouted = APP_LINK_PAGES.filter((page) => {
+      const leaf = matchRoutes(router.routes, `/w/ws_1/${page}`)?.at(-1)?.route.path
+      return leaf === undefined || leaf.startsWith(":") || leaf === "*"
+    })
+
+    expect(unrouted).toEqual([])
   })
 })

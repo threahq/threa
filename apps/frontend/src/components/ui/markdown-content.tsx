@@ -6,6 +6,7 @@ import rehypeRaw from "rehype-raw"
 import rehypeSanitize, { defaultSchema, type Options as SanitizeSchema } from "rehype-sanitize"
 import "katex/dist/katex.min.css"
 import { extractMath, normalizeMarkdownTables, parseMentionPointerHref } from "@threahq/prosemirror"
+import { APP_LINK_SCHEME } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { markdownComponents } from "@/lib/markdown/components"
 import { remarkThreaMath } from "@/lib/markdown/remark-math"
@@ -91,7 +92,7 @@ function urlTransform(url: string): string {
   }
   // Allow app: protocol so MarkdownLink can render in-app destinations from
   // agents and the user guide as chips. Same reasoning as above.
-  if (url.startsWith("app:")) {
+  if (url.startsWith(APP_LINK_SCHEME)) {
     return url
   }
   // Allow giphy: protocol so the link renderer can swap the anchor for the

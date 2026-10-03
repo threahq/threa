@@ -69,7 +69,7 @@ describe("buildSystemPrompt", () => {
     const prompt = buildJoinedPrompt({ persona, context: scratchpadContext, scratchpadCustomPrompt: null })
 
     expect(prompt).toContain(
-      `Pages: ${APP_LINK_PAGES.join(", ")}. Settings tabs: ${APP_LINK_SETTINGS_TABS.join(", ")}. Workspace settings tabs: ${APP_LINK_WORKSPACE_SETTINGS_TABS.join(", ")} (ai-agents opens only for admins).`
+      `Pages: ${APP_LINK_PAGES.join(", ")}. Settings tabs: ${APP_LINK_SETTINGS_TABS.join(", ")}. Workspace settings tabs: ${APP_LINK_WORKSPACE_SETTINGS_TABS.join(", ")}.`
     )
   })
 

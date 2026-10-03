@@ -42,11 +42,13 @@ export type AppLinkDestination =
   | { kind: "workspace-settings"; tab: WorkspaceSettingsTab }
 
 /**
- * Tabs an `app:` link may open. Diagnostics and feature flags show only for
- * some viewers, and a link to a hidden tab silently opens another one.
+ * Tabs an `app:` link may open. Diagnostics, feature flags and AI agents show
+ * only for some viewers, and a link to a hidden tab silently opens another one.
  */
 export const APP_LINK_SETTINGS_TABS = SETTINGS_TABS.filter((tab) => tab !== "diagnostics")
-export const APP_LINK_WORKSPACE_SETTINGS_TABS = WORKSPACE_SETTINGS_TABS.filter((tab) => tab !== "feature-flags")
+export const APP_LINK_WORKSPACE_SETTINGS_TABS = WORKSPACE_SETTINGS_TABS.filter(
+  (tab) => tab !== "feature-flags" && tab !== "ai-agents"
+)
 
 export const APP_LINK_SCHEME = "app:"
 
