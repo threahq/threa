@@ -36,7 +36,7 @@ describe("Message idempotency", () => {
         companionMode: "off",
         createdBy: testUserId,
       })
-      await StreamMemberRepository.insert(client, testStreamId, testUserId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, testUserId)
     })
   })
 
@@ -100,7 +100,7 @@ describe("Message idempotency", () => {
     await expect(
       service.createMessageForPrincipalReturningConversation({ kind: "user", userId: testUserId }, params)
     ).rejects.toMatchObject({ status: 404, code: "STREAM_NOT_FOUND" })
-    await StreamMemberRepository.insert(pool, testStreamId, testUserId)
+    await StreamMemberRepository.insert(pool, testWorkspaceId, testStreamId, testUserId)
   })
 
   test("principal duplicate never returns another principal's row", async () => {
@@ -108,7 +108,7 @@ describe("Message idempotency", () => {
     const otherId = userId()
     await withTransaction(pool, async (client) => {
       await addTestMember(client, testWorkspaceId, otherId)
-      await StreamMemberRepository.insert(client, testStreamId, otherId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, otherId)
     })
     const clientMessageId = `other_duplicate_${Date.now()}`
     await service.createMessage({

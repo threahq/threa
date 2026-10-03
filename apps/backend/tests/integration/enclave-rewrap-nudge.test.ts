@@ -89,6 +89,7 @@ describe("findUnservablePending", () => {
         currentKeyGeneration: params.currentGen,
       })
       await MessageRepository.insert(client, {
+        workspaceId: wsId,
         id: triggerId,
         streamId: sId,
         sequence: 1n,

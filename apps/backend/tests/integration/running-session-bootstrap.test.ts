@@ -3,10 +3,11 @@ import { Pool } from "pg"
 import { setupTestDatabase } from "./setup"
 import { AgentStepTypes } from "@threahq/types"
 import { AgentSessionRepository, SessionStatuses } from "../../src/features/agents"
-import { messageId, sessionId, stepId, streamId } from "../../src/lib/id"
+import { messageId, sessionId, stepId, streamId, workspaceId } from "../../src/lib/id"
 
 describe("running-session bootstrap reads for a batch of joined streams", () => {
   let pool: Pool
+  const testWorkspaceId = workspaceId()
   const runningStream = streamId()
   const busyStream = streamId()
   const doneStream = streamId()
@@ -20,6 +21,7 @@ describe("running-session bootstrap reads for a batch of joined streams", () => 
     const seed = async (id: string, stream: string, status: (typeof SessionStatuses)[keyof typeof SessionStatuses]) =>
       AgentSessionRepository.insert(pool, {
         id,
+        workspaceId: testWorkspaceId,
         streamId: stream,
         personaId: "persona_bootstrap",
         triggerMessageId: messageId(),

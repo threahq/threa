@@ -487,6 +487,7 @@ describe("Access Control", () => {
       // A threadable card (delegation:created) in the public channel — no message anchor.
       const event = await StreamEventRepository.insert(pool, {
         id: eventId(),
+        workspaceId: wsId,
         streamId: channel.id,
         eventType: "delegation:created",
         payload: {},
@@ -835,6 +836,7 @@ describe("Access Control", () => {
       await withTransaction(pool, async (client) => {
         await StreamEventRepository.insert(client, {
           id: eventId(),
+          workspaceId: wsId,
           streamId: channel.id,
           eventType: "command_dispatched",
           payload: {
@@ -849,6 +851,7 @@ describe("Access Control", () => {
 
         await StreamEventRepository.insert(client, {
           id: eventId(),
+          workspaceId: wsId,
           streamId: channel.id,
           eventType: "command_completed",
           payload: {
@@ -905,6 +908,7 @@ describe("Access Control", () => {
       await withTransaction(pool, async (client) => {
         await StreamEventRepository.insert(client, {
           id: eventId(),
+          workspaceId: wsId,
           streamId: channel.id,
           eventType: "command_dispatched",
           payload: {
@@ -919,6 +923,7 @@ describe("Access Control", () => {
 
         await StreamEventRepository.insert(client, {
           id: eventId(),
+          workspaceId: wsId,
           streamId: channel.id,
           eventType: "command_failed",
           payload: {

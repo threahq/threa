@@ -170,7 +170,7 @@ describe("inbox hold", () => {
       const reader = userId()
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 1)
-      await StreamMemberRepository.insert(pool, sid, reader)
+      await StreamMemberRepository.insert(pool, wid, sid, reader)
       const [evt1] = await StreamEventRepository.list(pool, sid)
       const first = await ReadStateRepository.advance(pool, sid, reader, evt1.id, { holdInInbox: true })
       expect(first.held).toBe(true)
@@ -182,6 +182,7 @@ describe("inbox hold", () => {
       // is covered separately.
       const evt2 = await StreamEventRepository.insert(pool, {
         id: eventId(),
+        workspaceId: wid,
         streamId: sid,
         eventType: "message_created",
         payload: { messageId: "msg_synthetic" },
@@ -403,7 +404,7 @@ describe("inbox hold", () => {
         const author = userId()
         await seedChannel(wid, sid, other, "public")
         await sendMessages(wid, sid, other, 1)
-        await UserPreferencesRepository.setOverride(pool, author, "inboxClearMode", "manual")
+        await UserPreferencesRepository.setOverride(pool, wid, author, "inboxClearMode", "manual")
 
         await eventService.createMessage({
           workspaceId: wid,
@@ -433,7 +434,7 @@ describe("inbox hold", () => {
         const author = userId()
         await seedChannel(wid, sid, other, "public")
         await sendMessages(wid, sid, other, 1)
-        await UserPreferencesRepository.setOverride(pool, author, "inboxClearMode", "read")
+        await UserPreferencesRepository.setOverride(pool, wid, author, "inboxClearMode", "read")
 
         await eventService.createMessage({
           workspaceId: wid,
@@ -458,7 +459,7 @@ describe("inbox hold", () => {
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 1)
       const [evt] = await StreamEventRepository.list(pool, sid)
-      await UserPreferencesRepository.setOverride(pool, reader, "inboxClearMode", "read")
+      await UserPreferencesRepository.setOverride(pool, wid, reader, "inboxClearMode", "read")
 
       await streamService.markAsRead(wid, sid, reader, evt.id)
 
@@ -474,7 +475,7 @@ describe("inbox hold", () => {
       await seedChannel(wid, sid, author)
       await sendMessages(wid, sid, author, 1)
       const [evt] = await StreamEventRepository.list(pool, sid)
-      await UserPreferencesRepository.setOverride(pool, reader, "inboxClearMode", "manual")
+      await UserPreferencesRepository.setOverride(pool, wid, reader, "inboxClearMode", "manual")
 
       await streamService.markAsRead(wid, sid, reader, evt.id)
 
@@ -503,9 +504,9 @@ describe("inbox hold", () => {
       const author = userId()
       const reader = userId()
       await seedChannel(wid, sid, author)
-      await StreamMemberRepository.insert(pool, sid, reader)
+      await StreamMemberRepository.insert(pool, wid, sid, reader)
       const [msg1] = await sendMessages(wid, sid, author, 1)
-      await UserPreferencesRepository.setOverride(pool, reader, "inboxClearMode", "read")
+      await UserPreferencesRepository.setOverride(pool, wid, reader, "inboxClearMode", "read")
 
       await withTransaction(pool, (client) =>
         applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg1] })
@@ -521,9 +522,9 @@ describe("inbox hold", () => {
       const author = userId()
       const reader = userId()
       await seedChannel(wid, sid, author)
-      await StreamMemberRepository.insert(pool, sid, reader)
+      await StreamMemberRepository.insert(pool, wid, sid, reader)
       const [msg1] = await sendMessages(wid, sid, author, 1)
-      await UserPreferencesRepository.setOverride(pool, reader, "inboxClearMode", "manual")
+      await UserPreferencesRepository.setOverride(pool, wid, reader, "inboxClearMode", "manual")
 
       await withTransaction(pool, (client) =>
         applySparseRead(client, { workspaceId: wid, streamId: sid, memberId: reader, messageIds: [msg1] })
@@ -575,7 +576,7 @@ describe("inbox hold", () => {
       const [msg1] = await sendMessages(wid, sid, author, 1)
       const [evt1] = await StreamEventRepository.list(pool, sid)
       await ReadStateRepository.advance(pool, sid, reactor, evt1.id, { holdInInbox: true })
-      await UserPreferencesRepository.setOverride(pool, reactor, "inboxClearMode", "manual")
+      await UserPreferencesRepository.setOverride(pool, wid, reactor, "inboxClearMode", "manual")
 
       await addReaction(wid, sid, msg1, reactor)
 
@@ -590,7 +591,7 @@ describe("inbox hold", () => {
       const reactor = userId()
       await seedChannel(wid, sid, author, "public")
       const [msg1] = await sendMessages(wid, sid, author, 1)
-      await UserPreferencesRepository.setOverride(pool, reactor, "inboxClearMode", "read")
+      await UserPreferencesRepository.setOverride(pool, wid, reactor, "inboxClearMode", "read")
 
       await addReaction(wid, sid, msg1, reactor)
 
@@ -972,7 +973,7 @@ describe("inbox hold", () => {
       const sid = streamId()
       await seedChannel(wid, sid, author, "public")
       await sendMessages(wid, sid, author, 1)
-      await StreamMemberRepository.insert(pool, sid, reader)
+      await StreamMemberRepository.insert(pool, wid, sid, reader)
 
       const result = await streamService.markAllAsRead(wid, reader)
 
@@ -987,7 +988,7 @@ describe("inbox hold", () => {
       const reader = userId()
       const sid = streamId()
       await seedChannel(wid, sid, author, "public")
-      await StreamMemberRepository.insert(pool, sid, reader)
+      await StreamMemberRepository.insert(pool, wid, sid, reader)
       await sendMessages(wid, sid, author, 1)
       const [evt1] = await StreamEventRepository.list(pool, sid)
 

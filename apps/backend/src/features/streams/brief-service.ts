@@ -177,6 +177,7 @@ export class StreamBriefService {
   ): Promise<void> {
     const event = await StreamEventRepository.insert(client, {
       id: eventId(),
+      workspaceId: params.workspaceId,
       streamId: params.streamId,
       eventType: "brief_updated",
       payload: params.payload,

@@ -10,7 +10,12 @@
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
-import { MessageReferenceErrorCodes, sharedMessageSlotKey, type JSONContent, type SharedMessageRef } from "@threahq/types"
+import {
+  MessageReferenceErrorCodes,
+  sharedMessageSlotKey,
+  type JSONContent,
+  type SharedMessageRef,
+} from "@threahq/types"
 
 import { setupTestDatabase, withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
@@ -95,7 +100,7 @@ describe("message reference resolution", () => {
           slug: `${label}-${id.slice(-8)}`,
           createdBy: author,
         })
-        await StreamMemberRepository.insert(client, id, author)
+        await StreamMemberRepository.insert(client, testWorkspaceId, id, author)
       }
     })
   })
@@ -282,7 +287,7 @@ describe("message reference resolution", () => {
         slug: `walled-${walled.slice(-8)}`,
         createdBy: stranger,
       })
-      await StreamMemberRepository.insert(client, walled, stranger)
+      await StreamMemberRepository.insert(client, testWorkspaceId, walled, stranger)
     })
     const secret = await eventService.createMessage({
       workspaceId: testWorkspaceId,
@@ -407,6 +412,7 @@ describe("message reference resolution", () => {
       }
       await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id,
           streamId: source,
           sequence: legacySequence++,

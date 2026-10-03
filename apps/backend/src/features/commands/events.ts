@@ -71,6 +71,7 @@ export async function insertCommandDispatchedEvent(
 ): Promise<StreamEvent> {
   const evt = await StreamEventRepository.insert(db, {
     id: params.eventId ?? eventId(),
+    workspaceId: params.workspaceId,
     streamId: params.streamId,
     eventType: "command_dispatched",
     payload: {
@@ -110,6 +111,7 @@ export async function insertCommandCompletedEvent(
 ): Promise<StreamEvent> {
   const evt = await StreamEventRepository.insert(db, {
     id: eventId(),
+    workspaceId: params.workspaceId,
     streamId: params.streamId,
     eventType: "command_completed",
     payload: {
@@ -137,6 +139,7 @@ export async function insertCommandProgressEvent(
 ): Promise<StreamEvent> {
   const evt = await StreamEventRepository.insert(db, {
     id: eventId(),
+    workspaceId: params.workspaceId,
     streamId: params.streamId,
     eventType: "command_progress",
     payload: { commandId: params.commandId, step: params.step } satisfies CommandProgressPayload,
@@ -160,6 +163,7 @@ export async function insertCommandFailedEvent(
 ): Promise<StreamEvent> {
   const evt = await StreamEventRepository.insert(db, {
     id: eventId(),
+    workspaceId: params.workspaceId,
     streamId: params.streamId,
     eventType: "command_failed",
     payload: { commandId: params.commandId, error: params.error } satisfies CommandFailedPayload,

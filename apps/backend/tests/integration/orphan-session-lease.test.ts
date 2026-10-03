@@ -74,6 +74,7 @@ describe("AgentSessionRepository.findOrphaned with a live claim lease", () => {
 
   async function seedStaleRunningSession(id: string): Promise<void> {
     await AgentSessionRepository.insert(pool, {
+      workspaceId: ws,
       id,
       streamId: stream,
       personaId: botId,

@@ -121,14 +121,15 @@ describe("runtime E2E key registry", () => {
   }): Promise<void> {
     const trigger = messageId()
     await pool.query(
-      `INSERT INTO messages (id, stream_id, sequence, author_id, author_type, content_json, content_markdown, revision, ciphertext, envelope)
-       VALUES ($1, $2, $5, $3, 'user', '{"type":"doc"}', '[encrypted]', 1, '\\x02', $4)`,
+      `INSERT INTO messages (id, workspace_id, stream_id, sequence, author_id, author_type, content_json, content_markdown, revision, ciphertext, envelope)
+       VALUES ($1, $6, $2, $5, $3, 'user', '{"type":"doc"}', '[encrypted]', 1, '\\x02', $4)`,
       [
         trigger,
         params.streamId,
         owner,
         JSON.stringify({ v: 2, keyGeneration: params.triggerGeneration }),
         nextSequence++,
+        ws,
       ]
     )
     await BotInvocationRepository.insertIdempotent(pool, {

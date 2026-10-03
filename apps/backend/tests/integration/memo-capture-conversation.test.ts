@@ -71,6 +71,7 @@ describe("save_memo capture event", () => {
       })
       for (const [index, id] of [sourceMessageId, orphanMessageId].entries()) {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id,
           streamId: testStreamId,
           sequence: BigInt(index + 1),

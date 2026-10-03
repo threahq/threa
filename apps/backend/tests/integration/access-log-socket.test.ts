@@ -515,9 +515,9 @@ describe("access-log socket capture", () => {
       )
     const insertEvent = (seq: number, createdAt: string) =>
       pool.query(
-        `INSERT INTO stream_events (id, stream_id, sequence, event_type, actor_id, actor_type, payload, created_at)
-         VALUES ($1,$2,$3,'message_created',$4,'user','{}'::jsonb,$5)`,
-        [`evt_${Math.random().toString(36).slice(2)}`, streamId, seq, userId, createdAt]
+        `INSERT INTO stream_events (id, workspace_id, stream_id, sequence, event_type, actor_id, actor_type, payload, created_at)
+         VALUES ($1,$2,$3,$4,'message_created',$5,'user','{}'::jsonb,$6)`,
+        [`evt_${Math.random().toString(36).slice(2)}`, wsId, streamId, seq, userId, createdAt]
       )
 
     await insertAccess("subscribe", [{ type: "stream", id: streamId }], at(0))

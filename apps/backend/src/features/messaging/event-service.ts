@@ -903,6 +903,7 @@ export class EventService {
 
     const event = await StreamEventRepository.insert(client, {
       id: evtId,
+      workspaceId: params.workspaceId,
       streamId: params.streamId,
       eventType: "message_created",
       payload: {
@@ -928,6 +929,7 @@ export class EventService {
 
     const message = await MessageRepository.insert(client, {
       id: msgId,
+      workspaceId: params.workspaceId,
       streamId: params.streamId,
       sequence: event.sequence,
       authorId: params.authorId,
@@ -986,7 +988,12 @@ export class EventService {
     }
 
     if (params.authorType === "persona") {
-      await StreamPersonaParticipantRepository.recordParticipation(client, params.streamId, params.authorId)
+      await StreamPersonaParticipantRepository.recordParticipation(
+        client,
+        params.workspaceId,
+        params.streamId,
+        params.authorId
+      )
     }
 
     // Compose-session provenance rides the send's own transaction so a trace can
@@ -1344,6 +1351,7 @@ export class EventService {
 
         const snapshot = await MessageVersionRepository.insert(client, {
           id: messageVersionId(),
+          workspaceId: params.workspaceId,
           messageId: params.messageId,
           versionNumber: existing.revision,
           contentJson: existing.contentJson,
@@ -1361,6 +1369,7 @@ export class EventService {
 
         const event = await StreamEventRepository.insert(client, {
           id: eventId(),
+          workspaceId: params.workspaceId,
           streamId: params.streamId,
           eventType: "message_edited",
           payload: {
@@ -1654,6 +1663,7 @@ export class EventService {
 
         await StreamEventRepository.insert(client, {
           id: eventId(),
+          workspaceId: params.workspaceId,
           streamId: params.streamId,
           eventType: "message_deleted",
           payload: {
@@ -1835,9 +1845,9 @@ export class EventService {
       // insert is idempotent (ON CONFLICT (stream_id, member_id) DO NOTHING),
       // so we can call it unconditionally for both the actor and the target
       // message's author without a precheck round-trip.
-      await StreamMemberRepository.insert(client, destinationThread.id, params.actorId)
+      await StreamMemberRepository.insert(client, params.workspaceId, destinationThread.id, params.actorId)
       if (targetMessage.authorType === AuthorTypes.USER && targetMessage.authorId !== params.actorId) {
-        await StreamMemberRepository.insert(client, destinationThread.id, targetMessage.authorId)
+        await StreamMemberRepository.insert(client, params.workspaceId, destinationThread.id, targetMessage.authorId)
       }
 
       const sourceEvents = await StreamEventRepository.findMessageCreatedByMessageIdsForUpdate(
@@ -1886,6 +1896,7 @@ export class EventService {
       // pair at the destination — the destination chain stays dense (INV-61).
       const nextSequencePairs = await StreamEventRepository.getNextSequencePairs(
         client,
+        params.workspaceId,
         destinationThread.id,
         movableEvents.length
       )
@@ -2118,6 +2129,7 @@ export class EventService {
       // destination gained dense fresh slots and has nothing to account for.
       const sourceTombstone = await StreamEventRepository.insert(client, {
         id: eventId(),
+        workspaceId: params.workspaceId,
         streamId: params.sourceStreamId,
         eventType: "messages:moved",
         payload: { ...tombstonePayload, vacatedBroadcastSequences } satisfies MessagesMovedEventPayload,
@@ -2127,6 +2139,7 @@ export class EventService {
       })
       const destinationTombstone = await StreamEventRepository.insert(client, {
         id: destinationTombstoneId,
+        workspaceId: params.workspaceId,
         streamId: destinationThread.id,
         eventType: "messages:moved",
         payload: tombstonePayload,
@@ -2362,6 +2375,7 @@ export class EventService {
         if (existing.streamId !== streamId) return { kind: "retry" as const, streamId: existing.streamId }
         await StreamEventRepository.insert(client, {
           id: eventId(),
+          workspaceId: params.workspaceId,
           streamId: params.streamId,
           eventType: "reaction_added",
           payload: {
@@ -2373,7 +2387,13 @@ export class EventService {
           actorType,
         })
 
-        const message = await MessageRepository.addReaction(client, params.messageId, params.emoji, params.userId)
+        const message = await MessageRepository.addReaction(
+          client,
+          params.workspaceId,
+          params.messageId,
+          params.emoji,
+          params.userId
+        )
 
         if (message && actorType === AuthorTypes.USER) {
           // Reacting is engagement: a provisional conversation placement the
@@ -2445,6 +2465,7 @@ export class EventService {
         if (existing.streamId !== streamId) return { kind: "retry" as const, streamId: existing.streamId }
         await StreamEventRepository.insert(client, {
           id: eventId(),
+          workspaceId: params.workspaceId,
           streamId: params.streamId,
           eventType: "reaction_removed",
           payload: {

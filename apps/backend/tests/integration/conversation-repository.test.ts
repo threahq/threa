@@ -88,6 +88,7 @@ describe("ConversationRepository", () => {
 
       const conversation = await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msgId,
           streamId: testStreamId,
           sequence: BigInt(1),
@@ -297,6 +298,7 @@ describe("ConversationRepository", () => {
 
       await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msgId,
           streamId: testStreamId,
           sequence: BigInt(100),
@@ -372,6 +374,7 @@ describe("ConversationRepository", () => {
       const convId = conversationId()
       const msgId = messageId()
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: msgId,
         streamId: lensStreamId,
         sequence: BigInt(seq++),
@@ -542,6 +545,7 @@ describe("ConversationRepository", () => {
       const convId = conversationId()
       const msgId = messageId()
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: msgId,
         streamId: convStreamId,
         sequence: BigInt(sequence),
@@ -578,6 +582,7 @@ describe("ConversationRepository", () => {
         // and must still match the CHANNEL's scope via the root rule.
         const parentMsgId = messageId()
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: parentMsgId,
           streamId: scopedChannelId,
           sequence: BigInt(2),
@@ -812,6 +817,7 @@ describe("ConversationRepository", () => {
 
       await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg1Id,
           streamId: testStreamId,
           sequence: BigInt(200),
@@ -821,6 +827,7 @@ describe("ConversationRepository", () => {
         })
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msg2Id,
           streamId: testStreamId,
           sequence: BigInt(201),
@@ -865,6 +872,7 @@ describe("ConversationRepository", () => {
         user2UserId = (await addTestMember(client, testWorkspaceId, user2WorkosId)).id
 
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msgId,
           streamId: testStreamId,
           sequence: BigInt(300),
@@ -991,6 +999,7 @@ describe("ConversationRepository", () => {
 
       const conversation = await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msgId,
           streamId: testStreamId,
           sequence: BigInt(400),
@@ -1021,6 +1030,7 @@ describe("ConversationRepository", () => {
 
       const conversation = await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msgId,
           streamId: testStreamId,
           sequence: BigInt(401),
@@ -1051,6 +1061,7 @@ describe("ConversationRepository", () => {
 
       const conversation = await withTransaction(pool, async (client) => {
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: msgId,
           streamId: testStreamId,
           sequence: BigInt(402),

@@ -2034,7 +2034,7 @@ describe("durable push delivery", () => {
       const users = await workspaceWithUsers()
       const root = await channel(ws === "" ? users.ws : ws, users.author.id, visibility)
       const members = rootMembers([users.author.id, users.recipient.id])
-      if (members.length > 0) await StreamMemberRepository.insertMany(pool, root.id, members)
+      if (members.length > 0) await StreamMemberRepository.insertMany(pool, root.workspaceId, root.id, members)
       const child = await StreamRepository.insert(pool, {
         id: streamId(),
         workspaceId: users.ws,

@@ -62,7 +62,7 @@ describe("Phantom-unread drift fixes", () => {
       visibility: "private",
       createdBy: actor.id,
     })
-    await StreamMemberRepository.insert(pool, source, actor.id)
+    await StreamMemberRepository.insert(pool, wid, source, actor.id)
 
     const target = await send(wid, source, actor.id, "target")
     const keep = await send(wid, source, actor.id, "keep")
@@ -106,8 +106,8 @@ describe("Phantom-unread drift fixes", () => {
       visibility: "private",
       createdBy: actor.id,
     })
-    await StreamMemberRepository.insert(pool, source, actor.id)
-    await StreamMemberRepository.insert(pool, source, reader.id)
+    await StreamMemberRepository.insert(pool, wid, source, actor.id)
+    await StreamMemberRepository.insert(pool, wid, source, reader.id)
 
     const target = await send(wid, source, actor.id, "target")
     const m1 = await send(wid, source, actor.id, "m1")
@@ -167,8 +167,8 @@ describe("Phantom-unread drift fixes", () => {
       visibility: "private",
       createdBy: actor.id,
     })
-    await StreamMemberRepository.insert(pool, source, actor.id)
-    await StreamMemberRepository.insert(pool, source, reader.id)
+    await StreamMemberRepository.insert(pool, wid, source, actor.id)
+    await StreamMemberRepository.insert(pool, wid, source, reader.id)
 
     const target = await send(wid, source, actor.id, "target")
     const m1 = await send(wid, source, actor.id, "m1")
@@ -219,7 +219,7 @@ describe("Phantom-unread drift fixes", () => {
       visibility: "private",
       createdBy: actor.id,
     })
-    await StreamMemberRepository.insert(pool, source, actor.id)
+    await StreamMemberRepository.insert(pool, wid, source, actor.id)
 
     const msg = await send(wid, source, actor.id, "@mention you")
 

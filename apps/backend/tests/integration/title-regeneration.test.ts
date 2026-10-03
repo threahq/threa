@@ -41,7 +41,7 @@ describe("title regeneration", () => {
         displayNameSource: "explicit",
         createdBy: ownerId,
       })
-      await StreamMemberRepository.insert(tx, sId, ownerId)
+      await StreamMemberRepository.insert(tx, wsId, sId, ownerId)
     })
     return { wsId, ownerId, sId }
   }
@@ -93,7 +93,7 @@ describe("title regeneration", () => {
         slug: `regen-${channelId}`,
         createdBy: ownerId,
       })
-      await StreamMemberRepository.insert(tx, channelId, ownerId)
+      await StreamMemberRepository.insert(tx, wsId, channelId, ownerId)
       await ConversationRepository.insert(tx, {
         id: cId,
         workspaceId: wsId,

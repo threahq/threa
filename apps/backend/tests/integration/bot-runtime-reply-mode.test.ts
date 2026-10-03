@@ -33,7 +33,7 @@ describe("linked session reply mode", () => {
       "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)",
       [root, workspace, owner]
     )
-    await StreamMemberRepository.insert(pool, root, owner)
+    await StreamMemberRepository.insert(pool, workspace, root, owner)
     const bot = `bot_${crypto.randomUUID().replaceAll("-", "").slice(0, 20)}`
     await BotRepository.create(pool, {
       id: bot,
@@ -66,9 +66,16 @@ describe("linked session reply mode", () => {
     return { workspace, root, owner, bot, instance, session, link }
   }
 
-  async function post(stream: string, author: string, markdown: string, metadata?: Record<string, string>) {
+  async function post(
+    workspace: string,
+    stream: string,
+    author: string,
+    markdown: string,
+    metadata?: Record<string, string>
+  ) {
     sequence += 1n
     return MessageRepository.insert(pool, {
+      workspaceId: workspace,
       id: messageId(),
       streamId: stream,
       sequence,
@@ -151,7 +158,7 @@ describe("linked session reply mode", () => {
     await replies(scenario, "thread")
     const service = botRuntimeServiceFor(pool)
 
-    const message = await post(scenario.root, scenario.owner, "what changed?")
+    const message = await post(scenario.workspace, scenario.root, scenario.owner, "what changed?")
     await service.reconcileInvocationSource({ workspaceId: scenario.workspace, sourceMessageId: message.id })
     const thread = await StreamRepository.findByAnchor(pool, scenario.root, message.id)
     expect(thread).toMatchObject({ type: "thread", rootStreamId: scenario.root, createdBy: scenario.bot })
@@ -172,7 +179,7 @@ describe("linked session reply mode", () => {
     })
     expect(claimed).toMatchObject({ sourceMessageId: message.id, responseStreamId: thread!.id, status: "claimed" })
 
-    const inThread = await post(thread!.id, scenario.owner, "follow-up")
+    const inThread = await post(scenario.workspace, thread!.id, scenario.owner, "follow-up")
     await service.reconcileInvocationSource({ workspaceId: scenario.workspace, sourceMessageId: inThread.id })
     expect(await invocationsFor(inThread.id)).toEqual([{ response_stream_id: thread!.id, status: "pending" }])
   })
@@ -204,7 +211,7 @@ describe("linked session reply mode", () => {
   test("should answer a /thread message in a thread on it when the session replies flat", async () => {
     const scenario = await seed()
     const service = botRuntimeServiceFor(pool)
-    const message = await post(scenario.root, scenario.owner, "just this once", {
+    const message = await post(scenario.workspace, scenario.root, scenario.owner, "just this once", {
       [MESSAGE_METADATA_REPLY_IN_THREAD_KEY]: "true",
     })
     await service.reconcileInvocationSource({ workspaceId: scenario.workspace, sourceMessageId: message.id })
@@ -228,7 +235,7 @@ describe("linked session reply mode", () => {
 
   test("should answer a root message in the scratchpad in flat mode", async () => {
     const scenario = await seed()
-    const message = await post(scenario.root, scenario.owner, "flat please")
+    const message = await post(scenario.workspace, scenario.root, scenario.owner, "flat please")
     await botRuntimeServiceFor(pool).reconcileInvocationSource({
       workspaceId: scenario.workspace,
       sourceMessageId: message.id,

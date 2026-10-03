@@ -8,6 +8,7 @@ import { AgentStepTypes } from "@threahq/types"
 import { setupTestDatabase, testMessageContent } from "./setup"
 
 describe("Agent Session Repository", () => {
+  const testWorkspaceId = workspaceId()
   let pool: Pool
   let eventService: EventService
 
@@ -45,6 +46,7 @@ describe("Agent Session Repository", () => {
 
       await withClient(pool, async (client) => {
         await AgentSessionRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: testSessionId,
           streamId: testStreamId,
           personaId: testPersonaId,
@@ -69,6 +71,7 @@ describe("Agent Session Repository", () => {
 
       await withClient(pool, async (client) => {
         await AgentSessionRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: testSessionId,
           streamId: testStreamId,
           personaId: testPersonaId,
@@ -91,6 +94,7 @@ describe("Agent Session Repository", () => {
 
       await withClient(pool, async (client) => {
         await AgentSessionRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: sessionId(),
           streamId: testStreamId1,
           personaId: testPersonaId,
@@ -121,6 +125,7 @@ describe("Agent Session Repository", () => {
 
       await withClient(pool, async (client) => {
         await AgentSessionRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: session1Id,
           streamId: testStreamId,
           personaId: testPersonaId,
@@ -133,6 +138,7 @@ describe("Agent Session Repository", () => {
         await new Promise((r) => setTimeout(r, 10))
 
         await AgentSessionRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: session2Id,
           streamId: testStreamId,
           personaId: testPersonaId,
@@ -157,6 +163,7 @@ describe("Agent Session Repository", () => {
 
       await withClient(pool, async (client) => {
         await AgentSessionRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: testSessionId,
           streamId: testStreamId,
           personaId: testPersonaId,
@@ -181,6 +188,7 @@ describe("Agent Session Repository", () => {
 
       await withClient(pool, async (client) => {
         const inserted = await AgentSessionRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: testSessionId,
           streamId: testStreamId,
           personaId: testPersonaId,
@@ -418,6 +426,7 @@ describe("Message Repository - listSince", () => {
 })
 
 describe("Agent Session - sentMessageIds", () => {
+  const testWorkspaceId = workspaceId()
   let pool: Pool
 
   beforeAll(async () => {
@@ -441,6 +450,7 @@ describe("Agent Session - sentMessageIds", () => {
 
     await withClient(pool, async (client) => {
       await AgentSessionRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: testSessionId,
         streamId: testStreamId,
         personaId: testPersonaId,
@@ -468,6 +478,7 @@ describe("Agent Session - sentMessageIds", () => {
     const testSessionId = sessionId()
 
     const session = await AgentSessionRepository.insert(pool, {
+      workspaceId: testWorkspaceId,
       id: testSessionId,
       streamId: testStreamId,
       personaId: testPersonaId,
@@ -481,6 +492,7 @@ describe("Agent Session - sentMessageIds", () => {
 })
 
 describe("Agent Session - Concurrency", () => {
+  const testWorkspaceId = workspaceId()
   let pool: Pool
 
   beforeAll(async () => {
@@ -503,6 +515,7 @@ describe("Agent Session - Concurrency", () => {
 
     // Insert a running session
     await AgentSessionRepository.insert(pool, {
+      workspaceId: testWorkspaceId,
       id: testSessionId,
       streamId: testStreamId,
       personaId: testPersonaId,
@@ -594,6 +607,7 @@ describe("Agent Session - Concurrency", () => {
 
         try {
           const session = await AgentSessionRepository.insert(client, {
+            workspaceId: testWorkspaceId,
             id,
             streamId: testStreamId,
             personaId: testPersonaId,
@@ -635,6 +649,7 @@ describe("Agent Session - Concurrency", () => {
     // Insert running sessions for two different streams
     await withClient(pool, async (client) => {
       await AgentSessionRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: session1Id,
         streamId: stream1Id,
         personaId: testPersonaId,
@@ -644,6 +659,7 @@ describe("Agent Session - Concurrency", () => {
       })
 
       await AgentSessionRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: session2Id,
         streamId: stream2Id,
         personaId: testPersonaId,
@@ -686,6 +702,7 @@ describe("Agent Session - Concurrency", () => {
       await withClient(pool, async (client) => {
         // Create session first
         await AgentSessionRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: testSessionId,
           streamId: testStreamId,
           personaId: testPersonaId,
@@ -744,6 +761,7 @@ describe("Agent Session - Concurrency", () => {
       const testSessionId = sessionId()
       await withClient(pool, async (client) => {
         await AgentSessionRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id: testSessionId,
           streamId: streamId(),
           personaId: personaId(),
@@ -778,6 +796,7 @@ describe("Agent Session - Concurrency", () => {
       // DO UPDATE in upsertStep clobbered one row instead of appending two.
       const testSessionId = sessionId()
       await AgentSessionRepository.insert(pool, {
+        workspaceId: testWorkspaceId,
         id: testSessionId,
         streamId: streamId(),
         personaId: personaId(),
@@ -846,6 +865,7 @@ describe("Agent Session - Concurrency", () => {
       // Fire two concurrent insertRunningOrSkip calls for the same stream
       const [result1, result2] = await Promise.all([
         AgentSessionRepository.insertRunningOrSkip(pool, {
+          workspaceId: testWorkspaceId,
           id: sessionId(),
           streamId: testStreamId,
           personaId: testPersonaId,
@@ -854,6 +874,7 @@ describe("Agent Session - Concurrency", () => {
           initialSequence: BigInt(0),
         }),
         AgentSessionRepository.insertRunningOrSkip(pool, {
+          workspaceId: testWorkspaceId,
           id: sessionId(),
           streamId: testStreamId,
           personaId: testPersonaId,
@@ -883,6 +904,7 @@ describe("Agent Session - Concurrency", () => {
 
       // Create first session
       const session1 = await AgentSessionRepository.insertRunningOrSkip(pool, {
+        workspaceId: testWorkspaceId,
         id: sessionId(),
         streamId: testStreamId,
         personaId: testPersonaId,
@@ -899,6 +921,7 @@ describe("Agent Session - Concurrency", () => {
 
       // Now a second session should be allowed
       const session2 = await AgentSessionRepository.insertRunningOrSkip(pool, {
+        workspaceId: testWorkspaceId,
         id: sessionId(),
         streamId: testStreamId,
         personaId: testPersonaId,
