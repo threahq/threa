@@ -621,7 +621,8 @@ export const MemoRepository = {
         AND source_message_ids && ${messageIds}::text[]
         AND EXISTS (
           SELECT 1 FROM messages
-          WHERE messages.id = ANY(memos.source_message_ids)
+          WHERE messages.workspace_id = memos.workspace_id
+            AND messages.id = ANY(memos.source_message_ids)
             AND messages.id = ANY(${messageIds}::text[])
             AND messages.edited_at > memos.created_at
         )
