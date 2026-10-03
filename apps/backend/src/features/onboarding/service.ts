@@ -5,15 +5,7 @@ import { HttpError } from "../../lib/errors"
 import { onboardingGreetingId, queueId } from "../../lib/id"
 import { JobQueues, enqueueQueuedJob, type PersonaAgentJobData } from "../../lib/queue"
 import { PersonaRepository } from "../agents"
-import { StreamRepository, type StreamService } from "../streams"
-
-/**
- * `uniqueness_key` of a user's "Meet Ariadne" scratchpad. One per user per
- * workspace; its existence is the checklist item's done signal.
- */
-export function onboardingStreamUniquenessKey(userId: string): string {
-  return `onboarding:meet-ariadne:${userId}`
-}
+import { StreamRepository, onboardingStreamUniquenessKey, type StreamService } from "../streams"
 
 interface Dependencies {
   pool: Pool

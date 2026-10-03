@@ -1,15 +1,14 @@
 import { useCallback } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
-import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { Bell, Camera, Check, PenLine, Sparkles, UserPlus, X } from "lucide-react"
 import { onboardingApi } from "@/api"
-import { workspaceKeys } from "@/hooks/use-workspaces"
+import { db } from "@/db"
 import { useSettings, useSidebar, usePreferencesOptional } from "@/contexts"
 import { usePushNotifications } from "@/hooks/use-push-notifications"
 import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { cn } from "@/lib/utils"
-import { StreamTypes, WORKSPACE_ROLE_SLUGS, type Stream, type User, type WorkspaceBootstrap } from "@threahq/types"
+import { StreamTypes, WORKSPACE_ROLE_SLUGS, type Stream, type User } from "@threahq/types"
 
 interface GettingStartedTask {
   id: string
@@ -82,7 +81,6 @@ export function useGettingStarted({
   const { collapseOnMobile } = useSidebar()
   const [, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
-  const queryClient = useQueryClient()
   // Mounting the hook here also gives the app a persistent auto-resubscribe
   // surface — previously it only ran while the notifications settings tab
   // was open.
@@ -96,15 +94,13 @@ export function useGettingStarted({
   const meetAriadne = useCallback(async () => {
     try {
       const { streamId } = await onboardingApi.meetAriadne(workspaceId)
-      queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) =>
-        old ? { ...old, onboardingStreamId: streamId } : old
-      )
+      await db.workspaceMetadata.update(workspaceId, { onboardingStreamId: streamId })
       collapseOnMobile()
       navigate(`/w/${workspaceId}/s/${streamId}`)
     } catch {
       toast.error("Couldn't start the conversation with Ariadne")
     }
-  }, [workspaceId, queryClient, collapseOnMobile, navigate])
+  }, [workspaceId, collapseOnMobile, navigate])
 
   const openInvites = useCallback(() => {
     collapseOnMobile()

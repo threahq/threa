@@ -17,7 +17,13 @@ import {
 } from "@threahq/types"
 import type { UserPreferencesService } from "../user-preferences"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
-import { assertStreamWritable, StreamPoliciesRepository, StreamRepository, resolveBriefStreamId } from "../streams"
+import {
+  assertStreamWritable,
+  onboardingStreamUniquenessKey,
+  StreamPoliciesRepository,
+  StreamRepository,
+  resolveBriefStreamId,
+} from "../streams"
 import { MessageRepository, MessageVersionRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
 import type { InjectionScreen } from "./injection-screen"
@@ -530,6 +536,20 @@ export class PersonaAgent {
       if (!stream) {
         return { skip: true as const, reason: "stream not found" }
       }
+      // A retry whose first attempt already posted the greeting, or a user who
+      // wrote before it ran: the greeting is only ever the stream's first word.
+      if (purpose.kind === "onboarding_greeting" && (stream.messageCount ?? 0) > 0) {
+        return { skip: true as const, reason: "onboarding stream already has messages" }
+      }
+      const isOnboardingStream =
+        stream.type === StreamTypes.SCRATCHPAD &&
+        (
+          await StreamRepository.findByUniquenessKey(
+            client,
+            workspaceId,
+            onboardingStreamUniquenessKey(stream.createdBy)
+          )
+        )?.id === stream.id
 
       const latestSequence = await StreamEventRepository.getLatestSequence(client, streamId)
       const triggerMessageRevision = await MessageVersionRepository.getCurrentRevision(client, messageId)
@@ -559,6 +579,7 @@ export class PersonaAgent {
         streamToolPolicy,
         rootStreamType,
         rootStreamCreatedBy,
+        isOnboardingStream,
       }
     })
 
@@ -593,6 +614,7 @@ export class PersonaAgent {
       streamToolPolicy,
       rootStreamType,
       rootStreamCreatedBy,
+      isOnboardingStream,
     } = precheck
 
     // The live subagent run this stream is the thread of, if any. One query,
@@ -981,12 +1003,14 @@ export class PersonaAgent {
 
         // The purpose as it effectively behaves this turn: a supersede rerun
         // whose target session vanished (no reusable plan), or a follow-up whose
-        // row failed to load, degrades to a plain catch-up. The purpose prompt
+        // row failed to load, degrades to a plain catch-up; a catch-up in the
+        // user's Meet Ariadne scratchpad carries the tour. The purpose prompt
         // section and the derived runtime flags both key off this, so wording and
         // behavior match what the turn actually does.
         let effectivePurpose: TurnPurpose = purpose
         if (purpose.kind === "supersede_rerun" && !isSupersedeRerun) effectivePurpose = { kind: "catch_up" }
         else if (purpose.kind === "follow_up" && !isFollowUp) effectivePurpose = { kind: "catch_up" }
+        else if (purpose.kind === "catch_up" && isOnboardingStream) effectivePurpose = { kind: "onboarding_tour" }
         const turnFlags = deriveTurnFlags(effectivePurpose)
 
         // Per-turn model resolution (roadmap 2.3), at the dispatch seam like

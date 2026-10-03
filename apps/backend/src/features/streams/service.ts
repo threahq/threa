@@ -100,6 +100,14 @@ import { publishThreadUpdated } from "./thread-updated"
 
 const DM_UNIQUENESS_KEY_PREFIX = "dm"
 
+/**
+ * `uniqueness_key` of a user's "Meet Ariadne" scratchpad. One per user per
+ * workspace; its existence is the checklist item's done signal.
+ */
+export function onboardingStreamUniquenessKey(userId: string): string {
+  return `onboarding:meet-ariadne:${userId}`
+}
+
 const createScratchpadParamsSchema = z.object({
   workspaceId: z.string(),
   displayName: z.string().optional(),

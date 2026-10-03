@@ -71,6 +71,7 @@ describe("deriveTurnFlags", () => {
     { purpose: { kind: "draft_test", draftId: "pcd_1" }, allow: false },
     // The greeting must post a message.
     { purpose: { kind: "onboarding_greeting" }, allow: false },
+    { purpose: { kind: "onboarding_tour" }, allow: false },
   ]
 
   for (const { purpose, allow } of cases) {

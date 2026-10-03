@@ -18,7 +18,6 @@ import {
   useAssignLabel,
   useUnassignLabel,
 } from "@/hooks"
-import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useSyncStatus } from "@/sync/sync-status"
 import { useSyncEngine } from "@/sync/sync-engine"
 import {
@@ -30,6 +29,7 @@ import {
   useWorkspaceUnreadState,
   useWorkspaceLabels,
   useWorkspaceLabelAssignments,
+  useWorkspaceMetadata,
 } from "@/stores/workspace-store"
 import { useCoordinatedLoading, useSidebar, usePreferencesOptional, usePanel } from "@/contexts"
 import { useCreateChannel } from "@/components/create-channel"
@@ -122,7 +122,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const workspace = useWorkspaceFromStore(workspaceId)
   const unreadState = useWorkspaceUnreadState(workspaceId)
   const workspaceUsers = useWorkspaceUsers(workspaceId)
-  const onboardingStreamId = useCachedWorkspaceBootstrap(workspaceId)?.onboardingStreamId ?? null
+  const onboardingStreamId = useWorkspaceMetadata(workspaceId)?.onboardingStreamId ?? null
   const allIdbStreams = useWorkspaceStreams(workspaceId)
   // System-purpose streams (persona test scratchpads) never list in the sidebar.
   const idbStreams = useMemo(() => allIdbStreams.filter((s) => !isUtilityStream(s)), [allIdbStreams])

@@ -816,6 +816,7 @@ export function registerWorkspaceSocketHandlers(
     let shouldAddDmPeer = false
     let currentUserId: string | null = null
     let dmPeerUserId: string | null = null
+    let isOwnOnboardingStream = false
     let cachedStream: StreamWithPreview = { ...payload.stream, lastMessagePreview: null }
 
     const applied = updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => {
@@ -824,6 +825,7 @@ export function registerWorkspaceSocketHandlers(
       const currentMember = currentUser && getWorkspaceUsers(old).find((u) => u.workosUserId === currentUser.id)
       currentUserId = currentMember?.id ?? null
       const isCreator = Boolean(currentMember && payload.stream.createdBy === currentMember.id)
+      isOwnOnboardingStream = Boolean(payload.onboarding && isCreator)
       const isDmParticipant =
         payload.stream.type === StreamTypes.DM &&
         currentUserId !== null &&
@@ -876,12 +878,15 @@ export function registerWorkspaceSocketHandlers(
           shouldAddDmPeer && dmPeerUserId != null
             ? [...old.dmPeers, { userId: dmPeerUserId, streamId: payload.stream.id }]
             : old.dmPeers,
-        ...(payload.onboarding && isCreator && { onboardingStreamId: payload.stream.id }),
       }
     })
 
     if (applied && shouldJoinStreamRoom) {
       refs.subscribeStream(payload.stream.id)
+    }
+
+    if (isOwnOnboardingStream) {
+      await db.workspaceMetadata.update(workspaceId, { onboardingStreamId: payload.stream.id })
     }
 
     await db.transaction("rw", [db.streams, db.streamMemberships, db.dmPeers], async () => {
@@ -2870,6 +2875,7 @@ export async function applyWorkspaceBootstrap(
     commands: bootstrap.commands,
     configuredToolCategories: bootstrap.configuredToolCategories,
     featureFlags: bootstrap.featureFlags,
+    onboardingStreamId: bootstrap.onboardingStreamId ?? null,
     _cachedAt: now,
   }
 
@@ -3372,6 +3378,7 @@ export async function applyReconnectBootstrapBatch(
     commands: finalBootstrap.commands,
     configuredToolCategories: finalBootstrap.configuredToolCategories,
     featureFlags: finalBootstrap.featureFlags,
+    onboardingStreamId: finalBootstrap.onboardingStreamId ?? null,
     _cachedAt: now,
   }
 

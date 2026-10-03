@@ -43,6 +43,8 @@ export function buildEarlyPurposeSection(purpose: TurnPurpose, ctx: EarlyPurpose
       return ctx.subagentBrief ? buildSubagentKickoffSection(ctx.subagentBrief) : ""
     case "onboarding_greeting":
       return buildOnboardingGreetingSection()
+    case "onboarding_tour":
+      return buildOnboardingTourSection()
     case "catch_up":
     case "supersede_rerun":
     // A draft-test turn adds no section on purpose: the editor is judging the
@@ -121,14 +123,22 @@ This is the user's first conversation with you in Threa. They opened it from the
 Post one short greeting with \`send_message\`, then stop and wait:
 - Say hello and, in one or two sentences, what you can help with in Threa.
 - Ask exactly ONE question: what they want to use Threa for.
-- Say that once they tell you, you will show them around. Your greeting stays in this conversation's history and is the only thing that carries this plan to the next turn, so make that promise explicit.
+- Say that once they tell you, you will show them around.
 
-Do not tour, list features or ask anything else yet.
+Do not tour, list features or ask anything else yet.`
+}
 
-When they answer, give a short tour that follows what they said instead of covering everything:
+function buildOnboardingTourSection(): string {
+  return `
+
+## First meeting
+
+This scratchpad is where the user first met you: your first message asked what they want to use Threa for. If they are answering that, give a short tour that follows what they said instead of covering everything:
 - A few concrete places, each as an \`app:\` link, with one line on what it is for.
-- Directions that match their layout (the device line tells you whether they are on mobile or desktop).
-- Use \`threa_guide\` for anything deeper than a pointer, and send the tour as a few short messages rather than one long one.`
+- Directions for their layout when the prompt has a Device section; without one, keep directions short enough to hold on both phone and desktop.
+- Use \`threa_guide\` for anything deeper than a pointer, and send the tour as a few short messages rather than one long one.
+
+Once the tour is given, or if they have moved on to something else, just carry on the conversation.`
 }
 
 function buildSupersedeSection(rerunContext?: AgentSessionRerunContext): string {

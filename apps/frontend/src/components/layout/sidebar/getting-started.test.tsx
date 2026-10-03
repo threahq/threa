@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { render, screen, userEvent, waitFor } from "@/test"
 import { onboardingApi } from "@/api"
-import { workspaceKeys } from "@/hooks/use-workspaces"
+import { db } from "@/db"
 import {
   GettingStarted,
   hasWrittenFirstNote,
@@ -13,7 +13,7 @@ import {
 } from "./getting-started"
 import * as contextsModule from "@/contexts"
 import * as pushModule from "@/hooks/use-push-notifications"
-import { StreamTypes, type User, type WorkspaceBootstrap } from "@threahq/types"
+import { StreamTypes, type User } from "@threahq/types"
 
 const openSettings = vi.fn()
 const collapseOnMobile = vi.fn()
@@ -97,6 +97,15 @@ function Harness(props: UseGettingStartedOptions) {
   )
 }
 
+const metadataRow = {
+  id: "workspace_1",
+  workspaceId: "workspace_1",
+  emojis: [],
+  emojiWeights: {},
+  commands: [],
+  _cachedAt: 1,
+}
+
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 
 function renderCard(props: Partial<UseGettingStartedOptions> = {}) {
@@ -119,9 +128,10 @@ function renderCard(props: Partial<UseGettingStartedOptions> = {}) {
 }
 
 describe("GettingStarted", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.restoreAllMocks()
     queryClient.clear()
+    await db.workspaceMetadata.clear()
     openSettings.mockReset()
     collapseOnMobile.mockReset()
     updatePreference.mockReset()
@@ -168,10 +178,10 @@ describe("GettingStarted", () => {
     expect(screen.getByText("Meet Ariadne")).toHaveClass("line-through")
   })
 
-  it("should create the Ariadne scratchpad, cache its id, and open it when Meet Ariadne is selected", async () => {
+  it("should create the Ariadne scratchpad, persist its id, and open it when Meet Ariadne is selected", async () => {
     const user = userEvent.setup()
     const meetAriadne = vi.spyOn(onboardingApi, "meetAriadne").mockResolvedValue({ streamId: "stream_onboarding" })
-    queryClient.setQueryData(workspaceKeys.bootstrap("workspace_1"), { users: [] } as unknown as WorkspaceBootstrap)
+    await db.workspaceMetadata.put(metadataRow)
     renderCard()
 
     await user.click(screen.getByRole("button", { name: "Meet Ariadne" }))
@@ -181,8 +191,8 @@ describe("GettingStarted", () => {
     )
     expect(meetAriadne).toHaveBeenCalledWith("workspace_1")
     expect(collapseOnMobile).toHaveBeenCalled()
-    expect(queryClient.getQueryData(workspaceKeys.bootstrap("workspace_1"))).toEqual({
-      users: [],
+    expect(await db.workspaceMetadata.get("workspace_1")).toEqual({
+      ...metadataRow,
       onboardingStreamId: "stream_onboarding",
     })
   })

@@ -4,7 +4,12 @@ import * as dbModule from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { HttpError } from "../../lib/errors"
 import { MessageRepository, MessageVersionRepository } from "../messaging"
-import { StreamPoliciesRepository, StreamRepository, StreamEventRepository } from "../streams"
+import {
+  StreamPoliciesRepository,
+  StreamRepository,
+  StreamEventRepository,
+  onboardingStreamUniquenessKey,
+} from "../streams"
 import { SearchRepository } from "../search"
 import { PersonaAgent, type PersonaAgentDeps, type PersonaAgentInput } from "./persona-agent"
 import { DraftsRepository, type Draft } from "../drafts"
@@ -455,6 +460,39 @@ describe("PersonaAgent subagent kickoff", () => {
     expect(capturedMessages[0]).toEqual([{ role: "user", content: ONBOARDING_GREETING_OPENER }])
     expect(capturedVolatilePrompts[0]).toContain("## First meeting")
     expect(preferenceUserIds).toEqual(["usr_1"])
+  })
+
+  it("should skip an onboarding greeting when the stream already has a message", async () => {
+    const { result, capturedModelStrings } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      streamOverride: { messageCount: 1 },
+      purpose: { kind: "onboarding_greeting" },
+    })
+
+    expect(result).toMatchObject({ status: "skipped", skipReason: "onboarding stream already has messages" })
+    expect(capturedModelStrings).toEqual([])
+  })
+
+  it("should carry the tour into a catch-up turn in the user's Meet Ariadne scratchpad", async () => {
+    spyOn(StreamRepository, "findByUniquenessKey").mockImplementation(async (_db, _ws, key: string) =>
+      key === onboardingStreamUniquenessKey("usr_1") ? stream : null
+    )
+    const { result, capturedVolatilePrompts } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      purpose: { kind: "catch_up" },
+    })
+
+    expect(result.status).toBe("completed")
+    expect(capturedVolatilePrompts[0]).toContain("give a short tour")
+  })
+
+  it("should run a plain catch-up in any other scratchpad", async () => {
+    const { capturedVolatilePrompts } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      purpose: { kind: "catch_up" },
+    })
+
+    expect(capturedVolatilePrompts[0]).not.toContain("## First meeting")
   })
 
   it("skips a kickoff whose run is no longer active instead of calling the provider on an empty thread", async () => {

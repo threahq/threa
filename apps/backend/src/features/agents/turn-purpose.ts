@@ -30,6 +30,9 @@ export type TurnPurpose =
   // First turn of the "Meet Ariadne" scratchpad: no user message exists, so the
   // persona speaks first. The invoking user is the job's `triggeredBy`.
   | { kind: "onboarding_greeting" }
+  // A companion catch-up in that scratchpad. Derived at dispatch, never from
+  // the payload: the stream, not the job, makes it the onboarding conversation.
+  | { kind: "onboarding_tour" }
 
 export type TurnPurposeKind = TurnPurpose["kind"]
 

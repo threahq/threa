@@ -450,6 +450,19 @@ describe("buildSystemPrompt", () => {
     expect(split.stable).not.toContain("## First meeting")
   })
 
+  test("tours, and never greets again, on the onboarding scratchpad's later turns", () => {
+    const split = buildSystemPrompt({
+      persona,
+      context: scratchpadContext,
+      scratchpadCustomPrompt: null,
+      purpose: { kind: "onboarding_tour" },
+    })
+
+    expect(split.volatile).toContain("give a short tour")
+    expect(split.volatile).not.toContain("exactly ONE question")
+    expect(split.stable).not.toContain("## First meeting")
+  })
+
   test("omits the first-meeting section for a catch-up turn", () => {
     const prompt = buildJoinedPrompt({
       persona,

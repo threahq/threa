@@ -11,7 +11,8 @@ import { setupTestDatabase, withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService } from "../../src/features/streams"
 import { StreamMemberRepository } from "../../src/features/streams/member-repository"
-import { OnboardingService, onboardingStreamUniquenessKey } from "../../src/features/onboarding"
+import { OnboardingService } from "../../src/features/onboarding"
+import { onboardingStreamUniquenessKey } from "../../src/features/streams"
 import { ARIADNE_AGENT_ID, PersonaRepository, resolveTurnPurpose } from "../../src/features/agents"
 import { JobQueues } from "../../src/lib/queue"
 import { userId, workspaceId } from "../../src/lib/id"
@@ -127,11 +128,14 @@ describe("meet ariadne onboarding", () => {
     const lonely = (await withTransaction(pool, (client) => addTestMember(client, wsId, userId()))).id
     const spy = spyOn(PersonaRepository, "getSystemDefault").mockResolvedValueOnce(null)
 
-    await expect(service.meetAriadne({ workspaceId: wsId, userId: lonely })).rejects.toMatchObject({
-      status: 503,
-      code: "ARIADNE_PERSONA_MISSING",
-    })
-    spy.mockRestore()
+    try {
+      await expect(service.meetAriadne({ workspaceId: wsId, userId: lonely })).rejects.toMatchObject({
+        status: 503,
+        code: "ARIADNE_PERSONA_MISSING",
+      })
+    } finally {
+      spy.mockRestore()
+    }
     expect(await service.findMeetAriadneStreamId(wsId, lonely)).toBeNull()
   })
 })

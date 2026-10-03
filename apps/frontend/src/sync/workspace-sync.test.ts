@@ -629,6 +629,12 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     expect(await db.streams.get("stream_keep")).toBeDefined()
   })
 
+  it("should persist the Meet Ariadne stream id so the checklist survives a reload", async () => {
+    await applyWorkspaceBootstrap("ws_1", makeBootstrap({ onboardingStreamId: "stream_meet" }))
+
+    expect((await db.workspaceMetadata.get("ws_1"))?.onboardingStreamId).toBe("stream_meet")
+  })
+
   it("persists archived roots from bootstrap.archivedStreams and the sweep keeps them", async () => {
     const fetchStartedAt = Date.now()
     const archivedRoot = makeStream("stream_arch_root", { archivedAt: "2026-01-01T00:00:00Z" })
@@ -2987,6 +2993,14 @@ describe("registerWorkspaceSocketHandlers", () => {
   })
 
   it("should mark Meet Ariadne done when the creator's onboarding scratchpad is created on another device", async () => {
+    await db.workspaceMetadata.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      emojis: [],
+      emojiWeights: {},
+      commands: [],
+      _cachedAt: 1,
+    })
     const queryClient = new QueryClient()
     queryClient.setQueryData(
       workspaceKeys.bootstrap("ws_1"),
@@ -3025,8 +3039,8 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     await Promise.resolve()
 
-    expect(queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.onboardingStreamId).toBe(
-      "stream_meet"
+    await vi.waitFor(async () =>
+      expect((await db.workspaceMetadata.get("ws_1"))?.onboardingStreamId).toBe("stream_meet")
     )
 
     cleanup()
