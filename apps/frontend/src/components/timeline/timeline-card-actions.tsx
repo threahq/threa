@@ -200,7 +200,7 @@ function DrawerAction({ action, onClose }: { action: TimelineCardAction; onClose
 
   return (
     <>
-      {action.separatorBefore && <Separator className="mx-3 my-1 bg-border/50" />}
+      {action.separatorBefore && <Separator className="mx-3 my-1 w-auto bg-border/50" />}
       {action.href ? (
         <Link to={action.href} className={className} aria-disabled={action.disabled} onClick={handleAction}>
           {content}
