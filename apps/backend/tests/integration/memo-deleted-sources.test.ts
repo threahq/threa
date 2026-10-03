@@ -235,7 +235,7 @@ describe("memo sources: deleted and edited messages", () => {
   }
 
   async function memoStatus(id: string): Promise<string | undefined> {
-    return (await MemoRepository.findById(pool, id))?.status
+    return (await MemoRepository.findById(pool, testWorkspaceId, id))?.status
   }
 
   async function isQueued(seeded: Seeded): Promise<boolean> {

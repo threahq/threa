@@ -66,7 +66,7 @@ describe("MemoRepository.hybridSearch semantic distance cutoff", () => {
         participantIds: [ownerId],
         knowledgeType: "context",
       })
-      await MemoRepository.updateEmbedding(client, allergyMemoId, axis(0))
+      await MemoRepository.updateEmbedding(client, testWorkspaceId, allergyMemoId, axis(0))
     })
   })
 
