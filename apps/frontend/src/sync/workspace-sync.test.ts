@@ -640,6 +640,10 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     await applyWorkspaceBootstrap("ws_1", makeBootstrap({ onboardingStreamId: null }))
 
     expect((await db.workspaceMetadata.get("ws_1"))?.onboardingStreamId).toBe("stream_meet")
+    const { renderHook } = await import("@testing-library/react")
+    const { useWorkspaceMetadata } = await import("@/stores/workspace-store")
+    const { result } = renderHook(() => useWorkspaceMetadata("ws_1"))
+    expect(result.current?.onboardingStreamId).toBe("stream_meet")
   })
 
   it("persists archived roots from bootstrap.archivedStreams and the sweep keeps them", async () => {
