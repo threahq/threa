@@ -431,7 +431,7 @@ describe("PendingMessagesContext", () => {
       })
 
       expect(mockDelete).toHaveBeenCalledWith("temp_board")
-      expect(dropCard).toHaveBeenCalledWith("conv_board")
+      expect(dropCard).toHaveBeenCalledWith("ws_1", "conv_board")
     })
 
     it("leaves the board untouched when deleting a non-board pending message", async () => {

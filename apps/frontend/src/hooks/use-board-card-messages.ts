@@ -782,7 +782,7 @@ export function useBoardCardMessages(
   // subscription on every card mount.
   const railKnowsEveryMember =
     (openingId === null || rail.seen.has(openingId)) && replyIds.every((id) => rail.seen.has(id))
-  const backfillRows = useConversationBackfillMessages(conversationId, {
+  const backfillRows = useConversationBackfillMessages(post.workspaceId, conversationId, {
     enabled: rail.resolved && !railKnowsEveryMember,
   })
   const backfillById = useMemo(() => {

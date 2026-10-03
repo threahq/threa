@@ -146,8 +146,8 @@ describe("useMoveToSubtopic", () => {
 
     await waitFor(() => expect(reassignMessage).toHaveBeenCalledWith(WS, "conv_grandchild", "m_target"))
     // The board store re-files on the HTTP response, not the socket echo.
-    await waitFor(() => expect(merge).toHaveBeenCalledWith("conv_grandchild", conversationResult))
-    expect(merge).toHaveBeenCalledWith("conv_main", previousResult)
+    await waitFor(() => expect(merge).toHaveBeenCalledWith(WS, "conv_grandchild", conversationResult))
+    expect(merge).toHaveBeenCalledWith(WS, "conv_main", previousResult)
     merge.mockRestore()
   })
 

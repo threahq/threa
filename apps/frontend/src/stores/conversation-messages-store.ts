@@ -30,7 +30,7 @@ export async function seedConversationMessages(
   messages: BoardPostMessage[]
 ): Promise<void> {
   await db.transaction("rw", db.conversationMessages, async () => {
-    await db.conversationMessages.where("conversationId").equals(conversationId).delete()
+    await db.conversationMessages.where("[workspaceId+conversationId]").equals([workspaceId, conversationId]).delete()
     await db.conversationMessages.bulkPut(messages.map((message) => toCached(workspaceId, conversationId, message)))
   })
 }
@@ -42,21 +42,25 @@ export async function seedConversationMessages(
  * union would keep resurrecting it after the board snapshot pruned it.
  */
 export async function pruneConversationMessagesToMembership(
+  workspaceId: string,
   conversationId: string,
   memberIds: ReadonlySet<string>
 ): Promise<void> {
   await db.transaction("rw", db.conversationMessages, async () => {
-    const rows = await db.conversationMessages.where("conversationId").equals(conversationId).toArray()
-    const stale = rows.filter((row) => !memberIds.has(row.messageId)).map((row) => row.messageId)
+    const rows = await db.conversationMessages
+      .where("[workspaceId+conversationId]")
+      .equals([workspaceId, conversationId])
+      .toArray()
+    const stale = rows.filter((row) => !memberIds.has(row.messageId))
     if (stale.length === 0) return
-    await db.conversationMessages.bulkDelete(stale)
+    await db.conversationMessages.bulkDelete(stale.map((row) => [workspaceId, row.messageId]))
   })
 }
 
 /** Drop every backfilled row of a conversation — an emptied conversation is no
  *  longer a card, so its cached bodies must go with it. */
-export async function deleteConversationMessages(conversationId: string): Promise<void> {
-  await db.conversationMessages.where("conversationId").equals(conversationId).delete()
+export async function deleteConversationMessages(workspaceId: string, conversationId: string): Promise<void> {
+  await db.conversationMessages.where("[workspaceId+conversationId]").equals([workspaceId, conversationId]).delete()
 }
 
 type ConversationMessagePatch = Partial<Omit<CachedConversationMessage, "messageId" | "conversationId" | "workspaceId">>
@@ -68,11 +72,12 @@ type ConversationMessagePatch = Partial<Omit<CachedConversationMessage, "message
  * rows here.
  */
 export async function patchConversationMessage(
+  workspaceId: string,
   messageId: string,
   patch: ConversationMessagePatch | ((row: CachedConversationMessage) => ConversationMessagePatch)
 ): Promise<void> {
   await db.transaction("rw", db.conversationMessages, async () => {
-    const existing = await db.conversationMessages.get(messageId)
+    const existing = await db.conversationMessages.get([workspaceId, messageId])
     if (!existing) return
     const fields = typeof patch === "function" ? patch(existing) : patch
     // A patch that changes nothing (a duplicate reaction, a re-delivered edit)
@@ -96,6 +101,10 @@ export async function patchConversationMessage(
 // synchronously at mount; the liveQuery owns it from its first emission on.
 const snapshotByConversation = new Map<string, CachedConversationMessage[]>()
 
+function snapshotKey(workspaceId: string, conversationId: string): string {
+  return `${workspaceId}/${conversationId}`
+}
+
 /**
  * Fill the snapshot for `conversationIds` from one bulk Dexie read. Only ABSENT
  * keys are written: a key already present came from a liveQuery emission (or an
@@ -106,27 +115,31 @@ const snapshotByConversation = new Map<string, CachedConversationMessage[]>()
  *
  * Bounded by the caller: the board primes the prewarmed cards' conversations only.
  */
-export async function primeConversationMessages(conversationIds: string[]): Promise<void> {
-  const missing = conversationIds.filter((id) => !snapshotByConversation.has(id))
+export async function primeConversationMessages(workspaceId: string, conversationIds: string[]): Promise<void> {
+  const missing = conversationIds.filter((id) => !snapshotByConversation.has(snapshotKey(workspaceId, id)))
   if (missing.length === 0) return
-  const rows = await db.conversationMessages.where("conversationId").anyOf(missing).toArray()
+  const rows = await db.conversationMessages
+    .where("[workspaceId+conversationId]")
+    .anyOf(missing.map((id) => [workspaceId, id]))
+    .toArray()
   const byConversation = new Map<string, CachedConversationMessage[]>(missing.map((id) => [id, []]))
   for (const row of rows) byConversation.get(row.conversationId)?.push(row)
   for (const [id, conversationRows] of byConversation) {
     // Re-check: a liveQuery may have emitted for this conversation while the read
     // was in flight, and that value wins.
-    if (snapshotByConversation.has(id)) continue
-    snapshotByConversation.set(id, conversationRows)
+    const key = snapshotKey(workspaceId, id)
+    if (snapshotByConversation.has(key)) continue
+    snapshotByConversation.set(key, conversationRows)
   }
 }
 
 /** Whether every one of `conversationIds` has been read into the snapshot. */
-export function conversationMessagesPrimed(conversationIds: string[]): boolean {
-  return conversationIds.every((id) => snapshotByConversation.has(id))
+export function conversationMessagesPrimed(workspaceId: string, conversationIds: string[]): boolean {
+  return conversationIds.every((id) => snapshotByConversation.has(snapshotKey(workspaceId, id)))
 }
 
 /** Drop the snapshot — for tests, so a module-level map can't leak rows across
- *  cases, and for a workspace switch (a different board, different ids). */
+ *  cases, and for the account switch (a different account's boards). */
 export function resetConversationMessageSnapshots(): void {
   snapshotByConversation.clear()
 }
@@ -139,23 +152,40 @@ export function resetConversationMessageSnapshots(): void {
  * Before the liveQuery's first emission the primed snapshot is the value, so a
  * card enabled at reveal renders its older leads in that same frame rather than
  * a tick later. Once the liveQuery emits it owns the value and refreshes the
- * snapshot, keeping later mounts warm.
+ * snapshot, keeping later mounts warm. A result counts only once it resolves
+ * for the current workspace and conversation — the stamp keeps a key switch
+ * from exposing the previous key's rows for one render and from writing them
+ * into the new key's snapshot.
  */
 export function useConversationBackfillMessages(
+  workspaceId: string,
   conversationId: string,
   opts: { enabled: boolean }
 ): CachedConversationMessage[] {
   const enabled = opts.enabled
-  const rows = useLiveQuery(
-    () => (enabled ? db.conversationMessages.where("conversationId").equals(conversationId).toArray() : EMPTY),
-    [conversationId, enabled]
+  const result = useLiveQuery(
+    async () => ({
+      forWorkspaceId: workspaceId,
+      forConversationId: conversationId,
+      rows: enabled
+        ? await db.conversationMessages
+            .where("[workspaceId+conversationId]")
+            .equals([workspaceId, conversationId])
+            .toArray()
+        : EMPTY,
+    }),
+    [workspaceId, conversationId, enabled]
   )
+  const rows =
+    result && result.forWorkspaceId === workspaceId && result.forConversationId === conversationId
+      ? result.rows
+      : undefined
   useEffect(() => {
     if (!enabled || !rows) return
-    snapshotByConversation.set(conversationId, rows)
-  }, [conversationId, enabled, rows])
+    snapshotByConversation.set(snapshotKey(workspaceId, conversationId), rows)
+  }, [workspaceId, conversationId, enabled, rows])
   if (!enabled) return EMPTY
-  return rows ?? snapshotByConversation.get(conversationId) ?? EMPTY
+  return rows ?? snapshotByConversation.get(snapshotKey(workspaceId, conversationId)) ?? EMPTY
 }
 
 /**
@@ -167,7 +197,7 @@ export function useConversationBackfillMessages(
  * whole new id set, which must gate afresh. Un-revealing on a LATER id set (a
  * scroll, an added conversation) is `useBoardRevealLatch`'s job, not this gate's.
  */
-export function useBoardBackfillPrimed(conversationIds: string[]): boolean {
+export function useBoardBackfillPrimed(workspaceId: string, conversationIds: string[]): boolean {
   const key = conversationIds.join(",")
   const ids = useMemo(() => (key ? key.split(",") : []), [key])
   // The prime resolving mutates a module map, which no render observes on its
@@ -176,14 +206,14 @@ export function useBoardBackfillPrimed(conversationIds: string[]): boolean {
   useEffect(() => {
     if (ids.length === 0) return
     let cancelled = false
-    void primeConversationMessages(ids).then(() => {
+    void primeConversationMessages(workspaceId, ids).then(() => {
       if (!cancelled) bumpPrimeGeneration((generation) => generation + 1)
     })
     return () => {
       cancelled = true
     }
-  }, [ids])
-  return conversationMessagesPrimed(ids)
+  }, [workspaceId, ids])
+  return conversationMessagesPrimed(workspaceId, ids)
 }
 
 /** Test alias — suites reset beside their `db.conversationMessages.clear()`. */
