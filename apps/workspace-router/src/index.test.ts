@@ -499,6 +499,27 @@ describe("workspace-router", () => {
       }
     })
 
+    test("should not proxy a client request to the internal stream-connection routes", async () => {
+      const originalFetch = globalThis.fetch
+      const fn = mockFetchFn()
+      try {
+        const responses = await Promise.all(
+          [
+            makeRequest("/internal/stream-connections/channel?workspaceId=a&streamId=b&invitedBy=c"),
+            makeRequest("/internal/stream-connections", "POST"),
+            makeRequest("/internal/stream-connections/accept", "POST"),
+            makeRequest("/internal/stream-connections/list", "POST"),
+          ].map((req) => worker.fetch(req, makeEnv({ CONTROL_PLANE_URL: CP_URL })))
+        )
+        expect({ statuses: responses.map((r) => r.status), proxied: fn.mock.calls.length }).toEqual({
+          statuses: [404, 404, 404, 404],
+          proxied: 0,
+        })
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    })
+
     test("proxies POST /api/workspaces to control-plane", async () => {
       const originalFetch = globalThis.fetch
       const fn = mockFetchFn()

@@ -82,10 +82,14 @@ describe("ControlPlaneClient error translation", () => {
     },
     {
       cp: { status: 401, body: { error: "Invalid or missing internal API key", code: "UNAUTHORIZED" } },
-      expected: { status: 502, code: "CONTROL_PLANE_UNAVAILABLE", message: "Failed to accept share link" },
+      expected: { status: 502, code: "CONTROL_PLANE_REJECTED", message: "Failed to accept share link" },
     },
     {
       cp: { status: 404, body: { error: "Not found" } },
+      expected: { status: 502, code: "CONTROL_PLANE_REJECTED", message: "Failed to accept share link" },
+    },
+    {
+      cp: { status: 503, body: { error: "Service unavailable" } },
       expected: { status: 502, code: "CONTROL_PLANE_UNAVAILABLE", message: "Failed to accept share link" },
     },
   ])("should forward only invite outcomes from a failed share-link call (CP $cp.status)", async ({ cp, expected }) => {

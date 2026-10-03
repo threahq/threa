@@ -3,6 +3,7 @@ import { OutboxRepository } from "./repository"
 import * as cursorLockModule from "@threahq/backend-common"
 import { BroadcastHandler } from "./broadcast-handler"
 import { SyncLogRepository } from "../../features/sync"
+import { UserRepository } from "../../features/workspaces"
 import type { ProcessResult } from "@threahq/backend-common"
 import type { OutboxEvent } from "./repository"
 import { CALLS_NAMESPACE, callRoom } from "../call-routing"
@@ -60,9 +61,14 @@ function createMockIo() {
     return chain
   }
 
+  const roomMoves: Array<{ room: string; leave?: string[]; join?: string[] }> = []
   const namespaceCache = new Map<string, { to: (room: string) => MockEmitChain }>()
   const io = {
     to: mock((rooms: string | string[]): MockEmitChain => makeRoomsChain(rooms)),
+    in: (room: string) => ({
+      socketsLeave: (leave: string[]) => roomMoves.push({ room, leave }),
+      socketsJoin: (join: string[]) => roomMoves.push({ room, join }),
+    }),
     of: mock((namespace: string) => {
       let ns = namespaceCache.get(namespace)
       if (!ns) {
@@ -73,15 +79,15 @@ function createMockIo() {
     }),
   }
 
-  return { io, emitChains }
+  return { io, emitChains, roomMoves }
 }
 
 function createHandler() {
   mockCursorLock()
-  const { io, emitChains } = createMockIo()
+  const { io, emitChains, roomMoves } = createMockIo()
   const botNamespace = io.of("/bot")
   const handler = new BroadcastHandler({} as any, io as any, botNamespace as any)
-  return { handler, io, emitChains }
+  return { handler, io, emitChains, roomMoves }
 }
 
 function makeEvent(id: bigint, eventType: string, payload: Record<string, unknown>): OutboxEvent {
@@ -122,6 +128,26 @@ describe("BroadcastHandler", () => {
       eventType: "call:transport_transfer_changed",
       payload: event.payload,
     })
+  })
+
+  it("should move a member's tabs by their current role when a profile event read before a demotion dispatches after it", async () => {
+    const event = makeEvent(1n, "workspace_user:updated", {
+      workspaceId: "ws_1",
+      user: { id: "usr_alice", role: "admin" },
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+    spyOn(UserRepository, "findById").mockResolvedValue({ id: "usr_alice", role: "member" } as never)
+
+    const { handler, roomMoves } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(roomMoves).toEqual([
+      {
+        room: "ws:ws_1:user:usr_alice",
+        leave: ["ws:ws_1:permission:members:write", "ws:ws_1:permission:workspace:admin"],
+      },
+    ])
   })
 
   it("should emit user-scoped event to user room", async () => {

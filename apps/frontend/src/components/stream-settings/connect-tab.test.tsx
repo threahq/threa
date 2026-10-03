@@ -393,6 +393,14 @@ describe("ConnectTab", () => {
       error: new ApiError(409, StreamConnectionErrorCodes.TOO_MANY_INVITES, "too many"),
       message: "This channel has too many open links. Revoke one to create another.",
     },
+    {
+      error: new ApiError(404, StreamConnectionErrorCodes.DISABLED, "disabled"),
+      message: "Shared channels are turned off for this workspace.",
+    },
+    {
+      error: new ApiError(403, "FORBIDDEN", "forbidden"),
+      message: "Only workspace admins can share channels.",
+    },
     { error: new ApiError(500, "INTERNAL", "boom"), message: "Couldn't create the link. Try again." },
   ])("should say why creating the link failed and let the admin retry ($error.code)", async ({ error, message }) => {
     vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([])
@@ -445,6 +453,20 @@ describe("ConnectTab", () => {
 
     expect(screen.getByLabelText("Invite link")).toHaveValue(`${window.location.origin}/connections/tok_secret`)
     expect(screen.getByText("Beta")).toBeInTheDocument()
+  })
+
+  it("should hold the skeleton instead of the share prompt while the first load runs and the cache holds only a revoked invite", async () => {
+    await putStreamConnection("ws_host", makeConnection({ state: "revoked", revision: 2 }))
+    let landLoad!: (connections: StreamConnection[]) => void
+    vi.spyOn(streamConnectionsApi, "list").mockReturnValue(new Promise((resolve) => (landLoad = resolve)))
+
+    renderTab()
+    await waitFor(() => expect(streamConnectionsApi.list).toHaveBeenCalled())
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 100)))
+
+    expect(screen.queryByText("Share with another workspace")).not.toBeInTheDocument()
+    await act(async () => landLoad([makePartner("strconn_2", "Gamma")]))
+    expect(await screen.findByText("Gamma")).toBeInTheDocument()
   })
 
   it("should drop a cached invite the load no longer lists", async () => {
@@ -559,6 +581,21 @@ describe("ConnectTab", () => {
 
     expect(await screen.findByText("Beta")).toBeInTheDocument()
     expect(screen.queryByText(WAITING)).not.toBeInTheDocument()
+  })
+
+  it.each([
+    {
+      error: new ApiError(404, StreamConnectionErrorCodes.DISABLED, "off"),
+      message: "Shared channels are turned off for this workspace.",
+    },
+    { error: new ApiError(403, "FORBIDDEN", "no"), message: "Only workspace admins can share channels." },
+  ])("should say why the load was refused and offer no retry ($error.code)", async ({ error, message }) => {
+    vi.spyOn(streamConnectionsApi, "list").mockRejectedValue(error)
+
+    renderTab()
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(message)
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument()
   })
 
   it("should keep showing the cached invites and offer a retry when the load fails", async () => {

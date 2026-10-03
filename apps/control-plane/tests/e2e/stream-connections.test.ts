@@ -58,12 +58,16 @@ describe("Stream connection routes", () => {
       streamId,
       includeIds: [snapshot.id],
     })
+    const partnerAfter = await partnerAdmin.get(`/api/stream-connections/lookup?token=${token}`)
+    const hostAfter = await hostAdmin.get(`/api/stream-connections/lookup?token=${token}`)
 
     expect({
       signedOut: signedOut.status,
       lookup: { status: lookup.status, cache: lookup.headers.get("cache-control"), data: lookup.data },
       accepted: { status: accepted.status, state: accepted.data.snapshot.state },
       listed: { status: listed.status, data: listed.data },
+      partnerAfter: { status: partnerAfter.status, data: partnerAfter.data },
+      hostAfter: { status: hostAfter.status, data: hostAfter.data },
     }).toEqual({
       signedOut: 401,
       lookup: {
@@ -83,6 +87,20 @@ describe("Stream connection routes", () => {
       },
       accepted: { status: 200, state: "active" },
       listed: { status: 200, data: { snapshots: [accepted.data.snapshot] } },
+      partnerAfter: {
+        status: 200,
+        data: {
+          state: "active",
+          hostWorkspaceId: host.id,
+          hostWorkspaceName: "Connect Host",
+          hostRegion: host.region,
+          streamDisplayName: "Launch",
+          streamSlug: "launch",
+          partnerWorkspaceId: partner.id,
+          partnerWorkspaceName: "Connect Partner",
+        },
+      },
+      hostAfter: { status: 409, data: expect.objectContaining({ code: StreamConnectionErrorCodes.ALREADY_ACCEPTED }) },
     })
   })
 

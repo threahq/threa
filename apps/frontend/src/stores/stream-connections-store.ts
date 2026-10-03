@@ -109,17 +109,17 @@ export type StreamConnectionsLoad = "loading" | "loaded" | "failed"
 export function useLoadStreamConnections(
   workspaceId: string,
   streamId: string
-): { status: StreamConnectionsLoad; retry: () => void } {
+): { status: StreamConnectionsLoad; error: unknown; retry: () => void } {
   const reconnectCount = useSocketReconnectCount()
   const [attempt, setAttempt] = useState(0)
-  const [settled, setSettled] = useState<{ key: string; status: "loaded" | "failed" } | null>(null)
+  const [settled, setSettled] = useState<{ key: string; status: "loaded" | "failed"; error?: unknown } | null>(null)
   const key = `${workspaceId}/${streamId}/${attempt}`
 
   useEffect(() => {
     let cancelled = false
     refreshStreamConnections(workspaceId, streamId).then(
       () => !cancelled && setSettled({ key, status: "loaded" }),
-      () => !cancelled && setSettled({ key, status: "failed" })
+      (error: unknown) => !cancelled && setSettled({ key, status: "failed", error })
     )
     return () => {
       cancelled = true
@@ -127,5 +127,6 @@ export function useLoadStreamConnections(
   }, [workspaceId, streamId, key, reconnectCount])
 
   const retry = useCallback(() => setAttempt((n) => n + 1), [])
-  return { status: settled?.key === key ? settled.status : "loading", retry }
+  const current = settled?.key === key ? settled : null
+  return { status: current?.status ?? "loading", error: current?.error, retry }
 }

@@ -265,6 +265,17 @@ describe("StreamConnectionService", () => {
     expect(listed).toEqual([seenBy(invited, "host", null)])
   })
 
+  test("should fail the listing when the control plane rejects the request instead of hiding it behind local rows", async () => {
+    const host = await seedWorkspace("Acme")
+    const stream = await seedStream(host.id, host.adminId)
+    await service.applySnapshot(snapshot(host, stream.id))
+    cp.respond(401, { error: "Unauthorized" })
+
+    await expect(
+      service.listForStream({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
+    ).rejects.toMatchObject({ status: 502, code: "CONTROL_PLANE_REJECTED" })
+  })
+
   test("should heal an accept the control plane never delivered when the host lists a pending link", async () => {
     const host = await seedWorkspace("Acme")
     const stream = await seedStream(host.id, host.adminId)
@@ -473,7 +484,7 @@ describe("StreamConnectionService", () => {
     })
   })
 
-  test("should refuse a revoke from the partner's side or from an admin who can't see the channel", async () => {
+  test("should refuse a revoke from the partner's side, and any action from an admin who can't see the channel", async () => {
     const host = await seedWorkspace("Acme")
     const partner = await seedWorkspace("Globex")
     const outsider = await addTestMember(pool, host.id, `admin2-${host.id}`, "admin")
@@ -486,6 +497,8 @@ describe("StreamConnectionService", () => {
     const outcomes = await Promise.allSettled([
       service.revokeInvite({ workspaceId: partner.id, connectionId: joined.id, userId: partner.adminId }),
       service.revokeInvite({ workspaceId: host.id, connectionId: pending.id, userId: outsider.id }),
+      service.createInvite({ workspaceId: host.id, streamId: stream.id, userId: outsider.id }),
+      service.listForStream({ workspaceId: host.id, streamId: stream.id, userId: outsider.id }),
     ])
 
     expect({
@@ -494,7 +507,7 @@ describe("StreamConnectionService", () => {
     }).toEqual({
       refusals: [
         expect.objectContaining({ status: 404, code: StreamConnectionErrorCodes.NOT_FOUND }),
-        expect.objectContaining({ status: 404, code: "STREAM_NOT_FOUND" }),
+        ...Array(3).fill(expect.objectContaining({ status: 404, code: "STREAM_NOT_FOUND" })),
       ],
       sent: [],
     })
@@ -622,12 +635,12 @@ describe("StreamConnectionService", () => {
     ])
   })
 
-  test("should stop calling a channel shareable once the link's creator is demoted, removed, or out of the private channel", async () => {
+  test("should stop calling a channel shareable once the link's creator is demoted, deactivated, removed, or out of the private channel", async () => {
     const host = await seedWorkspace("Acme")
     const publicChannel = await seedStream(host.id, host.adminId)
     const privateChannel = await seedStream(host.id, host.adminId, StreamTypes.CHANNEL, "private")
-    const [stillAdmin, demoted, removed, leftChannel, neverMember] = await Promise.all(
-      ["still", "demoted", "removed", "left", "never"].map((name) =>
+    const [stillAdmin, demoted, deactivated, removed, leftChannel, neverMember] = await Promise.all(
+      ["still", "demoted", "deactivated", "removed", "left", "never"].map((name) =>
         addTestMember(pool, host.id, `${name}-${host.id}`, "admin")
       )
     )
@@ -639,6 +652,13 @@ describe("StreamConnectionService", () => {
       status: "active",
       lastEventAt: new Date(),
     })
+    await WorkspaceUserPermissionsRepository.upsert(pool, {
+      workspaceId: host.id,
+      workosUserId: deactivated.workosUserId,
+      roleSlugs: ["admin"],
+      status: "inactive",
+      lastEventAt: new Date(),
+    })
     await UserRepository.remove(pool, host.id, removed.id)
     await StreamMemberRepository.delete(pool, privateChannel.id, leftChannel.id)
 
@@ -647,6 +667,7 @@ describe("StreamConnectionService", () => {
     const answers = {
       stillAdmin: await shareable(privateChannel.id, stillAdmin.id),
       demoted: await shareable(publicChannel.id, demoted.id),
+      deactivated: await shareable(publicChannel.id, deactivated.id),
       removed: await shareable(publicChannel.id, removed.id),
       leftChannel: await shareable(privateChannel.id, leftChannel.id),
       neverMember: await shareable(privateChannel.id, neverMember.id),
@@ -656,6 +677,7 @@ describe("StreamConnectionService", () => {
     expect(answers).toEqual({
       stillAdmin: true,
       demoted: false,
+      deactivated: false,
       removed: false,
       leftChannel: false,
       neverMember: false,

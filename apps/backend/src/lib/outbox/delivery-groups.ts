@@ -412,13 +412,12 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     return payload.streamId ? [streamGroup(payload.streamId)] : []
   }
 
-  // Only admins manage a channel's connections. A private channel's must not
-  // reach admins outside it, so it goes to its admin members one by one.
+  // A private channel's connection change must not reach admins outside it, so
+  // it goes to its admin members one by one; a public one falls through to the
+  // admin permission group below.
   if (isOutboxEventType(event, "stream_connection:updated")) {
     const payload = event.payload as StreamConnectionUpdatedOutboxPayload
-    return payload.streamVisibility === Visibilities.PUBLIC
-      ? [permissionGroup(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)]
-      : payload.adminMemberUserIds.map(userGroup)
+    if (payload.streamVisibility !== Visibilities.PUBLIC) return payload.adminMemberUserIds.map(userGroup)
   }
 
   // Permission-scoped events (e.g. invitation lifecycle → members:write) go to

@@ -43,7 +43,7 @@ export const streamConnectionIdSchema = z.string().min(1).max(64)
  * so a change that adds one deploys the regions first.
  */
 export const streamConnectionSnapshotSchema = z.object({
-  id: z.string().min(1),
+  id: streamConnectionIdSchema,
   revision: z.number().int().positive(),
   state: z.enum(STREAM_CONNECTION_STATES),
   hostWorkspaceId: z.string().min(1),

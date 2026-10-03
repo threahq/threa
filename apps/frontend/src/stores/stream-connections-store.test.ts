@@ -13,7 +13,7 @@ function connection(id: string, overrides: Partial<StreamConnection> = {}): Stre
     remoteWorkspaceId: null,
     remoteWorkspaceName: null,
     partnerVisibility: null,
-    invitedBy: "member_1",
+    invitedBy: "user_1",
     acceptedBy: null,
     expiresAt: "2026-10-08T00:00:00.000Z",
     ...overrides,

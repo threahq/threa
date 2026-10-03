@@ -25,6 +25,7 @@ import {
 import { resolveDeliveryGroups, emitToGroups, syncPermissionRooms } from "./delivery-groups"
 import { logger } from "../logger"
 import { SyncLogRepository, type SyncLogEntryInput } from "../../features/sync"
+import { UserRepository } from "../../features/workspaces"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threahq/backend-common"
 import type { OutboxHandler } from "@threahq/backend-common"
 import type { DelegationStatusChangedEventPayload } from "@threahq/types"
@@ -149,6 +150,7 @@ export class BroadcastHandler implements OutboxHandler {
 
       try {
         for (const event of events) {
+          await this.syncRoleRooms(event)
           this.broadcastEvent(event, routed.get(event.id))
           outboxDispatchLagSeconds.observe(Math.max(0, (Date.now() - event.createdAt.getTime()) / 1000))
           outboxEventsEmitted.inc({ event_type: event.eventType })
@@ -218,6 +220,23 @@ export class BroadcastHandler implements OutboxHandler {
     return routed
   }
 
+  /**
+   * Moves a member's sockets into the permission rooms of their current role.
+   * The role is re-read rather than taken from the payload: a profile write that
+   * read the user before a demotion committed can be dispatched after it.
+   */
+  private async syncRoleRooms(event: OutboxEvent): Promise<void> {
+    if (isOutboxEventType(event, "workspace_user:updated")) {
+      const { workspaceId, user } = event.payload as WorkspaceUserUpdatedOutboxPayload
+      const current = await UserRepository.findById(this.db, workspaceId, user.id)
+      syncPermissionRooms(this.io, workspaceId, user.id, current?.role ?? null)
+    }
+    if (isOutboxEventType(event, "workspace_user:removed")) {
+      const { workspaceId, removedUserId } = event.payload as WorkspaceUserRemovedOutboxPayload
+      syncPermissionRooms(this.io, workspaceId, removedUserId, null)
+    }
+  }
+
   private broadcastEvent(event: OutboxEvent, routedEvent: RoutedEvent | undefined): void {
     // Explicit undefined check, not `??`: bot-scoped events carry groups ===
     // null, which must pass through without re-resolving routing.
@@ -229,15 +248,6 @@ export class BroadcastHandler implements OutboxHandler {
     if (groups === null) {
       this.dispatchBotEvent(event)
       return
-    }
-
-    if (isOutboxEventType(event, "workspace_user:updated")) {
-      const { workspaceId, user } = event.payload as WorkspaceUserUpdatedOutboxPayload
-      syncPermissionRooms(this.io, workspaceId, user.id, user.role)
-    }
-    if (isOutboxEventType(event, "workspace_user:removed")) {
-      const { workspaceId, removedUserId } = event.payload as WorkspaceUserRemovedOutboxPayload
-      syncPermissionRooms(this.io, workspaceId, removedUserId, null)
     }
 
     emitToGroups(this.io, event, groups, routedEvent?.syncId)

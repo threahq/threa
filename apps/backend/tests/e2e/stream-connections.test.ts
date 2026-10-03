@@ -192,4 +192,39 @@ describe("Stream connections E2E", () => {
 
     expect(seenByAdmin).toEqual([whileAdmin, afterPromotion])
   })
+
+  test("should send a private channel's link changes only to its admin members, not to every admin", async () => {
+    const outsiderAdmin = new TestClient()
+    await loginAs(outsiderAdmin, `strconn-outsider-${testRunId}@test.com`, "Connect Outsider")
+    await joinWorkspace(outsiderAdmin, workspaceId, "admin")
+    const privateChannel = await createChannel(owner, workspaceId, `connect-private-${testRunId}`, "private")
+    const publicChannel = await createChannel(owner, workspaceId, `connect-public-b-${testRunId}`, "public")
+    const [ownerSocket, outsiderSocket] = await Promise.all([connectedSocket(owner), connectedSocket(outsiderAdmin)])
+    sockets.push(ownerSocket, outsiderSocket)
+    await Promise.all([joinRoom(ownerSocket, `ws:${workspaceId}`), joinRoom(outsiderSocket, `ws:${workspaceId}`)])
+
+    type Update = { connection: { id: string } }
+    const seenByOutsider: string[] = []
+    outsiderSocket.on("stream_connection:updated", (payload: Update) => seenByOutsider.push(payload.connection.id))
+    const privateLink = invitedSnapshot(privateChannel.id)
+    const publicLink = invitedSnapshot(publicChannel.id)
+    const ownerGotPrivate = nextEvent<Update>(
+      ownerSocket,
+      "stream_connection:updated",
+      (p) => p.connection.id === privateLink.id
+    )
+    const outsiderGotPublic = nextEvent<Update>(
+      outsiderSocket,
+      "stream_connection:updated",
+      (p) => p.connection.id === publicLink.id
+    )
+
+    await owner.internalRequest("POST", "/internal/stream-connections", privateLink)
+    await ownerGotPrivate
+    await owner.internalRequest("POST", "/internal/stream-connections", publicLink)
+    // Events reach one socket in order, so this arriving rules out the private one.
+    await outsiderGotPublic
+
+    expect(seenByOutsider).toEqual([publicLink.id])
+  })
 })

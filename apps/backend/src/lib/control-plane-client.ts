@@ -436,7 +436,9 @@ export class ControlPlaneClient {
         throw error
       }
       logger.error({ path, status: res.status, body }, `Failed to ${action}`)
-      throw new HttpError(`Failed to ${action}`, { status: 502, code: "CONTROL_PLANE_UNAVAILABLE" })
+      // A 4xx is a key or contract mismatch, not an outage, so callers that tolerate an outage must not swallow it.
+      const code = res.status >= 500 ? "CONTROL_PLANE_UNAVAILABLE" : "CONTROL_PLANE_REJECTED"
+      throw new HttpError(`Failed to ${action}`, { status: 502, code })
     }
     return res.json()
   }

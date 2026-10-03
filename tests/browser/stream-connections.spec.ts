@@ -62,8 +62,7 @@ async function acceptInvite(
   await expect(page.getByRole("link", { name: `Open ${partnerName}` })).toBeVisible()
 }
 
-async function expectSharedWith(page: Page, workspaceId: string, streamId: string, partnerNames: string[]) {
-  await page.goto(settingsUrl(workspaceId, streamId, "connect"))
+async function expectSharedWith(page: Page, partnerNames: string[]) {
   const dialog = page.getByRole("dialog")
   await expect(dialog.getByText("Shared with")).toBeVisible({ timeout: 10000 })
   for (const name of partnerNames) await expect(dialog.getByText(name)).toBeVisible()
@@ -71,7 +70,10 @@ async function expectSharedWith(page: Page, workspaceId: string, streamId: strin
 }
 
 test.describe("Stream connections", () => {
-  test("should share a channel with another workspace when its admin accepts the invite", async ({ browser, page }) => {
+  test("should share a channel with another workspace when its admin accepts, and name it in the host's open settings", async ({
+    browser,
+    page,
+  }) => {
     const partnerContext = await browser.newContext()
     try {
       const partnerPage = await partnerContext.newPage()
@@ -85,13 +87,16 @@ test.describe("Stream connections", () => {
       const invitePath = await createInviteLink(page)
 
       await acceptInvite(partnerPage, invitePath, slug, host.workspaceName, partner.workspaceName)
-      await expectSharedWith(page, host.workspaceId, streamId, [partner.workspaceName])
+      await expectSharedWith(page, [partner.workspaceName])
     } finally {
       await partnerContext.close()
     }
   })
 
-  test("should bring a third workspace into a channel already shared with another", async ({ browser, page }) => {
+  test("should bring a third workspace into a channel already shared with another, and list both after a reload", async ({
+    browser,
+    page,
+  }) => {
     const contexts = [await browser.newContext(), await browser.newContext()]
     try {
       const [partnerPage, thirdPage] = await Promise.all(contexts.map((context) => context.newPage()))
@@ -104,7 +109,8 @@ test.describe("Stream connections", () => {
       const secondInvite = await createInviteLink(page)
       await acceptInvite(thirdPage, secondInvite, slug, host.workspaceName, third.workspaceName, partner.workspaceName)
 
-      await expectSharedWith(page, host.workspaceId, streamId, [partner.workspaceName, third.workspaceName])
+      await page.reload()
+      await expectSharedWith(page, [partner.workspaceName, third.workspaceName])
     } finally {
       await Promise.all(contexts.map((context) => context.close()))
     }
@@ -141,7 +147,7 @@ test.describe("Stream connections", () => {
   test.describe("on a phone", () => {
     test.use({ viewport: PHONE, hasTouch: true })
 
-    test("should share a channel with another workspace when its admin accepts the invite", async ({
+    test("should share a channel with another workspace and name it in the host's open settings", async ({
       browser,
       page,
     }) => {
@@ -156,7 +162,7 @@ test.describe("Stream connections", () => {
         const invitePath = await createInviteLink(page)
 
         await acceptInvite(partnerPage, invitePath, slug, host.workspaceName, partner.workspaceName)
-        await expectSharedWith(page, host.workspaceId, streamId, [partner.workspaceName])
+        await expectSharedWith(page, [partner.workspaceName])
       } finally {
         await partnerContext.close()
       }

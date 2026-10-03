@@ -34,7 +34,7 @@ import { useWorkspaces } from "@/hooks"
 import { formatRegion } from "@/lib/regions"
 import { streamLabel } from "@/lib/streams"
 
-const LINK_CLASS = "text-sm text-foreground underline-offset-4 hover:underline"
+const LINK_CLASS = "inline-flex h-11 items-center px-4 text-sm text-foreground underline-offset-4 hover:underline"
 const FIELD_LABEL_CLASS = "text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground"
 
 const LOOKUP_ERROR_COPY = {

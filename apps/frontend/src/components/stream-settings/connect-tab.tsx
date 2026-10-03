@@ -19,7 +19,13 @@ import { useWorkspaceUsers } from "@/stores/workspace-store"
 
 const HOUR_MS = 60 * 60_000
 
+const REFUSAL_COPY: Partial<Record<string, string>> = {
+  [StreamConnectionErrorCodes.DISABLED]: "Shared channels are turned off for this workspace.",
+  FORBIDDEN: "Only workspace admins can share channels.",
+}
+
 const CREATE_ERROR_COPY: Partial<Record<string, string>> = {
+  ...REFUSAL_COPY,
   [StreamConnectionErrorCodes.NOT_SHAREABLE]: "Only active, unencrypted channels can be shared.",
   [StreamConnectionErrorCodes.TOO_MANY_INVITES]: "This channel has too many open links. Revoke one to create another.",
 }
@@ -29,6 +35,7 @@ function createErrorMessage(error: unknown): string {
 }
 
 const REVOKE_ERROR_COPY: Partial<Record<string, string>> = {
+  ...REFUSAL_COPY,
   [StreamConnectionErrorCodes.ALREADY_ACCEPTED]: "Another workspace already accepted this invite.",
   [StreamConnectionErrorCodes.NOT_FOUND]: "This link no longer exists.",
 }
@@ -69,9 +76,11 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
   const [actionError, setActionError] = useState<{ action: "create" | "revoke"; message: string } | null>(null)
 
   const [now, setNow] = useState(Date.now)
+  const connected = (rows ?? []).filter((row) => row.state === StreamConnectionStates.ACTIVE)
   const pending = (rows ?? []).filter(
     (row) => row.state === StreamConnectionStates.INVITED && Date.parse(row.expiresAt) > now
   )
+  const empty = connected.length === 0 && pending.length === 0
   const nextExpiry = pending.length > 0 ? Math.min(...pending.map((row) => Date.parse(row.expiresAt))) : null
   useEffect(() => {
     if (nextExpiry === null) return
@@ -79,7 +88,7 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
     return () => window.clearTimeout(timer)
   }, [nextExpiry, now])
 
-  if (rows === undefined || (load.status === "loading" && rows.length === 0)) {
+  if (rows === undefined || (load.status === "loading" && empty)) {
     return (
       <div className="space-y-3 p-1">
         <Skeleton className="h-4 w-32" />
@@ -88,14 +97,17 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
     )
   }
 
+  const refusal = ApiError.isApiError(load.error) && REFUSAL_COPY[load.error.code]
   const loadFailed = load.status === "failed" && (
     <div className="space-y-3">
       <p role="alert" className="text-sm text-destructive">
-        Couldn't load this channel's connections.
+        {refusal || "Couldn't load this channel's connections."}
       </p>
-      <Button variant="outline" size="sm" onClick={load.retry}>
-        Try again
-      </Button>
+      {!refusal && (
+        <Button variant="outline" size="sm" onClick={load.retry}>
+          Try again
+        </Button>
+      )}
     </div>
   )
   if (loadFailed && rows.length === 0) return <div className="p-1">{loadFailed}</div>
@@ -126,8 +138,6 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
     }
   }
 
-  const connected = rows.filter((row) => row.state === StreamConnectionStates.ACTIVE)
-  const empty = connected.length === 0 && pending.length === 0
   const blocked = unshareableReason(stream)
   const busy = creating || revokingId !== null
   const timePrefs = { timeFormat: preferences?.timeFormat }
