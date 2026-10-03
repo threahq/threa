@@ -11,7 +11,7 @@ import type { MemoExplorerService } from "../../memos"
 import type { SearchService } from "../../search"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
 import type { StartSubagentOutcome, ReportBackOutcome } from "../../subagents"
-import type { SandboxFile, SandboxRunResult } from "../../sandboxes"
+import type { SandboxFile, SandboxReadStream, SandboxRunResult } from "../../sandboxes"
 
 export interface WorkspaceToolDeps {
   db: Pool
@@ -150,7 +150,7 @@ export interface RunCommandToolDeps {
     files: SandboxFile[]
     timeoutSec: number
     signal?: AbortSignal
-  }) => Promise<SandboxRunResult>
+  }) => Promise<SandboxRunResult & { streamsRead?: SandboxReadStream[] }>
 }
 
 /**

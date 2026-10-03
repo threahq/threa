@@ -36,7 +36,7 @@ import {
   resolveSealingContext,
 } from "../e2e-streams"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
-import { isSandboxStreamReadable, sandboxReadableStreamIds } from "../sandboxes"
+import { isSandboxStreamReadable, recordSandboxReads, sandboxReadableStreamIds } from "../sandboxes"
 import { failSessionWithLifecycleInTransaction, PersonaRepository } from "../agents"
 import { type Memo, type MemoExplorerService, type MemoExplorerDetail, type MemoExplorerResult } from "../memos"
 import {
@@ -826,8 +826,11 @@ export function createPublicApiHandlers({
    * keys use their readable set, which excludes archived). Lazy — no access
    * query runs when no returned message references a shared source.
    */
-  function resolveSlots(req: Request, contentJsons: Iterable<JSONContent | null | undefined>): Promise<WireSlotMap> {
-    return resolvePublicMessageSlots(
+  async function resolveSlots(
+    req: Request,
+    contentJsons: Iterable<JSONContent | null | undefined>
+  ): Promise<WireSlotMap> {
+    const slots = await resolvePublicMessageSlots(
       pool,
       req.workspaceId!,
       () => {
@@ -837,6 +840,11 @@ export function createPublicApiHandlers({
       },
       contentJsons
     )
+    await noteSandboxReads(
+      req,
+      Object.values(slots).flatMap((slot) => (slot.state === "ok" ? [slot.streamId] : []))
+    )
+    return slots
   }
 
   /**
@@ -1162,6 +1170,13 @@ export function createPublicApiHandlers({
     }
     await assertStreamAccessible(req, conversation.streamId)
     return conversation
+  }
+
+  /** A sandbox command's output carries the streams it read, so its turn digest stays access-checked. */
+  async function noteSandboxReads(req: Request, streamIds: Iterable<string | null>): Promise<void> {
+    if (!req.sandboxSession) return
+    const ids = [...new Set(streamIds)].filter((id): id is string => id !== null)
+    await recordSandboxReads(pool, req.sandboxSession, ids)
   }
 
   async function resolveAccessibleAttachment(req: Request, attachmentId: string): Promise<Attachment> {
@@ -2816,6 +2831,10 @@ export function createPublicApiHandlers({
         searchFlag,
       })
 
+      await noteSandboxReads(
+        req,
+        results.map((r) => r.streamId)
+      )
       setAuditSubjects(
         res,
         results.map((r) => ({ type: "message", id: r.id }))
@@ -2939,6 +2958,10 @@ export function createPublicApiHandlers({
         limit,
       })
 
+      await noteSandboxReads(
+        req,
+        attachments.map((a) => a.streamId)
+      )
       setAuditSubjects(
         res,
         attachments.map((a) => ({ type: "attachment", id: a.id }))
@@ -2949,6 +2972,7 @@ export function createPublicApiHandlers({
     async getAttachment(req: Request, res: Response) {
       const attachment = await resolveAccessibleAttachment(req, req.params.attachmentId)
       const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, attachment.id)
+      await noteSandboxReads(req, [attachment.streamId])
 
       setAuditSubjects(res, [{ type: "attachment", id: attachment.id }])
       res.json({ data: serializeAttachmentDetail(attachment, extraction) })
@@ -2967,6 +2991,7 @@ export function createPublicApiHandlers({
 
     async downloadAttachment(req: Request, res: Response) {
       const attachment = await resolveAccessibleAttachment(req, req.params.attachmentId)
+      await noteSandboxReads(req, [attachment.streamId])
       setAuditSubjects(res, [{ type: "attachment", id: attachment.id }])
       const object = await attachmentService.getContent(attachment)
 
@@ -3018,6 +3043,7 @@ export function createPublicApiHandlers({
       const page = hasMore ? streams.slice(0, limit) : streams
 
       const parentStreamMap = await resolveParentStreams(pool, page)
+      await noteSandboxReads(req, [...page.map((s) => s.id), ...parentStreamMap.keys()])
 
       const lastStream = page[page.length - 1]
       res.json({
@@ -3042,6 +3068,7 @@ export function createPublicApiHandlers({
         throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
       }
 
+      await noteSandboxReads(req, [stream.id, stream.parentStreamId])
       res.json({ data: serializeStream(stream, await displayNameContext(stream)) })
     },
 
@@ -3169,6 +3196,7 @@ export function createPublicApiHandlers({
       })
 
       const hasMore = messages.length > limit
+      if (messages.length > 0) await noteSandboxReads(req, [streamId])
       // afterSequence returns ASC from DB — extra probe is at the tail.
       // beforeSequence/default return DESC then reverse to ASC — extra probe is at the head.
       let page = messages

@@ -8,6 +8,7 @@
  * - losing access mid-run removes the stream on the next call
  * - E2EE-rooted streams and their threads are never readable
  * - revoked and expired tokens stop validating
+ * - revoking hands back the streams the token served, and a revoked token records no more
  * - expired rows are kept a day, then deleted
  */
 
@@ -21,6 +22,7 @@ import { E2eStreamsRepository } from "../../src/features/e2e-streams"
 import {
   SandboxSessionTokenService,
   isSandboxStreamReadable,
+  recordSandboxReads,
   sandboxReadableStreamIds,
   type SandboxSession,
 } from "../../src/features/sandboxes"
@@ -145,6 +147,23 @@ describe("sandbox session tokens", () => {
 
     expect(await service.validate("threa_sk_not-a-token")).toBeNull()
     expect(await service.validate(`threa_uk_${live.value.slice(9)}`)).toBeNull()
+  })
+
+  test("should hand back the streams the token served, once each and named, when revoked", async () => {
+    const { session } = await mint([channel, nonMemberThread])
+    await recordSandboxReads(pool, session, [channel])
+    await recordSandboxReads(pool, session, [nonMemberThread, channel])
+
+    const served = await service.revoke(ws, session.id)
+
+    await expect(recordSandboxReads(pool, session, [channel])).rejects.toMatchObject({ status: 401 })
+    expect(new Set(served)).toEqual(
+      new Set([
+        { streamId: channel, title: `s-${channel.slice(-10)}` },
+        { streamId: nonMemberThread, title: "New thread" },
+      ])
+    )
+    expect(await service.revoke(ws, session.id)).toEqual([])
   })
 
   test("should delete rows a day past expiry at the next mint and keep recently expired ones", async () => {
