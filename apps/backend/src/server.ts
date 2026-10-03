@@ -219,6 +219,7 @@ import { SavedSuggestionsService, SuggestionExtractor } from "./features/saved-s
 import { ScheduledMessagesService, createScheduledMessageSendWorker } from "./features/scheduled-messages"
 import { DraftsService } from "./features/drafts"
 import { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
+import { StreamConnectionService } from "./features/stream-connections"
 import {
   PushService,
   PushNotificationHandler,
@@ -510,6 +511,7 @@ export async function startServer(): Promise<ServerInstance> {
       ? new ControlPlaneClient(config.controlPlaneUrl, config.internalApiKey)
       : null
   const invitationService = new InvitationService(pool, workspaceService)
+  const streamConnectionService = new StreamConnectionService({ pool, controlPlaneClient, featureFlagService })
 
   const scheduleManager = new ScheduleManager(pool, {
     lookaheadSeconds: 60,
@@ -993,6 +995,7 @@ export async function startServer(): Promise<ServerInstance> {
     labelService,
     labelAssignmentService,
     labelMessageService,
+    streamConnectionService,
     pushService,
     perfDiagnosticsService,
     s3Config: config.s3,

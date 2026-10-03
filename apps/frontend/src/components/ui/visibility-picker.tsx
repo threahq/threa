@@ -44,6 +44,7 @@ function VisibilityOption({ selected, onSelect, icon: Icon, label, hint, disable
   return (
     <button
       type="button"
+      aria-pressed={selected}
       onClick={onSelect}
       disabled={disabled}
       className={cn(

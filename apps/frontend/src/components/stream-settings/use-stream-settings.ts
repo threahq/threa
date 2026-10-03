@@ -4,7 +4,7 @@ import { useSearchParams } from "react-router-dom"
 const PARAM_TAB = "stream-settings"
 const PARAM_SID = "sid"
 
-export const STREAM_SETTINGS_TABS = ["general", "companion", "members"] as const
+export const STREAM_SETTINGS_TABS = ["general", "companion", "members", "connect"] as const
 export type StreamSettingsTab = (typeof STREAM_SETTINGS_TABS)[number]
 
 export function useStreamSettings() {

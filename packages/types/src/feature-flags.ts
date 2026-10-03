@@ -69,6 +69,9 @@ export const FEATURE_FLAGS = {
   // the result the user opened (`search_query_log`) to seed a retrieval eval
   // set. Off writes nothing; the search response says whether a row exists.
   searchQueryLog: defineFlag({ values: ["off", "on"], scopes: ["workspace", "user"], default: "off" }),
+  // Sharing a channel with another workspace (Threa Connect). Gates share,
+  // accept, and the Connect tab on each side.
+  streamConnections: defineFlag({ values: ["off", "on"], scopes: ["workspace"], default: "off" }),
 } as const satisfies FeatureFlagRegistry
 
 export type FeatureFlagKey = keyof typeof FEATURE_FLAGS

@@ -153,6 +153,7 @@ export {
   perfCaptureId,
   searchQueryLogId,
   sandboxSessionTokenId,
+  streamConnectionId,
 } from "./id"
 export {
   parseCookies,

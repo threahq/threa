@@ -11,6 +11,11 @@ export function buildStreamLink(workspaceId: string, streamId: string): string {
   return `${window.location.origin}/w/${workspaceId}/s/${streamId}`
 }
 
+/** Absolute invite link for a shared channel. The token is shown once, at creation. */
+export function buildStreamConnectionInviteLink(token: string): string {
+  return `${window.location.origin}/connections/${encodeURIComponent(token)}`
+}
+
 /**
  * Absolute, shareable URL for a delegation. Points at the first-class
  * `/delegations/:id` route (a redirect page that resolves the delegation and

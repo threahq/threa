@@ -16,6 +16,7 @@ import type {
   Slot,
   StreamContextBagPayload,
   StreamContextItem,
+  StreamConnection,
   StreamPurpose,
   StreamType,
   ThreaDocument,
@@ -1099,6 +1100,15 @@ export interface CachedSlot {
 }
 
 /**
+ * A Connect row of one workspace. The same connection id is a row in each
+ * workspace it touches, hence the compound key.
+ */
+export interface CachedStreamConnection extends StreamConnection {
+  workspaceId: string
+  _cachedAt: number
+}
+
+/**
  * Which account's data a cached database holds. One row, written the first time
  * an account opens it: a database whose marker names somebody else is not this
  * account's cache, whatever its name says.
@@ -1146,6 +1156,7 @@ export class ThreaDatabase extends Dexie {
   uploadJobs!: EntityTable<CachedUploadJob, "attachmentId">
   slots!: Table<CachedSlot, [string, string]>
   streamContextItems!: EntityTable<CachedStreamContextItem, "key">
+  streamConnections!: Table<CachedStreamConnection, [string, string]>
   cacheOwnership!: EntityTable<CacheOwnership, "id">
 
   private upgradeRecoveryAvailable = true
@@ -1649,6 +1660,11 @@ export class ThreaDatabase extends Dexie {
       cacheOwnership: "id",
     })
 
+    // v50: Connect rows, written by the Connect tab's fetch and `stream_connection:updated`.
+    this.version(50).stores({
+      streamConnections: "[workspaceId+id], [workspaceId+streamId]",
+    })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
 
     // Dexie holds every other transaction until this resolves, so nothing reads
@@ -1817,6 +1833,7 @@ export async function clearAllCachedData(): Promise<void> {
       db.conversationMessages.clear(),
       db.streamContextItems.clear(),
       db.slots.clear(),
+      db.streamConnections.clear(),
       // The persisted device key seals this identity's private key for
       // auto-resume — sign-out must drop it so the next account can't resume
       // this identity's unlocked session.

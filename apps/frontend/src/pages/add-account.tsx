@@ -4,11 +4,11 @@ import { toast } from "sonner"
 import { ArrowLeft, Mail } from "lucide-react"
 import { MAGIC_CODE_LENGTH, type SocialProvider } from "@threahq/types"
 import { API_BASE, ApiError, api } from "@/api/client"
+import { HaloIcon, StandalonePage } from "@/components/standalone-page"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp"
 import { Label } from "@/components/ui/label"
-import { ThreaLogo } from "@/components/threa-logo"
 
 type Step = "picker" | "email" | "verify"
 
@@ -93,7 +93,7 @@ export function AddAccountPage() {
   }, [code, email])
 
   return (
-    <AddAccountShell>
+    <StandalonePage>
       {/* `key={step}` re-mounts the step block on each transition so each one
           fades in instead of swapping silently. The shell itself only animates
           once on initial mount. */}
@@ -130,27 +130,7 @@ export function AddAccountPage() {
           />
         )}
       </div>
-    </AddAccountShell>
-  )
-}
-
-/**
- * Centred shell shared by every step. Mirrors `JoinShell` in apps/frontend/src/pages/join.tsx
- * so the multi-account add flow visually belongs to the same auth-landing
- * family as the invitation accept and sign-in pages.
- */
-function AddAccountShell({ children }: { children: ReactNode }) {
-  return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_50%_-10%,hsl(var(--primary)/0.10),transparent_55%)]"
-      />
-      <div className="relative flex w-full max-w-md flex-col items-center gap-10 p-6 animate-in fade-in slide-in-from-bottom-2 duration-500">
-        <ThreaLogo size="lg" />
-        {children}
-      </div>
-    </div>
+    </StandalonePage>
   )
 }
 
@@ -311,7 +291,7 @@ function VerifyStep({
       className="w-full space-y-8"
     >
       <div className="space-y-6 text-center">
-        <HaloMailIcon />
+        <HaloIcon icon={Mail} tone="primary" />
         <div className="space-y-2">
           <span className="text-[11px] uppercase tracking-[0.18em] text-muted-foreground">Code sent</span>
           <h1 className="text-2xl font-medium leading-tight">Check your inbox</h1>
@@ -369,18 +349,6 @@ function ProviderButton({ icon, children, onClick }: { icon: ReactNode; children
       {icon}
       <span>{children}</span>
     </Button>
-  )
-}
-
-/** Mirrors the HaloIcon used by `JoinPage`'s SubmittedState — same visual family. */
-function HaloMailIcon() {
-  return (
-    <div className="relative mx-auto flex h-16 w-16 items-center justify-center">
-      <div aria-hidden className="absolute inset-1 rounded-full bg-primary/15 blur-xl" />
-      <div className="relative flex h-14 w-14 items-center justify-center rounded-full border bg-background">
-        <Mail className="h-6 w-6 text-primary" />
-      </div>
-    </div>
   )
 }
 
