@@ -157,6 +157,19 @@ import { useScrollToMessage, snapshotTopVisibleRow, UNREAD_MARKER_TOP_GAP_PX } f
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
 
 /**
+ * A thread whose window holds only hidden rows is empty only when the server's
+ * own latest window is too: a cache can hold the membership rows and miss the
+ * replies, and its rows outlive the server's answer by a render or more.
+ */
+export function isThreadConfirmedEmpty(args: {
+  isConfirmedEmpty: boolean
+  bootstrapEvents: ReadonlyArray<Pick<StreamEvent, "eventType">> | undefined
+}): boolean {
+  if (args.isConfirmedEmpty) return true
+  return args.bootstrapEvents?.every((event) => THREAD_HIDDEN_EVENT_TYPES.has(event.eventType)) === true
+}
+
+/**
  * Per-tick terminal policy for the post-jump scroll driver.
  *
  * The driver re-attempts `scrollToMessage` every frame after a deep-link
@@ -2941,9 +2954,10 @@ export function StreamContent({
                           <EventList
                             timelineItems={timelineItems}
                             isLoading={isLoading}
-                            // Rows that are all hidden in a thread (membership) are an answer too,
-                            // once the server has given one: a cache can hold them and miss the replies.
-                            isConfirmedEmpty={isConfirmedEmpty || (events.length > 0 && bootstrap !== undefined)}
+                            isConfirmedEmpty={isThreadConfirmedEmpty({
+                              isConfirmedEmpty,
+                              bootstrapEvents: bootstrap?.events,
+                            })}
                             workspaceId={workspaceId}
                             streamId={streamId}
                             highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}
