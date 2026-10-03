@@ -125,7 +125,7 @@ function fakeCostService() {
 }
 
 function makeHandlers(createMessage = mock(async (_input: Record<string, unknown>) => ({}) as never)) {
-  spyOn(DynamicNamingStateRepository, "releaseOwnedClaim").mockResolvedValue(0)
+  const releaseClaim = spyOn(DynamicNamingStateRepository, "releaseOwnedClaim").mockResolvedValue(0)
   spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
   if (!("mock" in MessageRepository.findById)) {
     spyOn(MessageRepository, "findById").mockResolvedValue({
@@ -161,6 +161,7 @@ function makeHandlers(createMessage = mock(async (_input: Record<string, unknown
     completeClaim,
     failClaim,
     enqueueCatchUp,
+    releaseClaim,
   }
 }
 
@@ -178,7 +179,7 @@ describe("createEnclaveSessionHandlers.message", () => {
     spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([])
     const lifecycle = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_failed" } as never)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    const { handlers, createMessage, createMessageForPrincipalInTransaction, failClaim } = makeHandlers()
+    const { handlers, createMessage, createMessageForPrincipalInTransaction, failClaim, releaseClaim } = makeHandlers()
     createMessageForPrincipalInTransaction.mockRejectedValue(
       new HttpError("read only", { status: 403, code: "STREAM_READ_ONLY", details: { reason: "archived" } })
     )
@@ -193,6 +194,7 @@ describe("createEnclaveSessionHandlers.message", () => {
     expect(createMessage).not.toHaveBeenCalled()
     expect(updateStatus).toHaveBeenCalledTimes(2)
     expect(failClaim).toHaveBeenCalledTimes(1)
+    expect(releaseClaim.mock.calls.map((c) => c.slice(1))).toEqual([["ws_1", "session_1"]])
     expect(lifecycle).toHaveBeenCalledTimes(1)
   })
 
@@ -386,7 +388,9 @@ describe("createEnclaveSessionHandlers.namingDecision", () => {
       lastEvaluatedStructureVersion: 0,
     } as never)
     spyOn(MessageRepository, "getNamingStats").mockResolvedValue({ count: 3, latestMessageAt: new Date() })
-    spyOn(DynamicNamingStateRepository, "advanceOwnedClaimObservation").mockResolvedValue({ version: 5 } as never)
+    const advance = spyOn(DynamicNamingStateRepository, "advanceOwnedClaimObservation").mockResolvedValue({
+      version: 5,
+    } as never)
     const apply = spyOn(DynamicNamingStateRepository, "applyDecision").mockResolvedValue({ state: {} } as never)
     const store = spyOn(E2eStreamsRepository, "updateSealedName").mockResolvedValue(true)
     spyOn(StreamRepository, "updateDisplayName").mockResolvedValue({
@@ -407,7 +411,14 @@ describe("createEnclaveSessionHandlers.namingDecision", () => {
     await handlers.namingDecision(req("session_1", RENAME_BODY), res)
 
     expect(res.statusCode).toBe(204)
-    expect(apply).toHaveBeenCalledWith({}, expect.objectContaining({ token: "claim_1", expectedVersion: 5 }))
+    expect(advance).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ workspaceId: "ws_1", ownerId: "session_1", token: "claim_1", expectedVersion: 4 })
+    )
+    expect(apply).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ workspaceId: "ws_1", token: "claim_1", expectedVersion: 5 })
+    )
     expect(store).toHaveBeenCalledWith({}, "ws_1", "stream_1", expect.objectContaining({ ciphertext: "Y3Q=" }))
     expect(insert).toHaveBeenCalledWith(
       {},
@@ -444,9 +455,8 @@ describe("createEnclaveSessionHandlers.namingDecision", () => {
     } as never)
     spyOn(MessageRepository, "getNamingStats").mockResolvedValue({ count: 3, latestMessageAt: new Date() })
     spyOn(E2eStreamsRepository, "getSealedName").mockResolvedValue(null)
-    const release = spyOn(DynamicNamingStateRepository, "releaseOwnedClaim").mockResolvedValue(1)
     const advance = spyOn(DynamicNamingStateRepository, "advanceOwnedClaimObservation")
-    const { handlers } = makeHandlers()
+    const { handlers, releaseClaim: release } = makeHandlers()
 
     await handlers.namingDecision(
       req("session_1", {
@@ -460,7 +470,7 @@ describe("createEnclaveSessionHandlers.namingDecision", () => {
       fakeRes()
     )
 
-    expect(release).toHaveBeenCalledWith({}, "session_1")
+    expect(release).toHaveBeenCalledWith({}, "ws_1", "session_1")
     expect(advance).not.toHaveBeenCalled()
   })
 
@@ -493,11 +503,12 @@ describe("createEnclaveSessionHandlers.namingDecision", () => {
       displayNameRevision: 3,
     } as never)
     const store = spyOn(E2eStreamsRepository, "updateSealedName").mockResolvedValue(true)
-    const { handlers } = makeHandlers()
+    const { handlers, releaseClaim } = makeHandlers()
 
     await handlers.namingDecision(req("session_1", RENAME_BODY), fakeRes())
 
     expect(store).not.toHaveBeenCalled()
+    expect(releaseClaim).toHaveBeenCalledWith({}, "ws_1", "session_1")
   })
 })
 
@@ -595,7 +606,8 @@ describe("createEnclaveSessionHandlers.complete", () => {
     // No user message arrived during the turn → no follow-up dispatch.
     spyOn(StreamEventRepository, "getMessageSequence").mockResolvedValue(5n)
     spyOn(StreamEventRepository, "getLatestUnseenUserMessage").mockResolvedValue(null)
-    const { handlers, createMessage, io, emit, enqueueCatchUp, completeClaim, recordUsage } = makeHandlers()
+    const { handlers, createMessage, io, emit, enqueueCatchUp, completeClaim, recordUsage, releaseClaim } =
+      makeHandlers()
     const res = fakeRes()
 
     await handlers.complete(req("session_1", COMPLETE_BODY), res)
@@ -607,6 +619,7 @@ describe("createEnclaveSessionHandlers.complete", () => {
     expect(complete).toHaveBeenCalledTimes(1)
     // The turn's claim flips with the session, in the same transaction (INV-7).
     expect(completeClaim).toHaveBeenCalledWith(tx, "session_1")
+    expect(releaseClaim).toHaveBeenCalledWith(tx, "ws_1", "session_1")
     // Completion + event are one atomic transaction (INV-7): completeSession runs
     // on the tx client, not the bare pool.
     expect(complete.mock.calls[0]![0]).toBe(tx)
@@ -854,7 +867,7 @@ describe("createEnclaveSessionHandlers.fail", () => {
     const updateStatus = spyOn(AgentSessionRepository, "updateStatus").mockResolvedValue(SESSION)
     const insertEvent = spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
     const insertOutbox = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
-    const { handlers, io, emit, failClaim } = makeHandlers()
+    const { handlers, io, emit, failClaim, releaseClaim } = makeHandlers()
     const res = fakeRes()
 
     await handlers.fail(req("session_1", FAIL_BODY), res)
@@ -868,6 +881,7 @@ describe("createEnclaveSessionHandlers.fail", () => {
       sessionId: "session_1",
       errorMessage: "Enclave session failed: AbortError",
     })
+    expect(releaseClaim).toHaveBeenCalledWith(tx, "ws_1", "session_1")
     // FAILED is gated on the RUNNING→FAILED transition and carries the scrubbed
     // classification — the error's class name, never plaintext content (INV-E7).
     expect(updateStatus.mock.calls[0]![1]).toBe("ws_1")
@@ -1133,10 +1147,15 @@ describe("createEnclaveSessionHandlers.heartbeat", () => {
   it("refreshes the heartbeat, renews the claim, and answers abort: false", async () => {
     spyOn(AgentSessionRepository, "findByIdForCallback").mockResolvedValue(SESSION)
     const beat = spyOn(AgentSessionRepository, "updateHeartbeat").mockResolvedValue(undefined)
+    const renewLease = spyOn(DynamicNamingStateRepository, "renewOwnedClaimLease").mockResolvedValue(0)
     const { handlers, renewClaim } = makeHandlers()
     const res = fakeRes()
     await handlers.heartbeat(req("session_1", {}), res)
     expect(beat).toHaveBeenCalledWith(pool, "ws_1", "session_1")
+    expect(renewLease).toHaveBeenCalledWith(
+      pool,
+      expect.objectContaining({ workspaceId: "ws_1", ownerId: "session_1" })
+    )
     // A healthy long turn keeps its claim out of the claimable set.
     expect(renewClaim).toHaveBeenCalledWith(pool, expect.objectContaining({ sessionId: "session_1" }))
     expect(res.statusCode).toBe(200)

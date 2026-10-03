@@ -276,6 +276,7 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
      AND dt.id = sci.ref_id
     LEFT JOIN stream_events de
       ON sci.category = 'delegation'
+     AND de.workspace_id = sci.workspace_id
      AND de.stream_id = sci.stream_id
      AND de.event_type = 'delegation:created'
      AND de.payload->>'delegationId' = sci.ref_id
@@ -285,6 +286,7 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
      AND afu.id = sci.ref_id
     LEFT JOIN stream_events fue
       ON sci.category = 'follow_up'
+     AND fue.workspace_id = sci.workspace_id
      AND fue.stream_id = sci.stream_id
      AND fue.event_type = 'agent:follow_up_scheduled'
      AND fue.payload->>'followUpId' = sci.ref_id
