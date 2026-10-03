@@ -57,7 +57,7 @@ export const MessageConversationStateRepository = {
     await db.query(sql`
       INSERT INTO message_conversation_state (message_id, workspace_id, stream_id, conversation_id, state)
       VALUES (${params.messageId}, ${params.workspaceId}, ${params.streamId}, ${params.conversationId}, 'settling')
-      ON CONFLICT (message_id) DO NOTHING
+      ON CONFLICT (workspace_id, message_id) DO NOTHING
     `)
   },
 
@@ -188,13 +188,12 @@ export const MessageConversationStateRepository = {
         FROM messages m
         WHERE m.id = ANY(${messageIds}::text[])
           AND m.workspace_id = ${workspaceId}
-        ON CONFLICT (message_id) DO UPDATE
+        ON CONFLICT (workspace_id, message_id) DO UPDATE
         SET conversation_id = EXCLUDED.conversation_id,
             state = 'settled',
             settled_by = 'user',
             settled_at = NOW(),
             updated_at = NOW()
-        WHERE message_conversation_state.workspace_id = ${workspaceId}
         RETURNING message_id, workspace_id, stream_id, conversation_id, state, settled_by, settled_at
       `)
       return upserted.rows.map(mapRow)

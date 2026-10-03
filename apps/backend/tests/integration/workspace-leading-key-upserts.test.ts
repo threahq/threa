@@ -1,12 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { AuthorTypes, ContextIntents, ContextRefKinds, StreamTypes, Visibilities } from "@threahq/types"
-import { setupTestDatabase, withClient } from "./setup"
+import { setupTestDatabase, testMessageContent, withClient } from "./setup"
 import {
   ContextBagRepository,
   ConversationSummaryRepository,
   StreamPersonaParticipantRepository,
 } from "../../src/features/agents"
+import { MessageConversationStateRepository } from "../../src/features/conversations"
+import { MessageComposeTraceRepository, MessageRepository } from "../../src/features/messaging"
 import {
   StreamBriefRepository,
   StreamEventRepository,
@@ -16,6 +18,7 @@ import {
 } from "../../src/features/streams"
 import {
   agentConversationSummaryId,
+  conversationId,
   messageId,
   personaId,
   streamBriefId,
@@ -212,12 +215,15 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     stream: string
     member: string
     persona: string
+    message: string
     refStreams: [string, string]
   }
 
-  const firstRow = (columns: string, table: string) => async (ws: string, ids: SharedIds) =>
-    (await pool.query(`SELECT ${columns} FROM ${table} WHERE workspace_id = $1 AND stream_id = $2`, [ws, ids.stream]))
-      .rows[0] ?? null
+  const firstRow =
+    (columns: string, table: string, by: "stream" | "message" = "stream") =>
+    async (ws: string, ids: SharedIds) =>
+      (await pool.query(`SELECT ${columns} FROM ${table} WHERE workspace_id = $1 AND ${by}_id = $2`, [ws, ids[by]]))
+        .rows[0] ?? null
 
   const sharedKeyCases: Array<{
     name: string
@@ -317,6 +323,90 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
         ),
       read: firstRow("persona_id", "stream_persona_participants"),
     },
+    {
+      name: "a client message id",
+      oldKey: "messages_stream_id_client_message_id_unique",
+      write: (ws, ids, writer) =>
+        MessageRepository.insert(pool, {
+          id: messageId(),
+          workspaceId: ws,
+          streamId: ids.stream,
+          sequence: 1n,
+          authorId: ids.member,
+          authorType: AuthorTypes.USER,
+          ...testMessageContent(`message ${writer}`),
+          clientMessageId: ids.message,
+        }),
+      read: async (ws, ids) =>
+        (await MessageRepository.findByClientMessageId(pool, ws, ids.stream, ids.message))?.id ?? null,
+    },
+    {
+      name: "a reaction",
+      oldKey: "reactions_pkey",
+      write: (ws, ids) => MessageRepository.addReaction(pool, ws, ids.message, "👍", ids.member),
+      read: firstRow("user_id, emoji", "reactions", "message"),
+    },
+    {
+      name: "a compose trace",
+      oldKey: "message_compose_traces_pkey",
+      write: (ws, ids, writer) =>
+        MessageComposeTraceRepository.insert(pool, {
+          messageId: ids.message,
+          workspaceId: ws,
+          streamId: ids.stream,
+          horizonStreamId: ids.stream,
+          openedAt: "2026-10-03T10:00:00.000Z",
+          openedAtSequence: writer,
+          sentAtSequence: writer + 1,
+          resumedDraft: writer === 1,
+        }),
+      read: (ws, ids) => MessageComposeTraceRepository.findByMessageId(pool, ws, ids.message),
+    },
+    {
+      name: "a provisional conversation placement",
+      oldKey: "message_conversation_state_pkey",
+      write: (ws, ids) =>
+        MessageConversationStateRepository.insertSettling(pool, {
+          messageId: ids.message,
+          workspaceId: ws,
+          streamId: ids.stream,
+          conversationId: conversationId(),
+        }),
+      read: (ws, ids) => MessageConversationStateRepository.findByMessageId(pool, ws, ids.message),
+    },
+    {
+      name: "a user conversation placement",
+      oldKey: "message_conversation_state_pkey",
+      // Workspace A's state row stands alone: the old single-column message key keeps the same message id
+      // out of messages for both workspaces, and only workspace B needs the message for its settle.
+      write: async (ws, ids, writer) => {
+        if (writer === 0) {
+          return MessageConversationStateRepository.insertSettling(pool, {
+            messageId: ids.message,
+            workspaceId: ws,
+            streamId: ids.stream,
+            conversationId: conversationId(),
+          })
+        }
+        await MessageRepository.insert(pool, {
+          id: ids.message,
+          workspaceId: ws,
+          streamId: ids.stream,
+          sequence: 1n,
+          authorId: ids.member,
+          authorType: AuthorTypes.USER,
+          ...testMessageContent("settled by hand"),
+        })
+        return MessageConversationStateRepository.settleForConversationTargets(
+          pool,
+          ws,
+          [ids.message],
+          conversationId(),
+          "user"
+        )
+      },
+      read: (ws, ids) => MessageConversationStateRepository.findByMessageId(pool, ws, ids.message),
+    },
   ]
 
   // While the old keys exist, workspace B's write for a shared id is rejected by the old key. An arbiter still
@@ -331,6 +421,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
         stream: streamId(),
         member: userId(),
         persona: personaId(),
+        message: messageId(),
         refStreams: [streamId(), streamId()],
       }
 

@@ -37,8 +37,8 @@ export class ThreaWaitlistNotifier implements WaitlistNotifier {
 
   async notifySignup(signup: WaitlistSignup): Promise<void> {
     // clientMessageId keys on the row id, so a retry after a timeout collapses
-    // onto the same message via the backend's ON CONFLICT (stream_id,
-    // client_message_id) guard instead of posting the signup twice.
+    // onto the same message via the backend's unique key on the stream and
+    // client message id instead of posting the signup twice.
     const payload = {
       content: buildContent(signup),
       clientMessageId: `waitlist:${signup.id}`,
