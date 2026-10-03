@@ -266,6 +266,11 @@ describe("useScrollBehavior", () => {
   describe("rows arriving while detached", () => {
     type Rows = { itemCount: number; firstItemKey: string; isFetchingOlder?: boolean }
 
+    // jsdom has no CSS.supports, which the hook reads as "no scroll anchoring".
+    afterEach(() => {
+      delete (CSS as Partial<typeof CSS>).supports
+    })
+
     // A thread landed on its unread marker: 50 rows, reader 1056px above the
     // tail. The older page's rows land a render after the fetch flag clears.
     function landDetached() {
@@ -295,6 +300,7 @@ describe("useScrollBehavior", () => {
     }
 
     it("keeps the reader's row and stays detached when the browser anchored the prepend", () => {
+      CSS.supports = () => true
       const { scrollable, rerender } = landDetached()
 
       // Chromium's scroll anchoring has shifted scrollTop by the prepended
@@ -310,7 +316,11 @@ describe("useScrollBehavior", () => {
       expect({ afterPrepend, afterAppend: scrollable.scrollTop }).toEqual({ afterPrepend: 4485, afterAppend: 4485 })
     })
 
-    it("restores the reader's row when nothing anchored the prepend", () => {
+    it.each([
+      ["on an engine with anchoring that did not anchor", true],
+      ["on an engine without anchoring", false],
+    ])("restores the reader's row %s", (_label, anchoring) => {
+      CSS.supports = () => anchoring
       const { scrollable, rerender } = landDetached()
 
       scrollable.setScrollHeight(6293)
@@ -321,6 +331,17 @@ describe("useScrollBehavior", () => {
       rerender({ itemCount: 90, firstItemKey: "event_11" })
 
       expect({ afterPrepend, afterAppend: scrollable.scrollTop }).toEqual({ afterPrepend: 4485, afterAppend: 4485 })
+    })
+
+    it("adds the prepended height to a scroll still in flight on an engine without anchoring", () => {
+      const { scrollable, rerender } = landDetached()
+
+      // Momentum moved the reader 40px up; its scroll event has not fired yet.
+      scrollable.el.scrollTop = 2514
+      scrollable.setScrollHeight(6293)
+      rerender({ itemCount: 89, firstItemKey: "event_11" })
+
+      expect(scrollable.scrollTop).toBe(4445)
     })
   })
 
@@ -339,13 +360,13 @@ describe("useScrollBehavior", () => {
     rerender(<Probe itemCount={11} />)
     const following = scrollable.scrollTop
 
-    // A scroll event racing the growth cleared follow while the reader sat at
-    // the bottom; the next append re-arms it.
+    // A landing whose target is the last row detaches without leaving the
+    // bottom; the next append re-arms follow.
     act(() => ref.current?.disableAutoScroll())
     scrollable.setScrollHeight(1400)
     rerender(<Probe itemCount={12} />)
 
-    expect({ following, afterRacingClear: scrollable.scrollTop }).toEqual({ following: 1200, afterRacingClear: 1400 })
+    expect({ following, afterLanding: scrollable.scrollTop }).toEqual({ following: 1200, afterLanding: 1400 })
   })
 
   it("stays detached when a landing moved the reader off the bottom before the next rows", () => {

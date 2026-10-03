@@ -4,6 +4,10 @@ import { EVENT_PAGE_SIZE, SCROLL_FETCH_RATIO } from "@/lib/constants"
 /** Number of items from the bottom before showing "Jump to latest" */
 const JUMP_TO_LATEST_ITEM_THRESHOLD = 10
 
+function supportsScrollAnchoring(): boolean {
+  return typeof CSS !== "undefined" && CSS.supports?.("overflow-anchor", "auto") === true
+}
+
 interface UseScrollBehaviorOptions {
   /** Whether data is currently loading (delays initial scroll) */
   isLoading: boolean
@@ -92,7 +96,7 @@ export function useScrollBehavior({
   // Position as of the last commit, scroll event or resize: where the batch a
   // render applies started from. Read after the batch, live geometry already
   // includes the browser's scroll anchoring for a prepend.
-  const prevGeometry = useRef<{ scrollTop: number; distanceFromBottom: number } | null>(null)
+  const prevGeometry = useRef<{ scrollTop: number; scrollHeight: number; distanceFromBottom: number } | null>(null)
   // Track previous-render fetching values so effects can detect true→false transitions.
   const prevIsFetchingOlder = useRef(false)
   const prevIsFetchingNewer = useRef(false)
@@ -166,6 +170,7 @@ export function useScrollBehavior({
     if (!el) return
     prevGeometry.current = {
       scrollTop: el.scrollTop,
+      scrollHeight: el.scrollHeight,
       distanceFromBottom: el.scrollHeight - el.scrollTop - el.clientHeight,
     }
   }, [])
@@ -190,10 +195,13 @@ export function useScrollBehavior({
     const prev = prevGeometry.current
     const prepended = itemCount > oldCount && firstItemKey !== oldFirstItemKey
     if (prepended && !shouldAutoScroll.current) {
-      // Chromium's scroll anchoring has already held the reader's row by now;
-      // restore it by hand only where nothing moved (iOS Safari has no anchoring).
-      if (prev && el.scrollTop === prev.scrollTop) {
-        el.scrollTop = el.scrollHeight - el.clientHeight - prev.distanceFromBottom
+      // A scrollTop that moved on an engine with scroll anchoring is the browser
+      // having held the reader's row already. Anywhere else (iOS Safari has no
+      // anchoring, and a moved scrollTop there is a scroll still in flight) the
+      // growth above the reader is added by hand.
+      if (prev) {
+        const anchored = supportsScrollAnchoring() && el.scrollTop !== prev.scrollTop
+        if (!anchored) el.scrollTop += el.scrollHeight - prev.scrollHeight
       }
     } else if (shouldAutoScroll.current) {
       scrollToBottom()
