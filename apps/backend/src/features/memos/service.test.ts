@@ -129,6 +129,8 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
   )
   spyOn(MemoRepository, "findByStream").mockResolvedValue([])
   spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
+  spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(fakeStream())
+  spyOn(StreamRepository, "findByIdForWorkspaceForShare").mockResolvedValue(fakeStream())
   spyOn(MemoRepository, "getAllTags").mockResolvedValue([])
   spyOn(MemoRepository, "findActiveBySourceConversation").mockResolvedValue([])
   spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
@@ -923,6 +925,7 @@ function setupReflection(opts: { classification?: Partial<ConversationClassifica
   }
   const streamEventInsertMany = spyOn(StreamEventRepository, "insertMany").mockResolvedValue([captureEvent])
   spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
+  spyOn(StreamRepository, "findByIdForWorkspaceForShare").mockResolvedValue(fakeStream())
   spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
     new Map([
       [

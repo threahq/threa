@@ -1,6 +1,6 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test"
 import type { Pool, PoolClient } from "pg"
-import { ConversationStatuses } from "@threahq/types"
+import { ConversationStatuses, MemoryModes } from "@threahq/types"
 import { ConversationRepository } from "../../src/features/conversations"
 import { MemoRepository, MemoService, PendingItemRepository } from "../../src/features/memos"
 import type { ConversationClassification } from "../../src/features/memos/classifier"
@@ -121,6 +121,10 @@ describe("memo batch: pending items", () => {
       await requeue(client, ids)
       return id
     })
+  }
+
+  async function switchMemoryOff(ids: { streamId: string }) {
+    await StreamRepository.update(pool, ids.streamId, { memoryMode: MemoryModes.OFF })
   }
 
   async function pendingState(convId: string) {
@@ -258,6 +262,93 @@ describe("memo batch: pending items", () => {
       processed: false,
       fingerprint: null,
       failedAttempts: 0,
+    })
+  })
+
+  test("a stream switched off after its conversations were queued drops them without a model call", async () => {
+    const seeded = await seedQueuedConversation()
+    await switchMemoryOff(seeded)
+    let classifyCalls = 0
+
+    await serviceWith({
+      classify: async () => {
+        classifyCalls++
+        return worthy
+      },
+    }).processBatch(testWorkspaceId, seeded.streamId)
+
+    expect({ classifyCalls, ...(await pendingState(seeded.conversationId)) }).toEqual({
+      classifyCalls: 0,
+      processed: true,
+      fingerprint: null,
+      failedAttempts: 0,
+    })
+  })
+
+  test("switching memory off while the model calls run saves no memos", async () => {
+    const seeded = await seedQueuedConversation()
+
+    await serviceWith({
+      classify: async () => {
+        await switchMemoryOff(seeded)
+        return worthy
+      },
+    }).processBatch(testWorkspaceId, seeded.streamId)
+
+    expect(await memoCount(seeded.conversationId)).toBe(0)
+    expect(await pendingState(seeded.conversationId)).toMatchObject({ processed: true })
+  })
+
+  test("switching memory off while a reflective capture's model calls run saves no memos", async () => {
+    const seeded = await seedQueuedConversation()
+    const anchorMessageId = await withTransaction(pool, (client) => addMessage(client, seeded, 3n))
+    const sessionId = `session_${messageId()}`
+
+    const result = await serviceWith({
+      classify: async () => {
+        await switchMemoryOff(seeded)
+        return worthy
+      },
+    }).captureSessionReflection({
+      workspaceId: testWorkspaceId,
+      streamId: seeded.streamId,
+      sessionId,
+      digest: "Trigger: where do we start? Replied: with the auth service.",
+      anchorMessageId,
+      participantIds: [testUserId],
+    })
+
+    const { rows } = await pool.query(`SELECT id FROM memos WHERE source_session_id = $1`, [sessionId])
+    expect({ captured: result.captured, memos: rows.length }).toEqual({ captured: 0, memos: 0 })
+  })
+
+  test("switching memory off cannot commit while a save that passed the memory gate is writing", async () => {
+    const seeded = await seedQueuedConversation()
+    const findNearDuplicate = MemoRepository.findNearDuplicate
+    let switchError: { code?: string } | undefined
+    const spy = spyOn(MemoRepository, "findNearDuplicate").mockImplementation(async (...args) => {
+      const client = await pool.connect()
+      try {
+        await client.query("SET lock_timeout = '200ms'")
+        await StreamRepository.update(client, seeded.streamId, { memoryMode: MemoryModes.OFF })
+      } catch (error) {
+        switchError = error as { code?: string }
+      } finally {
+        await client.query("RESET lock_timeout")
+        client.release()
+      }
+      return findNearDuplicate(...args)
+    })
+
+    try {
+      await serviceWith({}).processBatch(testWorkspaceId, seeded.streamId)
+    } finally {
+      spy.mockRestore()
+    }
+
+    expect({ switchError: switchError?.code, memos: await memoCount(seeded.conversationId) }).toEqual({
+      switchError: "55P03",
+      memos: 1,
     })
   })
 })

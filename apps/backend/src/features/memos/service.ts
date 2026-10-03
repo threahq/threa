@@ -3,6 +3,8 @@ import { AISpendDeniedError } from "@threahq/agent-runtime"
 import { withTransaction, withClient, type Querier } from "../../db"
 import {
   assertStreamWritable,
+  findMemoryModeStream,
+  isMemoryAutomationOn,
   StreamStateRepository,
   StreamEventRepository,
   StreamRepository,
@@ -307,6 +309,12 @@ export class MemoService implements MemoServiceLike {
       })
 
       if (pending.length === 0) {
+        return null
+      }
+
+      // Queued before memory was switched off: dropped, not captured.
+      if (!isMemoryAutomationOn(await findMemoryModeStream(client, workspaceId, streamId))) {
+        await PendingItemRepository.markProcessed(client, pending)
         return null
       }
 
@@ -657,13 +665,21 @@ export class MemoService implements MemoServiceLike {
     // Save all results in one transaction so the memo rows, their outbox
     // events, and the memos:captured timeline events commit atomically.
     await withTransaction(this.pool, async (client) => {
+      // Switched off while the model calls ran: save nothing. Share-locked so
+      // the switch can't commit between this read and the memo writes (INV-20).
+      // The stream row is locked before the save lock below, the order
+      // save_memo takes them in, so the two can't deadlock.
+      const memoryOn = isMemoryAutomationOn(
+        await StreamRepository.findByIdForWorkspaceForShare(client, streamId, workspaceId)
+      )
+
       // Serialize batches for this stream so a concurrent batch can't read the
       // dedup gate and insert the same memo in the window before this one
       // commits (INV-20). Transaction-scoped: released on commit/rollback.
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${streamId}`])
 
       const createdMemos: MemoToCreate[] = []
-      for (const memoData of memosToCreate) {
+      for (const memoData of memoryOn ? memosToCreate : []) {
         // Authoritative dedup (INV-20): under the lock this sees committed
         // memos from other batches AND survivors already inserted earlier in
         // this same transaction (uncommitted rows are visible to it), so it
@@ -1251,6 +1267,18 @@ export class MemoService implements MemoServiceLike {
     // the dedup gate can't be read stale (INV-20). Memo rows, their outbox
     // events, and the memos:captured timeline event commit atomically (INV-7/62).
     return withTransaction(this.pool, async (client) => {
+      // Memory switched off while the model calls ran: save nothing. Same
+      // share-locked gate and lock order as the passive batch.
+      const root = await StreamRepository.findByIdForWorkspaceForShare(
+        client,
+        context.memoScope.rootStreamId,
+        workspaceId
+      )
+      if (!isMemoryAutomationOn(root)) {
+        logger.info({ sessionId, streamId }, "reflective capture — memory switched off before save")
+        return { classified: true, captured: 0, deduped: 0 }
+      }
+
       await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${streamId}`])
 
       const capturedMemos: MemosCapturedEventPayload["memos"] = []
