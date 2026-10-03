@@ -19,8 +19,8 @@ export interface MemorizerOutputMemo {
   knowledgeType: string
   keyPoints: string[]
   tags: string[]
-  /** Existing-memo ids this memo explicitly retires (reversed/replaced conclusion). */
-  supersedesMemoIds: string[]
+  /** Titles of the shown memos this memo explicitly retires (reversed/replaced conclusion). */
+  supersedesTitles: string[]
 }
 
 export interface MemorizerOutput {
@@ -49,6 +49,6 @@ export interface MemorizerExpected {
   conclusionMustState?: string
   /** LLM-judged: no memo may assert this conclusion (the abandoned/reversed side). */
   conclusionMustNotState?: string
-  /** true: some memo must retire an existing memo via supersedesMemoIds. false: none may. */
-  expectSupersedesExisting?: boolean
+  /** A title: memos must retire exactly that shown memo via supersedesMemoIds. null: none may retire anything. */
+  expectSupersedes?: string | null
 }

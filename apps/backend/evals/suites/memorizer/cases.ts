@@ -293,7 +293,7 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
       minMemos: 1,
       maxMemos: 2,
       conclusionMustState: "They switched session caching to (managed) Redis, replacing the in-process LRU",
-      expectSupersedesExisting: true,
+      expectSupersedes: "Sessioner cachas i en in-process LRU",
     },
   },
 
@@ -355,7 +355,7 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
       minMemos: 1,
       maxMemos: 2,
       conclusionMustState: "The Pro plan now costs 9 dollars per user, with 20% off annual plans",
-      expectSupersedesExisting: true,
+      expectSupersedes: "Pro-planen kostar 12 dollar per användare",
     },
   },
 
@@ -385,7 +385,7 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
       minMemos: 1,
       maxMemos: 2,
       mustCoverAny: [["Stripe"]],
-      expectSupersedesExisting: false,
+      expectSupersedes: null,
     },
   },
 ]

@@ -1334,6 +1334,8 @@ export class MemoService implements MemoServiceLike {
 
     // Phase 3: memorize. `content: []` — every reflective memo shares the sources
     // resolved in phase 1, so there is no per-memo source resolution.
+    // `supersedesMemoIds` is ignored: an agent's reflection never retires a
+    // memo; a human reversal lands through the conversation batch instead.
     const contents = (
       await this.memorizer.memorizeConversation(digest, {
         memoryContext: context.existingMemos,
