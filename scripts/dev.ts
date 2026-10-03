@@ -530,6 +530,7 @@ async function main() {
         INTERNAL_API_KEY: internalApiKey,
         ENCLAVE_INTERNAL_API_KEY: enclaveInternalApiKey,
         BRIDGE_API_KEY: bridgeApiKey,
+        WORKSPACE_ROUTER_URL: "http://localhost:3001",
         CORS_ALLOWED_ORIGINS: corsOrigins.join(","),
         DATABASE_POOL_MAX: process.env.DATABASE_POOL_MAX ?? "8",
         DATABASE_LISTEN_POOL_MAX: process.env.DATABASE_LISTEN_POOL_MAX ?? "4",

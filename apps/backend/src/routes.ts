@@ -48,6 +48,7 @@ import {
   createStreamConnectionBridgeHandlers,
   createStreamConnectionHandlers,
   type StreamConnectionExportService,
+  type StreamConnectionImportService,
   type StreamConnectionService,
 } from "./features/stream-connections"
 import { createPushHandlers, pushReceiptBodyParser, pushReceiptErrors } from "./features/push"
@@ -195,6 +196,7 @@ interface Dependencies {
   labelMessageService: LabelMessageService
   streamConnectionService: StreamConnectionService
   streamConnectionExportService: StreamConnectionExportService
+  streamConnectionImportService: StreamConnectionImportService
   pushService: PushService
   perfDiagnosticsService: PerfDiagnosticsService
   s3Config: S3Config
@@ -278,6 +280,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     labelMessageService,
     streamConnectionService,
     streamConnectionExportService,
+    streamConnectionImportService,
     pushService,
     perfDiagnosticsService,
     s3Config,
@@ -503,7 +506,10 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // Mounted under the host workspace's path so the workspace router lands it in the host's region.
   if (bridgeApiKey) {
     const bridgeAuth = createInternalAuthMiddleware(bridgeApiKey)
-    const bridge = createStreamConnectionBridgeHandlers({ streamConnectionExportService })
+    const bridge = createStreamConnectionBridgeHandlers({
+      streamConnectionExportService,
+      streamConnectionImportService,
+    })
     app.get(
       "/api/workspaces/:workspaceId/stream-connections/:connectionId/bridge/manifest",
       audit("stream_connections.bridge_manifest", "disclose"),
@@ -515,6 +521,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
       audit("stream_connections.bridge_events", "disclose"),
       bridgeAuth,
       bridge.events
+    )
+    // Mounted under the partner workspace's path, the other way round.
+    app.post(
+      "/api/workspaces/:workspaceId/stream-connections/:connectionId/bridge/poke",
+      audit.none("region-to-region wake signal: carries and returns no data, fires on every shared-channel change"),
+      bridgeAuth,
+      bridge.poke
     )
   }
 

@@ -21,6 +21,7 @@ import type { FeatureFlagService } from "../feature-flags"
 import { StreamMemberRepository, StreamRepository, checkStreamAccess, type Stream } from "../streams"
 import { WorkspaceUserPermissionsRepository } from "../workspace-authz"
 import { UserRepository, WorkspaceRepository } from "../workspaces"
+import { connectionNotFound } from "./errors"
 import { StreamConnectionRepository, type AppliedStreamConnection } from "./repository"
 
 interface Dependencies {
@@ -82,9 +83,7 @@ export class StreamConnectionService {
     await this.requireAdmin(params)
     const cp = this.requireControlPlane()
     const connection = await StreamConnectionRepository.findById(this.pool, params.workspaceId, params.connectionId)
-    if (!connection || connection.role !== "host") {
-      throw new HttpError("Connection not found", { status: 404, code: StreamConnectionErrorCodes.NOT_FOUND })
-    }
+    if (!connection || connection.role !== "host") throw connectionNotFound()
     await this.requireStream({ ...params, streamId: connection.streamId })
 
     const snapshot = await cp.revokeStreamConnectionInvite({

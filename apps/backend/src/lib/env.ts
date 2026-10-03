@@ -192,6 +192,8 @@ export interface Config {
    * CONTROL_PLANE_URL is set (INV-11).
    */
   bridgeApiKey: string | null
+  /** The workspace router's base URL. A region reaches another workspace's region through it, as for a shared channel's pokes. */
+  workspaceRouterUrl: string | null
   /** This instance's region name (e.g., "eu-north-1") */
   region: string | null
   posthog: PostHogConfig | null
@@ -334,6 +336,7 @@ export function loadConfig(): Config {
     internalApiKey: process.env.INTERNAL_API_KEY || null,
     enclaveInternalApiKey: process.env.ENCLAVE_INTERNAL_API_KEY || null,
     bridgeApiKey: process.env.BRIDGE_API_KEY || null,
+    workspaceRouterUrl: process.env.WORKSPACE_ROUTER_URL || null,
     region: process.env.REGION || null,
     posthog: loadPostHogConfig(
       {
@@ -453,6 +456,12 @@ export function loadConfig(): Config {
 
   if (config.controlPlaneUrl && !config.bridgeApiKey) {
     throw new Error("BRIDGE_API_KEY is required when CONTROL_PLANE_URL is set — shared channels replicate on it")
+  }
+
+  if (config.bridgeApiKey && !config.workspaceRouterUrl) {
+    throw new Error(
+      "WORKSPACE_ROUTER_URL is required when BRIDGE_API_KEY is set — a shared channel's region reaches its partners through the router"
+    )
   }
 
   if (useStubAuth) {

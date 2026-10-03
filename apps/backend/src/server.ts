@@ -222,7 +222,14 @@ import { SavedSuggestionsService, SuggestionExtractor } from "./features/saved-s
 import { ScheduledMessagesService, createScheduledMessageSendWorker } from "./features/scheduled-messages"
 import { DraftsService } from "./features/drafts"
 import { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
-import { StreamConnectionExportService, StreamConnectionService } from "./features/stream-connections"
+import {
+  BridgeClient,
+  StreamConnectionExportService,
+  StreamConnectionImportService,
+  StreamConnectionPokeHandler,
+  StreamConnectionService,
+  createStreamConnectionSweepWorker,
+} from "./features/stream-connections"
 import {
   PushService,
   PushNotificationHandler,
@@ -532,6 +539,11 @@ export async function startServer(): Promise<ServerInstance> {
   const invitationService = new InvitationService(pool, workspaceService)
   const streamConnectionService = new StreamConnectionService({ pool, controlPlaneClient, featureFlagService })
   const streamConnectionExportService = new StreamConnectionExportService({ pool, featureFlagService })
+  const streamConnectionImportService = new StreamConnectionImportService({ pool, featureFlagService })
+  const bridgeClient =
+    config.bridgeApiKey && config.workspaceRouterUrl
+      ? new BridgeClient({ routerUrl: config.workspaceRouterUrl, apiKey: config.bridgeApiKey })
+      : null
 
   const scheduleManager = new ScheduleManager(pool, {
     lookaheadSeconds: 60,
@@ -1018,6 +1030,7 @@ export async function startServer(): Promise<ServerInstance> {
     labelMessageService,
     streamConnectionService,
     streamConnectionExportService,
+    streamConnectionImportService,
     pushService,
     perfDiagnosticsService,
     s3Config: config.s3,
@@ -1497,6 +1510,14 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
+  if (bridgeClient) {
+    jobQueue.registerHandler(
+      JobQueues.STREAM_CONNECTION_SWEEP,
+      createStreamConnectionSweepWorker({ streamConnectionImportService }),
+      { tier: QueueTiers.LIGHT, fairness: QueueFairness.NONE }
+    )
+  }
+
   const memoBatchCheckWorker = createMemoBatchCheckWorker({ pool, memoService, jobQueue })
   const memoBatchProcessWorker = createMemoBatchProcessWorker({ pool, memoService, jobQueue })
   // memo.batch-check is a lightweight cron-driven dispatcher; the actual heavy
@@ -1830,6 +1851,9 @@ export async function startServer(): Promise<ServerInstance> {
   // Stale-upload thresholds are hours/days, so this can't interfere with
   // test fixtures — safe to run everywhere.
   await jobQueue.schedule(JobQueues.ATTACHMENT_UPLOAD_SWEEP, 900, { workspaceId: "system" }, null)
+  if (bridgeClient) {
+    await jobQueue.schedule(JobQueues.STREAM_CONNECTION_SWEEP, 300, { workspaceId: "system" }, null)
+  }
 
   // Outbox dispatcher - single LISTEN connection fans out to all handlers
   const outboxDispatcher = new OutboxDispatcher({
@@ -1915,6 +1939,7 @@ export async function startServer(): Promise<ServerInstance> {
     ...(shadowSyncHandler ? [shadowSyncHandler] : []),
     ...(githubRouteSyncHandler ? [githubRouteSyncHandler] : []),
     ...(analyticsOutboxHandler ? [analyticsOutboxHandler] : []),
+    ...(bridgeClient ? [new StreamConnectionPokeHandler(pool, bridgeClient)] : []),
   ]
 
   for (const handler of outboxHandlers) {

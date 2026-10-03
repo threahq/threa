@@ -225,6 +225,7 @@ export default defineConfig({
         INTERNAL_API_KEY: internalApiKey,
         ENCLAVE_INTERNAL_API_KEY: "test-enclave-key",
         BRIDGE_API_KEY: "test-bridge-key",
+        WORKSPACE_ROUTER_URL: `http://localhost:${routerPort}`,
         REGION: "local",
         // VAPID keys for push notification E2E tests
         VAPID_PUBLIC_KEY: "BM1RQ2UEVpAlbEgYOQ3bDrGAOrJGBmmh4_4UkmtGRzhi-5WPFmPuJbA6zv4kCp0iycvTaH6eveCXedCE0xSnZbk",

@@ -165,6 +165,8 @@ export async function startTestServer(): Promise<TestServer> {
   // Enable internal API endpoints (control-plane → regional backend pattern)
   process.env.INTERNAL_API_KEY = "test-internal-key"
   process.env.BRIDGE_API_KEY = "test-bridge-key"
+  // No router in this harness: the one backend holds every workspace, so a poke goes straight to it.
+  process.env.WORKSPACE_ROUTER_URL = `http://localhost:${port}`
 
   // Disable rate limits for tests (prevent flaky 429s)
   process.env.GLOBAL_RATE_LIMIT_MAX = "10000"

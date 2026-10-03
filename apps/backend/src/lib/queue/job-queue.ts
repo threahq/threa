@@ -59,6 +59,8 @@ export const JobQueues = {
   LINK_PREVIEW_VISIBLE_REFRESH: "link_preview.visible-refresh",
   PUSH_DELIVER: "push.deliver",
   PUSH_SESSION_EXPIRED: "push.session_expired",
+  STREAM_CONNECTION_PULL: "stream_connection.pull",
+  STREAM_CONNECTION_SWEEP: "stream_connection.sweep",
 } as const
 
 export type JobQueueName = (typeof JobQueues)[keyof typeof JobQueues]
@@ -150,6 +152,16 @@ export interface ConversationStalenessSweepJobData {
 }
 
 export interface AttachmentUploadSweepJobData {
+  workspaceId: string // Use "system" for system-wide cron job
+}
+
+/** A partner workspace reads its shared channel's changes from the host's region. */
+export interface StreamConnectionPullJobData {
+  workspaceId: string
+  connectionId: string
+}
+
+export interface StreamConnectionSweepJobData {
   workspaceId: string // Use "system" for system-wide cron job
 }
 
@@ -478,6 +490,8 @@ export interface JobDataMap {
   [JobQueues.GITHUB_WEBHOOK_PROCESS]: GithubWebhookProcessJobData
   [JobQueues.GITHUB_PREVIEW_REFRESH]: GithubPreviewRefreshJobData
   [JobQueues.LINK_PREVIEW_VISIBLE_REFRESH]: LinkPreviewVisibleRefreshJobData
+  [JobQueues.STREAM_CONNECTION_PULL]: StreamConnectionPullJobData
+  [JobQueues.STREAM_CONNECTION_SWEEP]: StreamConnectionSweepJobData
 }
 
 /** Returns void on success, throws on error. */
