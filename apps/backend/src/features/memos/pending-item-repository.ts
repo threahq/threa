@@ -63,7 +63,8 @@ export const PendingItemRepository = {
       )
       ON CONFLICT (workspace_id, item_type, item_id) DO UPDATE
       SET queued_at = EXCLUDED.queued_at,
-          processed_at = NULL
+          processed_at = NULL,
+          failed_attempts = 0
       WHERE memo_pending_items.processed_at IS NOT NULL
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
@@ -97,6 +98,28 @@ export const PendingItemRepository = {
       SET processed_at = NOW()
       WHERE id = ANY(${ids})
     `)
+  },
+
+  /**
+   * Count a failed attempt on each item. An item that reaches `maxAttempts` is
+   * marked processed, so it stops retrying until its next requeue.
+   */
+  async recordFailedAttempts(
+    client: PoolClient,
+    workspaceId: string,
+    ids: string[],
+    maxAttempts: number
+  ): Promise<PendingMemoItem[]> {
+    if (ids.length === 0) return []
+
+    const result = await client.query<PendingItemRow>(sql`
+      UPDATE memo_pending_items
+      SET failed_attempts = failed_attempts + 1,
+          processed_at = CASE WHEN failed_attempts + 1 >= ${maxAttempts} THEN NOW() END
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids})
+      RETURNING ${sql.raw(SELECT_FIELDS)}
+    `)
+    return result.rows.map(mapRowToPendingItem)
   },
 
   /**
