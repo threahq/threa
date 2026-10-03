@@ -92,9 +92,9 @@ function withoutWorkspace<T extends { workspaceId: string }>(row: T): Omit<T, "w
   return rest
 }
 
-async function seedV51(name: string, seed: (legacy: Dexie) => Promise<void>): Promise<void> {
+async function seedV52(name: string, seed: (legacy: Dexie) => Promise<void>): Promise<void> {
   const legacy = new Dexie(name)
-  legacy.version(51).stores({
+  legacy.version(52).stores({
     conversations: V48_CONVERSATIONS,
     conversationMessages: V46_CONVERSATION_MESSAGES,
     boardHiddenConversations: V38_BOARD_HIDDEN,
@@ -105,8 +105,8 @@ async function seedV51(name: string, seed: (legacy: Dexie) => Promise<void>): Pr
   legacy.close()
 }
 
-describe("v52 conversations, conversation messages, hidden conversations and stream context keyed by workspace", () => {
-  it("should carry rows that name a workspace to the new keys and drop the rest when upgrading from v51", async () => {
+describe("v53 conversations, conversation messages, hidden conversations and stream context keyed by workspace", () => {
+  it("should carry rows that name a workspace to the new keys and drop the rest when upgrading from v52", async () => {
     const name = `threa_test_${Math.random().toString(36).slice(2)}`
     const postTwo = cachedPost("conv_2", "ws_1", ["msg_c"], 20)
     const postOne = cachedPost("conv_1", "ws_1", ["msg_a", "msg_b"], 10)
@@ -130,7 +130,7 @@ describe("v52 conversations, conversation messages, hidden conversations and str
     const contextOther = cachedContextItem("link:b:msg_4", "ws_2", { rootStreamId: "stream_9", streamId: "stream_9" })
     const contextOrphan = cachedContextItem("link:a:msg_orphan", "ws_1", { sourceMessageId: "msg_orphan" })
 
-    await seedV51(name, async (legacy) => {
+    await seedV52(name, async (legacy) => {
       await legacy.table("conversations").bulkPut([postTwo, postOther, postOne, withoutWorkspace(postOrphan)])
       await legacy
         .table("conversationMessages")
@@ -238,7 +238,7 @@ describe("v52 conversations, conversation messages, hidden conversations and str
     const contextA = cachedContextItem("link:a:msg_copied", "ws_a", { sourceMessageId: "msg_copied" })
     const contextB = cachedContextItem("link:a:msg_copied", "ws_b", { sourceMessageId: "msg_copied" })
 
-    await seedV51(name, async (legacy) => {
+    await seedV52(name, async (legacy) => {
       await legacy.table("conversations").put(postA)
       await legacy.table("conversationMessages").put(messageA)
       await legacy.table("boardHiddenConversations").put(hiddenA)
