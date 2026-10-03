@@ -1,4 +1,4 @@
-import { expect, it } from "vitest"
+import { expect, it, vi } from "vitest"
 import { ThreaDatabase, getActiveDb, setActiveDb } from "@/db/database"
 import {
   consumeComposerCommandRequest,
@@ -13,23 +13,37 @@ it("should keep a pending command and late unsubscribe with their originating ac
   const received: string[] = []
   try {
     setActiveDb(a)
-    const offA = subscribeComposerCommandRequest("stream_shared", () => received.push("a"))
-    queueComposerCommandRequest("stream_shared", "/private-command-a")
+    const offA = subscribeComposerCommandRequest("ws_1", "stream_shared", () => received.push("a"))
+    queueComposerCommandRequest("ws_1", "stream_shared", "/private-command-a")
 
     setActiveDb(b)
-    expect(consumeComposerCommandRequest("stream_shared")).toBeNull()
-    const offB = subscribeComposerCommandRequest("stream_shared", () => received.push("b"))
+    expect(consumeComposerCommandRequest("ws_1", "stream_shared")).toBeNull()
+    const offB = subscribeComposerCommandRequest("ws_1", "stream_shared", () => received.push("b"))
     offA()
-    queueComposerCommandRequest("stream_shared", "/command-b")
-    expect(consumeComposerCommandRequest("stream_shared")).toBe("/command-b")
+    queueComposerCommandRequest("ws_1", "stream_shared", "/command-b")
+    expect(consumeComposerCommandRequest("ws_1", "stream_shared")).toBe("/command-b")
     offB()
 
     setActiveDb(a)
-    expect(consumeComposerCommandRequest("stream_shared")).toBe("/private-command-a")
+    expect(consumeComposerCommandRequest("ws_1", "stream_shared")).toBe("/private-command-a")
     expect(received).toEqual(["a", "b"])
   } finally {
     setActiveDb(previous)
     a.close()
     b.close()
   }
+})
+
+it("should keep a pending command with its workspace when another workspace shares the stream id", () => {
+  const listenerB = vi.fn()
+  const offB = subscribeComposerCommandRequest("ws_b", "stream_shared", listenerB)
+
+  queueComposerCommandRequest("ws_a", "stream_shared", "/command-a")
+
+  expect({
+    consumedByB: consumeComposerCommandRequest("ws_b", "stream_shared"),
+    listenerBCalls: listenerB.mock.calls.length,
+    consumedByA: consumeComposerCommandRequest("ws_a", "stream_shared"),
+  }).toEqual({ consumedByB: null, listenerBCalls: 0, consumedByA: "/command-a" })
+  offB()
 })

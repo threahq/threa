@@ -270,7 +270,7 @@ describe("TraceDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
     fireEvent.click(screen.getByRole("button", { name: "Stop" }))
 
-    await waitFor(() => expect(consumeComposerCommandRequest("stream_1")).toBe("/steer "))
+    await waitFor(() => expect(consumeComposerCommandRequest("ws_1", "stream_1")).toBe("/steer "))
     await waitFor(() =>
       expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", { streamId: "stream_1", command: "/stop" })
     )

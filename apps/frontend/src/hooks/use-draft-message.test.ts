@@ -542,7 +542,7 @@ describe("useDraftMessage", () => {
       })
       await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_confirmed" })
 
-      const observedResolveSeq = getScopeResolveSeq(draftKey) // captured when the save began
+      const observedResolveSeq = getScopeResolveSeq(workspaceId, draftKey) // captured when the save began
       await resolveLoadedDraft(workspaceId, draftKey)
       // Stale save fires (its keystroke predates the send): no loaded pointer now,
       // so this takes the create path — which the guard must refuse.
@@ -571,7 +571,7 @@ describe("useDraftMessage", () => {
       })
       await db.composerLoaded.put({ scope: draftKey, workspaceId, draftId: "draft_confirmed" })
 
-      const observedResolveSeq = getScopeResolveSeq(draftKey)
+      const observedResolveSeq = getScopeResolveSeq(workspaceId, draftKey)
       const realGet = db.drafts.get.bind(db.drafts)
       let injectedResolve = false
       vi.spyOn(db.drafts, "get").mockImplementation((async (key: string) => {
@@ -611,7 +611,7 @@ describe("useDraftMessage", () => {
       await resolveLoadedDraft(workspaceId, draftKey)
       // The user types a new message: this save begins AFTER the resolve, so it
       // observes the already-advanced seq and is not treated as stale.
-      const observedResolveSeq = getScopeResolveSeq(draftKey)
+      const observedResolveSeq = getScopeResolveSeq(workspaceId, draftKey)
       await upsertLoadedDraft(
         workspaceId,
         draftKey,

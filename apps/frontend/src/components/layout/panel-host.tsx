@@ -25,6 +25,6 @@ export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
   if (panelId && isConversationPanel(panelId)) {
     return <ConversationPanel key={panelId} workspaceId={workspaceId} onClose={onClose} className={className} />
   }
-  const panelKey = panelId ? (getDraftPromotionSource(panelId) ?? panelId) : panelId
+  const panelKey = panelId ? (getDraftPromotionSource(workspaceId, panelId) ?? panelId) : panelId
   return <StreamPanel key={panelKey} workspaceId={workspaceId} onClose={onClose} className={className} />
 }

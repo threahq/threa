@@ -19,7 +19,7 @@ describe("useSteerAgentSession", () => {
     await act(() => result.current())
 
     expect(commandsApi.listForStream).toHaveBeenCalledWith("ws_1", "stream_1")
-    expect(consumeComposerCommandRequest("stream_1")).toBe("/steer ")
+    expect(consumeComposerCommandRequest("ws_1", "stream_1")).toBe("/steer ")
   })
 
   it("leaves persona composers unchanged when no runtime steer command is advertised", async () => {
@@ -28,6 +28,6 @@ describe("useSteerAgentSession", () => {
     await act(() => result.current())
 
     expect(commandsApi.listForStream).toHaveBeenCalled()
-    expect(consumeComposerCommandRequest("stream_2")).toBeNull()
+    expect(consumeComposerCommandRequest("ws_1", "stream_2")).toBeNull()
   })
 })

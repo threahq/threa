@@ -46,7 +46,7 @@ export function useHostComposerHandoff(workspaceId: string) {
         if (board?.kind !== "reply") return null
         await setComposerTarget(workspaceId, hostScope, params.originScope)
       }
-      const queued = queueContentHandoff(params.hostStreamId, params.content, params.attachments ?? [])
+      const queued = queueContentHandoff(workspaceId, params.hostStreamId, params.content, params.attachments ?? [])
       if (!hostComposerMounted(params.hostStreamId)) {
         navigate(`/w/${workspaceId}/s/${params.hostStreamId}`)
       }

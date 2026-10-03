@@ -124,13 +124,13 @@ export function ShareMessageModal({
       setConfirmTargetId(targetStreamId)
       return
     }
-    queueShareHandoff(targetStreamId, attrs)
+    queueShareHandoff(workspaceId, targetStreamId, attrs)
     goToTarget(targetStreamId)
   }
 
   const handleConfirmShare = () => {
     if (confirmTargetId === null || !isE2eSource) return
-    queuePlaintextShareHandoff(confirmTargetId, sourcePlaintext!, attrs)
+    queuePlaintextShareHandoff(workspaceId, confirmTargetId, sourcePlaintext!, attrs)
     const target = confirmTargetId
     setConfirmTargetId(null)
     goToTarget(target)

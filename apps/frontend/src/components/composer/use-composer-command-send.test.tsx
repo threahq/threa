@@ -193,7 +193,7 @@ describe("useComposerCommandSend dispatchCommand", () => {
     ])
 
     await waitFor(() =>
-      expect(peekShareHandoffBatch("stream_conversation")?.handoffs).toEqual([
+      expect(peekShareHandoffBatch("ws_1", "stream_conversation")?.handoffs).toEqual([
         { kind: "content", content: content.content, attachments: [] },
       ])
     )

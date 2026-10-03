@@ -29,6 +29,7 @@ import type { CachedDraft, DraftPreview, StashedDraftRowOrigin } from "@/hooks"
 import { RESTORE_REFUSAL_MESSAGE, type DraftRestoreResult } from "@/lib/drafts/restore-refusal"
 
 export interface StashedDraftsPickerProps {
+  workspaceId: string
   drafts: CachedDraft[]
   /**
    * Decrypted (or plaintext) inline previews per draft id, computed by the host
@@ -121,6 +122,7 @@ function rowPreview(draft: CachedDraft, previewById?: Map<string, DraftPreview>)
 }
 
 export function StashedDraftsPicker({
+  workspaceId,
   drafts,
   previewById,
   originById,
@@ -233,9 +235,9 @@ export function StashedDraftsPicker({
       // already open beside this host the href can equal the current location and
       // the navigation is a router no-op — without this signal the tap would do
       // nothing visible (the silent no-op this routing exists to eliminate).
-      if (conversationId) requestConversationReplyOpen(conversationId)
+      if (conversationId) requestConversationReplyOpen(workspaceId, conversationId)
     },
-    [navigate]
+    [navigate, workspaceId]
   )
 
   // Two-step delete: the trash icon opens a confirm dialog (parity with the

@@ -173,7 +173,7 @@ describe("ShareMessageModal — picker filtering", () => {
     expect(item).not.toBeNull()
     fireEvent.click(item!)
 
-    expect(queue).toHaveBeenCalledWith("ch_target", SAMPLE_ATTRS)
+    expect(queue).toHaveBeenCalledWith("ws_1", "ch_target", SAMPLE_ATTRS)
   })
 })
 
@@ -228,7 +228,12 @@ describe("ShareMessageModal — E2E source confirms before decrypt-to-public", (
     expect(confirm).toBeTruthy()
     fireEvent.click(confirm!)
 
-    expect(queuePlaintext).toHaveBeenCalledWith("ch_target", "the launch codename is VELVET-OTTER", SAMPLE_ATTRS)
+    expect(queuePlaintext).toHaveBeenCalledWith(
+      "ws_1",
+      "ch_target",
+      "the launch codename is VELVET-OTTER",
+      SAMPLE_ATTRS
+    )
     expect(queuePointer).not.toHaveBeenCalled()
   })
 })

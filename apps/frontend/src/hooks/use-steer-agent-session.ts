@@ -10,7 +10,7 @@ export function useSteerAgentSession(workspaceId: string, streamId: string) {
       const advertised = commands.some(
         (command) => command.kind === CommandKinds.BOT_RUNTIME && command.name === "steer"
       )
-      if (advertised) queueComposerCommandRequest(streamId, "/steer ")
+      if (advertised) queueComposerCommandRequest(workspaceId, streamId, "/steer ")
     } catch (error) {
       console.warn("[useSteerAgentSession] failed to resolve runtime steer command", error)
     }
