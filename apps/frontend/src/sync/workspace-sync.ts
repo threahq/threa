@@ -45,7 +45,7 @@ import { decryptAgentSubstepText } from "@/lib/crypto/agent-substep"
 import type { CallStartedEventPayload } from "@threahq/types"
 import type { SyncEventSource } from "./socket-event-gate"
 import type { QueryClient } from "@tanstack/react-query"
-import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
+import { postClearNotifications } from "@/lib/sw-messages"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import type {
@@ -1194,10 +1194,7 @@ export function registerWorkspaceSocketHandlers(
     invalidateActivityFeed(hadActivity)
 
     // Dismiss push notification for this stream (fast path when the app is open)
-    navigator.serviceWorker?.controller?.postMessage({
-      type: SW_MSG_CLEAR_NOTIFICATIONS,
-      streamId: payload.streamId,
-    })
+    postClearNotifications(workspaceId, payload.streamId)
   }
 
   // Handle a read-pointer SET ("mark as unread") — from this or another session
@@ -1263,10 +1260,7 @@ export function registerWorkspaceSocketHandlers(
       commitCounter
     )
 
-    navigator.serviceWorker?.controller?.postMessage({
-      type: SW_MSG_CLEAR_NOTIFICATIONS,
-      streamId: payload.streamId,
-    })
+    postClearNotifications(workspaceId, payload.streamId)
   }
 
   // Handle all streams read (from other sessions of the same user)
@@ -1307,12 +1301,7 @@ export function registerWorkspaceSocketHandlers(
     invalidateActivityFeed(true)
 
     // Dismiss push notifications for all read streams (fast path when the app is open)
-    for (const streamId of payload.streamIds) {
-      navigator.serviceWorker?.controller?.postMessage({
-        type: SW_MSG_CLEAR_NOTIFICATIONS,
-        streamId,
-      })
-    }
+    for (const streamId of payload.streamIds) postClearNotifications(workspaceId, streamId)
   }
 
   // Handle a sidebar Inbox hold-membership flip (this or another session):
@@ -2013,9 +2002,7 @@ export function registerWorkspaceSocketHandlers(
     commitCounter((state) => dropActivitiesById(state, payload.activityIds))
     invalidateActivityFeed(true)
 
-    for (const streamId of new Set(payload.streamIds)) {
-      navigator.serviceWorker?.controller?.postMessage({ type: SW_MSG_CLEAR_NOTIFICATIONS, streamId })
-    }
+    for (const streamId of new Set(payload.streamIds)) postClearNotifications(workspaceId, streamId)
   }
 
   // GAM memo extraction: surface new memos in the memory explorer without a

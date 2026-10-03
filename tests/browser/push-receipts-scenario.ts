@@ -2,6 +2,7 @@ import { createECDH, createHash, randomBytes } from "crypto"
 import { test, expect, type BrowserContext, type CDPSession, type Page, type Worker } from "@playwright/test"
 import { devLogin, expectApiOk, generateTestId, waitForWorkspaceProvisioned } from "./helpers"
 import { runTestSql } from "./global-setup"
+import { workspaceScopedKey } from "../../apps/frontend/src/lib/workspace-scoped-key"
 
 /**
  * Push receipts through the production service worker, driven from the real
@@ -396,14 +397,14 @@ export async function deviceReportScenario(
       messageToken
     )
     await expect.poll(() => stagesOf(messageToken)).toEqual(["notification_created", "received"])
-    const [messageCard] = await notifications(page, messageStream)
+    const [messageCard] = await notifications(page, workspaceScopedKey(workspaceId, messageStream))
     expect(messageCard?.actions).toEqual(device.messageActions)
     expect(messageCard?.dataKeys).not.toContain("receipt")
 
     // The platform refuses one card: the worker reports that, and nothing is shown.
     const failedToken = newToken()
     const failedStream = "stream_receiptfailed"
-    const restoreShow = await failNotificationsTagged(worker, failedStream)
+    const restoreShow = await failNotificationsTagged(worker, workspaceScopedKey(workspaceId, failedStream))
     try {
       await deliverPush(
         cdp,
@@ -427,7 +428,10 @@ export async function deviceReportScenario(
       throw error
     }
     await restoreShow()
-    expect({ stages: stagesOf(failedToken), cards: await notifications(page, failedStream) }).toEqual({
+    expect({
+      stages: stagesOf(failedToken),
+      cards: await notifications(page, workspaceScopedKey(workspaceId, failedStream)),
+    }).toEqual({
       stages: ["creation_failed", "received"],
       cards: [],
     })
@@ -471,7 +475,10 @@ export async function deviceReportScenario(
       presentToken
     )
     await drainPushes(worker, [stream.id])
-    expect({ stages: stagesOf(presentToken), cards: await notifications(page, stream.id) }).toEqual({
+    expect({
+      stages: stagesOf(presentToken),
+      cards: await notifications(page, workspaceScopedKey(workspaceId, stream.id)),
+    }).toEqual({
       stages: ["received", "suppressed:presence"],
       cards: [],
     })
@@ -491,7 +498,7 @@ export async function deviceReportScenario(
     })
     const retained = await drainPushes(worker, [legacyStream])
     expect(retained[legacyStream], "the legacy push kept its event alive").toBeGreaterThan(0)
-    expect(await notifications(page, legacyStream)).toHaveLength(1)
+    expect(await notifications(page, workspaceScopedKey(workspaceId, legacyStream))).toHaveLength(1)
 
     const pushReports = receipts.filter((r) => r.body.token !== controlToken)
     expect({

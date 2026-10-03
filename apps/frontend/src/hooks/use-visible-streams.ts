@@ -1,5 +1,6 @@
 import { useEffect } from "react"
 import { createVisibleStreamRegistry, publishVisibleStreams, type VisibleStreamRegistry } from "@/lib/visible-streams"
+import { workspaceScopedKey } from "@/lib/workspace-scoped-key"
 
 /**
  * One registry per tab, publishing to the shared presence cache. Ownership
@@ -16,9 +17,9 @@ import { createVisibleStreamRegistry, publishVisibleStreams, type VisibleStreamR
 let sharedRegistry: VisibleStreamRegistry | null = null
 function getRegistry(): VisibleStreamRegistry {
   if (!sharedRegistry) {
-    sharedRegistry = createVisibleStreamRegistry((ids) => {
+    sharedRegistry = createVisibleStreamRegistry((streamKeys) => {
       if (!document.hasFocus()) return
-      void publishVisibleStreams(ids)
+      void publishVisibleStreams(streamKeys)
     })
     window.addEventListener("focus", () => sharedRegistry?.republish())
   }
@@ -26,19 +27,22 @@ function getRegistry(): VisibleStreamRegistry {
 }
 
 /**
- * Marks the given streams as on-screen for push suppression while the calling
- * component is mounted (see lib/visible-streams.ts). Register from surfaces
- * that actually render a stream's messages: the workspace layout (URL stream +
- * bare-stream panels), the conversation panel (its resolved stream ids), and
- * viewport-visible board cards.
+ * Marks the given streams of `workspaceId` as on-screen for push suppression
+ * while the calling component is mounted (see lib/visible-streams.ts). Register
+ * from surfaces that actually render a stream's messages: the workspace layout
+ * (URL stream + bare-stream panels), the conversation panel (its resolved stream
+ * ids), and viewport-visible board cards.
  */
-export function useVisibleStreams(streamIds: readonly string[]): void {
+export function useVisibleStreams(workspaceId: string, streamIds: readonly string[]): void {
   // Key on content, not array identity — callers rebuild the array per render.
-  const key = [...streamIds].sort().join(" ")
+  const key = streamIds
+    .map((id) => workspaceScopedKey(workspaceId, id))
+    .sort()
+    .join(" ")
   useEffect(() => {
     if (typeof window === "undefined" || !("caches" in window)) return
-    const ids = key ? key.split(" ") : []
-    if (ids.length === 0) return
-    return getRegistry().register(ids)
+    const streamKeys = key ? key.split(" ") : []
+    if (streamKeys.length === 0) return
+    return getRegistry().register(streamKeys)
   }, [key])
 }

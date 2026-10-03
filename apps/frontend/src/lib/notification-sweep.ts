@@ -1,3 +1,5 @@
+import { workspaceScopedKey } from "./workspace-scoped-key"
+
 /**
  * Bootstrap-time sweep of stale OS notifications.
  *
@@ -23,24 +25,27 @@ export interface DisplayedNotification {
 
 /**
  * Which displayed notifications belong to streams of THIS workspace with
- * nothing unread? Only stream tags (`stream_…` and `stream_…:mention`) are
- * candidates — rewrap/session-expired/test tags have no unread backing and are
- * left alone. Notifications stamped with another workspace (or not stamped at
- * all) are never touched: the keep-set is per-workspace, so a foreign
- * workspace's unread stream would otherwise always look stale from here.
+ * nothing unread? Only stream tags (`{workspaceId}/stream_…` and its
+ * `:mention` group) are candidates — rewrap/session-expired/test tags and bare
+ * (unscoped) tags are left alone. Notifications stamped with another workspace
+ * (or not stamped at all) are never touched: the keep-set is per-workspace, so
+ * a foreign workspace's unread stream would otherwise always look stale from
+ * here.
  */
 export function selectStaleStreamTags(
   notifications: readonly DisplayedNotification[],
   workspaceId: string,
   unreadStreamIds: ReadonlySet<string>
 ): string[] {
+  const streamTagPrefix = workspaceScopedKey(workspaceId, STREAM_TAG_PREFIX)
+  const unreadStreamKeys = new Set([...unreadStreamIds].map((streamId) => workspaceScopedKey(workspaceId, streamId)))
   return notifications
     .filter((notification) => {
       if (notification.workspaceId !== workspaceId) return false
       const { tag } = notification
-      const streamId = tag.endsWith(MENTION_TAG_SUFFIX) ? tag.slice(0, -MENTION_TAG_SUFFIX.length) : tag
-      if (!streamId.startsWith(STREAM_TAG_PREFIX)) return false
-      return !unreadStreamIds.has(streamId)
+      if (!tag.startsWith(streamTagPrefix)) return false
+      const streamKey = tag.endsWith(MENTION_TAG_SUFFIX) ? tag.slice(0, -MENTION_TAG_SUFFIX.length) : tag
+      return !unreadStreamKeys.has(streamKey)
     })
     .map((notification) => notification.tag)
 }
@@ -58,8 +63,8 @@ export async function sweepStaleStreamNotifications(
       tag: notification.tag,
       workspaceId: (notification.data as { workspaceId?: string } | null)?.workspaceId,
     }))
-    // Closing by tag is workspace-safe: a tag is a stream id, and a stream
-    // belongs to exactly one workspace.
+    // Closing by tag is workspace-safe: a tag is scoped by workspace, so the
+    // same stream id in another workspace carries a different tag.
     const stale = new Set(selectStaleStreamTags(entries, workspaceId, unreadStreamIds))
     for (const notification of notifications) {
       if (stale.has(notification.tag)) notification.close()

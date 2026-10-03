@@ -755,7 +755,7 @@ export function BoardCard({
       cardInViewport ? [...new Set([streamId, ...(post.streamIds ?? []), ...inlineComposer.branchStreamIds])] : [],
     [cardInViewport, streamId, post.streamIds, inlineComposer.branchStreamIds]
   )
-  useVisibleStreams(cardVisibleStreamIds)
+  useVisibleStreams(workspaceId, cardVisibleStreamIds)
 
   // Elevate the sticky header once it pins: a zero-height sentinel at the card
   // top drives it — when the sentinel scrolls out of the board viewport the

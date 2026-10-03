@@ -7,6 +7,7 @@ import {
   PushActions,
   type PushAction,
 } from "@threahq/types"
+import { workspaceScopedKey } from "./workspace-scoped-key"
 
 /** A single message entry accumulated by the service worker for grouped notifications. */
 export interface NotificationMessage {
@@ -66,12 +67,38 @@ export function isViewingStream(url: string, workspaceId: string | undefined, st
   return route !== null && route.workspaceId === workspaceId && route.streamId === streamId
 }
 
-/** Resolve the notification tag — mentions get a distinct tag so they stay visually separate. */
-export function resolveTag(streamId: string, activityType?: string): string {
+/**
+ * True when the push's stream is on screen in a focused window, by URL or by a
+ * registered workspace-scoped key (a panel's stream is not in the URL).
+ */
+export function isStreamOnScreen(
+  focusedUrls: readonly string[],
+  visibleStreams: ReadonlySet<string>,
+  workspaceId: string | undefined,
+  streamId: string | undefined
+): boolean {
+  if (!workspaceId || !streamId || focusedUrls.length === 0) return false
+  return (
+    focusedUrls.some((url) => isViewingStream(url, workspaceId, streamId)) ||
+    visibleStreams.has(workspaceScopedKey(workspaceId, streamId))
+  )
+}
+
+/**
+ * Resolve the notification tag, scoped by workspace (one service worker serves
+ * them all). Mentions get a distinct tag so they stay visually separate.
+ */
+export function resolveTag(workspaceId: string, streamId: string, activityType?: string): string {
+  const scoped = workspaceScopedKey(workspaceId, streamId)
   if (activityType === ActivityTypes.MENTION) {
-    return `${streamId}:mention`
+    return `${scoped}:mention`
   }
-  return streamId
+  return scoped
+}
+
+/** The "unlock to let your assistant reply" card's tag; the clear handler closes it with the stream's tags. */
+export function resolveRewrapTag(workspaceId: string, streamId: string): string {
+  return `rewrap:${workspaceScopedKey(workspaceId, streamId)}`
 }
 
 /** Format the notification title based on message count, stream name, and activity type. */

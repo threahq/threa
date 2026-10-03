@@ -4,8 +4,19 @@ export const SW_MSG_NOTIFICATION_CLICK = "NOTIFICATION_CLICK"
 /** Posted to all windows when the push subscription is rotated by the browser. */
 export const SW_MSG_SUBSCRIPTION_CHANGED = "PUSH_SUBSCRIPTION_CHANGED"
 
-/** Posted from the app to the SW to dismiss notifications for a stream the user is viewing. */
+/** Posted from the app to the SW to dismiss one stream's notifications; send via {@link postClearNotifications}. */
 export const SW_MSG_CLEAR_NOTIFICATIONS = "CLEAR_NOTIFICATIONS"
+
+export interface ClearNotificationsMessage {
+  type: typeof SW_MSG_CLEAR_NOTIFICATIONS
+  workspaceId: string
+  streamId: string
+}
+
+export function postClearNotifications(workspaceId: string, streamId: string): void {
+  const message: ClearNotificationsMessage = { type: SW_MSG_CLEAR_NOTIFICATIONS, workspaceId, streamId }
+  navigator.serviceWorker?.controller?.postMessage(message)
+}
 
 /**
  * Posted from the app to the SW to queue a background-sync prefetch of workspace

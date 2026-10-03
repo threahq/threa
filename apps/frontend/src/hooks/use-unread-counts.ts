@@ -20,7 +20,7 @@ import {
   type ReadStateSnapshot,
   type ResolvedReadAllFrontier,
 } from "@/sync/read-state"
-import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
+import { postClearNotifications } from "@/lib/sw-messages"
 import type { Activity, StreamReadFrontierSnapshot, WorkspaceBootstrap } from "@threahq/types"
 
 export type { ReadStateSnapshot }
@@ -502,13 +502,13 @@ export function useUnreadCounts(workspaceId: string) {
       // clears via its stream:read_all socket echo. Other devices dismiss via
       // their own socket echo when open, or the bootstrap sweep on next open
       // (lib/notification-sweep.ts) — never via push, which would burn quota.
-      navigator.serviceWorker?.controller?.postMessage({ type: SW_MSG_CLEAR_NOTIFICATIONS, streamId })
+      postClearNotifications(workspaceId, streamId)
       // `applied: false` = the server no-op'd (the event id resolved to nothing),
       // so the queue must not record the frontier as committed. An older backend
       // omits `readState`; that keeps today's meaning — a 200 is a commit.
       return commit.then((response) => ({ applied: response.readState !== null }))
     },
-    [markAsReadMutation]
+    [markAsReadMutation, workspaceId]
   )
 
   const markAllAsRead = useCallback(() => {

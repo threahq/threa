@@ -2,7 +2,9 @@
 import { PrecacheController, PrecacheRoute } from "workbox-precaching"
 import { NavigationRoute, registerRoute } from "workbox-routing"
 import {
+  isStreamOnScreen,
   resolveTag,
+  resolveRewrapTag,
   planNotificationAction,
   withNotificationActionFailure,
   countNotifiedMessages,
@@ -11,6 +13,7 @@ import {
 } from "./lib/sw-notification-format"
 import {
   ACCOUNT_ASSERTION_HEADER,
+  ActivityTypes,
   PUSH_RECEIPT_STAGES,
   PUSH_RECEIPT_SUPPRESSION_REASONS,
   PUSH_RECEIPT_SW_VERSION,
@@ -19,6 +22,7 @@ import {
 import { planRingCancel, type RingCancelData } from "./calls/call-ring-cancel"
 import { isDevicePresent } from "./lib/sw-presence"
 import { readVisibleStreams } from "./lib/visible-streams"
+import { workspaceScopedKey } from "./lib/workspace-scoped-key"
 import {
   BOOTSTRAP_SYNC_TAG,
   PENDING_SYNC_CACHE,
@@ -44,6 +48,7 @@ import {
   SW_MSG_BUILD_REPLY,
   SW_MSG_RUN_GC,
   SW_MSG_GC_REPLY,
+  type ClearNotificationsMessage,
 } from "./lib/sw-messages"
 import { stashShareTarget } from "./lib/share-target-storage"
 import { openNotificationTarget } from "./lib/sw-notification-open"
@@ -218,13 +223,13 @@ self.addEventListener("message", (event) => {
   }
 
   if (data.type === SW_MSG_CLEAR_NOTIFICATIONS) {
-    const streamId = (data as { streamId?: string }).streamId
-    if (!streamId) return
+    const { workspaceId, streamId } = data as Partial<ClearNotificationsMessage>
+    if (!workspaceId || !streamId) return
     event.waitUntil(
       Promise.all([
-        self.registration.getNotifications({ tag: streamId }),
-        self.registration.getNotifications({ tag: `${streamId}:mention` }),
-        self.registration.getNotifications({ tag: `rewrap:${streamId}` }),
+        self.registration.getNotifications({ tag: resolveTag(workspaceId, streamId) }),
+        self.registration.getNotifications({ tag: resolveTag(workspaceId, streamId, ActivityTypes.MENTION) }),
+        self.registration.getNotifications({ tag: resolveRewrapTag(workspaceId, streamId) }),
       ]).then(async (groups) => {
         for (const n of groups.flat()) n.close()
         await syncAppBadge()
@@ -472,7 +477,7 @@ interface PushData {
   messages?: Array<{ authorName?: string; contentPreview?: string; emoji?: string }>
   /** Newest message of a grouped card; `messageId` stays the oldest for the deep link. */
   latestMessageId?: string
-  action?: "clear" | "session_expired"
+  action?: "session_expired"
   kind?: "test" | "saved_reminder" | "rewrap_needed" | "call_ring" | "call_ring_cancel" | "missed_call"
   attemptId?: string
   callId?: string
@@ -501,20 +506,6 @@ self.addEventListener("push", (event) => {
     { origin: self.location.origin, fetch: (url, init) => fetch(url, init), hold: (p) => event.waitUntil(p) }
   )
   receipt?.received()
-
-  if (data.action === "clear") {
-    if (!data.streamId) return
-    event.waitUntil(
-      Promise.all([
-        self.registration.getNotifications({ tag: data.streamId }),
-        self.registration.getNotifications({ tag: `${data.streamId}:mention` }),
-      ]).then(async ([streamNotifs, mentionNotifs]) => {
-        for (const n of [...streamNotifs, ...mentionNotifs]) n.close()
-        await syncAppBadge()
-      })
-    )
-    return
-  }
 
   if (data.kind === "test") {
     event.waitUntil(
@@ -559,7 +550,7 @@ self.addEventListener("push", (event) => {
           body: "Unlock Threa to let your assistant reply in your encrypted scratchpad.",
           icon: "/threa-logo-192.png",
           badge: "/threa-logo-192.png",
-          tag: data.streamId ? `rewrap:${data.streamId}` : "rewrap",
+          tag: data.workspaceId && data.streamId ? resolveRewrapTag(data.workspaceId, data.streamId) : "rewrap",
           renotify: true,
           vibrate: THREA_VIBRATION_PATTERN,
           data: { ...data, kind: "rewrap_needed" },
@@ -612,7 +603,10 @@ self.addEventListener("push", (event) => {
           body: (data.mode === "audio_only" ? "Voice call" : "Video call") + where,
           icon: "/threa-logo-192.png",
           badge: "/threa-logo-192.png",
-          tag: data.streamId ? `missed-call:${data.streamId}` : "missed-call",
+          tag:
+            data.workspaceId && data.streamId
+              ? `missed-call:${workspaceScopedKey(data.workspaceId, data.streamId)}`
+              : "missed-call",
           renotify: true,
           vibrate: THREA_VIBRATION_PATTERN,
           data: { ...data, kind: "missed_call" },
@@ -623,20 +617,26 @@ self.addEventListener("push", (event) => {
   }
 
   const fmt = import("./lib/sw-notification-format")
-  const tag = data.streamId ? resolveTag(data.streamId, data.activityType) : "threa-notification"
+  const tag =
+    data.workspaceId && data.streamId
+      ? resolveTag(data.workspaceId, data.streamId, data.activityType)
+      : "threa-notification"
 
   event.waitUntil(
     Promise.all([fmt, self.clients.matchAll({ type: "window", includeUncontrolled: true }), readVisibleStreams()])
       .then(
         async ([
-          { appendMessage, formatTitle, formatBody, isViewingStream, resolveActions, resolvePushActionLimit },
+          { appendMessage, formatTitle, formatBody, resolveActions, resolvePushActionLimit },
           clients,
           visibleStreams,
         ]) => {
           const focusedClients = clients.filter((c) => c.focused && new URL(c.url).origin === self.location.origin)
-          const viewingThisStream =
-            focusedClients.some((c) => isViewingStream(c.url, data.workspaceId, data.streamId)) ||
-            (focusedClients.length > 0 && !!data.streamId && visibleStreams.has(data.streamId))
+          const viewingThisStream = isStreamOnScreen(
+            focusedClients.map((c) => c.url),
+            visibleStreams,
+            data.workspaceId,
+            data.streamId
+          )
           if (viewingThisStream && (await isDevicePresent())) {
             receipt?.settle(PUSH_RECEIPT_STAGES.SUPPRESSED, PUSH_RECEIPT_SUPPRESSION_REASONS.PRESENCE)
             return
