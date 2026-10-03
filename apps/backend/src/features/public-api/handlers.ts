@@ -826,8 +826,11 @@ export function createPublicApiHandlers({
    * keys use their readable set, which excludes archived). Lazy — no access
    * query runs when no returned message references a shared source.
    */
-  function resolveSlots(req: Request, contentJsons: Iterable<JSONContent | null | undefined>): Promise<WireSlotMap> {
-    return resolvePublicMessageSlots(
+  async function resolveSlots(
+    req: Request,
+    contentJsons: Iterable<JSONContent | null | undefined>
+  ): Promise<WireSlotMap> {
+    const slots = await resolvePublicMessageSlots(
       pool,
       req.workspaceId!,
       () => {
@@ -837,6 +840,11 @@ export function createPublicApiHandlers({
       },
       contentJsons
     )
+    await noteSandboxReads(
+      req,
+      Object.values(slots).flatMap((slot) => (slot.state === "ok" ? [slot.streamId] : []))
+    )
+    return slots
   }
 
   /**
@@ -3035,6 +3043,7 @@ export function createPublicApiHandlers({
       const page = hasMore ? streams.slice(0, limit) : streams
 
       const parentStreamMap = await resolveParentStreams(pool, page)
+      await noteSandboxReads(req, [...page.map((s) => s.id), ...parentStreamMap.keys()])
 
       const lastStream = page[page.length - 1]
       res.json({
@@ -3059,6 +3068,7 @@ export function createPublicApiHandlers({
         throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
       }
 
+      await noteSandboxReads(req, [stream.id, stream.parentStreamId])
       res.json({ data: serializeStream(stream, await displayNameContext(stream)) })
     },
 

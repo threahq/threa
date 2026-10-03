@@ -46,6 +46,7 @@ describe("Public API v1 — sandbox tokens", () => {
   let capturedId: string
   let uncapturedId: string
   let uncapturedAttachmentId: string
+  let quotingId: string
   let persona: string
   let invokerId: string
   let token: string
@@ -83,7 +84,15 @@ describe("Public API v1 — sandbox tokens", () => {
     capturedId = captured.id
     uncapturedId = uncaptured.id
     await sendMessage(client, workspaceId, capturedId, `captured ${testRunId}`)
-    await sendMessage(client, workspaceId, uncapturedId, `uncaptured ${testRunId}`)
+    const quoted = await sendMessage(client, workspaceId, uncapturedId, `uncaptured ${testRunId}`)
+    const quoting = await createChannel(client, workspaceId, `sandbox-quoting-${testRunId}`, "private")
+    quotingId = quoting.id
+    await sendMessage(
+      client,
+      workspaceId,
+      quotingId,
+      `Shared a message from [Sandbox](shared-message:${uncapturedId}/${quoted.id})`
+    )
     const outside = await uploadAttachment(client, workspaceId, {
       content: `secret,${testRunId}`,
       filename: `outside-${testRunId}.csv`,
@@ -190,6 +199,27 @@ describe("Public API v1 — sandbox tokens", () => {
     const served = await tokens.revoke(workspaceId, searcher.session.id)
 
     expect({ found, served: served.map((s) => s.streamId) }).toEqual({ found: [capturedId], served: [capturedId] })
+  })
+
+  test("should hand back the stream of a quoted message it hydrated", async () => {
+    const reader = await tokens.mint({
+      workspaceId,
+      invokingUserId: invokerId,
+      personaId: persona,
+      sessionId: sessionId(),
+      streamId: quotingId,
+      capturedStreamIds: [quotingId, uncapturedId],
+      ttlSec: 300,
+    })
+    const list = await api(`/api/v1/workspaces/${workspaceId}/streams/${quotingId}/messages`, reader.value)
+    const slots = Object.values(((await list.json()) as { slots: Record<string, { state: string }> }).slots)
+
+    const served = await tokens.revoke(workspaceId, reader.session.id)
+
+    expect({ slots: slots.map((s) => s.state), served: served.map((s) => s.streamId).sort() }).toEqual({
+      slots: ["ok"],
+      served: [quotingId, uncapturedId].sort(),
+    })
   })
 
   test("should stop answering once the token is revoked, handing back the streams it read", async () => {

@@ -120,23 +120,19 @@ export function bindStreamSandbox(
         tokenId = session.id
         return { token: value, workspaceId }
       }
-      const revoke = async (): Promise<SandboxReadStream[]> => {
-        if (!tokenId) return []
-        return sandbox.sessionTokens.revoke(workspaceId, tokenId).catch((err) => {
-          logger.warn(
-            { err, workspaceId, tokenId },
-            "Sandbox token not revoked; it expires with its TTL, and the command's sources are lost"
-          )
-          return []
-        })
-      }
+      const revoke = async (): Promise<SandboxReadStream[]> =>
+        tokenId ? sandbox.sessionTokens.revoke(workspaceId, tokenId) : []
       let result: SandboxRunResult
       try {
         result = await sandbox.service.run({ workspaceId, streamId, ...params, api })
       } catch (error) {
-        await revoke()
+        await revoke().catch((err) =>
+          logger.warn({ err, workspaceId, tokenId }, "Sandbox token not revoked; it expires with its TTL")
+        )
         throw error
       }
+      // Output without its sources would escape the digest access check, so a
+      // failed revoke fails the command rather than returning stdout.
       return { ...result, streamsRead: await revoke() }
     },
   }

@@ -106,6 +106,7 @@ describe("bindStreamSandbox", () => {
     streamToolPolicy?: ("web" | "workspace")[] | null
     invokingUserId?: string | null
     run?: SandboxService["run"]
+    revokeError?: Error
   }) {
     const calls: string[] = []
     const deps = bindStreamSandbox(
@@ -124,6 +125,7 @@ describe("bindStreamSandbox", () => {
           },
           revoke: async (_ws, id) => {
             calls.push(`revoke ${id}`)
+            if (params.revokeError) throw params.revokeError
             return [{ streamId: "stream_2", title: "design" }]
           },
         },
@@ -193,6 +195,32 @@ describe("bindStreamSandbox", () => {
       result: { ...ok, streamsRead: [{ streamId: "stream_2", title: "design" }] },
       calls: ["run", "mint ttl=90 captured=stream_1,stream_2", "revoke sbx_1"],
     })
+  })
+
+  test("withholds the output when the reads it was built from cannot be retrieved", async () => {
+    const { deps } = bind({
+      sealed: false,
+      revokeError: new Error("db down"),
+      run: async (p) => {
+        await p.api!()
+        return { ...ok, stdout: "private notes" }
+      },
+    })
+
+    await expect(deps!.run(params)).rejects.toThrow("db down")
+  })
+
+  test("still reports the command's own failure when its revoke also fails", async () => {
+    const { deps } = bind({
+      sealed: false,
+      revokeError: new Error("db down"),
+      run: async (p) => {
+        await p.api!()
+        throw new Error("command failed")
+      },
+    })
+
+    await expect(deps!.run(params)).rejects.toThrow("command failed")
   })
 
   test("mints nothing when the run fails before the command starts", async () => {
