@@ -134,7 +134,7 @@ describe("workspace_id rollout migrations", () => {
     )
   })
 
-  test("the backfill UPDATEs fill every table from its parent and keep value_generation", async () => {
+  test("should fill every table from its parent and keep value_generation when the backfill UPDATEs run over stale rows", async () => {
     const updates = (
       await Promise.all(ROLLOUT_MIGRATIONS.map((file) => Bun.file(resolve(MIGRATIONS_DIR, file)).text()))
     ).flatMap((sql) => sql.match(/^UPDATE [^;]+;/gm) ?? [])

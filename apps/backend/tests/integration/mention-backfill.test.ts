@@ -1,8 +1,7 @@
 /**
  * Workspace scope (INV-8) of the mention-actor-refs backfill, against a real schema.
  *
- * Ids are globally unique until W3, so a decoy cannot reuse an id. Most decoys
- * are workspace-B rows carrying the same bare `@slug` as workspace A's rows: a
+ * Most decoys are workspace-B rows carrying the same bare `@slug` as workspace A's rows: a
  * pass that drops its `workspace_id` pin would rewrite them with A's user id.
  * One `message_versions` decoy is an A version filed under a B message; only the
  * `m.workspace_id = v.workspace_id` join pin keeps it out.

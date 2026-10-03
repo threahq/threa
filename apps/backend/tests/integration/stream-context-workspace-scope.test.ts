@@ -1,8 +1,7 @@
 /**
  * Workspace scope (INV-8) of the stream-context backfill and read model.
  *
- * Ids are globally unique until W3, so a decoy cannot reuse an id. Each decoy
- * is a workspace-B row aimed at workspace-A data instead: B messages, memos,
+ * Each decoy is a workspace-B row aimed at workspace-A data instead: B messages, memos,
  * delegations and events filed under A stream ids, B rows pointing at A ids, and
  * A rows pointing at B ids. A statement that drops its `workspace_id` pin
  * resolves one of them.

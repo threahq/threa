@@ -1,8 +1,7 @@
 /**
  * Workspace scope (INV-8) of the message-embedding backfill.
  *
- * Ids are globally unique until W3, so a decoy cannot reuse an id. The decoys are
- * a workspace-B message filed under an A stream id, and a workspace-B
+ * The decoys are a workspace-B message filed under an A stream id, and a workspace-B
  * `e2e_streams` row keyed by an A stream id: a statement that drops its
  * `workspace_id` pin plans the B message, or treats A's stream as sealed.
  */

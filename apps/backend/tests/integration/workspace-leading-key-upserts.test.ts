@@ -37,7 +37,7 @@ import {
 } from "../../src/lib/id"
 
 /**
- * Each statement below names a workspace-leading twin key in its ON CONFLICT
+ * Each statement below names a workspace-leading key in its ON CONFLICT
  * target. Postgres infers the arbiter at plan time, so a statement that runs
  * proves the target matches a real index; running it twice takes the conflict
  * path.
