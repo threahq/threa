@@ -1478,13 +1478,12 @@ export const StreamRepository = {
 
   /**
    * Recount a stream's live messages from source and store the result when it
-   * differs. Callers run it in a transaction: the row lock is taken by its own
-   * statement first so the count runs on a snapshot that already sees every
-   * send committed before the lock was granted. Returns the change, or null
-   * when the stored count was already right.
+   * differs. The caller must already hold the stream's row lock, taken by an
+   * earlier statement, so the count runs on a snapshot that sees every send
+   * committed before the lock was granted. Returns the change, or null when
+   * the stored count was already right.
    */
   async recountMessages(db: Querier, workspaceId: string, streamId: string): Promise<MessageCountChange | null> {
-    await db.query(sql`SELECT id FROM streams WHERE workspace_id = ${workspaceId} AND id = ${streamId} FOR UPDATE`)
     const result = await db.query<MessageCountRow>(sql`
       WITH live AS (
         SELECT count(*)::int AS n FROM messages WHERE stream_id = ${streamId} AND deleted_at IS NULL

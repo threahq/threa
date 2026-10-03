@@ -35,6 +35,17 @@ export function mergeStreamByRevision<T extends Partial<Stream>>(cached: T, inco
   return merged as T
 }
 
+/** `target` with every revisioned field taken from `source`, so a stream copy matches its revision-merged row. */
+export function withStreamRevisions<T extends Partial<Stream>>(target: T, source: Partial<Stream>): T {
+  const next: Record<string, unknown> = { ...target }
+  for (const group of streamRevisionedGroups) {
+    for (const field of group.fields) {
+      if (field in source) next[field] = source[field]
+    }
+  }
+  return next as T
+}
+
 export async function persistStreamByRevision(incoming: Stream): Promise<CachedStream> {
   return db.transaction("rw", db.streams, async () => {
     const cached = await db.streams.get(incoming.id)

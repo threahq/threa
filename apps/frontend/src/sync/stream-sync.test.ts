@@ -120,6 +120,27 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     expect(ids).toEqual(["evt_A", "evt_B", "evt_X"])
   })
 
+  it("hands back the newer count and title IndexedDB kept over an older snapshot", async () => {
+    const streamId = "stream_revision"
+    const bootstrap = makeBootstrap([], streamId)
+    const newer = { displayName: "new title", displayNameRevision: 4, messageCount: 12, messageCountRevision: 12 }
+    await db.streams.put({ ...bootstrap.stream, ...newer, _cachedAt: Date.now() })
+    bootstrap.stream = {
+      ...bootstrap.stream,
+      displayName: "old title",
+      displayNameRevision: 2,
+      messageCount: 9,
+      messageCountRevision: 9,
+    }
+
+    await applyStreamBootstrap("ws_1", streamId, bootstrap)
+
+    expect({ envelope: bootstrap.stream, stored: await db.streams.get(streamId) }).toMatchObject({
+      envelope: newer,
+      stored: newer,
+    })
+  })
+
   it("clears sidebar activity from the same terminal event applied to the stream", async () => {
     const streamId = "stream_agent"
     upsertAgentSession("ws_1", {
