@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from "pg"
+import { ulid } from "ulid"
 import { AISpendDeniedError } from "@threahq/agent-runtime"
 import { withTransaction, withClient, type Querier } from "../../db"
 import {
@@ -45,6 +46,7 @@ import {
   MEMO_SINGLE_MESSAGE_AGE_GATE_MS,
   MEMO_ACTIVE_CONVERSATION_QUIET_MS,
   MEMO_MAX_FAILED_ATTEMPTS,
+  MEMO_BATCH_CLAIM_SECONDS,
   MEMO_DEDUP_DISTANCE,
   MEMO_SUPERSEDE_DISTANCE,
   MEMO_REFLECTIVE_MAX_MEMOS,
@@ -298,6 +300,25 @@ export class MemoService implements MemoServiceLike {
     this.suggestionCollector = config.suggestionCollector
   }
 
+  /** One batch per stream at a time: a stream another batch holds is skipped. */
+  async processBatch(workspaceId: string, streamId: string): Promise<ProcessResult> {
+    const claimToken = ulid()
+    const claimed = await StreamStateRepository.claimBatch(
+      this.pool,
+      workspaceId,
+      streamId,
+      claimToken,
+      MEMO_BATCH_CLAIM_SECONDS
+    )
+    if (!claimed) return { processed: 0, memosCreated: 0 }
+
+    try {
+      return await this.runBatch(workspaceId, streamId, claimToken)
+    } finally {
+      await StreamStateRepository.releaseBatchClaim(this.pool, workspaceId, streamId, claimToken)
+    }
+  }
+
   /**
    * Three-phase fetch / AI / save so no DB connection is held during AI calls,
    * which can take 1-5+ seconds (INV-41).
@@ -306,7 +327,7 @@ export class MemoService implements MemoServiceLike {
    * at least MEMO_SINGLE_MESSAGE_AGE_GATE_MS old, giving time for replies to arrive.
    * Deferred streams are retried on the next quiet-interval cycle (cheap no-op, no AI).
    */
-  async processBatch(workspaceId: string, streamId: string): Promise<ProcessResult> {
+  private async runBatch(workspaceId: string, streamId: string, claimToken: string): Promise<ProcessResult> {
     const fetchedData = await withClient(this.pool, async (client) => {
       const pending = await PendingItemRepository.findUnprocessed(client, workspaceId, streamId, {
         limit: 50,
@@ -432,6 +453,18 @@ export class MemoService implements MemoServiceLike {
 
     const convItems = fetchedData.pending.filter((p) => p.itemType === "conversation")
     for (const item of convItems) {
+      if (
+        !(await StreamStateRepository.renewBatchClaim(
+          this.pool,
+          workspaceId,
+          streamId,
+          claimToken,
+          MEMO_BATCH_CLAIM_SECONDS
+        ))
+      ) {
+        logger.info({ streamId }, "Memo batch lost its stream claim — another batch took over")
+        return { processed: 0, memosCreated: 0 }
+      }
       try {
         const conversation = fetchedData.conversations.get(item.itemId)
         if (!conversation) {
@@ -669,7 +702,7 @@ export class MemoService implements MemoServiceLike {
 
     // Save all results in one transaction so the memo rows, their outbox
     // events, and the memos:captured timeline events commit atomically.
-    await withTransaction(this.pool, async (client) => {
+    const saved = await withTransaction(this.pool, async (client) => {
       // Switched off while the model calls ran: save nothing. Share-locked so
       // the switch can't commit between this read and the memo writes (INV-20).
       // The stream row is locked before the save lock below, the order
@@ -682,6 +715,10 @@ export class MemoService implements MemoServiceLike {
       // dedup gate and insert the same memo in the window before this one
       // commits (INV-20). Transaction-scoped: released on commit/rollback.
       await MemoRepository.lockStreamSaves(client, streamId)
+
+      // Outlived its claim and another batch took the stream over: that batch
+      // owns these items now.
+      if (!(await StreamStateRepository.holdsBatchClaim(client, workspaceId, streamId, claimToken))) return false
 
       // A source deleted while the model calls ran drops the memo; the deletion
       // requeues the conversation, so the next batch re-extracts from the rest.
@@ -898,7 +935,9 @@ export class MemoService implements MemoServiceLike {
       }
 
       await StreamStateRepository.markProcessed(client, workspaceId, streamId)
+      return true
     })
+    if (!saved) return { processed: 0, memosCreated: 0 }
 
     const processed = fetchedData.pending.length - deferredItemIds.size - failedItemIds.size
     logger.info(

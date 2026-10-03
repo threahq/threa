@@ -59,6 +59,13 @@ export const MEMO_ACTIVE_CONVERSATION_QUIET_MS = 30 * 60 * 1000
 export const MEMO_MAX_FAILED_ATTEMPTS = 3
 
 /**
+ * How long a batch holds its stream without renewing. A batch renews before
+ * each conversation, so this bounds one conversation's model calls and how
+ * long a crashed batch delays its stream.
+ */
+export const MEMO_BATCH_CLAIM_SECONDS = 15 * 60
+
+/**
  * Upper bound on memos extracted from a single conversation. A conversation can
  * settle several unrelated things, but a runaway count usually means the model is
  * transcribing turns instead of extracting durable knowledge — the cap keeps the
