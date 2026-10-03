@@ -1,6 +1,10 @@
-import { describe, expect, it } from "bun:test"
+import type { AI } from "@threahq/agent-runtime"
+import { describe, expect, it, mock } from "bun:test"
+import type { ConfigResolver } from "../../lib/ai/config-resolver"
+import { MessageFormatter } from "../../lib/ai/message-formatter"
 import { getMemorizerSystemPrompt, memoSetSchema, MEMO_MAX_PER_CONVERSATION } from "./config"
-import { resolveSourceMessageIds } from "./memorizer"
+import { Memorizer, resolveSourceMessageIds } from "./memorizer"
+import type { Memo } from "./repository"
 
 describe("getMemorizerSystemPrompt", () => {
   it("should inject current date in YYYY-MM-DD format for UTC", () => {
@@ -129,5 +133,42 @@ describe("resolveSourceMessageIds", () => {
 
   it("returns no anchor when there are no messages", () => {
     expect(resolveSourceMessageIds(["whatever"], [])).toEqual([])
+  })
+})
+
+describe("Memorizer — supersession targets", () => {
+  it("lets a new conversation retire a stream memo it was shown, and drops ids it never saw", async () => {
+    const generateObject = mock(async (_params: { messages: { content: string }[] }) => ({
+      value: {
+        memos: [
+          {
+            title: "Pro costs $9 per user",
+            abstract: "They cut Pro to $9 per user with 20% off annual plans.",
+            knowledgeType: "decision",
+            keyPoints: [],
+            tags: [],
+            sourceMessageIds: [],
+            supersedesMemoIds: ["memo_price", "memo_invented"],
+          },
+        ],
+      },
+    }))
+    const memorizer = new Memorizer(
+      { generateObject } as unknown as AI,
+      { resolve: async () => ({ modelId: "test:model", temperature: 0 }) } as unknown as ConfigResolver,
+      new MessageFormatter()
+    )
+    const streamMemo = { id: "memo_price", title: "Pro costs $12", abstract: "Pro is $12 per user." } as Memo
+
+    const [memo] = await memorizer.memorizeConversation("<message/>", {
+      memoryContext: [streamMemo],
+      content: [],
+      workspaceId: "ws_1",
+    })
+
+    expect({
+      supersedesMemoIds: memo?.supersedesMemoIds,
+      shownWithId: generateObject.mock.calls[0]?.[0].messages[1]?.content.includes("[memo_price] Pro costs $12"),
+    }).toEqual({ supersedesMemoIds: ["memo_price"], shownWithId: true })
   })
 })

@@ -323,4 +323,69 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
       conclusionMustState: "Ylva is allergic to sesame, not peanuts",
     },
   },
+
+  {
+    id: "cross-conversation-reversal-supersedes-001",
+    name: "Reversal in a new conversation retires the stream memo it contradicts",
+    input: {
+      category: "revision",
+      memoryContext: [
+        {
+          title: "Pro-planen kostar 12 dollar per användare",
+          abstract: "De satte Pro-planens pris till 12 dollar per användare och månad, utan årsrabatt.",
+          createdDaysAgo: 6,
+        },
+        {
+          title: "Onboarding-mejl skickas via Resend",
+          abstract: "Onboarding-mejlen skickas via Resend från noreply-adressen.",
+          createdDaysAgo: 4,
+        },
+      ],
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown: "kollade konverteringen på pro, 12 dollar skrämmer bort småteamen",
+          minutesAgo: 30,
+        },
+        { ...KRIS, contentMarkdown: "ja, vi sänker till 9 per användare och ger 20% på årsplan", minutesAgo: 25 },
+        { ...PIERRE, contentMarkdown: "kör, jag uppdaterar prissidan idag", minutesAgo: 20 },
+      ],
+    },
+    expectedOutput: {
+      minMemos: 1,
+      maxMemos: 2,
+      conclusionMustState: "The Pro plan now costs 9 dollars per user, with 20% off annual plans",
+      expectSupersedesExisting: true,
+    },
+  },
+
+  {
+    id: "cross-conversation-elaboration-keeps-001",
+    name: "A new detail on a stream memo's topic retires nothing",
+    input: {
+      category: "extraction",
+      memoryContext: [
+        {
+          title: "Pro-planen kostar 12 dollar per användare",
+          abstract: "De satte Pro-planens pris till 12 dollar per användare och månad, utan årsrabatt.",
+          createdDaysAgo: 6,
+        },
+      ],
+      messages: [
+        { ...PIERRE, contentMarkdown: "hur fakturerar vi pro egentligen?", minutesAgo: 30 },
+        {
+          ...KRIS,
+          contentMarkdown: "via Stripe, i efterskott den första varje månad, per aktiv användare",
+          minutesAgo: 25,
+        },
+        { ...PIERRE, contentMarkdown: "toppen, då skriver jag det i FAQ:n", minutesAgo: 20 },
+      ],
+    },
+    expectedOutput: {
+      minMemos: 1,
+      maxMemos: 2,
+      mustCoverAny: [["Stripe"]],
+      expectSupersedesExisting: false,
+    },
+  },
 ]

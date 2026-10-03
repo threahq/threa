@@ -21,6 +21,11 @@ import {
  * exchange, which is the wrong-attribution footgun this guards. `messages` order
  * is not guaranteed chronological (findByIds returns a Map), so pick by timestamp.
  */
+// Ids are rendered so a reversal can name the memo it retires (supersedesMemoIds).
+function formatMemoList(memos: Pick<Memo, "id" | "title" | "abstract">[]): string {
+  return memos.map((m, i) => `${i + 1}. [${m.id}] ${m.title}\n   ${m.abstract}`).join("\n")
+}
+
 export function resolveSourceMessageIds(citedIds: string[], messages: Pick<Message, "id" | "createdAt">[]): string[] {
   const present = new Set(messages.map((m) => m.id))
   const valid = citedIds.filter((id) => present.has(id))
@@ -39,8 +44,8 @@ export interface MemoContent {
   tags: string[]
   sourceMessageIds: string[]
   /**
-   * Existing memos this revision explicitly retires (a reversed/replaced
-   * conclusion). Validated against the conversation's own memos — embedding
+   * Existing memos this memo explicitly retires (a reversed/replaced
+   * conclusion). Validated against the memos the model was shown — embedding
    * distance can't catch a reversal ("chose X" vs "chose Y" embed far apart),
    * so the model names the retired memo directly.
    */
@@ -48,8 +53,8 @@ export interface MemoContent {
 }
 
 export interface MemorizerContext {
-  /** Prior abstracts, fed to the model for vocabulary consistency. */
-  memoryContext: string[]
+  /** The stream's active memos: vocabulary context, and what a reversal may retire. */
+  memoryContext: Pick<Memo, "id" | "title" | "abstract">[]
   content: Message | Message[]
   /** Active memos already attached to this conversation (for the regenerate-on-revision path). */
   existingMemos?: Memo[]
@@ -124,7 +129,7 @@ export class Memorizer {
     const config = await this.configResolver.resolve(COMPONENT_PATHS.MEMO_MEMORIZER)
     const messages = context.content as Message[]
     const messageCount = formattedMessages.split("<message").length - 1
-    const validSupersedeIds = new Set((context.existingMemos ?? []).map((m) => m.id))
+    const validSupersedeIds = new Set([...context.memoryContext, ...(context.existingMemos ?? [])].map((m) => m.id))
 
     const { value } = await this.ai.generateObject({
       model: config.modelId,
@@ -167,16 +172,12 @@ export class Memorizer {
 
   private formatMemoryContext(context: MemorizerContext): string {
     return context.memoryContext.length > 0
-      ? context.memoryContext.map((a, i) => `${i + 1}. ${a}`).join("\n")
+      ? formatMemoList(context.memoryContext)
       : "No prior memos in this stream yet."
   }
 
   private formatExistingMemos(existingMemos: Memo[]): string {
-    if (existingMemos.length === 0) {
-      return "None."
-    }
-    // Ids are rendered so a reversal can name the memo it retires (supersedesMemoIds).
-    return existingMemos.map((m, i) => `${i + 1}. [${m.id}] ${m.title}\n   ${m.abstract}`).join("\n")
+    return existingMemos.length > 0 ? formatMemoList(existingMemos) : "None."
   }
 
   private formatExistingTags(context: MemorizerContext): string {

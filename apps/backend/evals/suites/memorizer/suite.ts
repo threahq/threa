@@ -80,7 +80,7 @@ async function runMemorizerTask(input: MemorizerInput, ctx: EvalContext): Promis
   const existingMemos = (input.existingMemos ?? []).map((m) => toMemo(m, conversationId))
 
   const context = {
-    memoryContext: input.memoryContext ?? [],
+    memoryContext: (input.memoryContext ?? []).map((m) => toMemo(m, `conv_${ulid()}`)),
     content: messages,
     existingMemos,
     workspaceId: ctx.workspaceId,

@@ -470,7 +470,7 @@ export class MemoService implements MemoServiceLike {
       fetchedData.formattedConversations.set(conversationId, formatted)
     }
 
-    const memoryContext = fetchedData.existingMemos.map((m) => m.abstract)
+    const memoryContext = fetchedData.existingMemos
     const memosToCreate: MemoToCreate[] = []
     const deferredItemIds = new Set<string>()
     const failedItemIds = new Set<string>()
@@ -803,9 +803,10 @@ export class MemoService implements MemoServiceLike {
 
         // Explicit supersession first: the memorizer names the memos whose
         // conclusion this one reverses or replaces (ids pre-validated against
-        // the conversation's own memos). Embedding distance cannot catch a
-        // reversal — "chose X" and "chose Y" embed far apart — so the model's
-        // citation is authoritative. The embedding check below still runs for
+        // the stream memos it was shown, so a reversal in a later conversation
+        // retires the earlier one). Embedding distance cannot catch a reversal
+        // — "chose X" and "chose Y" embed far apart — so the model's citation
+        // is authoritative. The embedding check below still runs for
         // unflagged paraphrase re-captures.
         if (explicitSupersedeIds.length > 0) {
           memoData.parentMemoId = explicitSupersedeIds[0]
@@ -1335,7 +1336,7 @@ export class MemoService implements MemoServiceLike {
     // resolved in phase 1, so there is no per-memo source resolution.
     const contents = (
       await this.memorizer.memorizeConversation(digest, {
-        memoryContext: context.existingMemos.map((m) => m.abstract),
+        memoryContext: context.existingMemos,
         content: [],
         existingTags: context.existingTags,
         workspaceId,
