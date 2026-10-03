@@ -157,9 +157,10 @@ export class UserPreferencesService {
    * share-locked until it ends, so a change to it commits either before the
    * read (and is seen) or after the caller's writes.
    */
-  async findAnalyticsConsentGrant(db: Querier, userId: string): Promise<string | null> {
+  async findAnalyticsConsentGrant(db: Querier, workspaceId: string, userId: string): Promise<string | null> {
     return UserPreferencesRepository.findOverrideGeneration(
       db,
+      workspaceId,
       userId,
       ANALYTICS_CONSENT_KEY,
       ANALYTICS_CONSENT_GRANTED
@@ -168,7 +169,7 @@ export class UserPreferencesService {
 
   async getPreferences(workspaceId: string, userId: string): Promise<UserPreferences> {
     // Single query, INV-30
-    const overrides = await UserPreferencesRepository.findOverrides(this.pool, userId)
+    const overrides = await UserPreferencesRepository.findOverrides(this.pool, workspaceId, userId)
     return mergeOverrides(workspaceId, userId, overrides)
   }
 
@@ -188,7 +189,9 @@ export class UserPreferencesService {
     }
     return withTransaction(this.pool, async (client) => {
       const currentOverrides =
-        updates.keyboardShortcuts !== undefined ? await UserPreferencesRepository.findOverrides(client, userId) : null
+        updates.keyboardShortcuts !== undefined
+          ? await UserPreferencesRepository.findOverrides(client, workspaceId, userId)
+          : null
       const pairs = flattenUpdates(updates)
 
       const toSet: Array<{ key: string; value: unknown }> = []
@@ -218,7 +221,7 @@ export class UserPreferencesService {
         await UserPreferencesRepository.bulkSetOverrides(client, workspaceId, userId, toSet)
       }
       if (toDelete.length > 0) {
-        await UserPreferencesRepository.bulkDeleteOverrides(client, userId, toDelete)
+        await UserPreferencesRepository.bulkDeleteOverrides(client, workspaceId, userId, toDelete)
       }
 
       if (updates.inboxClearMode === "read") {
@@ -226,7 +229,7 @@ export class UserPreferencesService {
         await releaseInboxHold(client, workspaceId, userId, held)
       }
 
-      const overrides = await UserPreferencesRepository.findOverrides(client, userId)
+      const overrides = await UserPreferencesRepository.findOverrides(client, workspaceId, userId)
       const preferences = mergeOverrides(workspaceId, userId, overrides)
 
       // Outbox event drives real-time sync across all the user's devices

@@ -1809,6 +1809,7 @@ describe("StreamService.markAsRead", () => {
 
   beforeEach(() => {
     service = new StreamService({} as never)
+    mockFindOverride.mockReset()
     mockFindOverride.mockResolvedValue(null)
     mockGetMessageOrdinalForEvent.mockReset()
     mockFindByStreamAndMember.mockReset()
@@ -1824,6 +1825,7 @@ describe("StreamService.markAsRead", () => {
     await service.markAsRead("ws_1", "stream_1", "usr_1", "evt_9")
 
     expect(mockGetMessageOrdinalForEvent).toHaveBeenCalledWith({}, "ws_1", "stream_1", "evt_9")
+    expect(mockFindOverride.mock.calls).toEqual([[{} as never, "ws_1", "usr_1", "inboxClearMode"]])
     expect(mockInsertOutbox).toHaveBeenCalledWith({}, "stream:read", {
       workspaceId: "ws_1",
       authorId: "usr_1",

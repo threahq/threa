@@ -33,7 +33,12 @@ export async function resolveDefaultPersona(
   ownerUserId?: string
 ): Promise<Persona | null> {
   if (ownerUserId) {
-    const userOverride = await UserPreferencesRepository.findOverride(db, ownerUserId, DEFAULT_COMPANION_PERSONA_KEY)
+    const userOverride = await UserPreferencesRepository.findOverride(
+      db,
+      workspaceId,
+      ownerUserId,
+      DEFAULT_COMPANION_PERSONA_KEY
+    )
     const userPersona = await resolvePointer(db, userOverride?.value, workspaceId)
     if (userPersona) return userPersona
   }

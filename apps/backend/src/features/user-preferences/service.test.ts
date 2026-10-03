@@ -22,7 +22,7 @@ describe("UserPreferencesService.updatePreferences defaultCompanionPersonaId", (
     const findById = spyOn(PersonaRepository, "findById").mockResolvedValue({ status: "active" } as any)
     const bulkSet = spyOn(UserPreferencesRepository, "bulkSetOverrides").mockResolvedValue(undefined as any)
     const bulkDelete = spyOn(UserPreferencesRepository, "bulkDeleteOverrides").mockResolvedValue(undefined as any)
-    spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([
+    const findOverrides = spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([
       { key: "defaultCompanionPersonaId", value: "persona_x" },
     ])
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
@@ -35,6 +35,7 @@ describe("UserPreferencesService.updatePreferences defaultCompanionPersonaId", (
       { key: "defaultCompanionPersonaId", value: "persona_x" },
     ])
     expect(bulkDelete).not.toHaveBeenCalled()
+    expect(findOverrides.mock.calls).toEqual([[{} as never, WORKSPACE_ID, USER_ID]])
     expect(prefs.defaultCompanionPersonaId).toBe("persona_x")
   })
 
@@ -73,8 +74,60 @@ describe("UserPreferencesService.updatePreferences defaultCompanionPersonaId", (
 
     // null equals the default, so it is a delete, not a store — and no lookup runs.
     expect(findById).not.toHaveBeenCalled()
-    expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["defaultCompanionPersonaId"])
+    expect(bulkDelete).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, ["defaultCompanionPersonaId"])
     expect(bulkSet).not.toHaveBeenCalled()
+  })
+})
+
+describe("UserPreferencesService reads", () => {
+  afterEach(() => mock.restore())
+
+  it("should read the overrides of the caller's workspace when preferences are fetched", async () => {
+    const pool = { pool: true } as any
+    const findOverrides = spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([
+      { key: "mobileInlineAttachments", value: false },
+    ])
+    const service = new UserPreferencesService(pool)
+
+    const prefs = await service.getPreferences(WORKSPACE_ID, USER_ID)
+
+    expect(findOverrides.mock.calls).toEqual([[pool, WORKSPACE_ID, USER_ID]])
+    expect(prefs.mobileInlineAttachments).toBe(false)
+  })
+
+  it("should read the consent grant of the caller's workspace and user", async () => {
+    const db = { db: true } as any
+    const findOverrideGeneration = spyOn(UserPreferencesRepository, "findOverrideGeneration").mockResolvedValue("7")
+    const service = new UserPreferencesService({} as any)
+
+    const grant = await service.findAnalyticsConsentGrant(db, WORKSPACE_ID, USER_ID)
+
+    expect(findOverrideGeneration.mock.calls).toEqual([[db, WORKSPACE_ID, USER_ID, "analyticsConsent", "granted"]])
+    expect(grant).toBe("7")
+  })
+})
+
+describe("UserPreferencesService.updatePreferences keyboard shortcuts", () => {
+  afterEach(() => mock.restore())
+
+  it("should read the current shortcuts of the caller's workspace and delete the ones no longer sent", async () => {
+    setupTransaction()
+    const bulkSet = spyOn(UserPreferencesRepository, "bulkSetOverrides").mockResolvedValue(undefined as any)
+    const bulkDelete = spyOn(UserPreferencesRepository, "bulkDeleteOverrides").mockResolvedValue(undefined as any)
+    const findOverrides = spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([
+      { key: "keyboardShortcuts.old", value: "mod+o" },
+    ])
+    spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
+    const service = new UserPreferencesService({} as any)
+
+    await service.updatePreferences(WORKSPACE_ID, USER_ID, { keyboardShortcuts: { next: "mod+n" } })
+
+    expect(findOverrides.mock.calls).toEqual([
+      [{} as never, WORKSPACE_ID, USER_ID],
+      [{} as never, WORKSPACE_ID, USER_ID],
+    ])
+    expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [{ key: "keyboardShortcuts.next", value: "mod+n" }])
+    expect(bulkDelete).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, ["keyboardShortcuts.old"])
   })
 })
 
@@ -128,7 +181,7 @@ describe("UserPreferencesService.updatePreferences analyticsConsent", () => {
     const prefs = await service.updatePreferences(WORKSPACE_ID, USER_ID, { analyticsConsent: "denied" })
 
     expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [{ key: "analyticsConsent", value: "denied" }])
-    expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["sessionReplayOptIn"])
+    expect(bulkDelete).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, ["sessionReplayOptIn"])
     expect(prefs.sessionReplayOptIn).toBe(false)
   })
 
@@ -142,7 +195,7 @@ describe("UserPreferencesService.updatePreferences analyticsConsent", () => {
 
     await service.updatePreferences(WORKSPACE_ID, USER_ID, { analyticsConsent: "unset" })
 
-    expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["analyticsConsent", "sessionReplayOptIn"])
+    expect(bulkDelete).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, ["analyticsConsent", "sessionReplayOptIn"])
   })
 
   it("should refuse a replay opt-in sent alongside a consent withdrawal", async () => {
@@ -159,7 +212,7 @@ describe("UserPreferencesService.updatePreferences analyticsConsent", () => {
     })
 
     expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [{ key: "analyticsConsent", value: "denied" }])
-    expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["sessionReplayOptIn"])
+    expect(bulkDelete).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, ["sessionReplayOptIn"])
     expect(prefs.sessionReplayOptIn).toBe(false)
   })
 
@@ -243,7 +296,7 @@ describe("UserPreferencesService.updatePreferences board ledger settings", () =>
       boardLedgerRows: DEFAULT_BOARD_LEDGER_ROWS,
     })
 
-    expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["boardLedgerRows"])
+    expect(bulkDelete).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, ["boardLedgerRows"])
     expect(bulkSet).not.toHaveBeenCalled()
     expect(prefs.boardLedgerRows).toBe(DEFAULT_BOARD_LEDGER_ROWS)
   })
@@ -266,7 +319,7 @@ describe("UserPreferencesService.updatePreferences codeBlockWrapOverrides", () =
     ])
 
     await service.updatePreferences(WORKSPACE_ID, USER_ID, { codeBlockWrapOverrides: {} })
-    expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["codeBlockWrapOverrides"])
+    expect(bulkDelete).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, ["codeBlockWrapOverrides"])
   })
 })
 

@@ -29,6 +29,7 @@ import { DraftsRepository } from "../drafts"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamContextRepository } from "../stream-context"
 import { UserPreferencesRepository } from "../user-preferences"
+import { MessageConversationStateRepository } from "../conversations"
 
 // The suites below drive the service with a bare `{}` client, so the
 // "In this stream" projection writes are stubbed globally; the suite that
@@ -1139,6 +1140,16 @@ describe("EventService.createMessage author born-read", () => {
     })
   })
 
+  it("should read the author's inbox clear mode in the message's workspace", async () => {
+    const service = new EventService({} as any)
+
+    await service.createMessage(baseParams)
+
+    expect((UserPreferencesRepository.findOverride as any).mock.calls).toEqual([
+      [{}, "ws_1", "usr_1", "inboxClearMode"],
+    ])
+  })
+
   it("born-reads a non-member author too — read state is user-anchored, not membership-gated", async () => {
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(false)
     const service = new EventService({} as any)
@@ -1149,6 +1160,35 @@ describe("EventService.createMessage author born-read", () => {
     expect(ReadStateRepository.advance).toHaveBeenCalledWith({}, "ws_1", "stream_1", "usr_1", createdEventId, {
       holdInInbox: false,
     })
+  })
+})
+
+describe("EventService.addReactionInternal inbox clear mode", () => {
+  beforeEach(() => {
+    spyOn(db, "withTransaction").mockImplementation(((_db: unknown, callback: (client: any) => Promise<unknown>) =>
+      callback({})) as any)
+    spyOn(MessageRepository, "findByIdForUpdate").mockResolvedValue({ id: "msg_1", streamId: "stream_1" } as any)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({} as any)
+    spyOn(MessageRepository, "addReaction").mockResolvedValue({ id: "msg_1" } as any)
+    spyOn(MessageConversationStateRepository, "settle").mockResolvedValue([])
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as any)
+  })
+
+  it("should read the reactor's inbox clear mode in the message's workspace", async () => {
+    const service = new EventService({} as any)
+
+    await service.addReactionInternal({
+      workspaceId: "ws_1",
+      messageId: "msg_1",
+      streamId: "stream_1",
+      emoji: "👍",
+      userId: "usr_1",
+    })
+
+    expect((UserPreferencesRepository.findOverride as any).mock.calls).toEqual([
+      [{}, "ws_1", "usr_1", "inboxClearMode"],
+    ])
+    expect(ReadStateRepository.clearInboxHeld).toHaveBeenCalledWith({}, "ws_1", "usr_1", ["stream_1"])
   })
 })
 
