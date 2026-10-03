@@ -55,7 +55,12 @@ export function createCommandWorker(deps: CommandWorkerDeps): JobHandler<Command
         } catch (error) {
           const denial = error as { code?: string; details?: { reason?: string } }
           if (denial.code !== "STREAM_READ_ONLY" && denial.code !== "STREAM_NOT_FOUND") throw error
-          const alreadyTerminal = await StreamEventRepository.findCommandTerminal(client, streamId, commandId)
+          const alreadyTerminal = await StreamEventRepository.findCommandTerminal(
+            client,
+            workspaceId,
+            streamId,
+            commandId
+          )
           if (!alreadyTerminal) {
             const reason =
               denial.code === "STREAM_NOT_FOUND" ? "not_a_member" : (denial.details?.reason ?? "not_a_member")

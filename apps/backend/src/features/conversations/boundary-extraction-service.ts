@@ -190,7 +190,7 @@ export class BoundaryExtractionService {
       const surroundingCardEventIds: string[] =
         surroundingMessages.length > 0
           ? (
-              await StreamEventRepository.list(client, stream.id, {
+              await StreamEventRepository.list(client, stream.workspaceId, stream.id, {
                 types: cardAnchorTypes,
                 afterSequence: surroundingMessages[0]!.sequence - 1n,
                 beforeSequence: surroundingMessages[surroundingMessages.length - 1]!.sequence + 1n,

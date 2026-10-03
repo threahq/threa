@@ -66,7 +66,7 @@ describe("command dispatch idempotency", () => {
       commandId: "cmd_existing",
       eventId: event.id,
     })
-    spyOn(StreamEventRepository, "findById").mockResolvedValue(event)
+    const findEvent = spyOn(StreamEventRepository, "findById").mockResolvedValue(event)
     const resolveCommand = mock(async () => null)
     const handlers = createCommandHandlers({
       pool: makePool(),
@@ -87,6 +87,7 @@ describe("command dispatch idempotency", () => {
 
     await handlers.dispatch(req, res)
 
+    expect(findEvent).toHaveBeenCalledWith(expect.anything(), "ws_1", event.id)
     expect({ status: res.statusCode, body: res.body, availabilityCalls: resolveCommand.mock.calls.length }).toEqual({
       status: 202,
       body: {

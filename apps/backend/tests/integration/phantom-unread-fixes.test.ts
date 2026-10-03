@@ -114,7 +114,7 @@ describe("Phantom-unread drift fixes", () => {
     const m2 = await send(wid, source, actor.id, "m2")
     const m3 = await send(wid, source, actor.id, "m3")
 
-    const events = await StreamEventRepository.list(pool, source)
+    const events = await StreamEventRepository.list(pool, wid, source)
     const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
 
     // Reader's watermark sits on m2 — which is about to be moved away.
@@ -149,7 +149,7 @@ describe("Phantom-unread drift fixes", () => {
     expect(after?.lastReadAt).toEqual(before!.lastReadAt)
 
     // Source now holds target + m1; nothing unread above m1.
-    const counts = await streamService.getUnreadCounts([
+    const counts = await streamService.getUnreadCounts(wid, [
       { streamId: source, memberId: reader.id, lastReadEventId: after?.lastReadEventId ?? null },
     ])
     expect(counts.get(source)).toEqual({ unreadCount: 0, totalCount: 2 })
@@ -174,7 +174,7 @@ describe("Phantom-unread drift fixes", () => {
     const m1 = await send(wid, source, actor.id, "m1")
     const m2 = await send(wid, source, actor.id, "m2")
     const m3 = await send(wid, source, actor.id, "m3")
-    const events = await StreamEventRepository.list(pool, source)
+    const events = await StreamEventRepository.list(pool, wid, source)
     const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
 
     // Read through m2, then a holding read through m3 freezes the floor on m2.

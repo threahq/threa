@@ -146,7 +146,12 @@ export async function checkForUnseenMessages(params: {
   const { pool, jobQueue, workspaceId, streamId, personaId, lastSeenSequence, trigger, previousJobId } = params
 
   // Only check for USER messages - ignore persona responses to avoid infinite loops (single query, INV-30)
-  const latestUserMessage = await StreamEventRepository.getLatestUnseenUserMessage(pool, streamId, lastSeenSequence)
+  const latestUserMessage = await StreamEventRepository.getLatestUnseenUserMessage(
+    pool,
+    workspaceId,
+    streamId,
+    lastSeenSequence
+  )
 
   if (!latestUserMessage) {
     return

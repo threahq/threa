@@ -312,7 +312,7 @@ describe("push source revalidation", () => {
           })
         )
       )
-      const event = await StreamEventRepository.findByMessageId(pool, root.id, message.id)
+      const event = await StreamEventRepository.findByMessageId(pool, ws, root.id, message.id)
       await ReadStateRepository.advance(pool, root.id, recipient.id, event!.id, { holdInInbox: false })
 
       const results = await Promise.all(rows.map((r) => resolve(ws, recipient.id, r.id)))

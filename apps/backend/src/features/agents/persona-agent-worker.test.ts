@@ -172,7 +172,7 @@ describe("createPersonaAgentWorker", () => {
 
     it("enqueues an episode-summary job when a completed session replied", async () => {
       // No unseen messages, so the follow-up nudge stays out of the way.
-      spyOn(StreamEventRepository, "getLatestUnseenUserMessage").mockResolvedValue(null)
+      const unseen = spyOn(StreamEventRepository, "getLatestUnseenUserMessage").mockResolvedValue(null)
       const send = mock((_q: unknown, _d: unknown) => Promise.resolve("queue_1"))
       const worker = createPersonaAgentWorker({
         agent: makeCompletedAgent({ messagesSent: 2 }),
@@ -183,6 +183,7 @@ describe("createPersonaAgentWorker", () => {
 
       await worker({ id: "job_3", name: "persona.agent", data: baseData })
 
+      expect(unseen.mock.calls[0]!.slice(1, 3)).toEqual(["ws_1", "stream_1"])
       expect(send).toHaveBeenCalledWith(JobQueues.AGENT_EPISODE_SUMMARIZE, {
         workspaceId: "ws_1",
         sessionId: "session_1",

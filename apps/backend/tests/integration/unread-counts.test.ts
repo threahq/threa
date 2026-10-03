@@ -68,11 +68,11 @@ describe("Unread Counts", () => {
       })
 
       // Get the event ID for this message
-      const events = await StreamEventRepository.list(pool, testStreamId)
+      const events = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId)
       const lastEventId = events[0].id
 
       // Count unreads with lastReadEventId = latest event
-      const counts = await streamService.getUnreadCounts([
+      const counts = await streamService.getUnreadCounts(testWorkspaceId, [
         { streamId: testStreamId, memberId: testUserId, lastReadEventId: lastEventId },
       ])
 
@@ -118,11 +118,11 @@ describe("Unread Counts", () => {
       })
 
       // Get the first event as last read
-      const events = await StreamEventRepository.list(pool, testStreamId)
+      const events = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId)
       const firstEventId = events[0].id
 
       // Should have 2 unread (messages 2 and 3)
-      const counts = await streamService.getUnreadCounts([
+      const counts = await streamService.getUnreadCounts(testWorkspaceId, [
         { streamId: testStreamId, memberId: testUserId, lastReadEventId: firstEventId },
       ])
 
@@ -154,7 +154,7 @@ describe("Unread Counts", () => {
       }
 
       // Count with null lastReadEventId (never read)
-      const counts = await streamService.getUnreadCounts([
+      const counts = await streamService.getUnreadCounts(testWorkspaceId, [
         { streamId: testStreamId, memberId: testUserId, lastReadEventId: null },
       ])
 
@@ -191,7 +191,7 @@ describe("Unread Counts", () => {
       expect(authorReadState?.lastReadEventId).not.toBeNull()
 
       // Author should have 0 unread
-      const authorCounts = await streamService.getUnreadCounts([
+      const authorCounts = await streamService.getUnreadCounts(testWorkspaceId, [
         { streamId: testStreamId, memberId: authorId, lastReadEventId: authorReadState!.lastReadEventId },
       ])
       expect(authorCounts.get(testStreamId)).toEqual({ unreadCount: 0, totalCount: 1 })
@@ -200,7 +200,7 @@ describe("Unread Counts", () => {
       const otherReadState = await ReadStateRepository.get(pool, testStreamId, otherUserId)
       expect(otherReadState).toBeNull()
 
-      const otherCounts = await streamService.getUnreadCounts([
+      const otherCounts = await streamService.getUnreadCounts(testWorkspaceId, [
         { streamId: testStreamId, memberId: otherUserId, lastReadEventId: null },
       ])
       expect(otherCounts.get(testStreamId)).toEqual({ unreadCount: 1, totalCount: 1 })
@@ -253,10 +253,10 @@ describe("Unread Counts", () => {
       }
 
       // Get first event from stream1, read all of stream2
-      const events1 = await StreamEventRepository.list(pool, stream1)
-      const events2 = await StreamEventRepository.list(pool, stream2)
+      const events1 = await StreamEventRepository.list(pool, testWorkspaceId, stream1)
+      const events2 = await StreamEventRepository.list(pool, testWorkspaceId, stream2)
 
-      const counts = await streamService.getUnreadCounts([
+      const counts = await streamService.getUnreadCounts(testWorkspaceId, [
         { streamId: stream1, memberId: testUserId, lastReadEventId: events1[0].id }, // Read 1, unread 1
         { streamId: stream2, memberId: testUserId, lastReadEventId: events2[2].id }, // Read all 3, unread 0
       ])
@@ -320,7 +320,7 @@ describe("Unread Counts", () => {
       expect(readState2?.lastReadEventId).not.toBeNull()
 
       // Verify unread counts are now 0
-      const counts = await streamService.getUnreadCounts([
+      const counts = await streamService.getUnreadCounts(testWorkspaceId, [
         { streamId: stream1, memberId: testUserId, lastReadEventId: readState1!.lastReadEventId },
         { streamId: stream2, memberId: testUserId, lastReadEventId: readState2!.lastReadEventId },
       ])
@@ -358,7 +358,7 @@ describe("Unread Counts", () => {
       })
 
       // Mark stream1 as read first
-      const events1 = await StreamEventRepository.list(pool, stream1)
+      const events1 = await StreamEventRepository.list(pool, testWorkspaceId, stream1)
       await streamService.markAsRead(testWorkspaceId, stream1, testUserId, events1[0].id)
 
       // Now markAllAsRead should return empty (both are already read or have no messages)
@@ -447,7 +447,7 @@ describe("Unread Counts", () => {
           authorType: "user",
           ...testMessageContent("Test message"),
         })
-        const events = await StreamEventRepository.list(pool, streamId)
+        const events = await StreamEventRepository.list(pool, testWorkspaceId, streamId)
         eventIds.push(events[0].id)
       }
 
@@ -527,7 +527,7 @@ describe("Unread Counts", () => {
       expect(payloads.map((p) => p.messageOrdinal)).toEqual([1, 2, 3])
 
       // Sequences are the events' per-stream sequences, in order.
-      const events = await StreamEventRepository.list(pool, testStreamId)
+      const events = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId)
       expect(payloads.map((p) => p.sequence)).toEqual(events.map((e) => e.sequence.toString()))
     })
 
@@ -545,7 +545,7 @@ describe("Unread Counts", () => {
       }
 
       // Read up to the second message: ordinal 2 of 3.
-      const events = await StreamEventRepository.list(pool, testStreamId)
+      const events = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId)
       await streamService.markAsRead(testWorkspaceId, testStreamId, readerId, events[1].id)
 
       const payloads = await listOutboxPayloads("stream:read", testStreamId)
@@ -562,7 +562,7 @@ describe("Unread Counts", () => {
       })
 
       // The derived unread matches the authoritative count: 3 - 2 = 1.
-      const counts = await streamService.getUnreadCounts([
+      const counts = await streamService.getUnreadCounts(testWorkspaceId, [
         { streamId: testStreamId, memberId: readerId, lastReadEventId: events[1].id },
       ])
       expect(counts.get(testStreamId)).toEqual({ unreadCount: 1, totalCount: 3 })
@@ -618,12 +618,21 @@ describe("Unread Counts", () => {
         })
       }
 
-      const events = await StreamEventRepository.list(pool, testStreamId)
-      const first = await StreamEventRepository.getMessageOrdinalForEvent(pool, testStreamId, events[0].id)
+      const events = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId)
+      const first = await StreamEventRepository.getMessageOrdinalForEvent(
+        pool,
+        testWorkspaceId,
+        testStreamId,
+        events[0].id
+      )
       expect(first).toEqual({ sequence: events[0].sequence, messageOrdinal: 1 })
 
-      expect(await StreamEventRepository.getMessageOrdinalForEvent(pool, testStreamId, "evt_missing")).toBeNull()
-      expect(await StreamEventRepository.countMessagesThrough(pool, testStreamId, events[1].sequence)).toBe(2)
+      expect(
+        await StreamEventRepository.getMessageOrdinalForEvent(pool, testWorkspaceId, testStreamId, "evt_missing")
+      ).toBeNull()
+      expect(
+        await StreamEventRepository.countMessagesThrough(pool, testWorkspaceId, testStreamId, events[1].sequence)
+      ).toBe(2)
     })
   })
 
@@ -658,7 +667,7 @@ describe("Unread Counts", () => {
         })
       }
 
-      const events = await StreamEventRepository.list(pool, testStreamId)
+      const events = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId)
       const [firstEvent, targetEvent, thirdEvent] = events
 
       await withTransaction(pool, async (client) => {
@@ -735,7 +744,7 @@ describe("Unread Counts", () => {
         ...testMessageContent("already read"),
       })
 
-      const events = await StreamEventRepository.list(pool, testStreamId)
+      const events = await StreamEventRepository.list(pool, testWorkspaceId, testStreamId)
       await streamService.markAsRead(testWorkspaceId, testStreamId, readerId, events[0].id)
 
       // A notification worker that resolved before the read can commit its stale unread insert afterward.
