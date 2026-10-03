@@ -31,7 +31,7 @@ function arrange(streamById: Record<string, unknown>) {
   spyOn(E2eStreamActorsRepository, "listForStream").mockResolvedValue([
     { kind: "enclave", actorId: "enclave", keyId: null },
   ] as never)
-  spyOn(StreamRepository, "findById").mockImplementation(((_db: unknown, id: string) =>
+  spyOn(StreamRepository, "findById").mockImplementation(((_db: unknown, _workspaceId: string, id: string) =>
     Promise.resolve(streamById[id] ?? null)) as never)
   return spyOn(EnclaveInvocationsRepository, "insertPending").mockResolvedValue(true)
 }

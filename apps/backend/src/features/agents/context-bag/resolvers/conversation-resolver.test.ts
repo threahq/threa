@@ -125,28 +125,29 @@ describe("ConversationResolver.assertAccess", () => {
       "ws_1"
     )
 
-    expect(findById).toHaveBeenCalledWith(expect.anything(), "stream_real_root")
+    expect(findById).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_real_root")
     expect(isMember).not.toHaveBeenCalled()
   })
 })
 
 describe("ConversationResolver.fetch", () => {
   it("throws CONTEXT_SOURCE_NOT_FOUND when the conversation is gone", async () => {
-    spyOn(ConversationRepository, "findById").mockResolvedValue(null)
+    const findByIds = spyOn(ConversationRepository, "findByIds").mockResolvedValue([])
 
     await expect(
-      ConversationResolver.fetch({} as any, {
+      ConversationResolver.fetch({} as any, "ws_1", {
         kind: ContextRefKinds.CONVERSATION,
         conversationId: "conv_gone",
         streamId: "stream_root",
       })
     ).rejects.toMatchObject({ code: "CONTEXT_SOURCE_NOT_FOUND" })
+    expect(findByIds).toHaveBeenCalledWith(expect.anything(), "ws_1", ["conv_gone"])
   })
 
   it("resolves member messages flattened-chronological across streams and drops soft-deleted rows", async () => {
-    spyOn(ConversationRepository, "findById").mockResolvedValue(
-      makeConversation({ messageIds: ["msg_a", "msg_b", "msg_deleted"] })
-    )
+    spyOn(ConversationRepository, "findByIds").mockResolvedValue([
+      makeConversation({ messageIds: ["msg_a", "msg_b", "msg_deleted"] }),
+    ])
     // Returned out of order, spanning root + a thread, with one soft-deleted.
     spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
       new Map([
@@ -156,7 +157,7 @@ describe("ConversationResolver.fetch", () => {
       ])
     )
 
-    const result = await ConversationResolver.fetch({} as any, {
+    const result = await ConversationResolver.fetch({} as any, "ws_1", {
       kind: ContextRefKinds.CONVERSATION,
       conversationId: "conv_1",
       streamId: "stream_root",
@@ -168,7 +169,7 @@ describe("ConversationResolver.fetch", () => {
   })
 
   it("marks the focal message when originMessageId is a member", async () => {
-    spyOn(ConversationRepository, "findById").mockResolvedValue(makeConversation())
+    spyOn(ConversationRepository, "findByIds").mockResolvedValue([makeConversation()])
     spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
       new Map([
         ["msg_a", makeMessage({ id: "msg_a", createdAt: new Date("2026-04-22T09:00:00Z") })],
@@ -176,7 +177,7 @@ describe("ConversationResolver.fetch", () => {
       ])
     )
 
-    const result = await ConversationResolver.fetch({} as any, {
+    const result = await ConversationResolver.fetch({} as any, "ws_1", {
       kind: ContextRefKinds.CONVERSATION,
       conversationId: "conv_1",
       streamId: "stream_root",

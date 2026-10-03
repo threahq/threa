@@ -133,9 +133,8 @@ export async function fetchStreamBag(
 
   // The trusted stream to enrich a ref's chip from: the conversation's own root
   // for a conversation ref, the (access-checked) source stream for a thread ref.
-  // Feeding the raw `ref.streamId` of a conversation ref into the
-  // workspace-unscoped `StreamRepository.findByIds` would leak another
-  // workspace's stream metadata (INV-8), since it's never access-checked.
+  // Never feed the raw `ref.streamId` of a conversation ref to the stream
+  // lookup: it's never access-checked.
   const effectiveStreamId = (ref: (typeof visibleRefs)[number]): string | null =>
     ref.kind === ContextRefKinds.CONVERSATION
       ? (conversationById.get(ref.conversationId)?.streamId ?? null)
@@ -146,7 +145,7 @@ export async function fetchStreamBag(
   // dimension is the right ceiling regardless of N. INV-56.
   const refStreamIds = [...new Set(visibleRefs.map(effectiveStreamId).filter((id): id is string => id !== null))]
   const [sourceStreams, itemCounts] = await Promise.all([
-    StreamRepository.findByIds(db, refStreamIds),
+    StreamRepository.findByIds(db, workspaceId, refStreamIds),
     MessageRepository.countByStreams(db, refStreamIds),
   ])
   const streamById = new Map(sourceStreams.map((s) => [s.id, s]))

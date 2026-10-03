@@ -11,6 +11,7 @@ const pool = {} as Pool
 
 const ORPHAN = {
   id: "session_1",
+  workspaceId: "ws_1",
   streamId: "stream_1",
   personaId: "persona_ariadne",
   triggerMessageId: "msg_1",

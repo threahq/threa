@@ -18,6 +18,7 @@ export type StepType = AgentStepType
 // Internal row types (snake_case)
 interface SessionRow {
   id: string
+  workspace_id: string
   stream_id: string
   persona_id: string
   trigger_message_id: string
@@ -71,6 +72,7 @@ interface SessionProgressSnapshotRow {
 // Domain types (camelCase)
 export interface AgentSession {
   id: string
+  workspaceId: string
   streamId: string
   personaId: string
   triggerMessageId: string
@@ -229,6 +231,7 @@ export interface AppendStepParams {
 function mapRowToSession(row: SessionRow): AgentSession {
   return {
     id: row.id,
+    workspaceId: row.workspace_id,
     streamId: row.stream_id,
     personaId: row.persona_id,
     triggerMessageId: row.trigger_message_id,
@@ -280,7 +283,7 @@ function mapRowToStep(row: StepRow): AgentSessionStep {
 }
 
 const SESSION_SELECT_FIELDS = `
-  id, stream_id, persona_id, trigger_message_id, trigger_message_revision, supersedes_session_id,
+  id, workspace_id, stream_id, persona_id, trigger_message_id, trigger_message_revision, supersedes_session_id,
   status, current_step, current_step_type, server_id, callback_token_hash, reply_key_generation, heartbeat_at,
   abort_requested_at, response_message_id, error, last_seen_sequence,
   sent_message_ids, context_message_ids, episode_summary, response_validation_failed,

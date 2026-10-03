@@ -234,7 +234,7 @@ describe("EnclaveClaimService.claimTurn", () => {
     arrangeClaim({ ...INVOCATION, rootStreamId: "stream_root" })
     // The trigger lives in a THREAD whose root is stream_root; the thread shares
     // the root's SSK and carries no wraps of its own.
-    spyOn(StreamRepository, "findById").mockImplementation((async (_p: unknown, id: string) =>
+    spyOn(StreamRepository, "findById").mockImplementation((async (_p: unknown, _workspaceId: string, id: string) =>
       id === "stream_1"
         ? { id: "stream_1", workspaceId: "ws_1", rootStreamId: "stream_root" }
         : { id: "stream_root", workspaceId: "ws_1", rootStreamId: null }) as never)

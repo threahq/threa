@@ -327,7 +327,7 @@ export class ConversationService {
     // never a member of the thread conversation.
     const streamIds = [...new Set(conversations.map((c) => c.streamId))]
     const streamById = new Map(
-      (streamIds.length > 0 ? await StreamRepository.findByIds(this.pool, streamIds) : []).map((s) => [s.id, s])
+      (await StreamRepository.findByIds(this.pool, workspaceId, streamIds)).map((s) => [s.id, s])
     )
     // A thread anchor's ROOT row (for `rootStreamType`) isn't among the anchors —
     // fetch the missing roots in one extra batch (INV-56).
@@ -338,7 +338,7 @@ export class ConversationService {
           .filter((id): id is string => Boolean(id) && !streamById.has(id!))
       ),
     ]
-    for (const root of missingRootIds.length > 0 ? await StreamRepository.findByIds(this.pool, missingRootIds) : []) {
+    for (const root of await StreamRepository.findByIds(this.pool, workspaceId, missingRootIds)) {
       streamById.set(root.id, root)
     }
     const sealedAnchorIds = new Set(
@@ -586,8 +586,8 @@ export class ConversationService {
           // its stream (re-file, not relocation).
           if (message.streamId !== target.streamId) {
             const [targetRoot, messageRoot] = await Promise.all([
-              effectiveRootId(client, target.streamId),
-              effectiveRootId(client, message.streamId),
+              effectiveRootId(client, workspaceId, target.streamId),
+              effectiveRootId(client, workspaceId, message.streamId),
             ])
             if (targetRoot !== messageRoot) {
               throw new HttpError("Conversation is in a different root stream", {
@@ -648,7 +648,7 @@ export class ConversationService {
           const deliveryFor = async (streamId: string) => {
             let resolved = deliveryByStreamId.get(streamId)
             if (!resolved) {
-              const stream = await StreamRepository.findById(client, streamId)
+              const stream = await StreamRepository.findById(client, workspaceId, streamId)
               resolved = await resolveConversationDelivery(client, stream)
               deliveryByStreamId.set(streamId, resolved)
             }
@@ -816,7 +816,7 @@ export class ConversationService {
       })
       const locked = await ConversationRepository.findByIdForUpdate(client, workspaceId, conversationId)
       if (!locked) throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
-      const stream = await StreamRepository.findById(client, locked.streamId)
+      const stream = await StreamRepository.findById(client, locked.workspaceId, locked.streamId)
       if (!stream || stream.type === StreamTypes.SCRATCHPAD || stream.e2eEnabled) {
         throw new HttpError("Conversation title regeneration is not supported for this stream", {
           status: 400,
@@ -920,7 +920,7 @@ export class ConversationService {
         throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
       }
       if (topicSummary !== undefined) {
-        const ownerStream = await StreamRepository.findById(client, updated.streamId)
+        const ownerStream = await StreamRepository.findById(client, updated.workspaceId, updated.streamId)
         if (ownerStream?.type === StreamTypes.SCRATCHPAD) {
           throw new HttpError("Rename the scratchpad instead", {
             status: 400,
@@ -936,7 +936,7 @@ export class ConversationService {
         })
         if (!updated) throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
       }
-      const stream = await StreamRepository.findById(client, updated.streamId)
+      const stream = await StreamRepository.findById(client, updated.workspaceId, updated.streamId)
       const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
       const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
         client,
@@ -991,7 +991,7 @@ export class ConversationService {
         throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
       }
 
-      const threadStream = await StreamRepository.findById(client, threadStreamId)
+      const threadStream = await StreamRepository.findById(client, workspaceId, threadStreamId)
       if (!threadStream || threadStream.type !== StreamTypes.THREAD) {
         throw new HttpError("Split target is not a thread", { status: 400, code: "NOT_A_THREAD" })
       }
@@ -999,7 +999,7 @@ export class ConversationService {
       // One-root invariant (INV-62): the thread being promoted must share the
       // source anchor's effective root — a thread is same-root by construction,
       // so this only rejects a foreign/crafted `threadStreamId`.
-      const sourceStream = await StreamRepository.findById(client, source.streamId)
+      const sourceStream = await StreamRepository.findById(client, source.workspaceId, source.streamId)
       const threadRoot = threadStream.rootStreamId ?? threadStream.id
       const sourceRoot = sourceStream?.rootStreamId ?? source.streamId
       if (threadRoot !== sourceRoot) {
@@ -1022,7 +1022,7 @@ export class ConversationService {
       // Move set: source members whose stream is the thread or one of its
       // descendant threads (deeper sub-topics move with it). One recursive query
       // for the subtree (INV-56), then filter members by their own stream.
-      const subtreeIds = new Set(await StreamRepository.listSelfAndDescendantIds(client, threadStreamId))
+      const subtreeIds = new Set(await StreamRepository.listSelfAndDescendantIds(client, workspaceId, threadStreamId))
       const memberMessages = await MessageRepository.findByIds(client, source.messageIds)
       const moveIds = source.messageIds.filter((id) => {
         const streamId = memberMessages.get(id)?.streamId
@@ -1277,7 +1277,7 @@ export class ConversationService {
           status: ConversationStatuses.ACTIVE,
           parentConversationId: await resolveEventAnchoredParentConversationId(
             client,
-            await StreamRepository.findById(client, streamId)
+            await StreamRepository.findById(client, workspaceId, streamId)
           ),
         })
       }
@@ -1376,7 +1376,7 @@ export class ConversationService {
       // Every message, source, and destination shares one stream (guarded above),
       // so one delivery resolution covers all of them (INV-62), as in
       // {@link reassignMessage}.
-      const stream = await StreamRepository.findById(client, streamId)
+      const stream = await StreamRepository.findById(client, workspaceId, streamId)
       const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
 
       if (target.kind === "new") {
@@ -1482,7 +1482,7 @@ export class ConversationService {
           code: "CONVERSATION_NOT_IN_STREAM",
         })
       }
-      const ownerStream = await StreamRepository.findById(client, source.streamId)
+      const ownerStream = await StreamRepository.findById(client, source.workspaceId, source.streamId)
       if (ownerStream?.type === StreamTypes.SCRATCHPAD) {
         throw new HttpError("Scratchpad conversations cannot be split", {
           status: 400,
@@ -1636,7 +1636,7 @@ export class ConversationService {
 
       // Everything shares one stream (guarded above), so one delivery resolution
       // covers every event (INV-62), as in {@link reassignMessagesToConversation}.
-      const stream = await StreamRepository.findById(client, streamId)
+      const stream = await StreamRepository.findById(client, workspaceId, streamId)
       const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
 
       for (const mintedId of mintedIds) {
@@ -1794,7 +1794,7 @@ export class ConversationService {
     }
 
     const memberSet = new Set<string>([...conversation.messageIds, ...conversation.secondaryMessageIds])
-    const stream = await StreamRepository.findById(client, conversation.streamId)
+    const stream = await StreamRepository.findById(client, conversation.workspaceId, conversation.streamId)
     if (stream?.type === StreamTypes.THREAD && stream.parentAnchorId?.startsWith("msg_")) {
       memberSet.add(stream.parentAnchorId)
     }
@@ -1835,18 +1835,14 @@ export class ConversationService {
     // over distinct streams only (one batch lookup, not per-message) and BEFORE
     // any applySparseRead/Unread write.
     const conversationRoot = stream?.rootStreamId ?? conversation.streamId
-    const memberStreams = await StreamRepository.findByIds(client, [...groups.keys()])
+    const memberStreams = await StreamRepository.findByIds(client, workspaceId, [...groups.keys()])
     const memberStreamById = new Map(memberStreams.map((s) => [s.id, s]))
     for (const memberStreamId of groups.keys()) {
       const memberStream = memberStreamById.get(memberStreamId)
-      // A missing row, a cross-workspace stream, or a stream whose effective
+      // A missing row (the lookup is workspace-scoped) or a stream whose effective
       // root (thread → root, same rule as `effectiveRootId`) differs from the
       // conversation's root is foreign to this conversation.
-      if (
-        !memberStream ||
-        memberStream.workspaceId !== workspaceId ||
-        (memberStream.rootStreamId ?? memberStream.id) !== conversationRoot
-      ) {
+      if (!memberStream || (memberStream.rootStreamId ?? memberStream.id) !== conversationRoot) {
         throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
       }
     }

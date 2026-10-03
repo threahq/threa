@@ -1487,7 +1487,7 @@ describe("EventService.createMessage parent thread update (reply in thread)", ()
     await service.createMessage(baseParams)
 
     // Reply-count maintenance lives on the thread stream row (INV-20 atomic +1).
-    expect(StreamRepository.bumpThreadReplyCount).toHaveBeenCalledWith(expect.anything(), "stream_thread", 1)
+    expect(StreamRepository.bumpThreadReplyCount).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_thread", 1)
     // Anchor-agnostic patch, replyCount read off the thread stream row.
     expect(OutboxRepository.insert).toHaveBeenCalledWith(
       expect.anything(),
@@ -1558,7 +1558,7 @@ describe("EventService sharedMessages wire enrichment", () => {
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
     // Target stream (create-path E2E check, post-write thread lookup) vs.
     // source stream (share validation's findStream / checkStreamAccess).
-    spyOn(StreamRepository, "findById").mockImplementation((async (_client: any, id: string) => {
+    spyOn(StreamRepository, "findById").mockImplementation((async (_client: any, _workspaceId: string, id: string) => {
       if (id === "stream_source") {
         return {
           id: "stream_source",

@@ -82,7 +82,9 @@ describe("stream brief handlers", () => {
   it("GET on a thread returns the ROOT stream's brief (threads inherit, INV-62)", async () => {
     const thread = fakeStream({ id: "stream_thread", rootStreamId: "stream_root" })
     const root = fakeStream({ id: "stream_root" })
-    spyOn(StreamRepository, "findById").mockImplementation(async (_db, id) => (id === "stream_thread" ? thread : root))
+    spyOn(StreamRepository, "findById").mockImplementation(async (_db, _workspaceId, id) =>
+      id === "stream_thread" ? thread : root
+    )
     const get = mock(async (_params: { workspaceId: string; streamId: string }) => null)
     const handlers = makeHandlers({ get } as unknown as Partial<StreamBriefService>)
 

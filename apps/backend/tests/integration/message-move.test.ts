@@ -154,7 +154,7 @@ describe("message move integration", () => {
 
     // Move-in bumps the destination thread's streams.reply_count set-based by the
     // number of moved messages (chunk 2 projections; INV-56 single UPDATE).
-    const destThreadRow = await StreamRepository.findById(pool, result.thread.id)
+    const destThreadRow = await StreamRepository.findById(pool, testWorkspaceId, result.thread.id)
     expect(destThreadRow?.replyCount).toBe(2)
 
     const sourceEvents = await StreamEventRepository.list(pool, sourceStreamId, { types: ["message_created"] })

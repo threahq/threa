@@ -160,7 +160,7 @@ describe("linked session reply mode", () => {
 
     const message = await post(scenario.workspace, scenario.root, scenario.owner, "what changed?")
     await service.reconcileInvocationSource({ workspaceId: scenario.workspace, sourceMessageId: message.id })
-    const thread = await StreamRepository.findByAnchor(pool, scenario.root, message.id)
+    const thread = await StreamRepository.findByAnchor(pool, scenario.workspace, scenario.root, message.id)
     expect(thread).toMatchObject({ type: "thread", rootStreamId: scenario.root, createdBy: scenario.bot })
 
     // An edit reconciles again: it must find the same thread, not supersede the invocation.
@@ -216,7 +216,7 @@ describe("linked session reply mode", () => {
     })
     await service.reconcileInvocationSource({ workspaceId: scenario.workspace, sourceMessageId: message.id })
 
-    const thread = await StreamRepository.findByAnchor(pool, scenario.root, message.id)
+    const thread = await StreamRepository.findByAnchor(pool, scenario.workspace, scenario.root, message.id)
     expect(thread).toMatchObject({ type: "thread", rootStreamId: scenario.root, createdBy: scenario.bot })
     expect(await invocationsFor(message.id)).toEqual([{ response_stream_id: thread!.id, status: "pending" }])
 
@@ -242,7 +242,7 @@ describe("linked session reply mode", () => {
     })
 
     expect({
-      thread: await StreamRepository.findByAnchor(pool, scenario.root, message.id),
+      thread: await StreamRepository.findByAnchor(pool, scenario.workspace, scenario.root, message.id),
       invocations: await invocationsFor(message.id),
     }).toEqual({ thread: null, invocations: [{ response_stream_id: scenario.root, status: "pending" }] })
   })

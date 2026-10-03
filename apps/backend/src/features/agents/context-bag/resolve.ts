@@ -137,7 +137,7 @@ export async function resolveBagForStream(
         continue
       }
       try {
-        const part = await fetchRef(db, ref, { intent: bag.intent })
+        const part = await fetchRef(db, bag.workspaceId, ref, { intent: bag.intent })
         resolveds.push({ ref, ...part })
       } catch (err) {
         // A viewport whose on-screen messages are all gone has no snapshot to
@@ -157,13 +157,11 @@ export async function resolveBagForStream(
     // label as the inline message badge — INV-35: don't fork the formatting
     // logic, share the data shape via `formatContextRefLabel` on the FE.
     // Enrich from each resolver's authoritative `sourceStreamId`, never the
-    // client-supplied `ref.streamId` — `StreamRepository.findByIds` is not
-    // workspace-scoped, so a conversation ref's unvalidated `ref.streamId`
-    // would leak another workspace's stream metadata into the trace (INV-8).
+    // client-supplied `ref.streamId`, which a conversation ref never access-checks.
     const refStreamIds = [...new Set(resolveds.map((r) => r.sourceStreamId))]
     const [sourceStreams, itemCounts] = refStreamIds.length
       ? await Promise.all([
-          StreamRepository.findByIds(db, refStreamIds),
+          StreamRepository.findByIds(db, bag.workspaceId, refStreamIds),
           MessageRepository.countByStreams(db, refStreamIds),
         ])
       : [[], new Map<string, number>()]

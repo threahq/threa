@@ -351,7 +351,7 @@ export class EnclaveClaimService {
     // enqueue): the SSK wraps are HPKE-bound to the root's id, so the enclave
     // must unwrap under it (assignment.streamId = root). The reply still
     // lands in the trigger's stream — the session row is keyed by `streamId`.
-    const triggerStream = await StreamRepository.findById(pool, streamId)
+    const triggerStream = await StreamRepository.findById(pool, workspaceId, streamId)
     if (!triggerStream) return completeAsNoOp("trigger stream gone")
 
     const e2e = await E2eStreamsRepository.getByStreamId(pool, workspaceId, e2eStreamId)
@@ -503,7 +503,7 @@ export class EnclaveClaimService {
       // import cycle's TDZ. The enclave schema's own history cap must stay ≥ this.
       MessageRepository.findSurrounding(pool, triggerId, streamId, CONTEXT_WINDOW_CANDIDATE_CEILING, 0),
       triggerStream.rootStreamId
-        ? StreamRepository.findById(pool, triggerStream.rootStreamId)
+        ? StreamRepository.findById(pool, workspaceId, triggerStream.rootStreamId)
         : Promise.resolve(triggerStream),
       this.userPreferencesService.getPreferences(workspaceId, trigger.authorId),
       UserRepository.findByIds(pool, workspaceId, [trigger.authorId]),
@@ -652,7 +652,7 @@ export class EnclaveClaimService {
       // transaction as RUNNING. A lost/rolled-back session can therefore never
       // strand an ownerless naming claim. Threads deliberately receive no slot.
       if (triggerStream.type === StreamTypes.SCRATCHPAD && triggerStream.id === e2eStreamId) {
-        const locked = await StreamRepository.findByIdForUpdateBlocking(tx, triggerStream.id)
+        const locked = await StreamRepository.findByIdForUpdateBlocking(tx, workspaceId, triggerStream.id)
         const source = locked?.displayNameSource ?? (locked?.displayName ? TitleSources.LEGACY : null)
         if (locked && !locked.archivedAt && (source === null || source === TitleSources.GENERATED)) {
           const stats = await MessageRepository.getNamingStats(tx, locked.id)

@@ -80,8 +80,8 @@ export const ViewportResolver: Resolver<ViewportContextRef> = {
     }
   },
 
-  async fetch(db, ref) {
-    const stream = await StreamRepository.findById(db, ref.streamId)
+  async fetch(db, workspaceId, ref) {
+    const stream = await StreamRepository.findById(db, workspaceId, ref.streamId)
     if (!stream) {
       throw new HttpError("Context source stream not found", { status: 404, code: "CONTEXT_SOURCE_NOT_FOUND" })
     }

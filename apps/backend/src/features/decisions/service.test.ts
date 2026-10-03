@@ -98,7 +98,7 @@ const SEALED_REQUEST_PARAMS = {
 }
 
 function stubRunningSession() {
-  spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue({
+  spyOn(StreamRepository, "findById").mockResolvedValue({
     id: "stream_1",
     rootStreamId: null,
   } as never)
@@ -246,7 +246,7 @@ describe("DecisionService.request", () => {
 
   it("refuses a bot with no running session and no in-flight invocation", async () => {
     stubTransaction()
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue({ id: "stream_1", rootStreamId: null } as never)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", rootStreamId: null } as never)
     spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream").mockResolvedValue(null as never)
     spyOn(BotInvocationRepository, "findLiveClaimedForBot").mockResolvedValue(null)
     const insert = spyOn(DecisionRequestRepository, "insert").mockResolvedValue(fakeDecision())
@@ -260,7 +260,7 @@ describe("DecisionService.request", () => {
 
   it("refuses an invocation the bot is running on another stream", async () => {
     stubTransaction()
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue({ id: "stream_1", rootStreamId: null } as never)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", rootStreamId: null } as never)
     spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream").mockResolvedValue(null as never)
     spyOn(BotInvocationRepository, "findLiveClaimedForBot").mockResolvedValue({
       id: "binv_1",
@@ -278,7 +278,7 @@ describe("DecisionService.request", () => {
 
   it("accepts a runtime session id from an invocation-only requester with no session link", async () => {
     stubTransaction()
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue({ id: "stream_1", rootStreamId: null } as never)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", rootStreamId: null } as never)
     spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream").mockResolvedValue(null as never)
     spyOn(BotInvocationRepository, "findLiveClaimedForBot").mockResolvedValue({
       id: "binv_1",
@@ -299,7 +299,7 @@ describe("DecisionService.request", () => {
 
   it("refuses a runtime session id that did not claim the named invocation", async () => {
     stubTransaction()
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue({ id: "stream_1", rootStreamId: null } as never)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", rootStreamId: null } as never)
     spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream").mockResolvedValue(null as never)
     spyOn(BotInvocationRepository, "findLiveClaimedForBot").mockResolvedValue({
       id: "binv_1",
@@ -317,7 +317,7 @@ describe("DecisionService.request", () => {
 
   it("refuses a requester with no runtime session to deliver the answer to", async () => {
     stubTransaction()
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue({ id: "stream_1", rootStreamId: null } as never)
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_1", rootStreamId: null } as never)
     spyOn(BotRuntimeSessionLinkRepository, "findActiveByStream").mockResolvedValue(null as never)
     spyOn(BotInvocationRepository, "findLiveClaimedForBot").mockResolvedValue({
       id: "binv_1",

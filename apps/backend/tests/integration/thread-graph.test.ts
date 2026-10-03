@@ -289,7 +289,7 @@ describe("Thread Graph", () => {
       })
 
       // Creator should be a member
-      const isMember = await streamService.isMember(thread.id, ownerId)
+      const isMember = await streamService.isMember(wsId, thread.id, ownerId)
       expect(isMember).toBe(true)
     })
   })
@@ -433,8 +433,8 @@ describe("Thread Graph", () => {
       expect(thread2.createdBy).toBe(ownerId)
 
       // Both users should be members
-      const isMember1 = await streamService.isMember(thread1.id, ownerId)
-      const isMember2 = await streamService.isMember(thread1.id, user2Id)
+      const isMember1 = await streamService.isMember(wsId, thread1.id, ownerId)
+      const isMember2 = await streamService.isMember(wsId, thread1.id, user2Id)
       expect(isMember1).toBe(true)
       expect(isMember2).toBe(true)
     })
@@ -644,8 +644,8 @@ describe("Thread Graph", () => {
       expect(thread.parentAnchorId).toBe(event.id)
       expect(thread.rootStreamId).toBe(channelId)
       // Members: the creator plus the event's user actor.
-      expect(await streamService.isMember(thread.id, ownerId)).toBe(true)
-      expect(await streamService.isMember(thread.id, actorId)).toBe(true)
+      expect(await streamService.isMember(wsId, thread.id, ownerId)).toBe(true)
+      expect(await streamService.isMember(wsId, thread.id, actorId)).toBe(true)
     })
 
     test("a non-threadable event type is rejected with ANCHOR_NOT_THREADABLE", async () => {
@@ -718,7 +718,7 @@ describe("Thread Graph", () => {
         principal: { kind: "user", userId: ownerId },
       })
 
-      const persisted = await StreamRepository.findById(pool, thread.id)
+      const persisted = await StreamRepository.findById(pool, wsId, thread.id)
       expect(persisted?.parentAnchorId).toBe(parentMessage.id)
     })
 
@@ -816,7 +816,7 @@ describe("Thread Graph", () => {
         ...testMessageContent("reply one"),
       })
 
-      const afterReply = await StreamRepository.findById(pool, thread.id)
+      const afterReply = await StreamRepository.findById(pool, wsId, thread.id)
       expect(afterReply?.replyCount).toBe(1)
       expect(afterReply?.lastReplyAt).not.toBeNull()
 
@@ -838,7 +838,7 @@ describe("Thread Graph", () => {
         messageId: reply.id,
         actorId: ownerId,
       })
-      const afterDelete = await StreamRepository.findById(pool, thread.id)
+      const afterDelete = await StreamRepository.findById(pool, wsId, thread.id)
       expect(afterDelete?.replyCount).toBe(0)
     })
 
@@ -869,7 +869,7 @@ describe("Thread Graph", () => {
         ...testMessageContent("reply on the card"),
       })
 
-      const afterReply = await StreamRepository.findById(pool, thread.id)
+      const afterReply = await StreamRepository.findById(pool, wsId, thread.id)
       expect(afterReply?.replyCount).toBe(1)
 
       const emitted = await outboxByAnchor(cardEvent.id)
@@ -933,7 +933,7 @@ describe("Thread Graph", () => {
         ...testMessageContent("reply on card"),
       })
 
-      const dataMap = await streamService.getThreadsWithReplyCounts(channelId, [parent.id, cardEvent.id])
+      const dataMap = await streamService.getThreadsWithReplyCounts(wsId, channelId, [parent.id, cardEvent.id])
       expect(dataMap.get(parent.id)).toEqual({ threadId: msgThread.id, replyCount: 1 })
       expect(dataMap.get(cardEvent.id)).toEqual({ threadId: cardThread.id, replyCount: 1 })
     })

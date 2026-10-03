@@ -81,7 +81,7 @@ function setupTransaction() {
 }
 
 function makeService(
-  streamService: any = { getStreamById: mock(async (id: string) => ({ id, archivedAt: null })) },
+  streamService: any = { getStreamById: mock(async (_workspaceId: string, id: string) => ({ id, archivedAt: null })) },
   extra: { attachmentService?: any } = {}
 ) {
   return new PersonaConfigService({

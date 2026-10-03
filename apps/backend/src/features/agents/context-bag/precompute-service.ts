@@ -75,7 +75,7 @@ export async function precomputeRefSummaries(
         })
       }
       await assertRefAccess(db, ref, userId, workspaceId)
-      const part = await fetchRef(db, ref, { intent })
+      const part = await fetchRef(db, workspaceId, ref, { intent })
       out.push({ ref, ...part })
     }
     return out

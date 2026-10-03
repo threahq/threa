@@ -77,14 +77,12 @@ export async function failSessionWithLifecycleInTransaction(
 export async function failSessionWithLifecycle(
   pool: Pool,
   io: Server,
-  session: { id: string; streamId: string; personaId: string; triggerMessageId: string },
+  session: { id: string; workspaceId: string; streamId: string; personaId: string; triggerMessageId: string },
   error: string,
   onFailed?: (tx: Querier) => Promise<void>
 ): Promise<boolean> {
-  const { id: sessionId, streamId, personaId } = session
-  // Resolve the workspace from the stream (agent_sessions don't carry it) so we
-  // can address the workspace-scoped rooms, same as the enclave complete path.
-  const stream = await StreamRepository.findById(pool, streamId)
+  const { id: sessionId, workspaceId, streamId, personaId } = session
+  const stream = await StreamRepository.findById(pool, workspaceId, streamId)
 
   // Mark FAILED + write the lifecycle event in one transaction (INV-7), and only
   // when we actually win the RUNNING→FAILED transition — so a session that
@@ -154,8 +152,8 @@ export function createOrphanSessionCleanup(
         try {
           const won = await failSessionWithLifecycle(pool, io, session, ORPHAN_ERROR, async (tx) => {
             if (!onSessionFailed) return
-            const stream = await StreamRepository.findById(tx, session.streamId)
-            if (stream) await onSessionFailed(tx, { ...session, workspaceId: stream.workspaceId })
+            const stream = await StreamRepository.findById(tx, session.workspaceId, session.streamId)
+            if (stream) await onSessionFailed(tx, session)
           })
           if (won) {
             logger.info({ sessionId: session.id, streamId: session.streamId }, "Marked orphaned session as failed")

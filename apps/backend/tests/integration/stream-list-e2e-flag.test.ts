@@ -79,7 +79,7 @@ describe("StreamRepository.listByIds and end-to-end encryption", () => {
     const { wsId, sealedId } = await seed()
 
     const [listed] = await StreamRepository.listByIds(pool, wsId, [sealedId])
-    const read = await StreamRepository.findByIdForWorkspace(pool, sealedId, wsId)
+    const read = await StreamRepository.findById(pool, wsId, sealedId)
 
     expect(listed?.e2eEnabled).toBe(true)
     expect(listed?.e2eEnabled).toBe(read?.e2eEnabled)
