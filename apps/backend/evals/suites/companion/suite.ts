@@ -407,6 +407,7 @@ export async function runCompanionTask(
       embeddingService,
     })
     const generalResearcher = new GeneralResearcher({ ai: ctx.ai, configResolver: ctx.configResolver })
+    const recallOff = (input.preparedRecall ?? process.env.EVAL_PREPARED_RECALL) === "off"
     const memoExplorerService = new MemoExplorerService({
       pool: ctx.pool,
       embeddingService,
@@ -568,17 +569,15 @@ export async function runCompanionTask(
       memoExplorerService,
       preparedRecall: new PreparedRecall({
         analyticsReporter: new DisabledAnalyticsReporter(),
-        memoExplorerService,
-        // The no-recall arm (`preparedRecall: "off"` or `EVAL_PREPARED_RECALL=off`): an unscored pool recalls nothing.
-        scorer:
-          (input.preparedRecall ?? process.env.EVAL_PREPARED_RECALL) === "off"
-            ? { score: async () => null }
-            : new DecisionsRelevanceScorer({
-                ai: ctx.ai,
-                subject: "knowledge memos",
-                question: PREPARED_RECALL_QUESTION,
-                functionId: "prepared-recall-score",
-              }),
+        // The no-recall arm (`preparedRecall: "off"` or `EVAL_PREPARED_RECALL=off`) finds no candidates, so it
+        // pays for no memo search or query embedding.
+        memoExplorerService: recallOff ? { search: async () => [] } : memoExplorerService,
+        scorer: new DecisionsRelevanceScorer({
+          ai: ctx.ai,
+          subject: "knowledge memos",
+          question: PREPARED_RECALL_QUESTION,
+          functionId: "prepared-recall-score",
+        }),
       }),
       storage: stubStorage,
       modelRegistry: createModelRegistry(),
@@ -635,9 +634,9 @@ export async function runCompanionTask(
     const trajectory: CompanionTrajectoryStep[] = steps.map((step) => ({
       stepType: step.stepType,
       completed: step.completedAt !== null,
-      sourceUrls: (step.sources ?? [])
-        .map((source) => source.url)
-        .filter((url): url is string => typeof url === "string"),
+      sourceUrls: (step.sources ?? []).flatMap((source) => (typeof source.url === "string" ? [source.url] : [])),
+      sourceMemoIds: (step.sources ?? []).flatMap((source) => (source.memoId ? [source.memoId] : [])),
+      sourceStreamIds: (step.sources ?? []).flatMap((source) => (source.streamId ? [source.streamId] : [])),
       ...(step.stepType === "tool_error" || step.stepType === "tool_call"
         ? { content: typeof step.content === "string" ? step.content.slice(0, 500) : null }
         : {}),

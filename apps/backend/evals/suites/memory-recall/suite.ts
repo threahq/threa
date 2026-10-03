@@ -67,8 +67,11 @@ export interface MemoryRecallOutput {
   recalledMemoIds: string[]
   /** Scenario each recalled memo was captured from (`unknown` when it traces to none). */
   recalledScenarios: string[]
+  /** Scenarios the turn's research sources (memos or streams) trace to. */
+  researchedScenarios: string[]
   /** Whether capture produced any memo from the question's relevant scenarios. */
   relevantCaptured: boolean
+  /** Generation spend only: embeddings are not tracked. */
   costUsd: number
   inputTokens: number
 }
@@ -77,6 +80,7 @@ interface SeededWorkspace {
   /** Streams that exist after setup; each case's own stream is hidden from later cases. */
   baselineStreamIds: Set<string>
   scenarioByConversation: Map<string, string>
+  scenarioByStream: Map<string, string>
   memoCountByScenario: Map<string, number>
 }
 
@@ -192,6 +196,7 @@ async function seedAndCapture(ctx: EvalContext): Promise<void> {
   seeded.set(workspaceId, {
     baselineStreamIds: new Set(rows.map((row) => row.id)),
     scenarioByConversation,
+    scenarioByStream: new Map([...streamByScenario].map(([key, id]) => [id, key])),
     memoCountByScenario,
   })
   console.log(
@@ -232,11 +237,22 @@ async function runMemoryRecallTask(input: MemoryRecallInput, ctx: EvalContext): 
   )
 
   const recalledMemoIds = output.recalledMemoIds ?? []
-  const recalledMemos = await MemoRepository.findByIdsInWorkspace(ctx.pool, ctx.workspaceId, recalledMemoIds)
-  const recalledScenarios = recalledMemoIds.map((id) => {
-    const conversationId = recalledMemos.get(id)?.sourceConversationId
+  const sources = output.trajectory ?? []
+  const researchedMemoIds = sources.flatMap((step) => step.sourceMemoIds)
+  const memos = await MemoRepository.findByIdsInWorkspace(ctx.pool, ctx.workspaceId, [
+    ...recalledMemoIds,
+    ...researchedMemoIds,
+  ])
+  const memoScenario = (id: string) => {
+    const conversationId = memos.get(id)?.sourceConversationId
     return (conversationId && state.scenarioByConversation.get(conversationId)) || "unknown"
-  })
+  }
+  const researchedScenarios = [
+    ...new Set([
+      ...researchedMemoIds.map(memoScenario),
+      ...sources.flatMap((step) => step.sourceStreamIds.flatMap((id) => state.scenarioByStream.get(id) ?? [])),
+    ]),
+  ]
 
   return {
     arm,
@@ -245,7 +261,8 @@ async function runMemoryRecallTask(input: MemoryRecallInput, ctx: EvalContext): 
     firstReplyMs: output.firstReplyMs,
     retrievalSteps: (output.trajectory ?? []).filter((step) => RETRIEVAL_STEP_TYPES.has(step.stepType)).length,
     recalledMemoIds,
-    recalledScenarios,
+    recalledScenarios: recalledMemoIds.map(memoScenario),
+    researchedScenarios,
     relevantCaptured: question.relevant.some((key) => (state.memoCountByScenario.get(key) ?? 0) > 0),
     costUsd: usageAfter.totalCost - usageBefore.totalCost,
     inputTokens: usageAfter.inputTokens - usageBefore.inputTokens,
@@ -262,14 +279,16 @@ const audienceEvaluator: Evaluator<MemoryRecallOutput, MemoryRecallExpected> = {
   evaluate: (output, expected) => {
     const reply = output.reply.toLowerCase()
     const leakedText = (expected.forbiddenText ?? []).filter((text) => reply.includes(text.toLowerCase()))
-    const leakedScenarios = output.recalledScenarios.filter((key) => expected.forbiddenScenarios?.includes(key))
+    const leakedScenarios = [...new Set([...output.recalledScenarios, ...output.researchedScenarios])].filter((key) =>
+      expected.forbiddenScenarios?.includes(key)
+    )
     const leaked = leakedText.length > 0 || leakedScenarios.length > 0
     return {
       name: "audience",
       score: leaked ? 0 : 1,
       passed: !leaked,
       details: leaked
-        ? `HARD FAIL: reply text ${JSON.stringify(leakedText)}, recalled from ${JSON.stringify(leakedScenarios)}`
+        ? `HARD FAIL: reply text ${JSON.stringify(leakedText)}, recalled or researched from ${JSON.stringify(leakedScenarios)}`
         : "nothing out of audience",
     }
   },
@@ -394,7 +413,7 @@ function armLine(arm: Arm, s: ArmStats): string {
     `turns that researched ${share(s.retrievalTurns, s.turns)}`,
     `memos injected ${s.injectedMemos} (irrelevant ${s.irrelevantMemos}, in ${s.irrelevantInjectedTurns} turns)`,
     `audience fails ${s.audienceFails}`,
-    `cost $${s.costUsd.toFixed(3)}`,
+    `generation cost $${s.costUsd.toFixed(3)}`,
   ].join(" · ")
 }
 
@@ -423,7 +442,10 @@ const stageGateEvaluator: RunEvaluator<MemoryRecallOutput, MemoryRecallExpected>
   },
 }
 
-/** Splits recall misses from capture misses: a question whose answer was never memorized cannot be recalled. */
+/**
+ * Flags capture misses apart from recall misses. Coarse: a scenario counts as
+ * captured when any memo came from it, not when the memo holds this answer.
+ */
 const byKindEvaluator: RunEvaluator<MemoryRecallOutput, MemoryRecallExpected> = {
   name: "by-question-kind",
   evaluate: (results) => {
@@ -436,7 +458,7 @@ const byKindEvaluator: RunEvaluator<MemoryRecallOutput, MemoryRecallExpected> = 
     const uncaptured = [
       ...new Set(answerable.filter((r) => !r.output.relevantCaptured).map((r) => r.expectedOutput.id)),
     ]
-    lines.push(`answer never captured as a memo: ${uncaptured.length > 0 ? uncaptured.join(", ") : "none"}`)
+    lines.push(`no memo captured from a relevant scenario: ${uncaptured.length > 0 ? uncaptured.join(", ") : "none"}`)
     return { name: "by-question-kind", score: 1, passed: true, details: lines.join("\n") }
   },
 }

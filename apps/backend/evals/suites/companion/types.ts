@@ -24,6 +24,9 @@ export interface CompanionTrajectoryStep {
   completed: boolean
   /** URLs the step attached as sources — the citation trail behind the reply. */
   sourceUrls: string[]
+  /** Workspace memos and streams the step's sources point at. */
+  sourceMemoIds: string[]
+  sourceStreamIds: string[]
   /** Truncated step content, kept only for tool_call/tool_error steps. */
   content?: string | null
 }
