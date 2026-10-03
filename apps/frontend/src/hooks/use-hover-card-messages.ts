@@ -23,8 +23,8 @@ function isCardMessage(row: CachedEvent): boolean {
  * the socket keeps the rows current and the sync engine warms the history before a
  * card opens, so reading never fetches. `undefined` until the first read resolves.
  */
-export function useHoverCardMessages(streamId: string): HoverCardMessage[] | undefined {
-  const events = useStreamEvents(streamId)
+export function useHoverCardMessages(workspaceId: string, streamId: string): HoverCardMessage[] | undefined {
+  const events = useStreamEvents(workspaceId, streamId)
   return useMemo(() => {
     if (!events) return undefined
     return events

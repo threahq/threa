@@ -10,9 +10,10 @@ import * as streamSyncModule from "@/sync/stream-sync"
 import * as draftStoreModule from "@/stores/draft-store"
 import * as boardStoreModule from "@/stores/board-store"
 import * as diagnosticsModule from "@/lib/connectivity-diagnostics/facade"
+import * as sharePrivacyToastModule from "@/lib/share-privacy-toast"
 import * as useDraftMessageModule from "./use-draft-message"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { MessageErrorCodes, MessageReferenceErrorCodes } from "@threahq/types"
+import { MessageErrorCodes, MessageReferenceErrorCodes, ShareErrorCodes } from "@threahq/types"
 import { toast } from "sonner"
 import { ApiError } from "@/api/client"
 import { retireAccountWork } from "@/sync/account-fence"
@@ -284,7 +285,7 @@ describe("useMessageQueue", () => {
       mockPendingMessages = mockPendingMessages.filter((m) => m.clientId !== id)
       return Promise.resolve()
     })
-    mockEventsUpdate.mockImplementation((_id: string, changes: Record<string, unknown>) => {
+    mockEventsUpdate.mockImplementation((_key: [string, string], changes: Record<string, unknown>) => {
       if ("_sentAt" in changes) order.push("markSentAt")
       return Promise.resolve(1)
     })
@@ -442,7 +443,7 @@ describe("useMessageQueue", () => {
     ]
 
     renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
-    await waitFor(() => expect(read).toHaveBeenCalledWith("temp_delayed_event"))
+    await waitFor(() => expect(read).toHaveBeenCalledWith(["ws_1", "temp_delayed_event"]))
     await act(async () => {
       const retired = retireAccountWork(1000)
       releaseEvent()
@@ -512,8 +513,128 @@ describe("useMessageQueue", () => {
       retryCount: 1,
       retryAfter: expect.any(Number),
     })
-    expect(mockEventsUpdate).toHaveBeenCalledWith("temp_fail", { _status: "failed" })
+    expect(mockEventsUpdate).toHaveBeenCalledWith(["ws_1", "temp_fail"], { _status: "failed" })
     expect(mockMarkFailed).toHaveBeenCalledWith("temp_fail")
+  })
+
+  it("should address the optimistic event by the queued message's workspace when its send fails under another workspace's hook", async () => {
+    mockCreate.mockRejectedValue(new Error("Network error"))
+    mockPendingMessages = [
+      {
+        clientId: "temp_other_workspace",
+        workspaceId: "ws_2",
+        streamId: "stream_1",
+        content: "Fail",
+        contentFormat: "markdown",
+        createdAt: 1000,
+        retryCount: 0,
+      },
+    ]
+
+    renderHook(() => useMessageQueue("ws_1"), { wrapper: createWrapper() })
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    expect(mockEventsUpdate.mock.calls).toEqual([
+      [["ws_2", "temp_other_workspace"], { _status: "pending" }],
+      [["ws_2", "temp_other_workspace"], { _status: "failed" }],
+    ])
+  })
+
+  it("should address the thread anchor by the queued message's workspace when its promotion runs under another workspace's hook", async () => {
+    mockStreamCreate.mockResolvedValue({
+      id: "stream_real_thread",
+      workspaceId: "ws_2",
+      type: "thread",
+      parentStreamId: "stream_parent",
+      parentAnchorId: "event_card",
+    })
+    mockPendingMessages = [
+      {
+        clientId: "temp_thread_other_workspace",
+        workspaceId: "ws_2",
+        streamId: "draft:stream_parent:event_card",
+        draftId: "draft:stream_parent:event_card",
+        content: "Reply",
+        contentFormat: "markdown",
+        createdAt: 1000,
+        retryCount: 0,
+        streamCreation: {
+          type: "thread",
+          parentStreamId: "stream_parent",
+          parentAnchorId: "event_card",
+        },
+      } as unknown as MockPendingMessage,
+    ]
+
+    renderHook(() => useMessageQueue("ws_1"), { wrapper: createWrapper() })
+    await waitFor(() => expect(mockMarkSent).toHaveBeenCalledWith("temp_thread_other_workspace"))
+
+    expect(vi.mocked(streamSyncModule.setParentThreadId).mock.calls).toEqual([
+      ["ws_2", "stream_parent", "event_card", "stream_real_thread", expect.anything()],
+    ])
+  })
+
+  it("should mark the optimistic event sent by the queued message's workspace when its send succeeds under another workspace's hook", async () => {
+    mockPendingMessages = [
+      {
+        clientId: "temp_sent_other_workspace",
+        workspaceId: "ws_2",
+        streamId: "stream_1",
+        content: "Hello",
+        contentFormat: "markdown",
+        createdAt: 1000,
+        retryCount: 0,
+      },
+    ]
+
+    renderHook(() => useMessageQueue("ws_1"), { wrapper: createWrapper() })
+    await waitFor(() => expect(mockMarkSent).toHaveBeenCalledWith("temp_sent_other_workspace"))
+
+    expect(mockEventsUpdate.mock.calls).toEqual([
+      [["ws_2", "temp_sent_other_workspace"], { _status: "pending" }],
+      [["ws_2", "temp_sent_other_workspace"], { _sentAt: expect.any(Number) }],
+    ])
+  })
+
+  it("should cancel a privacy-blocked share in the queued message's workspace when its toast cancels under another workspace's hook", async () => {
+    const surfaced = vi.spyOn(sharePrivacyToastModule, "surfacePrivacyBlockToast").mockImplementation(() => {})
+    const deleteMessage = vi.fn().mockResolvedValue(undefined)
+    vi.spyOn(contextsModule, "usePendingMessages").mockReturnValue({
+      markPending: mockMarkPending,
+      markFailed: mockMarkFailed,
+      markSent: mockMarkSent,
+      registerQueueNotify: mockRegisterQueueNotify,
+      retryMessage: vi.fn(),
+      deleteMessage,
+    } as unknown as ReturnType<typeof contextsModule.usePendingMessages>)
+    mockCreate.mockRejectedValue(
+      new ApiError(409, ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED, "Share would expose its source")
+    )
+    mockPendingMessages = [
+      {
+        clientId: "temp_privacy_other_workspace",
+        workspaceId: "ws_2",
+        streamId: "stream_1",
+        content: "Shared",
+        contentFormat: "markdown",
+        createdAt: 1000,
+        retryCount: 0,
+      },
+    ]
+
+    renderHook(() => useMessageQueue("ws_1"), { wrapper: createWrapper() })
+    await waitFor(() =>
+      expect(surfaced).toHaveBeenCalledWith("temp_privacy_other_workspace", {
+        retryMessage: expect.any(Function),
+        deleteMessage: expect.any(Function),
+      })
+    )
+    await surfaced.mock.calls[0]![1].deleteMessage("temp_privacy_other_workspace")
+
+    expect(deleteMessage.mock.calls).toEqual([["ws_2", "temp_privacy_other_workspace"]])
   })
 
   it("parks a message when its atomic steer is no longer available", async () => {
@@ -542,7 +663,7 @@ describe("useMessageQueue", () => {
       terminalFailure: true,
       retryAfter: undefined,
     })
-    expect(mockEventsUpdate).toHaveBeenCalledWith("temp_steer_gone", { _status: "failed" })
+    expect(mockEventsUpdate).toHaveBeenCalledWith(["ws_1", "temp_steer_gone"], { _status: "failed" })
     expect(mockMarkFailed).toHaveBeenCalledWith("temp_steer_gone")
   })
 
@@ -578,7 +699,7 @@ describe("useMessageQueue", () => {
       terminalFailure: true,
       retryAfter: undefined,
     })
-    expect(mockEventsUpdate).toHaveBeenCalledWith("temp_quote_gone", { _status: "failed" })
+    expect(mockEventsUpdate).toHaveBeenCalledWith(["ws_1", "temp_quote_gone"], { _status: "failed" })
     expect(mockMarkFailed).toHaveBeenCalledWith("temp_quote_gone")
   })
 
@@ -749,7 +870,7 @@ describe("useMessageQueue", () => {
     })
 
     // The first events.update call should be the _status: "pending" reset
-    expect(mockEventsUpdate).toHaveBeenCalledWith("temp_retry_status", { _status: "pending" })
+    expect(mockEventsUpdate).toHaveBeenCalledWith(["ws_1", "temp_retry_status"], { _status: "pending" })
     expect(mockMarkPending).toHaveBeenCalledWith("temp_retry_status")
   })
 
@@ -1017,7 +1138,7 @@ describe("useMessageQueue", () => {
     expect(mockMarkSent).not.toHaveBeenCalled()
     expect(mockMarkFailed).not.toHaveBeenCalled()
     expect(mockEventsUpdate).not.toHaveBeenCalledWith(
-      "temp_switch",
+      ["ws_1", "temp_switch"],
       expect.objectContaining({ _sentAt: expect.any(Number) })
     )
     expect(mockPendingMessages).toHaveLength(1)

@@ -31,7 +31,7 @@ export function StreamContextGallery({
   onSelect,
   onClose,
 }: StreamContextGalleryProps) {
-  const events = useStreamEvents(streamId)
+  const events = useStreamEvents(workspaceId, streamId)
   const stream = useStreamFromStore(workspaceId, streamId)
   const rootStreamId = stream?.rootStreamId ?? streamId
   // The panel's rows come from the server index under `scope: "tree"`, so they

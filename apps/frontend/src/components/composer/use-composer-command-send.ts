@@ -44,7 +44,7 @@ export function useComposerCommandSend(
   const availableCommands = useStreamCommands(workspaceId, streamId)
   const openAside = useOpenAside(workspaceId)
   const { queueCommand } = useCommandDispatchQueue(workspaceId, streamId ?? "")
-  const rememberDispatchedCommand = useCommandFailureRestore(streamId ?? "")
+  const rememberDispatchedCommand = useCommandFailureRestore(workspaceId, streamId ?? "")
 
   const availableCommandByName = useMemo(() => {
     const map = new Map<string, CommandInfo>()

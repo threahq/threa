@@ -135,7 +135,7 @@ interface HoverCardContentProps {
 
 /** Mounts the popover once the local read resolves (a few ms), so the card opens with its messages in place. */
 function HoverCardContent({ hover, side, ...props }: HoverCardContentProps) {
-  const messages = useHoverCardMessages(props.stream.id)
+  const messages = useHoverCardMessages(props.workspaceId, props.stream.id)
   if (messages === undefined) return null
   return (
     <PopoverContent

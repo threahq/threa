@@ -620,8 +620,10 @@ describe("InlineComposerForm compose trace", () => {
   beforeEach(() => {
     editorSpy = vi.fn(AutoFocusEditorStub)
     spyOnExport(composerModule, "MessageComposer").mockReturnValue(editorSpy as never)
-    spyOnExport(streamSyncModule, "getLatestPersistedSequence").mockReturnValue((async (id: string) =>
-      id === "stream_1" ? "77" : null) as never)
+    spyOnExport(streamSyncModule, "getLatestPersistedSequence").mockReturnValue((async (
+      workspaceId: string,
+      id: string
+    ) => (workspaceId === "ws_1" && id === "stream_1" ? "77" : null)) as never)
   })
 
   it("measures against the streamId prop even when the host is absent from the workspace cache", async () => {

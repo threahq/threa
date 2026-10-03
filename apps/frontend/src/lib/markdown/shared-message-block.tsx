@@ -40,7 +40,7 @@ export function SharedMessagePointerBlock({
   range,
 }: SharedMessagePointerBlockProps) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
-  const source = useSharedMessageSource({ messageId, streamId, version, range })
+  const source = useSharedMessageSource({ workspaceId, messageId, streamId, version, range })
 
   const card = (
     <div

@@ -112,6 +112,32 @@ describe("useBoardCardMessages", () => {
     expect(result.current.totalReplies).toBe(2)
   })
 
+  it("should render each workspace's own messages when two workspaces' cards read the same stream id", async () => {
+    await db.events.bulkPut([
+      msgEvent("m1", "ws_1 opening", 1),
+      msgEvent("r1", "ws_1 reply", 2),
+      { ...msgEvent("m1", "ws_2 opening", 1), workspaceId: "ws_2" },
+      { ...msgEvent("r1", "ws_2 reply", 2), workspaceId: "ws_2" },
+    ])
+    const post = makePost({ messageIds: ["m1", "r1"], openingId: "m1" })
+    const otherWorkspacePost = { ...post, workspaceId: "ws_2" }
+    const first = renderHook(() => useBoardCardMessages(post))
+    const second = renderHook(() => useBoardCardMessages(otherWorkspacePost))
+
+    await waitFor(() => {
+      expect(first.result.current.source).toBe("events")
+      expect(second.result.current.source).toBe("events")
+    })
+    const shown = (card: BoardCardMessages) => ({
+      opening: card.openingMessage?.contentMarkdown,
+      replies: card.replies.map((m) => m.contentMarkdown),
+    })
+    expect({ ws_1: shown(first.result.current), ws_2: shown(second.result.current) }).toEqual({
+      ws_1: { opening: "ws_1 opening", replies: ["ws_1 reply"] },
+      ws_2: { opening: "ws_2 opening", replies: ["ws_2 reply"] },
+    })
+  })
+
   it("merges a conversation that spans its root + a thread (one root) into one chronological run", async () => {
     const THREAD = "stream_thread2"
     await db.events.bulkPut([
@@ -247,7 +273,7 @@ describe("useBoardCardMessages", () => {
     //    which the card isn't subscribed to yet) AND messageIds now lists the real
     //    id — the gap where it belongs to no rail. The reply must NOT blink out and
     //    must NOT collapse under a "1 more" gap.
-    await db.events.delete("temp_c")
+    await db.events.delete([WS, "temp_c"])
     rerender(makePost({ messageIds: ["m1", "msg_real_c"], openingId: "m1", streamIds: [STREAM] }))
     await waitFor(() => expect(result.current.replies.map((m) => m.contentMarkdown)).toEqual(["my convert reply"]))
     expect(result.current.totalReplies).toBe(1)
@@ -275,7 +301,7 @@ describe("useBoardCardMessages", () => {
       expect([...result.current.replies, ...result.current.pendingReplies].map((m) => m.id)).toContain("temp_d")
     )
 
-    await db.events.delete("temp_d")
+    await db.events.delete([WS, "temp_d"])
     rerender(makePost({ messageIds: ["m1", "d1", "msg_real_d"], openingId: "m1", streamIds: [STREAM] }))
     await waitFor(() => expect(result.current.replies.map((m) => m.contentMarkdown)).toContain("my convert reply"))
   })
@@ -321,7 +347,7 @@ describe("useBoardCardMessages", () => {
         createdAt: new Date(3).toISOString(),
         _cachedAt: 4,
       } as CachedEvent)
-      await db.events.delete("temp_z")
+      await db.events.delete([WS, "temp_z"])
     })
     await waitFor(() => expect(shown()).toContain("msg_real"))
     expect(shown()).not.toContain("temp_z")
@@ -394,8 +420,8 @@ describe("useBoardCardMessages", () => {
     await waitFor(() => expect(result.current.replies[0]?.contentMarkdown).toBe("before"))
 
     await db.events
-      .where("[streamId+eventType]")
-      .equals([STREAM, "message_created"])
+      .where("[workspaceId+streamId+eventType]")
+      .equals([WS, STREAM, "message_created"])
       .filter((e) => (e.payload as { messageId?: string }).messageId === "r1")
       .modify((e) => {
         ;(e.payload as { contentMarkdown?: string }).contentMarkdown = "after"
@@ -613,7 +639,7 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
       rootStreamId: STREAM,
       parentStreamId: STREAM,
     } as never)
-    const optimistic = await db.events.get("temp_c")
+    const optimistic = await db.events.get([WS, "temp_c"])
     await db.events.put({ ...optimistic!, streamId: THREAD })
     await waitFor(() => expect(shownBodies(result.current)).toEqual(["my convert reply"]))
 
@@ -641,7 +667,7 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
         createdAt: new Date(4).toISOString(),
         _cachedAt: 4,
       } as CachedEvent)
-      await db.events.delete("temp_c")
+      await db.events.delete([WS, "temp_c"])
     })
     await waitFor(() =>
       expect([...result.current.replies, ...result.current.pendingReplies].map((m) => m.id)).toEqual(["msg_real_c"])
@@ -721,7 +747,7 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
     )
 
     // The swap's delete finally lands; nothing on screen may move.
-    await db.events.delete("temp_d")
+    await db.events.delete([WS, "temp_d"])
     await waitFor(() =>
       expect([...result.current.replies, ...result.current.pendingReplies].map((m) => m.id)).toEqual(["msg_real_d"])
     )
@@ -784,7 +810,7 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
         createdAt: new Date(4).toISOString(),
         _cachedAt: 4,
       } as CachedEvent)
-      await db.events.delete("temp_p")
+      await db.events.delete([WS, "temp_p"])
     })
     await waitFor(() => expect(result.current.replies.map((m) => m.id)).toEqual(["msg_real_p"]))
 
@@ -872,7 +898,7 @@ describe("useBoardCardMessages stability (no flicker, no hiding)", () => {
         createdAt: new Date(6).toISOString(),
         _cachedAt: 6,
       } as CachedEvent)
-      await db.events.delete("temp_q")
+      await db.events.delete([WS, "temp_q"])
     })
     await waitFor(() => expect(result.current.replies.map((m) => m.id)).toEqual(["msg_new_q"]))
 
@@ -1022,20 +1048,20 @@ describe("useBoardRailsReady", () => {
   it("is false until every rail's first IDB read lands, then true — the reveal gate", async () => {
     await db.events.bulkPut([msgEvent("m1", "hello", 1, "stream_a"), msgEvent("m2", "there", 2, "stream_b")])
 
-    const { result } = renderHook(() => useBoardRailsReady(["stream_a", "stream_b"]))
+    const { result } = renderHook(() => useBoardRailsReady(WS, ["stream_a", "stream_b"]))
     // First snapshot precedes the rails' async first read.
     expect(result.current).toBe(false)
     await waitFor(() => expect(result.current).toBe(true))
   })
 
   it("is true for an empty stream set (nothing to wait for)", () => {
-    const { result } = renderHook(() => useBoardRailsReady([]))
+    const { result } = renderHook(() => useBoardRailsReady(WS, []))
     expect(result.current).toBe(true)
   })
 
   it("pre-warms the shared registry so a later card mount reads resolved rails", async () => {
     await db.events.bulkPut([msgEvent("m1", "warm", 1, "stream_warm")])
-    const { result } = renderHook(() => useBoardRailsReady(["stream_warm"]))
+    const { result } = renderHook(() => useBoardRailsReady(WS, ["stream_warm"]))
     await waitFor(() => expect(result.current).toBe(true))
     // The registry entry the gate created is the same one a mounting card uses.
     expect(__boardRailRegistrySize()).toBeGreaterThan(0)

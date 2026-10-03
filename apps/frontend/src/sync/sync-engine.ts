@@ -532,7 +532,7 @@ export class SyncEngine {
   async refreshVisibleEventReads(): Promise<void> {
     if (this.isDestroyed) return
     try {
-      await requestStreamEventReadRefresh(this.getVisibleServerStreamIds())
+      await requestStreamEventReadRefresh(this.workspaceId, this.getVisibleServerStreamIds())
     } catch (error) {
       console.error("Stream event read refresh failed", { workspaceId: this.workspaceId, error })
     }
@@ -1316,7 +1316,7 @@ export class SyncEngine {
         if (
           !options?.refreshPersisted &&
           this.subscribedStreams.has(streamId) &&
-          (await getLatestPersistedSequence(streamId)) !== null
+          (await getLatestPersistedSequence(this.workspaceId, streamId)) !== null
         )
           continue
         if (!(await this.refreshStreamAfterNavigation(streamId))) missed.push(streamId)
@@ -1351,7 +1351,7 @@ export class SyncEngine {
    * display-only fetch outside the subscribe→fetch window this rule guards.
    */
   private async joinStreamForCatchUp(streamId: string): Promise<string | null> {
-    const after = await getLatestPersistedSequence(streamId)
+    const after = await getLatestPersistedSequence(this.workspaceId, streamId)
     await this.ensureStreamSubscription(streamId, { awaitJoin: true })
     return after
   }
@@ -1488,7 +1488,7 @@ export class SyncEngine {
       // belong to the bootstrap query layer (useStreamBootstrap / the
       // coordinated stream queries) — warming here too would double-fetch the
       // full window on every cold open.
-      const after = await getLatestPersistedSequence(streamId)
+      const after = await getLatestPersistedSequence(this.workspaceId, streamId)
       if (after === null || this.isDestroyed) return
 
       const fetchStartedAt = Date.now()

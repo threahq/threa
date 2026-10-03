@@ -138,13 +138,13 @@ export function useInAppLinkChip({
     async () => {
       if (!isMessage || !streamId || !messageId) return null
       const event = await db.events
-        .where("[streamId+eventType]")
-        .equals([streamId, "message_created"])
+        .where("[workspaceId+streamId+eventType]")
+        .equals([workspaceId, streamId, "message_created"])
         .filter((e) => (e.payload as { messageId?: string } | null)?.messageId === messageId)
         .first()
       return event ?? null
     },
-    [isMessage, streamId, messageId],
+    [workspaceId, isMessage, streamId, messageId],
     undefined
   )
 

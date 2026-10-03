@@ -8,7 +8,7 @@ import { BOARD_RAIL_EVENT_TYPES } from "@/lib/board/board-rail-event-types"
  * range shape mounted event consumers observe; a plain read cannot restore a
  * missed mutation signal.
  */
-export async function requestStreamEventReadRefresh(streamIds: string[]): Promise<void> {
+export async function requestStreamEventReadRefresh(workspaceId: string, streamIds: string[]): Promise<void> {
   const table = db.events
   const uniqueStreamIds = [...new Set(streamIds)]
   if (uniqueStreamIds.length === 0) return
@@ -16,14 +16,17 @@ export async function requestStreamEventReadRefresh(streamIds: string[]): Promis
   await table.db.transaction("rw", table, async () => {
     for (const streamId of uniqueStreamIds) {
       const latest = await table
-        .where("[streamId+_sequenceNum]")
-        .between([streamId, Dexie.minKey], [streamId, Dexie.maxKey], true, true)
+        .where("[workspaceId+streamId+_sequenceNum]")
+        .between([workspaceId, streamId, Dexie.minKey], [workspaceId, streamId, Dexie.maxKey], true, true)
         .last()
       const latestBoardRailEvent = await table
-        .where("[streamId+eventType]")
-        .anyOf(BOARD_RAIL_EVENT_TYPES.map((eventType) => [streamId, eventType]))
+        .where("[workspaceId+streamId+eventType]")
+        .anyOf(BOARD_RAIL_EVENT_TYPES.map((eventType) => [workspaceId, streamId, eventType]))
         .first()
-      const latestMessage = await table.where("[streamId+eventType]").equals([streamId, "message_created"]).last()
+      const latestMessage = await table
+        .where("[workspaceId+streamId+eventType]")
+        .equals([workspaceId, streamId, "message_created"])
+        .last()
       const rowsToTouch = new Map<string, CachedEvent>()
       if (latest) rowsToTouch.set(latest.id, latest)
       if (latestBoardRailEvent) rowsToTouch.set(latestBoardRailEvent.id, latestBoardRailEvent)

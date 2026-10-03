@@ -283,7 +283,7 @@ export async function cacheToIndexedDB(
   const now = Date.now()
   await db.transaction("rw", [db.events, db.slots], async () => {
     if (events.length > 0) {
-      const existingRows = await db.events.bulkGet(events.map((e) => e.id))
+      const existingRows = await db.events.bulkGet(events.map((e) => [workspaceId, e.id]))
       const existingById = new Map(
         existingRows.filter((row): row is NonNullable<typeof row> => row != null).map((row) => [row.id, row] as const)
       )
@@ -455,7 +455,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
   // cap for bounded initial load.
   const idbFloor = useMemo(() => getDisplayFloor(bootstrapFloor, olderFloor), [bootstrapFloor, olderFloor])
   const idbFloorNum = idbFloor !== null ? Number(idbFloor) : null
-  const idbEvents = useStreamEvents(streamId, idbFloorNum)
+  const idbEvents = useStreamEvents(workspaceId, streamId, idbFloorNum)
 
   const idbResolved = idbEvents !== undefined
   const hasIdbEvents = idbResolved && idbEvents.length > 0
@@ -772,19 +772,6 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     [streamService, workspaceId, streamId, queryClient, exitJumpMode]
   )
 
-  // addEvent and updateEvent write directly to IDB; useLiveQuery picks up
-  // changes automatically — no TanStack cache needed.
-  const addEvent = useCallback(
-    async (event: StreamEvent) => {
-      await db.events.put({ ...event, workspaceId, _sequenceNum: sequenceToNum(event.sequence), _cachedAt: Date.now() })
-    },
-    [workspaceId]
-  )
-
-  const updateEvent = useCallback(async (eventId: string, updates: Partial<StreamEvent>) => {
-    await db.events.update(eventId, { ...updates, _cachedAt: Date.now() })
-  }, [])
-
   // Latest sequence from IDB events
   const latestSequence = useMemo(() => {
     if (!idbEvents || idbEvents.length === 0) return bootstrap?.latestSequence ?? "0"
@@ -842,7 +829,5 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     exitJumpMode,
     cancelPendingJump,
     currentJumpGeneration,
-    addEvent,
-    updateEvent,
   }
 }

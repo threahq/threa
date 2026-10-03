@@ -267,7 +267,7 @@ describe("cacheToIndexedDB with eventWriteChunking on", () => {
     await cacheToIndexedDB("ws_1", "stream_1", page(50, 100))
     await cacheToIndexedDB("ws_1", "stream_1", page(50, 50))
 
-    const cached = await db.events.where("streamId").equals("stream_1").toArray()
+    const cached = await db.events.where("[workspaceId+streamId]").equals(["ws_1", "stream_1"]).toArray()
     expect(cached).toHaveLength(100)
 
     const displayFloor = getDisplayFloor(getMinimumSequence(page(50, 100)), getMinimumSequence(page(50, 50)))
@@ -276,13 +276,13 @@ describe("cacheToIndexedDB with eventWriteChunking on", () => {
 
   it("a page that heals thread stats still heals them when chunked", async () => {
     await cacheToIndexedDB("ws_1", "stream_1", page(50, 100))
-    await db.events.update("evt_120", {
+    await db.events.update(["ws_1", "evt_120"], {
       payload: { messageId: "evt_120", contentMarkdown: "hi", threadId: "str_t", replyCount: 3 },
     })
 
     await cacheToIndexedDB("ws_1", "stream_1", page(50, 100))
 
-    const healed = await db.events.get("evt_120")
+    const healed = await db.events.get(["ws_1", "evt_120"])
     expect(healed?.payload).toMatchObject({ threadId: "str_t", replyCount: 3 })
   })
 })
@@ -309,6 +309,12 @@ describe("useEvents live-tail jump bridge", () => {
     }
   }
 
+  // Rows exist only under this describe's workspace; any other workspace reads an empty cache.
+  function cachedRowsFor(rowsByStream: Record<string, CachedEvent[]>) {
+    return (requestedWorkspaceId: string, requestedStreamId: string | undefined) =>
+      requestedWorkspaceId === workspaceId && requestedStreamId ? (rowsByStream[requestedStreamId] ?? []) : []
+  }
+
   function wrapper() {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     return function Wrapper({ children }: { children: ReactNode }) {
@@ -332,9 +338,7 @@ describe("useEvents live-tail jump bridge", () => {
   it("renders a fetched latest message even when the IndexedDB observer misses the write", async () => {
     const stale = event("stale", 1)
     const target = event("target", 2)
-    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation((requestedStreamId) =>
-      requestedStreamId === streamId ? [stale] : []
-    )
+    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation(cachedRowsFor({ [streamId]: [stale] }))
     getEventsAround.mockResolvedValue({
       events: [stale, target],
       hasOlder: false,
@@ -359,8 +363,8 @@ describe("useEvents live-tail jump bridge", () => {
     const stale = event("stale", 1)
     const target = event("target", 2)
     const other = event("other", 1, "stream_other")
-    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation((requestedStreamId) =>
-      requestedStreamId === streamId ? [stale] : [other]
+    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation(
+      cachedRowsFor({ [streamId]: [stale], stream_other: [other] })
     )
     getEventsAround.mockResolvedValue({ events: [stale, target], hasOlder: false, hasNewer: false })
 
@@ -410,10 +414,10 @@ describe("bounded timeline read from the events hook's window", () => {
     const tailFloor = 301
 
     // The window floor drops one 50-event page: only the prefix range moves.
-    const prefixBefore = await loadStreamPrefix(STREAM, 200, tailFloor)
-    const tailBefore = await loadStreamTail(STREAM, tailFloor, null)
-    const prefixAfter = await loadStreamPrefix(STREAM, 150, tailFloor)
-    const tailAfter = await loadStreamTail(STREAM, tailFloor, null)
+    const prefixBefore = await loadStreamPrefix("ws_1", STREAM, 200, tailFloor)
+    const tailBefore = await loadStreamTail("ws_1", STREAM, tailFloor, null)
+    const prefixAfter = await loadStreamPrefix("ws_1", STREAM, 150, tailFloor)
+    const tailAfter = await loadStreamTail("ws_1", STREAM, tailFloor, null)
 
     expect(prefixAfter).toHaveLength(prefixBefore.length + 50)
     expect(tailAfter.map((e) => e.id)).toEqual(tailBefore.map((e) => e.id))
@@ -425,7 +429,10 @@ describe("bounded timeline read from the events hook's window", () => {
   it("a thread with two thousand replies renders every reply", async () => {
     await seed(2000)
 
-    const union = unionStreamRanges(await loadStreamPrefix(STREAM, 1, 1801), await loadStreamTail(STREAM, 1801, null))
+    const union = unionStreamRanges(
+      await loadStreamPrefix("ws_1", STREAM, 1, 1801),
+      await loadStreamTail("ws_1", STREAM, 1801, null)
+    )
 
     expect(union).toHaveLength(2000)
     expect(union.map((e) => e._sequenceNum)).toEqual(Array.from({ length: 2000 }, (_, i) => i + 1))

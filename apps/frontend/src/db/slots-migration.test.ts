@@ -33,7 +33,7 @@ describe("v42 slots migration", () => {
 
     // Existing rows survive the no-op upgrade.
     expect(await db.streams.get(["ws_1", "stream_1"])).toMatchObject({ id: "stream_1", workspaceId: "ws_1" })
-    expect(await db.events.get("event_1")).toMatchObject({ id: "event_1", streamId: "stream_1" })
+    expect(await db.events.get(["ws_1", "event_1"])).toMatchObject({ id: "event_1", streamId: "stream_1" })
 
     // The new table starts empty and is writable under its compound key.
     expect(await db.slots.toArray()).toEqual([])

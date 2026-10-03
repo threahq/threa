@@ -259,9 +259,9 @@ describe("processOperationQueue database capture", () => {
       setActiveDb(claimedDb)
     }
 
-    expect(bump.mock.calls[0]?.[4]).toBe(claimedDb)
+    expect(bump.mock.calls[0]?.[5]).toBe(claimedDb)
     expect(await replacementDb.events.toArray()).toEqual([])
-    expect(await claimedDb.events.get("evt_real")).toMatchObject({ id: "evt_real" })
+    expect(await claimedDb.events.get([workspaceId, "evt_real"])).toMatchObject({ id: "evt_real" })
   })
 
   it("should land a scheduled send's server row in the database it claimed the op from", async () => {

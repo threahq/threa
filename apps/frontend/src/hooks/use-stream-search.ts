@@ -142,13 +142,14 @@ function buildFlatMatches(results: SearchResultItem[], query: string): FlatMatch
  * streams, decrypted markdown for E2E streams.
  */
 async function searchLocalEvents(
+  workspaceId: string,
   streamId: string,
   query: string,
   resolve: SearchContentResolver
 ): Promise<SearchResultItem[]> {
   const events = await db.events
-    .where("streamId")
-    .equals(streamId)
+    .where("[workspaceId+streamId]")
+    .equals([workspaceId, streamId])
     .filter((e) => e.eventType === "message_created" || e.eventType === "companion_response")
     .toArray()
   return collectLocalMatches(events, query, resolve)
@@ -236,7 +237,7 @@ export function useStreamSearch({
     try {
       // Phase 1: instant local IDB substring search (decrypting sealed rows on
       // demand for E2E streams).
-      localResults = await searchLocalEvents(streamId, trimmed, resolveContent)
+      localResults = await searchLocalEvents(workspaceId, streamId, trimmed, resolveContent)
       if (searchId !== searchIdRef.current) return
 
       if (localResults.length > 0) {

@@ -693,8 +693,8 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
       // before the message reaches the server.
       await db.transaction("rw", [db.pendingMessages, db.events], async () => {
         const [anchorSequence, allocatedSequence] = await Promise.all([
-          getLatestPersistedSequence(streamId),
-          nextOptimisticSequence(streamId),
+          getLatestPersistedSequence(workspaceId, streamId),
+          nextOptimisticSequence(workspaceId, streamId),
         ])
         await db.pendingMessages.add({
           clientId,
