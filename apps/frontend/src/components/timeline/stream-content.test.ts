@@ -12,6 +12,7 @@ import {
   resolveStreamLanding,
   isChromeStripCollapsed,
   isTypingChromeHidden,
+  isThreadConfirmedEmpty,
 } from "./stream-content"
 import { localStartOfDayMs } from "@/lib/dates"
 
@@ -578,5 +579,21 @@ describe("resolveStreamLanding", () => {
     // Marker pref with an unresolved read frontier: consuming would open at
     // the tail forever — wait.
     expect(resolveStreamLanding({ ...base, anchor: null, readStateResolved: false })).toBe("wait")
+  })
+})
+
+describe("isThreadConfirmedEmpty", () => {
+  const joined = { eventType: "member_joined" as const }
+  const reply = { eventType: "message_created" as const }
+
+  it.each([
+    ["an empty stream the load state already confirmed", true, true, undefined, true],
+    ["cached membership rows with the server still to answer", false, true, undefined, false],
+    ["cached membership rows after the server answered with a reply", false, true, [joined, reply], false],
+    ["a server window of membership rows only", false, true, [joined], true],
+    ["a session-cached server window of membership rows before the first cache read", false, false, [joined], false],
+    ["a session-cached empty server window before the first cache read", false, false, [], false],
+  ])("%s", (_name, isConfirmedEmpty, isResolved, bootstrapEvents, expected) => {
+    expect(isThreadConfirmedEmpty({ isConfirmedEmpty, isResolved, bootstrapEvents })).toBe(expected)
   })
 })

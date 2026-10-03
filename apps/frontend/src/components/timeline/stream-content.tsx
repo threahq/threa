@@ -157,6 +157,23 @@ import { useScrollToMessage, snapshotTopVisibleRow, UNREAD_MARKER_TOP_GAP_PX } f
 const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joined", "member_added", "member_left"])
 
 /**
+ * A thread whose window holds only hidden rows is empty only when the server's
+ * own latest window is too: a cache can hold the membership rows and miss the
+ * replies, and its rows outlive the server's answer by a render or more. Not
+ * before the first cache read either: a server answer kept from earlier in the
+ * session can predate replies the cache holds.
+ */
+export function isThreadConfirmedEmpty(args: {
+  isConfirmedEmpty: boolean
+  isResolved: boolean
+  bootstrapEvents: ReadonlyArray<Pick<StreamEvent, "eventType">> | undefined
+}): boolean {
+  if (args.isConfirmedEmpty) return true
+  if (!args.isResolved) return false
+  return args.bootstrapEvents?.every((event) => THREAD_HIDDEN_EVENT_TYPES.has(event.eventType)) === true
+}
+
+/**
  * Per-tick terminal policy for the post-jump scroll driver.
  *
  * The driver re-attempts `scrollToMessage` every frame after a deep-link
@@ -1634,6 +1651,7 @@ export function StreamContent({
     isFetchingNewer,
     resetKey: streamId,
     content: plainContentEl,
+    firstItemKey: !useVirtualized ? displayEvents[0]?.id : undefined,
     // Only treat the user as "at the bottom" when they are essentially flush.
     // A small scroll-up to reference older messages while typing should not be
     // snapped back when the composer grows.
@@ -1732,7 +1750,10 @@ export function StreamContent({
         if (useVirtualized) {
           virtualScrollToBottomRef.current({ force: opts.initial })
         } else {
-          plainScrollToBottomRef.current({ force: opts.initial })
+          // Never forced: the virtualized follow/hold refs above don't track
+          // the plain scroller, so its own follow flag is the only guard that
+          // keeps a thread landed on its unread marker detached.
+          plainScrollToBottomRef.current()
         }
       }
       if (opts.initial) {
@@ -2937,6 +2958,11 @@ export function StreamContent({
                           <EventList
                             timelineItems={timelineItems}
                             isLoading={isLoading}
+                            isConfirmedEmpty={isThreadConfirmedEmpty({
+                              isConfirmedEmpty,
+                              isResolved,
+                              bootstrapEvents: bootstrap?.events,
+                            })}
                             workspaceId={workspaceId}
                             streamId={streamId}
                             highlightMessageId={streamSearch.activeMessageId ?? highlightMessageId}

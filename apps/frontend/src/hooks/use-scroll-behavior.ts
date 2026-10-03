@@ -4,6 +4,10 @@ import { EVENT_PAGE_SIZE, SCROLL_FETCH_RATIO } from "@/lib/constants"
 /** Number of items from the bottom before showing "Jump to latest" */
 const JUMP_TO_LATEST_ITEM_THRESHOLD = 10
 
+function supportsScrollAnchoring(): boolean {
+  return typeof CSS !== "undefined" && CSS.supports?.("overflow-anchor", "auto") === true
+}
+
 interface UseScrollBehaviorOptions {
   /** Whether data is currently loading (delays initial scroll) */
   isLoading: boolean
@@ -40,6 +44,11 @@ interface UseScrollBehaviorOptions {
    * hook first runs, and the observers attach when it does.
    */
   content?: HTMLElement | null
+  /**
+   * Identity of the first item. A count increase that changes it is a prepend,
+   * whichever render the fetch state settled in; without it nothing reads as one.
+   */
+  firstItemKey?: string
 }
 
 interface UseScrollBehaviorReturn {
@@ -77,12 +86,17 @@ export function useScrollBehavior({
   resetKey,
   skipInitialScroll = false,
   content,
+  firstItemKey,
 }: UseScrollBehaviorOptions): UseScrollBehaviorReturn {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const shouldAutoScroll = useRef(true)
   const [isScrolledFarFromBottom, setIsScrolledFarFromBottom] = useState(false)
   const prevItemCount = useRef(0)
-  const prevScrollHeight = useRef(0)
+  const prevFirstItemKey = useRef<string | undefined>(undefined)
+  // Position as of the last commit, scroll event or resize: where the batch a
+  // render applies started from. Read after the batch, live geometry already
+  // includes the browser's scroll anchoring for a prepend.
+  const prevGeometry = useRef<{ scrollTop: number; scrollHeight: number; distanceFromBottom: number } | null>(null)
   // Track previous-render fetching values so effects can detect true→false transitions.
   const prevIsFetchingOlder = useRef(false)
   const prevIsFetchingNewer = useRef(false)
@@ -115,7 +129,8 @@ export function useScrollBehavior({
   useLayoutEffect(() => {
     shouldAutoScroll.current = !skipInitialScrollRef.current
     prevItemCount.current = 0
-    prevScrollHeight.current = 0
+    prevFirstItemKey.current = undefined
+    prevGeometry.current = null
     prevIsFetchingOlder.current = false
     prevIsFetchingNewer.current = false
     olderFetchScheduled.current = false
@@ -150,6 +165,16 @@ export function useScrollBehavior({
     el.scrollTop = el.scrollHeight
   }, [])
 
+  const captureGeometry = useCallback(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    prevGeometry.current = {
+      scrollTop: el.scrollTop,
+      scrollHeight: el.scrollHeight,
+      distanceFromBottom: el.scrollHeight - el.scrollTop - el.clientHeight,
+    }
+  }, [])
+
   // Scroll position preservation and initial scroll.
   // useLayoutEffect runs synchronously after DOM mutation but before paint,
   // preventing a visible one-frame scroll jump when older messages are prepended.
@@ -159,38 +184,44 @@ export function useScrollBehavior({
 
     const oldCount = prevItemCount.current
     prevItemCount.current = itemCount
+    const oldFirstItemKey = prevFirstItemKey.current
+    prevFirstItemKey.current = firstItemKey
 
     if (oldCount === 0 && itemCount > 0) {
       scrollToBottom()
       return
     }
 
-    // Only preserve scroll when older content was just prepended at the top
-    // (isFetchingOlder transitioned true→false). Bottom-appended content
-    // (WebSocket messages, newer pagination) needs no scrollTop adjustment.
-    const olderContentJustArrived = prevIsFetchingOlder.current && !isFetchingOlder
-    if (itemCount > oldCount && !shouldAutoScroll.current && olderContentJustArrived) {
-      const heightDelta = el.scrollHeight - prevScrollHeight.current
-      if (heightDelta > 0) {
-        el.scrollTop += heightDelta
+    const prev = prevGeometry.current
+    const prepended = itemCount > oldCount && firstItemKey !== oldFirstItemKey
+    if (prepended && !shouldAutoScroll.current) {
+      // A scrollTop that moved on an engine with scroll anchoring is the browser
+      // having held the reader's row already. Anywhere else (iOS Safari has no
+      // anchoring, and a moved scrollTop there is a scroll still in flight) the
+      // growth above the reader is added by hand.
+      if (prev) {
+        const anchored = supportsScrollAnchoring() && el.scrollTop !== prev.scrollTop
+        if (!anchored) el.scrollTop += el.scrollHeight - prev.scrollHeight
       }
     } else if (shouldAutoScroll.current) {
       scrollToBottom()
-    } else if (itemCount > oldCount && !olderContentJustArrived && prevScrollHeight.current > 0) {
-      // New content appended at bottom, but shouldAutoScroll was cleared by a
-      // rapid scroll event during content growth (scrollHeight grew faster than
-      // scrollTop could keep up). Check if the user was near the bottom before
-      // this batch arrived — if so, re-arm auto-scroll.
-      const wasNearBottom = prevScrollHeight.current - el.scrollTop - el.clientHeight < bottomThreshold
-      if (wasNearBottom) {
-        shouldAutoScroll.current = true
-        scrollToBottom()
-      }
+    } else if (
+      itemCount > oldCount &&
+      prev &&
+      prev.distanceFromBottom < bottomThreshold &&
+      el.scrollTop === prev.scrollTop
+    ) {
+      // Detached without leaving the bottom (a landing whose target is the
+      // last row): follow the rows appended below. A scrollTop written since
+      // the measurement, with its scroll event still pending, means the reader
+      // is elsewhere now.
+      shouldAutoScroll.current = true
+      scrollToBottom()
     }
     // `resetKey` is a dep so a conversation switch re-anchors even when the new
     // content has the same itemCount: the reset effect above just set
     // prevItemCount to 0, and only a run of this effect consumes that.
-  }, [isLoading, itemCount, scrollToBottom, isFetchingOlder, resetKey])
+  }, [isLoading, itemCount, firstItemKey, scrollToBottom, bottomThreshold, resetKey])
 
   // Capture previous-render values AFTER the adjustment effect has read them.
   // No dep array → runs every render, defined after adjustment so it runs second.
@@ -201,10 +232,7 @@ export function useScrollBehavior({
     if (prevIsFetchingNewer.current && !isFetchingNewer) newerFetchScheduled.current = false
     prevIsFetchingOlder.current = isFetchingOlder
     prevIsFetchingNewer.current = isFetchingNewer
-    const el = scrollContainerRef.current
-    if (el) {
-      prevScrollHeight.current = el.scrollHeight
-    }
+    captureGeometry()
   })
 
   // Re-anchor scroll position when the container resizes (e.g. mobile keyboard
@@ -231,17 +259,19 @@ export function useScrollBehavior({
       } else if (delta !== 0) {
         el.scrollTop += delta
       }
+      captureGeometry()
     })
 
     observer.observe(el)
     if (content) observer.observe(content)
     return () => observer.disconnect()
-  }, [content])
+  }, [content, captureGeometry])
 
   const handleScroll = useCallback(() => {
     if (!scrollContainerRef.current) return
 
     const el = scrollContainerRef.current
+    captureGeometry()
     const { scrollTop, scrollHeight, clientHeight } = el
     const isNearBottom = scrollHeight - scrollTop - clientHeight < bottomThreshold
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight
@@ -302,6 +332,7 @@ export function useScrollBehavior({
     bottomThreshold,
     itemCount,
     triggerItemCount,
+    captureGeometry,
   ])
 
   const disableAutoScroll = useCallback(() => {
