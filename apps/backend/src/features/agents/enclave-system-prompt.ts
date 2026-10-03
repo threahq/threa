@@ -69,6 +69,7 @@ export async function buildEnclaveSystemPrompt(params: {
     // prompt builder here or the encrypted turn silently diverges from the
     // in-process companion's response style.
     styleSlots: resolvePersonaStyleSlots(enclavePersona),
+    selfKnowledge: { access: null, memoryCapture: "off", sealed: true },
   })
 
   // The shared prompt advertises the reduced toolset but never explains *why*
