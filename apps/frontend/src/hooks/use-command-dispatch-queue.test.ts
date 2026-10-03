@@ -52,7 +52,7 @@ describe("cancelCommandDispatch", () => {
 
     await cancelCommandDispatch(workspaceId, streamId, commandId)
 
-    expect(await db.events.where("streamId").equals(streamId).toArray()).toEqual([])
+    expect(await db.events.where("[workspaceId+streamId]").equals([workspaceId, streamId]).toArray()).toEqual([])
     expect(await db.pendingOperations.toArray()).toEqual([])
   })
 
@@ -68,7 +68,7 @@ describe("cancelCommandDispatch", () => {
     })
 
     expect(await cancelCommandDispatch("ws_other", streamId, commandId)).toBe(false)
-    expect(await db.events.get(commandId)).toBeDefined()
+    expect(await db.events.get([workspaceId, commandId])).toBeDefined()
     expect(await db.pendingOperations.get("op_other_workspace")).toBeDefined()
   })
 
@@ -94,7 +94,7 @@ describe("cancelCommandDispatch", () => {
       () => true
     )
 
-    expect((await db.events.get(`${commandId}:failed`))?._anchorSequenceNum).toBe(4)
+    expect((await db.events.get([workspaceId, `${commandId}:failed`]))?._anchorSequenceNum).toBe(4)
   })
 
   it("forwards the queued conversation ref to the dispatch request", async () => {

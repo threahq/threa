@@ -224,13 +224,15 @@ const RAIL_TEARDOWN_GRACE_MS = 5000
 // previous one's events (and its unsent overlay rows).
 const railRegistry = createDbScopedRegistry<StreamRailEntry>()
 
+const railKey = (workspaceId: string, streamId: string) => `${workspaceId}/${streamId}`
+
 /**
  * Show a just-queued optimistic event on its stream's board rail now, without
  * waiting for the IDB write to round-trip through `liveQuery`. Called by the
  * send path (`useQueueDraftMessage`) immediately before the write it mirrors.
  */
 export function publishOptimisticRailEvent(event: CachedEvent): void {
-  const entry = railRegistry.peek(event.streamId)
+  const entry = railRegistry.peek(railKey(event.workspaceId, event.streamId))
   // No rail means no board card is reading this stream — nothing to make eager,
   // and no liveQuery would ever emit to prune the entry (the send paths that
   // create a scratchpad or a thread out of view come through here too).
@@ -274,11 +276,11 @@ function pruneOverlay(entry: StreamRailEntry, events: CachedEvent[]): Map<string
   return undefined
 }
 
-function subscribeStreamRail(streamId: string, listener: () => void): () => void {
+function subscribeStreamRail(workspaceId: string, streamId: string, listener: () => void): () => void {
   // `database` and `entry` are captured for the whole life of THIS subscription:
   // the query, the emission and the teardown all act on the pair that was live
   // when the subscriber attached, never on whatever the key resolves to later.
-  const { database, entry, isNew } = railRegistry.acquire(streamId, () => ({
+  const { database, entry, isNew } = railRegistry.acquire(railKey(workspaceId, streamId), () => ({
     rail: LOADING_RAIL,
     events: [],
     overlay: undefined,
@@ -290,11 +292,11 @@ function subscribeStreamRail(streamId: string, listener: () => void): () => void
   if (isNew) {
     entry.subscription = liveQuery(() =>
       database.events
-        .where("[streamId+eventType]")
-        .anyOf(BOARD_RAIL_EVENT_TYPES.map((eventType) => [streamId, eventType]))
+        .where("[workspaceId+streamId+eventType]")
+        .anyOf(BOARD_RAIL_EVENT_TYPES.map((eventType) => [workspaceId, streamId, eventType]))
         .toArray()
     ).subscribe((events) => {
-      if (!railRegistry.holds(database, streamId, entry)) return
+      if (!railRegistry.holds(database, railKey(workspaceId, streamId), entry)) return
       entry.events = events
       entry.rail = buildRail(events, pruneOverlay(entry, events))
       for (const notify of entry.listeners) notify()
@@ -321,7 +323,7 @@ function subscribeStreamRail(streamId: string, listener: () => void): () => void
         // on a later re-subscribe the persisted copy is what should appear — a
         // surviving entry would resurrect a row IDB may no longer have.
         entry.overlay = undefined
-        railRegistry.remove(database, streamId, entry)
+        railRegistry.remove(database, railKey(workspaceId, streamId), entry)
       }, RAIL_TEARDOWN_GRACE_MS)
     }
   }
@@ -399,7 +401,7 @@ function mergeRails(rails: StreamRail[], gatingCount: number): MergedRail {
  * references changes — `useSyncExternalStore` requires a stable snapshot, so
  * re-merging on every read would loop.
  */
-function useMergedStreamRail(gatingStreamIds: string[], extraStreamIds: string[]): MergedRail {
+function useMergedStreamRail(workspaceId: string, gatingStreamIds: string[], extraStreamIds: string[]): MergedRail {
   const gatingCount = gatingStreamIds.length
   const gatingKey = gatingStreamIds.join(",")
   const extraKey = extraStreamIds.join(",")
@@ -409,17 +411,17 @@ function useMergedStreamRail(gatingStreamIds: string[], extraStreamIds: string[]
 
   const subscribe = useCallback(
     (onChange: () => void) => {
-      const unsubscribes = streamIds.map((id) => subscribeStreamRail(id, onChange))
+      const unsubscribes = streamIds.map((id) => subscribeStreamRail(workspaceId, id, onChange))
       return () => {
         for (const unsubscribe of unsubscribes) unsubscribe()
       }
     },
     // `key` captures the set; the closure over `streamIds` is consistent with it.
-    [key]
+    [workspaceId, key]
   )
 
   const getSnapshot = useCallback(() => {
-    const inputs = streamIds.map((id) => railRegistry.peek(id)?.rail ?? LOADING_RAIL)
+    const inputs = streamIds.map((id) => railRegistry.peek(railKey(workspaceId, id))?.rail ?? LOADING_RAIL)
     const cached = cacheRef.current
     if (cached && cached.inputs.length === inputs.length && cached.inputs.every((rail, i) => rail === inputs[i])) {
       return cached.merged
@@ -427,7 +429,7 @@ function useMergedStreamRail(gatingStreamIds: string[], extraStreamIds: string[]
     const merged = mergeRails(inputs, gatingCount)
     cacheRef.current = { inputs, merged }
     return merged
-  }, [key])
+  }, [workspaceId, key])
 
   return useSyncExternalStore(subscribe, getSnapshot)
 }
@@ -528,19 +530,22 @@ function useChildThreadStreamIds(workspaceId: string, parentMessageIds: string[]
  * Subscribing here creates the shared registry entries, so cards mounting after
  * the reveal reuse already-resolved rails.
  */
-export function useBoardRailsReady(streamIds: string[]): boolean {
+export function useBoardRailsReady(workspaceId: string, streamIds: string[]): boolean {
   const key = streamIds.join(",")
   const subscribe = useCallback(
     (onChange: () => void) => {
-      const unsubscribes = streamIds.map((id) => subscribeStreamRail(id, onChange))
+      const unsubscribes = streamIds.map((id) => subscribeStreamRail(workspaceId, id, onChange))
       return () => {
         for (const unsubscribe of unsubscribes) unsubscribe()
       }
     },
     // `key` captures the set; the closure over `streamIds` is consistent with it.
-    [key]
+    [workspaceId, key]
   )
-  const getSnapshot = useCallback(() => streamIds.every((id) => railRegistry.peek(id)?.rail.resolved ?? false), [key])
+  const getSnapshot = useCallback(
+    () => streamIds.every((id) => railRegistry.peek(railKey(workspaceId, id))?.rail.resolved ?? false),
+    [workspaceId, key]
+  )
   return useSyncExternalStore(subscribe, getSnapshot)
 }
 
@@ -767,7 +772,7 @@ export function useBoardCardMessages(
     return [...set].sort()
   }, [childThreadKey, gatingKey, threadable, messageIdsKey, openingId, streamId, branchStreamKey, extraDraftPanelKey])
 
-  const rail = useMergedStreamRail(gatingStreamIds, extraStreamIds)
+  const rail = useMergedStreamRail(post.workspaceId, gatingStreamIds, extraStreamIds)
   const conversationId = post.conversation.id
 
   // The backfill store only matters while the rail's window is missing members —

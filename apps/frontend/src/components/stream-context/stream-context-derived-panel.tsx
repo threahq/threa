@@ -45,7 +45,7 @@ export function StreamContextDerivedPanel({
   onOpenGallery,
   note,
 }: StreamContextPanelProps & { note?: string }) {
-  const events = useStreamEvents(streamId)
+  const events = useStreamEvents(workspaceId, streamId)
   // Delegations come from the authoritative list endpoint, not the loaded
   // window (statuses live in patch events — see delegationContextItems); the
   // query key is invalidated by stream-sync on delegation socket events, so an

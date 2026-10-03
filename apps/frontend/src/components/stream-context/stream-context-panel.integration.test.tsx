@@ -800,6 +800,7 @@ describe("StreamContextPanel", () => {
     await db.events.put({
       id: "evt_1",
       streamId: STREAM,
+      workspaceId: WS,
       eventType: "message_created",
       sequence: "1",
       _sequenceNum: 1,

@@ -398,7 +398,7 @@ describe("useUnreadCounts", () => {
       _cachedAt: Date.now() - 5000,
     })
     await seedEvent("client_pending", "stream_1", String(Date.now()))
-    await db.events.update("client_pending", { _clientId: "client_pending", _status: "pending" })
+    await db.events.update(["ws_1", "client_pending"], { _clientId: "client_pending", _status: "pending" })
 
     mockMarkAsRead.mockResolvedValue(legacyReadResponse())
 

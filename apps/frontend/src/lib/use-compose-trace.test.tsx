@@ -16,10 +16,12 @@ function wrapper(queryClient: QueryClient) {
   }
 }
 
-function clientWithFlag(value: "off" | "capture" | undefined): QueryClient {
+function clientWithFlag(value: "off" | "capture" | undefined, workspaceIds = [workspaceId]): QueryClient {
   const queryClient = new QueryClient()
   const layers: FeatureFlagLayers = { workspace: value ? { composeTraces: value } : {}, user: {} }
-  queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), { featureFlags: layers } as WorkspaceBootstrap)
+  for (const id of workspaceIds) {
+    queryClient.setQueryData(workspaceKeys.bootstrap(id), { featureFlags: layers } as WorkspaceBootstrap)
+  }
   return queryClient
 }
 
@@ -115,6 +117,29 @@ describe("useComposeTrace", () => {
     await act(async () => result.current.onComposerFocus())
     await act(async () => {
       rerender({ horizonStreamId: "stream_2", draftReady: true })
+    })
+
+    expect(await result.current.takeComposeTrace()).toBeUndefined()
+  })
+
+  it("should drop the session when the workspace changes under the same scope and stream", async () => {
+    const { result, rerender } = renderHook(
+      ({ currentWorkspaceId }: { currentWorkspaceId: string }) =>
+        useComposeTrace({
+          workspaceId: currentWorkspaceId,
+          scopeId: streamId,
+          horizonStreamId: streamId,
+          hasDraftContent: () => false,
+          draftReady: true,
+        }),
+      {
+        wrapper: wrapper(clientWithFlag("capture", [workspaceId, "ws_2"])),
+        initialProps: { currentWorkspaceId: workspaceId },
+      }
+    )
+    await act(async () => result.current.onComposerFocus())
+    await act(async () => {
+      rerender({ currentWorkspaceId: "ws_2" })
     })
 
     expect(await result.current.takeComposeTrace()).toBeUndefined()

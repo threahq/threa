@@ -13,9 +13,10 @@ const mockEventsGet = vi.fn()
 const mockEventsUpdate = vi.fn().mockResolvedValue(1)
 const mockEventsPut = vi.fn().mockResolvedValue(undefined)
 const mockEventsDelete = vi.fn().mockResolvedValue(undefined)
-let mockHydratedPendingIds: string[] = []
-let mockHydratedFailedIds: string[] = []
-let mockHydratedEditingIds: string[] = []
+type HydratedRow = { id: string; workspaceId: string }
+let mockHydratedPendingRows: HydratedRow[] = []
+let mockHydratedFailedRows: HydratedRow[] = []
+let mockHydratedEditingRows: HydratedRow[] = []
 
 const fakeDb = {
   pendingMessages: {
@@ -30,11 +31,11 @@ const fakeDb = {
     delete: (...args: unknown[]) => mockEventsDelete(...args),
     where: (field: string) => ({
       equals: (value: string) => ({
-        primaryKeys: () => {
+        toArray: () => {
           if (field !== "_status") return Promise.resolve([])
-          if (value === "pending") return Promise.resolve(mockHydratedPendingIds)
-          if (value === "failed") return Promise.resolve(mockHydratedFailedIds)
-          if (value === "editing") return Promise.resolve(mockHydratedEditingIds)
+          if (value === "pending") return Promise.resolve(mockHydratedPendingRows)
+          if (value === "failed") return Promise.resolve(mockHydratedFailedRows)
+          if (value === "editing") return Promise.resolve(mockHydratedEditingRows)
           return Promise.resolve([])
         },
       }),
@@ -62,9 +63,9 @@ describe("PendingMessagesContext", () => {
     mockEventsUpdate.mockReset().mockResolvedValue(1)
     mockEventsPut.mockReset().mockResolvedValue(undefined)
     mockEventsDelete.mockReset().mockResolvedValue(undefined)
-    mockHydratedPendingIds = []
-    mockHydratedFailedIds = []
-    mockHydratedEditingIds = []
+    mockHydratedPendingRows = []
+    mockHydratedFailedRows = []
+    mockHydratedEditingRows = []
   })
 
   describe("retryMessage", () => {
@@ -89,7 +90,7 @@ describe("PendingMessagesContext", () => {
     })
 
     it("should reset retryCount and re-enqueue when the message exists", async () => {
-      mockGet.mockResolvedValue({ clientId: "temp_retry", retryCount: 2 })
+      mockGet.mockResolvedValue({ clientId: "temp_retry", workspaceId: "ws_1", retryCount: 2 })
 
       const { result } = renderHook(() => usePendingMessages(), { wrapper })
 
@@ -105,14 +106,14 @@ describe("PendingMessagesContext", () => {
         status: undefined,
         terminalFailure: undefined,
       })
-      expect(mockEventsUpdate).toHaveBeenCalledWith("temp_retry", { _status: "pending" })
+      expect(mockEventsUpdate).toHaveBeenCalledWith(["ws_1", "temp_retry"], { _status: "pending" })
       expect(result.current.getStatus("temp_retry")).toBe("pending")
     })
   })
 
   describe("markEditing", () => {
     it("should transition a pending message to editing status", async () => {
-      mockGet.mockResolvedValue({ clientId: "temp_edit", retryCount: 0 })
+      mockGet.mockResolvedValue({ clientId: "temp_edit", workspaceId: "ws_1", retryCount: 0 })
       mockEventsGet.mockResolvedValue({ _status: "pending" })
 
       const { result } = renderHook(() => usePendingMessages(), { wrapper })
@@ -125,12 +126,15 @@ describe("PendingMessagesContext", () => {
       })
 
       expect(mockUpdate).toHaveBeenCalledWith("temp_edit", { status: "editing", preEditStatus: "pending" })
-      expect(mockEventsUpdate).toHaveBeenCalledWith("temp_edit", { _status: "editing", _preEditStatus: "pending" })
+      expect(mockEventsUpdate).toHaveBeenCalledWith(["ws_1", "temp_edit"], {
+        _status: "editing",
+        _preEditStatus: "pending",
+      })
       expect(result.current.getStatus("temp_edit")).toBe("editing")
     })
 
     it("should transition a failed message to editing status", async () => {
-      mockGet.mockResolvedValue({ clientId: "temp_edit_fail", retryCount: 3 })
+      mockGet.mockResolvedValue({ clientId: "temp_edit_fail", workspaceId: "ws_1", retryCount: 3 })
       mockEventsGet.mockResolvedValue({ _status: "failed" })
 
       const { result } = renderHook(() => usePendingMessages(), { wrapper })
@@ -163,7 +167,7 @@ describe("PendingMessagesContext", () => {
   describe("cancelEditing", () => {
     it("should restore a previously-pending message to pending", async () => {
       // Setup: mark pending, then edit
-      mockGet.mockResolvedValue({ clientId: "temp_cancel", retryCount: 0, status: undefined })
+      mockGet.mockResolvedValue({ clientId: "temp_cancel", workspaceId: "ws_1", retryCount: 0, status: undefined })
       mockEventsGet.mockResolvedValue({ _status: "pending" })
 
       const { result } = renderHook(() => usePendingMessages(), { wrapper })
@@ -183,7 +187,7 @@ describe("PendingMessagesContext", () => {
     })
 
     it("should restore a previously-failed message to failed", async () => {
-      mockGet.mockResolvedValue({ clientId: "temp_cancel_fail", retryCount: 3, status: undefined })
+      mockGet.mockResolvedValue({ clientId: "temp_cancel_fail", workspaceId: "ws_1", retryCount: 3, status: undefined })
       mockEventsGet.mockResolvedValue({ _status: "failed" })
 
       const { result } = renderHook(() => usePendingMessages(), { wrapper })
@@ -205,9 +209,10 @@ describe("PendingMessagesContext", () => {
 
   describe("startup hydration", () => {
     it("restores persisted editing messages to pending instead of reopening edit mode", async () => {
-      mockHydratedEditingIds = ["temp_restore_pending"]
+      mockHydratedEditingRows = [{ id: "temp_restore_pending", workspaceId: "ws_1" }]
       mockGet.mockResolvedValue({
         clientId: "temp_restore_pending",
+        workspaceId: "ws_1",
         status: "editing",
         preEditStatus: "pending",
       })
@@ -221,16 +226,17 @@ describe("PendingMessagesContext", () => {
         })
       })
 
-      expect(mockEventsUpdate).toHaveBeenCalledWith("temp_restore_pending", { _status: "pending" })
+      expect(mockEventsUpdate).toHaveBeenCalledWith(["ws_1", "temp_restore_pending"], { _status: "pending" })
       expect(result.current.getStatus("temp_restore_pending")).toBe("pending")
     })
 
     it("kicks the queue when startup hydration restores a pending message", async () => {
       vi.useFakeTimers()
       try {
-        mockHydratedEditingIds = ["temp_restore_notify"]
+        mockHydratedEditingRows = [{ id: "temp_restore_notify", workspaceId: "ws_1" }]
         mockGet.mockResolvedValue({
           clientId: "temp_restore_notify",
+          workspaceId: "ws_1",
           status: "editing",
           preEditStatus: "pending",
         })
@@ -256,9 +262,10 @@ describe("PendingMessagesContext", () => {
     })
 
     it("restores persisted editing messages to failed when they were editing a failed send", async () => {
-      mockHydratedEditingIds = ["temp_restore_failed"]
+      mockHydratedEditingRows = [{ id: "temp_restore_failed", workspaceId: "ws_2" }]
       mockGet.mockResolvedValue({
         clientId: "temp_restore_failed",
+        workspaceId: "ws_2",
         status: "editing",
         preEditStatus: "failed",
       })
@@ -272,14 +279,14 @@ describe("PendingMessagesContext", () => {
         })
       })
 
-      expect(mockEventsUpdate).toHaveBeenCalledWith("temp_restore_failed", { _status: "failed" })
+      expect(mockEventsUpdate).toHaveBeenCalledWith(["ws_2", "temp_restore_failed"], { _status: "failed" })
       expect(result.current.getStatus("temp_restore_failed")).toBe("failed")
     })
   })
 
   describe("saveEditedMessage", () => {
     it("should update content and return to pending status", async () => {
-      mockGet.mockResolvedValue({ clientId: "temp_save", retryCount: 0, content: "old" })
+      mockGet.mockResolvedValue({ clientId: "temp_save", workspaceId: "ws_1", retryCount: 0, content: "old" })
       mockEventsGet.mockResolvedValue({
         id: "temp_save",
         payload: { contentMarkdown: "old" },
@@ -357,7 +364,7 @@ describe("PendingMessagesContext", () => {
         expectedSteer: undefined,
       },
     ])("$name", async ({ existingSteer, contentJson, steerAvailable, expectedSteer }) => {
-      mockGet.mockResolvedValue({ clientId: "temp_steer_edit", steer: existingSteer })
+      mockGet.mockResolvedValue({ clientId: "temp_steer_edit", workspaceId: "ws_1", steer: existingSteer })
       mockEventsGet.mockResolvedValue({
         id: "temp_steer_edit",
         payload: { contentMarkdown: "old" },
@@ -378,17 +385,32 @@ describe("PendingMessagesContext", () => {
 
   describe("deleteMessage", () => {
     it("should remove from both IDB tables and clear all state sets", async () => {
+      mockGet.mockResolvedValue({ clientId: "temp_del", workspaceId: "ws_1", retryCount: 0, status: undefined })
       const { result } = renderHook(() => usePendingMessages(), { wrapper })
 
       act(() => result.current.markPending("temp_del"))
 
       await act(async () => {
-        await result.current.deleteMessage("temp_del")
+        await result.current.deleteMessage("ws_1", "temp_del")
       })
 
       expect(mockDelete).toHaveBeenCalledWith("temp_del")
-      expect(mockEventsDelete).toHaveBeenCalledWith("temp_del")
+      expect(mockEventsDelete).toHaveBeenCalledWith(["ws_1", "temp_del"])
       expect(result.current.getStatus("temp_del")).toBeNull()
+    })
+
+    it("should delete the optimistic event when its queue row is already gone", async () => {
+      mockGet.mockResolvedValue(undefined)
+      const { result } = renderHook(() => usePendingMessages(), { wrapper })
+
+      act(() => result.current.markPending("temp_sent"))
+
+      await act(async () => {
+        await result.current.deleteMessage("ws_2", "temp_sent")
+      })
+
+      expect(mockEventsDelete).toHaveBeenCalledWith(["ws_2", "temp_sent"])
+      expect(result.current.getStatus("temp_sent")).toBeNull()
     })
 
     it("drops the optimistic board card when a cancelled new-scratchpad post is deleted", async () => {
@@ -396,6 +418,7 @@ describe("PendingMessagesContext", () => {
       spyOnExport(boardStoreModule, "deleteOptimisticBoardPost").mockReturnValue(dropCard)
       mockGet.mockResolvedValue({
         clientId: "temp_board",
+        workspaceId: "ws_1",
         retryCount: 0,
         status: undefined,
         conversation: { intent: "new", conversationId: "conv_board" },
@@ -404,7 +427,7 @@ describe("PendingMessagesContext", () => {
       const { result } = renderHook(() => usePendingMessages(), { wrapper })
 
       await act(async () => {
-        await result.current.deleteMessage("temp_board")
+        await result.current.deleteMessage("ws_1", "temp_board")
       })
 
       expect(mockDelete).toHaveBeenCalledWith("temp_board")
@@ -414,19 +437,19 @@ describe("PendingMessagesContext", () => {
     it("leaves the board untouched when deleting a non-board pending message", async () => {
       const dropCard = vi.fn().mockResolvedValue(undefined)
       spyOnExport(boardStoreModule, "deleteOptimisticBoardPost").mockReturnValue(dropCard)
-      mockGet.mockResolvedValue({ clientId: "temp_plain", retryCount: 0, status: undefined })
+      mockGet.mockResolvedValue({ clientId: "temp_plain", workspaceId: "ws_1", retryCount: 0, status: undefined })
 
       const { result } = renderHook(() => usePendingMessages(), { wrapper })
 
       await act(async () => {
-        await result.current.deleteMessage("temp_plain")
+        await result.current.deleteMessage("ws_1", "temp_plain")
       })
 
       expect(dropCard).not.toHaveBeenCalled()
     })
 
     it("should clear editing state when deleting an editing message", async () => {
-      mockGet.mockResolvedValue({ clientId: "temp_del_edit", retryCount: 0, status: undefined })
+      mockGet.mockResolvedValue({ clientId: "temp_del_edit", workspaceId: "ws_1", retryCount: 0, status: undefined })
       mockEventsGet.mockResolvedValue({ _status: "pending" })
 
       const { result } = renderHook(() => usePendingMessages(), { wrapper })
@@ -439,7 +462,7 @@ describe("PendingMessagesContext", () => {
       expect(result.current.getStatus("temp_del_edit")).toBe("editing")
 
       await act(async () => {
-        await result.current.deleteMessage("temp_del_edit")
+        await result.current.deleteMessage("ws_1", "temp_del_edit")
       })
 
       expect(result.current.getStatus("temp_del_edit")).toBeNull()

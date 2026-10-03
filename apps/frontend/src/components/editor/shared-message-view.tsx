@@ -22,6 +22,7 @@ export function SharedMessageView({ node, deleteNode, selected }: NodeViewProps)
   const attrs = node.attrs as SharedMessageAttrs
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const source = useSharedMessageSource({
+    workspaceId,
     messageId: attrs.messageId,
     streamId: attrs.streamId,
     version: attrs.version ?? null,

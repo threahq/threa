@@ -11,7 +11,7 @@ async function clearEvents() {
 
 /** A legacy pointer: no revision, no span. */
 function unpinned(messageId: string) {
-  return useSharedMessageSource({ messageId, streamId: "stream_src", version: null, range: null })
+  return useSharedMessageSource({ workspaceId: "ws_1", messageId, streamId: "stream_src", version: null, range: null })
 }
 
 /**
@@ -187,6 +187,46 @@ describe("useSharedMessageSource", () => {
     })
   })
 
+  it("should resolve the requested workspace's own copy when two workspaces hold the same message id", async () => {
+    const copiedEvent = (workspaceId: string, contentMarkdown: string, actorId: string) => ({
+      id: "evt_copied",
+      workspaceId,
+      streamId: "stream_src",
+      sequence: "1",
+      _sequenceNum: 1,
+      eventType: "message_created" as const,
+      payload: { messageId: "msg_copied", contentMarkdown },
+      actorId,
+      actorType: "user" as const,
+      createdAt: "2026-04-23T10:00:00Z",
+      _cachedAt: Date.now(),
+    })
+    await db.events.bulkPut([copiedEvent("ws_1", "ws_1 body", "usr_1"), copiedEvent("ws_2", "ws_2 body", "usr_2")])
+
+    const { result } = renderHook(() =>
+      useSharedMessageSource({
+        workspaceId: "ws_2",
+        messageId: "msg_copied",
+        streamId: "stream_src",
+        version: null,
+        range: null,
+      })
+    )
+
+    await waitFor(() => expect(result.current.status).toBe("resolved"))
+    expect(result.current).toEqual({
+      status: "resolved",
+      contentMarkdown: "ws_2 body",
+      authorId: "usr_2",
+      actorType: "user",
+      editedAt: null,
+      attachments: undefined,
+      version: null,
+      currentRevision: null,
+      range: null,
+    })
+  })
+
   it("stays blank for the first 300ms then surfaces a skeleton hint", () => {
     vi.useFakeTimers()
     const { result } = renderHook(() => unpinned("msg_absent"))
@@ -248,7 +288,14 @@ describe("useSharedMessageSource — pinned references", () => {
 
   it("reads the slot its own pin keys, not the whole-message one", () => {
     const { result } = renderHook(
-      () => useSharedMessageSource({ messageId: "msg_1", streamId: "stream_src", version: 2, range: SPAN }),
+      () =>
+        useSharedMessageSource({
+          workspaceId: "ws_1",
+          messageId: "msg_1",
+          streamId: "stream_src",
+          version: 2,
+          range: SPAN,
+        }),
       {
         wrapper: ({ children }) => (
           <SlotsProvider
@@ -324,7 +371,13 @@ describe("useSharedMessageSource — pinned references", () => {
 
     const { result, rerender } = renderHook(
       ({ version }) =>
-        useSharedMessageSource({ messageId: "msg_edited", streamId: "stream_src", version, range: null }),
+        useSharedMessageSource({
+          workspaceId: "ws_1",
+          messageId: "msg_edited",
+          streamId: "stream_src",
+          version,
+          range: null,
+        }),
       { initialProps: { version: 3 } }
     )
 
@@ -358,7 +411,13 @@ describe("useSharedMessageSource — pinned references", () => {
     })
 
     const { result } = renderHook(() =>
-      useSharedMessageSource({ messageId: "msg_span", streamId: "stream_src", version: 2, range: SPAN })
+      useSharedMessageSource({
+        workspaceId: "ws_1",
+        messageId: "msg_span",
+        streamId: "stream_src",
+        version: 2,
+        range: SPAN,
+      })
     )
 
     await waitFor(() => expect(result.current.status).toBe("resolved"))

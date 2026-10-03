@@ -127,7 +127,7 @@ describe("SyncEngine.handlePageResume", () => {
 
     await engine.refreshVisibleEventReads()
 
-    const refreshed = await db.events.bulkGet(streamIds.map((streamId) => `evt_${streamId}`))
+    const refreshed = await db.events.bulkGet(streamIds.map((streamId) => ["ws_1", `evt_${streamId}`]))
     expect(refreshed.map((event) => ({ streamId: event?.streamId, refreshed: (event?._cachedAt ?? 0) > 1 }))).toEqual(
       streamIds.map((streamId) => ({ streamId, refreshed: true }))
     )
@@ -282,7 +282,7 @@ describe("SyncEngine.handlePageResume", () => {
       })
     })
 
-    expect(await db.events.get("evt_2")).toBeTruthy()
+    expect(await db.events.get(["ws_1", "evt_2"])).toBeTruthy()
   })
 
   it("merges navigation refresh results against concurrent query cache updates", async () => {
@@ -605,7 +605,7 @@ describe("SyncEngine reconnect catch-up cursor (INV-53 gap safety)", () => {
       expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_1", { after: "1" })
     })
     await vi.waitFor(async () => {
-      expect(await db.events.get("evt_2")).toMatchObject({ streamId: "thread_1", sequence: "2" })
+      expect(await db.events.get(["ws_1", "evt_2"])).toMatchObject({ streamId: "thread_1", sequence: "2" })
     })
   })
 })
@@ -655,7 +655,7 @@ describe("SyncEngine HTTP-first warm fetch", () => {
     })
     // The delta is applied to IDB so the open timeline fills in immediately…
     await vi.waitFor(async () => {
-      expect(await db.events.get("evt_2")).toBeTruthy()
+      expect(await db.events.get(["ws_1", "evt_2"])).toBeTruthy()
     })
     // …but no room join happened: the warm fetch is display-only, and the
     // reconnect path still owns subscription + cursor discipline.
@@ -673,7 +673,7 @@ describe("SyncEngine HTTP-first warm fetch", () => {
       expect(deps.streamService.bootstrap).toHaveBeenCalled()
     })
     await vi.waitFor(async () => {
-      expect(await db.events.get("evt_2")).toBeTruthy()
+      expect(await db.events.get(["ws_1", "evt_2"])).toBeTruthy()
     })
     deps.streamService.bootstrap.mockClear()
 
@@ -730,7 +730,7 @@ describe("SyncEngine HTTP-first warm fetch", () => {
 
     engine.setCurrentStreamId("stream_1")
     await vi.waitFor(async () => {
-      expect(await db.events.get("evt_2")).toBeTruthy()
+      expect(await db.events.get(["ws_1", "evt_2"])).toBeTruthy()
     })
 
     expect(deps.queryClient.getQueryData(["streams", "bootstrap", "ws_1", "stream_1"])).toBeUndefined()
@@ -1044,7 +1044,7 @@ describe("SyncEngine.backfillStreamGap", () => {
     await engine.backfillStreamGap("stream_1", "1")
 
     expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { after: "1" })
-    expect(await db.events.get("evt_2")).toBeTruthy()
+    expect(await db.events.get(["ws_1", "evt_2"])).toBeTruthy()
   })
 
   it("single-flights concurrent backfills for the same stream", async () => {
@@ -2875,7 +2875,7 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
     await engine.onConnect(asSocket(socket))
 
     expect(getAgentActivityForStream("ws_1", "stream_dm")).toEqual([])
-    expect(await db.events.get("evt_completed")).toMatchObject({
+    expect(await db.events.get(["ws_1", "evt_completed"])).toMatchObject({
       eventType: "agent_session:completed",
       payload: { sessionId: "session_settled" },
     })

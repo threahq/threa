@@ -38,12 +38,18 @@ export function resetStreamStoreCache(): void {}
  * upward naturally when newer server events arrive, without comparing client
  * and server clocks.
  */
-export async function loadStreamEvents(streamId: string, fromSequenceNum: number | null): Promise<CachedEvent[]> {
+export async function loadStreamEvents(
+  workspaceId: string,
+  streamId: string,
+  fromSequenceNum: number | null
+): Promise<CachedEvent[]> {
   const hasFloor = fromSequenceNum != null
-  const lowerBound: [string, number] | [string, typeof Dexie.minKey] = hasFloor
-    ? [streamId, fromSequenceNum]
-    : [streamId, Dexie.minKey]
-  const range = db.events.where("[streamId+_sequenceNum]").between(lowerBound, [streamId, Dexie.maxKey], true, true)
+  const lowerBound: [string, string, number] | [string, string, typeof Dexie.minKey] = hasFloor
+    ? [workspaceId, streamId, fromSequenceNum]
+    : [workspaceId, streamId, Dexie.minKey]
+  const range = db.events
+    .where("[workspaceId+streamId+_sequenceNum]")
+    .between(lowerBound, [workspaceId, streamId, Dexie.maxKey], true, true)
 
   // With a floor we scan the compound index ASC directly — already in render
   // order. Without a floor we scan DESC + cap to the newest N as a memory bound
@@ -66,7 +72,7 @@ export async function loadStreamEvents(streamId: string, fromSequenceNum: number
   // very top and are usually already in `base`). Drive this off the `_status`
   // index — Dexie only indexes rows where the value is present, so this is the
   // handful of unsent rows app-wide, not an O(history) scan of the stream.
-  const unsentForStream = await loadUnsentStreamEvents(streamId, hasFloor ? fromSequenceNum : null)
+  const unsentForStream = await loadUnsentStreamEvents(workspaceId, streamId, hasFloor ? fromSequenceNum : null)
   if (unsentForStream.length === 0) return base
 
   const loadedIds = new Set(base.map((e) => e.id))
@@ -74,9 +80,15 @@ export async function loadStreamEvents(streamId: string, fromSequenceNum: number
   return orderStreamEvents([...base, ...extra])
 }
 
-async function loadUnsentStreamEvents(streamId: string, floor: number | null): Promise<CachedEvent[]> {
+async function loadUnsentStreamEvents(
+  workspaceId: string,
+  streamId: string,
+  floor: number | null
+): Promise<CachedEvent[]> {
   const unsent = await db.events.where("_status").anyOf(["pending", "failed", "editing"]).toArray()
-  return unsent.filter((e) => e.streamId === streamId && (floor === null || e._sequenceNum >= floor))
+  return unsent.filter(
+    (e) => e.workspaceId === workspaceId && e.streamId === streamId && (floor === null || e._sequenceNum >= floor)
+  )
 }
 
 /**
@@ -96,22 +108,23 @@ async function loadUnsentStreamEvents(streamId: string, floor: number | null): P
  * a capped read must.
  */
 export async function loadStreamTail(
+  workspaceId: string,
   streamId: string,
   tailFloor: number | null,
   scanFloor: number | null = null
 ): Promise<CachedEvent[]> {
   if (tailFloor !== null) {
     return await db.events
-      .where("[streamId+_sequenceNum]")
-      .between([streamId, tailFloor], [streamId, Dexie.maxKey], true, true)
+      .where("[workspaceId+streamId+_sequenceNum]")
+      .between([workspaceId, streamId, tailFloor], [workspaceId, streamId, Dexie.maxKey], true, true)
       .toArray()
   }
 
   const base = await db.events
-    .where("[streamId+_sequenceNum]")
+    .where("[workspaceId+streamId+_sequenceNum]")
     .between(
-      scanFloor === null ? [streamId, Dexie.minKey] : [streamId, scanFloor],
-      [streamId, Dexie.maxKey],
+      scanFloor === null ? [workspaceId, streamId, Dexie.minKey] : [workspaceId, streamId, scanFloor],
+      [workspaceId, streamId, Dexie.maxKey],
       true,
       true
     )
@@ -120,7 +133,7 @@ export async function loadStreamTail(
     .toArray()
   base.sort((a, b) => a._sequenceNum - b._sequenceNum)
 
-  const unsentForStream = await loadUnsentStreamEvents(streamId, scanFloor)
+  const unsentForStream = await loadUnsentStreamEvents(workspaceId, streamId, scanFloor)
   if (unsentForStream.length === 0) return base
 
   const loadedIds = new Set(base.map((e) => e.id))
@@ -140,14 +153,20 @@ export async function loadStreamTail(
  * the unsplit one and the anchor resolves without a narrower frame in between.
  */
 export async function loadStreamPrefix(
+  workspaceId: string,
   streamId: string,
   floor: number | null,
   tailFloor: number | null
 ): Promise<CachedEvent[]> {
-  if (tailFloor === null) return await loadStreamEvents(streamId, floor)
+  if (tailFloor === null) return await loadStreamEvents(workspaceId, streamId, floor)
   return await db.events
-    .where("[streamId+_sequenceNum]")
-    .between(floor === null ? [streamId, Dexie.minKey] : [streamId, floor], [streamId, tailFloor], true, false)
+    .where("[workspaceId+streamId+_sequenceNum]")
+    .between(
+      floor === null ? [workspaceId, streamId, Dexie.minKey] : [workspaceId, streamId, floor],
+      [workspaceId, streamId, tailFloor],
+      true,
+      false
+    )
     .toArray()
 }
 
@@ -246,11 +265,16 @@ export function unionStreamRanges(prefix: CachedEvent[], tail: CachedEvent[]): C
   return combined.some((event) => event._status != null) ? orderStreamEvents(combined) : combined
 }
 
-/** A stamped read result: the streamId, and the tail floor the read was made under. */
-export type StampedStreamEvents = CachedEvent[] & { __streamId?: string; __tailFloor?: number | null }
+/** A stamped read result: the workspace and stream it was read for, and the tail floor it was made under. */
+export type StampedStreamEvents = CachedEvent[] & {
+  __workspaceId?: string
+  __streamId?: string
+  __tailFloor?: number | null
+}
 
 export function stampStreamEvents(
   events: CachedEvent[],
+  workspaceId: string,
   streamId: string | undefined,
   tailFloor: number | null = null
 ): StampedStreamEvents {
@@ -259,6 +283,7 @@ export function stampStreamEvents(
   // same floor do), and stamping in place would then rewrite the other read's
   // stamp — composing a window that unions one array with itself.
   const stamped = events.slice() as StampedStreamEvents
+  stamped.__workspaceId = workspaceId
   if (streamId) stamped.__streamId = streamId
   stamped.__tailFloor = tailFloor
   return stamped
@@ -294,6 +319,7 @@ export function composeStreamWindow(
 
 /** The tail floor latched for one stream visit. */
 interface TailAnchor {
+  workspaceId: string
   streamId: string
   tailFloor: number
 }
@@ -303,14 +329,15 @@ interface TailAnchor {
  * Returns `undefined` while the query is resolving, `CachedEvent[]` once resolved.
  * Updates automatically when any write to db.events affects this stream.
  *
- * Correctness: when `streamId` changes, `useLiveQuery` keeps returning the
- * previous stream's result until the new query resolves. We can't trust that
- * result even when it's empty (an empty previous-stream result would otherwise
- * be interpreted as "current stream is empty"). We track which `streamId`
- * the live result has actually been resolved for and return `undefined`
- * until the two match.
+ * Correctness: when `workspaceId` or `streamId` changes, `useLiveQuery` keeps
+ * returning the previous key's result until the new query resolves. We can't
+ * trust that result even when it's empty (an empty previous-stream result would
+ * otherwise be interpreted as "current stream is empty"). We track which
+ * `(workspaceId, streamId)` the live result has actually been resolved for and
+ * return `undefined` until the two match.
  */
 export function useStreamEvents(
+  workspaceId: string,
   streamId: string | undefined,
   fromSequenceNum?: number | null
 ): CachedEvent[] | undefined {
@@ -327,7 +354,10 @@ export function useStreamEvents(
   // the widened prefix read is in flight. Skew between the two live queries
   // therefore cannot uncover a range, and nothing rendered can vanish or
   // fabricate a hole (INV-61). A stream switch re-latches by construction.
-  const latchedFloor = bounded && anchor !== null && anchor.streamId === streamId ? anchor.tailFloor : null
+  const latchedFloor =
+    bounded && anchor !== null && anchor.workspaceId === workspaceId && anchor.streamId === streamId
+      ? anchor.tailFloor
+      : null
   // ...except when the window floor rises ABOVE the latch: a `syncMode: "replace"`
   // bootstrap (long-offline reconnect) resets the floor ratchet, and keeping the
   // old latch would invert the prefix range `[floor, tailFloor)` (permanently
@@ -343,44 +373,44 @@ export function useStreamEvents(
   // Both reads register with the apply window while in flight so a bootstrap
   // sweep holds its window until the timeline has re-read what it wrote.
   const tail = useLiveQuery(async () => {
-    if (!streamId || !bounded) return stampStreamEvents([], streamId)
+    if (!streamId || !bounded) return stampStreamEvents([], workspaceId, streamId)
     const release = trackPendingRead()
     try {
       const stopLoad = getPerfCapture().time("timeline.tailLoad")
-      const events = await loadStreamTail(streamId, tailFloor, tailScanFloor)
+      const events = await loadStreamTail(workspaceId, streamId, tailFloor, tailScanFloor)
       stopLoad()
-      return stampStreamEvents(events, streamId, tailFloor)
+      return stampStreamEvents(events, workspaceId, streamId, tailFloor)
     } finally {
       release()
     }
-  }, [streamId, tailFloor, tailScanFloor, bounded])
+  }, [workspaceId, streamId, tailFloor, tailScanFloor, bounded])
 
   const result = useLiveQuery(async () => {
-    if (!streamId) return stampStreamEvents([], streamId)
+    if (!streamId) return stampStreamEvents([], workspaceId, streamId)
     const release = trackPendingRead()
     try {
       const capture = getPerfCapture()
       capture.count("liveQuery.rerun")
       const stopLoad = capture.time("liveQuery.load")
       const events = bounded
-        ? await loadStreamPrefix(streamId, floor, tailFloor)
-        : await loadStreamEvents(streamId, floor)
+        ? await loadStreamPrefix(workspaceId, streamId, floor, tailFloor)
+        : await loadStreamEvents(workspaceId, streamId, floor)
       stopLoad()
-      // Stamp the result with the streamId it was fetched for so the caller
-      // can distinguish a fresh empty result from a stale empty result left
-      // over from the previous stream.
-      return stampStreamEvents(events, streamId, bounded ? tailFloor : null)
+      // Stamp the result with the key it was fetched for so the caller can
+      // distinguish a fresh empty result from a stale empty result left over
+      // from the previous workspace or stream.
+      return stampStreamEvents(events, workspaceId, streamId, bounded ? tailFloor : null)
     } finally {
       release()
     }
-  }, [streamId, floor, tailFloor, bounded])
+  }, [workspaceId, streamId, floor, tailFloor, bounded])
 
-  // Until `useLiveQuery` re-runs after a streamId change, `result` is still
-  // the previous stream's array. Our stamp lets us detect that regardless of
-  // whether the previous result happened to be non-empty or empty.
-  const resultStreamId = result?.__streamId
-  const tailStreamId = tail?.__streamId
-  const tailForStream = bounded && streamId && tailStreamId === streamId ? (tail ?? null) : null
+  // Until `useLiveQuery` re-runs after a key change, `result` is still the
+  // previous key's array. Our stamp lets us detect that regardless of whether
+  // the previous result happened to be non-empty or empty.
+  const resultMatches = result?.__workspaceId === workspaceId && result.__streamId === streamId
+  const tailMatches = tail?.__workspaceId === workspaceId && tail.__streamId === streamId
+  const tailForStream = bounded && streamId && tailMatches ? (tail ?? null) : null
 
   const oldestPersistedTail =
     bounded && streamId && tailForStream && tailFloor === null
@@ -389,8 +419,8 @@ export function useStreamEvents(
 
   useEffect(() => {
     if (!bounded || !streamId || !oldestPersistedTail) return
-    setAnchor({ streamId, tailFloor: oldestPersistedTail._sequenceNum })
-  }, [bounded, streamId, oldestPersistedTail])
+    setAnchor({ workspaceId, streamId, tailFloor: oldestPersistedTail._sequenceNum })
+  }, [bounded, workspaceId, streamId, oldestPersistedTail])
 
   // Between one read landing and the next one it triggers (a stream switch, a
   // re-latch after an unanchored tail, a prefix stamped for an older floor)
@@ -399,24 +429,27 @@ export function useStreamEvents(
   const expectedTailFloor = bounded ? tailFloor : null
   const readsUnsettled =
     !!streamId &&
-    (resultStreamId !== streamId ||
+    (!resultMatches ||
       (result?.__tailFloor ?? null) !== expectedTailFloor ||
-      (bounded && (tailStreamId !== streamId || (tail?.__tailFloor ?? null) !== tailFloor)) ||
+      (bounded && (!tailMatches || (tail?.__tailFloor ?? null) !== tailFloor)) ||
       !!oldestPersistedTail)
   useEffect(() => {
     if (!readsUnsettled) return
     return trackPendingRead()
   }, [readsUnsettled])
 
-  const prevRef = useRef<{ streamId: string; array: CachedEvent[] } | null>(null)
-  const prevArray = prevRef.current?.streamId === streamId ? (prevRef.current?.array ?? null) : null
+  const prevRef = useRef<{ workspaceId: string; streamId: string; array: CachedEvent[] } | null>(null)
+  const prevArray =
+    prevRef.current?.workspaceId === workspaceId && prevRef.current?.streamId === streamId
+      ? (prevRef.current?.array ?? null)
+      : null
 
   const union = useMemo(() => composeStreamWindow(result, tailForStream, prevArray), [result, tailForStream, prevArray])
 
   // Both reads must be stamped for the current stream before anything is
   // returned: a union built from one fresh and one stale range is a window with
   // a hole in it, which INV-61's contiguity gate would read as a real gap.
-  const resolved = !streamId || (resultStreamId === streamId && (!bounded || tailStreamId === streamId))
+  const resolved = !streamId || (resultMatches && (!bounded || tailMatches))
   // A draft→real promotion moves the optimistic rows onto the real id before the
   // real view mounts. Until its live query resolves (and, for the draft id, once
   // the rows have moved away), paint those rows so neither view shows a skeleton
@@ -437,9 +470,9 @@ export function useStreamEvents(
   if (handoff && union.length === 0) return handoff
 
   const prev = prevRef.current
-  const shared = shareEventIdentities(prev?.streamId === streamId ? prev.array : null, union)
+  const shared = shareEventIdentities(prevArray, union)
   if (shared !== prev?.array) {
-    prevRef.current = { streamId, array: shared }
+    prevRef.current = { workspaceId, streamId, array: shared }
   }
   return shared
 }

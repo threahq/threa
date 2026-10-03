@@ -615,7 +615,7 @@ describe("MessageEvent", () => {
       render(<MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />, { wrapper: Wrapper })
 
       await userEvent.click(screen.getByRole("button", { name: "Delete" }))
-      expect(mockDeleteMessage).toHaveBeenCalledWith(event.id)
+      expect(mockDeleteMessage).toHaveBeenCalledWith(workspaceId, event.id)
     })
   })
 
@@ -652,6 +652,17 @@ describe("MessageEvent", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Edit" }))
       expect(mockMarkEditing).toHaveBeenCalledWith(event.id)
+    })
+
+    it("should call deleteMessage with the workspace when Delete is clicked on failed message", async () => {
+      mockGetStatus = () => "failed"
+      mockDeleteMessage.mockResolvedValue(undefined)
+      const event = createMessageEvent("msg_failed", "Failed message")
+
+      render(<MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />, { wrapper: Wrapper })
+
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }))
+      expect(mockDeleteMessage).toHaveBeenCalledWith(workspaceId, event.id)
     })
   })
 

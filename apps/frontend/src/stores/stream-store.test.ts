@@ -56,8 +56,8 @@ async function putRawEvent(event: CachedEvent): Promise<void> {
 
   try {
     await new Promise<void>((resolve, reject) => {
-      const transaction = database.transaction("events", "readwrite")
-      transaction.objectStore("events").put(event)
+      const transaction = database.transaction("eventsByWorkspace", "readwrite")
+      transaction.objectStore("eventsByWorkspace").put(event)
       transaction.oncomplete = () => resolve()
       transaction.onerror = () => reject(transaction.error)
       transaction.onabort = () => reject(transaction.error)
@@ -112,7 +112,7 @@ describe("loadStreamEvents", () => {
       makeRealEvent(streamId, "4"),
     ])
 
-    const events = await loadStreamEvents(streamId, null)
+    const events = await loadStreamEvents(WORKSPACE_ID, streamId, null)
 
     expect(events.map((e) => e.sequence)).toEqual(["1", "2", "3", "4", "5"])
   })
@@ -127,7 +127,7 @@ describe("loadStreamEvents", () => {
       makeRealEvent(streamId, "4"),
     ])
 
-    const events = await loadStreamEvents(streamId, 1)
+    const events = await loadStreamEvents(WORKSPACE_ID, streamId, 1)
 
     expect(events.map((e) => e.sequence)).toEqual(["1", "2", "3", "4", "5"])
   })
@@ -146,7 +146,7 @@ describe("loadStreamEvents", () => {
       makeOptimisticEvent(streamId, "temp_5", String(t0 + 5)),
     ])
 
-    const events = await loadStreamEvents(streamId, null)
+    const events = await loadStreamEvents(WORKSPACE_ID, streamId, null)
 
     expect(events.map((e) => e.id)).toEqual(["temp_1", "temp_2", "temp_3", "temp_4", "temp_5"])
   })
@@ -168,26 +168,26 @@ describe("loadStreamEvents", () => {
       makeOptimisticEvent(streamId, "temp_5", String(t0 + 5)),
     ])
 
-    let events = await loadStreamEvents(streamId, null)
+    let events = await loadStreamEvents(WORKSPACE_ID, streamId, null)
     expect(events.map((e) => e.id)).toEqual(["temp_1", "temp_2", "temp_3", "temp_4", "temp_5"])
 
     // Ack message 1: real evt_…_1 takes its place with server seq=1
     await db.transaction("rw", db.events, async () => {
       await db.events.put(makeRealEvent(streamId, "1"))
-      await db.events.delete("temp_1")
+      await db.events.delete([WORKSPACE_ID, "temp_1"])
     })
-    events = await loadStreamEvents(streamId, null)
+    events = await loadStreamEvents(WORKSPACE_ID, streamId, null)
     expect(events.map((e) => e.sequence)).toEqual(["1", String(t0 + 2), String(t0 + 3), String(t0 + 4), String(t0 + 5)])
 
     // Ack messages 2, 3, 4, 5 in order
     for (const seq of ["2", "3", "4", "5"]) {
       await db.transaction("rw", db.events, async () => {
         await db.events.put(makeRealEvent(streamId, seq))
-        await db.events.delete(`temp_${seq}`)
+        await db.events.delete([WORKSPACE_ID, `temp_${seq}`])
       })
     }
 
-    events = await loadStreamEvents(streamId, null)
+    events = await loadStreamEvents(WORKSPACE_ID, streamId, null)
     expect(events.map((e) => e.sequence)).toEqual(["1", "2", "3", "4", "5"])
   })
 
@@ -204,7 +204,7 @@ describe("loadStreamEvents", () => {
       makeOptimisticEvent(streamId, "temp_x", String(t0 + 1)),
     ])
 
-    const events = await loadStreamEvents(streamId, 1)
+    const events = await loadStreamEvents(WORKSPACE_ID, streamId, 1)
     expect(events.map((e) => e.id)).toEqual([
       "evt_stream_with_history_1",
       "evt_stream_with_history_2",
@@ -224,7 +224,7 @@ describe("loadStreamEvents", () => {
     )
     await db.events.bulkPut([...reals, oldFailed])
 
-    const events = await loadStreamEvents(streamId, null)
+    const events = await loadStreamEvents(WORKSPACE_ID, streamId, null)
 
     expect(events[0].id).toBe("temp_old")
   })
@@ -240,7 +240,7 @@ describe("loadStreamEvents", () => {
       editing,
     ])
 
-    const events = await loadStreamEvents(streamId, 1)
+    const events = await loadStreamEvents(WORKSPACE_ID, streamId, 1)
 
     expect(events.map((event) => event.id)).toEqual([
       "evt_stream_editing_1",
@@ -258,7 +258,7 @@ describe("loadStreamEvents", () => {
       makeOptimisticEvent(streamId, "temp_a", "1001", createdAt, 0),
     ])
 
-    const events = await loadStreamEvents(streamId, null)
+    const events = await loadStreamEvents(WORKSPACE_ID, streamId, null)
 
     expect(events.map((event) => event.id)).toEqual(["temp_z", "temp_a"])
   })
@@ -288,7 +288,7 @@ describe("loadStreamEvents", () => {
       optimistic,
     ])
 
-    const events = await loadStreamEvents(streamId, 1)
+    const events = await loadStreamEvents(WORKSPACE_ID, streamId, 1)
 
     expect(events.map((event) => event.id)).toEqual([
       "evt_stream_slow_clock_1",
@@ -327,12 +327,12 @@ describe("loadStreamEvents", () => {
     await db.events.bulkPut([makeRealEvent(streamId, "1"), first, second])
 
     await db.transaction("rw", db.events, async () => {
-      await bumpLaterOptimisticAnchors(streamId, first._sequenceNum, 2, first.id)
-      await db.events.delete(first.id)
+      await bumpLaterOptimisticAnchors(WORKSPACE_ID, streamId, first._sequenceNum, 2, first.id)
+      await db.events.delete([WORKSPACE_ID, first.id])
       await db.events.put(makeRealEvent(streamId, "2"))
     })
 
-    const events = await loadStreamEvents(streamId, 1)
+    const events = await loadStreamEvents(WORKSPACE_ID, streamId, 1)
 
     expect(events.map((event) => event.id)).toEqual([
       "evt_stream_partial_ack_1",
@@ -347,9 +347,9 @@ describe("loadStreamEvents", () => {
     const later = makeOptimisticEvent(streamId, "temp_z", "1000", "2026-01-01T00:00:01.000Z", 1)
     await db.events.bulkPut([confirmed, later])
 
-    await bumpLaterOptimisticAnchors(streamId, confirmed._sequenceNum, 2, confirmed.id)
+    await bumpLaterOptimisticAnchors(WORKSPACE_ID, streamId, confirmed._sequenceNum, 2, confirmed.id)
 
-    expect((await db.events.get(later.id))?._anchorSequenceNum).toBe(2)
+    expect((await db.events.get([WORKSPACE_ID, later.id]))?._anchorSequenceNum).toBe(2)
   })
 
   it("lets a failed optimistic command move above newer persisted events", async () => {
@@ -362,7 +362,7 @@ describe("loadStreamEvents", () => {
     newer.createdAt = "2026-01-01T21:13:00.000Z"
     await db.events.bulkPut([makeRealEvent(streamId, "1"), failed, newer])
 
-    const events = await loadStreamEvents(streamId, 1)
+    const events = await loadStreamEvents(WORKSPACE_ID, streamId, 1)
 
     expect(events.map((event) => event.id)).toEqual([
       "evt_stream_failed_command_1",
@@ -383,7 +383,7 @@ describe("loadStreamEvents", () => {
     const shuffled = [...seqs].reverse()
     await db.events.bulkPut(shuffled.map((n) => makeRealEvent(streamId, String(n))))
 
-    const events = await loadStreamEvents(streamId, 1)
+    const events = await loadStreamEvents(WORKSPACE_ID, streamId, 1)
 
     expect(events.map((e) => e._sequenceNum)).toEqual(seqs)
   })
@@ -401,7 +401,7 @@ describe("loadStreamEvents", () => {
       makeOptimisticEvent(streamId, "temp_above", "999999"),
     ])
 
-    const events = await loadStreamEvents(streamId, 100)
+    const events = await loadStreamEvents(WORKSPACE_ID, streamId, 100)
 
     expect(events.map((e) => e.id)).toEqual(["evt_stream_floored_100", "evt_stream_floored_101", "temp_above"])
   })
@@ -698,8 +698,8 @@ describe("bounded timeline read — tail and prefix", () => {
 
   /** The production union of both ranges, at a given anchor. */
   async function readUnion(streamId: string, floor: number | null, tailFloor: number | null): Promise<CachedEvent[]> {
-    const prefix = await loadStreamPrefix(streamId, floor, tailFloor)
-    const tail = await loadStreamTail(streamId, tailFloor, tailFloor === null ? floor : null)
+    const prefix = await loadStreamPrefix(WORKSPACE_ID, streamId, floor, tailFloor)
+    const tail = await loadStreamTail(WORKSPACE_ID, streamId, tailFloor, tailFloor === null ? floor : null)
     return unionStreamRanges(prefix, tail)
   }
 
@@ -732,7 +732,7 @@ describe("bounded timeline read — tail and prefix", () => {
   it("the unanchored tail read returns the newest N above the floor, in ascending order", async () => {
     await seed(TIMELINE_TAIL_EVENTS + 120)
 
-    const tail = await loadStreamTail(STREAM, null, 1)
+    const tail = await loadStreamTail(WORKSPACE_ID, STREAM, null, 1)
 
     expect(tail).toHaveLength(TIMELINE_TAIL_EVENTS)
     expect(tail.map((e) => e._sequenceNum)).toEqual(Array.from({ length: TIMELINE_TAIL_EVENTS }, (_, i) => 121 + i))
@@ -764,8 +764,9 @@ describe("bounded timeline read — tail and prefix", () => {
       makeOptimisticEvent(STREAM, "temp_failed", String(Date.now() + 1)),
     ])
 
-    const single = await loadStreamEvents(STREAM, 50)
-    const tailFloor = (await loadStreamTail(STREAM, null, 50)).filter((e) => e._status == null)[0]._sequenceNum
+    const single = await loadStreamEvents(WORKSPACE_ID, STREAM, 50)
+    const tailFloor = (await loadStreamTail(WORKSPACE_ID, STREAM, null, 50)).filter((e) => e._status == null)[0]
+      ._sequenceNum
     const split = await readUnion(STREAM, 50, tailFloor)
 
     expect(split).toEqual(single)
@@ -785,7 +786,7 @@ describe("bounded timeline read — tail and prefix", () => {
     // in the result because the unanchored tail merges the `_status` index.
     await seed(TIMELINE_TAIL_EVENTS + 50)
     await db.events.put(makeOptimisticEvent(STREAM, "temp_low", "5"))
-    const unanchoredTail = await loadStreamTail(STREAM, null, 1)
+    const unanchoredTail = await loadStreamTail(WORKSPACE_ID, STREAM, null, 1)
     expect(unanchoredTail.filter((e) => e.id === "temp_low")).toHaveLength(1)
   })
 
@@ -846,9 +847,9 @@ describe("bounded timeline read — tail and prefix", () => {
       await db.events.put(makeRealEvent(STREAM, "21"))
     }
 
-    const tailEmissions = await countEmissions(() => loadStreamTail(STREAM, 15, null), write)
-    await db.events.delete(`evt_${STREAM}_21`)
-    const prefixEmissions = await countEmissions(() => loadStreamPrefix(STREAM, 1, 15), write)
+    const tailEmissions = await countEmissions(() => loadStreamTail(WORKSPACE_ID, STREAM, 15, null), write)
+    await db.events.delete([WORKSPACE_ID, `evt_${STREAM}_21`])
+    const prefixEmissions = await countEmissions(() => loadStreamPrefix(WORKSPACE_ID, STREAM, 1, 15), write)
 
     expect(tailEmissions).toBeGreaterThan(0)
     expect(prefixEmissions).toBe(0)
@@ -858,9 +859,9 @@ describe("bounded timeline read — tail and prefix", () => {
     await seed(20)
 
     const prefixEmissions = await countEmissions(
-      () => loadStreamPrefix(STREAM, 1, 15),
+      () => loadStreamPrefix(WORKSPACE_ID, STREAM, 1, 15),
       async () => {
-        await db.events.update(`evt_${STREAM}_3`, { _patchedAt: Date.now() })
+        await db.events.update([WORKSPACE_ID, `evt_${STREAM}_3`], { _patchedAt: Date.now() })
       }
     )
 
@@ -876,14 +877,14 @@ describe("bounded timeline read — tail and prefix", () => {
     // The prefix range is `[floor, tailFloor)`, so nothing arriving above the
     // floor can change it: holding the prefix's resolution is indistinguishable
     // from letting it re-run, which is why emission skew cannot uncover a range.
-    const stalePrefix = await loadStreamPrefix(STREAM, 1, tailFloor)
+    const stalePrefix = await loadStreamPrefix(WORKSPACE_ID, STREAM, 1, tailFloor)
     await db.events.bulkPut(
       Array.from({ length: 3 }, (_, i) => makeBroadcastEvent(STREAM, String(i + 21), String(i + 21)))
     )
-    const freshPrefix = await loadStreamPrefix(STREAM, 1, tailFloor)
+    const freshPrefix = await loadStreamPrefix(WORKSPACE_ID, STREAM, 1, tailFloor)
     expect(freshPrefix).toEqual(stalePrefix)
 
-    const tail = await loadStreamTail(STREAM, tailFloor, null)
+    const tail = await loadStreamTail(WORKSPACE_ID, STREAM, tailFloor, null)
     const union = unionStreamRanges(stalePrefix, tail)
 
     expect(union.map((e) => e._sequenceNum)).toEqual(Array.from({ length: 23 }, (_, i) => i + 1))
@@ -896,12 +897,12 @@ describe("bounded timeline read — tail and prefix", () => {
 
     const rendered = await readUnion(STREAM, 200, tailFloor)
     const renderedIds = rendered.map((e) => e.id)
-    const widenedPrefix = await loadStreamPrefix(STREAM, 150, tailFloor)
-    const tail = await loadStreamTail(STREAM, tailFloor, null)
+    const widenedPrefix = await loadStreamPrefix(WORKSPACE_ID, STREAM, 150, tailFloor)
+    const tail = await loadStreamTail(WORKSPACE_ID, STREAM, tailFloor, null)
 
     // Both interleavings of the two arms' emissions, and the fully-settled state.
     const steps = [
-      unionStreamRanges(await loadStreamPrefix(STREAM, 200, tailFloor), tail),
+      unionStreamRanges(await loadStreamPrefix(WORKSPACE_ID, STREAM, 200, tailFloor), tail),
       unionStreamRanges(widenedPrefix, tail),
     ]
     for (const step of steps) {
@@ -913,9 +914,9 @@ describe("bounded timeline read — tail and prefix", () => {
     // Neutralisation: the refuted design raised the tail floor on an older page.
     // With the floor raised, the old prefix no longer reaches the new tail and
     // rows the user was looking at disappear — this test fails against it.
-    const raisedTail = await loadStreamTail(STREAM, 261, null)
+    const raisedTail = await loadStreamTail(WORKSPACE_ID, STREAM, 261, null)
     const raisedIds = new Set(
-      unionStreamRanges(await loadStreamPrefix(STREAM, 200, tailFloor), raisedTail).map((e) => e.id)
+      unionStreamRanges(await loadStreamPrefix(WORKSPACE_ID, STREAM, 200, tailFloor), raisedTail).map((e) => e.id)
     )
     expect(renderedIds.filter((id) => !raisedIds.has(id)).length).toBeGreaterThan(0)
   })
@@ -934,8 +935,8 @@ describe("bounded timeline read — tail and prefix", () => {
     }
 
     // 1. Pre-latch: unstamped prefix (today's whole floored read) + unanchored tail.
-    const prefixPre = stampStreamEvents(await loadStreamEvents(STREAM, 1), STREAM, null)
-    const tailPre = stampStreamEvents(await loadStreamTail(STREAM, null, 1), STREAM, null)
+    const prefixPre = stampStreamEvents(await loadStreamEvents(WORKSPACE_ID, STREAM, 1), WORKSPACE_ID, STREAM, null)
+    const tailPre = stampStreamEvents(await loadStreamTail(WORKSPACE_ID, STREAM, null, 1), WORKSPACE_ID, STREAM, null)
     const windowPre = track(composeStreamWindow(prefixPre, tailPre, null))
 
     // 2. The tail floor latches at the oldest persisted row of that emission.
@@ -945,17 +946,27 @@ describe("bounded timeline read — tail and prefix", () => {
     // 3. A message arrives before the anchored reads resolve, so the still-live
     //    unanchored query re-emits shifted up by one: `[62..261]`, not `[61..261]`.
     await db.events.put(makeBroadcastEvent(STREAM, "261", "261"))
-    const tailStale = stampStreamEvents(await loadStreamTail(STREAM, null, 1), STREAM, null)
+    const tailStale = stampStreamEvents(await loadStreamTail(WORKSPACE_ID, STREAM, null, 1), WORKSPACE_ID, STREAM, null)
     expect(tailStale[0]._sequenceNum).toBe(62)
 
     // 4. The anchored prefix resolves first — the exact interleave. Composing it
     //    with the stale tail would omit sequence 61.
-    const prefixAnchored = stampStreamEvents(await loadStreamPrefix(STREAM, 1, tailFloor), STREAM, tailFloor)
+    const prefixAnchored = stampStreamEvents(
+      await loadStreamPrefix(WORKSPACE_ID, STREAM, 1, tailFloor),
+      WORKSPACE_ID,
+      STREAM,
+      tailFloor
+    )
     const windowSkewed = track(composeStreamWindow(prefixAnchored, tailStale, windowPre))
     expect(windowSkewed).toBe(windowPre)
 
     // 5. The anchored tail resolves; both stamps agree and the window settles.
-    const tailAnchored = stampStreamEvents(await loadStreamTail(STREAM, tailFloor, null), STREAM, tailFloor)
+    const tailAnchored = stampStreamEvents(
+      await loadStreamTail(WORKSPACE_ID, STREAM, tailFloor, null),
+      WORKSPACE_ID,
+      STREAM,
+      tailFloor
+    )
     const windowFinal = track(composeStreamWindow(prefixAnchored, tailAnchored, windowSkewed))
 
     expect(windowFinal?.map((e) => e._sequenceNum)).toEqual(Array.from({ length: 261 }, (_, i) => i + 1))
@@ -1006,9 +1017,9 @@ describe("useStreamEvents across a draft promotion", () => {
     await db.events.put(moved)
     emitDraftPromoted({ draftId, realStreamId: realId, workspaceId: WORKSPACE_ID, events: [moved] })
 
-    const { result } = renderHook(() => useStreamEvents(realId, null))
+    const { result } = renderHook(() => useStreamEvents(WORKSPACE_ID, realId, null))
 
-    // Spread off the window's `__streamId`/`__tailFloor` stamps so the rows
+    // Spread off the window's `__workspaceId`/`__streamId`/`__tailFloor` stamps so the rows
     // themselves are what gets compared.
     expect(result.current?.map((event) => ({ ...event }))).toEqual([moved])
     await waitFor(() => expect(getDraftPromotionEvents(realId)).toBeNull())
@@ -1023,7 +1034,7 @@ describe("useStreamEvents across a draft promotion", () => {
     const moved: CachedEvent = { ...makeRealEvent(realId, String(Date.now())), id: "temp_pending", _status: "pending" }
     emitDraftPromoted({ draftId, realStreamId: realId, workspaceId: WORKSPACE_ID, events: [moved] })
 
-    const { result } = renderHook(() => useStreamEvents(realId, null))
+    const { result } = renderHook(() => useStreamEvents(WORKSPACE_ID, realId, null))
 
     await waitFor(() => expect(result.current).toBeDefined())
     await new Promise((resolve) => setTimeout(resolve, 10))
@@ -1038,7 +1049,7 @@ describe("useStreamEvents across a draft promotion", () => {
     await db.events.put(moved)
     emitDraftPromoted({ draftId, realStreamId: realId, workspaceId: WORKSPACE_ID, events: [moved] })
 
-    const { result } = renderHook(() => useStreamEvents(draftId, null))
+    const { result } = renderHook(() => useStreamEvents(WORKSPACE_ID, draftId, null))
 
     await waitFor(() => expect(result.current).toBeDefined())
     await new Promise((resolve) => setTimeout(resolve, 10))
@@ -1077,18 +1088,19 @@ describe("useStreamEvents with the bounded read armed", () => {
 
   it("re-reads IDB on resume when a frozen page missed the service worker's write notification", async () => {
     await seed(STREAM, 1)
-    const { result } = renderHook(() => useStreamEvents(STREAM, 1))
+    const { result } = renderHook(() => useStreamEvents(WORKSPACE_ID, STREAM, 1))
     await waitFor(() => expect(result.current?.map((event) => event.sequence)).toEqual(["1"]))
 
     await putRawEvent(makeRealEvent(STREAM, "2"))
-    expect((await db.events.where("streamId").equals(STREAM).toArray()).map((event) => event.sequence)).toEqual([
-      "1",
-      "2",
-    ])
+    expect(
+      (await db.events.where("[workspaceId+streamId]").equals([WORKSPACE_ID, STREAM]).toArray()).map(
+        (event) => event.sequence
+      )
+    ).toEqual(["1", "2"])
     await new Promise((resolve) => setTimeout(resolve, 10))
     expect(result.current?.map((event) => event.sequence)).toEqual(["1"])
 
-    await act(() => requestStreamEventReadRefresh([STREAM]))
+    await act(() => requestStreamEventReadRefresh(WORKSPACE_ID, [STREAM]))
 
     await waitFor(() => expect(result.current?.map((event) => event.sequence)).toEqual(["1", "2"]))
   })
@@ -1102,14 +1114,14 @@ describe("useStreamEvents with the bounded read armed", () => {
     let messageEventIds: string[] = []
     const boardSubscription = liveQuery(() =>
       db.events
-        .where("[streamId+eventType]")
-        .anyOf(BOARD_RAIL_EVENT_TYPES.map((eventType) => [STREAM, eventType]))
+        .where("[workspaceId+streamId+eventType]")
+        .anyOf(BOARD_RAIL_EVENT_TYPES.map((eventType) => [WORKSPACE_ID, STREAM, eventType]))
         .toArray()
     ).subscribe((events) => {
       boardEventIds = events.map((event) => event.id).sort()
     })
     const messageSubscription = liveQuery(() =>
-      db.events.where("[streamId+eventType]").equals([STREAM, "message_created"]).toArray()
+      db.events.where("[workspaceId+streamId+eventType]").equals([WORKSPACE_ID, STREAM, "message_created"]).toArray()
     ).subscribe((events) => {
       messageEventIds = events.map((event) => event.id).sort()
     })
@@ -1129,7 +1141,7 @@ describe("useStreamEvents with the bounded read armed", () => {
         messageEventIds: [`evt_${STREAM}_1`],
       })
 
-      await act(() => requestStreamEventReadRefresh([STREAM]))
+      await act(() => requestStreamEventReadRefresh(WORKSPACE_ID, [STREAM]))
 
       await waitFor(() =>
         expect({ boardEventIds, messageEventIds }).toEqual({
@@ -1148,12 +1160,15 @@ describe("useStreamEvents with the bounded read armed", () => {
 
     const { ranges, restore } = recordRanges()
     try {
-      const { result, rerender } = renderHook(({ floor }: { floor: number }) => useStreamEvents(STREAM, floor), {
-        initialProps: { floor: 200 },
-      })
+      const { result, rerender } = renderHook(
+        ({ floor }: { floor: number }) => useStreamEvents(WORKSPACE_ID, STREAM, floor),
+        {
+          initialProps: { floor: 200 },
+        }
+      )
       await waitFor(() => expect(result.current?.length).toBe(101))
 
-      const tailRanges = ranges.filter((args) => Array.isArray(args[1]) && (args[1] as unknown[])[1] === Dexie.maxKey)
+      const tailRanges = ranges.filter((args) => Array.isArray(args[1]) && (args[1] as unknown[])[2] === Dexie.maxKey)
       const tailRangeCount = tailRanges.length
       const anchoredTailLower = tailRanges[tailRanges.length - 1][0]
 
@@ -1161,7 +1176,7 @@ describe("useStreamEvents with the bounded read armed", () => {
       await waitFor(() => expect(result.current?.length).toBe(151))
 
       const tailRangesAfter = ranges.filter(
-        (args) => Array.isArray(args[1]) && (args[1] as unknown[])[1] === Dexie.maxKey
+        (args) => Array.isArray(args[1]) && (args[1] as unknown[])[2] === Dexie.maxKey
       )
       expect(tailRangesAfter.length).toBe(tailRangeCount)
       expect(tailRangesAfter[tailRangesAfter.length - 1][0]).toEqual(anchoredTailLower)
@@ -1185,7 +1200,7 @@ describe("useStreamEvents with the bounded read armed", () => {
       const seen: (CachedEvent[] | undefined)[] = []
       const { result, rerender } = renderHook(
         ({ floor }: { floor: number }) => {
-          const events = useStreamEvents(STREAM, floor)
+          const events = useStreamEvents(WORKSPACE_ID, STREAM, floor)
           seen.push(events)
           return events
         },
@@ -1197,8 +1212,8 @@ describe("useStreamEvents with the bounded read armed", () => {
       await waitFor(() => expect(result.current?.[0]?._sequenceNum).toBe(raisedFloor))
 
       const tailLowerBounds = ranges
-        .filter((args) => Array.isArray(args[1]) && (args[1] as unknown[])[1] === Dexie.maxKey)
-        .map((args) => (args[0] as unknown[])[1])
+        .filter((args) => Array.isArray(args[1]) && (args[1] as unknown[])[2] === Dexie.maxKey)
+        .map((args) => (args[0] as unknown[])[2])
       expect({
         window: result.current?.map((e) => e._sequenceNum),
         reLatchedAtOrAboveFloor: tailLowerBounds[tailLowerBounds.length - 1],
@@ -1235,7 +1250,7 @@ describe("useStreamEvents with the bounded read armed", () => {
     const seen: (CachedEvent[] | undefined)[] = []
     const { result, rerender } = renderHook(
       ({ streamId }: { streamId: string }) => {
-        const events = useStreamEvents(streamId, 1)
+        const events = useStreamEvents(WORKSPACE_ID, streamId, 1)
         seen.push(events)
         return events
       },
@@ -1262,10 +1277,77 @@ describe("useStreamEvents as a tracked read", () => {
 
   it("holds whenReadsSettled until the mounted window has read its rows", async () => {
     await db.events.bulkPut([makeRealEvent(STREAM, "1"), makeRealEvent(STREAM, "2")])
-    const { result } = renderHook(() => useStreamEvents(STREAM, 1))
+    const { result } = renderHook(() => useStreamEvents(WORKSPACE_ID, STREAM, 1))
 
     await whenReadsSettled()
 
     expect(result.current?.map((event) => event.sequence)).toEqual(["1", "2"])
+  })
+})
+
+describe("timeline reads when two workspaces hold the same stream", () => {
+  const STREAM = "stream_copied"
+
+  function inWorkspace(workspaceId: string, sequence: string): CachedEvent {
+    return {
+      ...makeRealEvent(STREAM, sequence),
+      workspaceId,
+      payload: { messageId: `msg_${sequence}`, contentMarkdown: `${workspaceId}:${sequence}` },
+    }
+  }
+
+  const rowsA = ["1", "2", "3"].map((sequence) => inWorkspace("ws_a", sequence))
+  const rowsB = ["1", "2", "3"].map((sequence) => inWorkspace("ws_b", sequence))
+  const unsentInB: CachedEvent = { ...makeOptimisticEvent(STREAM, "temp_b", "1000"), workspaceId: "ws_b" }
+
+  beforeEach(async () => {
+    await db.events.clear()
+    await db.events.bulkPut([...rowsA, ...rowsB, unsentInB])
+  })
+
+  it("should return only this workspace's rows from every bounded and unbounded read", async () => {
+    const read = async (workspaceId: string) => ({
+      all: await loadStreamEvents(workspaceId, STREAM, null),
+      floored: await loadStreamEvents(workspaceId, STREAM, 2),
+      unanchoredTail: await loadStreamTail(workspaceId, STREAM, null),
+      anchoredTail: await loadStreamTail(workspaceId, STREAM, 2),
+      prefix: await loadStreamPrefix(workspaceId, STREAM, 1, 3),
+    })
+
+    expect({ a: await read("ws_a"), b: await read("ws_b"), c: await read("ws_c") }).toEqual({
+      a: {
+        all: rowsA,
+        floored: rowsA.slice(1),
+        unanchoredTail: rowsA,
+        anchoredTail: rowsA.slice(1),
+        prefix: rowsA.slice(0, 2),
+      },
+      b: {
+        all: [...rowsB, unsentInB],
+        floored: [...rowsB.slice(1), unsentInB],
+        unanchoredTail: [...rowsB, unsentInB],
+        anchoredTail: [...rowsB.slice(1), unsentInB],
+        prefix: rowsB.slice(0, 2),
+      },
+      c: { all: [], floored: [], unanchoredTail: [], anchoredTail: [], prefix: [] },
+    })
+  })
+
+  it("should never hand back the previous workspace's rows while a workspace switch is in flight", async () => {
+    const seen: { asked: string; rows: CachedEvent[] | undefined }[] = []
+    const { result, rerender } = renderHook(
+      ({ workspaceId }: { workspaceId: string }) => {
+        const rows = useStreamEvents(workspaceId, STREAM, 1)
+        seen.push({ asked: workspaceId, rows })
+        return rows
+      },
+      { initialProps: { workspaceId: "ws_a" } }
+    )
+    await waitFor(() => expect(result.current && [...result.current]).toEqual(rowsA))
+
+    rerender({ workspaceId: "ws_b" })
+    await waitFor(() => expect(result.current && [...result.current]).toEqual([...rowsB, unsentInB]))
+
+    expect(seen.filter(({ asked, rows }) => rows?.some((row) => row.workspaceId !== asked))).toEqual([])
   })
 })

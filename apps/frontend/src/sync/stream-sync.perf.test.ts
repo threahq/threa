@@ -135,7 +135,7 @@ describe("message:created sub-marks", () => {
     const capture = new PerfCapture()
     armPerfCapture(capture)
     await deliver("stream_perf", ["evt_same"])
-    const armedEvents = await db.events.where("streamId").equals("stream_perf").toArray()
+    const armedEvents = await db.events.where("[workspaceId+streamId]").equals(["ws_1", "stream_perf"]).toArray()
     const armedStream = await db.streams.get(["ws_1", "stream_perf"])
 
     const armedCount = capture.snapshot().length
@@ -143,7 +143,7 @@ describe("message:created sub-marks", () => {
     armPerfCapture(NO_CAPTURE)
     await resetTables()
     await deliver("stream_perf", ["evt_same"])
-    const unarmedEvents = await db.events.where("streamId").equals("stream_perf").toArray()
+    const unarmedEvents = await db.events.where("[workspaceId+streamId]").equals(["ws_1", "stream_perf"]).toArray()
     const unarmedStream = await db.streams.get(["ws_1", "stream_perf"])
 
     // Asserted against the previously-armed capture, not against the disarmed

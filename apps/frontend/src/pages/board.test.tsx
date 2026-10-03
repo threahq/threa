@@ -74,11 +74,12 @@ function makePost(
   msgOverrides: Partial<BoardPostMessage> | null = {},
   recentMessages: BoardPostMessage[] = [],
   totalReplies?: number
-): BoardPost {
+): BoardPost & { workspaceId: string } {
   const conversation = makeConversation(convOverrides)
   const openingMessage =
     msgOverrides === null ? null : makeOpeningMessage({ streamId: conversation.streamId, ...msgOverrides })
   return {
+    workspaceId: WORKSPACE_ID,
     conversation,
     openingMessage,
     recentMessages,

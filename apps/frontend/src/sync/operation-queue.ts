@@ -61,7 +61,7 @@ async function markCommandDispatchFailed(
   error: Error
 ): Promise<void> {
   await database.transaction("rw", database.events, async () => {
-    const dispatched = await database.events.get(optimisticEventId)
+    const dispatched = await database.events.get([workspaceId, optimisticEventId])
     if (!dispatched) return
     const failedSequence = (Number(dispatched.sequence) + 1).toString()
     const failedEvent: CachedEvent = {
@@ -82,7 +82,7 @@ async function markCommandDispatchFailed(
       _status: "failed",
       _cachedAt: Date.now(),
     }
-    await database.events.update(optimisticEventId, { _status: "failed" })
+    await database.events.update([workspaceId, optimisticEventId], { _status: "failed" })
     await database.events.put(failedEvent)
   })
 }
@@ -255,9 +255,10 @@ async function executeOperation(
         })
         if (!result.success) throw new ApiError(400, "COMMAND_DISPATCH_FAILED", result.error)
         await database.transaction("rw", [database.events, database.pendingOperations], async () => {
-          const optimistic = await database.events.get(optimisticEventId)
+          const optimistic = await database.events.get([workspaceId, optimisticEventId])
           if (optimistic) {
             await bumpLaterOptimisticAnchors(
+              workspaceId,
               optimistic.streamId,
               optimistic._sequenceNum,
               sequenceToNum(result.event.sequence),
@@ -267,7 +268,7 @@ async function executeOperation(
               // instance is outside this transaction besides.
               database
             )
-            await database.events.delete(optimisticEventId)
+            await database.events.delete([workspaceId, optimisticEventId])
             await database.events.put({
               ...result.event,
               workspaceId,

@@ -43,7 +43,7 @@ describe("putEventsBounded", () => {
 
     expect(bulkPut).toHaveBeenCalledTimes(2)
     expect(bulkPut.mock.calls.map((call) => (call[0] as CachedEvent[]).length)).toEqual([EVENT_BULK_PUT_LIMIT, 1])
-    expect(await db.events.where("streamId").equals("stream_a").count()).toBe(50)
+    expect(await db.events.where("[workspaceId+streamId]").equals(["ws_1", "stream_a"]).count()).toBe(50)
   })
 
   it("a page at the limit is written as one bulkPut", async () => {
@@ -52,7 +52,9 @@ describe("putEventsBounded", () => {
     await putEventsBounded(db.events, makePage("stream_a", EVENT_BULK_PUT_LIMIT))
 
     expect(bulkPut).toHaveBeenCalledTimes(1)
-    expect(await db.events.where("streamId").equals("stream_a").count()).toBe(EVENT_BULK_PUT_LIMIT)
+    expect(await db.events.where("[workspaceId+streamId]").equals(["ws_1", "stream_a"]).count()).toBe(
+      EVENT_BULK_PUT_LIMIT
+    )
   })
 })
 
@@ -61,7 +63,7 @@ describe("skipNoOpEventRewrites", () => {
     const rows = makePage("stream_a", 50)
     await putEventsBounded(db.events, rows)
 
-    const existingRows = await db.events.bulkGet(rows.map((row) => row.id))
+    const existingRows = await db.events.bulkGet(rows.map((row) => [row.workspaceId, row.id]))
     const existingById = new Map(
       existingRows.filter((row): row is CachedEvent => row != null).map((row) => [row.id, row] as const)
     )
@@ -71,7 +73,7 @@ describe("skipNoOpEventRewrites", () => {
     await putEventsBounded(db.events, skipNoOpEventRewrites(existingById, candidates))
 
     expect(bulkPut).toHaveBeenCalledTimes(0)
-    const after = await db.events.where("streamId").equals("stream_a").toArray()
+    const after = await db.events.where("[workspaceId+streamId]").equals(["ws_1", "stream_a"]).toArray()
     expect(after.every((row) => row._cachedAt === 1)).toBe(true)
   })
 
@@ -114,8 +116,8 @@ describe("live-query wake set (D1)", () => {
     })
     const subscription = liveQuery(() =>
       db.events
-        .where("[streamId+_sequenceNum]")
-        .between(["stream_a", 0], ["stream_a", Number.MAX_SAFE_INTEGER])
+        .where("[workspaceId+streamId+_sequenceNum]")
+        .between(["ws_1", "stream_a", 0], ["ws_1", "stream_a", Number.MAX_SAFE_INTEGER])
         .toArray()
     ).subscribe(() => {
       emissions += 1
@@ -155,7 +157,7 @@ describe("live-query wake set (D1)", () => {
     })
 
     expect(emissions).toBe(0)
-    expect(await db.events.where("streamId").equals("stream_b").count()).toBe(50)
+    expect(await db.events.where("[workspaceId+streamId]").equals(["ws_1", "stream_b"]).count()).toBe(50)
   })
 
   it("a patch to a row the query returned still wakes it", async () => {

@@ -103,7 +103,8 @@ describe("useStreamSearch hook integration", () => {
     vi.spyOn(dbModule.db.events, "where").mockReturnValue(chain as never)
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
+    await dbModule.db.events.clear()
     fakeEvents = []
     vi.spyOn(e2eStore, "useE2eSession").mockReturnValue({
       status: "unlocked",
@@ -178,5 +179,46 @@ describe("useStreamSearch hook integration", () => {
 
     expect(result.current.results.map((r) => r.id)).toEqual(["m1"])
     expect(searchMessagesSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it("should return only the searched workspace's rows when two workspaces hold the same stream id", async () => {
+    await dbModule.db.events.bulkPut([
+      event({ id: "e1", _sequenceNum: 1, payload: { messageId: "m1", contentMarkdown: "shared body ws_1" } }),
+      event({
+        id: "e1",
+        workspaceId: "ws_2",
+        _sequenceNum: 1,
+        payload: { messageId: "m1", contentMarkdown: "shared body ws_2" },
+      }),
+      event({
+        id: "e2",
+        workspaceId: "ws_2",
+        _sequenceNum: 2,
+        payload: { messageId: "m2", contentMarkdown: "shared extra ws_2" },
+      }),
+    ])
+
+    const { result } = renderHook(() =>
+      useStreamSearch({ workspaceId: "ws_1", streamId: "stream_1", e2eEnabled: false })
+    )
+
+    await act(async () => {
+      result.current.setQuery("shared")
+    })
+    await act(async () => {
+      await result.current.search()
+    })
+
+    expect(result.current.results).toEqual([
+      {
+        id: "m1",
+        streamId: "stream_1",
+        content: "shared body ws_1",
+        authorId: "usr_1",
+        authorType: "user",
+        createdAt: new Date(1000).toISOString(),
+        rank: 0,
+      },
+    ])
   })
 })
