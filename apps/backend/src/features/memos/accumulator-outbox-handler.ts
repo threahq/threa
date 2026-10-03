@@ -1,10 +1,12 @@
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import { StreamStateRepository, findMemoryModeStream, isMemoryAutomationOn } from "../streams"
+import { ConversationRepository } from "../conversations"
 import { PendingItemRepository } from "./pending-item-repository"
+import { MemoRepository } from "./repository"
 import { pendingItemId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
-import { withClient } from "../../db"
+import { withClient, withTransaction } from "../../db"
 import { E2eStreamsRepository } from "../e2e-streams"
 
 export type MemoAccumulatorHandlerConfig = DebouncedOutboxHandlerConfig
@@ -27,6 +29,10 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
       case "conversation:created":
       case "conversation:updated":
         await this.handleConversationEvent(event)
+        break
+      case "message:edited":
+      case "message:deleted":
+        await this.handleMessageMutation(event)
         break
     }
   }
@@ -61,37 +67,104 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
       return
     }
 
-    await withClient(this.db, async (client) => {
-      // `off` excludes the stream from memo extraction *and* passive to-do
-      // capture (both ride processBatch, which never runs without queued items).
-      const topLevelStream = await findMemoryModeStream(client, workspaceId, streamId)
-      if (!topLevelStream) {
-        // Nothing to attribute memos to, so don't queue an orphan.
-        logger.warn({ workspaceId, streamId }, "Stream not found for memo accumulator")
-        return
-      }
-      if (!isMemoryAutomationOn(topLevelStream)) {
-        logger.debug({ workspaceId, streamId }, "Memory automation off for stream — skipping memo queue")
-        return
-      }
-      const topLevelStreamId = topLevelStream.id
+    await withClient(this.db, (client) => this.queueConversations(client, workspaceId, streamId, [conversationId]))
+  }
 
-      await PendingItemRepository.queue(client, [
-        {
-          id: pendingItemId(),
+  /**
+   * An edit or delete changes what memos drawn from the message may say, so its
+   * conversations go back through the batch. A delete also retires the memos
+   * citing it straight away, whatever the stream's memory mode: archived when
+   * none of their sources survive, otherwise superseded. A conversation memo is
+   * re-extracted from the rest by the requeued batch; a saved or reflective
+   * memo has no conversation to re-extract from, so it is gone.
+   */
+  private async handleMessageMutation(event: OutboxEvent): Promise<void> {
+    const payload = event.payload as unknown as Record<string, unknown>
+    const messageId =
+      event.eventType === "message:deleted"
+        ? payload.messageId
+        : (payload.event as { payload?: { messageId?: unknown } } | undefined)?.payload?.messageId
+    if (
+      typeof payload.workspaceId !== "string" ||
+      typeof payload.streamId !== "string" ||
+      typeof messageId !== "string"
+    ) {
+      return
+    }
+    const { workspaceId, streamId } = payload as { workspaceId: string; streamId: string }
+
+    if (await E2eStreamsRepository.isE2eStream(this.db, workspaceId, streamId)) {
+      return
+    }
+
+    await withTransaction(this.db, async (client) => {
+      if (event.eventType === "message:deleted") {
+        // Held by every memo save in the stream: a memo saved concurrently
+        // either commits before the lookup below, or sees the deletion.
+        const memoStream = await findMemoryModeStream(client, workspaceId, streamId)
+        if (memoStream) await MemoRepository.lockStreamSaves(client, memoStream.id)
+
+        const citing = await MemoRepository.findActiveCitingMessage(client, workspaceId, messageId)
+        await MemoRepository.archiveMany(
+          client,
           workspaceId,
-          streamId: topLevelStreamId,
-          itemType: "conversation",
-          itemId: conversationId,
-        },
-      ])
+          citing.filter((c) => !c.hasLiveSource).map((c) => c.memo.id)
+        )
+        await MemoRepository.markSuperseded(
+          client,
+          workspaceId,
+          citing.filter((c) => c.hasLiveSource).map((c) => c.memo.id),
+          "A source message was deleted"
+        )
+      }
 
-      await StreamStateRepository.upsertActivity(client, workspaceId, topLevelStreamId)
-
-      logger.debug(
-        { workspaceId, streamId: topLevelStreamId, conversationId },
-        "Conversation queued for memo processing"
+      const conversations = await ConversationRepository.findByMessageId(client, workspaceId, messageId)
+      await this.queueConversations(
+        client,
+        workspaceId,
+        streamId,
+        conversations.map((c) => c.id)
       )
     })
+  }
+
+  private async queueConversations(
+    client: PoolClient,
+    workspaceId: string,
+    streamId: string,
+    conversationIds: string[]
+  ): Promise<void> {
+    if (conversationIds.length === 0) return
+
+    // `off` excludes the stream from memo extraction *and* passive to-do
+    // capture (both ride processBatch, which never runs without queued items).
+    const topLevelStream = await findMemoryModeStream(client, workspaceId, streamId)
+    if (!topLevelStream) {
+      // Nothing to attribute memos to, so don't queue an orphan.
+      logger.warn({ workspaceId, streamId }, "Stream not found for memo accumulator")
+      return
+    }
+    if (!isMemoryAutomationOn(topLevelStream)) {
+      logger.debug({ workspaceId, streamId }, "Memory automation off for stream — skipping memo queue")
+      return
+    }
+
+    await PendingItemRepository.queue(
+      client,
+      conversationIds.map((itemId) => ({
+        id: pendingItemId(),
+        workspaceId,
+        streamId: topLevelStream.id,
+        itemType: "conversation",
+        itemId,
+      }))
+    )
+
+    await StreamStateRepository.upsertActivity(client, workspaceId, topLevelStream.id)
+
+    logger.debug(
+      { workspaceId, streamId: topLevelStream.id, conversationIds },
+      "Conversations queued for memo processing"
+    )
   }
 }

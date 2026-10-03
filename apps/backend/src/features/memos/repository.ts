@@ -569,6 +569,37 @@ export const MemoRepository = {
   },
 
   /**
+   * Serializes, per top-level stream, memo saves (batch, save_memo, reflective
+   * capture) with each other and with retirement when a source message is
+   * deleted. Keyed by the root so a save in a thread and a deletion in its
+   * channel take the same lock.
+   */
+  async lockStreamSaves(db: Querier, rootStreamId: string): Promise<void> {
+    await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${rootStreamId}`])
+  },
+
+  /** Active memos citing `messageId`, each flagged with whether any of its sources is still undeleted. */
+  async findActiveCitingMessage(
+    db: Querier,
+    workspaceId: string,
+    messageId: string
+  ): Promise<Array<{ memo: Memo; hasLiveSource: boolean }>> {
+    const result = await db.query<MemoRow & { has_live_source: boolean }>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)},
+        EXISTS (
+          SELECT 1 FROM messages
+          JOIN streams ON streams.id = messages.stream_id AND streams.workspace_id = memos.workspace_id
+          WHERE messages.id = ANY(memos.source_message_ids) AND messages.deleted_at IS NULL
+        ) AS has_live_source
+      FROM memos
+      WHERE workspace_id = ${workspaceId}
+        AND status = 'active'
+        AND source_message_ids @> ARRAY[${messageId}]::text[]
+    `)
+    return result.rows.map((row) => ({ memo: mapRowToMemo(row), hasLiveSource: row.has_live_source }))
+  },
+
+  /**
    * Closest active memo in `streamId` whose abstract embedding sits within
    * `maxDistance` (pgvector cosine distance) of `embedding`. Drives the dedup
    * gate (INV-20) for repeats both across conversations AND within one: the
@@ -672,6 +703,16 @@ export const MemoRepository = {
     await db.query(sql`
       UPDATE memos
       SET status = 'superseded', revision_reason = ${revisionReason}, updated_at = NOW()
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}::text[]) AND status = 'active'
+    `)
+  },
+
+  /** Archive active memos in one round-trip (INV-56). Workspace-scoped (INV-8). */
+  async archiveMany(db: Querier, workspaceId: string, ids: string[]): Promise<void> {
+    if (ids.length === 0) return
+    await db.query(sql`
+      UPDATE memos
+      SET status = 'archived', archived_at = NOW(), updated_at = NOW()
       WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}::text[]) AND status = 'active'
     `)
   },

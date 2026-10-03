@@ -345,7 +345,7 @@ export class MemoService implements MemoServiceLike {
         if (conv) {
           conversations.set(convId, conv)
           const msgs = await MessageRepository.findByIds(client, conv.messageIds)
-          conversationMessages.set(convId, msgs)
+          conversationMessages.set(convId, new Map([...msgs].filter(([, message]) => !message.deletedAt)))
           const existingMemos = await MemoRepository.findActiveBySourceConversation(client, convId)
           existingConversationMemos.set(convId, existingMemos)
         }
@@ -680,10 +680,20 @@ export class MemoService implements MemoServiceLike {
       // Serialize batches for this stream so a concurrent batch can't read the
       // dedup gate and insert the same memo in the window before this one
       // commits (INV-20). Transaction-scoped: released on commit/rollback.
-      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${streamId}`])
+      await MemoRepository.lockStreamSaves(client, streamId)
+
+      // A source deleted while the model calls ran drops the memo; the deletion
+      // requeues the conversation, so the next batch re-extracts from the rest.
+      const sources = await MessageRepository.findByIds(
+        client,
+        memosToCreate.flatMap((m) => m.sourceMessageIds)
+      )
+      const savable = memoryOn
+        ? memosToCreate.filter((m) => m.sourceMessageIds.every((id) => !sources.get(id)?.deletedAt))
+        : []
 
       const createdMemos: MemoToCreate[] = []
-      for (const memoData of memoryOn ? memosToCreate : []) {
+      for (const memoData of savable) {
         // Authoritative dedup (INV-20): under the lock this sees committed
         // memos from other batches AND survivors already inserted earlier in
         // this same transaction (uncommitted rows are visible to it), so it
@@ -1020,6 +1030,14 @@ export class MemoService implements MemoServiceLike {
         await assertStreamWritable(client, { workspaceId, streamId, principal })
       }
 
+      // Resolves the root so a thread-backed save inherits the scratchpad tier.
+      const natural = await resolveMemoScopeForStreamId(client, streamId)
+
+      // Serialize against the passive batch, other saves and source deletions
+      // in this root (same lock key) before the sources are read, so neither the
+      // dedup gate nor a source's liveness can be read stale (INV-20).
+      await MemoRepository.lockStreamSaves(client, natural.rootStreamId)
+
       // Resolve the cited source messages scoped to the turn's own stream family
       // (INV-8/INV-62): `sourceMessageIds` is LLM-supplied, so an id outside this
       // family — another workspace, an inaccessible stream, or a broader stream
@@ -1054,8 +1072,6 @@ export class MemoService implements MemoServiceLike {
       // matching passive extraction; an explicit tool `scope` overrides. A `user`
       // override needs an invoking human to own it — with none, fall back to the
       // natural tier rather than mint an ownerless (CHECK-violating) user memo.
-      // Resolves the root so a thread-backed save inherits the scratchpad tier.
-      const natural = await resolveMemoScopeForStreamId(client, streamId)
       let resolvedScope = natural.scope
       let resolvedScopeUserId = natural.scopeUserId
       if (scopeOverride === MemoScopes.WORKSPACE) {
@@ -1081,10 +1097,6 @@ export class MemoService implements MemoServiceLike {
       // event there. Passive/reflective capture never hit this: they only produce
       // `user` scope in a private scratchpad, whose audience already equals the owner.
       const captureLeaksToStream = resolvedScope === MemoScopes.USER && natural.scope !== MemoScopes.USER
-
-      // Serialize against the passive batch and other save_memo calls for this
-      // stream (same lock key) so the dedup gate can't be read stale (INV-20).
-      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${streamId}`])
 
       const duplicate = await MemoRepository.findNearDuplicate(client, {
         workspaceId,
@@ -1303,9 +1315,10 @@ export class MemoService implements MemoServiceLike {
       )
     }
 
-    // Phase 4: save under the same per-stream lock the batch/save_memo use, so
-    // the dedup gate can't be read stale (INV-20). Memo rows, their outbox
-    // events, and the memos:captured timeline event commit atomically (INV-7/62).
+    // Phase 4: save under the same per-root lock the batch/save_memo and source
+    // deletions use, so neither the dedup gate nor a source's liveness can be
+    // read stale (INV-20). Memo rows, their outbox events, and the
+    // memos:captured timeline event commit atomically (INV-7/62).
     return withTransaction(this.pool, async (client) => {
       // Memory switched off while the model calls ran: save nothing. Same
       // share-locked gate and lock order as the passive batch.
@@ -1319,7 +1332,15 @@ export class MemoService implements MemoServiceLike {
         return { classified: true, captured: 0, deduped: 0 }
       }
 
-      await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`memo-batch:${streamId}`])
+      await MemoRepository.lockStreamSaves(client, context.memoScope.rootStreamId)
+
+      // A source deleted while the model calls ran: the memos were written from
+      // it, so dropping only the citation would keep its content.
+      const sources = await MessageRepository.findByIds(client, context.sourceMessageIds)
+      if (context.sourceMessageIds.some((id) => !sources.get(id) || sources.get(id)?.deletedAt)) {
+        logger.info({ sessionId, streamId }, "reflective capture — a source was deleted before save")
+        return { classified: true, captured: 0, deduped: 0 }
+      }
 
       const capturedMemos: MemosCapturedEventPayload["memos"] = []
       let deduped = 0

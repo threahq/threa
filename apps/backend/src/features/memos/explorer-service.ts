@@ -505,7 +505,7 @@ export class MemoExplorerService {
 
     const sourceMessages = memo.sourceMessageIds
       .map((messageId) => sourceMessagesMap.get(messageId))
-      .filter((message): message is Message => Boolean(message))
+      .filter((message): message is Message => message !== undefined && !message.deletedAt)
       .filter((message) => accessibleStreamIds.includes(message.streamId))
 
     if (sourceMessages.length === 0) {
