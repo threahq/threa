@@ -544,7 +544,7 @@ export class LinkPreviewService {
     // person; only then fall back to any non-author member.
     let recipientName: string | undefined
     if (stream.type === "dm") {
-      const members = await StreamMemberRepository.list(this.deps.pool, { streamId: targetStreamId })
+      const members = await StreamMemberRepository.list(this.deps.pool, workspaceId, { streamId: targetStreamId })
       const recipientId =
         members.find((m) => m.memberId !== message.authorId && m.memberId !== userId)?.memberId ??
         members.find((m) => m.memberId !== message.authorId)?.memberId

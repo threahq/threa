@@ -73,10 +73,12 @@ describe("stream write lock statements", () => {
       expect(
         (await StreamRepository.findByIdsForUpdateBlocking(client, workspaceId, [threadId, rootId])).map((s) => s.id)
       ).toEqual([rootId, threadId].sort())
-      expect(await StreamMemberRepository.lockMemberships(client, [rootId], userId)).toEqual(new Set([rootId]))
-      expect(await StreamMemberRepository.lockMemberPairs(client, [{ streamId: rootId, memberId: userId }])).toEqual(
-        new Set([`${rootId}:${userId}`])
+      expect(await StreamMemberRepository.lockMemberships(client, workspaceId, [rootId], userId)).toEqual(
+        new Set([rootId])
       )
+      expect(
+        await StreamMemberRepository.lockMemberPairs(client, workspaceId, [{ streamId: rootId, memberId: userId }])
+      ).toEqual(new Set([`${rootId}:${userId}`]))
       expect(await BotChannelAccessRepository.lockGrants(client, workspaceId, botId, [rootId])).toEqual(
         new Set([rootId])
       )

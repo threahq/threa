@@ -52,7 +52,7 @@ export async function resolveSavedView(
     for (const s of rootStreams) streamById.set(s.id, s)
   }
 
-  const accessibleStreamIds = await computeAccessibleStreams(db, userId, streams, streamById)
+  const accessibleStreamIds = await computeAccessibleStreams(db, workspaceId, userId, streams, streamById)
 
   return rows.map((row) =>
     toView(
@@ -71,6 +71,7 @@ export async function resolveSavedView(
  */
 async function computeAccessibleStreams(
   db: Querier,
+  workspaceId: string,
   userId: string,
   streams: Stream[],
   streamById: Map<string, Stream>
@@ -99,7 +100,7 @@ async function computeAccessibleStreams(
   }
 
   for (const accessStreamId of privateAccessStreamIds) {
-    const members = await StreamMemberRepository.filterMemberIds(db, accessStreamId, [userId])
+    const members = await StreamMemberRepository.filterMemberIds(db, workspaceId, accessStreamId, [userId])
     if (members.has(userId)) {
       for (const sid of authorizes.get(accessStreamId) ?? []) accessible.add(sid)
     }

@@ -64,7 +64,7 @@ async function principalParticipates(
   principal: StreamWritePrincipal
 ): Promise<boolean> {
   if (principal.kind === "user") {
-    return StreamMemberRepository.isMember(db, rootStreamId, principal.userId)
+    return StreamMemberRepository.isMember(db, workspaceId, rootStreamId, principal.userId)
   }
   return BotChannelAccessRepository.hasGrant(db, workspaceId, principal.botId, rootStreamId)
 }
@@ -101,7 +101,7 @@ export async function projectStreamsForPrincipal<T extends AuthorityStream>(
   const participatingRootIds =
     principal.kind === "user"
       ? new Set(
-          (await StreamMemberRepository.findByStreamsAndMember(db, validRootIds, principal.userId)).map(
+          (await StreamMemberRepository.findByStreamsAndMember(db, workspaceId, validRootIds, principal.userId)).map(
             (member) => member.streamId
           )
         )
@@ -196,7 +196,7 @@ export async function resolveLockedStreamAuthorities(
   const rootIds = [...new Set(facts.map(({ root }) => root.id))].sort()
   const participatingRootIds =
     principal.kind === "user"
-      ? await StreamMemberRepository.lockMemberships(db, rootIds, principal.userId)
+      ? await StreamMemberRepository.lockMemberships(db, params.workspaceId, rootIds, principal.userId)
       : await BotChannelAccessRepository.lockGrants(db, params.workspaceId, principal.botId, rootIds)
 
   const authorities: LockedStreamAuthority[] = []
