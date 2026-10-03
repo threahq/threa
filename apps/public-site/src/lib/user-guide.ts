@@ -19,21 +19,19 @@ export const guideArticles: GuideArticle[] = sortGuideArticles(
   )
 )
 
-/** The overview page is "index"; DocsLayout matches `current` against these slugs. */
-export const guideNav = [
-  { group: "User guide", items: [{ slug: "index", label: "All articles", href: "/guide" }] },
-  ...GUIDE_SECTIONS.map((section) => ({
-    group: section.title,
-    items: guideArticles
-      .filter((a) => a.section === section.id)
-      .map((a) => ({ slug: a.slug, label: a.title, href: `/guide/${a.slug}` })),
-  })).filter((g) => g.items.length > 0),
-]
-
 export const guideSections = GUIDE_SECTIONS.map((section) => ({
   ...section,
   articles: guideArticles.filter((a) => a.section === section.id),
 })).filter((s) => s.articles.length > 0)
+
+/** The overview page is "index"; DocsLayout matches `current` against these slugs. */
+export const guideNav = [
+  { group: "User guide", items: [{ slug: "index", label: "All articles", href: "/guide" }] },
+  ...guideSections.map((section) => ({
+    group: section.title,
+    items: section.articles.map((a) => ({ slug: a.slug, label: a.title, href: `/guide/${a.slug}` })),
+  })),
+]
 
 const processor = createMarkdownProcessor({ rehypePlugins: [[rehypeAppLinks, { appUrl: apiBase }]] })
 
