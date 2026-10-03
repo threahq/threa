@@ -64,10 +64,13 @@ describe("Stream connections E2E", () => {
       hostStreamId: channelId,
       hostStreamSlug: `connect-${testRunId}`,
       hostStreamDisplayName: null,
+      invitedBy: "usr_inviter",
       partnerWorkspaceId: null,
       partnerWorkspaceName: null,
       partnerRegion: null,
       partnerVisibility: null,
+      acceptedBy: null,
+      peerWorkspaceIds: [],
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
     }
 

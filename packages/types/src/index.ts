@@ -1427,7 +1427,7 @@ export {
   type PushTestProgress,
 } from "./push"
 
-// Stream connections (Threa Connect: a channel shared with another workspace)
+// Stream connections (Threa Connect: a channel shared with other workspaces)
 export {
   StreamConnectionStates,
   StreamConnectionErrorCodes,

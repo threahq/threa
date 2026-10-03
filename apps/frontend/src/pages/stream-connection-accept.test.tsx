@@ -28,7 +28,9 @@ function makeWorkspace(id: string, name: string): Workspace {
   }
 }
 
-function makeLookup(): StreamConnectionLookupResponse {
+type PendingLookup = Extract<StreamConnectionLookupResponse, { state: "invited" }>
+
+function makeLookup(overrides: Partial<PendingLookup> = {}): PendingLookup {
   return {
     state: "invited",
     hostWorkspaceId: "ws_acme",
@@ -38,11 +40,26 @@ function makeLookup(): StreamConnectionLookupResponse {
     streamSlug: "design",
     partnerWorkspaceId: null,
     partnerWorkspaceName: null,
+    partners: [],
+    ...overrides,
   }
 }
 
+function makePartners(...names: string[]): PendingLookup["partners"] {
+  return names.map((name) => ({ workspaceId: `ws_${name.toLowerCase()}`, workspaceName: name }))
+}
+
 function makeAcceptedLookup(): StreamConnectionLookupResponse {
-  return { ...makeLookup(), state: "active", partnerWorkspaceId: "ws_beta", partnerWorkspaceName: "Beta" }
+  return {
+    state: "active",
+    hostWorkspaceId: "ws_acme",
+    hostWorkspaceName: "Acme",
+    hostRegion: "eu-north-1",
+    streamDisplayName: null,
+    streamSlug: "design",
+    partnerWorkspaceId: "ws_beta",
+    partnerWorkspaceName: "Beta",
+  }
 }
 
 function renderPage(path = "/connections/tok_1") {
@@ -141,6 +158,7 @@ describe("StreamConnectionAcceptPage", () => {
   it.each([
     { code: StreamConnectionErrorCodes.DISABLED, message: "Shared channels aren't turned on for that workspace." },
     { code: StreamConnectionErrorCodes.ALREADY_ACCEPTED, message: "Another workspace already accepted this invite." },
+    { code: StreamConnectionErrorCodes.ALREADY_CONNECTED, message: "That workspace is already in this channel." },
     { code: StreamConnectionErrorCodes.EXPIRED, message: "Invite expired" },
     { code: StreamConnectionErrorCodes.REVOKED, message: "Invite revoked" },
     {
@@ -244,6 +262,83 @@ describe("StreamConnectionAcceptPage", () => {
 
     expect(await screen.findByRole("heading", { name: "No other workspace to connect" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Accept" })).not.toBeInTheDocument()
+  })
+
+  it("should leave the host and every partner out of the picker", async () => {
+    mockSession({ id: "user_1" }, [
+      makeWorkspace("ws_acme", "Acme"),
+      makeWorkspace("ws_beta", "Beta"),
+      makeWorkspace("ws_gamma", "Gamma"),
+      makeWorkspace("ws_delta", "Delta"),
+      makeWorkspace("ws_epsilon", "Epsilon"),
+    ])
+    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeLookup({ partners: makePartners("Beta", "Gamma") }))
+    const get = vi.spyOn(api, "get")
+
+    renderPage()
+    await userEvent.click(await screen.findByRole("combobox"))
+
+    const options = await screen.findAllByRole("option")
+    expect({
+      offered: options.map((option) => option.textContent),
+      probed: get.mock.calls.map(([path]) => path.split("/")[3]),
+    }).toEqual({
+      offered: ["Delta", "Epsilon"],
+      probed: ["ws_delta", "ws_epsilon"],
+    })
+  })
+
+  it.each([
+    { partners: [], line: null },
+    { partners: ["Beta"], line: "Beta is already in this channel." },
+    { partners: ["Beta", "Gamma"], line: "Beta and Gamma are already in this channel." },
+    { partners: ["Beta", "Gamma", "Delta"], line: "Beta, Gamma, and Delta are already in this channel." },
+  ])("should say who is already in the channel when it has $partners.length partners", async ({ partners, line }) => {
+    mockSession({ id: "user_1" }, [makeWorkspace("ws_zeta", "Zeta")])
+    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeLookup({ partners: makePartners(...partners) }))
+
+    renderPage()
+    await screen.findByRole("heading", { name: "#design from Acme" })
+
+    expect(screen.queryByText(/already in this channel/)?.textContent ?? null).toBe(line)
+  })
+
+  it("should point the viewer elsewhere when every workspace they have is already in the channel", async () => {
+    mockSession({ id: "user_1" }, [
+      makeWorkspace("ws_acme", "Acme"),
+      makeWorkspace("ws_beta", "Beta"),
+      makeWorkspace("ws_gamma", "Gamma"),
+    ])
+    vi.spyOn(streamConnectionsApi, "lookup").mockResolvedValue(makeLookup({ partners: makePartners("Beta", "Gamma") }))
+    const get = vi.spyOn(api, "get")
+
+    renderPage()
+
+    expect(await screen.findByRole("heading", { name: "No other workspace to connect" })).toBeInTheDocument()
+    expect({ accept: screen.queryByRole("button", { name: "Accept" }), probes: get.mock.calls }).toEqual({
+      accept: null,
+      probes: [],
+    })
+  })
+
+  it("should drop the accept error when the refreshed invite shows the failed workspace is already in the channel", async () => {
+    mockSession({ id: "user_1" }, [makeWorkspace("ws_beta", "Beta"), makeWorkspace("ws_gamma", "Gamma")])
+    vi.spyOn(streamConnectionsApi, "lookup")
+      .mockResolvedValueOnce(makeLookup())
+      .mockResolvedValue(makeLookup({ partners: makePartners("Beta") }))
+    vi.spyOn(streamConnectionsApi, "accept").mockRejectedValue(
+      new ApiError(409, StreamConnectionErrorCodes.ALREADY_CONNECTED, "already connected")
+    )
+
+    renderPage()
+    expect(await screen.findByRole("combobox")).toHaveTextContent("Beta")
+    await userEvent.click(screen.getByRole("button", { name: "Accept" }))
+
+    expect(await screen.findByText("Beta is already in this channel.")).toBeInTheDocument()
+    expect({ selected: screen.getByRole("combobox").textContent, alert: screen.queryByRole("alert") }).toEqual({
+      selected: "Gamma",
+      alert: null,
+    })
   })
 
   it("should point the viewer elsewhere when the host is their only workspace", async () => {

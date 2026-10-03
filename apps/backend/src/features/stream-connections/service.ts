@@ -1,7 +1,6 @@
 import type { Pool } from "pg"
 import {
   StreamConnectionErrorCodes,
-  StreamConnectionStates,
   StreamTypes,
   type CreateStreamConnectionInviteResponse,
   type StreamConnection,
@@ -60,8 +59,8 @@ export class StreamConnectionService {
       hostStreamId: stream.id,
       hostStreamSlug: stream.slug,
       hostStreamDisplayName: stream.displayName,
+      invitedBy: params.userId,
     })
-    if (result.superseded) await this.applySnapshot(result.superseded)
     await this.applySnapshot(result.snapshot)
     return { connection: await this.readBack(params.workspaceId, result.snapshot.id), token: result.token }
   }
@@ -81,12 +80,18 @@ export class StreamConnectionService {
     this.requireControlPlane()
   }
 
-  async accept(params: { workspaceId: string; token: string; visibility: Visibility }): Promise<StreamConnection> {
+  async accept(params: {
+    workspaceId: string
+    userId: string
+    token: string
+    visibility: Visibility
+  }): Promise<StreamConnection> {
     await this.assertCanAccept(params.workspaceId)
     const snapshot = await this.requireControlPlane().acceptStreamConnection({
       token: params.token,
       partnerWorkspaceId: params.workspaceId,
       visibility: params.visibility,
+      acceptedBy: params.userId,
     })
     await this.applySnapshot(snapshot)
     return this.readBack(params.workspaceId, snapshot.id)
@@ -100,15 +105,16 @@ export class StreamConnectionService {
       params.workspaceId,
       params.streamId
     )
-    const pending = connections.find((c) => c.state === StreamConnectionStates.INVITED)
-    if (!pending) return connections
-    // An accept from another region reaches this one only through the control
-    // plane's outbox, which gives up after a few retries. Re-reading heals it.
-    const snapshot = await this.requireControlPlane().getStreamConnection({
-      connectionId: pending.id,
+    if (connections.length === 0) return connections
+    // Changes made in another region reach this one only through the control
+    // plane's outbox, which gives up after a few retries. Re-reading heals it,
+    // including rows this region shows that the control plane has since moved on.
+    const snapshots = await this.requireControlPlane().listStreamConnections({
       workspaceId: params.workspaceId,
+      streamId: params.streamId,
+      includeIds: connections.map((c) => c.id),
     })
-    await this.applySnapshot(snapshot)
+    await StreamConnectionRepository.applySnapshots(this.pool, snapshots)
     return StreamConnectionRepository.listLiveForStream(this.pool, params.workspaceId, params.streamId)
   }
 
@@ -124,9 +130,9 @@ export class StreamConnectionService {
 
   /** Projects a control-plane snapshot. Safe to repeat and to receive out of order. */
   async applySnapshot(snapshot: StreamConnectionSnapshot): Promise<void> {
-    const localSides = await StreamConnectionRepository.applySnapshot(this.pool, snapshot)
-    if (localSides === 0) {
-      throw new HttpError("Neither workspace of this connection lives in this region", {
+    const localRows = await StreamConnectionRepository.applySnapshots(this.pool, [snapshot])
+    if (localRows === 0) {
+      throw new HttpError("No workspace of this connection lives in this region", {
         status: 404,
         code: "WORKSPACE_NOT_FOUND",
       })

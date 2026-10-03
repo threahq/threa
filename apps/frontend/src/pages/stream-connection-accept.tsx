@@ -68,6 +68,8 @@ function acceptErrorMessage(error: unknown): string {
       return "Shared channels aren't turned on for that workspace."
     case StreamConnectionErrorCodes.ALREADY_ACCEPTED:
       return "Another workspace already accepted this invite."
+    case StreamConnectionErrorCodes.ALREADY_CONNECTED:
+      return "That workspace is already in this channel."
     case StreamConnectionErrorCodes.NOT_SHAREABLE:
       return "The host stopped sharing this channel. Ask the channel's admin about it."
     case StreamConnectionErrorCodes.EXPIRED:
@@ -78,6 +80,10 @@ function acceptErrorMessage(error: unknown): string {
       return fallback
   }
 }
+
+type PendingInvite = StreamConnectionLookupResponse & { state: typeof StreamConnectionStates.INVITED }
+
+const LIST_FORMAT = new Intl.ListFormat("en", { style: "long", type: "conjunction" })
 
 function lookupKey(token: string) {
   return ["stream-connection-lookup", token] as const
@@ -118,7 +124,8 @@ function SignedInAccept({ token }: { token: string }) {
     retry: false,
   })
   const invite = lookup.data?.state === StreamConnectionStates.INVITED ? lookup.data : null
-  const candidates = invite && workspaces ? workspaces.filter((w) => w.id !== invite.hostWorkspaceId) : []
+  const inChannel = new Set(invite ? [invite.hostWorkspaceId, ...invite.partners.map((p) => p.workspaceId)] : [])
+  const candidates = invite && workspaces ? workspaces.filter((w) => !inChannel.has(w.id)) : []
   const canAccept = useQueries({
     queries: candidates.map((w) => ({
       queryKey: ["stream-connection-can-accept", w.id],
@@ -180,8 +187,8 @@ function SignedInAccept({ token }: { token: string }) {
     return (
       <StatusScreen icon={SearchX} title="No other workspace to connect">
         <p className="text-sm text-muted-foreground">
-          Accept from a workspace other than {data.hostWorkspaceName} where you're an admin and shared channels are
-          turned on.
+          Accept from a workspace that isn't in this channel yet, where you're an admin and shared channels are turned
+          on.
         </p>
         <OpenThreaLink />
       </StatusScreen>
@@ -191,15 +198,7 @@ function SignedInAccept({ token }: { token: string }) {
   return <AcceptForm token={token} lookup={data} workspaces={acceptable} />
 }
 
-function AcceptForm({
-  token,
-  lookup,
-  workspaces,
-}: {
-  token: string
-  lookup: StreamConnectionLookupResponse
-  workspaces: Workspace[]
-}) {
+function AcceptForm({ token, lookup, workspaces }: { token: string; lookup: PendingInvite; workspaces: Workspace[] }) {
   const queryClient = useQueryClient()
   const [workspaceId, setWorkspaceId] = useState(workspaces[0]?.id ?? "")
   const [visibility, setVisibility] = useState<Visibility>("private")
@@ -221,6 +220,8 @@ function AcceptForm({
     onError: () => void queryClient.invalidateQueries({ queryKey: lookupKey(token) }),
   })
   const channel = channelLabel(lookup)
+  // A recheck can drop the workspace that failed from under the selection, and its error with it.
+  const acceptError = accept.isError && accept.variables.id === workspace?.id ? accept.error : null
 
   return (
     <StandalonePage>
@@ -234,6 +235,12 @@ function AcceptForm({
             Hosted in {formatRegion(lookup.hostRegion)}. Messages your workspace posts in this channel are stored there
             too.
           </p>
+          {lookup.partners.length > 0 && (
+            <p className="text-sm text-muted-foreground">
+              {LIST_FORMAT.format(lookup.partners.map((p) => p.workspaceName))}{" "}
+              {lookup.partners.length === 1 ? "is" : "are"} already in this channel.
+            </p>
+          )}
         </div>
         <form
           className="space-y-4"
@@ -281,9 +288,9 @@ function AcceptForm({
               />
             </div>
           </div>
-          {accept.isError && (
+          {acceptError && (
             <p role="alert" className="text-sm text-destructive">
-              {acceptErrorMessage(accept.error)}
+              {acceptErrorMessage(acceptError)}
             </p>
           )}
           <Button

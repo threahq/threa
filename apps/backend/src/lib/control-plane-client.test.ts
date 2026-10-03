@@ -92,7 +92,12 @@ describe("ControlPlaneClient error translation", () => {
     globalThis.fetch = mock(async () => makeResponse(cp.status, JSON.stringify(cp.body))) as unknown as typeof fetch
 
     await expect(
-      client.acceptStreamConnection({ token: "tok", partnerWorkspaceId: "ws_1", visibility: "private" })
+      client.acceptStreamConnection({
+        token: "tok",
+        partnerWorkspaceId: "ws_1",
+        visibility: "private",
+        acceptedBy: "usr_1",
+      })
     ).rejects.toMatchObject({ name: "HttpError", ...expected })
   })
 })

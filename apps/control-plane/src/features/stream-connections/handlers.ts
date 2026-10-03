@@ -12,15 +12,17 @@ const createInviteSchema = z.object({
   hostStreamId: idSchema,
   hostStreamSlug: z.string().nullable(),
   hostStreamDisplayName: z.string().nullable(),
+  invitedBy: idSchema,
 })
 const revokeSchema = z.object({ hostWorkspaceId: idSchema })
 const acceptSchema = z.object({
   token: streamConnectionTokenSchema,
   partnerWorkspaceId: idSchema,
   visibility: z.enum(VISIBILITY_OPTIONS),
+  acceptedBy: idSchema,
 })
 const lookupSchema = z.object({ token: streamConnectionTokenSchema })
-const getSchema = z.object({ workspaceId: idSchema })
+const listSchema = z.object({ workspaceId: idSchema, streamId: idSchema, includeIds: z.array(idSchema) })
 
 interface Dependencies {
   streamConnectionService: StreamConnectionService
@@ -44,10 +46,9 @@ export function createStreamConnectionHandlers({ streamConnectionService }: Depe
       res.json({ snapshot: await streamConnectionService.accept(body) })
     },
 
-    async get(req: Request, res: Response) {
-      const connectionId = parseRequest(idSchema, req.params.id)
-      const { workspaceId } = parseRequest(getSchema, req.query)
-      res.json({ snapshot: await streamConnectionService.getForWorkspace({ connectionId, workspaceId }) })
+    async list(req: Request, res: Response) {
+      const body = parseRequest(listSchema, req.body)
+      res.json({ snapshots: await streamConnectionService.listForWorkspace(body) })
     },
 
     /** Session-authenticated: the invite page before the user picks a workspace. */

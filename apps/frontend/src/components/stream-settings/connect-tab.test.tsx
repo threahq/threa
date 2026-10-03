@@ -39,10 +39,23 @@ function makeConnection(overrides: Partial<StreamConnection> = {}): StreamConnec
     remoteWorkspaceId: null,
     remoteWorkspaceName: null,
     partnerVisibility: null,
+    invitedBy: "user_1",
+    acceptedBy: null,
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
     ...overrides,
   }
 }
+
+function makePartner(id: string, name: string): StreamConnection {
+  return makeConnection({
+    id,
+    state: "active",
+    remoteWorkspaceId: `ws_${name.toLowerCase()}`,
+    remoteWorkspaceName: name,
+  })
+}
+
+const WAITING = "Waiting for a workspace to accept."
 
 function renderTab(stream = makeStream()) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -94,7 +107,7 @@ describe("ConnectTab", () => {
 
     renderTab()
 
-    expect(await screen.findByText("Waiting for another workspace to accept.")).toBeInTheDocument()
+    expect(await screen.findByText(WAITING)).toBeInTheDocument()
     expect(screen.queryByLabelText("Invite link")).not.toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Revoke" })).toBeInTheDocument()
   })
@@ -110,43 +123,188 @@ describe("ConnectTab", () => {
     expect(revoke).toHaveBeenCalledWith("ws_host", "sconn_1")
   })
 
-  it("should keep showing a pending invite when another admin replaced the link the admin revoked", async () => {
-    const list = vi
-      .spyOn(streamConnectionsApi, "list")
-      .mockResolvedValueOnce([makeConnection()])
-      .mockResolvedValue([makeConnection({ id: "sconn_2" })])
-    vi.spyOn(streamConnectionsApi, "revoke").mockResolvedValue(makeConnection({ state: "revoked" }))
+  it("should list every connected workspace and every pending invite when the channel has several", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date"] })
+    vi.setSystemTime(new Date(2026, 9, 1, 10, 0))
+    vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([
+      makePartner("sconn_beta", "Beta"),
+      makePartner("sconn_gamma", "Gamma"),
+      makeConnection({ id: "sconn_a", expiresAt: new Date(2026, 9, 1, 10, 30).toISOString() }),
+      makeConnection({ id: "sconn_b", expiresAt: new Date(2026, 9, 1, 10, 45).toISOString() }),
+    ])
 
     renderTab()
-    await userEvent.click(await screen.findByRole("button", { name: "Revoke" }))
 
-    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
-    await waitFor(() => expect(screen.getByRole("button", { name: "Revoke" })).toBeEnabled())
-    expect(screen.getByText("Waiting for another workspace to accept.")).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: "Create invite link" })).not.toBeInTheDocument()
+    const items = await screen.findAllByRole("listitem")
+    expect({
+      rows: items.map((item) => item.textContent),
+      createLink: screen.getByRole("button", { name: "Create invite link" }).hasAttribute("disabled"),
+    }).toEqual({
+      rows: ["Beta", "Gamma", `${WAITING}Expires 10:30.Revoke`, `${WAITING}Expires 10:45.Revoke`],
+      createLink: false,
+    })
   })
 
-  it("should offer only a replacement link when the pending invite has expired", async () => {
+  it("should leave only the share prompt when every invite has expired", async () => {
     vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([
       makeConnection({ expiresAt: new Date(Date.now() - 1000).toISOString() }),
     ])
 
     renderTab()
 
-    expect(await screen.findByText("This link has expired.")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Replace link" })).toBeInTheDocument()
+    expect(await screen.findByRole("button", { name: "Create invite link" })).toBeInTheDocument()
+    expect(screen.queryByText(WAITING)).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Revoke" })).not.toBeInTheDocument()
   })
 
-  it("should name the partner workspace when the channel is shared", async () => {
+  it("should revoke only the chosen link and keep the other pending invites", async () => {
+    vi.spyOn(streamConnectionsApi, "list")
+      .mockResolvedValueOnce([
+        makeConnection({ id: "sconn_a" }),
+        makeConnection({ id: "sconn_b" }),
+        makeConnection({ id: "sconn_c" }),
+      ])
+      .mockResolvedValue([makeConnection({ id: "sconn_a" }), makeConnection({ id: "sconn_c" })])
+    const revoke = vi.spyOn(streamConnectionsApi, "revoke").mockResolvedValue(makeConnection({ state: "revoked" }))
+
+    renderTab()
+    await userEvent.click((await screen.findAllByRole("button", { name: "Revoke" }))[1])
+
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Revoke" })).toHaveLength(2))
+    expect({ revoked: revoke.mock.calls, waiting: screen.getAllByText(WAITING).length }).toEqual({
+      revoked: [["ws_host", "sconn_b"]],
+      waiting: 2,
+    })
+  })
+
+  it("should mark only the link being revoked and hold the other actions until it's gone", async () => {
     vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([
-      makeConnection({ state: "active", remoteWorkspaceId: "ws_beta", remoteWorkspaceName: "Beta" }),
+      makeConnection({ id: "sconn_a" }),
+      makeConnection({ id: "sconn_b" }),
+    ])
+    let finishRevoke!: (connection: StreamConnection) => void
+    vi.spyOn(streamConnectionsApi, "revoke").mockReturnValue(new Promise((resolve) => (finishRevoke = resolve)))
+
+    renderTab()
+    await userEvent.click((await screen.findAllByRole("button", { name: "Revoke" }))[1])
+
+    await screen.findByRole("button", { name: "Revoking…" })
+    expect(
+      screen.getAllByRole("button").map((button) => [button.textContent, button.hasAttribute("disabled")])
+    ).toEqual([
+      ["Revoke", true],
+      ["Revoking…", true],
+      ["Create invite link", true],
+    ])
+    await act(async () => finishRevoke(makeConnection({ state: "revoked" })))
+    await waitFor(() => expect(screen.getByRole("button", { name: "Create invite link" })).toBeEnabled())
+  })
+
+  it("should add the new link above the pending invites when the admin creates another", async () => {
+    vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([makeConnection({ id: "sconn_a" })])
+    vi.spyOn(streamConnectionsApi, "createInvite").mockResolvedValue({
+      connection: makeConnection({ id: "sconn_b" }),
+      token: "tok_b",
+    })
+
+    renderTab()
+    await userEvent.click(await screen.findByRole("button", { name: "Create invite link" }))
+
+    const link = await screen.findByLabelText("Invite link")
+    expect({
+      link: (link as HTMLInputElement).value,
+      revokeButtons: screen.getAllByRole("button", { name: "Revoke" }).length,
+      waiting: screen.getAllByText(WAITING).length,
+    }).toEqual({ link: `${window.location.origin}/connections/tok_b`, revokeButtons: 2, waiting: 1 })
+  })
+
+  it("should keep the connected workspaces when the admin creates another invite", async () => {
+    vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([makePartner("sconn_beta", "Beta")])
+    vi.spyOn(streamConnectionsApi, "createInvite").mockResolvedValue({
+      connection: makeConnection({ id: "sconn_b" }),
+      token: "tok_b",
+    })
+
+    renderTab()
+    await userEvent.click(await screen.findByRole("button", { name: "Create invite link" }))
+
+    expect(await screen.findByLabelText("Invite link")).toHaveValue(`${window.location.origin}/connections/tok_b`)
+    expect(screen.getByText("Beta")).toBeInTheDocument()
+    expect(screen.getAllByRole("button", { name: "Revoke" })).toHaveLength(1)
+    expect(screen.getByRole("button", { name: "Create invite link" })).toBeEnabled()
+  })
+
+  it("should keep the new link when the admin revokes a different invite", async () => {
+    vi.spyOn(streamConnectionsApi, "list")
+      .mockResolvedValueOnce([makeConnection({ id: "sconn_a" })])
+      .mockResolvedValue([makeConnection({ id: "sconn_b" })])
+    const revoke = vi.spyOn(streamConnectionsApi, "revoke").mockResolvedValue(makeConnection({ state: "revoked" }))
+    vi.spyOn(streamConnectionsApi, "createInvite").mockResolvedValue({
+      connection: makeConnection({ id: "sconn_b" }),
+      token: "tok_b",
+    })
+
+    renderTab()
+    await userEvent.click(await screen.findByRole("button", { name: "Create invite link" }))
+    await screen.findByLabelText("Invite link")
+    await userEvent.click(screen.getAllByRole("button", { name: "Revoke" })[1])
+
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Revoke" })).toHaveLength(1))
+    expect({
+      revoked: revoke.mock.calls,
+      link: (screen.getByLabelText("Invite link") as HTMLInputElement).value,
+      waiting: screen.queryByText(WAITING),
+    }).toEqual({
+      revoked: [["ws_host", "sconn_a"]],
+      link: `${window.location.origin}/connections/tok_b`,
+      waiting: null,
+    })
+  })
+
+  it("should drop the link and keep the other invites when the admin revokes the one just created", async () => {
+    vi.spyOn(streamConnectionsApi, "list")
+      .mockResolvedValueOnce([makeConnection({ id: "sconn_a" })])
+      .mockResolvedValue([makeConnection({ id: "sconn_a" })])
+    const revoke = vi.spyOn(streamConnectionsApi, "revoke").mockResolvedValue(makeConnection({ state: "revoked" }))
+    vi.spyOn(streamConnectionsApi, "createInvite").mockResolvedValue({
+      connection: makeConnection({ id: "sconn_b" }),
+      token: "tok_b",
+    })
+
+    renderTab()
+    await userEvent.click(await screen.findByRole("button", { name: "Create invite link" }))
+    await screen.findByLabelText("Invite link")
+    await userEvent.click(screen.getAllByRole("button", { name: "Revoke" })[0])
+
+    await waitFor(() => expect(screen.queryByLabelText("Invite link")).not.toBeInTheDocument())
+    expect({ revoked: revoke.mock.calls, waiting: screen.getAllByText(WAITING).length }).toEqual({
+      revoked: [["ws_host", "sconn_b"]],
+      waiting: 1,
+    })
+  })
+
+  it("should name every partner workspace when the channel is shared", async () => {
+    vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([
+      makePartner("sconn_beta", "Beta"),
+      makePartner("sconn_gamma", "Gamma"),
     ])
 
     renderTab()
 
     expect(await screen.findByText("Beta")).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /link/i })).not.toBeInTheDocument()
+    expect(screen.getByText("Gamma")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Revoke" })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Create invite link" })).toBeEnabled()
+  })
+
+  it("should still list the partners and explain why there is no new link when the shared channel is archived", async () => {
+    vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([makePartner("sconn_beta", "Beta")])
+
+    renderTab(makeStream({ archivedAt: "2026-10-01T12:00:00.000Z" }))
+
+    expect(await screen.findByText("Beta")).toBeInTheDocument()
+    expect(screen.getByText("Archived channels can't be shared.")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Create invite link" })).not.toBeInTheDocument()
   })
 
   it("should explain why an encrypted channel can't be shared instead of offering a link", async () => {
@@ -240,27 +398,10 @@ describe("ConnectTab", () => {
     expect(await screen.findByText("Expires 10:30.")).toBeInTheDocument()
   })
 
-  it("should refresh to the shared state when a create races an accept", async () => {
-    const list = vi
-      .spyOn(streamConnectionsApi, "list")
-      .mockResolvedValueOnce([])
-      .mockResolvedValue([makeConnection({ state: "active", remoteWorkspaceName: "Beta" })])
-    vi.spyOn(streamConnectionsApi, "createInvite").mockRejectedValue(
-      new ApiError(409, StreamConnectionErrorCodes.ALREADY_SHARED, "already shared")
-    )
-
-    renderTab()
-    await userEvent.click(await screen.findByRole("button", { name: "Create invite link" }))
-
-    expect(await screen.findByText("Beta")).toBeInTheDocument()
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
-    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
-  })
-
-  it("should refresh to the shared state when a revoke races an accept", async () => {
+  it("should list the partner when a revoke races their accept", async () => {
     vi.spyOn(streamConnectionsApi, "list")
       .mockResolvedValueOnce([makeConnection()])
-      .mockResolvedValue([makeConnection({ state: "active", remoteWorkspaceName: "Beta" })])
+      .mockResolvedValue([makePartner("sconn_1", "Beta")])
     vi.spyOn(streamConnectionsApi, "revoke").mockRejectedValue(
       new ApiError(409, StreamConnectionErrorCodes.ALREADY_ACCEPTED, "already accepted")
     )
@@ -269,19 +410,19 @@ describe("ConnectTab", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Revoke" }))
 
     expect(await screen.findByText("Beta")).toBeInTheDocument()
-    expect(screen.queryByRole("alert")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Revoke" })).not.toBeInTheDocument()
   })
 
-  it("should say the channel is already shared when the refresh hasn't caught up with the accept", async () => {
-    const list = vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([])
-    vi.spyOn(streamConnectionsApi, "createInvite").mockRejectedValue(
-      new ApiError(409, StreamConnectionErrorCodes.ALREADY_SHARED, "already shared")
+  it("should say another workspace accepted the invite when the refresh hasn't caught up with the accept", async () => {
+    const list = vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([makeConnection()])
+    vi.spyOn(streamConnectionsApi, "revoke").mockRejectedValue(
+      new ApiError(409, StreamConnectionErrorCodes.ALREADY_ACCEPTED, "already accepted")
     )
 
     renderTab()
-    await userEvent.click(await screen.findByRole("button", { name: "Create invite link" }))
+    await userEvent.click(await screen.findByRole("button", { name: "Revoke" }))
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("This channel is already shared with another workspace.")
+    expect(await screen.findByRole("alert")).toHaveTextContent("Another workspace already accepted this invite.")
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
   })
 
@@ -289,13 +430,55 @@ describe("ConnectTab", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     vi.spyOn(streamConnectionsApi, "list")
       .mockResolvedValueOnce([makeConnection()])
-      .mockResolvedValue([makeConnection({ state: "active", remoteWorkspaceName: "Beta" })])
+      .mockResolvedValue([makePartner("sconn_1", "Beta")])
 
     renderTab()
-    expect(await screen.findByText("Waiting for another workspace to accept.")).toBeInTheDocument()
+    expect(await screen.findByText(WAITING)).toBeInTheDocument()
     await vi.advanceTimersByTimeAsync(15_000)
 
     expect(await screen.findByText("Beta")).toBeInTheDocument()
+  })
+
+  it("should show a second partner once they accept while another partner is already connected", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.spyOn(streamConnectionsApi, "list")
+      .mockResolvedValueOnce([makePartner("sconn_beta", "Beta"), makeConnection({ id: "sconn_b" })])
+      .mockResolvedValue([makePartner("sconn_beta", "Beta"), makePartner("sconn_b", "Gamma")])
+
+    renderTab()
+    expect(await screen.findByText(WAITING)).toBeInTheDocument()
+    await vi.advanceTimersByTimeAsync(15_000)
+
+    expect(await screen.findByText("Gamma")).toBeInTheDocument()
+    expect(screen.getByText("Beta")).toBeInTheDocument()
+    expect(screen.queryByText(WAITING)).not.toBeInTheDocument()
+  })
+
+  it("should stop polling once the last pending invite is accepted", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const list = vi
+      .spyOn(streamConnectionsApi, "list")
+      .mockResolvedValueOnce([makeConnection()])
+      .mockResolvedValue([makePartner("sconn_1", "Beta")])
+
+    renderTab()
+    await screen.findByText(WAITING)
+    await vi.advanceTimersByTimeAsync(15_000)
+    await screen.findByText("Beta")
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(list).toHaveBeenCalledTimes(2)
+  })
+
+  it("should not poll when the channel has no pending invite", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const list = vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([makePartner("sconn_beta", "Beta")])
+
+    renderTab()
+    await screen.findByText("Beta")
+    await vi.advanceTimersByTimeAsync(60_000)
+
+    expect(list).toHaveBeenCalledTimes(1)
   })
 
   it("should load the connections again when the admin retries a failed load", async () => {
@@ -316,12 +499,12 @@ describe("ConnectTab", () => {
       .mockRejectedValue(new ApiError(500, "INTERNAL", "boom"))
 
     const queryClient = renderTab()
-    expect(await screen.findByText("Waiting for another workspace to accept.")).toBeInTheDocument()
+    expect(await screen.findByText(WAITING)).toBeInTheDocument()
     await queryClient.refetchQueries()
     await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
 
     expect(list).toHaveBeenCalledTimes(2)
-    expect(screen.getByText("Waiting for another workspace to accept.")).toBeInTheDocument()
+    expect(screen.getByText(WAITING)).toBeInTheDocument()
     expect(screen.queryByRole("alert")).not.toBeInTheDocument()
   })
 })

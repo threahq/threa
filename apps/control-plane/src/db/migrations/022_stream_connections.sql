@@ -1,6 +1,8 @@
--- Threa Connect: one host channel shared with one partner workspace. The
--- control plane owns the record; each side's region keeps a projection row,
--- written only from the snapshots the outbox fans out (revision-guarded).
+-- Threa Connect: a host channel shared with any number of partner workspaces,
+-- one row per invite link. The row is pending until a partner accepts it, then
+-- stands for that partner's place in the channel. The control plane owns the
+-- record; each region keeps projection rows, written only from the snapshots
+-- the outbox fans out (revision-guarded).
 
 CREATE TABLE stream_connections (
     id TEXT PRIMARY KEY,
@@ -8,8 +10,10 @@ CREATE TABLE stream_connections (
     host_stream_id TEXT NOT NULL,
     host_stream_slug TEXT,
     host_stream_display_name TEXT,
+    invited_by TEXT NOT NULL,
     partner_workspace_id TEXT,
     partner_visibility TEXT,
+    accepted_by TEXT,
     state TEXT NOT NULL,
     token_hash TEXT NOT NULL UNIQUE,
     expires_at TIMESTAMPTZ NOT NULL,
@@ -18,7 +22,9 @@ CREATE TABLE stream_connections (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- A channel has at most one live connection: a pending invite or an accepted share.
-CREATE UNIQUE INDEX stream_connections_live_per_stream
-    ON stream_connections (host_workspace_id, host_stream_id)
-    WHERE state IN ('invited', 'active');
+CREATE INDEX stream_connections_stream ON stream_connections (host_stream_id, host_workspace_id);
+
+-- A workspace joins a channel once, however many links it is sent.
+CREATE UNIQUE INDEX stream_connections_active_partner
+    ON stream_connections (host_workspace_id, host_stream_id, partner_workspace_id)
+    WHERE state = 'active';

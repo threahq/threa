@@ -13,12 +13,9 @@ import { z } from "zod"
 
 const REQUEST_TIMEOUT_MS = 10_000
 
-const createdInviteSchema = z.object({
-  snapshot: streamConnectionSnapshotSchema,
-  token: z.string(),
-  superseded: streamConnectionSnapshotSchema.nullable(),
-})
+const createdInviteSchema = z.object({ snapshot: streamConnectionSnapshotSchema, token: z.string() })
 const snapshotResponseSchema = z.object({ snapshot: streamConnectionSnapshotSchema })
+const snapshotsResponseSchema = z.object({ snapshots: z.array(streamConnectionSnapshotSchema) })
 const streamConnectionOutcomeCodes = new Set<string>(Object.values(StreamConnectionErrorCodes))
 
 // CP's shared error middleware always responds with `{ error, code? }` JSON.
@@ -373,15 +370,12 @@ export class ControlPlaneClient {
     }
   }
 
-  /**
-   * Mints a share link for a host channel. `superseded` is the pending invite
-   * this one replaced, so the caller can project it before the new one.
-   */
   async createStreamConnectionInvite(params: {
     hostWorkspaceId: string
     hostStreamId: string
     hostStreamSlug: string | null
     hostStreamDisplayName: string | null
+    invitedBy: string
   }): Promise<z.infer<typeof createdInviteSchema>> {
     const body = await this.postStreamConnection("/internal/stream-connections", params, "create share link")
     return createdInviteSchema.parse(body)
@@ -403,34 +397,28 @@ export class ControlPlaneClient {
     token: string
     partnerWorkspaceId: string
     visibility: Visibility
+    acceptedBy: string
   }): Promise<StreamConnectionSnapshot> {
     const body = await this.postStreamConnection("/internal/stream-connections/accept", params, "accept share link")
     return snapshotResponseSchema.parse(body).snapshot
   }
 
-  async getStreamConnection(params: { connectionId: string; workspaceId: string }): Promise<StreamConnectionSnapshot> {
-    const query = new URLSearchParams({ workspaceId: params.workspaceId })
-    const body = await this.requestStreamConnection(
-      `/internal/stream-connections/${encodeURIComponent(params.connectionId)}?${query}`,
-      { method: "GET" },
-      "read shared channel"
-    )
-    return snapshotResponseSchema.parse(body).snapshot
+  /** The workspace's current view of a shared channel: every live connection, plus `includeIds` in any state. */
+  async listStreamConnections(params: {
+    workspaceId: string
+    streamId: string
+    includeIds: string[]
+  }): Promise<StreamConnectionSnapshot[]> {
+    const body = await this.postStreamConnection("/internal/stream-connections/list", params, "read shared channel")
+    return snapshotsResponseSchema.parse(body).snapshots
   }
 
   private async postStreamConnection(path: string, payload: unknown, action: string): Promise<unknown> {
-    return this.requestStreamConnection(path, { method: "POST", body: JSON.stringify(payload) }, action)
-  }
-
-  private async requestStreamConnection(
-    path: string,
-    init: { method: "GET" | "POST"; body?: string },
-    action: string
-  ): Promise<unknown> {
     let res: Response
     try {
       res = await fetch(`${this.baseUrl}${path}`, {
-        ...init,
+        method: "POST",
+        body: JSON.stringify(payload),
         headers: {
           "Content-Type": "application/json",
           [INTERNAL_API_KEY_HEADER]: this.internalApiKey,

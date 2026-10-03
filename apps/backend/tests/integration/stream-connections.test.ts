@@ -86,25 +86,62 @@ describe("StreamConnectionService", () => {
       hostStreamId,
       hostStreamSlug: "launch",
       hostStreamDisplayName: "Launch",
+      invitedBy: "usr_inviter",
       partnerWorkspaceId: null,
       partnerWorkspaceName: null,
       partnerRegion: null,
       partnerVisibility: null,
+      acceptedBy: null,
+      peerWorkspaceIds: [],
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
       ...overrides,
     }
   }
 
-  function activated(invited: StreamConnectionSnapshot, partner: { id: string; name: string }) {
+  function activated(
+    invited: StreamConnectionSnapshot,
+    partner: { id: string; name: string },
+    peerWorkspaceIds: string[] = []
+  ): StreamConnectionSnapshot {
     return {
       ...invited,
       revision: invited.revision + 1,
-      state: "active" as const,
+      state: "active",
       partnerWorkspaceId: partner.id,
       partnerWorkspaceName: partner.name,
       partnerRegion: "eu",
-      partnerVisibility: "private" as const,
+      partnerVisibility: "private",
+      acceptedBy: "usr_accepter",
+      peerWorkspaceIds,
     }
+  }
+
+  /** A row as one workspace sees it. Only the host's row names the inviter, and only the partner's the accepter. */
+  function seenBy(
+    connection: StreamConnectionSnapshot,
+    role: "host" | "partner" | "peer",
+    remote: { id: string; name: string } | null
+  ) {
+    return {
+      id: connection.id,
+      role,
+      state: connection.state,
+      streamId: connection.hostStreamId,
+      streamSlug: connection.hostStreamSlug,
+      streamDisplayName: connection.hostStreamDisplayName,
+      remoteWorkspaceId: remote?.id ?? null,
+      remoteWorkspaceName: remote?.name ?? null,
+      partnerVisibility: connection.partnerVisibility,
+      invitedBy: role === "host" ? connection.invitedBy : null,
+      acceptedBy: role === "partner" ? connection.acceptedBy : null,
+      expiresAt: connection.expiresAt,
+    }
+  }
+
+  const byId = <T extends { id: string }>(rows: T[]) => rows.toSorted((a, b) => a.id.localeCompare(b.id))
+
+  function listRequest(workspaceId: string, streamId: string, includeIds: string[]) {
+    return { path: "/internal/stream-connections/list", body: { workspaceId, streamId, includeIds } }
   }
 
   beforeAll(async () => {
@@ -128,8 +165,8 @@ describe("StreamConnectionService", () => {
     const host = await seedWorkspace("Acme")
     const stream = await seedStream(host.id, host.adminId)
     const invited = snapshot(host, stream.id)
-    cp.respond(201, { snapshot: invited, token: "tok_secret", superseded: null })
-    cp.respond(200, { snapshot: invited })
+    cp.respond(201, { snapshot: invited, token: "tok_secret" })
+    cp.respond(200, { snapshots: [invited] })
 
     const result = await service.createInvite({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
     const minted = [...cp.requests]
@@ -145,9 +182,11 @@ describe("StreamConnectionService", () => {
       remoteWorkspaceId: null,
       remoteWorkspaceName: null,
       partnerVisibility: null,
+      invitedBy: "usr_inviter",
+      acceptedBy: null,
       expiresAt: invited.expiresAt,
     }
-    // A pending link is re-read from the control plane on every list, in case an accept never arrived.
+    // The channel is re-read from the control plane on every list, in case a sync never arrived.
     expect({ result, minted, listed, repaired: cp.requests.slice(minted.length) }).toEqual({
       result: { connection, token: "tok_secret" },
       minted: [
@@ -158,27 +197,46 @@ describe("StreamConnectionService", () => {
             hostStreamId: stream.id,
             hostStreamSlug: stream.slug,
             hostStreamDisplayName: "Launch",
+            invitedBy: host.adminId,
           },
         },
       ],
       listed: [connection],
-      repaired: [{ path: `/internal/stream-connections/${invited.id}?workspaceId=${host.id}`, body: null }],
+      repaired: [listRequest(host.id, stream.id, [invited.id])],
     })
   })
 
-  test("should replace the pending link in the list when a new one is minted", async () => {
+  test("should list the channel's partners and every working link, newest first", async () => {
     const host = await seedWorkspace("Acme")
     const stream = await seedStream(host.id, host.adminId)
-    const first = snapshot(host, stream.id)
-    await service.applySnapshot(first)
-    const second = snapshot(host, stream.id)
-    cp.respond(201, { snapshot: second, token: "tok_2", superseded: { ...first, state: "revoked", revision: 2 } })
-    cp.respond(200, { snapshot: second })
-
-    await service.createInvite({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
+    const partner = { id: workspaceId(), name: "Globex" }
+    const accepted = { ...activated(snapshot(host, stream.id), partner), partnerRegion: "us" }
+    const older = snapshot(host, stream.id)
+    const newer = snapshot(host, stream.id)
+    const lapsed = snapshot(host, stream.id, { expiresAt: new Date(Date.now() - 60_000).toISOString() })
+    for (const s of [accepted, older, newer, lapsed]) await service.applySnapshot(s)
+    cp.respond(200, { snapshots: [accepted, older, newer] })
 
     const listed = await service.listForStream({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
-    expect(listed.map((c) => c.id)).toEqual([second.id])
+
+    expect({ listed: listed.map((c) => [c.id, c.state]), sent: cp.requests }).toEqual({
+      listed: [
+        [newer.id, "invited"],
+        [older.id, "invited"],
+        [accepted.id, "active"],
+      ],
+      sent: [listRequest(host.id, stream.id, [newer.id, older.id, accepted.id])],
+    })
+  })
+
+  test("should skip the control plane when a channel has only expired links", async () => {
+    const host = await seedWorkspace("Acme")
+    const stream = await seedStream(host.id, host.adminId)
+    await service.applySnapshot(snapshot(host, stream.id, { expiresAt: new Date(Date.now() - 60_000).toISOString() }))
+
+    const listed = await service.listForStream({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
+
+    expect({ listed, sent: cp.requests }).toEqual({ listed: [], sent: [] })
   })
 
   test("should heal an accept the control plane never delivered when the host lists a pending link", async () => {
@@ -187,7 +245,7 @@ describe("StreamConnectionService", () => {
     const invited = snapshot(host, stream.id)
     await service.applySnapshot(invited)
     const remotePartner = { id: workspaceId(), name: "Globex" }
-    cp.respond(200, { snapshot: { ...activated(invited, remotePartner), partnerRegion: "us" } })
+    cp.respond(200, { snapshots: [{ ...activated(invited, remotePartner), partnerRegion: "us" }] })
 
     const listed = await service.listForStream({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
 
@@ -203,10 +261,30 @@ describe("StreamConnectionService", () => {
           remoteWorkspaceId: remotePartner.id,
           remoteWorkspaceName: "Globex",
           partnerVisibility: "private",
+          invitedBy: "usr_inviter",
+          acceptedBy: null,
           expiresAt: invited.expiresAt,
         },
       ],
-      sent: [{ path: `/internal/stream-connections/${invited.id}?workspaceId=${host.id}`, body: null }],
+      sent: [listRequest(host.id, stream.id, [invited.id])],
+    })
+  })
+
+  test("should show a workspace that joined while this region missed the sync", async () => {
+    const host = await seedWorkspace("Acme")
+    const stream = await seedStream(host.id, host.adminId)
+    const second = { id: workspaceId(), name: "Globex" }
+    const third = { id: workspaceId(), name: "Initech" }
+    const toSecond = { ...activated(snapshot(host, stream.id), second), partnerRegion: "us" }
+    await service.applySnapshot(toSecond)
+    const toThird = { ...activated(snapshot(host, stream.id), third, [second.id]), partnerRegion: "us" }
+    cp.respond(200, { snapshots: [{ ...toSecond, peerWorkspaceIds: [third.id] }, toThird] })
+
+    const listed = await service.listForStream({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
+
+    expect({ listed: byId(listed), sent: cp.requests }).toEqual({
+      listed: byId([seenBy(toSecond, "host", second), seenBy(toThird, "host", third)]),
+      sent: [listRequest(host.id, stream.id, [toSecond.id])],
     })
   })
 
@@ -221,6 +299,7 @@ describe("StreamConnectionService", () => {
 
     const accepted = await service.accept({
       workspaceId: partner.id,
+      userId: partner.adminId,
       token: "tok_secret",
       visibility: "private",
     })
@@ -234,7 +313,14 @@ describe("StreamConnectionService", () => {
       partnerVisibility: "private",
       expiresAt: invited.expiresAt,
     }
-    const partnerView = { ...common, role: "partner", remoteWorkspaceId: host.id, remoteWorkspaceName: "Acme" }
+    const partnerView = {
+      ...common,
+      role: "partner",
+      remoteWorkspaceId: host.id,
+      remoteWorkspaceName: "Acme",
+      invitedBy: null,
+      acceptedBy: "usr_accepter",
+    }
     expect({
       accepted,
       sent: cp.requests,
@@ -249,10 +335,20 @@ describe("StreamConnectionService", () => {
             token: "tok_secret",
             partnerWorkspaceId: partner.id,
             visibility: "private",
+            acceptedBy: partner.adminId,
           },
         },
       ],
-      host: [{ ...common, role: "host", remoteWorkspaceId: partner.id, remoteWorkspaceName: "Globex" }],
+      host: [
+        {
+          ...common,
+          role: "host",
+          remoteWorkspaceId: partner.id,
+          remoteWorkspaceName: "Globex",
+          invitedBy: "usr_inviter",
+          acceptedBy: null,
+        },
+      ],
       partner: [partnerView],
     })
   })
@@ -267,6 +363,7 @@ describe("StreamConnectionService", () => {
 
     const accepted = await service.accept({
       workspaceId: partner.id,
+      userId: partner.adminId,
       token: "tok_secret",
       visibility: "private",
     })
@@ -281,8 +378,67 @@ describe("StreamConnectionService", () => {
       remoteWorkspaceId: host.id,
       remoteWorkspaceName: "Acme",
       partnerVisibility: "public",
+      invitedBy: null,
+      acceptedBy: "usr_accepter",
       expiresAt: active.expiresAt,
     })
+  })
+
+  test("should give every workspace in a three-way channel its own row for each connection", async () => {
+    const host = await seedWorkspace("Acme")
+    const second = await seedWorkspace("Globex")
+    const third = await seedWorkspace("Initech")
+    const stream = await seedStream(host.id, host.adminId)
+    const toSecond = activated(snapshot(host, stream.id), second, [third.id])
+    const toThird = activated(snapshot(host, stream.id), third, [second.id])
+
+    await StreamConnectionRepository.applySnapshots(pool, [toSecond, toThird])
+
+    const seen = async (ws: { id: string }) =>
+      byId(await StreamConnectionRepository.listLiveForStream(pool, ws.id, stream.id))
+    expect({ host: await seen(host), second: await seen(second), third: await seen(third) }).toEqual({
+      host: byId([seenBy(toSecond, "host", second), seenBy(toThird, "host", third)]),
+      second: byId([seenBy(toSecond, "partner", host), seenBy(toThird, "peer", third)]),
+      third: byId([seenBy(toThird, "partner", host), seenBy(toSecond, "peer", second)]),
+    })
+  })
+
+  test("should project a peer row in a region that holds neither the host nor the connection's partner", async () => {
+    const remoteHost = { id: workspaceId(), name: "Acme" }
+    const remotePartner = { id: workspaceId(), name: "Globex" }
+    const peer = await seedWorkspace("Initech")
+    const hostStreamId = streamId()
+    const active = {
+      ...activated(snapshot(remoteHost, hostStreamId), remotePartner, [peer.id]),
+      hostRegion: "us",
+      partnerRegion: "us",
+    }
+
+    await service.applySnapshot(active)
+
+    expect(await StreamConnectionRepository.listLiveForStream(pool, peer.id, hostStreamId)).toEqual([
+      seenBy(active, "peer", remotePartner),
+    ])
+  })
+
+  test("should keep a peer row's newer state when an older snapshot arrives late", async () => {
+    const remoteHost = { id: workspaceId(), name: "Acme" }
+    const remotePartner = { id: workspaceId(), name: "Globex" }
+    const peer = await seedWorkspace("Initech")
+    const hostStreamId = streamId()
+    const active = {
+      ...activated(snapshot(remoteHost, hostStreamId), remotePartner, [peer.id]),
+      hostRegion: "us",
+      partnerRegion: "us",
+    }
+    const renamed = { ...active, revision: active.revision + 1, partnerWorkspaceName: "Globex Corp" }
+
+    await service.applySnapshot(renamed)
+    await service.applySnapshot(active)
+
+    expect(await StreamConnectionRepository.listLiveForStream(pool, peer.id, hostStreamId)).toEqual([
+      seenBy(renamed, "peer", { id: remotePartner.id, name: "Globex Corp" }),
+    ])
   })
 
   test("should keep the newer state when an older snapshot arrives late", async () => {
@@ -343,6 +499,8 @@ describe("StreamConnectionService", () => {
           remoteWorkspaceId: remotePartner.id,
           remoteWorkspaceName: "Globex",
           partnerVisibility: "private",
+          invitedBy: "usr_inviter",
+          acceptedBy: null,
           expiresAt: active.expiresAt,
         },
       ],
@@ -374,6 +532,8 @@ describe("StreamConnectionService", () => {
           remoteWorkspaceId: remoteHost.id,
           remoteWorkspaceName: "Acme",
           partnerVisibility: "private",
+          invitedBy: null,
+          acceptedBy: "usr_accepter",
           expiresAt: active.expiresAt,
         },
       ],
@@ -468,7 +628,7 @@ describe("StreamConnectionService", () => {
       service.createInvite(ids),
       service.listForStream(ids),
       service.revokeInvite({ workspaceId: host.id, connectionId: streamConnectionId() }),
-      service.accept({ workspaceId: host.id, token: "tok", visibility: "public" }),
+      service.accept({ workspaceId: host.id, userId: host.adminId, token: "tok", visibility: "public" }),
       service.assertCanAccept(host.id),
     ])
 
@@ -479,20 +639,19 @@ describe("StreamConnectionService", () => {
   })
 
   test("should pass the control plane's refusal through with its code", async () => {
-    const host = await seedWorkspace("Acme")
-    const stream = await seedStream(host.id, host.adminId)
-    cp.respond(409, { error: "Channel already shared", code: StreamConnectionErrorCodes.ALREADY_SHARED })
+    const partner = await seedWorkspace("Globex")
+    cp.respond(409, { error: "Already in this channel", code: StreamConnectionErrorCodes.ALREADY_CONNECTED })
 
     await expect(
-      service.createInvite({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
-    ).rejects.toMatchObject({ status: 409, code: StreamConnectionErrorCodes.ALREADY_SHARED })
+      service.accept({ workspaceId: partner.id, userId: partner.adminId, token: "tok", visibility: "public" })
+    ).rejects.toMatchObject({ status: 409, code: StreamConnectionErrorCodes.ALREADY_CONNECTED })
   })
 
   test("should fail the list rather than show a link the control plane couldn't confirm", async () => {
     const host = await seedWorkspace("Acme")
     const stream = await seedStream(host.id, host.adminId)
     const ids = { workspaceId: host.id, streamId: stream.id, userId: host.adminId }
-    cp.respond(201, { snapshot: snapshot(host, stream.id), token: "tok_secret", superseded: null })
+    cp.respond(201, { snapshot: snapshot(host, stream.id), token: "tok_secret" })
     await service.createInvite(ids)
     cp.respond(503, { error: "Unavailable" })
 

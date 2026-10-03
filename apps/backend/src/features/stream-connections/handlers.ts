@@ -49,7 +49,11 @@ export function createStreamConnectionHandlers({ streamConnectionService }: Depe
 
     async accept(req: Request, res: Response) {
       const body = validateRequest(acceptStreamConnectionSchema, req.body)
-      const connection = await streamConnectionService.accept({ workspaceId: req.workspaceId!, ...body })
+      const connection = await streamConnectionService.accept({
+        workspaceId: req.workspaceId!,
+        userId: req.user!.id,
+        ...body,
+      })
       res.json({ connection })
     },
 

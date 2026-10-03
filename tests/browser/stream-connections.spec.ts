@@ -4,7 +4,7 @@ import { expectApiOk, loginAndCreateWorkspace, workspaceIdFromUrl } from "./help
 /**
  * Sharing a channel across workspaces: the host admin mints an invite link from
  * channel settings, a partner admin opens it in another workspace's session and
- * accepts, and the host's settings then name the partner.
+ * accepts, and the host's settings then name every partner.
  */
 
 test.describe.configure({ timeout: 90_000 })
@@ -57,9 +57,17 @@ async function createInviteLink(page: Page): Promise<string> {
   return new URL(link).pathname
 }
 
-async function acceptInvite(page: Page, invitePath: string, slug: string, hostName: string, partnerName: string) {
+async function acceptInvite(
+  page: Page,
+  invitePath: string,
+  slug: string,
+  hostName: string,
+  partnerName: string,
+  alreadyIn?: string
+) {
   await page.goto(invitePath)
   await expect(page.getByRole("heading", { name: `#${slug} from ${hostName}` })).toBeVisible()
+  if (alreadyIn) await expect(page.getByText(`${alreadyIn} is already in this channel.`)).toBeVisible()
   await expect(page.getByText("Hosted in Local.", { exact: false })).toBeVisible()
   await expect(page.getByRole("combobox")).toHaveText(partnerName)
   await page.getByRole("button", { name: "Accept" }).click()
@@ -67,12 +75,12 @@ async function acceptInvite(page: Page, invitePath: string, slug: string, hostNa
   await expect(page.getByRole("link", { name: `Open ${partnerName}` })).toBeVisible()
 }
 
-async function expectSharedWith(page: Page, workspaceId: string, streamId: string, partnerName: string) {
+async function expectSharedWith(page: Page, workspaceId: string, streamId: string, partnerNames: string[]) {
   await page.goto(settingsUrl(workspaceId, streamId, "connect"))
   const dialog = page.getByRole("dialog")
-  await expect(dialog.getByText("Shared with")).toBeVisible()
-  await expect(dialog.getByText(partnerName)).toBeVisible()
-  await expect(dialog.getByRole("button", { name: "Create invite link" })).toHaveCount(0)
+  await expect(dialog.getByText("Shared with")).toBeVisible({ timeout: 10000 })
+  for (const name of partnerNames) await expect(dialog.getByText(name)).toBeVisible()
+  await expect(dialog.getByRole("button", { name: "Create invite link" })).toBeVisible()
 }
 
 test.describe("Stream connections", () => {
@@ -90,9 +98,28 @@ test.describe("Stream connections", () => {
       const invitePath = await createInviteLink(page)
 
       await acceptInvite(partnerPage, invitePath, slug, host.workspaceName, partner.workspaceName)
-      await expectSharedWith(page, host.workspaceId, streamId, partner.workspaceName)
+      await expectSharedWith(page, host.workspaceId, streamId, [partner.workspaceName])
     } finally {
       await partnerContext.close()
+    }
+  })
+
+  test("should bring a third workspace into a channel already shared with another", async ({ browser, page }) => {
+    const contexts = [await browser.newContext(), await browser.newContext()]
+    try {
+      const [partnerPage, thirdPage] = await Promise.all(contexts.map((context) => context.newPage()))
+      const { host, partner, slug, streamId } = await setUpHostAndPartner(page, partnerPage)
+      const third = await setUpWorkspace(thirdPage, "third")
+
+      await page.goto(settingsUrl(host.workspaceId, streamId, "connect"))
+      await acceptInvite(partnerPage, await createInviteLink(page), slug, host.workspaceName, partner.workspaceName)
+      await page.goto(settingsUrl(host.workspaceId, streamId, "connect"))
+      const secondInvite = await createInviteLink(page)
+      await acceptInvite(thirdPage, secondInvite, slug, host.workspaceName, third.workspaceName, partner.workspaceName)
+
+      await expectSharedWith(page, host.workspaceId, streamId, [partner.workspaceName, third.workspaceName])
+    } finally {
+      await Promise.all(contexts.map((context) => context.close()))
     }
   })
 
@@ -114,7 +141,7 @@ test.describe("Stream connections", () => {
         const invitePath = await createInviteLink(page)
 
         await acceptInvite(partnerPage, invitePath, slug, host.workspaceName, partner.workspaceName)
-        await expectSharedWith(page, host.workspaceId, streamId, partner.workspaceName)
+        await expectSharedWith(page, host.workspaceId, streamId, [partner.workspaceName])
       } finally {
         await partnerContext.close()
       }

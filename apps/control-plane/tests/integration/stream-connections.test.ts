@@ -37,7 +37,12 @@ describe("StreamConnectionService", () => {
       hostStreamId,
       hostStreamSlug: "launch",
       hostStreamDisplayName: "Launch",
+      invitedBy: "usr_inviter",
     })
+  }
+
+  function accept(token: string, partnerWorkspaceId: string, visibility: "public" | "private" = "public") {
+    return service.accept({ token, partnerWorkspaceId, visibility, acceptedBy: `usr_admin_of_${partnerWorkspaceId}` })
   }
 
   async function syncEvents(connectionId: string): Promise<StreamConnectionSyncPayload[]> {
@@ -109,9 +114,18 @@ describe("StreamConnectionService", () => {
         streamSlug: "launch",
         partnerWorkspaceId: null,
         partnerWorkspaceName: null,
+        partners: [],
       },
     })
-    expect(snapshot).toMatchObject({ revision: 1, state: "invited", hostRegion: "eu", partnerRegion: null })
+    expect(snapshot).toMatchObject({
+      revision: 1,
+      state: "invited",
+      hostRegion: "eu",
+      partnerRegion: null,
+      invitedBy: "usr_inviter",
+      acceptedBy: null,
+      peerWorkspaceIds: [],
+    })
   })
 
   test("should push the accepted snapshot to each side's own region when they differ", async () => {
@@ -119,11 +133,7 @@ describe("StreamConnectionService", () => {
     const partner = await seedWorkspace("us", "Globex")
     const { snapshot: invited, token } = await invite(host)
 
-    const accepted = await service.accept({
-      token,
-      partnerWorkspaceId: partner,
-      visibility: "private",
-    })
+    const accepted = await accept(token, partner, "private")
     await service.syncToRegions({ connectionId: accepted.id })
 
     expect(accepted).toEqual({
@@ -134,6 +144,7 @@ describe("StreamConnectionService", () => {
       partnerWorkspaceName: "Globex",
       partnerRegion: "us",
       partnerVisibility: "private",
+      acceptedBy: `usr_admin_of_${partner}`,
     })
     expect({ eu: received(eu), us: received(us), events: await syncEvents(accepted.id) }).toEqual({
       eu: [{ url: "/internal/stream-connections", body: accepted }],
@@ -146,11 +157,7 @@ describe("StreamConnectionService", () => {
     const host = await seedWorkspace("eu", "Acme")
     const partner = await seedWorkspace("us", "Globex")
     const { token } = await invite(host)
-    const accepted = await service.accept({
-      token,
-      partnerWorkspaceId: partner,
-      visibility: "private",
-    })
+    const accepted = await accept(token, partner, "private")
     us.setStreamConnectionStatus(503)
 
     const sync = service.syncToRegions({ connectionId: accepted.id })
@@ -170,7 +177,7 @@ describe("StreamConnectionService", () => {
     const partner = await seedWorkspace("us", "Globex")
     await WorkspaceRegistryRepository.insertMembership(pool, partner, "workos_partner_member")
     const { token } = await invite(host)
-    await service.accept({ token, partnerWorkspaceId: partner, visibility: "public" })
+    await accept(token, partner)
 
     const member = await service.lookup(token, "workos_partner_member")
 
@@ -187,11 +194,7 @@ describe("StreamConnectionService", () => {
     const host = await seedWorkspace("eu", "Acme")
     const partner = await seedWorkspace("eu", "Initech")
     const { token } = await invite(host)
-    const accepted = await service.accept({
-      token,
-      partnerWorkspaceId: partner,
-      visibility: "public",
-    })
+    const accepted = await accept(token, partner)
 
     await service.syncToRegions({ connectionId: accepted.id })
 
@@ -205,14 +208,9 @@ describe("StreamConnectionService", () => {
     const host = await seedWorkspace("eu", "Acme")
     const partner = await seedWorkspace("us", "Globex")
     const { token } = await invite(host)
-    const params = {
-      token,
-      partnerWorkspaceId: partner,
-      visibility: "public" as const,
-    }
 
-    const first = await service.accept(params)
-    const retry = await service.accept(params)
+    const first = await accept(token, partner)
+    const retry = await accept(token, partner)
 
     expect({ retry, events: await syncEvents(first.id) }).toEqual({
       retry: first,
@@ -225,9 +223,7 @@ describe("StreamConnectionService", () => {
     const partners = [await seedWorkspace("us", "Globex"), await seedWorkspace("eu", "Initech")]
     const { token } = await invite(host)
 
-    const results = await Promise.allSettled(
-      partners.map((partnerWorkspaceId) => service.accept({ token, partnerWorkspaceId, visibility: "public" }))
-    )
+    const results = await Promise.allSettled(partners.map((partner) => accept(token, partner)))
 
     const winners = results.filter((r) => r.status === "fulfilled")
     const losers = results.filter((r) => r.status === "rejected").map((r) => (r as PromiseRejectedResult).reason)
@@ -235,37 +231,151 @@ describe("StreamConnectionService", () => {
     expect(losers).toMatchObject([{ status: 409, code: StreamConnectionErrorCodes.ALREADY_ACCEPTED }])
   })
 
-  test("should revoke the pending invite when a new link is minted for the same channel", async () => {
+  test("should let a third workspace join and push every connection to the region of every workspace in it", async () => {
     const host = await seedWorkspace("eu", "Acme")
-    const first = await invite(host, "stream_relink")
-    const second = await invite(host, "stream_relink")
+    const second = await seedWorkspace("us", "Globex")
+    const third = await seedWorkspace("eu", "Initech")
+    const stream = `stream_trio_${crypto.randomUUID()}`
+    const first = await invite(host, stream)
+    const secondConnection = await accept(first.token, second)
+    const next = await invite(host, stream)
+    eu.reset()
+    us.reset()
 
-    await expect(service.lookup(first.token, "workos_viewer")).rejects.toMatchObject({
-      status: 409,
-      code: StreamConnectionErrorCodes.REVOKED,
-    })
+    const thirdConnection = await accept(next.token, third)
+    const resynced = await service.listForWorkspace({ workspaceId: host, streamId: stream, includeIds: [] })
+    await service.syncToRegions({ connectionId: thirdConnection.id })
+    await service.syncToRegions({ connectionId: secondConnection.id })
+
+    const secondNow = { ...secondConnection, peerWorkspaceIds: [third] }
     expect({
-      superseded: second.superseded,
-      lookup: (await service.lookup(second.token, "workos_viewer")).state,
-      firstEvents: await syncEvents(first.snapshot.id),
+      thirdConnection,
+      resynced,
+      eu: received(eu),
+      us: received(us),
+      secondEvents: await syncEvents(secondConnection.id),
     }).toEqual({
-      superseded: { ...first.snapshot, state: "revoked", revision: 2 },
-      lookup: "invited",
-      firstEvents: [{ connectionId: first.snapshot.id }, { connectionId: first.snapshot.id }],
+      thirdConnection: {
+        ...next.snapshot,
+        revision: 2,
+        state: "active",
+        partnerWorkspaceId: third,
+        partnerWorkspaceName: "Initech",
+        partnerRegion: "eu",
+        partnerVisibility: "public",
+        acceptedBy: `usr_admin_of_${third}`,
+        peerWorkspaceIds: [second],
+      },
+      resynced: [secondNow, thirdConnection],
+      eu: [
+        { url: "/internal/stream-connections", body: thirdConnection },
+        { url: "/internal/stream-connections", body: secondNow },
+      ],
+      us: [
+        { url: "/internal/stream-connections", body: thirdConnection },
+        { url: "/internal/stream-connections", body: secondNow },
+      ],
+      // Minted, accepted, then synced again when the third workspace joined.
+      secondEvents: [
+        { connectionId: secondConnection.id },
+        { connectionId: secondConnection.id },
+        { connectionId: secondConnection.id },
+      ],
     })
-    expect(first.superseded).toBeNull()
   })
 
-  test("should refuse to replace or revoke an accepted share without touching it", async () => {
+  test("should name the workspaces already in the channel on a new link's invite page", async () => {
+    const host = await seedWorkspace("eu", "Acme")
+    const partners = [await seedWorkspace("us", "Globex"), await seedWorkspace("eu", "Initech")]
+    const stream = `stream_named_${crypto.randomUUID()}`
+    for (const partner of partners) {
+      await accept((await invite(host, stream)).token, partner)
+    }
+    const { token } = await invite(host, stream)
+
+    expect(await service.lookup(token, "workos_viewer")).toMatchObject({
+      state: "invited",
+      partners: [
+        { workspaceId: partners[0], workspaceName: "Globex" },
+        { workspaceId: partners[1], workspaceName: "Initech" },
+      ],
+    })
+  })
+
+  test("should refuse a workspace already in the channel and leave the second link pending", async () => {
     const host = await seedWorkspace("eu", "Acme")
     const partner = await seedWorkspace("us", "Globex")
-    const { snapshot, token } = await invite(host, "stream_shared")
-    await service.accept({ token, partnerWorkspaceId: partner, visibility: "public" })
+    const stream = `stream_twice_${crypto.randomUUID()}`
+    await accept((await invite(host, stream)).token, partner)
+    const second = await invite(host, stream)
 
-    await expect(invite(host, "stream_shared")).rejects.toMatchObject({
+    await expect(accept(second.token, partner)).rejects.toMatchObject({
       status: 409,
-      code: StreamConnectionErrorCodes.ALREADY_SHARED,
+      code: StreamConnectionErrorCodes.ALREADY_CONNECTED,
     })
+    expect({
+      lookup: (await service.lookup(second.token, "workos_viewer")).state,
+      events: await syncEvents(second.snapshot.id),
+    }).toEqual({ lookup: "invited", events: [{ connectionId: second.snapshot.id }] })
+  })
+
+  test("should let one workspace in when it accepts two links to the same channel at once", async () => {
+    const host = await seedWorkspace("eu", "Acme")
+    const partner = await seedWorkspace("us", "Globex")
+    const stream = `stream_double_${crypto.randomUUID()}`
+    const links = [await invite(host, stream), await invite(host, stream)]
+
+    const results = await Promise.allSettled(links.map((link) => accept(link.token, partner)))
+
+    expect({
+      outcomes: results.map((r) => outcomeOf(r, "accepted")).toSorted(),
+      live: (await liveConnections(host)).map((c) => c.state).toSorted(),
+    }).toEqual({
+      outcomes: [StreamConnectionErrorCodes.ALREADY_CONNECTED, "accepted"],
+      live: ["active", "invited"],
+    })
+  })
+
+  test("should let two workspaces accept links to one channel at once and sync each to the other", async () => {
+    const host = await seedWorkspace("eu", "Acme")
+    const partners = [await seedWorkspace("us", "Globex"), await seedWorkspace("eu", "Initech")]
+    const stream = `stream_pair_${crypto.randomUUID()}`
+    const links = [await invite(host, stream), await invite(host, stream)]
+
+    const accepted = await Promise.all(links.map((link, i) => accept(link.token, partners[i])))
+
+    const events = await Promise.all(accepted.map((c) => syncEvents(c.id)))
+    const listed = await service.listForWorkspace({ workspaceId: partners[0], streamId: stream, includeIds: [] })
+    expect({
+      peers: listed.map((c) => ({ id: c.id, partner: c.partnerWorkspaceId, peers: c.peerWorkspaceIds })),
+      // Accepts take turns, so whichever went second synced the first again for its new peer.
+      eventCounts: events.map((e) => e.length).toSorted(),
+    }).toEqual({
+      peers: expect.arrayContaining([
+        { id: accepted[0].id, partner: partners[0], peers: [partners[1]] },
+        { id: accepted[1].id, partner: partners[1], peers: [partners[0]] },
+      ]),
+      eventCounts: [2, 3],
+    })
+  })
+
+  test("should keep every link pending when several are minted for one channel at once", async () => {
+    const host = await seedWorkspace("eu", "Acme")
+    const stream = `stream_many_${crypto.randomUUID()}`
+
+    const minted = await Promise.all([invite(host, stream), invite(host, stream), invite(host, stream)])
+
+    expect((await liveConnections(host)).toSorted((a, b) => a.id.localeCompare(b.id))).toEqual(
+      minted.map((m) => ({ id: m.snapshot.id, state: "invited" })).toSorted((a, b) => a.id.localeCompare(b.id))
+    )
+  })
+
+  test("should refuse to revoke an accepted share without touching it", async () => {
+    const host = await seedWorkspace("eu", "Acme")
+    const partner = await seedWorkspace("us", "Globex")
+    const { snapshot, token } = await invite(host)
+    await accept(token, partner)
+
     await expect(service.revokeInvite({ connectionId: snapshot.id, hostWorkspaceId: host })).rejects.toMatchObject({
       status: 409,
       code: StreamConnectionErrorCodes.ALREADY_ACCEPTED,
@@ -279,39 +389,13 @@ describe("StreamConnectionService", () => {
     })
   })
 
-  test("should either share the channel or revoke the invite when a new link races the accept", async () => {
-    const host = await seedWorkspace("eu", "Acme")
-    const partner = await seedWorkspace("us", "Globex")
-    const stream = `stream_race_${crypto.randomUUID()}`
-    const { snapshot, token } = await invite(host, stream)
-
-    const [accepted, minted] = await Promise.allSettled([
-      service.accept({ token, partnerWorkspaceId: partner, visibility: "public" }),
-      invite(host, stream),
-    ])
-
-    const mintedId = minted.status === "fulfilled" ? minted.value.snapshot.id : null
-    expect([
-      {
-        accept: "accepted",
-        mint: StreamConnectionErrorCodes.ALREADY_SHARED,
-        live: [{ id: snapshot.id, state: "active" }],
-      },
-      { accept: StreamConnectionErrorCodes.REVOKED, mint: "minted", live: [{ id: mintedId, state: "invited" }] },
-    ]).toContainEqual({
-      accept: outcomeOf(accepted, "accepted"),
-      mint: outcomeOf(minted, "minted"),
-      live: await liveConnections(host),
-    })
-  })
-
   test("should either share the channel or revoke the invite when a revoke races the accept", async () => {
     const host = await seedWorkspace("eu", "Acme")
     const partner = await seedWorkspace("us", "Globex")
     const { snapshot, token } = await invite(host)
 
     const [accepted, revoked] = await Promise.allSettled([
-      service.accept({ token, partnerWorkspaceId: partner, visibility: "public" }),
+      accept(token, partner),
       service.revokeInvite({ connectionId: snapshot.id, hostWorkspaceId: host }),
     ])
 
@@ -329,40 +413,13 @@ describe("StreamConnectionService", () => {
     })
   })
 
-  test.each([
-    ["no link is pending", false],
-    ["a link is already pending", true],
-  ])("should keep only the newest of three links minted at once when %s", async (_case, pending) => {
-    const host = await seedWorkspace("eu", "Acme")
-    const stream = `stream_race_${crypto.randomUUID()}`
-    const earlier = pending ? await invite(host, stream) : null
-
-    const minted = await Promise.all([invite(host, stream), invite(host, stream), invite(host, stream)])
-
-    const live = await pool.query<{ id: string }>(
-      `SELECT id FROM stream_connections WHERE host_workspace_id = $1 AND state IN ('invited', 'active')`,
-      [host]
-    )
-    const liveIds = live.rows.map((r) => r.id)
-    const mintedIds = minted.map((m) => m.snapshot.id)
-    const everyId = earlier ? [earlier.snapshot.id, ...mintedIds] : mintedIds
-    // Each mint superseded whatever was live when it ran, so every other link was superseded exactly once.
-    expect({
-      liveIsMinted: liveIds.length === 1 && mintedIds.includes(liveIds[0]),
-      superseded: minted.flatMap((m) => (m.superseded ? [m.superseded.id] : [])).toSorted(),
-    }).toEqual({
-      liveIsMinted: true,
-      superseded: everyId.filter((id) => id !== liveIds[0]).toSorted(),
-    })
-  })
-
   test("should ask the host region before accepting and refuse when the channel is no longer shareable", async () => {
     const host = await seedWorkspace("eu", "Acme")
     const partner = await seedWorkspace("us", "Globex")
     const { snapshot, token } = await invite(host)
     eu.setStreamShareable(false)
 
-    await expect(service.accept({ token, partnerWorkspaceId: partner, visibility: "public" })).rejects.toMatchObject({
+    await expect(accept(token, partner)).rejects.toMatchObject({
       status: 409,
       code: StreamConnectionErrorCodes.NOT_SHAREABLE,
     })
@@ -387,9 +444,7 @@ describe("StreamConnectionService", () => {
     const { snapshot, token } = await invite(host)
     eu.setStreamShareable("error")
 
-    await expect(service.accept({ token, partnerWorkspaceId: partner, visibility: "public" })).rejects.toThrow(
-      "Regional backend returned 503"
-    )
+    await expect(accept(token, partner)).rejects.toThrow("Regional backend returned 503")
 
     expect({
       live: await liveConnections(host),
@@ -404,11 +459,11 @@ describe("StreamConnectionService", () => {
     const host = await seedWorkspace("eu", "Acme")
     const partner = await seedWorkspace("us", "Globex")
     const { snapshot, token } = await invite(host)
-    await service.accept({ token, partnerWorkspaceId: partner, visibility: "public" })
+    await accept(token, partner)
     eu.reset()
     eu.setStreamShareable("error")
 
-    const retried = await service.accept({ token, partnerWorkspaceId: partner, visibility: "public" })
+    const retried = await accept(token, partner)
 
     expect({ state: retried.state, checks: shareableChecks(eu), events: await syncEvents(snapshot.id) }).toEqual({
       state: "active",
@@ -420,9 +475,6 @@ describe("StreamConnectionService", () => {
   test("should refuse to accept an unknown, revoked, expired, or own-workspace invite", async () => {
     const host = await seedWorkspace("eu", "Acme")
     const partner = await seedWorkspace("us", "Globex")
-    const accept = (token: string, partnerWorkspaceId = partner) =>
-      service.accept({ token, partnerWorkspaceId, visibility: "public" })
-
     const revokedInvite = await invite(host)
     await service.revokeInvite({ connectionId: revokedInvite.snapshot.id, hostWorkspaceId: host })
     const expiredInvite = await invite(host)
@@ -434,9 +486,9 @@ describe("StreamConnectionService", () => {
     eu.setStreamShareable(false)
 
     const outcomes = await Promise.allSettled([
-      accept("not-a-token"),
-      accept(revokedInvite.token),
-      accept(expiredInvite.token),
+      accept("not-a-token", partner),
+      accept(revokedInvite.token, partner),
+      accept(expiredInvite.token, partner),
       accept(ownInvite.token, host),
     ])
 
@@ -457,17 +509,56 @@ describe("StreamConnectionService", () => {
     })
   })
 
-  test("should return a connection's current state only to its host or partner", async () => {
+  test("should list a channel's connections to the workspaces that hold them, and settled ones only on request", async () => {
     const host = await seedWorkspace("eu", "Acme")
-    const partner = await seedWorkspace("us", "Globex")
-    const stranger = await seedWorkspace("us", "Initech")
-    const { token } = await invite(host)
-    const accepted = await service.accept({ token, partnerWorkspaceId: partner, visibility: "private" })
+    const second = await seedWorkspace("us", "Globex")
+    const third = await seedWorkspace("eu", "Initech")
+    const stranger = await seedWorkspace("us", "Hooli")
+    const stream = `stream_listed_${crypto.randomUUID()}`
+    const secondConnection = await accept((await invite(host, stream)).token, second)
+    const thirdConnection = await accept((await invite(host, stream)).token, third)
+    const pending = await invite(host, stream)
+    const revoked = await invite(host, stream)
+    await service.revokeInvite({ connectionId: revoked.snapshot.id, hostWorkspaceId: host })
+    const expiredInvite = await invite(host, stream)
+    await pool.query(`UPDATE stream_connections SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, [
+      expiredInvite.snapshot.id,
+    ])
+    await invite(host, `stream_other_${crypto.randomUUID()}`)
 
-    const read = (workspaceId: string) => service.getForWorkspace({ connectionId: accepted.id, workspaceId })
+    const list = async (workspaceId: string, includeIds: string[] = []) =>
+      (await service.listForWorkspace({ workspaceId, streamId: stream, includeIds })).map((c) => [c.id, c.state])
 
-    expect({ host: await read(host), partner: await read(partner) }).toEqual({ host: accepted, partner: accepted })
-    await expect(read(stranger)).rejects.toMatchObject({ status: 404, code: StreamConnectionErrorCodes.NOT_FOUND })
+    expect({
+      host: await list(host),
+      hostAskingAfterSettled: await list(host, [revoked.snapshot.id, expiredInvite.snapshot.id]),
+      second: await list(second),
+      third: await list(third, [pending.snapshot.id]),
+      stranger: await list(stranger, [secondConnection.id, pending.snapshot.id]),
+    }).toEqual({
+      host: [
+        [secondConnection.id, "active"],
+        [thirdConnection.id, "active"],
+        [pending.snapshot.id, "invited"],
+      ],
+      hostAskingAfterSettled: [
+        [secondConnection.id, "active"],
+        [thirdConnection.id, "active"],
+        [pending.snapshot.id, "invited"],
+        [revoked.snapshot.id, "revoked"],
+        [expiredInvite.snapshot.id, "invited"],
+      ],
+      // A partner sees the channel's other partners, never the host's pending links.
+      second: [
+        [secondConnection.id, "active"],
+        [thirdConnection.id, "active"],
+      ],
+      third: [
+        [secondConnection.id, "active"],
+        [thirdConnection.id, "active"],
+      ],
+      stranger: [],
+    })
   })
 
   test("should revoke a pending invite once, and refuse another workspace", async () => {

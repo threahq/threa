@@ -25,18 +25,19 @@ export interface CreateInviteParams {
   hostStreamId: string
   hostStreamSlug: string | null
   hostStreamDisplayName: string | null
+  invitedBy: string
 }
 
 export interface CreateInviteResult {
   snapshot: StreamConnectionSnapshot
   token: string
-  superseded: StreamConnectionSnapshot | null
 }
 
 export interface AcceptParams {
   token: string
   partnerWorkspaceId: string
   visibility: Visibility
+  acceptedBy: string
 }
 
 interface Dependencies {
@@ -60,8 +61,11 @@ function expired(): HttpError {
   return new HttpError("Invite expired", { status: 409, code: StreamConnectionErrorCodes.EXPIRED })
 }
 
-function alreadyShared(): HttpError {
-  return new HttpError("Channel already shared", { status: 409, code: StreamConnectionErrorCodes.ALREADY_SHARED })
+function alreadyConnected(): HttpError {
+  return new HttpError("Workspace is already in this channel", {
+    status: 409,
+    code: StreamConnectionErrorCodes.ALREADY_CONNECTED,
+  })
 }
 
 function notShareable(): HttpError {
@@ -85,58 +89,29 @@ export class StreamConnectionService {
     this.regionalClient = regionalClient
   }
 
-  /**
-   * Mints a new invite link for a channel. A pending invite for the same channel
-   * is revoked in the same transaction, so only the newest link works. The
-   * revoked one comes back as `superseded` so the caller's region can project
-   * both at once instead of waiting for the outbox.
-   */
+  /** Mints an invite link for a channel. Each link admits one workspace, and a channel can have several pending. */
   async createInvite(params: CreateInviteParams): Promise<CreateInviteResult> {
     const host = await WorkspaceRegistryRepository.findById(this.pool, params.hostWorkspaceId)
     if (!host) {
       throw new HttpError("Workspace not found", { status: 404, code: "NOT_FOUND" })
     }
 
-    const minted = await this.mint(params)
-    if (!minted) throw alreadyShared()
-    const { id, token, supersededId } = minted
-
-    return {
-      snapshot: await this.requireSnapshot(id),
-      token,
-      superseded: supersededId ? await this.requireSnapshot(supersededId) : null,
-    }
-  }
-
-  /** Null when the channel is already shared. */
-  private async mint(
-    params: CreateInviteParams
-  ): Promise<{ id: string; token: string; supersededId: string | null } | null> {
     const id = streamConnectionId()
     const token = randomBytes(32).toString("base64url")
-    return withTransaction(this.pool, async (client) => {
-      const live = await StreamConnectionRepository.lockLiveForStream(
-        client,
-        params.hostWorkspaceId,
-        params.hostStreamId
-      )
-      if (live?.state === StreamConnectionStates.ACTIVE) return null
-      if (live) {
-        await StreamConnectionRepository.revokeInvite(client, live.id)
-        await this.enqueueSync(client, live.id)
-      }
+    await withTransaction(this.pool, async (client) => {
       await StreamConnectionRepository.insert(client, {
         id,
         hostWorkspaceId: params.hostWorkspaceId,
         hostStreamId: params.hostStreamId,
         hostStreamSlug: params.hostStreamSlug,
         hostStreamDisplayName: params.hostStreamDisplayName,
+        invitedBy: params.invitedBy,
         tokenHash: hashToken(token),
         expiresAt: new Date(Date.now() + STREAM_CONNECTION_INVITE_TTL_MS),
       })
-      await this.enqueueSync(client, id)
-      return { id, token, supersededId: live?.id ?? null }
+      await this.enqueueSync(client, [id])
     })
+    return { snapshot: await this.requireSnapshot(id), token }
   }
 
   /** Revokes a pending invite. Disconnecting an accepted share is a separate operation. */
@@ -147,7 +122,7 @@ export class StreamConnectionService {
       if (record.state === StreamConnectionStates.ACTIVE) throw alreadyAccepted()
       if (record.state === StreamConnectionStates.INVITED) {
         await StreamConnectionRepository.revokeInvite(client, record.id)
-        await this.enqueueSync(client, record.id)
+        await this.enqueueSync(client, [record.id])
       }
     })
     return this.requireSnapshot(params.connectionId)
@@ -164,24 +139,30 @@ export class StreamConnectionService {
       throw new HttpError("Workspace not found", { status: 404, code: "NOT_FOUND" })
     }
 
+    const tokenHash = hashToken(params.token)
+    const found = await StreamConnectionRepository.findSnapshotByTokenHash(this.pool, tokenHash)
+    if (!found) throw notFound()
     // The host may have archived the channel or switched sharing off since the
     // link was minted. Asked before the transaction so no lock waits on the region,
     // and only for an invite the transaction would otherwise activate.
-    const tokenHash = hashToken(params.token)
-    const pending = await StreamConnectionRepository.findSnapshotByTokenHash(this.pool, tokenHash)
     if (
-      pending?.state === StreamConnectionStates.INVITED &&
-      new Date(pending.expiresAt) > new Date() &&
-      pending.hostWorkspaceId !== params.partnerWorkspaceId &&
-      !(await this.regionalClient.isStreamShareable(pending.hostRegion, {
-        workspaceId: pending.hostWorkspaceId,
-        streamId: pending.hostStreamId,
+      found.state === StreamConnectionStates.INVITED &&
+      new Date(found.expiresAt) > new Date() &&
+      found.hostWorkspaceId !== params.partnerWorkspaceId &&
+      !(await this.regionalClient.isStreamShareable(found.hostRegion, {
+        workspaceId: found.hostWorkspaceId,
+        streamId: found.hostStreamId,
       }))
     ) {
       throw notShareable()
     }
 
     const connectionId = await withTransaction(this.pool, async (client) => {
+      // Accepts into one channel take turns, so each sees every partner that
+      // joined before it. Two running side by side would each miss the other,
+      // and neither partner would learn the other is in the channel. The host
+      // and stream never change on a row, so the unlocked read above names them.
+      await StreamConnectionRepository.lockChannel(client, found.hostWorkspaceId, found.hostStreamId)
       const record = await StreamConnectionRepository.lockByTokenHash(client, tokenHash)
       if (!record) throw notFound()
       if (record.state === StreamConnectionStates.ACTIVE) {
@@ -196,28 +177,36 @@ export class StreamConnectionService {
           code: StreamConnectionErrorCodes.SAME_WORKSPACE,
         })
       }
+      const partners = await StreamConnectionRepository.listPartners(
+        client,
+        record.hostWorkspaceId,
+        record.hostStreamId
+      )
+      if (partners.some((p) => p.workspaceId === params.partnerWorkspaceId)) throw alreadyConnected()
 
       await StreamConnectionRepository.activate(client, {
         id: record.id,
         partnerWorkspaceId: params.partnerWorkspaceId,
         partnerVisibility: params.visibility,
+        acceptedBy: params.acceptedBy,
       })
-      await this.enqueueSync(client, record.id)
+      // Every partner already in the channel gains a peer, so their connections fan out again too.
+      await this.enqueueSync(client, [record.id, ...partners.map((p) => p.connectionId)])
       return record.id
     })
     return this.requireSnapshot(connectionId)
   }
 
-  /** A region re-reading a connection it holds, to heal a sync the outbox never delivered. */
-  async getForWorkspace(params: { connectionId: string; workspaceId: string }): Promise<StreamConnectionSnapshot> {
-    const snapshot = await StreamConnectionRepository.findSnapshot(this.pool, params.connectionId)
-    if (
-      !snapshot ||
-      (snapshot.hostWorkspaceId !== params.workspaceId && snapshot.partnerWorkspaceId !== params.workspaceId)
-    ) {
-      throw notFound()
-    }
-    return snapshot
+  /**
+   * A region re-reading the channel's connections it holds, to heal syncs the
+   * outbox never delivered. `includeIds` names the rows it is about to show.
+   */
+  async listForWorkspace(params: {
+    workspaceId: string
+    streamId: string
+    includeIds: string[]
+  }): Promise<StreamConnectionSnapshot[]> {
+    return StreamConnectionRepository.listSnapshotsForWorkspace(this.pool, params)
   }
 
   /** What the invite page shows. Never exposes who created the link. */
@@ -234,7 +223,18 @@ export class StreamConnectionService {
     }
     if (snapshot.state === StreamConnectionStates.INVITED) {
       if (new Date(snapshot.expiresAt) <= new Date()) throw expired()
-      return { ...base, state: snapshot.state, partnerWorkspaceId: null, partnerWorkspaceName: null }
+      const partners = await StreamConnectionRepository.listPartners(
+        this.pool,
+        snapshot.hostWorkspaceId,
+        snapshot.hostStreamId
+      )
+      return {
+        ...base,
+        state: snapshot.state,
+        partnerWorkspaceId: null,
+        partnerWorkspaceName: null,
+        partners: partners.map(({ workspaceId, workspaceName }) => ({ workspaceId, workspaceName })),
+      }
     }
     // A used link tells only the accepting workspace's members where the channel went.
     const { partnerWorkspaceId, partnerWorkspaceName } = snapshot
@@ -249,10 +249,11 @@ export class StreamConnectionService {
   }
 
   /**
-   * Outbox handler: push the current snapshot, not event-time state, to each
-   * side's region. One region holding both sides gets it once and projects both.
-   * Every region is attempted before a failure is raised, so one region being
-   * down doesn't hold back the other.
+   * Outbox handler: push the current snapshot, not event-time state, to the
+   * region of every workspace that holds a row for it: host, partner and peers.
+   * A region holding several of them gets it once and projects them all. Every
+   * region is attempted before a failure is raised, so one region being down
+   * doesn't hold back the others.
    */
   async syncToRegions(payload: StreamConnectionSyncPayload): Promise<void> {
     const snapshot = await StreamConnectionRepository.findSnapshot(this.pool, payload.connectionId)
@@ -260,10 +261,10 @@ export class StreamConnectionService {
       logger.warn({ connectionId: payload.connectionId }, "Stream connection sync skipped: connection or host gone")
       return
     }
-    const regions =
-      snapshot.partnerRegion && snapshot.partnerRegion !== snapshot.hostRegion
-        ? [snapshot.hostRegion, snapshot.partnerRegion]
-        : [snapshot.hostRegion]
+    const peers = await WorkspaceRegistryRepository.findByIds(this.pool, snapshot.peerWorkspaceIds)
+    const regions = [
+      ...new Set([snapshot.hostRegion, snapshot.partnerRegion, ...peers.map((peer) => peer.region)]),
+    ].filter((region) => region !== null)
     const results = await Promise.allSettled(
       regions.map((region) => this.regionalClient.syncStreamConnection(region, snapshot))
     )
@@ -282,10 +283,14 @@ export class StreamConnectionService {
     }
   }
 
-  private async enqueueSync(client: PoolClient, connectionId: string): Promise<void> {
-    await OutboxRepository.insert(client, OUTBOX_STREAM_CONNECTION_SYNC, {
-      connectionId,
-    } satisfies StreamConnectionSyncPayload)
+  private async enqueueSync(client: PoolClient, connectionIds: string[]): Promise<void> {
+    await OutboxRepository.insertMany(
+      client,
+      connectionIds.map((connectionId) => ({
+        eventType: OUTBOX_STREAM_CONNECTION_SYNC,
+        payload: { connectionId } satisfies StreamConnectionSyncPayload,
+      }))
+    )
   }
 
   private async requireSnapshot(id: string): Promise<StreamConnectionSnapshot> {
