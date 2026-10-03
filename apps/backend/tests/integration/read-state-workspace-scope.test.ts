@@ -173,7 +173,9 @@ describe("Read state and sparse overlay workspace scope (INV-8)", () => {
 
     const events = await StreamEventRepository.list(pool, wsA, channelA)
     const createdEvent = (messageId: string) => {
-      const event = events.find((e) => e.eventType === "message_created" && e.payload.messageId === messageId)!
+      const event = events.find(
+        (e) => e.eventType === "message_created" && (e.payload as { messageId: string }).messageId === messageId
+      )!
       return { id: event.id, sequence: event.sequence }
     }
     e1 = createdEvent(m1)
