@@ -67,7 +67,7 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
       return
     }
 
-    await withClient(this.db, (client) => this.queueConversations(client, workspaceId, streamId, [conversationId]))
+    await withClient(this.db, (client) => queueMemoConversations(client, workspaceId, streamId, [conversationId]))
   }
 
   /**
@@ -99,27 +99,10 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
 
     await withTransaction(this.db, async (client) => {
       if (event.eventType === "message:deleted") {
-        // Held by every memo save in the stream: a memo saved concurrently
-        // either commits before the lookup below, or sees the deletion.
-        const memoStream = await findMemoryModeStream(client, workspaceId, streamId)
-        if (memoStream) await MemoRepository.lockStreamSaves(client, memoStream.id)
-
-        const citing = await MemoRepository.findActiveCitingMessage(client, workspaceId, messageId)
-        await MemoRepository.archiveMany(
-          client,
-          workspaceId,
-          citing.filter((c) => !c.hasLiveSource).map((c) => c.memo.id)
-        )
-        await MemoRepository.markSuperseded(
-          client,
-          workspaceId,
-          citing.filter((c) => c.hasLiveSource).map((c) => c.memo.id),
-          "A source message was deleted"
-        )
+        await retireMemosCitingDeletedMessage(client, workspaceId, streamId, messageId)
       }
-
       const conversations = await ConversationRepository.findByMessageId(client, workspaceId, messageId)
-      await this.queueConversations(
+      await queueMemoConversations(
         client,
         workspaceId,
         streamId,
@@ -127,45 +110,68 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
       )
     })
   }
+}
 
-  private async queueConversations(
-    client: PoolClient,
-    workspaceId: string,
-    streamId: string,
-    conversationIds: string[]
-  ): Promise<void> {
-    if (conversationIds.length === 0) return
+/**
+ * Archives the active memos citing a deleted message when none of their
+ * sources survive, and supersedes the rest. Returns how many memos it retired.
+ */
+export async function retireMemosCitingDeletedMessage(
+  client: PoolClient,
+  workspaceId: string,
+  streamId: string,
+  messageId: string
+): Promise<number> {
+  // Held by every memo save in the stream: a memo saved concurrently
+  // either commits before the lookup below, or sees the deletion.
+  const memoStream = await findMemoryModeStream(client, workspaceId, streamId)
+  if (memoStream) await MemoRepository.lockStreamSaves(client, memoStream.id)
 
-    // `off` excludes the stream from memo extraction *and* passive to-do
-    // capture (both ride processBatch, which never runs without queued items).
-    const topLevelStream = await findMemoryModeStream(client, workspaceId, streamId)
-    if (!topLevelStream) {
-      // Nothing to attribute memos to, so don't queue an orphan.
-      logger.warn({ workspaceId, streamId }, "Stream not found for memo accumulator")
-      return
-    }
-    if (!isMemoryAutomationOn(topLevelStream)) {
-      logger.debug({ workspaceId, streamId }, "Memory automation off for stream — skipping memo queue")
-      return
-    }
+  const citing = await MemoRepository.findActiveCitingMessage(client, workspaceId, messageId)
+  const archived = citing.filter((c) => !c.hasLiveSource).map((c) => c.memo.id)
+  const superseded = citing.filter((c) => c.hasLiveSource).map((c) => c.memo.id)
+  await MemoRepository.archiveMany(client, workspaceId, archived)
+  await MemoRepository.markSuperseded(client, workspaceId, superseded, "A source message was deleted")
+  return archived.length + superseded.length
+}
 
-    // Stream state before pending rows, the order a batch save locks them in.
-    await StreamStateRepository.upsertActivity(client, workspaceId, topLevelStream.id)
+export async function queueMemoConversations(
+  client: PoolClient,
+  workspaceId: string,
+  streamId: string,
+  conversationIds: string[]
+): Promise<void> {
+  if (conversationIds.length === 0) return
 
-    await PendingItemRepository.queue(
-      client,
-      conversationIds.map((itemId) => ({
-        id: pendingItemId(),
-        workspaceId,
-        streamId: topLevelStream.id,
-        itemType: "conversation",
-        itemId,
-      }))
-    )
-
-    logger.debug(
-      { workspaceId, streamId: topLevelStream.id, conversationIds },
-      "Conversations queued for memo processing"
-    )
+  // `off` excludes the stream from memo extraction *and* passive to-do
+  // capture (both ride processBatch, which never runs without queued items).
+  const topLevelStream = await findMemoryModeStream(client, workspaceId, streamId)
+  if (!topLevelStream) {
+    // Nothing to attribute memos to, so don't queue an orphan.
+    logger.warn({ workspaceId, streamId }, "Stream not found for memo accumulator")
+    return
   }
+  if (!isMemoryAutomationOn(topLevelStream)) {
+    logger.debug({ workspaceId, streamId }, "Memory automation off for stream — skipping memo queue")
+    return
+  }
+
+  // Stream state before pending rows, the order a batch save locks them in.
+  await StreamStateRepository.upsertActivity(client, workspaceId, topLevelStream.id)
+
+  await PendingItemRepository.queue(
+    client,
+    conversationIds.map((itemId) => ({
+      id: pendingItemId(),
+      workspaceId,
+      streamId: topLevelStream.id,
+      itemType: "conversation",
+      itemId,
+    }))
+  )
+
+  logger.debug(
+    { workspaceId, streamId: topLevelStream.id, conversationIds },
+    "Conversations queued for memo processing"
+  )
 }
