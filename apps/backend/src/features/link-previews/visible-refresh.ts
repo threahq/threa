@@ -39,8 +39,8 @@ const VISIBLE_REFRESHABLE_PREVIEW_TYPES: ReadonlySet<string> = new Set(GITHUB_PR
  * next window gets a fresh bucket, so a persisted completed row never blocks a
  * later nudge.
  */
-export function visibleRefreshQueueId(previewId: string, nowMs: number): string {
-  return `queue_lpviz_${previewId}_b${Math.floor(nowMs / VISIBLE_REFRESH_DEBOUNCE_MS)}`
+export function visibleRefreshQueueId(workspaceId: string, previewId: string, nowMs: number): string {
+  return `queue_lpviz_${workspaceId}_${previewId}_b${Math.floor(nowMs / VISIBLE_REFRESH_DEBOUNCE_MS)}`
 }
 
 /**
@@ -60,7 +60,7 @@ export async function enqueueVisiblePreviewRefreshes(
         await jobQueue.send(
           JobQueues.LINK_PREVIEW_VISIBLE_REFRESH,
           { workspaceId, previewId },
-          { messageId: visibleRefreshQueueId(previewId, now) }
+          { messageId: visibleRefreshQueueId(workspaceId, previewId, now) }
         )
       } catch (error) {
         log.debug({ err: error, workspaceId, previewId }, "Failed to enqueue visible preview refresh; dropping")

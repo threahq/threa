@@ -42,7 +42,7 @@ export function createBackfillChunkWorker(deps: BackfillChunkWorkerDeps): JobHan
         return
       }
 
-      await client.query(
+      const updateResult = await client.query(
         sql`
           UPDATE backfill_runs
           SET
@@ -52,8 +52,13 @@ export function createBackfillChunkWorker(deps: BackfillChunkWorkerDeps): JobHan
             completed_at = CASE WHEN chunks_completed + 1 >= total_chunks THEN now() ELSE completed_at END,
             updated_at = now()
           WHERE id = ${runId}
+            AND workspace_id = ${workspaceId}
         `
       )
+
+      if ((updateResult.rowCount ?? 0) !== 1) {
+        throw new Error(`Backfill run ${runId} not found in workspace ${workspaceId}`)
+      }
     })
 
     logger.info({ jobId: job.id, backfillName, workspaceId, runId, chunkIndex, processed }, "Backfill chunk processed")
