@@ -308,7 +308,6 @@ describe("Calls workspace scope (INV-8)", () => {
       const channel = await streams.createChannel({
         workspaceId: wid,
         slug: `calls-scope-${label}-${wid}`,
-        displayName: `Calls scope ${label}`,
         createdBy: host,
         visibility: Visibilities.PRIVATE,
       })
