@@ -25,7 +25,9 @@ function toCached(workspaceId: string, rootStreamId: string, item: StreamContext
  * Reactive "In this stream" feed, newest first — the panel's read authority,
  * mirroring how the timeline reads `events` from IDB. A live sync applier or a
  * page seed re-sorts the feed in place without a refetch. Returns `undefined`
- * until the first IDB read resolves (loading), `[]` when genuinely empty.
+ * until the query resolves for the current workspace, stream, root and scope —
+ * the stamp keeps a key switch from exposing the previous key's rows for one
+ * render — and `[]` when genuinely empty.
  *
  * `scope: "tree"` reads the root's whole thread tree (INV-62 — a thread's
  * content belongs to its root's context); `"stream"` reads just this stream.
@@ -43,14 +45,13 @@ export async function readStreamContextRows(
 ): Promise<CachedStreamContextItem[]> {
   const [index, anchor] =
     scope === "tree"
-      ? (["[rootStreamId+occurredAt]", rootStreamId] as const)
-      : (["[streamId+occurredAt]", streamId] as const)
-  const rows = await db.streamContextItems
+      ? (["[workspaceId+rootStreamId+occurredAt]", rootStreamId] as const)
+      : (["[workspaceId+streamId+occurredAt]", streamId] as const)
+  return db.streamContextItems
     .where(index)
-    .between([anchor, Dexie.minKey], [anchor, Dexie.maxKey])
+    .between([workspaceId, anchor, Dexie.minKey], [workspaceId, anchor, Dexie.maxKey])
     .reverse()
     .toArray()
-  return rows.filter((row) => row.workspaceId === workspaceId)
 }
 
 export function useStreamContextRows(
@@ -59,46 +60,61 @@ export function useStreamContextRows(
   rootStreamId: string,
   scope: StreamContextScope
 ): CachedStreamContextItem[] | undefined {
-  return useLiveQuery(async () => {
-    const [index, anchor] =
-      scope === "tree"
-        ? (["[rootStreamId+occurredAt]", rootStreamId] as const)
-        : (["[streamId+occurredAt]", streamId] as const)
-    const rows = await db.streamContextItems
-      .where(index)
-      .between([anchor, Dexie.minKey], [anchor, Dexie.maxKey])
-      .reverse()
-      .toArray()
-    // Cross-workspace ids never collide, but the filter keeps a stale row from a
-    // previous account's database out of the feed if one is ever left behind.
-    return rows.filter((row) => row.workspaceId === workspaceId)
-  }, [workspaceId, streamId, rootStreamId, scope])
+  const result = useLiveQuery(
+    async () => ({
+      forWorkspaceId: workspaceId,
+      forStreamId: streamId,
+      forRootStreamId: rootStreamId,
+      forScope: scope,
+      rows: await readStreamContextRows(workspaceId, streamId, rootStreamId, scope),
+    }),
+    [workspaceId, streamId, rootStreamId, scope]
+  )
+  if (
+    !result ||
+    result.forWorkspaceId !== workspaceId ||
+    result.forStreamId !== streamId ||
+    result.forRootStreamId !== rootStreamId ||
+    result.forScope !== scope
+  ) {
+    return undefined
+  }
+  return result.rows
 }
 
 /**
  * Every occurrence of one collapsed group ("shared 4 times"), newest first.
  * Locally derived rows group by their raw `refId` until the server's normalized
  * `groupKey` lands, so an expanded group can gain members on reconcile.
+ * `undefined` until the query resolves for the current workspace, root and
+ * group — the stamp keeps a key switch from exposing the previous key's rows
+ * for one render.
  */
 export function useStreamContextOccurrences(
   workspaceId: string,
   rootStreamId: string,
   groupRef: string | null
 ): CachedStreamContextItem[] | undefined {
-  return useLiveQuery(async () => {
-    if (!groupRef) return []
+  const result = useLiveQuery(async () => {
+    const stamp = { forWorkspaceId: workspaceId, forRootStreamId: rootStreamId, forGroupRef: groupRef }
+    if (!groupRef) return { ...stamp, rows: [] }
     const rows = await db.streamContextItems
-      .where("[groupRef+occurredAt]")
-      .between([groupRef, Dexie.minKey], [groupRef, Dexie.maxKey])
+      .where("[workspaceId+groupRef+occurredAt]")
+      .between([workspaceId, groupRef, Dexie.minKey], [workspaceId, groupRef, Dexie.maxKey])
       .reverse()
       .toArray()
-    // One IDB database backs every workspace of the account and a groupRef is
-    // only `category:groupKey`, so the same link shared in another workspace or
-    // another root lands under the same key. The server's `listOccurrences`
-    // filters workspace + root; an unfiltered read would list more occurrences
-    // than the row was labelled with and jump into a foreign stream.
-    return rows.filter((row) => row.workspaceId === workspaceId && row.rootStreamId === rootStreamId)
+    // A groupRef spans roots; the server's `listOccurrences` filters by root.
+    return { ...stamp, rows: rows.filter((row) => row.rootStreamId === rootStreamId) }
   }, [workspaceId, rootStreamId, groupRef])
+  if (
+    !result ||
+    result.forWorkspaceId !== workspaceId ||
+    result.forRootStreamId !== rootStreamId ||
+    result.forGroupRef !== groupRef
+  ) {
+    return undefined
+  }
+  return result.rows
 }
 
 /**
@@ -132,9 +148,11 @@ export async function putLocalContextRows(rows: CachedStreamContextItem[]): Prom
     // splice re-applies buffered live events), so a blind `bulkPut` would stomp
     // the server's `groupKey`/`detail` back to a bare local row on every
     // reconnect. Only absent or still-`pending` keys are written.
-    const existing = await db.streamContextItems.bulkGet(rows.map((row) => row.key))
-    const reconciled = new Set(existing.filter((row) => row && row._status !== "pending").map((row) => row!.key))
-    const writable = rows.filter((row) => !reconciled.has(row.key))
+    const existing = await db.streamContextItems.bulkGet(rows.map((row) => [row.workspaceId, row.key]))
+    const writable = rows.filter((_, index) => {
+      const prior = existing[index]
+      return !prior || prior._status === "pending"
+    })
     if (writable.length === 0) return
     await db.streamContextItems.bulkPut(writable.map((row) => ({ ...row, _status: "pending" as const })))
   })
@@ -173,12 +191,10 @@ export async function replaceContextRowsForMessage(
     // landmark carries the same `sourceMessageId` but is written by another path
     // that never re-creates it (mirrors the server's `replaceForMessage`, which
     // deletes `MESSAGE_BODY_CONTEXT_CATEGORIES` only).
-    const removed = existing
-      .filter(
-        (row) => (MESSAGE_BODY_CONTEXT_CATEGORIES as readonly string[]).includes(row.category) && !nextKeys.has(row.key)
-      )
-      .map((row) => row.key)
-    if (removed.length > 0) await db.streamContextItems.bulkDelete(removed)
+    const removed = existing.filter(
+      (row) => (MESSAGE_BODY_CONTEXT_CATEGORIES as readonly string[]).includes(row.category) && !nextKeys.has(row.key)
+    )
+    if (removed.length > 0) await db.streamContextItems.bulkDelete(removed.map((row) => [workspaceId, row.key]))
 
     const merged = rows.map((row) => {
       const prior = existingByKey.get(row.key)

@@ -57,7 +57,7 @@ export function useRegenerateTitle(workspaceId: string, target: RegenerationTarg
         return
       }
       const result = await conversationsApi.regenerateTitle(workspaceId, target.conversationId)
-      await mergeBoardConversation(target.conversationId, result.conversation)
+      await mergeBoardConversation(workspaceId, target.conversationId, result.conversation)
       queryClient.setQueryData<ConversationWithStaleness>(
         conversationKeys.byId(workspaceId, target.conversationId),
         (old) => (old ? mergeConversationByTitleRevision(old, result.conversation) : result.conversation)

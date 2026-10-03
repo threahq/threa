@@ -67,10 +67,9 @@ async function loadBoardDraftContext(workspaceId: string, keys: ScopeKeys): Prom
 
   const convIds = conversationIdKey ? conversationIdKey.split(",") : []
   const branchIds = new Set(branchConversationIdKey ? branchConversationIdKey.split(",") : [])
-  const referencedRows = convIds.length > 0 ? await db.conversations.bulkGet(convIds) : []
-  const referenced = referencedRows.filter(
-    (row): row is CachedBoardPost => row !== undefined && row.workspaceId === workspaceId
-  )
+  const referencedRows =
+    convIds.length > 0 ? await db.conversations.bulkGet(convIds.map((id) => [workspaceId, id])) : []
+  const referenced = referencedRows.filter((row): row is CachedBoardPost => row !== undefined)
 
   const forkMessageIds = new Set(subtopicMessageIdKey ? subtopicMessageIdKey.split(",") : [])
   const branchPosts = referenced.filter((row) => branchIds.has(row.id))
@@ -232,9 +231,9 @@ async function loadThreadAnchorContext(workspaceId: string, anchorIdKey: string)
   }
 
   const conversationIdByAnchorId = new Map<string, string>()
-  const conversationRows = await db.conversationMessages.bulkGet(anchorIds)
+  const conversationRows = await db.conversationMessages.bulkGet(anchorIds.map((id) => [workspaceId, id]))
   for (const row of conversationRows) {
-    if (row?.workspaceId === workspaceId) conversationIdByAnchorId.set(row.messageId, row.conversationId)
+    if (row) conversationIdByAnchorId.set(row.messageId, row.conversationId)
   }
 
   return { streamByAnchorId, conversationIdByAnchorId, loaded: true }

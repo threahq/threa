@@ -292,7 +292,7 @@ function mountPanel(opts: {
   )
   if (opts.cachedById) {
     const byId = opts.cachedById
-    vi.spyOn(boardStoreModule, "useBoardPost").mockImplementation(((id: string | null) =>
+    vi.spyOn(boardStoreModule, "useBoardPost").mockImplementation(((_workspaceId: string, id: string | null) =>
       id ? (byId[id] ?? null) : null) as never)
   } else {
     vi.spyOn(boardStoreModule, "useBoardPost").mockReturnValue(opts.cached as never)

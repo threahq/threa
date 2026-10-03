@@ -1,17 +1,31 @@
 import { describe, it, expect, beforeEach } from "vitest"
 import { renderHook, waitFor } from "@testing-library/react"
 import { db } from "@/db"
-import { resetDraftContextCache, useBoardDraftContext } from "./use-board-draft-context"
+import {
+  draftScopesSignature,
+  resetDraftContextCache,
+  useBoardDraftContext,
+  type BoardDraftContext,
+} from "./use-board-draft-context"
 
 const workspaceId = "ws_1"
 
-async function seedConversation(conversationId: string, streamId: string) {
+async function seedConversation(
+  conversationId: string,
+  streamId: string,
+  overrides: { workspaceId?: string; topicSummary?: string; messageIds?: string[] } = {}
+) {
   await db.conversations.put({
     id: conversationId,
-    workspaceId,
+    workspaceId: overrides.workspaceId ?? workspaceId,
     _lastActivityMs: 1,
     _cachedAt: 1,
-    conversation: { id: conversationId, streamId, topicSummary: null },
+    conversation: {
+      id: conversationId,
+      streamId,
+      topicSummary: overrides.topicSummary ?? null,
+      messageIds: overrides.messageIds,
+    },
   } as unknown as Parameters<typeof db.conversations.put>[0])
 }
 
@@ -75,5 +89,95 @@ describe("useBoardDraftContext retention", () => {
     expect(result.current.loaded).toBe(false)
     await waitFor(() => expect(result.current.loaded).toBe(true))
     expect(result.current.boardPostMap.has("conv_1")).toBe(false)
+  })
+})
+
+describe("useBoardDraftContext workspace isolation", () => {
+  beforeEach(async () => {
+    resetDraftContextCache()
+    await db.conversations.clear()
+    await db.streams.clear()
+  })
+
+  async function seedThreadStream(streamWorkspaceId: string, parentAnchorId: string) {
+    await db.streams.put({
+      id: "thread_1",
+      workspaceId: streamWorkspaceId,
+      parentAnchorId,
+    } as unknown as Parameters<typeof db.streams.put>[0])
+  }
+
+  function summarize(context: BoardDraftContext) {
+    const post = (row: { workspaceId: string; conversation: { topicSummary: string | null } }) => ({
+      workspaceId: row.workspaceId,
+      topicSummary: row.conversation.topicSummary,
+    })
+    const posts = (map: Map<string, Parameters<typeof post>[0]>) =>
+      Object.fromEntries([...map].map(([key, row]) => [key, post(row)]))
+    return {
+      loaded: context.loaded,
+      boardPostMap: posts(context.boardPostMap),
+      hostPostByMessageId: posts(context.hostPostByMessageId),
+      parentPostByBranchConversationId: posts(context.parentPostByBranchConversationId),
+    }
+  }
+
+  it("resolves each workspace's own conversations, hosts and branch parents when two workspaces hold the same ids", async () => {
+    await seedConversation("conv_main", "stream_chan", {
+      workspaceId: "ws_1",
+      topicSummary: "main in ws_1",
+      messageIds: ["m_fork", "m_anchor"],
+    })
+    await seedConversation("conv_branch", "thread_1", { workspaceId: "ws_1", topicSummary: "branch in ws_1" })
+    await seedThreadStream("ws_1", "m_anchor")
+    await seedConversation("conv_main", "stream_chan", {
+      workspaceId: "ws_2",
+      topicSummary: "main in ws_2",
+      messageIds: ["m_fork", "m_anchor"],
+    })
+    await seedConversation("conv_branch", "thread_1", { workspaceId: "ws_2", topicSummary: "branch in ws_2" })
+    await seedConversation("conv_other", "stream_other", {
+      workspaceId: "ws_2",
+      topicSummary: "other in ws_2",
+      messageIds: ["m_anchor_other"],
+    })
+    await seedThreadStream("ws_2", "m_anchor_other")
+    const signature = draftScopesSignature([
+      "board:reply:conv_main",
+      "board:branch-reply:conv_branch",
+      "board:subtopic:stream_chan:m_fork",
+    ])
+
+    const inWs1 = renderHook(() => useBoardDraftContext("ws_1", signature))
+    const inWs2 = renderHook(() => useBoardDraftContext("ws_2", signature))
+    await waitFor(() => {
+      expect(inWs1.result.current.loaded).toBe(true)
+      expect(inWs2.result.current.loaded).toBe(true)
+    })
+
+    const main1 = { workspaceId: "ws_1", topicSummary: "main in ws_1" }
+    const main2 = { workspaceId: "ws_2", topicSummary: "main in ws_2" }
+    const other2 = { workspaceId: "ws_2", topicSummary: "other in ws_2" }
+    expect({ ws_1: summarize(inWs1.result.current), ws_2: summarize(inWs2.result.current) }).toEqual({
+      ws_1: {
+        loaded: true,
+        boardPostMap: {
+          conv_main: main1,
+          conv_branch: { workspaceId: "ws_1", topicSummary: "branch in ws_1" },
+        },
+        hostPostByMessageId: { m_fork: main1, m_anchor: main1 },
+        parentPostByBranchConversationId: { conv_branch: main1 },
+      },
+      ws_2: {
+        loaded: true,
+        boardPostMap: {
+          conv_main: main2,
+          conv_branch: { workspaceId: "ws_2", topicSummary: "branch in ws_2" },
+          conv_other: other2,
+        },
+        hostPostByMessageId: { m_fork: main2, m_anchor_other: other2 },
+        parentPostByBranchConversationId: { conv_branch: other2 },
+      },
+    })
   })
 })

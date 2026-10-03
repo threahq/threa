@@ -47,8 +47,8 @@ function message(id: string): BoardPostMessage {
   }
 }
 
-async function row(messageId: string) {
-  const cached = await db.conversationMessages.get(messageId)
+async function row(messageId: string, workspaceId = WS) {
+  const cached = await db.conversationMessages.get([workspaceId, messageId])
   if (!cached) return null
   const { _cachedAt, ...rest } = cached
   return rest
@@ -94,6 +94,28 @@ describe("live patches mirror onto the conversation backfill store", () => {
     expect(await row("m1")).toEqual(
       cachedShape({ contentMarkdown: "edited body", editedAt: "2026-07-02T10:00:00.000Z" })
     )
+  })
+
+  it("patches only its own workspace's row when a copied stream caches the same message id in another workspace", async () => {
+    await seedConversationMessages("ws_other", CONV, [message("m1")])
+
+    await emit("message:edited", {
+      workspaceId: WS,
+      streamId: STREAM,
+      event: {
+        id: "evt_edit",
+        streamId: STREAM,
+        sequence: "2",
+        eventType: "message_edited",
+        createdAt: "2026-07-02T10:00:00.000Z",
+        payload: { messageId: "m1", contentJson: null, contentMarkdown: "edited body" },
+      },
+    })
+
+    expect({ own: await row("m1"), other: await row("m1", "ws_other") }).toEqual({
+      own: cachedShape({ contentMarkdown: "edited body", editedAt: "2026-07-02T10:00:00.000Z" }),
+      other: { ...cachedShape(), workspaceId: "ws_other" },
+    })
   })
 
   it("applies message:deleted", async () => {
