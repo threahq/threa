@@ -479,21 +479,25 @@ export const MemoRepository = {
     return result.rows.map(mapRowToMemo)
   },
 
+  /**
+   * `scopeUserId` is the tier the reader writes into: private memos come back
+   * only for their owner, null returns shared memos only.
+   */
   async findByStream(
     db: Querier,
     streamId: string,
-    options?: { status?: MemoStatus; limit?: number; orderBy?: "createdAt" | "updatedAt" }
+    options: { scopeUserId: string | null; status?: MemoStatus; limit?: number; orderBy?: "createdAt" | "updatedAt" }
   ): Promise<Memo[]> {
-    const limit = options?.limit ?? 50
-    const orderBy = options?.orderBy === "updatedAt" ? "updated_at" : "created_at"
+    const limit = options.limit ?? 50
+    const orderBy = options.orderBy === "updatedAt" ? "updated_at" : "created_at"
 
     // UNION over the two source paths: conversation memos (via source_conversation_id)
     // and message memos (via source_message_id), each resolving to a stream_id.
-    const values: unknown[] = [streamId]
-    let paramIndex = 2
+    const values: unknown[] = [streamId, options.scopeUserId]
+    let paramIndex = 3
     let statusClause = ""
 
-    if (options?.status) {
+    if (options.status) {
       statusClause = `AND m.status = $${paramIndex}`
       values.push(options.status)
       paramIndex++
@@ -501,14 +505,15 @@ export const MemoRepository = {
 
     values.push(limit)
 
+    const scopeClause = `AND (m.scope <> 'user' OR m.scope_user_id = $2)`
     const query = `
       SELECT ${SELECT_FIELDS_PREFIXED} FROM memos m
       JOIN conversations c ON m.source_conversation_id = c.id
-      WHERE c.stream_id = $1 ${statusClause}
+      WHERE c.stream_id = $1 ${scopeClause} ${statusClause}
       UNION
       SELECT ${SELECT_FIELDS_PREFIXED} FROM memos m
       JOIN messages msg ON m.source_message_id = msg.id
-      WHERE msg.stream_id = $1 ${statusClause}
+      WHERE msg.stream_id = $1 ${scopeClause} ${statusClause}
       ORDER BY ${orderBy} DESC
       LIMIT $${paramIndex}
     `
@@ -923,11 +928,29 @@ export const MemoRepository = {
     return mapRowToMemo(result.rows[0])
   },
 
-  async getAllTags(db: Querier, workspaceId: string): Promise<string[]> {
+  /**
+   * Tags a capture into `rootStreamId` may show its model: shared memos whose
+   * source root is that root or public (resolved through the root, as
+   * `findEmbedSummaries` does), plus `scopeUserId`'s own private memos.
+   */
+  async getAllTags(
+    db: Querier,
+    workspaceId: string,
+    scope: { scopeUserId: string | null; rootStreamId: string }
+  ): Promise<string[]> {
     const result = await db.query<{ tag: string }>(sql`
-      SELECT DISTINCT unnest(tags) as tag
-      FROM memos
-      WHERE workspace_id = ${workspaceId} AND status = 'active'
+      SELECT DISTINCT unnest(m.tags) as tag
+      FROM memos m
+      LEFT JOIN messages src_msg ON src_msg.id = m.source_message_id
+      LEFT JOIN conversations src_conv ON src_conv.id = m.source_conversation_id
+      LEFT JOIN messages first_msg ON first_msg.id = m.source_message_ids[1]
+      LEFT JOIN streams s ON s.id = COALESCE(src_msg.stream_id, src_conv.stream_id, first_msg.stream_id)
+      LEFT JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id)
+      WHERE m.workspace_id = ${workspaceId} AND m.status = 'active'
+        AND (
+          (m.scope = 'user' AND m.scope_user_id = ${scope.scopeUserId})
+          OR (m.scope <> 'user' AND (root.id = ${scope.rootStreamId} OR root.visibility = 'public'))
+        )
       ORDER BY tag
     `)
     return result.rows.map((r) => r.tag)
