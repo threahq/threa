@@ -15,7 +15,7 @@ import {
   type CommandInfo,
 } from "@threahq/types"
 import { withClient, type Querier } from "../../db"
-import { checkStreamAccess, projectStreamForUser, StreamRepository, type Stream } from "../streams"
+import { canHostAside, checkStreamAccess, projectStreamForUser, StreamRepository, type Stream } from "../streams"
 import { BotRepository } from "../public-api"
 import {
   isSupervisorHeld,
@@ -150,14 +150,21 @@ export class CommandAvailabilityService {
     options?: { includeReadOnlyWorkCommands?: boolean }
   ): Promise<ResolvedCommand[]> {
     const stream = await checkStreamAccess(db, params.streamId, params.workspaceId, params.userId)
-    // A shared channel's copy runs no commands: their effects would stay on this side, unseen by the host.
-    if (!stream || stream.originWorkspaceId) return []
+    if (!stream) return []
     const projected = await projectStreamForUser(db, {
       workspaceId: params.workspaceId,
       stream,
       userId: params.userId,
     })
     if (!projected) return []
+    const asideHost = canHostAside(projected)
+    if (stream.originWorkspaceId) {
+      // A shared channel's copy offers only `/aside`: any other command's effects
+      // would stay on this side, unseen by the host, while an aside belongs here.
+      return listClientActionCommandInfos()
+        .filter((info) => isClientActionAvailableInStream(info, stream, { asideHost }))
+        .map((info) => ({ info, executionKind: CommandKinds.CLIENT_ACTION }))
+    }
     const writable = !projected.readOnly
 
     const commands: ResolvedCommand[] = []
@@ -172,7 +179,7 @@ export class CommandAvailabilityService {
     }
 
     for (const info of listClientActionCommandInfos()) {
-      if (isClientActionAvailableInStream(info, stream, { writable })) {
+      if (isClientActionAvailableInStream(info, stream, { asideHost })) {
         commands.push({ info, executionKind: CommandKinds.CLIENT_ACTION })
       }
     }
@@ -211,18 +218,16 @@ async function isServerCommandAvailableInStream(name: string, stream: Stream, db
 
 /**
  * Client-action commands are gated per host stream. `/aside` follows the create
- * path's own rules (host type, no E2E host, writable host) so the palette never
+ * path's own rules (host type, no E2E host, `canHostAside`) so the palette never
  * offers an aside the server would refuse — and never inside an aside.
  */
 export function isClientActionAvailableInStream(
   info: CommandInfo,
   stream: Stream,
-  options?: { writable?: boolean }
+  options?: { asideHost?: boolean }
 ): boolean {
   if (info.clientActionId === ASIDE_COMMAND) {
-    // An aside inherits its host's archive state, so an archived (read-only)
-    // host cannot open one — the create path refuses it.
-    return isAsideHostType(stream.type) && stream.e2eEnabled !== true && options?.writable !== false
+    return isAsideHostType(stream.type) && stream.e2eEnabled !== true && options?.asideHost !== false
   }
   return true
 }

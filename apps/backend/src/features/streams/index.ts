@@ -38,6 +38,7 @@ export {
   deriveStreamViewerState,
   createStreamReadOnlyError,
   assertViewerStreamWritable,
+  canHostAside,
   assertStreamWritable,
   assertStreamsWritable,
   resolveLockedStreamAuthorities,

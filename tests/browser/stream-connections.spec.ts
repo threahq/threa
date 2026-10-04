@@ -401,6 +401,52 @@ test.describe("Stream connections", () => {
     }
   })
 
+  test("should open a partner member's aside on a host message in their copy and let Ariadne answer there", async ({
+    browser,
+    page,
+  }) => {
+    test.setTimeout(150_000)
+    const partnerContext = await browser.newContext()
+    try {
+      const partnerPage = await partnerContext.newPage()
+      await partnerPage.setViewportSize({ width: 1600, height: 800 })
+      const { host, partner, slug, streamId } = await setUpHostAndPartner(page, partnerPage)
+      await page.goto(settingsUrl(host.workspaceId, streamId, "connect"))
+      await acceptInvite(partnerPage, await createInviteLink(page), slug, host.workspaceName, partner.workspaceName)
+
+      const opener = `Mockups for review ${host.testId}`
+      const opened = await page.request.post(`/api/workspaces/${host.workspaceId}/messages`, {
+        data: { streamId, content: opener },
+      })
+      await expectApiOk(opened, "Send host message")
+
+      await partnerPage.goto(`/w/${partner.workspaceId}/s/${streamId}`)
+      const message = timelineMessage(partnerPage, opener)
+      await expect(message).toBeVisible({ timeout: 30_000 })
+      await message.hover()
+      await message.getByRole("button", { name: "Message actions" }).click()
+      await partnerPage.getByRole("menuitem", { name: "Open an aside here" }).click()
+
+      const stage = partnerPage.getByTestId("aside-stage")
+      await expect(stage).toBeVisible({ timeout: 15_000 })
+      const asideId = await stage.getAttribute("data-aside-id")
+      expect(asideId).toBeTruthy()
+      await expect(
+        partnerPage.locator(`[data-stream-scroller="${streamId}"]`).locator("[data-aside-id]").first()
+      ).toHaveAttribute("data-aside-id", asideId!, { timeout: 15_000 })
+
+      const asideChat = partnerPage.getByTestId("aside-conversation")
+      await asideChat.locator("[contenteditable='true']").click()
+      await partnerPage.keyboard.type("What is this about?")
+      await partnerPage.keyboard.press("ControlOrMeta+Enter")
+      await expect(
+        asideChat.locator(".message-item").filter({ hasText: /stub response from the companion/ })
+      ).toBeVisible({ timeout: 45_000 })
+    } finally {
+      await partnerContext.close()
+    }
+  })
+
   test("should bring a third workspace into a channel already shared with another, and list both after a reload", async ({
     browser,
     page,

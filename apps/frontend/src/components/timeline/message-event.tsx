@@ -953,7 +953,7 @@ function SentMessageEvent({
   const navigate = useNavigate()
   const location = useLocation()
   const currentStream = useStreamFromStore(workspaceId, streamId)
-  // A shared channel's copy takes reactions, edits and deletes through the host, but no threads, asides, moves or conversations.
+  // A shared channel's copy takes reactions, edits and deletes through the host, but no threads, moves or conversations.
   const sharedCopy = !!currentStream?.originWorkspaceId
   const parentStream = useStreamFromStore(workspaceId, currentStream?.parentStreamId ?? undefined)
   const rootStream = useStreamFromStore(workspaceId, currentStream?.rootStreamId ?? undefined)
@@ -1207,7 +1207,7 @@ function SentMessageEvent({
   const openAside = useOpenAside(workspaceId)
   // Archived hosts (directly or through any ancestor) cannot open one — the
   // aside would inherit the archive and the create path refuses it.
-  const canOpenAside = isAsideHostType(currentStream?.type ?? "") && !e2eEnabled && !hostArchived && !sharedCopy
+  const canOpenAside = isAsideHostType(currentStream?.type ?? "") && !e2eEnabled && !hostArchived
   const handleOpenAside = useCallback(() => {
     void openAside({ kind: "stream", hostStreamId: streamId, anchorId: payload.messageId }).catch(() => {
       /* toast already surfaced inside the hook */

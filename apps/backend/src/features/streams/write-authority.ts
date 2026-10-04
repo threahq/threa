@@ -65,6 +65,15 @@ export function assertViewerStreamWritable(state: StreamViewerState): void {
   if (state.readOnlyReason) throw createStreamReadOnlyError(state.readOnlyReason)
 }
 
+/**
+ * An aside inherits its host's archive state through the parent chain, so a
+ * read-only host can't take one. A shared channel's copy can: the aside lives in
+ * this workspace and nothing in it reaches the host.
+ */
+export function canHostAside(state: StreamViewerState): boolean {
+  return !state.readOnlyReason || state.readOnlyReason === StreamReadOnlyReasons.SHARED_COPY
+}
+
 async function principalParticipates(
   db: Querier,
   workspaceId: string,

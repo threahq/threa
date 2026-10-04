@@ -23,7 +23,13 @@ import { ActivityService } from "../../src/features/activity"
 import { AttachmentRepository } from "../../src/features/attachments"
 import { CommandAvailabilityService, CommandRegistry } from "../../src/features/commands"
 import { EventService, MessageRepository } from "../../src/features/messaging"
-import { StreamMemberRepository, StreamRepository, type Stream } from "../../src/features/streams"
+import {
+  StreamEventRepository,
+  StreamMemberRepository,
+  StreamRepository,
+  StreamService,
+  type Stream,
+} from "../../src/features/streams"
 import { FeatureFlagOverrideRepository, FeatureFlagService } from "../../src/features/feature-flags"
 import { UserRepository, WorkspaceRepository, syncUserCopies } from "../../src/features/workspaces"
 import {
@@ -607,7 +613,7 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
     expect(edit).toEqual(UNREACHABLE)
   })
 
-  test("should offer no commands in a shared channel's copy while the host's channel keeps them", async () => {
+  test("should offer only /aside in a shared channel's copy while the host's channel keeps its commands", async () => {
     const world = await seedWorld()
     const registry = new CommandRegistry()
     registry.register({
@@ -621,9 +627,48 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
 
     expect({
       channel: await names(world.host.id, world.host.adminId, world.channel.id),
-      channelCopy: await names(world.partner.id, world.pat.id, world.channelCopy.id),
-      threadCopy: await names(world.partner.id, world.pat.id, world.threadCopy.id),
-    }).toEqual({ channel: ["invite"], channelCopy: [], threadCopy: [] })
+      channelCopy: await names(world.partner.id, world.partner.adminId, world.channelCopy.id),
+      threadCopy: await names(world.partner.id, world.partner.adminId, world.threadCopy.id),
+    }).toEqual({ channel: ["invite"], channelCopy: ["aside"], threadCopy: ["aside"] })
+  })
+
+  test("should open a partner member's aside on a copy message in the partner's workspace and leave the host untouched", async () => {
+    const world = await seedWorld()
+    const anchorId = world.threadCopy.parentAnchorId!
+
+    const aside = await new StreamService(pool).createAside({
+      workspaceId: world.partner.id,
+      parentStreamId: world.channelCopy.id,
+      parentAnchorId: anchorId,
+      createdBy: world.partner.adminId,
+    })
+    const later = await hostSays(world.host, world.channel.id, "after the aside")
+    expect(await pullVia(world.bridge).pull(world.ref)).toBe(true)
+
+    const anchorPayloads = async (workspace: string, stream: string) =>
+      (await StreamEventRepository.list(pool, workspace, stream, { types: ["aside:anchored"] })).map(
+        (event) => event.payload
+      )
+    const { workspaceId, type, visibility, parentStreamId, originWorkspaceId } = aside
+    expect({
+      aside: { workspaceId, type, visibility, parentStreamId, originWorkspaceId },
+      copyAnchors: await anchorPayloads(world.partner.id, world.channelCopy.id),
+      hostAnchors: await anchorPayloads(world.host.id, world.channel.id),
+      hostAside: await StreamRepository.findById(pool, world.host.id, aside.id),
+      pulledAfter: (await partnerMessage(world, later.id))?.id,
+    }).toEqual({
+      aside: {
+        workspaceId: world.partner.id,
+        type: StreamTypes.ASIDE,
+        visibility: "private",
+        parentStreamId: world.channelCopy.id,
+        originWorkspaceId: null,
+      },
+      copyAnchors: [{ asideId: aside.id, anchorId }],
+      hostAnchors: [],
+      hostAside: null,
+      pulledAfter: later.id,
+    })
   })
 
   describe("when the partner's write carries files", () => {
