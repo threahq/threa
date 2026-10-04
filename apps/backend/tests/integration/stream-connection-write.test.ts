@@ -341,7 +341,7 @@ describe("A partner's writes to a shared channel", () => {
     expect(await outcome(send(world, "hi"))).toEqual(NOT_FOUND)
   })
 
-  test("should keep mentions of host users and the partner's own users and flatten every other mention when the partner sends", async () => {
+  test("should keep mentions of host users and the partner's own users and flatten every other mention, a kept id under a broadcast slug included, when the partner sends", async () => {
     const world = await seedWorld()
     const thirdUser = await seedThirdWorkspaceUser(world)
     const persona = await PersonaRepository.insertWorkspacePersona(pool, {
@@ -378,6 +378,10 @@ describe("A partner's writes to a shared channel", () => {
             mention(thirdUser.id, "tess-writes-third"),
             { type: "text", text: " " },
             { type: "mention", attrs: { id: "broadcast:channel", slug: "channel", mentionType: "broadcast" } },
+            { type: "text", text: " " },
+            mention(world.host.adminId, "channel"),
+            { type: "text", text: " " },
+            mention(world.sam.id, "Here"),
           ],
         },
       ],
@@ -400,6 +404,10 @@ describe("A partner's writes to a shared channel", () => {
             { type: "text", text: "@tess-writes-third" },
             { type: "text", text: " " },
             { type: "text", text: "@channel" },
+            { type: "text", text: " " },
+            { type: "text", text: "@channel" },
+            { type: "text", text: " " },
+            { type: "text", text: "@Here" },
           ],
         },
       ],

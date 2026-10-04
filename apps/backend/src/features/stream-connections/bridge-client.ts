@@ -13,6 +13,7 @@ import {
   type BridgeSendMessage,
   type BridgeSendMessageResponse,
 } from "@threahq/types"
+import { logger } from "../../lib/logger"
 import { hostUnreachable, writeRefused } from "./errors"
 
 // 401 is a bridge key the two regions disagree on, not the host's verdict on the write.
@@ -138,6 +139,7 @@ export class BridgeClient {
     try {
       res = await this.send(address, path, method, body)
     } catch (error) {
+      logger.warn({ ...address, where, err: error }, "Bridge write failed")
       throw hostUnreachable(`Bridge ${where} failed: ${error instanceof Error ? error.message : String(error)}`)
     }
     if (res.ok) return res
@@ -146,6 +148,7 @@ export class BridgeClient {
       .then((body: { error?: unknown } | null) => (typeof body?.error === "string" ? `: ${body.error}` : ""))
       .catch(() => "")
     const answer = `Bridge ${where} answered ${res.status}${reason}`
+    logger.warn({ ...address, where, status: res.status }, answer)
     throw RETRYABLE_STATUSES.has(res.status) || res.status >= 500 ? hostUnreachable(answer) : writeRefused(answer)
   }
 

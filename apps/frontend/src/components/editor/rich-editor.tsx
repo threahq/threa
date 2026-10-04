@@ -921,9 +921,10 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         if (moved) return false
 
         const files = event.dataTransfer?.files
-        if (files && files.length > 0 && onFileUploadRef.current && editorRef.current) {
+        if (files && files.length > 0) {
+          // Without an upload handler the browser would open the dropped file in place of the app.
           event.preventDefault()
-          handleFilesInsert(Array.from(files), editorRef.current)
+          if (onFileUploadRef.current && editorRef.current) handleFilesInsert(Array.from(files), editorRef.current)
           return true
         }
 

@@ -288,6 +288,26 @@ describe("Stream connection partner writes", () => {
     })
   }, 30_000)
 
+  test("should show a partner member's reaction on both sides when the member reacts to a host message", async () => {
+    const { partnerClient, host, partner, root, accepterId } = await setup()
+    const reactions = async () => ({
+      host: (await view(host.id, root.id))?.reactions,
+      copy: (await view(partner.id, root.id))?.reactions,
+    })
+
+    const reacted = await addReaction(partnerClient, partner.id, root.id, ":+1:")
+    const afterReact = await reactions()
+    const unreacted = await removeReaction(partnerClient, partner.id, root.id, ":+1:")
+    const afterUnreact = await reactions()
+
+    expect({ reacted: reacted.reactions, afterReact, unreacted: unreacted.reactions, afterUnreact }).toEqual({
+      reacted: { ":+1:": [accepterId] },
+      afterReact: { host: { ":+1:": [accepterId] }, copy: { ":+1:": [accepterId] } },
+      unreacted: {},
+      afterUnreact: { host: {}, copy: {} },
+    })
+  }, 30_000)
+
   test("should refuse with 403 FORBIDDEN when a partner member edits a host user's message", async () => {
     const { partnerClient, host, partner, root } = await setup()
 

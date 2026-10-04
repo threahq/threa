@@ -98,7 +98,6 @@ export function MessageEditForm({
         onSave()
       } catch (err) {
         if (isPermanentApiError(err)) {
-          setContentJson(json)
           toast.error("Couldn't save your edit.")
           return
         }
@@ -142,8 +141,11 @@ export function MessageEditForm({
         onCancel()
         return
       }
+      const json = parseMarkdown(trimmed)
       setDocEditorOpen(false)
-      await saveEdit(parseMarkdown(trimmed))
+      // A refused save keeps the form open, so it must hold what the full editor sent.
+      setContentJson(inAppLinkMarksToNodes(json))
+      await saveEdit(json)
     },
     [saveEdit, initialMarkdown, onCancel, onDelete]
   )

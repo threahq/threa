@@ -110,6 +110,13 @@ async function editMessage(page: Page, message: Locator, text: string) {
   await page.getByRole("main").getByRole("button", { name: "Save", exact: true }).click()
 }
 
+async function deleteMessage(page: Page, message: Locator) {
+  await message.hover()
+  await message.getByRole("button", { name: "Message actions" }).click()
+  await page.getByRole("menuitem", { name: "Delete message" }).click()
+  await page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click()
+}
+
 async function reactToMessage(page: Page, message: Locator): Promise<string> {
   await message.hover()
   await message.getByRole("button", { name: "Add reaction" }).first().click()
@@ -218,7 +225,7 @@ test.describe("Stream connections", () => {
     }
   })
 
-  test("should carry a partner's reply, edit and reaction to the host and the host's answer back when the partner lives in another region", async ({
+  test("should carry a partner's reply, edit, reaction and delete to the host and the host's answer back when the partner lives in another region", async ({
     browser,
     page,
   }) => {
@@ -264,6 +271,10 @@ test.describe("Stream connections", () => {
       const hostPill = timelineMessage(page, answer).getByRole("button").filter({ hasText: emoji })
       await expect(hostPill).toBeVisible({ timeout: 30_000 })
       await expect(hostPill).toContainText("1")
+
+      await deleteMessage(partnerPage, timelineMessage(partnerPage, edited))
+      await expect(timelineMessage(partnerPage, edited)).toHaveCount(0, { timeout: 15_000 })
+      await expect(timelineMessage(page, edited)).toHaveCount(0, { timeout: 30_000 })
     } finally {
       await partnerContext.close()
     }

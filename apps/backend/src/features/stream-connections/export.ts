@@ -17,6 +17,7 @@ import {
   type EventType,
   type JSONContent,
   type ThreaMark,
+  isBroadcastSlug,
 } from "@threahq/types"
 import { withClient } from "../../db"
 import type { StorageProvider } from "../../lib/storage/s3-client"
@@ -513,9 +514,12 @@ function exportNode(node: JSONContent, scope: ContentScope): JSONContent | null 
       if (scope.inboundMentions) return exportNode({ type: "blockquote", content: node.content }, scope)
       break
     case "mention":
-      if (scope.inboundMentions && !scope.inboundMentions.has(attr(node, "id") ?? "")) {
+      if (scope.inboundMentions) {
         const slug = attr(node, "slug")
-        return asText(node, slug ? `@${slug}` : null)
+        // Ingestion turns any mention with a broadcast slug into a broadcast, whatever its id.
+        if (!scope.inboundMentions.has(attr(node, "id") ?? "") || isBroadcastSlug(slug?.toLowerCase() ?? "")) {
+          return asText(node, slug ? `@${slug}` : null)
+        }
       }
       break
     case "messageRef":

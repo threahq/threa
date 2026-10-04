@@ -258,8 +258,43 @@ describe("MessageEditForm saving", () => {
       infos: infoToast.mock.calls,
       saved: onSave.mock.calls,
       queued: await db.pendingOperations.toArray(),
-      formOpen: screen.queryByRole("textbox", { name: "Edit message" }) !== null,
-    }).toEqual({ errors: [["Couldn't save your edit."]], infos: [], saved: [], queued: [], formOpen: true })
+    }).toEqual({ errors: [["Couldn't save your edit."]], infos: [], saved: [], queued: [] })
+  })
+
+  it("should keep what the user typed while the save was in flight when the server refuses it", async () => {
+    vi.spyOn(toast, "error").mockReturnValue("e3")
+    const typedLater: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "Edited again" }] }],
+    }
+    let refuse = () => {}
+    const update = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            refuse = () => reject(new ApiError(403, StreamConnectionErrorCodes.WRITE_REFUSED, "Refused"))
+          })
+      )
+      .mockResolvedValue(undefined)
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update,
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+    const user = userEvent.setup()
+
+    await submitEdit(vi.fn())
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+      target: { value: JSON.stringify(typedLater) },
+    })
+    refuse()
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toBeEnabled())
+    await user.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2))
+    expect(update.mock.calls.map(([, , body]) => body)).toEqual([
+      { contentJson: editedContent },
+      { contentJson: typedLater },
+    ])
   })
 
   it("should queue the edit and close the form when the request fails without a server verdict", async () => {
