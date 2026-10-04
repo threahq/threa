@@ -1170,6 +1170,7 @@ Each query must have:
               accessibleStreamIds: new Set(accessibleStreamIds),
             })
             if (resolved.size > 0) {
+              const quoteStreamIds = [...new Set([...resolved.values()].map((m) => m.streamId))]
               for (const e of enriched) {
                 const seed = seedMessageMap.get(e.id)
                 if (!seed) continue
@@ -1184,6 +1185,7 @@ Each query must have:
                 const appended = extractAppendedQuoteContext(rendered, seed.contentMarkdown)
                 if (appended.length > 0) {
                   e.quoteContext = appended
+                  e.quoteStreamIds = quoteStreamIds
                 }
               }
             }

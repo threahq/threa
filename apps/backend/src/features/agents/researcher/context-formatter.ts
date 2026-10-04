@@ -35,6 +35,8 @@ export interface EnrichedMessageResult {
    * accessible. Undefined when there is no quoted-source context to add.
    */
   quoteContext?: string
+  /** Streams the quoted sources in {@link quoteContext} came from. */
+  quoteStreamIds?: string[]
 }
 
 export interface EnrichedAttachmentResult {

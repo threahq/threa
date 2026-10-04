@@ -67,6 +67,12 @@ Returns the source messages with their \`messageId\`, \`streamId\`, and \`author
         const { memo, sourceStream, rootStream, sourceMessages } = detail
 
         return {
+          provenanceStreamIds: [
+            ...new Set([
+              ...(memo.sourceStreamIds ?? (sourceStream ? [sourceStream.id] : [])),
+              ...sourceMessages.map((m) => m.streamId),
+            ]),
+          ],
           output: JSON.stringify({
             id: memo.id,
             title: memo.title,

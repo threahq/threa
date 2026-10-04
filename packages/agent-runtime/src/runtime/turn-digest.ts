@@ -47,9 +47,12 @@ export interface ToolWorkRecord {
  * completed tool calls' trace content + sources — the digest's raw material.
  * Hidden tools (trace.hidden) never surface to users, so they never enter the
  * digest either; failed tools produced no findings to carry forward.
+ * `provenanceStreamIds` is the wider set: every stream any completed tool
+ * (hidden or not) put in front of the model, which a saved memo inherits.
  */
 export class TurnDigestCollector implements AgentObserver {
   readonly records: ToolWorkRecord[] = []
+  readonly provenanceStreamIds = new Set<string>()
   private readonly hiddenToolCallIds = new Set<string>()
 
   get hasToolWork(): boolean {
@@ -62,6 +65,10 @@ export class TurnDigestCollector implements AgentObserver {
         if (event.hidden) this.hiddenToolCallIds.add(event.toolCallId)
         return
       case "tool:complete": {
+        for (const streamId of event.provenanceStreamIds ?? []) this.provenanceStreamIds.add(streamId)
+        for (const source of event.trace.sources ?? []) {
+          if (source.streamId) this.provenanceStreamIds.add(source.streamId)
+        }
         if (this.hiddenToolCallIds.delete(event.toolCallId)) return
         this.records.push({
           toolName: event.toolName,

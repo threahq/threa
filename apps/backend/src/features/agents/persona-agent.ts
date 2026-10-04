@@ -1403,12 +1403,7 @@ export class PersonaAgent {
                   sourceStreamIds: saveMemoStreamIds,
                   // Read at call time: the collector fills as the turn's tools complete.
                   provenanceStreamIds: [
-                    ...new Set([
-                      ...agentContext.carriedSourceStreamIds,
-                      ...digestCollector.records
-                        .flatMap((r) => r.sources)
-                        .flatMap((s) => (s.streamId ? [s.streamId] : [])),
-                    ]),
+                    ...new Set([...agentContext.carriedSourceStreamIds, ...digestCollector.provenanceStreamIds]),
                   ],
                   // The human the agent serves owns a `user`-scoped save (roadmap 6.4).
                   invokingUserId: agentContext.invokingUserId,

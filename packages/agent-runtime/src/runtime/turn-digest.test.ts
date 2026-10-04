@@ -87,6 +87,65 @@ describe("TurnDigestCollector", () => {
     ])
   })
 
+  it("should collect provenance stream ids from hidden tools and trace sources when tools complete, but not from errors", async () => {
+    const collector = new TurnDigestCollector()
+
+    await collector.handle({
+      type: "tool:start",
+      toolCallId: "tc_hidden",
+      toolName: "search_messages",
+      stepType: AgentStepTypes.WORKSPACE_SEARCH,
+      input: {},
+      hidden: true,
+    })
+    await collector.handle({
+      type: "tool:complete",
+      toolCallId: "tc_hidden",
+      toolName: "search_messages",
+      input: {},
+      output: "raw",
+      durationMs: 5,
+      provenanceStreamIds: ["stream_private", "stream_shared"],
+      trace: { stepType: AgentStepTypes.WORKSPACE_SEARCH, content: "hidden content" },
+    })
+    await collector.handle({
+      type: "tool:start",
+      toolCallId: "tc_visible",
+      toolName: "workspace_research",
+      stepType: AgentStepTypes.WORKSPACE_SEARCH,
+      input: {},
+    })
+    await collector.handle({
+      type: "tool:complete",
+      toolCallId: "tc_visible",
+      toolName: "workspace_research",
+      input: {},
+      output: "raw",
+      durationMs: 5,
+      trace: {
+        stepType: AgentStepTypes.WORKSPACE_SEARCH,
+        content: "research",
+        sources: [workspaceSource("Notes", "stream_notes"), webSource("Tides", "https://a.example")],
+      },
+    })
+    await collector.handle({
+      type: "tool:error",
+      toolCallId: "tc_failed",
+      toolName: "get_stream_messages",
+      error: "boom",
+      durationMs: 3,
+    })
+
+    expect([...collector.provenanceStreamIds]).toEqual(["stream_private", "stream_shared", "stream_notes"])
+    expect(collector.records).toEqual([
+      {
+        toolName: "workspace_research",
+        content: "research",
+        sources: [workspaceSource("Notes", "stream_notes"), webSource("Tides", "https://a.example")],
+      },
+    ])
+  })
+
   it("has no tool work when only non-tool events occurred", async () => {
     const collector = new TurnDigestCollector()
     await collector.handle({ type: "thinking", content: "hmm", durationMs: 5 })

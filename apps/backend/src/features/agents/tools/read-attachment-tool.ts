@@ -283,16 +283,18 @@ Use \`search_attachments\` first when you don't already have the attachment id.`
         }
 
         const section = input.section
-        if (!section) {
-          return readWhole(db, workspaceId, storage, attachment, supportsVision)
+        const read = (): Promise<AgentToolResult> => {
+          if (!section) return readWhole(db, workspaceId, storage, attachment, supportsVision)
+          if (section.kind === "lines") {
+            return readLines(db, workspaceId, storage, attachment, section.startLine, section.endLine)
+          }
+          if (section.kind === "pages") {
+            return readPages(db, workspaceId, attachment, section.startPage, section.endPage)
+          }
+          return readRows(db, workspaceId, storage, attachment, section.sheetName, section.startRow, section.endRow)
         }
-        if (section.kind === "lines") {
-          return readLines(db, workspaceId, storage, attachment, section.startLine, section.endLine)
-        }
-        if (section.kind === "pages") {
-          return readPages(db, workspaceId, attachment, section.startPage, section.endPage)
-        }
-        return readRows(db, workspaceId, storage, attachment, section.sheetName, section.startRow, section.endRow)
+        const result = await read()
+        return attachment.streamId ? { ...result, provenanceStreamIds: [attachment.streamId] } : result
       } catch (error) {
         logger.error({ error, attachmentId: input.attachmentId }, "Read attachment failed")
         return errorOutput(

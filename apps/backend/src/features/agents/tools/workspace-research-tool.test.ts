@@ -73,6 +73,49 @@ describe("workspace_research tool", () => {
     expect(result.systemContext).toBe("## Retrieved Knowledge\nUseful workspace details.")
   })
 
+  test("should report the streams of found memos, messages, quoted sources and attachments as provenance when research completes", async () => {
+    const runWorkspaceAgent = mock(
+      async (): Promise<WorkspaceAgentResult> => ({
+        ...baseResult,
+        memos: [
+          {
+            memo: { sourceStreamIds: ["stream_a", "stream_b"] } as unknown as import("../../memos").Memo,
+            distance: 0.1,
+            sourceStream: { id: "stream_capture", type: "channel", name: null },
+          },
+          {
+            memo: { sourceStreamIds: null } as unknown as import("../../memos").Memo,
+            distance: 0.2,
+            sourceStream: { id: "stream_legacy", type: "channel", name: null },
+          },
+        ],
+        messages: [
+          {
+            id: "msg_1",
+            streamId: "stream_c",
+            quoteStreamIds: ["stream_quoted"],
+          } as unknown as WorkspaceAgentResult["messages"][number],
+        ],
+        attachments: [
+          { id: "att_1", streamId: "stream_d" } as unknown as NonNullable<WorkspaceAgentResult["attachments"]>[number],
+          { id: "att_2", streamId: null } as unknown as NonNullable<WorkspaceAgentResult["attachments"]>[number],
+        ],
+      })
+    )
+
+    const tool = createWorkspaceResearchTool({ runWorkspaceAgent, searchFlag: "on" })
+    const result = await tool.config.execute({ query: "q" }, { toolCallId: "test" })
+
+    expect(result.provenanceStreamIds).toEqual([
+      "stream_a",
+      "stream_b",
+      "stream_legacy",
+      "stream_c",
+      "stream_quoted",
+      "stream_d",
+    ])
+  })
+
   test("propagates onProgress substeps to the runtime onProgress callback", async () => {
     const runWorkspaceAgent = mock(
       async (_query: string, opts: { onSubstep: (s: string) => void }): Promise<WorkspaceAgentResult> => {

@@ -12,6 +12,7 @@ function buildResult(overrides: Partial<GeneralResearchResult> = {}): GeneralRes
       { type: "workspace", title: "Orphan", url: "" },
     ],
     substeps: [{ text: "Searching the web…", at: "2026-05-29T00:00:00.000Z" }],
+    provenanceStreamIds: [],
     ...overrides,
   }
 }
@@ -36,6 +37,16 @@ describe("general_research tool", () => {
       sourceCount: 1,
     })
     expect(output.substeps[0].text).toBe("Searching the web…")
+  })
+
+  test("should report the researcher's provenance streams on the tool result without surfacing them as sources when the run read workspace streams", async () => {
+    const runGeneralResearch = mock(async () => buildResult({ provenanceStreamIds: ["stream_private"] }))
+    const tool = createGeneralResearchTool({ runGeneralResearch, scope: "workspace-web-integrations" })
+
+    const result = await tool.config.execute({ query: "anything" }, { toolCallId: "tc_1" })
+
+    expect(result.provenanceStreamIds).toEqual(["stream_private"])
+    expect(result.sources).toEqual([{ type: "web", title: "Docs", url: "https://example.com/docs", snippet: "…" }])
   })
 
   test("carries the full brief in the trace content but keeps it out of the LLM output", async () => {

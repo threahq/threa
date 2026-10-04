@@ -73,6 +73,8 @@ export type AgentEvent =
       input: unknown
       output: string
       durationMs: number
+      /** Streams the result read from, for memo provenance; not part of the trace. */
+      provenanceStreamIds?: string[]
       trace: {
         stepType: AgentStepType
         content: string

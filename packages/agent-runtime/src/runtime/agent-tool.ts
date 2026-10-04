@@ -32,6 +32,8 @@ export interface AgentToolResult {
   systemContext?: string
   /** Set by `screenWebToolOutput`: whether the output reads as written to steer the model, or went unjudged. */
   injectionScreen?: InjectionScreenVerdict
+  /** Streams whose content this result put in front of the model; folded into any memo the turn saves, never displayed. */
+  provenanceStreamIds?: string[]
 }
 
 /**

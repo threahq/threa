@@ -71,6 +71,7 @@ describe("read_attachment — whole-file read", () => {
     const parsed = JSON.parse(result.output)
 
     expect(result.multimodal).toBeUndefined()
+    expect(result.provenanceStreamIds).toEqual(["stream_1"])
     expect(parsed).toMatchObject({
       id: "attach_1",
       filename: "snippet.txt",

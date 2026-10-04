@@ -87,8 +87,10 @@ describe("describe_memo tool", () => {
     const memoExplorer = makeMemoExplorer(async () => detail)
     const tool = createDescribeMemoTool(makeDeps(memoExplorer))
 
-    const { output } = await tool.config.execute({ memoId: "memo_abc" }, toolOpts)
+    const { output, provenanceStreamIds } = await tool.config.execute({ memoId: "memo_abc" }, toolOpts)
     const parsed = JSON.parse(output)
+
+    expect(provenanceStreamIds).toEqual(["stream_1"])
 
     expect(parsed.id).toBe("memo_abc")
     expect(parsed.title).toBe("Deploy plan recap")
@@ -112,11 +114,29 @@ describe("describe_memo tool", () => {
     const memoExplorer = makeMemoExplorer(async () => null)
     const tool = createDescribeMemoTool(makeDeps(memoExplorer))
 
-    const { output } = await tool.config.execute({ memoId: "memo_inaccessible" }, toolOpts)
+    const { output, provenanceStreamIds } = await tool.config.execute({ memoId: "memo_inaccessible" }, toolOpts)
     const parsed = JSON.parse(output)
+
+    expect(provenanceStreamIds).toBeUndefined()
 
     expect(parsed.error).toContain("not found")
     expect(parsed.memoId).toBe("memo_inaccessible")
+  })
+
+  it("should report the memo's recorded source streams and its source messages' streams as provenance when the memo carries them", async () => {
+    const detail = {
+      memo: { status: "active", sourceStreamIds: ["stream_9", "stream_3"] },
+      sourceStream: { id: "stream_1", type: "channel", name: "general" },
+      rootStream: null,
+      sourceMessages: [
+        { id: "msg_1", streamId: "stream_thread", content: "hi", createdAt: new Date("2026-04-30T08:50:00Z") },
+      ],
+    } as unknown as MemoExplorerDetail
+    const tool = createDescribeMemoTool(makeDeps(makeMemoExplorer(async () => detail)))
+
+    const { provenanceStreamIds } = await tool.config.execute({ memoId: "memo_agent" }, toolOpts)
+
+    expect(provenanceStreamIds).toEqual(["stream_9", "stream_3", "stream_thread"])
   })
 
   it("forwards workspaceId and accessibleStreamIds to MemoExplorerService.getById for access gating", async () => {
