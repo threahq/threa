@@ -86,6 +86,19 @@ describe("updateWorkspaceSettingsSchema sandboxInternet", () => {
   })
 })
 
+describe("updateWorkspaceSettingsSchema guestDmPolicy", () => {
+  it("accepts the three policies and nothing else", () => {
+    expect({
+      off: updateWorkspaceSettingsSchema.safeParse({ guestDmPolicy: "off" }).success,
+      admins: updateWorkspaceSettingsSchema.safeParse({ guestDmPolicy: "admins" }).success,
+      open: updateWorkspaceSettingsSchema.safeParse({ guestDmPolicy: "open" }).success,
+      unknown: updateWorkspaceSettingsSchema.safeParse({ guestDmPolicy: "everyone" }).success,
+      boolean: updateWorkspaceSettingsSchema.safeParse({ guestDmPolicy: true }).success,
+      absent: updateWorkspaceSettingsSchema.parse({}).guestDmPolicy,
+    }).toEqual({ off: true, admins: true, open: true, unknown: false, boolean: false, absent: undefined })
+  })
+})
+
 describe("WorkspaceSettingsRepository.insertOverrideIfAbsent", () => {
   it("seeds without overwriting, so an admin's stored choice always wins", async () => {
     let captured = ""

@@ -125,6 +125,13 @@ export const DEFAULT_SUBAGENT_MODELS: string[] = SUBAGENT_MODEL_CATALOG.filter((
   (entry) => entry.id
 )
 
+/**
+ * Who a guest may hold a direct message with. Enforced on DM creation and on
+ * every send, so tightening the policy also closes DMs that already exist.
+ */
+export const GUEST_DM_POLICIES = { OFF: "off", ADMINS: "admins", OPEN: "open" } as const
+export type GuestDmPolicy = (typeof GUEST_DM_POLICIES)[keyof typeof GUEST_DM_POLICIES]
+
 /** Full workspace settings (wire format). */
 export interface WorkspaceSettings {
   workspaceId: string
@@ -199,6 +206,12 @@ export interface WorkspaceSettings {
    * sandboxes on their next command.
    */
   sandboxInternet: boolean
+  /**
+   * Whether a guest may hold direct messages: `off` closes every DM with a
+   * guest, `admins` allows only guest-to-admin DMs, `open` allows all of them.
+   * A closed DM stays readable; nobody can write to it.
+   */
+  guestDmPolicy: GuestDmPolicy
   createdAt: string
   updatedAt: string
 }
@@ -214,6 +227,7 @@ export const DEFAULT_WORKSPACE_SETTINGS: Omit<WorkspaceSettings, "workspaceId" |
   billingTimezone: "UTC",
   subagentModels: DEFAULT_SUBAGENT_MODELS,
   sandboxInternet: true,
+  guestDmPolicy: GUEST_DM_POLICIES.OFF,
 }
 
 /** Partial update — only provided fields are changed. */
@@ -227,6 +241,7 @@ export interface UpdateWorkspaceSettingsInput {
   billingTimezone?: string
   subagentModels?: string[]
   sandboxInternet?: boolean
+  guestDmPolicy?: GuestDmPolicy
 }
 
 /** Valid top-level settings keys that can be overridden. */
