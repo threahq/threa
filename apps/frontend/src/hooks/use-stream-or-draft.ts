@@ -568,7 +568,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
     // Update IDB (not delete) so useLiveQuery reactively picks up archivedAt.
     // The sidebar filters out streams with archivedAt set.
-    await db.streams.update(streamId, { archivedAt })
+    await db.streams.update([workspaceId, streamId], { archivedAt })
 
     queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
       if (!old || typeof old !== "object") return old

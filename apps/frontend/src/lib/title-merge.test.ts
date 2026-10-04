@@ -6,6 +6,7 @@ import type { ConversationWithStaleness, Stream } from "@threahq/types"
 const stream = (revision: number): Stream =>
   ({
     id: "stream_1",
+    workspaceId: "ws_1",
     displayName: `title-${revision}`,
     displayNameSource: "explicit",
     displayNameRevision: revision,
@@ -32,7 +33,7 @@ describe("revision-guarded title merges", () => {
 
     await persistStreamByRevision({ ...stream(3), description: "delayed mutation fields" })
 
-    expect(await db.streams.get("stream_1")).toMatchObject({
+    expect(await db.streams.get(["ws_1", "stream_1"])).toMatchObject({
       displayName: "title-5",
       displayNameRevision: 5,
       sealedNameCiphertext: "cipher-5",

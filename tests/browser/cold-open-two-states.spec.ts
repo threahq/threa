@@ -378,7 +378,7 @@ async function arrange(page: Page, context: BrowserContext): Promise<Fixture> {
       async () => {
         const streams = await readIdbRows<{ id: string; lastMessagePreview?: { content: string } | null }>(
           page,
-          "streams"
+          "streamsByWorkspace"
         )
         const events = await readIdbRows<{ streamId: string }>(page, "events")
         const previews = Object.values(ids).every((id) =>

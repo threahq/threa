@@ -522,7 +522,7 @@ describe("useStreamFromStore", () => {
     releaseRegistry = await primeRegistry(REGISTRY_WORKSPACE)
     const get = vi.spyOn(db.streams, "get")
 
-    const { result } = renderHook(() => useStreamFromStore("stream_a"))
+    const { result } = renderHook(() => useStreamFromStore(REGISTRY_WORKSPACE, "stream_a"))
 
     await waitFor(() => expect(result.current?.id).toBe("stream_a"))
     expect(get).not.toHaveBeenCalled()
@@ -536,10 +536,83 @@ describe("useStreamFromStore", () => {
     await db.streams.put(makeStream("stream_socket", OTHER_WORKSPACE))
     const get = vi.spyOn(db.streams, "get")
 
-    const { result } = renderHook(() => useStreamFromStore("stream_socket"))
+    const { result } = renderHook(() => useStreamFromStore(OTHER_WORKSPACE, "stream_socket"))
 
     await waitFor(() => expect(result.current?.id).toBe("stream_socket"))
-    expect(get).toHaveBeenCalledWith("stream_socket")
+    expect(get).toHaveBeenCalledWith([OTHER_WORKSPACE, "stream_socket"])
+  })
+
+  it("each workspace reads its own row when a copied stream id exists in both", async () => {
+    await db.streams.bulkPut([
+      makeStream("stream_copied", "ws_a", { displayName: "name in a" }),
+      makeStream("stream_copied", "ws_b", { displayName: "name in b" }),
+    ])
+
+    const inA = renderHook(() => useStreamFromStore("ws_a", "stream_copied"))
+    const inB = renderHook(() => useStreamFromStore("ws_b", "stream_copied"))
+
+    await waitFor(() => expect(inA.result.current?.displayName).toBe("name in a"))
+    await waitFor(() => expect(inB.result.current?.displayName).toBe("name in b"))
+    expect([inA.result.current?.workspaceId, inB.result.current?.workspaceId]).toEqual(["ws_a", "ws_b"])
+  })
+
+  it.each([
+    { label: "workspace with no registry", primed: undefined, to: { workspaceId: "ws_b", streamId: "stream_copied" } },
+    {
+      label: "workspace away from a registry-held row",
+      primed: "ws_a",
+      to: { workspaceId: "ws_b", streamId: "stream_copied" },
+    },
+    { label: "stream with no registry", primed: undefined, to: { workspaceId: "ws_a", streamId: "stream_other" } },
+  ])("should never return another key's row when the hook switches $label", async ({ primed, to }) => {
+    await db.streams.bulkPut([
+      makeStream("stream_copied", "ws_a", { displayName: "copied in a" }),
+      makeStream("stream_copied", "ws_b", { displayName: "copied in b" }),
+      makeStream("stream_other", "ws_a", { displayName: "other in a" }),
+    ])
+    if (primed) releaseRegistry = await primeRegistry(primed)
+    const seen: Array<{ key: string; row: string | undefined }> = []
+
+    const { result, rerender } = renderHook(
+      ({ workspaceId, streamId }: { workspaceId: string; streamId: string }) => {
+        const row = useStreamFromStore(workspaceId, streamId)
+        seen.push({ key: `${workspaceId}/${streamId}`, row: row && `${row.workspaceId}/${row.id}` })
+        return row
+      },
+      { initialProps: { workspaceId: "ws_a", streamId: "stream_copied" } }
+    )
+    await waitFor(() => expect(result.current?.displayName).toBe("copied in a"))
+    rerender(to)
+    await waitFor(() =>
+      expect(result.current && `${result.current.workspaceId}/${result.current.id}`).toBe(
+        `${to.workspaceId}/${to.streamId}`
+      )
+    )
+
+    expect(seen.filter((render) => render.row !== undefined && render.row !== render.key)).toEqual([])
+  })
+
+  it("each workspace's registry entry serves its own row when a copied stream id exists in both", async () => {
+    await db.streams.bulkPut([
+      makeStream("stream_copied", "ws_a", { displayName: "name in a" }),
+      makeStream("stream_copied", "ws_b", { displayName: "name in b" }),
+    ])
+    const releaseA = await primeRegistry("ws_a")
+    const releaseB = await primeRegistry("ws_b")
+    releaseRegistry = () => {
+      releaseA()
+      releaseB()
+    }
+
+    const inA = renderHook(() => useStreamFromStore("ws_a", "stream_copied"))
+    const inB = renderHook(() => useStreamFromStore("ws_b", "stream_copied"))
+    await waitFor(() => expect(inA.result.current?.displayName).toBe("name in a"))
+    await waitFor(() => expect(inB.result.current?.displayName).toBe("name in b"))
+
+    await db.streams.put(makeStream("stream_copied", "ws_a", { displayName: "renamed in a" }))
+
+    await waitFor(() => expect(inA.result.current?.displayName).toBe("renamed in a"))
+    expect(inB.result.current?.displayName).toBe("name in b")
   })
 
   it("a change to one stream re-renders only its readers", async () => {
@@ -550,11 +623,11 @@ describe("useStreamFromStore", () => {
     let rendersB = 0
     const readerA = renderHook(() => {
       rendersA += 1
-      return useStreamFromStore("stream_a")
+      return useStreamFromStore(REGISTRY_WORKSPACE, "stream_a")
     })
     const readerB = renderHook(() => {
       rendersB += 1
-      return useStreamFromStore("stream_b")
+      return useStreamFromStore(REGISTRY_WORKSPACE, "stream_b")
     })
     await waitFor(() => expect(readerA.result.current?.id).toBe("stream_a"))
     await waitFor(() => expect(readerB.result.current?.id).toBe("stream_b"))
@@ -572,8 +645,8 @@ describe("useStreamFromStore", () => {
     await db.streams.bulkPut([makeStream("stream_a", REGISTRY_WORKSPACE), makeStream("stream_b", REGISTRY_WORKSPACE)])
     releaseRegistry = await primeRegistry(REGISTRY_WORKSPACE)
 
-    const readerA = renderHook(() => useStreamFromStore("stream_a"))
-    const readerB = renderHook(() => useStreamFromStore("stream_b"))
+    const readerA = renderHook(() => useStreamFromStore(REGISTRY_WORKSPACE, "stream_a"))
+    const readerB = renderHook(() => useStreamFromStore(REGISTRY_WORKSPACE, "stream_b"))
     await waitFor(() => expect(readerA.result.current?.id).toBe("stream_a"))
     await waitFor(() => expect(readerB.result.current?.id).toBe("stream_b"))
     const rowA = readerA.result.current
@@ -590,7 +663,7 @@ describe("useStreamFromStore", () => {
 
     const observed: unknown[] = []
     const { result } = renderHook(() => {
-      const row = useStreamFromStore("stream_a")
+      const row = useStreamFromStore(REGISTRY_WORKSPACE, "stream_a")
       observed.push(row)
       return row
     })
@@ -599,7 +672,7 @@ describe("useStreamFromStore", () => {
     // Pin the fallback read open: the removal must resolve to `undefined` off the
     // registry emission alone, not by waiting for a per-key re-read.
     vi.spyOn(db.streams, "get").mockReturnValue(new Promise(() => {}) as never)
-    await db.streams.delete("stream_a")
+    await db.streams.delete([REGISTRY_WORKSPACE, "stream_a"])
 
     await waitFor(() => expect(result.current).toBeUndefined())
     for (const value of observed) {

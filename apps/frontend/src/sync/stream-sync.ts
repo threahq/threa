@@ -524,7 +524,7 @@ async function writeBootstrapEventsAndStream(
   // is the sidebar's activity sort key). Use update() for existing records
   // and fall back to put() if the stream doesn't exist in IDB yet.
   const stream = preserveDmDisplayName(bootstrap.stream)
-  const cachedStream = await db.streams.get(stream.id)
+  const cachedStream = await db.streams.get([workspaceId, stream.id])
   if (preserveExistingStream && cachedStream) return undefined
   const preservedReadState = await persistBootstrapReadState(workspaceId, streamId, bootstrap, now, fetchStartedAt, db)
   // A preserved local frontier is what the envelope must carry into the
@@ -545,14 +545,14 @@ async function writeBootstrapEventsAndStream(
   const isDmWithNullName = stream.type === StreamTypes.DM && stream.displayName == null
   if (isDmWithNullName) {
     const { displayName: _, ...withoutDisplayName } = fullStreamData
-    const updated = await db.streams.update(stream.id, withoutDisplayName as never)
+    const updated = await db.streams.update([workspaceId, stream.id], withoutDisplayName as never)
     if (updated === 0) {
       await db.streams.put(fullStreamData)
     }
     return preservedReadState
   }
 
-  const updated = await db.streams.update(stream.id, fullStreamData as never)
+  const updated = await db.streams.update([workspaceId, stream.id], fullStreamData as never)
   if (updated === 0) {
     await db.streams.put(fullStreamData)
   }
@@ -875,8 +875,8 @@ async function reconcileAppendedAgentActivity(
   streamId: string,
   event: StreamEvent
 ): Promise<void> {
-  const stream = await db.streams.get(streamId)
-  if (!stream || stream.workspaceId !== workspaceId) return
+  const stream = await db.streams.get([workspaceId, streamId])
+  if (!stream) return
   reconcileAgentActivityFromStreamEvents(workspaceId, agentActivityStreamContext(stream), [event])
 }
 
@@ -1279,7 +1279,7 @@ function isEncryptedPayload(payload: unknown): boolean {
  * (INV-62). Falls back to the stream as its own root when its row isn't cached.
  */
 async function resolveContextScope(workspaceId: string, streamId: string): Promise<ContextRowsContext> {
-  const stream = await db.streams.get(streamId)
+  const stream = await db.streams.get([workspaceId, streamId])
   return { workspaceId, streamId, rootStreamId: stream?.rootStreamId ?? streamId }
 }
 
@@ -1637,6 +1637,7 @@ function bindStreamSocketHandlers(
   }
 
   const handleMessagesMoved = async (payload: MessagesMovedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
     if (payload.sourceStreamId !== streamId && payload.destinationStreamId !== streamId) return
 
     const now = Date.now()
@@ -1687,7 +1688,7 @@ function bindStreamSocketHandlers(
         await writeSlotCarrier({ database: db, workspaceId, streamId, carrier: payload, mode: "merge", cachedAt: now })
       }
 
-      const cachedThread = await db.streams.get(payload.thread.id)
+      const cachedThread = await db.streams.get([workspaceId, payload.thread.id])
       const thread = cachedThread ? mergeStreamByRevision(cachedThread, payload.thread) : payload.thread
       await db.streams.put({ ...thread, _cachedAt: now })
     })
@@ -1787,6 +1788,7 @@ function bindStreamSocketHandlers(
   }
 
   const handleStreamCreated = async (payload: StreamCreatedPayload) => {
+    if (payload.workspaceId !== workspaceId) return
     if ((payload.stream.parentStreamId ?? payload.streamId) !== streamId) return
     const stream = payload.stream
     // An aside is anchored like a thread but is never the anchor's thread:
@@ -1842,7 +1844,7 @@ function bindStreamSocketHandlers(
     const streamPatch: { replyCount?: number; lastReplyAt?: string | null } = {}
     if (payload.replyCount !== undefined) streamPatch.replyCount = payload.replyCount
     if (payload.threadSummary !== undefined) streamPatch.lastReplyAt = payload.threadSummary?.lastReplyAt ?? null
-    if (Object.keys(streamPatch).length > 0) await db.streams.update(payload.threadId, streamPatch)
+    if (Object.keys(streamPatch).length > 0) await db.streams.update([workspaceId, payload.threadId], streamPatch)
   }
 
   const handleAppendEvent = async (

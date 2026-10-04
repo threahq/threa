@@ -803,6 +803,7 @@ export function registerWorkspaceSocketHandlers(
   // `scheduledKeys` invalidation is needed here.
 
   const handleStreamCreated = async (payload: StreamPayload) => {
+    if (payload.workspaceId !== workspaceId) return
     // A system-purpose stream (e.g. a persona-editor test scratchpad) is a real,
     // fully-functional stream, but not a sidebar entry: the editor mounts it
     // directly (StreamContent runs its own subscribe+bootstrap), so the workspace
@@ -895,7 +896,7 @@ export function registerWorkspaceSocketHandlers(
       // Cache to IndexedDB — skip other users' scratchpads to avoid stale
       // entries resurfacing on hydration if the event leaks during a deploy race.
       if (shouldCacheStream) {
-        const existingStream = await db.streams.get(payload.stream.id)
+        const existingStream = await db.streams.get([workspaceId, payload.stream.id])
         const mergedStream = existingStream ? mergeStreamByRevision(existingStream, cachedStream) : cachedStream
         await db.streams.put({ ...mergedStream, _cachedAt: now })
       }
@@ -926,6 +927,7 @@ export function registerWorkspaceSocketHandlers(
   }
 
   const handleStreamUpdated = async (payload: StreamPayload) => {
+    if (payload.workspaceId !== workspaceId) return
     // For DMs the backend sends displayName: null (the name is derived from
     // the peer user on the frontend). Preserve whatever name is already cached.
     const isDmWithNullName = payload.stream.type === StreamTypes.DM && payload.stream.displayName == null
@@ -979,7 +981,7 @@ export function registerWorkspaceSocketHandlers(
     // last-message preview and notification level. For DMs, also preserve the
     // resolved displayName since the backend sends null.
     await db.transaction("rw", db.streams, async () => {
-      const old = await db.streams.get(payload.stream.id)
+      const old = await db.streams.get([workspaceId, payload.stream.id])
       if (!old) return
       const merged = mergeStreamByRevision(old, payload.stream)
       await db.streams.put({
@@ -991,6 +993,7 @@ export function registerWorkspaceSocketHandlers(
   }
 
   const handleStreamArchived = async (payload: StreamPayload) => {
+    if (payload.workspaceId !== workspaceId) return
     const descendantIds = payload.threadStreamIds ?? []
     const sealedIds = [payload.stream.id, ...descendantIds]
     queryClient.setQueryData(streamKeys.bootstrap(workspaceId, payload.stream.id), (old: unknown) => {
@@ -1039,6 +1042,7 @@ export function registerWorkspaceSocketHandlers(
   }
 
   const handleStreamUnarchived = async (payload: StreamPayload) => {
+    if (payload.workspaceId !== workspaceId) return
     queryClient.setQueryData(streamKeys.bootstrap(workspaceId, payload.stream.id), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       const bootstrap = old as StreamBootstrap
@@ -1386,7 +1390,7 @@ export function registerWorkspaceSocketHandlers(
         })
       }
 
-      const stream = await db.streams.get(payload.streamId)
+      const stream = await db.streams.get([workspaceId, payload.streamId])
       const unread = await db.unreadState.get(workspaceId)
       if (stream && unread) {
         const mutedStreamIds = new Set(unread.mutedStreamIds)
@@ -1460,7 +1464,7 @@ export function registerWorkspaceSocketHandlers(
   // key on the exact stream and on the timeline row the session hangs under, never
   // on the root.
   const resolveStreamAnchor = async (streamId: string): Promise<AgentActivityStreamContext | null> => {
-    const stream = await db.streams.get(streamId)
+    const stream = await db.streams.get([workspaceId, streamId])
     if (!stream) return null
     return agentActivityStreamContext(stream)
   }
@@ -1630,9 +1634,9 @@ export function registerWorkspaceSocketHandlers(
     })
 
     await db.transaction("rw", [db.streams], async () => {
-      const old = await db.streams.get(streamId)
+      const old = await db.streams.get([workspaceId, streamId])
       if (!old) return
-      await db.streams.update(streamId, { ...merge(old), _cachedAt: Date.now() })
+      await db.streams.update([workspaceId, streamId], { ...merge(old), _cachedAt: Date.now() })
     })
   }
 
@@ -1813,8 +1817,8 @@ export function registerWorkspaceSocketHandlers(
       db.streamReadState.delete(`${workspaceId}:${payload.streamId}`),
       ...(shouldRemoveFromSidebar
         ? [
-            db.streams.delete(payload.streamId),
-            deleteStreamSlots(db, payload.streamId),
+            db.streams.delete([workspaceId, payload.streamId]),
+            deleteStreamSlots(db, workspaceId, payload.streamId),
             // The cards this stream contributed are unreadable now — drop them
             // rather than leave them rendering off the cache.
             removeBoardConversationsForStream(workspaceId, payload.streamId),
@@ -2190,7 +2194,7 @@ export function registerWorkspaceSocketHandlers(
   const handleBoardMuteChanged = async (payload: BoardStreamMuteChangedPayload) => {
     if (payload.workspaceId !== workspaceId) return
     if (payload.active) await putMuted(workspaceId, payload.streamId)
-    else await deleteMuted(payload.streamId)
+    else await deleteMuted(workspaceId, payload.streamId)
   }
 
   const handleStreamConnectionUpdated = async (payload: StreamConnectionUpdatedPayload) => {
@@ -2660,7 +2664,7 @@ async function hasArchivedAncestorInCache(workspaceId: string, stream: Stream): 
 async function upsertStreamRow(stream: Stream): Promise<void> {
   await db.transaction("rw", db.streams, async () => {
     const now = Date.now()
-    const old = await db.streams.get(stream.id)
+    const old = await db.streams.get([stream.workspaceId, stream.id])
     await db.streams.put(
       old
         ? { ...mergeStreamByRevision(old, stream), _cachedAt: now }
@@ -3592,10 +3596,10 @@ export async function applyReconnectBootstrapBatch(
         const terminalIds = Array.from(terminalStreamIds)
         const terminalRowIds = terminalIds.map((streamId) => `${workspaceId}:${streamId}`)
         await Promise.all([
-          db.streams.bulkDelete(terminalIds),
+          db.streams.bulkDelete(terminalIds.map((streamId) => [workspaceId, streamId])),
           db.streamMemberships.bulkDelete(terminalRowIds),
           db.streamReadState.bulkDelete(terminalRowIds),
-          deleteSlotsForStreams(db, terminalIds),
+          deleteSlotsForStreams(db, workspaceId, terminalIds),
         ])
         removeRowConfirmations(workspaceId, "streams", terminalIds)
         removeRowConfirmations(workspaceId, "streamMemberships", terminalRowIds)
@@ -3771,7 +3775,7 @@ async function cleanupStaleEntities(
   )
 
   // Derive the stream ids the absence-sweep will remove BEFORE deleting, then
-  // drop their slot rows too. Slots key off streamId, and the workspace
+  // drop their slot rows too. Slots are keyed per stream, and the workspace
   // bootstrap enumerates streams — not each stream's valid slot keys — so they
   // can't ride the generic deleteStale (Amendment A4).
   const staleStreamIds = await staleEntityIds(db.streams, "workspaceId", workspaceId, bootstrapStreamIds, now)
@@ -3787,8 +3791,10 @@ async function cleanupStaleEntities(
     staleLabelIds,
     staleLabelAssignmentIds,
   ] = await Promise.all([
-    staleStreamIds.length > 0 ? db.streams.bulkDelete(staleStreamIds) : Promise.resolve(),
-    deleteSlotsForStreams(db, staleStreamIds),
+    staleStreamIds.length > 0
+      ? db.streams.bulkDelete(staleStreamIds.map((streamId) => [workspaceId, streamId]))
+      : Promise.resolve(),
+    deleteSlotsForStreams(db, workspaceId, staleStreamIds),
     deleteStale(db.workspaceUsers, "workspaceId", workspaceId, bootstrapUserIds, now),
     deleteStale(db.streamMemberships, "workspaceId", workspaceId, bootstrapMembershipIds, now),
     // NO streamReadState sweep: the bootstrap map enumerates MEMBER streams

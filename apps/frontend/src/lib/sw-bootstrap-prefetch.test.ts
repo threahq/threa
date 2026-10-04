@@ -140,7 +140,10 @@ describe("runBootstrapSync account routing", () => {
 
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: null, workosUserId })
 
-    const row = (await accountDb.streams.get(streamId)) as { notificationLevel?: string; lastMessagePreview?: unknown }
+    const row = (await accountDb.streams.get(["ws_1", streamId])) as {
+      notificationLevel?: string
+      lastMessagePreview?: unknown
+    }
     expect(row.notificationLevel).toBe("mentions")
     expect(row.lastMessagePreview).toMatchObject({ authorId: "user_1" })
   })
@@ -176,7 +179,7 @@ describe("runBootstrapSync account routing", () => {
 
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: null, workosUserId })
 
-    const preview = (await accountDb.streams.get(streamId))?.lastMessagePreview
+    const preview = (await accountDb.streams.get(["ws_1", streamId]))?.lastMessagePreview
     expect({ type: typeof preview?.content, content: preview?.content }).toEqual({
       type: "string",
       content: "hello there",
@@ -278,7 +281,7 @@ describe("runBootstrapSync account routing", () => {
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: null, workosUserId })
 
     const accountDb = new ThreaDatabase(accountDbName(workosUserId))
-    const rows = await accountDb.slots.where("streamId").equals(streamId).toArray()
+    const rows = await accountDb.slots.where("[workspaceId+streamId]").equals(["ws_1", streamId]).toArray()
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatchObject({ slotKey: sharedMessageSlotKey("msg_src"), value: missingSlot("msg_src") })
   })
@@ -304,7 +307,7 @@ describe("runBootstrapSync account routing", () => {
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: "evt_pushed", workosUserId })
 
     const accountDb = new ThreaDatabase(accountDbName(workosUserId))
-    const rows = await accountDb.slots.where("streamId").equals(streamId).toArray()
+    const rows = await accountDb.slots.where("[workspaceId+streamId]").equals(["ws_1", streamId]).toArray()
     const byKey = Object.fromEntries(rows.map((r) => [r.slotKey, r.value]))
     expect(byKey).toEqual({
       [sharedMessageSlotKey("msg_bootstrap")]: missingSlot("msg_bootstrap"),
@@ -352,7 +355,7 @@ describe("runBootstrapSync account routing", () => {
 
     await runBootstrapSync({ workspaceId: "ws_1", streamId, messageId: null, workosUserId })
 
-    const rows = await accountDb.slots.where("streamId").equals(streamId).toArray()
+    const rows = await accountDb.slots.where("[workspaceId+streamId]").equals(["ws_1", streamId]).toArray()
     expect(Object.fromEntries(rows.map((r) => [r.slotKey, r.value]))).toEqual({
       [sharedMessageSlotKey("msg_window")]: missingSlot("msg_window"),
       [sharedMessageSlotKey("msg_page")]: missingSlot("msg_page"),

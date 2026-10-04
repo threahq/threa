@@ -2351,13 +2351,13 @@ describe("SyncEngine sync cursor (active mode)", () => {
     await engine.onConnect(asSocket(new MockSocket()))
 
     await vi.waitFor(async () => {
-      expect((await db.streams.get("stream_x"))?.lastMessagePreview?.content).toBe("third")
+      expect((await db.streams.get(["ws_1", "stream_x"]))?.lastMessagePreview?.content).toBe("third")
     })
 
     // The replay folds three previews but persists only the last — the sidebar
     // re-sorts once on "third" instead of stepping through first/second.
     const persisted = updateSpy.mock.calls
-      .filter((call) => call[0] === "stream_x")
+      .filter((call) => (call[0] as [string, string]).join("/") === "ws_1/stream_x")
       .map((call) => (call[1] as { lastMessagePreview?: { content?: string } }).lastMessagePreview?.content)
     expect(persisted).toContain("third")
     expect(persisted).not.toContain("first")

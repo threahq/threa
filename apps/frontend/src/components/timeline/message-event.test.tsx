@@ -866,7 +866,11 @@ describe("MessageEvent stream-row reads", () => {
   const streamId = "stream_123"
 
   function StreamRowProbe() {
-    return <span data-testid="stream-row-probe">{useStreamFromStore(streamId)?.displayName ?? "unresolved"}</span>
+    return (
+      <span data-testid="stream-row-probe">
+        {useStreamFromStore(workspaceId, streamId)?.displayName ?? "unresolved"}
+      </span>
+    )
   }
 
   const rootStreamId = "stream_root"

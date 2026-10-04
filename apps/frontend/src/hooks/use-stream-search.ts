@@ -190,7 +190,7 @@ export function useStreamSearch({
   const session = useE2eSession(workspaceId, userId ?? "")
   const sessionRef = useRef(session)
   sessionRef.current = session
-  const streamRow = useStreamFromStore(streamId)
+  const streamRow = useStreamFromStore(workspaceId, streamId)
   const streamRowRef = useRef(streamRow)
   streamRowRef.current = streamRow
 

@@ -48,7 +48,7 @@ export function withStreamRevisions<T extends Partial<Stream>>(target: T, source
 
 export async function persistStreamByRevision(incoming: Stream): Promise<CachedStream> {
   return db.transaction("rw", db.streams, async () => {
-    const cached = await db.streams.get(incoming.id)
+    const cached = await db.streams.get([incoming.workspaceId, incoming.id])
     const merged = cached ? mergeStreamByRevision(cached, incoming) : incoming
     const row = { ...merged, _cachedAt: Date.now() } as CachedStream
     await db.streams.put(row)

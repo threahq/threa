@@ -57,8 +57,8 @@ function eventReferencing(...messageIds: string[]): { payload: unknown } {
   }
 }
 
-async function readMap(streamId: string): Promise<SlotMap> {
-  const rows = await db.slots.where("streamId").equals(streamId).toArray()
+async function readMap(streamId: string, workspaceId = "ws_1"): Promise<SlotMap> {
+  const rows = await db.slots.where("[workspaceId+streamId]").equals([workspaceId, streamId]).toArray()
   const map: SlotMap = {}
   for (const row of rows) map[row.slotKey] = row.value
   return map
@@ -80,7 +80,7 @@ describe("writeSlotCarrier — write-boundary normalization", () => {
     })
 
     expect(await readMap("stream_a")).toEqual({ [sharedMessageSlotKey("msg_1")]: slot("msg_1") })
-    const row = await db.slots.where("streamId").equals("stream_a").first()
+    const row = await db.slots.where("[workspaceId+streamId]").equals(["ws_1", "stream_a"]).first()
     expect(row).toMatchObject({ workspaceId: "ws_1", streamId: "stream_a", slotKey: "shared:msg_1" })
   })
 
@@ -250,6 +250,40 @@ describe("writeSlotCarrier — merge vs replace", () => {
     // The window no longer carries msg_gone's reference, so its row resets;
     // msg_elsewhere belongs to an out-of-window page and survives.
     expect(await readMap("stream_a")).toEqual({ [sharedMessageSlotKey("msg_elsewhere")]: slot("msg_elsewhere") })
+  })
+
+  it("should leave the same stream id and slot key in another workspace untouched when replacing", async () => {
+    await db.slots.bulkPut([
+      {
+        workspaceId: "ws_a",
+        streamId: "stream_a",
+        slotKey: sharedMessageSlotKey("msg_1"),
+        value: slot("msg_1", "in a"),
+        _cachedAt: 1,
+      },
+      {
+        workspaceId: "ws_b",
+        streamId: "stream_a",
+        slotKey: sharedMessageSlotKey("msg_1"),
+        value: slot("msg_1", "in b"),
+        _cachedAt: 1,
+      },
+    ])
+
+    await writeSlotCarrier({
+      database: db,
+      workspaceId: "ws_a",
+      streamId: "stream_a",
+      carrier: { slots: {} },
+      mode: "replace",
+      windowEvents: [eventReferencing("msg_1")],
+      cachedAt: 2,
+    })
+
+    expect({ a: await readMap("stream_a", "ws_a"), b: await readMap("stream_a", "ws_b") }).toEqual({
+      a: {},
+      b: { [sharedMessageSlotKey("msg_1")]: slot("msg_1", "in b") },
+    })
   })
 
   it("scopes a replace to the pinned key a pointer actually reads", async () => {
@@ -496,7 +530,7 @@ describe("slot eviction helpers", () => {
       },
     ])
 
-    await deleteStreamSlots(db, "stream_a")
+    await deleteStreamSlots(db, "ws_1", "stream_a")
 
     expect(await readMap("stream_a")).toEqual({})
     expect(await readMap("stream_b")).toEqual({ [sharedMessageSlotKey("msg_2")]: slot("msg_2") })
@@ -527,10 +561,37 @@ describe("slot eviction helpers", () => {
       },
     ])
 
-    await deleteSlotsForStreams(db, ["stream_a", "stream_b"])
+    await deleteSlotsForStreams(db, "ws_1", ["stream_a", "stream_b"])
 
     expect(await readMap("stream_a")).toEqual({})
     expect(await readMap("stream_b")).toEqual({})
     expect(await readMap("stream_c")).toEqual({ [sharedMessageSlotKey("msg_3")]: slot("msg_3") })
+  })
+
+  it.each([
+    ["deleteStreamSlots", () => deleteStreamSlots(db, "ws_a", "stream_a")],
+    ["deleteSlotsForStreams", () => deleteSlotsForStreams(db, "ws_a", ["stream_a"])],
+  ])("%s leaves the same stream id in another workspace untouched", async (_name, evict) => {
+    await db.slots.bulkPut([
+      {
+        workspaceId: "ws_a",
+        streamId: "stream_a",
+        slotKey: sharedMessageSlotKey("msg_1"),
+        value: slot("msg_1", "in a"),
+        _cachedAt: 1,
+      },
+      {
+        workspaceId: "ws_b",
+        streamId: "stream_a",
+        slotKey: sharedMessageSlotKey("msg_1"),
+        value: slot("msg_1", "in b"),
+        _cachedAt: 1,
+      },
+    ])
+
+    await evict()
+
+    expect(await readMap("stream_a", "ws_a")).toEqual({})
+    expect(await readMap("stream_a", "ws_b")).toEqual({ [sharedMessageSlotKey("msg_1")]: slot("msg_1", "in b") })
   })
 })

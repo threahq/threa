@@ -169,7 +169,7 @@ describe("useUnarchiveStream", () => {
     expect({
       bootstrapArchivedAt: (queryClient.getQueryData(streamKeys.bootstrap("ws_1", stream.id)) as { stream: Stream })
         .stream.archivedAt,
-      persistedArchivedAt: (await db.streams.get(stream.id))?.archivedAt,
+      persistedArchivedAt: (await db.streams.get(["ws_1", stream.id]))?.archivedAt,
     }).toEqual({ bootstrapArchivedAt: null, persistedArchivedAt: null })
   })
 
@@ -205,7 +205,7 @@ describe("useUnarchiveStream", () => {
 
     expect({
       bootstrapArchivedAt: (queryClient.getQueryData(key) as { stream: Stream }).stream.archivedAt,
-      persistedArchivedAt: (await db.streams.get(stream.id))?.archivedAt,
+      persistedArchivedAt: (await db.streams.get(["ws_1", stream.id]))?.archivedAt,
     }).toEqual({ bootstrapArchivedAt: null, persistedArchivedAt: null })
   })
 
@@ -256,7 +256,10 @@ describe("useUnarchiveStream", () => {
     await waitFor(() => expect(mockUnarchive).toHaveBeenCalled())
     const newerArchive = { ...stream, archivedAt: "2026-04-01T00:00:00.000Z", updatedAt: "2026-04-01T00:00:00.000Z" }
     act(() => queryClient.setQueryData(key, { stream: newerArchive }))
-    await db.streams.update(stream.id, { archivedAt: newerArchive.archivedAt, updatedAt: newerArchive.updatedAt })
+    await db.streams.update(["ws_1", stream.id], {
+      archivedAt: newerArchive.archivedAt,
+      updatedAt: newerArchive.updatedAt,
+    })
     await act(async () => {
       completeUnarchive()
       await mutation
@@ -264,7 +267,7 @@ describe("useUnarchiveStream", () => {
 
     expect({
       bootstrapArchivedAt: (queryClient.getQueryData(key) as { stream: Stream }).stream.archivedAt,
-      persistedArchivedAt: (await db.streams.get(stream.id))?.archivedAt,
+      persistedArchivedAt: (await db.streams.get(["ws_1", stream.id]))?.archivedAt,
     }).toEqual({ bootstrapArchivedAt: newerArchive.archivedAt, persistedArchivedAt: newerArchive.archivedAt })
   })
 
@@ -290,14 +293,14 @@ describe("useUnarchiveStream", () => {
     })
     await waitFor(() => expect(mockUnarchive).toHaveBeenCalled())
     act(() => queryClient.setQueryData(key, { stream, readState: { lastReadSequence: "12" } }))
-    await db.streams.update(stream.id, { displayName: "Updated name", updatedAt: "2026-03-02T00:00:00.000Z" })
+    await db.streams.update(["ws_1", stream.id], { displayName: "Updated name", updatedAt: "2026-03-02T00:00:00.000Z" })
     await act(async () => {
       completeUnarchive()
       await mutation
     })
 
     const bootstrap = queryClient.getQueryData(key) as { stream: Stream; readState: { lastReadSequence: string } }
-    const persisted = await db.streams.get(stream.id)
+    const persisted = await db.streams.get(["ws_1", stream.id])
     expect({
       bootstrapArchivedAt: bootstrap.stream.archivedAt,
       readState: bootstrap.readState,
@@ -360,7 +363,7 @@ describe("useCreateStream", () => {
     })
 
     expect(mockSubscribeStream).toHaveBeenCalledWith("stream_new")
-    expect(await db.streams.get("stream_new")).toBeDefined()
+    expect(await db.streams.get(["ws_1", "stream_new"])).toBeDefined()
     expect(await db.streamMemberships.get("ws_1:stream_new")).toMatchObject({
       workspaceId: "ws_1",
       streamId: "stream_new",

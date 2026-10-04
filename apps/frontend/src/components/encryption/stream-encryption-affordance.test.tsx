@@ -66,13 +66,15 @@ beforeEach(() => {
 })
 
 /**
- * Stub `useStreamFromStore` so a probed stream resolves to a hydrated row.
- * `rootStreamId === null` is a top-level scratchpad (its own root); a non-null
- * value marks a thread whose key lives on that root.
+ * Stub `useStreamFromStore` so a probed stream in the current test's workspace
+ * resolves to a hydrated row. `rootStreamId === null` is a top-level scratchpad
+ * (its own root); a non-null value marks a thread whose key lives on that root.
  */
 function mockStreamRow(rootStreamId: string | null): void {
-  vi.spyOn(streamStoreModule, "useStreamFromStore").mockImplementation((id) =>
-    id ? ({ id, rootStreamId } as unknown as ReturnType<typeof streamStoreModule.useStreamFromStore>) : undefined
+  vi.spyOn(streamStoreModule, "useStreamFromStore").mockImplementation((workspaceId, id) =>
+    id && workspaceId === `ws_test_${wsCounter}`
+      ? ({ id, workspaceId, rootStreamId } as unknown as ReturnType<typeof streamStoreModule.useStreamFromStore>)
+      : undefined
   )
 }
 

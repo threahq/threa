@@ -1,4 +1,4 @@
-import Dexie, { type EntityTable, type PromiseExtended, type Table } from "dexie"
+import Dexie, { type EntityTable, type PromiseExtended, type Table, type Transaction } from "dexie"
 import type {
   Activity,
   AuthorType,
@@ -29,6 +29,9 @@ import type { KdfParams } from "@/lib/crypto/passphrase"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 
 const WORKSPACE_USERS_STORE = "workspaceUsers"
+const STREAMS_STORE = "streamsByWorkspace"
+const SLOTS_STORE = "slotsByWorkspace"
+const BOARD_MUTED_STREAMS_STORE = "boardMutedStreamsByWorkspace"
 const LEGACY_WORKSPACE_USERS_STORE = "workspaceMembers"
 
 export interface CachedWorkspace {
@@ -1089,9 +1092,9 @@ export interface CachedStreamContextItem extends StreamContextItem {
  * One hydrated slot value persisted for offline/cold-start pointer rendering
  * (Amendment A). Slots live here — NOT in the TanStack bootstrap cache: the
  * sync layer is the single write boundary, and render reads canonical rows via
- * `useStreamSlots`. Compound primary key `[streamId+slotKey]` (stream ids are
- * globally unique, so the slot key needs no wider scope); `workspaceId` records
- * ownership for workspace cleanup. `value` is the wire `Slot` (strings/dates).
+ * `useStreamSlots`. Compound primary key `[workspaceId+streamId+slotKey]`: a
+ * copied stream keeps its id in the partner workspace, so the workspace scopes
+ * the key. `value` is the wire `Slot` (strings/dates).
  */
 export interface CachedSlot {
   workspaceId: string
@@ -1122,10 +1125,17 @@ export interface CacheOwnership {
 
 export const CACHE_OWNER_ID = "owner"
 
+async function moveRows(tx: Transaction, from: string, to: string): Promise<void> {
+  const rows = (await tx.table(from).toArray()).filter(
+    (row: { workspaceId?: unknown }) => typeof row.workspaceId === "string" && row.workspaceId !== ""
+  )
+  if (rows.length > 0) await tx.table(to).bulkPut(rows)
+}
+
 export class ThreaDatabase extends Dexie {
   workspaces!: EntityTable<CachedWorkspace, "id">
   workspaceUsers!: EntityTable<CachedWorkspaceUser, "id">
-  streams!: EntityTable<CachedStream, "id">
+  streams!: Table<CachedStream, [string, string]>
   streamMemberships!: EntityTable<CachedStreamMembership, "id">
   streamReadState!: EntityTable<CachedStreamReadState, "id">
   dmPeers!: EntityTable<CachedDmPeer, "id">
@@ -1154,9 +1164,9 @@ export class ThreaDatabase extends Dexie {
   conversations!: EntityTable<CachedBoardPost, "id">
   conversationMessages!: EntityTable<CachedConversationMessage, "messageId">
   boardHiddenConversations!: EntityTable<CachedBoardHiddenConversation, "id">
-  boardMutedStreams!: EntityTable<CachedBoardMutedStream, "id">
+  boardMutedStreams!: Table<CachedBoardMutedStream, [string, string]>
   uploadJobs!: EntityTable<CachedUploadJob, "attachmentId">
-  slots!: Table<CachedSlot, [string, string]>
+  slots!: Table<CachedSlot, [string, string, string]>
   streamContextItems!: EntityTable<CachedStreamContextItem, "key">
   streamConnections!: Table<CachedStreamConnection, [string, string]>
   cacheOwnership!: EntityTable<CacheOwnership, "id">
@@ -1671,7 +1681,36 @@ export class ThreaDatabase extends Dexie {
     // schema delta (see v40).
     this.version(51).stores({})
 
+    // v52: streams, slots and board mutes are keyed by workspace. Threa Connect
+    // copies a stream into a partner workspace under the same `stream_` id, and
+    // one account database holds every workspace the account belongs to, so a
+    // bare-id key made the second workspace's write overwrite the first. Dexie
+    // cannot change a primary key, so each store moves to a new physical store
+    // and keeps its property name (as v12 did for workspaceUsers). The upgrade
+    // copies every row that names its workspace and drops the rest: they cannot
+    // be keyed, and the bootstrap refetches them.
+    // One-way door: once a client has opened at v52, code declaring only v51
+    // cannot open the database (IndexedDB refuses a version downgrade), so a
+    // revert of this bump is not available — reverting means a v53.
+    this.version(52)
+      .stores({
+        [STREAMS_STORE]: "[workspaceId+id], workspaceId, type, [workspaceId+type], _cachedAt",
+        [SLOTS_STORE]: "[workspaceId+streamId+slotKey], [workspaceId+streamId], workspaceId, _cachedAt",
+        [BOARD_MUTED_STREAMS_STORE]: "[workspaceId+id], workspaceId",
+        streams: null,
+        slots: null,
+        boardMutedStreams: null,
+      })
+      .upgrade(async (tx) => {
+        await moveRows(tx, "streams", STREAMS_STORE)
+        await moveRows(tx, "slots", SLOTS_STORE)
+        await moveRows(tx, "boardMutedStreams", BOARD_MUTED_STREAMS_STORE)
+      })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
+    this.streams = this.table(STREAMS_STORE)
+    this.slots = this.table(SLOTS_STORE)
+    this.boardMutedStreams = this.table(BOARD_MUTED_STREAMS_STORE)
 
     // Dexie holds every other transaction until this resolves, so nothing reads
     // or writes a database before its contents are known to belong to the

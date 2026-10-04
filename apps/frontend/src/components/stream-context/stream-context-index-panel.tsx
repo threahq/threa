@@ -79,9 +79,9 @@ const MAX_JUMP_PAGES = 10
 
 export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   const { workspaceId, streamId, onClose, onJumpToMessage, onOpenThread, onOpenMemo, onOpenGallery } = props
-  const stream = useStreamFromStore(streamId)
-  const { rootStreamId, scope } = useStreamContextScope(streamId)
-  const rootStream = useStreamFromStore(rootStreamId)
+  const stream = useStreamFromStore(workspaceId, streamId)
+  const { rootStreamId, scope } = useStreamContextScope(workspaceId, streamId)
+  const rootStream = useStreamFromStore(workspaceId, rootStreamId)
   const isOnline = useIsOnline()
   const users = useWorkspaceUsers(workspaceId)
 
@@ -609,7 +609,7 @@ function OccurrenceList({
   onJump: StreamContextPanelProps["onJumpToMessage"]
 }) {
   const groupRef = contextGroupRef(row)
-  const { scope } = useStreamContextScope(streamId)
+  const { scope } = useStreamContextScope(workspaceId, streamId)
   const occurrences = useStreamContextOccurrences(workspaceId, streamId, row.rootStreamId, scope, groupRef)
   const { formatRelative } = useFormattedDate()
   const { q, from, before, after } = filters

@@ -210,7 +210,7 @@ export function BoardCard({
   const structuralIndex = useStreamStructuralIndex(workspaceId)
   const streamId = conversation.streamId
   // Archived cards are reachable under `?archived=true` — read-only (INV-62).
-  const cardStream = useStreamFromStore(streamId)
+  const cardStream = useStreamFromStore(workspaceId, streamId)
   const archived = useEffectiveArchived({
     workspaceId,
     stream: cardStream,
