@@ -119,7 +119,7 @@ describe("Phantom-unread drift fixes", () => {
 
     // Reader's watermark sits on m2 — which is about to be moved away.
     await streamService.markAsRead(wid, source, reader.id, eventByMsg.get(m2)!.id)
-    const before = await ReadStateRepository.get(pool, source, reader.id)
+    const before = await ReadStateRepository.get(pool, wid, source, reader.id)
     expect(before?.lastReadEventId).toBe(eventByMsg.get(m2)!.id)
 
     const validation = await eventService.validateMoveMessagesToThread({
@@ -141,7 +141,7 @@ describe("Phantom-unread drift fixes", () => {
     // After the fix: the watermark repoints to m1 (nearest surviving prior source
     // event); without it, it would still point at m2 (now in the thread) and the
     // unread count would resolve against a foreign thread-space sequence.
-    const after = await ReadStateRepository.get(pool, source, reader.id)
+    const after = await ReadStateRepository.get(pool, wid, source, reader.id)
     expect(after?.lastReadEventId).toBe(eventByMsg.get(m1)!.id)
     // The repoint is an automated correction, not a read: last_read_at must be
     // preserved — it feeds the conversation card's time fallback, and bumping it
@@ -178,9 +178,11 @@ describe("Phantom-unread drift fixes", () => {
     const eventByMsg = new Map(events.map((e) => [(e.payload as { messageId: string }).messageId, e]))
 
     // Read through m2, then a holding read through m3 freezes the floor on m2.
-    await ReadStateRepository.advance(pool, source, reader.id, eventByMsg.get(m2)!.id, { holdInInbox: false })
-    await ReadStateRepository.advance(pool, source, reader.id, eventByMsg.get(m3)!.id, { holdInInbox: true })
-    expect((await ReadStateRepository.get(pool, source, reader.id))?.inboxFloorEventId).toBe(eventByMsg.get(m2)!.id)
+    await ReadStateRepository.advance(pool, wid, source, reader.id, eventByMsg.get(m2)!.id, { holdInInbox: false })
+    await ReadStateRepository.advance(pool, wid, source, reader.id, eventByMsg.get(m3)!.id, { holdInInbox: true })
+    expect((await ReadStateRepository.get(pool, wid, source, reader.id))?.inboxFloorEventId).toBe(
+      eventByMsg.get(m2)!.id
+    )
 
     const validation = await eventService.validateMoveMessagesToThread({
       workspaceId: wid,
@@ -198,7 +200,7 @@ describe("Phantom-unread drift fixes", () => {
       leaseKey: validation.leaseKey,
     })
 
-    const after = await ReadStateRepository.get(pool, source, reader.id)
+    const after = await ReadStateRepository.get(pool, wid, source, reader.id)
     expect({ held: after?.inboxHeld, floor: after?.inboxFloorEventId }).toEqual({
       held: true,
       floor: eventByMsg.get(m1)!.id,

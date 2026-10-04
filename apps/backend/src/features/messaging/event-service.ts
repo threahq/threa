@@ -972,12 +972,21 @@ export class EventService {
         // A send is engagement: it always releases an existing hold, and never
         // starts a new one (unlike a plain read, which can hold on interleaved
         // other-author messages up to this point).
-        await ReadStateRepository.advance(client, params.streamId, params.authorId, evtId, { holdInInbox: false })
+        await ReadStateRepository.advance(client, params.workspaceId, params.streamId, params.authorId, evtId, {
+          holdInInbox: false,
+        })
         await releaseInboxHold(client, params.workspaceId, params.authorId, [params.streamId])
       } else {
-        const { held } = await ReadStateRepository.advance(client, params.streamId, params.authorId, evtId, {
-          holdInInbox: inboxClearMode === "manual",
-        })
+        const { held } = await ReadStateRepository.advance(
+          client,
+          params.workspaceId,
+          params.streamId,
+          params.authorId,
+          evtId,
+          {
+            holdInInbox: inboxClearMode === "manual",
+          }
+        )
         if (held) {
           await OutboxRepository.insert(client, "stream:inbox_updated", {
             workspaceId: params.workspaceId,
@@ -1988,6 +1997,7 @@ export class EventService {
       //    events to the nearest surviving prior source event — otherwise it counts
       //    unread against a foreign thread-space sequence (survives reload).
       await SparseReadRepository.rehomeReads(client, {
+        workspaceId: params.workspaceId,
         sourceStreamId: params.sourceStreamId,
         destinationStreamId: destinationThread.id,
         messageIds: uniqueMessageIds,
@@ -1995,6 +2005,7 @@ export class EventService {
       // A3: repoint any read-state row whose watermark was a moved event.
       await ReadStateRepository.repointForMovedEvents(
         client,
+        params.workspaceId,
         params.sourceStreamId,
         movableEvents.map((entry) => ({ eventId: entry.event.id, sequence: entry.event.sequence }))
       )

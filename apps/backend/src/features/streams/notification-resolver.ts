@@ -44,7 +44,7 @@ export async function resolveNotificationLevelsForStream(
 
   if (needsResolution.length === 0) return resolved
 
-  const ancestorIds = await getAncestorIds(db, stream.parentStreamId, 2)
+  const ancestorIds = await getAncestorIds(db, stream.workspaceId, stream.parentStreamId, 2)
   if (ancestorIds.length === 0) {
     for (const member of needsResolution) {
       resolved.push({ memberId: member.memberId, effectiveLevel: getDefaultLevel(stream.type), source: "default" })
@@ -53,7 +53,7 @@ export async function resolveNotificationLevelsForStream(
   }
 
   const memberIds = needsResolution.map((m) => m.memberId)
-  const ancestorMemberships = await getAncestorMemberships(db, ancestorIds, memberIds)
+  const ancestorMemberships = await getAncestorMemberships(db, stream.workspaceId, ancestorIds, memberIds)
 
   for (const member of needsResolution) {
     let inherited: NotificationLevel | null = null
@@ -81,20 +81,25 @@ export async function resolveNotificationLevelsForStream(
 }
 
 /** Ordered ancestor stream IDs (nearest first) via one recursive CTE. */
-async function getAncestorIds(db: Querier, parentStreamId: string | null, maxHops: number): Promise<string[]> {
+async function getAncestorIds(
+  db: Querier,
+  workspaceId: string,
+  parentStreamId: string | null,
+  maxHops: number
+): Promise<string[]> {
   if (!parentStreamId) return []
 
   const result = await db.query<{ id: string }>(sql`
     WITH RECURSIVE ancestors AS (
       SELECT id, parent_stream_id, 1 AS depth
       FROM streams
-      WHERE id = ${parentStreamId}
+      WHERE workspace_id = ${workspaceId} AND id = ${parentStreamId}
 
       UNION ALL
 
       SELECT s.id, s.parent_stream_id, a.depth + 1
       FROM ancestors a
-      JOIN streams s ON s.id = a.parent_stream_id
+      JOIN streams s ON s.id = a.parent_stream_id AND s.workspace_id = ${workspaceId}
       WHERE a.depth < ${maxHops}
     )
     SELECT id FROM ancestors ORDER BY depth
@@ -105,13 +110,15 @@ async function getAncestorIds(db: Querier, parentStreamId: string | null, maxHop
 /** Returns Map<ancestorId, Map<memberId, notificationLevel>> for the given members. */
 async function getAncestorMemberships(
   db: Querier,
+  workspaceId: string,
   ancestorIds: string[],
   memberIds: string[]
 ): Promise<Map<string, Map<string, NotificationLevel>>> {
   const result = await db.query<{ stream_id: string; member_id: string; notification_level: string }>(sql`
     SELECT stream_id, member_id, notification_level
     FROM stream_members
-    WHERE stream_id = ANY(${ancestorIds})
+    WHERE workspace_id = ${workspaceId}
+      AND stream_id = ANY(${ancestorIds})
       AND member_id = ANY(${memberIds})
       AND notification_level IS NOT NULL
   `)

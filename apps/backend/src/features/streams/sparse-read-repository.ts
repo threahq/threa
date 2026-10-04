@@ -37,7 +37,8 @@ export const SparseReadRepository = {
       SELECT ${params.workspaceId}, ${params.streamId}, ${params.memberId}, e.payload->>'messageId', e.id, e.sequence
       FROM unnest(${params.messageIds}::text[]) AS ids(message_id)
       JOIN stream_events e
-        ON e.stream_id = ${params.streamId}
+        ON e.workspace_id = ${params.workspaceId}
+       AND e.stream_id = ${params.streamId}
        AND e.event_type = 'message_created'
        AND e.payload->>'messageId' = ids.message_id
       ON CONFLICT (stream_id, member_id, message_id) DO NOTHING
@@ -45,20 +46,26 @@ export const SparseReadRepository = {
   },
 
   /** Remove specific overlay rows by (stream, member, messageIds). */
-  async deleteReads(db: Querier, streamId: string, memberId: string, messageIds: string[]): Promise<void> {
+  async deleteReads(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    memberId: string,
+    messageIds: string[]
+  ): Promise<void> {
     if (messageIds.length === 0) return
     await db.query(sql`
       DELETE FROM stream_member_message_reads
-      WHERE stream_id = ${streamId} AND member_id = ${memberId}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND member_id = ${memberId}
         AND message_id = ANY(${messageIds}::text[])
     `)
   },
 
   /** The overlay message ids for one (stream, member), ascending by sequence. */
-  async listOverlayIds(db: Querier, streamId: string, memberId: string): Promise<string[]> {
+  async listOverlayIds(db: Querier, workspaceId: string, streamId: string, memberId: string): Promise<string[]> {
     const result = await db.query<{ message_id: string }>(sql`
       SELECT message_id FROM stream_member_message_reads
-      WHERE stream_id = ${streamId} AND member_id = ${memberId}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND member_id = ${memberId}
       ORDER BY sequence ASC
     `)
     return result.rows.map((r) => r.message_id)
@@ -69,12 +76,17 @@ export const SparseReadRepository = {
    * `readMessageIds` map in a single batch. Streams with no overlay row are
    * absent from the map (the caller omits empty streams anyway).
    */
-  async listOverlayIdsForMember(db: Querier, memberId: string, streamIds: string[]): Promise<Map<string, string[]>> {
+  async listOverlayIdsForMember(
+    db: Querier,
+    workspaceId: string,
+    memberId: string,
+    streamIds: string[]
+  ): Promise<Map<string, string[]>> {
     const map = new Map<string, string[]>()
     if (streamIds.length === 0) return map
     const result = await db.query<{ stream_id: string; message_id: string }>(sql`
       SELECT stream_id, message_id FROM stream_member_message_reads
-      WHERE member_id = ${memberId} AND stream_id = ANY(${streamIds}::text[])
+      WHERE workspace_id = ${workspaceId} AND member_id = ${memberId} AND stream_id = ANY(${streamIds}::text[])
       ORDER BY stream_id, sequence ASC
     `)
     for (const row of result.rows) {
@@ -86,10 +98,16 @@ export const SparseReadRepository = {
   },
 
   /** Prune overlay rows at or below `sequence` — the watermark-advance invariant. */
-  async pruneAtOrBelow(db: Querier, streamId: string, memberId: string, sequence: bigint): Promise<void> {
+  async pruneAtOrBelow(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    memberId: string,
+    sequence: bigint
+  ): Promise<void> {
     await db.query(sql`
       DELETE FROM stream_member_message_reads
-      WHERE stream_id = ${streamId} AND member_id = ${memberId}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND member_id = ${memberId}
         AND sequence <= ${sequence.toString()}
     `)
   },
@@ -99,20 +117,26 @@ export const SparseReadRepository = {
    * to before message M means M and everything after it is unread, so overlay rows
    * for messages at/after M contradict the intent and are dropped.
    */
-  async deleteAtOrAbove(db: Querier, streamId: string, memberId: string, sequence: bigint): Promise<void> {
+  async deleteAtOrAbove(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    memberId: string,
+    sequence: bigint
+  ): Promise<void> {
     await db.query(sql`
       DELETE FROM stream_member_message_reads
-      WHERE stream_id = ${streamId} AND member_id = ${memberId}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND member_id = ${memberId}
         AND sequence >= ${sequence.toString()}
     `)
   },
 
   /** Wipe all overlay rows for a member across the given streams (mark-all-as-read). */
-  async deleteAllForStreams(db: Querier, memberId: string, streamIds: string[]): Promise<void> {
+  async deleteAllForStreams(db: Querier, workspaceId: string, memberId: string, streamIds: string[]): Promise<void> {
     if (streamIds.length === 0) return
     await db.query(sql`
       DELETE FROM stream_member_message_reads
-      WHERE member_id = ${memberId} AND stream_id = ANY(${streamIds}::text[])
+      WHERE workspace_id = ${workspaceId} AND member_id = ${memberId} AND stream_id = ANY(${streamIds}::text[])
     `)
   },
 
@@ -126,6 +150,7 @@ export const SparseReadRepository = {
    */
   async findCompactionTarget(
     db: Querier,
+    workspaceId: string,
     streamId: string,
     memberId: string,
     watermarkSeq: bigint
@@ -133,7 +158,7 @@ export const SparseReadRepository = {
     const result = await db.query<{ event_id: string; sequence: string }>(sql`
       WITH bound AS (
         SELECT MAX(sequence) AS max_seq FROM stream_member_message_reads
-        WHERE stream_id = ${streamId} AND member_id = ${memberId}
+        WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND member_id = ${memberId}
       ),
       ordered AS (
         SELECT
@@ -144,12 +169,15 @@ export const SparseReadRepository = {
           (r.message_id IS NOT NULL OR m.deleted_at IS NOT NULL) AS covered
         FROM stream_events e
         LEFT JOIN stream_member_message_reads r
-          ON r.stream_id = e.stream_id
+          ON r.workspace_id = ${workspaceId}
+         AND r.stream_id = e.stream_id
          AND r.member_id = ${memberId}
          AND r.message_id = e.payload->>'messageId'
         LEFT JOIN messages m
-          ON m.id = e.payload->>'messageId'
-        WHERE e.stream_id = ${streamId}
+          ON m.workspace_id = ${workspaceId}
+         AND m.id = e.payload->>'messageId'
+        WHERE e.workspace_id = ${workspaceId}
+          AND e.stream_id = ${streamId}
           AND e.event_type = 'message_created'
           AND e.sequence > ${watermarkSeq.toString()}
           -- The target must itself be covered, so the run can never extend past
@@ -179,20 +207,27 @@ export const SparseReadRepository = {
    * watermark absorb that trailing dead water too. A missing `messages` row
    * counts as alive (conservative: stops the run).
    */
-  async findTrailingDeletedRunEnd(db: Querier, streamId: string, afterSeq: bigint): Promise<CompactionTarget | null> {
+  async findTrailingDeletedRunEnd(
+    db: Querier,
+    workspaceId: string,
+    streamId: string,
+    afterSeq: bigint
+  ): Promise<CompactionTarget | null> {
     const result = await db.query<{ event_id: string; sequence: string }>(sql`
       WITH first_alive AS (
         SELECT MIN(e.sequence) AS seq
         FROM stream_events e
-        LEFT JOIN messages m ON m.id = e.payload->>'messageId'
-        WHERE e.stream_id = ${streamId}
+        LEFT JOIN messages m ON m.id = e.payload->>'messageId' AND m.workspace_id = ${workspaceId}
+        WHERE e.workspace_id = ${workspaceId}
+          AND e.stream_id = ${streamId}
           AND e.event_type = 'message_created'
           AND e.sequence > ${afterSeq.toString()}
           AND m.deleted_at IS NULL
       )
       SELECT e.id AS event_id, e.sequence
       FROM stream_events e
-      WHERE e.stream_id = ${streamId}
+      WHERE e.workspace_id = ${workspaceId}
+        AND e.stream_id = ${streamId}
         AND e.event_type = 'message_created'
         AND e.sequence > ${afterSeq.toString()}
         AND e.sequence < COALESCE((SELECT seq FROM first_alive), 9223372036854775807)
@@ -204,10 +239,10 @@ export const SparseReadRepository = {
   },
 
   /** Overlay row count for one (stream, member). */
-  async countOverlay(db: Querier, streamId: string, memberId: string): Promise<number> {
+  async countOverlay(db: Querier, workspaceId: string, streamId: string, memberId: string): Promise<number> {
     const result = await db.query<{ count: string }>(sql`
       SELECT COUNT(*)::text AS count FROM stream_member_message_reads
-      WHERE stream_id = ${streamId} AND member_id = ${memberId}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND member_id = ${memberId}
     `)
     return parseInt(result.rows[0].count, 10)
   },
@@ -221,15 +256,17 @@ export const SparseReadRepository = {
    */
   async rehomeReads(
     db: Querier,
-    params: { sourceStreamId: string; destinationStreamId: string; messageIds: string[] }
+    params: { workspaceId: string; sourceStreamId: string; destinationStreamId: string; messageIds: string[] }
   ): Promise<void> {
     if (params.messageIds.length === 0) return
     await db.query(sql`
       UPDATE stream_member_message_reads r
       SET stream_id = ${params.destinationStreamId}, event_id = e.id, sequence = e.sequence
       FROM stream_events e
-      WHERE r.stream_id = ${params.sourceStreamId}
+      WHERE r.workspace_id = ${params.workspaceId}
+        AND r.stream_id = ${params.sourceStreamId}
         AND r.message_id = ANY(${params.messageIds}::text[])
+        AND e.workspace_id = ${params.workspaceId}
         AND e.stream_id = ${params.destinationStreamId}
         AND e.event_type = 'message_created'
         AND e.payload->>'messageId' = r.message_id

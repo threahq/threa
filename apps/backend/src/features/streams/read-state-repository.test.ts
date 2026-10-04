@@ -37,7 +37,7 @@ describe("ReadStateRepository.advance", () => {
         updated_at: new Date(),
       },
     ])
-    await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9", { holdInInbox: false })
+    await ReadStateRepository.advance(db, "ws_1", "stream_1", "usr_1", "evt_9", { holdInInbox: false })
 
     expect(query).toHaveBeenCalledTimes(1)
     const text = flat(sqlText(query.mock.calls[0]))
@@ -58,11 +58,11 @@ describe("ReadStateRepository.advance", () => {
     expect(text).toContain("RETURNING")
   })
 
-  test("binds streamId, userId, eventId, holdInInbox in order", async () => {
+  test("binds workspaceId, streamId, userId, eventId, holdInInbox in order", async () => {
     const { db, query } = makeDb()
-    await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9", { holdInInbox: true })
+    await ReadStateRepository.advance(db, "ws_1", "stream_1", "usr_1", "evt_9", { holdInInbox: true })
     // A hold-enabled advance seeds and locks the row first (two statements).
-    expect(sqlValues(query.mock.calls[2])).toEqual(["stream_1", "usr_1", "evt_9", true])
+    expect(sqlValues(query.mock.calls[2])).toEqual(["ws_1", "stream_1", "usr_1", "evt_9", true])
   })
 
   test("returns the post-write row when the advance lands", async () => {
@@ -77,7 +77,7 @@ describe("ReadStateRepository.advance", () => {
       hold: false,
     }
     const { db, query } = makeDb([row])
-    const result = await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9", { holdInInbox: false })
+    const result = await ReadStateRepository.advance(db, "ws_1", "stream_1", "usr_1", "evt_9", { holdInInbox: false })
     expect(query).toHaveBeenCalledTimes(1)
     expect(result.state?.lastReadEventId).toBe("evt_9")
     expect(result.held).toBe(false)
@@ -100,7 +100,7 @@ describe("ReadStateRepository.advance", () => {
       hold: true,
     }
     const { db } = makeDb([row])
-    const result = await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9", { holdInInbox: true })
+    const result = await ReadStateRepository.advance(db, "ws_1", "stream_1", "usr_1", "evt_9", { holdInInbox: true })
     expect(result.held).toBe(true)
   })
 
@@ -119,7 +119,7 @@ describe("ReadStateRepository.advance", () => {
       hold: false,
     }
     const { db } = makeDb([row])
-    const result = await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_9", { holdInInbox: false })
+    const result = await ReadStateRepository.advance(db, "ws_1", "stream_1", "usr_1", "evt_9", { holdInInbox: false })
     expect(result.held).toBe(false)
   })
 
@@ -145,7 +145,9 @@ describe("ReadStateRepository.advance", () => {
     query.mockResolvedValueOnce({ rows: [standing], rowCount: 1 })
     const db = { query } as unknown as Querier
 
-    const result = await ReadStateRepository.advance(db, "stream_1", "usr_1", "evt_stale", { holdInInbox: true })
+    const result = await ReadStateRepository.advance(db, "ws_1", "stream_1", "usr_1", "evt_stale", {
+      holdInInbox: true,
+    })
 
     expect(query).toHaveBeenCalledTimes(4)
     expect(result.state?.lastReadEventId).toBe("evt_higher")
@@ -156,7 +158,7 @@ describe("ReadStateRepository.advance", () => {
 describe("ReadStateRepository.set", () => {
   test("is an unconditional upsert with no sequence comparison", async () => {
     const { db, query } = makeDb()
-    await ReadStateRepository.set(db, "stream_1", "usr_1", "evt_3")
+    await ReadStateRepository.set(db, "ws_1", "stream_1", "usr_1", "evt_3")
 
     const text = flat(sqlText(query.mock.calls[0]))
     expect(text).toContain("ON CONFLICT (stream_id, user_id) DO UPDATE")
@@ -167,15 +169,15 @@ describe("ReadStateRepository.set", () => {
 
   test("allows a null eventId (park before the first message)", async () => {
     const { db, query } = makeDb()
-    await ReadStateRepository.set(db, "stream_1", "usr_1", null)
-    expect(sqlValues(query.mock.calls[0])).toEqual(["stream_1", "usr_1", null])
+    await ReadStateRepository.set(db, "ws_1", "stream_1", "usr_1", null)
+    expect(sqlValues(query.mock.calls[0])).toEqual(["ws_1", "stream_1", "usr_1", null])
   })
 })
 
 describe("ReadStateRepository.batchAdvance", () => {
   test("no-ops without querying on an empty map", async () => {
     const { db, query } = makeDb()
-    await ReadStateRepository.batchAdvance(db, "usr_1", new Map())
+    await ReadStateRepository.batchAdvance(db, "ws_1", "usr_1", new Map())
     expect(query).not.toHaveBeenCalled()
   })
 
@@ -183,6 +185,7 @@ describe("ReadStateRepository.batchAdvance", () => {
     const { db, query } = makeDb()
     await ReadStateRepository.batchAdvance(
       db,
+      "ws_1",
       "usr_1",
       new Map([
         ["stream_1", "evt_a"],
@@ -194,10 +197,10 @@ describe("ReadStateRepository.batchAdvance", () => {
     // row (getBatch).
     expect(query).toHaveBeenCalledTimes(2)
     const text = flat(sqlText(query.mock.calls[0]))
-    expect(text).toContain("unnest($1::text[])")
+    expect(text).toContain("unnest($2::text[])")
     expect(text).toContain("ON CONFLICT (stream_id, user_id) DO UPDATE")
     expect(text).toContain("> COALESCE")
-    expect(sqlValues(query.mock.calls[0])).toEqual([["stream_1", "stream_2"], ["evt_a", "evt_b"], "usr_1"])
+    expect(sqlValues(query.mock.calls[0])).toEqual(["ws_1", ["stream_1", "stream_2"], ["evt_a", "evt_b"], "usr_1"])
   })
 
   test("returns the standing row for EVERY attempted stream, including guard-rejected concurrent advances", async () => {
@@ -231,6 +234,7 @@ describe("ReadStateRepository.batchAdvance", () => {
 
     const result = await ReadStateRepository.batchAdvance(
       db,
+      "ws_1",
       "usr_1",
       new Map([
         ["stream_1", "evt_a"],
@@ -243,7 +247,7 @@ describe("ReadStateRepository.batchAdvance", () => {
     const reRead = flat(sqlText(query.mock.calls[1]))
     expect(reRead).toContain("SELECT")
     expect(reRead).toContain("FROM stream_read_state")
-    expect(sqlValues(query.mock.calls[1])).toEqual(["usr_1", ["stream_1", "stream_2"]])
+    expect(sqlValues(query.mock.calls[1])).toEqual(["ws_1", "usr_1", ["stream_1", "stream_2"]])
     // Both attempted streams come back — the rejected one at its higher standing frontier.
     expect(result.states.map((r) => r.streamId).sort()).toEqual(["stream_1", "stream_2"])
     expect(result.states.find((r) => r.streamId === "stream_2")?.lastReadEventId).toBe("evt_higher")
@@ -306,31 +310,31 @@ describe("ReadStateRepository.listInboxArrivals", () => {
 describe("ReadStateRepository.setForUsers", () => {
   test("no-ops without querying on an empty user list", async () => {
     const { db, query } = makeDb()
-    await ReadStateRepository.setForUsers(db, "stream_1", [], "evt_1")
+    await ReadStateRepository.setForUsers(db, "ws_1", "stream_1", [], "evt_1")
     expect(query).not.toHaveBeenCalled()
   })
 
   test("unconditionally sets one event across many users", async () => {
     const { db, query } = makeDb()
-    await ReadStateRepository.setForUsers(db, "stream_1", ["usr_a", "usr_b"], "evt_1")
+    await ReadStateRepository.setForUsers(db, "ws_1", "stream_1", ["usr_a", "usr_b"], "evt_1")
     const text = flat(sqlText(query.mock.calls[0]))
-    expect(text).toContain("unnest($3::text[])")
+    expect(text).toContain("unnest($4::text[])")
     expect(text).toContain("ON CONFLICT (stream_id, user_id) DO UPDATE")
     expect(text).not.toContain("stream_events")
-    expect(sqlValues(query.mock.calls[0])).toEqual(["stream_1", "evt_1", ["usr_a", "usr_b"]])
+    expect(sqlValues(query.mock.calls[0])).toEqual(["ws_1", "stream_1", "evt_1", ["usr_a", "usr_b"]])
   })
 })
 
 describe("ReadStateRepository.repointForMovedEvents", () => {
   test("no-ops without querying on an empty move set", async () => {
     const { db, query } = makeDb()
-    await ReadStateRepository.repointForMovedEvents(db, "stream_src", [])
+    await ReadStateRepository.repointForMovedEvents(db, "ws_1", "stream_src", [])
     expect(query).not.toHaveBeenCalled()
   })
 
   test("repoints moved-event frontiers to the nearest surviving prior source event", async () => {
     const { db, query } = makeDb()
-    await ReadStateRepository.repointForMovedEvents(db, "stream_src", [
+    await ReadStateRepository.repointForMovedEvents(db, "ws_1", "stream_src", [
       { eventId: "evt_m1", sequence: 20n },
       { eventId: "evt_m2", sequence: 40n },
     ])
@@ -339,8 +343,8 @@ describe("ReadStateRepository.repointForMovedEvents", () => {
     // A moved(event_id, src_seq) unnest, a repoint subquery picking the greatest
     // surviving prior source sequence, then UPDATE ... FROM repoint.
     expect(text).toContain("WITH moved AS")
-    expect(text).toContain("unnest($2::text[]) AS event_id")
-    expect(text).toContain("unnest($3::bigint[]) AS src_seq")
+    expect(text).toContain("unnest($3::text[]) AS event_id")
+    expect(text).toContain("unnest($4::bigint[]) AS src_seq")
     expect(text).toContain("e.sequence < moved.src_seq")
     expect(text).toContain("ORDER BY e.sequence DESC LIMIT 1")
     expect(text).toContain("FROM stream_read_state rs")
@@ -349,7 +353,7 @@ describe("ReadStateRepository.repointForMovedEvents", () => {
     expect(text).toContain("rs.user_id = repoint.user_id")
     // last_read_at deliberately untouched (automated correction, not a read).
     expect(text).not.toContain("last_read_at")
-    expect(sqlValues(query.mock.calls[0])).toEqual(["stream_src", ["evt_m1", "evt_m2"], ["20", "40"]])
+    expect(sqlValues(query.mock.calls[0])).toEqual(["ws_1", "stream_src", ["evt_m1", "evt_m2"], ["20", "40"]])
   })
 })
 
@@ -366,7 +370,7 @@ describe("ReadStateRepository readers", () => {
       inbox_floor_event_id: "evt_3",
     }
     const withRow = makeDb([row])
-    expect(await ReadStateRepository.get(withRow.db, "stream_1", "usr_1")).toEqual({
+    expect(await ReadStateRepository.get(withRow.db, "ws_1", "stream_1", "usr_1")).toEqual({
       workspaceId: "ws_1",
       streamId: "stream_1",
       userId: "usr_1",
@@ -378,12 +382,12 @@ describe("ReadStateRepository readers", () => {
     })
 
     const empty = makeDb([])
-    expect(await ReadStateRepository.get(empty.db, "stream_1", "usr_1")).toBeNull()
+    expect(await ReadStateRepository.get(empty.db, "ws_1", "stream_1", "usr_1")).toBeNull()
   })
 
   test("getBatch returns [] without querying for an empty stream list", async () => {
     const { db, query } = makeDb()
-    expect(await ReadStateRepository.getBatch(db, "usr_1", [])).toEqual([])
+    expect(await ReadStateRepository.getBatch(db, "ws_1", "usr_1", [])).toEqual([])
     expect(query).not.toHaveBeenCalled()
   })
 
@@ -412,7 +416,7 @@ describe("ReadStateRepository.ensureForUpdate", () => {
       .mockResolvedValueOnce({ rows: [row], rowCount: 1 })
     const db = { query } as unknown as Querier
 
-    const result = await ReadStateRepository.ensureForUpdate(db, "stream_1", "usr_1")
+    const result = await ReadStateRepository.ensureForUpdate(db, "ws_1", "stream_1", "usr_1")
 
     expect(query).toHaveBeenCalledTimes(2)
     const seed = flat(sqlText(query.mock.calls[0]))
@@ -432,7 +436,7 @@ describe("ReadStateRepository.ensureForUpdate", () => {
       .mockResolvedValueOnce({ rows: [], rowCount: 0 })
     const db = { query } as unknown as Querier
 
-    expect(await ReadStateRepository.ensureForUpdate(db, "stream_gone", "usr_1")).toBeNull()
+    expect(await ReadStateRepository.ensureForUpdate(db, "ws_1", "stream_gone", "usr_1")).toBeNull()
   })
 })
 
