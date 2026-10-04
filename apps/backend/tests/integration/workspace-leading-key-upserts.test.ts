@@ -383,7 +383,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     },
     {
       name: "a brief",
-      landsAs: (ws) => ({ workspaceId: ws, content: "Goal 1" }),
+      landsAs: (ws) => expect.objectContaining({ workspaceId: ws, content: "Goal 1" }),
       write: (ws, ids, writer) =>
         StreamBriefRepository.insertFirstVersion(pool, {
           id: streamBriefId(),
@@ -393,17 +393,15 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           updatedByKind: AuthorTypes.USER,
           updatedById: userId(),
         }),
-      read: async (ws, ids) => {
-        const brief = await StreamBriefRepository.findByStreamId(pool, ws, ids.stream)
-        return brief && { workspaceId: brief.workspaceId, content: brief.content }
-      },
+      read: (ws, ids) => StreamBriefRepository.findByStreamId(pool, ws, ids.stream),
     },
     {
       name: "a context bag",
-      landsAs: (ws, ids) => ({
-        workspaceId: ws,
-        refs: [{ kind: ContextRefKinds.THREAD, streamId: ids.refStreams[1] }],
-      }),
+      landsAs: (ws, ids) =>
+        expect.objectContaining({
+          workspaceId: ws,
+          refs: [{ kind: ContextRefKinds.THREAD, streamId: ids.refStreams[1] }],
+        }),
       write: (ws, ids, writer) =>
         ContextBagRepository.insert(pool, {
           workspaceId: ws,
@@ -412,14 +410,11 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           refs: [{ kind: ContextRefKinds.THREAD, streamId: ids.refStreams[writer] }],
           createdBy: userId(),
         }),
-      read: async (ws, ids) => {
-        const bag = await ContextBagRepository.findByStream(pool, ws, ids.stream)
-        return bag && { workspaceId: bag.workspaceId, refs: bag.refs }
-      },
+      read: (ws, ids) => ContextBagRepository.findByStream(pool, ws, ids.stream),
     },
     {
       name: "a conversation summary",
-      landsAs: (ws) => ({ workspaceId: ws, summary: "summary 1", lastSummarizedSequence: 2n }),
+      landsAs: (ws) => expect.objectContaining({ workspaceId: ws, summary: "summary 1", lastSummarizedSequence: 2n }),
       write: (ws, ids, writer) =>
         ConversationSummaryRepository.upsert(pool, {
           id: agentConversationSummaryId(),
@@ -429,16 +424,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           summary: `summary ${writer}`,
           lastSummarizedSequence: BigInt(writer + 1),
         }),
-      read: async (ws, ids) => {
-        const summary = await ConversationSummaryRepository.findByStreamAndPersona(pool, ws, ids.stream, ids.persona)
-        return (
-          summary && {
-            workspaceId: summary.workspaceId,
-            summary: summary.summary,
-            lastSummarizedSequence: summary.lastSummarizedSequence,
-          }
-        )
-      },
+      read: (ws, ids) => ConversationSummaryRepository.findByStreamAndPersona(pool, ws, ids.stream, ids.persona),
     },
     {
       name: "a persona participation",
@@ -476,7 +462,8 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     },
     {
       name: "a compose trace",
-      landsAs: (ws) => ({ workspaceId: ws, openedAtSequence: "1", sentAtSequence: "2", resumedDraft: true }),
+      landsAs: (ws) =>
+        expect.objectContaining({ workspaceId: ws, openedAtSequence: "1", sentAtSequence: "2", resumedDraft: true }),
       write: (ws, ids, writer) =>
         MessageComposeTraceRepository.insert(pool, {
           messageId: ids.message,
@@ -488,21 +475,11 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           sentAtSequence: writer + 1,
           resumedDraft: writer === 1,
         }),
-      read: async (ws, ids) => {
-        const trace = await MessageComposeTraceRepository.findByMessageId(pool, ws, ids.message)
-        return (
-          trace && {
-            workspaceId: trace.workspaceId,
-            openedAtSequence: trace.openedAtSequence,
-            sentAtSequence: trace.sentAtSequence,
-            resumedDraft: trace.resumedDraft,
-          }
-        )
-      },
+      read: (ws, ids) => MessageComposeTraceRepository.findByMessageId(pool, ws, ids.message),
     },
     {
       name: "a provisional conversation placement",
-      landsAs: (ws) => ({ workspaceId: ws, state: "settling", settledBy: null }),
+      landsAs: (ws) => expect.objectContaining({ workspaceId: ws, state: "settling", settledBy: null }),
       write: (ws, ids) =>
         MessageConversationStateRepository.insertSettling(pool, {
           messageId: ids.message,
@@ -510,14 +487,11 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           streamId: ids.stream,
           conversationId: conversationId(),
         }),
-      read: async (ws, ids) => {
-        const state = await MessageConversationStateRepository.findByMessageId(pool, ws, ids.message)
-        return state && { workspaceId: state.workspaceId, state: state.state, settledBy: state.settledBy }
-      },
+      read: (ws, ids) => MessageConversationStateRepository.findByMessageId(pool, ws, ids.message),
     },
     {
       name: "a user conversation placement",
-      landsAs: (ws) => ({ workspaceId: ws, state: "settled", settledBy: "user" }),
+      landsAs: (ws) => expect.objectContaining({ workspaceId: ws, state: "settled", settledBy: "user" }),
       write: async (ws, ids) => {
         await MessageRepository.insert(pool, {
           id: ids.message,
@@ -536,10 +510,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           "user"
         )
       },
-      read: async (ws, ids) => {
-        const state = await MessageConversationStateRepository.findByMessageId(pool, ws, ids.message)
-        return state && { workspaceId: state.workspaceId, state: state.state, settledBy: state.settledBy }
-      },
+      read: (ws, ids) => MessageConversationStateRepository.findByMessageId(pool, ws, ids.message),
     },
     {
       name: "an attachment reference",
