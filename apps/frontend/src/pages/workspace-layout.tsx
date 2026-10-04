@@ -68,7 +68,8 @@ import { setLastWorkspaceId } from "@/lib/last-workspace"
 import { useCapturePageviews } from "@/lib/analytics/use-capture-pageviews"
 import { isServerStreamId } from "@/lib/stream-ids"
 import { useAccountScope, useAuth } from "@/auth"
-import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { useWorkspaceStreamsSelect, type CachedStream } from "@/stores/workspace-store"
+import { isLinkableStreamType } from "@/lib/streams"
 import { SyncEngine, SyncEngineContext } from "@/sync/sync-engine"
 import { ReadCommitQueue, ReadCommitQueueContext } from "@/sync/read-commit-queue"
 import { useUnreadCounts } from "@/hooks/use-unread-counts"
@@ -506,9 +507,15 @@ function MentionableWrapper({ children }: { children: ReactNode }) {
   )
 }
 
+function pickLinkTargets(streams: CachedStream[]) {
+  return streams
+    .filter((stream) => isLinkableStreamType(stream.type))
+    .map(({ id, type, slug, displayName }) => ({ id, type, slug, displayName }))
+}
+
 /** Owns the stream-list subscription for channel links, for the same reason. */
 function WorkspaceChannelLinkProvider({ workspaceId, children }: { workspaceId: string; children: ReactNode }) {
-  const streams = useWorkspaceStreams(workspaceId)
+  const streams = useWorkspaceStreamsSelect(workspaceId, pickLinkTargets)
   return (
     <ChannelLinkProvider workspaceId={workspaceId} streams={streams}>
       {children}

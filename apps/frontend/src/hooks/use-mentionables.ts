@@ -1,17 +1,19 @@
-import { useMemo } from "react"
+import { useCallback, useMemo } from "react"
 import type { Mentionable } from "@/components/editor/triggers/types"
 import {
   isPickableUser,
   useWorkspaceUsers,
   useWorkspacePersonas,
   useWorkspaceBots,
-  useWorkspaceStreams,
+  useWorkspaceStreamsSelect,
+  type CachedStream,
   useWorkspaceStreamsRaw,
 } from "@/stores/workspace-store"
 import { useParams } from "react-router-dom"
 import { useUser } from "@/auth"
 import { rankMatches } from "@/lib/match-score"
 import { useStreamBootstrap } from "./use-streams"
+import type { CachedStreamBootstrap } from "@/sync/stream-sync"
 import { useWorkspaceEmoji } from "./use-workspace-emoji"
 import { getPersonaAvatarUrl, StreamTypes, type StreamType } from "@threahq/types"
 import type { MentionTypeLookup } from "@threahq/prosemirror"
@@ -49,6 +51,10 @@ interface MentionStreamSource {
   rootStreamId?: string | null
 }
 
+function pickMentionAccess(bootstrap: CachedStreamBootstrap) {
+  return { members: bootstrap.members, botMemberIds: bootstrap.botMemberIds }
+}
+
 /**
  * Build the `MentionStreamContext` for the editor — broadcast filtering
  * (@channel, @here), invite-mode member exclusion, bot mentionability, and
@@ -66,15 +72,16 @@ export function useMentionStreamContext(
   workspaceId: string,
   stream: MentionStreamSource | null | undefined
 ): MentionStreamContext | undefined {
-  const idbStreams = useWorkspaceStreams(workspaceId)
   const rootStreamId = stream?.rootStreamId ?? null
   const streamId = stream?.id ?? ""
 
   const { data: currentBootstrap } = useStreamBootstrap(workspaceId, streamId, {
     enabled: !!streamId && !rootStreamId,
+    select: pickMentionAccess,
   })
   const { data: rootBootstrap } = useStreamBootstrap(workspaceId, rootStreamId ?? "", {
     enabled: !!rootStreamId,
+    select: pickMentionAccess,
   })
   const accessBootstrap = rootStreamId ? rootBootstrap : currentBootstrap
 
@@ -86,13 +93,12 @@ export function useMentionStreamContext(
   )
 
   const streamType = stream?.type
-  const rootStreamType = useMemo(
-    () =>
-      streamType === StreamTypes.THREAD && rootStreamId
-        ? idbStreams.find((s) => s.id === rootStreamId)?.type
-        : undefined,
-    [idbStreams, streamType, rootStreamId]
+  const selectRootType = useCallback(
+    (streams: CachedStream[]) =>
+      streamType === StreamTypes.THREAD && rootStreamId ? streams.find((s) => s.id === rootStreamId)?.type : undefined,
+    [streamType, rootStreamId]
   )
+  const rootStreamType = useWorkspaceStreamsSelect(workspaceId, selectRootType)
   const members = accessBootstrap?.members
   const botMemberIds = accessBootstrap?.botMemberIds
   const accessLoaded = !!accessBootstrap
