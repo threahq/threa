@@ -3,8 +3,9 @@
  * names exactly what they render: each page, its h2/h3 headings, every API
  * operation, and every request/response field row.
  *
- * Writes dist/developers/search-index.json, which the search UI fetches the
- * first time it opens.
+ * Each docs area (developers, guide) gets its own index at
+ * dist/<area>/search-index.json, which the search UI fetches the first time it
+ * opens (the page names it in <body data-search-index>).
  */
 
 import { readdirSync, readFileSync, writeFileSync } from "node:fs"
@@ -14,11 +15,12 @@ import { fileURLToPath } from "node:url"
 import type { SearchEntry } from "../src/lib/search"
 
 const distDir = fileURLToPath(new URL("../dist", import.meta.url))
-const docsDir = join(distDir, "developers")
+const AREAS = ["developers", "guide"]
 
 // Older dated API versions render the same operations as the current
 // reference; indexing them would list every endpoint twice.
-const isOlderReference = (file: string) => /^reference\/[^/]+\/index\.html$/.test(relative(docsDir, file))
+const isOlderReference = (docsDir: string, file: string) =>
+  /^reference\/[^/]+\/index\.html$/.test(relative(docsDir, file))
 
 function htmlFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
@@ -95,9 +97,9 @@ function captureText(onDone: (text: string, el: Opened) => void) {
   }
 }
 
-async function indexPage(file: string): Promise<SearchEntry[]> {
-  const rel = relative(docsDir, file)
-  const route = rel === "index.html" ? "/developers" : `/developers/${rel.replace(/\/index\.html$/, "")}`
+async function indexPage(area: string, file: string): Promise<SearchEntry[]> {
+  const rel = relative(join(distDir, area), file)
+  const route = rel === "index.html" ? `/${area}` : `/${area}/${rel.replace(/\/index\.html$/, "")}`
   const entries: SearchEntry[] = []
   const unlinked: string[] = []
 
@@ -241,16 +243,19 @@ async function indexPage(file: string): Promise<SearchEntry[]> {
   return [page, ...entries]
 }
 
-const files = htmlFiles(docsDir)
-  .filter((f) => !isOlderReference(f))
-  .sort()
-const entries = (await Promise.all(files.map(indexPage))).flat()
-const json = JSON.stringify(entries)
-writeFileSync(join(docsDir, "search-index.json"), json)
+for (const area of AREAS) {
+  const docsDir = join(distDir, area)
+  const files = htmlFiles(docsDir)
+    .filter((f) => !isOlderReference(docsDir, f))
+    .sort()
+  const entries = (await Promise.all(files.map((f) => indexPage(area, f)))).flat()
+  const json = JSON.stringify(entries)
+  writeFileSync(join(docsDir, "search-index.json"), json)
 
-const counts = entries.reduce<Record<string, number>>((acc, e) => ({ ...acc, [e.kind]: (acc[e.kind] ?? 0) + 1 }), {})
-console.log(
-  `Wrote search index: ${entries.length} entries (${Object.entries(counts)
-    .map(([k, n]) => `${n} ${k}`)
-    .join(", ")}), ${(json.length / 1024).toFixed(0)} KB`
-)
+  const counts = entries.reduce<Record<string, number>>((acc, e) => ({ ...acc, [e.kind]: (acc[e.kind] ?? 0) + 1 }), {})
+  console.log(
+    `Wrote ${area} search index: ${entries.length} entries (${Object.entries(counts)
+      .map(([k, n]) => `${n} ${k}`)
+      .join(", ")}), ${(json.length / 1024).toFixed(0)} KB`
+  )
+}

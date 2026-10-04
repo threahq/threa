@@ -3,6 +3,7 @@
  *
  * Runs after `astro build` (see the package build script) and writes into dist:
  *   - /developers/<page>.md — a markdown mirror of each docs page
+ *   - /guide/<article>.md   — the user guide's articles, from their own markdown
  *   - /index.md, /about.md  — mirrors of the marketing pages
  *   - /llms.txt             — index per the llms.txt convention (llmstxt.org)
  *   - /llms-full.txt        — every docs page concatenated into one fetch
@@ -10,8 +11,9 @@
  * The mirrors are what functions/_middleware.ts serves to a request carrying
  * `Accept: text/markdown`, so every page route has one.
  *
- * The markdown is converted from the same HTML the site ships, so it cannot
- * drift from the pages. Code samples are taken from each block's raw
+ * Developer markdown is converted from the same HTML the site ships, so it cannot
+ * drift from the pages. Guide mirrors are the articles' own markdown, which the
+ * guide pages render from. Code samples are taken from each block's raw
  * data-template (the visible HTML renders {{tokens}} as empty chips that the
  * playground fills client-side, so converting the <pre> would drop them) and
  * the tokens become literal placeholders an agent can substitute.
@@ -19,6 +21,7 @@
 
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs"
 import { fileURLToPath } from "node:url"
+import { groupGuideArticles, loadGuideArticles } from "@threahq/user-guide"
 import TurndownService from "turndown"
 
 import { MIRROR_PREFIX } from "../functions/_middleware"
@@ -154,7 +157,27 @@ const SITE_PAGES: Page[] = [
   },
 ]
 
-const ALL_PAGES = [...PAGES, ...SITE_PAGES]
+/* The user guide's pages. Unlike the docs they are not converted from HTML:
+   the articles are markdown already, so the mirror is the article itself. */
+const GUIDE_ARTICLES = loadGuideArticles()
+const GUIDE_INDEX: Page = {
+  route: "/guide",
+  html: "guide/index.html",
+  md: "guide/index.md",
+  title: "User guide",
+  blurb: "Every article in the guide, by topic.",
+}
+const GUIDE_ARTICLE_PAGES: Array<Page & { body: string }> = GUIDE_ARTICLES.map((a) => ({
+  route: `/guide/${a.slug}`,
+  html: `guide/${a.slug}/index.html`,
+  md: `guide/${a.slug}.md`,
+  title: a.title,
+  blurb: a.summary,
+  body: a.body,
+}))
+const GUIDE_PAGES: Page[] = [GUIDE_INDEX, ...GUIDE_ARTICLE_PAGES]
+
+const ALL_PAGES = [...PAGES, ...SITE_PAGES, ...GUIDE_PAGES]
 
 // ---------------------------------------------------------------------------
 // HTML -> markdown
@@ -402,6 +425,10 @@ function pageToMarkdown(page: Page): string {
   const notes = SITE_PAGES.includes(page)
     ? "Markdown mirror generated from the page above; product mockups are omitted. Developer docs start at https://threa.io/llms.txt."
     : "Markdown mirror generated from the page above. YOUR_WORKSPACE_ID is the ws_… id in the app URL after /w/; YOUR_API_KEY is a key from Settings > API keys."
+  return withMirrorHeader(page, notes, md)
+}
+
+function withMirrorHeader(page: Page, notes: string, md: string): string {
   const header = ["---", `source: ${SITE}${page.route}`, `notes: ${notes}`, "---"].join("\n")
   const mirror = `${header}\n\n${md}\n`
   // The middleware tells a mirror from Pages' 200-HTML answer to a missing
@@ -411,6 +438,22 @@ function pageToMarkdown(page: Page): string {
     throw new Error(`${page.md} does not start with the mirror front matter the middleware matches on`)
   }
   return mirror
+}
+
+const GUIDE_APP_LINKS =
+  "An app:<page> link (app:memory, app:settings/ai) names a place inside the Threa app; it opens from the app, not from here."
+const GUIDE_NOTES = `Rough draft of the Threa user guide, generated from the article's own markdown. ${GUIDE_APP_LINKS} The developer docs start at https://threa.io/llms.txt.`
+
+function guideIndexMarkdown(): string {
+  const sections = groupGuideArticles(GUIDE_ARTICLES).flatMap((section) => [
+    `## ${section.title}`,
+    section.articles.map((a) => `- [${a.title}](/guide/${a.slug}): ${a.summary}`).join("\n"),
+  ])
+  return ["# Threa user guide", ...sections].join("\n\n")
+}
+
+function guideToMarkdown(page: Page, body: string): string {
+  return withMirrorHeader(page, GUIDE_NOTES, rewriteLinks(body))
 }
 
 // ---------------------------------------------------------------------------
@@ -425,16 +468,18 @@ if (missing.length) {
 // The inverse direction: a page added to src/pages/ without a PAGES or
 // SITE_PAGES entry would silently ship with no markdown mirror, so
 // `Accept: text/markdown` on its route would fall back to HTML.
-const builtPages = readdirSync(dist("developers"), { withFileTypes: true })
-  .filter((e) => e.isDirectory())
-  .map((e) => `developers/${e.name}/index.html`)
-  .concat("developers/index.html")
-  .concat(
-    readdirSync(dist("."), { withFileTypes: true })
-      .filter((e) => (e.isDirectory() ? e.name !== "developers" : e.name.endsWith(".html")))
-      .map((e) => (e.isDirectory() ? `${e.name}/index.html` : e.name))
-      .filter((html) => existsSync(dist(html)))
-  )
+const DOCS_AREAS = ["developers", "guide"]
+const builtPages = DOCS_AREAS.flatMap((area) =>
+  readdirSync(dist(area), { withFileTypes: true })
+    .filter((e) => e.isDirectory())
+    .map((e) => `${area}/${e.name}/index.html`)
+    .concat(`${area}/index.html`)
+).concat(
+  readdirSync(dist("."), { withFileTypes: true })
+    .filter((e) => (e.isDirectory() ? !DOCS_AREAS.includes(e.name) : e.name.endsWith(".html")))
+    .map((e) => (e.isDirectory() ? `${e.name}/index.html` : e.name))
+    .filter((html) => existsSync(dist(html)))
+)
 // A route outside _routes.json never reaches functions/_middleware.ts, so its
 // mirror would ship with nothing able to negotiate for it — the one failure
 // that leaves every other guard here green.
@@ -465,6 +510,12 @@ const mirrors = PAGES.map((page) => {
 })
 
 for (const page of SITE_PAGES) writeFileSync(dist(page.md), pageToMarkdown(page))
+writeFileSync(dist(GUIDE_INDEX.md), guideToMarkdown(GUIDE_INDEX, guideIndexMarkdown()))
+const guideMirrors = GUIDE_ARTICLE_PAGES.map((page) => {
+  const md = guideToMarkdown(page, page.body)
+  writeFileSync(dist(page.md), md)
+  return { page, md }
+})
 
 const llmsTxt = `# Threa
 
@@ -473,7 +524,8 @@ const llmsTxt = `# Threa
 > read. The public REST API lives at https://app.threa.io under
 > /api/v1/workspaces/{workspaceId}/… and authenticates every request with
 > "Authorization: Bearer <api key>". Keys are created in the app (Settings > API keys)
-> and carry scopes; GET /me verifies a key with no scope required.
+> and carry scopes; GET /me verifies a key with no scope required. How to use the app
+> itself is in the user guide (rough draft) at https://threa.io/guide, listed below.
 
 Threa is open source (https://github.com/threahq/threa) and self-hostable. Things
 an agent can do over the API today:
@@ -496,10 +548,16 @@ mirror them one-to-one, and every page route also answers
 
 ${PAGES.map((p) => `- [${p.title}](${SITE}/${p.md}): ${p.blurb}`).join("\n")}
 
+## User guide (rough draft)
+
+How to use Threa as a person, not a developer. Still being written; expect gaps.
+
+${GUIDE_PAGES.map((p) => `- [${p.title}](${SITE}/${p.md}): ${p.blurb}`).join("\n")}
+
 ## Machine-readable
 
 - [OpenAPI 3.0 spec](${SITE}/openapi.json): the canonical contract — every endpoint, schema, scope, and error. This is the current version; each dated version has its own spec at ${SITE}/openapi/<version>.json.
-- [Full docs in one file](${SITE}/llms-full.txt): all pages above concatenated
+- [Full docs in one file](${SITE}/llms-full.txt): the docs and user guide pages above concatenated
 - [API catalog](${SITE}/.well-known/api-catalog): RFC 9727 linkset naming the spec, the docs, and this index
 - [Agent skills index](${SITE}/.well-known/agent-skills/index.json): installable skills for working against a Threa workspace
 - [auth.md](${SITE}/auth.md): how an agent obtains and uses a key
@@ -515,11 +573,13 @@ writeFileSync(dist("llms.txt"), llmsTxt)
 // One fetch for everything: the mirrors with their front matter swapped for a
 // plain source line, so the only `---` lines are the page separators.
 const llmsFull = [
-  `# Threa developer docs (full)\n\n> Concatenation of every page under ${SITE}/developers, generated at build.\n> The canonical API contract is the OpenAPI spec: ${SITE}/openapi.json\n> Placeholders: YOUR_WORKSPACE_ID is the ws_… id in the app URL after /w/; YOUR_API_KEY is a key from Settings > API keys.`,
-  ...mirrors.map(({ page, md }) => `*Source: ${SITE}${page.route}*\n\n${md.replace(/^---\n[\s\S]*?\n---\n\n/, "")}`),
+  `# Threa docs (full)\n\n> Concatenation of every page under ${SITE}/developers and ${SITE}/guide, generated at build.\n> Developer docs: the canonical API contract is the OpenAPI spec: ${SITE}/openapi.json\n> Developer docs placeholders: YOUR_WORKSPACE_ID is the ws_… id in the app URL after /w/; YOUR_API_KEY is a key from Settings > API keys.\n> User guide (rough draft): ${GUIDE_APP_LINKS}`,
+  ...[...mirrors, ...guideMirrors].map(
+    ({ page, md }) => `*Source: ${SITE}${page.route}*\n\n${md.replace(/^---\n[\s\S]*?\n---\n\n/, "")}`
+  ),
 ].join("\n\n---\n\n")
 writeFileSync(dist("llms-full.txt"), llmsFull)
 
 console.log(
-  `Wrote ${mirrors.length} markdown mirrors, llms.txt, llms-full.txt (${(llmsFull.length / 1024).toFixed(0)} KB full)`
+  `Wrote ${mirrors.length + guideMirrors.length} markdown mirrors, llms.txt, llms-full.txt (${(llmsFull.length / 1024).toFixed(0)} KB full)`
 )

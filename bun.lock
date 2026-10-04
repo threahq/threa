@@ -345,7 +345,10 @@
     "apps/public-site": {
       "name": "@threahq/public-site",
       "dependencies": {
+        "@astrojs/markdown-remark": "6.3.11",
         "@astrojs/sitemap": "^3.7.3",
+        "@threahq/types": "workspace:*",
+        "@threahq/user-guide": "workspace:*",
         "astro": "^5.6.1",
         "katex": "^0.16.47",
       },
@@ -466,6 +469,16 @@
       "version": "0.1.0",
       "dependencies": {
         "zod": "^4.3.5",
+      },
+      "peerDependencies": {
+        "typescript": "^5",
+      },
+    },
+    "packages/user-guide": {
+      "name": "@threahq/user-guide",
+      "version": "0.1.0",
+      "devDependencies": {
+        "@threahq/types": "workspace:*",
       },
       "peerDependencies": {
         "typescript": "^5",
@@ -1604,6 +1617,8 @@
     "@threahq/public-site": ["@threahq/public-site@workspace:apps/public-site"],
 
     "@threahq/types": ["@threahq/types@workspace:packages/types"],
+
+    "@threahq/user-guide": ["@threahq/user-guide@workspace:packages/user-guide"],
 
     "@tiptap/core": ["@tiptap/core@3.22.3", "", { "peerDependencies": { "@tiptap/pm": "^3.22.3" } }, "sha512-Dv9MKK5BDWCF0N2l6/Pxv3JNCce2kwuWf2cKMBc2bEetx0Pn6o7zlFmSxMvYK4UtG1Tw9Yg/ZHi6QOFWK0Zm9Q=="],
 

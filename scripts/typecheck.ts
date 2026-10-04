@@ -6,6 +6,7 @@ const rootDir = path.resolve(import.meta.dir, "..")
 
 const allPackages = [
   "packages/types",
+  "packages/user-guide",
   "packages/prosemirror",
   "packages/crypto",
   "packages/backend-common",
