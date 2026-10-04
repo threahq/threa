@@ -74,6 +74,21 @@ describe("agent memo provenance", () => {
     return id
   }
 
+  const saveAgentMemo = (params: { provenanceStreamIds: string[]; requiresBrowse: boolean }) =>
+    service.saveMemo({
+      workspaceId: testWorkspaceId,
+      streamId: home,
+      sessionId: null,
+      sourceStreamIds: [home],
+      title: "Rollout plan",
+      abstract: "The rollout starts on Monday with the flag off.",
+      keyPoints: [],
+      tags: [],
+      knowledgeType: "decision",
+      sourceMessageIds: [anchorId],
+      ...params,
+    })
+
   beforeAll(async () => {
     pool = await setupTestDatabase()
     service = new MemoService({
@@ -126,19 +141,9 @@ describe("agent memo provenance", () => {
   })
 
   test("should store the turn's streams together with every stream whose content reached the model when an agent saves a memo", async () => {
-    const saved = await service.saveMemo({
-      workspaceId: testWorkspaceId,
-      streamId: home,
-      sessionId: null,
-      sourceStreamIds: [home],
+    const saved = await saveAgentMemo({
       provenanceStreamIds: [research, otherResearch, home, research],
       requiresBrowse: true,
-      title: "Rollout plan",
-      abstract: "The rollout starts on Monday with the flag off.",
-      keyPoints: [],
-      tags: [],
-      knowledgeType: "decision",
-      sourceMessageIds: [anchorId],
     })
     expect(saved).toMatchObject({ ok: true, deduped: false })
 
@@ -181,20 +186,7 @@ describe("agent memo provenance", () => {
   })
 
   test("should store requiresBrowse false for a saved memo and a reflective capture when the agent wrote for an audience that needs no browse", async () => {
-    const saved = await service.saveMemo({
-      workspaceId: testWorkspaceId,
-      streamId: home,
-      sessionId: null,
-      sourceStreamIds: [home],
-      provenanceStreamIds: [home],
-      requiresBrowse: false,
-      title: "Rollout plan",
-      abstract: "The rollout starts on Monday with the flag off.",
-      keyPoints: [],
-      tags: [],
-      knowledgeType: "decision",
-      sourceMessageIds: [anchorId],
-    })
+    const saved = await saveAgentMemo({ provenanceStreamIds: [home], requiresBrowse: false })
     const session = `session_${streamId()}`
     await service.captureSessionReflection({
       workspaceId: testWorkspaceId,

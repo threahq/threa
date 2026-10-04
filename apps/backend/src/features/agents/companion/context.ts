@@ -554,7 +554,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
         accessibleStreamIds,
       })
     : { text: null, sourceStreamIds: [] }
-  const carriedSourceStreamIds = [...new Set([...previousSessions.sourceStreamIds, ...turnDigests.sourceStreamIds])]
+  const carriedSourceStreamIds = [...previousSessions.sourceStreamIds, ...turnDigests.sourceStreamIds]
 
   // Render the stitched discussion once author names are fully resolved. Null
   // when there's nothing to stitch (no spawning conversation, or a deep thread

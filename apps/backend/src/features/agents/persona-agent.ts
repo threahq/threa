@@ -1409,9 +1409,7 @@ export class PersonaAgent {
                   sessionId: session.id,
                   sourceStreamIds: saveMemoStreamIds,
                   // Read at call time: the collector fills as the turn's tools complete.
-                  provenanceStreamIds: [
-                    ...new Set([...agentContext.carriedSourceStreamIds, ...digestCollector.provenanceStreamIds]),
-                  ],
+                  provenanceStreamIds: [...agentContext.carriedSourceStreamIds, ...digestCollector.provenanceStreamIds],
                   requiresBrowse: agentContext.memoAudience
                     ? await audienceBrowses(pool, workspaceId, agentContext.memoAudience)
                     : true,

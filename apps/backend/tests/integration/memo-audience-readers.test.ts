@@ -98,6 +98,23 @@ describe("memo readers pass their audience", () => {
     audiences: [audience],
   })
 
+  const memoLandmark = (refId: string, room: string, root: string) => ({
+    id: streamContextItemId(),
+    workspaceId: ws,
+    streamId: room,
+    rootStreamId: root,
+    category: "memo" as const,
+    refKind: "memo" as const,
+    refId,
+    groupKey: refId,
+    sourceMessageId: null,
+    authorId: member,
+    occurredAt: new Date(),
+    sequence: null,
+    snippet: "memo",
+    detail: {},
+  })
+
   beforeAll(async () => {
     pool = await setupTestDatabase()
     ws = workspaceId()
@@ -238,22 +255,7 @@ describe("memo readers pass their audience", () => {
   test("should list a memo landmark in a room only when the room can read the memo's sources", async () => {
     const service = createStreamContextService({ pool })
     const landmarks = Object.values(memos).flatMap((id) =>
-      [stream.roomGuest, stream.roomAll].map((room) => ({
-        id: streamContextItemId(),
-        workspaceId: ws,
-        streamId: room,
-        rootStreamId: room,
-        category: "memo" as const,
-        refKind: "memo" as const,
-        refId: id,
-        groupKey: id,
-        sourceMessageId: null,
-        authorId: member,
-        occurredAt: new Date(),
-        sequence: null,
-        snippet: "memo",
-        detail: {},
-      }))
+      [stream.roomGuest, stream.roomAll].map((room) => memoLandmark(id, room, room))
     )
     await StreamContextRepository.insertMany(pool, landmarks)
 
@@ -281,22 +283,7 @@ describe("memo readers pass their audience", () => {
     const service = createStreamContextService({ pool })
     await StreamContextRepository.insertMany(
       pool,
-      Object.values(memos).map((id) => ({
-        id: streamContextItemId(),
-        workspaceId: ws,
-        streamId: stream.roomGuestThread,
-        rootStreamId: stream.roomGuest,
-        category: "memo" as const,
-        refKind: "memo" as const,
-        refId: id,
-        groupKey: id,
-        sourceMessageId: null,
-        authorId: member,
-        occurredAt: new Date(),
-        sequence: null,
-        snippet: "memo",
-        detail: {},
-      }))
+      Object.values(memos).map((id) => memoLandmark(id, stream.roomGuestThread, stream.roomGuest))
     )
 
     const response = await service.list({
