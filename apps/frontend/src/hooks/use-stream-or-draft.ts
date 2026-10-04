@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react"
 import { replaceEqualDeep, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
-import { db, sequenceToNum, type CachedStream, type DraftScratchpad } from "@/db"
+import { db, sequenceToNum, type CachedEvent, type CachedStream, type DraftScratchpad } from "@/db"
 import { useStreamService, useMessageService, usePendingMessages } from "@/contexts"
 import { useUser } from "@/auth"
 import { type SealStreamMessageResult } from "@/lib/crypto/message-envelope"
@@ -534,7 +534,8 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
 function useRealStream(workspaceId: string, streamId: string, enabled: boolean): UseStreamOrDraftReturn {
   const queryClient = useQueryClient()
   const streamService = useStreamService()
-  const { markPending, publishOptimisticEvent, revokeOptimisticEvent, notifyQueue } = usePendingMessages()
+  const { markPending, publishOptimisticEvent, replaceOptimisticEvent, revokeOptimisticEvent, notifyQueue } =
+    usePendingMessages()
   const user = useUser()
   const idbUsers = useWorkspaceUsers(workspaceId)
   const idbDmPeers = useWorkspaceDmPeers(workspaceId)
@@ -663,17 +664,16 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
       // and sealing or the durable write can each outlast a frame.
       markPending(clientId)
       const publishedSequence = Date.now().toString()
-      const publish = (event: StreamEvent) =>
-        publishOptimisticEvent({
-          ...event,
-          workspaceId,
-          sequence: publishedSequence,
-          _sequenceNum: sequenceToNum(publishedSequence),
-          _clientId: clientId,
-          _status: "pending",
-          _cachedAt: Date.now(),
-        })
-      publish(optimisticEvent)
+      const toPublished = (event: StreamEvent): CachedEvent => ({
+        ...event,
+        workspaceId,
+        sequence: publishedSequence,
+        _sequenceNum: sequenceToNum(publishedSequence),
+        _clientId: clientId,
+        _status: "pending",
+        _cachedAt: Date.now(),
+      })
+      publishOptimisticEvent(toPublished(optimisticEvent))
 
       // If the destination is an E2E scratchpad, encrypt the markdown body
       // to the owner's UIK and stash the ciphertext on the pending row. The
@@ -726,7 +726,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
             ...optimisticEvent,
             payload: { ...(optimisticEvent.payload as object), attachmentRefs: sealed.attachmentRefs },
           }
-          publish(optimisticEvent)
+          replaceOptimisticEvent(toPublished(optimisticEvent))
         }
       }
 
@@ -780,6 +780,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
       workspaceId,
       markPending,
       publishOptimisticEvent,
+      replaceOptimisticEvent,
       revokeOptimisticEvent,
       notifyQueue,
       currentUserId,

@@ -16,12 +16,16 @@ interface PendingMessagesContextValue {
   /**
    * Show a just-sent row on its stream's timeline in the sending tick. The
    * durable write reaches the timeline a write commit plus a live-query re-read
-   * later, after the composer has already cleared. Publishing an id again
-   * replaces its row. The timeline revokes the row once its own events carry
-   * the id: the send settling does not prove the timeline has re-read, so
-   * settling never drops it.
+   * later, after the composer has already cleared. The timeline revokes the row
+   * once its own events carry the id: the send settling does not prove the
+   * timeline has re-read, so settling never drops it.
    */
   publishOptimisticEvent: (event: CachedEvent) => void
+  /**
+   * Swap a published row's content where it sits. A row no longer published
+   * stays gone: its timeline may have unmounted while the caller was sealing.
+   */
+  replaceOptimisticEvent: (event: CachedEvent) => void
   /** Take a published row back: its write failed, or the timeline carries it. */
   revokeOptimisticEvent: (id: string) => void
   /** Drop a stream's published rows when its timeline goes away. */
@@ -144,9 +148,17 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
   )
 
   const publishOptimisticEvent = useCallback((event: CachedEvent) => {
+    setOptimisticEvents((prev) => new Map(prev).set(event.streamId, [...(prev.get(event.streamId) ?? []), event]))
+  }, [])
+
+  const replaceOptimisticEvent = useCallback((event: CachedEvent) => {
     setOptimisticEvents((prev) => {
-      const others = (prev.get(event.streamId) ?? []).filter((published) => published.id !== event.id)
-      return new Map(prev).set(event.streamId, [...others, event])
+      const published = prev.get(event.streamId)
+      if (!published?.some((row) => row.id === event.id)) return prev
+      return new Map(prev).set(
+        event.streamId,
+        published.map((row) => (row.id === event.id ? event : row))
+      )
     })
   }, [])
 
@@ -396,6 +408,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
     () => ({
       markPending,
       publishOptimisticEvent,
+      replaceOptimisticEvent,
       revokeOptimisticEvent,
       clearOptimisticEvents,
       markFailed,
@@ -411,6 +424,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
     [
       markPending,
       publishOptimisticEvent,
+      replaceOptimisticEvent,
       revokeOptimisticEvent,
       clearOptimisticEvents,
       markFailed,

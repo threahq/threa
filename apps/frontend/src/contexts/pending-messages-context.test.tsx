@@ -417,14 +417,26 @@ describe("PendingMessagesContext", () => {
       })
     })
 
-    it("replaces the row when its id is published again", () => {
+    it("replaces a published row where it sits, keeping later sends below it", () => {
       const { result } = renderPublished()
+      const later = { id: "temp_later", streamId: "stream_a" } as dbModule.CachedEvent
       const resealed = { ...sent, payload: { attachmentRefs: ["ref"] } } as dbModule.CachedEvent
-
       act(() => result.current.publishOptimisticEvent(sent))
-      act(() => result.current.publishOptimisticEvent(resealed))
+      act(() => result.current.publishOptimisticEvent(later))
 
-      expect(result.current.published).toEqual([resealed])
+      act(() => result.current.replaceOptimisticEvent(resealed))
+
+      expect(result.current.published).toEqual([resealed, later])
+    })
+
+    it("does not bring a row back by replacing it after its stream was cleared", () => {
+      const { result } = renderPublished()
+      act(() => result.current.publishOptimisticEvent(sent))
+      act(() => result.current.clearOptimisticEvents("stream_a"))
+
+      act(() => result.current.replaceOptimisticEvent({ ...sent, payload: {} } as dbModule.CachedEvent))
+
+      expect(result.current.published).toEqual([])
     })
 
     it.each(["markSent", "markFailed"] as const)(
