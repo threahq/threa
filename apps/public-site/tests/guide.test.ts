@@ -87,14 +87,14 @@ describe("rehypeAppLinks", () => {
     children: [{ type: "text" }],
   })
 
-  test("rewrites a valid app: link into a chip that opens the app", () => {
+  test("rewrites a valid app: link into a chip that opens its place in the app", () => {
     const a = link("app:settings/ai")
     rehypeAppLinks({ appUrl: "https://app.example" })({
       type: "root",
       children: [{ type: "element", tagName: "p", children: [a] }],
     })
     expect(a.properties).toEqual({
-      href: "https://app.example",
+      href: "https://app.example/go/settings/ai",
       className: ["app-link"],
       title: "Opens your Threa workspace",
     })

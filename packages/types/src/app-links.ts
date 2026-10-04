@@ -52,6 +52,9 @@ export const APP_LINK_WORKSPACE_SETTINGS_TABS = WORKSPACE_SETTINGS_TABS.filter(
 
 export const APP_LINK_SCHEME = "app:"
 
+/** App route that opens an `app:` place from outside the app, such as the public guide: `/go/settings/notifications`. */
+export const APP_LINK_GO_ROUTE = "/go"
+
 function isOneOf<T extends string>(values: readonly T[], value: string | undefined): value is T {
   return value !== undefined && (values as readonly string[]).includes(value)
 }
