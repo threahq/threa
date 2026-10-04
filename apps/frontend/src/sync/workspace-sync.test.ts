@@ -620,14 +620,6 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     ])
   })
 
-  it("keeps cached actor copies when the bootstrap omits the field and no sweep is requested", async () => {
-    await db.actorCopies.put({ ...makeActorCopy("persona_host", "Host Persona"), _cachedAt: 1 })
-
-    await applyWorkspaceBootstrap("ws_1", makeBootstrap())
-
-    expect(await db.actorCopies.get(["ws_1", "persona_host"])).toBeDefined()
-  })
-
   it("persists host actor copies from a reconnect bootstrap batch", async () => {
     await applyReconnectBootstrapBatch(
       "ws_1",

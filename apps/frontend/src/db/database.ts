@@ -338,7 +338,6 @@ export interface CachedPersona {
   _cachedAt: number
 }
 
-/** A host persona or bot named in a shared channel's copy; display-only, never a persona or bot of this workspace. */
 export interface CachedActorCopy {
   id: string
   workspaceId: string

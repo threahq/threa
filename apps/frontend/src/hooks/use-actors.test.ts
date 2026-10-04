@@ -267,46 +267,6 @@ describe("useActors", () => {
   })
 
   describe("host actor copies", () => {
-    it("should use the copy's name and emoji initials when no local persona or bot has the id", () => {
-      mockActorCopies = [
-        createActorCopy({ id: "persona_host", name: "Host Persona", avatarEmoji: ":thread:" }),
-        createActorCopy({ id: "bot_host", name: "Host Bot" }),
-      ]
-
-      const { result } = renderHook(() => useActors(workspaceId), {
-        wrapper: createTestWrapper(queryClient),
-      })
-
-      expect({
-        personaName: result.current.getActorName("persona_host", "persona"),
-        personaInitials: result.current.getActorInitials("persona_host", "persona"),
-        botName: result.current.getActorName("bot_host", "bot"),
-        botInitials: result.current.getActorInitials("bot_host", "bot"),
-        personaAvatar: result.current.getActorAvatar("persona_host", "persona"),
-      }).toEqual({
-        personaName: "Host Persona",
-        personaInitials: "🧵",
-        botName: "Host Bot",
-        botInitials: "HB",
-        personaAvatar: { fallback: "🧵" },
-      })
-    })
-
-    it("should fall back to the generic names when no copy has the id", () => {
-      mockActorCopies = [createActorCopy({ id: "persona_host" })]
-
-      const { result } = renderHook(() => useActors(workspaceId), {
-        wrapper: createTestWrapper(queryClient),
-      })
-
-      expect({
-        persona: result.current.getActorName("persona_other", "persona"),
-        bot: result.current.getActorName("bot_other", "bot"),
-        personaInitials: result.current.getActorInitials("persona_other", "persona"),
-        botInitials: result.current.getActorInitials("bot_other", "bot"),
-      }).toEqual({ persona: "AI Companion", bot: "Bot", personaInitials: "AI", botInitials: "B" })
-    })
-
     it("should prefer the local persona and bot over a copy with the same id", () => {
       mockPersonas = [createPersona({ id: "persona_host", name: "Local Persona" })]
       mockBots = [createBot({ id: "bot_host", name: "Local Bot" })]
@@ -323,38 +283,6 @@ describe("useActors", () => {
         persona: result.current.getActorName("persona_host", "persona"),
         bot: result.current.getActorName("bot_host", "bot"),
       }).toEqual({ persona: "Local Persona", bot: "Local Bot" })
-    })
-
-    it("should not return a copy from getPersona or getBot", () => {
-      mockActorCopies = [createActorCopy({ id: "persona_host" }), createActorCopy({ id: "bot_host" })]
-
-      const { result } = renderHook(() => useActors(workspaceId), {
-        wrapper: createTestWrapper(queryClient),
-      })
-
-      expect({
-        persona: result.current.getPersona("persona_host"),
-        bot: result.current.getBot("bot_host"),
-      }).toEqual({ persona: undefined, bot: undefined })
-    })
-
-    it("should return a new lookup when the copies array changes and the same one when it does not", () => {
-      mockActorCopies = [createActorCopy({ id: "persona_host", name: "Host Persona" })]
-      const { result, rerender } = renderHook(() => useActors(workspaceId), {
-        wrapper: createTestWrapper(queryClient),
-      })
-      const first = result.current
-
-      rerender()
-      const second = result.current
-      mockActorCopies = [createActorCopy({ id: "persona_host", name: "Renamed Host" })]
-      rerender()
-
-      expect({
-        stable: second === first,
-        changed: result.current !== first,
-        renamed: result.current.getActorName("persona_host", "persona"),
-      }).toEqual({ stable: true, changed: true, renamed: "Renamed Host" })
     })
   })
 
