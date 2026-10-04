@@ -134,7 +134,7 @@ export const ConversationSummaryRepository = {
         ${keyGeneration},
         ${params.lastSummarizedSequence.toString()}
       )
-      ON CONFLICT (stream_id, persona_id) DO UPDATE SET
+      ON CONFLICT (workspace_id, stream_id, persona_id) DO UPDATE SET
         summary = CASE
           WHEN EXCLUDED.last_summarized_sequence > agent_conversation_summaries.last_summarized_sequence
           THEN EXCLUDED.summary

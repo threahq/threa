@@ -623,8 +623,8 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
           principal: { kind: "user", userId: initiatingUserId },
         })
         await ConversationSummaryRepository.upsert(tx, {
-          // A fresh id only matters on the insert path; ON CONFLICT (stream_id,
-          // persona_id) keeps the existing row's id, so a per-call id is safe.
+          // A fresh id only matters on the insert path; the conflict path keeps
+          // the existing row's id, so a per-call id is safe.
           id: agentConversationSummaryId(),
           workspaceId: stream.workspaceId,
           streamId: session.streamId,

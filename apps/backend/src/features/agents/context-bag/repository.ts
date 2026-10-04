@@ -45,9 +45,8 @@ export const ContextBagRepository = {
    * Look up the bag attached to a stream.
    *
    * Workspace-scoped per INV-8: cross-workspace queries cannot leak a bag
-   * even if a streamId collision ever occurs. The unique index on
-   * `(stream_id, intent)` from `20260425130000_context_bag_unique_intent`
-   * makes the LIMIT 1 result deterministic for the v1 single-intent case;
+   * even if a streamId collision ever occurs. The unique key on stream and
+   * intent makes the LIMIT 1 result deterministic for the v1 single-intent case;
    * an explicit `ORDER BY created_at ASC` pins behavior if multiple intents
    * land on the same stream later.
    */
@@ -65,9 +64,8 @@ export const ContextBagRepository = {
 
   /**
    * Race-safe upsert (INV-20). Two write paths can land here for the same
-   * `(stream_id, intent)`: the `createScratchpad` transaction and the
-   * standalone precompute endpoint. The unique index from
-   * `20260425130000_context_bag_unique_intent` makes the conflict explicit; we
+   * stream and intent: the `createScratchpad` transaction and the
+   * standalone precompute endpoint. The unique key makes the conflict explicit; we
    * reconcile by replacing the refs payload (the latest writer wins on
    * payload, which matches user intent — they just pressed "send" with this
    * exact bag) and refreshing `updated_at`. `created_by`/`created_at` stay
@@ -82,7 +80,7 @@ export const ContextBagRepository = {
       ) VALUES (
         ${id}, ${params.workspaceId}, ${params.streamId}, ${params.intent}, ${refsJson}::jsonb, ${params.createdBy}
       )
-      ON CONFLICT (stream_id, intent) DO UPDATE
+      ON CONFLICT (workspace_id, stream_id, intent) DO UPDATE
         SET refs = EXCLUDED.refs,
             updated_at = NOW()
       RETURNING ${sql.raw(SELECT_FIELDS)}

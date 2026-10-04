@@ -15,7 +15,7 @@ export const StreamPersonaParticipantRepository = {
     await client.query(sql`
       INSERT INTO stream_persona_participants (workspace_id, stream_id, persona_id)
       VALUES (${workspaceId}, ${streamId}, ${personaId})
-      ON CONFLICT (stream_id, persona_id) DO NOTHING
+      ON CONFLICT (workspace_id, stream_id, persona_id) DO NOTHING
     `)
   },
 

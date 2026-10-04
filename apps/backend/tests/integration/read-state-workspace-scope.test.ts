@@ -70,15 +70,27 @@ describe("Read state and sparse overlay workspace scope (INV-8)", () => {
   }
 
   async function addEvent(wid: string, stream: string, actor: string, message: string = messageId()) {
+    // The old (stream_id) key on stream_sequences still exists, so a foreign workspace cannot get its own
+    // counter row for a shared stream id: the event takes the owner's sequences and is then relabelled.
+    const owner = (
+      await pool.query<{ workspace_id: string }>("SELECT workspace_id FROM streams WHERE id = $1", [stream])
+    ).rows[0].workspace_id
     const event = await StreamEventRepository.insert(pool, {
       id: eventId(),
-      workspaceId: wid,
+      workspaceId: owner,
       streamId: stream,
       eventType: "message_created",
       payload: { messageId: message },
       actorId: actor,
       actorType: "user",
     })
+    if (owner !== wid) {
+      await pool.query("UPDATE stream_events SET workspace_id = $1 WHERE workspace_id = $2 AND id = $3", [
+        wid,
+        owner,
+        event.id,
+      ])
+    }
     return { id: event.id, sequence: event.sequence, messageId: message } satisfies SeededEvent
   }
 

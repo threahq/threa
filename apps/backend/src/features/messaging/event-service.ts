@@ -1908,7 +1908,7 @@ export class EventService {
         throw new HttpError("Cannot move messages into an archived thread", { status: 403, code: "THREAD_ARCHIVED" })
       }
 
-      // insert is idempotent (ON CONFLICT (stream_id, member_id) DO NOTHING),
+      // insert is idempotent (DO NOTHING on conflict),
       // so we can call it unconditionally for both the actor and the target
       // message's author without a precheck round-trip.
       await StreamMemberRepository.insert(client, params.workspaceId, destinationThread.id, params.actorId)

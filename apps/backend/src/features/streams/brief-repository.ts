@@ -96,7 +96,7 @@ export const StreamBriefRepository = {
       INSERT INTO stream_briefs (id, workspace_id, stream_id, content, version, updated_by_kind, updated_by_id)
       VALUES (${params.id}, ${params.workspaceId}, ${params.streamId}, ${params.content}, 1,
               ${params.updatedByKind}, ${params.updatedById})
-      ON CONFLICT (stream_id) DO NOTHING
+      ON CONFLICT (workspace_id, stream_id) DO NOTHING
       RETURNING ${sql.raw(COLUMNS)}
     `)
     return result.rows[0] ? mapRow(result.rows[0]) : null

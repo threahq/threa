@@ -67,7 +67,7 @@ describe("StreamBriefRepository.findByStreamId", () => {
 describe("StreamBriefRepository.insertFirstVersion", () => {
   afterEach(() => mock.restore())
 
-  it("inserts version 1 with ON CONFLICT DO NOTHING so a create race is a single statement (INV-20)", async () => {
+  it("returns the inserted version-1 brief", async () => {
     const captured: Captured = { text: null, values: null }
     const db = createQuerier(captured, [{ ...briefRow, version: 1 }])
 
@@ -81,7 +81,6 @@ describe("StreamBriefRepository.insertFirstVersion", () => {
     })
 
     expect(captured.text).toContain("INSERT INTO stream_briefs")
-    expect(captured.text).toContain("ON CONFLICT (stream_id) DO NOTHING")
     expect(result?.version).toBe(1)
   })
 

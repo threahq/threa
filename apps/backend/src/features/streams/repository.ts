@@ -1135,7 +1135,7 @@ export const StreamRepository = {
         ${params.uniquenessKey ?? null},
         ${params.createdBy}
       )
-      ON CONFLICT (parent_stream_id, parent_anchor_id) WHERE parent_anchor_id IS NOT NULL AND type = 'thread' DO NOTHING
+      ON CONFLICT (workspace_id, parent_stream_id, parent_anchor_id) WHERE parent_anchor_id IS NOT NULL AND type = 'thread' DO NOTHING
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
 

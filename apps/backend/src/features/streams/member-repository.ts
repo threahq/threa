@@ -133,7 +133,7 @@ export const StreamMemberRepository = {
     const result = await db.query<StreamMemberRow>(sql`
       INSERT INTO stream_members (workspace_id, stream_id, member_id)
       VALUES (${workspaceId}, ${streamId}, ${memberId})
-      ON CONFLICT (stream_id, member_id) DO NOTHING
+      ON CONFLICT (workspace_id, stream_id, member_id) DO NOTHING
       RETURNING stream_id, member_id, notification_level, joined_at
     `)
     if (result.rows.length === 0) {
@@ -152,7 +152,7 @@ export const StreamMemberRepository = {
       INSERT INTO stream_members (workspace_id, stream_id, member_id)
       SELECT ${workspaceId}, ${streamId}, members.member_id
       FROM unnest(${uniqueMemberIds}::text[]) AS members(member_id)
-      ON CONFLICT (stream_id, member_id) DO NOTHING
+      ON CONFLICT (workspace_id, stream_id, member_id) DO NOTHING
       RETURNING stream_id, member_id, notification_level, joined_at
     `)
 
