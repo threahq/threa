@@ -197,11 +197,14 @@ export const bridgeManifestSchema = z.object({ streams: z.array(bridgeStreamSche
 export type BridgeManifest = z.infer<typeof bridgeManifestSchema>
 
 export const bridgeAttachmentSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().regex(/^attach_[0-9A-Za-z]+$/),
   filename: z.string(),
   mimeType: z.string(),
   sizeBytes: z.number().int().nonnegative(),
   safetyStatus: z.enum(ATTACHMENT_SAFETY_STATUSES),
+  /** Pixel dimensions of an image. Absent from a host that predates them. */
+  width: z.number().int().positive().nullable().default(null),
+  height: z.number().int().positive().nullable().default(null),
 })
 export type BridgeAttachment = z.infer<typeof bridgeAttachmentSchema>
 

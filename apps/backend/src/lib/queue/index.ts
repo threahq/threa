@@ -50,6 +50,7 @@ export {
   type GithubPreviewRefreshJobData,
   type StreamConnectionPullJobData,
   type StreamConnectionSweepJobData,
+  type StreamConnectionCopyAttachmentJobData,
 } from "./job-queue"
 export { ScheduleManager, type ScheduleManagerConfig } from "./schedule-manager"
 export { CleanupWorker, type CleanupWorkerConfig } from "./cleanup-worker"

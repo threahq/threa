@@ -323,6 +323,8 @@ function toBridgeMessage(message: Message, attachments: Attachment[], scope: Con
       mimeType: attachment.mimeType,
       sizeBytes: attachment.sizeBytes,
       safetyStatus: attachment.safetyStatus,
+      width: attachment.width,
+      height: attachment.height,
     })),
   }
 }

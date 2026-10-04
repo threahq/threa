@@ -101,6 +101,21 @@ export const AttachmentUploadRepository = {
     return mapRow(result.rows[0])
   },
 
+  async insertMany(client: Querier, rows: InsertAttachmentUploadParams[]): Promise<void> {
+    if (rows.length === 0) return
+    await client.query(sql`
+      INSERT INTO attachment_uploads (id, workspace_id, attachment_id, uploaded_by, status, expected_size_bytes)
+      SELECT * FROM UNNEST(
+        ${rows.map((r) => r.id)}::text[],
+        ${rows.map((r) => r.workspaceId)}::text[],
+        ${rows.map((r) => r.attachmentId)}::text[],
+        ${rows.map((r) => r.uploadedBy)}::text[],
+        ${rows.map(() => AttachmentUploadStatuses.RESERVED)}::text[],
+        ${rows.map((r) => r.expectedSizeBytes)}::bigint[]
+      )
+    `)
+  },
+
   async findByAttachmentId(
     client: Querier,
     workspaceId: string,
