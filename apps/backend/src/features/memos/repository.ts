@@ -64,6 +64,7 @@ interface MemoRow {
   parent_memo_id: string | null
   status: string
   version: number
+  card_version: number
   revision_reason: string | null
   authored_by_kind: string
   source_session_id: string | null
@@ -90,6 +91,8 @@ export interface Memo {
   parentMemoId: string | null
   status: MemoStatus
   version: number
+  /** Bumped by every field update; the generation a reader pins before acting on the memo (INV-66). */
+  cardVersion: number
   revisionReason: string | null
   authoredByKind: AuthoredByKind
   sourceSessionId: string | null
@@ -262,6 +265,7 @@ function mapRowToMemo(row: MemoRow): Memo {
     parentMemoId: row.parent_memo_id,
     status: row.status as MemoStatus,
     version: row.version,
+    cardVersion: row.card_version,
     revisionReason: row.revision_reason,
     authoredByKind: row.authored_by_kind as AuthoredByKind,
     sourceSessionId: row.source_session_id,
@@ -276,7 +280,7 @@ function mapRowToMemo(row: MemoRow): Memo {
 const SELECT_FIELDS = `
   id, workspace_id, memo_type, source_message_id, source_conversation_id,
   title, abstract, key_points, source_message_ids, participant_ids,
-  knowledge_type, tags, parent_memo_id, status, version, revision_reason,
+  knowledge_type, tags, parent_memo_id, status, version, card_version, revision_reason,
   authored_by_kind, source_session_id, scope, scope_user_id,
   created_at, updated_at, archived_at
 `
@@ -284,7 +288,7 @@ const SELECT_FIELDS = `
 const SELECT_FIELDS_PREFIXED = `
   m.id, m.workspace_id, m.memo_type, m.source_message_id, m.source_conversation_id,
   m.title, m.abstract, m.key_points, m.source_message_ids, m.participant_ids,
-  m.knowledge_type, m.tags, m.parent_memo_id, m.status, m.version, m.revision_reason,
+  m.knowledge_type, m.tags, m.parent_memo_id, m.status, m.version, m.card_version, m.revision_reason,
   m.authored_by_kind, m.source_session_id, m.scope, m.scope_user_id,
   m.created_at, m.updated_at, m.archived_at
 `
@@ -792,6 +796,22 @@ export const MemoRepository = {
     `)
     const allowed = new Set(result.rows.map((row) => row.id))
     return ids.filter((id) => allowed.has(id))
+  },
+
+  /**
+   * Row-locks the memos and returns their current card versions, so a caller
+   * can compare against the versions it observed and act before any edit
+   * lands (INV-20). Locked in id order so concurrent lockers can't deadlock.
+   */
+  async lockCardVersions(db: Querier, workspaceId: string, ids: string[]): Promise<Map<string, number>> {
+    if (ids.length === 0) return new Map()
+    const result = await db.query<{ id: string; card_version: number }>(sql`
+      SELECT id, card_version FROM memos
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}::text[])
+      ORDER BY id
+      FOR UPDATE
+    `)
+    return new Map(result.rows.map((row) => [row.id, row.card_version]))
   },
 
   /** Mark memos superseded in one round-trip (INV-56). Workspace-scoped (INV-8). */
