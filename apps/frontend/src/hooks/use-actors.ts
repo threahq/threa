@@ -1,5 +1,10 @@
 import { useWorkspaceEmoji } from "./use-workspace-emoji"
-import { useWorkspaceUsers, useWorkspacePersonas, useWorkspaceBots } from "@/stores/workspace-store"
+import {
+  useWorkspaceUsers,
+  useWorkspacePersonas,
+  useWorkspaceBots,
+  useWorkspaceActorCopies,
+} from "@/stores/workspace-store"
 import { getActorLookup } from "@/stores/actor-lookup"
 
 import type { ActorLookup } from "@/stores/actor-lookup"
@@ -23,6 +28,7 @@ export function useActors(workspaceId: string): ActorLookup {
   const users = useWorkspaceUsers(workspaceId)
   const personas = useWorkspacePersonas(workspaceId)
   const bots = useWorkspaceBots(workspaceId)
+  const actorCopies = useWorkspaceActorCopies(workspaceId)
 
-  return getActorLookup(workspaceId, users, personas, bots, toEmoji)
+  return getActorLookup(workspaceId, users, personas, bots, actorCopies, toEmoji)
 }

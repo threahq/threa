@@ -338,6 +338,16 @@ export interface CachedPersona {
   _cachedAt: number
 }
 
+/** A host persona or bot named in a shared channel's copy; display-only, never a persona or bot of this workspace. */
+export interface CachedActorCopy {
+  id: string
+  workspaceId: string
+  originWorkspaceId: string
+  name: string
+  avatarEmoji: string | null
+  _cachedAt: number
+}
+
 export interface PendingStreamCreation {
   type: StreamType
   displayName?: string
@@ -1153,6 +1163,7 @@ export class ThreaDatabase extends Dexie {
   events!: Table<CachedEvent, [string, string]>
   personas!: Table<CachedPersona, [string, string]>
   bots!: EntityTable<CachedBot, "id">
+  actorCopies!: Table<CachedActorCopy, [string, string]>
   pendingMessages!: EntityTable<PendingMessage, "clientId">
   syncCursors!: EntityTable<SyncCursor, "key">
   draftScratchpads!: EntityTable<DraftScratchpad, "id">
@@ -1812,6 +1823,13 @@ export class ThreaDatabase extends Dexie {
         await moveRows(tx, "composerTarget", COMPOSER_TARGET_STORE)
       })
 
+    // v56: display-only copies of a host workspace's personas and bots that
+    // appear in a shared channel's copy, keyed by workspace because the same
+    // host `persona_`/`bot_` id is copied into every partner workspace.
+    this.version(56).stores({
+      actorCopies: "[workspaceId+id], workspaceId",
+    })
+
     this.composerLoaded = this.table(COMPOSER_LOADED_STORE)
     this.composerTarget = this.table(COMPOSER_TARGET_STORE)
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE)
@@ -1967,6 +1985,7 @@ export async function clearAllCachedData(): Promise<void> {
       db.events.clear(),
       db.personas.clear(),
       db.bots.clear(),
+      db.actorCopies.clear(),
       db.syncCursors.clear(),
       db.unreadState.clear(),
       db.userPreferences.clear(),

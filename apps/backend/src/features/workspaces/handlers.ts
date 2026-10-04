@@ -24,6 +24,7 @@ import { SyncLogRepository } from "../sync"
 import { BotRepository, serializeBot } from "../public-api"
 import { AgentSessionRepository } from "../agents"
 import { projectActiveAgentSessions } from "./active-agent-sessions"
+import { ActorCopyRepository } from "./actor-copy-repository"
 import { displayNameFromWorkos, type WorkosOrgService } from "@threahq/backend-common"
 import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
@@ -183,6 +184,7 @@ export function createWorkspaceHandlers({
         streams,
         personas,
         bots,
+        actorCopies,
         emojiWeights,
         userPreferences,
         workspaceSettings,
@@ -204,6 +206,7 @@ export function createWorkspaceHandlers({
         streamService.listWithPreviews(workspaceId, userId),
         workspaceService.getPersonasForWorkspace(workspaceId, userId),
         BotRepository.listVisibleTo(pool, workspaceId, userId),
+        ActorCopyRepository.listByWorkspace(pool, workspaceId),
         workspaceService.getEmojiWeights(workspaceId, userId),
         userPreferencesService.getPreferences(workspaceId, userId),
         workspaceSettingsService.getSettings(workspaceId),
@@ -385,6 +388,7 @@ export function createWorkspaceHandlers({
         onboardingStreamId,
         personas,
         bots: bots.map(serializeBot),
+        actorCopies,
         emojis: getEmojiList(),
         emojiWeights,
         commands,

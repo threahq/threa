@@ -4,6 +4,7 @@ import { createWorkspaceHandlers } from "./handlers"
 import { SyncLogRepository } from "../sync"
 import { BotRepository } from "../public-api"
 import { AgentSessionRepository } from "../agents"
+import { ActorCopyRepository } from "./actor-copy-repository"
 
 // Bootstrap pulls from ~17 injected services plus three module-static repos.
 // Following INV-48 the statics are stubbed via `spyOn` against the namespace
@@ -100,6 +101,7 @@ describe("workspace bootstrap handler", () => {
       retainedFrom: 0n,
     } as never)
     spyOn(BotRepository, "listVisibleTo").mockResolvedValue([] as never)
+    spyOn(ActorCopyRepository, "listByWorkspace").mockResolvedValue([])
     spyOn(AgentSessionRepository, "listRunningByWorkspace").mockResolvedValue([] as never)
 
     const archivedAt = new Date()
@@ -135,6 +137,7 @@ describe("workspace bootstrap handler", () => {
   it("derives unread, watermark sequences, and the streamReadState map from the effective frontier", async () => {
     spyOn(SyncLogRepository, "getHeadAndRetainedFrom").mockResolvedValue({ head: 0n, retainedFrom: 0n } as never)
     spyOn(BotRepository, "listVisibleTo").mockResolvedValue([] as never)
+    spyOn(ActorCopyRepository, "listByWorkspace").mockResolvedValue([])
     spyOn(AgentSessionRepository, "listRunningByWorkspace").mockResolvedValue([] as never)
 
     const deps = makeDeps([])
@@ -230,6 +233,7 @@ describe("workspace bootstrap handler", () => {
   it("emits the viewer's feature-flag layers, not a resolved map", async () => {
     spyOn(SyncLogRepository, "getHeadAndRetainedFrom").mockResolvedValue({ head: 0n, retainedFrom: 0n } as never)
     spyOn(BotRepository, "listVisibleTo").mockResolvedValue([] as never)
+    spyOn(ActorCopyRepository, "listByWorkspace").mockResolvedValue([])
     spyOn(AgentSessionRepository, "listRunningByWorkspace").mockResolvedValue([] as never)
 
     const deps = makeDeps([])
@@ -249,6 +253,7 @@ describe("workspace bootstrap handler", () => {
   it("should carry analytics as null in the bootstrap payload when deps have no posthog config", async () => {
     spyOn(SyncLogRepository, "getHeadAndRetainedFrom").mockResolvedValue({ head: 0n, retainedFrom: 0n } as never)
     spyOn(BotRepository, "listVisibleTo").mockResolvedValue([] as never)
+    spyOn(ActorCopyRepository, "listByWorkspace").mockResolvedValue([])
     spyOn(AgentSessionRepository, "listRunningByWorkspace").mockResolvedValue([] as never)
 
     const handlers = createWorkspaceHandlers(makeDeps([], null))
@@ -262,6 +267,7 @@ describe("workspace bootstrap handler", () => {
   it("should carry the posthog token and host in the bootstrap payload when deps have a posthog config", async () => {
     spyOn(SyncLogRepository, "getHeadAndRetainedFrom").mockResolvedValue({ head: 0n, retainedFrom: 0n } as never)
     spyOn(BotRepository, "listVisibleTo").mockResolvedValue([] as never)
+    spyOn(ActorCopyRepository, "listByWorkspace").mockResolvedValue([])
     spyOn(AgentSessionRepository, "listRunningByWorkspace").mockResolvedValue([] as never)
 
     const handlers = createWorkspaceHandlers(

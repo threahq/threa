@@ -26,6 +26,7 @@ import {
   DEFAULT_SIDEBAR_CONFIG,
   DEFAULT_QUICK_LINKS,
   SIDEBAR_CONFIG_VERSION,
+  type ActorCopy,
   type LabelAssignment,
   type SavedMessageView,
   type ScheduledMessageView,
@@ -162,6 +163,7 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
       db.dmPeers.clear(),
       db.personas.clear(),
       db.bots.clear(),
+      db.actorCopies.clear(),
       db.unreadState.clear(),
       db.userPreferences.clear(),
       db.sidebarConfigs.clear(),
@@ -601,6 +603,44 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     await applyWorkspaceBootstrap("ws_1", makeBootstrap(), fetchStartedAt)
 
     expect(await db.workspaceUsers.get(["ws_1", "user_gone"])).toBeUndefined()
+  })
+
+  it("persists host actor copies from the bootstrap and sweeps copies it no longer carries", async () => {
+    const fetchStartedAt = Date.now() - 1000
+    await db.actorCopies.put({ ...makeActorCopy("persona_gone", "Gone"), _cachedAt: fetchStartedAt - 86400000 })
+
+    await applyWorkspaceBootstrap(
+      "ws_1",
+      makeBootstrap({ actorCopies: [makeActorCopy("persona_host", "Host Persona", "🧵")] }),
+      fetchStartedAt
+    )
+
+    expect(await db.actorCopies.toArray()).toEqual([
+      { ...makeActorCopy("persona_host", "Host Persona", "🧵"), _cachedAt: expect.any(Number) },
+    ])
+  })
+
+  it("keeps cached actor copies when the bootstrap omits the field and no sweep is requested", async () => {
+    await db.actorCopies.put({ ...makeActorCopy("persona_host", "Host Persona"), _cachedAt: 1 })
+
+    await applyWorkspaceBootstrap("ws_1", makeBootstrap())
+
+    expect(await db.actorCopies.get(["ws_1", "persona_host"])).toBeDefined()
+  })
+
+  it("persists host actor copies from a reconnect bootstrap batch", async () => {
+    await applyReconnectBootstrapBatch(
+      "ws_1",
+      makeBootstrap({ actorCopies: [makeActorCopy("bot_host", "Host Bot", "🤖")] }),
+      new Map(),
+      new Set(),
+      new Set(),
+      Date.now()
+    )
+
+    expect(await db.actorCopies.toArray()).toEqual([
+      { ...makeActorCopy("bot_host", "Host Bot", "🤖"), _cachedAt: expect.any(Number) },
+    ])
   })
 
   it("skips cleanup when fetchStartedAt is not provided", async () => {
@@ -1925,6 +1965,10 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
   })
 })
 
+function makeActorCopy(id: string, name: string, avatarEmoji: string | null = null): ActorCopy {
+  return { id, workspaceId: "ws_1", originWorkspaceId: "ws_host", name, avatarEmoji }
+}
+
 function createTestSocket() {
   const handlers = new Map<string, Set<(payload: unknown) => unknown>>()
 
@@ -1983,6 +2027,7 @@ describe("registerWorkspaceSocketHandlers", () => {
   beforeEach(async () => {
     await Promise.all([
       db.streams.clear(),
+      db.actorCopies.clear(),
       db.streamMemberships.clear(),
       db.streamReadState.clear(),
       db.dmPeers.clear(),
@@ -3456,6 +3501,56 @@ describe("registerWorkspaceSocketHandlers", () => {
     const cached = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))
     expect(cached?.bots).toContainEqual(expect.objectContaining({ id: "bot_friend", name: "Kris's Bot" }))
     expect(await db.bots.get("bot_friend")).toMatchObject({ id: "bot_friend", name: "Kris's Bot" })
+
+    cleanup()
+  })
+
+  it("upserts a host actor copy into the bootstrap cache and Dexie when actor_copy:upserted arrives", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({ actorCopies: [makeActorCopy("persona_host", "Old Name")] })
+    )
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    await emitAsync("actor_copy:upserted", {
+      workspaceId: "ws_1",
+      actorCopy: makeActorCopy("persona_host", "New Name", "🧵"),
+    })
+    await emitAsync("actor_copy:upserted", {
+      workspaceId: "ws_1",
+      actorCopy: makeActorCopy("bot_host", "Host Bot"),
+    })
+
+    expect({
+      cached: queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.actorCopies,
+      stored: (await db.actorCopies.toArray())
+        .map(({ _cachedAt: _, ...copy }) => copy)
+        .sort((a, b) => a.id.localeCompare(b.id)),
+    }).toEqual({
+      cached: [makeActorCopy("persona_host", "New Name", "🧵"), makeActorCopy("bot_host", "Host Bot")],
+      stored: [makeActorCopy("bot_host", "Host Bot"), makeActorCopy("persona_host", "New Name", "🧵")],
+    })
+
+    cleanup()
+  })
+
+  it("ignores actor_copy:upserted for another workspace", async () => {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    await emitAsync("actor_copy:upserted", {
+      workspaceId: "ws_other",
+      actorCopy: { ...makeActorCopy("persona_host", "Elsewhere"), workspaceId: "ws_other" },
+    })
+
+    expect({
+      cached: queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.actorCopies,
+      stored: await db.actorCopies.toArray(),
+    }).toEqual({ cached: undefined, stored: [] })
 
     cleanup()
   })

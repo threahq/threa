@@ -3,7 +3,8 @@ import { Pool } from "pg"
 import { generateSlug, streamConnectionId } from "@threahq/backend-common"
 import { StreamErrorCodes, StreamReadOnlyReasons, Visibilities, type StreamConnectionSnapshot } from "@threahq/types"
 import { FeatureFlagService } from "../../src/features/feature-flags"
-import { MessageRepository } from "../../src/features/messaging"
+import { PersonaRepository } from "../../src/features/agents"
+import { EventService, MessageRepository } from "../../src/features/messaging"
 import {
   BridgeClient,
   StreamConnectionImportService,
@@ -23,6 +24,7 @@ import {
   getBaseUrl,
   getBootstrap,
   getUserId,
+  getWorkspaceBootstrap,
   joinStream,
   joinWorkspace,
   loginAs,
@@ -572,6 +574,59 @@ describe("Stream connection pull", () => {
 
     const { copies, expected } = await copiesMatch(host.id, partner.id, [missed.id])
     expect({ beforeSweep, copies }).toEqual({ beforeSweep: { queued: [], copy: [null] }, copies: expected })
+  }, 30_000)
+
+  test("should serve the host persona's name in the partner's bootstrap when it wrote in the shared channel", async () => {
+    const { hostClient, partnerClient, host, partner, channel, share, ref } = await setup()
+    await sendMessage(hostClient, host.id, channel.id, "kickoff")
+    const persona = await PersonaRepository.insertWorkspacePersona(pool, {
+      workspaceId: host.id,
+      slug: `helper-${n}-${testRunId}`,
+      config: {
+        name: "Host Helper",
+        description: null,
+        avatarEmoji: ":robot_face:",
+        systemPrompt: "Base system prompt",
+        model: "openai/gpt-5.4",
+        escalationModel: null,
+        temperature: null,
+        maxTokens: null,
+        enabledTools: [],
+        tonePrompt: null,
+        brevityPrompt: null,
+      },
+    })
+    await new EventService(pool).createMessage({
+      workspaceId: host.id,
+      streamId: channel.id,
+      authorId: persona.id,
+      authorType: "persona",
+      contentJson: {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "from the helper" }] }],
+      },
+      contentMarkdown: "from the helper",
+    })
+    await share()
+    await pullService.pull(ref)
+
+    const bootstrap = await getWorkspaceBootstrap(partnerClient, partner.id)
+
+    expect({
+      actorCopies: bootstrap.actorCopies,
+      listedAsPersona: bootstrap.personas.some((candidate) => candidate.id === persona.id),
+    }).toEqual({
+      actorCopies: [
+        {
+          id: persona.id,
+          workspaceId: partner.id,
+          originWorkspaceId: host.id,
+          name: "Host Helper",
+          avatarEmoji: ":robot_face:",
+        },
+      ],
+      listedAsPersona: false,
+    })
   }, 30_000)
 
   test("should copy nothing while the partner has Connect off or the connection is revoked", async () => {

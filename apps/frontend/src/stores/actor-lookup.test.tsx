@@ -1,6 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { act, render, renderHook, waitFor } from "@testing-library/react"
-import { db, type CachedPersona, type CachedWorkspaceMetadata, type CachedWorkspaceUser } from "@/db"
+import {
+  db,
+  type CachedActorCopy,
+  type CachedPersona,
+  type CachedWorkspaceMetadata,
+  type CachedWorkspaceUser,
+} from "@/db"
 import * as emojiPicker from "@/lib/emoji-picker"
 import * as perfCapture from "@/lib/perf/capture"
 import { useActors } from "@/hooks/use-actors"
@@ -61,6 +67,10 @@ function makePersona(id: string, name: string): CachedPersona {
   }
 }
 
+function makeCopy(id: string, name: string, avatarEmoji: string | null = null): CachedActorCopy {
+  return { id, workspaceId: WORKSPACE, originWorkspaceId: "ws_host", name, avatarEmoji, _cachedAt: 1 }
+}
+
 function makeMetadata(): CachedWorkspaceMetadata {
   return {
     id: WORKSPACE,
@@ -101,6 +111,7 @@ describe("actor lookup", () => {
     await db.workspaceUsers.clear()
     await db.personas.clear()
     await db.bots.clear()
+    await db.actorCopies.clear()
     await db.workspaceMetadata.clear()
     await db.streams.clear()
   })
@@ -172,6 +183,84 @@ describe("actor lookup", () => {
     })
 
     await waitFor(() => expect(result.current.getActorName("persona_1", "persona")).toBe("Ariadne"))
+  })
+
+  it("should resolve a host copy's name and emoji when no local persona or bot has the id", async () => {
+    await db.workspaceMetadata.put(makeMetadata())
+    await db.actorCopies.bulkPut([
+      makeCopy("persona_host", "Host Persona", ":thread:"),
+      makeCopy("bot_host", "Host Bot"),
+    ])
+    const { result } = renderHook(() => useActors(WORKSPACE))
+    await waitFor(() => expect(result.current.getActorName("persona_host", "persona")).toBe("Host Persona"))
+
+    expect({
+      personaName: result.current.getActorName("persona_host", "persona"),
+      personaInitials: result.current.getActorInitials("persona_host", "persona"),
+      botName: result.current.getActorName("bot_host", "bot"),
+      botInitials: result.current.getActorInitials("bot_host", "bot"),
+      personaAvatar: result.current.getActorAvatar("persona_host", "persona"),
+    }).toEqual({
+      personaName: "Host Persona",
+      personaInitials: "🧵",
+      botName: "Host Bot",
+      botInitials: "HB",
+      personaAvatar: { fallback: "🧵" },
+    })
+  })
+
+  it("should keep the generic fallback names when no copy matches the id", async () => {
+    await db.workspaceMetadata.put(makeMetadata())
+    await db.actorCopies.put(makeCopy("persona_host", "Host Persona"))
+    const { result } = renderHook(() => useActors(WORKSPACE))
+    await waitFor(() => expect(result.current.getActorName("persona_host", "persona")).toBe("Host Persona"))
+
+    expect({
+      persona: result.current.getActorName("persona_other", "persona"),
+      bot: result.current.getActorName("bot_other", "bot"),
+    }).toEqual({ persona: "AI Companion", bot: "Bot" })
+  })
+
+  it("should not return a host copy from getPersona or getBot", async () => {
+    await db.workspaceMetadata.put(makeMetadata())
+    await db.actorCopies.bulkPut([makeCopy("persona_host", "Host Persona"), makeCopy("bot_host", "Host Bot")])
+    const { result } = renderHook(() => useActors(WORKSPACE))
+    await waitFor(() => expect(result.current.getActorName("persona_host", "persona")).toBe("Host Persona"))
+
+    expect({
+      persona: result.current.getPersona("persona_host"),
+      bot: result.current.getBot("bot_host"),
+    }).toEqual({ persona: undefined, bot: undefined })
+  })
+
+  it("should prefer the local persona over a host copy when both carry the id", async () => {
+    await db.workspaceMetadata.put(makeMetadata())
+    await db.personas.put(makePersona("persona_1", "Ariadne"))
+    await db.actorCopies.put(makeCopy("persona_1", "Host Copy"))
+    const { result } = renderHook(() => useActors(WORKSPACE))
+
+    await waitFor(() => expect(result.current.getActorName("persona_1", "persona")).toBe("Ariadne"))
+  })
+
+  it("should change the lookup identity when a copy changes, and keep it when nothing does", async () => {
+    await db.workspaceMetadata.put(makeMetadata())
+    await db.actorCopies.put(makeCopy("persona_host", "Host Persona"))
+    const { result, rerender } = renderHook(() => useActors(WORKSPACE))
+    await waitFor(() => expect(result.current.getActorName("persona_host", "persona")).toBe("Host Persona"))
+    const before = result.current
+
+    rerender()
+    const afterRerender = result.current
+
+    await act(async () => {
+      await db.actorCopies.put(makeCopy("persona_host", "Renamed Host"))
+    })
+    await waitFor(() => expect(result.current.getActorName("persona_host", "persona")).toBe("Renamed Host"))
+
+    expect({ stableOnRerender: afterRerender === before, changedOnCopy: result.current !== before }).toEqual({
+      stableOnRerender: true,
+      changedOnCopy: true,
+    })
   })
 
   it("a consumer keeps its lookup identity across a re-render", async () => {

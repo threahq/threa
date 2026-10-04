@@ -20,6 +20,7 @@ import {
   type CachedDmPeer,
   type CachedPersona,
   type CachedBot,
+  type CachedActorCopy,
   type CachedLabel,
   type CachedLabelAssignment,
   type CachedUnreadState,
@@ -51,6 +52,7 @@ const cache = {
   dmPeers: new Map<string, CachedDmPeer[]>(),
   personas: new Map<string, CachedPersona[]>(),
   bots: new Map<string, CachedBot[]>(),
+  actorCopies: new Map<string, CachedActorCopy[]>(),
   labels: new Map<string, CachedLabel[]>(),
   labelAssignments: new Map<string, CachedLabelAssignment[]>(),
   unreadState: new Map<string, CachedUnreadState>(),
@@ -144,6 +146,7 @@ export function resetWorkspaceStoreCache(): void {
   cache.dmPeers.clear()
   cache.personas.clear()
   cache.bots.clear()
+  cache.actorCopies.clear()
   cache.labels.clear()
   cache.labelAssignments.clear()
   cache.unreadState.clear()
@@ -187,6 +190,7 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     dmPeers,
     personas,
     bots,
+    actorCopies,
     labels,
     labelAssignments,
     unreadState,
@@ -202,6 +206,7 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     database.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
     database.personas.where("workspaceId").equals(workspaceId).toArray(),
     database.bots.where("workspaceId").equals(workspaceId).toArray(),
+    database.actorCopies.where("workspaceId").equals(workspaceId).toArray(),
     database.labels.where("workspaceId").equals(workspaceId).toArray(),
     database.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
     database.unreadState.get(workspaceId),
@@ -237,6 +242,7 @@ export async function seedCacheFromIdb(workspaceId: string): Promise<boolean> {
     dmPeers,
     personas,
     bots,
+    actorCopies,
     labels,
     labelAssignments,
     unreadState,
@@ -263,6 +269,7 @@ export function seedWorkspaceCache(
     dmPeers: CachedDmPeer[]
     personas: CachedPersona[]
     bots: CachedBot[]
+    actorCopies?: CachedActorCopy[]
     labels?: CachedLabel[]
     labelAssignments?: CachedLabelAssignment[]
     unreadState?: CachedUnreadState
@@ -283,6 +290,7 @@ export function seedWorkspaceCache(
   cache.dmPeers.set(workspaceId, data.dmPeers)
   cache.personas.set(workspaceId, data.personas)
   cache.bots.set(workspaceId, data.bots)
+  if (data.actorCopies) cache.actorCopies.set(workspaceId, data.actorCopies)
   if (data.labels) cache.labels.set(workspaceId, data.labels)
   if (data.labelAssignments) cache.labelAssignments.set(workspaceId, data.labelAssignments)
   if (data.unreadState) cache.unreadState.set(workspaceId, data.unreadState)
@@ -304,6 +312,7 @@ export function getCachedWorkspaceTables(workspaceId: string): {
   dmPeers?: CachedDmPeer[]
   personas?: CachedPersona[]
   bots?: CachedBot[]
+  actorCopies?: CachedActorCopy[]
   labels?: CachedLabel[]
   labelAssignments?: CachedLabelAssignment[]
 } {
@@ -315,6 +324,7 @@ export function getCachedWorkspaceTables(workspaceId: string): {
     dmPeers: cache.dmPeers.get(workspaceId),
     personas: cache.personas.get(workspaceId),
     bots: cache.bots.get(workspaceId),
+    actorCopies: cache.actorCopies.get(workspaceId),
     labels: cache.labels.get(workspaceId),
     labelAssignments: cache.labelAssignments.get(workspaceId),
   }
@@ -524,6 +534,11 @@ export function useWorkspacePersonas(workspaceId: string | undefined): CachedPer
 export function useWorkspaceBots(workspaceId: string | undefined): CachedBot[] {
   const cached = workspaceId ? (cache.bots.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
   return useArrayStoreHook(workspaceId, "bots", cached)
+}
+
+export function useWorkspaceActorCopies(workspaceId: string | undefined): CachedActorCopy[] {
+  const cached = workspaceId ? (cache.actorCopies.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
+  return useArrayStoreHook(workspaceId, "actorCopies", cached)
 }
 
 export function useWorkspaceLabels(workspaceId: string | undefined): CachedLabel[] {

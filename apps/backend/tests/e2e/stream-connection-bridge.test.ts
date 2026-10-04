@@ -332,6 +332,7 @@ describe("Stream connection bridge", () => {
     expect(page).toEqual({
       changes: [exported(edited), exported(reacted), { kind: "message_removed", messageId: doomed.id }],
       users: [{ id: author.id, name: "Host Admin", slug: author.slug }],
+      actors: [],
       cursor: (await manifest(partner)).streams[0].head,
       hasMore: false,
     })
@@ -370,7 +371,7 @@ describe("Stream connection bridge", () => {
         pages: expect.any(Number),
       },
       threadRead: { changes: [inThread(movedA), inThread(movedB)], cursor: heads.get(threadStreamId)!, pages: 1 },
-      caughtUp: { changes: [], users: [], cursor: heads.get(channel.id)!, hasMore: false },
+      caughtUp: { changes: [], users: [], actors: [], cursor: heads.get(channel.id)!, hasMore: false },
     })
   })
 

@@ -3,6 +3,7 @@ import { UnknownNodeTypeError } from "@threahq/prosemirror"
 import {
   AuthorTypes,
   StreamConnectionStates,
+  type BridgeActor,
   type BridgeChange,
   type BridgeEvents,
   type BridgeManifest,
@@ -14,9 +15,11 @@ import {
   type ThreaMark,
 } from "@threahq/types"
 import { withClient } from "../../db"
+import { PersonaRepository } from "../agents"
 import { AttachmentRepository, type Attachment } from "../attachments"
 import type { FeatureFlagService } from "../feature-flags"
 import { MessageRepository, deriveContentMarkdown, type Message } from "../messaging"
+import { BotRepository } from "../public-api"
 import { StreamEventRepository, StreamRepository, normalizeStreamDescription, type Stream } from "../streams"
 import { UserRepository } from "../workspaces"
 import { connectionNotFound } from "./errors"
@@ -197,7 +200,8 @@ export class StreamConnectionExportService {
           : { kind: "message_removed", messageId: id }
       })
       const users = await loadNamedUsers(client, caller.workspaceId, shared)
-      return { changes, users, cursor: cursor.toString(), hasMore }
+      const actors = await loadNamedActors(client, caller.workspaceId, shared)
+      return { changes, users, actors, cursor: cursor.toString(), hasMore }
     })
   }
 
@@ -274,6 +278,31 @@ async function loadNamedUsers(client: PoolClient, workspaceId: string, messages:
   }
   const users = await UserRepository.findByIds(client, workspaceId, [...ids])
   return users.map((user) => ({ id: user.id, name: user.name, slug: user.slug }))
+}
+
+/**
+ * The host's own personas and bots the messages name as author or reactor.
+ * Built-in personas resolve everywhere, so they are left out. A personal
+ * persona is invisible to every host member but its owner, so its name stays
+ * home too.
+ */
+async function loadNamedActors(client: PoolClient, workspaceId: string, messages: Message[]): Promise<BridgeActor[]> {
+  const personaIds = new Set<string>()
+  const botIds = new Set<string>()
+  for (const message of messages) {
+    if (message.authorType === AuthorTypes.PERSONA) personaIds.add(message.authorId)
+    if (message.authorType === AuthorTypes.BOT) botIds.add(message.authorId)
+    for (const reactors of Object.values(message.reactions)) {
+      for (const id of reactors) {
+        if (id.startsWith("persona_")) personaIds.add(id)
+        if (id.startsWith("bot_")) botIds.add(id)
+      }
+    }
+  }
+  const personas = await PersonaRepository.findByIds(client, workspaceId, [...personaIds])
+  const bots = await BotRepository.findByIds(client, workspaceId, [...botIds])
+  const custom = personas.filter((persona) => persona.workspaceId === workspaceId && persona.managedBy !== "user")
+  return [...custom, ...bots].map(({ id, name, avatarEmoji }) => ({ id, name, avatarEmoji }))
 }
 
 /**

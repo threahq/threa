@@ -40,6 +40,7 @@ import type {
   WorkspaceInvitation,
   Persona,
   Bot,
+  ActorCopy,
   BoardView,
   ThreadSummary,
 } from "./domain"
@@ -1905,6 +1906,8 @@ export interface WorkspaceBootstrap {
   dmPeers: Array<{ userId: string; streamId: string }>
   personas: Persona[]
   bots: Bot[]
+  /** Host personas and bots that wrote in a shared channel copy here, by name only. Optional: payloads cached before this field shipped lack it. */
+  actorCopies?: ActorCopy[]
   emojis: EmojiEntry[]
   emojiWeights: Record<string, number>
   commands: CommandInfo[]
