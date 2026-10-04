@@ -6,6 +6,7 @@ import {
   StreamTypes,
   bridgeEventsSchema,
   bridgeManifestSchema,
+  type AttachmentSafetyStatus,
   type BridgeEvents,
   type BridgeManifest,
   type JSONContent,
@@ -18,6 +19,7 @@ import {
   testContentJson,
   testMessageContent,
 } from "./setup"
+import { AttachmentRepository } from "../../src/features/attachments"
 import { CommandAvailabilityService, CommandRegistry } from "../../src/features/commands"
 import { EventService, MessageRepository } from "../../src/features/messaging"
 import { StreamRepository, type Stream } from "../../src/features/streams"
@@ -31,10 +33,11 @@ import {
   StreamConnectionRepository,
   StreamConnectionWriteService,
 } from "../../src/features/stream-connections"
-import { messageId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { attachmentId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 
 const REFUSED = { status: 403, code: StreamConnectionErrorCodes.WRITE_REFUSED }
 const UNREACHABLE = { status: 503, code: StreamConnectionErrorCodes.HOST_UNREACHABLE }
+const UNSUPPORTED = { status: 400, code: StreamConnectionErrorCodes.COPY_WRITE_UNSUPPORTED }
 
 type Address = Parameters<BridgeClient["getManifest"]>[0]
 
@@ -92,6 +95,22 @@ class TamperedBridgeClient extends DirectBridgeClient {
 
   override async listEvents(address: Address, params: Parameters<BridgeClient["listEvents"]>[1]) {
     return this.tamper(await super.listEvents(address, params))
+  }
+}
+
+/** Runs `afterSend` once the host has taken a send, before the partner pulls it back. */
+class AfterSendBridgeClient extends DirectBridgeClient {
+  constructor(
+    host: ConstructorParameters<typeof DirectBridgeClient>[0],
+    private readonly afterSend: () => Promise<void>
+  ) {
+    super(host)
+  }
+
+  override async sendMessage(address: Address, params: Parameters<BridgeClient["sendMessage"]>[1]) {
+    const sent = await super.sendMessage(address, params)
+    await this.afterSend()
+    return sent
   }
 }
 
@@ -260,6 +279,7 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
     ...asPat(world, stream),
     clientMessageId,
     contentJson: testContentJson(text),
+    attachmentIds: [] as string[],
   })
 
   const profile = (user: { id: string; name: string; slug: string }) => ({
@@ -372,6 +392,7 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
       ...asPat(world),
       clientMessageId: "client-mention",
       contentJson: content,
+      attachmentIds: [],
     })
 
     expect({ users: world.bridge.sent.map((sent) => sent.users), contentJson: message.contentJson }).toEqual({
@@ -389,6 +410,7 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
       ...asPat(world),
       messageId: sent.id,
       contentJson: testContentJson("second draft"),
+      attachmentIds: [],
     })
 
     expect(edited).toMatchObject({ id: sent.id, contentMarkdown: "second draft", revision: 2 })
@@ -536,6 +558,7 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
         ...asPat(world),
         messageId: sent.id,
         contentJson: testContentJson("second draft"),
+        attachmentIds: [],
       })
     )
 
@@ -561,6 +584,233 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
     }).toEqual({ channel: ["invite"], channelCopy: [], threadCopy: [] })
   })
 
+  describe("when the partner's write carries files", () => {
+    /** A file a partner user uploaded on the partner, bound to nothing yet unless `messageId` is given. */
+    async function partnerUpload(
+      world: World,
+      uploadedBy: string,
+      options: { safetyStatus?: AttachmentSafetyStatus; boundTo?: { messageId: string; streamId: string } } = {}
+    ) {
+      const id = attachmentId()
+      await AttachmentRepository.insert(pool, {
+        id,
+        workspaceId: world.partner.id,
+        uploadedBy,
+        filename: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: 12,
+        storagePath: `${world.partner.id}/${id}/notes.txt`,
+        safetyStatus: options.safetyStatus ?? "clean",
+      })
+      if (options.boundTo) {
+        const { messageId: boundId, streamId: boundStream } = options.boundTo
+        await AttachmentRepository.attachToMessage(pool, world.partner.id, [id], boundId, boundStream)
+      }
+      return id
+    }
+
+    const withFile = (id: string, text: string): JSONContent => ({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "attachmentReference", attrs: { id, filename: "notes.txt", status: "uploaded" } },
+            { type: "text", text },
+          ],
+        },
+      ],
+    })
+
+    async function fileRows(workspace: string, id: string) {
+      const { rows } = await pool.query(
+        `SELECT a.message_id, a.stream_id, a.uploaded_by, a.safety_status, q.id AS job_id
+         FROM attachments a
+         LEFT JOIN queue_messages q ON q.workspace_id = a.workspace_id AND q.id = 'scfile_' || a.workspace_id || '_' || a.id
+         WHERE a.workspace_id = $1 AND a.id = $2`,
+        [workspace, id]
+      )
+      return rows
+    }
+
+    test("should queue a copy on the host and bind the partner's original to the copy when the partner sends a fresh upload", async () => {
+      const world = await seedWorld()
+      const file = await partnerUpload(world, world.pat.id)
+
+      const message = await forwardVia(world.bridge).sendMessage({
+        ...asPat(world),
+        clientMessageId: "client-file",
+        contentJson: withFile(file, " attached"),
+        attachmentIds: [file],
+      })
+
+      expect({
+        sent: world.bridge.sent.map((sent) => sent.attachments),
+        host: await fileRows(world.host.id, file),
+        partner: await fileRows(world.partner.id, file),
+        copy: {
+          contentJson: message.contentJson,
+          attachments: (await createdPayloads(world, message.id)).map((payload) =>
+            payload.attachments.map((a: { id: string }) => a.id)
+          ),
+        },
+      }).toEqual({
+        sent: [[{ id: file, filename: "notes.txt", mimeType: "text/plain", sizeBytes: 12, width: null, height: null }]],
+        host: [
+          {
+            message_id: message.id,
+            stream_id: world.channel.id,
+            uploaded_by: world.pat.id,
+            safety_status: "pending_upload",
+            job_id: `scfile_${world.host.id}_${file}`,
+          },
+        ],
+        partner: [
+          {
+            message_id: message.id,
+            stream_id: world.channelCopy.id,
+            uploaded_by: world.pat.id,
+            safety_status: "clean",
+            job_id: null,
+          },
+        ],
+        copy: { contentJson: withFile(file, " attached"), attachments: [[file]] },
+      })
+    })
+
+    test("should return the copy's message without asking the host again when the partner retries a send whose file the pull bound", async () => {
+      const world = await seedWorld()
+      const file = await partnerUpload(world, world.pat.id)
+      const send = {
+        ...asPat(world),
+        clientMessageId: "client-file-retry",
+        contentJson: withFile(file, " attached"),
+        attachmentIds: [file],
+      }
+      const first = await forwardVia(world.bridge).sendMessage(send)
+
+      const retried = await forwardVia(world.bridge).sendMessage(send)
+
+      expect({ retried: retried.id, sent: world.bridge.sent.length }).toEqual({ retried: first.id, sent: 1 })
+    })
+
+    test("should bind the partner's original to the copy when the partner sends a file it is still scanning", async () => {
+      const world = await seedWorld()
+      const file = await partnerUpload(world, world.pat.id, { safetyStatus: "pending_scan" })
+
+      const message = await forwardVia(world.bridge).sendMessage({
+        ...asPat(world),
+        clientMessageId: "client-scanning",
+        contentJson: withFile(file, " still scanning"),
+        attachmentIds: [file],
+      })
+
+      expect(await fileRows(world.partner.id, file)).toEqual([
+        {
+          message_id: message.id,
+          stream_id: world.channelCopy.id,
+          uploaded_by: world.pat.id,
+          safety_status: "pending_scan",
+          job_id: null,
+        },
+      ])
+    })
+
+    test("should land the copy without the file and keep pulling when the partner's original is quarantined before the pull", async () => {
+      const world = await seedWorld()
+      const file = await partnerUpload(world, world.pat.id)
+      const bridge = new AfterSendBridgeClient(host, async () => {
+        await pool.query("UPDATE attachments SET safety_status = 'quarantined' WHERE workspace_id = $1 AND id = $2", [
+          world.partner.id,
+          file,
+        ])
+      })
+
+      const message = await forwardVia(bridge).sendMessage({
+        ...asPat(world),
+        clientMessageId: "client-quarantined",
+        contentJson: withFile(file, " quarantined"),
+        attachmentIds: [file],
+      })
+      const later = await hostSays(world.host, world.channel.id, "later")
+      await pullVia(world.bridge).pull(world.ref, { streamId: world.channel.id })
+
+      expect({
+        partner: await fileRows(world.partner.id, file),
+        copyAttachments: (await createdPayloads(world, message.id)).map((payload) => payload.attachments ?? []),
+        laterCopied: (await createdPayloads(world, later.id)).length,
+      }).toEqual({
+        partner: [
+          { message_id: null, stream_id: null, uploaded_by: world.pat.id, safety_status: "quarantined", job_id: null },
+        ],
+        copyAttachments: [[]],
+        laterCopied: 1,
+      })
+    })
+
+    test("should refuse without calling the host when the partner sends a file that isn't the sender's unsent upload", async () => {
+      const world = await seedWorld()
+      const sent = await forwardVia(world.bridge).sendMessage(patSend(world, "client-earlier", "earlier"))
+      const files = [
+        await partnerUpload(world, world.sam.id),
+        await partnerUpload(world, world.pat.id, { boundTo: { messageId: sent.id, streamId: world.channelCopy.id } }),
+        await partnerUpload(world, world.pat.id, { safetyStatus: "quarantined" }),
+        attachmentId(),
+      ]
+      world.bridge.sent.length = 0
+
+      const outcomes = []
+      for (const [index, file] of files.entries()) {
+        outcomes.push(
+          await outcome(
+            forwardVia(world.bridge).sendMessage({
+              ...asPat(world),
+              clientMessageId: `client-refused-${index}`,
+              contentJson: withFile(file, " not mine to send"),
+              attachmentIds: [file],
+            })
+          )
+        )
+      }
+
+      expect({ outcomes, sent: world.bridge.sent }).toEqual({ outcomes: files.map(() => UNSUPPORTED), sent: [] })
+    })
+
+    test("should keep the message's own file when the partner edits, and refuse an edit that adds a file", async () => {
+      const world = await seedWorld()
+      const forward = forwardVia(world.bridge)
+      const file = await partnerUpload(world, world.pat.id)
+      const sent = await forward.sendMessage({
+        ...asPat(world),
+        clientMessageId: "client-edit-file",
+        contentJson: withFile(file, " first"),
+        attachmentIds: [file],
+      })
+      const added = await partnerUpload(world, world.pat.id)
+
+      const edited = await forward.editMessage({
+        ...asPat(world),
+        messageId: sent.id,
+        contentJson: withFile(file, " second"),
+        attachmentIds: [file],
+      })
+      const refused = await outcome(
+        forward.editMessage({
+          ...asPat(world),
+          messageId: sent.id,
+          contentJson: withFile(added, " another"),
+          attachmentIds: [added],
+        })
+      )
+
+      expect({ contentJson: edited.contentJson, revision: edited.revision, refused }).toEqual({
+        contentJson: withFile(file, " second"),
+        revision: 2,
+        refused: UNSUPPORTED,
+      })
+    })
+  })
+
   describe("when the copy pulls the host's pages", () => {
     test("should apply a page authored by the partner's own user and keep its client message id when the host returns the partner's message", async () => {
       const world = await seedWorld()
@@ -573,6 +823,7 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
         users: [],
         clientMessageId: "client-echo",
         contentJson: testContentJson("from the partner"),
+        attachments: [],
       })
 
       const reached = await pullVia(world.bridge).pull(world.ref)

@@ -1610,6 +1610,12 @@ export class EventService {
 
     const validated: string[] = []
     for (const a of attachments) {
+      // The message's own files stay while still settling: keeping them grants
+      // nobody new access.
+      if (a.messageId === params.messageId && a.e2eOnly !== true) {
+        validated.push(a.id)
+        continue
+      }
       // Shareable = scanned-clean OR E2E ciphertext (unscannable, owner's own
       // bytes). Single source of truth with the download path.
       if (!isAttachmentSafeForSharing(a.safetyStatus)) {

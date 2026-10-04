@@ -228,19 +228,20 @@ export class StreamConnectionExportService {
   }
 
   /**
-   * Where a partner can fetch one file of a shared message from. Only a file
-   * owned by a live message in the shared tree is served; any other id is the
-   * same 404 as an unknown connection.
+   * Where the other side of a connection can fetch one file from: a host serves
+   * the files of its shared tree, a partner the files its members sent into
+   * the copy. Only a file owned by a live message in those streams is served;
+   * any other id is the same 404 as an unknown connection.
    */
   async getAttachment(caller: BridgeCaller & { attachmentId: string }): Promise<BridgeAttachmentResponse> {
     await this.assertEnabled(caller.workspaceId)
     const { attachment, upload } = await withClient(this.pool, async (client) => {
-      const { tree } = await loadSharedTree(client, caller)
+      const servedStreamIds = await loadServedStreamIds(client, caller)
       const attachment = await AttachmentRepository.findById(client, caller.workspaceId, caller.attachmentId)
       const message = attachment?.messageId
         ? await MessageRepository.findById(client, caller.workspaceId, attachment.messageId)
         : null
-      if (!attachment || !message || message.deletedAt !== null || !tree.some((s) => s.id === message.streamId)) {
+      if (!attachment || !message || message.deletedAt !== null || !servedStreamIds.has(message.streamId)) {
         throw connectionNotFound()
       }
       const upload = await AttachmentUploadRepository.findByAttachmentId(client, caller.workspaceId, attachment.id)
@@ -300,6 +301,20 @@ export async function loadSharedTree(
   const tree = [root]
   for (let i = 0; i < tree.length; i++) tree.push(...(threadsByParent.get(tree[i].id) ?? []))
   return { connection, tree }
+}
+
+/** The streams whose files a connection serves: the host's shared tree, or the partner's copy root and the threads under it. */
+async function loadServedStreamIds(client: PoolClient, caller: BridgeCaller): Promise<Set<string>> {
+  const connection = await StreamConnectionRepository.findById(client, caller.workspaceId, caller.connectionId)
+  if (connection?.role !== "partner") {
+    const { tree } = await loadSharedTree(client, caller)
+    return new Set(tree.map((stream) => stream.id))
+  }
+  if (connection.state !== StreamConnectionStates.ACTIVE || connection.remoteWorkspaceId !== caller.callerWorkspaceId) {
+    throw connectionNotFound()
+  }
+  const threads = await StreamRepository.listThreadsByRoot(client, caller.workspaceId, connection.streamId)
+  return new Set([connection.streamId, ...threads.map((thread) => thread.id)])
 }
 
 function changedMessageIds(eventType: string, payload: unknown): string[] {
@@ -453,14 +468,16 @@ export interface ImportedContent {
  * Cleans a partner's document before the host stores it, with the markdown it
  * reads as. A mention stays only when it names a host user or one of the
  * caller's own users, so the partner can't point at a user, persona or bot it
- * has no standing to name. Quotes, shares and file references drop: the
- * partner's users hold no membership here to read what they point at. An agent
- * block becomes a blockquote, so it credits no agent. The caller's users must
- * already be copied here.
+ * has no standing to name. A file reference stays only for `attachmentIds`: the
+ * files the write sends, or the edited message's own. Quotes, shares and other
+ * file references drop: the partner's users hold no membership here to read
+ * what they point at.
+ * An agent block becomes a blockquote, so it credits no agent. The caller's
+ * users must already be copied here.
  */
 export async function importDoc(
   client: PoolClient,
-  params: { workspaceId: string; callerWorkspaceId: string; tree: Stream[]; doc: JSONContent }
+  params: { workspaceId: string; callerWorkspaceId: string; tree: Stream[]; attachmentIds: string[]; doc: JSONContent }
 ): Promise<ImportedContent> {
   const { workspaceId, callerWorkspaceId, doc } = params
   const userIds = [...new Set(collectMentionIds(doc).filter((id) => id.startsWith("usr_")))]
@@ -475,7 +492,7 @@ export async function importDoc(
     const contentJson = exportDoc(doc, {
       tree: new Set(params.tree.map((stream) => stream.id)),
       messages: new Map(),
-      attachmentIds: new Set(),
+      attachmentIds: new Set(params.attachmentIds),
       inboundMentions: mentions,
     })
     return { contentJson, contentMarkdown: deriveContentMarkdown(contentJson) }

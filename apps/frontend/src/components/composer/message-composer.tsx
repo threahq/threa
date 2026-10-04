@@ -272,9 +272,6 @@ export interface MessageComposerProps {
 
   /** Phone foot only: the aside button beside Attach (the `/aside` command by another handle). */
   onOpenAside?: () => void
-
-  /** Removes every way to add a file: the attach controls, the file input, paste, drop, `/attachment` and `/snippet`. */
-  attachmentsDisabled?: boolean
 }
 
 export function MessageComposer({
@@ -321,7 +318,6 @@ export function MessageComposer({
   scheduledMessagesTrigger,
   scheduledMessagesTriggerFab,
   onOpenAside,
-  attachmentsDisabled = false,
 }: MessageComposerProps) {
   // Controls (buttons, file input) are disabled during both external disable and sending.
   // The editor itself stays editable during sending so mobile keyboards don't close/reopen.
@@ -980,11 +976,6 @@ export function MessageComposer({
     fileInputRef.current?.click()
   }, [fileInputRef])
 
-  // The editor gates paste, drop, `/attachment` and `/snippet` on having an upload handler.
-  const attachClick = attachmentsDisabled ? undefined : handleAttachClick
-  const editorFileUpload = attachmentsDisabled ? undefined : onFileUpload
-  const requestInlineUpload = attachmentsDisabled ? undefined : handleRequestInlineUpload
-
   const handleFileInputChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
       const forceInline = inlineUploadRequestRef.current
@@ -1154,7 +1145,7 @@ export function MessageComposer({
       value={content}
       onChange={handleContentChange}
       onSubmit={handleSubmit}
-      onFileUpload={editorFileUpload}
+      onFileUpload={onFileUpload}
       imageCount={imageCount}
       placeholder={placeholder}
       disabled={disabled}
@@ -1174,7 +1165,7 @@ export function MessageComposer({
       commandStreamId={commandStreamId}
       includeStreamCommands={includeStreamCommands}
       trayAttachments={pendingAttachments}
-      onRequestFileUpload={requestInlineUpload}
+      onRequestFileUpload={handleRequestInlineUpload}
     />
   )
 
@@ -1306,16 +1297,14 @@ export function MessageComposer({
             <p id={instructionsId} className="sr-only">
               {screenReaderInstructions}
             </p>
-            {!attachmentsDisabled && (
-              <input
-                ref={bindFileInput}
-                type="file"
-                multiple
-                className="hidden"
-                onChange={handleFileInputChange}
-                disabled={controlsDisabled}
-              />
-            )}
+            <input
+              ref={bindFileInput}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleFileInputChange}
+              disabled={controlsDisabled}
+            />
 
             {/* Editor — fills remaining space. Desktop: toolbar + actions in one bar via
               toolbarTrailingContent. Touch: no toolbar here — Chrome scrolls the focused
@@ -1341,7 +1330,7 @@ export function MessageComposer({
                 value={content}
                 onChange={handleContentChange}
                 onSubmit={handleSubmit}
-                onFileUpload={editorFileUpload}
+                onFileUpload={onFileUpload}
                 imageCount={imageCount}
                 placeholder={placeholder}
                 disabled={disabled}
@@ -1361,7 +1350,7 @@ export function MessageComposer({
                 commandStreamId={commandStreamId}
                 includeStreamCommands={includeStreamCommands}
                 trayAttachments={pendingAttachments}
-                onRequestFileUpload={requestInlineUpload}
+                onRequestFileUpload={handleRequestInlineUpload}
                 belowToolbarContent={
                   pendingAttachments.length > 0 || (contextRefs && contextRefs.length > 0) ? (
                     <div className="pt-1 pb-2 border-b border-border/50 [&>div]:mb-0">{attachmentTray(false)}</div>
@@ -1389,7 +1378,7 @@ export function MessageComposer({
                     onFormatOpenChange={setFormatOpen}
                     showExpand={false}
                     showAttach
-                    onAttachClick={attachClick}
+                    onAttachClick={handleAttachClick}
                     side={actionSide}
                     trailingContent={
                       <div className={cn("flex items-center gap-1", mirrored && "flex-row-reverse")}>
@@ -1488,26 +1477,24 @@ export function MessageComposer({
                       Command
                     </TooltipContent>
                   </Tooltip>
-                  {attachClick && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          aria-label="Attach files"
-                          className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
-                          onClick={attachClick}
-                          disabled={controlsDisabled}
-                        >
-                          <Paperclip className="h-4 w-4" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top" className="text-xs">
-                        Attach files
-                      </TooltipContent>
-                    </Tooltip>
-                  )}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        aria-label="Attach files"
+                        className="h-[30px] w-[30px] shrink-0 p-0 rounded-md bg-background shadow-md"
+                        onClick={handleAttachClick}
+                        disabled={controlsDisabled}
+                      >
+                        <Paperclip className="h-4 w-4" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" className="text-xs">
+                      Attach files
+                    </TooltipContent>
+                  </Tooltip>
                 </div>
                 {micButtonFab}
                 {hasFailed ? (
@@ -1619,16 +1606,14 @@ export function MessageComposer({
               <ComposerLinkPreviews content={content} workspaceId={workspaceId} className="mb-2" />
             )}
 
-            {!attachmentsDisabled && (
-              <input
-                ref={bindFileInput}
-                type="file"
-                multiple
-                className="hidden"
-                onChange={handleFileInputChange}
-                disabled={controlsDisabled}
-              />
-            )}
+            <input
+              ref={bindFileInput}
+              type="file"
+              multiple
+              className="hidden"
+              onChange={handleFileInputChange}
+              disabled={controlsDisabled}
+            />
 
             <div className="input-glow-wrapper flex-1 flex flex-col min-h-0">
               <div
@@ -1764,7 +1749,7 @@ export function MessageComposer({
                           sendButton,
                         }}
                         footMenu={{
-                          onAttach: attachClick,
+                          onAttach: handleAttachClick,
                           onOpenAside,
                           onSchedule: scheduledMessagesTrigger ? () => scheduledMessagesOpenRef.current?.() : undefined,
                           scheduledCount,
@@ -1792,7 +1777,7 @@ export function MessageComposer({
                         onInsertEmoji={insertEmoji}
                         onInsertMention={insertMention}
                         onInsertCommand={insertSlash}
-                        onAttachClick={attachClick}
+                        onAttachClick={handleAttachClick}
                         onExpandClick={onExpandClick}
                         micButton={micButton}
                         stashedDraftsTrigger={stashedDraftsTrigger}

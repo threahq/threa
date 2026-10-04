@@ -1,14 +1,23 @@
 import type { Pool } from "pg"
 import { collectMentionActorRefs } from "@threahq/prosemirror"
-import type { BridgeWriteUser, JSONContent } from "@threahq/types"
+import {
+  BINDABLE_ATTACHMENT_SAFETY_STATUSES,
+  type AttachmentSafetyStatus,
+  type BridgeWriteAttachment,
+  type BridgeWriteUser,
+  type JSONContent,
+} from "@threahq/types"
+import { AttachmentRepository } from "../attachments"
 import { MessageRepository, type Message } from "../messaging"
 import type { FeatureFlagService } from "../feature-flags"
 import type { Stream } from "../streams"
 import { UserRepository } from "../workspaces"
 import type { BridgeClient } from "./bridge-client"
-import { hostUnreachable, writeRefused } from "./errors"
+import { copyWriteUnsupported, hostUnreachable, writeRefused } from "./errors"
 import { bridgeAddress, toActivePartner, type StreamConnectionPullService } from "./pull"
 import { StreamConnectionRepository, type ConnectionRef } from "./repository"
+
+const BINDABLE_STATUSES = new Set<AttachmentSafetyStatus>(BINDABLE_ATTACHMENT_SAFETY_STATUSES)
 
 /** A pull that loses a cursor race writes nothing, so it is tried again against the winner's work. */
 const PULL_ATTEMPTS = 3
@@ -47,23 +56,39 @@ export class StreamConnectionForwardService {
     this.featureFlagService = deps.featureFlagService
   }
 
-  /** The host dedupes a send by its client message id, so a send that failed to confirm is safe to retry. */
-  async sendMessage(params: ForwardCaller & { clientMessageId: string; contentJson: JSONContent }): Promise<Message> {
+  /**
+   * A send that failed to confirm is safe to retry: once the pull brought it back the copy answers it, and before
+   * that the host dedupes it by its client message id. The sent files stay unbound here until that pull binds them.
+   */
+  async sendMessage(
+    params: ForwardCaller & { clientMessageId: string; contentJson: JSONContent; attachmentIds: string[] }
+  ): Promise<Message> {
     const { clientMessageId, contentJson } = params
     const { address, ref, author } = await this.open(params)
+    const landed = await MessageRepository.findByClientMessageId(
+      this.pool,
+      params.workspaceId,
+      params.stream.id,
+      clientMessageId
+    )
+    if (landed?.authorId === params.userId) return landed
     const { messageId } = await this.bridgeClient.sendMessage(address, {
       streamId: params.stream.id,
       author,
       users: await this.mentionedOwnUsers(params.workspaceId, contentJson),
       clientMessageId,
       contentJson,
+      attachments: await this.newUploads(params.workspaceId, params.userId, params.attachmentIds),
     })
     return this.settle(ref, params.stream.id, messageId)
   }
 
-  async editMessage(params: ForwardCaller & { messageId: string; contentJson: JSONContent }): Promise<Message> {
+  async editMessage(
+    params: ForwardCaller & { messageId: string; contentJson: JSONContent; attachmentIds: string[] }
+  ): Promise<Message> {
     const { messageId, contentJson } = params
     const { address, ref, author } = await this.open(params)
+    await this.assertOwnFiles(params.workspaceId, messageId, params.attachmentIds)
     await this.bridgeClient.editMessage(address, {
       streamId: params.stream.id,
       messageId,
@@ -138,6 +163,38 @@ export class StreamConnectionForwardService {
     return users
       .filter((user) => user.originWorkspaceId === null)
       .map((user) => ({ id: user.id, name: user.name, slug: user.slug }))
+  }
+
+  /** An edit keeps the message's own files and adds none: a file reaches the host only with the send that brings it. */
+  private async assertOwnFiles(workspaceId: string, messageId: string, ids: string[]): Promise<void> {
+    if (ids.length === 0) return
+    const rows = await AttachmentRepository.findByIds(this.pool, workspaceId, ids)
+    if (rows.length !== ids.length || rows.some((row) => row.messageId !== messageId)) {
+      throw copyWriteUnsupported("Files can't be added to a sent message in a shared channel")
+    }
+  }
+
+  /** A send carries only files its author uploaded and hasn't sent yet: the host copies each one, and nothing else is the author's to give it. */
+  private async newUploads(workspaceId: string, userId: string, ids: string[]): Promise<BridgeWriteAttachment[]> {
+    const rows = await AttachmentRepository.findByIds(this.pool, workspaceId, ids)
+    const sendable = rows.filter(
+      (row) =>
+        row.uploadedBy === userId &&
+        row.messageId === null &&
+        !row.e2eOnly &&
+        BINDABLE_STATUSES.has(row.safetyStatus)
+    )
+    if (sendable.length !== ids.length) {
+      throw copyWriteUnsupported("Only files you just uploaded can be sent to a shared channel")
+    }
+    return sendable.map(({ id, filename, mimeType, sizeBytes, width, height }) => ({
+      id,
+      filename,
+      mimeType,
+      sizeBytes,
+      width,
+      height,
+    }))
   }
 
   /** The copy of a message the host now holds. Absent means the pull could not bring it in, which a retry can. */

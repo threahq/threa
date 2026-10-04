@@ -62,8 +62,8 @@ export interface Attachment {
 
 export interface InsertAttachmentCopyParams {
   id: string
-  streamId: string
-  messageId: string
+  streamId: string | null
+  messageId: string | null
   uploadedBy: string
   filename: string
   mimeType: string

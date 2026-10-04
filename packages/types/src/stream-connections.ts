@@ -271,12 +271,18 @@ export type BridgeUser = z.infer<typeof bridgeUserSchema>
 export const bridgeWriteUserSchema = bridgeUserSchema.extend({ id: z.string().regex(/^usr_/) })
 export type BridgeWriteUser = z.infer<typeof bridgeWriteUserSchema>
 
+/** A file a partner's member sent with a message. The host keeps its own copy under the same id, fetched from the partner. */
+export const bridgeWriteAttachmentSchema = bridgeAttachmentSchema.omit({ safetyStatus: true })
+export type BridgeWriteAttachment = z.infer<typeof bridgeWriteAttachmentSchema>
+
 /** A partner's message into a shared stream, written as one of its users. `users` names the partner users its content mentions. */
 export const bridgeSendMessageSchema = z.object({
   author: bridgeWriteUserSchema,
   users: z.array(bridgeWriteUserSchema),
   clientMessageId: z.string().min(1),
   contentJson: bridgeWriteContentSchema,
+  /** Absent from a partner that predates files. */
+  attachments: z.array(bridgeWriteAttachmentSchema).default([]),
 })
 export type BridgeSendMessage = z.infer<typeof bridgeSendMessageSchema>
 
