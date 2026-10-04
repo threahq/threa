@@ -28,6 +28,9 @@ import type { MentionTypeLookup } from "@threahq/prosemirror"
  * `botMemberIds` is the set of bots that are members of the current stream
  * (or its root stream for threads). In normal chat mode, only bots in this
  * set are mentionable.
+ *
+ * `connectedWorkspaceIds` are the workspaces this stream's channel is shared
+ * with; their users' local copies are mentionable here and nowhere else.
  */
 export interface MentionStreamContext {
   streamType: StreamType
@@ -35,6 +38,7 @@ export interface MentionStreamContext {
   inviteMode?: boolean
   memberIds?: Set<string>
   botMemberIds?: Set<string>
+  connectedWorkspaceIds?: ReadonlySet<string>
   /** Whether the current user can invite bots (admin/owner only). */
   canInviteBots?: boolean
 }
@@ -96,6 +100,8 @@ export function useMentionStreamContext(
       ctx.memberIds = ids
     }
     if (accessBootstrap?.botMemberIds) ctx.botMemberIds = new Set(accessBootstrap.botMemberIds)
+    // A bootstrap cached before the field shipped lacks it at runtime.
+    if (accessBootstrap) ctx.connectedWorkspaceIds = new Set(accessBootstrap.connectedWorkspaceIds ?? [])
     ctx.canInviteBots = currentUserRole === "admin" || currentUserRole === "owner"
     return ctx
   }, [stream, idbStreams, accessBootstrap, currentUserRole])
@@ -168,7 +174,14 @@ export function useMentionables(streamContext?: MentionStreamContext, { includeH
     const broadcasts = filterBroadcastMentions(streamContext)
 
     const currentUserId = currentUser?.id
-    const listedUsers = includeHostCopies ? workspaceUsers : workspaceUsers.filter(isPickableUser)
+    const connectedWorkspaceIds = streamContext?.inviteMode ? undefined : streamContext?.connectedWorkspaceIds
+    const listedUsers = includeHostCopies
+      ? workspaceUsers
+      : workspaceUsers.filter(
+          (u) =>
+            isPickableUser(u) ||
+            (u.originWorkspaceId != null && connectedWorkspaceIds?.has(u.originWorkspaceId) === true)
+        )
     const users: Mentionable[] = listedUsers.map((u) => ({
       id: u.id,
       slug: u.slug,
