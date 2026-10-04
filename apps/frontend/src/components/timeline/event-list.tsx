@@ -8,7 +8,6 @@ import {
   type BotAccessStatusChangedEventPayload,
   type DecisionResolvedEventPayload,
   type CallEndedEventPayload,
-  type CommandDispatchedPayload,
 } from "@threahq/types"
 import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "./session-grouping"
 import { getCommandId, isOwnCommandEvent } from "./command-grouping"
@@ -28,8 +27,6 @@ import { localStartOfDayMs } from "@/lib/dates"
 import { isSameAuthorRun } from "@/lib/message-grouping"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ConversationOverlayRow } from "./conversation-overlay/conversation-overlay"
-import { PopIn, useArrivals } from "./pop-in"
-import { isInFlight } from "@/stores/stream-store"
 import type {
   ConversationOverlayContext,
   ConversationOverlayModel,
@@ -62,8 +59,6 @@ interface EventListProps {
   batch?: BatchTimelineState
   /** Set while the conversation overlay is active; decorates message rows. */
   conversationOverlay?: ConversationOverlayContext
-  /** Rows appended at the tail after the first render grow in (`PopIn`). */
-  animateArrivals?: boolean
 }
 
 /**
@@ -616,28 +611,6 @@ export function getTimelineItemKey(item: TimelineItem): string {
     default:
       return item.event.id
   }
-}
-
-/** A row's identity across an own send's optimistic → server swap: the server
- *  row carries the optimistic row's id as `clientMessageId`, and a command's
- *  dispatched event carries the optimistic command id as `clientCommandId`. */
-export function getTimelineItemArrivalKey(item: TimelineItem): string {
-  if (item.type === "event") {
-    const clientMessageId = (item.event.payload as { clientMessageId?: string } | undefined)?.clientMessageId
-    if (clientMessageId) return clientMessageId
-  }
-  if (item.type === "command_group") {
-    const dispatched = item.events.find((event) => event.eventType === "command_dispatched")
-    const clientCommandId = (dispatched?.payload as CommandDispatchedPayload | undefined)?.clientCommandId
-    if (clientCommandId) return clientCommandId
-  }
-  return getTimelineItemKey(item)
-}
-
-/** An own send not yet echoed; it sits at the tail until its server row replaces it. */
-export function isTimelineItemInFlight(item: TimelineItem): boolean {
-  // Unsent rows reach the timeline as their cached rows, `_status` included.
-  return item.type === "event" && isInFlight(item.event as { _status?: string; _preEditStatus?: string })
 }
 
 /** Number of skeleton placeholder rows prepended while an older page is in flight. */
@@ -1372,7 +1345,6 @@ export function EventList({
   viewerIsMember,
   batch,
   conversationOverlay,
-  animateArrivals = false,
 }: EventListProps) {
   const { phase } = useCoordinatedLoading()
   const socket = useSocket()
@@ -1385,12 +1357,6 @@ export function EventList({
   // render all events with no zero-height filtering, so dividers go straight
   // onto the grouped list.
   const itemsWithDividers = useMemo(() => injectDayDividers(timelineItems), [timelineItems])
-  const arrivals = useArrivals(
-    itemsWithDividers.map(getTimelineItemArrivalKey),
-    streamId,
-    animateArrivals && !isLoading,
-    new Set(itemsWithDividers.filter(isTimelineItemInFlight).map(getTimelineItemArrivalKey))
-  )
 
   if (isLoading) {
     return (
@@ -1467,13 +1433,9 @@ export function EventList({
       {itemsWithDividers.map((item) => {
         const itemKey = getTimelineItemKey(item)
         return (
-          <PopIn
-            key={itemKey}
-            className={isFirstUnread(item, firstUnreadEventId) ? "relative" : undefined}
-            arrivedAt={arrivals.get(getTimelineItemArrivalKey(item))}
-          >
+          <div key={itemKey} className={isFirstUnread(item, firstUnreadEventId) ? "relative" : undefined}>
             <TimelineItemContent item={item} ctx={ctx} deferSecondaryHydration={phase !== "ready"} />
-          </PopIn>
+          </div>
         )
       })}
     </div>

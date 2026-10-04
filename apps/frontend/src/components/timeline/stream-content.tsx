@@ -100,8 +100,6 @@ import {
   findEventItemIndex,
   findTimelineTargetIndex,
   getTimelineItemKey,
-  getTimelineItemArrivalKey,
-  isTimelineItemInFlight,
   filterVisibleItems,
   collectDividerAnchorIds,
   OLDER_SKELETON_ITEMS,
@@ -2974,7 +2972,6 @@ export function StreamContent({
                             viewerIsMember={isMember}
                             batch={batchState}
                             conversationOverlay={activeConversationOverlay}
-                            animateArrivals={!isJumpMode}
                           />
                           {isFetchingNewer && (
                             <div className="flex justify-center py-2">
@@ -3604,8 +3601,6 @@ function TimelineMessageList({
   // hand back rows still marked deferred after the ref flips.
   const scrollerItems = visibleItems.map((item, index) => ({
     key: getTimelineItemKey(item),
-    arrivalKey: getTimelineItemArrivalKey(item),
-    inFlight: isTimelineItemInFlight(item),
     node: (
       <TimelineItemContent
         item={item}
@@ -3630,7 +3625,6 @@ function TimelineMessageList({
       contentRef={contentRef}
       shift={shift}
       isInitialSettling={isInitialSettling}
-      animateArrivals={!isJumpMode}
       onScroll={handleScroll}
       startMargin={{ heightPx: startMargin }}
       hasRenderedContent={hasRenderedContent}

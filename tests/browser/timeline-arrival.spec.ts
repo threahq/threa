@@ -2,24 +2,20 @@ import { test, expect, type Page, type Route } from "@playwright/test"
 import { loginAndCreateWorkspace, createChannel, expectApiOk, generateTestId } from "./helpers"
 
 /**
- * A message that arrives while the reader watches grows in from zero height and
- * pushes the rows above it up.
+ * A message that arrives while the reader watches appears at full height in one
+ * frame — no growth.
  *
- * - pinned: the list stays on the bottom every frame of the growth and the row
- *   above the arrival only ever moves up — a frame late on the pin reads as the
- *   new row sliding under the composer, a backwards step as a jitter. Sampled
- *   from a ResizeObserver on the growing row, created after the app's own: it
- *   fires inside the frame, after the app has pinned and before paint, with the
- *   animation clock frozen at the frame's time. A read outside a frame lets
- *   Chrome advance that clock, so it would measure growth nobody painted.
+ * - pinned: the row is in its final place, and the list on the bottom, in the
+ *   frame the row first lays out.
+ *   Sampled from a ResizeObserver on the new row, created after the app's own: it
+ *   fires inside that frame, after the app has pinned and before paint. A read
+ *   outside a frame would force layout before the app's pin and see a gap nobody
+ *   painted.
  * - detached: the rows the reader is looking at don't move at all.
- * - cold load: nothing animates.
- * - the viewer's own send grows in like any arrival, and leaves the composer in
- *   the frame its row appears, keeping whatever was typed while it was in flight.
- * - a message landing while that send is in flight grows in above it, and the
+ * - the viewer's own send leaves the composer at once, keeping whatever is typed
+ *   while it is in flight.
+ * - a message landing while that send is in flight appears above it, and the
  *   send keeps its place when it confirms.
- * - a slash command's chip grows in once, not again when the server's copy
- *   replaces the optimistic one.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -30,6 +26,8 @@ interface Frame {
   distance: number
   /** Top of the row carrying `anchorText`. */
   anchorTop: number
+  /** Gap between the arrival's bottom edge and the list's; a growing row starts clipped below its final place. */
+  arrivalGap: number
 }
 
 async function seedMessages(page: Page, workspaceId: string, streamId: string, count: number): Promise<void> {
@@ -57,38 +55,36 @@ async function postMessage(page: Page, workspaceId: string, streamId: string, co
   return ((await response.json()) as { message: { id: string } }).message.id
 }
 
-/** Records whether a PopIn animation ever renders, from before the app boots. */
-function watchForAnimation() {
-  const state = { sawAnimation: false }
-  ;(window as unknown as { __popIn: typeof state }).__popIn = state
-  new MutationObserver(() => {
-    if (document.querySelector(".pop-in-grow, .pop-in-fx")) state.sawAnimation = true
-  }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] })
-}
-
-async function sawAnimation(page: Page): Promise<boolean> {
-  return page.evaluate(() => (window as unknown as { __popIn: { sawAnimation: boolean } }).__popIn.sawAnimation)
-}
-
-/** Samples in-frame geometry every frame the arrival grows. */
+/** Samples in-frame geometry every frame the arrival's row resizes, starting with the frame it first lays out. */
 function sampleArrival({ anchorText, arrivalText }: { anchorText: string; arrivalText: string }) {
   const frames: Frame[] = []
-  ;(window as unknown as { __frames: Frame[] }).__frames = frames
+  const laterGaps: number[] = []
+  Object.assign(window, { __frames: frames, __laterGaps: laterGaps })
   const rowWith = (text: string) =>
     [...document.querySelectorAll<HTMLElement>("main [data-event-id]")].find((row) => row.textContent?.includes(text))
   let scroller = rowWith(anchorText)!.parentElement!
   while (getComputedStyle(scroller).overflowY !== "auto") scroller = scroller.parentElement!
+  const gap = () => Math.round(scroller.getBoundingClientRect().bottom - arrival.getBoundingClientRect().bottom)
+  // A growing row's inner box never resizes, so the frames after the first are read from rAF.
+  const sampleLater = () => {
+    laterGaps.push(gap())
+    if (laterGaps.length < 30) requestAnimationFrame(sampleLater)
+  }
   const resize = new ResizeObserver(() => {
+    if (frames.length === 0) requestAnimationFrame(sampleLater)
     frames.push({
       distance: Math.round(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight),
       anchorTop: Math.round(rowWith(anchorText)!.getBoundingClientRect().top * 10) / 10,
+      arrivalGap: gap(),
     })
   })
+  let arrival: HTMLElement
   const mutations = new MutationObserver(() => {
-    const growing = rowWith(arrivalText)?.closest(".pop-in-grow")
-    if (!growing) return
+    const row = rowWith(arrivalText)
+    if (!row) return
     mutations.disconnect()
-    resize.observe(growing)
+    arrival = row
+    resize.observe(row)
   })
   mutations.observe(scroller, { subtree: true, childList: true })
 }
@@ -107,22 +103,49 @@ async function waitForSettledTail(page: Page) {
   await page.waitForTimeout(2000)
 }
 
+async function readFrames(page: Page): Promise<Frame[]> {
+  return page.evaluate(() => (window as unknown as { __frames: Frame[] }).__frames)
+}
+
+async function readLaterGaps(page: Page): Promise<number[]> {
+  return page.evaluate(() => (window as unknown as { __laterGaps: number[] }).__laterGaps)
+}
+
+async function arrivalGapNow(page: Page, text: string): Promise<number> {
+  return page.evaluate((text) => {
+    const row = [...document.querySelectorAll<HTMLElement>("main [data-event-id]")].find((r) =>
+      r.textContent?.includes(text)
+    )!
+    let scroller = row.parentElement!
+    while (getComputedStyle(scroller).overflowY !== "auto") scroller = scroller.parentElement!
+    return Math.round(scroller.getBoundingClientRect().bottom - row.getBoundingClientRect().bottom)
+  }, text)
+}
+
+/** The row sits in its final place from the first frame it lays out, with the list on the bottom every frame. */
+async function expectAppearedPinned(page: Page, text: string) {
+  const [frames, laterGaps, finalGap] = [
+    await readFrames(page),
+    await readLaterGaps(page),
+    await arrivalGapNow(page, text),
+  ]
+  expect(frames.length, "the arrival never laid out").toBeGreaterThan(0)
+  const offBottom = frames.filter((f) => f.distance > AT_BOTTOM_PX)
+  const misplaced = [frames[0].arrivalGap, ...laterGaps].filter((g) => g !== finalGap)
+  expect({ misplaced, offBottom }).toEqual({ misplaced: [], offBottom: [] })
+}
+
 async function expectPinnedArrival(page: Page, workspaceId: string, streamId: string) {
   const arrivalText = `arrival ${generateTestId()}`
   await page.evaluate(sampleArrival, { anchorText: "seed msg-040", arrivalText })
   await postMessage(page, workspaceId, streamId, arrivalText)
   await expect(page.getByRole("main").getByText(arrivalText).first()).toBeVisible({ timeout: 10000 })
   await page.waitForTimeout(1000)
-  const frames = await page.evaluate(() => (window as unknown as { __frames: Frame[] }).__frames)
 
-  // A loaded box paints a 450ms growth in as few as three frames.
-  expect(frames.length, "the arrival never grew").toBeGreaterThan(2)
-  const offBottom = frames.filter((f) => f.distance > AT_BOTTOM_PX)
-  const backwards = frames.filter((f, i) => i > 0 && f.anchorTop > frames[i - 1].anchorTop + 0.5)
-  expect({ offBottom, backwards }).toEqual({ offBottom: [], backwards: [] })
+  await expectAppearedPinned(page, arrivalText)
 }
 
-test("an arrival while pinned grows in and pushes the list up without leaving the bottom", async ({ page }) => {
+test("an arrival while pinned appears at full height without leaving the bottom", async ({ page }) => {
   const { workspaceId, streamId } = await openSeededChannel(page)
   await page.reload()
   await waitForSettledTail(page)
@@ -130,7 +153,7 @@ test("an arrival while pinned grows in and pushes the list up without leaving th
   await expectPinnedArrival(page, workspaceId, streamId)
 })
 
-test("a thread reply while pinned grows in and pushes the thread up without leaving the bottom", async ({ page }) => {
+test("a thread reply while pinned appears at full height without leaving the bottom", async ({ page }) => {
   await loginAndCreateWorkspace(page)
   await createChannel(page, `pop-${generateTestId()}`, { switchToAll: false })
   const workspaceId = page.url().match(/\/w\/([^/]+)/)![1]
@@ -176,23 +199,16 @@ test("an arrival while reading history moves nothing on screen", async ({ page }
     timeout: 10000,
   })
   await page.waitForTimeout(1000)
-  const frames = await page.evaluate(() => (window as unknown as { __frames: Frame[] }).__frames)
+  const frames = await readFrames(page)
 
-  expect(frames.length, "the arrival never grew").toBeGreaterThan(2)
+  expect(frames.length, "the arrival never laid out").toBeGreaterThan(0)
   const moved = frames.filter((f) => f.anchorTop !== before.anchorTop)
   expect({ moved, after: await anchorTopNow() }).toEqual({ moved: [], after: before })
 })
 
-test("opening a stream animates nothing", async ({ page }) => {
-  await openSeededChannel(page)
-  await page.addInitScript(watchForAnimation)
-  await page.reload()
-  await waitForSettledTail(page)
-
-  expect(await sawAnimation(page)).toBe(false)
-})
-
-test("your own send grows in and pushes the list up without leaving the bottom", async ({ page }) => {
+test("your own send leaves the composer at once and appears pinned, keeping what you type meanwhile", async ({
+  page,
+}) => {
   await openSeededChannel(page)
   await page.reload()
   await waitForSettledTail(page)
@@ -202,69 +218,47 @@ test("your own send grows in and pushes the list up without leaving the bottom",
   await editor.click()
   await editor.pressSequentially(text)
   await page.evaluate(sampleArrival, { anchorText: "seed msg-040", arrivalText: text })
-  await page.getByRole("button", { name: "Send", exact: true }).first().click()
-  await expect(page.getByRole("main").getByText(text).first()).toBeVisible({ timeout: 10000 })
-  await page.waitForTimeout(1000)
-  const frames = await page.evaluate(() => (window as unknown as { __frames: Frame[] }).__frames)
-
-  expect(frames.length, "the send never grew").toBeGreaterThan(2)
-  const offBottom = frames.filter((f) => f.distance > AT_BOTTOM_PX)
-  const backwards = frames.filter((f, i) => i > 0 && f.anchorTop > frames[i - 1].anchorTop + 0.5)
-  expect({ offBottom, backwards }).toEqual({ offBottom: [], backwards: [] })
-})
-
-test("your own send leaves the composer in the frame its row appears", async ({ page }) => {
-  await openSeededChannel(page)
-  await waitForSettledTail(page)
-
-  const text = `own send ${generateTestId()}`
-  const editor = page.locator("[contenteditable='true']").first()
-  await editor.click()
-  await editor.pressSequentially(text)
   await page.evaluate((text) => {
-    const probe = window as unknown as { __sendGap: boolean }
-    probe.__sendGap = false
+    const probe = window as unknown as { __composerInNextFrame: boolean | null }
+    probe.__composerInNextFrame = null
     const composer = document.querySelector("[contenteditable='true']")!
-    const tick = () => {
-      const inComposer = composer.textContent?.includes(text) ?? false
-      const inTimeline = [...document.querySelectorAll("[data-message-id]")].some((row) =>
-        row.textContent?.includes(text)
-      )
-      if (!inComposer && !inTimeline) probe.__sendGap = true
-      if (!inTimeline) requestAnimationFrame(tick)
-    }
-    requestAnimationFrame(tick)
+    document.addEventListener(
+      "keydown",
+      (e) => {
+        if (e.key !== "Enter") return
+        requestAnimationFrame(() => (probe.__composerInNextFrame = composer.textContent?.includes(text) ?? false))
+      },
+      { capture: true, once: true }
+    )
   }, text)
   await page.keyboard.press("Enter")
   await page.keyboard.type("still typing")
 
   await expect(page.getByRole("main").getByText(text).first()).toBeVisible({ timeout: 10000 })
   await expect(editor).toHaveText("still typing")
-  expect(await page.evaluate(() => (window as unknown as { __sendGap: boolean }).__sendGap)).toBe(false)
+  await page.waitForTimeout(1000)
+  expect(
+    await page.evaluate(() => (window as unknown as { __composerInNextFrame: boolean | null }).__composerInNextFrame)
+  ).toBe(false)
+  await expectAppearedPinned(page, text)
 })
 
-/** Records every order `first`/`second` rows render in, and whether `first` ever grew. */
+/** Records every order `first`/`second` rows render in. */
 function watchOrder({ first, second }: { first: string; second: string }) {
-  const state = { orders: [] as string[], firstGrew: false }
+  const state = { orders: [] as string[] }
   ;(window as unknown as { __order: typeof state }).__order = state
   const check = () => {
     const rows = [...document.querySelectorAll<HTMLElement>("main [data-event-id]")]
     const a = rows.findIndex((row) => row.textContent?.includes(first))
     const b = rows.findIndex((row) => row.textContent?.includes(second))
-    if (a >= 0 && rows[a].closest(".pop-in-grow")) state.firstGrew = true
     if (a < 0 || b < 0) return
     const order = a < b ? "first above second" : "second above first"
     if (state.orders.at(-1) !== order) state.orders.push(order)
   }
-  new MutationObserver(check).observe(document.querySelector("main")!, {
-    subtree: true,
-    childList: true,
-    attributes: true,
-    attributeFilter: ["class"],
-  })
+  new MutationObserver(check).observe(document.querySelector("main")!, { subtree: true, childList: true })
 }
 
-test("a message landing while your send is in flight grows in above it, and your send keeps its place", async ({
+test("a message landing while your send is in flight appears above it, and your send keeps its place", async ({
   page,
 }) => {
   const { workspaceId, streamId } = await openSeededChannel(page)
@@ -297,54 +291,5 @@ test("a message landing while your send is in flight grows in above it, and your
 
   expect(await page.evaluate(() => (window as unknown as { __order: unknown }).__order)).toEqual({
     orders: ["first above second"],
-    firstGrew: true,
   })
-})
-
-/** Counts the separate growths a row carrying `text` goes through. */
-function countGrowths({ text }: { text: string }) {
-  const seen = new WeakSet<Element>()
-  const state = { growths: 0 }
-  ;(window as unknown as { __growths: typeof state }).__growths = state
-  new MutationObserver(() => {
-    for (const growing of document.querySelectorAll("main .pop-in-grow")) {
-      if (seen.has(growing) || !growing.textContent?.includes(text)) continue
-      seen.add(growing)
-      state.growths++
-    }
-  }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ["class"] })
-}
-
-test("a slash command's chip grows in once when the server confirms it", async ({ page }) => {
-  const { workspaceId } = await openSeededChannel(page)
-  const botResponse = await page.request.post(`/api/workspaces/${workspaceId}/bots`, {
-    data: { name: "PopBot", slug: `pop-bot-${generateTestId()}`, description: "A test bot", avatarEmoji: "🤖" },
-  })
-  await expectApiOk(botResponse, "create bot")
-  await page.reload()
-  await waitForSettledTail(page)
-  // Held past the chip's 450ms growth, so the optimistic → server swap lands on a settled row.
-  await page.route(/\/commands\/dispatch$/, async (route: Route) => {
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-    await route.continue()
-  })
-
-  const editor = page.locator("[contenteditable='true']").first()
-  await editor.click()
-  await page.keyboard.type("/inv")
-  await page
-    .locator("[aria-label='Slash command suggestions']")
-    .getByRole("option", { name: /invite/ })
-    .click()
-  await page.keyboard.type("@")
-  await page
-    .locator("[aria-label='Mention suggestions']")
-    .getByRole("option", { name: /PopBot/ })
-    .click()
-  await page.evaluate(countGrowths, { text: "/invite" })
-  await page.getByRole("button", { name: "Send", exact: true }).first().click()
-  await expect(page.getByText("PopBot was added to the conversation")).toBeVisible({ timeout: 20000 })
-  await page.waitForTimeout(1000)
-
-  expect(await page.evaluate(() => (window as unknown as { __growths: { growths: number } }).__growths.growths)).toBe(1)
 })

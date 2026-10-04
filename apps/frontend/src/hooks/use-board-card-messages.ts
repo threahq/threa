@@ -49,7 +49,6 @@ function eventToRenderable(event: CachedEvent): RenderableMessage | null {
     attachments: p.attachments,
     linkPreviews: p.linkPreviews,
     memoEmbeds: p.memoEmbeds,
-    clientMessageId: p.clientMessageId,
   }
 }
 

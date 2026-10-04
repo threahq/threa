@@ -1,16 +1,10 @@
 import { type CSSProperties, type ReactNode, useRef } from "react"
 import { Virtualizer, type VirtualizerHandle } from "virtua"
 import { cn } from "@/lib/utils"
-import { PopIn, useArrivals } from "./pop-in"
 
 interface VirtualizedScrollerItem {
   /** Stable across renders — this is the virtualizer's identity for the row. */
   key: string
-  /** Identity for arrival animation when it outlives `key` — an optimistic
-   *  row's client id, which its server row keeps. Defaults to `key`. */
-  arrivalKey?: string
-  /** An unsent own row; see `useArrivals`. */
-  inFlight?: boolean
   node: ReactNode
 }
 
@@ -64,11 +58,6 @@ interface VirtualizedScrollerProps {
    */
   mask?: ReactNode
   skeleton?: ReactNode
-  /**
-   * Rows appended at the tail after the landing grow in (`PopIn`). Off while the
-   * window isn't the live tail (jump mode), where appends are newer pages.
-   */
-  animateArrivals?: boolean
 }
 
 /**
@@ -116,16 +105,8 @@ export function VirtualizedScroller({
   overlay,
   mask,
   skeleton,
-  animateArrivals = true,
   ...dataAttributes
 }: VirtualizedScrollerProps) {
-  const arrivals = useArrivals(
-    items.map((item) => item.arrivalKey ?? item.key),
-    scrollKey,
-    animateArrivals && !isInitialSettling,
-    new Set(items.filter((item) => item.inFlight).map((item) => item.arrivalKey ?? item.key))
-  )
-
   // Never mount the list empty: the initial landing and the settle mask in
   // useTimelineScroll both arm when items first exist, so a list mounted with
   // zero items paints an empty top-anchored frame and the populate + pin a
@@ -183,9 +164,9 @@ export function VirtualizedScroller({
               bufferSize={2000}
             >
               {items.map((item) => (
-                <PopIn key={item.key} className={itemClassName} arrivedAt={arrivals.get(item.arrivalKey ?? item.key)}>
+                <div key={item.key} className={itemClassName}>
                   {item.node}
-                </PopIn>
+                </div>
               ))}
             </Virtualizer>
           </div>
