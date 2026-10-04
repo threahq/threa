@@ -1,5 +1,10 @@
 export { AttachmentRepository } from "./repository"
-export type { Attachment, InsertAttachmentParams, AttachmentWithExtraction } from "./repository"
+export type {
+  Attachment,
+  InsertAttachmentParams,
+  InsertAttachmentCopyParams,
+  AttachmentWithExtraction,
+} from "./repository"
 
 export { AttachmentReferenceRepository } from "./reference-repository"
 export type { AttachmentReference, InsertAttachmentReferenceParams } from "./reference-repository"
@@ -40,7 +45,7 @@ export { PdfProcessingJobRepository } from "./pdf/job-repository"
 export type { PdfProcessingJob, InsertPdfProcessingJobParams } from "./pdf/job-repository"
 
 export { AttachmentService, buildContentDisposition, buildUploadParams, parseE2eUploadFlag } from "./service"
-export type { CreateAttachmentParams, UploadedFileFacts } from "./service"
+export type { CopyOutcome, CreateAttachmentParams, UploadedFileFacts } from "./service"
 
 export { createAttachmentHandlers } from "./handlers"
 

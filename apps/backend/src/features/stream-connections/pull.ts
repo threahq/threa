@@ -381,7 +381,7 @@ async function applyPage(
   const named = namedAuthors(page.changes.flatMap((change) => (change.kind === "message" ? [change.message] : [])))
   await assertUsersAreCopies(client, connection, named.userIds)
   await assertActorsAreCopies(client, connection, named, page.actors)
-  await applyCopyChanges(client, workspaceId, stream, page.changes)
+  await applyCopyChanges(client, workspaceId, stream, page.changes, connectionId)
   await StreamConnectionCursorRepository.upsert(client, {
     workspaceId,
     connectionId,

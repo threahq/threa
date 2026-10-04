@@ -10,6 +10,7 @@ import { botChannelAccessId, streamId, userId, workspaceId } from "../../src/lib
 import type { Querier } from "../../src/db"
 import { UserRepository, type InsertUserParams } from "../../src/features/workspaces"
 import { getTestDatabaseTarget, quoteDatabaseIdentifier } from "../test-database"
+import { createS3Storage, type StorageProvider } from "../../src/lib/storage/s3-client"
 import { BotRuntimeService } from "../../src/features/bot-runtimes"
 import { StreamService } from "../../src/features/streams"
 import { LabelAssignmentService, LabelService } from "../../src/features/labels"
@@ -28,6 +29,22 @@ export function botRuntimeServiceFor(pool: Pool): BotRuntimeService {
     botChannelService: new BotChannelService({ pool }),
   })
   return new BotRuntimeService({ pool, streamService: new StreamService(pool), labelAssignmentService })
+}
+
+/** Storage on the test bucket the preloaded test server created; call it from a hook, after the preload has set the S3 env. */
+export function createTestStorage(): StorageProvider {
+  const env = (name: string) => {
+    const value = process.env[name]
+    if (!value) throw new Error(`${name} is unset: call createTestStorage from a hook, after the test-server preload`)
+    return value
+  }
+  return createS3Storage({
+    bucket: env("S3_BUCKET"),
+    region: env("S3_REGION"),
+    accessKeyId: env("S3_ACCESS_KEY_ID"),
+    secretAccessKey: env("S3_SECRET_ACCESS_KEY"),
+    endpoint: env("S3_ENDPOINT"),
+  })
 }
 
 /**

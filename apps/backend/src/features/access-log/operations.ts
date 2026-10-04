@@ -118,6 +118,7 @@ export const ACCESS_LOG_OPERATIONS = [
   "stream_connections.revoke",
   "stream_connections.bridge_manifest",
   "stream_connections.bridge_events",
+  "stream_connections.bridge_attachment",
   "stream_connections.bridge_poke",
   // Search
   "search.messages",

@@ -197,13 +197,25 @@ export const bridgeManifestSchema = z.object({ streams: z.array(bridgeStreamSche
 export type BridgeManifest = z.infer<typeof bridgeManifestSchema>
 
 export const bridgeAttachmentSchema = z.object({
-  id: z.string().min(1),
+  id: z.string().regex(/^attach_[0-9A-Za-z]+$/),
   filename: z.string(),
   mimeType: z.string(),
   sizeBytes: z.number().int().nonnegative(),
   safetyStatus: z.enum(ATTACHMENT_SAFETY_STATUSES),
+  /** Pixel dimensions of an image. Absent from a host that predates them. */
+  width: z.number().int().positive().nullable().default(null),
+  height: z.number().int().positive().nullable().default(null),
 })
 export type BridgeAttachment = z.infer<typeof bridgeAttachmentSchema>
+
+/** Whether a partner can fetch a host attachment's bytes yet, and where from. */
+export const bridgeAttachmentResponseSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ready"), url: z.string().min(1) }),
+  z.object({ status: z.literal("pending") }),
+  z.object({ status: z.literal("blocked") }),
+  z.object({ status: z.literal("failed") }),
+])
+export type BridgeAttachmentResponse = z.infer<typeof bridgeAttachmentResponseSchema>
 
 /** A message's current state. */
 export const bridgeMessageSchema = z.object({

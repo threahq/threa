@@ -60,6 +60,21 @@ export interface Attachment {
   createdAt: Date
 }
 
+export interface InsertAttachmentCopyParams {
+  id: string
+  streamId: string
+  messageId: string
+  uploadedBy: string
+  filename: string
+  mimeType: string
+  sizeBytes: number
+  storagePath: string
+  width: number | null
+  height: number | null
+  safetyStatus: AttachmentSafetyStatus
+  processingStatus: ProcessingStatus
+}
+
 export interface InsertAttachmentParams {
   id: string
   workspaceId: string
@@ -264,6 +279,46 @@ export const AttachmentRepository = {
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     return mapRowToAttachment(result.rows[0])
+  },
+
+  /**
+   * Insert rows already bound to a message, in one statement. No ON CONFLICT:
+   * a duplicate id fails the transaction rather than overwrite an attachment
+   * the workspace already owns.
+   */
+  async insertCopies(client: Querier, workspaceId: string, rows: InsertAttachmentCopyParams[]): Promise<Attachment[]> {
+    if (rows.length === 0) return []
+    const result = await client.query<AttachmentRow>(sql`
+      INSERT INTO attachments (
+        id, workspace_id, stream_id, message_id, uploaded_by,
+        filename, mime_type, size_bytes, storage_path,
+        width, height, safety_status, processing_status
+      )
+      SELECT
+        id, ${workspaceId}::text, stream_id, message_id, uploaded_by,
+        filename, mime_type, size_bytes, storage_path,
+        width, height, safety_status, processing_status
+      FROM UNNEST(
+        ${rows.map((r) => r.id)}::text[],
+        ${rows.map((r) => r.streamId)}::text[],
+        ${rows.map((r) => r.messageId)}::text[],
+        ${rows.map((r) => r.uploadedBy)}::text[],
+        ${rows.map((r) => r.filename)}::text[],
+        ${rows.map((r) => r.mimeType)}::text[],
+        ${rows.map((r) => r.sizeBytes)}::bigint[],
+        ${rows.map((r) => r.storagePath)}::text[],
+        ${rows.map((r) => r.width)}::int[],
+        ${rows.map((r) => r.height)}::int[],
+        ${rows.map((r) => r.safetyStatus)}::text[],
+        ${rows.map((r) => r.processingStatus)}::text[]
+      ) AS t(
+        id, stream_id, message_id, uploaded_by,
+        filename, mime_type, size_bytes, storage_path,
+        width, height, safety_status, processing_status
+      )
+      RETURNING ${sql.raw(SELECT_FIELDS)}
+    `)
+    return result.rows.map(mapRowToAttachment)
   },
 
   async attachToMessage(

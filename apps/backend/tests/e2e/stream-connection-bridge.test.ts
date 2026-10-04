@@ -421,6 +421,54 @@ describe("Stream connection bridge", () => {
     ])
   })
 
+  test("should hand the partner a url for a shared message's file, refuse a file outside the tree, and record both reads", async () => {
+    const { client, workspace, channel, connection, partnerWorkspaceId, partner } = await setup()
+    const other = await createChannel(client, workspace.id, `files-${testRunId}`, "private")
+    const upload = (name: string, content: string) =>
+      uploadAttachment(client, workspace.id, { content, filename: name, mimeType: "text/plain" })
+    const shared = await upload("shared.txt", "shared bytes")
+    const hidden = await upload("hidden.txt", "hidden bytes")
+    await sendMessageWithAttachments(client, workspace.id, channel.id, "file", [shared.id])
+    await sendMessageWithAttachments(client, workspace.id, other.id, "file", [hidden.id])
+
+    const served = await partner(`/attachments/${shared.id}`)
+    const refused = await partner(`/attachments/${hidden.id}`)
+
+    const { url } = served.data as { url: string }
+    expect({
+      served: {
+        status: served.status,
+        answer: (served.data as { status: string }).status,
+        bytes: await (await fetch(url)).text(),
+      },
+      refused: { status: refused.status, code: (refused.data as { code?: string }).code },
+    }).toEqual({
+      served: { status: 200, answer: "ready", bytes: "shared bytes" },
+      refused: { status: 404, code: "STREAM_CONNECTION_NOT_FOUND" },
+    })
+    let rows: Array<{ outcome: string; subjects: unknown }> = []
+    for (let attempt = 0; attempt < 40 && rows.length < 2; attempt++) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 50))
+      ;({ rows } = await pool.query(
+        `SELECT actor_id, auth_ref, access_kind, outcome, subjects FROM access_log
+         WHERE workspace_id = $1 AND operation = 'stream_connections.bridge_attachment' ORDER BY outcome`,
+        [workspace.id]
+      ))
+    }
+    const disclosure = { actor_id: partnerWorkspaceId, auth_ref: connection.id, access_kind: "disclose" }
+    expect(rows).toEqual([
+      {
+        ...disclosure,
+        outcome: "denied",
+        subjects: [
+          { type: "param", id: connection.id },
+          { type: "param", id: hidden.id },
+        ],
+      },
+      { ...disclosure, outcome: "success", subjects: [{ type: "attachment", id: shared.id }] },
+    ])
+  })
+
   test("should keep pointers that resolve inside the shared tree and flatten or drop the rest", async () => {
     const { client, workspace, channel, partner } = await setup()
     const other = await createChannel(client, workspace.id, `private-${testRunId}`, "private")

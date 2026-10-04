@@ -61,6 +61,7 @@ export const JobQueues = {
   PUSH_SESSION_EXPIRED: "push.session_expired",
   STREAM_CONNECTION_PULL: "stream_connection.pull",
   STREAM_CONNECTION_SWEEP: "stream_connection.sweep",
+  STREAM_CONNECTION_COPY_ATTACHMENT: "stream_connection.copy_attachment",
 } as const
 
 export type JobQueueName = (typeof JobQueues)[keyof typeof JobQueues]
@@ -165,6 +166,13 @@ export interface StreamConnectionPullJobData {
 
 export interface StreamConnectionSweepJobData {
   workspaceId: string // Use "system" for system-wide cron job
+}
+
+/** A partner workspace copies one host attachment's bytes into its own storage. */
+export interface StreamConnectionCopyAttachmentJobData {
+  workspaceId: string
+  connectionId: string
+  attachmentId: string
 }
 
 export interface MemoBatchCheckJobData {
@@ -494,6 +502,7 @@ export interface JobDataMap {
   [JobQueues.LINK_PREVIEW_VISIBLE_REFRESH]: LinkPreviewVisibleRefreshJobData
   [JobQueues.STREAM_CONNECTION_PULL]: StreamConnectionPullJobData
   [JobQueues.STREAM_CONNECTION_SWEEP]: StreamConnectionSweepJobData
+  [JobQueues.STREAM_CONNECTION_COPY_ATTACHMENT]: StreamConnectionCopyAttachmentJobData
 }
 
 /** Returns void on success, throws on error. */

@@ -11,7 +11,7 @@ import {
   type BridgeManifest,
 } from "@threahq/types"
 import { streamConnectionId } from "@threahq/backend-common"
-import { addTestMember, setupIsolatedTestDatabase, testMessageContent } from "./setup"
+import { addTestMember, createTestStorage, setupIsolatedTestDatabase, testMessageContent } from "./setup"
 import { ActorCopyRepository, WorkspaceRepository } from "../../src/features/workspaces"
 import { ARIADNE_AGENT_ID, PersonaRepository } from "../../src/features/agents"
 import { BotRepository } from "../../src/features/public-api"
@@ -65,7 +65,7 @@ describe("Actor copies", () => {
     pool = isolated.pool
     cleanup = isolated.cleanup
     featureFlagService = new FeatureFlagService(pool)
-    exporter = new StreamConnectionExportService({ pool, featureFlagService })
+    exporter = new StreamConnectionExportService({ pool, featureFlagService, storage: createTestStorage() })
     eventService = new EventService(pool)
   }, 120_000)
 

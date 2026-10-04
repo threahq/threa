@@ -1,6 +1,6 @@
 import { z } from "zod"
 import { Pool, type PoolClient } from "pg"
-import { withTransaction } from "../../db"
+import { withTransaction, type Querier } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository, type Attachment } from "./repository"
 import { AttachmentUploadRepository } from "./upload-repository"
@@ -115,6 +115,8 @@ export type CompleteReservedUploadResult =
   | { status: "blocked"; reason: string }
   | { status: "size_mismatch"; expectedSizeBytes: number; receivedSizeBytes: number }
   | { status: "conflict"; reason: string }
+
+export type CopyOutcome = "clean" | "quarantined" | "failed"
 
 export type ReportUploadFailureResult = "reported" | "already_settled" | "not_found" | "forbidden"
 
@@ -380,6 +382,48 @@ export class AttachmentService {
   }
 
   /**
+   * Settles a shared channel's copy of a host attachment: its bytes landed
+   * (`clean`), the host blocked it (`quarantined`), or the copy gave up
+   * (`failed`). A copy never emits `attachment:uploaded`: the host already
+   * scanned it, and nothing in the partner reads host files. Idempotent: a row
+   * that is no longer awaiting its copy is left as it is.
+   */
+  async settleCopy(workspaceId: string, attachmentId: string, outcome: CopyOutcome): Promise<void> {
+    await withTransaction(this.pool, (client) =>
+      this.settleCopyInTransaction(client, workspaceId, attachmentId, outcome)
+    )
+  }
+
+  /** `settleCopy` inside a caller's open transaction, such as a queue's dead-letter move. */
+  async settleCopyInTransaction(
+    client: Querier,
+    workspaceId: string,
+    attachmentId: string,
+    outcome: CopyOutcome
+  ): Promise<void> {
+    const current = await AttachmentRepository.findByIdForUpdate(client, workspaceId, attachmentId)
+    if (current?.safetyStatus !== AttachmentSafetyStatuses.PENDING_UPLOAD) return
+
+    if (outcome === "failed") {
+      const failed = await AttachmentUploadRepository.markFailed(client, workspaceId, attachmentId, {
+        code: "copy_failed",
+      })
+      if (failed) await this.publishUploadStatusChanged(client, current, AttachmentUploadStatuses.FAILED)
+      return
+    }
+
+    await this.transitionReservedSafety(
+      client,
+      current,
+      outcome === "clean" ? AttachmentSafetyStatuses.CLEAN : AttachmentSafetyStatuses.QUARANTINED
+    )
+    await AttachmentUploadRepository.deleteByAttachmentId(client, workspaceId, attachmentId)
+    const settled = await AttachmentRepository.findById(client, workspaceId, attachmentId)
+    if (!settled) throw new Error(`Attachment not found after settling its copy: ${attachmentId}`)
+    await this.publishUploadStatusChanged(client, settled, AttachmentUploadStatuses.UPLOADED)
+  }
+
+  /**
    * Cron sweep for uploads whose client died without reporting: idle
    * reserved/uploading rows flip to `failed` (viewers see it), long-failed
    * rows flip to `abandoned` — deleting never-bound zombie attachment rows and
@@ -507,7 +551,7 @@ export class AttachmentService {
    * on any other divergence.
    */
   private async transitionReservedSafety(
-    client: PoolClient,
+    client: Querier,
     current: Attachment,
     to: AttachmentSafetyStatus
   ): Promise<void> {
@@ -530,7 +574,7 @@ export class AttachmentService {
    * row lock).
    */
   private async publishUploadStatusChanged(
-    client: PoolClient,
+    client: Querier,
     attachment: Attachment,
     uploadStatus: AttachmentUploadStatus
   ): Promise<void> {

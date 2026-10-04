@@ -1,9 +1,25 @@
 import { isDeepStrictEqual } from "node:util"
 import type { PoolClient } from "pg"
 import { serializeBigInt } from "@threahq/backend-common"
-import { AuthorTypes, type AuthorType, type BridgeChange, type BridgeMessage } from "@threahq/types"
+import {
+  AttachmentSafetyStatuses,
+  AttachmentUploadStatuses,
+  AuthorTypes,
+  ProcessingStatuses,
+  type AttachmentSummary,
+  type AuthorType,
+  type BridgeChange,
+  type BridgeMessage,
+} from "@threahq/types"
 import { OutboxRepository } from "../../lib/outbox"
-import { eventId, messageVersionId } from "../../lib/id"
+import { eventId, messageVersionId, attachmentReferenceId, attachmentUploadId } from "../../lib/id"
+import { JobQueues, QueueRepository, type StreamConnectionCopyAttachmentJobData } from "../../lib/queue"
+import {
+  AttachmentReferenceRepository,
+  AttachmentRepository,
+  AttachmentUploadRepository,
+  toAttachmentSummary,
+} from "../attachments"
 import {
   StreamEventRepository,
   StreamRepository,
@@ -34,12 +50,16 @@ export async function applyCopyChanges(
   client: PoolClient,
   workspaceId: string,
   stream: Stream,
-  changes: BridgeChange[]
+  changes: BridgeChange[],
+  connectionId: string
 ): Promise<void> {
   const nextOrdinal = tailOrdinals(client, workspaceId, stream.id)
   for (const change of changes) {
-    if (change.kind === "message") await applyMessageCopy(client, workspaceId, stream, change.message, nextOrdinal)
-    else await removeMessageCopy(client, workspaceId, stream, change.messageId)
+    if (change.kind === "message") {
+      await applyMessageCopy(client, workspaceId, stream, connectionId, change.message, nextOrdinal)
+    } else {
+      await removeMessageCopy(client, workspaceId, stream, change.messageId)
+    }
   }
 }
 
@@ -65,6 +85,7 @@ async function applyMessageCopy(
   client: PoolClient,
   workspaceId: string,
   stream: Stream,
+  connectionId: string,
   copy: BridgeMessage,
   nextOrdinal: NextOrdinal
 ): Promise<void> {
@@ -74,7 +95,7 @@ async function applyMessageCopy(
   await lockMessageCountStreams(client, workspaceId, [stream.id])
   const existing = await MessageRepository.findByIdForUpdate(client, workspaceId, copy.id)
   if (!existing) {
-    await insertCopy(client, workspaceId, stream, copy, nextOrdinal)
+    await insertCopy(client, workspaceId, stream, connectionId, copy, nextOrdinal)
   } else {
     if (existing.streamId !== stream.id || existing.deletedAt) {
       throw new Error(`Message copy ${copy.id} conflicts with message ${existing.id} in stream ${existing.streamId}`)
@@ -136,15 +157,94 @@ async function removeMessageCopy(
   }
 }
 
+/**
+ * Rows for the host message's files, bound to the copy. Bytes stay on the host
+ * until a queued job copies each one; until then a file reads as uploading.
+ * Plain inserts: an id this workspace already holds means the host named a
+ * file that is not its own, and the page is refused.
+ */
+async function insertCopyAttachments(
+  client: PoolClient,
+  workspaceId: string,
+  stream: Stream,
+  connectionId: string,
+  copy: BridgeMessage
+): Promise<AttachmentSummary[]> {
+  if (copy.attachments.length === 0) return []
+  const rows = await AttachmentRepository.insertCopies(
+    client,
+    workspaceId,
+    copy.attachments.map((attachment) => ({
+      id: attachment.id,
+      streamId: stream.id,
+      messageId: copy.id,
+      uploadedBy: copy.authorId,
+      filename: attachment.filename,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+      storagePath: `${workspaceId}/${attachment.id}/${attachment.filename}`,
+      width: attachment.width,
+      height: attachment.height,
+      safetyStatus:
+        attachment.safetyStatus === AttachmentSafetyStatuses.QUARANTINED
+          ? AttachmentSafetyStatuses.QUARANTINED
+          : AttachmentSafetyStatuses.PENDING_UPLOAD,
+      processingStatus: ProcessingStatuses.SKIPPED,
+    }))
+  )
+  const awaitingBytes = rows.filter((row) => row.safetyStatus === AttachmentSafetyStatuses.PENDING_UPLOAD)
+  await AttachmentUploadRepository.insertMany(
+    client,
+    awaitingBytes.map((row) => ({
+      id: attachmentUploadId(),
+      workspaceId,
+      attachmentId: row.id,
+      uploadedBy: copy.authorId,
+      expectedSizeBytes: row.sizeBytes,
+    }))
+  )
+  await AttachmentReferenceRepository.insertMany(
+    client,
+    rows.map((row) => ({
+      id: attachmentReferenceId(),
+      workspaceId,
+      attachmentId: row.id,
+      messageId: copy.id,
+      streamId: stream.id,
+    }))
+  )
+  const now = new Date()
+  await QueueRepository.batchInsert(
+    client,
+    awaitingBytes.map((row) => {
+      const payload: StreamConnectionCopyAttachmentJobData = { workspaceId, connectionId, attachmentId: row.id }
+      return {
+        id: `scfile_${workspaceId}_${row.id}`,
+        queueName: JobQueues.STREAM_CONNECTION_COPY_ATTACHMENT,
+        workspaceId,
+        payload,
+        processAfter: now,
+        insertedAt: now,
+      }
+    })
+  )
+  const awaiting = new Set(awaitingBytes.map((row) => row.id))
+  return rows.map((row) =>
+    toAttachmentSummary(row, awaiting.has(row.id) ? AttachmentUploadStatuses.RESERVED : undefined)
+  )
+}
+
 async function insertCopy(
   client: PoolClient,
   workspaceId: string,
   stream: Stream,
+  connectionId: string,
   copy: BridgeMessage,
   nextOrdinal: NextOrdinal
 ): Promise<void> {
   const createdAt = new Date(copy.createdAt)
   await adjustStreamMessageCount(client, workspaceId, stream.id, 1)
+  const attachments = await insertCopyAttachments(client, workspaceId, stream, connectionId, copy)
   const event = await StreamEventRepository.insert(client, {
     id: eventId(),
     workspaceId,
@@ -155,6 +255,7 @@ async function insertCopy(
       contentJson: copy.contentJson,
       contentMarkdown: copy.contentMarkdown,
       revision: 1,
+      ...(attachments.length > 0 && { attachments }),
     } satisfies MessageCreatedPayload,
     actorId: copy.authorId,
     actorType: copy.authorType,
@@ -184,7 +285,7 @@ async function insertCopy(
       sequence: event.sequence,
       contentJson: copy.contentJson,
       contentMarkdown: copy.contentMarkdown,
-      attachments: [],
+      attachments,
     })
   )
   await OutboxRepository.insert(client, "message:created", {
@@ -264,6 +365,7 @@ async function replaceContextRows(
   existing: Message,
   copy: BridgeMessage
 ): Promise<void> {
+  const attachments = await AttachmentRepository.findByMessageId(client, workspaceId, copy.id)
   await StreamContextRepository.replaceForMessage(
     client,
     workspaceId,
@@ -278,7 +380,7 @@ async function replaceContextRows(
       sequence: existing.sequence,
       contentJson: copy.contentJson,
       contentMarkdown: copy.contentMarkdown,
-      attachments: [],
+      attachments: attachments.map((attachment) => toAttachmentSummary(attachment)),
     })
   )
 }

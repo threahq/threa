@@ -32,8 +32,14 @@ const COPY_TREATMENT: Record<string, { treatment: Treatment; why: string }> = {
     treatment: "skips",
     why: "a copy is created by the bridge, not its named creator; user copies hold no consent",
   },
-  "features/attachments/embedding-outbox-handler.ts": { treatment: "inert", why: "copies carry no attachments" },
-  "features/attachments/uploaded-outbox-handler.ts": { treatment: "inert", why: "copies carry no attachments" },
+  "features/attachments/embedding-outbox-handler.ts": {
+    treatment: "inert",
+    why: "copies never emit attachment:uploaded, so no copied file is processed or embedded",
+  },
+  "features/attachments/uploaded-outbox-handler.ts": {
+    treatment: "inert",
+    why: "copies never emit attachment:uploaded; the host scanned the file and the partner only takes its clean bytes",
+  },
   "features/bot-runtimes/invocation-outbox-handler.ts": { treatment: "skips", why: "no bot turns on host content" },
   "features/commands/outbox-handler.ts": {
     treatment: "serves",
