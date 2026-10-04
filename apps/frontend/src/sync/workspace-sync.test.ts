@@ -620,13 +620,19 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     ])
   })
 
-  it("should keep cached actor copies when a bootstrap from an older server omits them", async () => {
+  it.each([
+    ["full", (at: number) => applyWorkspaceBootstrap("ws_1", makeBootstrap(), at)],
+    [
+      "reconnect",
+      (at: number) => applyReconnectBootstrapBatch("ws_1", makeBootstrap(), new Map(), new Set(), new Set(), at),
+    ],
+  ])("should keep cached actor copies when a %s bootstrap from an older server omits them", async (_, apply) => {
     const fetchStartedAt = Date.now() - 1000
     const cached = { ...makeActorCopy("persona_host", "Host Persona"), _cachedAt: fetchStartedAt - 86400000 }
     await db.actorCopies.put(cached)
     resetWorkspaceStoreCache()
 
-    await applyWorkspaceBootstrap("ws_1", makeBootstrap(), fetchStartedAt)
+    await apply(fetchStartedAt)
 
     expect({ stored: await db.actorCopies.toArray(), seeded: getCachedWorkspaceTables("ws_1").actorCopies }).toEqual({
       stored: [cached],
