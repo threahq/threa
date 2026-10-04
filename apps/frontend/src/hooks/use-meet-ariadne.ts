@@ -4,9 +4,9 @@ import { getActiveDb } from "@/db"
 
 /** Creates (or reuses) the viewer's Meet Ariadne scratchpad and caches its id; resolves to the stream id. */
 export function useMeetAriadne(workspaceId: string): () => Promise<string> {
-  const inFlight = useRef<Promise<string> | null>(null)
+  const inFlight = useRef<{ workspaceId: string; request: Promise<string> } | null>(null)
   return useCallback(() => {
-    if (inFlight.current) return inFlight.current
+    if (inFlight.current?.workspaceId === workspaceId) return inFlight.current.request
     // Resolved before the request so a workspace switch mid-flight cannot redirect the write.
     const database = getActiveDb()
     const request = (async () => {
@@ -17,9 +17,9 @@ export function useMeetAriadne(workspaceId: string): () => Promise<string> {
         .catch((error) => console.warn("Failed to cache the Meet Ariadne stream", error))
       return streamId
     })().finally(() => {
-      inFlight.current = null
+      if (inFlight.current?.request === request) inFlight.current = null
     })
-    inFlight.current = request
+    inFlight.current = { workspaceId, request }
     return request
   }, [workspaceId])
 }

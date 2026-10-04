@@ -165,11 +165,14 @@ export const WORKSPACE_REACH_TOOLS: ReadonlySet<string> = new Set<CardToolName>(
 /**
  * `general_research` runs its own toolset under the same stream policy, so it
  * searches the workspace only where the policy grants `workspace`. Any wired
- * `workspace` tool proves the grant; with none the card underclaims, never over.
+ * `workspace` tool proves the grant, including `workspace_research`, which has no
+ * `TOOL_CATEGORIES_BY_NAME` row; with none the card underclaims, never over.
  */
 function workspaceGranted(toolNames: readonly string[]): boolean {
-  return toolNames.some((tool) =>
-    (TOOL_CATEGORIES_BY_NAME as Record<string, readonly string[]>)[tool]?.includes("workspace")
+  return toolNames.some(
+    (tool) =>
+      tool === WORKSPACE_RESEARCH_TOOL_NAME ||
+      (TOOL_CATEGORIES_BY_NAME as Record<string, readonly string[]>)[tool]?.includes("workspace")
   )
 }
 
