@@ -169,7 +169,7 @@ export class StreamConnectionExportService {
       const cursor = hasMore ? events[events.length - 1].sequence : caughtUp
 
       const messageIds = [...new Set(events.flatMap((event) => changedMessageIds(event.eventType, event.payload)))]
-      const messages = await MessageRepository.findByIdsInWorkspace(client, caller.workspaceId, messageIds)
+      const messages = await MessageRepository.findByIds(client, caller.workspaceId, messageIds)
       const shared = messageIds.flatMap((id) => {
         const message = messages.get(id)
         if (!message) throw new Error(`Message ${id} named by an event of stream ${caller.streamId} does not exist`)
@@ -313,7 +313,7 @@ async function loadContentScope(
   }
   docs.forEach(visit)
 
-  const messages = await MessageRepository.findByIdsInWorkspace(client, workspaceId, [...messageIds])
+  const messages = await MessageRepository.findByIds(client, workspaceId, [...messageIds])
   const reachable = await AttachmentRepository.listReachableFromStreams(
     client,
     workspaceId,
