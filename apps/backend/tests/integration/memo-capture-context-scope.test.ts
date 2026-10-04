@@ -125,6 +125,7 @@ describe("memo capture: model context honors memo scope", () => {
   async function seedMessage(ws: Workspace, stream: string): Promise<string> {
     const id = messageId()
     await MessageRepository.insert(pool, {
+      workspaceId: ws.id,
       id,
       streamId: stream,
       sequence: nextSequence++,

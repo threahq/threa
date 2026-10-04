@@ -252,6 +252,7 @@ describe("report_back", () => {
         const posted = messageId()
         await withTransaction(pool, (client) =>
           MessageRepository.insert(client, {
+            workspaceId: ctx.workspaceId,
             id: posted,
             streamId: threadStreamId,
             sequence: 1n,
@@ -607,6 +608,7 @@ async function seedChannelMessage(streamId: string, sequence: bigint): Promise<s
   const id = messageId()
   await withTransaction(pool, (client) =>
     MessageRepository.insert(client, {
+      workspaceId: ctx.workspaceId,
       id,
       streamId,
       sequence,

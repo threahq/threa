@@ -180,6 +180,7 @@ export interface RecentEpisodeSummary {
 // Insert params
 export interface InsertSessionParams {
   id: string
+  workspaceId: string
   streamId: string
   personaId: string
   triggerMessageId: string
@@ -314,11 +315,12 @@ export const AgentSessionRepository = {
     const result = await db.query<SessionRow>(
       sql`
         INSERT INTO agent_sessions (
-          id, stream_id, persona_id, trigger_message_id,
+          id, workspace_id, stream_id, persona_id, trigger_message_id,
           trigger_message_revision, supersedes_session_id,
           status, server_id, heartbeat_at
         ) VALUES (
           ${params.id},
+          ${params.workspaceId},
           ${params.streamId},
           ${params.personaId},
           ${params.triggerMessageId},
@@ -357,11 +359,12 @@ export const AgentSessionRepository = {
     const result = await db.query<SessionRow>(
       sql`
         INSERT INTO agent_sessions (
-          id, stream_id, persona_id, trigger_message_id,
+          id, workspace_id, stream_id, persona_id, trigger_message_id,
           trigger_message_revision, supersedes_session_id,
           status, server_id, callback_token_hash, reply_key_generation, heartbeat_at, last_seen_sequence
         ) VALUES (
           ${params.id},
+          ${params.workspaceId},
           ${params.streamId},
           ${params.personaId},
           ${params.triggerMessageId},
@@ -968,21 +971,25 @@ export const AgentSessionRepository = {
    * existing step (INV-20).
    */
   async appendStep(db: Querier, params: AppendStepParams): Promise<AgentSessionStep> {
-    const session = await db.query(sql`SELECT 1 FROM agent_sessions WHERE id = ${params.sessionId}`)
+    const session = await db.query<{ workspace_id: string }>(
+      sql`SELECT workspace_id FROM agent_sessions WHERE id = ${params.sessionId}`
+    )
     if (session.rowCount === 0) {
       throw new Error(`agent_sessions row not found for session id ${params.sessionId}`)
     }
+    const workspaceId = session.rows[0].workspace_id
 
     while (true) {
       const result = await db.query<StepRow>(
         sql`
             INSERT INTO agent_session_steps (
-              id, session_id, step_number, step_type, content,
+              id, workspace_id, session_id, step_number, step_type, content,
               content_ciphertext, content_envelope, sources,
               message_id, tokens_used, started_at, completed_at, client_step_id
             )
             SELECT
               ${params.id},
+              ${workspaceId},
               ${params.sessionId},
               COALESCE(MAX(step_number), 0) + 1,
               ${params.stepType},
@@ -1027,10 +1034,11 @@ export const AgentSessionRepository = {
     const result = await db.query<StepRow>(
       sql`
         INSERT INTO agent_session_steps (
-          id, session_id, step_number, step_type, content, sources,
+          id, workspace_id, session_id, step_number, step_type, content, sources,
           message_id, tokens_used, started_at, completed_at
         ) VALUES (
           ${params.id},
+          (SELECT workspace_id FROM agent_sessions WHERE id = ${params.sessionId}),
           ${params.sessionId},
           ${params.stepNumber},
           ${params.stepType},

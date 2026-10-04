@@ -231,7 +231,7 @@ describe("StreamService.joinPublicChannel", () => {
     const result = await service.joinPublicChannel("stream_1", "ws_1", "member_1")
 
     expect(result).toMatchObject({ streamId: "stream_1", memberId: "member_1" })
-    expect(mockInsertMember).toHaveBeenCalledWith({}, "stream_1", "member_1")
+    expect(mockInsertMember).toHaveBeenCalledWith({}, "ws_1", "stream_1", "member_1")
   })
 
   test("should emit member_joined stream event and outbox event", async () => {
@@ -248,6 +248,7 @@ describe("StreamService.joinPublicChannel", () => {
       {},
       {
         id: "evt_1",
+        workspaceId: "ws_1",
         streamId: "stream_1",
         eventType: "member_joined",
         payload: {},
@@ -485,7 +486,7 @@ describe("StreamService.findOrCreateDm", () => {
         createdBy: "usr_2",
       })
     )
-    expect(mockInsertManyMembers).toHaveBeenCalledWith({}, "stream_dm_1", ["usr_1", "usr_2"])
+    expect(mockInsertManyMembers).toHaveBeenCalledWith({}, "ws_1", "stream_dm_1", ["usr_1", "usr_2"])
     expect(mockInsertOutbox).toHaveBeenCalledWith(
       {},
       "stream:created",

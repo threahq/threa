@@ -1043,6 +1043,7 @@ export class BotRuntimeService {
       if (!updated || status !== "deleted") continue
       const streamEvent = await StreamEventRepository.insert(db, {
         id: eventId(),
+        workspaceId,
         streamId: updated.streamId,
         eventType: "agent_session:deleted",
         payload: { sessionId: updated.id, deletedAt: updated.completedAt?.toISOString() ?? new Date().toISOString() },

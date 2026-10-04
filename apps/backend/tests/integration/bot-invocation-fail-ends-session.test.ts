@@ -57,7 +57,7 @@ describe("failBotInvocation ends the agent session", () => {
         companionMode: "off",
         createdBy: member,
       })
-      await StreamMemberRepository.insert(client, target, member)
+      await StreamMemberRepository.insert(client, workspace, target, member)
       await client.query("INSERT INTO bots (id, workspace_id, api_key_id, name) VALUES ($1,$2,$3,$4)", [
         botId,
         workspace,
@@ -113,6 +113,7 @@ describe("failBotInvocation ends the agent session", () => {
       )
       if (session !== "none") {
         await AgentSessionRepository.insert(client, {
+          workspaceId: workspace,
           id: invocationId,
           streamId: target,
           personaId: botId,

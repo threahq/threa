@@ -83,7 +83,7 @@ describe("read-as-owner write authority", () => {
           slug: `s-${id.slice(-10)}`,
           createdBy: ownerId,
         })
-        await StreamMemberRepository.insert(client, id, ownerId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, id, ownerId)
       }
 
       await StreamRepository.insert(client, {

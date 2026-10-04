@@ -60,7 +60,7 @@ describe("dynamic conversation naming", () => {
         companionMode: "off",
         createdBy: user,
       })
-      await StreamMemberRepository.insert(client, stream, user)
+      await StreamMemberRepository.insert(client, ws, stream, user)
       await ConversationRepository.insert(client, {
         id: conversation,
         streamId: stream,
@@ -71,6 +71,7 @@ describe("dynamic conversation naming", () => {
       for (let sequence = 1; sequence <= params.count; sequence += 1) {
         const id = messageId()
         await MessageRepository.insert(client, {
+          workspaceId: ws,
           id,
           streamId: stream,
           sequence: BigInt(sequence),
@@ -204,6 +205,7 @@ describe("dynamic conversation naming", () => {
       for (let sequence = 4; sequence <= 6; sequence += 1) {
         const id = messageId()
         await MessageRepository.insert(client, {
+          workspaceId: item.workspaceId,
           id,
           streamId: item.streamId,
           sequence: BigInt(sequence),

@@ -93,6 +93,7 @@ describe("memo batch: pending items", () => {
   ): Promise<string> {
     const id = messageId()
     await MessageRepository.insert(client, {
+      workspaceId: testWorkspaceId,
       id,
       streamId: ids.streamId,
       sequence,

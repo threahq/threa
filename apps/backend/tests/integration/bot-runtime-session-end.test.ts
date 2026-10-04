@@ -36,6 +36,7 @@ describe("ending a bot runtime session", () => {
   async function anchorMessage(markdown = "anchor message", targetStreamId = root) {
     sequence += 1n
     return MessageRepository.insert(pool, {
+      workspaceId: workspace,
       id: messageId(),
       streamId: targetStreamId,
       sequence,

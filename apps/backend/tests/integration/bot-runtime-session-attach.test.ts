@@ -32,6 +32,7 @@ describe("attachRuntimeSessionToThread", () => {
   async function anchorMessage(streamIdForAnchor = root, markdown = "anchor message") {
     sequence += 1n
     return MessageRepository.insert(pool, {
+      workspaceId: workspace,
       id: messageId(),
       streamId: streamIdForAnchor,
       sequence,

@@ -441,6 +441,7 @@ export class EnclaveClaimService {
         const deniedSessionId = newSessionId()
         const created = await AgentSessionRepository.insertRunningOrSkip(tx, {
           id: deniedSessionId,
+          workspaceId,
           streamId,
           personaId: ARIADNE_AGENT_ID,
           triggerMessageId: triggerId,
@@ -636,6 +637,7 @@ export class EnclaveClaimService {
       if (!(await ensureTriggerWritable(tx))) return null
       const created = await AgentSessionRepository.insertRunningOrSkip(tx, {
         id: sid,
+        workspaceId,
         streamId,
         personaId: ARIADNE_AGENT_ID,
         triggerMessageId: triggerId,
@@ -744,6 +746,7 @@ export class EnclaveClaimService {
   ): Promise<void> {
     const startedEvent = await StreamEventRepository.insert(tx, {
       id: eventId(),
+      workspaceId: params.workspaceId,
       streamId: params.stream.id,
       eventType: "agent_session:started",
       payload: {

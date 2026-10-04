@@ -102,6 +102,7 @@ describe("memo:updated", () => {
     await withTransaction(pool, async (client) => {
       const { MessageRepository } = await import("../../src/features/messaging")
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: sourceMsg,
         streamId: sourceChannel,
         sequence: sequence++,
@@ -166,6 +167,7 @@ describe("memo:updated", () => {
     await withTransaction(pool, async (client) => {
       const { MessageRepository } = await import("../../src/features/messaging")
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: sourceMsg,
         streamId: otherPrivateChannel,
         sequence: sequence++,
@@ -221,6 +223,7 @@ describe("memo:updated", () => {
     await withTransaction(pool, async (client) => {
       const { MessageRepository } = await import("../../src/features/messaging")
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: sourceMsg,
         streamId: publicChannel,
         sequence: sequence++,
@@ -279,6 +282,7 @@ describe("memo:updated", () => {
     await withTransaction(pool, async (client) => {
       const { MessageRepository } = await import("../../src/features/messaging")
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: srcMsg,
         streamId: publicChannel,
         sequence: sequence++,
@@ -303,7 +307,7 @@ describe("memo:updated", () => {
     })
 
     const { StreamMemberRepository } = await import("../../src/features/streams")
-    await StreamMemberRepository.insert(pool, publicChannel, testUserId)
+    await StreamMemberRepository.insert(pool, testWorkspaceId, publicChannel, testUserId)
 
     const target = await eventService.createMessage({
       workspaceId: testWorkspaceId,
@@ -382,6 +386,7 @@ describe("memo:updated", () => {
     await withTransaction(pool, async (client) => {
       const { MessageRepository } = await import("../../src/features/messaging")
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: sourceMsg,
         streamId: publicChannel,
         sequence: sequence++,

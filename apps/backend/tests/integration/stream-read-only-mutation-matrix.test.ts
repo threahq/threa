@@ -59,7 +59,7 @@ describe("synchronous stream read-only mutation matrix", () => {
         createdBy: member,
         ...overrides,
       })
-      await StreamMemberRepository.insert(client, id, member)
+      await StreamMemberRepository.insert(client, workspace, id, member)
     })
     return id
   }
@@ -99,7 +99,7 @@ describe("synchronous stream read-only mutation matrix", () => {
         companionMode: "off",
         createdBy: otherMember,
       })
-      await StreamMemberRepository.insert(client, foreign, otherMember)
+      await StreamMemberRepository.insert(client, otherWorkspace, foreign, otherMember)
     })
     await pool.query("UPDATE streams SET archived_at = NOW() WHERE id = $1", [archived])
     const service = new StreamService(pool)
@@ -190,6 +190,7 @@ describe("synchronous stream read-only mutation matrix", () => {
     const root = await seed({ visibility: "public" })
     const anchor = await StreamEventRepository.insert(pool, {
       id: eventId(),
+      workspaceId: workspace,
       streamId: root,
       eventType: "delegation:created",
       payload: {},

@@ -89,7 +89,7 @@ describe("deferred generated output authority", () => {
         createdBy: member,
         ...overrides,
       })
-      await StreamMemberRepository.insert(client, id, member)
+      await StreamMemberRepository.insert(client, workspace, id, member)
     })
     return id
   }
@@ -200,6 +200,7 @@ describe("deferred generated output authority", () => {
       )
       if (params.sealed) {
         await AgentSessionRepository.insertRunningOrSkip(client, {
+          workspaceId: workspace,
           id: invocationId,
           streamId: target,
           personaId: botId,
@@ -210,6 +211,7 @@ describe("deferred generated output authority", () => {
         })
       } else {
         await AgentSessionRepository.insert(client, {
+          workspaceId: workspace,
           id: invocationId,
           streamId: target,
           personaId: botId,
@@ -489,6 +491,7 @@ describe("deferred generated output authority", () => {
     ).message
     const sourceSessionId = sessionId()
     await AgentSessionRepository.insert(pool, {
+      workspaceId: workspace,
       id: sourceSessionId,
       streamId: target,
       personaId: "persona_followup_control",
@@ -787,6 +790,7 @@ describe("deferred generated output authority", () => {
       )
       const sourceSessionId = sessionId()
       await AgentSessionRepository.insert(pool, {
+        workspaceId: workspace,
         id: sourceSessionId,
         streamId: target,
         personaId: presentationId,
@@ -1081,6 +1085,7 @@ describe("deferred generated output authority", () => {
     ).message
     const sourceSessionId = sessionId()
     await AgentSessionRepository.insert(pool, {
+      workspaceId: workspace,
       id: sourceSessionId,
       streamId: target,
       personaId: "persona_followup_identity",
@@ -1137,6 +1142,7 @@ describe("deferred generated output authority", () => {
       ).message
       const sourceSessionId = sessionId()
       await AgentSessionRepository.insert(pool, {
+        workspaceId: workspace,
         id: sourceSessionId,
         streamId: target,
         personaId: "persona_followup",
@@ -1841,6 +1847,7 @@ describe("deferred generated output authority", () => {
       const id = sessionId()
       const token = `enclave_${crypto.randomUUID()}`
       await AgentSessionRepository.insertRunningOrSkip(pool, {
+        workspaceId: workspace,
         id,
         streamId: target,
         personaId: ARIADNE_AGENT_ID,
@@ -1924,6 +1931,7 @@ describe("deferred generated output authority", () => {
     const id = sessionId()
     const token = `enclave_${crypto.randomUUID()}`
     await AgentSessionRepository.insertRunningOrSkip(pool, {
+      workspaceId: workspace,
       id,
       streamId: target,
       personaId: ARIADNE_AGENT_ID,

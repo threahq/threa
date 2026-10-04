@@ -3,7 +3,7 @@ import type { Pool } from "pg"
 import { AgentStepTypes } from "@threahq/types"
 import { AgentSessionRepository, SessionStatuses, type SessionStatus } from "../../src/features/agents"
 import { loadEpisodeSummaryPromptBlock } from "../../src/features/agents/companion/episode-summaries"
-import { messageId, personaId, sessionId, stepId, streamId } from "../../src/lib/id"
+import { messageId, personaId, sessionId, stepId, streamId, workspaceId } from "../../src/lib/id"
 import { setupTestDatabase } from "./setup"
 
 describe("episode summaries: source stream access", () => {
@@ -22,7 +22,13 @@ describe("episode summaries: source stream access", () => {
    * nothing. Decoys that must never be injected: another stream's, another persona's, a running session's.
    */
   async function seedSessions() {
-    const ids = { streamId: streamId(), personaId: personaId(), shared: streamId(), private: streamId() }
+    const ids = {
+      workspaceId: workspaceId(),
+      streamId: streamId(),
+      personaId: personaId(),
+      shared: streamId(),
+      private: streamId(),
+    }
     await seedSession(ids, "Answered from the shared channel.", [[ids.shared]])
     await seedSession(ids, "Answered from the private channel.", [[ids.shared], [ids.private]])
     await seedSession(ids, "Answered without research.", [])
@@ -33,13 +39,14 @@ describe("episode summaries: source stream access", () => {
   }
 
   async function seedSession(
-    ids: { streamId: string; personaId: string },
+    ids: { workspaceId: string; streamId: string; personaId: string },
     summary: string,
     digestSourceStreamIds: string[][],
     status: SessionStatus = SessionStatuses.COMPLETED
   ) {
     const id = sessionId()
     await AgentSessionRepository.insert(pool, {
+      workspaceId: ids.workspaceId,
       id,
       streamId: ids.streamId,
       personaId: ids.personaId,
@@ -60,7 +67,7 @@ describe("episode summaries: source stream access", () => {
   }
 
   async function injectedSummaries(
-    ids: { streamId: string; personaId: string },
+    ids: { workspaceId: string; streamId: string; personaId: string },
     accessibleStreamIds: Set<string> | null
   ): Promise<string[]> {
     const block = await loadEpisodeSummaryPromptBlock(pool, { ...ids, accessibleStreamIds })

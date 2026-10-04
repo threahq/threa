@@ -74,7 +74,7 @@ describe("describe_memo viewer", () => {
         slug: `c-${publicChannelId.slice(-8)}`,
         createdBy: ownerId,
       })
-      await StreamMemberRepository.insert(client, publicChannelId, ownerId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, publicChannelId, ownerId)
 
       await StreamRepository.insert(client, {
         id: ownerScratchpadId,
@@ -83,7 +83,7 @@ describe("describe_memo viewer", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerId,
       })
-      await StreamMemberRepository.insert(client, ownerScratchpadId, ownerId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, ownerScratchpadId, ownerId)
 
       // Joined through one of the scratchpad's threads.
       const guestId = (await addTestMember(client, testWorkspaceId, userId())).id
@@ -94,13 +94,14 @@ describe("describe_memo viewer", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerId,
       })
-      await StreamMemberRepository.insert(client, sharedScratchpadId, ownerId)
-      await StreamMemberRepository.insert(client, sharedScratchpadId, guestId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, sharedScratchpadId, ownerId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, sharedScratchpadId, guestId)
 
       // Both memos cite a message in the public channel, so the source-stream
       // gate passes in every turn and only the memo's scope separates them.
       const sourceMessageId = messageId()
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: sourceMessageId,
         streamId: publicChannelId,
         sequence: 1n,

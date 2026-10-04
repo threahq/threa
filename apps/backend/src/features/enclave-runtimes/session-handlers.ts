@@ -896,6 +896,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
           const steps = await AgentSessionRepository.findStepsBySession(tx, id)
           const completedEvent = await StreamEventRepository.insert(tx, {
             id: eventId(),
+            workspaceId: stream.workspaceId,
             streamId: session.streamId,
             eventType: "agent_session:completed",
             payload: {

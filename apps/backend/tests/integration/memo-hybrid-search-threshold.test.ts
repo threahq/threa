@@ -42,10 +42,11 @@ describe("MemoRepository.hybridSearch semantic distance cutoff", () => {
         visibility: Visibilities.PRIVATE,
         createdBy: ownerId,
       })
-      await StreamMemberRepository.insert(client, scratchpadId, ownerId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, scratchpadId, ownerId)
 
       const sourceMessageId = messageId()
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: sourceMessageId,
         streamId: scratchpadId,
         sequence: 1n,

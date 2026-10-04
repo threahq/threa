@@ -74,7 +74,7 @@ describe("memo sources: deleted and edited messages", () => {
         createdBy: testUserId,
         memoryMode,
       })
-      await StreamMemberRepository.insert(client, seeded.streamId, testUserId)
+      await StreamMemberRepository.insert(client, testWorkspaceId, seeded.streamId, testUserId)
       await ConversationRepository.insert(client, {
         id: seeded.conversationId,
         streamId: seeded.streamId,
@@ -84,6 +84,7 @@ describe("memo sources: deleted and edited messages", () => {
       for (const [index, text] of ["the rollout starts on Monday", "and the flag defaults to off"].entries()) {
         const id = messageId()
         await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
           id,
           streamId: seeded.streamId,
           sequence: BigInt(index + 1),
@@ -146,6 +147,7 @@ describe("memo sources: deleted and edited messages", () => {
         memoryMode: MemoryModes.AUTO,
       })
       await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
         id: replyId,
         streamId: threadId,
         sequence: 1n,

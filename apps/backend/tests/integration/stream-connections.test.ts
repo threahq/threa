@@ -490,7 +490,7 @@ describe("StreamConnectionService", () => {
     const partner = await seedWorkspace("Globex")
     const outsider = await addTestMember(pool, host.id, `admin2-${host.id}`, "admin")
     const stream = await seedStream(host.id, host.adminId, StreamTypes.CHANNEL, "private")
-    await StreamMemberRepository.insert(pool, stream.id, host.adminId)
+    await StreamMemberRepository.insert(pool, host.id, stream.id, host.adminId)
     const pending = snapshot(host, stream.id)
     const joined = activated(snapshot(host, stream.id), partner)
     for (const s of [pending, joined]) await service.applySnapshot(s)
@@ -578,7 +578,7 @@ describe("StreamConnectionService", () => {
       ownerUserId: host.adminId,
       ownerUserKeyId: "e2ek_owner",
     })
-    await StreamMemberRepository.insert(pool, dm.id, host.adminId)
+    await StreamMemberRepository.insert(pool, host.id, dm.id, host.adminId)
 
     const outcomes = await Promise.allSettled(
       [dm, thread, archived, sealed].map((s) =>
@@ -645,7 +645,8 @@ describe("StreamConnectionService", () => {
         addTestMember(pool, host.id, `${name}-${host.id}`, "admin")
       )
     )
-    for (const user of [stillAdmin, leftChannel]) await StreamMemberRepository.insert(pool, privateChannel.id, user.id)
+    for (const user of [stillAdmin, leftChannel])
+      await StreamMemberRepository.insert(pool, host.id, privateChannel.id, user.id)
     for (const user of [stillAdmin, leftChannel, neverMember]) {
       await WorkspaceUserPermissionsRepository.upsert(pool, {
         workspaceId: host.id,
@@ -829,7 +830,7 @@ describe("StreamConnectionService", () => {
     await addTestMember(pool, host.id, `admin2-${host.id}`, "admin")
     const member = await addTestMember(pool, host.id, `member-${host.id}`)
     const stream = await seedStream(host.id, host.adminId, StreamTypes.CHANNEL, "private")
-    await StreamMemberRepository.insertMany(pool, stream.id, [host.adminId, member.id])
+    await StreamMemberRepository.insertMany(pool, host.id, stream.id, [host.adminId, member.id])
     const invited = snapshot(host, stream.id)
 
     await service.applySnapshot(invited)
@@ -849,7 +850,7 @@ describe("StreamConnectionService", () => {
     const host = await seedWorkspace("Acme")
     const member = await addTestMember(pool, host.id, `member-${host.id}`)
     const stream = await seedStream(host.id, member.id, StreamTypes.CHANNEL, "private")
-    await StreamMemberRepository.insertMany(pool, stream.id, [member.id])
+    await StreamMemberRepository.insertMany(pool, host.id, stream.id, [member.id])
 
     await service.applySnapshot(snapshot(host, stream.id))
 

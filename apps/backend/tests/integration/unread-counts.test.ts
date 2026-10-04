@@ -56,7 +56,7 @@ describe("Unread Counts", () => {
           `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)`,
           [testStreamId, testWorkspaceId, testUserId]
         )
-        await StreamMemberRepository.insert(client, testStreamId, testUserId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, testUserId)
       })
 
       const message = await eventService.createMessage({
@@ -89,7 +89,7 @@ describe("Unread Counts", () => {
           `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)`,
           [testStreamId, testWorkspaceId, testUserId]
         )
-        await StreamMemberRepository.insert(client, testStreamId, testUserId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, testUserId)
       })
 
       // Create 3 messages
@@ -139,7 +139,7 @@ describe("Unread Counts", () => {
           `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)`,
           [testStreamId, testWorkspaceId, testUserId]
         )
-        await StreamMemberRepository.insert(client, testStreamId, testUserId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, testUserId)
       })
 
       // Create 3 messages
@@ -173,8 +173,8 @@ describe("Unread Counts", () => {
           `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', 'private', $3)`,
           [testStreamId, testWorkspaceId, authorId]
         )
-        await StreamMemberRepository.insert(client, testStreamId, authorId)
-        await StreamMemberRepository.insert(client, testStreamId, otherUserId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, authorId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, otherUserId)
       })
 
       // Author sends a message
@@ -221,8 +221,8 @@ describe("Unread Counts", () => {
           `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)`,
           [stream2, testWorkspaceId, testUserId]
         )
-        await StreamMemberRepository.insert(client, stream1, testUserId)
-        await StreamMemberRepository.insert(client, stream2, testUserId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, stream1, testUserId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, stream2, testUserId)
       })
 
       // Stream 1: 2 messages
@@ -283,10 +283,10 @@ describe("Unread Counts", () => {
           `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)`,
           [stream2, testWorkspaceId, testUserId]
         )
-        await StreamMemberRepository.insert(client, stream1, testUserId)
-        await StreamMemberRepository.insert(client, stream2, testUserId)
-        await StreamMemberRepository.insert(client, stream1, otherUserId)
-        await StreamMemberRepository.insert(client, stream2, otherUserId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, stream1, testUserId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, stream2, testUserId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, stream1, otherUserId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, stream2, otherUserId)
       })
 
       // Add messages from another user so testUserId has unread messages
@@ -344,8 +344,8 @@ describe("Unread Counts", () => {
           `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)`,
           [stream2, testWorkspaceId, testUserId]
         )
-        await StreamMemberRepository.insert(client, stream1, testUserId)
-        await StreamMemberRepository.insert(client, stream2, testUserId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, stream1, testUserId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, stream2, testUserId)
       })
 
       // Add message to stream1 only
@@ -384,10 +384,10 @@ describe("Unread Counts", () => {
           `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)`,
           [stream2, workspace2, testUserId]
         )
-        await StreamMemberRepository.insert(client, stream1, testUserId)
-        await StreamMemberRepository.insert(client, stream2, testUserId)
-        await StreamMemberRepository.insert(client, stream1, otherUserId)
-        await StreamMemberRepository.insert(client, stream2, otherUserId)
+        await StreamMemberRepository.insert(client, workspace1, stream1, testUserId)
+        await StreamMemberRepository.insert(client, workspace2, stream2, testUserId)
+        await StreamMemberRepository.insert(client, workspace1, stream1, otherUserId)
+        await StreamMemberRepository.insert(client, workspace2, stream2, otherUserId)
       })
 
       // Add messages from another user so testUserId has unread messages
@@ -433,7 +433,7 @@ describe("Unread Counts", () => {
             `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)`,
             [id, testWorkspaceId, testUserId]
           )
-          await StreamMemberRepository.insert(client, id, testUserId)
+          await StreamMemberRepository.insert(client, testWorkspaceId, id, testUserId)
         }
       })
 
@@ -494,8 +494,8 @@ describe("Unread Counts", () => {
           `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', 'private', $3)`,
           [testStreamId, testWorkspaceId, authorId]
         )
-        await StreamMemberRepository.insert(client, testStreamId, authorId)
-        await StreamMemberRepository.insert(client, testStreamId, readerId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, authorId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, readerId)
       })
 
       return { testStreamId, testWorkspaceId, authorId, readerId }
@@ -643,7 +643,7 @@ describe("Unread Counts", () => {
           [testStreamId, testWorkspaceId, atTarget]
         )
         for (const m of [atTarget, past, behind, unread, dangling]) {
-          await StreamMemberRepository.insert(client, testStreamId, m)
+          await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, m)
         }
       })
 
@@ -708,8 +708,8 @@ describe("Unread Counts", () => {
           `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'dm', 'private', $3)`,
           [testStreamId, testWorkspaceId, authorId]
         )
-        await StreamMemberRepository.insert(client, testStreamId, authorId)
-        await StreamMemberRepository.insert(client, testStreamId, readerId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, authorId)
+        await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, readerId)
       })
 
       return { testStreamId, testWorkspaceId, authorId, readerId }

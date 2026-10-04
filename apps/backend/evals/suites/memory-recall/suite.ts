@@ -116,7 +116,7 @@ async function insertScenarioStream(
   })
   const memberIds = scenario.kind === "scratchpad" ? [ctx.userId] : [ctx.userId, bobId]
   for (const memberId of memberIds) {
-    await StreamMemberRepository.insert(ctx.pool, id, memberId)
+    await StreamMemberRepository.insert(ctx.pool, ctx.workspaceId, id, memberId)
   }
   return { streamId: id, memberIds }
 }

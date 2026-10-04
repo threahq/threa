@@ -119,6 +119,7 @@ export async function withCompanionSession(
 
     const session = await AgentSessionRepository.insertRunningOrSkip(db, {
       id: sessionId(),
+      workspaceId,
       streamId,
       personaId,
       triggerMessageId,
@@ -135,6 +136,7 @@ export async function withCompanionSession(
 
     const streamEvent = await StreamEventRepository.insert(db, {
       id: eventId(),
+      workspaceId,
       streamId,
       eventType: "agent_session:started",
       payload: {
@@ -199,6 +201,7 @@ export async function withCompanionSession(
 
         const streamEvent = await StreamEventRepository.insert(db, {
           id: eventId(),
+          workspaceId,
           streamId,
           eventType: "agent_session:completed",
           payload: {
@@ -295,6 +298,7 @@ export async function withCompanionSession(
         if (willRetry) {
           const streamEvent = await StreamEventRepository.insert(db, {
             id: eventId(),
+            workspaceId,
             streamId,
             eventType: "agent_session:interrupted",
             payload: {
@@ -319,6 +323,7 @@ export async function withCompanionSession(
           if (onTerminalFailure) await onTerminalFailure(db, String(err))
           const streamEvent = await StreamEventRepository.insert(db, {
             id: eventId(),
+            workspaceId,
             streamId,
             eventType: "agent_session:failed",
             payload: {

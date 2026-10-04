@@ -51,9 +51,10 @@ describe("message move integration", () => {
       companionMode: "on",
       createdBy: actor.id,
     })
-    await StreamMemberRepository.insert(pool, sourceStreamId, actor.id)
+    await StreamMemberRepository.insert(pool, testWorkspaceId, sourceStreamId, actor.id)
 
     const traceSession = await AgentSessionRepository.insert(pool, {
+      workspaceId: testWorkspaceId,
       id: sessionId(),
       streamId: sourceStreamId,
       personaId: personaId(),
@@ -93,6 +94,7 @@ describe("message move integration", () => {
     const traceStartedEventId = eventId()
     await StreamEventRepository.insert(pool, {
       id: traceStartedEventId,
+      workspaceId: testWorkspaceId,
       streamId: sourceStreamId,
       eventType: "agent_session:started",
       payload: {
@@ -113,6 +115,7 @@ describe("message move integration", () => {
     const traceCompletedEventId = eventId()
     await StreamEventRepository.insert(pool, {
       id: traceCompletedEventId,
+      workspaceId: testWorkspaceId,
       streamId: sourceStreamId,
       eventType: "agent_session:completed",
       payload: {
@@ -303,8 +306,8 @@ describe("message move integration", () => {
       companionMode: "off",
       createdBy: actor.id,
     })
-    await StreamMemberRepository.insert(pool, sourceStreamId, actor.id)
-    await StreamMemberRepository.insert(pool, sourceStreamId, other.id)
+    await StreamMemberRepository.insert(pool, testWorkspaceId, sourceStreamId, actor.id)
+    await StreamMemberRepository.insert(pool, testWorkspaceId, sourceStreamId, other.id)
 
     const target = await eventService.createMessage({
       workspaceId: testWorkspaceId,
@@ -420,7 +423,7 @@ describe("message move integration", () => {
       companionMode: "off",
       createdBy: actor.id,
     })
-    await StreamMemberRepository.insert(pool, sourceStreamId, actor.id)
+    await StreamMemberRepository.insert(pool, testWorkspaceId, sourceStreamId, actor.id)
 
     const selected = await eventService.createMessage({
       workspaceId: testWorkspaceId,

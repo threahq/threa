@@ -325,7 +325,7 @@ export async function seedDm(pool: Pool, tag: string): Promise<SeedContext> {
       visibility: "private",
       createdBy: users[0].id,
     })
-    await StreamMemberRepository.insertMany(client, sId, [users[0].id, users[1].id])
+    await StreamMemberRepository.insertMany(client, wsId, sId, [users[0].id, users[1].id])
     return { workspaceId: wsId, streamId: sId, users }
   })
 }

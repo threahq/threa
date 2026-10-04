@@ -362,6 +362,7 @@ export function createMessageHandlers({
         const event = await withTransaction(pool, async (client) => {
           const evt = await StreamEventRepository.insert(client, {
             id: evtId,
+            workspaceId,
             streamId,
             eventType: "command_dispatched",
             payload: {

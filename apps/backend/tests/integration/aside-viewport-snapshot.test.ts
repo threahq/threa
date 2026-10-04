@@ -60,6 +60,7 @@ describe("Aside viewport snapshot", () => {
       for (let i = 0; i < count; i++) {
         const id = messageId()
         await MessageRepository.insert(client, {
+          workspaceId: wsId,
           id,
           streamId,
           sequence: sequence++,

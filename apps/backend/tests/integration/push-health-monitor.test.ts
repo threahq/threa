@@ -119,7 +119,7 @@ describe("monitor push probe", () => {
 
   async function user(consent: "granted" | "denied" | null): Promise<string> {
     const id = newUserId()
-    if (consent) await UserPreferencesRepository.setOverride(pool, id, ANALYTICS_CONSENT_KEY, consent)
+    if (consent) await UserPreferencesRepository.setOverride(pool, ws, id, ANALYTICS_CONSENT_KEY, consent)
     return id
   }
 
@@ -128,7 +128,7 @@ describe("monitor push probe", () => {
 
   async function setConsent(uid: string, consent: "granted" | "denied" | null) {
     if (consent === null) await UserPreferencesRepository.deleteOverride(pool, uid, ANALYTICS_CONSENT_KEY)
-    else await UserPreferencesRepository.setOverride(pool, uid, ANALYTICS_CONSENT_KEY, consent)
+    else await UserPreferencesRepository.setOverride(pool, ws, uid, ANALYTICS_CONSENT_KEY, consent)
   }
 
   /**

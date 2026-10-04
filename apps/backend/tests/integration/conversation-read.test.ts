@@ -90,7 +90,7 @@ describe("ConversationService read/unread", () => {
         `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', 'private', $3)`,
         [root, wid, author]
       )
-      await StreamMemberRepository.insert(client, root, reader)
+      await StreamMemberRepository.insert(client, wid, root, reader)
     })
     const msg1 = await send(wid, root, author, "root 1")
 
@@ -157,7 +157,7 @@ describe("ConversationService read/unread", () => {
         `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', 'private', $3)`,
         [root, wid, author]
       )
-      await StreamMemberRepository.insert(client, root, reader)
+      await StreamMemberRepository.insert(client, wid, root, reader)
     })
     const msg1 = await send(wid, root, author, "topic A opener")
     const msg2 = await send(wid, root, author, "topic B — stays unread")
@@ -210,7 +210,7 @@ describe("ConversationService read/unread", () => {
         `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', 'private', $3)`,
         [root, wid, author]
       )
-      await StreamMemberRepository.insert(client, root, reader)
+      await StreamMemberRepository.insert(client, wid, root, reader)
     })
     const msg1 = await send(wid, root, author, "root 1")
     const thread = streamId()
@@ -276,7 +276,7 @@ describe("ConversationService read/unread", () => {
         `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', 'private', $3)`,
         [root, wid, author]
       )
-      await StreamMemberRepository.insert(client, root, reader)
+      await StreamMemberRepository.insert(client, wid, root, reader)
     })
     const a = await send(wid, root, author, "a")
     const b = await send(wid, root, author, "b")

@@ -73,6 +73,7 @@ async function seedSourceConversation(streamId: string): Promise<string> {
 async function mintConversationFor(streamId: string, authorId: string): Promise<string> {
   return withTransaction(pool, async (client) => {
     const message = await MessageRepository.insert(client, {
+      workspaceId: ctx.workspaceId,
       id: messageId(),
       streamId,
       sequence: sequence++,
@@ -123,6 +124,7 @@ describe("conversations minted inside a subagent thread", () => {
 
     const reply = await withTransaction(pool, (client) =>
       MessageRepository.insert(client, {
+        workspaceId: ctx.workspaceId,
         id: messageId(),
         streamId: run.threadStreamId,
         sequence: sequence++,
@@ -143,6 +145,7 @@ describe("conversations minted inside a subagent thread", () => {
 
     const reply = await withTransaction(pool, (client) =>
       MessageRepository.insert(client, {
+        workspaceId: ctx.workspaceId,
         id: messageId(),
         streamId: run.threadStreamId,
         sequence: sequence++,
@@ -160,6 +163,7 @@ describe("conversations minted inside a subagent thread", () => {
     const channel = await ctx.createChannel({ slug: "nesting-msg-anchor", memberIds: [ctx.owner] })
     const anchorMessageId = await withTransaction(pool, async (client) => {
       const message = await MessageRepository.insert(client, {
+        workspaceId: ctx.workspaceId,
         id: messageId(),
         streamId: channel.id,
         sequence: sequence++,

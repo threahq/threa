@@ -214,6 +214,7 @@ export class BotAccessRequestService {
   ): Promise<void> {
     const event = await StreamEventRepository.insert(client, {
       id: eventId(),
+      workspaceId: params.workspaceId,
       streamId: params.streamId,
       eventType: params.eventType,
       payload: params.payload,

@@ -57,10 +57,11 @@ describe("cross-bot linked scratchpad routing", () => {
     return id
   }
 
-  async function insertMessage(stream: string, author: string, markdown: string) {
+  async function insertMessage(workspace: string, stream: string, author: string, markdown: string) {
     sequence += 1n
     return MessageRepository.insert(pool, {
       id: messageId(),
+      workspaceId: workspace,
       streamId: stream,
       sequence,
       authorId: author,
@@ -78,7 +79,7 @@ describe("cross-bot linked scratchpad routing", () => {
       "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)",
       [root, workspace, owner]
     )
-    await StreamMemberRepository.insert(pool, root, owner)
+    await StreamMemberRepository.insert(pool, workspace, root, owner)
     const rootBot = await createBot(workspace, owner, "Root bot")
     const childBot = await createBot(workspace, owner, "Child bot")
     await BotChannelAccessRepository.grantAccess(pool, {
@@ -101,7 +102,7 @@ describe("cross-bot linked scratchpad routing", () => {
       activeStreamId: root,
       linkedBy: owner,
     })
-    const anchor = await insertMessage(root, owner, "child anchor")
+    const anchor = await insertMessage(workspace, root, owner, "child anchor")
     const childInstance = `child-${crypto.randomUUID()}`
     const childSession = `child-session-${crypto.randomUUID()}`
     const attached = await service.attachRuntimeSessionToThread({
@@ -158,8 +159,8 @@ describe("cross-bot linked scratchpad routing", () => {
         }
       )
 
-      const rootMessage = await insertMessage(scenario.root, scenario.owner, "root turn")
-      const childMessage = await insertMessage(scenario.thread, scenario.owner, "child turn")
+      const rootMessage = await insertMessage(scenario.workspace, scenario.root, scenario.owner, "root turn")
+      const childMessage = await insertMessage(scenario.workspace, scenario.thread, scenario.owner, "child turn")
       await service.reconcileInvocationSource({ workspaceId: scenario.workspace, sourceMessageId: rootMessage.id })
       await service.reconcileInvocationSource({ workspaceId: scenario.workspace, sourceMessageId: childMessage.id })
 
@@ -275,10 +276,10 @@ describe("cross-bot linked scratchpad routing", () => {
       "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)",
       [root, workspace, owner]
     )
-    await StreamMemberRepository.insert(pool, root, owner)
+    await StreamMemberRepository.insert(pool, workspace, root, owner)
     const firstBot = await createBot(workspace, owner, "First competitor")
     const secondBot = await createBot(workspace, owner, "Second competitor")
-    const anchor = await insertMessage(root, owner, "contested anchor")
+    const anchor = await insertMessage(workspace, root, owner, "contested anchor")
     const attach = (botId: string) =>
       botRuntimeServiceFor(pool).attachRuntimeSessionToThread({
         workspaceId: workspace,
@@ -359,7 +360,7 @@ describe("cross-bot linked scratchpad routing", () => {
       activeStreamId: scenario.thread,
       linkedBy: scenario.owner,
     })
-    const message = await insertMessage(scenario.thread, scenario.owner, "ambiguous child turn")
+    const message = await insertMessage(scenario.workspace, scenario.thread, scenario.owner, "ambiguous child turn")
 
     await expect(
       new BotRuntimeService({ pool }).reconcileInvocationSource({
