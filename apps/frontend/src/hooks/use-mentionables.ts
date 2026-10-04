@@ -1,6 +1,7 @@
 import { useMemo } from "react"
 import type { Mentionable } from "@/components/editor/triggers/types"
 import {
+  isPickableUser,
   useWorkspaceUsers,
   useWorkspacePersonas,
   useWorkspaceBots,
@@ -151,9 +152,11 @@ export function filterBroadcastMentions(ctx?: MentionStreamContext): Mentionable
 /**
  * Mentionable entities for the current workspace (users, personas, bots,
  * broadcasts, "me" shortcut). With `streamContext`, broadcasts are filtered by
- * stream type; without it, all broadcasts are included.
+ * stream type; without it, all broadcasts are included. `includeHostCopies`
+ * keeps copies of host users, for a `from:` filter: a copy wrote messages here
+ * but is never a target.
  */
-export function useMentionables(streamContext?: MentionStreamContext) {
+export function useMentionables(streamContext?: MentionStreamContext, { includeHostCopies = false } = {}) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const workspaceUsers = useWorkspaceUsers(workspaceId ?? "")
   const workspacePersonas = useWorkspacePersonas(workspaceId ?? "")
@@ -165,7 +168,8 @@ export function useMentionables(streamContext?: MentionStreamContext) {
     const broadcasts = filterBroadcastMentions(streamContext)
 
     const currentUserId = currentUser?.id
-    const users: Mentionable[] = workspaceUsers.map((u) => ({
+    const listedUsers = includeHostCopies ? workspaceUsers : workspaceUsers.filter(isPickableUser)
+    const users: Mentionable[] = listedUsers.map((u) => ({
       id: u.id,
       slug: u.slug,
       name: u.name,
@@ -226,7 +230,16 @@ export function useMentionables(streamContext?: MentionStreamContext) {
     const memberBots = streamContext?.botMemberIds ? bots.filter((b) => streamContext.botMemberIds!.has(b.id)) : bots
 
     return [...users, ...personas, ...memberBots, ...broadcasts]
-  }, [workspaceUsers, workspacePersonas, workspaceBots, currentUser?.id, toEmoji, streamContext, workspaceId])
+  }, [
+    workspaceUsers,
+    workspacePersonas,
+    workspaceBots,
+    currentUser?.id,
+    toEmoji,
+    streamContext,
+    workspaceId,
+    includeHostCopies,
+  ])
 
   return {
     mentionables,

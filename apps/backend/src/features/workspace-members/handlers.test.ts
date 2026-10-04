@@ -64,6 +64,7 @@ const fakeUser = {
   notificationsPausedIndefinitely: false,
   setupCompleted: true,
   joinedAt: new Date(),
+  originWorkspaceId: null,
 }
 
 describe("createWorkspaceMemberManagementHandlers", () => {

@@ -6,7 +6,7 @@ import type { Stream, StreamType } from "@threahq/types"
 import { getStreamName, streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { streamsApi } from "@/api"
 import { createDmDraftId, useUnreadCounts, useActivityCounts } from "@/hooks"
-import { useWorkspaceUnreadState } from "@/stores/workspace-store"
+import { isPickableUser, useWorkspaceUnreadState } from "@/stores/workspace-store"
 import { openAside } from "@/stores/aside-store"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -270,6 +270,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
 
     const existingDmPeerIds = new Set((dmPeers ?? []).map((peer) => peer.userId))
     const scoredVirtualDms = users!
+      .filter(isPickableUser)
       .filter((workspaceUser) => workspaceUser.id !== currentUserId)
       .filter((workspaceUser) => !existingDmPeerIds.has(workspaceUser.id))
       .map((workspaceUser) => ({

@@ -4,7 +4,7 @@ import { Label } from "@/components/ui/label"
 import { SearchableList } from "@/components/ui/searchable-list"
 import { renderUserListItem, type UserListItem } from "@/components/ui/user-list-item"
 import { UserPlus, X } from "lucide-react"
-import { useWorkspaceUsers } from "@/stores/workspace-store"
+import { isPickableUser, useWorkspaceUsers } from "@/stores/workspace-store"
 import { getInitials } from "@/lib/initials"
 import { getAvatarColor } from "@/lib/avatar-color"
 import { rankMatches } from "@/lib/match-score"
@@ -26,7 +26,9 @@ export function UserPicker({ workspaceId, currentUserId, selectedUserIds, onChan
     // yet" and returns every candidate, which here would dump the whole
     // member list the moment a stray space is typed.
     if (!search.trim()) return []
-    const candidates = workspaceUsers.filter((m) => m.id !== currentUserId && !selectedSet.has(m.id))
+    const candidates = workspaceUsers.filter(
+      (m) => isPickableUser(m) && m.id !== currentUserId && !selectedSet.has(m.id)
+    )
     return rankMatches(candidates, search, (m) => ({ labels: [m.name, m.slug] })).map((m) => ({
       id: m.id,
       label: m.name || m.slug,

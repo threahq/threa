@@ -12,7 +12,7 @@ import { StreamTypes } from "@threahq/types"
 import { createMockStream, mockStreamsList } from "@/test/fixtures"
 import { FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
 import { getAsideState, resetAsideStoreCache } from "@/stores/aside-store"
-import { mockUsersList } from "@/test/fixtures/users"
+import { mockUsers, mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
@@ -1107,6 +1107,23 @@ describe("QuickSwitcher Integration Tests", () => {
       })
       // The typo-band stream is dropped entirely while a real match exists.
       expect(document.querySelector('a[href="/w/workspace_1/s/stream_typo_only"]')).not.toBeInTheDocument()
+    })
+
+    it("should offer no virtual DM to a copy of a host user when one matches the query", async () => {
+      const user = userEvent.setup()
+      mockWorkspaceBootstrap.data.users = [
+        ...mockUsersList,
+        { ...mockUsers.alice, id: "member_copy", workosUserId: null, slug: "alice-host", originWorkspaceId: "ws_host" },
+      ]
+
+      renderWithProviders(<QuickSwitcher {...defaultProps} />)
+
+      await user.type(screen.getByLabelText("Quick switcher input"), "alice")
+
+      await waitFor(() => {
+        expect(document.querySelector('a[href="/w/workspace_1/s/draft_dm_member_3"]')).toBeInTheDocument()
+      })
+      expect(document.querySelector('a[href="/w/workspace_1/s/draft_dm_member_copy"]')).not.toBeInTheDocument()
     })
 
     it("should include virtual DM targets when dmPeers is missing", async () => {

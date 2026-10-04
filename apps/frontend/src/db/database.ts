@@ -82,6 +82,7 @@ export interface CachedWorkspaceUser {
   notificationsPausedIndefinitely: boolean
   setupCompleted: boolean
   joinedAt: string
+  originWorkspaceId?: string | null
   _cachedAt: number
 }
 

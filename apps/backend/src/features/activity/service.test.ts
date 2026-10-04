@@ -132,6 +132,7 @@ describe("ActivityService author name resolution", () => {
       notificationsPausedIndefinitely: false,
       setupCompleted: true,
       joinedAt: new Date(),
+      originWorkspaceId: null,
     })
 
     let capturedContext: Record<string, unknown> | undefined

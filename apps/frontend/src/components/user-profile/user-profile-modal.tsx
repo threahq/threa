@@ -16,7 +16,7 @@ import {
 import { createDmDraftId } from "@/hooks"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { useCallLaunch } from "@/components/call"
-import { useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
+import { isPickableUser, useWorkspaceUsers, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useAuth } from "@/auth"
 import { getAvatarUrl, resolveActiveStatus, type User } from "@threahq/types"
@@ -187,7 +187,7 @@ export function UserProfileModal({ userId, open, onOpenChange }: UserProfileModa
             </>
           )}
 
-          {!isOwnProfile && messageHref && (
+          {!isOwnProfile && isPickableUser(user) && messageHref && (
             <>
               <Separator />
               <div className="flex gap-2">

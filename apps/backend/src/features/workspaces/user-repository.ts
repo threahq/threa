@@ -51,6 +51,7 @@ interface UserRow {
   notifications_paused_indefinitely: boolean
   setup_completed: boolean
   joined_at: Date
+  origin_workspace_id: string | null
   mirror_role_slugs: string[] | null
 }
 
@@ -82,6 +83,8 @@ export interface User {
   notificationsPausedIndefinitely: boolean
   setupCompleted: boolean
   joinedAt: Date
+  /** The host workspace a shared channel copied this user from; null for this workspace's own people. */
+  originWorkspaceId: string | null
 }
 
 /** A user someone has signed in as. Only claimed users authenticate. */
@@ -138,7 +141,7 @@ const SELECT_FIELDS = `
   pronouns, phone, github_username,
   status_emoji, status_text, status_expires_at,
   status_pauses_notifications, notifications_paused_until, notifications_paused_indefinitely,
-  setup_completed, joined_at
+  setup_completed, joined_at, origin_workspace_id
 `
 
 // Read paths derive `role` from the WorkOS authz mirror so role changes
@@ -165,7 +168,7 @@ const SELECT_FIELDS_WITH_ALIAS = `
   u.pronouns, u.phone, u.github_username,
   u.status_emoji, u.status_text, u.status_expires_at,
   u.status_pauses_notifications, u.notifications_paused_until, u.notifications_paused_indefinitely,
-  u.setup_completed, u.joined_at,
+  u.setup_completed, u.joined_at, u.origin_workspace_id,
   wup.role_slugs AS mirror_role_slugs
 `
 
@@ -218,6 +221,7 @@ function mapRowToUser(row: UserRow): User {
     notificationsPausedIndefinitely: Boolean(row.notifications_paused_indefinitely),
     setupCompleted: row.setup_completed,
     joinedAt: row.joined_at,
+    originWorkspaceId: row.origin_workspace_id,
   }
 }
 
@@ -276,7 +280,8 @@ export const UserRepository = {
         um.notifications_paused_indefinitely,
         um.setup_completed,
         um.joined_at,
-        um.mirror_role_slugs
+        um.mirror_role_slugs,
+        um.origin_workspace_id
       FROM (SELECT 1) AS one
       LEFT JOIN user_match um ON true
     `)

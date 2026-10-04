@@ -21,6 +21,7 @@ import {
 import { useSyncStatus } from "@/sync/sync-status"
 import { useSyncEngine } from "@/sync/sync-engine"
 import {
+  isPickableUser,
   useWorkspaceUsers,
   useWorkspaceStreams,
   useWorkspaceStreamMemberships,
@@ -505,7 +506,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     currentUser,
     hasWrittenNote,
     onboardingStreamId,
-    memberCount: workspaceUsers.length,
+    memberCount: workspaceUsers.filter(isPickableUser).length,
     onCreateScratchpad: handleCreateScratchpad,
   })
 

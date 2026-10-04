@@ -401,7 +401,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const openAttachmentPickerRef = useRef<() => void>(() => {})
   const openAttachmentPicker = useCallback(() => openAttachmentPickerRef.current(), [])
 
-  // Unfiltered for type-lookup: ensures all broadcast slugs always resolve correctly
+  // Not stream-scoped for type-lookup: ensures all broadcast slugs always resolve correctly
   const { mentionables } = useMentionables()
   const { getMentionType, isKnownChannel } = useMarkdownTriggerLookups(mentionables)
   // Filtered for autocomplete dropdown only

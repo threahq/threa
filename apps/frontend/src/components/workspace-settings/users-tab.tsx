@@ -26,7 +26,7 @@ import {
 import { ActorAvatar } from "@/components/actor-avatar"
 import { invitationsApi, invitationKeys } from "@/api/invitations"
 import { ApiError } from "@/api/client"
-import { useWorkspaceUsers } from "@/stores/workspace-store"
+import { isPickableUser, useWorkspaceUsers } from "@/stores/workspace-store"
 import { useFormattedDate } from "@/hooks"
 import { useCoverClose } from "@/hooks/use-cover-close"
 import { INVITE_LINK_COVER } from "@/lib/covers"
@@ -143,7 +143,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
   const authUser = useUser()
   const workspaceUsers = useWorkspaceUsers(workspaceId)
   const users = useMemo(
-    () => workspaceUsers.slice().sort((a, b) => (a.name || a.slug).localeCompare(b.name || b.slug)),
+    () => workspaceUsers.filter(isPickableUser).sort((a, b) => (a.name || a.slug).localeCompare(b.name || b.slug)),
     [workspaceUsers]
   )
 
