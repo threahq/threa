@@ -159,7 +159,7 @@ export class StreamConnectionExportService {
       // moved away with their messages, events the host keeps to itself).
       const heads = await StreamEventRepository.listHeadSequences(client, caller.workspaceId, [caller.streamId])
       const head = heads.get(caller.streamId) ?? 0n
-      const events = await StreamEventRepository.list(client, caller.streamId, {
+      const events = await StreamEventRepository.list(client, caller.workspaceId, caller.streamId, {
         afterSequence: caller.after,
         beforeSequence: head + 1n,
         limit: caller.limit,
