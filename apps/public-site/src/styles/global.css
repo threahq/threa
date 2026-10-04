@@ -773,24 +773,12 @@ body {
 .ad-log > * {
   flex-shrink: 0;
 }
-.ad-in {
-  display: grid;
-  grid-template-rows: 0fr;
-  opacity: 0;
-  transition:
-    grid-template-rows 0.45s cubic-bezier(0.2, 0.7, 0.2, 1),
-    opacity 0.3s ease-out 0.1s;
+/* Rows appear at full height in one frame, as in the app. */
+.ad-in:not(.is-in) {
+  display: none;
 }
-.ad-in > div {
-  min-height: 0;
-  overflow: hidden;
-}
-.ad-in.is-in {
-  grid-template-rows: 1fr;
-  opacity: 1;
-}
-/* The app's highlight-flash on a new message. */
-.ad-in.is-in .tl-row {
+/* The app's highlight-flash on someone else's new message; your own send doesn't flash. */
+.ad-in.is-in:not([data-beat="sent"]) .tl-row {
   animation: ad-flash 2s ease-out;
 }
 @keyframes ad-flash {

@@ -28,7 +28,6 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { MessageItem, type RenderableMessage } from "@/components/message/message-item"
 import {
-  boardRowArrivalKey,
   buildBranchedBoardRows,
   findBoardRowIndex,
   injectBoardDayDividers,
@@ -1185,11 +1184,7 @@ function ConversationPanelBody({
     onRedirectSession: () => setFocusSeq((n) => n + 1),
   }
   const scrollerItems = revealed
-    ? rows.map((row) => ({
-        key: row.key,
-        arrivalKey: boardRowArrivalKey(row),
-        node: renderBranchedBoardRow(row, rowRenderProps),
-      }))
+    ? rows.map((row) => ({ key: row.key, node: renderBranchedBoardRow(row, rowRenderProps) }))
     : []
   const hasRenderedContent = useRenderedContentLatch(scrollerItems.length)
   // A cold backfill can fail with no rows at all, and the scroller renders its
