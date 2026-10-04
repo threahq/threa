@@ -23,6 +23,7 @@ import type {
   TitleSource,
   ToolPrivacyCategory,
   ToolPrivacyPolicy,
+  Visibility,
   WorkspaceRoleSlug,
 } from "@threahq/types"
 import type { KdfParams } from "@/lib/crypto/passphrase"
@@ -101,7 +102,7 @@ export interface CachedStream {
    * fallback (rows cached before this field existed leave it undefined).
    */
   descriptionJson?: ThreaDocument | null
-  visibility: "public" | "private"
+  visibility: Visibility
   parentStreamId: string | null
   /**
    * Canonical id of the timeline item a thread anchors on: `msg_…` (message) or

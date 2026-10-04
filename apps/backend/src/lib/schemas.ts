@@ -2,7 +2,7 @@ import { z } from "zod"
 import {
   STREAM_TYPES,
   STREAM_PURPOSES,
-  VISIBILITY_OPTIONS,
+  CREATABLE_VISIBILITIES,
   COMPANION_MODES,
   MEMORY_MODES,
   CONTENT_FORMATS,
@@ -16,7 +16,7 @@ import {
 
 export const streamTypeSchema = z.enum(STREAM_TYPES)
 export const streamPurposeSchema = z.enum(STREAM_PURPOSES)
-export const visibilitySchema = z.enum(VISIBILITY_OPTIONS)
+export const visibilitySchema = z.enum(CREATABLE_VISIBILITIES)
 export const companionModeSchema = z.enum(COMPANION_MODES)
 export const memoryModeSchema = z.enum(MEMORY_MODES)
 export const contentFormatSchema = z.enum(CONTENT_FORMATS)

@@ -4,7 +4,7 @@ import { ThreadResolver } from "./thread-resolver"
 import { AttachmentRepository, type Attachment } from "../../../attachments"
 import { MessageRepository } from "../../../messaging"
 import { LinkPreviewRepository } from "../../../link-previews"
-import { StreamRepository, StreamMemberRepository } from "../../../streams"
+import { StreamRepository } from "../../../streams"
 import { UserRepository } from "../../../workspaces"
 import { PersonaRepository } from "../../persona-repository"
 
@@ -81,56 +81,41 @@ function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   }
 }
 
+function dbReading(...readableStreamIds: string[]): any {
+  return {
+    query: async ({ text }: { text: string }) => {
+      if (!text.includes("s.id = ANY(")) throw new Error(`Unstubbed query: ${text}`)
+      return { rows: readableStreamIds.map((id) => ({ id })) }
+    },
+  }
+}
+
 describe("ThreadResolver.assertAccess", () => {
   afterEach(() => mock.restore())
 
-  it("allows public channels without a membership check", async () => {
-    const stream = makeStream({ visibility: Visibilities.PUBLIC })
+  it("allows a stream the access predicate reads", async () => {
+    const stream = makeStream()
     spyOn(StreamRepository, "findById").mockResolvedValue(stream)
-    const isMember = spyOn(StreamMemberRepository, "isMember").mockResolvedValue(false)
 
     await ThreadResolver.assertAccess(
-      {} as any,
+      dbReading(stream.id),
       { kind: ContextRefKinds.THREAD, streamId: stream.id },
       "usr_x",
       stream.workspaceId
     )
-
-    expect(isMember).not.toHaveBeenCalled()
   })
 
-  it("rejects private streams when the user is not a member", async () => {
+  it("rejects a stream the access predicate does not read", async () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(makeStream())
-    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(false)
 
     await expect(
       ThreadResolver.assertAccess(
-        {} as any,
+        dbReading(),
         { kind: ContextRefKinds.THREAD, streamId: "stream_source" },
         "usr_x",
         "ws_1"
       )
     ).rejects.toThrow(/No access/)
-  })
-
-  it("inherits visibility from the root stream for nested threads", async () => {
-    const thread = makeStream({ id: "stream_thread", type: "thread", rootStreamId: "stream_root" })
-    const rootPublic = makeStream({ id: "stream_root", visibility: Visibilities.PUBLIC })
-    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, _workspaceId: string, id: string) => {
-      if (id === "stream_thread") return thread
-      if (id === "stream_root") return rootPublic
-      return null
-    })
-    const isMember = spyOn(StreamMemberRepository, "isMember").mockResolvedValue(false)
-
-    await ThreadResolver.assertAccess(
-      {} as any,
-      { kind: ContextRefKinds.THREAD, streamId: "stream_thread" },
-      "usr_x",
-      "ws_1"
-    )
-
-    expect(isMember).not.toHaveBeenCalled()
   })
 
   it("rejects when the source stream is in a different workspace", async () => {

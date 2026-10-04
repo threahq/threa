@@ -93,13 +93,18 @@ export const STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH = 10_000
  */
 export const STREAM_BRIEF_MAX_CHARS = 4000
 
-export const VISIBILITY_OPTIONS = ["public", "private"] as const
+export const VISIBILITY_OPTIONS = ["public", "guest_public", "private"] as const
 export type Visibility = (typeof VISIBILITY_OPTIONS)[number]
 
 export const Visibilities = {
   PUBLIC: "public",
+  GUEST_PUBLIC: "guest_public",
   PRIVATE: "private",
 } as const satisfies Record<string, Visibility>
+
+/** The visibilities a request may set; `guest_public` is not one of them. */
+export const CREATABLE_VISIBILITIES = [Visibilities.PUBLIC, Visibilities.PRIVATE] as const
+export type CreatableVisibility = (typeof CREATABLE_VISIBILITIES)[number]
 
 // Labelable resource types — the polymorphic target of a label assignment.
 // Labeling is resource-agnostic: the table, service, events, sync, and UI

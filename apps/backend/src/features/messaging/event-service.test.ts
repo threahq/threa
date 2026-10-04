@@ -31,6 +31,16 @@ import { StreamContextRepository } from "../stream-context"
 import { UserPreferencesRepository } from "../user-preferences"
 import { MessageConversationStateRepository } from "../conversations"
 
+// Answers only checkStreamAccess's statement with the ids it lets through.
+function clientReading(...readableStreamIds: string[]) {
+  return {
+    query: async ({ text }: { text: string }) => {
+      if (!text.includes("s.id = ANY(")) throw new Error(`Unstubbed query: ${text}`)
+      return { rows: readableStreamIds.map((id) => ({ id })) }
+    },
+  }
+}
+
 // The suites below drive the service with a bare `{}` client, so the
 // "In this stream" projection writes are stubbed globally; the suite that
 // asserts them re-spies with its own recorders.
@@ -397,8 +407,8 @@ describe("EventService attachment safety checks", () => {
         sizeBytes: 100,
       },
     ] as any)
-    // checkStreamAccess() resolves to the source stream as long as the
-    // stream row exists and is public (or the user is a member).
+    spyOn(db, "withTransaction").mockImplementation(((_db: unknown, callback: (client: any) => Promise<unknown>) =>
+      callback(clientReading("stream_source"))) as any)
     spyOn(StreamRepository, "findById").mockResolvedValue({
       id: "stream_source",
       workspaceId: "ws_1",
@@ -406,7 +416,6 @@ describe("EventService attachment safety checks", () => {
       visibility: "public",
       type: "channel",
     } as any)
-    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
     spyOn(ReadStateRepository, "advance").mockResolvedValue({ state: null, held: false } as any)
     spyOn(StreamEventRepository, "insert").mockImplementation((async (_client: any, params: any) => ({
       id: "evt_1",
@@ -1631,7 +1640,7 @@ describe("EventService sharedMessages wire enrichment", () => {
 
   beforeEach(() => {
     spyOn(db, "withTransaction").mockImplementation(((_db: unknown, callback: (client: any) => Promise<unknown>) =>
-      callback({})) as any)
+      callback(clientReading("stream_source"))) as any)
     spyOn(messagesTotal, "inc").mockImplementation(() => undefined)
     spyOn(StreamEventRepository, "countMessagesThrough").mockResolvedValue(1)
     // Target stream (create-path E2E check, post-write thread lookup) vs.

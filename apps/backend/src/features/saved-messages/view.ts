@@ -1,8 +1,7 @@
 import type { SavedMessageView, SavedMessageSnapshot } from "@threahq/types"
-import { Visibilities } from "@threahq/types"
 import { type Querier } from "../../db"
 // Streams must import before messaging — see service.ts for why.
-import { StreamRepository, StreamMemberRepository, type Stream } from "../streams"
+import { StreamRepository, listAccessibleStreamIds, type Stream } from "../streams"
 import { MessageRepository, type Message } from "../messaging"
 import type { SavedMessage } from "./repository"
 
@@ -33,26 +32,14 @@ export async function resolveSavedView(
   const messageIds = Array.from(new Set(rows.flatMap((r) => (r.messageId ? [r.messageId] : []))))
   const streamIds = Array.from(new Set(rows.flatMap((r) => (r.streamId ? [r.streamId] : []))))
 
-  // Batch fetch messages and streams (INV-56). Access resolution uses root
-  // streams for threads; fetch those in a second pass.
-  const [messages, streams] = await Promise.all([
+  // Batch fetch messages, streams and access (INV-56). Access follows a thread
+  // to its root (INV-62).
+  const [messages, streams, accessibleStreamIds] = await Promise.all([
     MessageRepository.findByIds(db, workspaceId, messageIds),
     StreamRepository.findByIds(db, workspaceId, streamIds),
+    listAccessibleStreamIds(db, workspaceId, userId, streamIds),
   ])
-
-  const streamById = new Map<string, Stream>()
-  for (const s of streams) streamById.set(s.id, s)
-
-  const rootIds = new Set<string>()
-  for (const s of streams) {
-    if (s.rootStreamId && !streamById.has(s.rootStreamId)) rootIds.add(s.rootStreamId)
-  }
-  if (rootIds.size > 0) {
-    const rootStreams = await StreamRepository.findByIds(db, workspaceId, Array.from(rootIds))
-    for (const s of rootStreams) streamById.set(s.id, s)
-  }
-
-  const accessibleStreamIds = await computeAccessibleStreams(db, workspaceId, userId, streams, streamById)
+  const streamById = new Map(streams.map((s) => [s.id, s]))
 
   return rows.map((row) =>
     toView(
@@ -62,51 +49,6 @@ export async function resolveSavedView(
       row.streamId !== null && accessibleStreamIds.has(row.streamId)
     )
   )
-}
-
-/**
- * Access rule: thread -> root stream visibility/membership; else self. Public
- * streams grant access to all workspace users; private streams require
- * explicit membership.
- */
-async function computeAccessibleStreams(
-  db: Querier,
-  workspaceId: string,
-  userId: string,
-  streams: Stream[],
-  streamById: Map<string, Stream>
-): Promise<Set<string>> {
-  if (streams.length === 0) return new Set()
-
-  const accessible = new Set<string>()
-  const privateAccessStreamIds = new Set<string>()
-  // Map access-stream -> original streams it authorizes
-  const authorizes = new Map<string, string[]>()
-
-  for (const s of streams) {
-    const accessStreamId = s.rootStreamId ?? s.id
-    const accessStream = streamById.get(accessStreamId)
-    if (!accessStream) continue
-
-    if (accessStream.visibility === Visibilities.PUBLIC) {
-      accessible.add(s.id)
-      continue
-    }
-
-    privateAccessStreamIds.add(accessStreamId)
-    const list = authorizes.get(accessStreamId) ?? []
-    list.push(s.id)
-    authorizes.set(accessStreamId, list)
-  }
-
-  for (const accessStreamId of privateAccessStreamIds) {
-    const members = await StreamMemberRepository.filterMemberIds(db, workspaceId, accessStreamId, [userId])
-    if (members.has(userId)) {
-      for (const sid of authorizes.get(accessStreamId) ?? []) accessible.add(sid)
-    }
-  }
-
-  return accessible
 }
 
 function toView(

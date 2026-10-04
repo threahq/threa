@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, mock, spyOn, test } from "bun:test"
-import { WORKSPACE_USER_ROLES } from "@threahq/types"
+import { WORKSPACE_ROLE_SLUGS, WORKSPACE_USER_ROLES } from "@threahq/types"
 import type { Pool } from "pg"
 import type { ControlPlaneClient } from "../../lib/control-plane-client"
 import { createWorkspaceMemberManagementHandlers } from "./handlers"
@@ -151,6 +151,25 @@ describe("createWorkspaceMemberManagementHandlers", () => {
           user: { workosUserId: "workos_caller" },
           params: { userId: "usr_target" },
           body: { roleSlug: "superuser" },
+        } as never,
+        res as never
+      )
+    ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
+    expect(controlPlaneClient.changeWorkspaceMemberRole).not.toHaveBeenCalled()
+  })
+
+  test("should reject with 400 when the requested role is guest", async () => {
+    const controlPlaneClient = createControlPlaneClientStub()
+    const handlers = createWorkspaceMemberManagementHandlers({ pool: {} as Pool, controlPlaneClient })
+    const res = createResponse()
+
+    await expect(
+      handlers.changeRole(
+        {
+          workspaceId: "ws_1",
+          user: { workosUserId: "workos_caller" },
+          params: { userId: "usr_target" },
+          body: { roleSlug: WORKSPACE_ROLE_SLUGS.GUEST },
         } as never,
         res as never
       )

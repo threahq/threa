@@ -1,6 +1,11 @@
 import type { Pool } from "pg"
 import { HttpError, logger, type WorkosOrganizationMembership, type WorkosOrgService } from "@threahq/backend-common"
-import { rolesGrant, WORKSPACE_PERMISSION_SCOPES, WORKSPACE_USER_ROLES, type WorkspaceRoleSlug } from "@threahq/types"
+import {
+  rolesGrant,
+  WORKSPACE_ASSIGNABLE_ROLES,
+  WORKSPACE_PERMISSION_SCOPES,
+  type WorkspaceAssignableRole,
+} from "@threahq/types"
 import { withOrganizationAdminLock } from "./org-admin-lock"
 
 interface Dependencies {
@@ -27,14 +32,14 @@ export interface AssignRoleParams {
   actor: AdminActor
   organizationId: string
   targetUserId: string
-  roleSlug: WorkspaceRoleSlug
+  roleSlug: WorkspaceAssignableRole
 }
 
 export interface ChangeRoleParams {
   actor: AdminActor
   organizationId: string
   targetUserId: string
-  roleSlug: WorkspaceRoleSlug
+  roleSlug: WorkspaceAssignableRole
 }
 
 export interface RemoveMemberParams {
@@ -71,7 +76,7 @@ export class WorkosAuthzAdminService {
   }
 
   async assignRole(params: AssignRoleParams): Promise<void> {
-    assertKnownRole(params.roleSlug)
+    assertAssignableRole(params.roleSlug)
     await withOrganizationAdminLock(this.pool, params.organizationId, async () => {
       const memberships = await this.workosOrgService.listOrganizationMemberships(params.organizationId)
       this.assertActorMayManage(params.actor, memberships)
@@ -97,7 +102,7 @@ export class WorkosAuthzAdminService {
   }
 
   async changeRole(params: ChangeRoleParams): Promise<void> {
-    assertKnownRole(params.roleSlug)
+    assertAssignableRole(params.roleSlug)
     await withOrganizationAdminLock(this.pool, params.organizationId, async () => {
       const memberships = await this.workosOrgService.listOrganizationMemberships(params.organizationId)
       this.assertActorMayManage(params.actor, memberships)
@@ -213,8 +218,8 @@ function requireTargetMembership(
   return target
 }
 
-function assertKnownRole(slug: string): asserts slug is WorkspaceRoleSlug {
-  if (!WORKSPACE_USER_ROLES.includes(slug as WorkspaceRoleSlug)) {
-    throw new HttpError(`Unknown workspace role: ${slug}`, { status: 400, code: "INVALID_ROLE" })
+function assertAssignableRole(slug: string): asserts slug is WorkspaceAssignableRole {
+  if (!(WORKSPACE_ASSIGNABLE_ROLES as readonly string[]).includes(slug)) {
+    throw new HttpError(`Workspace role is not assignable: ${slug}`, { status: 400, code: "INVALID_ROLE" })
   }
 }

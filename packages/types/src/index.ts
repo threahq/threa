@@ -55,6 +55,8 @@ export {
   StreamPurposes,
   // Visibility
   VISIBILITY_OPTIONS,
+  CREATABLE_VISIBILITIES,
+  type CreatableVisibility,
   type Visibility,
   Visibilities,
   // Labelable resources
@@ -1314,6 +1316,7 @@ export {
   WORKSPACE_ROLE_SLUGS,
   WORKSPACE_ROLE_DEFINITIONS,
   WORKSPACE_INVITABLE_ROLES,
+  WORKSPACE_ASSIGNABLE_ROLES,
   permissionsForRole,
   parseJwtPermissions,
   roleDisplayName,
@@ -1322,6 +1325,7 @@ export {
   type WorkspacePermissionSlug,
   type WorkspaceRoleSlug,
   type WorkspaceInvitableRole,
+  type WorkspaceAssignableRole,
   type WorkspaceRoleDefinition,
 } from "./workspace-permissions"
 

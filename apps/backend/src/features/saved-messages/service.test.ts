@@ -4,7 +4,8 @@ import { AuthorTypes, CompanionModes, SavedStatuses, StreamTypes, Visibilities }
 import { SavedMessagesService } from "./service"
 import { SavedMessagesRepository } from "./repository"
 // Streams before messaging to avoid a latent circular-init in public-api/schemas.ts.
-import { StreamRepository, StreamMemberRepository } from "../streams"
+import { StreamRepository } from "../streams"
+import * as streamsBarrel from "../streams"
 import { MessageRepository } from "../messaging"
 import { ConversationRepository, MessageConversationStateRepository } from "../conversations"
 import { OutboxRepository } from "../../lib/outbox"
@@ -104,6 +105,9 @@ function setupService() {
   // Saving settles a provisional conversation assignment; nothing is settling in
   // these fixtures, so the engagement hook short-circuits.
   spyOn(MessageConversationStateRepository, "settle").mockResolvedValue([])
+  spyOn(streamsBarrel, "listAccessibleStreamIds").mockImplementation(
+    async (_db, _ws, _userId, streamIds) => new Set(streamIds)
+  )
   // resolveSavedView is covered by its own tests; stub out here
   spyOn(viewModule, "resolveSavedView").mockImplementation(
     async (_db: any, _workspaceId: string, _userId: string, rows: SavedMessage[]) =>
@@ -151,15 +155,29 @@ describe("SavedMessagesService.save", () => {
     expect(findStream).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, STREAM_ID)
   })
 
-  it("throws 403 on private streams when the user is not a member", async () => {
+  it("throws 403 when the user cannot read the stream", async () => {
     const service = setupService()
     spyOn(MessageRepository, "findById").mockResolvedValue(fakeMessage())
-    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream({ visibility: Visibilities.PRIVATE }))
-    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(false)
+    spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
+    spyOn(streamsBarrel, "listAccessibleStreamIds").mockResolvedValue(new Set())
 
     await expect(
       service.save({ workspaceId: WORKSPACE_ID, userId: USER_ID, messageId: MESSAGE_ID, remindAt: null })
     ).rejects.toMatchObject({ status: 403 })
+  })
+
+  it("should throw 404 when a thread's root stream is gone", async () => {
+    const service = setupService()
+    spyOn(MessageRepository, "findById").mockResolvedValue(fakeMessage({ streamId: "thread_1" }))
+    const thread = fakeStream({ id: "thread_1", rootStreamId: "root_1", parentStreamId: "root_1" })
+    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, _workspaceId: string, id: string) =>
+      id === thread.id ? thread : null
+    )
+    spyOn(streamsBarrel, "listAccessibleStreamIds").mockResolvedValue(new Set())
+
+    await expect(
+      service.save({ workspaceId: WORKSPACE_ID, userId: USER_ID, messageId: MESSAGE_ID, remindAt: null })
+    ).rejects.toMatchObject({ status: 404, code: "MESSAGE_NOT_FOUND" })
   })
 
   it("clamps past remindAt values to NOW() so reminders in the past fire immediately", async () => {

@@ -19,6 +19,7 @@ import {
   MAX_STREAM_CHAIN_DEPTH,
   type ArchiveStatus,
 } from "../../lib/sql-filters"
+import { streamAccessPredicateSql } from "./access"
 
 export type { StreamType, Visibility, CompanionMode, MemoryMode, ArchiveStatus }
 
@@ -784,13 +785,13 @@ export const StreamRepository = {
     filters?: {
       types?: StreamType[]
       parentStreamId?: string
-      userMembershipStreamIds?: string[]
+      viewerUserId?: string
       archiveStatus?: ArchiveStatus[]
     }
   ): Promise<Stream[]> {
     const types = filters?.types
     const parentStreamId = filters?.parentStreamId
-    const userMembershipStreamIds = filters?.userMembershipStreamIds
+    const viewerUserId = filters?.viewerUserId
     const archiveStatus = filters?.archiveStatus
 
     const archiveCondition = sql.raw(archiveStatusSql("s", archiveStatus))
@@ -807,56 +808,29 @@ export const StreamRepository = {
       return result.rows.map(mapRowToStream)
     }
 
-    if (userMembershipStreamIds !== undefined) {
+    if (viewerUserId !== undefined) {
+      const selectStreams = sql`SELECT ${sql.raw(SELECT_FIELDS_ALIASED)} FROM streams s WHERE s.workspace_id = ${workspaceId}`
+      const archived = sql`${archiveCondition}`
+      const unpurposed = sql`${sql.raw(purposeIsNull("s"))}`
+      const readable = streamAccessPredicateSql(workspaceId, viewerUserId, "s.id")
+
       if (types && types.length > 0) {
         const result = await db.query<StreamRow>(
-          sql`SELECT ${sql.raw(SELECT_FIELDS_ALIASED)} FROM streams s
-              WHERE s.workspace_id = ${workspaceId}
+          composeSql`${selectStreams}
                 AND s.type = ANY(${types})
-                AND ${archiveCondition}
-                AND (
-                  s.visibility = 'public'
-                  OR s.id = ANY(${userMembershipStreamIds})
-                  OR (
-                    s.type = 'thread'
-                    AND EXISTS (
-                      SELECT 1 FROM streams access_root
-                      WHERE access_root.id = s.root_stream_id
-                        AND access_root.workspace_id = ${workspaceId}
-                        AND (
-                          access_root.visibility = 'public'
-                          OR access_root.id = ANY(${userMembershipStreamIds})
-                        )
-                    )
-                  )
-                )
-                AND ${sql.raw(purposeIsNull("s"))}
+                AND ${archived}
+                AND ${readable}
+                AND ${unpurposed}
               ORDER BY s.created_at DESC`
         )
         return result.rows.map(mapRowToStream)
       }
 
       const result = await db.query<StreamRow>(
-        sql`SELECT ${sql.raw(SELECT_FIELDS_ALIASED)} FROM streams s
-            WHERE s.workspace_id = ${workspaceId}
-              AND ${archiveCondition}
-              AND (
-                s.visibility = 'public'
-                OR s.id = ANY(${userMembershipStreamIds})
-                OR (
-                  s.type = 'thread'
-                  AND EXISTS (
-                    SELECT 1 FROM streams access_root
-                    WHERE access_root.id = s.root_stream_id
-                      AND access_root.workspace_id = ${workspaceId}
-                      AND (
-                        access_root.visibility = 'public'
-                        OR access_root.id = ANY(${userMembershipStreamIds})
-                      )
-                  )
-                )
-              )
-              AND ${sql.raw(purposeIsNull("s"))}
+        composeSql`${selectStreams}
+              AND ${archived}
+              AND ${readable}
+              AND ${unpurposed}
             ORDER BY s.created_at DESC`
       )
       return result.rows.map(mapRowToStream)
@@ -893,40 +867,26 @@ export const StreamRepository = {
     workspaceId: string,
     filters?: {
       types?: StreamType[]
-      userMembershipStreamIds?: string[]
+      viewerUserId?: string
       archiveStatus?: ArchiveStatus[]
     }
   ): Promise<StreamWithPreview[]> {
     const types = filters?.types
-    const userMembershipStreamIds = filters?.userMembershipStreamIds
+    const viewerUserId = filters?.viewerUserId
     const archiveStatus = filters?.archiveStatus
 
     const archiveCondition = sql`${sql.raw(archiveStatusSql("s", archiveStatus))}`
     const excludePurposedStreams = sql`${sql.raw(`AND ${purposeIsNull("s")}`)}`
 
-    // Build query with visibility filter if user's membership stream IDs provided
-    if (userMembershipStreamIds !== undefined) {
+    if (viewerUserId !== undefined) {
+      const readable = streamAccessPredicateSql(workspaceId, viewerUserId, "s.id")
+
       if (types && types.length > 0) {
         const result = await db.query<StreamWithPreviewRow>(
           composeSql`${selectStreamsWithPreviewSql(workspaceId)}
               AND s.type = ANY(${types})
               AND ${archiveCondition}
-              AND (
-                s.visibility = 'public'
-                OR s.id = ANY(${userMembershipStreamIds})
-                OR (
-                  s.type = 'thread'
-                  AND EXISTS (
-                    SELECT 1 FROM streams access_root
-                    WHERE access_root.id = s.root_stream_id
-                      AND access_root.workspace_id = ${workspaceId}
-                      AND (
-                        access_root.visibility = 'public'
-                        OR access_root.id = ANY(${userMembershipStreamIds})
-                      )
-                  )
-                )
-              )
+              AND ${readable}
               ${excludePurposedStreams}
               ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
         )
@@ -936,22 +896,7 @@ export const StreamRepository = {
       const result = await db.query<StreamWithPreviewRow>(
         composeSql`${selectStreamsWithPreviewSql(workspaceId)}
             AND ${archiveCondition}
-            AND (
-              s.visibility = 'public'
-              OR s.id = ANY(${userMembershipStreamIds})
-              OR (
-                s.type = 'thread'
-                AND EXISTS (
-                  SELECT 1 FROM streams access_root
-                  WHERE access_root.id = s.root_stream_id
-                    AND access_root.workspace_id = ${workspaceId}
-                    AND (
-                      access_root.visibility = 'public'
-                      OR access_root.id = ANY(${userMembershipStreamIds})
-                    )
-                )
-              )
-            )
+            AND ${readable}
             ${excludePurposedStreams}
             ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
       )
@@ -982,32 +927,20 @@ export const StreamRepository = {
    * Streams archived in their own right (threads included) that the viewer
    * can read, as slim `Stream` rows. Rows sealed only by an ancestor are not
    * listed: the client derives their state by walking `parentStreamId` into
-   * this index. Access is the INV-62 rule: the stream or its access root is
-   * public, or the viewer is a member of the access root. Feeds the bootstrap
+   * this index. Access is the INV-62 rule: the viewer reads the stream's
+   * access root (open to them, or they are a member of it). Feeds the bootstrap
    * `archivedStreams` index so archival survives reloads and the client can
    * name the ancestor that seals a stream.
    */
   async listArchivedStreams(db: Querier, workspaceId: string, userId: string): Promise<Stream[]> {
+    const selectStreams = sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)}
+      WHERE s.workspace_id = ${workspaceId}`
+    const unpurposed = sql`${sql.raw(purposeIsNull("s"))}`
     const result = await db.query<StreamRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)}
-          WHERE s.workspace_id = ${workspaceId}
+      composeSql`${selectStreams}
             AND s.archived_at IS NOT NULL
-            AND (
-              s.visibility = 'public'
-              OR EXISTS (
-                SELECT 1 FROM streams access_root
-                WHERE access_root.workspace_id = ${workspaceId}
-                  AND access_root.id = s.root_stream_id
-                  AND access_root.visibility = 'public'
-              )
-              OR EXISTS (
-                SELECT 1 FROM stream_members m
-                WHERE m.workspace_id = ${workspaceId}
-                  AND m.stream_id = COALESCE(s.root_stream_id, s.id)
-                  AND m.member_id = ${userId}
-              )
-            )
-            AND ${sql.raw(purposeIsNull("s"))}
+            AND ${streamAccessPredicateSql(workspaceId, userId, "s.id")}
+            AND ${unpurposed}
           ORDER BY s.archived_at DESC`
     )
     return result.rows.map(mapRowToStream)

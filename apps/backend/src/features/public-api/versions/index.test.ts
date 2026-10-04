@@ -516,11 +516,8 @@ describe("VERSION_CHANGES: the 2026-08-21 pinned-reference change", () => {
 describe("VERSION_CHANGES: the 2026-10-01 unclaimed-user change", () => {
   const unclaimedChange = VERSION_CHANGES.find((c) => c.version === "2026-10-01")!
 
-  test("is the current version and scopes listUsers only", () => {
-    expect({ current: CURRENT_API_VERSION, operations: [...unclaimedChange.operations] }).toEqual({
-      current: "2026-10-01",
-      operations: ["listUsers"],
-    })
+  test("scopes listUsers only", () => {
+    expect([...unclaimedChange.operations]).toEqual(["listUsers"])
   })
 
   test("downgradeResponse drops users without an email and keeps the page metadata", () => {
@@ -562,6 +559,73 @@ describe("VERSION_CHANGES: the 2026-10-01 unclaimed-user change", () => {
           get: { operationId: "listUsers", responses: { "200": userItem(["id", "name", "slug", "email", "role"]) } },
         },
         "/other": { get: { operationId: "whoami", responses: { "200": userItem(["id", "name", "slug", "role"]) } } },
+      },
+    })
+  })
+})
+
+describe("VERSION_CHANGES: the 2026-10-04 guest_public change", () => {
+  const guestPublicChange = VERSION_CHANGES.find((c) => c.version === "2026-10-04")!
+
+  test("should be the current version and scope the slot-map operations", () => {
+    expect({ current: CURRENT_API_VERSION, operations: [...guestPublicChange.operations] }).toEqual({
+      current: "2026-10-04",
+      operations: [
+        "listMessages",
+        "sendMessage",
+        "listConversationMessages",
+        "findMessagesByMetadata",
+        "updateMessage",
+        "completeBotInvocation",
+        "searchMessages",
+      ],
+    })
+  })
+
+  test("should report a guest_public source as public and leave every other slot alone", () => {
+    const okSlot = { type: "sharedMessage", state: "ok", messageId: "msg_ok", content: "hi" }
+    const privateSlot = (sourceVisibility: string) => ({
+      type: "sharedMessage",
+      state: "private",
+      messageId: "msg_p",
+      sourceStreamKind: "channel",
+      sourceVisibility,
+    })
+    const payload = {
+      data: [{ id: "msg_1" }],
+      slots: { "msg_ok@1": okSlot, msg_gp: privateSlot("guest_public"), msg_pr: privateSlot("private") },
+    }
+    expect(guestPublicChange.downgradeResponse!(payload, { operationId: "listMessages" })).toEqual({
+      data: [{ id: "msg_1" }],
+      slots: { "msg_ok@1": okSlot, msg_gp: privateSlot("public"), msg_pr: privateSlot("private") },
+    })
+  })
+
+  test("should leave operations without a slot map alone", () => {
+    const payload = { data: [{ id: "stream_1", visibility: "guest_public" }] }
+    expect(guestPublicChange.downgradeResponse!(payload, { operationId: "listStreams" })).toBe(payload)
+  })
+
+  test("should drop guest_public from sourceVisibility enums and nowhere else", () => {
+    const privateSlotSchema = (visibilities: string[]) => ({
+      type: "object",
+      properties: {
+        state: { type: "string", const: "private" },
+        sourceVisibility: { type: "string", enum: visibilities },
+      },
+    })
+    const spec = {
+      paths: {
+        "/messages": {
+          get: { operationId: "listMessages", responses: privateSlotSchema(["public", "guest_public", "private"]) },
+        },
+        "/other": { get: { operationId: "other", responses: { type: "string", enum: ["guest_public"] } } },
+      },
+    }
+    expect(guestPublicChange.downgradeSpec!(spec)).toEqual({
+      paths: {
+        "/messages": { get: { operationId: "listMessages", responses: privateSlotSchema(["public", "private"]) } },
+        "/other": { get: { operationId: "other", responses: { type: "string", enum: ["guest_public"] } } },
       },
     })
   })

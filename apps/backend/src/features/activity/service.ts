@@ -7,6 +7,7 @@ import {
   StreamEventRepository,
   resolveNotificationLevelsForStream,
   usersReadThroughEffective,
+  usersReadingWithoutMembership,
   checkStreamAccess,
   type Stream,
 } from "../streams"
@@ -16,7 +17,6 @@ import { BotRepository } from "../public-api"
 import { MessageRepository } from "../messaging"
 import { E2eStreamsRepository } from "../e2e-streams"
 import {
-  Visibilities,
   NotificationLevels,
   StreamTypes,
   AuthorTypes,
@@ -586,8 +586,8 @@ export class ActivityService {
   }
 
   /**
-   * Batch-check which user IDs have access to a stream.
-   * Public streams: all pass. Private: single batch membership query.
+   * Batch-check which user IDs have access to a stream: readers without a membership row
+   * (`usersReadingWithoutMembership`) plus, for the rest, one batch membership query.
    */
   private async filterByAccess(
     client: PoolClient,
@@ -596,14 +596,14 @@ export class ActivityService {
     rootStream: Stream | null,
     userIds: string[]
   ): Promise<Set<string>> {
-    if (stream.rootStreamId) {
-      if (!rootStream) return new Set()
-      if (rootStream.visibility === Visibilities.PUBLIC) return new Set(userIds)
-      return StreamMemberRepository.filterMemberIds(client, workspaceId, rootStream.id, userIds)
-    }
+    const accessStream = stream.rootStreamId ? rootStream : stream
+    if (!accessStream) return new Set()
 
-    if (stream.visibility === Visibilities.PUBLIC) return new Set(userIds)
-    return StreamMemberRepository.filterMemberIds(client, workspaceId, stream.id, userIds)
+    const open = await usersReadingWithoutMembership(client, workspaceId, accessStream.visibility, userIds)
+    const rest = userIds.filter((id) => !open.has(id))
+    if (rest.length === 0) return open
+    const members = await StreamMemberRepository.filterMemberIds(client, workspaceId, accessStream.id, rest)
+    return new Set([...open, ...members])
   }
 
   /**

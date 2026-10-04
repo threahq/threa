@@ -6,7 +6,7 @@ import { toast } from "sonner"
 import {
   roleDisplayName,
   WORKSPACE_PERMISSION_SCOPES,
-  WORKSPACE_USER_ROLES,
+  WORKSPACE_ASSIGNABLE_ROLES,
   type WorkspaceRoleSlug,
 } from "@threahq/types"
 import { Button } from "@/components/ui/button"
@@ -271,7 +271,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {WORKSPACE_USER_ROLES.filter((slug) => slug !== "owner").map((slug) => (
+                      {WORKSPACE_ASSIGNABLE_ROLES.filter((slug) => slug !== "owner").map((slug) => (
                         <SelectItem key={slug} value={slug}>
                           {roleDisplayName(slug)}
                         </SelectItem>

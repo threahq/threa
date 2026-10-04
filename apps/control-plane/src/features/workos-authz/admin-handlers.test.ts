@@ -137,6 +137,24 @@ describe("createInternalAuthzAdminHandlers", () => {
     expect(adminService.changeRole).not.toHaveBeenCalled()
   })
 
+  test("should reject the guest role with 400 when changing a role", async () => {
+    const pool = createPoolWithOrg("org_workos_123")
+    const adminService = createAdminServiceStub()
+    const handlers = createInternalAuthzAdminHandlers({ pool, adminService })
+    const res = createResponse()
+
+    await expect(
+      handlers.changeRole(
+        {
+          params: { workspaceId: "ws_1", userId: "user_target" },
+          body: { actor: { workosUserId: "user_caller" }, roleSlug: WORKSPACE_ROLE_SLUGS.GUEST },
+        } as any,
+        res as any
+      )
+    ).rejects.toMatchObject({ status: 400, code: "VALIDATION_ERROR" })
+    expect(adminService.changeRole).not.toHaveBeenCalled()
+  })
+
   test("rejects missing actor.workosUserId", async () => {
     const pool = createPoolWithOrg("org_workos_123")
     const adminService = createAdminServiceStub()

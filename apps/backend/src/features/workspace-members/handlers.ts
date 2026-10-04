@@ -1,7 +1,7 @@
 import type { Request, Response } from "express"
 import { z } from "zod"
 import type { Pool } from "pg"
-import { WORKSPACE_USER_ROLES } from "@threahq/types"
+import { WORKSPACE_ASSIGNABLE_ROLES } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import type { ControlPlaneClient } from "../../lib/control-plane-client"
 import { UserRepository } from "../workspaces"
@@ -12,7 +12,7 @@ interface Dependencies {
 }
 
 const changeRoleBody = z.object({
-  roleSlug: z.enum(WORKSPACE_USER_ROLES),
+  roleSlug: z.enum(WORKSPACE_ASSIGNABLE_ROLES),
 })
 
 async function resolveTargetWorkosUserId(pool: Pool, workspaceId: string, userId: string): Promise<string> {

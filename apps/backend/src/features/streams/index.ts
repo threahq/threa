@@ -19,12 +19,16 @@ export { findMemoryModeStream, isMemoryAutomationOn } from "./memory-mode"
 
 // Canonical "can this user read this stream?" check (INV-8)
 export {
+  OPEN_TO_BOTS_VISIBILITIES,
   checkStreamAccess,
+  isOpenToBots,
   listAccessibleStreamIds,
   listRoomReadableStreamIds,
   resolveEffectiveAccessStream,
   rootReadableConditionSql,
+  rootReadableWithoutMembershipSql,
   streamAccessPredicateSql,
+  usersReadingWithoutMembership,
 } from "./access"
 
 export {

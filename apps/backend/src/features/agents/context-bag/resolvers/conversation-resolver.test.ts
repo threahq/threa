@@ -5,7 +5,7 @@ import { AttachmentRepository } from "../../../attachments"
 import { MessageRepository } from "../../../messaging"
 import { LinkPreviewRepository } from "../../../link-previews"
 import { ConversationRepository } from "../../../conversations"
-import { StreamRepository, StreamMemberRepository } from "../../../streams"
+import { StreamRepository } from "../../../streams"
 import { UserRepository } from "../../../workspaces"
 import { PersonaRepository } from "../../persona-repository"
 
@@ -81,6 +81,15 @@ function makeMessage(overrides: Record<string, any> = {}): any {
   }
 }
 
+function dbReading(...readableStreamIds: string[]): any {
+  return {
+    query: async ({ text }: { text: string }) => {
+      if (!text.includes("s.id = ANY(")) throw new Error(`Unstubbed query: ${text}`)
+      return { rows: readableStreamIds.map((id) => ({ id })) }
+    },
+  }
+}
+
 describe("ConversationResolver.assertAccess", () => {
   it("rejects when the conversation is missing or cross-workspace", async () => {
     spyOn(ConversationRepository, "findByIds").mockResolvedValue([])
@@ -98,11 +107,10 @@ describe("ConversationResolver.assertAccess", () => {
   it("rejects when the caller cannot read the conversation's root stream", async () => {
     spyOn(ConversationRepository, "findByIds").mockResolvedValue([makeConversation()])
     spyOn(StreamRepository, "findById").mockResolvedValue(makeStream())
-    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(false)
 
     await expect(
       ConversationResolver.assertAccess(
-        {} as any,
+        dbReading(),
         { kind: ContextRefKinds.CONVERSATION, conversationId: "conv_1", streamId: "stream_root" },
         "usr_x",
         "ws_1"
@@ -112,13 +120,10 @@ describe("ConversationResolver.assertAccess", () => {
 
   it("allows access when the root stream is readable, using the conversation's own root not the client streamId", async () => {
     spyOn(ConversationRepository, "findByIds").mockResolvedValue([makeConversation({ streamId: "stream_real_root" })])
-    const findById = spyOn(StreamRepository, "findById").mockResolvedValue(
-      makeStream({ id: "stream_real_root", visibility: Visibilities.PUBLIC })
-    )
-    const isMember = spyOn(StreamMemberRepository, "isMember").mockResolvedValue(false)
+    const findById = spyOn(StreamRepository, "findById").mockResolvedValue(makeStream({ id: "stream_real_root" }))
 
     await ConversationResolver.assertAccess(
-      {} as any,
+      dbReading("stream_real_root"),
       // Client-supplied streamId is a stale/wrong value — must be ignored.
       { kind: ContextRefKinds.CONVERSATION, conversationId: "conv_1", streamId: "stream_wrong" },
       "usr_x",
@@ -126,7 +131,6 @@ describe("ConversationResolver.assertAccess", () => {
     )
 
     expect(findById).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_real_root")
-    expect(isMember).not.toHaveBeenCalled()
   })
 })
 

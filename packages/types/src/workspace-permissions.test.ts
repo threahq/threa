@@ -1,9 +1,12 @@
 import { describe, test, expect } from "bun:test"
 import {
+  WORKSPACE_ASSIGNABLE_ROLES,
+  WORKSPACE_INVITABLE_ROLES,
   WORKSPACE_PERMISSION_SCOPES,
   WORKSPACE_PERMISSIONS,
   WORKSPACE_ROLE_DEFINITIONS,
   WORKSPACE_ROLE_SLUGS,
+  WORKSPACE_USER_ROLES,
   parseJwtPermissions,
   permissionsForRole,
   rolesGrant,
@@ -35,18 +38,48 @@ describe("WORKSPACE_PERMISSIONS catalog", () => {
     }
   })
 
-  test("catalog has exactly 23 permissions", () => {
-    expect(WORKSPACE_PERMISSIONS).toHaveLength(23)
-    expect(SCOPE_VALUES.size).toBe(23)
+  test("catalog has exactly 24 permissions", () => {
+    expect(WORKSPACE_PERMISSIONS).toHaveLength(24)
+    expect(SCOPE_VALUES.size).toBe(24)
   })
 })
 
 describe("WORKSPACE_ROLE_DEFINITIONS", () => {
-  test("contains exactly member, admin, owner", () => {
+  test("contains exactly member, admin, owner, guest", () => {
     const slugs = new Set(WORKSPACE_ROLE_DEFINITIONS.map((r) => r.slug))
     expect(slugs).toEqual(
-      new Set([WORKSPACE_ROLE_SLUGS.MEMBER, WORKSPACE_ROLE_SLUGS.ADMIN, WORKSPACE_ROLE_SLUGS.OWNER])
+      new Set([
+        WORKSPACE_ROLE_SLUGS.MEMBER,
+        WORKSPACE_ROLE_SLUGS.ADMIN,
+        WORKSPACE_ROLE_SLUGS.OWNER,
+        WORKSPACE_ROLE_SLUGS.GUEST,
+      ])
     )
+  })
+
+  test("guest permissions are member permissions minus workspace:browse and bots:create:personal", () => {
+    expect([...getRole(WORKSPACE_ROLE_SLUGS.GUEST).permissions]).toEqual([
+      "messages:search",
+      "streams:read",
+      "streams:write",
+      "messages:read",
+      "messages:write",
+      "users:read",
+      "memos:read",
+      "attachments:read",
+      "attachments:write",
+      "labels:read",
+      "labels:write",
+      "delegations:read",
+      "delegations:write",
+    ])
+  })
+
+  test("member, admin and owner hold workspace:browse and guest does not", () => {
+    const holders = WORKSPACE_ROLE_DEFINITIONS.filter((r) =>
+      r.permissions.includes(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE)
+    ).map((r) => r.slug)
+    expect(holders).toEqual([WORKSPACE_ROLE_SLUGS.MEMBER, WORKSPACE_ROLE_SLUGS.ADMIN, WORKSPACE_ROLE_SLUGS.OWNER])
   })
 
   test("owner ⊇ admin ⊇ member", () => {
@@ -94,10 +127,30 @@ describe("WORKSPACE_ROLE_DEFINITIONS", () => {
     }
   })
 
-  test("absolute permission counts (member=14, admin=22, owner=23)", () => {
-    expect(getRole(WORKSPACE_ROLE_SLUGS.MEMBER).permissions).toHaveLength(14)
-    expect(getRole(WORKSPACE_ROLE_SLUGS.ADMIN).permissions).toHaveLength(22)
-    expect(getRole(WORKSPACE_ROLE_SLUGS.OWNER).permissions).toHaveLength(23)
+  test("absolute permission counts (member=15, admin=23, owner=24, guest=13)", () => {
+    expect(getRole(WORKSPACE_ROLE_SLUGS.MEMBER).permissions).toHaveLength(15)
+    expect(getRole(WORKSPACE_ROLE_SLUGS.ADMIN).permissions).toHaveLength(23)
+    expect(getRole(WORKSPACE_ROLE_SLUGS.OWNER).permissions).toHaveLength(24)
+    expect(getRole(WORKSPACE_ROLE_SLUGS.GUEST).permissions).toHaveLength(13)
+  })
+})
+
+describe("role lists", () => {
+  test("every role is known but guest is neither invitable nor assignable", () => {
+    expect({
+      known: [...WORKSPACE_USER_ROLES],
+      invitable: [...WORKSPACE_INVITABLE_ROLES],
+      assignable: [...WORKSPACE_ASSIGNABLE_ROLES],
+    }).toEqual({
+      known: [
+        WORKSPACE_ROLE_SLUGS.MEMBER,
+        WORKSPACE_ROLE_SLUGS.ADMIN,
+        WORKSPACE_ROLE_SLUGS.OWNER,
+        WORKSPACE_ROLE_SLUGS.GUEST,
+      ],
+      invitable: [WORKSPACE_ROLE_SLUGS.MEMBER, WORKSPACE_ROLE_SLUGS.ADMIN],
+      assignable: [WORKSPACE_ROLE_SLUGS.MEMBER, WORKSPACE_ROLE_SLUGS.ADMIN, WORKSPACE_ROLE_SLUGS.OWNER],
+    })
   })
 })
 

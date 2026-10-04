@@ -1,10 +1,10 @@
 import { Globe, Lock } from "lucide-react"
 import { cn } from "@/lib/utils"
-import type { Visibility } from "@threahq/types"
+import type { CreatableVisibility, Visibility } from "@threahq/types"
 
 interface VisibilityPickerProps {
   value: Visibility
-  onChange: (value: Visibility) => void
+  onChange: (value: CreatableVisibility) => void
   disabled?: boolean
 }
 

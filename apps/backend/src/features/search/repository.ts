@@ -2,7 +2,6 @@ import type { Querier } from "../../db"
 import { sql, composeSql } from "../../db"
 import {
   DM_PARTICIPANT_COUNT,
-  Visibilities,
   type AuthorType,
   type ConversationStatus,
   type JSONContent,
@@ -10,7 +9,7 @@ import {
 } from "@threahq/types"
 import { archiveStatusSql, type ArchiveStatus } from "../../lib/sql-filters"
 import { tsqueryAcrossConfigsSql } from "../../lib/text-search-config"
-import { streamAccessPredicateSql } from "../streams"
+import { OPEN_TO_BOTS_VISIBILITIES, streamAccessPredicateSql } from "../streams"
 import { REPLY_COUNT_SUBQUERY } from "../messaging"
 import type { AgentAccessSpec } from "../agents"
 import { LEGACY_SEMANTIC_DISTANCE_THRESHOLD, SEARCH_HYBRID_LEG_LIMIT, type SearchRanking } from "./config"
@@ -243,10 +242,8 @@ export const SearchRepository = {
    * Get stream IDs that a user can access, optionally filtered by required participants.
    * Combines access control + participant filtering in ONE query.
    *
-   * Access rules:
-   * - User is in the stream, OR
-   * - Stream is public, OR
-   * - For threads: user can access the root stream (member OR root is public)
+   * Access: the effective root (a thread resolves to its root) is readable
+   * without membership, or the user is a member of it (INV-62).
    *
    * Participant filtering (AND logic):
    * - If userIds provided, stream must have ALL specified participants
@@ -743,10 +740,11 @@ export const SearchRepository = {
    * Get public stream IDs in a workspace.
    * Used by agent access control for public_only access spec.
    *
-   * Publicness is the ROOT's visibility (INV-62): threads copy the root's
+   * Openness is the ROOT's visibility (INV-62): threads copy the root's
    * visibility at creation and are never re-synced, so a thread's own row can
    * say "public" long after its root went private — trusting it leaked those
-   * threads into agent research and bot scopes.
+   * threads into agent research and bot scopes. `public` and `guest_public`
+   * both count: agents and bots have no role to lack browse with.
    */
   async getPublicStreams(
     db: Querier,
@@ -760,7 +758,7 @@ export const SearchRepository = {
       SELECT s.id FROM streams s
       JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id
       WHERE s.workspace_id = ${workspaceId}
-        AND root.visibility = ${Visibilities.PUBLIC}
+        AND root.visibility = ANY(${[...OPEN_TO_BOTS_VISIBILITIES]})
         AND (${!hasTypeFilter} OR s.type = ANY(${options?.streamTypes ?? []}))
         AND ${archiveCondition}
     `)
@@ -795,8 +793,8 @@ export const SearchRepository = {
    *
    * Access specs:
    * - user_full_access: Everything the specified user can access
-   * - public_only: Only public streams
-   * - public_plus_stream: Public streams + a specific stream and its threads
+   * - public_only: Only open streams (`public` and `guest_public`)
+   * - public_plus_stream: Open streams + a specific stream and its threads
    * - user_intersection: Streams all specified users can access (for DMs)
    */
   async getAccessibleStreamsForAgent(

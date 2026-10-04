@@ -19,7 +19,7 @@ import {
   StreamTypes,
   type StreamConnectionErrorCode,
   type StreamConnectionLookupResponse,
-  type Visibility,
+  type CreatableVisibility,
   type Workspace,
 } from "@threahq/types"
 import { ApiError } from "@/api/client"
@@ -239,7 +239,7 @@ function SignedInAccept({ token }: { token: string }) {
 function AcceptForm({ token, lookup, workspaces }: { token: string; lookup: PendingInvite; workspaces: Workspace[] }) {
   const queryClient = useQueryClient()
   const [workspaceId, setWorkspaceId] = useState(workspaces[0]?.id ?? "")
-  const [visibility, setVisibility] = useState<Visibility>("private")
+  const [visibility, setVisibility] = useState<CreatableVisibility>("private")
   // A rechecked workspace can drop out of the list; the picker then asks again rather than picking for the viewer.
   const workspace = workspaces.find((w) => w.id === workspaceId) ?? null
   const accept = useMutation({

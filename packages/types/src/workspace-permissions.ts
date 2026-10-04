@@ -5,6 +5,7 @@
  */
 
 export const WORKSPACE_PERMISSION_SCOPES = {
+  WORKSPACE_BROWSE: "workspace:browse",
   MESSAGES_SEARCH: "messages:search",
   STREAMS_READ: "streams:read",
   STREAMS_WRITE: "streams:write",
@@ -43,6 +44,11 @@ export interface WorkspacePermission {
  * sync script and the frontend scope picker.
  */
 export const WORKSPACE_PERMISSIONS: readonly WorkspacePermission[] = Object.freeze([
+  {
+    slug: WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE,
+    name: "Browse workspace",
+    description: "Grants access to see the workspace's public channels without being added to them.",
+  },
   {
     slug: WORKSPACE_PERMISSION_SCOPES.MESSAGES_SEARCH,
     name: "Search messages",
@@ -171,15 +177,21 @@ export const WORKSPACE_ROLE_SLUGS = {
   OWNER: "owner",
   ADMIN: "admin",
   MEMBER: "member",
+  GUEST: "guest",
 } as const
 
 export type WorkspaceRoleSlug = (typeof WORKSPACE_ROLE_SLUGS)[keyof typeof WORKSPACE_ROLE_SLUGS]
 
 /**
  * Roles that can be granted via invitation. Owner promotion is an explicit
- * post-join action, never an invite role, so it's excluded here.
+ * post-join action and guests are not invitable yet, so both are excluded here.
  */
-export type WorkspaceInvitableRole = Exclude<WorkspaceRoleSlug, typeof WORKSPACE_ROLE_SLUGS.OWNER>
+export type WorkspaceInvitableRole = Exclude<
+  WorkspaceRoleSlug,
+  typeof WORKSPACE_ROLE_SLUGS.OWNER | typeof WORKSPACE_ROLE_SLUGS.GUEST
+>
+
+export type WorkspaceAssignableRole = Exclude<WorkspaceRoleSlug, typeof WORKSPACE_ROLE_SLUGS.GUEST>
 
 export interface WorkspaceRoleDefinition {
   readonly slug: WorkspaceRoleSlug
@@ -189,6 +201,7 @@ export interface WorkspaceRoleDefinition {
 }
 
 const READ_AND_SELF_SERVE: readonly WorkspacePermissionSlug[] = Object.freeze([
+  WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE,
   WORKSPACE_PERMISSION_SCOPES.MESSAGES_SEARCH,
   WORKSPACE_PERMISSION_SCOPES.STREAMS_READ,
   WORKSPACE_PERMISSION_SCOPES.STREAMS_WRITE,
@@ -204,6 +217,13 @@ const READ_AND_SELF_SERVE: readonly WorkspacePermissionSlug[] = Object.freeze([
   WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_READ,
   WORKSPACE_PERMISSION_SCOPES.DELEGATIONS_WRITE,
 ])
+
+const GUEST_PERMISSIONS: readonly WorkspacePermissionSlug[] = Object.freeze(
+  READ_AND_SELF_SERVE.filter(
+    (slug) =>
+      slug !== WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE && slug !== WORKSPACE_PERMISSION_SCOPES.BOTS_CREATE_PERSONAL
+  )
+)
 
 const ADMIN_ADDITIONS: readonly WorkspacePermissionSlug[] = Object.freeze([
   WORKSPACE_PERMISSION_SCOPES.BOTS_CREATE_SHARED,
@@ -243,6 +263,13 @@ export const WORKSPACE_ROLE_DEFINITIONS: readonly WorkspaceRoleDefinition[] = Ob
       WORKSPACE_PERMISSION_SCOPES.WORKSPACE_OWNER,
     ]),
   },
+  {
+    slug: WORKSPACE_ROLE_SLUGS.GUEST,
+    name: "Guest",
+    description:
+      "Sees only the channels they are added to, plus channels shared with guests. Cannot create personal bots.",
+    permissions: GUEST_PERMISSIONS,
+  },
 ])
 
 export const WORKSPACE_USER_ROLES = WORKSPACE_ROLE_DEFINITIONS.map((r) => r.slug) as unknown as readonly [
@@ -252,13 +279,21 @@ export const WORKSPACE_USER_ROLES = WORKSPACE_ROLE_DEFINITIONS.map((r) => r.slug
 
 /**
  * Roles that can be granted via invitation (everything except `owner`, which
- * is reached via post-join promotion). Declared as a non-empty tuple so it
- * works with `z.enum(...)` directly, and type-checked against
- * `WorkspaceInvitableRole` so any catalog change forces a deliberate update.
+ * is reached via post-join promotion, and `guest`, which is not invitable yet).
+ * Declared as a non-empty tuple so it works with `z.enum(...)` directly, and
+ * type-checked against `WorkspaceInvitableRole` so any catalog change forces a
+ * deliberate update.
  */
 export const WORKSPACE_INVITABLE_ROLES: readonly [WorkspaceInvitableRole, ...WorkspaceInvitableRole[]] = [
   WORKSPACE_ROLE_SLUGS.MEMBER,
   WORKSPACE_ROLE_SLUGS.ADMIN,
+]
+
+/** Roles a role-change surface offers: every role except `guest`, which is not assignable yet. */
+export const WORKSPACE_ASSIGNABLE_ROLES: readonly [WorkspaceAssignableRole, ...WorkspaceAssignableRole[]] = [
+  WORKSPACE_ROLE_SLUGS.MEMBER,
+  WORKSPACE_ROLE_SLUGS.ADMIN,
+  WORKSPACE_ROLE_SLUGS.OWNER,
 ]
 
 export function permissionsForRole(slug: WorkspaceRoleSlug): WorkspacePermissionSlug[] {

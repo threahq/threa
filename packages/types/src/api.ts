@@ -6,7 +6,7 @@
 
 import type {
   StreamType,
-  Visibility,
+  CreatableVisibility,
   LabelableResourceType,
   CompanionMode,
   MemoryMode,
@@ -86,7 +86,7 @@ interface CreateStreamInputBase {
   descriptionJson?: JSONContent
   /** Markdown description (external/wire); backend parses it to `descriptionJson`. */
   description?: string
-  visibility?: Visibility
+  visibility?: CreatableVisibility
   companionMode?: CompanionMode
   companionPersonaId?: string
   parentStreamId?: string
@@ -150,7 +150,7 @@ export interface UpdateStreamInput {
    * parses it to `descriptionJson`. Internal clients should send `descriptionJson`.
    */
   description?: string
-  visibility?: Visibility
+  visibility?: CreatableVisibility
   companionMode?: CompanionMode
   companionPersonaId?: string
   memoryMode?: MemoryMode

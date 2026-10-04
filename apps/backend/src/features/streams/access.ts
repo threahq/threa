@@ -1,9 +1,9 @@
 import type { QueryConfig } from "pg"
 import type { Querier } from "../../db"
 import { sql, composeSql } from "../../db"
-import { Visibilities } from "@threahq/types"
+import { Visibilities, type Visibility } from "@threahq/types"
+import { findUserIdsWithoutBrowse, viewerLacksBrowseSql } from "../workspaces"
 import { StreamRepository, type Stream } from "./repository"
-import { StreamMemberRepository } from "./member-repository"
 
 /**
  * Minimal structural shape this helper needs: the stream's id and a
@@ -22,10 +22,9 @@ export interface AccessResolvable {
  * authoritative for access decisions. Top-level streams are their own
  * authoritative source; threads inherit from their root.
  *
- * Single source of truth for the "thread → root" access pattern. Every
- * helper that decides "can user X read stream Y?" or "is this stream
- * effectively private?" routes through here, so subtle drifts (stale
- * thread visibility, sparse thread member sets) can't reintroduce holes.
+ * Callers that need the effective root row in memory (write authority,
+ * effective privacy) route through here. Read access is decided in SQL by
+ * {@link streamAccessPredicateSql}, which resolves the same root.
  *
  * Falls back to the input stream when the root row is missing — the
  * FK-less schema (INV-1) means a dangling `root_stream_id` is possible
@@ -75,9 +74,10 @@ export async function resolveEffectiveAccessStreams<T extends AccessResolvable>(
  * 1. **Workspace boundary** — a stream belonging to another workspace is
  *    treated as inaccessible (INV-8), even when the caller's userId
  *    happens to be a member elsewhere.
- * 2. **Public channels** — public channels grant read access to every
- *    workspace member without requiring a `stream_members` row, so
- *    membership-only checks would falsely deny access.
+ * 2. **Open channels** — `guest_public` channels grant read access to every
+ *    workspace user and `public` channels to every user with browse, neither
+ *    requiring a `stream_members` row, so membership-only checks would
+ *    falsely deny access.
  * 3. **Threads** — threads inherit access from their root stream's
  *    membership/visibility; checking membership on the thread itself is
  *    nearly always wrong.
@@ -100,27 +100,30 @@ export async function checkStreamAccess(
 ): Promise<Stream | null> {
   const stream = await StreamRepository.findById(db, workspaceId, streamId)
   if (!stream) return null
+  const accessible = await listAccessibleStreamIds(db, workspaceId, userId, [stream.id])
+  return accessible.has(stream.id) ? stream : null
+}
 
-  const effective = await resolveEffectiveAccessStream(db, stream)
-  // A thread whose root is missing collapses back to the thread itself —
-  // not accessible without the root present. Compare ids rather than
-  // object identity so this stays correct if the resolver ever returns a
-  // copy on the dangling-root fallback.
-  if (stream.rootStreamId && effective.id !== stream.rootStreamId) return null
-
-  if (effective.visibility !== Visibilities.PUBLIC) {
-    const isMember = await StreamMemberRepository.isMember(db, workspaceId, effective.id, userId)
-    if (!isMember) return null
-  }
-  return stream
+/**
+ * The legs of root readability that need no `stream_members` row: `guest_public` is open to every
+ * workspace user, `public` to users with browse. Exported on its own because the catch-up history
+ * bound asks the same question. `rootAlias` is a trusted SQL alias, never user input.
+ */
+export function rootReadableWithoutMembershipSql(workspaceId: string, userId: string, rootAlias: string): QueryConfig {
+  const root = sql`${sql.raw(rootAlias)}`
+  return composeSql`(
+    ${root}.visibility = ${Visibilities.GUEST_PUBLIC}
+    OR (${root}.visibility = ${Visibilities.PUBLIC} AND NOT ${viewerLacksBrowseSql(workspaceId, userId)})
+  )`
 }
 
 /**
  * The canonical "is this *already-resolved effective root* readable by the
- * user?" leaf: public visibility OR a `stream_members` row on the root. This is
+ * user?" leaf: readable without membership ({@link rootReadableWithoutMembershipSql})
+ * OR a `stream_members` row on the root. This is
  * the single rule that both the per-id predicate ({@link streamAccessPredicateSql})
  * and the workspace catch-up CTE (`features/sync/repository.ts`) reduce a
- * stream's effective root down to — extracted so the public-without-membership
+ * stream's effective root down to — extracted so the open-without-membership
  * branch cannot live in one and be silently dropped from the other (catch-up
  * replicating the thread→root leg while omitting the public-root leg is the
  * drift this guards against). The caller resolves the effective root
@@ -129,16 +132,17 @@ export async function checkStreamAccess(
  *
  * `rootAlias` is injected raw (squid `raw`) because it is a SQL alias reference,
  * not a value — it MUST be a trusted constant supplied by call-site code (e.g.
- * `"eff_root"`), NEVER derived from user input. Built with squid `sql` so it
- * carries `$1..$k` placeholders that {@link composeSql} renumbers when splicing
+ * `"eff_root"`), NEVER derived from user input. Built with {@link composeSql} so it
+ * carries `$1..$k` placeholders that composeSql renumbers when splicing
  * it into a larger query.
  */
 export function rootReadableConditionSql(workspaceId: string, userId: string, rootAlias: string): QueryConfig {
-  return sql`(
-    ${sql.raw(rootAlias)}.visibility = ${Visibilities.PUBLIC}
+  const root = sql`${sql.raw(rootAlias)}`
+  return composeSql`(
+    ${rootReadableWithoutMembershipSql(workspaceId, userId, rootAlias)}
     OR EXISTS (
       SELECT 1 FROM stream_members
-      WHERE workspace_id = ${workspaceId} AND stream_id = ${sql.raw(rootAlias)}.id AND member_id = ${userId}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${root}.id AND member_id = ${userId}
     )
   )`
 }
@@ -146,14 +150,13 @@ export function rootReadableConditionSql(workspaceId: string, userId: string, ro
 /**
  * Canonical SQL predicate for the "thread → root" stream-access rule
  * (INV-62), as a reusable `EXISTS` fragment correlated to a stream-id
- * column. This is the single source of truth for the *set-based* form of
- * the same three rules `checkStreamAccess` enforces per-id (workspace
- * boundary, public root grants read without a `stream_members` row, threads
- * inherit from their root). The effective root is resolved with
- * `COALESCE(root_stream_id, id)` (a top-level stream is its own root, a thread
- * defers to its root; a thread whose root row is missing finds no join and is
- * denied), then {@link rootReadableConditionSql} decides readability — the same
- * leaf the catch-up CTE applies, so the two cannot drift.
+ * column, and the single source of truth for stream read access
+ * (`checkStreamAccess` and `listAccessibleStreamIds` run it). The effective
+ * root is resolved with `COALESCE(root_stream_id, id)` (a top-level stream is
+ * its own root, a thread defers to its root; a thread whose root row is
+ * missing finds no join and is denied), then {@link rootReadableConditionSql}
+ * decides readability — the same leaf the catch-up CTE applies, so the two
+ * cannot drift.
  *
  * The returned `QueryConfig` is spliced into a larger query via
  * {@link composeSql} (squid's own `sql` tag cannot nest fragments — it would
@@ -239,4 +242,34 @@ export async function listAccessibleStreamIds(
       AND ${streamAccessPredicateSql(workspaceId, userId, "s.id")}
   `)
   return new Set(result.rows.map((r) => r.id))
+}
+
+/**
+ * Which of `userIds` read a stream of this `visibility` without a `stream_members` row, for gates
+ * that decide in TypeScript. The SQL form of the same rule is {@link rootReadableWithoutMembershipSql}.
+ * Pass the effective root's visibility; an unknown value reads for no one.
+ */
+export async function usersReadingWithoutMembership(
+  db: Querier,
+  workspaceId: string,
+  visibility: Visibility,
+  userIds: readonly string[]
+): Promise<Set<string>> {
+  switch (visibility) {
+    case Visibilities.GUEST_PUBLIC:
+      return new Set(userIds)
+    case Visibilities.PUBLIC: {
+      const lacking = await findUserIdsWithoutBrowse(db, workspaceId, userIds)
+      return new Set(userIds.filter((userId) => !lacking.has(userId)))
+    }
+    default:
+      return new Set()
+  }
+}
+
+/** Bots have no role to lack browse with, so every open root, `public` or `guest_public`, is readable without a grant. */
+export const OPEN_TO_BOTS_VISIBILITIES: readonly Visibility[] = [Visibilities.PUBLIC, Visibilities.GUEST_PUBLIC]
+
+export function isOpenToBots(visibility: Visibility): boolean {
+  return OPEN_TO_BOTS_VISIBILITIES.includes(visibility)
 }

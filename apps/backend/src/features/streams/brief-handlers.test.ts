@@ -59,9 +59,15 @@ function fakeRes() {
   return res as typeof res & Response
 }
 
-function makeHandlers(service: Partial<StreamBriefService>) {
+function makeHandlers(service: Partial<StreamBriefService>, readableStreamId = "stream_chan") {
+  const pool = {
+    query: async ({ text }: { text: string }) => {
+      if (!text.includes("s.id = ANY(")) throw new Error(`Unstubbed query: ${text}`)
+      return { rows: [{ id: readableStreamId }] }
+    },
+  } as unknown as Pool
   return createStreamBriefHandlers({
-    pool: {} as Pool,
+    pool,
     streamBriefService: service as StreamBriefService,
   })
 }
@@ -86,7 +92,7 @@ describe("stream brief handlers", () => {
       id === "stream_thread" ? thread : root
     )
     const get = mock(async (_params: { workspaceId: string; streamId: string }) => null)
-    const handlers = makeHandlers({ get } as unknown as Partial<StreamBriefService>)
+    const handlers = makeHandlers({ get } as unknown as Partial<StreamBriefService>, "stream_thread")
 
     const res = fakeRes()
     await handlers.get(fakeReq({ params: { streamId: "stream_thread" } }), res)

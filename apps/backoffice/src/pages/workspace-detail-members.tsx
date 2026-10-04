@@ -2,7 +2,7 @@ import { useEffect, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useParams } from "react-router-dom"
 import { RefreshCw, MoreHorizontal, Ban, UserPlus } from "lucide-react"
-import { roleDisplayName, WORKSPACE_USER_ROLES, type WorkspaceRoleSlug } from "@threahq/types"
+import { roleDisplayName, WORKSPACE_ASSIGNABLE_ROLES, type WorkspaceRoleSlug } from "@threahq/types"
 import { Section } from "@/components/layout/section"
 import { InlineBanner } from "@/components/inline-banner"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -396,7 +396,7 @@ function AssignMemberForm({
           disabled={disabled}
           className="h-10 rounded-input border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {WORKSPACE_USER_ROLES.map((slug) => (
+          {WORKSPACE_ASSIGNABLE_ROLES.map((slug) => (
             <option key={slug} value={slug}>
               {roleDisplayName(slug)}
             </option>
@@ -599,7 +599,7 @@ function MemberRow({
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">Change role</div>
-            {WORKSPACE_USER_ROLES.map((slug) => {
+            {WORKSPACE_ASSIGNABLE_ROLES.map((slug) => {
               const memberHasRole = memberRoleSet.has(slug)
               return (
                 <DropdownMenuItem key={slug} disabled={busy || memberHasRole} onSelect={() => onChangeRole(slug)}>

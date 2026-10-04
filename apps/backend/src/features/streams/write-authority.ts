@@ -3,7 +3,6 @@ import {
   StreamErrorCodes,
   StreamReadOnlyReasons,
   StreamTypes,
-  Visibilities,
   type StreamReadOnlyReason,
   type StreamViewerState,
   type StreamType,
@@ -12,7 +11,12 @@ import {
 import type { Querier } from "../../db"
 import { StreamNotFoundError } from "../../lib/errors"
 import { BotChannelAccessRepository, isStreamReadableAsOwner } from "../api-keys"
-import { resolveEffectiveAccessStream, resolveEffectiveAccessStreams } from "./access"
+import {
+  isOpenToBots,
+  resolveEffectiveAccessStream,
+  resolveEffectiveAccessStreams,
+  usersReadingWithoutMembership,
+} from "./access"
 import { StreamMemberRepository } from "./member-repository"
 import { StreamRepository, type Stream } from "./repository"
 
@@ -69,6 +73,23 @@ async function principalParticipates(
   return BotChannelAccessRepository.hasGrant(db, workspaceId, principal.botId, rootStreamId)
 }
 
+async function visibilitiesReadWithoutParticipating(
+  db: Querier,
+  workspaceId: string,
+  principal: StreamWritePrincipal,
+  visibilities: Iterable<Visibility>
+): Promise<Set<Visibility>> {
+  const open = new Set<Visibility>()
+  for (const visibility of new Set(visibilities)) {
+    const reads =
+      principal.kind === "bot"
+        ? isOpenToBots(visibility)
+        : (await usersReadingWithoutMembership(db, workspaceId, visibility, [principal.userId])).has(principal.userId)
+    if (reads) open.add(visibility)
+  }
+  return open
+}
+
 export async function projectStreamForPrincipal<T extends AuthorityStream>(
   db: Querier,
   params: { workspaceId: string; stream: T; principal: StreamWritePrincipal }
@@ -81,7 +102,12 @@ export async function projectStreamForPrincipal<T extends AuthorityStream>(
   if (effective.workspaceId !== workspaceId) return null
 
   const participates = await principalParticipates(db, workspaceId, effective.id, principal)
-  if (effective.visibility !== Visibilities.PUBLIC && !participates) return null
+  const readable =
+    participates ||
+    (await visibilitiesReadWithoutParticipating(db, workspaceId, principal, [effective.visibility])).has(
+      effective.visibility
+    )
+  if (!readable) return null
 
   const ancestorArchived = stream.archivedAt
     ? false
@@ -114,10 +140,16 @@ export async function projectStreamsForPrincipal<T extends AuthorityStream>(
       streams.filter((stream) => !stream.archivedAt).map((stream) => stream.id)
     )
   )
+  const readableWithoutParticipating = await visibilitiesReadWithoutParticipating(
+    db,
+    workspaceId,
+    principal,
+    facts.filter(({ root }) => !participatingRootIds.has(root.id)).map(({ root }) => root.visibility)
+  )
   const projected: Array<T & StreamViewerState> = []
   for (const { target, root } of facts) {
     const participates = participatingRootIds.has(root.id)
-    if (root.visibility !== Visibilities.PUBLIC && !participates) continue
+    if (!participates && !readableWithoutParticipating.has(root.visibility)) continue
     projected.push({
       ...target,
       ...deriveStreamViewerState({ target, ancestorArchived: sealedIds.has(target.id), participates }),
@@ -199,10 +231,16 @@ export async function resolveLockedStreamAuthorities(
       ? await StreamMemberRepository.lockMemberships(db, params.workspaceId, rootIds, principal.userId)
       : await BotChannelAccessRepository.lockGrants(db, params.workspaceId, principal.botId, rootIds)
 
+  const readableWithoutParticipating = await visibilitiesReadWithoutParticipating(
+    db,
+    params.workspaceId,
+    principal,
+    facts.filter(({ root }) => !participatingRootIds.has(root.id)).map(({ root }) => root.visibility)
+  )
   const authorities: LockedStreamAuthority[] = []
   for (const { target, root, ancestorArchived } of facts) {
     const participates = participatingRootIds.has(root.id)
-    if (root.visibility !== Visibilities.PUBLIC && !participates) {
+    if (!participates && !readableWithoutParticipating.has(root.visibility)) {
       // A bot that already reads this stream through its owner
       // (`bots.reads_as_owner`) must not be told "not found" on write — it just
       // read the stream, so the existence-hiding 404 reads as a transient error

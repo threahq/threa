@@ -361,6 +361,7 @@ jobs:
           filters: |
             permissions:
               - 'packages/types/src/api-keys.ts'
+              - 'packages/types/src/workspace-permissions.ts'
               - 'scripts/sync-workos-permissions.ts'
 
       - name: Setup Bun

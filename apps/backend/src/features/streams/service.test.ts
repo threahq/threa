@@ -1,6 +1,7 @@
 import { afterAll, describe, test, expect, mock, spyOn, beforeEach } from "bun:test"
 import type { PoolClient } from "pg"
 import { StreamService } from "./service"
+import * as access from "./access"
 import { StreamRepository } from "./repository"
 import { StreamMemberRepository, type StreamMember } from "./member-repository"
 import { ReadStateRepository } from "./read-state-repository"
@@ -51,6 +52,10 @@ spyOn(StreamMemberRepository, "lockMemberPairs").mockImplementation(
   async (_client, _workspaceId, pairs) => new Set(pairs.map(({ streamId, memberId }) => `${streamId}:${memberId}`))
 )
 const mockLockGrants = spyOn(BotChannelAccessRepository, "lockGrants").mockResolvedValue(new Set())
+// Stands in for the browse lookup against the fake `{}` client: every user of an open root reads it.
+spyOn(access, "usersReadingWithoutMembership").mockImplementation(async (_client, _workspaceId, visibility, userIds) =>
+  visibility === "public" || visibility === "guest_public" ? new Set(userIds) : new Set()
+)
 const mockInsertOrFindByUniquenessKey = spyOn(StreamRepository, "insertOrFindByUniquenessKey")
 const mockInsertMember = spyOn(StreamMemberRepository, "insert")
 const mockInsertManyMembers = spyOn(StreamMemberRepository, "insertMany")

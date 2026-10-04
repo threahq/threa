@@ -251,9 +251,9 @@ describe("thread archival chain", () => {
     const pick = (streams: Array<{ id: string }>) => streams.map(({ id }) => id).sort()
 
     expect({
-      active: pick(await StreamRepository.list(pool, workspace, { userMembershipStreamIds: [ids.A] })),
+      active: pick(await StreamRepository.list(pool, workspace, { viewerUserId: owner })),
       activeThreads: pick(
-        await StreamRepository.list(pool, workspace, { userMembershipStreamIds: [ids.A], types: [StreamTypes.THREAD] })
+        await StreamRepository.list(pool, workspace, { viewerUserId: owner, types: [StreamTypes.THREAD] })
       ),
       childrenOfA: pick(await StreamRepository.list(pool, workspace, { parentStreamId: ids.A })),
       archived: pick(await StreamRepository.list(pool, workspace, { archiveStatus: ["archived"] })),
@@ -264,7 +264,7 @@ describe("thread archival chain", () => {
           includeArchived: true,
         })
       ),
-      previews: pick(await StreamRepository.listWithPreviews(pool, workspace, { userMembershipStreamIds: [ids.A] })),
+      previews: pick(await StreamRepository.listWithPreviews(pool, workspace, { viewerUserId: owner })),
       archivedForMember: pick(await service.listArchivedStreams(workspace, bystander)),
     }).toEqual({
       active: [ids.A, ids.E].sort(),
