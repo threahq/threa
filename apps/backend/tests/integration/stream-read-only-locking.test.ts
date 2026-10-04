@@ -41,7 +41,11 @@ describe("stream write lock statements", () => {
       "INSERT INTO streams (id, workspace_id, type, visibility, parent_stream_id, root_stream_id, created_by) VALUES ($1,$2,'thread','private',$3,$3,$4)",
       [threadId, workspaceId, rootId, userId]
     )
-    await pool.query("INSERT INTO stream_members (stream_id, member_id) VALUES ($1,$2)", [rootId, userId])
+    await pool.query("INSERT INTO stream_members (workspace_id, stream_id, member_id) VALUES ($1,$2,$3)", [
+      workspaceId,
+      rootId,
+      userId,
+    ])
     await pool.query("INSERT INTO bots (id, workspace_id, api_key_id, name) VALUES ($1,$2,$3,'Locker bot')", [
       botId,
       workspaceId,
@@ -166,10 +170,11 @@ describe("stream write lock statements", () => {
       "INSERT INTO streams (id,workspace_id,type,visibility,created_by,archived_at) VALUES ($1,$2,'channel','private',$3,NOW()),($4,$2,'channel','private',$3,NULL)",
       [staleId, workspaceId, userId, currentId]
     )
-    await pool.query("INSERT INTO stream_members (stream_id,member_id) VALUES ($1,$3),($2,$3)", [
+    await pool.query("INSERT INTO stream_members (workspace_id,stream_id,member_id) VALUES ($4,$1,$3),($4,$2,$3)", [
       staleId,
       currentId,
       userId,
+      workspaceId,
     ])
     const service = new EventService(pool)
     const principal = { kind: "user" as const, userId }
@@ -351,7 +356,7 @@ describe("stream write lock statements", () => {
       streamId: rootId,
       principal: { kind: "user", userId } as const,
       transition: `DELETE FROM stream_members WHERE stream_id=$1 AND member_id='${userId}'`,
-      reset: `INSERT INTO stream_members (stream_id,member_id) VALUES ($1,'${userId}') ON CONFLICT DO NOTHING`,
+      reset: `INSERT INTO stream_members (workspace_id,stream_id,member_id) VALUES ('${workspaceId}',$1,'${userId}') ON CONFLICT DO NOTHING`,
     },
     {
       name: "bot revoke",
@@ -364,10 +369,10 @@ describe("stream write lock statements", () => {
 
   async function resetAuthorityFacts() {
     await pool.query("UPDATE streams SET archived_at=NULL WHERE id=$1", [rootId])
-    await pool.query("INSERT INTO stream_members (stream_id,member_id) VALUES ($1,$2) ON CONFLICT DO NOTHING", [
-      rootId,
-      userId,
-    ])
+    await pool.query(
+      "INSERT INTO stream_members (workspace_id,stream_id,member_id) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING",
+      [workspaceId, rootId, userId]
+    )
     await pool.query(
       "INSERT INTO bot_channel_access (id,workspace_id,bot_id,stream_id,granted_by) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (workspace_id,bot_id,stream_id) DO NOTHING",
       [`bca_reset_${suffix}`, workspaceId, botId, rootId, userId]

@@ -26,7 +26,11 @@ describe("decision requests", () => {
   beforeAll(async () => {
     fixture = await seedBotRuntimeFixture({ label: "decision_requests", instanceIds: ["hermes-instance"] })
     ;({ pool, workspace, stream, author, bot } = fixture)
-    await pool.query("INSERT INTO stream_members (stream_id, member_id) VALUES ($1, $2)", [stream, author])
+    await pool.query("INSERT INTO stream_members (workspace_id, stream_id, member_id) VALUES ($1, $2, $3)", [
+      workspace,
+      stream,
+      author,
+    ])
     service = new DecisionService({ pool, botChannelService: new BotChannelService({ pool }) })
     await botRuntimeServiceFor(pool).createOrLinkPiRemoteSession({
       workspaceId: workspace,
@@ -186,7 +190,11 @@ describe("decision requests", () => {
       "INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)",
       [sealedStream, workspace, author]
     )
-    await pool.query("INSERT INTO stream_members (stream_id, member_id) VALUES ($1, $2)", [sealedStream, author])
+    await pool.query("INSERT INTO stream_members (workspace_id, stream_id, member_id) VALUES ($1, $2, $3)", [
+      workspace,
+      sealedStream,
+      author,
+    ])
     await BotChannelAccessRepository.grantAccess(pool, {
       id: botChannelAccessId(),
       workspaceId: workspace,

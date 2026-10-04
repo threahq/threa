@@ -37,7 +37,7 @@ import {
 } from "../../src/lib/id"
 
 /**
- * Each statement below names a workspace-leading twin key in its ON CONFLICT
+ * Each statement below names a workspace-leading key in its ON CONFLICT
  * target. Postgres infers the arbiter at plan time, so a statement that runs
  * proves the target matches a real index; running it twice takes the conflict
  * path.
@@ -298,9 +298,11 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     root: string
     anchor: string
     stream: string
+    thread: string
     member: string
     persona: string
     message: string
+    sentMessage: string
     attachment: string
     conversation: string
     refStreams: [string, string]
@@ -313,20 +315,8 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
       (await pool.query(`SELECT ${columns} FROM ${table} WHERE workspace_id = $1 AND ${by}_id = $2`, [ws, ids[by]]))
         .rows[0] ?? null
 
-  // The old single-column streams key keeps one stream id out of two workspaces at once, so workspace B
-  // takes the stream over from workspace A before its read-state write.
-  const ownStream = async (ws: string, ids: SharedIds, writer: 0 | 1) => {
-    if (writer === 0) {
-      await StreamRepository.insert(pool, {
-        id: ids.stream,
-        workspaceId: ws,
-        type: StreamTypes.CHANNEL,
-        createdBy: ids.member,
-      })
-      return
-    }
-    await pool.query("UPDATE streams SET workspace_id = $1 WHERE id = $2", [ws, ids.stream])
-  }
+  const seedStream = (ws: string, ids: SharedIds) =>
+    StreamRepository.insert(pool, { id: ids.stream, workspaceId: ws, type: StreamTypes.CHANNEL, createdBy: ids.member })
 
   // Writer 1 is self-authored, so its row lands already read: an arbiter that updates A's row changes its read_at.
   const activity = (ws: string, ids: SharedIds, writer: 0 | 1, activityType: string) => ({
@@ -340,18 +330,19 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     isSelf: writer === 1,
   })
 
-  const sharedKeyCases: Array<{
-    name: string
-    oldKey: string
-    write: (ws: string, ids: SharedIds, writer: 0 | 1) => Promise<unknown>
-    read: (ws: string, ids: SharedIds) => Promise<unknown>
-  }> = [
+  const sharedKeyCases: Array<
+    {
+      name: string
+      write: (ws: string, ids: SharedIds, writer: 0 | 1) => Promise<unknown>
+      read: (ws: string, ids: SharedIds) => Promise<unknown>
+    } & ({ oldKey: string } | { landsAs: (ws: string, ids: SharedIds) => unknown })
+  > = [
     {
       name: "a thread anchor",
-      oldKey: "idx_streams_thread_anchor_typed",
+      landsAs: (ws, ids) => ({ workspaceId: ws, id: ids.thread }),
       write: (ws, ids) =>
         StreamRepository.insertThreadOrFind(pool, {
-          id: streamId(),
+          id: ids.thread,
           workspaceId: ws,
           type: StreamTypes.THREAD,
           visibility: Visibilities.PRIVATE,
@@ -360,7 +351,10 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           rootStreamId: ids.root,
           createdBy: userId(),
         }),
-      read: async (ws, ids) => (await StreamRepository.findByAnchor(pool, ws, ids.root, ids.anchor))?.id ?? null,
+      read: async (ws, ids) => {
+        const thread = await StreamRepository.findByAnchor(pool, ws, ids.root, ids.anchor)
+        return thread && { workspaceId: thread.workspaceId, id: thread.id }
+      },
     },
     {
       name: "a member through insert",
@@ -440,10 +434,10 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     },
     {
       name: "a client message id",
-      oldKey: "messages_stream_id_client_message_id_unique",
+      landsAs: (_ws, ids) => ({ id: ids.sentMessage, contentMarkdown: "message 1" }),
       write: (ws, ids, writer) =>
         MessageRepository.insert(pool, {
-          id: messageId(),
+          id: ids.sentMessage,
           workspaceId: ws,
           streamId: ids.stream,
           sequence: 1n,
@@ -452,14 +446,16 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           ...testMessageContent(`message ${writer}`),
           clientMessageId: ids.message,
         }),
-      read: async (ws, ids) =>
-        (await MessageRepository.findByClientMessageId(pool, ws, ids.stream, ids.message))?.id ?? null,
+      read: async (ws, ids) => {
+        const message = await MessageRepository.findByClientMessageId(pool, ws, ids.stream, ids.message)
+        return message && { id: message.id, contentMarkdown: message.contentMarkdown }
+      },
     },
     {
       name: "a reaction",
-      oldKey: "reactions_pkey",
+      landsAs: (ws, ids) => ({ workspace_id: ws, user_id: ids.member, emoji: "👍" }),
       write: (ws, ids) => MessageRepository.addReaction(pool, ws, ids.message, "👍", ids.member),
-      read: firstRow("user_id, emoji", "reactions", "message"),
+      read: firstRow("workspace_id, user_id, emoji", "reactions", "message"),
     },
     {
       name: "a compose trace",
@@ -492,17 +488,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     {
       name: "a user conversation placement",
       oldKey: "message_conversation_state_pkey",
-      // Workspace A's state row stands alone: the old single-column message key keeps the same message id
-      // out of messages for both workspaces, and only workspace B needs the message for its settle.
-      write: async (ws, ids, writer) => {
-        if (writer === 0) {
-          return MessageConversationStateRepository.insertSettling(pool, {
-            messageId: ids.message,
-            workspaceId: ws,
-            streamId: ids.stream,
-            conversationId: conversationId(),
-          })
-        }
+      write: async (ws, ids) => {
         await MessageRepository.insert(pool, {
           id: ids.message,
           workspaceId: ws,
@@ -554,7 +540,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
       name: "a read watermark through advance",
       oldKey: "stream_read_state_pkey",
       write: async (ws, ids, writer) => {
-        await ownStream(ws, ids, writer)
+        await seedStream(ws, ids)
         return ReadStateRepository.advance(pool, ws, ids.stream, ids.member, ids.events[writer], { holdInInbox: false })
       },
       read: firstRow("last_read_event_id", "stream_read_state"),
@@ -563,7 +549,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
       name: "a read watermark through set",
       oldKey: "stream_read_state_pkey",
       write: async (ws, ids, writer) => {
-        await ownStream(ws, ids, writer)
+        await seedStream(ws, ids)
         return ReadStateRepository.set(pool, ws, ids.stream, ids.member, ids.events[writer])
       },
       read: firstRow("last_read_event_id", "stream_read_state"),
@@ -572,7 +558,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
       name: "a read watermark through batchAdvance",
       oldKey: "stream_read_state_pkey",
       write: async (ws, ids, writer) => {
-        await ownStream(ws, ids, writer)
+        await seedStream(ws, ids)
         return ReadStateRepository.batchAdvance(pool, ws, ids.member, new Map([[ids.stream, ids.events[writer]]]))
       },
       read: firstRow("last_read_event_id", "stream_read_state"),
@@ -580,8 +566,8 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     {
       name: "a read watermark through ensureForUpdate",
       oldKey: "stream_read_state_pkey",
-      write: async (ws, ids, writer) => {
-        await ownStream(ws, ids, writer)
+      write: async (ws, ids) => {
+        await seedStream(ws, ids)
         return ReadStateRepository.ensureForUpdate(pool, ws, ids.stream, ids.member)
       },
       read: firstRow("last_read_event_id", "stream_read_state"),
@@ -589,8 +575,8 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     {
       name: "a read watermark through ensureBatchForUpdate",
       oldKey: "stream_read_state_pkey",
-      write: async (ws, ids, writer) => {
-        await ownStream(ws, ids, writer)
+      write: async (ws, ids) => {
+        await seedStream(ws, ids)
         return ReadStateRepository.ensureBatchForUpdate(pool, ws, ids.member, [ids.stream])
       },
       read: firstRow("last_read_event_id", "stream_read_state"),
@@ -599,7 +585,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
       name: "a read watermark through setForUsers",
       oldKey: "stream_read_state_pkey",
       write: async (ws, ids, writer) => {
-        await ownStream(ws, ids, writer)
+        await seedStream(ws, ids)
         return ReadStateRepository.setForUsers(pool, ws, ids.stream, [ids.member], ids.events[writer])
       },
       read: firstRow("last_read_event_id", "stream_read_state"),
@@ -607,12 +593,11 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     {
       name: "a sparse message read",
       oldKey: "stream_member_message_reads_pkey",
-      write: async (ws, ids, writer) => {
-        // The old event keys still span workspaces, so each workspace's event takes its own id and sequence.
+      write: async (ws, ids) => {
         await pool.query(
           `INSERT INTO stream_events (id, workspace_id, stream_id, sequence, event_type, payload)
-           VALUES ($1, $2, $3, $4, 'message_created', $5)`,
-          [ids.events[writer], ws, ids.stream, writer + 1, JSON.stringify({ messageId: ids.message })]
+           VALUES ($1, $2, $3, 1, 'message_created', $4)`,
+          [ids.events[0], ws, ids.stream, JSON.stringify({ messageId: ids.message })]
         )
         return SparseReadRepository.insertReads(pool, {
           workspaceId: ws,
@@ -691,9 +676,11 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     },
   ]
 
-  // While the old keys exist, workspace B's write for a shared id is rejected by the old key. An arbiter still
-  // on the old key would instead take the conflict path: update A's row or drop B's write without an error.
-  for (const { name, oldKey, write, read } of sharedKeyCases) {
+  // Workspace B writes ids workspace A already holds. A key still on its old columns rejects the write; a
+  // contracted key lets it land as B's own row. An arbiter on the old columns would instead take the conflict
+  // path: update A's row or drop B's write without an error.
+  for (const testCase of sharedKeyCases) {
+    const { name, write, read } = testCase
     test(`should leave workspace A's row untouched when workspace B writes ${name} for the same ids`, async () => {
       const wsA = workspaceId()
       const wsB = workspaceId()
@@ -701,9 +688,11 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
         root: streamId(),
         anchor: messageId(),
         stream: streamId(),
+        thread: streamId(),
         member: userId(),
         persona: personaId(),
         message: messageId(),
+        sentMessage: messageId(),
         attachment: attachmentId(),
         conversation: conversationId(),
         refStreams: [streamId(), streamId()],
@@ -719,12 +708,11 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           return error.constraint
         }
       )
-      const storedB = await read(wsB, ids)
 
-      expect({
-        a: await read(wsA, ids),
-        b: rejectedBy ?? (storedB === null ? "dropped silently" : "landed"),
-      }).toEqual({ a: seededA, b: oldKey })
+      expect({ a: await read(wsA, ids), b: rejectedBy ?? (await read(wsB, ids)) }).toEqual({
+        a: seededA,
+        b: "oldKey" in testCase ? testCase.oldKey : testCase.landsAs(wsB, ids),
+      })
     })
   }
 })
