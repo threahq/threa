@@ -12,10 +12,12 @@ import { io, Socket } from "socket.io-client"
 import type { Pool } from "pg"
 import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import { createTestPool } from "../integration/setup"
+import { WorkspaceService } from "../../src/features/workspaces"
 import {
   TestClient,
   type Stream,
   type SyncCatchUpResult,
+  type WorkspaceUser,
   loginAs,
   createWorkspace,
   createScratchpad,
@@ -626,5 +628,149 @@ describe("Guest delivery", () => {
       guestPublicEntries: eventTypesFor(guestLog, publicChannel),
       guestHasOpenCount: eventTypesFor(guestLog, openChannel).includes("stream:message_count"),
     }).toEqual({ ownerHasPublicCount: true, guestPublicEntries: [], guestHasOpenCount: true })
+  })
+})
+
+describe("Guest roster", () => {
+  type UpdatedEvent = { user: { id: string; name: string } }
+  type RemovedEvent = { removedUserId: string }
+
+  const runId = Math.random().toString(36).substring(7)
+  let pool: Pool
+  let owner: TestClient
+  let guestClient: TestClient
+  let coMemberClient: TestClient
+  let strangerClient: TestClient
+  let workspaceId: string
+  let sharedChannel: Stream
+  let coMember: WorkspaceUser
+  let stranger: WorkspaceUser
+  let ownerSocket: Socket
+  let guestSocket: Socket
+
+  const collect = <T>(socket: Socket, eventName: string): T[] => {
+    const seen: T[] = []
+    socket.on(eventName, (event: T) => seen.push(event))
+    return seen
+  }
+
+  const rename = async (client: TestClient, name: string) => {
+    expect((await client.patch(`/api/workspaces/${workspaceId}/profile`, { name })).status).toBe(200)
+  }
+
+  // The stranger goes first: a socket delivers in order, so once a listener has heard the co-member's
+  // update, an earlier update for the stranger that was meant for it would already have arrived.
+  const renameStrangerThenCoMember = async (tag: string, laterListeners: Socket[]) => {
+    const strangerHeard = waitForEvent(ownerSocket, "workspace_user:updated")
+    await rename(strangerClient, `Stranger ${tag}`)
+    await strangerHeard
+
+    const coMemberHeard = Promise.all(laterListeners.map((socket) => waitForEvent(socket, "workspace_user:updated")))
+    await rename(coMemberClient, `Co-member ${tag}`)
+    await coMemberHeard
+  }
+
+  const peopleIdsOf = async (client: TestClient) => {
+    const { data } = await client.get<{ users: Array<{ id: string }> }>(`/api/workspaces/${workspaceId}/users`)
+    return data.users.map((user) => user.id)
+  }
+
+  beforeAll(async () => {
+    pool = createTestPool()
+    owner = new TestClient()
+    guestClient = new TestClient()
+    coMemberClient = new TestClient()
+    strangerClient = new TestClient()
+    await loginAs(owner, `guest-roster-owner-${runId}@example.com`, "Guest Roster Owner")
+    await loginAs(guestClient, `guest-roster-guest-${runId}@example.com`, "Guest Roster Guest")
+    await loginAs(coMemberClient, `guest-roster-comember-${runId}@example.com`, "Guest Roster Co-member")
+    await loginAs(strangerClient, `guest-roster-stranger-${runId}@example.com`, "Guest Roster Stranger")
+    workspaceId = (await createWorkspace(owner, `Guest Roster ${runId}`)).id
+    sharedChannel = await createChannel(owner, workspaceId, `gr-shared-${runId}`, "private")
+
+    const guest = await joinWorkspace(guestClient, workspaceId)
+    coMember = await joinWorkspace(coMemberClient, workspaceId)
+    stranger = await joinWorkspace(strangerClient, workspaceId)
+    expect((await addStreamMember(owner, workspaceId, sharedChannel.id, guest.id)).status).toBe(201)
+    expect((await addStreamMember(owner, workspaceId, sharedChannel.id, coMember.id)).status).toBe(201)
+    await pool.query(`UPDATE users SET role = $3 WHERE workspace_id = $1 AND id = $2`, [
+      workspaceId,
+      guest.id,
+      WORKSPACE_ROLE_SLUGS.GUEST,
+    ])
+
+    ownerSocket = createSocket(owner)
+    guestSocket = createSocket(guestClient)
+    await Promise.all([connectSocket(ownerSocket), connectSocket(guestSocket)])
+    await Promise.all([joinRoom(ownerSocket, `ws:${workspaceId}`), joinRoom(guestSocket, `ws:${workspaceId}`)])
+  })
+
+  afterAll(async () => {
+    ownerSocket?.disconnect()
+    guestSocket?.disconnect()
+    await pool.end()
+  })
+
+  test("should deliver a co-member's profile update but not a stranger's when the viewer is a guest", async () => {
+    const guestUpdates = collect<UpdatedEvent>(guestSocket, "workspace_user:updated")
+    const ownerUpdates = collect<UpdatedEvent>(ownerSocket, "workspace_user:updated")
+
+    await renameStrangerThenCoMember("live", [ownerSocket, guestSocket])
+
+    const named = ({ user }: UpdatedEvent) => ({ id: user.id, name: user.name })
+    expect({ owner: ownerUpdates.map(named), guest: guestUpdates.map(named) }).toEqual({
+      owner: [
+        { id: stranger.id, name: "Stranger live" },
+        { id: coMember.id, name: "Co-member live" },
+      ],
+      guest: [{ id: coMember.id, name: "Co-member live" }],
+    })
+  })
+
+  test("should hold a co-member's profile update but not a stranger's in a guest's catch-up when the owner's holds both", async () => {
+    const { head } = await getSyncCatchUp(owner, workspaceId)
+
+    await renameStrangerThenCoMember("logged", [ownerSocket])
+
+    const [ownerLog, guestLog] = await Promise.all([
+      getSyncCatchUp(owner, workspaceId, head),
+      getSyncCatchUp(guestClient, workspaceId, head),
+    ])
+    const updatedNames = (log: SyncCatchUpResult) =>
+      log.entries
+        .filter((entry) => entry.eventType === "workspace_user:updated")
+        .map((entry) => (entry.payload as UpdatedEvent).user.name)
+
+    expect({ owner: updatedNames(ownerLog), guest: updatedNames(guestLog) }).toEqual({
+      owner: ["Stranger logged", "Co-member logged"],
+      guest: ["Co-member logged"],
+    })
+  })
+
+  test("should deliver a co-member's removal to a guest when the owner removes them from the workspace", async () => {
+    const ownerRemoval = waitForEvent<RemovedEvent>(ownerSocket, "workspace_user:removed")
+    const guestRemoval = waitForEvent<RemovedEvent>(guestSocket, "workspace_user:removed")
+
+    // The member-removal route is a control-plane call that no test server has; the service is what its
+    // regional side runs.
+    await new WorkspaceService(pool, {} as never, {} as never).removeUser(workspaceId, coMember.id)
+    const [ownerHeard, guestHeard] = await Promise.all([ownerRemoval, guestRemoval])
+
+    expect({ owner: ownerHeard.removedUserId, guest: guestHeard.removedUserId }).toEqual({
+      owner: coMember.id,
+      guest: coMember.id,
+    })
+  })
+
+  test("should list a stranger in a guest's people once the stranger joins a stream the guest reads", async () => {
+    const before = await peopleIdsOf(guestClient)
+
+    expect((await addStreamMember(owner, workspaceId, sharedChannel.id, stranger.id)).status).toBe(201)
+    const after = await peopleIdsOf(guestClient)
+
+    expect({ before: before.includes(stranger.id), after: after.includes(stranger.id) }).toEqual({
+      before: false,
+      after: true,
+    })
   })
 })
