@@ -44,6 +44,7 @@ import {
   userId,
   workspaceId,
 } from "../../src/lib/id"
+import { MAX_FILE_SIZE } from "../../src/middleware/upload"
 
 /** Answers the partner's bridge calls from the host's export service in-process, parsing each answer as the wire does. */
 class DirectBridgeClient extends BridgeClient {
@@ -169,10 +170,10 @@ describe("Copying a shared channel's files", () => {
 
   async function hostFile(
     world: World,
-    options: { safetyStatus: AttachmentSafetyStatus; bytes?: Buffer; sizeBytes?: number; filename?: string }
+    options: { safetyStatus: AttachmentSafetyStatus; bytes?: Buffer; sizeBytes?: number }
   ) {
     const id = attachmentId()
-    const filename = options.filename ?? "notes.txt"
+    const filename = "notes.txt"
     const storagePath = `${world.host.id}/${id}/${filename}`
     if (options.bytes) await storage.putObject(storagePath, options.bytes, "text/plain")
     await AttachmentRepository.insert(pool, {
@@ -506,6 +507,24 @@ describe("Copying a shared channel's files", () => {
       })
     })
 
+    test("should mark the copy failed without asking the host when the file is over this region's size cap", async () => {
+      const world = await seedWorld()
+      const file = await hostFile(world, { safetyStatus: AttachmentSafetyStatuses.CLEAN, sizeBytes: MAX_FILE_SIZE + 1 })
+      await sendWithFiles(world, world.channel.id, [file.id])
+      await world.pull()
+      const callsBefore = world.bridgeClient.attachmentCalls.length
+
+      await world.runJob(file.id)
+
+      expect({
+        calls: world.bridgeClient.attachmentCalls.length - callsBefore,
+        state: await partnerState(world, file.id),
+      }).toEqual({
+        calls: 0,
+        state: { safetyStatus: "pending_upload", upload: { status: "failed", errorCode: "copy_failed" } },
+      })
+    })
+
     test("should refuse the bytes and leave the row waiting when the host object is shorter than the size its message declares", async () => {
       const world = await seedWorld()
       const file = await hostFile(world, {
@@ -604,28 +623,6 @@ describe("Copying a shared channel's files", () => {
         state: { safetyStatus: "pending_upload", upload: { status: "failed", errorCode: "copy_failed" } },
         events: [{ uploadStatus: "failed", safetyStatus: "pending_upload" }],
       })
-    })
-
-    test("should refuse the page and copy nothing when a host file's name is 256 characters", async () => {
-      const world = await seedWorld()
-      const file = await hostFile(world, {
-        safetyStatus: AttachmentSafetyStatuses.CLEAN,
-        sizeBytes: 9,
-        filename: `${"n".repeat(252)}.txt`,
-      })
-      await sendWithFiles(world, world.channel.id, [file.id])
-
-      await expect(world.pull()).rejects.toThrow(/filename/)
-
-      const count = async (table: string) =>
-        (await pool.query(`SELECT COUNT(*)::int AS n FROM ${table} WHERE workspace_id = $1`, [world.partner.id]))
-          .rows[0].n
-      expect({
-        attachments: await count("attachments"),
-        uploads: await count("attachment_uploads"),
-        references: await count("attachment_references"),
-        jobs: await count("queue_messages"),
-      }).toEqual({ attachments: 0, uploads: 0, references: 0, jobs: 0 })
     })
 
     function downloadUrlRequest(world: World, caller: string, id: string) {

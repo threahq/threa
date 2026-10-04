@@ -33,12 +33,17 @@ export function botRuntimeServiceFor(pool: Pool): BotRuntimeService {
 
 /** Storage on the test bucket the preloaded test server created; call it from a hook, after the preload has set the S3 env. */
 export function createTestStorage(): StorageProvider {
+  const env = (name: string) => {
+    const value = process.env[name]
+    if (!value) throw new Error(`${name} is unset: call createTestStorage from a hook, after the test-server preload`)
+    return value
+  }
   return createS3Storage({
-    bucket: process.env.S3_BUCKET ?? "threa-test-uploads",
-    region: process.env.S3_REGION ?? "us-east-1",
-    accessKeyId: process.env.S3_ACCESS_KEY_ID ?? "minioadmin",
-    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "minioadmin",
-    endpoint: process.env.S3_ENDPOINT,
+    bucket: env("S3_BUCKET"),
+    region: env("S3_REGION"),
+    accessKeyId: env("S3_ACCESS_KEY_ID"),
+    secretAccessKey: env("S3_SECRET_ACCESS_KEY"),
+    endpoint: env("S3_ENDPOINT"),
   })
 }
 

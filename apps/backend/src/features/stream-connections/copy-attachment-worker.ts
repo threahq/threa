@@ -45,6 +45,14 @@ export function createStreamConnectionCopyAttachmentWorker(
       await deps.attachmentService.settleCopy(workspaceId, attachmentId, "failed")
       return
     }
+    if (attachment.sizeBytes > MAX_FILE_SIZE) {
+      logger.warn(
+        { ...job.data, sizeBytes: attachment.sizeBytes },
+        "Gave up a shared channel file copy: it is over this region's size cap"
+      )
+      await deps.attachmentService.settleCopy(workspaceId, attachmentId, "failed")
+      return
+    }
 
     const answer = await deps.bridgeClient.getAttachment(
       { workspaceId: connection.remoteWorkspaceId, connectionId, callerWorkspaceId: workspaceId },
@@ -80,18 +88,17 @@ export function createStreamConnectionCopyAttachmentOnDLQ(deps: {
 
 /** Reads the body, holding no more than the size the host's message declares and refusing any other length. */
 async function download(url: string, sizeBytes: number): Promise<Buffer> {
-  const limit = Math.min(sizeBytes, MAX_FILE_SIZE)
-  const timeoutMs = DOWNLOAD_TIMEOUT_FLOOR_MS + Math.ceil(limit / MIN_DOWNLOAD_BYTES_PER_MS)
+  const timeoutMs = DOWNLOAD_TIMEOUT_FLOOR_MS + Math.ceil(sizeBytes / MIN_DOWNLOAD_BYTES_PER_MS)
   const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
   if (!res.ok) throw new Error(`Host storage answered ${res.status}`)
-  const tooLarge = new Error(`Host file is larger than the ${limit} bytes its message declares`)
-  if (Number(res.headers.get("content-length") ?? 0) > limit) throw tooLarge
+  const tooLarge = new Error(`Host file is larger than the ${sizeBytes} bytes its message declares`)
+  if (Number(res.headers.get("content-length") ?? 0) > sizeBytes) throw tooLarge
   const body = res.body as unknown as AsyncIterable<Uint8Array> | null
   const chunks: Uint8Array[] = []
   let received = 0
   for await (const chunk of body ?? []) {
     received += chunk.byteLength
-    if (received > limit) throw tooLarge
+    if (received > sizeBytes) throw tooLarge
     chunks.push(chunk)
   }
   if (received !== sizeBytes)

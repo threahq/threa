@@ -308,6 +308,20 @@ describe("Attachments in a shared channel's copy", () => {
     expect(before.attachments).toHaveLength(1)
   })
 
+  test("should copy a file under its full name when the host stored a name longer than 255 characters", async () => {
+    const world = await seedWorld()
+    const file = await hostFile(world, `${"n".repeat(296)}.pdf`, AttachmentSafetyStatuses.CLEAN)
+    await sendWithFiles(world, "a long name", [file])
+
+    await world.pull()
+
+    const rows = await partnerRows(world)
+    expect({
+      filenames: rows.attachments.map((row) => row.filename),
+      jobs: rows.jobs.map((row) => row.payload.attachmentId),
+    }).toEqual({ filenames: [file.filename], jobs: [file.id] })
+  })
+
   test("should keep the copy's media and file context when the host edits a message with files", async () => {
     const world = await seedWorld()
     const image = await hostFile(world, "a-photo.png", AttachmentSafetyStatuses.CLEAN, { width: 4, height: 3 })

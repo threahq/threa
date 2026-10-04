@@ -283,8 +283,8 @@ export const AttachmentRepository = {
 
   /**
    * Insert rows already bound to a message, in one statement. No ON CONFLICT:
-   * a duplicate id is a caller bug and must fail the transaction rather than
-   * overwrite an attachment the workspace already owns.
+   * a duplicate id fails the transaction rather than overwrite an attachment
+   * the workspace already owns.
    */
   async insertCopies(client: Querier, workspaceId: string, rows: InsertAttachmentCopyParams[]): Promise<Attachment[]> {
     if (rows.length === 0) return []

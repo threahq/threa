@@ -198,7 +198,7 @@ export type BridgeManifest = z.infer<typeof bridgeManifestSchema>
 
 export const bridgeAttachmentSchema = z.object({
   id: z.string().regex(/^attach_[0-9A-Za-z]+$/),
-  filename: z.string().min(1).max(255),
+  filename: z.string(),
   mimeType: z.string(),
   sizeBytes: z.number().int().nonnegative(),
   safetyStatus: z.enum(ATTACHMENT_SAFETY_STATUSES),
