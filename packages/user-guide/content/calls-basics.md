@@ -24,7 +24,7 @@ Before you connect, Threa asks the browser for your microphone and, for video, y
 
 ## Answer an incoming call
 
-A card at the bottom right reads "<name> is calling…", with **Video call** or **Voice call** below. It has three buttons: **Silence ring**, **Decline call** and **Accept call**. It does not take keyboard focus from what you are typing.
+A card at the bottom right reads "`<name>` is calling…", with **Video call** or **Voice call** below. It has three buttons: **Silence ring**, **Decline call** and **Accept call**. It does not take keyboard focus from what you are typing.
 
 The ring sound stays off when your overall **Notification level** is **None** or you have paused notifications, but the card still shows. A stream's own level does not change this. See [Notification levels per stream](/guide/notification-levels) and [Pausing notifications and setting a status](/guide/pause-and-status). If the page cannot play sound, Threa sends a system notification with the same text, and selecting it accepts the call.
 

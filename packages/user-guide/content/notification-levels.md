@@ -41,6 +41,18 @@ Which levels a stream offers depends on its type:
 | Direct message | Everything, Muted                          | Everything    |
 | Aside          | Muted                                      | Muted         |
 
+## How the two levels combine
+
+The stream's level decides which messages are recorded in your activity and can notify you. Your overall level can only hold back push notifications on top of that. It never adds any. A channel left on its default, Mentions only, notifies you only when you are mentioned, even when your overall level is **All messages**.
+
+A thread with no level of its own takes one from the stream it sits under:
+
+- **Muted** carries through, so the thread is muted too.
+- **Everything** gives the thread **Activity**.
+- **Activity** and **Mentions only** don't carry through. The thread uses its own default.
+
+Setting a level on the thread itself overrides all of this.
+
 ## Related
 
 - Silence everything for a while: [Pausing notifications and setting a status](/guide/pause-and-status).

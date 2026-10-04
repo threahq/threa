@@ -18,7 +18,7 @@ Type `@` and pick the agent from the mention list, where agents carry an **AI** 
 
 A few rules decide whether a mention reaches an agent:
 
-- A mention in a message you write brings the agent in. Messages written by agents and slash commands don't.
+- A mention in a message you write brings the agent in. Messages written by agents or bots, and slash commands, don't.
 - A personal persona can only be mentioned by the person who made it.
 - A persona that has been archived is skipped.
 - If you mention several agents, each one gets its own session.

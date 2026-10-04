@@ -17,7 +17,7 @@ Cards are grouped under Today, Yesterday, Earlier this week, This month and Olde
 
 - **Expand conversation** and **Collapse conversation** change how much of the card is shown.
 - **Open conversation** opens the whole conversation in the side panel.
-- The **Conversation actions** menu has **Rename topic…** (a scratchpad's own conversation shows **Rename scratchpad…**), **Regenerate title** when the title is a generated one, **Mark resolved** or **Reopen**, **Copy link**, **Split with AI…**, **Open an aside** where the stream allows one, and **Hide from board**. Split is not offered for scratchpads.
+- The **Conversation actions** menu has **Rename topic…** (a scratchpad's own conversation shows **Rename scratchpad…**), **Regenerate title** when the title was set by hand or predates automatic titles, **Mark resolved** or **Reopen**, **Copy link**, **Split with AI…**, **Open an aside** where the stream allows one, and **Hide from board**. Split is not offered for scratchpads.
 - The reply box ("Write a reply…") files your message into that conversation.
 
 When new activity arrives while you are reading, a floating pill such as "3 updates" appears at the top. Click it to bring the new activity in. The round **New post** button at the bottom right opens a composer where you pick the stream to post in, or start a new scratchpad.

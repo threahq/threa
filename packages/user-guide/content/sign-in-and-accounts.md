@@ -11,7 +11,7 @@ Threa uses WorkOS for sign-in. One browser can hold several accounts at once, so
 
 ## Sign in
 
-Open the login page and select **Sign in with WorkOS**. After you sign in, Threa opens the last workspace you used in this browser. If there isn't one, you land on the workspace picker. See [Creating or joining a workspace](/guide/create-or-join-a-workspace).
+Open the login page and select **Sign in with WorkOS**. After you sign in, Threa opens the last workspace that account used in this browser. If there isn't one, you land on the workspace picker. See [Creating or joining a workspace](/guide/create-or-join-a-workspace).
 
 ## Add another account
 

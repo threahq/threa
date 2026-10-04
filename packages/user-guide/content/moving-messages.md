@@ -31,7 +31,7 @@ If the target message already has a thread, the messages go into it. Otherwise T
 
 ## What moved messages look like
 
-In the stream they came from, a line reads "<name> moved N messages". Click it to open a drawer listing the moved messages, with links to the source and the destination.
+In the stream they came from, a line reads "`<name>` moved N messages". Click it to open a drawer listing the moved messages, with links to the source and the destination.
 
 In the thread, each moved message shows a small arrow icon. Hover it to see who moved the message, from which stream and when. Click the icon, or choose **Show move details** from the message's menu, to open the same drawer.
 

@@ -45,6 +45,6 @@ Agents can save memos too. Those show a badge, either "AI-captured" or "Captured
 
 - Active: shown by default on the Memory page.
 - Archived: set aside but kept. You can restore it from the Memory page.
-- Superseded: replaced by a newer memo. The older one links to its replacement with "Replaced by a newer memo".
+- Superseded: replaced by a newer memo, or retired because one of its source messages was deleted. When there is a replacement, the older memo links to it with "Replaced by a newer memo".
 
 Whether a conversation is saved at all is set by **Automatic memory**. See [Turning automatic memory off](/guide/automatic-memory-toggle).

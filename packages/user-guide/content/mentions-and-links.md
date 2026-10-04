@@ -24,7 +24,7 @@ A personal bot owned by someone else shows **Mention only** with the note "only 
 
 Mentions in a message are stored as links to the person or agent itself. A mention of someone whose handle Threa does not recognise stays as plain text.
 
-## Channel links with
+## Channel links with the # sign
 
 Type **#** and part of a name to link to a channel or a scratchpad. Channels are listed before scratchpads. Archived streams and streams without a name are not offered. Type **##** to list channels only.
 

@@ -7,7 +7,7 @@ order: 6
 
 # Your welcome setup
 
-The first time you join a workspace, Threa shows a **Welcome** page titled "Complete your profile to get started". It sets the name and handle other people see in that workspace. You get to it when you accept an invitation, for example by selecting **Accept** on a pending invitation in the workspace picker.
+The first time you join a workspace, Threa shows a page titled **Welcome**, with the line "Complete your profile to get started". It sets the name and handle other people see in that workspace. You get to it when you accept an invitation, for example by selecting **Accept** on a pending invitation in the workspace picker.
 
 ## The Welcome page
 

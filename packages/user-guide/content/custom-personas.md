@@ -34,7 +34,7 @@ Your edits sync as a draft. The footer shows whether the draft is synced, and **
 
 ## Test chat
 
-The **Test chat** pane lets you talk to the persona before you commit. Turns run against your draft, and nothing from the test chat is saved to memory. On a narrow screen it is the **Test draft** button. Saving or discarding the draft ends the test chat.
+The **Test chat** pane lets you talk to the persona before you commit. Turns run against your draft, and nothing from the test chat is saved to memory. In the test chat the persona can't schedule follow-ups, update the stream brief, delegate tasks, start subagents, save memos, run commands or change your settings, even when those tools are ticked. On a narrow screen it is the **Test draft** button. Saving or discarding the draft ends the test chat.
 
 ## Use it
 

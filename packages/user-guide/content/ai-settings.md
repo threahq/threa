@@ -11,7 +11,7 @@ The **AI** tab of your [settings](app:settings/ai) shapes how agents behave for 
 
 ## Scratchpad Instructions
 
-Standing guidance that Ariadne follows in your personal scratchpads. It is added after her base system prompt, and applies to scratchpads and to threads started in a scratchpad. It does not apply in channels, DMs or threads under them. Write it in the box and click **Save**. **Reset** discards your edits. To remove the instructions, delete everything and save. Ctrl+Enter (⌘Enter on Mac) also saves.
+Standing guidance for the companion that answers in your personal scratchpads, Ariadne unless you pick another. It is added after that agent's base system prompt, and applies to scratchpads and to threads started in a scratchpad. It does not apply in channels, DMs or threads under them. Write it in the box and click **Save**. **Reset** discards your edits. To remove the instructions, delete everything and save. Ctrl+Enter (⌘Enter on Mac) also saves.
 
 ## Default companion
 

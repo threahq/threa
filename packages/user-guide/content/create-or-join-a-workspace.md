@@ -11,7 +11,7 @@ A workspace is where your streams, people and memory live. After signing in you 
 
 ## The workspace picker
 
-The picker greets you with "Welcome, <your name>" and "Select a workspace to continue". It lists:
+The picker greets you with "Welcome, `<your name>`" and "Select a workspace to continue". It lists:
 
 - **Pending invitations**: each workspace that has invited you, with an **Accept** button.
 - Your workspaces, as buttons. Select one to open it.

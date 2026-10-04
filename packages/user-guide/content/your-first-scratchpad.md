@@ -32,7 +32,7 @@ Each scratchpad has a **Companion mode**:
 - **Companion**: Ariadne reads new messages and replies.
 - **Quiet**: Ariadne stays out unless you mention her with `@ariadne`. In an encrypted scratchpad mentions don't reach her, so switch to Companion to talk to her there.
 
-Change it from the scratchpad's settings at any time. The same panel lets you choose which agent acts as the companion, and which kinds of tools she may use there.
+Change it from the scratchpad's settings at any time. The same panel lets you choose which agent acts as the companion, except in an encrypted scratchpad, which always uses Ariadne. It also sets which kinds of tools she may use there.
 
 ## What gets remembered
 

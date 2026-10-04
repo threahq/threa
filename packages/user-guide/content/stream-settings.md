@@ -7,7 +7,7 @@ order: 4
 
 # Stream settings
 
-Every stream has a settings dialog. Open it from the **Stream actions** menu in the header, or from **Settings** in a sidebar row's menu. Channels, scratchpads, DMs and threads have three tabs: General, Companion and Members. System streams and asides show General only.
+Every stream has a settings dialog. Open it from the **Stream actions** menu in the header, or from **Settings** in a sidebar row's menu. Channels, scratchpads, DMs and threads have three tabs: General, Companion and Members. Where the workspace has the feature enabled, workspace admins also see a fourth tab on channels, **Connect**, for sharing the channel with another workspace. System streams and asides show General only.
 
 ## General
 

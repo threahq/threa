@@ -18,7 +18,7 @@ Open the scratchpad's settings and go to the **Companion** tab (see [Stream sett
 - **GitHub**: read from connected GitHub.
 - **Linear**: read from connected Linear.
 
-Only groups for integrations that are set up are shown. The agent can always reply, so **Messaging & participation** is not a switch. That group covers sending messages, reactions, follow-ups, delegations and the stream brief.
+Only groups for integrations that are set up are shown. The agent can always reply, so **Messaging & participation** is not a switch. That group covers sending messages, reactions, follow-ups, delegations, subagents, the stream brief and the Threa guide.
 
 If you tick nothing, the agent can only read the scratchpad and reply. A change takes effect on the agent's next turn.
 
@@ -28,6 +28,7 @@ If you tick nothing, the agent can only read the scratchpad and reply. A change 
 - Allowing **Web** also allows the agent to read GitHub.
 - Sandbox internet access needs the workspace setting and **Web** to both allow it.
 - Saving a memo and changing your settings need **Workspace**.
+- Ariadne searches the workspace's messages, streams and people through her research tool, which needs **Web**. It searches the workspace only when **Workspace** is allowed too. With **Web** alone her research covers the web only, and with **Workspace** alone she can't search messages.
 
 ## Encrypted scratchpads
 

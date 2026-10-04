@@ -42,7 +42,7 @@ Choose **Add to section…** from a stream's menu in the sidebar. A picker title
 
 On a desktop browser you can also drag a stream row onto a custom section to file it there. Dropping onto a label section applies that label to the stream and takes it out of any custom section. Dragging is off on touch devices, which use **Add to section…**.
 
-When you drag a labeled stream out of its label section into a custom section or another label, Threa asks whether to keep the old label. The dialog is titled "Remove the <label name> label?" and offers **Keep label** and **Remove label**, plus a **Remember my choice** checkbox. You can set this ahead of time under **Moving labeled streams** in [Appearance settings](app:settings/appearance): **Ask each time**, **Remove the old label** or **Keep the old label**.
+When you drag a labeled stream out of its label section into a custom section or another label, Threa asks whether to keep the old label. The dialog is titled "Remove the `<label name>` label?" and offers **Keep label** and **Remove label**, plus a **Remember my choice** checkbox. You can set this ahead of time under **Moving labeled streams** in [Appearance settings](app:settings/appearance): **Ask each time**, **Remove the old label** or **Keep the old label**.
 
 ## Filter and sort a section
 

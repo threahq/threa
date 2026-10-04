@@ -41,7 +41,7 @@ A stream's settings also let you limit which kinds of tools agents may use there
 
 ## Bots
 
-A bot can read public channels but only posts in streams it was added to, and other members can see which streams that is. Private channels stay invisible to it until it is added. A personal bot with **Read everything you can read** switched on can read whatever you can read, except end-to-end encrypted streams. See [Bots](/guide/bots-overview).
+A bot can read public channels but only posts in streams it was added to, and other members can see which streams that is. Private channels stay invisible to it until it is added. A personal bot with **Read everything you can read** switched on can read whatever you can read, except archived and end-to-end encrypted streams. See [Bots](/guide/bots-overview).
 
 ## Encrypted scratchpads
 

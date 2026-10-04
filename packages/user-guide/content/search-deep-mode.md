@@ -11,8 +11,8 @@ This article describes search behavior that is not available in every workspace 
 
 ## What changes when it is on
 
-- Several words in a query match messages that contain any of them. With the setting off, a message has to contain all of them.
-- Results can include conversations as well as single messages, and memories from the [Memory](app:memory) page.
+- Keyword matching for several words finds messages that contain any of them. With the setting off, keyword matching needs all of them. Messages with a similar meaning are found either way.
+- Results can include conversations that matched through their topic, marked with a "topic" chip, and memory chips from the [Memory](app:memory) page. Matching messages are grouped by conversation either way.
 - The **Refine** button appears next to **Add filter**, once you have typed a query.
 - The row menu gains **More like this** and **Drop** on rows that belong to a conversation.
 

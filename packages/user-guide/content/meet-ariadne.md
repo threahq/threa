@@ -9,7 +9,7 @@ order: 3
 
 Ariadne is the AI agent built into every Threa workspace. She is a thinking companion: she helps you explore an idea, work through a decision, and find what you or your team already said. By default her replies are short and direct.
 
-The quickest introduction is **Meet Ariadne** in the sidebar's **Getting started** checklist. It opens a scratchpad of your own where she speaks first and offers to show you how Threa can be used. Say yes and she walks you through the main places in the app. Selecting it again takes you back to the same scratchpad.
+The quickest introduction is **Meet Ariadne** in the sidebar's **Getting started** checklist. It opens a scratchpad of your own where she speaks first and offers to show you how Threa can be used. Say yes and she walks you through the main places in the app. The checklist item is then marked done, and the scratchpad stays in your sidebar.
 
 ## Talking to her
 
@@ -46,7 +46,7 @@ Ariadne only reaches what the conversation allows:
 
 Memos sit on top of your messages; they don't replace them. As time passes, the messages that settled something get buried in the past under everything said since. A memo condenses what they settled into one clear entry, so a search still finds it months later and it reads on its own. Every message stays searchable whether or not it became a memo, so Ariadne can search for an earlier conversation and find it again. She also keeps summaries of her earlier sessions in the same stream.
 
-Where **Automatic memory** is on, decisions, facts and how-tos from a conversation can become memos once it settles. Casual chat usually produces none. Memos from your private scratchpads are visible only to you; memos from anywhere else are visible to people who can open the conversation they came from. Where it is off, nothing becomes a memo unless you ask her to save one. It starts off in scratchpads where she replies; see [Your first scratchpad](/guide/your-first-scratchpad).
+Where **Automatic memory** is on, decisions, facts and how-tos from a conversation can become memos once it settles. Casual chat usually produces none. Memos from your private scratchpads and your asides are visible only to you; memos from anywhere else are visible to people who can open the conversation they came from. Where it is off, nothing becomes a memo unless you ask her to save one. It starts off in scratchpads where she replies; see [Your first scratchpad](/guide/your-first-scratchpad).
 
 ## Choose a different agent
 

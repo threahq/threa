@@ -25,7 +25,7 @@ The New Encrypted Scratchpad and New Encrypted Quick Note commands skip the draf
 
 ## Naming
 
-A scratchpad is named from what you write first. To change the name, click the title in the header, or open the **Stream actions** menu and choose **Rename**. While the name is still automatic, the scratchpad's settings also offer **Regenerate title**.
+A scratchpad is named from what you write first. To change the name, click the title in the header, or open the **Stream actions** menu and choose **Rename**. When the name was set by hand, or predates automatic titles, the scratchpad's settings also offer **Regenerate title**.
 
 ## The mode pill
 

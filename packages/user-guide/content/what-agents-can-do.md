@@ -36,7 +36,7 @@ Agents act through tools. This article lists Ariadne's tools in plain words. A c
 
 An agent can run a shell command in a sandbox tied to the conversation. It gets back the output, the error output and the exit code, and it can copy up to 10 workspace attachments into the sandbox first. Commands time out after 60 seconds unless the agent asks for longer, up to 5 minutes.
 
-- If the sandbox expired, the next command starts a fresh one and the files from the old one are gone. The agent is told when that happens.
+- If the sandbox expired or its internet access changed, the next command starts a fresh one and the files from the old one are gone. The agent is told when that happens.
 - Sandbox images include Python with common data and document libraries, plus LibreOffice.
 - Internet access from the sandbox needs both the workspace setting and web access for that conversation. Workspace admins set the workspace side (see [Workspace AI agents](/guide/workspace-ai-agents)).
 - Encrypted scratchpads don't have a sandbox.

@@ -17,6 +17,8 @@ Every conversation is active, stalled or resolved.
 - A conversation with no activity for 7 days becomes resolved.
 - You can mark one resolved yourself and reopen it later.
 
+New activity in a stalled or automatically resolved conversation makes it active again. A conversation you resolved yourself stays resolved until you reopen it.
+
 A resolved conversation shows a check mark and a muted title, on its board card and in its panel. Stalled has no marker of its own.
 
 ## The conversation menu

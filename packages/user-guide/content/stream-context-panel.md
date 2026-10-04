@@ -22,7 +22,7 @@ Items are grouped by day, and the header shows the total. Chips under the search
 
 - **All** shows everything.
 - **Agent** shows follow-ups and delegations together. It appears only when there are some.
-- **Links**, **Media**, **Files**, **Memories**, **Delegations**, **Follow-ups** and **Threads** show one kind each.
+- **Pull requests**, **Links**, **Media**, **Files**, **Memories**, **Delegations**, **Follow-ups** and **Threads** show one kind each. **Links** also includes pull requests.
 
 In a channel, DM or scratchpad the panel covers the stream and all of its threads. Opened from a thread, it covers that thread only.
 
@@ -49,4 +49,4 @@ A stream can have a brief, a short standing note of goals, decisions and prefere
 
 An AI persona can also keep the brief up to date with its `update_stream_brief` tool, with a one-line reason. Brief changes are never silent. The timeline shows a row such as "Ariadne updated the stream brief" ("created" the first time) with the reason, and selecting **stream brief** opens the Companion tab so you can review or correct the text. If a persona write collides with a human edit, the persona is handed your current text and retries on top of it.
 
-The stream's description appears in the timeline too. Setting or clearing it adds a row reading "<name> set the description" with the text, or "<name> cleared the description".
+The stream's description appears in the timeline too. Setting or clearing it adds a row reading "`<name>` set the description" with the text, or "`<name>` cleared the description".
