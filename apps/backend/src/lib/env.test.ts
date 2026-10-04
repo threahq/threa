@@ -22,6 +22,7 @@ function setBaseEnv() {
   delete process.env.MEDIACONVERT_ENDPOINT
   delete process.env.INTERNAL_API_KEY
   delete process.env.ENCLAVE_INTERNAL_API_KEY
+  delete process.env.BRIDGE_API_KEY
   delete process.env.CONTROL_PLANE_URL
   delete process.env.REGION
   delete process.env.CLOUDFLARE_REALTIME_APP_ID
@@ -354,6 +355,7 @@ describe("loadConfig github app configuration", () => {
     process.env.CONTROL_PLANE_URL = "https://cp.example.com"
     process.env.INTERNAL_API_KEY = "internal-key"
     process.env.ENCLAVE_INTERNAL_API_KEY = "enclave-key"
+    process.env.BRIDGE_API_KEY = "bridge-key"
 
     const config = loadConfig()
     expect(config.github.enabled).toBe(true)
@@ -524,6 +526,20 @@ describe("loadConfig enclave credential separation (Phase 2.4c, E2EE-22)", () =>
     process.env.INTERNAL_API_KEY = "shared-key"
 
     expect(() => loadConfig()).toThrow("ENCLAVE_INTERNAL_API_KEY is required when CONTROL_PLANE_URL is set")
+  })
+})
+
+describe("loadConfig bridge credential", () => {
+  test("should throw when CONTROL_PLANE_URL is set without BRIDGE_API_KEY", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+    process.env.CONTROL_PLANE_URL = "http://localhost:3003"
+    process.env.REGION = "local"
+    process.env.INTERNAL_API_KEY = "shared-key"
+    process.env.ENCLAVE_INTERNAL_API_KEY = "enclave-key"
+
+    expect(() => loadConfig()).toThrow("BRIDGE_API_KEY is required when CONTROL_PLANE_URL is set")
   })
 })
 

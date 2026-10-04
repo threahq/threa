@@ -1,5 +1,6 @@
 import { z } from "zod"
-import { VISIBILITY_OPTIONS, type Visibility } from "./constants"
+import { ATTACHMENT_SAFETY_STATUSES, AUTHOR_TYPES, VISIBILITY_OPTIONS, type Visibility } from "./constants"
+import type { JSONContent } from "./prosemirror"
 
 // A stream connection is one invite link to a host channel: pending until a
 // partner workspace accepts it, then that partner's place in the channel. A
@@ -158,3 +159,77 @@ export type StreamConnectionLookupResponse =
       partnerWorkspaceId: string
       partnerWorkspaceName: string
     })
+
+// The bridge: how a partner's region reads a shared channel from the host's
+// region. The partner calls the host workspace's API path with the bridge key,
+// naming itself in this header, which must match the connection's partner.
+export const BRIDGE_WORKSPACE_HEADER = "X-Threa-Bridge-Workspace"
+
+/** A stream event sequence, as a decimal string. */
+const bridgeSequenceSchema = z.string().regex(/^\d+$/)
+
+const bridgeContentSchema = z.custom<JSONContent>(
+  (value) => typeof value === "object" && value !== null && (value as { type?: unknown }).type === "doc"
+)
+
+/** One stream of the shared tree: the channel, or a thread anchored on one of the tree's messages. */
+export const bridgeStreamSchema = z.object({
+  id: z.string().min(1),
+  parentStreamId: z.string().min(1).nullable(),
+  parentAnchorId: z.string().min(1).nullable(),
+  displayName: z.string().nullable(),
+  description: z.string().nullable(),
+  descriptionJson: bridgeContentSchema.nullable(),
+  archivedAt: z.iso.datetime().nullable(),
+  /** The stream's latest event sequence. A partner whose cursor is here has read everything. */
+  head: bridgeSequenceSchema,
+})
+export type BridgeStream = z.infer<typeof bridgeStreamSchema>
+
+export const bridgeManifestSchema = z.object({ streams: z.array(bridgeStreamSchema) })
+export type BridgeManifest = z.infer<typeof bridgeManifestSchema>
+
+export const bridgeAttachmentSchema = z.object({
+  id: z.string().min(1),
+  filename: z.string(),
+  mimeType: z.string(),
+  sizeBytes: z.number().int().nonnegative(),
+  safetyStatus: z.enum(ATTACHMENT_SAFETY_STATUSES),
+})
+export type BridgeAttachment = z.infer<typeof bridgeAttachmentSchema>
+
+/** A message's current state. */
+export const bridgeMessageSchema = z.object({
+  id: z.string().min(1),
+  streamId: z.string().min(1),
+  authorId: z.string().min(1),
+  authorType: z.enum(AUTHOR_TYPES),
+  contentJson: bridgeContentSchema,
+  contentMarkdown: z.string(),
+  /** Emoji to the ids of the users who reacted with it. */
+  reactions: z.record(z.string(), z.array(z.string())),
+  revision: z.number().int().positive(),
+  editedAt: z.iso.datetime().nullable(),
+  createdAt: z.iso.datetime(),
+  attachments: z.array(bridgeAttachmentSchema),
+})
+export type BridgeMessage = z.infer<typeof bridgeMessageSchema>
+
+/** What a partner applies: a message to upsert, or one to drop because it was deleted or left the shared tree. */
+export const bridgeChangeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("message"), message: bridgeMessageSchema }),
+  z.object({ kind: z.literal("message_removed"), messageId: z.string().min(1) }),
+])
+export type BridgeChange = z.infer<typeof bridgeChangeSchema>
+
+/**
+ * A page of one stream's changes after a cursor. The cursor moves past every
+ * event read, including the ones the host keeps to itself, so a page can hold
+ * fewer changes than events.
+ */
+export const bridgeEventsSchema = z.object({
+  changes: z.array(bridgeChangeSchema),
+  cursor: bridgeSequenceSchema,
+  hasMore: z.boolean(),
+})
+export type BridgeEvents = z.infer<typeof bridgeEventsSchema>

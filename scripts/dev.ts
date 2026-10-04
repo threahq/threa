@@ -393,6 +393,7 @@ async function main() {
   // credential boundary.
   const internalApiKey = backendEnv.INTERNAL_API_KEY ?? "dev-internal-key"
   const enclaveInternalApiKey = backendEnv.ENCLAVE_INTERNAL_API_KEY ?? "dev-enclave-internal-key"
+  const bridgeApiKey = backendEnv.BRIDGE_API_KEY ?? "dev-bridge-key"
 
   const cpDbUrl = siblingDatabaseUrl(dbBase, "_cp")
   await ensureDatabase(cpDbUrl, "control-plane")
@@ -528,6 +529,7 @@ async function main() {
         CONTROL_PLANE_URL: "http://localhost:3003",
         INTERNAL_API_KEY: internalApiKey,
         ENCLAVE_INTERNAL_API_KEY: enclaveInternalApiKey,
+        BRIDGE_API_KEY: bridgeApiKey,
         CORS_ALLOWED_ORIGINS: corsOrigins.join(","),
         DATABASE_POOL_MAX: process.env.DATABASE_POOL_MAX ?? "8",
         DATABASE_LISTEN_POOL_MAX: process.env.DATABASE_LISTEN_POOL_MAX ?? "4",

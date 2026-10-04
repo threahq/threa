@@ -164,6 +164,7 @@ export async function startTestServer(): Promise<TestServer> {
 
   // Enable internal API endpoints (control-plane → regional backend pattern)
   process.env.INTERNAL_API_KEY = "test-internal-key"
+  process.env.BRIDGE_API_KEY = "test-bridge-key"
 
   // Disable rate limits for tests (prevent flaky 429s)
   process.env.GLOBAL_RATE_LIMIT_MAX = "10000"

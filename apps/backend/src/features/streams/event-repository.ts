@@ -274,6 +274,18 @@ export const StreamEventRepository = {
     return windows
   },
 
+  /** Each stream's latest allocated event sequence. A stream that never had an event is absent. */
+  async listHeadSequences(db: Querier, workspaceId: string, streamIds: string[]): Promise<Map<string, bigint>> {
+    if (streamIds.length === 0) return new Map()
+    const result = await db.query<{ stream_id: string; head: string }>(sql`
+      SELECT q.stream_id, q.next_sequence - 1 AS head
+      FROM stream_sequences q
+      JOIN streams s ON s.id = q.stream_id
+      WHERE s.workspace_id = ${workspaceId} AND q.stream_id = ANY(${streamIds})
+    `)
+    return new Map(result.rows.map((row) => [row.stream_id, BigInt(row.head)]))
+  },
+
   async list(
     db: Querier,
     streamId: string,

@@ -185,6 +185,13 @@ export interface Config {
    * CONTROL_PLANE_URL is set (INV-11), same as INTERNAL_API_KEY.
    */
   enclaveInternalApiKey: string | null
+  /**
+   * Secret regions present to read each other's shared-channel exports (Threa
+   * Connect). Its own credential so neither the control-plane key nor the
+   * enclave key can read workspace content across organizations. Required when
+   * CONTROL_PLANE_URL is set (INV-11).
+   */
+  bridgeApiKey: string | null
   /** This instance's region name (e.g., "eu-north-1") */
   region: string | null
   posthog: PostHogConfig | null
@@ -326,6 +333,7 @@ export function loadConfig(): Config {
     controlPlaneUrl: process.env.CONTROL_PLANE_URL || null,
     internalApiKey: process.env.INTERNAL_API_KEY || null,
     enclaveInternalApiKey: process.env.ENCLAVE_INTERNAL_API_KEY || null,
+    bridgeApiKey: process.env.BRIDGE_API_KEY || null,
     region: process.env.REGION || null,
     posthog: loadPostHogConfig(
       {
@@ -441,6 +449,10 @@ export function loadConfig(): Config {
     throw new Error(
       "ENCLAVE_INTERNAL_API_KEY is required when CONTROL_PLANE_URL is set — the enclave channel runs on its own credential, distinct from INTERNAL_API_KEY"
     )
+  }
+
+  if (config.controlPlaneUrl && !config.bridgeApiKey) {
+    throw new Error("BRIDGE_API_KEY is required when CONTROL_PLANE_URL is set — shared channels replicate on it")
   }
 
   if (useStubAuth) {

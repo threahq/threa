@@ -222,7 +222,7 @@ import { SavedSuggestionsService, SuggestionExtractor } from "./features/saved-s
 import { ScheduledMessagesService, createScheduledMessageSendWorker } from "./features/scheduled-messages"
 import { DraftsService } from "./features/drafts"
 import { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
-import { StreamConnectionService } from "./features/stream-connections"
+import { StreamConnectionExportService, StreamConnectionService } from "./features/stream-connections"
 import {
   PushService,
   PushNotificationHandler,
@@ -531,6 +531,7 @@ export async function startServer(): Promise<ServerInstance> {
       : null
   const invitationService = new InvitationService(pool, workspaceService)
   const streamConnectionService = new StreamConnectionService({ pool, controlPlaneClient, featureFlagService })
+  const streamConnectionExportService = new StreamConnectionExportService({ pool, featureFlagService })
 
   const scheduleManager = new ScheduleManager(pool, {
     lookaheadSeconds: 60,
@@ -1016,6 +1017,7 @@ export async function startServer(): Promise<ServerInstance> {
     labelAssignmentService,
     labelMessageService,
     streamConnectionService,
+    streamConnectionExportService,
     pushService,
     perfDiagnosticsService,
     s3Config: config.s3,
@@ -1026,6 +1028,7 @@ export async function startServer(): Promise<ServerInstance> {
     allowDevAuthRoutes: config.useStubAuth && !isProduction,
     internalApiKey: config.internalApiKey,
     enclaveInternalApiKey: config.enclaveInternalApiKey,
+    bridgeApiKey: config.bridgeApiKey,
     apiKeyService,
     botChannelService,
     linkPreviewService,

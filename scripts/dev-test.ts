@@ -127,6 +127,7 @@ async function main() {
       CONTROL_PLANE_URL: `http://localhost:${controlPlanePort}`,
       INTERNAL_API_KEY: backendEnv.INTERNAL_API_KEY ?? "dev-internal-key",
       ENCLAVE_INTERNAL_API_KEY: backendEnv.ENCLAVE_INTERNAL_API_KEY ?? "dev-enclave-internal-key",
+      BRIDGE_API_KEY: backendEnv.BRIDGE_API_KEY ?? "dev-bridge-key",
       REGION: "local",
     }
 
