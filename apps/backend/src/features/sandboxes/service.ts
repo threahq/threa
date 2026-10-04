@@ -1,8 +1,9 @@
 import type { Pool } from "pg"
 import { logger } from "../../lib/logger"
-import { StreamSandboxRepository, type StreamSandboxRow } from "./repository"
+import { sandboxLeaseId } from "../../lib/id"
+import { StreamSandboxLeaseRepository, StreamSandboxRepository, type StreamSandboxRow } from "./repository"
 import type { SandboxApiAccess, SandboxExecResult, SandboxFile, SandboxRunner } from "./runner"
-import { SANDBOX_MAX_OUTPUT_BYTES } from "./config"
+import { SANDBOX_MAX_OUTPUT_BYTES, SANDBOX_MAX_TIMEOUT_SEC } from "./config"
 
 /** Why a stream got a new sandbox in place of the one it had. Files from before are gone either way. */
 export const SandboxReplacedReasons = {
@@ -23,6 +24,13 @@ export interface SandboxRunResult extends SandboxExecResult {
 
 /** Two callers binding the same stream at once is the only reason to go round again. */
 const MAX_BIND_ATTEMPTS = 3
+
+/** Renewed every third of its life, so only a holder that stopped running loses it. */
+const LEASE_TTL_SEC = 60
+const LEASE_RENEW_MS = (LEASE_TTL_SEC * 1000) / 3
+const LEASE_POLL_MS = 250
+/** Long enough to outwait one command at the longest timeout. */
+const MAX_LEASE_WAIT_MS = (SANDBOX_MAX_TIMEOUT_SEC + LEASE_TTL_SEC) * 1000
 
 export class SandboxService {
   private readonly pool: Pool
@@ -50,8 +58,20 @@ export class SandboxService {
     signal?: AbortSignal
     api?: () => Promise<SandboxApiAccess>
   }): Promise<SandboxRunResult> {
+    // The lease spans the reuse check through the command's end: a box another
+    // turn could fill between the two would hand this command content its turn
+    // cannot read.
+    const release = await this.lease(params)
+    try {
+      return await this.runLeased(params)
+    } finally {
+      await release()
+    }
+  }
+
+  private async runLeased(params: Parameters<SandboxService["run"]>[0]): Promise<SandboxRunResult> {
     const { workspaceId, streamId } = params
-    const { sandboxId, replaced, contentStreamIds } = await this.acquire(params)
+    const { sandboxId, replaced } = await this.acquire(params)
     params.signal?.throwIfAborted()
     if (params.contentStreamIds.length > 0) {
       const recorded = await StreamSandboxRepository.addContent(this.pool, {
@@ -70,16 +90,16 @@ export class SandboxService {
       signal: params.signal,
       api: params.api,
     })
-    // Reads during the command land on whichever box the stream holds now. A
-    // replace that reset it loses them here; the token's own record covers that.
+    // Backstop for a lease lost mid-command. Content is recorded on the box
+    // before it lands and a box's record only grows, so the record covers
+    // everything the command could have seen; a replaced box took its record.
     const after = await StreamSandboxRepository.find(this.pool, workspaceId, streamId)
-    return {
-      ...result,
-      replaced,
-      contentStreamIds: [
-        ...new Set([...contentStreamIds, ...params.contentStreamIds, ...(after?.contentStreamIds ?? [])]),
-      ],
+    if (after?.sandboxId !== sandboxId) {
+      throw new Error(
+        "this stream's sandbox was replaced while the command ran, so its output is withheld; run it again"
+      )
     }
+    return { ...result, replaced, contentStreamIds: after.contentStreamIds }
   }
 
   private async acquire(params: {
@@ -87,7 +107,7 @@ export class SandboxService {
     streamId: string
     internet: boolean
     readableStreamIds: string[]
-  }): Promise<{ sandboxId: string; replaced: SandboxReplacedReason | null; contentStreamIds: string[] }> {
+  }): Promise<{ sandboxId: string; replaced: SandboxReplacedReason | null }> {
     const { workspaceId, streamId, internet } = params
     const readable = new Set(params.readableStreamIds)
     // A caller that lost a replace race still had its files in the box it read.
@@ -99,7 +119,7 @@ export class SandboxService {
         current.internet === internet &&
         current.contentStreamIds.every((id) => readable.has(id))
       if (current && reusable && (await this.runner.alive(current.sandboxId))) {
-        return { sandboxId: current.sandboxId, replaced: lost, contentStreamIds: current.contentStreamIds }
+        return { sandboxId: current.sandboxId, replaced: lost }
       }
 
       const sandboxId = await this.runner.create({ workspaceId, streamId, internet })
@@ -121,15 +141,35 @@ export class SandboxService {
         if (current) lost ??= replacedReason(current, internet, readable, this.runner.kind)
         continue
       }
-      if (!current) return { sandboxId, replaced: lost, contentStreamIds: [] }
+      if (!current) return { sandboxId, replaced: lost }
       if (current.runner === this.runner.kind && !reusable) await this.discard(current.sandboxId)
-      return {
-        sandboxId,
-        replaced: replacedReason(current, internet, readable, this.runner.kind),
-        contentStreamIds: [],
-      }
+      return { sandboxId, replaced: replacedReason(current, internet, readable, this.runner.kind) }
     }
     throw new Error(`could not bind a sandbox to stream ${streamId} after ${MAX_BIND_ATTEMPTS} attempts`)
+  }
+
+  private async lease(params: { workspaceId: string; streamId: string; signal?: AbortSignal }) {
+    const lease = { workspaceId: params.workspaceId, streamId: params.streamId, leaseId: sandboxLeaseId() }
+    const giveUpAt = Date.now() + MAX_LEASE_WAIT_MS
+    while (!(await StreamSandboxLeaseRepository.take(this.pool, { ...lease, ttlSec: LEASE_TTL_SEC }))) {
+      if (Date.now() > giveUpAt)
+        throw new Error("another command is still running in this stream's sandbox; run it again")
+      await new Promise((resolve) => setTimeout(resolve, LEASE_POLL_MS))
+      params.signal?.throwIfAborted()
+    }
+    const renewal = setInterval(() => {
+      StreamSandboxLeaseRepository.renew(this.pool, { ...lease, ttlSec: LEASE_TTL_SEC })
+        .then((held) => {
+          if (!held) logger.warn(lease, "Sandbox lease lost while its command ran")
+        })
+        .catch((err) => logger.warn({ err, ...lease }, "Sandbox lease not renewed"))
+    }, LEASE_RENEW_MS)
+    return async () => {
+      clearInterval(renewal)
+      await StreamSandboxLeaseRepository.release(this.pool, lease).catch((err) =>
+        logger.warn({ err, ...lease }, "Sandbox lease not released; it frees itself when it expires")
+      )
+    }
   }
 
   /** A box nobody points at; if removal fails, its idle timer ends it. */
