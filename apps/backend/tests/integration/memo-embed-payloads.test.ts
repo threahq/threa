@@ -522,7 +522,7 @@ describe("memo embed summaries on message payloads", () => {
         authorType: "user",
         ...bodyCiting("both readable at creation", [ownRoomMemo, publicMemo]),
       })
-      const events = await eventService.listEvents(vanishing, { limit: 200 })
+      const events = await eventService.listEvents(testWorkspaceId, vanishing, { limit: 200 })
       const created = events.find(
         (e) => e.eventType === "message_created" && (e.payload as MessageCreatedPayload).messageId === message.id
       )
@@ -555,7 +555,7 @@ describe("memo embed summaries on message payloads", () => {
         authorType: "user",
         ...bodyCiting("cited in the channel", [sameStreamMemo]),
       })
-      const events = (await eventService.listEvents(channel, { limit: 200 })).filter(
+      const events = (await eventService.listEvents(testWorkspaceId, channel, { limit: 200 })).filter(
         (e) => (e.payload as { messageId?: string }).messageId === message.id
       )
 
