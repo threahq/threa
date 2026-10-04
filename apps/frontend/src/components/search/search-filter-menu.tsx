@@ -225,7 +225,7 @@ function FilterValuePicker({
 }) {
   switch (kind) {
     case "from":
-      return <UserPicker userIds={userIds} onSelect={(slug) => onCommit("from", slug)} />
+      return <UserPicker userIds={userIds} includeHostCopies onSelect={(slug) => onCommit("from", slug)} />
     case "with":
       return <UserPicker userIds={userIds} onSelect={(slug) => onCommit("with", slug)} />
     case "in-dm":
@@ -248,8 +248,16 @@ function FilterValuePicker({
  * personas/bots here would commit a chip whose filter silently never applies.
  * Keeps the "me" shortcut matching the current user.
  */
-function UserPicker({ onSelect, userIds }: { onSelect: (slug: string) => void; userIds?: ReadonlySet<string> }) {
-  const { mentionables } = useMentionables()
+function UserPicker({
+  onSelect,
+  userIds,
+  includeHostCopies,
+}: {
+  onSelect: (slug: string) => void
+  userIds?: ReadonlySet<string>
+  includeHostCopies?: boolean
+}) {
+  const { mentionables } = useMentionables(undefined, { includeHostCopies })
   const [search, setSearch] = useState("")
 
   const filtered = useMemo(() => {

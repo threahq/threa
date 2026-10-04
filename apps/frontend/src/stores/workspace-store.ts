@@ -418,7 +418,7 @@ export function useWorkspaceUsers(workspaceId: string | undefined): CachedWorksp
   return useArrayStoreHook(workspaceId, "users", cached)
 }
 
-/** A copy of a host user stays in the users list to render authors and reactors but is never a pick target. */
+/** A copy of a host user stays in the users list so authors, reactors and read filters can show it, but it is never a pick target or counted among the workspace's people. */
 export function isPickableUser(user: Pick<CachedWorkspaceUser, "originWorkspaceId">): boolean {
   return !user.originWorkspaceId
 }

@@ -280,7 +280,8 @@ export const UserRepository = {
         um.notifications_paused_indefinitely,
         um.setup_completed,
         um.joined_at,
-        um.mirror_role_slugs
+        um.mirror_role_slugs,
+        um.origin_workspace_id
       FROM (SELECT 1) AS one
       LEFT JOIN user_match um ON true
     `)

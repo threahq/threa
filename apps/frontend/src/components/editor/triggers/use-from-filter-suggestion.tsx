@@ -6,7 +6,7 @@ import { useSuggestion } from "./use-suggestion"
 
 /** Hook for `from:@` filter suggestions (users/personas) in search context. */
 export function useFromFilterSuggestion() {
-  const { mentionables } = useMentionables()
+  const { mentionables } = useMentionables(undefined, { includeHostCopies: true })
 
   const renderList = useCallback(
     (props: {

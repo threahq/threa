@@ -127,7 +127,8 @@ describe("MessageReactions", () => {
     expect({
       addButton: screen.queryByRole("button", { name: "Add reaction" }),
       toggled: mockToggleReaction.mock.calls,
-    }).toEqual({ addButton: null, toggled: [] })
+      pillDisabled: screen.getByText("1").closest("button")?.getAttribute("aria-disabled"),
+    }).toEqual({ addButton: null, toggled: [], pillDisabled: "true" })
   })
 })
 

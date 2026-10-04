@@ -248,19 +248,21 @@ export const ReactionPill = forwardRef<
       type="button"
       className={cn(
         "reveal-host relative inline-flex min-h-[26px] items-center gap-1 rounded-full border pl-2 pr-2.5 text-xs transition-colors",
-        !onToggle && "cursor-default",
         hasReacted
-          ? "border-primary/50 bg-primary/[0.14] text-primary hover:bg-primary/[0.2]"
-          : "border-transparent bg-primary/[0.05] text-muted-foreground hover:bg-primary/[0.1] hover:text-foreground"
+          ? "border-primary/50 bg-primary/[0.14] text-primary"
+          : "border-transparent bg-primary/[0.05] text-muted-foreground",
+        !onToggle && "cursor-default",
+        onToggle && (hasReacted ? "hover:bg-primary/[0.2]" : "hover:bg-primary/[0.1] hover:text-foreground")
       )}
       onClick={onToggle}
+      aria-disabled={!onToggle || undefined}
       {...rest}
     >
       {/* Remove affordance: a mouse hover reveals the X over the emoji; touch
             taps the pill to toggle, so the X stays hidden there. */}
       <span className="relative text-sm leading-none w-4 h-4 flex items-center justify-center">
         <span>{emoji}</span>
-        {hasReacted && <X className="reveal-actions-hover-only absolute inset-0 h-4 w-4 text-primary/70" />}
+        {hasReacted && onToggle && <X className="reveal-actions-hover-only absolute inset-0 h-4 w-4 text-primary/70" />}
       </span>
       <span className={cn("tabular-nums", hasReacted && "font-medium")}>
         <RollingNumber value={userIds.length} />

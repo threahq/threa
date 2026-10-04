@@ -36,4 +36,21 @@ describe("useMentionables host user copies", () => {
       expect(result.current.mentionables.filter((m) => m.type === "user").map((m) => m.id)).toEqual(["usr_local"])
     )
   })
+
+  it("should keep a copy of a host user when a from filter asks for host copies", async () => {
+    await seedWorkspaceUser(WORKSPACE_ID, "usr_local", "Lena Local")
+    await seedWorkspaceUser(WORKSPACE_ID, "usr_copy", "Hosted Hazel")
+    await db.workspaceUsers.update([WORKSPACE_ID, "usr_copy"], { originWorkspaceId: "ws_host" })
+
+    const { result } = renderHook(() => useMentionables(undefined, { includeHostCopies: true }), { wrapper })
+
+    await waitFor(() =>
+      expect(
+        result.current.mentionables
+          .filter((m) => m.type === "user")
+          .map((m) => m.id)
+          .sort()
+      ).toEqual(["usr_copy", "usr_local"])
+    )
+  })
 })

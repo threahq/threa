@@ -45,11 +45,11 @@ describe("host user copies in a partner workspace", () => {
       name: "Hosted Hazel",
       slug: `hazel-host-${slugSuffix}`,
     }))!
-    return { wsId, owner, member, copy }
+    return { wsId, ownerWorkosUserId, owner, member, copy }
   }
 
   test("should leave a copy out of targetable reads and keep it in visible reads", async () => {
-    const { wsId, owner, copy } = await seed()
+    const { wsId, ownerWorkosUserId, owner, copy } = await seed()
     const read = async (purpose: PeopleScope["purpose"]) => {
       const scope: PeopleScope = { viewer: { kind: "user", userId: owner.id }, purpose }
       return {
@@ -65,10 +65,13 @@ describe("host user copies in a partner workspace", () => {
       targetable: await read(PeoplePurposes.TARGETABLE),
       visible: await read(PeoplePurposes.VISIBLE),
       originWorkspaceId: (await UserRepository.findById(pool, wsId, copy.id))?.originWorkspaceId,
+      requesterOriginWorkspaceId: (await UserRepository.findWorkspaceUserAccess(pool, wsId, ownerWorkosUserId)).user
+        ?.originWorkspaceId,
     }).toEqual({
       targetable: { listed: false, bySlugs: false, searched: false, byIds: false, byId: false },
       visible: { listed: true, bySlugs: true, searched: true, byIds: true, byId: true },
       originWorkspaceId: copy.originWorkspaceId,
+      requesterOriginWorkspaceId: null,
     })
   })
 
