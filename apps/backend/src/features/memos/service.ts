@@ -813,6 +813,20 @@ export class MemoService implements MemoServiceLike {
       )
 
       const createdMemos: MemoToCreate[] = []
+      // Every memo in the batch saw the stream as it was before the batch, so
+      // a later conversation reversing the same memo cites it after a
+      // batch-mate already retired it. Following the retirement chain makes it
+      // retire that batch-mate instead of deduping against it. Memos from one
+      // conversation never chain: they are siblings, not successive versions.
+      const retiredBy = new Map<string, MemoToCreate>()
+      const latestOf = (id: string, conversationId: string | undefined): string => {
+        let current = id
+        for (let next = retiredBy.get(current); next && next.sourceConversationId !== conversationId; ) {
+          current = next.id
+          next = retiredBy.get(current)
+        }
+        return current
+      }
       for (const memoData of savable) {
         // Authoritative dedup (INV-20): under the lock this sees committed
         // memos from other batches AND survivors already inserted earlier in
@@ -820,7 +834,9 @@ export class MemoService implements MemoServiceLike {
         // subsumes the in-batch check. Same-conversation repeats are gated
         // here too — the revision prompt alone demonstrably re-emits
         // near-identical memos when a conversation is re-processed.
-        const citedIds = (memoData.supersedesMemoIds ?? []).filter((id) => !createdMemos.some((m) => m.id === id))
+        const citedIds = (memoData.supersedesMemoIds ?? [])
+          .filter((id) => !createdMemos.some((m) => m.id === id))
+          .map((id) => latestOf(id, memoData.sourceConversationId))
         const explicitSupersedeIds = await MemoRepository.filterSupersedable(client, workspaceId, citedIds, {
           conversationId: memoData.sourceConversationId ?? null,
           sourceMessageIds: memoData.sourceMessageIds,
@@ -931,6 +947,8 @@ export class MemoService implements MemoServiceLike {
             "Revised memo superseded prior capture(s) from the same conversation"
           )
         }
+
+        for (const id of [...explicitSupersedeIds, ...toSupersede.map((s) => s.memo.id)]) retiredBy.set(id, memoData)
 
         const { embedding, ...memoFields } = memoData
         await MemoRepository.insert(client, memoFields)
