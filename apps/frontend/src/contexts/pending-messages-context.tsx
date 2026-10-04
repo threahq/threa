@@ -320,7 +320,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
     })
     revokeOptimisticRailEvent(id)
     if (pending?.conversation?.intent === ConversationIntents.NEW && pending.conversation.conversationId) {
-      await deleteOptimisticBoardPost(pending.conversation.conversationId)
+      await deleteOptimisticBoardPost(pending.workspaceId, pending.conversation.conversationId)
     }
     setPendingIds((prev) => {
       const next = new Set(prev)

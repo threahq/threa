@@ -25,38 +25,53 @@ function toCached(workspaceId: string, post: BoardPost, status?: "pending"): Cac
  * Reactive board feed for a workspace, newest activity first — the board's read
  * authority, mirroring how the timeline reads `events` from IDB. A live
  * `conversation:*` merge or an optimistic write re-sorts the feed in place
- * without a refetch. Returns `undefined` until the first IDB read resolves
- * (loading), `[]` when the store is genuinely empty.
+ * without a refetch. Returns `undefined` until the query resolves for the
+ * current workspace — the stamp keeps a workspace switch from exposing the
+ * previous workspace's feed for one render — and `[]` when the store is
+ * genuinely empty.
  */
 export function useBoardPosts(workspaceId: string, opts?: { enabled?: boolean }): CachedBoardPost[] | undefined {
   const enabled = opts?.enabled ?? true
-  return useLiveQuery(
+  const result = useLiveQuery(
     // A disabled querier touches no table, so it registers no Dexie
     // subscription and never re-fires on board writes — callers that read the
     // feed conditionally (per-card sibling pickers) pay nothing when off.
-    () =>
-      enabled
-        ? db.conversations
+    async () => ({
+      forWorkspaceId: workspaceId,
+      rows: enabled
+        ? await db.conversations
             .where("[workspaceId+_lastActivityMs]")
             .between([workspaceId, Dexie.minKey], [workspaceId, Dexie.maxKey])
             .reverse()
             .toArray()
         : [],
+    }),
     [workspaceId, enabled]
   )
+  if (!result || result.forWorkspaceId !== workspaceId) return undefined
+  return result.rows
 }
 
 /**
  * One board post from the reactive store, by conversation id — the conversation
  * panel's static projection (opening/recent/streamIds), live-merged in place as
- * the feed reconciles. `undefined` until the first IDB read resolves (loading),
- * `null` once it resolves to no such row (the panel then fetches it by id).
+ * the feed reconciles. `undefined` until the query resolves for the current
+ * workspace and conversation — the stamp keeps a key switch from exposing the
+ * previous key's row for one render — `null` once it resolves to no such row
+ * (the panel then fetches it by id).
  */
-export function useBoardPost(conversationId: string | null): CachedBoardPost | null | undefined {
-  return useLiveQuery(async () => {
+export function useBoardPost(workspaceId: string, conversationId: string | null): CachedBoardPost | null | undefined {
+  const result = useLiveQuery(async () => {
     if (!conversationId) return null
-    return (await db.conversations.get(conversationId)) ?? null
-  }, [conversationId])
+    return {
+      forWorkspaceId: workspaceId,
+      forConversationId: conversationId,
+      post: (await db.conversations.get([workspaceId, conversationId])) ?? null,
+    }
+  }, [workspaceId, conversationId])
+  if (!conversationId) return result === undefined ? undefined : null
+  if (!result || result.forWorkspaceId !== workspaceId || result.forConversationId !== conversationId) return undefined
+  return result.post
 }
 
 /**
@@ -70,7 +85,7 @@ export async function seedBoardPosts(workspaceId: string, posts: BoardPost[]): P
   if (posts.length === 0) return
   await db.transaction("rw", db.conversations, async () => {
     const incoming = posts.map((post) => toCached(workspaceId, post))
-    const existing = await db.conversations.bulkGet(incoming.map((post) => post.id))
+    const existing = await db.conversations.bulkGet(incoming.map((post) => [workspaceId, post.id]))
     await db.conversations.bulkPut(
       incoming.map((post, index) => {
         const cached = existing[index]
@@ -172,7 +187,7 @@ function buildOptimisticPost(workspaceId: string, input: OptimisticBoardPostInpu
 export async function putOptimisticBoardPost(workspaceId: string, input: OptimisticBoardPostInput): Promise<void> {
   const post = buildOptimisticPost(workspaceId, input)
   await db.transaction("rw", db.conversations, async () => {
-    if (await db.conversations.get(input.conversationId)) return
+    if (await db.conversations.get([workspaceId, input.conversationId])) return
     await db.conversations.put(toCached(workspaceId, post, "pending"))
   })
 }
@@ -205,7 +220,7 @@ export async function reconcileOptimisticBoardPost(
 ): Promise<void> {
   const post = buildOptimisticPost(workspaceId, input)
   await database.transaction("rw", database.conversations, async () => {
-    const existing = await database.conversations.get(input.conversationId)
+    const existing = await database.conversations.get([workspaceId, input.conversationId])
     if (!existing) return
     if (existing._status === "pending") {
       await database.conversations.put(toCached(workspaceId, post, "pending"))
@@ -228,10 +243,10 @@ export async function reconcileOptimisticBoardPost(
  * `_status: "pending"`: a card the send already committed (server-reconciled, or
  * even mid-flight) is never removed by a stale cancel.
  */
-export async function deleteOptimisticBoardPost(conversationId: string): Promise<void> {
+export async function deleteOptimisticBoardPost(workspaceId: string, conversationId: string): Promise<void> {
   await db.transaction("rw", db.conversations, async () => {
-    const existing = await db.conversations.get(conversationId)
-    if (existing?._status === "pending") await db.conversations.delete(conversationId)
+    const existing = await db.conversations.get([workspaceId, conversationId])
+    if (existing?._status === "pending") await db.conversations.delete([workspaceId, conversationId])
   })
 }
 
@@ -245,9 +260,13 @@ export async function deleteOptimisticBoardPost(conversationId: string): Promise
  * stream; never creates a row (a card we don't have can't be rendered from this
  * event alone).
  */
-export async function addBoardConversationStream(conversationId: string, streamId: string): Promise<void> {
+export async function addBoardConversationStream(
+  workspaceId: string,
+  conversationId: string,
+  streamId: string
+): Promise<void> {
   await db.transaction("rw", db.conversations, async () => {
-    const existing = await db.conversations.get(conversationId)
+    const existing = await db.conversations.get([workspaceId, conversationId])
     if (!existing) return
     const streamIds = existing.streamIds ?? []
     if (streamIds.includes(streamId)) return
@@ -263,6 +282,7 @@ export async function addBoardConversationStream(conversationId: string, streamI
  * hydrate a card it cannot render from the event alone.
  */
 export async function mergeBoardConversation(
+  workspaceId: string,
   conversationId: string,
   conversation: ConversationWithStaleness,
   /** The event's board-level settling set. `settlingMessageIds` is a BoardPost
@@ -281,13 +301,13 @@ export async function mergeBoardConversation(
     // Guard on an EXPLICIT empty array: a payload that omits `messageIds` (a
     // partial/aggregate-only event) is not "known empty" — fall through to upsert.
     if (Array.isArray(conversation.messageIds) && conversation.messageIds.length === 0) {
-      await db.conversations.delete(conversationId)
+      await db.conversations.delete([workspaceId, conversationId])
       // A separate table, so it can't join this transaction's scope — run it
       // outside the zone rather than letting Dexie reject a foreign-table write.
-      Dexie.ignoreTransaction(() => void deleteConversationMessages(conversationId))
+      Dexie.ignoreTransaction(() => void deleteConversationMessages(workspaceId, conversationId))
       return true
     }
-    const existing = await db.conversations.get(conversationId)
+    const existing = await db.conversations.get([workspaceId, conversationId])
     if (!existing) return false
     // The aggregate names the members but carries no bodies, so the projection
     // snapshots must be reconciled here: a message re-filed OUT of this
@@ -302,7 +322,9 @@ export async function mergeBoardConversation(
     // The backfill store is the other snapshot of these bodies, and the merged
     // view unions it with the rail — prune it on the same event or a re-filed
     // message keeps rendering off a fetch nothing else would ever correct.
-    if (memberIds) Dexie.ignoreTransaction(() => void pruneConversationMessagesToMembership(conversationId, memberIds))
+    if (memberIds) {
+      Dexie.ignoreTransaction(() => void pruneConversationMessagesToMembership(workspaceId, conversationId, memberIds))
+    }
     // An opening that moved away can't be patched in place (its replacement's
     // body isn't in the event): merge what's known but report unhandled, so the
     // caller refetches the board head and re-seeds the card with its real new
@@ -367,6 +389,6 @@ export async function removeBoardConversationsForStream(workspaceId: string, str
   await db.transaction("rw", db.conversations, async () => {
     const rows = await boardRowsForStreams(workspaceId, [streamId])
     if (rows.length === 0) return
-    await db.conversations.bulkDelete(rows.map((row) => row.id))
+    await db.conversations.bulkDelete(rows.map((row) => [workspaceId, row.id]))
   })
 }

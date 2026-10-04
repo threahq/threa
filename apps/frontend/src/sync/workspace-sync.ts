@@ -2188,7 +2188,7 @@ export function registerWorkspaceSocketHandlers(
     if (payload.workspaceId !== workspaceId) return
     if (payload.active)
       await putHidden(workspaceId, payload.conversationId, payload.hiddenAt ? Date.parse(payload.hiddenAt) : Date.now())
-    else await deleteHidden(payload.conversationId)
+    else await deleteHidden(workspaceId, payload.conversationId)
   }
 
   const handleBoardMuteChanged = async (payload: BoardStreamMuteChangedPayload) => {
@@ -2374,42 +2374,45 @@ export function registerWorkspaceSocketHandlers(
     settlingMessageIds?: string[]
   }) => {
     if (payload.workspaceId !== workspaceId) return
-    await mergeBoardConversation(payload.conversation.id, payload.conversation, payload.settlingMessageIds).then(
-      (merged) => {
-        if (merged) return
-        queryClient.invalidateQueries({
-          queryKey: [...conversationKeys.all, "workspaceList", workspaceId],
-          refetchType: "active",
-        })
-        // A post fetched by id (deep link, search, in-stream list, past the board
-        // cursor) has no IDB row, so the merge above reached nothing and the
-        // panel would sit on its 60s-stale copy — the settling mark would never
-        // appear or fade. Patch the by-id cache in place when it holds the row
-        // (no refetch, panel stays live); otherwise mark it stale.
-        const boardPostKey = conversationKeys.boardPost(payload.conversation.id)
-        const cached = queryClient.getQueryData<BoardPost>(boardPostKey)
-        // A patched post must stay internally consistent, like
-        // mergeBoardConversation: prune rendered rows to the new membership, and
-        // if the OPENER left the membership the post's shape can't be patched —
-        // refetch instead of rendering a non-member opening.
-        const memberIds =
-          cached && new Set([...payload.conversation.messageIds, ...payload.conversation.secondaryMessageIds])
-        if (cached && memberIds && (!cached.openingMessage || memberIds.has(cached.openingMessage.id))) {
-          queryClient.setQueryData<BoardPost>(boardPostKey, (prev) =>
-            prev
-              ? {
-                  ...prev,
-                  conversation: mergeConversationByTitleRevision(prev.conversation, payload.conversation),
-                  recentMessages: prev.recentMessages.filter((m) => memberIds.has(m.id)),
-                  settlingMessageIds: payload.settlingMessageIds ?? prev.settlingMessageIds,
-                }
-              : prev
-          )
-        } else {
-          queryClient.invalidateQueries({ queryKey: boardPostKey })
-        }
+    await mergeBoardConversation(
+      workspaceId,
+      payload.conversation.id,
+      payload.conversation,
+      payload.settlingMessageIds
+    ).then((merged) => {
+      if (merged) return
+      queryClient.invalidateQueries({
+        queryKey: [...conversationKeys.all, "workspaceList", workspaceId],
+        refetchType: "active",
+      })
+      // A post fetched by id (deep link, search, in-stream list, past the board
+      // cursor) has no IDB row, so the merge above reached nothing and the
+      // panel would sit on its 60s-stale copy — the settling mark would never
+      // appear or fade. Patch the by-id cache in place when it holds the row
+      // (no refetch, panel stays live); otherwise mark it stale.
+      const boardPostKey = conversationKeys.boardPost(payload.conversation.id)
+      const cached = queryClient.getQueryData<BoardPost>(boardPostKey)
+      // A patched post must stay internally consistent, like
+      // mergeBoardConversation: prune rendered rows to the new membership, and
+      // if the OPENER left the membership the post's shape can't be patched —
+      // refetch instead of rendering a non-member opening.
+      const memberIds =
+        cached && new Set([...payload.conversation.messageIds, ...payload.conversation.secondaryMessageIds])
+      if (cached && memberIds && (!cached.openingMessage || memberIds.has(cached.openingMessage.id))) {
+        queryClient.setQueryData<BoardPost>(boardPostKey, (prev) =>
+          prev
+            ? {
+                ...prev,
+                conversation: mergeConversationByTitleRevision(prev.conversation, payload.conversation),
+                recentMessages: prev.recentMessages.filter((m) => memberIds.has(m.id)),
+                settlingMessageIds: payload.settlingMessageIds ?? prev.settlingMessageIds,
+              }
+            : prev
+        )
+      } else {
+        queryClient.invalidateQueries({ queryKey: boardPostKey })
       }
-    )
+    })
   }
 
   // A conversation can span its root + the root's threads (one root).
@@ -2482,7 +2485,7 @@ export function registerWorkspaceSocketHandlers(
     conversationId: string
   }) => {
     if (payload.workspaceId !== workspaceId) return
-    await addBoardConversationStream(payload.conversationId, payload.streamId)
+    await addBoardConversationStream(workspaceId, payload.conversationId, payload.streamId)
   }
 
   socket.on("stream:created", handleStreamCreated)

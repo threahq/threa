@@ -33,6 +33,10 @@ const STREAMS_STORE = "streamsByWorkspace"
 const SLOTS_STORE = "slotsByWorkspace"
 const BOARD_MUTED_STREAMS_STORE = "boardMutedStreamsByWorkspace"
 const EVENTS_STORE = "eventsByWorkspace"
+const CONVERSATIONS_STORE = "conversationsByWorkspace"
+const CONVERSATION_MESSAGES_STORE = "conversationMessagesByWorkspace"
+const BOARD_HIDDEN_CONVERSATIONS_STORE = "boardHiddenConversationsByWorkspace"
+const STREAM_CONTEXT_ITEMS_STORE = "streamContextItemsByWorkspace"
 const LEGACY_WORKSPACE_USERS_STORE = "workspaceMembers"
 
 export interface CachedWorkspace {
@@ -1039,8 +1043,8 @@ export interface CachedBoardPost extends BoardPost {
  * railed one.
  */
 export interface CachedConversationMessage extends BoardPostMessage {
-  /** The message id — the primary key (`id` is inherited and identical; the
-   *  explicit name keeps the key legible against the board post's `id`). */
+  /** The message id — keyed with `workspaceId` (`id` is inherited and identical;
+   *  the explicit name keeps the key legible against the board post's `id`). */
   messageId: string
   conversationId: string
   workspaceId: string
@@ -1067,7 +1071,7 @@ export interface CachedBoardMutedStream {
  * `stream_context_items` projection row (link, media, file, memo, delegation,
  * thread), and the panel's read authority once C5 cuts it over.
  *
- * Keyed by the wire `key` (`${category}:${refId}:${sourceMessageId}` — see
+ * Keyed by workspace and the wire `key` (`${category}:${refId}:${sourceMessageId}` — see
  * `streamContextItemKey`), never the server's ULID: the same key is derivable
  * locally from a timeline event, so a locally-derived row and the server row it
  * anticipates collapse to one row on `bulkPut` instead of double-rendering.
@@ -1162,13 +1166,13 @@ export class ThreaDatabase extends Dexie {
   labelAssignments!: EntityTable<CachedLabelAssignment, "id">
   e2eDeviceKeys!: EntityTable<CachedE2eDeviceKey, "id">
   sidebarConfigs!: EntityTable<CachedSidebarConfig, "id">
-  conversations!: EntityTable<CachedBoardPost, "id">
-  conversationMessages!: EntityTable<CachedConversationMessage, "messageId">
-  boardHiddenConversations!: EntityTable<CachedBoardHiddenConversation, "id">
+  conversations!: Table<CachedBoardPost, [string, string]>
+  conversationMessages!: Table<CachedConversationMessage, [string, string]>
+  boardHiddenConversations!: Table<CachedBoardHiddenConversation, [string, string]>
   boardMutedStreams!: Table<CachedBoardMutedStream, [string, string]>
   uploadJobs!: EntityTable<CachedUploadJob, "attachmentId">
   slots!: Table<CachedSlot, [string, string, string]>
-  streamContextItems!: EntityTable<CachedStreamContextItem, "key">
+  streamContextItems!: Table<CachedStreamContextItem, [string, string]>
   streamConnections!: Table<CachedStreamConnection, [string, string]>
   cacheOwnership!: EntityTable<CacheOwnership, "id">
 
@@ -1730,11 +1734,46 @@ export class ThreaDatabase extends Dexie {
         await moveRows(tx, "events", EVENTS_STORE)
       })
 
+    // v54: conversations, their message backfill, board hides and context rows
+    // are keyed by workspace like v52/v53. A copied stream keeps its message ids
+    // in the partner workspace, so the message-keyed backfill rows and the
+    // context rows (whose `key` embeds the source message id) overwrote the
+    // other workspace's copy. Every unused or cross-workspace index is dropped
+    // so a missed call site throws instead of mixing workspaces;
+    // `*conversation.messageIds` stays bare because IndexedDB has no compound
+    // multiEntry index. Rows without a `workspaceId` are dropped; the bootstrap
+    // refetches them.
+    // One-way door: once a client has opened at v54, code declaring only v53
+    // cannot open the database (IndexedDB refuses a version downgrade), so a
+    // revert of this bump is not available — reverting means a v55.
+    this.version(54)
+      .stores({
+        [CONVERSATIONS_STORE]: "[workspaceId+id], workspaceId, [workspaceId+_lastActivityMs], *conversation.messageIds",
+        [CONVERSATION_MESSAGES_STORE]: "[workspaceId+messageId], [workspaceId+conversationId]",
+        [BOARD_HIDDEN_CONVERSATIONS_STORE]: "[workspaceId+id], workspaceId",
+        [STREAM_CONTEXT_ITEMS_STORE]:
+          "[workspaceId+key], [workspaceId+sourceMessageId], [workspaceId+rootStreamId+occurredAt], [workspaceId+streamId+occurredAt], [workspaceId+groupRef+occurredAt]",
+        conversations: null,
+        conversationMessages: null,
+        boardHiddenConversations: null,
+        streamContextItems: null,
+      })
+      .upgrade(async (tx) => {
+        await moveRows(tx, "conversations", CONVERSATIONS_STORE)
+        await moveRows(tx, "conversationMessages", CONVERSATION_MESSAGES_STORE)
+        await moveRows(tx, "boardHiddenConversations", BOARD_HIDDEN_CONVERSATIONS_STORE)
+        await moveRows(tx, "streamContextItems", STREAM_CONTEXT_ITEMS_STORE)
+      })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
     this.streams = this.table(STREAMS_STORE)
     this.slots = this.table(SLOTS_STORE)
     this.boardMutedStreams = this.table(BOARD_MUTED_STREAMS_STORE)
     this.events = this.table(EVENTS_STORE)
+    this.conversations = this.table(CONVERSATIONS_STORE)
+    this.conversationMessages = this.table(CONVERSATION_MESSAGES_STORE)
+    this.boardHiddenConversations = this.table(BOARD_HIDDEN_CONVERSATIONS_STORE)
+    this.streamContextItems = this.table(STREAM_CONTEXT_ITEMS_STORE)
 
     // Dexie holds every other transaction until this resolves, so nothing reads
     // or writes a database before its contents are known to belong to the

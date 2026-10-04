@@ -589,7 +589,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // shared board-drafts snapshot; hold the reveal until its first read lands so
   // a pill is in the card's first frame, never a later one.
   const draftsReady = useBoardDraftsReady(workspaceId)
-  const backfillPrimed = useBoardBackfillPrimed(prewarmConversationIds)
+  const backfillPrimed = useBoardBackfillPrimed(workspaceId, prewarmConversationIds)
   // Latch the reveal so a newly added conversation's cold rail can't un-paint the
   // whole feed (see `useBoardRevealLatch`); the gate only holds the first paint.
   // `posts.length > 0` is load-bearing: every term above is vacuously true on an

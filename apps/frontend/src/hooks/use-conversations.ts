@@ -493,7 +493,7 @@ export interface ConversationBoardPost {
  */
 export function useConversationBoardPost(workspaceId: string, conversationId: string | null): ConversationBoardPost {
   const conversationService = useConversationService()
-  const cached = useBoardPost(conversationId)
+  const cached = useBoardPost(workspaceId, conversationId)
   // Fetch only once the store has resolved to genuinely no row (`null`, not the
   // still-loading `undefined`) — a card already on the board never round-trips.
   const shouldFetch = !!conversationId && cached === null
@@ -713,8 +713,8 @@ export function useReassignConversationMessage(workspaceId: string, streamId: st
       // Apply the returned aggregates to the board store now, so the board card /
       // panel re-file on the HTTP response instead of waiting for the socket echo
       // (which then lands as an idempotent overwrite). No-op for uncached rows.
-      void mergeBoardConversation(conversation.id, conversation)
-      if (previousConversation) void mergeBoardConversation(previousConversation.id, previousConversation)
+      void mergeBoardConversation(workspaceId, conversation.id, conversation)
+      if (previousConversation) void mergeBoardConversation(workspaceId, previousConversation.id, previousConversation)
       // The expanded per-conversation message panels refetch their row sets.
       queryClient.invalidateQueries({ queryKey: conversationKeys.messages(conversation.id) })
       if (previousConversation) {
@@ -745,7 +745,7 @@ export function useSettleConversationMessage(workspaceId: string, streamId: stri
         (old: ConversationWithStaleness[] | undefined) =>
           old?.map((c) => (c.id === conversation.id ? mergeConversationByTitleRevision(c, conversation) : c))
       )
-      void mergeBoardConversation(conversation.id, conversation, settlingMessageIds)
+      void mergeBoardConversation(workspaceId, conversation.id, conversation, settlingMessageIds)
       const boardPostKey = conversationKeys.boardPost(conversation.id)
       if (queryClient.getQueryData(boardPostKey)) {
         queryClient.setQueryData<BoardPost>(boardPostKey, (prev) =>
@@ -885,7 +885,7 @@ export function useUpdateConversation(workspaceId: string) {
         ...(topicSummary !== undefined ? { topicSummary } : {}),
         ...(status !== undefined ? { status } : {}),
       }
-      const prevRow = await db.conversations.get(conversationId)
+      const prevRow = await db.conversations.get([workspaceId, conversationId])
       if (prevRow) {
         await db.conversations.put({
           ...prevRow,
@@ -909,7 +909,7 @@ export function useUpdateConversation(workspaceId: string) {
       toast.error("Couldn't update the conversation")
     },
     onSuccess: ({ conversation }, { conversationId }) => {
-      void mergeBoardConversation(conversationId, conversation)
+      void mergeBoardConversation(workspaceId, conversationId, conversation)
       const boardPostKey = conversationKeys.boardPost(conversationId)
       if (queryClient.getQueryData(boardPostKey)) {
         queryClient.setQueryData<BoardPost>(boardPostKey, (prev) =>
@@ -951,13 +951,13 @@ export function useHideConversation(workspaceId: string) {
   return useMutation({
     mutationFn: (conversationId: string) => conversationService.hideConversation(workspaceId, conversationId),
     onMutate: async (conversationId: string) => {
-      const prev = await db.boardHiddenConversations.get(conversationId)
+      const prev = await db.boardHiddenConversations.get([workspaceId, conversationId])
       await putHidden(workspaceId, conversationId, Date.now())
       return { conversationId, prev }
     },
     onError: (_error, conversationId, ctx) => {
       if (ctx?.prev) void putHidden(workspaceId, conversationId, ctx.prev.hiddenAt)
-      else void deleteHidden(conversationId)
+      else void deleteHidden(workspaceId, conversationId)
       toast.error("Couldn't hide from the board")
     },
     onSuccess: ({ hiddenAt }, conversationId) => {
@@ -971,8 +971,8 @@ export function useUnhideConversation(workspaceId: string) {
   return useMutation({
     mutationFn: (conversationId: string) => conversationService.unhideConversation(workspaceId, conversationId),
     onMutate: async (conversationId: string) => {
-      const prev = await db.boardHiddenConversations.get(conversationId)
-      await deleteHidden(conversationId)
+      const prev = await db.boardHiddenConversations.get([workspaceId, conversationId])
+      await deleteHidden(workspaceId, conversationId)
       return { conversationId, prev }
     },
     onError: (_error, conversationId, ctx) => {
