@@ -8,7 +8,9 @@ import { ApiError, delegationsApi } from "@/api"
 import { useSidebar } from "@/contexts"
 import { useLastLocation } from "@/hooks"
 import { useAccountScope } from "@/auth"
-import { accountHomePath } from "@/lib/last-workspace"
+import { accountHomePath, getLastWorkspaceId } from "@/lib/last-workspace"
+import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
+import { APP_LINK_GO_ROUTE, APP_LINK_SCHEME, parseAppLinkHref } from "@threahq/types"
 
 // Route-level code splitting: each page lazy-loads its own chunk so heavy
 // dependencies (tiptap/prosemirror, recharts, limax/pinyin-pro, etc.) ride
@@ -22,6 +24,11 @@ export const router = createBrowserRouter([
       {
         path: "/",
         element: <RootRedirect />,
+        errorElement: <ErrorBoundary />,
+      },
+      {
+        path: `${APP_LINK_GO_ROUTE}/*`,
+        element: <GoRedirect />,
         errorElement: <ErrorBoundary />,
       },
       {
@@ -213,6 +220,23 @@ export function RootRedirect() {
   return <Navigate to={activeWorkosUserId ? accountHomePath(activeWorkosUserId) : "/workspaces"} replace />
 }
 
+/**
+ * `/go/<place>` opens an `app:` place from outside the app, such as the public
+ * guide, which holds no workspace id. It lands in the account's last workspace;
+ * with none, or for a place the app does not know, it takes the root landing.
+ */
+export function GoRedirect() {
+  const place = useParams()["*"] ?? ""
+  const { activeWorkosUserId } = useAccountScope()
+  const workspaceId = activeWorkosUserId ? getLastWorkspaceId(activeWorkosUserId) : null
+  const destination = parseAppLinkHref(`${APP_LINK_SCHEME}${place}`)
+  if (!workspaceId || !destination) return <Navigate to="/" replace />
+  const home = `/w/${workspaceId}`
+  if (destination.kind === "page") return <Navigate to={`${home}/${destination.page}`} replace />
+  const param = destination.kind === "settings" ? "settings" : WS_SETTINGS_PARAM
+  return <Navigate to={`${home}?${new URLSearchParams({ [param]: destination.tab })}`} replace />
+}
+
 /** Workspace index route — redirects to a stream or opens the sidebar. */
 export function WorkspaceHome() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -237,7 +261,10 @@ export function WorkspaceHome() {
   }
 
   if (boardHref && workspaceId) {
-    return <Navigate to={boardHref} replace />
+    // Index params such as `?settings=` open over the restored board rather than being dropped.
+    const board = new URL(boardHref, window.location.origin)
+    new URLSearchParams(location.search).forEach((value, key) => board.searchParams.set(key, value))
+    return <Navigate to={`${board.pathname}${board.search}`} replace />
   }
 
   if (redirectStreamId && workspaceId) {

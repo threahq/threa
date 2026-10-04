@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import type { DelegationSummary } from "@threahq/types"
-import { DelegationRedirect, LegacyMemoRedirect, RootRedirect, WorkspaceHome } from "./index"
+import { DelegationRedirect, GoRedirect, LegacyMemoRedirect, RootRedirect, WorkspaceHome } from "./index"
 import { ApiError, delegationsApi } from "@/api"
 import * as useLastLocationModule from "@/hooks/use-last-location"
 import * as sidebarContextModule from "@/contexts/sidebar-context"
@@ -107,6 +107,73 @@ describe("RootRedirect", () => {
   })
 })
 
+describe("GoRedirect", () => {
+  function renderGo(path: string) {
+    return render(
+      <AuthProvider>
+        <AccountScopeProvider landAt={() => {}}>
+          <MemoryRouter initialEntries={[path]}>
+            <Routes>
+              <Route path="/" element={<RootRedirect />} />
+              <Route path="/go/*" element={<GoRedirect />} />
+              <Route path="/w/:workspaceId/*" element={<PathAndSearchEcho />} />
+              <Route path="/workspaces" element={<PathAndSearchEcho />} />
+            </Routes>
+          </MemoryRouter>
+        </AccountScopeProvider>
+      </AuthProvider>
+    )
+  }
+
+  function signedInAs(workosUserId: string) {
+    localStorage.setItem("threa-active-account", workosUserId)
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          ({
+            status: 200,
+            ok: true,
+            json: async () => ({ id: workosUserId, email: `${workosUserId}@example.com`, name: workosUserId }),
+          }) as unknown as Response
+      )
+    )
+  }
+
+  beforeEach(() => {
+    localStorage.clear()
+    vi.unstubAllGlobals()
+    window.__eagerAuthPromise = undefined
+  })
+
+  it.each([
+    ["/go/memory", "/w/ws_abc/memory"],
+    ["/go/settings/notifications", "/w/ws_abc?settings=notifications"],
+    ["/go/workspace-settings/bots", "/w/ws_abc?ws-settings=bots"],
+  ])("should open %s in the last workspace when the account has one", async (path, landing) => {
+    signedInAs("workos_A")
+    setLastWorkspaceId("workos_A", "ws_abc")
+    renderGo(path)
+
+    expect((await screen.findByTestId("path")).textContent).toBe(landing)
+  })
+
+  it("should take the root landing when the place is not one the app knows", async () => {
+    signedInAs("workos_A")
+    setLastWorkspaceId("workos_A", "ws_abc")
+    renderGo("/go/nowhere")
+
+    expect(await screen.findByTestId("path")).toHaveTextContent(/^\/w\/ws_abc$/)
+  })
+
+  it("should take the root landing when the account has no last workspace", async () => {
+    signedInAs("workos_B")
+    renderGo("/go/memory")
+
+    expect(await screen.findByTestId("path")).toHaveTextContent(/^\/workspaces$/)
+  })
+})
+
 describe("WorkspaceHome", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
@@ -198,6 +265,26 @@ describe("WorkspaceHome", () => {
     )
 
     expect(await screen.findByTestId("path")).toHaveTextContent("/w/ws_123/board/active")
+  })
+
+  it("should keep index search params over the board href when the last surface was the board", async () => {
+    mockUseLastLocation.mockReturnValue({
+      redirectStreamId: null,
+      boardHref: "/w/ws_123/board/active?in=stream_x",
+      shouldOpenSidebar: false,
+    })
+    render(
+      <MemoryRouter initialEntries={["/w/ws_123?settings=notifications"]}>
+        <Routes>
+          <Route path="/w/:workspaceId" element={<WorkspaceHome />} />
+          <Route path="/w/:workspaceId/board/:lens" element={<PathAndSearchEcho />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    expect(await screen.findByTestId("path")).toHaveTextContent(
+      "/w/ws_123/board/active?in=stream_x&settings=notifications"
+    )
   })
 
   it("redirects legacy memo routes into the memory explorer", async () => {

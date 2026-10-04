@@ -1479,5 +1479,6 @@ export {
   APP_LINK_WORKSPACE_SETTINGS_TABS,
   type AppLinkDestination,
   APP_LINK_SCHEME,
+  APP_LINK_GO_ROUTE,
   parseAppLinkHref,
 } from "./app-links"
