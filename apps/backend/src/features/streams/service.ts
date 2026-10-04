@@ -47,7 +47,6 @@ import {
 import { PeoplePurposes, UserRepository } from "../workspaces"
 import { BotChannelAccessRepository } from "../api-keys"
 import {
-  StreamReadOnlyReasons,
   StreamTypes,
   isAsideHostType,
   Visibilities,
