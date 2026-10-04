@@ -42,7 +42,9 @@ Ariadne only reaches what the conversation allows:
 
 ## Memory
 
-Where **Automatic memory** is on, decisions and facts from the conversation can become memos that you, and Ariadne, can recall later. Memos from your private scratchpads are visible only to you; memos from anywhere else are visible to people who can open the conversation they came from. Between conversations she remembers through memos and summaries of her earlier sessions in the same stream. Where it is off, nothing becomes a memo unless you ask her to save one. It starts off in scratchpads where she replies; see [Your first scratchpad](/guide/your-first-scratchpad).
+Memos sit on top of your messages; they don't replace them. Every message stays searchable whether or not it became a memo, so Ariadne can search for an earlier conversation and find it again. She also keeps summaries of her earlier sessions in the same stream.
+
+Where **Automatic memory** is on, decisions, facts and how-tos from a conversation can become memos once it settles. Casual chat usually produces none. Memos from your private scratchpads are visible only to you; memos from anywhere else are visible to people who can open the conversation they came from. Where it is off, nothing becomes a memo unless you ask her to save one. It starts off in scratchpads where she replies; see [Your first scratchpad](/guide/your-first-scratchpad).
 
 ## Choose a different agent
 
