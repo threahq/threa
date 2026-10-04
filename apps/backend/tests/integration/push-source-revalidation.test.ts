@@ -460,9 +460,15 @@ describe("push source revalidation", () => {
       return result.rows[0]?.payload.reminderGeneration
     }
 
-    async function fire(savedId: string): Promise<number> {
-      expect(await savedService.markReminderFired({ savedId })).toEqual({ fired: true })
-      return (await firedGeneration(savedId))!
+    async function fire(saved: { id: string; workspaceId: string; userId: string }): Promise<number> {
+      expect(
+        await savedService.markReminderFired({
+          workspaceId: saved.workspaceId,
+          userId: saved.userId,
+          savedId: saved.id,
+        })
+      ).toEqual({ fired: true })
+      return (await firedGeneration(saved.id))!
     }
 
     async function savedMessage() {
@@ -484,7 +490,7 @@ describe("push source revalidation", () => {
 
     test("should stay valid for the fired generation and re-read edited content", async () => {
       const { ws, author, recipient, root, message, saved } = await savedMessage()
-      const generation = await fire(saved.id)
+      const generation = await fire(saved)
       await eventService.editMessageInternal({
         workspaceId: ws,
         messageId: message.id,
@@ -519,8 +525,8 @@ describe("push source revalidation", () => {
         messageId: threadMessage.id,
         remindAt: IN_AN_HOUR(),
       })
-      const generation = await fire(saved.id)
-      const threadGeneration = await fire(threadSaved.id)
+      const generation = await fire(saved)
+      const threadGeneration = await fire(threadSaved)
       await E2eStreamsRepository.markStreamE2e(pool, {
         streamId: root.id,
         workspaceId: ws,
@@ -568,7 +574,7 @@ describe("push source revalidation", () => {
       }
       for (const [name, mutate] of Object.entries(cases)) {
         const ctx = await savedMessage()
-        const generation = await fire(ctx.saved.id)
+        const generation = await fire(ctx.saved)
         await mutate(ctx)
         outcomes[name] = await resolveReminder(ctx.ws, ctx.recipient.id, ctx.saved.id, generation)
       }
@@ -578,14 +584,14 @@ describe("push source revalidation", () => {
 
     test("should pin a new generation when a rescheduled reminder fires again", async () => {
       const { ws, recipient, saved } = await savedMessage()
-      const first = await fire(saved.id)
+      const first = await fire(saved)
       await savedService.updateReminder({
         workspaceId: ws,
         userId: recipient.id,
         savedId: saved.id,
         remindAt: IN_AN_HOUR(),
       })
-      const second = await fire(saved.id)
+      const second = await fire(saved)
 
       expect(second).toBeGreaterThan(first)
       expect(await resolveReminder(ws, recipient.id, saved.id, first)).toBeNull()
@@ -604,7 +610,7 @@ describe("push source revalidation", () => {
 
     test("should report a deleted message or lost access without content and stay valid", async () => {
       const deleted = await savedMessage()
-      const deletedGen = await fire(deleted.saved.id)
+      const deletedGen = await fire(deleted.saved)
       await eventService.deleteMessageInternal({
         workspaceId: deleted.ws,
         messageId: deleted.message.id,
@@ -622,7 +628,7 @@ describe("push source revalidation", () => {
         messageId: message.id,
         remindAt: IN_AN_HOUR(),
       })
-      const lostGen = await fire(saved.id)
+      const lostGen = await fire(saved)
       expect(await resolveReminder(ws, recipient.id, saved.id, lostGen)).toMatchObject({
         contentMarkdown: "private note",
         unavailableReason: null,
@@ -668,7 +674,7 @@ describe("push source revalidation", () => {
         note: null,
         remindAt: IN_AN_HOUR(),
       })
-      const generation = await fire(saved.id)
+      const generation = await fire(saved)
       await savedService.updateContent({
         workspaceId: ws,
         userId: recipient.id,

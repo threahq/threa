@@ -1274,3 +1274,28 @@ describe("ActivityService.processMemberAdded", () => {
     expect(captured).toMatchObject({ actorId: USER_ID, actorType: AuthorTypes.USER, context: { authorName: "Alice" } })
   })
 })
+
+describe("ActivityService feed and unread counts workspace scope", () => {
+  afterEach(() => mock.restore())
+
+  it("should list the feed for the user within the workspace", async () => {
+    const list = spyOn(ActivityRepository, "listByUser").mockResolvedValue({ activities: [], hasMore: false } as never)
+    const opts = { limit: 5 }
+
+    await setupService().listFeed(USER_ID, WORKSPACE_ID, opts)
+
+    expect(list.mock.calls.map((call) => call.slice(1))).toEqual([[USER_ID, WORKSPACE_ID, opts]])
+  })
+
+  it("should count unread activity for the user within the workspace", async () => {
+    const count = spyOn(ActivityRepository, "countUnreadGrouped").mockResolvedValue({
+      mentionsByStream: new Map(),
+      totalByStream: new Map(),
+      total: 0,
+    })
+
+    await setupService().getUnreadCounts(USER_ID, WORKSPACE_ID)
+
+    expect(count.mock.calls.map((call) => call.slice(1))).toEqual([[USER_ID, WORKSPACE_ID]])
+  })
+})

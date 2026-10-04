@@ -73,7 +73,7 @@ const CONVERSATION_SPAN_LATERAL = `
           min(m.created_at) AS first_message_at,
           max(m.created_at) AS last_message_at
         FROM messages m
-        WHERE m.id = ANY(h.message_ids) AND m.deleted_at IS NULL
+        WHERE m.id = ANY(h.message_ids) AND m.workspace_id = h.workspace_id AND m.deleted_at IS NULL
       ) span`
 
 function mapRowToSearchResult(row: SearchResultRow): SearchResult {
@@ -114,6 +114,7 @@ export interface ResolvedFilters {
 }
 
 export interface ExactSearchParams {
+  workspaceId: string
   query: string
   phrases?: string[]
   streamIds: string[]
@@ -179,11 +180,13 @@ export interface ConversationsForMessagesParams {
 }
 
 export interface MessagesByIdsParams {
+  workspaceId: string
   ids: string[]
   streamIds: string[]
 }
 
 export interface HybridSearchParams {
+  workspaceId: string
   query: string
   phrases?: string[]
   embedding: number[]
@@ -278,7 +281,7 @@ export const SearchRepository = {
     // With participant filter: combined query using UNION for users + personas
     const result = await db.query<{ id: string }>(composeSql`
       WITH accessible AS (
-        SELECT s.id
+        SELECT s.id, s.root_stream_id
         FROM streams s
         WHERE s.workspace_id = ${workspaceId}
           AND ${streamAccessPredicateSql(workspaceId, userId, "s.id")}
@@ -290,19 +293,18 @@ export const SearchRepository = {
         FROM (
           SELECT stream_id, member_id
           FROM stream_members
-          WHERE member_id = ANY(${userIds})
+          WHERE workspace_id = ${workspaceId} AND member_id = ANY(${userIds})
           UNION ALL
           SELECT stream_id, persona_id AS member_id
           FROM stream_persona_participants
-          WHERE persona_id = ANY(${userIds})
+          WHERE workspace_id = ${workspaceId} AND persona_id = ANY(${userIds})
         ) t
         GROUP BY stream_id
         HAVING COUNT(DISTINCT member_id) = ${userIds.length}
       )
       SELECT DISTINCT a.id
       FROM accessible a
-      JOIN streams st ON st.id = a.id
-      JOIN member_streams m ON m.stream_id = a.id OR m.stream_id = st.root_stream_id
+      JOIN member_streams m ON m.stream_id = a.id OR m.stream_id = a.root_stream_id
     `)
 
     return result.rows.map((r) => r.id)
@@ -315,7 +317,7 @@ export const SearchRepository = {
    * If query is empty, returns recent messages matching filters.
    */
   async fullTextSearch(db: Querier, params: FullTextSearchParams): Promise<SearchResult[]> {
-    const { query, streamIds, filters, limit, ranking } = params
+    const { workspaceId, query, streamIds, filters, limit, ranking } = params
     const phrases = withQuotedPhrases(query, params.phrases ?? [], ranking)
 
     if (streamIds.length === 0) {
@@ -339,7 +341,9 @@ export const SearchRepository = {
           0 as rank
         FROM messages m
         JOIN streams s ON m.stream_id = s.id
-        WHERE m.stream_id = ANY(${streamIds})
+        WHERE m.workspace_id = ${workspaceId}
+          AND s.workspace_id = ${workspaceId}
+          AND m.stream_id = ANY(${streamIds})
           AND m.deleted_at IS NULL
           ${phrasePredicatesSql(phrases)}
           AND (${filters.authorId === undefined} OR m.author_id = ${filters.authorId ?? ""})
@@ -368,7 +372,9 @@ export const SearchRepository = {
         ts_rank(m.search_vector, ${keywordTsquerySql(query, ranking)}, ${tsRankNormalization(ranking)}::int) as rank
       FROM messages m
       JOIN streams s ON m.stream_id = s.id
-      WHERE m.stream_id = ANY(${streamIds})
+      WHERE m.workspace_id = ${workspaceId}
+        AND s.workspace_id = ${workspaceId}
+        AND m.stream_id = ANY(${streamIds})
         AND m.deleted_at IS NULL
         AND m.search_vector @@ ${keywordTsquerySql(query, ranking)}
         ${phrasePredicatesSql(phrases)}
@@ -392,6 +398,7 @@ export const SearchRepository = {
    */
   async hybridSearch(db: Querier, params: HybridSearchParams): Promise<SearchResult[]> {
     const {
+      workspaceId,
       query,
       embedding,
       streamIds,
@@ -435,7 +442,9 @@ export const SearchRepository = {
         FROM messages m
         JOIN streams s ON m.stream_id = s.id
         CROSS JOIN keyword_query kq
-        WHERE m.stream_id = ANY(${streamIds})
+        WHERE m.workspace_id = ${workspaceId}
+          AND s.workspace_id = ${workspaceId}
+          AND m.stream_id = ANY(${streamIds})
           AND m.deleted_at IS NULL
           AND m.search_vector @@ kq.q
           ${phrasePredicatesSql(phrases)}
@@ -462,7 +471,9 @@ export const SearchRepository = {
           ROW_NUMBER() OVER (ORDER BY m.embedding <=> ${embeddingLiteral}::vector) as rank
         FROM messages m
         JOIN streams s ON m.stream_id = s.id
-        WHERE m.stream_id = ANY(${streamIds})
+        WHERE m.workspace_id = ${workspaceId}
+          AND s.workspace_id = ${workspaceId}
+          AND m.stream_id = ANY(${streamIds})
           AND m.deleted_at IS NULL
           AND m.embedding IS NOT NULL
           AND (${semanticDistanceThreshold === null} OR m.embedding <=> ${embeddingLiteral}::vector < ${semanticDistanceThreshold ?? 0})
@@ -504,9 +515,7 @@ export const SearchRepository = {
    * Semantic-only conversation leg: nearest conversation embeddings within the
    * accessible streams, gated by `maxDistance`. Author filters match on
    * `participant_ids`; `after` reads `last_activity_at` (a conversation still
-   * going counts) while `before` reads `created_at`. `messages` has no
-   * workspace column, so the opener/closer lookups go through the
-   * conversation's own `message_ids` (INV-68).
+   * going counts) while `before` reads `created_at`.
    */
   async conversationSearch(db: Querier, params: ConversationSearchParams): Promise<ConversationSearchResult[]> {
     const { workspaceId, embedding, streamIds, filters, limit, maxDistance } = params
@@ -520,6 +529,7 @@ export const SearchRepository = {
       WITH hits AS (
         SELECT
           c.id,
+          c.workspace_id,
           c.stream_id,
           c.topic_summary,
           c.summary,
@@ -528,11 +538,14 @@ export const SearchRepository = {
           c.participant_ids,
           (c.embedding <=> ${embeddingLiteral}::vector) AS distance
         FROM conversations c
-        JOIN streams s ON s.id = c.stream_id
+        JOIN streams s ON s.id = c.stream_id AND s.workspace_id = c.workspace_id
         WHERE c.workspace_id = ${workspaceId}
           AND c.stream_id = ANY(${streamIds})
           AND c.embedding IS NOT NULL
-          AND EXISTS (SELECT 1 FROM messages m WHERE m.id = ANY(c.message_ids) AND m.deleted_at IS NULL)
+          AND EXISTS (
+            SELECT 1 FROM messages m
+            WHERE m.id = ANY(c.message_ids) AND m.workspace_id = c.workspace_id AND m.deleted_at IS NULL
+          )
           AND (${filters.authorId === undefined} OR c.participant_ids @> ARRAY[${filters.authorId ?? ""}]::text[])
           AND (${filters.streamTypes === undefined || filters.streamTypes.length === 0} OR s.type = ANY(${filters.streamTypes ?? []}))
           AND (${filters.before === undefined} OR c.created_at < ${filters.before ?? new Date()})
@@ -591,6 +604,7 @@ export const SearchRepository = {
       WITH hits AS (
         SELECT
           c.id,
+          c.workspace_id,
           c.stream_id,
           c.topic_summary,
           c.summary,
@@ -644,7 +658,7 @@ export const SearchRepository = {
    * Ordered by sequence so a memo's source messages read in posting order.
    */
   async messagesByIds(db: Querier, params: MessagesByIdsParams): Promise<SearchResult[]> {
-    const { ids, streamIds } = params
+    const { workspaceId, ids, streamIds } = params
     if (ids.length === 0 || streamIds.length === 0) {
       return []
     }
@@ -664,7 +678,8 @@ export const SearchRepository = {
         m.created_at,
         0 AS rank
       FROM messages m
-      WHERE m.id = ANY(${ids}::text[])
+      WHERE m.workspace_id = ${workspaceId}
+        AND m.id = ANY(${ids}::text[])
         AND m.stream_id = ANY(${streamIds}::text[])
         AND m.deleted_at IS NULL
       ORDER BY m.sequence ASC
@@ -680,7 +695,7 @@ export const SearchRepository = {
    * Use this for error messages, IDs, or other literal text matching.
    */
   async exactSearch(db: Querier, params: ExactSearchParams): Promise<SearchResult[]> {
-    const { query, phrases = [], streamIds, filters, limit } = params
+    const { workspaceId, query, phrases = [], streamIds, filters, limit } = params
     const hasQuery = query.trim().length > 0
 
     if (streamIds.length === 0 || (!hasQuery && phrases.length === 0)) {
@@ -707,7 +722,9 @@ export const SearchRepository = {
         0 as rank
       FROM messages m
       JOIN streams s ON m.stream_id = s.id
-      WHERE m.stream_id = ANY(${streamIds})
+      WHERE m.workspace_id = ${workspaceId}
+        AND s.workspace_id = ${workspaceId}
+        AND m.stream_id = ANY(${streamIds})
         AND m.deleted_at IS NULL
         ${exactQueryPredicate}
         ${phrasePredicatesSql(phrases)}
@@ -741,24 +758,11 @@ export const SearchRepository = {
 
     const result = await db.query<{ id: string }>(sql`
       SELECT s.id FROM streams s
-      JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id)
+      JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id
       WHERE s.workspace_id = ${workspaceId}
         AND root.visibility = ${Visibilities.PUBLIC}
         AND (${!hasTypeFilter} OR s.type = ANY(${options?.streamTypes ?? []}))
         AND ${archiveCondition}
-    `)
-
-    return result.rows.map((r) => r.id)
-  },
-
-  /**
-   * Get a stream and all its thread descendants.
-   * Used by agent access control for public_plus_stream access spec.
-   */
-  async getStreamWithThreads(db: Querier, streamId: string): Promise<string[]> {
-    const result = await db.query<{ id: string }>(sql`
-      SELECT id FROM streams
-      WHERE id = ${streamId} OR root_stream_id = ${streamId}
     `)
 
     return result.rows.map((r) => r.id)
@@ -816,7 +820,7 @@ export const SearchRepository = {
       case "public_plus_stream": {
         const [publicIds, streamTreeIds] = await Promise.all([
           this.getPublicStreams(db, workspaceId, options),
-          this.getStreamWithThreads(db, spec.streamId),
+          this.expandStreamIdsWithThreads(db, workspaceId, [spec.streamId]),
         ])
 
         return [...new Set([...publicIds, ...streamTreeIds])]

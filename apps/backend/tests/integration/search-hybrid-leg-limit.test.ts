@@ -67,6 +67,7 @@ describe("Hybrid search leg limit", () => {
     expect(SEARCH_HYBRID_LEG_LIMIT).toBeGreaterThanOrEqual(MATCHING_MESSAGES)
 
     const results = await SearchRepository.hybridSearch(pool, {
+      workspaceId: wsId,
       query: "rollbackmarker",
       embedding: new Array(1536).fill(0),
       streamIds: [padId],
@@ -82,6 +83,7 @@ describe("Hybrid search leg limit", () => {
 
   test("a caller asking for more rows than the leg limit still gets legs that deep", async () => {
     const results = await SearchRepository.hybridSearch(pool, {
+      workspaceId: wsId,
       query: "rollbackmarker",
       embedding: new Array(1536).fill(0),
       streamIds: [padId],

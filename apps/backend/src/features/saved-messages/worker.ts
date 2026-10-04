@@ -14,7 +14,7 @@ export function createSavedReminderWorker(deps: {
   return async (job) => {
     const { savedMessageId, workspaceId, userId } = job.data
 
-    const result = await deps.savedMessagesService.markReminderFired({ savedId: savedMessageId })
+    const result = await deps.savedMessagesService.markReminderFired({ workspaceId, userId, savedId: savedMessageId })
 
     if (result.fired) {
       logger.info({ jobId: job.id, savedMessageId, workspaceId, userId }, "Saved reminder fired")

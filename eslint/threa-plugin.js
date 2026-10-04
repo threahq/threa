@@ -1136,7 +1136,7 @@ export const sqlTextAssertionAllowlist = {
   "apps/backend/src/features/enclave-runtimes/repository.test.ts": 12,
   "apps/backend/src/features/memos/service.test.ts": 3,
   "apps/backend/src/features/messaging/repository.test.ts": 2,
-  "apps/backend/src/features/saved-messages/repository.test.ts": 51,
+  "apps/backend/src/features/saved-messages/repository.test.ts": 48,
   "apps/backend/src/features/scheduled-messages/repository.test.ts": 51,
   "apps/backend/src/features/search/repository.test.ts": 8,
   "apps/backend/src/features/streams/access.test.ts": 4,
@@ -1176,26 +1176,20 @@ export function sqlTextAssertionExemptions(packageDir) {
  */
 export const unscopedSqlAllowlist = {
   "apps/backend/src/features/access-log/repository.ts": 5,
-  "apps/backend/src/features/activity/repository.ts": 1,
   "apps/backend/src/features/ai-usage/usage-repository.ts": 2,
   "apps/backend/src/features/calls/policy-repository.ts": 3,
   "apps/backend/src/features/calls/repository.ts": 14,
   "apps/backend/src/features/calls/transfer-repository.ts": 1,
   "apps/backend/src/features/invitations/repository.ts": 7,
-  "apps/backend/src/features/link-previews/repository.ts": 2,
   "apps/backend/src/features/perf-diagnostics/repository.ts": 2,
   "apps/backend/src/features/push/delivery-repository.ts": 2,
   "apps/backend/src/features/push/receipt-repository.ts": 2,
   "apps/backend/src/features/push/repository.ts": 4,
   "apps/backend/src/features/push/session-repository.ts": 2,
-  "apps/backend/src/features/saved-messages/repository.ts": 2,
-  "apps/backend/src/features/search/repository.ts": 19,
-  "apps/backend/src/features/sync/repository.ts": 5,
   "apps/backend/src/features/user-preferences/repository.ts": 7,
   "apps/backend/src/features/workspace-integrations/repository.ts": 1,
   "apps/backend/src/features/workspaces/repository.ts": 1,
   "apps/backend/src/features/workspaces/user-repository.ts": 2,
-  "apps/backend/src/lib/sql-filters.ts": 2,
 }
 
 export function unscopedSqlExemptions(packageDir) {
