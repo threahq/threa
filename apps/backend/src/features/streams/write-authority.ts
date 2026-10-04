@@ -63,15 +63,6 @@ export function deriveStreamViewerState(params: {
   return { readOnly: false, readOnlyReason: null }
 }
 
-function findClosedDmRootIds(
-  db: Querier,
-  workspaceId: string,
-  roots: Iterable<Pick<AuthorityStream, "id" | "type">>
-): Promise<Set<string>> {
-  const dmRootIds = [...roots].filter((root) => root.type === StreamTypes.DM).map((root) => root.id)
-  return findGuestPolicyClosedDmIds(db, workspaceId, dmRootIds)
-}
-
 export function createStreamReadOnlyError(reason: StreamReadOnlyReason): HttpError {
   return new HttpError("This stream is read-only", {
     status: 403,
@@ -148,7 +139,7 @@ export async function projectStreamForPrincipal<T extends AuthorityStream>(
   const ancestorArchived = stream.archivedAt
     ? false
     : await StreamRepository.isEffectivelyArchived(db, workspaceId, stream.id)
-  const guestDmClosed = (await findClosedDmRootIds(db, workspaceId, [effective])).has(effective.id)
+  const guestDmClosed = (await findGuestPolicyClosedDmIds(db, workspaceId, [effective])).has(effective.id)
   return { ...stream, ...deriveStreamViewerState({ target: stream, ancestorArchived, participates, guestDmClosed }) }
 }
 
@@ -183,7 +174,7 @@ export async function projectStreamsForPrincipal<T extends AuthorityStream>(
     principal,
     facts.filter(({ root }) => !participatingRootIds.has(root.id)).map(({ root }) => root.visibility)
   )
-  const closedDmRootIds = await findClosedDmRootIds(
+  const closedDmRootIds = await findGuestPolicyClosedDmIds(
     db,
     workspaceId,
     facts.map(({ root }) => root)
@@ -284,7 +275,7 @@ export async function resolveLockedStreamAuthorities(
     principal,
     facts.filter(({ root }) => !participatingRootIds.has(root.id)).map(({ root }) => root.visibility)
   )
-  const closedDmRootIds = await findClosedDmRootIds(
+  const closedDmRootIds = await findGuestPolicyClosedDmIds(
     db,
     params.workspaceId,
     facts.map(({ root }) => root)

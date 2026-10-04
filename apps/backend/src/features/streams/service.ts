@@ -538,9 +538,7 @@ export class StreamService {
     }
     const ancestorArchived =
       (await StreamRepository.findNearestArchivedAncestor(this.pool, params.workspaceId, stream.id)) !== null
-    const guestDmClosed =
-      root.type === StreamTypes.DM &&
-      (await findGuestPolicyClosedDmIds(this.pool, params.workspaceId, [root.id])).has(root.id)
+    const guestDmClosed = (await findGuestPolicyClosedDmIds(this.pool, params.workspaceId, [root])).has(root.id)
     return { stream, state: deriveStreamViewerState({ target: stream, ancestorArchived, participates, guestDmClosed }) }
   }
 

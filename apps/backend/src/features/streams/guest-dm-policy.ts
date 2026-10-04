@@ -1,6 +1,7 @@
 import {
   DEFAULT_WORKSPACE_SETTINGS,
   GUEST_DM_POLICIES,
+  StreamTypes,
   type GuestDmPolicy,
   type WorkspaceSettings,
 } from "@threahq/types"
@@ -8,21 +9,13 @@ import type { Querier } from "../../db"
 import { WorkspaceSettingsRepository } from "../workspace-settings"
 import { findUserIdsWithAdmin, findUserIdsWithoutBrowse } from "../workspaces"
 import { StreamMemberRepository } from "./member-repository"
+import type { Stream } from "./repository"
 
 const GUEST_DM_POLICY_KEY = "guestDmPolicy" satisfies keyof WorkspaceSettings
-
-function isGuestDmPolicy(value: unknown): value is GuestDmPolicy {
-  return (Object.values(GUEST_DM_POLICIES) as unknown[]).includes(value)
-}
 
 interface DmParty {
   guest: boolean
   admin: boolean
-}
-
-export async function resolveGuestDmPolicy(db: Querier, workspaceId: string): Promise<GuestDmPolicy> {
-  const override = await WorkspaceSettingsRepository.findOverride(db, workspaceId, GUEST_DM_POLICY_KEY)
-  return isGuestDmPolicy(override?.value) ? override.value : DEFAULT_WORKSPACE_SETTINGS.guestDmPolicy
 }
 
 /** A DM with no guest party is always open; otherwise the policy decides, and `admins` needs every other party of each guest to be an admin. */
@@ -36,7 +29,8 @@ export function isGuestDmOpen(policy: GuestDmPolicy, parties: readonly DmParty[]
 async function loadPolicyFacts(db: Querier, workspaceId: string, userIds: readonly string[]) {
   const guestIds = await findUserIdsWithoutBrowse(db, workspaceId, userIds)
   if (guestIds.size === 0) return null
-  const policy = await resolveGuestDmPolicy(db, workspaceId)
+  const override = await WorkspaceSettingsRepository.findOverride(db, workspaceId, GUEST_DM_POLICY_KEY)
+  const policy = (override?.value as GuestDmPolicy | undefined) ?? DEFAULT_WORKSPACE_SETTINGS.guestDmPolicy
   if (policy === GUEST_DM_POLICIES.OPEN) return null
   const adminIds =
     policy === GUEST_DM_POLICIES.ADMINS ? await findUserIdsWithAdmin(db, workspaceId, userIds) : new Set<string>()
@@ -46,14 +40,15 @@ async function loadPolicyFacts(db: Querier, workspaceId: string, userIds: readon
   }
 }
 
-/** The ids among `dmStreamIds` that the guest DM policy currently closes to every writer. */
+/** The ids among the DM streams in `streams` that the guest DM policy currently closes to every writer. */
 export async function findGuestPolicyClosedDmIds(
   db: Querier,
   workspaceId: string,
-  dmStreamIds: readonly string[]
+  streams: Iterable<Pick<Stream, "id" | "type">>
 ): Promise<Set<string>> {
+  const dmStreamIds = [...new Set([...streams].filter((s) => s.type === StreamTypes.DM).map((s) => s.id))]
   if (dmStreamIds.length === 0) return new Set()
-  const members = await StreamMemberRepository.list(db, workspaceId, { streamIds: [...new Set(dmStreamIds)] })
+  const members = await StreamMemberRepository.list(db, workspaceId, { streamIds: dmStreamIds })
   const facts = await loadPolicyFacts(db, workspaceId, [...new Set(members.map((member) => member.memberId))])
   if (!facts) return new Set()
   const partiesByDm = new Map<string, DmParty[]>()

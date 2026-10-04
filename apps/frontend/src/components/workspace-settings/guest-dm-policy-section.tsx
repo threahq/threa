@@ -20,8 +20,6 @@ const POLICY_LABELS: Record<GuestDmPolicy, string> = {
   [GUEST_DM_POLICIES.OPEN]: "Everyone",
 }
 
-const POLICIES = Object.values(GUEST_DM_POLICIES)
-
 export function GuestDmPolicySection({ workspaceId }: GuestDmPolicySectionProps) {
   const bootstrap = useCachedWorkspaceBootstrap(workspaceId)
   const canManage = hasPermission(bootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
@@ -48,9 +46,9 @@ export function GuestDmPolicySection({ workspaceId }: GuestDmPolicySectionProps)
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {POLICIES.map((value) => (
+            {Object.entries(POLICY_LABELS).map(([value, label]) => (
               <SelectItem key={value} value={value}>
-                {POLICY_LABELS[value]}
+                {label}
               </SelectItem>
             ))}
           </SelectContent>

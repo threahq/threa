@@ -71,7 +71,6 @@ export async function findUserIdsWithAdmin(
   workspaceId: string,
   userIds: readonly string[]
 ): Promise<Set<string>> {
-  if (userIds.length === 0) return new Set()
   const result = await db.query<{ id: string }>(
     composeSql`SELECT u.id ${workspaceUsersSql(
       workspaceId,
