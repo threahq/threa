@@ -327,6 +327,10 @@ describe("StreamContextPanel", () => {
     expect(screen.getByText("Open")).toBeInTheDocument()
     expect(screen.getByText("threahq/threa#1826 · 2×")).toBeInTheDocument()
     expect(screen.queryByText("Alpha")).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole("button", { name: /^Links/ }))
+    expect(await screen.findByText("Alpha")).toBeInTheDocument()
+    expect(screen.getByRole("link", { name: "Open Stream PR section" })).toHaveAttribute("href", PR)
   })
 
   it("hides a PR cached as a link row from before PRs had their own section", async () => {

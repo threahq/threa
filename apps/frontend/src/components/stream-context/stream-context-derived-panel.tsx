@@ -10,9 +10,9 @@ import { delegationContextItems, withDelegations } from "@/lib/stream-context/de
 import { followUpContextItems, withFollowUps } from "@/lib/stream-context/follow-ups"
 import { StreamContextRow } from "./stream-context-row"
 import {
-  AGENT_FILTER_CATEGORIES,
   chipsFromCounts,
   ContextChipRow,
+  filterCategories,
   filterCount,
   ContextEmpty,
   ContextPanelHeader,
@@ -86,12 +86,8 @@ export function StreamContextDerivedPanel({
   // Memoized for its identity as much as its cost: the timeline's day grouping
   // is keyed on this array, and a fresh one per render would miss that memo.
   const visible = useMemo(() => {
-    if (effectiveFilter === "agent") {
-      const agentCategories: readonly string[] = AGENT_FILTER_CATEGORIES
-      return items.filter((i) => agentCategories.includes(i.category))
-    }
-    if (effectiveFilter !== "all") return items.filter((i) => i.category === effectiveFilter)
-    return items
+    const categories = filterCategories(effectiveFilter)
+    return categories ? items.filter((i) => categories.includes(i.category)) : items
   }, [items, effectiveFilter])
   const isLoading = events === undefined || ((delegationsPending || outcomesQuery.isPending) && visible.length === 0)
 

@@ -16,20 +16,27 @@ import { cn } from "@/lib/utils"
 export type Filter = "all" | ContextCategory | "agent"
 
 /** The two categories the Agent chip selects, and whose counts it sums. */
-export const AGENT_FILTER_CATEGORIES = ["follow_up", "delegation"] as const satisfies readonly ContextCategory[]
+const AGENT_FILTER_CATEGORIES = ["follow_up", "delegation"] as const satisfies readonly ContextCategory[]
+
+/** Pull requests are links too: the Links chip lists them beside every other link. */
+const LINK_FILTER_CATEGORIES = ["link", "pull_request"] as const satisfies readonly ContextCategory[]
+
+function categoriesOf(filter: Exclude<Filter, "all">): readonly ContextCategory[] {
+  if (filter === "agent") return AGENT_FILTER_CATEGORIES
+  if (filter === "link") return LINK_FILTER_CATEGORIES
+  return [filter]
+}
 
 /** The categories a filter narrows to, or `undefined` for the whole scope. */
 export function filterCategories(filter: Filter): ContextCategory[] | undefined {
   if (filter === "all") return undefined
-  if (filter === "agent") return [...AGENT_FILTER_CATEGORIES]
-  return [filter]
+  return [...categoriesOf(filter)]
 }
 
-/** The count a chip shows — the Agent chip sums the categories it stands for. */
+/** The count a chip shows — a chip standing for several categories sums them. */
 export function filterCount(counts: Record<ContextCategory, number>, filter: Filter, total: number): number {
   if (filter === "all") return total
-  if (filter === "agent") return AGENT_FILTER_CATEGORIES.reduce((sum, c) => sum + counts[c], 0)
-  return counts[filter]
+  return categoriesOf(filter).reduce((sum, c) => sum + counts[c], 0)
 }
 
 /** The props both panel implementations take; the index panel owns the choice. */
@@ -99,11 +106,11 @@ export function chipsFromCounts(counts: Record<ContextCategory, number>, total: 
   return [
     { value: "all", label: "All", count: total },
     ...(agentCount > 0 ? [{ value: "agent" as Filter, label: "Agent", count: agentCount }] : []),
-    ...CONTEXT_CATEGORIES.filter((c) => counts[c] > 0).map((c) => ({
+    ...CONTEXT_CATEGORIES.map((c) => ({
       value: c as Filter,
       label: CATEGORY_LABELS[c],
-      count: counts[c],
-    })),
+      count: filterCount(counts, c, total),
+    })).filter((chip) => chip.count > 0),
   ]
 }
 
