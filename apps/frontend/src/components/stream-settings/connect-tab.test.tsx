@@ -225,10 +225,13 @@ describe("ConnectTab", () => {
     renderTab()
     await userEvent.click((await screen.findAllByRole("button", { name: "Revoke" }))[1])
 
-    await waitFor(() => expect(screen.getAllByRole("button", { name: "Revoke" })).toHaveLength(2))
-    expect({ revoked: revoke.mock.calls, waiting: screen.getAllByText(WAITING).length }).toEqual({
+    await waitFor(() => expect(screen.getAllByText(WAITING)).toHaveLength(2))
+    expect({
+      revoked: revoke.mock.calls,
+      revokeButtons: screen.getAllByRole("button", { name: "Revoke" }).length,
+    }).toEqual({
       revoked: [["ws_host", "strconn_2"]],
-      waiting: 2,
+      revokeButtons: 2,
     })
   })
 
