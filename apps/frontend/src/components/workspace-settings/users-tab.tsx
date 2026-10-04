@@ -39,6 +39,7 @@ type WorkspaceUserRow = ReturnType<typeof useWorkspaceUsers>[number]
 import { InviteDialog } from "./invite-dialog"
 import { CreateInviteLinkDialog } from "./create-invite-link-dialog"
 import { EditInviteLinkDialog } from "./edit-invite-link-dialog"
+import { GuestDmPolicySection } from "./guest-dm-policy-section"
 
 function CopyLinkLabel({ isCopied, tokenInMemory }: { isCopied: boolean; tokenInMemory: boolean }) {
   if (isCopied) {
@@ -421,6 +422,8 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
           ))}
         </div>
       )}
+
+      <GuestDmPolicySection workspaceId={workspaceId} />
 
       <InviteDialog
         workspaceId={workspaceId}
