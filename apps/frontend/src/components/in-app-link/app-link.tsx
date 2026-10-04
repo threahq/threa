@@ -11,7 +11,7 @@ import {
   type SettingsTab,
   type SidebarQuickLinkKey,
 } from "@threahq/types"
-import { QUICK_LINK_META } from "@/components/layout/sidebar/quick-links"
+import { QUICK_LINK_META } from "@/components/layout/sidebar/quick-link-meta"
 import { SETTINGS_TAB_CONFIG } from "@/components/settings/tab-config"
 import { WORKSPACE_SETTINGS_TAB_CONFIG, WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { useOptionalSettings } from "@/contexts"

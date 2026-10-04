@@ -1,41 +1,13 @@
 import { RollingNumber } from "@/components/rolling-number"
-import {
-  Bell,
-  Bookmark,
-  Brain,
-  CalendarClock,
-  Compass,
-  FileEdit,
-  ListChecks,
-  Paperclip,
-  Tag,
-  type LucideIcon,
-} from "lucide-react"
 import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { SidebarQuickLink, SidebarQuickLinkKey } from "@threahq/types"
+import { QUICK_LINK_META } from "./quick-link-meta"
 import { QUICK_LINKS_SECTION_ID } from "@threahq/types"
 import { UnreadBadge } from "@/components/unread-badge"
 import { useSidebar } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { MoreDivider, SectionHeader } from "./sections"
-
-/**
- * Per-key label + icon for the quick links. Single source of truth shared by the
- * rendered list and the sidebar editor (which lists every link for reorder /
- * show-hide), so the two never drift.
- */
-export const QUICK_LINK_META: Record<SidebarQuickLinkKey, { label: string; icon: LucideIcon }> = {
-  drafts: { label: "Drafts", icon: FileEdit },
-  saved: { label: "Saved", icon: Bookmark },
-  streams: { label: "Streams", icon: Compass },
-  files: { label: "Files", icon: Paperclip },
-  scheduled: { label: "Scheduled", icon: CalendarClock },
-  agenda: { label: "Agent agenda", icon: ListChecks },
-  memory: { label: "Memory", icon: Brain },
-  labels: { label: "Labels", icon: Tag },
-  activity: { label: "Activity", icon: Bell },
-}
 
 interface SidebarQuickLinksProps {
   workspaceId: string
