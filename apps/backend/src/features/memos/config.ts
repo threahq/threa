@@ -399,11 +399,11 @@ const WORTHY_CRITERIA: Record<KnowledgeType, string> = {
 
 const UNWORTHY_CRITERIA = {
   transient_status:
-    "A passing state — it is broken, it works, it is slow right now — with no cause, fix, decision, or lasting change attached. True for an hour, worthless after. The FIX for that same problem would be a procedure or a learning; this is the bare state. Where the participants' own deal, plan, or booking stands is never this: it holds until they change it, however many days ago it was said.",
+    "A passing state — it is broken, it works, it is slow right now — with no cause, fix, decision, or lasting change attached. True for an hour, worthless after. The FIX for that same problem would be a procedure or a learning; this is the bare state. Where the participants' own deal stands, or a commitment the team plans around (an offsite, an agreed deadline), is never this: it holds until they change it, however many days ago it was said.",
   reaction_or_relay:
     "The participants passed along or reacted to something they are not party to: news, a release, an announcement, a rumor, a third-party event. The underlying fact may be perfectly durable and it still belongs here, because they did not produce it. Recasting the reaction as a fact about them does not move it. An offer made to them, a negotiation they are in, or their own test result is theirs, never this.",
   social:
-    "Banter, small talk, moods, and short-lived personal logistics: where someone is today, plans for this evening or weekend. Nothing was produced and nothing lasts. A personal fact that stays true for months is a reference, not this.",
+    "Banter, small talk, moods, and short-lived personal logistics: where someone is today, plans for this evening or weekend, booked or not, however long ago they were made. Nothing was produced and nothing lasts. A personal fact that stays true for months is a reference, not this.",
   unresolved:
     "A discussion that trails off without landing, or whose substance lives only behind an external link. Something was being worked on; nothing was reached.",
 }
@@ -419,7 +419,7 @@ Two tests decide it, and an option on the worthy side has to pass BOTH:
 - DURABILITY: would the core still be true and useful in six months?
 - AGENCY: did the participants decide it, work it out, or validate it themselves, rather than voice a reaction to something outside their control? A first-hand fact about their own lives, or a deal they are party to, is theirs.
 
-A conversation is not worth capturing just because it is long or technical. If the durable core is "they chatted about X", pick the option on the unworthy side that names why. Message tags carry a relative \`age\` — a passing state described days ago has gone stale, while a decision, a validated learning, or where their own deal or plan stands stays durable regardless of age.`
+A conversation is not worth capturing just because it is long or technical. If the durable core is "they chatted about X", pick the option on the unworthy side that names why. Message tags carry a relative \`age\` — a passing state described days ago has gone stale, while a decision, a validated learning, or where their own deal or a commitment they plan around stands stays durable regardless of age.`
 
 export const ACTION_ITEMS_INSTRUCTIONS = `Did someone commit to doing something, or get directly asked to? A task, a to-do, a follow-up with an owner.
 
@@ -432,7 +432,7 @@ More chat around a topic a memo already states is NOT a revision: restatements, 
 const MEMORIZER_SYSTEM_PROMPT_TEMPLATE = `You are a knowledge curator for a team chat application. From a conversation, you pull out only the things genuinely worth remembering later and write each as its own short, self-contained memo.
 
 Before writing anything, gate every candidate through two topic-neutral tests — a candidate that fails EITHER is not a memo. Apply them to what was actually produced, never blanket-ban the subject. A whole conversation can pass zero candidates; returning no memos is correct and common when nothing here lasts or nothing here was produced by the participants:
-- DURABLE? Would the core still be true and useful in six months? A worked-out procedure, a committed decision, a validated finding lasts. A passing state — "it's broken / it works / it's slow right now" — is stale within the hour and yields nothing; the CAUSE or FIX behind it is what's durable, so capture what was produced, not the passing state. A commitment for a date ahead — a booked event, a chosen venue, an agreed deadline — is not a passing state: it holds until it happens or they change it.
+- DURABLE? Would the core still be true and useful in six months? A worked-out procedure, a committed decision, a validated finding lasts. A passing state — "it's broken / it works / it's slow right now" — is stale within the hour and yields nothing; the CAUSE or FIX behind it is what's durable, so capture what was produced, not the passing state. A commitment the team plans around for a date ahead — a booked offsite, an agreed deadline — is not a passing state: it holds until it happens or they change it. Tonight's dinner or this weekend's plans are short-lived logistics, booked or not.
 - PRODUCED BY THEM? Did the participants decide it, work it out, or validate it themselves — or are they relaying or reacting to something outside their control (news, a release, a third-party event, a rumor)? Relay and reaction fail this gate EVEN WHEN the underlying fact is perfectly durable: "Company X shut down its product" or "they don't want to work there because of the CEO" is still true next year, but the participants only passed it along — it is not knowledge they produced, so it is not a memo. Recasting a reaction as a fact about them ("they dislike X", "they found Y impressive") does not rescue it. A first-hand, lasting fact about their own lives (an allergy, a leave period and who covers it, a standing day off) or a deal they are party to (an offer made to them) is theirs and passes. The moment they turn that same subject into something they produced — a decision to adopt or drop it, or a learning they validated about a tool they build with — it passes.
 
 How to write the memos that clear both gates:

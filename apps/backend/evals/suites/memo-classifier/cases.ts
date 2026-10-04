@@ -376,4 +376,23 @@ export const memoClassifierCases: EvalCase<MemoClassifierInput, MemoClassifierEx
     },
     expectedOutput: { expectKnowledgeWorthy: true },
   },
+
+  {
+    id: "booked-dinner-days-old-001",
+    name: "Logistics: a booked dinner stays ephemeral days after it was set",
+    input: {
+      topicSummary: "Ramen on Friday",
+      category: "logistics",
+      messages: [
+        { ...PIERRE, contentMarkdown: "Ramen on Friday after work?", minutesAgo: 3 * DAY_MINUTES },
+        {
+          ...KRIS,
+          contentMarkdown: "Yes! Booked a table at Ramen Ki for 18:00, four of us.",
+          minutesAgo: 3 * DAY_MINUTES - 2,
+        },
+        { ...PIERRE, contentMarkdown: "Perfect", minutesAgo: 3 * DAY_MINUTES - 3 },
+      ],
+    },
+    expectedOutput: { expectKnowledgeWorthy: false },
+  },
 ]

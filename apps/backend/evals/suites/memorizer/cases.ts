@@ -12,6 +12,9 @@ import type { MemorizerInput, MemorizerExpected } from "./types"
 const KRIS = { authorId: "usr_eval_a", authorType: "user" as const, authorName: "Kim" }
 const PIERRE = { authorId: "usr_eval_b", authorType: "user" as const, authorName: "Pelle" }
 const DAY_MINUTES = 24 * 60
+const daysAhead = (days: number) =>
+  new Date(Date.now() + days * DAY_MINUTES * 60_000).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+const OFFSITE_DATES = `${daysAhead(60)} to ${daysAhead(62)}`
 
 export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
   {
@@ -398,13 +401,12 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
       messages: [
         {
           ...PIERRE,
-          contentMarkdown:
-            "Proposal for the offsite: Villa Fjällhem in Åre, November 12–14. Room for all 14 of us and a ski-in lodge.",
+          contentMarkdown: `Proposal for the offsite: Villa Fjällhem in Åre, ${OFFSITE_DATES}. Room for all 14 of us and a ski-in lodge.`,
           minutesAgo: 30 * DAY_MINUTES,
         },
         {
           ...KRIS,
-          contentMarkdown: "Love it. Let's book Fjällhem for Nov 12–14 then.",
+          contentMarkdown: `Love it. Let's book Fjällhem for ${OFFSITE_DATES} then.`,
           minutesAgo: 30 * DAY_MINUTES - 1,
         },
         { ...PIERRE, contentMarkdown: "Booked, deposit paid.", minutesAgo: 30 * DAY_MINUTES - 2 },
@@ -436,12 +438,12 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
         },
         {
           ...PIERRE,
-          contentMarkdown: "Hotel Skeppsholmen has the conference wing free Nov 12–14. Same dates, no travel.",
+          contentMarkdown: `Hotel Skeppsholmen has the conference wing free ${OFFSITE_DATES}. Same dates, no travel.`,
           minutesAgo: 9 * DAY_MINUTES - 2,
         },
         {
           ...KRIS,
-          contentMarkdown: "Decided: offsite moves to Hotel Skeppsholmen in Stockholm, Nov 12–14. No ski gear needed.",
+          contentMarkdown: `Decided: offsite moves to Hotel Skeppsholmen in Stockholm, ${OFFSITE_DATES}. No ski gear needed.`,
           minutesAgo: 9 * DAY_MINUTES - 3,
         },
       ],
@@ -449,8 +451,28 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
     expectedOutput: {
       minMemos: 1,
       maxMemos: 2,
-      conclusionMustState: "The offsite is at Hotel Skeppsholmen in Stockholm on Nov 12–14",
+      conclusionMustState: `The offsite is at Hotel Skeppsholmen in Stockholm on ${OFFSITE_DATES}`,
       conclusionMustNotState: "The offsite is at Villa Fjällhem in Åre",
+    },
+  },
+
+  {
+    id: "booked-dinner-yields-nothing-001",
+    name: "Selectivity: a booked table for this week is short-lived logistics, not a memo",
+    input: {
+      category: "transient",
+      messages: [
+        { ...PIERRE, contentMarkdown: "Ramen on Friday after work?", minutesAgo: 3 * DAY_MINUTES },
+        {
+          ...KRIS,
+          contentMarkdown: "Yes! Booked a table at Ramen Ki for 18:00, four of us.",
+          minutesAgo: 3 * DAY_MINUTES - 2,
+        },
+        { ...PIERRE, contentMarkdown: "Perfect", minutesAgo: 3 * DAY_MINUTES - 3 },
+      ],
+    },
+    expectedOutput: {
+      maxMemos: 0,
     },
   },
 ]
