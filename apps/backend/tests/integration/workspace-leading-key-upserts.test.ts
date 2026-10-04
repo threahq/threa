@@ -330,13 +330,12 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     isSelf: writer === 1,
   })
 
-  const sharedKeyCases: Array<
-    {
-      name: string
-      write: (ws: string, ids: SharedIds, writer: 0 | 1) => Promise<unknown>
-      read: (ws: string, ids: SharedIds) => Promise<unknown>
-    } & ({ oldKey: string } | { landsAs: (ws: string, ids: SharedIds) => unknown })
-  > = [
+  const sharedKeyCases: Array<{
+    name: string
+    write: (ws: string, ids: SharedIds, writer: 0 | 1) => Promise<unknown>
+    read: (ws: string, ids: SharedIds) => Promise<unknown>
+    landsAs: (ws: string, ids: SharedIds) => unknown
+  }> = [
     {
       name: "a thread anchor",
       landsAs: (ws, ids) => ({ workspaceId: ws, id: ids.thread }),
@@ -358,33 +357,33 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     },
     {
       name: "a member through insert",
-      oldKey: "stream_members_pkey",
+      landsAs: (ws, ids) => ({ workspace_id: ws, member_id: ids.member }),
       write: (ws, ids) => StreamMemberRepository.insert(pool, ws, ids.stream, ids.member),
-      read: firstRow("member_id", "stream_members"),
+      read: firstRow("workspace_id, member_id", "stream_members"),
     },
     {
       name: "a member through insertMany",
-      oldKey: "stream_members_pkey",
+      landsAs: (ws, ids) => ({ workspace_id: ws, member_id: ids.member }),
       write: (ws, ids) => StreamMemberRepository.insertMany(pool, ws, ids.stream, [ids.member]),
-      read: firstRow("member_id", "stream_members"),
+      read: firstRow("workspace_id, member_id", "stream_members"),
     },
     {
       name: "a sequence counter",
-      oldKey: "stream_sequences_pkey",
+      landsAs: (ws) => ({ workspace_id: ws, next_sequence: "4", next_broadcast_sequence: "2" }),
       write: (ws, ids, writer) =>
         StreamEventRepository.allocateSequences(pool, ws, ids.stream, { total: writer + 2, broadcast: 1 }),
-      read: firstRow("next_sequence, next_broadcast_sequence", "stream_sequences"),
+      read: firstRow("workspace_id, next_sequence, next_broadcast_sequence", "stream_sequences"),
     },
     {
       name: "a tool policy",
-      oldKey: "stream_policies_pkey",
+      landsAs: () => ["workspace"],
       write: (ws, ids, writer) =>
         StreamPoliciesRepository.setToolPolicy(pool, ws, ids.stream, writer === 0 ? ["web"] : ["workspace"]),
       read: (ws, ids) => StreamPoliciesRepository.getToolPolicy(pool, ws, ids.stream),
     },
     {
       name: "a brief",
-      oldKey: "idx_stream_briefs_stream",
+      landsAs: (ws) => ({ workspaceId: ws, content: "Goal 1" }),
       write: (ws, ids, writer) =>
         StreamBriefRepository.insertFirstVersion(pool, {
           id: streamBriefId(),
@@ -394,11 +393,17 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           updatedByKind: AuthorTypes.USER,
           updatedById: userId(),
         }),
-      read: (ws, ids) => StreamBriefRepository.findByStreamId(pool, ws, ids.stream),
+      read: async (ws, ids) => {
+        const brief = await StreamBriefRepository.findByStreamId(pool, ws, ids.stream)
+        return brief && { workspaceId: brief.workspaceId, content: brief.content }
+      },
     },
     {
       name: "a context bag",
-      oldKey: "idx_sca_stream_intent_unique",
+      landsAs: (ws, ids) => ({
+        workspaceId: ws,
+        refs: [{ kind: ContextRefKinds.THREAD, streamId: ids.refStreams[1] }],
+      }),
       write: (ws, ids, writer) =>
         ContextBagRepository.insert(pool, {
           workspaceId: ws,
@@ -407,11 +412,14 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           refs: [{ kind: ContextRefKinds.THREAD, streamId: ids.refStreams[writer] }],
           createdBy: userId(),
         }),
-      read: (ws, ids) => ContextBagRepository.findByStream(pool, ws, ids.stream),
+      read: async (ws, ids) => {
+        const bag = await ContextBagRepository.findByStream(pool, ws, ids.stream)
+        return bag && { workspaceId: bag.workspaceId, refs: bag.refs }
+      },
     },
     {
       name: "a conversation summary",
-      oldKey: "idx_agent_conversation_summaries_stream_persona",
+      landsAs: (ws) => ({ workspaceId: ws, summary: "summary 1", lastSummarizedSequence: 2n }),
       write: (ws, ids, writer) =>
         ConversationSummaryRepository.upsert(pool, {
           id: agentConversationSummaryId(),
@@ -421,16 +429,25 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           summary: `summary ${writer}`,
           lastSummarizedSequence: BigInt(writer + 1),
         }),
-      read: (ws, ids) => ConversationSummaryRepository.findByStreamAndPersona(pool, ws, ids.stream, ids.persona),
+      read: async (ws, ids) => {
+        const summary = await ConversationSummaryRepository.findByStreamAndPersona(pool, ws, ids.stream, ids.persona)
+        return (
+          summary && {
+            workspaceId: summary.workspaceId,
+            summary: summary.summary,
+            lastSummarizedSequence: summary.lastSummarizedSequence,
+          }
+        )
+      },
     },
     {
       name: "a persona participation",
-      oldKey: "stream_persona_participants_pkey",
+      landsAs: (ws, ids) => ({ workspace_id: ws, persona_id: ids.persona }),
       write: (ws, ids) =>
         withClient(pool, (client) =>
           StreamPersonaParticipantRepository.recordParticipation(client, ws, ids.stream, ids.persona)
         ),
-      read: firstRow("persona_id", "stream_persona_participants"),
+      read: firstRow("workspace_id, persona_id", "stream_persona_participants"),
     },
     {
       name: "a client message id",
@@ -459,7 +476,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     },
     {
       name: "a compose trace",
-      oldKey: "message_compose_traces_pkey",
+      landsAs: (ws) => ({ workspaceId: ws, openedAtSequence: "1", sentAtSequence: "2", resumedDraft: true }),
       write: (ws, ids, writer) =>
         MessageComposeTraceRepository.insert(pool, {
           messageId: ids.message,
@@ -471,11 +488,21 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           sentAtSequence: writer + 1,
           resumedDraft: writer === 1,
         }),
-      read: (ws, ids) => MessageComposeTraceRepository.findByMessageId(pool, ws, ids.message),
+      read: async (ws, ids) => {
+        const trace = await MessageComposeTraceRepository.findByMessageId(pool, ws, ids.message)
+        return (
+          trace && {
+            workspaceId: trace.workspaceId,
+            openedAtSequence: trace.openedAtSequence,
+            sentAtSequence: trace.sentAtSequence,
+            resumedDraft: trace.resumedDraft,
+          }
+        )
+      },
     },
     {
       name: "a provisional conversation placement",
-      oldKey: "message_conversation_state_pkey",
+      landsAs: (ws) => ({ workspaceId: ws, state: "settling", settledBy: null }),
       write: (ws, ids) =>
         MessageConversationStateRepository.insertSettling(pool, {
           messageId: ids.message,
@@ -483,11 +510,14 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           streamId: ids.stream,
           conversationId: conversationId(),
         }),
-      read: (ws, ids) => MessageConversationStateRepository.findByMessageId(pool, ws, ids.message),
+      read: async (ws, ids) => {
+        const state = await MessageConversationStateRepository.findByMessageId(pool, ws, ids.message)
+        return state && { workspaceId: state.workspaceId, state: state.state, settledBy: state.settledBy }
+      },
     },
     {
       name: "a user conversation placement",
-      oldKey: "message_conversation_state_pkey",
+      landsAs: (ws) => ({ workspaceId: ws, state: "settled", settledBy: "user" }),
       write: async (ws, ids) => {
         await MessageRepository.insert(pool, {
           id: ids.message,
@@ -506,11 +536,14 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           "user"
         )
       },
-      read: (ws, ids) => MessageConversationStateRepository.findByMessageId(pool, ws, ids.message),
+      read: async (ws, ids) => {
+        const state = await MessageConversationStateRepository.findByMessageId(pool, ws, ids.message)
+        return state && { workspaceId: state.workspaceId, state: state.state, settledBy: state.settledBy }
+      },
     },
     {
       name: "an attachment reference",
-      oldKey: "attachment_references_pair_idx",
+      landsAs: (ws, ids) => ({ workspace_id: ws, message_id: ids.message }),
       write: (ws, ids) =>
         AttachmentReferenceRepository.insertMany(pool, [
           {
@@ -521,11 +554,11 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
             streamId: ids.stream,
           },
         ]),
-      read: firstRow("id", "attachment_references", "attachment"),
+      read: firstRow("workspace_id, message_id", "attachment_references", "attachment"),
     },
     {
       name: "a video transcode job",
-      oldKey: "video_transcode_jobs_attachment_id_key",
+      landsAs: (ws) => ({ workspace_id: ws, status: "submitted", mediaconvert_job_id: "mc_1" }),
       write: async (ws, ids) => {
         const job = await VideoTranscodeJobRepository.upsert(pool, {
           id: videoTranscodeJobId(),
@@ -534,65 +567,65 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
         })
         await VideoTranscodeJobRepository.updateSubmitted(pool, ws, job.id, "mc_1")
       },
-      read: firstRow("id, status, mediaconvert_job_id", "video_transcode_jobs", "attachment"),
+      read: firstRow("workspace_id, status, mediaconvert_job_id", "video_transcode_jobs", "attachment"),
     },
     {
       name: "a read watermark through advance",
-      oldKey: "stream_read_state_pkey",
+      landsAs: (ws, ids) => ({ workspace_id: ws, last_read_event_id: ids.events[1] }),
       write: async (ws, ids, writer) => {
         await seedStream(ws, ids)
         return ReadStateRepository.advance(pool, ws, ids.stream, ids.member, ids.events[writer], { holdInInbox: false })
       },
-      read: firstRow("last_read_event_id", "stream_read_state"),
+      read: firstRow("workspace_id, last_read_event_id", "stream_read_state"),
     },
     {
       name: "a read watermark through set",
-      oldKey: "stream_read_state_pkey",
+      landsAs: (ws, ids) => ({ workspace_id: ws, last_read_event_id: ids.events[1] }),
       write: async (ws, ids, writer) => {
         await seedStream(ws, ids)
         return ReadStateRepository.set(pool, ws, ids.stream, ids.member, ids.events[writer])
       },
-      read: firstRow("last_read_event_id", "stream_read_state"),
+      read: firstRow("workspace_id, last_read_event_id", "stream_read_state"),
     },
     {
       name: "a read watermark through batchAdvance",
-      oldKey: "stream_read_state_pkey",
+      landsAs: (ws, ids) => ({ workspace_id: ws, last_read_event_id: ids.events[1] }),
       write: async (ws, ids, writer) => {
         await seedStream(ws, ids)
         return ReadStateRepository.batchAdvance(pool, ws, ids.member, new Map([[ids.stream, ids.events[writer]]]))
       },
-      read: firstRow("last_read_event_id", "stream_read_state"),
+      read: firstRow("workspace_id, last_read_event_id", "stream_read_state"),
     },
     {
       name: "a read watermark through ensureForUpdate",
-      oldKey: "stream_read_state_pkey",
+      landsAs: (ws) => ({ workspace_id: ws, last_read_event_id: null }),
       write: async (ws, ids) => {
         await seedStream(ws, ids)
         return ReadStateRepository.ensureForUpdate(pool, ws, ids.stream, ids.member)
       },
-      read: firstRow("last_read_event_id", "stream_read_state"),
+      read: firstRow("workspace_id, last_read_event_id", "stream_read_state"),
     },
     {
       name: "a read watermark through ensureBatchForUpdate",
-      oldKey: "stream_read_state_pkey",
+      landsAs: (ws) => ({ workspace_id: ws, last_read_event_id: null }),
       write: async (ws, ids) => {
         await seedStream(ws, ids)
         return ReadStateRepository.ensureBatchForUpdate(pool, ws, ids.member, [ids.stream])
       },
-      read: firstRow("last_read_event_id", "stream_read_state"),
+      read: firstRow("workspace_id, last_read_event_id", "stream_read_state"),
     },
     {
       name: "a read watermark through setForUsers",
-      oldKey: "stream_read_state_pkey",
+      landsAs: (ws, ids) => ({ workspace_id: ws, last_read_event_id: ids.events[1] }),
       write: async (ws, ids, writer) => {
         await seedStream(ws, ids)
         return ReadStateRepository.setForUsers(pool, ws, ids.stream, [ids.member], ids.events[writer])
       },
-      read: firstRow("last_read_event_id", "stream_read_state"),
+      read: firstRow("workspace_id, last_read_event_id", "stream_read_state"),
     },
     {
       name: "a sparse message read",
-      oldKey: "stream_member_message_reads_pkey",
+      landsAs: (ws, ids) => ({ workspace_id: ws, event_id: ids.events[0] }),
       write: async (ws, ids) => {
         await pool.query(
           `INSERT INTO stream_events (id, workspace_id, stream_id, sequence, event_type, payload)
@@ -606,82 +639,80 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
           messageIds: [ids.message],
         })
       },
-      read: firstRow("event_id", "stream_member_message_reads"),
+      read: firstRow("workspace_id, event_id", "stream_member_message_reads"),
     },
     {
       name: "a hidden board conversation",
-      oldKey: "board_hidden_conversations_pkey",
+      landsAs: (ws, ids) => ({ workspace_id: ws, conversation_id: ids.conversation, hidden_at: expect.any(Date) }),
       write: (ws, ids) =>
         BoardExclusionRepository.hideConversation(pool, {
           workspaceId: ws,
           conversationId: ids.conversation,
           userId: ids.member,
         }),
-      read: firstRow("hidden_at", "board_hidden_conversations", "conversation"),
+      read: firstRow("workspace_id, conversation_id, hidden_at", "board_hidden_conversations", "conversation"),
     },
     {
       name: "a muted board stream",
-      oldKey: "board_muted_streams_pkey",
+      landsAs: (ws, ids) => ({ workspace_id: ws, user_id: ids.member }),
       write: (ws, ids) =>
         BoardExclusionRepository.muteStream(pool, { workspaceId: ws, streamId: ids.stream, userId: ids.member }),
-      read: firstRow("user_id", "board_muted_streams"),
+      read: firstRow("workspace_id, user_id", "board_muted_streams"),
     },
     {
       name: "a reaction activity through insert",
-      oldKey: "idx_user_activity_dedup_reaction",
+      landsAs: (ws) => ({ workspace_id: ws, activity_type: ActivityTypes.REACTION, read_at: expect.any(Date) }),
       write: (ws, ids, writer) =>
         ActivityRepository.insert(pool, { ...activity(ws, ids, writer, ActivityTypes.REACTION), userId: ids.member }),
-      read: firstRow("activity_type, read_at", "user_activity", "message"),
+      read: firstRow("workspace_id, activity_type, read_at", "user_activity", "message"),
     },
     {
       name: "a reaction activity through insertBatch",
-      oldKey: "idx_user_activity_dedup_reaction",
+      landsAs: (ws) => ({ workspace_id: ws, activity_type: ActivityTypes.REACTION, read_at: expect.any(Date) }),
       write: (ws, ids, writer) =>
         ActivityRepository.insertBatch(pool, {
           ...activity(ws, ids, writer, ActivityTypes.REACTION),
           userIds: [ids.member],
         }),
-      read: firstRow("activity_type, read_at", "user_activity", "message"),
+      read: firstRow("workspace_id, activity_type, read_at", "user_activity", "message"),
     },
     {
       name: "a mention activity through insert",
-      oldKey: "idx_user_activity_dedup_non_reaction",
+      landsAs: (ws) => ({ workspace_id: ws, activity_type: ActivityTypes.MENTION, read_at: expect.any(Date) }),
       write: (ws, ids, writer) =>
         ActivityRepository.insert(pool, { ...activity(ws, ids, writer, ActivityTypes.MENTION), userId: ids.member }),
-      read: firstRow("activity_type, read_at", "user_activity", "message"),
+      read: firstRow("workspace_id, activity_type, read_at", "user_activity", "message"),
     },
     {
       name: "a mention activity through insertBatch",
-      oldKey: "idx_user_activity_dedup_non_reaction",
+      landsAs: (ws) => ({ workspace_id: ws, activity_type: ActivityTypes.MENTION, read_at: expect.any(Date) }),
       write: (ws, ids, writer) =>
         ActivityRepository.insertBatch(pool, {
           ...activity(ws, ids, writer, ActivityTypes.MENTION),
           userIds: [ids.member],
         }),
-      read: firstRow("activity_type, read_at", "user_activity", "message"),
+      read: firstRow("workspace_id, activity_type, read_at", "user_activity", "message"),
     },
     {
       name: "a preference override through setOverride",
-      oldKey: "user_preference_overrides_pkey",
+      landsAs: () => ({ key: "theme", value: "theme 1" }),
       write: (ws, ids, writer) =>
         UserPreferencesRepository.setOverride(pool, ws, ids.member, "theme", `theme ${writer}`),
       read: (ws, ids) => UserPreferencesRepository.findOverride(pool, ws, ids.member, "theme"),
     },
     {
       name: "a preference override through bulkSetOverrides",
-      oldKey: "user_preference_overrides_pkey",
+      landsAs: () => ({ key: "theme", value: "theme 1" }),
       write: (ws, ids, writer) =>
         UserPreferencesRepository.bulkSetOverrides(pool, ws, ids.member, [{ key: "theme", value: `theme ${writer}` }]),
       read: (ws, ids) => UserPreferencesRepository.findOverride(pool, ws, ids.member, "theme"),
     },
   ]
 
-  // Workspace B writes ids workspace A already holds. A key still on its old columns rejects the write; a
-  // contracted key lets it land as B's own row. An arbiter on the old columns would instead take the conflict
-  // path: update A's row or drop B's write without an error.
-  for (const testCase of sharedKeyCases) {
-    const { name, write, read } = testCase
-    test(`should leave workspace A's row untouched when workspace B writes ${name} for the same ids`, async () => {
+  // Workspace B writes ids workspace A already holds. An arbiter still on the old columns would take the
+  // conflict path: update A's row or drop B's write without an error.
+  for (const { name, write, read, landsAs } of sharedKeyCases) {
+    test(`should land workspace B's own row and leave workspace A's untouched when B writes ${name} for the same ids`, async () => {
       const wsA = workspaceId()
       const wsB = workspaceId()
       const ids: SharedIds = {
@@ -701,18 +732,9 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
 
       await write(wsA, ids, 0)
       const seededA = await read(wsA, ids)
-      const rejectedBy = await write(wsB, ids, 1).then(
-        () => null,
-        (error: { code?: string; constraint?: string }) => {
-          if (error.code !== "23505") throw error
-          return error.constraint
-        }
-      )
+      await write(wsB, ids, 1)
 
-      expect({ a: await read(wsA, ids), b: rejectedBy ?? (await read(wsB, ids)) }).toEqual({
-        a: seededA,
-        b: "oldKey" in testCase ? testCase.oldKey : testCase.landsAs(wsB, ids),
-      })
+      expect({ a: await read(wsA, ids), b: await read(wsB, ids) }).toEqual({ a: seededA, b: landsAs(wsB, ids) })
     })
   }
 })

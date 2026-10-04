@@ -1,0 +1,5 @@
+SET LOCAL lock_timeout = '5s';
+
+ALTER TABLE pdf_page_extractions DROP CONSTRAINT pdf_page_extractions_pkey, ADD CONSTRAINT pdf_page_extractions_pkey PRIMARY KEY USING INDEX pdf_page_extractions_pkey_ws;
+
+ALTER TABLE pdf_page_extractions DROP CONSTRAINT pdf_page_extractions_attachment_id_page_number_key, ADD CONSTRAINT pdf_page_extractions_attachment_id_page_number_key UNIQUE USING INDEX pdf_page_extractions_attachment_id_page_number_key_ws;

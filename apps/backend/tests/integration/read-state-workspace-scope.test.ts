@@ -70,27 +70,15 @@ describe("Read state and sparse overlay workspace scope (INV-8)", () => {
   }
 
   async function addEvent(wid: string, stream: string, actor: string, message: string = messageId()) {
-    // The old (stream_id) key on stream_sequences still exists, so a foreign workspace cannot get its own
-    // counter row for a shared stream id: the event takes the owner's sequences and is then relabelled.
-    const owner = (
-      await pool.query<{ workspace_id: string }>("SELECT workspace_id FROM streams WHERE id = $1", [stream])
-    ).rows[0].workspace_id
     const event = await StreamEventRepository.insert(pool, {
       id: eventId(),
-      workspaceId: owner,
+      workspaceId: wid,
       streamId: stream,
       eventType: "message_created",
       payload: { messageId: message },
       actorId: actor,
       actorType: "user",
     })
-    if (owner !== wid) {
-      await pool.query("UPDATE stream_events SET workspace_id = $1 WHERE workspace_id = $2 AND id = $3", [
-        wid,
-        owner,
-        event.id,
-      ])
-    }
     return { id: event.id, sequence: event.sequence, messageId: message } satisfies SeededEvent
   }
 
@@ -453,29 +441,38 @@ describe("Read state and sparse overlay workspace scope (INV-8)", () => {
     })
   })
 
-  test("should return no read state when only another workspace holds the row for that stream and user", async () => {
-    const stream = await seedChannel(wsB, bAuthor)
+  test("should land its own read state beside another workspace's row when both hold the same stream and user ids", async () => {
+    const stream = await seedChannel(wsA)
     const user = userId()
     await addReadState(wsB, stream, user)
 
-    expect(await ReadStateRepository.ensureForUpdate(pool, wsA, stream, user)).toBeNull()
+    const own = await ReadStateRepository.ensureForUpdate(pool, wsA, stream, user)
+    const rows = await pool.query<{ workspace_id: string }>(
+      "SELECT workspace_id FROM stream_read_state WHERE stream_id = $1 AND user_id = $2 ORDER BY workspace_id",
+      [stream, user]
+    )
+
+    expect({ own: own?.workspaceId, workspaces: rows.rows.map((row) => row.workspace_id) }).toEqual({
+      own: wsA,
+      workspaces: [wsA, wsB].sort(),
+    })
   })
 
   test("should leave another workspace's read state unlocked when batch ensuring for update", async () => {
-    const stream = await seedChannel(wsB, bAuthor)
+    const stream = await seedChannel(wsA)
     const user = userId()
     await addReadState(wsB, stream, user)
 
     const unlocked = await withTransaction(pool, async (client) => {
       await ReadStateRepository.ensureBatchForUpdate(client, wsA, user, [stream])
       const probe = await pool.query(
-        `SELECT user_id FROM stream_read_state WHERE stream_id = $1 AND user_id = $2 FOR UPDATE SKIP LOCKED`,
+        `SELECT workspace_id FROM stream_read_state WHERE stream_id = $1 AND user_id = $2 FOR UPDATE SKIP LOCKED`,
         [stream, user]
       )
       return probe.rows
     })
 
-    expect(unlocked).toEqual([{ user_id: user }])
+    expect(unlocked).toEqual([{ workspace_id: wsB }])
   })
 
   test("should list held streams only from its own workspace when the user is also held in another", async () => {

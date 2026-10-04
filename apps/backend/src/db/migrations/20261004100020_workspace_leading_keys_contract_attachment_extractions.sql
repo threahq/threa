@@ -1,0 +1,5 @@
+SET LOCAL lock_timeout = '5s';
+
+ALTER TABLE attachment_extractions DROP CONSTRAINT attachment_extractions_pkey, ADD CONSTRAINT attachment_extractions_pkey PRIMARY KEY USING INDEX attachment_extractions_pkey_ws;
+
+ALTER TABLE attachment_extractions DROP CONSTRAINT attachment_extractions_attachment_id_key, ADD CONSTRAINT attachment_extractions_attachment_id_key UNIQUE USING INDEX attachment_extractions_attachment_id_key_ws;

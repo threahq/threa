@@ -70,8 +70,8 @@ export interface InsertSubagentRunParams {
 }
 
 /**
- * The partial unique index `(scope_stream_id) WHERE status = 'active'` rejected
- * the write: this conversation surface already has a live subagent. Typed so
+ * The partial unique index on workspace and scope stream where status is active
+ * rejected the write: this conversation surface already has a live subagent. Typed so
  * the tool and the requeue endpoint can tell the model/user "one at a time"
  * instead of surfacing a raw Postgres error (INV-11 — the refusal is explicit,
  * not a silent no-op).

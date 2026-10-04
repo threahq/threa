@@ -337,22 +337,15 @@ describe("StreamEventRepository workspace scope (INV-8)", () => {
     await sendMessage(wsA, channel.id, userA, "Two")
     const [first] = await StreamEventRepository.list(pool, wsA, channel.id)
     const decoyMessageId = messageId()
-    // The old (stream_id) key on stream_sequences still exists, so wsB cannot get its own counter row for
-    // this stream id: the decoy takes wsA's sequences and is then relabelled.
     const decoy = await StreamEventRepository.insert(pool, {
       id: eventId(),
-      workspaceId: wsA,
+      workspaceId: wsB,
       streamId: channel.id,
       eventType: "message_created",
       payload: { messageId: decoyMessageId },
       actorId: userA,
       actorType: AuthorTypes.USER,
     })
-    await pool.query("UPDATE stream_events SET workspace_id = $1 WHERE workspace_id = $2 AND id = $3", [
-      wsB,
-      wsA,
-      decoy.id,
-    ])
     await SparseReadRepository.insertReads(pool, {
       workspaceId: wsB,
       streamId: channel.id,

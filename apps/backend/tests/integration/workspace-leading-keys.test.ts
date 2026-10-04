@@ -4,47 +4,7 @@ import path from "node:path"
 import type { Pool } from "pg"
 import { setupIsolatedTestDatabase } from "./setup"
 
-/** Old key names that already have a workspace-leading `<name>_ws` twin. */
-const TWINNED_KEYS: string[] = [
-  "stream_members_pkey",
-  "stream_sequences_pkey",
-  "stream_policies_pkey",
-  "idx_stream_briefs_stream",
-  "idx_sca_stream_intent_unique",
-  "stream_persona_participants_pkey",
-  "stream_persona_roster_pkey",
-  "e2e_streams_pkey",
-  "idx_agent_conversation_summaries_stream_persona",
-  "idx_agent_sessions_one_running_per_stream",
-  "idx_subagent_runs_one_active",
-  "message_versions_pkey",
-  "idx_message_versions_message_seq",
-  "message_compose_traces_pkey",
-  "message_conversation_state_pkey",
-  "researcher_cache_message_id_key",
-  "conversations_pkey",
-  "memos_pkey",
-  "link_previews_pkey",
-  "attachment_references_pkey",
-  "attachment_references_pair_idx",
-  "attachment_extractions_pkey",
-  "attachment_extractions_attachment_id_key",
-  "attachment_uploads_attachment_id_key",
-  "pdf_page_extractions_pkey",
-  "pdf_page_extractions_attachment_id_page_number_key",
-  "pdf_processing_jobs_attachment_id_key",
-  "video_transcode_jobs_attachment_id_key",
-  "persona_attachments_pkey",
-  "stream_read_state_pkey",
-  "stream_member_message_reads_pkey",
-  "board_hidden_conversations_pkey",
-  "board_muted_streams_pkey",
-  "idx_user_activity_dedup_non_reaction",
-  "idx_user_activity_dedup_reaction",
-  "user_preference_overrides_pkey",
-]
-
-/** Keys whose old single-id definition is gone: the old name now leads with workspace_id. */
+/** Every key that spans copied ids: the old single-id definition is gone and the old name leads with workspace_id. */
 const CONTRACTED_KEYS: Record<string, { primary: boolean; def: string }> = {
   streams_pkey: {
     primary: true,
@@ -86,9 +46,153 @@ const CONTRACTED_KEYS: Record<string, { primary: boolean; def: string }> = {
     primary: true,
     def: "CREATE UNIQUE INDEX users_pkey ON public.users USING btree (workspace_id, id)",
   },
+  stream_members_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX stream_members_pkey ON public.stream_members USING btree (workspace_id, stream_id, member_id)",
+  },
+  stream_sequences_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX stream_sequences_pkey ON public.stream_sequences USING btree (workspace_id, stream_id)",
+  },
+  stream_policies_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX stream_policies_pkey ON public.stream_policies USING btree (workspace_id, stream_id)",
+  },
+  idx_stream_briefs_stream: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX idx_stream_briefs_stream ON public.stream_briefs USING btree (workspace_id, stream_id)",
+  },
+  idx_sca_stream_intent_unique: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX idx_sca_stream_intent_unique ON public.stream_context_attachments USING btree (workspace_id, stream_id, intent)",
+  },
+  stream_persona_participants_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX stream_persona_participants_pkey ON public.stream_persona_participants USING btree (workspace_id, stream_id, persona_id)",
+  },
+  stream_persona_roster_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX stream_persona_roster_pkey ON public.stream_persona_roster USING btree (workspace_id, stream_id, persona_id)",
+  },
+  e2e_streams_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX e2e_streams_pkey ON public.e2e_streams USING btree (workspace_id, stream_id)",
+  },
+  idx_agent_conversation_summaries_stream_persona: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX idx_agent_conversation_summaries_stream_persona ON public.agent_conversation_summaries USING btree (workspace_id, stream_id, persona_id)",
+  },
+  idx_agent_sessions_one_running_per_stream: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX idx_agent_sessions_one_running_per_stream ON public.agent_sessions USING btree (workspace_id, stream_id) WHERE (status = 'running'::text)",
+  },
+  idx_subagent_runs_one_active: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX idx_subagent_runs_one_active ON public.subagent_runs USING btree (workspace_id, scope_stream_id) WHERE (status = 'active'::text)",
+  },
+  message_versions_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX message_versions_pkey ON public.message_versions USING btree (workspace_id, id)",
+  },
+  idx_message_versions_message_seq: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX idx_message_versions_message_seq ON public.message_versions USING btree (workspace_id, message_id, version_number)",
+  },
+  message_compose_traces_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX message_compose_traces_pkey ON public.message_compose_traces USING btree (workspace_id, message_id)",
+  },
+  message_conversation_state_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX message_conversation_state_pkey ON public.message_conversation_state USING btree (workspace_id, message_id)",
+  },
+  researcher_cache_message_id_key: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX researcher_cache_message_id_key ON public.researcher_cache USING btree (workspace_id, message_id)",
+  },
+  conversations_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX conversations_pkey ON public.conversations USING btree (workspace_id, id)",
+  },
+  memos_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX memos_pkey ON public.memos USING btree (workspace_id, id)",
+  },
+  link_previews_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX link_previews_pkey ON public.link_previews USING btree (workspace_id, id)",
+  },
+  attachment_references_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX attachment_references_pkey ON public.attachment_references USING btree (workspace_id, id)",
+  },
+  attachment_references_pair_idx: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX attachment_references_pair_idx ON public.attachment_references USING btree (workspace_id, attachment_id, message_id)",
+  },
+  attachment_extractions_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX attachment_extractions_pkey ON public.attachment_extractions USING btree (workspace_id, id)",
+  },
+  attachment_extractions_attachment_id_key: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX attachment_extractions_attachment_id_key ON public.attachment_extractions USING btree (workspace_id, attachment_id)",
+  },
+  attachment_uploads_attachment_id_key: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX attachment_uploads_attachment_id_key ON public.attachment_uploads USING btree (workspace_id, attachment_id)",
+  },
+  pdf_page_extractions_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX pdf_page_extractions_pkey ON public.pdf_page_extractions USING btree (workspace_id, id)",
+  },
+  pdf_page_extractions_attachment_id_page_number_key: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX pdf_page_extractions_attachment_id_page_number_key ON public.pdf_page_extractions USING btree (workspace_id, attachment_id, page_number)",
+  },
+  pdf_processing_jobs_attachment_id_key: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX pdf_processing_jobs_attachment_id_key ON public.pdf_processing_jobs USING btree (workspace_id, attachment_id)",
+  },
+  video_transcode_jobs_attachment_id_key: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX video_transcode_jobs_attachment_id_key ON public.video_transcode_jobs USING btree (workspace_id, attachment_id)",
+  },
+  persona_attachments_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX persona_attachments_pkey ON public.persona_attachments USING btree (workspace_id, attachment_id)",
+  },
+  stream_read_state_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX stream_read_state_pkey ON public.stream_read_state USING btree (workspace_id, stream_id, user_id)",
+  },
+  stream_member_message_reads_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX stream_member_message_reads_pkey ON public.stream_member_message_reads USING btree (workspace_id, stream_id, member_id, message_id)",
+  },
+  board_hidden_conversations_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX board_hidden_conversations_pkey ON public.board_hidden_conversations USING btree (workspace_id, conversation_id, user_id)",
+  },
+  board_muted_streams_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX board_muted_streams_pkey ON public.board_muted_streams USING btree (workspace_id, stream_id, user_id)",
+  },
+  idx_user_activity_dedup_non_reaction: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX idx_user_activity_dedup_non_reaction ON public.user_activity USING btree (workspace_id, user_id, message_id, activity_type, actor_id) WHERE (activity_type <> ALL (ARRAY['reaction'::text, 'saved_reminder'::text]))",
+  },
+  idx_user_activity_dedup_reaction: {
+    primary: false,
+    def: "CREATE UNIQUE INDEX idx_user_activity_dedup_reaction ON public.user_activity USING btree (workspace_id, user_id, message_id, actor_id, emoji) WHERE (activity_type = 'reaction'::text)",
+  },
+  user_preference_overrides_pkey: {
+    primary: true,
+    def: "CREATE UNIQUE INDEX user_preference_overrides_pkey ON public.user_preference_overrides USING btree (workspace_id, user_id, key)",
+  },
 }
 
-/** Unique keys that need no twin of their own, each with its reason. */
+/** Unique keys that stay without a leading workspace_id, each with its reason. */
 const EXEMPT_KEYS: Record<string, string> = {
   access_log_pkey: "partition key carries occurred_at; ids are generated locally (accessLogId)",
   agent_session_steps_client_step_id_key: "keyed by session id; sessions are created locally, never copied",
@@ -111,15 +215,9 @@ const EXEMPT_KEYS: Record<string, string> = {
 }
 
 const MIGRATIONS_DIR = path.resolve(import.meta.dir, "../../src/db/migrations")
-const STREAM_MEMBERS_MIGRATION_SUFFIX = "_workspace_leading_keys_stream_members.sql"
+const STREAM_MEMBERS_MIGRATION_SUFFIX = "_workspace_leading_keys_contract_stream_members.sql"
 
-interface TwinShape {
-  oldPresent: boolean
-  twin: string | null
-  valid: boolean
-}
-
-describe("workspace-leading twin keys", () => {
+describe("workspace-leading keys", () => {
   let pool: Pool
   let cleanup: () => Promise<void>
 
@@ -132,38 +230,6 @@ describe("workspace-leading twin keys", () => {
   afterAll(async () => {
     await cleanup()
   }, 30_000)
-
-  test("should lead every twin with workspace_id and keep the old definition when a key is twinned", async () => {
-    const result = await pool.query<{ name: string; def: string; valid: boolean }>(
-      `
-      SELECT i.relname AS name, pg_get_indexdef(i.oid) AS def, ix.indisvalid AS valid
-      FROM pg_class i
-      JOIN pg_index ix ON ix.indexrelid = i.oid
-      JOIN pg_namespace n ON n.oid = i.relnamespace
-      WHERE n.nspname = 'public' AND i.relname = ANY($1)
-    `,
-      [TWINNED_KEYS.flatMap((name) => [name, `${name}_ws`])]
-    )
-    const byName = new Map(result.rows.map((row) => [row.name, row]))
-
-    const actual: Record<string, TwinShape> = {}
-    const expected: Record<string, TwinShape> = {}
-    for (const name of TWINNED_KEYS) {
-      const old = byName.get(name)
-      const twin = byName.get(`${name}_ws`)
-      actual[name] = { oldPresent: old !== undefined, twin: twin?.def ?? null, valid: twin?.valid ?? false }
-      expected[name] = {
-        oldPresent: true,
-        twin:
-          old?.def
-            .replace(`INDEX ${name} ON`, `INDEX ${name}_ws ON`)
-            .replace("USING btree (", "USING btree (workspace_id, ") ?? null,
-        valid: true,
-      }
-    }
-
-    expect(actual).toEqual(expected)
-  })
 
   test("should keep each contracted key under its old name leading with workspace_id when the contract migrations have run", async () => {
     const result = await pool.query<{ name: string; def: string; primary: boolean }>(
@@ -182,24 +248,21 @@ describe("workspace-leading twin keys", () => {
     )
   })
 
-  test("should leave no twin index or duplicate users key behind when the contract migrations have run", async () => {
-    const result = await pool.query<{ name: string }>(
-      `
+  test("should leave no _ws index or duplicate users key behind when the contract migrations have run", async () => {
+    const result = await pool.query<{ name: string }>(`
       SELECT i.relname AS name
       FROM pg_class i
       JOIN pg_namespace n ON n.oid = i.relnamespace
-      WHERE n.nspname = 'public' AND i.relkind = 'i' AND i.relname = ANY($1)
+      WHERE n.nspname = 'public' AND i.relkind = 'i' AND (i.relname LIKE '%\\_ws' OR i.relname = 'users_id_key')
       ORDER BY i.relname
-    `,
-      [[...Object.keys(CONTRACTED_KEYS).map((name) => `${name}_ws`), "users_id_key"]]
-    )
+    `)
 
     expect(result.rows).toEqual([])
   })
 
   test("should list every non-workspace-leading unique key in exactly one list when a table carries workspace_id", async () => {
     const result = await pool.query<{ name: string; skipped: boolean }>(`
-      -- Plain (id) primary keys are mostly locally generated ids; copied tables list theirs by hand.
+      -- Plain (id) primary keys are locally generated ids.
       SELECT i.relname AS name,
              (ix.indkey[0] = wa.attnum)
                OR (ix.indisprimary AND ix.indnkeyatts = 1 AND fa.attname = 'id') AS skipped
@@ -213,7 +276,6 @@ describe("workspace-leading twin keys", () => {
     `)
     const existing = new Set(result.rows.map((row) => row.name))
     const lists: Record<string, Set<string>> = {
-      TWINNED_KEYS: new Set(TWINNED_KEYS),
       CONTRACTED_KEYS: new Set(Object.keys(CONTRACTED_KEYS)),
       EXEMPT_KEYS: new Set(Object.keys(EXEMPT_KEYS)),
     }
@@ -254,7 +316,11 @@ describe("workspace-leading twin keys", () => {
     const migrationFile = readdirSync(MIGRATIONS_DIR).find((file) => file.endsWith(STREAM_MEMBERS_MIGRATION_SUFFIX))
     expect(migrationFile).toBeDefined()
     const migrationSql = readFileSync(path.join(MIGRATIONS_DIR, migrationFile!), "utf8")
-    await pool.query("DROP INDEX stream_members_pkey_ws")
+    await pool.query(`
+      ALTER TABLE stream_members DROP CONSTRAINT stream_members_pkey;
+      ALTER TABLE stream_members ADD CONSTRAINT stream_members_pkey PRIMARY KEY (stream_id, member_id);
+      CREATE UNIQUE INDEX stream_members_pkey_ws ON stream_members (workspace_id, stream_id, member_id);
+    `)
 
     const holder = await pool.connect()
     const migrator = await pool.connect()
@@ -285,11 +351,14 @@ describe("workspace-leading twin keys", () => {
       holding = false
       await migrator.query(migrationSql)
 
-      const twin = await pool.query<{ indisvalid: boolean }>(
-        `SELECT ix.indisvalid FROM pg_index ix JOIN pg_class i ON i.oid = ix.indexrelid WHERE i.relname = 'stream_members_pkey_ws'`
+      const key = await pool.query<{ def: string; primary: boolean }>(
+        `SELECT pg_get_indexdef(i.oid) AS def, ix.indisprimary AS primary FROM pg_index ix JOIN pg_class i ON i.oid = ix.indexrelid WHERE i.relname = 'stream_members_pkey'`
       )
       const after = (await migrator.query<{ lock_timeout: string }>("SHOW lock_timeout")).rows[0].lock_timeout
-      expect({ twin: twin.rows, lockTimeout: after }).toEqual({ twin: [{ indisvalid: true }], lockTimeout: before })
+      expect({ key: key.rows, lockTimeout: after }).toEqual({
+        key: [CONTRACTED_KEYS.stream_members_pkey],
+        lockTimeout: before,
+      })
     } finally {
       if (holding) await holder.query("ROLLBACK").catch(() => undefined)
       holder.release()

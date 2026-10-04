@@ -656,7 +656,7 @@ export const AgentSessionRepository = {
    *
    * NOTE: Session *creation* never uses this — that goes through
    * `insertRunningOrSkip()`, which atomically prevents duplicates via the partial
-   * unique index on (stream_id) WHERE status='running'. This read is for
+   * unique index on workspace and stream where status is running. This read is for
    * opportunistic trace stamping: the public-API bot `sendMessage` path calls it
    * to deep-link a bot message to its live session.
    *
