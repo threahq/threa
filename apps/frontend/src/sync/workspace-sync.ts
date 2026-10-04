@@ -3029,7 +3029,7 @@ export async function applyWorkspaceBootstrap(
       mergedDmPeers = dmPeersDiff.merged
       mergedPersonas = personasDiff.merged
       mergedBots = botsDiff.merged
-      mergedActorCopies = actorCopiesDiff.merged
+      mergedActorCopies = bootstrap.actorCopies ? actorCopiesDiff.merged : existingActorCopies
       mergedLabels = labelsDiff.merged
       mergedLabelAssignments = labelAssignmentsDiff.merged
       recordSkippedRowConfirmations(workspaceId, "streams", streamsDiff, now)
@@ -3533,7 +3533,7 @@ export async function applyReconnectBootstrapBatch(
       mergedDmPeers = dmPeersDiff.merged
       mergedPersonas = personasDiff.merged
       mergedBots = botsDiff.merged
-      mergedActorCopies = actorCopiesDiff.merged
+      mergedActorCopies = finalBootstrap.actorCopies ? actorCopiesDiff.merged : existingActorCopies
       mergedLabels = labelsDiff.merged
       mergedLabelAssignments = labelAssignmentsDiff.merged
       recordSkippedRowConfirmations(workspaceId, "streams", streamsDiff, now)

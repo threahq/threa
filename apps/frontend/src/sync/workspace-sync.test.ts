@@ -46,7 +46,7 @@ import {
   resetAgentActivityStore,
 } from "@/stores/agent-activity-store"
 import * as agentSubstep from "@/lib/crypto/agent-substep"
-import { getCachedWorkspaceTables, subscribeWorkspaceCache } from "@/stores/workspace-store"
+import { getCachedWorkspaceTables, resetWorkspaceStoreCache, subscribeWorkspaceCache } from "@/stores/workspace-store"
 import type { Socket } from "socket.io-client"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
 
@@ -624,10 +624,14 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     const fetchStartedAt = Date.now() - 1000
     const cached = { ...makeActorCopy("persona_host", "Host Persona"), _cachedAt: fetchStartedAt - 86400000 }
     await db.actorCopies.put(cached)
+    resetWorkspaceStoreCache()
 
     await applyWorkspaceBootstrap("ws_1", makeBootstrap(), fetchStartedAt)
 
-    expect(await db.actorCopies.toArray()).toEqual([cached])
+    expect({ stored: await db.actorCopies.toArray(), seeded: getCachedWorkspaceTables("ws_1").actorCopies }).toEqual({
+      stored: [cached],
+      seeded: [cached],
+    })
   })
 
   it("persists host actor copies from a reconnect bootstrap batch", async () => {

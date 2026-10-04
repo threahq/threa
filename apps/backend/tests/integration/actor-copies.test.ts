@@ -26,7 +26,8 @@ import {
 } from "../../src/features/stream-connections"
 import { streamId, userId, workspaceId } from "../../src/lib/id"
 
-type Tamper = (page: BridgeEvents) => BridgeEvents
+/** Returns the page as the wire carries it, where a host that predates actor copies sends no `actors`. */
+type Tamper = (page: BridgeEvents) => Omit<BridgeEvents, "actors"> & Partial<Pick<BridgeEvents, "actors">>
 
 /** Answers the partner's bridge calls from the host's export service in-process, so a test can alter a page on the way. */
 class DirectBridgeClient extends BridgeClient {
@@ -316,7 +317,7 @@ describe("Actor copies", () => {
     })
   })
 
-  describe("when a page names an actor of the partner itself", () => {
+  describe("when a page names a user, persona or bot of the partner itself", () => {
     const mapMessages =
       (edit: (message: Extract<BridgeChange, { kind: "message" }>["message"]) => object): Tamper =>
       (page) => ({
@@ -334,20 +335,26 @@ describe("Actor copies", () => {
 
     const cases = [
       ["persona", "author", (id: string) => asAuthor(id, AuthorTypes.PERSONA)],
+      ["persona", "author typed as a bot", (id: string) => asAuthor(id, AuthorTypes.BOT)],
       ["persona", "reactor", asReactor],
       ["persona", "listed actor", asListed],
       ["bot", "author", (id: string) => asAuthor(id, AuthorTypes.BOT)],
+      ["bot", "author typed as a persona", (id: string) => asAuthor(id, AuthorTypes.PERSONA)],
       ["bot", "reactor", asReactor],
       ["bot", "listed actor", asListed],
+      ["user", "author typed as a bot", (id: string) => asAuthor(id, AuthorTypes.BOT)],
     ] as const
+
+    const seedOwn = {
+      persona: (world: World) => seedPersona(world.partner.id, "Partner own", null),
+      bot: (world: World) => seedBot(world.partner.id, "Partner own", null),
+      user: async (world: World) => ({ id: world.partner.adminId }),
+    }
 
     for (const [kind, role, tamper] of cases) {
       test(`should refuse the page and write nothing when it names a partner ${kind} as ${role}`, async () => {
         const world = await seedWorld()
-        const own =
-          kind === "persona"
-            ? await seedPersona(world.partner.id, "Partner own", null)
-            : await seedBot(world.partner.id, "Partner own", null)
+        const own = await seedOwn[kind](world)
         const message = await say(world, world.persona.id, AuthorTypes.PERSONA, "hello")
 
         await expect(world.pull(tamper(own.id))).rejects.toThrow(own.id)
@@ -361,9 +368,9 @@ describe("Actor copies", () => {
     }
   })
 
-  test("should refuse the page when it lists a built-in persona as an actor to copy", async () => {
+  test("should refuse the page and write nothing when it lists a built-in persona as an actor to copy", async () => {
     const world = await seedWorld()
-    await say(world, world.persona.id, AuthorTypes.PERSONA, "hello")
+    const message = await say(world, world.persona.id, AuthorTypes.PERSONA, "hello")
     const listsBuiltIn: Tamper = (page) => ({
       ...page,
       actors: [...page.actors, { id: ARIADNE_AGENT_ID, name: "Ariadne", avatarEmoji: null }],
@@ -371,7 +378,24 @@ describe("Actor copies", () => {
 
     await expect(world.pull(listsBuiltIn)).rejects.toThrow("is built in and cannot be copied")
 
-    expect(await ActorCopyRepository.listByWorkspace(pool, world.partner.id)).toEqual([])
+    expect({
+      copies: await ActorCopyRepository.listByWorkspace(pool, world.partner.id),
+      announced: await announced(world.partner.id),
+      messageCopied: (await MessageRepository.findByIds(pool, world.partner.id, [message.id])).has(message.id),
+    }).toEqual({ copies: [], announced: [], messageCopied: false })
+  })
+
+  test("should copy the messages and no actors when the host predates actor copies", async () => {
+    const world = await seedWorld()
+    const message = await say(world, world.persona.id, AuthorTypes.PERSONA, "hello")
+    await react(world, message.id, world.bot.id, AuthorTypes.BOT)
+
+    await world.pull((page) => ({ ...page, actors: undefined }))
+
+    expect({
+      copies: await ActorCopyRepository.listByWorkspace(pool, world.partner.id),
+      messageCopied: (await MessageRepository.findByIds(pool, world.partner.id, [message.id])).has(message.id),
+    }).toEqual({ copies: [], messageCopied: true })
   })
 
   test("should copy the messages when a built-in persona authors or reacts in the page", async () => {
