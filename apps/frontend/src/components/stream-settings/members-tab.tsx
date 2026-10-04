@@ -26,7 +26,14 @@ import { botsApi } from "@/api/bots"
 import { isPickableUser, useWorkspaceUsers, useWorkspaceBots } from "@/stores/workspace-store"
 import { rankMatches } from "@/lib/match-score"
 import { hasPermission } from "@/lib/permissions"
-import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type Stream, type StreamMember } from "@threahq/types"
+import {
+  roleDisplayName,
+  StreamTypes,
+  WORKSPACE_PERMISSION_SCOPES,
+  type Stream,
+  type StreamMember,
+  type WorkspaceRoleSlug,
+} from "@threahq/types"
 import { toast } from "sonner"
 
 interface MembersTabProps {
@@ -76,7 +83,7 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
           ? { ...sm, name: workspaceUser.name, slug: workspaceUser.slug, role: workspaceUser.role }
           : null
       })
-      .filter(Boolean) as (StreamMember & { name: string; slug: string; role: string })[]
+      .filter(Boolean) as (StreamMember & { name: string; slug: string; role: WorkspaceRoleSlug })[]
     return enriched.sort((a, b) => (a.name || a.slug).localeCompare(b.name || b.slug))
   }, [streamMembers, workspaceUsers])
 
@@ -147,7 +154,7 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   <Badge variant={member.role === "owner" ? "default" : "secondary"} className="text-xs">
-                    {member.role}
+                    {roleDisplayName(member.role)}
                   </Badge>
                   {canManageMembers && member.memberId !== currentUserId && (
                     <Button

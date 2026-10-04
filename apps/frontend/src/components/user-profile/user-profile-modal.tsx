@@ -80,6 +80,8 @@ function getRoleBadge(role: User["role"]) {
       return <Badge variant="secondary">Owner</Badge>
     case "admin":
       return <Badge variant="secondary">Admin</Badge>
+    case "guest":
+      return <Badge variant="secondary">Guest</Badge>
     default:
       return null
   }

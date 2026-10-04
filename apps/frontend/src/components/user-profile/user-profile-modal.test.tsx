@@ -188,3 +188,11 @@ describe("UserProfileModal — host user copy", () => {
     expect(screen.queryByRole("button", { name: /^Call$/i })).toBeNull()
   })
 })
+
+describe("UserProfileModal — role badge", () => {
+  it("should show a Guest badge when the user is a guest", () => {
+    seed(withDm, { role: "guest" })
+    renderModal(makeManager(), true)
+    expect(screen.getByText("Guest")).toBeInTheDocument()
+  })
+})

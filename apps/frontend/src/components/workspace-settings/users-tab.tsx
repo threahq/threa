@@ -115,9 +115,7 @@ export function PendingEmailInvitationDetails({
         {email}
       </span>
       <div className="flex items-center gap-2">
-        <Badge variant="outline" className="capitalize">
-          {role}
-        </Badge>
+        <Badge variant="outline">{roleDisplayName(role)}</Badge>
         <span className="text-xs text-muted-foreground">
           {expiresAt ? `Expires ${formatDate(new Date(expiresAt))}` : "Never expires"}
         </span>
@@ -237,7 +235,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
         {users.map((user) => {
           const isSelf = user.workosUserId === authUser?.id
           // Owners aren't demotable here — ownership transfer is its own flow.
-          const canEditRole = canManageMembers && !isSelf && user.role !== "owner"
+          const canEditRole = canManageMembers && !isSelf && user.role !== "owner" && user.role !== "guest"
           const canRemove = canManageMembers && !isSelf && user.role !== "owner"
           const isRoleChanging = changeRoleMutation.isPending && changeRoleMutation.variables?.userId === user.id
 
@@ -335,9 +333,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
                         Invite link
                       </span>
                       <Badge variant="outline">{state}</Badge>
-                      <Badge variant="outline" className="capitalize">
-                        {invitation.role}
-                      </Badge>
+                      <Badge variant="outline">{roleDisplayName(invitation.role)}</Badge>
                     </div>
                     <p className="text-xs text-muted-foreground">
                       {invitation.useCount} of {invitation.maxUses ?? "unlimited"} joined ·{" "}
