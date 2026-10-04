@@ -81,13 +81,8 @@ describe("useMentionables connected workspace copies", () => {
 
   afterEach(() => vi.restoreAllMocks())
 
-  function listedUserIds(context: MentionStreamContext) {
-    const { result } = renderHook(() => useMentionables(context), { wrapper })
-    return result
-  }
-
   it("should list a copy of a connected workspace's user when the stream is shared with that workspace", async () => {
-    const result = listedUserIds(sharedChannel)
+    const { result } = renderHook(() => useMentionables(sharedChannel), { wrapper })
 
     await waitFor(() =>
       expect(
@@ -100,7 +95,10 @@ describe("useMentionables connected workspace copies", () => {
   })
 
   it("should leave out a copy when the stream is shared with a different workspace", async () => {
-    const result = listedUserIds({ streamType: "channel", connectedWorkspaceIds: new Set(["ws_other"]) })
+    const { result } = renderHook(
+      () => useMentionables({ streamType: "channel", connectedWorkspaceIds: new Set(["ws_other"]) }),
+      { wrapper }
+    )
 
     await waitFor(() =>
       expect(result.current.mentionables.filter((m) => m.type === "user").map((m) => m.id)).toEqual(["usr_local"])
@@ -108,7 +106,9 @@ describe("useMentionables connected workspace copies", () => {
   })
 
   it("should leave out a connected workspace's copy when listing who to invite", async () => {
-    const result = listedUserIds({ ...sharedChannel, inviteMode: true, memberIds: new Set() })
+    const { result } = renderHook(() => useMentionables({ ...sharedChannel, inviteMode: true, memberIds: new Set() }), {
+      wrapper,
+    })
 
     await waitFor(() =>
       expect(result.current.mentionables.filter((m) => m.type === "user").map((m) => m.id)).toEqual(["usr_local"])

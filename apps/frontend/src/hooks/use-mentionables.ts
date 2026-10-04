@@ -178,9 +178,7 @@ export function useMentionables(streamContext?: MentionStreamContext, { includeH
     const listedUsers = includeHostCopies
       ? workspaceUsers
       : workspaceUsers.filter(
-          (u) =>
-            isPickableUser(u) ||
-            (u.originWorkspaceId != null && connectedWorkspaceIds?.has(u.originWorkspaceId) === true)
+          (u) => isPickableUser(u) || (u.originWorkspaceId != null && connectedWorkspaceIds?.has(u.originWorkspaceId))
         )
     const users: Mentionable[] = listedUsers.map((u) => ({
       id: u.id,
