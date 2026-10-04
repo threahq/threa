@@ -152,5 +152,6 @@ export class StreamConnectionForwardService {
     for (let attempt = 0; attempt < PULL_ATTEMPTS; attempt++) {
       if (await this.pullService.pull(ref, { streamId })) return
     }
+    throw hostUnreachable(`Stream ${streamId} did not catch up with its host`)
   }
 }

@@ -18,6 +18,7 @@ import {
   testContentJson,
   testMessageContent,
 } from "./setup"
+import { CommandAvailabilityService, CommandRegistry } from "../../src/features/commands"
 import { EventService, MessageRepository } from "../../src/features/messaging"
 import { StreamRepository, type Stream } from "../../src/features/streams"
 import { FeatureFlagOverrideRepository, FeatureFlagService } from "../../src/features/feature-flags"
@@ -523,6 +524,41 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
       retried: (await messageIdsByClientId(world, "client-retry"))[0],
     })
     expect(await messageIdsByClientId(world, "client-retry")).toHaveLength(1)
+  })
+
+  test("should throw HOST_UNREACHABLE rather than return the stale copy when an edit's pulls all lose", async () => {
+    const world = await seedWorld()
+    const sent = await forwardVia(world.bridge).sendMessage(patSend(world, "client-stale", "first draft"))
+    const losing = new LosingPullService({ pool, bridgeClient: world.bridge, featureFlagService }, 3)
+
+    const edit = await outcome(
+      forwardVia(world.bridge, losing).editMessage({
+        ...asPat(world),
+        messageId: sent.id,
+        contentJson: testContentJson("second draft"),
+      })
+    )
+
+    expect(edit).toEqual(UNREACHABLE)
+  })
+
+  test("should offer no commands in a shared channel's copy while the host's channel keeps them", async () => {
+    const world = await seedWorld()
+    const registry = new CommandRegistry()
+    registry.register({
+      name: "invite",
+      description: "Invite someone",
+      execute: () => Promise.reject(new Error("not run here")),
+    })
+    const availability = new CommandAvailabilityService({ pool, commandRegistry: registry })
+    const names = async (workspaceId: string, userId: string, stream: string) =>
+      (await availability.listStreamCommands({ workspaceId, userId, streamId: stream })).map((command) => command.name)
+
+    expect({
+      channel: await names(world.host.id, world.host.adminId, world.channel.id),
+      channelCopy: await names(world.partner.id, world.pat.id, world.channelCopy.id),
+      threadCopy: await names(world.partner.id, world.pat.id, world.threadCopy.id),
+    }).toEqual({ channel: ["invite"], channelCopy: [], threadCopy: [] })
   })
 
   describe("when the copy pulls the host's pages", () => {

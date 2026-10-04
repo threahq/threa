@@ -150,7 +150,8 @@ export class CommandAvailabilityService {
     options?: { includeReadOnlyWorkCommands?: boolean }
   ): Promise<ResolvedCommand[]> {
     const stream = await checkStreamAccess(db, params.streamId, params.workspaceId, params.userId)
-    if (!stream) return []
+    // A shared channel's copy runs no commands: their effects would stay on this side, unseen by the host.
+    if (!stream || stream.originWorkspaceId) return []
     const projected = await projectStreamForUser(db, {
       workspaceId: params.workspaceId,
       stream,
