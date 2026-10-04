@@ -4,7 +4,7 @@ import path from "node:path"
 import type { Pool } from "pg"
 import { setupIsolatedTestDatabase } from "./setup"
 
-/** Every unique key on a table that holds copied ids: led by workspace_id so each workspace keeps its own row. */
+/** Keys re-keyed to lead with workspace_id under their original names, each pinned to its final definition. */
 const CONTRACTED_KEYS: Record<string, { primary: boolean; def: string }> = {
   streams_pkey: {
     primary: true,
@@ -262,7 +262,8 @@ describe("workspace-leading keys", () => {
 
   test("should list every non-workspace-leading unique key in exactly one list when a table carries workspace_id", async () => {
     const result = await pool.query<{ name: string; skipped: boolean }>(`
-      -- Plain (id) primary keys are locally generated ids.
+      -- Plain (id) primary keys are skipped as locally generated; a table whose ids are copied across
+      -- workspaces leads its key with workspace_id and lists it in CONTRACTED_KEYS.
       SELECT i.relname AS name,
              (ix.indkey[0] = wa.attnum)
                OR (ix.indisprimary AND ix.indnkeyatts = 1 AND fa.attname = 'id') AS skipped
