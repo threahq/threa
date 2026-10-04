@@ -13,6 +13,7 @@ export { releaseInboxHold } from "./inbox-release"
 export type { CreateScratchpadParams, CreateChannelParams, CreateThreadParams } from "./service"
 
 export { normalizeStreamDescription } from "./description"
+export type { NormalizedStreamDescription } from "./description"
 
 // Which stream's memoryMode governs automatic capture here (INV-62 thread → root)
 export { findMemoryModeStream, isMemoryAutomationOn } from "./memory-mode"

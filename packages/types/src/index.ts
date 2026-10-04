@@ -1471,6 +1471,7 @@ export {
   type BridgeAttachment,
   type BridgeMessage,
   type BridgeChange,
+  type BridgeUser,
   type BridgeEvents,
 } from "./stream-connections"
 

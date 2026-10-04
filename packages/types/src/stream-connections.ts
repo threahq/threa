@@ -183,6 +183,7 @@ export const bridgeStreamSchema = z.object({
   id: z.string().min(1),
   parentStreamId: z.string().min(1).nullable(),
   parentAnchorId: z.string().min(1).nullable(),
+  slug: z.string().nullable(),
   displayName: z.string().nullable(),
   description: z.string().nullable(),
   descriptionJson: bridgeContentSchema.nullable(),
@@ -221,6 +222,14 @@ export const bridgeMessageSchema = z.object({
 })
 export type BridgeMessage = z.infer<typeof bridgeMessageSchema>
 
+/** A host user who wrote or reacted in the shared tree, as the partner shows them. */
+export const bridgeUserSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  slug: z.string().min(1),
+})
+export type BridgeUser = z.infer<typeof bridgeUserSchema>
+
 /** What a partner applies: a message to upsert, or one to drop because it was deleted or left the shared tree. */
 export const bridgeChangeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("message"), message: bridgeMessageSchema }),
@@ -235,6 +244,8 @@ export type BridgeChange = z.infer<typeof bridgeChangeSchema>
  */
 export const bridgeEventsSchema = z.object({
   changes: z.array(bridgeChangeSchema),
+  /** Every user the changes name as an author or reactor. */
+  users: z.array(bridgeUserSchema),
   cursor: bridgeSequenceSchema,
   hasMore: z.boolean(),
 })

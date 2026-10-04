@@ -21,6 +21,7 @@ function makeStream(overrides: Partial<Stream> = {}): Stream {
     lastReplyAt: null,
     companionMode: "off",
     companionPersonaId: null,
+    originWorkspaceId: null,
     createdBy: "member_1",
     createdAt: new Date(),
     updatedAt: new Date(),

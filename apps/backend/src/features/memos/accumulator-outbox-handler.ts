@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg"
-import { StreamStateRepository, findMemoryModeStream, isMemoryAutomationOn } from "../streams"
+import { StreamRepository, StreamStateRepository, findMemoryModeStream, isMemoryAutomationOn } from "../streams"
 import { ConversationRepository } from "../conversations"
 import { PendingItemRepository } from "./pending-item-repository"
 import { MemoRepository } from "./repository"
@@ -66,6 +66,7 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
     if (await E2eStreamsRepository.isE2eStream(this.db, workspaceId, streamId)) {
       return
     }
+    if (await StreamRepository.isSharedCopy(this.db, workspaceId, streamId)) return
 
     await withClient(this.db, (client) => queueMemoConversations(client, workspaceId, streamId, [conversationId]))
   }
@@ -96,6 +97,8 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
     if (await E2eStreamsRepository.isE2eStream(this.db, workspaceId, streamId)) {
       return
     }
+    // A shared copy mirrors another workspace's channel; its automation runs there.
+    if (await StreamRepository.isSharedCopy(this.db, workspaceId, streamId)) return
 
     await withTransaction(this.db, async (client) => {
       if (event.eventType === "message:deleted") {

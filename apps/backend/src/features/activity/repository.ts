@@ -166,7 +166,7 @@ export const ActivityRepository = {
         id, workspace_id, user_id, activity_type, stream_id, message_id,
         actor_id, actor_type, context, is_self, read_at, emoji
       )
-      VALUES (
+      SELECT
         ${id},
         ${params.workspaceId},
         ${params.userId},
@@ -175,10 +175,13 @@ export const ActivityRepository = {
         ${params.messageId},
         ${params.actorId},
         ${params.actorType},
-        ${JSON.stringify(params.context ?? {})},
+        ${JSON.stringify(params.context ?? {})}::jsonb,
         ${isSelf},
-        ${readAt},
+        ${readAt}::timestamptz,
         ${emoji}
+      WHERE NOT EXISTS (
+        SELECT 1 FROM users u
+        WHERE u.workspace_id = ${params.workspaceId} AND u.id = ${params.userId} AND u.origin_workspace_id IS NOT NULL
       )
       ${conflictClauseFor(params.activityType)}
       RETURNING ${sql.raw(USER_ACTIVITY_COLUMNS)}
@@ -225,6 +228,10 @@ export const ActivityRepository = {
         ${params.userIds.map(() => contextJson)}::jsonb[],
         ${readAt}::timestamptz[]
       ) AS t(id, workspace_id, user_id, activity_type, stream_id, message_id, actor_id, actor_type, context, read_at)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM users u
+        WHERE u.workspace_id = t.workspace_id AND u.id = t.user_id AND u.origin_workspace_id IS NOT NULL
+      )
       ${conflictClauseFor(params.activityType)}
       RETURNING ${sql.raw(USER_ACTIVITY_COLUMNS)}
     `)

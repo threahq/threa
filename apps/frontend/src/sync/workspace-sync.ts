@@ -408,6 +408,7 @@ function toWorkspaceBootstrapStream(stream: CachedStream): WorkspaceBootstrap["s
     createdAt: stream.createdAt,
     updatedAt: stream.updatedAt,
     archivedAt: stream.archivedAt,
+    originWorkspaceId: stream.originWorkspaceId,
     lastMessagePreview: stream.lastMessagePreview ?? null,
   }
 }

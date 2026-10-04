@@ -225,6 +225,8 @@ import {
   StreamConnectionPokeHandler,
   StreamConnectionService,
   createStreamConnectionSweepWorker,
+  createStreamConnectionPullWorker,
+  StreamConnectionPullService,
   STREAM_CONNECTION_SWEEP_INTERVAL_SECONDS,
 } from "./features/stream-connections"
 import {
@@ -1497,6 +1499,12 @@ export async function startServer(): Promise<ServerInstance> {
       JobQueues.STREAM_CONNECTION_SWEEP,
       createStreamConnectionSweepWorker({ streamConnectionImportService }),
       { tier: QueueTiers.LIGHT, fairness: QueueFairness.NONE }
+    )
+    const streamConnectionPullService = new StreamConnectionPullService({ pool, bridgeClient, featureFlagService })
+    jobQueue.registerHandler(
+      JobQueues.STREAM_CONNECTION_PULL,
+      createStreamConnectionPullWorker({ streamConnectionPullService }),
+      { tier: QueueTiers.LIGHT, fairness: QueueFairness.WORKSPACE }
     )
   }
 

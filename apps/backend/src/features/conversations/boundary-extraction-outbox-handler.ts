@@ -5,6 +5,7 @@ import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
 import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { StreamRepository } from "../streams"
 
 export type BoundaryExtractionHandlerConfig = DebouncedOutboxHandlerConfig
 
@@ -47,6 +48,8 @@ export class BoundaryExtractionHandler extends DebouncedOutboxHandler {
     if (!messageEvent.actorId) {
       return
     }
+    // A shared copy mirrors another workspace's channel; its automation runs there.
+    if (await StreamRepository.isSharedCopy(this.db, workspaceId, streamId)) return
 
     logger.debug({ streamId, messageId: messageEvent.payload.messageId }, "Boundary extraction job dispatched")
 

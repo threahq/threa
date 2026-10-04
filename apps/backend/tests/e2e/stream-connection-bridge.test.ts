@@ -12,6 +12,7 @@ import {
   type StreamConnectionSnapshot,
 } from "@threahq/types"
 import { StreamRepository } from "../../src/features/streams"
+import { UserRepository } from "../../src/features/workspaces"
 import { streamId, workspaceId } from "../../src/lib/id"
 import {
   TestClient,
@@ -27,6 +28,7 @@ import {
   updateMessage,
   updateStream,
   uploadAttachment,
+  validateMoveMessagesToThread,
   type Message,
 } from "../client"
 import { getTestDatabaseTarget } from "../test-database"
@@ -55,7 +57,7 @@ describe("Stream connection bridge", () => {
   })
 
   /** A host workspace with Connect on, one shared channel, and the partner the channel is shared with. */
-  async function setup(options: { partnerWorkspaceId?: string } = {}) {
+  async function setup(options: { partnerWorkspaceId?: string; deferShare?: boolean } = {}) {
     const client = new TestClient()
     n++
     await loginAs(client, `bridge-${n}-${testRunId}@test.com`, "Host Admin")
@@ -80,10 +82,11 @@ describe("Stream connection bridge", () => {
       peerWorkspaceIds: [],
       expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
     }
-    await syncConnection(client, connection)
+    const share = () => syncConnection(client, connection)
+    if (!options.deferShare) await share()
     const partner = (path: string, headers?: Record<string, string>) =>
       bridgeGet(workspace.id, connection.id, path, headers ?? partnerHeaders(partnerWorkspaceId))
-    return { client, workspace, channel, connection, partnerWorkspaceId, partner }
+    return { client, workspace, channel, connection, partnerWorkspaceId, partner, share }
   }
 
   async function setConnectFlag(client: TestClient, wsId: string, value: "on" | "off") {
@@ -274,13 +277,14 @@ describe("Stream connection bridge", () => {
     const shared = await manifest(partner)
     const fullReads = await Promise.all(shared.streams.map((stream) => readAll(partner, stream.id)))
 
-    const bare = { description: null, descriptionJson: null, archivedAt: null, head: expect.any(String) }
+    const bare = { slug: null, description: null, descriptionJson: null, archivedAt: null, head: expect.any(String) }
     expect(shared).toEqual({
       streams: [
         {
           id: channel.id,
           parentStreamId: null,
           parentAnchorId: null,
+          slug: channel.slug,
           displayName: channel.displayName,
           description: `Plans live in #${other.slug}, replies in [#${channel.slug}](channel:${channel.id})`,
           descriptionJson: doc(
@@ -312,7 +316,7 @@ describe("Stream connection bridge", () => {
     expect(fullReads.map((read) => read.cursor)).toEqual(shared.streams.map((stream) => stream.head))
   })
 
-  test("should export each changed message once, as it is now, drop deleted ones, and withhold what the host keeps to itself", async () => {
+  test("should export each changed message once, as it is now, with the users it names, drop deleted ones, and withhold what the host keeps to itself", async () => {
     const { client, workspace, channel, partner } = await setup()
     const first = await sendMessage(client, workspace.id, channel.id, "first")
     const second = await sendMessage(client, workspace.id, channel.id, "second")
@@ -324,15 +328,17 @@ describe("Stream connection bridge", () => {
 
     const page = await events(partner, channel.id)
 
+    const author = (await UserRepository.findById(pool, workspace.id, first.authorId))!
     expect(page).toEqual({
       changes: [exported(edited), exported(reacted), { kind: "message_removed", messageId: doomed.id }],
+      users: [{ id: author.id, name: "Host Admin", slug: author.slug }],
       cursor: (await manifest(partner)).streams[0].head,
       hasMore: false,
     })
   })
 
-  test("should follow messages moved into a thread, and page past the sequences they vacated", async () => {
-    const { client, workspace, channel, partner } = await setup()
+  test("should share messages moved into a thread before the share with the thread, and page past the sequences they vacated", async () => {
+    const { client, workspace, channel, partner, share } = await setup({ deferShare: true })
     const anchor = await sendMessage(client, workspace.id, channel.id, "anchor")
     const movedA = await sendMessage(client, workspace.id, channel.id, "moved a")
     const movedB = await sendMessage(client, workspace.id, channel.id, "moved b")
@@ -344,6 +350,7 @@ describe("Stream connection bridge", () => {
       anchor.id,
       [movedA.id, movedB.id]
     )
+    await share()
 
     const heads = new Map((await manifest(partner)).streams.map((stream) => [stream.id, stream.head]))
     const channelRead = await readAll(partner, channel.id, 1)
@@ -353,13 +360,34 @@ describe("Stream connection bridge", () => {
     const inThread = (message: Message) => exported(message, { streamId: threadStreamId })
     expect({ channelRead, threadRead, caughtUp }).toEqual({
       channelRead: {
-        changes: [exported(anchor), exported(stays), inThread(movedA), inThread(movedB)],
+        changes: [
+          exported(anchor),
+          exported(stays),
+          { kind: "message_removed", messageId: movedA.id },
+          { kind: "message_removed", messageId: movedB.id },
+        ],
         cursor: heads.get(channel.id)!,
         pages: expect.any(Number),
       },
       threadRead: { changes: [inThread(movedA), inThread(movedB)], cursor: heads.get(threadStreamId)!, pages: 1 },
-      caughtUp: { changes: [], cursor: heads.get(channel.id)!, hasMore: false },
+      caughtUp: { changes: [], users: [], cursor: heads.get(channel.id)!, hasMore: false },
     })
+  })
+
+  test("should refuse to move messages when the channel is shared", async () => {
+    const { client, workspace, channel } = await setup()
+    const anchor = await sendMessage(client, workspace.id, channel.id, "anchor")
+    const moving = await sendMessage(client, workspace.id, channel.id, "moving")
+
+    const { status, data } = await validateMoveMessagesToThread<{ code: string }>(
+      client,
+      workspace.id,
+      channel.id,
+      anchor.id,
+      [moving.id]
+    )
+
+    expect({ status, code: data.code }).toEqual({ status: 403, code: "STREAM_SHARED" })
   })
 
   test("should record each read as a disclosure to the partner, under its connection", async () => {

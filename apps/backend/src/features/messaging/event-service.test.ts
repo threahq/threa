@@ -27,6 +27,7 @@ import { messagesTotal } from "../../lib/observability"
 import { StreamPersonaParticipantRepository } from "../agents"
 import { DraftsRepository } from "../drafts"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { StreamConnectionRepository } from "../stream-connections"
 import { StreamContextRepository } from "../stream-context"
 import { UserPreferencesRepository } from "../user-preferences"
 import { MessageConversationStateRepository } from "../conversations"
@@ -1804,6 +1805,7 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
     parentStreamId: null,
     parentAnchorId: null,
     rootStreamId: null,
+    originWorkspaceId: null,
   }
   const destinationThread = {
     id: "stream_thread",
@@ -1816,6 +1818,7 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
     parentStreamId: "stream_src",
     parentAnchorId: "msg_target",
     rootStreamId: "stream_src",
+    originWorkspaceId: null,
   }
 
   function movedMessage(contentJson: unknown) {
@@ -1841,6 +1844,7 @@ describe("EventService.moveMessagesToThread destination slot carrier (B3)", () =
     spyOn(StreamRepository, "findById").mockResolvedValue(sourceStream as any)
     spyOn(StreamRepository, "findByAnchor").mockResolvedValue(null)
     spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
+    spyOn(StreamConnectionRepository, "listLiveForStream").mockResolvedValue([])
     spyOn(MessageRepository, "findByIdForUpdate").mockResolvedValue({
       id: "msg_target",
       streamId: "stream_src",
@@ -2345,15 +2349,20 @@ describe("EventService.createMessage outbox pairing (the sidebar's single previe
 
 /**
  * The client-side single preview writer rests on two source-level properties the
- * mocked-transaction test above cannot see: `message:created` is emitted from
- * exactly ONE site, and `stream:activity` rides with it. A second emit site added
- * anywhere in `apps/backend/src` keeps that test green while silently freezing the
- * sidebar for those messages — the preview is written from `stream:activity` alone.
+ * mocked-transaction test above cannot see: `message:created` is emitted only from
+ * the recorded sites, and `stream:activity` rides with each. An unrecorded emit site
+ * added anywhere in `apps/backend/src` keeps that test green while silently freezing
+ * the sidebar for those messages — the preview is written from `stream:activity` alone.
+ * The shared-channel replica is the second site; its pairing is proven end to end in
+ * `tests/e2e/stream-connection-pull.test.ts`.
  *
- * Same shape as the INV-68 ratchet: one recorded count, which may only go down.
+ * Same shape as the INV-68 ratchet: recorded counts, which may only go down.
  */
-describe("message:created has exactly one outbox emit site", () => {
-  const EXPECTED_EMIT_SITES = { "features/messaging/event-service.ts": 1 }
+describe("message:created outbox emit sites", () => {
+  const EXPECTED_EMIT_SITES = {
+    "features/messaging/event-service.ts": 1,
+    "features/messaging/replica.ts": 1,
+  }
 
   async function countEmitSites(root: string): Promise<Record<string, number>> {
     const { Glob } = await import("bun")
@@ -2367,7 +2376,7 @@ describe("message:created has exactly one outbox emit site", () => {
     return counts
   }
 
-  it("finds the one site, in event-service.ts", async () => {
+  it("should find message:created emitted only at the recorded sites", async () => {
     const root = new URL("../../../src", import.meta.url).pathname.replace(/\/$/, "")
     expect(await countEmitSites(root)).toEqual(EXPECTED_EMIT_SITES)
   })

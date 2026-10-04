@@ -1,5 +1,6 @@
 import type { Pool } from "pg"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { StreamRepository } from "../streams"
 import { PersonaRepository } from "./persona-repository"
 import { parseMessagePayload } from "../../lib/outbox"
 import { AgentTriggers, AuthorTypes } from "@threahq/types"
@@ -84,6 +85,8 @@ export class MentionInvokeHandler extends DebouncedOutboxHandler {
     if (personaIds.length === 0) {
       return
     }
+    // A shared copy mirrors another workspace's channel; its automation runs there.
+    if (await StreamRepository.isSharedCopy(this.db, workspaceId, streamId)) return
 
     const personas = await PersonaRepository.findByIds(this.db, workspaceId, personaIds)
 

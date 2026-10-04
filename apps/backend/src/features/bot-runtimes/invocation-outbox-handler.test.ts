@@ -357,6 +357,10 @@ describe("resolveCanonicalInvocationRoutes", () => {
 })
 
 describe("BotInvocationOutboxHandler canonical reconciliation", () => {
+  beforeEach(() => {
+    spyOn(StreamRepository, "isSharedCopy").mockResolvedValue(false)
+  })
+
   const createdPayload = {
     workspaceId: "ws_1",
     streamId: "stream_1",
@@ -378,6 +382,18 @@ describe("BotInvocationOutboxHandler canonical reconciliation", () => {
     )
 
     expect(reconcile).toHaveBeenCalledWith({ workspaceId: "ws_1", sourceMessageId: "msg_1" })
+  })
+
+  it("should not reconcile when the message is in a shared copy", async () => {
+    spyOn(StreamRepository, "isSharedCopy").mockResolvedValue(true)
+    const reconcile = spyOn(BotRuntimeService.prototype, "reconcileInvocationSource").mockResolvedValue([])
+    const handler = new BotInvocationOutboxHandler(pool, new BotRuntimeService({ pool }))
+
+    await (handler as unknown as { processMessageMutation(payload: unknown): Promise<void> }).processMessageMutation(
+      createdPayload
+    )
+
+    expect(reconcile).not.toHaveBeenCalled()
   })
 
   it("posts missing-link notices only after reconciliation with an idempotent source key", async () => {
@@ -420,6 +436,7 @@ describe("BotInvocationOutboxHandler canonical reconciliation", () => {
 
     await (handler as unknown as { processMessageDeleted(payload: unknown): Promise<void> }).processMessageDeleted({
       workspaceId: "ws_1",
+      streamId: "stream_1",
       messageId: "msg_1",
     })
 

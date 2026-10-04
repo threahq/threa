@@ -52,6 +52,7 @@ describe("MemoAccumulatorHandler memory gate", () => {
 
   function arrange(findById: (id: string) => any) {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    spyOn(StreamRepository, "isSharedCopy").mockResolvedValue(false)
     spyOn(dbModule, "withClient").mockImplementation((async (_pool: unknown, fn: (c: unknown) => unknown) =>
       fn({})) as typeof dbModule.withClient)
     spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, _workspaceId: string, id: string) =>
@@ -124,5 +125,30 @@ describe("MemoAccumulatorHandler memory gate", () => {
 
     expect(queue).not.toHaveBeenCalled()
     expect(activity).not.toHaveBeenCalled()
+  })
+
+  it("should skip queueing when the conversation is in a shared copy", async () => {
+    const { handler, queue, activity } = arrange(() => makeStream({ id: "stream_x", memoryMode: MemoryModes.AUTO }))
+    spyOn(StreamRepository, "isSharedCopy").mockResolvedValue(true)
+
+    await handler.run(conversationEvent("stream_x"))
+
+    expect(queue).not.toHaveBeenCalled()
+    expect(activity).not.toHaveBeenCalled()
+  })
+
+  it("should leave memos alone when a message in a shared copy is deleted", async () => {
+    const { handler } = arrange(() => makeStream({ id: "stream_x", memoryMode: MemoryModes.AUTO }))
+    spyOn(StreamRepository, "isSharedCopy").mockResolvedValue(true)
+    const transaction = spyOn(dbModule, "withTransaction").mockResolvedValue(undefined as never)
+
+    await handler.run({
+      id: 2n,
+      eventType: "message:deleted",
+      createdAt: new Date(),
+      payload: { workspaceId: "ws_1", streamId: "stream_x", messageId: "msg_1" },
+    } as unknown as OutboxEvent)
+
+    expect(transaction).not.toHaveBeenCalled()
   })
 })

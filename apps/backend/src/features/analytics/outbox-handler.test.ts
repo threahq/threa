@@ -4,6 +4,7 @@ import * as cursorLockModule from "@threahq/backend-common"
 import type { ProcessResult } from "@threahq/backend-common"
 import { AnalyticsOutboxHandler } from "./outbox-handler"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { StreamRepository } from "../streams"
 import { UserPreferencesRepository, userOverrideRefKey } from "../user-preferences"
 
 function makeFakeCursorLock() {
@@ -26,11 +27,12 @@ function createHandler(consent: Map<string, unknown> = new Map()) {
   const excludeE2eRootedStreamIds = spyOn(E2eStreamsRepository, "excludeE2eRootedStreamIds").mockImplementation(
     async (_db, refs) => refs.map((ref) => ref.streamId)
   )
+  const findSharedCopyRefs = spyOn(StreamRepository, "findSharedCopyRefs").mockResolvedValue([])
   const findOverrideForUsers = spyOn(UserPreferencesRepository, "findOverrideForUsers").mockResolvedValue(consent)
   const captureEvent = mock()
   const reporter = { captureEvent, captureException: mock(), shutdown: mock(async () => {}) }
   const handler = new AnalyticsOutboxHandler({} as any, reporter as any)
-  return { handler, captureEvent, excludeE2eRootedStreamIds, findOverrideForUsers }
+  return { handler, captureEvent, excludeE2eRootedStreamIds, findSharedCopyRefs, findOverrideForUsers }
 }
 
 function messageCreatedEvent(overrides: {
@@ -156,6 +158,21 @@ describe("AnalyticsOutboxHandler", () => {
     const { handler, captureEvent, excludeE2eRootedStreamIds } = createHandler(USR_A_GRANTED)
     excludeE2eRootedStreamIds.mockResolvedValue([])
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([messageCreatedEvent({})] as any)
+
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(captureEvent).not.toHaveBeenCalled()
+  })
+
+  it("should not capture anything when the stream is a shared copy", async () => {
+    const { handler, captureEvent, findSharedCopyRefs } = createHandler(USR_A_GRANTED)
+    findSharedCopyRefs.mockResolvedValue([{ workspaceId: "ws_test", streamId: "stream_test" }])
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([
+      messageCreatedEvent({}),
+      reactionEvent(),
+      streamCreatedEvent(),
+    ] as any)
 
     handler.handle()
     await new Promise((r) => setTimeout(r, 300))

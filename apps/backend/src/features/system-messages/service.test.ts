@@ -27,6 +27,7 @@ function fakeStream(overrides: Partial<Stream> = {}): Stream {
     lastReplyAt: null,
     companionMode: CompanionModes.OFF,
     companionPersonaId: null,
+    originWorkspaceId: null,
     createdBy: USER_A,
     createdAt: new Date(),
     updatedAt: new Date(),

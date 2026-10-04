@@ -19,6 +19,7 @@ function stream(id: string, workspaceId = "ws_1", rootStreamId: string | null = 
     lastReplyAt: null,
     companionMode: "off",
     companionPersonaId: null,
+    originWorkspaceId: null,
     createdBy: "usr_1",
     createdAt: new Date(0),
     updatedAt: new Date(0),

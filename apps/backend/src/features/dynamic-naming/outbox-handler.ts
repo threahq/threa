@@ -203,7 +203,8 @@ export class DynamicNamingOutboxHandler extends DebouncedOutboxHandler {
     if (!payload || payload.event.actorType !== AuthorTypes.USER || !payload.event.actorId) return
 
     const stream = await StreamRepository.findById(this.db, payload.workspaceId, payload.streamId)
-    if (!stream || stream.archivedAt) return
+    // A shared copy takes its name from the host workspace.
+    if (!stream || stream.archivedAt || stream.originWorkspaceId) return
     if (
       stream.type !== StreamTypes.SCRATCHPAD &&
       stream.type !== StreamTypes.THREAD &&

@@ -35,6 +35,7 @@ import { releaseInboxHold } from "./inbox-release"
 import {
   assertStreamWritable,
   assertViewerStreamWritable,
+  createStreamReadOnlyError,
   deriveStreamViewerState,
   lockEffectiveStreams,
   type LockedStreamFacts,
@@ -71,6 +72,7 @@ import {
   type StreamReadFrontier,
   type StreamReadFrontierSnapshot,
   TitleSources,
+  StreamReadOnlyReasons,
   type StreamDirectoryStats,
 } from "@threahq/types"
 import { ContextBagRepository, PersonaRepository, assertAssignablePersona } from "../agents"
@@ -1349,6 +1351,8 @@ export class StreamService {
   ): Promise<Stream | null> {
     const { target, root } = await lockLifecycleStreams(client, workspaceId, streamId)
     await lockPrincipalAccess(client, workspaceId, root, principal)
+    // A copy archives when its host does, through the pull.
+    if (target.originWorkspaceId) throw createStreamReadOnlyError(StreamReadOnlyReasons.SHARED_COPY)
     assertCanArchive(target, root, principal)
     // Idempotent once authority is proven: a repeat flip would bump archived_at
     // and append a second lifecycle event, so retries would litter the timeline.

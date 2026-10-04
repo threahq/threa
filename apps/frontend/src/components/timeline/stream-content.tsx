@@ -669,6 +669,7 @@ export function StreamContent({
   const stream = streamFromProps ?? idbStream ?? bootstrap?.stream
   const isThread = stream?.type === StreamTypes.THREAD
   const isSystem = stream?.type === StreamTypes.SYSTEM
+  const isSharedCopy = !!stream?.originWorkspaceId
   // Archived state is inherited down the parent chain; the shared hook walks
   // the warm workspace-stream cache and falls back to the per-stream
   // bootstrap's cold-load verdict only when a link is missing.
@@ -2341,6 +2342,8 @@ export function StreamContent({
     disabledReason = "This thread has been sealed in the labyrinth. It can be read but not extended."
   } else if (ancestorArchived) {
     disabledReason = "The stream this thread belongs to has been archived. It can be read but not extended."
+  } else if (isSharedCopy) {
+    disabledReason = "Shared from another workspace. It can be read here but not posted to."
   }
 
   const handleJoined = useCallback(
@@ -3114,7 +3117,7 @@ export function StreamContent({
                     <MessageInput
                       workspaceId={workspaceId}
                       streamId={streamId}
-                      disabled={isArchived || isSystem}
+                      disabled={isArchived || isSystem || isSharedCopy}
                       disabledReason={disabledReason}
                       autoFocus={autoFocus}
                       onComposerHeightChange={handleComposerHeightChange}

@@ -5,6 +5,7 @@ import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
 import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { StreamRepository } from "../streams"
 
 export type EmbeddingHandlerConfig = DebouncedOutboxHandlerConfig
 
@@ -73,6 +74,8 @@ export class EmbeddingHandler extends DebouncedOutboxHandler {
     if (await E2eStreamsRepository.isE2eStream(this.db, workspaceId, streamId)) {
       return
     }
+    // A shared copy mirrors another workspace's channel; its automation runs there.
+    if (await StreamRepository.isSharedCopy(this.db, workspaceId, streamId)) return
 
     logger.debug({ messageId }, logMessage)
 
