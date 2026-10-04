@@ -217,6 +217,14 @@ describe("A partner's writes to a shared channel", () => {
     expect(await outcome(send(world, "yours", { author: world.sam, clientMessageId: "client-taken" }))).toEqual(REFUSED)
   })
 
+  test("should refuse the send when the author's message under the client message id was deleted", async () => {
+    const world = await seedWorld()
+    const { messageId } = await send(world, "gone", { clientMessageId: "client-deleted" })
+    await writer.deleteMessage({ ...world.caller, streamId: world.channel.id, messageId, authorId: world.pat.id })
+
+    expect(await outcome(send(world, "gone", { clientMessageId: "client-deleted" }))).toEqual(REFUSED)
+  })
+
   test("should change the content when the author edits their message", async () => {
     const world = await seedWorld()
     const { messageId: id } = await send(world, "first draft")
@@ -298,15 +306,16 @@ describe("A partner's writes to a shared channel", () => {
       outcome(send(world, "as host", { author: hostUser })),
       outcome(send(world, "as third", { author: thirdUser })),
       outcome(send(world, "mentioning host", { users: [hostUser] })),
+      outcome(send(world, "mentioning third", { users: [{ ...thirdUser, name: "Impostor" }] })),
     ])
 
-    const { rows } = await pool.query("SELECT name FROM users WHERE workspace_id = $1 AND id = $2", [
-      world.host.id,
-      world.host.adminId,
-    ])
-    expect({ outcomes, hostUserName: rows[0].name }).toEqual({
-      outcomes: [REFUSED, REFUSED, REFUSED],
-      hostUserName: expect.not.stringMatching("Impostor"),
+    const { rows } = await pool.query(
+      "SELECT id, name FROM users WHERE workspace_id = $1 AND id = ANY($2) ORDER BY id",
+      [world.host.id, [world.host.adminId, thirdUser.id]]
+    )
+    expect({ outcomes, names: rows.map((row) => row.name) }).toEqual({
+      outcomes: [REFUSED, REFUSED, REFUSED, REFUSED],
+      names: [expect.not.stringMatching("Impostor"), expect.not.stringMatching("Impostor")],
     })
   })
 
@@ -454,18 +463,16 @@ describe("A partner's writes to a shared channel", () => {
     })
   })
 
-  test("should refuse content that is not a document when the partner sends it", async () => {
+  test("should refuse content naming a node or mark the bridge doesn't carry when the partner sends it", async () => {
     const world = await seedWorld()
-    const paragraph = (...content: unknown[]) => ({ type: "paragraph", content })
-    const malformed = [
-      { type: "doc", content: "not a list" },
-      { type: "doc", content: [null] },
-      { type: "doc", content: ["not a node"] },
-      { type: "doc", content: [{ content: [] }] },
+    const malformed: JSONContent[] = [
+      { type: "paragraph", content: [{ type: "text", text: "x" }] },
       { type: "doc", content: [{ type: "script" }] },
-      { type: "doc", content: [paragraph({ type: "text", text: "x", marks: "bold" })] },
-      { type: "doc", content: [paragraph({ type: "text", text: "x", marks: [null] })] },
-    ] as JSONContent[]
+      {
+        type: "doc",
+        content: [{ type: "paragraph", content: [{ type: "text", text: "x", marks: [{ type: "blink" }] }] }],
+      },
+    ]
 
     const outcomes = await Promise.all(malformed.map((content) => outcome(send(world, content))))
 
@@ -495,7 +502,7 @@ describe("A partner's writes to a shared channel", () => {
 
     await writer.addReaction({ ...target, author: world.pat })
     const added = (await stored(world, message.id))?.reactions
-    await writer.removeReaction({ ...target, userId: world.pat.id })
+    await writer.removeReaction({ ...target, authorId: world.pat.id })
     const removed = (await stored(world, message.id))?.reactions
 
     expect({ added, removed }).toEqual({ added: { ":+1:": [world.pat.id] }, removed: {} })
@@ -518,7 +525,7 @@ describe("A partner's writes to a shared channel", () => {
           streamId: world.channel.id,
           messageId: inside.id,
           emoji: ":+1:",
-          userId: world.pat.id,
+          authorId: world.pat.id,
         })
       ),
     ])

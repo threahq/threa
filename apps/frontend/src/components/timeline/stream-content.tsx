@@ -3117,7 +3117,7 @@ export function StreamContent({
                       streamId={streamId}
                       disabled={isArchived || isSystem}
                       disabledReason={disabledReason}
-                      attachmentsDisabled={isSharedCopy}
+                      sharedCopy={isSharedCopy}
                       autoFocus={autoFocus}
                       onComposerHeightChange={handleComposerHeightChange}
                       onMobileTypingChange={setMobileComposerTyping}

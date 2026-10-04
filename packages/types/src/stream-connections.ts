@@ -184,6 +184,19 @@ const bridgeContentSchema = z.custom<JSONContent>(
   (value) => typeof value === "object" && value !== null && (value as { type?: unknown }).type === "doc"
 )
 
+const bridgeContentNodeSchema: z.ZodType<JSONContent> = z.lazy(() =>
+  z.object({
+    type: z.string(),
+    attrs: z.record(z.string(), z.unknown()).optional(),
+    content: z.array(bridgeContentNodeSchema).optional(),
+    marks: z.array(z.object({ type: z.string(), attrs: z.record(z.string(), z.unknown()).optional() })).optional(),
+    text: z.string().optional(),
+  })
+)
+
+/** A partner's document, checked node by node so the host only judges which nodes it carries, never their shape. */
+const bridgeWriteContentSchema = bridgeContentNodeSchema.refine((doc) => doc.type === "doc")
+
 /** One stream of the shared tree: the channel, or a thread anchored on one of the tree's messages. */
 export const bridgeStreamSchema = z.object({
   id: z.string().min(1),
@@ -263,7 +276,7 @@ export const bridgeSendMessageSchema = z.object({
   author: bridgeWriteUserSchema,
   users: z.array(bridgeWriteUserSchema),
   clientMessageId: z.string().min(1),
-  contentJson: bridgeContentSchema,
+  contentJson: bridgeWriteContentSchema,
 })
 export type BridgeSendMessage = z.infer<typeof bridgeSendMessageSchema>
 
@@ -273,7 +286,7 @@ export type BridgeSendMessageResponse = z.infer<typeof bridgeSendMessageResponse
 export const bridgeEditMessageSchema = z.object({
   author: bridgeWriteUserSchema,
   users: z.array(bridgeWriteUserSchema),
-  contentJson: bridgeContentSchema,
+  contentJson: bridgeWriteContentSchema,
 })
 export type BridgeEditMessage = z.infer<typeof bridgeEditMessageSchema>
 
@@ -283,7 +296,7 @@ export type BridgeAddReaction = z.infer<typeof bridgeAddReactionSchema>
 
 /** A delete names its author in the query, since a DELETE carries no body. */
 export const bridgeDeleteMessageQuerySchema = z.object({ authorId: z.string().regex(/^usr_/) })
-export const bridgeRemoveReactionQuerySchema = z.object({ userId: z.string().regex(/^usr_/) })
+export const bridgeRemoveReactionQuerySchema = z.object({ authorId: z.string().regex(/^usr_/) })
 
 /** A host custom persona or bot that wrote or reacted in the shared tree, as the partner shows it. */
 export const bridgeActorSchema = z.object({

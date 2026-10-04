@@ -307,18 +307,11 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
           call: `${req.method} ${new URL(req.url).pathname}`,
           callerWorkspace: req.headers.get("X-Threa-Bridge-Workspace"),
         })
-        return Response.json({ error: "stub" }, { status: respondWith() })
+        return Response.json({ error: "Stub says no" }, { status: respondWith() })
       },
     })
     stubs.push(server)
     return { url: `http://localhost:${server.port}`, requests }
-  }
-
-  function unusedUrl() {
-    const server = Bun.serve({ port: 0, fetch: () => new Response() })
-    const url = `http://localhost:${server.port}`
-    server.stop(true)
-    return url
   }
 
   test("should send as the partner's user and return the copy carrying the client message id when the host takes the message", async () => {
@@ -462,14 +455,14 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
 
   test("should throw HOST_UNREACHABLE and leave no local message when the host cannot be reached", async () => {
     const world = await seedWorld()
-    const deadHost = new BridgeClient({ routerUrl: unusedUrl(), apiKey: "unused" })
+    const deadHost = new BridgeClient({ routerUrl: "http://127.0.0.1:1", apiKey: "unused" })
 
     const sent = await outcome(forwardVia(deadHost).sendMessage(patSend(world, "client-dead", "into the void")))
 
     expect({ sent, local: await messageIdsByClientId(world, "client-dead") }).toEqual({ sent: UNREACHABLE, local: [] })
   })
 
-  test("should refuse a write the host answers with a 4xx and call it unreachable when it answers with a 5xx or asks to slow down", async () => {
+  test("should refuse a write the host answers with a 4xx, giving the host's reason, and call it unreachable when it answers with a 5xx, rejects the bridge key or asks to slow down", async () => {
     const world = await seedWorld()
     let status = 403
     const stub = startStubHost(() => status)
@@ -477,10 +470,20 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
     const send = () => outcome(forward.sendMessage(patSend(world, "client-stub", "to the stub")))
 
     const outcomes: unknown[] = []
-    for (status of [403, 404, 408, 429, 500, 503]) outcomes.push(await send())
+    for (status of [403, 404, 401, 408, 429, 500, 503]) outcomes.push(await send())
+    status = 403
+    const reason = await forward
+      .sendMessage(patSend(world, "client-stub", "to the stub"))
+      .catch((error: Error) => error.message)
 
-    expect({ outcomes, requests: stub.requests[0], local: await messageIdsByClientId(world, "client-stub") }).toEqual({
-      outcomes: [REFUSED, REFUSED, UNREACHABLE, UNREACHABLE, UNREACHABLE, UNREACHABLE],
+    expect({
+      outcomes,
+      reason,
+      requests: stub.requests[0],
+      local: await messageIdsByClientId(world, "client-stub"),
+    }).toEqual({
+      outcomes: [REFUSED, REFUSED, UNREACHABLE, UNREACHABLE, UNREACHABLE, UNREACHABLE, UNREACHABLE],
+      reason: expect.stringContaining("answered 403: Stub says no"),
       requests: {
         call: `POST /api/workspaces/${world.host.id}/stream-connections/${world.connectionId}/bridge/streams/${world.channel.id}/messages`,
         callerWorkspace: world.partner.id,
@@ -587,6 +590,31 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
         afterRefusal: null,
         reached: true,
         applied: world.host.adminId,
+      })
+    })
+
+    test("should refuse a page typing a user author as a persona and apply nothing when the page is pulled", async () => {
+      const world = await seedWorld()
+      const news = await hostSays(world.host, world.channel.id, "news")
+      const tampered = new TamperedBridgeClient(host, (page) => ({
+        ...page,
+        changes: page.changes.map((change) =>
+          change.kind === "message"
+            ? { ...change, message: { ...change.message, authorType: AuthorTypes.PERSONA } }
+            : change
+        ),
+      }))
+
+      const refused = await pullVia(tampered)
+        .pull(world.ref)
+        .then(
+          () => "pulled",
+          (error: Error) => error.message
+        )
+
+      expect({ refused, applied: await partnerMessage(world, news.id) }).toEqual({
+        refused: expect.stringContaining("is typed as a persona"),
+        applied: null,
       })
     })
 

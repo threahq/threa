@@ -68,8 +68,9 @@ export class StreamConnectionWriteService {
       ...content,
       clientMessageId: caller.clientMessageId,
     })
-    // The send is deduped on its id alone, so an id another user already sent under is not this author's to see.
-    if (message.authorId !== caller.author.id || message.authorType !== AuthorTypes.USER) {
+    // The send is deduped on its id alone, so an id another user already sent under is not this author's to see,
+    // and a deleted message would never come back to the caller's copy.
+    if (message.authorId !== caller.author.id || message.authorType !== AuthorTypes.USER || message.deletedAt) {
       throw writeRefused("Client message id is taken")
     }
     return { messageId: message.id }
@@ -126,9 +127,9 @@ export class StreamConnectionWriteService {
     if (!reacted) throw writeRefused("Message not found")
   }
 
-  async removeReaction(caller: MessageCaller & { userId: string; emoji: string }): Promise<void> {
+  async removeReaction(caller: MessageCaller & { authorId: string; emoji: string }): Promise<void> {
     await this.admit(caller, {
-      authorId: caller.userId,
+      authorId: caller.authorId,
       profiles: [],
       message: { id: caller.messageId, ownedByAuthor: false },
     })
@@ -137,7 +138,7 @@ export class StreamConnectionWriteService {
       messageId: caller.messageId,
       streamId: caller.streamId,
       emoji: caller.emoji,
-      userId: caller.userId,
+      userId: caller.authorId,
       actorType: AuthorTypes.USER,
     })
     if (!removed) throw writeRefused("Message not found")

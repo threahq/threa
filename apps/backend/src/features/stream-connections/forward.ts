@@ -101,7 +101,7 @@ export class StreamConnectionForwardService {
       streamId: params.stream.id,
       messageId: params.messageId,
       emoji: params.emoji,
-      userId: author.id,
+      authorId: author.id,
     })
     return this.settle(ref, params.stream.id, params.messageId)
   }

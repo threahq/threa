@@ -258,7 +258,7 @@ describe("MessageEditForm saving", () => {
       infos: infoToast.mock.calls,
       saved: onSave.mock.calls,
       queued: await db.pendingOperations.toArray(),
-      formOpen: screen.getByRole("textbox", { name: "Edit message" }) !== null,
+      formOpen: screen.queryByRole("textbox", { name: "Edit message" }) !== null,
     }).toEqual({ errors: [["Couldn't save your edit."]], infos: [], saved: [], queued: [], formOpen: true })
   })
 

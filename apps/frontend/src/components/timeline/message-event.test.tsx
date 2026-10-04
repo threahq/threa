@@ -968,12 +968,20 @@ describe("MessageEvent stream-row reads", () => {
     )
     expect(await screen.findByTestId("stream-row-probe")).toHaveTextContent("Shared Channel")
 
+    const pill = screen.getByText("1").closest("button")
     expect({
-      pillToggles: screen.getByText("1").closest("button")?.getAttribute("aria-disabled") ?? null,
+      pill,
+      pillDisabled: pill?.getAttribute("aria-disabled") ?? null,
       addReaction: screen.queryAllByRole("button", { name: "Add reaction" }).length > 0,
       replyLink: screen.queryByRole("link", { name: "Reply in thread" }),
       replyButton: screen.queryByRole("button", { name: "Reply in thread" }),
-    }).toEqual({ pillToggles: null, addReaction: true, replyLink: null, replyButton: null })
+    }).toEqual({
+      pill: expect.any(HTMLButtonElement),
+      pillDisabled: null,
+      addReaction: true,
+      replyLink: null,
+      replyButton: null,
+    })
   })
 
   it("an E2E row still holds at pending until its stream row hydrates", async () => {

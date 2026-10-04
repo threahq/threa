@@ -478,26 +478,24 @@ export async function importDoc(
       inboundMentions: mentions,
     })
     return { contentJson, contentMarkdown: deriveContentMarkdown(contentJson) }
-  } catch {
-    throw writeRefused("Content is not valid")
+  } catch (error) {
+    if (error instanceof UnknownNodeTypeError || error instanceof UnknownContentError) {
+      throw writeRefused("Content is not valid")
+    }
+    throw error
   }
 }
 
-/** Reads a document that may not be one, so a malformed node is for `exportDoc` to refuse rather than a throw here. */
-function collectMentionIds(root: JSONContent): string[] {
-  const ids: string[] = []
-  const pending: unknown[] = [root]
-  while (pending.length > 0) {
-    const node = pending.pop() as JSONContent | null
-    if (typeof node !== "object" || node === null) continue
-    if (BRIDGE_NODE_RULES.get(node.type ?? "") === "mention") ids.push(attr(node, "id") ?? "")
-    if (Array.isArray(node.content)) for (const child of node.content) pending.push(child)
-  }
-  return ids
+function collectMentionIds(node: JSONContent): string[] {
+  const own = BRIDGE_NODE_RULES.get(node.type ?? "") === "mention" ? [attr(node, "id") ?? ""] : []
+  return [...own, ...(node.content ?? []).flatMap(collectMentionIds)]
 }
+
+/** Content naming a node or mark the bridge doesn't carry, which a partner's write is refused for. */
+class UnknownContentError extends Error {}
 
 function exportDoc(doc: JSONContent, scope: ContentScope): JSONContent {
-  if (doc.type !== "doc") throw new Error(`A document's root is ${doc.type}, not doc`)
+  if (doc.type !== "doc") throw new UnknownContentError(`A document's root is ${doc.type}, not doc`)
   return exportNode(doc, scope)!
 }
 
@@ -505,7 +503,7 @@ function exportNode(node: JSONContent, scope: ContentScope): JSONContent | null 
   const rule = BRIDGE_NODE_RULES.get(node.type ?? "")
   if (!rule) throw new UnknownNodeTypeError(node.type ?? "")
   for (const mark of node.marks ?? []) {
-    if (!Object.hasOwn(BRIDGE_MARKS, mark.type)) throw new Error(`Unknown mark type ${mark.type}`)
+    if (!Object.hasOwn(BRIDGE_MARKS, mark.type)) throw new UnknownContentError(`Unknown mark type ${mark.type}`)
   }
 
   switch (rule) {

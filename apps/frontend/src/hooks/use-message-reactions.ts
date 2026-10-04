@@ -49,18 +49,6 @@ export function useMessageReactions(workspaceId: string, messageId: string): Use
 
   const addReaction = useCallback(
     async (emoji: string) => {
-      // Optimistically bump the local emoji weight so the quick-bar re-ranks
-      // without needing a page reload. Fire-and-forget — non-critical.
-      const shortcode = emojiToShortcode.get(emoji)
-      if (shortcode) {
-        db.workspaceMetadata.get(workspaceId).then((meta) => {
-          if (!meta) return
-          return db.workspaceMetadata.update(workspaceId, {
-            emojiWeights: { ...meta.emojiWeights, [shortcode]: (meta.emojiWeights[shortcode] ?? 0) + 1 },
-          })
-        })
-      }
-
       try {
         await messagesApi.addReaction(workspaceId, messageId, emoji)
       } catch (err) {
@@ -71,6 +59,18 @@ export function useMessageReactions(workspaceId: string, messageId: string): Use
         // Enqueue for retry when back online
         await enqueueOperation(workspaceId, "add_reaction", { messageId, emoji })
         syncEngine.kickOperationQueue()
+      }
+
+      // Bump the local emoji weight once the reaction is made or queued, so the
+      // quick-bar re-ranks without needing a page reload. Fire-and-forget — non-critical.
+      const shortcode = emojiToShortcode.get(emoji)
+      if (shortcode) {
+        db.workspaceMetadata.get(workspaceId).then((meta) => {
+          if (!meta) return
+          return db.workspaceMetadata.update(workspaceId, {
+            emojiWeights: { ...meta.emojiWeights, [shortcode]: (meta.emojiWeights[shortcode] ?? 0) + 1 },
+          })
+        })
       }
     },
     [workspaceId, messageId, syncEngine, emojiToShortcode]

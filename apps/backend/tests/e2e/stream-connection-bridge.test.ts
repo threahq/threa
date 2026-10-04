@@ -486,6 +486,42 @@ describe("Stream connection bridge", () => {
     })
   })
 
+  test("should refuse with 400 and land nothing when the partner posts a document whose nodes aren't nodes", async () => {
+    const { workspace, channel, connection, partnerWorkspaceId, partner } = await setup()
+    const textNode = (marks: unknown) => ({ type: "paragraph", content: [{ type: "text", text: "x", marks }] })
+    const malformed = [
+      { type: "paragraph", content: [] },
+      { type: "doc", content: "not a list" },
+      { type: "doc", content: [null] },
+      { type: "doc", content: ["not a node"] },
+      { type: "doc", content: [{ content: [] }] },
+      { type: "doc", content: [textNode("bold")] },
+      { type: "doc", content: [textNode([null])] },
+    ]
+
+    const statuses = await Promise.all(
+      malformed.map(async (contentJson, index) => {
+        const { status } = await new TestClient().request(
+          "POST",
+          `/api/workspaces/${workspace.id}/stream-connections/${connection.id}/bridge/streams/${channel.id}/messages`,
+          {
+            author: { id: userId(), name: "Pat Partner", slug: "pat" },
+            users: [],
+            clientMessageId: `bad-${index}`,
+            contentJson,
+          },
+          partnerHeaders(partnerWorkspaceId)
+        )
+        return status
+      })
+    )
+
+    expect({ statuses, changes: (await events(partner, channel.id)).changes }).toEqual({
+      statuses: malformed.map(() => 400),
+      changes: [],
+    })
+  })
+
   test("should hand the partner a url for a shared message's file, refuse a file outside the tree, and record both reads", async () => {
     const { client, workspace, channel, connection, partnerWorkspaceId, partner } = await setup()
     const other = await createChannel(client, workspace.id, `files-${testRunId}`, "private")

@@ -230,10 +230,10 @@ export function createStreamConnectionBridgeHandlers({
 
     async removeReaction(req: Request, res: Response) {
       const { emoji: rawEmoji, ...params } = validateRequest(bridgeReactionParamsSchema, req.params)
-      const { userId } = validateRequest(bridgeRemoveReactionQuerySchema, req.query)
+      const { authorId } = validateRequest(bridgeRemoveReactionQuerySchema, req.query)
       await streamConnectionWriteService.removeReaction({
         ...params,
-        userId,
+        authorId,
         emoji: requireShortcode(rawEmoji),
         callerWorkspaceId: identifyCaller(req, params.connectionId),
       })

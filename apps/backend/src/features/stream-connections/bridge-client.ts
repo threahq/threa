@@ -15,7 +15,8 @@ import {
 } from "@threahq/types"
 import { hostUnreachable, writeRefused } from "./errors"
 
-const RETRYABLE_STATUSES = new Set([408, 429])
+// 401 is a bridge key the two regions disagree on, not the host's verdict on the write.
+const RETRYABLE_STATUSES = new Set([401, 408, 429])
 
 const REQUEST_TIMEOUT_MS = 5_000
 
@@ -110,9 +111,9 @@ export class BridgeClient {
 
   async removeReaction(
     address: ConnectionAddress,
-    params: { streamId: string; messageId: string; emoji: string; userId: string }
+    params: { streamId: string; messageId: string; emoji: string; authorId: string }
   ): Promise<void> {
-    const query = new URLSearchParams({ userId: params.userId })
+    const query = new URLSearchParams({ authorId: params.authorId })
     await this.write(address, `${reactionPath(params.streamId, params.messageId, params.emoji)}?${query}`, "DELETE")
   }
 
@@ -140,7 +141,11 @@ export class BridgeClient {
       throw hostUnreachable(`Bridge ${where} failed: ${error instanceof Error ? error.message : String(error)}`)
     }
     if (res.ok) return res
-    const answer = `Bridge ${where} answered ${res.status}`
+    const reason = await res
+      .json()
+      .then((body: { error?: unknown } | null) => (typeof body?.error === "string" ? `: ${body.error}` : ""))
+      .catch(() => "")
+    const answer = `Bridge ${where} answered ${res.status}${reason}`
     throw RETRYABLE_STATUSES.has(res.status) || res.status >= 500 ? hostUnreachable(answer) : writeRefused(answer)
   }
 
