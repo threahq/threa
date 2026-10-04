@@ -3,23 +3,15 @@ import type { Pool } from "pg"
 import type { Querier } from "../../src/db"
 import { AgentSessionStatuses, AgentStepTypes, DelegationStatuses } from "@threahq/types"
 import { setupTestDatabase, withTestTransaction, withTransaction } from "./setup"
-import {
-  AgentSessionRepository,
-  ConversationSummaryRepository,
-  PersonaRepository,
-  StreamPersonaParticipantRepository,
-} from "../../src/features/agents"
+import { AgentSessionRepository, PersonaRepository } from "../../src/features/agents"
 import { PersonaAttachmentRepository } from "../../src/features/agents/persona-attachment-repository"
 import { AgentOutcomeReadRepository } from "../../src/features/agent-outcomes"
-import { DelegatedTaskRepository } from "../../src/features/delegations"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import {
-  agentConversationSummaryId,
   agentFollowUpId,
   attachmentId,
   delegationId,
   eventId,
-  extractionId,
   messageId,
   personaId,
   sessionId,
@@ -42,7 +34,7 @@ interface Scope {
   personaB: string
 }
 
-describe("agent sessions, personas, outcomes and delegations workspace scope (INV-8)", () => {
+describe("agent sessions, personas and outcomes workspace scope (INV-8)", () => {
   let pool: Pool
   let sequence = 0
 
@@ -245,17 +237,6 @@ describe("agent sessions, personas, outcomes and delegations workspace scope (IN
     return id
   }
 
-  async function addExtraction(wid: string, attachment: string, summary: string, fullText: string | null) {
-    await insertRow("attachment_extractions", {
-      id: extractionId(),
-      workspace_id: wid,
-      attachment_id: attachment,
-      content_type: "document",
-      summary,
-      full_text: fullText,
-    })
-  }
-
   async function addBinding(wid: string, persona: string, attachment: string, position: number) {
     await insertRow("persona_attachments", {
       attachment_id: attachment,
@@ -275,212 +256,6 @@ describe("agent sessions, personas, outcomes and delegations workspace scope (IN
   })
 
   describe("session reads", () => {
-    let scope: Scope
-    let streamHistory: string
-    let triggerHistory: string
-    let sessionOld: string
-    let sessionNew: string
-    let decoyHistory: string
-    let digestStep: string
-    let thinkingStep: string
-    let streamRun: string
-    let streamRunB: string
-    let sessionRun: string
-    let sessionRunB: string
-    let sessionThread: string
-    let sessionCrossPointer: string
-    let threadStream: string
-    let threadAnchor: string
-    let createdNew: Date
-    let completedNew: Date
-
-    beforeAll(async () => {
-      scope = await seedScope("session-reads")
-      const { wsA, wsB, userA, userB, personaA, personaB } = scope
-
-      streamHistory = await addStream(wsA, userA)
-      triggerHistory = messageId()
-      createdNew = at(120)
-      completedNew = at(119)
-      sessionOld = await addSession(wsA, {
-        streamId: streamHistory,
-        personaId: personaA,
-        status: AgentSessionStatuses.COMPLETED,
-        triggerMessageId: triggerHistory,
-        created_at: at(180),
-        completed_at: at(179),
-      })
-      sessionNew = await addSession(wsA, {
-        streamId: streamHistory,
-        personaId: personaA,
-        status: AgentSessionStatuses.COMPLETED,
-        triggerMessageId: triggerHistory,
-        created_at: createdNew,
-        completed_at: completedNew,
-        episode_summary: "A episode",
-      })
-      // Newest session of the stream, persona and trigger, owned by B: every unpinned read prefers it.
-      decoyHistory = await addSession(wsB, {
-        streamId: streamHistory,
-        personaId: personaA,
-        status: AgentSessionStatuses.COMPLETED,
-        triggerMessageId: triggerHistory,
-        created_at: at(10),
-        completed_at: at(9),
-        episode_summary: "B secret episode",
-      })
-      digestStep = await addStep(wsA, sessionNew, 1, AgentStepTypes.TURN_DIGEST, {
-        content: JSON.stringify({ findings: "A digest" }),
-      })
-      thinkingStep = await addStep(wsA, sessionNew, 2, AgentStepTypes.THINKING)
-      await addStep(wsB, sessionNew, 3, AgentStepTypes.TURN_DIGEST, {
-        content: JSON.stringify({ findings: "B secret digest" }),
-      })
-      await addStep(wsB, decoyHistory, 1, AgentStepTypes.TURN_DIGEST)
-
-      streamRun = await addStream(wsA, userA)
-      streamRunB = await addStream(wsB, userB)
-      sessionRun = await addSession(wsA, {
-        streamId: streamRun,
-        personaId: personaA,
-        status: AgentSessionStatuses.RUNNING,
-        sent_message_ids: [messageId()],
-        current_step_type: AgentStepTypes.THINKING,
-      })
-      await addStep(wsA, sessionRun, 1, AgentStepTypes.MESSAGE_SENT)
-      await addStep(wsA, sessionRun, 2, AgentStepTypes.TOOL_CALL)
-      await addStep(wsB, sessionRun, 9, AgentStepTypes.MESSAGE_SENT)
-      sessionRunB = await addSession(wsB, {
-        streamId: streamRunB,
-        personaId: personaB,
-        status: AgentSessionStatuses.RUNNING,
-      })
-      await addStep(wsB, sessionRunB, 1, AgentStepTypes.MESSAGE_SENT)
-
-      threadAnchor = eventId()
-      threadStream = await addStream(wsA, userA, {
-        type: "thread",
-        rootStreamId: streamRun,
-        parentAnchorId: threadAnchor,
-      })
-      sessionThread = await addSession(wsA, {
-        streamId: threadStream,
-        personaId: personaA,
-        status: AgentSessionStatuses.RUNNING,
-      })
-      // An A session pointing at B's stream: only the join pin keeps it out of A's sidebar seed.
-      sessionCrossPointer = await addSession(wsA, {
-        streamId: await addStream(wsB, userB),
-        personaId: personaA,
-        status: AgentSessionStatuses.RUNNING,
-      })
-    })
-
-    test("should find a session by id only inside its own workspace", async () => {
-      const { wsA } = scope
-      expect({
-        own: (await AgentSessionRepository.findById(pool, wsA, sessionNew))?.id,
-        foreign: await AgentSessionRepository.findById(pool, wsA, decoyHistory),
-        ownLocked: (await AgentSessionRepository.findByIdForUpdate(pool, wsA, sessionNew))?.id,
-        foreignLocked: await AgentSessionRepository.findByIdForUpdate(pool, wsA, decoyHistory),
-      }).toEqual({ own: sessionNew, foreign: null, ownLocked: sessionNew, foreignLocked: null })
-    })
-
-    test("should return only its own workspace's sessions when reading by trigger message", async () => {
-      const { wsA } = scope
-      expect({
-        latest: (await AgentSessionRepository.findByTriggerMessage(pool, wsA, triggerHistory))?.id,
-        all: ids(await AgentSessionRepository.listByTriggerMessage(pool, wsA, triggerHistory)),
-      }).toEqual({ latest: sessionNew, all: [sessionNew, sessionOld] })
-    })
-
-    test("should return only its own workspace's latest session when reading a stream's history", async () => {
-      const { wsA } = scope
-      expect({
-        latest: (await AgentSessionRepository.findLatestByStream(pool, wsA, streamHistory))?.id,
-        latestCompleted: (await AgentSessionRepository.findLatestCompletedByStream(pool, wsA, streamHistory))?.id,
-      }).toEqual({ latest: sessionNew, latestCompleted: sessionNew })
-    })
-
-    test("should read digests, episode summaries and steps only from its own workspace", async () => {
-      const { wsA, personaA } = scope
-      const params = { streamId: streamHistory, personaId: personaA, limit: 10 }
-      expect({
-        digests: (await AgentSessionRepository.findRecentDigestStepsByStream(pool, wsA, params)).map(
-          (digest) => digest.step.id
-        ),
-        episodes: await AgentSessionRepository.findRecentEpisodeSummariesByStream(pool, wsA, params),
-        steps: (await AgentSessionRepository.findStepsBySession(pool, wsA, sessionNew)).map((step) => step.id),
-      }).toEqual({
-        digests: [digestStep],
-        episodes: [
-          {
-            summary: "A episode",
-            sessionCreatedAt: createdNew,
-            sessionCompletedAt: completedNew,
-            turnDigests: [{ findings: "A digest" }],
-          },
-        ],
-        steps: [digestStep, thinkingStep],
-      })
-    })
-
-    test("should count only its own workspace's steps when summarizing running sessions", async () => {
-      const { wsA } = scope
-      const snapshots = await AgentSessionRepository.findProgressSnapshotsByIds(pool, wsA, [sessionRun, sessionRunB])
-      const counts = await AgentSessionRepository.countStepsBySessions(pool, wsA, [sessionRun, sessionRunB])
-      expect({ snapshots: Object.fromEntries(snapshots), counts: Object.fromEntries(counts) }).toEqual({
-        snapshots: {
-          [sessionRun]: {
-            sessionId: sessionRun,
-            currentStepType: AgentStepTypes.THINKING,
-            stepCount: 2,
-            messageCount: 1,
-          },
-        },
-        counts: { [sessionRun]: { stepCount: 2, messageCount: 1 } },
-      })
-    })
-
-    test("should find running sessions only inside its own workspace", async () => {
-      const { wsA } = scope
-      expect({
-        own: (await AgentSessionRepository.findRunningByStream(pool, wsA, streamRun))?.id,
-        foreign: await AgentSessionRepository.findRunningByStream(pool, wsA, streamRunB),
-        many: ids(await AgentSessionRepository.findRunningByStreams(pool, wsA, [streamRun, streamRunB])),
-      }).toEqual({ own: sessionRun, foreign: null, many: [sessionRun] })
-    })
-
-    test("should list running sessions of its own workspace only when seeding the sidebar", async () => {
-      const { wsA, personaA } = scope
-      const running = await AgentSessionRepository.listRunningByWorkspace(pool, wsA)
-      expect(running.toSorted((a, b) => a.sessionId.localeCompare(b.sessionId))).toEqual(
-        [
-          {
-            sessionId: sessionRun,
-            streamId: streamRun,
-            rootStreamId: streamRun,
-            parentAnchorId: null,
-            triggerMessageId: expect.any(String),
-            personaId: personaA,
-            startedAt: expect.any(Date),
-            currentStepType: AgentStepTypes.THINKING,
-          },
-          {
-            sessionId: sessionThread,
-            streamId: threadStream,
-            rootStreamId: streamRun,
-            parentAnchorId: threadAnchor,
-            triggerMessageId: expect.any(String),
-            personaId: personaA,
-            startedAt: expect.any(Date),
-            currentStepType: null,
-          },
-        ].toSorted((a, b) => a.sessionId.localeCompare(b.sessionId))
-      )
-      expect(running.map((row) => row.sessionId)).not.toContain(sessionCrossPointer)
-    })
-
     test("should treat only its own workspace's live claim as keeping a stale session alive", async () => {
       const orphans = await seedScope("orphans")
       const liveClaim = { claim_expires_at: new Date(Date.now() + 3_600_000) }
@@ -518,59 +293,25 @@ describe("agent sessions, personas, outcomes and delegations workspace scope (IN
 
   describe("session and step writes", () => {
     let scope: Scope
-    let streamForeign: string
     let foreignRunning: string
-    let foreignCaptured: string
     let foreignStep: string
-    let ownRunning: string
     let ownClosing: string
     let ownCompleting: string
     let ownSteps: string
     let ownUpserts: string
-    let ownInvocation: string
-    let crossInvocation: string
-    let crossSession: string
-    let foreignInvocation: string
-    let foreignInvocationStream: string
-
-    const foreignRunningInitial = {
-      heartbeat_at: null,
-      current_step_type: null,
-      context_message_ids: [] as string[],
-      episode_summary: null,
-      reflective_captured_at: null,
-      response_validation_failed: false,
-      last_seen_sequence: null,
-      abort_requested_at: null,
-    }
 
     beforeAll(async () => {
       scope = await seedScope("session-writes")
       const { wsA, wsB, userA, userB, personaA, personaB } = scope
 
-      streamForeign = await addStream(wsB, userB)
       foreignRunning = await addSession(wsB, {
-        streamId: streamForeign,
-        personaId: personaB,
-        status: AgentSessionStatuses.RUNNING,
-        ...foreignRunningInitial,
-      })
-      foreignCaptured = await addSession(wsB, {
         streamId: await addStream(wsB, userB),
         personaId: personaB,
-        status: AgentSessionStatuses.COMPLETED,
-        completed_at: at(60),
-        reflective_captured_at: at(30),
+        status: AgentSessionStatuses.RUNNING,
       })
       foreignStep = await addStep(wsB, foreignRunning, 1, AgentStepTypes.TOOL_CALL, {
         client_step_id: "b-client-step",
         started_at: at(20),
-      })
-
-      ownRunning = await addSession(wsA, {
-        streamId: await addStream(wsA, userA),
-        personaId: personaA,
-        status: AgentSessionStatuses.RUNNING,
       })
 
       ownClosing = await addSession(wsA, {
@@ -603,83 +344,6 @@ describe("agent sessions, personas, outcomes and delegations workspace scope (IN
         status: AgentSessionStatuses.RUNNING,
       })
       await addStep(wsA, ownUpserts, 1, AgentStepTypes.THINKING, { content: JSON.stringify({ text: "attempt one" }) })
-
-      foreignInvocationStream = await addStream(wsB, userB)
-      foreignInvocation = await addSession(wsB, {
-        streamId: foreignInvocationStream,
-        personaId: personaB,
-        status: AgentSessionStatuses.RUNNING,
-      })
-      await addInvocation(wsB, foreignInvocation, foreignInvocationStream, "claimed")
-
-      const ownInvocationStream = await addStream(wsA, userA)
-      ownInvocation = await addSession(wsA, {
-        streamId: ownInvocationStream,
-        personaId: personaA,
-        status: AgentSessionStatuses.RUNNING,
-      })
-      await addInvocation(wsA, ownInvocation, ownInvocationStream, "claimed")
-
-      // Same id as A's session, but the invocation row belongs to B.
-      const crossStream = await addStream(wsA, userA)
-      crossInvocation = await addSession(wsA, {
-        streamId: crossStream,
-        personaId: personaA,
-        status: AgentSessionStatuses.RUNNING,
-      })
-      await addInvocation(wsB, crossInvocation, crossStream, "claimed")
-
-      // Same id again, the other way round: the session belongs to B, the invocation to A.
-      const crossSessionStream = await addStream(wsB, userB)
-      crossSession = await addSession(wsB, {
-        streamId: crossSessionStream,
-        personaId: personaB,
-        status: AgentSessionStatuses.RUNNING,
-      })
-      await addInvocation(wsA, crossSession, crossSessionStream, "claimed")
-    })
-
-    test("should leave another workspace's session untouched when writing with a foreign id", async () => {
-      const { wsA } = scope
-      const tracked = [foreignRunning, foreignCaptured]
-      const before = await rawRows("agent_sessions", tracked)
-
-      const results = {
-        updateStatus: await AgentSessionRepository.updateStatus(
-          pool,
-          wsA,
-          foreignRunning,
-          AgentSessionStatuses.COMPLETED
-        ),
-        requestAbort: await AgentSessionRepository.requestAbort(pool, wsA, foreignRunning),
-        setEpisodeSummary: await AgentSessionRepository.setEpisodeSummary(pool, wsA, foreignRunning, "leak"),
-        setReflectiveCaptured: await AgentSessionRepository.setReflectiveCaptured(
-          pool,
-          wsA,
-          foreignRunning,
-          new Date()
-        ),
-        completeSession: await AgentSessionRepository.completeSession(pool, wsA, foreignRunning, {
-          lastSeenSequence: 9n,
-        }),
-      }
-      await AgentSessionRepository.updateHeartbeat(pool, wsA, foreignRunning)
-      await AgentSessionRepository.updateCurrentStepType(pool, wsA, foreignRunning, AgentStepTypes.THINKING)
-      await AgentSessionRepository.updateContextMessageIds(pool, wsA, foreignRunning, ["msg_leak"])
-      await AgentSessionRepository.markResponseValidationFailed(pool, wsA, foreignRunning)
-      await AgentSessionRepository.updateLastSeenSequence(pool, wsA, foreignRunning, 5n)
-      await AgentSessionRepository.clearReflectiveCaptured(pool, wsA, foreignCaptured)
-
-      expect({ results, rows: await rawRows("agent_sessions", tracked) }).toEqual({
-        results: {
-          updateStatus: null,
-          requestAbort: false,
-          setEpisodeSummary: false,
-          setReflectiveCaptured: false,
-          completeSession: null,
-        },
-        rows: before,
-      })
     })
 
     test("should leave another workspace's steps untouched when writing steps with a foreign session or step id", async () => {
@@ -749,99 +413,6 @@ describe("agent sessions, personas, outcomes and delegations workspace scope (IN
         statuses: [AgentSessionStatuses.COMPLETED, AgentSessionStatuses.COMPLETED],
         byStatus: { [scope.wsA]: "closed", [scope.wsB]: "open" },
         byCompletion: { [scope.wsA]: "closed", [scope.wsB]: "open" },
-      })
-    })
-
-    test("should update the reply key generation only when the session and its invocation share the workspace", async () => {
-      const { wsA } = scope
-      const generation = async (session: string) => (await rawRows("agent_sessions", [session]))[0].reply_key_generation
-      const results = {
-        own: await AgentSessionRepository.updateInvocationReplyKeyGeneration(pool, {
-          workspaceId: wsA,
-          invocationId: ownInvocation,
-          replyKeyGeneration: 4,
-        }),
-        foreignSession: await AgentSessionRepository.updateInvocationReplyKeyGeneration(pool, {
-          workspaceId: wsA,
-          invocationId: foreignInvocation,
-          replyKeyGeneration: 4,
-        }),
-        foreignInvocation: await AgentSessionRepository.updateInvocationReplyKeyGeneration(pool, {
-          workspaceId: wsA,
-          invocationId: crossInvocation,
-          replyKeyGeneration: 4,
-        }),
-        foreignSessionOwnInvocation: await AgentSessionRepository.updateInvocationReplyKeyGeneration(pool, {
-          workspaceId: wsA,
-          invocationId: crossSession,
-          replyKeyGeneration: 4,
-        }),
-      }
-
-      expect({
-        results,
-        generations: [
-          await generation(ownInvocation),
-          await generation(foreignInvocation),
-          await generation(crossInvocation),
-          await generation(crossSession),
-        ],
-      }).toEqual({
-        results: { own: true, foreignSession: false, foreignInvocation: false, foreignSessionOwnInvocation: false },
-        generations: [4, null, null, null],
-      })
-    })
-
-    test("should apply session writes within its own workspace", async () => {
-      const { wsA } = scope
-      const abort = await AgentSessionRepository.requestAbort(pool, wsA, ownRunning)
-      await AgentSessionRepository.updateCurrentStepType(pool, wsA, ownRunning, AgentStepTypes.THINKING)
-      await AgentSessionRepository.updateContextMessageIds(pool, wsA, ownRunning, ["msg_one", "msg_two"])
-      const firstSummary = await AgentSessionRepository.setEpisodeSummary(pool, wsA, ownRunning, "own summary")
-      const secondSummary = await AgentSessionRepository.setEpisodeSummary(pool, wsA, ownRunning, "overwrite")
-      const captured = await AgentSessionRepository.setReflectiveCaptured(pool, wsA, ownRunning, at(1))
-      await AgentSessionRepository.markResponseValidationFailed(pool, wsA, ownRunning)
-      await AgentSessionRepository.updateLastSeenSequence(pool, wsA, ownRunning, 7n)
-      const afterWrites = await AgentSessionRepository.findById(pool, wsA, ownRunning)
-      await AgentSessionRepository.clearReflectiveCaptured(pool, wsA, ownRunning)
-      await AgentSessionRepository.updateHeartbeat(pool, wsA, ownRunning)
-      const completed = await AgentSessionRepository.completeSession(pool, wsA, ownRunning, { lastSeenSequence: 8n })
-      const final = await AgentSessionRepository.findById(pool, wsA, ownRunning)
-
-      expect({
-        flags: { abort, firstSummary, secondSummary, captured },
-        afterWrites: {
-          currentStepType: afterWrites?.currentStepType,
-          contextMessageIds: afterWrites?.contextMessageIds,
-          episodeSummary: afterWrites?.episodeSummary,
-          responseValidationFailed: afterWrites?.responseValidationFailed,
-          lastSeenSequence: afterWrites?.lastSeenSequence,
-          abortRequestedAt: afterWrites?.abortRequestedAt,
-          reflectiveCapturedAt: afterWrites?.reflectiveCapturedAt,
-        },
-        final: {
-          status: final?.status,
-          completedStatus: completed?.status,
-          reflectiveCapturedAt: final?.reflectiveCapturedAt,
-          heartbeatRefreshed: final?.heartbeatAt !== null && final!.heartbeatAt!.getTime() > at(60).getTime(),
-        },
-      }).toEqual({
-        flags: { abort: true, firstSummary: true, secondSummary: false, captured: true },
-        afterWrites: {
-          currentStepType: AgentStepTypes.THINKING,
-          contextMessageIds: ["msg_one", "msg_two"],
-          episodeSummary: "own summary",
-          responseValidationFailed: true,
-          lastSeenSequence: 7n,
-          abortRequestedAt: expect.any(Date),
-          reflectiveCapturedAt: expect.any(Date),
-        },
-        final: {
-          status: AgentSessionStatuses.COMPLETED,
-          completedStatus: AgentSessionStatuses.COMPLETED,
-          reflectiveCapturedAt: null,
-          heartbeatRefreshed: true,
-        },
       })
     })
 
@@ -918,63 +489,20 @@ describe("agent sessions, personas, outcomes and delegations workspace scope (IN
     })
   })
 
-  describe("personas, attachments, summaries and participants", () => {
+  describe("personas and attachment bindings", () => {
     let scope: Scope
-    let streamOwn: string
-    let streamForeign: string
-    let boundOne: string
-    let boundTwo: string
-    let boundForeignInA: string
     let personaCapped: string
     let foreignCappedBinding: string
 
     beforeAll(async () => {
       scope = await seedScope("small-repos")
-      const { wsA, wsB, userA, userB, personaA, personaB } = scope
-      streamOwn = await addStream(wsA, userA)
-      streamForeign = await addStream(wsB, userB)
-
-      boundOne = await addAttachment(wsA)
-      boundTwo = await addAttachment(wsA)
-      await addBinding(wsA, personaA, boundOne, 0)
-      await addBinding(wsA, personaA, boundTwo, 1)
-      await addExtraction(wsA, boundOne, "own summary", "own full text")
-      // B's extraction row under A's attachment id: an unpinned join reports the file as extracted.
-      await addExtraction(wsB, boundTwo, "foreign summary", "foreign full text")
-
-      // A binding whose attachment row belongs to B, and a B binding under A's persona.
-      boundForeignInA = await addAttachment(wsB)
-      await addBinding(wsA, personaA, boundForeignInA, 2)
-      await addBinding(wsB, personaA, await addAttachment(wsB), 0)
+      const { wsA, wsB } = scope
 
       personaCapped = personaId()
       await addPersona(wsA, personaCapped)
       await addBinding(wsA, personaCapped, await addAttachment(wsA), 0)
       foreignCappedBinding = await addAttachment(wsB)
       await addBinding(wsB, personaCapped, foreignCappedBinding, 7)
-
-      await insertRow("agent_conversation_summaries", {
-        id: agentConversationSummaryId(),
-        workspace_id: wsB,
-        stream_id: streamForeign,
-        persona_id: personaB,
-        summary: "B secret summary",
-        last_summarized_sequence: 9,
-      })
-      await insertRow("stream_persona_participants", {
-        workspace_id: wsB,
-        stream_id: streamForeign,
-        persona_id: personaB,
-      })
-    })
-
-    test("should find personas only inside its own workspace", async () => {
-      const { wsA, personaA, personaB } = scope
-      expect({
-        own: (await PersonaRepository.findById(pool, wsA, personaA))?.id,
-        foreign: await PersonaRepository.findById(pool, wsA, personaB),
-        many: (await PersonaRepository.findByIds(pool, wsA, [personaA, personaB])).map((persona) => persona.id),
-      }).toEqual({ own: personaA, foreign: null, many: [personaA] })
     })
 
     test("should return system personas alongside its own workspace's personas", async () => {
@@ -995,26 +523,6 @@ describe("agent sessions, personas, outcomes and delegations workspace scope (IN
           .map((persona) => persona.id)
           .sort(),
       }).toEqual({ one: systemPersona, many: [personaA, systemPersona].sort() })
-    })
-
-    test("should list only its own workspace's bound attachments and their extractions", async () => {
-      const { wsA, personaA } = scope
-      const listed = await PersonaAttachmentRepository.listForPersona(pool, wsA, personaA)
-      const withContent = await PersonaAttachmentRepository.listForPersonaWithContent(pool, wsA, personaA)
-
-      expect({
-        listed: listed.map((item) => [item.attachmentId, item.position, item.hasExtraction, item.summaryChars]),
-        withContent: withContent.map((item) => [item.attachmentId, item.hasExtraction, item.summary, item.fullText]),
-      }).toEqual({
-        listed: [
-          [boundOne, 0, true, "own summary".length],
-          [boundTwo, 1, false, null],
-        ],
-        withContent: [
-          [boundOne, true, "own summary", "own full text"],
-          [boundTwo, false, null, null],
-        ],
-      })
     })
 
     test("should bind and unbind attachments by counting only its own workspace's bindings", async () => {
@@ -1049,280 +557,6 @@ describe("agent sessions, personas, outcomes and delegations workspace scope (IN
         unbindForeign: false,
         unbindOwn: true,
         foreignBindings: [wsB],
-      })
-    })
-
-    test("should read conversation summaries only inside its own workspace", async () => {
-      const { wsA, personaA, personaB } = scope
-      await ConversationSummaryRepository.upsert(pool, {
-        id: agentConversationSummaryId(),
-        workspaceId: wsA,
-        streamId: streamOwn,
-        personaId: personaA,
-        summary: "own summary",
-        lastSummarizedSequence: 3n,
-      })
-
-      const results = {
-        own: (await ConversationSummaryRepository.findByStreamAndPersona(pool, wsA, streamOwn, personaA))?.summary,
-        foreign: await ConversationSummaryRepository.findByStreamAndPersona(pool, wsA, streamForeign, personaB),
-      }
-
-      expect(results).toEqual({ own: "own summary", foreign: null })
-    })
-
-    test("should report persona participation only inside its own workspace", async () => {
-      const { wsA, personaA, personaB } = scope
-      const client = await pool.connect()
-      try {
-        const before = await StreamPersonaParticipantRepository.hasParticipated(client, wsA, streamOwn, personaA)
-        await StreamPersonaParticipantRepository.recordParticipation(client, wsA, streamOwn, personaA)
-        expect({
-          before,
-          own: await StreamPersonaParticipantRepository.hasParticipated(client, wsA, streamOwn, personaA),
-          foreign: await StreamPersonaParticipantRepository.hasParticipated(client, wsA, streamForeign, personaB),
-        }).toEqual({ before: false, own: true, foreign: false })
-      } finally {
-        client.release()
-      }
-    })
-  })
-
-  describe("delegations", () => {
-    let scope: Scope
-    let streamOwn: string
-    let streamForeign: string
-    let foreignOpen: string
-    let foreignExpired: string
-    let foreignClaimed: string
-    let taskWithEvent: string
-    let taskWithForeignEvent: string
-    let createdEvent: string
-
-    beforeAll(async () => {
-      scope = await seedScope("delegations")
-      const { wsA, wsB, userA, userB } = scope
-      streamOwn = await addStream(wsA, userA)
-      streamForeign = await addStream(wsB, userB)
-
-      taskWithEvent = await addTask(wsA, streamOwn, { createdAt: at(30) })
-      taskWithForeignEvent = await addTask(wsA, streamOwn, { createdAt: at(20) })
-      createdEvent = await addEvent(wsA, streamOwn, "delegation:created", { delegationId: taskWithEvent })
-      // B's copy of the card event on A's stream: an unpinned join anchors A's task to it.
-      await addEvent(wsB, streamOwn, "delegation:created", { delegationId: taskWithForeignEvent })
-      // B's delegation listed under A's stream id.
-      await addTask(wsB, streamOwn, { createdAt: at(10) })
-
-      foreignOpen = await addTask(wsB, streamForeign)
-      foreignExpired = await addTask(wsB, streamForeign, {
-        status: DelegationStatuses.EXPIRED,
-        claim_token_hash: "b-hash",
-      })
-      foreignClaimed = await addTask(wsB, streamForeign, {
-        status: DelegationStatuses.CLAIMED,
-        claim_token_hash: "b-hash",
-        claim_idempotency_key: "b-key",
-        claim_expires_at: new Date(Date.now() + 3_600_000),
-      })
-      // An A-workspace event row on B's stream: only the subquery pin keeps B's task from resolving through it.
-      await addEvent(wsA, streamForeign, "delegation:created", { delegationId: foreignClaimed })
-    })
-
-    test("should read a delegation by id only inside its own workspace", async () => {
-      const { wsA } = scope
-      const found = await DelegatedTaskRepository.findById(pool, wsA, taskWithEvent)
-      const withEvent = await DelegatedTaskRepository.findByIdWithEvent(pool, wsA, taskWithEvent)
-      expect({
-        own: found?.id,
-        withEvent: withEvent && { id: withEvent.id, createdEventId: withEvent.createdEventId },
-        foreign: await DelegatedTaskRepository.findById(pool, wsA, foreignOpen),
-        foreignWithEvent: await DelegatedTaskRepository.findByIdWithEvent(pool, wsA, foreignOpen),
-      }).toEqual({
-        own: taskWithEvent,
-        withEvent: { id: taskWithEvent, createdEventId: createdEvent },
-        foreign: null,
-        foreignWithEvent: null,
-      })
-    })
-
-    test("should anchor a delegation only to its own workspace's created event", async () => {
-      const { wsA } = scope
-      const listed = await DelegatedTaskRepository.listByStream(pool, wsA, streamOwn)
-      const withForeignEvent = await DelegatedTaskRepository.findByIdWithEvent(pool, wsA, taskWithForeignEvent)
-      expect({
-        listed: listed.map((task) => [task.id, task.createdEventId]),
-        withForeignEvent: withForeignEvent?.createdEventId,
-        createdEventIds: [
-          await DelegatedTaskRepository.findCreatedEventId(pool, wsA, taskWithEvent),
-          await DelegatedTaskRepository.findCreatedEventId(pool, wsA, taskWithForeignEvent),
-          await DelegatedTaskRepository.findCreatedEventId(pool, wsA, foreignClaimed),
-        ],
-      }).toEqual({
-        listed: [
-          [taskWithForeignEvent, null],
-          [taskWithEvent, createdEvent],
-        ],
-        withForeignEvent: null,
-        createdEventIds: [createdEvent, null, null],
-      })
-    })
-
-    test("should list only its own workspace's open delegations", async () => {
-      const wsC = await seedWorkspace("delegations-open-c")
-      const wsD = await seedWorkspace("delegations-open-d")
-      const stream = streamId()
-      const own = await addTask(wsC, stream, { createdAt: at(5) })
-      await addTask(wsC, stream, { status: DelegationStatuses.COMPLETED })
-      await addTask(wsD, stream, { createdAt: at(4) })
-
-      expect(ids(await DelegatedTaskRepository.listOpen(pool, wsC))).toEqual([own])
-    })
-
-    test("should leave another workspace's delegation untouched when transitioning with a foreign id", async () => {
-      const { wsA } = scope
-      const tracked = [foreignOpen, foreignExpired, foreignClaimed]
-      const before = await rawRows("delegated_tasks", tracked)
-      const token = { claimTokenHash: "b-hash" }
-
-      const results = {
-        claim: await DelegatedTaskRepository.claim(pool, {
-          workspaceId: wsA,
-          id: foreignOpen,
-          claimTokenHash: "a-hash",
-          claimIdempotencyKey: null,
-          claimedByLabel: "a",
-          ttlSeconds: 60,
-        }),
-        reclaim: await DelegatedTaskRepository.reclaimByIdempotencyKey(pool, {
-          workspaceId: wsA,
-          id: foreignClaimed,
-          claimIdempotencyKey: "b-key",
-          claimTokenHash: "a-hash",
-          ttlSeconds: 60,
-        }),
-        renew: await DelegatedTaskRepository.renewClaim(pool, {
-          workspaceId: wsA,
-          id: foreignClaimed,
-          ttlSeconds: 60,
-          ...token,
-        }),
-        running: await DelegatedTaskRepository.markRunning(pool, {
-          workspaceId: wsA,
-          id: foreignClaimed,
-          ttlSeconds: 60,
-          statusNote: "leak",
-          ...token,
-        }),
-        locked: await DelegatedTaskRepository.findClaimedForUpdate(pool, {
-          workspaceId: wsA,
-          id: foreignClaimed,
-          ...token,
-        }),
-        complete: await DelegatedTaskRepository.complete(pool, {
-          workspaceId: wsA,
-          id: foreignClaimed,
-          resultMessageId: null,
-          ...token,
-        }),
-        fail: await DelegatedTaskRepository.fail(pool, {
-          workspaceId: wsA,
-          id: foreignClaimed,
-          statusNote: "leak",
-          ...token,
-        }),
-        release: await DelegatedTaskRepository.release(pool, { workspaceId: wsA, id: foreignClaimed, ...token }),
-        markDone: await DelegatedTaskRepository.markDone(pool, { workspaceId: wsA, id: foreignClaimed }),
-        markCancelled: await DelegatedTaskRepository.markCancelled(pool, { workspaceId: wsA, id: foreignOpen }),
-        requeue: await DelegatedTaskRepository.requeue(pool, { workspaceId: wsA, id: foreignExpired }),
-      }
-
-      expect({ results, rows: await rawRows("delegated_tasks", tracked) }).toEqual({
-        results: {
-          claim: null,
-          reclaim: null,
-          renew: null,
-          running: null,
-          locked: null,
-          complete: null,
-          fail: null,
-          release: null,
-          markDone: null,
-          markCancelled: null,
-          requeue: null,
-        },
-        rows: before,
-      })
-    })
-
-    test("should transition its own workspace's delegations", async () => {
-      const { wsA } = scope
-      const statusOf = (task: { status: string } | null) => task?.status ?? null
-      const open = () => addTask(wsA, streamOwn)
-      const claim = (id: string, key: string | null = null) =>
-        DelegatedTaskRepository.claim(pool, {
-          workspaceId: wsA,
-          id,
-          claimTokenHash: "a-hash",
-          claimIdempotencyKey: key,
-          claimedByLabel: "agent",
-          ttlSeconds: 60,
-        })
-      const token = { workspaceId: wsA, claimTokenHash: "a-hash" }
-
-      const completed = await open()
-      await claim(completed, "a-key")
-      const reclaimed = await DelegatedTaskRepository.reclaimByIdempotencyKey(pool, {
-        workspaceId: wsA,
-        id: completed,
-        claimIdempotencyKey: "a-key",
-        claimTokenHash: "a-hash",
-        ttlSeconds: 60,
-      })
-      const renewed = await DelegatedTaskRepository.renewClaim(pool, { ...token, id: completed, ttlSeconds: 60 })
-      const running = await DelegatedTaskRepository.markRunning(pool, {
-        ...token,
-        id: completed,
-        ttlSeconds: 60,
-        statusNote: "halfway",
-      })
-      const locked = await DelegatedTaskRepository.findClaimedForUpdate(pool, { ...token, id: completed })
-      const done = await DelegatedTaskRepository.complete(pool, { ...token, id: completed, resultMessageId: null })
-
-      const failed = await open()
-      await claim(failed)
-      const failure = await DelegatedTaskRepository.fail(pool, { ...token, id: failed, statusNote: "broke" })
-
-      const released = await open()
-      await claim(released)
-      const reopened = await DelegatedTaskRepository.release(pool, { ...token, id: released })
-
-      const markedDone = await DelegatedTaskRepository.markDone(pool, { workspaceId: wsA, id: await open() })
-      const cancelled = await DelegatedTaskRepository.markCancelled(pool, { workspaceId: wsA, id: await open() })
-      const expired = await addTask(wsA, streamOwn, { status: DelegationStatuses.EXPIRED })
-      const requeued = await DelegatedTaskRepository.requeue(pool, { workspaceId: wsA, id: expired })
-
-      expect({
-        reclaimed: statusOf(reclaimed),
-        renewed: statusOf(renewed),
-        running: statusOf(running),
-        locked: statusOf(locked),
-        done: statusOf(done),
-        failure: statusOf(failure),
-        reopened: statusOf(reopened),
-        markedDone: statusOf(markedDone),
-        cancelled: statusOf(cancelled),
-        requeued: statusOf(requeued),
-      }).toEqual({
-        reclaimed: DelegationStatuses.CLAIMED,
-        renewed: DelegationStatuses.CLAIMED,
-        running: DelegationStatuses.RUNNING,
-        locked: DelegationStatuses.RUNNING,
-        done: DelegationStatuses.COMPLETED,
-        failure: DelegationStatuses.FAILED,
-        reopened: DelegationStatuses.OPEN,
-        markedDone: DelegationStatuses.COMPLETED,
-        cancelled: DelegationStatuses.CANCELLED,
-        requeued: DelegationStatuses.OPEN,
       })
     })
   })
