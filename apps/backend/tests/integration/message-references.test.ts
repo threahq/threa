@@ -145,7 +145,7 @@ describe("message reference resolution", () => {
       contentMarkdown: "agreed",
     })
 
-    const stored = await MessageRepository.findById(pool, quoting.id)
+    const stored = await MessageRepository.findById(pool, testWorkspaceId, quoting.id)
     expect(quoteAttrs(stored!)).toEqual({
       messageId: src.id,
       streamId: source,
@@ -182,7 +182,7 @@ describe("message reference resolution", () => {
       contentMarkdown: "> I never said this",
     })
 
-    const stored = await MessageRepository.findById(pool, quoting.id)
+    const stored = await MessageRepository.findById(pool, testWorkspaceId, quoting.id)
     expect(quoteAttrs(stored!)).toMatchObject({ snippet: "second", authorId: author, version: 2 })
   })
 
@@ -230,7 +230,7 @@ describe("message reference resolution", () => {
         contentJson: { type: "doc", content: [quoteNode({ messageId: src.id, streamId: source, snippet })] },
         contentMarkdown: `> ${snippet}`,
       })
-      return quoteAttrs((await MessageRepository.findById(pool, quoting.id))!)
+      return quoteAttrs((await MessageRepository.findById(pool, testWorkspaceId, quoting.id))!)
     }
 
     test("text that exists in the current revision yields its range", async () => {
@@ -342,7 +342,7 @@ describe("message reference resolution", () => {
         contentMarkdown: "look at this",
       })
 
-      const stored = (await MessageRepository.findById(pool, sharing.id))!
+      const stored = (await MessageRepository.findById(pool, testWorkspaceId, sharing.id))!
       expect(shareAttrs(stored)).toMatchObject({ version: 1, range })
 
       const slots = await hydrateFor(stored)
@@ -370,7 +370,7 @@ describe("message reference resolution", () => {
         contentMarkdown: "look at this",
       })
 
-      const stored = (await MessageRepository.findById(pool, sharing.id))!
+      const stored = (await MessageRepository.findById(pool, testWorkspaceId, sharing.id))!
       expect(shareAttrs(stored)).toMatchObject({ version: 2, range: null })
 
       const slots = await hydrateFor(stored)
@@ -459,7 +459,7 @@ describe("message reference resolution", () => {
       })
 
       expect(edited).not.toBeNull()
-      const stored = (await MessageRepository.findById(pool, legacy.id))!
+      const stored = (await MessageRepository.findById(pool, testWorkspaceId, legacy.id))!
       expect(quoteAttrs(stored)).toEqual(before)
       expect(stored.contentMarkdown).toContain("and one more thing")
     })
@@ -509,7 +509,7 @@ describe("message reference resolution", () => {
       },
       contentMarkdown: "agreed",
     })
-    const before = quoteAttrs((await MessageRepository.findById(pool, quoting.id))!)
+    const before = quoteAttrs((await MessageRepository.findById(pool, testWorkspaceId, quoting.id))!)
 
     // The source moves on; the pinned quote must not follow it.
     await eventService.editMessageInternal({
@@ -521,7 +521,7 @@ describe("message reference resolution", () => {
       contentMarkdown: "third body",
     })
 
-    const stored = (await MessageRepository.findById(pool, quoting.id))!
+    const stored = (await MessageRepository.findById(pool, testWorkspaceId, quoting.id))!
     await eventService.editMessageInternal({
       workspaceId: testWorkspaceId,
       messageId: quoting.id,
@@ -531,7 +531,7 @@ describe("message reference resolution", () => {
       contentMarkdown: "agreed\n\nstill agreed",
     })
 
-    const after = quoteAttrs((await MessageRepository.findById(pool, quoting.id))!)
+    const after = quoteAttrs((await MessageRepository.findById(pool, testWorkspaceId, quoting.id))!)
     expect(after).toEqual(before)
   })
 })

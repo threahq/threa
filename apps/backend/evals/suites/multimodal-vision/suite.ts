@@ -454,7 +454,7 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
     await personaAgent.run(agentInput)
 
     // Read back messages sent by the agent
-    const allMessages = await MessageRepository.list(ctx.pool, streamId, { limit: 100 })
+    const allMessages = await MessageRepository.list(ctx.pool, ctx.workspaceId, streamId, { limit: 100 })
     const agentMessages = allMessages.filter((m) => m.authorId === personaId)
 
     const messages: VisionMessage[] = agentMessages.map((m) => ({

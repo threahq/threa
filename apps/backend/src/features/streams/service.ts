@@ -801,7 +801,7 @@ export class StreamService {
         if (anchorId.startsWith("msg_")) {
           // Locked like the thread path: a concurrent move would re-parent the
           // message between an unlocked read and the insert (INV-20).
-          const anchorMessage = await MessageRepository.findByIdForUpdate(client, anchorId)
+          const anchorMessage = await MessageRepository.findByIdForUpdate(client, params.workspaceId, anchorId)
           if (!anchorMessage || anchorMessage.streamId !== params.parentStreamId) {
             throw new MessageNotFoundError()
           }
@@ -1044,7 +1044,7 @@ export class StreamService {
       // unique index is scoped per parent_stream_id), so no conflict catches it
       // (INV-20). The lock serializes the validate-then-insert against the move.
       // Event anchors don't move (cards are never re-parented), so no lock there.
-      const parentMessage = await MessageRepository.findByIdForUpdate(client, anchorId)
+      const parentMessage = await MessageRepository.findByIdForUpdate(client, params.workspaceId, anchorId)
       if (!parentMessage || parentMessage.streamId !== params.parentStreamId) {
         throw new MessageNotFoundError()
       }

@@ -42,7 +42,7 @@ export async function buildSessionDigest(pool: Pool, session: AgentSession): Pro
 
   // A fired follow-up carries a synthetic `followup_<id>` trigger with no real
   // message row, so findById returns null — the session's other signals stand.
-  const trigger = await MessageRepository.findById(pool, session.triggerMessageId)
+  const trigger = await MessageRepository.findById(pool, session.workspaceId, session.triggerMessageId)
   if (trigger) {
     if (trigger.authorType === AuthorTypes.USER) participantUserIds.add(trigger.authorId)
     if (trigger.contentMarkdown.trim()) sections.push(`Trigger message:\n${trigger.contentMarkdown.trim()}`)
@@ -61,7 +61,7 @@ export async function buildSessionDigest(pool: Pool, session: AgentSession): Pro
   // Prefer the real trigger as the anchor; otherwise fall back to the last real reply.
   let anchorMessageId: string | null = trigger ? trigger.id : null
   if (session.sentMessageIds.length > 0) {
-    const sent = await MessageRepository.findByIds(pool, session.sentMessageIds)
+    const sent = await MessageRepository.findByIds(pool, session.workspaceId, session.sentMessageIds)
     const replies: string[] = []
     for (const id of session.sentMessageIds) {
       const msg = sent.get(id)

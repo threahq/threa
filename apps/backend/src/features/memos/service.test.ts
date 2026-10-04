@@ -141,8 +141,7 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
   spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
   spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined as never)
   spyOn(ConversationRepository, "findById").mockResolvedValue(fakeConversation())
-  spyOn(MessageRepository, "findByIds").mockResolvedValue(fakeMessages())
-  const findSourceMessages = spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(fakeMessages())
+  const findSourceMessages = spyOn(MessageRepository, "findByIds").mockResolvedValue(fakeMessages())
   spyOn(LinkPreviewRepository, "findByMessageIds").mockResolvedValue(new Map())
   spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "usr_1", timezone: "UTC" }] as never)
   spyOn(StreamStateRepository, "markProcessed").mockResolvedValue(undefined as never)
@@ -683,7 +682,7 @@ function setupSaveMemo() {
     createdAt: new Date(),
   }
   const streamEventInsertMany = spyOn(StreamEventRepository, "insertMany").mockResolvedValue([captureEvent])
-  spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(fakeMessages())
+  spyOn(MessageRepository, "findByIds").mockResolvedValue(fakeMessages())
   const contextInsertMany = spyOn(StreamContextRepository, "insertMany").mockResolvedValue(0)
 
   const service = new MemoService({
@@ -988,7 +987,6 @@ function setupReflection(opts: { classification?: Partial<ConversationClassifica
       } as unknown as Message,
     ],
   ])
-  spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(trigger)
   spyOn(MessageRepository, "findByIds").mockResolvedValue(trigger)
   const contextInsertMany = spyOn(StreamContextRepository, "insertMany").mockResolvedValue(0)
 
@@ -1202,11 +1200,13 @@ describe("MemoService — stream-context projection privacy + scoping", () => {
   afterEach(() => mock.restore())
 
   it("resolves source messages workspace-scoped (INV-8)", async () => {
-    const { service, findSourceMessages } = setupService({ memoContents: [memoContent] })
+    const { service, findSourceMessages } = setupService({
+      memoContents: [{ ...memoContent, sourceMessageIds: ["msg_2"] }],
+    })
 
     await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
-    expect(findSourceMessages).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, ["msg_1", "msg_2"])
+    expect(findSourceMessages).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, ["msg_2"])
   })
 
   it("writes no projection row for a private save into a shared stream (title would leak)", async () => {

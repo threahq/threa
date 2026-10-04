@@ -275,7 +275,7 @@ describe("report_back", () => {
     expect(JSON.parse(result.output)).toMatchObject({ ok: true, subagentId: run.id })
     const settled = await subagentService.getById({ workspaceId: ctx.workspaceId, id: run.id })
     expect(settled).toMatchObject({ status: SubagentStatuses.COMPLETED })
-    expect(await MessageRepository.findById(pool, settled!.resultMessageId!)).toMatchObject({
+    expect(await MessageRepository.findById(pool, ctx.workspaceId, settled!.resultMessageId!)).toMatchObject({
       streamId: threadStreamId,
       contentMarkdown: "The plan misses the backfill window.",
     })

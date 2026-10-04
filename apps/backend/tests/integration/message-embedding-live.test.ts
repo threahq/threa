@@ -97,7 +97,7 @@ describe("embedMessageWithContext hash guard", () => {
     const embeddingService: EmbeddingServiceLike = {
       async embed(text) {
         calls.push(text)
-        await MessageRepository.updateEmbeddings(pool, [
+        await MessageRepository.updateEmbeddings(pool, wsId, [
           { id: message.id, embedding: unitVector(1), sourceHash: "newer-text", expectedSourceHash: null },
         ])
         return unitVector(2)

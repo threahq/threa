@@ -47,7 +47,7 @@ export class LabelMessageService {
     const messageIds = assignments.map((a) => a.resourceId)
     if (messageIds.length === 0) return []
 
-    const byId = await MessageRepository.findByIds(this.pool, messageIds)
+    const byId = await MessageRepository.findByIds(this.pool, workspaceId, messageIds)
     // Preserve the newest-stowed-first order of the assignments; drop ids that
     // resolved to nothing and messages deleted after they were labeled.
     const ordered = messageIds.map((id) => byId.get(id)).filter((m): m is Message => Boolean(m) && !m!.deletedAt)

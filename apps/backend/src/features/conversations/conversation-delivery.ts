@@ -19,7 +19,7 @@ export async function resolveConversationDelivery(
   stream: Stream | null
 ): Promise<{ parentStreamId: string | undefined; streamVisibility: Visibility | undefined }> {
   if (stream?.type === StreamTypes.THREAD && stream.parentAnchorId?.startsWith("msg_")) {
-    const parentMessage = await MessageRepository.findById(client, stream.parentAnchorId)
+    const parentMessage = await MessageRepository.findById(client, stream.workspaceId, stream.parentAnchorId)
     const parentStreamId = parentMessage?.streamId
     const parentStream = parentMessage
       ? await StreamRepository.findById(client, stream.workspaceId, parentMessage.streamId)

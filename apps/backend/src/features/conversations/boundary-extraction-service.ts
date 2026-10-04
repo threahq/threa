@@ -71,7 +71,7 @@ export class BoundaryExtractionService {
         return { conversation: null, stream: null, messages: [] as Message[] }
       }
       const stream = await StreamRepository.findById(client, workspaceId, conversation.streamId)
-      const messagesMap = await MessageRepository.findByIds(client, conversation.messageIds)
+      const messagesMap = await MessageRepository.findByIds(client, workspaceId, conversation.messageIds)
       // Preserve the conversation's stored (chronological) order.
       const messages = conversation.messageIds
         .map((id) => messagesMap.get(id))
@@ -121,7 +121,7 @@ export class BoundaryExtractionService {
     // fetch extractions on the pool — mirrors streams/naming-service.ts.
     const fetchedData = await withClient(this.pool, async (client) => {
       passStartedAt = await MessageConversationStateRepository.now(client)
-      const message = await MessageRepository.findById(client, messageId)
+      const message = await MessageRepository.findById(client, workspaceId, messageId)
       if (!message) {
         return { message: null, stream: null, extractionContextBase: null }
       }
@@ -174,6 +174,7 @@ export class BoundaryExtractionService {
 
       const surroundingMessages = await MessageRepository.findSurrounding(
         client,
+        workspaceId,
         message.id,
         stream.id,
         MESSAGES_BEFORE,
@@ -209,7 +210,7 @@ export class BoundaryExtractionService {
         candidateAnchorIds
       )
       const threadRootIds = candidateAnchorIds.filter((id) => anchorsWithReplies.has(id))
-      const threadMessagesByParent = await MessageRepository.findThreadMessages(client, threadRootIds)
+      const threadMessagesByParent = await MessageRepository.findThreadMessages(client, workspaceId, threadRootIds)
       const allThreadMessages = Array.from(threadMessagesByParent.values()).flat()
 
       const allContextMessages = [...surroundingMessages, ...allThreadMessages]
@@ -539,7 +540,7 @@ export class BoundaryExtractionService {
 
         let reassignedMessage = messagesById.get(r.messageId)
         if (!reassignedMessage) {
-          const m = await MessageRepository.findById(client, r.messageId)
+          const m = await MessageRepository.findById(client, workspaceId, r.messageId)
           if (m) {
             reassignedMessage = m
             messagesById.set(r.messageId, m)
@@ -619,7 +620,7 @@ export class BoundaryExtractionService {
             // attach added this author to the guess, and an overturn must not
             // leave them listed in a conversation they never spoke in.
             const remainingIds = lockedPrior.messageIds.filter((id) => id !== messageId)
-            const remainingMessages = await MessageRepository.findByIds(client, remainingIds)
+            const remainingMessages = await MessageRepository.findByIds(client, workspaceId, remainingIds)
             await ConversationRepository.removePrimaryMessages(
               client,
               workspaceId,

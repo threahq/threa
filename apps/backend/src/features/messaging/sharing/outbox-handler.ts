@@ -95,7 +95,7 @@ export async function invalidatePointersForEvent(event: OutboxEvent, db: Pool, i
   // instead would emit `shared:<id>` entries no pinned node ever reads. One
   // batched read for every share-carrying message across all targets (INV-56);
   // a share row whose message is gone contributes no references.
-  const shareMessages = await MessageRepository.findByIdsInWorkspace(db, workspaceId, [
+  const shareMessages = await MessageRepository.findByIds(db, workspaceId, [
     ...new Set(shares.map((share) => share.shareMessageId)),
   ])
 

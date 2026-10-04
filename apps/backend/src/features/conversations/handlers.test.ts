@@ -316,6 +316,7 @@ describe("Conversation Handlers", () => {
       await handlers.getMessages(mockReq({ params: { conversationId: "conv_1" } }), res)
 
       expect(mockValidateStreamAccess).toHaveBeenCalledWith("stream_1", "ws_1", "usr_1")
+      expect(mockGetMessages).toHaveBeenCalledWith("ws_1", "conv_1")
     })
   })
 

@@ -394,7 +394,7 @@ export class MemoService implements MemoServiceLike {
         const conv = await ConversationRepository.findById(client, convId)
         if (conv) {
           conversations.set(convId, conv)
-          const msgs = await MessageRepository.findByIds(client, conv.messageIds)
+          const msgs = await MessageRepository.findByIds(client, workspaceId, conv.messageIds)
           conversationMessages.set(convId, new Map([...msgs].filter(([, message]) => !message.deletedAt)))
           // A saved or reflective memo citing a message edited since is shown
           // beside the conversation's own memos, so the classifier keeps it
@@ -762,6 +762,7 @@ export class MemoService implements MemoServiceLike {
       // requeues the conversation, so the next batch re-extracts from the rest.
       const sources = await MessageRepository.findByIds(
         client,
+        workspaceId,
         memosToCreate.flatMap((m) => m.sourceMessageIds)
       )
       const sourced = memoryOn
@@ -1076,7 +1077,7 @@ export class MemoService implements MemoServiceLike {
     const targetStreamId = stream.rootStreamId ?? stream.id
 
     const allSourceIds = [...new Set(memos.flatMap((memo) => memo.sourceMessageIds))]
-    const sourceMessages = await MessageRepository.findByIdsInWorkspace(client, workspaceId, allSourceIds)
+    const sourceMessages = await MessageRepository.findByIds(client, workspaceId, allSourceIds)
 
     const rows: NewStreamContextItem[] = []
     for (const memo of memos) {
@@ -1472,7 +1473,7 @@ export class MemoService implements MemoServiceLike {
 
       // A source deleted while the model calls ran: the memos were written from
       // it, so dropping only the citation would keep its content.
-      const sources = await MessageRepository.findByIds(client, context.sourceMessageIds)
+      const sources = await MessageRepository.findByIds(client, workspaceId, context.sourceMessageIds)
       if (context.sourceMessageIds.some((id) => !sources.get(id) || sources.get(id)?.deletedAt)) {
         logger.info({ sessionId, streamId }, "reflective capture — a source was deleted before save")
         return { classified: true, captured: 0, deduped: 0 }

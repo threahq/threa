@@ -302,7 +302,7 @@ async function buildScratchpadContext(
   temporal: TemporalContext | undefined,
   maxMessages: number
 ): Promise<StreamContext> {
-  const messages = await MessageRepository.list(db, stream.id, { limit: maxMessages })
+  const messages = await MessageRepository.list(db, stream.workspaceId, stream.id, { limit: maxMessages })
 
   return {
     streamType: stream.type,
@@ -325,7 +325,7 @@ async function buildChannelContext(
   currentTime?: Date
 ): Promise<StreamContext> {
   const [messages, members] = await Promise.all([
-    MessageRepository.list(db, stream.id, { limit: maxMessages }),
+    MessageRepository.list(db, stream.workspaceId, stream.id, { limit: maxMessages }),
     StreamMemberRepository.list(db, stream.workspaceId, { streamId: stream.id }),
   ])
 
@@ -361,7 +361,7 @@ async function buildDmContext(
   currentTime?: Date
 ): Promise<StreamContext> {
   const [messages, members] = await Promise.all([
-    MessageRepository.list(db, stream.id, { limit: maxMessages }),
+    MessageRepository.list(db, stream.workspaceId, stream.id, { limit: maxMessages }),
     StreamMemberRepository.list(db, stream.workspaceId, { streamId: stream.id }),
   ])
 
@@ -402,7 +402,7 @@ async function buildThreadContext(
   temporal: TemporalContext | undefined,
   maxMessages: number
 ): Promise<StreamContext> {
-  const messages = await MessageRepository.list(db, stream.id, { limit: maxMessages })
+  const messages = await MessageRepository.list(db, stream.workspaceId, stream.id, { limit: maxMessages })
 
   const threadPath = await buildThreadPath(db, stream)
 

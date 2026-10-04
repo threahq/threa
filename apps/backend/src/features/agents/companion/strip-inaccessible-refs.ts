@@ -106,7 +106,7 @@ export async function stripInaccessibleAgentRefs(params: StripParams): Promise<S
 
   const messageMap =
     messageIdsToCheck.size > 0
-      ? await MessageRepository.findByIdsInWorkspace(pool, workspaceId, [...messageIdsToCheck])
+      ? await MessageRepository.findByIds(pool, workspaceId, [...messageIdsToCheck])
       : new Map()
 
   const memoMap =

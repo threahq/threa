@@ -84,6 +84,7 @@ describe("bot invocation control protocol", () => {
   async function edit(sourceId: string, revision: number) {
     await MessageRepository.updateContent(
       pool,
+      workspace,
       sourceId,
       testContentJson(`revision ${revision}`),
       `revision ${revision}`
@@ -171,7 +172,7 @@ describe("bot invocation control protocol", () => {
       claimedByA!.id,
     ])
     const reclaimedByB = await claim("owner-b", instance, "session-b")
-    await MessageRepository.softDelete(pool, source.id)
+    await MessageRepository.softDelete(pool, workspace, source.id)
     await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: source.id })
     const cancelledB = await service().getBootstrapForRuntime({
       workspaceId: workspace,
@@ -390,7 +391,7 @@ describe("bot invocation control protocol", () => {
       const token = `${delivery}-paused-listener`
       const claimed = await claim(token)
       if (delivery === "plaintext") {
-        await MessageRepository.updateContent(pool, source.id, testContentJson("after"), "after")
+        await MessageRepository.updateContent(pool, workspace, source.id, testContentJson("after"), "after")
       } else {
         await pool.query(
           `UPDATE messages
@@ -409,7 +410,7 @@ describe("bot invocation control protocol", () => {
         claimTtlSeconds: 60,
         knownSourceRevision: 1,
       })
-      const deleted = await MessageRepository.softDelete(pool, source.id)
+      const deleted = await MessageRepository.softDelete(pool, workspace, source.id)
       const cancelled = await service().renewInvocationClaim({
         workspaceId: workspace,
         botId: bot,
@@ -447,7 +448,7 @@ describe("bot invocation control protocol", () => {
     await setMode("live")
     const source = await createSource()
     const claimed = await claim("delete-token")
-    const deleted = await MessageRepository.softDelete(pool, source.id)
+    const deleted = await MessageRepository.softDelete(pool, workspace, source.id)
     await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: source.id })
     await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: source.id })
     const renewed = await service().renewInvocationClaim({
@@ -669,7 +670,7 @@ describe("bot invocation control protocol", () => {
     })
     const source = await createSource()
     const claimed = await claim("stale-route-token")
-    await MessageRepository.updateContent(pool, source.id, testContentJson("revision 2"), "revision 2")
+    await MessageRepository.updateContent(pool, workspace, source.id, testContentJson("revision 2"), "revision 2")
     await service().setActiveActor({
       workspaceId: workspace,
       rootStreamId: stream,
@@ -821,7 +822,7 @@ describe("bot invocation control protocol", () => {
   test("renew and edit reconciliation follow source-before-row lock order", async () => {
     const source = await createSource()
     const claimed = await claim("lock-order-token")
-    await MessageRepository.updateContent(pool, source.id, testContentJson("revision 2"), "revision 2")
+    await MessageRepository.updateContent(pool, workspace, source.id, testContentJson("revision 2"), "revision 2")
     const blocker = await pool.connect()
     await blocker.query("BEGIN")
     try {

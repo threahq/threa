@@ -103,7 +103,7 @@ describe("resolveQuoteReplies", () => {
     expect(resolved.size).toBe(1)
     expect(resolved.get("msg_B")?.id).toBe("msg_B")
     expect(mockFindByIdsInStreams).toHaveBeenCalledTimes(1)
-    expect(mockFindByIdsInStreams.mock.calls[0][2]).toEqual(["msg_B"])
+    expect(mockFindByIdsInStreams.mock.calls[0].slice(1, 3)).toEqual(["ws_test", ["msg_B"]])
   })
 
   test("follows a depth chain up to maxDepth=5", async () => {

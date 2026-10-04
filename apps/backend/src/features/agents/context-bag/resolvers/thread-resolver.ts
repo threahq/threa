@@ -71,15 +71,15 @@ export const ThreadResolver: Resolver<ThreadRef> = {
     // can opt into windowing later by passing their own intent here).
     const useDiscussWindow = options?.intent === ContextIntents.DISCUSS_THREAD
     const messages = useDiscussWindow
-      ? await fetchDiscussWindow(db, ref)
-      : await MessageRepository.list(db, ref.streamId, { limit: MAX_FETCH })
+      ? await fetchDiscussWindow(db, workspaceId, ref)
+      : await MessageRepository.list(db, workspaceId, ref.streamId, { limit: MAX_FETCH })
 
     // Apply optional anchoring. `fromMessageId`/`toMessageId` bound the slice
     // by sequence so the bag can pin down a specific range of the thread.
     // The discuss-window path already returns a centered slice, so anchors
     // are skipped there — they're a different slicing primitive that the
     // discuss flow doesn't use (and can't combine with cleanly).
-    const anchored = useDiscussWindow ? messages : await applyAnchors(db, messages, ref)
+    const anchored = useDiscussWindow ? messages : await applyAnchors(db, workspaceId, messages, ref)
 
     // Always prepend the thread's anchor when the source is a thread — the reply
     // chain is unintelligible without the message (or card) that spawned it.
@@ -126,10 +126,10 @@ export const ThreadResolver: Resolver<ThreadRef> = {
  * with 200 messages after returns 5 before + focal + 44 after rather than
  * leaving 19 slots empty.
  */
-async function fetchDiscussWindow(db: Querier, ref: ThreadRef): Promise<Message[]> {
+async function fetchDiscussWindow(db: Querier, workspaceId: string, ref: ThreadRef): Promise<Message[]> {
   if (!ref.originMessageId) {
     // No focal: return the most recent N messages (chronological order).
-    return MessageRepository.list(db, ref.streamId, { limit: DISCUSS_WINDOW_TOTAL })
+    return MessageRepository.list(db, workspaceId, ref.streamId, { limit: DISCUSS_WINDOW_TOTAL })
   }
 
   // Fetch generously on both sides so we can rebalance below without a second
@@ -137,6 +137,7 @@ async function fetchDiscussWindow(db: Querier, ref: ThreadRef): Promise<Message[
   // chronological order with the target included.
   const surrounding = await MessageRepository.findSurrounding(
     db,
+    workspaceId,
     ref.originMessageId,
     ref.streamId,
     DISCUSS_WINDOW_TOTAL,
@@ -146,7 +147,7 @@ async function fetchDiscussWindow(db: Querier, ref: ThreadRef): Promise<Message[
     // Origin doesn't resolve in this stream (wrong id, deleted, different
     // stream). Fall back to the most-recent slice so the user still gets a
     // useful context — matching the slash-command shape.
-    return MessageRepository.list(db, ref.streamId, { limit: DISCUSS_WINDOW_TOTAL })
+    return MessageRepository.list(db, workspaceId, ref.streamId, { limit: DISCUSS_WINDOW_TOTAL })
   }
 
   const targetIdx = surrounding.findIndex((m) => m.id === ref.originMessageId)
@@ -159,7 +160,7 @@ async function fetchDiscussWindow(db: Querier, ref: ThreadRef): Promise<Message[
     // Slicing `surrounding` here would give a window skewed around the
     // deletion point; the slash-command tail is more honest — the user's
     // anchor is unrecoverable, fall back to "what's recent in this stream."
-    return MessageRepository.list(db, ref.streamId, { limit: DISCUSS_WINDOW_TOTAL })
+    return MessageRepository.list(db, workspaceId, ref.streamId, { limit: DISCUSS_WINDOW_TOTAL })
   }
 
   const beforeAvailable = targetIdx
@@ -185,6 +186,7 @@ async function fetchDiscussWindow(db: Querier, ref: ThreadRef): Promise<Message[
 
 async function applyAnchors<T extends { id: string; sequence: bigint; streamId?: string }>(
   db: Querier,
+  workspaceId: string,
   messages: T[],
   ref: ThreadRef
 ): Promise<T[]> {
@@ -201,10 +203,10 @@ async function applyAnchors<T extends { id: string; sequence: bigint; streamId?:
   //   - CONTEXT_ANCHOR_NOT_FOUND — the id doesn't exist in this stream at all
   //   - CONTEXT_ANCHOR_OUT_OF_WINDOW — the id exists but predates MAX_FETCH
   if (ref.fromMessageId && fromIdx < 0) {
-    await assertAnchorExists(db, ref.streamId, ref.fromMessageId, "fromMessageId")
+    await assertAnchorExists(db, workspaceId, ref.streamId, ref.fromMessageId, "fromMessageId")
   }
   if (ref.toMessageId && toIdx < 0) {
-    await assertAnchorExists(db, ref.streamId, ref.toMessageId, "toMessageId")
+    await assertAnchorExists(db, workspaceId, ref.streamId, ref.toMessageId, "toMessageId")
   }
 
   const [lo, hi] = fromIdx <= toIdx ? [fromIdx, toIdx] : [toIdx, fromIdx]
@@ -213,6 +215,7 @@ async function applyAnchors<T extends { id: string; sequence: bigint; streamId?:
 
 async function assertAnchorExists(
   db: Querier,
+  workspaceId: string,
   streamId: string,
   anchorId: string,
   label: "fromMessageId" | "toMessageId"
@@ -222,7 +225,7 @@ async function assertAnchorExists(
   // soft-deleted anchor would otherwise look like a live row and get
   // mis-labeled OUT_OF_WINDOW — the suggested workaround (widen the window)
   // can never recover it. Treat soft-deleted anchors as not-found.
-  const anchor = await MessageRepository.findById(db, anchorId)
+  const anchor = await MessageRepository.findById(db, workspaceId, anchorId)
   const existsInStream = anchor !== null && anchor.streamId === streamId && !anchor.deletedAt
   if (!existsInStream) {
     throw new HttpError(`${label} anchor not found in this stream`, {

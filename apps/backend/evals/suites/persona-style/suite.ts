@@ -280,7 +280,7 @@ async function runPersonaStyleTask(input: PersonaStyleInput, ctx: EvalContext): 
     }
     await personaAgent.run(agentInput)
 
-    const allMessages = await MessageRepository.list(ctx.pool, streamId, { limit: 100 })
+    const allMessages = await MessageRepository.list(ctx.pool, ctx.workspaceId, streamId, { limit: 100 })
     const reply = allMessages
       .filter((m) => m.authorId === personaId)
       .map((m) => m.contentMarkdown)

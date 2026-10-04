@@ -53,7 +53,7 @@ describe("stripInaccessibleAgentRefs", () => {
   })
 
   it("keeps refs whose source stream is in the agent's scope and resolves in the workspace", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([["msg_a", { id: "msg_a", streamId: "stream_a" } as any]])
     )
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([
@@ -77,7 +77,7 @@ describe("stripInaccessibleAgentRefs", () => {
   it("drops sharedMessage when the source message id resolves to nothing in the workspace", async () => {
     // INV-8 collapses cross-workspace ids and in-workspace deny into "not
     // found" — both surface as an empty map here.
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
 
     const result = await stripInaccessibleAgentRefs({
@@ -103,7 +103,7 @@ describe("stripInaccessibleAgentRefs", () => {
     // The message exists in workspace, but the source stream is not in the
     // scope-restricted AgentAccessSpec reach (e.g. private channel msg from
     // a public-channel-invoked agent).
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([["msg_secret", { id: "msg_secret", streamId: "stream_private" } as any]])
     )
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
@@ -125,7 +125,7 @@ describe("stripInaccessibleAgentRefs", () => {
   })
 
   it("drops sharedMessage when the message exists but in a different stream than the ref claims", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
       new Map([["msg_a", { id: "msg_a", streamId: "stream_actual" } as any]])
     )
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
@@ -146,7 +146,7 @@ describe("stripInaccessibleAgentRefs", () => {
   })
 
   it("validates cross-stream quoteReply but passes same-stream quoteReply through unchecked", async () => {
-    const findSpy = spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    const findSpy = spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
 
     const result = await stripInaccessibleAgentRefs({
@@ -164,7 +164,7 @@ describe("stripInaccessibleAgentRefs", () => {
     })
 
     // Only the cross-stream quote was validated, and its msg id was looked up.
-    expect(findSpy.mock.calls[0]?.[2]).toEqual(["msg_phantom"])
+    expect(findSpy.mock.calls[0]?.slice(1)).toEqual(["ws_1", ["msg_phantom"]])
 
     expect(result.dropped).toHaveLength(1)
     expect(result.dropped[0]).toMatchObject({
@@ -178,7 +178,7 @@ describe("stripInaccessibleAgentRefs", () => {
   })
 
   it("drops attachmentReference when the attachment id is unknown or in another workspace", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([
       { id: "att_other_ws", workspaceId: "ws_other", streamId: "stream_x" } as any,
     ])
@@ -199,7 +199,7 @@ describe("stripInaccessibleAgentRefs", () => {
     // Attachment lives in stream_source (not in scope), but referenced from
     // stream_visible (in scope). Mirrors AttachmentService.getAccessible —
     // the ref projection lets the agent re-surface what she could already see.
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([
       {
         id: "att_a",
@@ -226,7 +226,7 @@ describe("stripInaccessibleAgentRefs", () => {
   })
 
   it("drops attachment when neither direct stream nor any referencing stream is in scope", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([
       {
         id: "att_secret",
@@ -257,7 +257,7 @@ describe("stripInaccessibleAgentRefs", () => {
     // Defense in depth: the strip helper must reject malware-scan-quarantined
     // attachments BEFORE event-service throws on them, otherwise they'd
     // survive strip and crash the whole message at write time.
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([
       {
         id: "att_quarantined",
@@ -285,7 +285,7 @@ describe("stripInaccessibleAgentRefs", () => {
   })
 
   it("keeps memoEmbed when the memo resolves to an active memo in the workspace", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
     spyOn(MemoRepository, "findByIdsInWorkspace").mockResolvedValue(
       new Map([["memo_a", { id: "memo_a", status: "active" } as any]])
@@ -308,7 +308,7 @@ describe("stripInaccessibleAgentRefs", () => {
   it("drops memoEmbed when the memo id resolves to nothing in the workspace", async () => {
     // INV-8: hallucinated ids and cross-workspace memos both collapse into an
     // empty map and surface as "not found".
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
     spyOn(MemoRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
 
@@ -331,7 +331,7 @@ describe("stripInaccessibleAgentRefs", () => {
   })
 
   it("drops memoEmbed when the memo exists but is no longer active", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
     spyOn(MemoRepository, "findByIdsInWorkspace").mockResolvedValue(
       new Map([["memo_archived", { id: "memo_archived", status: "archived" } as any]])
@@ -354,7 +354,7 @@ describe("stripInaccessibleAgentRefs", () => {
   })
 
   it("re-serializes the cleaned tree to markdown so contentJson and contentMarkdown stay in sync", async () => {
-    spyOn(MessageRepository, "findByIdsInWorkspace").mockResolvedValue(new Map())
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
     spyOn(AttachmentRepository, "findByIds").mockResolvedValue([])
 
     const result = await stripInaccessibleAgentRefs({

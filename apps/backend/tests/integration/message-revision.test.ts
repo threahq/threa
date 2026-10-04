@@ -94,7 +94,7 @@ describe("message revision", () => {
       })
     }
 
-    const stored = await MessageRepository.findById(pool, message.id)
+    const stored = await MessageRepository.findById(pool, testWorkspaceId, message.id)
     expect(stored?.revision).toBe(3)
     expect(await MessageVersionRepository.getCurrentRevision(pool, message.id)).toBe(3)
 
@@ -148,7 +148,7 @@ describe("message revision", () => {
       [messageVersionId(), message.id, testUserId]
     )
     await pool.query(`UPDATE messages SET content_markdown = 'v3 body (old writer)' WHERE id = $1`, [message.id])
-    expect((await MessageRepository.findById(pool, message.id))?.revision).toBe(2)
+    expect((await MessageRepository.findById(pool, testWorkspaceId, message.id))?.revision).toBe(2)
 
     await eventService.editMessageInternal({
       workspaceId: testWorkspaceId,
@@ -160,7 +160,7 @@ describe("message revision", () => {
 
     const versions = await MessageVersionRepository.listByMessageId(pool, message.id)
     expect(versions.map((v) => v.versionNumber)).toEqual([1, 2, 3])
-    expect((await MessageRepository.findById(pool, message.id))?.revision).toBe(4)
+    expect((await MessageRepository.findById(pool, testWorkspaceId, message.id))?.revision).toBe(4)
     const lastEdit = (await eventService.listEvents(testWorkspaceId, channel, { limit: 200 }))
       .filter((e) => e.eventType === "message_edited" && (e.payload as MessageEditedPayload).messageId === message.id)
       .map((e) => (e.payload as MessageEditedPayload).revision)

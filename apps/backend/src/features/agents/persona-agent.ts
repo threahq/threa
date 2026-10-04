@@ -1742,7 +1742,7 @@ export class PersonaAgent {
                 .map((event) => (event.payload as { messageId?: string }).messageId)
                 .filter((messageId): messageId is string => typeof messageId === "string")
 
-              const messagesById = await MessageRepository.findByIds(db, changedMessageIds)
+              const messagesById = await MessageRepository.findByIds(db, workspaceId, changedMessageIds)
 
               const userIds = [
                 ...new Set(
@@ -2037,7 +2037,7 @@ export class PersonaAgent {
       return { messageIds: [], nextIndex: 0, supersededSession }
     }
 
-    const messagesById = await MessageRepository.findByIds(db, candidateMessageIds)
+    const messagesById = await MessageRepository.findByIds(db, workspaceId, candidateMessageIds)
     const reusableMessageIds = candidateMessageIds.filter((id) => {
       const message = messagesById.get(id)
       if (!message || message.deletedAt) return false

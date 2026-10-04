@@ -92,7 +92,7 @@ describe("bot invocation canonical source mutations", () => {
     const companion = await invocation(message.id, message.revision)
     const control = await invocation(message.id, 0, undefined, "session-control")
 
-    await MessageRepository.updateContent(pool, message.id, testContentJson("after"), "after")
+    await MessageRepository.updateContent(pool, workspace, message.id, testContentJson("after"), "after")
     await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
 
     const afterEdit = await pool.query<{
@@ -115,7 +115,7 @@ describe("bot invocation canonical source mutations", () => {
       { id: control.invocation.id, trigger: "session-control", status: "pending", source_message_revision: 0 },
     ])
 
-    await MessageRepository.softDelete(pool, message.id)
+    await MessageRepository.softDelete(pool, workspace, message.id)
     await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
     const afterDelete = await pool.query<{ trigger: string; status: string }>(
       `SELECT trigger, status FROM bot_invocations
@@ -140,7 +140,7 @@ describe("bot invocation canonical source mutations", () => {
       })
       await pool.query("UPDATE bot_invocations SET status = 'completed' WHERE id = $1", [completed.invocation.id])
 
-      await MessageRepository.softDelete(pool, message.id)
+      await MessageRepository.softDelete(pool, workspace, message.id)
       await new BotRuntimeService({ pool }).reconcileInvocationSource({
         workspaceId: workspace,
         sourceMessageId: message.id,
@@ -169,10 +169,10 @@ describe("bot invocation canonical source mutations", () => {
 
   test("repository edits and deletion advance the canonical revision once", async () => {
     const created = await source()
-    const first = await MessageRepository.updateContent(pool, created.id, testContentJson("two"), "two")
-    const second = await MessageRepository.updateContent(pool, created.id, testContentJson("three"), "three")
-    const deleted = await MessageRepository.softDelete(pool, created.id)
-    const repeatedDelete = await MessageRepository.softDelete(pool, created.id)
+    const first = await MessageRepository.updateContent(pool, workspace, created.id, testContentJson("two"), "two")
+    const second = await MessageRepository.updateContent(pool, workspace, created.id, testContentJson("three"), "three")
+    const deleted = await MessageRepository.softDelete(pool, workspace, created.id)
+    const repeatedDelete = await MessageRepository.softDelete(pool, workspace, created.id)
     expect([
       created.revision,
       first?.revision,
@@ -187,7 +187,7 @@ describe("bot invocation canonical source mutations", () => {
     const message = await source("before")
 
     await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
-    await MessageRepository.updateContent(pool, message.id, testContentJson("after"), "after")
+    await MessageRepository.updateContent(pool, workspace, message.id, testContentJson("after"), "after")
     await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
 
     const rows = await pool.query<{ prompt_markdown: string; source_message_revision: number; status: string }>(
@@ -214,7 +214,7 @@ describe("bot invocation canonical source mutations", () => {
       contentMarkdown: "before",
       editedBy: author,
     })
-    await MessageRepository.updateContent(pool, message.id, testContentJson("after"), "after")
+    await MessageRepository.updateContent(pool, workspace, message.id, testContentJson("after"), "after")
     await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
     await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
 
@@ -262,7 +262,7 @@ describe("bot invocation canonical source mutations", () => {
     })
     expect(claimed).not.toBeNull()
 
-    await MessageRepository.updateContent(pool, message.id, testContentJson("after"), "after")
+    await MessageRepository.updateContent(pool, workspace, message.id, testContentJson("after"), "after")
     expect(
       await service().failInvocation({
         workspaceId: workspace,
@@ -340,6 +340,7 @@ describe("bot invocation canonical source mutations", () => {
     try {
       await MessageRepository.updateContent(
         failureEditor,
+        workspace,
         failureMessage.id,
         testContentJson("failure after"),
         "failure after"
@@ -388,6 +389,7 @@ describe("bot invocation canonical source mutations", () => {
     try {
       await MessageRepository.updateContent(
         parkingEditor,
+        workspace,
         parkingMessage.id,
         testContentJson("parking after"),
         "parking after"
@@ -541,7 +543,7 @@ describe("bot invocation canonical source mutations", () => {
         initialSequence: 0n,
       })
     ).not.toBeNull()
-    await MessageRepository.updateContent(pool, message.id, mentionContent(), "@source-test-bot")
+    await MessageRepository.updateContent(pool, workspace, message.id, mentionContent(), "@source-test-bot")
 
     const sessionBlocker = await pool.connect()
     const completer = await pool.connect()
@@ -634,7 +636,7 @@ describe("bot invocation canonical source mutations", () => {
     let committed = false
     try {
       await editor.query("BEGIN")
-      await MessageRepository.updateContent(editor, message.id, testContentJson("after"), "after")
+      await MessageRepository.updateContent(editor, workspace, message.id, testContentJson("after"), "after")
       let settled = false
       const claiming = service()
         .claimNextInvocation({
@@ -676,7 +678,7 @@ describe("bot invocation canonical source mutations", () => {
     const message = await source("gone")
     const first = await invocation(message.id, message.revision)
     const second = await invocation(message.id, message.revision, undefined, "active-scratchpad", otherBot)
-    await MessageRepository.softDelete(pool, message.id)
+    await MessageRepository.softDelete(pool, workspace, message.id)
 
     const claims = Promise.all([
       service().claimNextInvocation({
@@ -840,11 +842,15 @@ describe("bot invocation canonical source mutations", () => {
       })
       expect(locked && (await service().validateClaimSourceForCompletion(completer, locked))).toBe(true)
       let editSettled = false
-      const editing = MessageRepository.updateContent(pool, message.id, testContentJson("after"), "after").finally(
-        () => {
-          editSettled = true
-        }
-      )
+      const editing = MessageRepository.updateContent(
+        pool,
+        workspace,
+        message.id,
+        testContentJson("after"),
+        "after"
+      ).finally(() => {
+        editSettled = true
+      })
       await new Promise((resolve) => setTimeout(resolve, 50))
       expect(editSettled).toBe(false)
       const completed = await service().completeInvocationInTransaction(completer, {
@@ -883,7 +889,7 @@ describe("bot invocation canonical source mutations", () => {
     const editor = await pool.connect()
     await editor.query("BEGIN")
     try {
-      await MessageRepository.updateContent(editor, message.id, testContentJson("after"), "after")
+      await MessageRepository.updateContent(editor, workspace, message.id, testContentJson("after"), "after")
       let completionSettled = false
       const completion = (async () => {
         const completer = await pool.connect()

@@ -447,7 +447,9 @@ describe("ConversationService.reassignMessage", () => {
     expect(result.conversation).toMatchObject({ id: convSubId, messageIds: [threadMsgId, msg2Id] })
     expect(result.previousConversation).toMatchObject({ id: convAId, messageIds: [msg1Id] })
 
-    const movedRow = await withTransaction(pool, (client) => MessageRepository.findById(client, msg2Id))
+    const movedRow = await withTransaction(pool, (client) =>
+      MessageRepository.findById(client, testWorkspaceId, msg2Id)
+    )
     expect(movedRow?.streamId).toBe(testStreamId)
 
     // Delivery resolves per conversation stream: the thread-anchored target

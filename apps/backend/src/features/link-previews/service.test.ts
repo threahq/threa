@@ -324,7 +324,7 @@ describe("LinkPreviewService.resolveInAppLink", () => {
         url: "https://app.threa.io/w/ws_self/s/stream_1?m=msg_1",
       })
     )
-    spyOn(MessageRepository, "findById").mockResolvedValue({
+    const findMessage = spyOn(MessageRepository, "findById").mockResolvedValue({
       id: "msg_1",
       streamId: "stream_1",
       authorType: "user",
@@ -345,6 +345,7 @@ describe("LinkPreviewService.resolveInAppLink", () => {
       streamName: "general",
       streamType: "channel",
     })
+    expect(findMessage).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "msg_1")
   })
 
   test("strips markdown before truncating so a link cut at the boundary never leaks literal syntax", async () => {

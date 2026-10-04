@@ -469,7 +469,7 @@ export class MemoExplorerService {
     let sourceStreamId: string | null = null
 
     if (memo.sourceMessageId) {
-      const sourceMessage = await MessageRepository.findById(this.pool, memo.sourceMessageId)
+      const sourceMessage = await MessageRepository.findById(this.pool, memo.workspaceId, memo.sourceMessageId)
       sourceStreamId = sourceMessage?.streamId ?? null
     } else if (memo.sourceConversationId) {
       const sourceConversation = await ConversationRepository.findById(this.pool, memo.sourceConversationId)
@@ -477,7 +477,7 @@ export class MemoExplorerService {
     }
 
     if (!sourceStreamId && memo.sourceMessageIds.length > 0) {
-      const sourceMessages = await MessageRepository.findByIds(this.pool, memo.sourceMessageIds)
+      const sourceMessages = await MessageRepository.findByIds(this.pool, memo.workspaceId, memo.sourceMessageIds)
       sourceStreamId = sourceMessages.get(memo.sourceMessageIds[0] ?? "")?.streamId ?? null
     }
 
@@ -501,7 +501,7 @@ export class MemoExplorerService {
     memo: Memo,
     accessibleStreamIds: string[]
   ): Promise<MemoExplorerSourceMessage[]> {
-    const sourceMessagesMap = await MessageRepository.findByIds(this.pool, memo.sourceMessageIds)
+    const sourceMessagesMap = await MessageRepository.findByIds(this.pool, workspaceId, memo.sourceMessageIds)
     if (sourceMessagesMap.size === 0) {
       return []
     }

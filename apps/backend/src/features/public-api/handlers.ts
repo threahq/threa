@@ -615,6 +615,7 @@ async function buildClaimContext(
 
   const surrounding = await MessageRepository.findSurrounding(
     pool,
+    invocation.workspaceId,
     invocation.sourceMessageId,
     invocation.activeStreamId,
     CLAIM_CONTEXT_MAX_MESSAGES,
@@ -687,9 +688,10 @@ async function buildSealedClaimContext(
   }
   const [wraps, trigger, surrounding] = await Promise.all([
     StreamE2eKeyWrapsRepository.listForStream(pool, invocation.workspaceId, invocation.rootStreamId),
-    MessageRepository.findById(pool, invocation.sourceMessageId),
+    MessageRepository.findById(pool, invocation.workspaceId, invocation.sourceMessageId),
     MessageRepository.findSurrounding(
       pool,
+      invocation.workspaceId,
       invocation.sourceMessageId,
       invocation.activeStreamId,
       CLAIM_CONTEXT_MAX_MESSAGES,
@@ -1035,7 +1037,12 @@ export function createPublicApiHandlers({
       expectedId?: string
     }
   ): Promise<Message | null> {
-    const existing = await MessageRepository.findByClientMessageId(tx, params.streamId, params.clientMessageId)
+    const existing = await MessageRepository.findByClientMessageId(
+      tx,
+      params.workspaceId,
+      params.streamId,
+      params.clientMessageId
+    )
     if (!existing) return null
     const createdEvent = await StreamEventRepository.findByMessageId(
       tx,
@@ -1126,7 +1133,7 @@ export function createPublicApiHandlers({
     }
     if (session.callbackTokenHash) verifyCallbackToken(session, callbackToken)
     const message = session.responseMessageId
-      ? await MessageRepository.findById(client, session.responseMessageId)
+      ? await MessageRepository.findById(client, invocation.workspaceId, session.responseMessageId)
       : null
     if (session.responseMessageId && !message) return null
     if (
@@ -1164,7 +1171,7 @@ export function createPublicApiHandlers({
 
   /** Resolve mutation actor independently; message snapshot is only a placement hint. */
   async function resolveMessageMutation(messageId: string, req: Request) {
-    const message = await eventService.getMessageById(messageId)
+    const message = await eventService.getMessageById(req.workspaceId!, messageId)
     if (req.userApiKey) {
       return { message, actorId: req.user!.id, actorType: AuthorTypes.USER as AuthorType, displayName: req.user!.name }
     }
@@ -3247,6 +3254,7 @@ export function createPublicApiHandlers({
     },
 
     async listMessages(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
       const streamId = req.params.streamId
 
       const result = listMessagesSchema.safeParse(req.query)
@@ -3262,7 +3270,7 @@ export function createPublicApiHandlers({
 
       await assertStreamAccessible(req, streamId)
 
-      const messages = await eventService.getMessages(streamId, {
+      const messages = await eventService.getMessages(workspaceId, streamId, {
         limit: limit + 1,
         beforeSequence: before ? BigInt(before) : undefined,
         afterSequence: after ? BigInt(after) : undefined,
@@ -3386,7 +3394,7 @@ export function createPublicApiHandlers({
       const { after, limit } = validateRequest(listConversationMessagesSchema, req.query)
       const conversation = await resolveAccessibleConversation(req, req.params.conversationId)
 
-      const members = await conversationService.getMessages(conversation.id)
+      const members = await conversationService.getMessages(workspaceId, conversation.id)
       const sorted = members
         .filter((m) => !m.deletedAt)
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || (a.id < b.id ? -1 : 1))
@@ -3457,6 +3465,7 @@ export function createPublicApiHandlers({
       }
 
       const messages = await eventService.findByMetadata({
+        workspaceId,
         streamIds: accessibleStreamIds,
         filter: metadata,
         streamId,
