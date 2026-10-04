@@ -3,6 +3,7 @@ import {
   DELEGATION_STATUSES,
   FOLLOW_UP_STATUSES,
   KNOWLEDGE_TYPES,
+  parseGitHubPullRequestUrl,
   type DelegationStatus,
   type FollowUpStatus,
   type KnowledgeType,
@@ -13,6 +14,7 @@ import type {
   StreamContextFollowUpDetail,
   StreamContextLinkDetail,
   StreamContextMemoDetail,
+  StreamContextPullRequestDetail,
   StreamContextThreadDetail,
 } from "@threahq/types"
 import type { CachedStreamContextItem } from "@/db"
@@ -26,8 +28,10 @@ import type { ContextItem } from "./types"
  * The wire `detail` is joined live server-side and is empty on a locally derived
  * row that hasn't reconciled yet, so every field is treated as optional here:
  * a link with no preview falls back to its href, an attachment with no metadata
- * to its ref id. Returns null only when the row can't be rendered at all
- * (a file row with no attachment id).
+ * to its ref id. Returns null when the row can't be rendered at all (a file row
+ * with no attachment id, a PR row whose ref isn't a PR URL), and for a `link`
+ * row holding a PR URL: projected before PRs had their own category, it can
+ * outlive the server-side backfill in this device's cache.
  */
 export function contextItemFromCached(row: CachedStreamContextItem): ContextItem | null {
   const base = {
@@ -40,8 +44,25 @@ export function contextItemFromCached(row: CachedStreamContextItem): ContextItem
   }
 
   switch (row.category) {
+    case "pull_request": {
+      const detail = row.detail as Partial<StreamContextPullRequestDetail>
+      const ref = parseGitHubPullRequestUrl(detail.url ?? row.refId)
+      if (!ref) return null
+      return {
+        ...base,
+        category: "pull_request",
+        url: ref.url,
+        owner: ref.owner,
+        repo: ref.repo,
+        number: ref.number,
+        title: detail.title ?? null,
+        state: detail.state ?? null,
+        refCount: row.occurrenceCount,
+      }
+    }
     case "link": {
       const detail = row.detail as Partial<StreamContextLinkDetail>
+      if (parseGitHubPullRequestUrl(detail.url ?? row.refId)) return null
       const { previewKind, badge } = linkPreviewBadge({
         previewType: detail.previewType ?? null,
         contentType: detail.contentType ?? null,

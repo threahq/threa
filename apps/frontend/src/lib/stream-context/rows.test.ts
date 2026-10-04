@@ -298,6 +298,39 @@ describe("contextItemsFromEvent", () => {
     expect(contextItemsFromEvent(messageEvent({ contentMarkdown: "hi" }), CTX)).toEqual([])
   })
 
+  it("folds every view of a PR into one pull_request row keyed by its canonical URL", () => {
+    const rows = contextItemsFromEvent(
+      messageEvent({
+        messageId: "msg_1",
+        contentMarkdown: "x",
+        contentJson: doc(
+          { type: "text", text: "diff https://github.com/acme/repo/pull/42/files and " },
+          {
+            type: "text",
+            text: "the PR",
+            marks: [{ type: "link", attrs: { href: "https://www.github.com/acme/repo/pull/42#issuecomment-1" } }],
+          }
+        ),
+      }),
+      CTX
+    )
+    expect(rows.map((r) => [r.key, r.groupKey, r.detail])).toEqual([
+      [
+        "pull_request:https://github.com/acme/repo/pull/42:msg_1",
+        "https://github.com/acme/repo/pull/42",
+        {
+          url: "https://github.com/acme/repo/pull/42",
+          owner: "acme",
+          repo: "repo",
+          number: 42,
+          title: null,
+          state: null,
+          previewStatus: null,
+        },
+      ],
+    ])
+  })
+
   /**
    * Parity seam: these are the exact keys `contextRowsForMessage`
    * (apps/backend/src/features/stream-context/extract.ts) produces for the same

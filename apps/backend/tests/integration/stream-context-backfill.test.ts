@@ -16,7 +16,8 @@ import { EventService } from "../../src/features/messaging"
 import { MemoRepository } from "../../src/features/memos"
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
 import { plan, processChunk } from "../../src/features/stream-context/backfill"
-import { memoId, userEncryptionKeyId, workspaceId } from "../../src/lib/id"
+import { StreamContextRepository } from "../../src/features/stream-context/repository"
+import { memoId, streamContextItemId, userEncryptionKeyId, workspaceId } from "../../src/lib/id"
 import { sql } from "../../src/db"
 import { StreamTypes, Visibilities } from "@threahq/types"
 
@@ -32,6 +33,7 @@ describe("stream-context backfill against the real schema", () => {
   let sealedStreamId: string
   let threadId: string
   let memoRefId: string
+  const PR_URL = "https://github.com/threahq/threa/pull/1826"
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
@@ -76,6 +78,14 @@ describe("stream-context backfill against the real schema", () => {
         ...testMessageContent(`see https://example.com/${streamId}/doc`),
       })
     }
+
+    const prMessage = await eventService.createMessage({
+      workspaceId: wsId,
+      streamId: channelId,
+      authorId: ownerId,
+      authorType: "user",
+      ...testMessageContent(`stacked on ${PR_URL}/files`),
+    })
 
     const anchor = await eventService.createMessage({
       workspaceId: wsId,
@@ -141,6 +151,26 @@ describe("stream-context backfill against the real schema", () => {
     // The rows the live write path just created are what the backfill must
     // converge on, so clear them and let the backfill rebuild from stored state.
     await pool.query(sql`DELETE FROM stream_context_items WHERE workspace_id = ${wsId}`)
+    // What the pre-`pull_request` derivation wrote for the PR message: the
+    // backfill must replace it, not add a PR row beside it.
+    await StreamContextRepository.insertMany(pool, [
+      {
+        id: streamContextItemId(),
+        workspaceId: wsId,
+        streamId: channelId,
+        rootStreamId: channelId,
+        category: "link",
+        refKind: "url",
+        refId: `${PR_URL}/files`,
+        groupKey: `${PR_URL}/files`,
+        sourceMessageId: prMessage.id,
+        authorId: ownerId,
+        occurredAt: new Date(),
+        sequence: null,
+        snippet: "stacked on",
+        detail: { url: `${PR_URL}/files` },
+      },
+    ])
   })
 
   afterAll(async () => {
@@ -184,6 +214,7 @@ describe("stream-context backfill against the real schema", () => {
       { stream_id: channelId, category: "link", ref_id: `https://example.com/${channelId}/doc` },
       { stream_id: dmId, category: "link", ref_id: `https://example.com/${dmId}/doc` },
       { stream_id: channelId, category: "memo", ref_id: memoRefId },
+      { stream_id: channelId, category: "pull_request", ref_id: PR_URL },
       { stream_id: channelId, category: "thread", ref_id: threadId },
     ])
   })

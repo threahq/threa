@@ -85,6 +85,7 @@ describe("StreamContextService.list", () => {
       feedRow({ streamId: "stream_thread" }),
     ])
     spyOn(StreamContextReadRepository, "countsByCategory").mockResolvedValue({
+      pull_request: 0,
       link: 1,
       media: 0,
       file: 0,
@@ -138,7 +139,7 @@ describe("StreamContextService.list", () => {
           },
         },
       ],
-      counts: { link: 1, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 },
+      counts: { pull_request: 0, link: 1, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 },
       nextCursor: null,
       mode: "index",
     })
@@ -148,6 +149,7 @@ describe("StreamContextService.list", () => {
     grantAccess(stream())
     sealed(false)
     spyOn(StreamContextReadRepository, "countsByCategory").mockResolvedValue({
+      pull_request: 0,
       link: 3,
       media: 0,
       file: 0,
@@ -192,6 +194,7 @@ describe("StreamContextService.list", () => {
     sealed(false)
     const listFeed = spyOn(StreamContextReadRepository, "listFeed").mockResolvedValue([])
     spyOn(StreamContextReadRepository, "countsByCategory").mockResolvedValue({
+      pull_request: 0,
       link: 0,
       media: 0,
       file: 0,
@@ -231,6 +234,7 @@ describe("StreamContextService.list", () => {
     sealed(false)
     spyOn(StreamContextReadRepository, "listFeed").mockResolvedValue([])
     const counts = spyOn(StreamContextReadRepository, "countsByCategory").mockResolvedValue({
+      pull_request: 0,
       link: 4,
       media: 2,
       file: 0,
@@ -284,7 +288,7 @@ describe("StreamContextService.list", () => {
 
     expect(response).toEqual({
       items: [],
-      counts: { link: 0, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 },
+      counts: { pull_request: 0, link: 0, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 },
       nextCursor: null,
       mode: "client",
     })

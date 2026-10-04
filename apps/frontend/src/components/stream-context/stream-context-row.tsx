@@ -4,6 +4,9 @@ import {
   CornerDownRight,
   ExternalLink,
   Film,
+  GitMerge,
+  GitPullRequest,
+  GitPullRequestClosed,
   Github,
   Globe,
   ImageIcon,
@@ -28,7 +31,8 @@ import { galleryDocType } from "./stream-gallery-items"
 import { useLiveThread } from "./use-live-thread"
 import { AgentActivityDot } from "@/components/layout/sidebar/stream-item"
 import { UnreadBadge } from "@/components/unread-badge"
-import type { ContextItem, LinkContextItem, MediaContextItem } from "@/lib/stream-context/types"
+import { colorWithAlpha, PR_STATE_LABELS, prStateColor, StatePill } from "@/components/timeline/link-preview-primitives"
+import type { ContextItem, LinkContextItem, MediaContextItem, PullRequestContextItem } from "@/lib/stream-context/types"
 
 interface StreamContextRowProps {
   workspaceId: string
@@ -111,6 +115,29 @@ function LinkLeading({ item }: { item: LinkContextItem }) {
   )
 }
 
+const PR_STATE_ICONS = { open: GitPullRequest, merged: GitMerge, closed: GitPullRequestClosed } as const
+
+/** State-tinted PR glyph; neutral until the PR's GitHub preview has landed. */
+function PullRequestLeading({ item }: { item: PullRequestContextItem }) {
+  if (!item.state) {
+    return (
+      <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+        <GitPullRequest className="size-4" />
+      </div>
+    )
+  }
+  const color = prStateColor(item.state)
+  const Icon = PR_STATE_ICONS[item.state]
+  return (
+    <div
+      className="flex size-10 shrink-0 items-center justify-center rounded-md"
+      style={{ backgroundColor: colorWithAlpha(color, 0.14), color }}
+    >
+      <Icon className="size-4" />
+    </div>
+  )
+}
+
 function BadgePill({ label, tone }: { label: string; tone: "github" | "linear" | "in-app" }) {
   return (
     <span
@@ -154,6 +181,32 @@ export function StreamContextRow({
   let opensExternally = false
 
   switch (item.category) {
+    case "pull_request": {
+      const reference = `${item.owner}/${item.repo}#${item.number}`
+      leading = <PullRequestLeading item={item} />
+      primaryText = item.title ?? reference
+      secondaryText = item.title ? reference : item.snippet || reference
+      if (item.refCount > 1) secondaryText = `${secondaryText} · ${item.refCount}×`
+      if (item.state) {
+        badge = (
+          <StatePill color={prStateColor(item.state)} dot>
+            {PR_STATE_LABELS[item.state]}
+          </StatePill>
+        )
+      }
+      opensExternally = true
+      primaryAction = (
+        <a
+          href={item.url}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="absolute inset-0 z-10 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span className="sr-only">Open {primaryText}</span>
+        </a>
+      )
+      break
+    }
     case "link": {
       leading = <LinkLeading item={item} />
       primaryText = item.title ?? prettyHost(item.url)
@@ -389,7 +442,8 @@ export function StreamContextRow({
   // (a link opens the URL; a media/previewable-file row opens the gallery) keep
   // a secondary "go to message" affordance. Rows that already jump on primary
   // (non-previewable files) don't need it.
-  const showJump = (item.category === "link" || galleryKey != null) && jumpTarget != null
+  const showJump =
+    (item.category === "link" || item.category === "pull_request" || galleryKey != null) && jumpTarget != null
 
   return (
     <div className="group relative flex gap-3">
@@ -408,7 +462,7 @@ export function StreamContextRow({
                 <HighlightedText text={primaryText} terms={searchTerms} />
               </span>
               <UnreadBadge count={unreadCount} className="h-4 min-w-4 shrink-0 px-1 text-[10px]" />
-              {item.category === "link" && opensExternally && (
+              {opensExternally && (
                 // Persistent (not hover-gated) so a link row reads as "opens
                 // externally" at a glance, distinct from the rows that jump to
                 // the message — and visible on touch, where there is no hover.

@@ -1,6 +1,9 @@
 import {
   categoryFromMime,
   isInAppLinkContentType,
+  parseGitHubPullRequestUrl,
+  type GitHubPreview,
+  type GitHubPrPreviewData,
   type AttachmentSummary,
   type CapturedMemoSummary,
   type JSONContent,
@@ -16,6 +19,7 @@ import {
   type ContextItem,
   type DerivedStreamContext,
   type LinkContextItem,
+  type PullRequestContextItem,
 } from "./types"
 
 /** The slice of a `message_created` payload the panel reads. */
@@ -119,7 +123,8 @@ export function linkPreviewBadge(
  * Pure and reactive: callers pass the live `useStreamEvents` array and re-run
  * on every change. Collects links (external URLs and in-app references —
  * shared messages, channels, memos, conversations, delegated tasks — badged by
- * their preview contentType), media (images/GIFs/videos), file
+ * their preview contentType), pull requests (any github.com PR URL, folded to
+ * its canonical URL and colored by the PR preview's state), media (images/GIFs/videos), file
  * attachments, captured memories, and threads branched from this stream — each
  * carrying the source message id for "jump to origin". Items dedup within their
  * category (links by normalized URL, attachments by id, memos by memoId,
@@ -133,6 +138,7 @@ export function linkPreviewBadge(
  */
 export function deriveStreamContext(events: readonly CachedEvent[] | undefined): DerivedStreamContext {
   const links = new Map<string, LinkContextItem>()
+  const pullRequests = new Map<string, PullRequestContextItem>()
   const media = new Map<string, ContextItem>()
   const files = new Map<string, ContextItem>()
   const memos = new Map<string, ContextItem>()
@@ -182,7 +188,38 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
     }
 
     const seenInMessage = new Set<string>()
+    const addPullRequest = (url: string, preview: LinkPreviewSummary | undefined) => {
+      const ref = parseGitHubPullRequestUrl(url)
+      if (!ref) return false
+      if (seenInMessage.has(ref.url)) return true
+      seenInMessage.add(ref.url)
+      const existing = pullRequests.get(ref.url)
+      if (existing) {
+        existing.refCount += 1
+        return true
+      }
+      const prPreview = [preview, previewsByUrl.get(normalizeUrl(ref.url))].find(
+        (candidate) => candidate?.previewType === "github_pr"
+      )
+      const data = (prPreview?.previewData as GitHubPreview | undefined)?.data as GitHubPrPreviewData | undefined
+      pullRequests.set(ref.url, {
+        key: `pull_request:${ref.url}`,
+        category: "pull_request",
+        createdAt,
+        sourceMessageId: messageId,
+        snippet,
+        url: ref.url,
+        owner: ref.owner,
+        repo: ref.repo,
+        number: ref.number,
+        title: data?.title ?? null,
+        state: data?.state ?? null,
+        refCount: 1,
+      })
+      return true
+    }
     const addLink = (url: string, preview?: LinkPreviewSummary) => {
+      if (addPullRequest(url, preview)) return
       const norm = normalizeUrl(url)
       if (seenInMessage.has(norm)) return
       seenInMessage.add(norm)
@@ -302,9 +339,14 @@ export function deriveStreamContext(events: readonly CachedEvent[] | undefined):
   }
 
   // ISO timestamps sort lexically; compare b→a for newest-first.
-  const items = [...links.values(), ...media.values(), ...files.values(), ...memos.values(), ...threads.values()].sort(
-    (a, b) => b.createdAt.localeCompare(a.createdAt)
-  )
+  const items = [
+    ...pullRequests.values(),
+    ...links.values(),
+    ...media.values(),
+    ...files.values(),
+    ...memos.values(),
+    ...threads.values(),
+  ].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
 
   const counts = Object.fromEntries(CONTEXT_CATEGORIES.map((c) => [c, 0])) as Record<ContextCategory, number>
   for (const item of items) counts[item.category] += 1

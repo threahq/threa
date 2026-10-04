@@ -12,6 +12,7 @@ import type {
   FileContextItem,
   LinkContextItem,
   MediaContextItem,
+  PullRequestContextItem,
   ThreadContextItem,
 } from "@/lib/stream-context/types"
 
@@ -170,6 +171,54 @@ describe("StreamContextRow link", () => {
     expect(anchor).toHaveAttribute("target", "_blank")
     expect(anchor).toHaveAttribute("rel", expect.stringContaining("noopener"))
     expect(screen.getByTestId("location")).toHaveTextContent("/start")
+  })
+})
+
+function pullRequestItem(overrides: Partial<PullRequestContextItem> = {}): PullRequestContextItem {
+  return {
+    ...itemBase,
+    key: "pull_request:https://github.com/acme/repo/pull/42",
+    category: "pull_request",
+    url: "https://github.com/acme/repo/pull/42",
+    owner: "acme",
+    repo: "repo",
+    number: 42,
+    title: "Fix the thing",
+    state: "merged",
+    refCount: 1,
+    ...overrides,
+  }
+}
+
+describe("StreamContextRow pull request", () => {
+  it("shows the title, state, and reference; opens GitHub in a new tab and jumps to the message", async () => {
+    const { onJumpToMessage } = renderRow(pullRequestItem({ refCount: 3 }))
+
+    expect(screen.getByText("Fix the thing")).toBeInTheDocument()
+    expect(screen.getByText("Merged")).toBeInTheDocument()
+    expect(screen.getByText("acme/repo#42 · 3×")).toBeInTheDocument()
+
+    const anchor = screen.getByRole("link", { name: /open fix the thing/i })
+    expect(anchor).toHaveAttribute("href", "https://github.com/acme/repo/pull/42")
+    expect(anchor).toHaveAttribute("target", "_blank")
+
+    await userEvent.click(screen.getByRole("button", { name: "Go to message" }))
+    expect(onJumpToMessage).toHaveBeenCalledWith("msg_1")
+  })
+
+  it.each([
+    ["open", "Open"],
+    ["closed", "Closed"],
+  ] as const)("labels a %s PR %s", (state, label) => {
+    renderRow(pullRequestItem({ state }))
+    expect(screen.getByText(label)).toBeInTheDocument()
+  })
+
+  it("falls back to the owner/repo#number reference with no state before the preview lands", () => {
+    renderRow(pullRequestItem({ title: null, state: null }))
+
+    expect(screen.getByRole("link", { name: "Open acme/repo#42" })).toBeInTheDocument()
+    for (const label of ["Open", "Merged", "Closed"]) expect(screen.queryByText(label)).toBeNull()
   })
 })
 

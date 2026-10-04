@@ -1,4 +1,11 @@
-import { AuthorTypes, MemoScopes, StreamTypes, type JSONContent, type MemoScope } from "@threahq/types"
+import {
+  AuthorTypes,
+  MemoScopes,
+  StreamTypes,
+  parseGitHubPullRequestUrl,
+  type JSONContent,
+  type MemoScope,
+} from "@threahq/types"
 import { sql } from "../../db"
 import { chunkIds, registerBackfill, type BackfillContext } from "../../lib/backfill"
 import { streamContextItemId } from "../../lib/id"
@@ -420,6 +427,22 @@ async function reconcileMessagesChunk(
   )
 }
 
+/**
+ * Rows projected before pull requests had their own category carry PR URLs as
+ * `link` rows. No current derivation writes one, so dropping every such row for
+ * the chunk's messages is correct whatever edits raced the chunk.
+ */
+async function dropPullRequestLinkRows(ctx: BackfillContext, workspaceId: string, messageIds: string[]): Promise<void> {
+  const links = await ctx.pool.query<{ id: string; ref_id: string }>(sql`
+    SELECT id, ref_id FROM stream_context_items
+    WHERE workspace_id = ${workspaceId}
+      AND source_message_id = ANY(${messageIds})
+      AND category = 'link'
+  `)
+  const ids = links.rows.filter((row) => parseGitHubPullRequestUrl(row.ref_id) !== null).map((row) => row.id)
+  await StreamContextRepository.deleteByIds(ctx.pool, workspaceId, ids)
+}
+
 async function processMessagesChunk(
   ctx: BackfillContext,
   workspaceId: string,
@@ -453,6 +476,11 @@ async function processMessagesChunk(
 
   const rows = messageChunkRows(chunk, workspaceId, messages.rows, attachments.rows)
   const inserted = await StreamContextRepository.insertMany(ctx.pool, rows)
+  await dropPullRequestLinkRows(
+    ctx,
+    workspaceId,
+    messages.rows.map((message) => message.id)
+  )
   const removed = await reconcileMessagesChunk(ctx, workspaceId, chunk, messages.rows, rows)
   return Math.max(inserted - removed, 0)
 }

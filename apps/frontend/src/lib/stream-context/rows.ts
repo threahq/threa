@@ -3,6 +3,7 @@ import {
   BLOCKED_HOSTNAMES,
   BLOCKED_IP_PATTERNS,
   categoryFromMime,
+  parseGitHubPullRequestUrl,
   streamContextItemKey,
   TRACKING_PARAMS,
   type AttachmentSummary,
@@ -127,6 +128,11 @@ export function contextItemsFromEvent(
       const normalized = localNormalizedUrl(url)
       if (seenNormalized.has(normalized)) continue
       seenNormalized.add(normalized)
+      const pullRequest = parseGitHubPullRequestUrl(url)
+      if (pullRequest) {
+        push("pull_request", "url", pullRequest.url, { ...pullRequest, title: null, state: null, previewStatus: null })
+        continue
+      }
       push("link", "url", url, emptyLinkDetail(url))
     }
   }

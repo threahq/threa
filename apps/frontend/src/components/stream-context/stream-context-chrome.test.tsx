@@ -82,8 +82,28 @@ describe("ContextTimeline virtualization wiring", () => {
   })
 })
 
+describe("the Links chip", () => {
+  const counts = { pull_request: 2, link: 3, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 }
+
+  it("lists pull requests beside every other link while they keep their own chip", () => {
+    expect({
+      chips: chipsFromCounts(counts, 5),
+      categories: filterCategories("link"),
+      pullRequests: filterCategories("pull_request"),
+    }).toEqual({
+      chips: [
+        { value: "all", label: "All", count: 5 },
+        { value: "pull_request", label: "Pull requests", count: 2 },
+        { value: "link", label: "Links", count: 5 },
+      ],
+      categories: ["link", "pull_request"],
+      pullRequests: ["pull_request"],
+    })
+  })
+})
+
 describe("the Agent chip", () => {
-  const counts = { link: 3, media: 0, file: 0, memo: 0, delegation: 2, follow_up: 4, thread: 0 }
+  const counts = { pull_request: 0, link: 3, media: 0, file: 0, memo: 0, delegation: 2, follow_up: 4, thread: 0 }
 
   it("stands for both agent categories: one chip, their summed count, ahead of the per-category chips", () => {
     expect(chipsFromCounts(counts, 9)).toEqual([

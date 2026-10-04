@@ -33,8 +33,12 @@ import {
   colorWithAlpha,
   Field,
   FieldGrid,
+  GITHUB_DONE_COLOR,
+  GITHUB_OPEN_COLOR,
   LabelChip,
   MonoTag,
+  PR_STATE_LABELS,
+  prStateColor,
   PREVIEW_CARD_WIDTH,
   StatePill,
 } from "./link-preview-primitives"
@@ -654,20 +658,6 @@ function getGenericFallbackLabel(url: string): string {
   } catch {
     return url
   }
-}
-
-// GitHub state hues mirror github.com: green (open), purple (merged / done), red
-// (closed). One source drives both the state pill and the card's accent glow.
-const GITHUB_OPEN_COLOR = "#22c55e"
-const GITHUB_DONE_COLOR = "#a855f7"
-const GITHUB_CLOSED_COLOR = "#ef4444"
-
-const PR_STATE_LABELS = { merged: "Merged", closed: "Closed", open: "Open" } as const
-
-function prStateColor(state: GitHubPrPreviewData["state"]): string {
-  if (state === "merged") return GITHUB_DONE_COLOR
-  if (state === "closed") return GITHUB_CLOSED_COLOR
-  return GITHUB_OPEN_COLOR
 }
 
 function GitHubPrContent({ data }: { data: GitHubPrPreviewData }) {
