@@ -209,7 +209,7 @@ export class StreamConnectionExportService {
       connection.remoteWorkspaceId === caller.callerWorkspaceId
     if (!shared) throw connectionNotFound()
 
-    const root = await StreamRepository.findByIdForWorkspace(client, connection.streamId, caller.workspaceId)
+    const root = await StreamRepository.findById(client, caller.workspaceId, connection.streamId)
     if (!root) throw new Error(`Shared channel ${connection.streamId} is missing from ${caller.workspaceId}`)
 
     const threadsByParent = new Map<string, Stream[]>()
