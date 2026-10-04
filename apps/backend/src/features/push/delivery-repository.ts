@@ -335,7 +335,9 @@ export const PushDeliveryRepository = {
    * that can still send is touched. Returns the number of plans deleted.
    */
   async deleteExpiredPlans(db: Querier, params: { expiredBefore: Date; limit: number }): Promise<number> {
-    const result = await db.query(sql`
+    const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- retention sweep across every workspace
+      sql`
       WITH doomed AS (
         SELECT id, workspace_id FROM push_delivery_plans
         WHERE expires_at < ${params.expiredBefore}
@@ -350,8 +352,9 @@ export const PushDeliveryRepository = {
       )
       DELETE FROM push_delivery_plans p
       USING doomed
-      WHERE p.id = doomed.id
-    `)
+      WHERE p.id = doomed.id AND p.workspace_id = doomed.workspace_id
+    `
+    )
     return result.rowCount ?? 0
   },
 }

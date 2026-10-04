@@ -184,7 +184,7 @@ describe("CallService.startCall — product glare", () => {
 
     expect(result).toMatchObject({ created: false, call: { id: "call_winner" } })
     expect(result.chatAnchorId).toBe("event_existing")
-    expect(findAnchor).toHaveBeenCalledWith(expect.anything(), "stream_1", "call_winner")
+    expect(findAnchor).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_1", "call_winner")
     expect(findOpen).toHaveBeenCalledTimes(1)
     expect(admit).toHaveBeenCalledTimes(1)
   })
@@ -1194,40 +1194,68 @@ describe("CallService sweeps", () => {
   it("reapLapsedEndpoints locks calls before closing endpoints, then cascades, returning counts", async () => {
     stubTransaction()
     const order: string[] = []
-    spyOn(CallEndpointRepository, "findLapsedCallIds").mockResolvedValue(["call_1"])
-    spyOn(CallEndpointRepository, "findLapsedWorkspaceIds").mockResolvedValue(["ws_1"])
+    const lapsed = [
+      { workspaceId: "ws_1", callId: "call_1" },
+      { workspaceId: "ws_2", callId: "call_1" },
+    ]
+    spyOn(CallEndpointRepository, "findLapsedCallIds").mockResolvedValue(lapsed)
+    spyOn(CallEndpointRepository, "findLapsedWorkspaceIds").mockResolvedValue(["ws_1", "ws_2"])
     const lock = spyOn(CallRepository, "lockForUpdateInOrder").mockImplementation(async () => {
       order.push("lock")
     })
-    spyOn(CallEndpointRepository, "reapLapsed").mockImplementation(async () => {
+    const reap = spyOn(CallEndpointRepository, "reapLapsed").mockImplementation(async () => {
       order.push("reap")
       return [
         fakeEndpoint({ id: "callep_a", participantId: "callp_a", callId: "call_1", status: "closed" }),
         fakeEndpoint({ id: "callep_b", participantId: "callp_b", callId: "call_1", status: "closed" }),
+        fakeEndpoint({
+          id: "callep_c",
+          workspaceId: "ws_2",
+          participantId: "callp_a",
+          callId: "call_1",
+          status: "closed",
+        }),
       ]
     })
     const markLeft = spyOn(CallParticipantRepository, "markLeftWhereNoLiveEndpoint").mockResolvedValue([
       fakeParticipant({ id: "callp_a", status: "left" }),
     ])
     const grace = spyOn(CallRepository, "enterGraceIfEmptyBatch").mockResolvedValue([
-      fakeCall({ status: "empty_grace" }),
+      fakeCall({ id: "call_1", status: "empty_grace" }),
+      fakeCall({ id: "call_1", workspaceId: "ws_2", status: "empty_grace" }),
     ])
+    const cancelRings = spyOn(CallInvitationRepository, "cancelRingingForCalls").mockResolvedValue([])
     // Disconnect-driven emptiness must NOT take the explicit-leave immediate-end path.
     const end = spyOn(CallRepository, "endActiveIfEmpty").mockResolvedValue(null)
     const bumpBatch = spyOn(CallRepository, "bumpRosterVersionBatch").mockResolvedValue(undefined)
+    const findCall = spyOn(CallRepository, "findById").mockResolvedValue(null)
 
     const result = await makeService().reapLapsedEndpoints(NOW)
 
-    expect(result).toEqual({ endpoints: 2, participants: 1, calls: 1 })
+    expect(result).toEqual({ endpoints: 3, participants: 1, calls: 2 })
     // Call lock precedes the endpoint close — the fix for the endpoint→call AB-BA deadlock.
     expect(order).toEqual(["lock", "reap"])
-    expect(lock).toHaveBeenCalledWith(expect.anything(), ["call_1"])
-    expect(markLeft).toHaveBeenCalledWith(expect.anything(), ["callp_a", "callp_b"])
-    expect(grace).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ callIds: ["call_1"] }))
+    expect(lock.mock.calls.map((c) => c.slice(1))).toEqual([[lapsed]])
+    expect(reap.mock.calls.map((c) => c.slice(1))).toEqual([[NOW, lapsed]])
+    expect(markLeft.mock.calls.map((c) => c.slice(1))).toEqual([
+      [
+        [
+          { workspaceId: "ws_1", participantId: "callp_a" },
+          { workspaceId: "ws_1", participantId: "callp_b" },
+          { workspaceId: "ws_2", participantId: "callp_a" },
+        ],
+      ],
+    ])
+    expect(grace.mock.calls.map((c) => c.slice(1))).toEqual([[{ refs: lapsed, graceDeadline: expect.any(Date) }]])
+    expect(cancelRings.mock.calls.map((c) => c.slice(1))).toEqual([[lapsed]])
     // The reaper keeps the grace window (its reconnect buffer) — never ends in-tx.
     expect(end).not.toHaveBeenCalled()
     // The reap cascade bumps the roster version of every touched call in the same tx (INV-66).
-    expect(bumpBatch).toHaveBeenCalledWith(expect.anything(), ["call_1"])
+    expect(bumpBatch.mock.calls.map((c) => c.slice(1))).toEqual([[lapsed]])
+    expect(findCall.mock.calls.map((c) => c.slice(1))).toEqual([
+      ["ws_1", "call_1"],
+      ["ws_2", "call_1"],
+    ])
   })
 
   it("reapLapsedEndpoints short-circuits before locking when nothing lapsed", async () => {
@@ -1297,7 +1325,7 @@ describe("CallService sweeps", () => {
 
   it("reapLapsedEndpoints closes the CF sessions of reaped endpoints AFTER commit", async () => {
     stubTransaction()
-    spyOn(CallEndpointRepository, "findLapsedCallIds").mockResolvedValue(["call_1"])
+    spyOn(CallEndpointRepository, "findLapsedCallIds").mockResolvedValue([{ workspaceId: "ws_1", callId: "call_1" }])
     spyOn(CallEndpointRepository, "findLapsedWorkspaceIds").mockResolvedValue(["ws_1"])
     spyOn(CallRepository, "lockForUpdateInOrder").mockResolvedValue(undefined)
     spyOn(CallEndpointRepository, "reapLapsed").mockResolvedValue([
@@ -1406,7 +1434,7 @@ describe("CallService — call_started / call_ended timeline (1.4)", () => {
   it("appends call_ended carrying the end summary for both the completed and reaped paths", async () => {
     stubTransaction()
     const endedAt = new Date(NOW.getTime() + 5000)
-    spyOn(CallInvitationRepository, "cancelRingingForCalls").mockResolvedValue([])
+    const cancelRings = spyOn(CallInvitationRepository, "cancelRingingForCalls").mockResolvedValue([])
     spyOn(CallRepository, "endGraceExpired").mockResolvedValue([
       fakeCall({ id: "call_done", status: "ended", endedReason: "completed", startedAt: NOW, endedAt }),
       fakeCall({ id: "call_reaped", status: "ended", endedReason: "reaped", startedAt: NOW, endedAt }),
@@ -1424,6 +1452,14 @@ describe("CallService — call_started / call_ended timeline (1.4)", () => {
     const result = await makeService().endGraceExpiredCalls(NOW)
 
     expect(result).toEqual({ ended: 2 })
+    expect(cancelRings.mock.calls.map((c) => c.slice(1))).toEqual([
+      [
+        [
+          { workspaceId: "ws_1", callId: "call_done" },
+          { workspaceId: "ws_1", callId: "call_reaped" },
+        ],
+      ],
+    ])
     expect(eventInsert).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
@@ -1452,7 +1488,7 @@ describe("CallService — call_started / call_ended timeline (1.4)", () => {
   it("should read stream members per workspace when the grace sweep ends calls that share a stream id across workspaces", async () => {
     stubTransaction()
     const endedAt = new Date(NOW.getTime() + 5000)
-    spyOn(CallInvitationRepository, "cancelRingingForCalls").mockResolvedValue([])
+    const cancelRings = spyOn(CallInvitationRepository, "cancelRingingForCalls").mockResolvedValue([])
     spyOn(CallRepository, "endGraceExpired").mockResolvedValue([
       fakeCall({ id: "call_a", workspaceId: "ws_1", status: "ended", endedReason: "completed", endedAt }),
       fakeCall({ id: "call_b", workspaceId: "ws_2", status: "ended", endedReason: "completed", endedAt }),
@@ -1472,6 +1508,14 @@ describe("CallService — call_started / call_ended timeline (1.4)", () => {
 
     await makeService().endGraceExpiredCalls(NOW)
 
+    expect(cancelRings.mock.calls.map((c) => c.slice(1))).toEqual([
+      [
+        [
+          { workspaceId: "ws_1", callId: "call_a" },
+          { workspaceId: "ws_2", callId: "call_b" },
+        ],
+      ],
+    ])
     expect(memberList).toHaveBeenCalledWith(expect.anything(), "ws_1", { streamIds: ["stream_1"] })
     expect(memberList).toHaveBeenCalledWith(expect.anything(), "ws_2", { streamIds: ["stream_1"] })
     expect(emit).toHaveBeenCalledWith(
