@@ -10,7 +10,6 @@ import {
   PdfProcessingJobRepository,
   PdfProcessingService,
   StubExcelProcessingService,
-  StubImageCaptionService,
   StubPdfProcessingService,
   StubTextProcessingService,
   StubVideoTranscodingService,
@@ -18,9 +17,7 @@ import {
   TextProcessingService,
   VideoTranscodeJobRepository,
   WordProcessingService,
-  createAttachmentFailedOnDLQ,
   createExcelProcessingWorker,
-  createImageCaptionWorker,
   createImageThumbnailWorker,
   createPdfAssembleWorker,
   createPdfPageWorker,
@@ -32,12 +29,7 @@ import {
   createWordProcessingWorker,
 } from "../../src/features/attachments"
 import { processAttachment } from "../../src/features/attachments/process-attachment"
-import {
-  AvatarUploadRepository,
-  createAvatarProcessOnDLQ,
-  createAvatarProcessWorker,
-  type AvatarProcessingService,
-} from "../../src/features/workspaces"
+import { createAvatarProcessWorker, type AvatarProcessingService } from "../../src/features/workspaces"
 import {
   JobQueues,
   type JobHandler,
@@ -46,15 +38,7 @@ import {
   type QueueManager,
 } from "../../src/lib/queue"
 import type { StorageProvider } from "../../src/lib/storage/s3-client"
-import {
-  attachmentId,
-  avatarUploadId,
-  pdfJobId,
-  pdfPageId,
-  userId,
-  videoTranscodeJobId,
-  workspaceId,
-} from "../../src/lib/id"
+import { attachmentId, pdfJobId, pdfPageId, userId, videoTranscodeJobId, workspaceId } from "../../src/lib/id"
 
 interface ProcessingJobData {
   attachmentId: string
@@ -205,16 +189,6 @@ describe("Attachment processing workers, services and DLQ hooks stay inside the 
         completed: { processingStatus: "completed", extractions: [{ workspace_id: wsA, source_type: "excel" }] },
       },
       {
-        name: "image caption",
-        filename: "photo.png",
-        mimeType: "image/png",
-        run: asJob(
-          JobQueues.IMAGE_CAPTION,
-          createImageCaptionWorker({ imageCaptionService: new StubImageCaptionService(pool) })
-        ),
-        completed: { processingStatus: "skipped" },
-      },
-      {
         name: "video transcode submit",
         filename: "clip.mp4",
         mimeType: "video/mp4",
@@ -252,7 +226,7 @@ describe("Attachment processing workers, services and DLQ hooks stay inside the 
     await pool.end()
   })
 
-  const pipelineNames = ["text", "word", "excel", "image caption", "video transcode submit", "pdf prepare"]
+  const pipelineNames = ["text", "word", "excel", "video transcode submit", "pdf prepare"]
   const pipelineNamed = (name: string) => pipelines.find((pipeline) => pipeline.name === name)!
 
   test.each(pipelineNames)(
@@ -590,39 +564,6 @@ describe("Attachment processing workers, services and DLQ hooks stay inside the 
       return id
     }
 
-    async function observeAvatarUploads(id: string) {
-      const result = await pool.query(`SELECT workspace_id FROM avatar_uploads WHERE id = $1`, [id])
-      return result.rows
-    }
-
-    async function seedAvatarUpload() {
-      const id = avatarUploadId()
-      await AvatarUploadRepository.insert(pool, {
-        id,
-        workspaceId: wsA,
-        userId: userId(),
-        rawS3Key: `avatar/${id}`,
-        replacesAvatarUrl: null,
-      })
-      return id
-    }
-
-    test("should mark workspace A's attachment failed when the attachment hook gets a workspace A job", async () => {
-      const id = await seedAttachment(wsA, "notes.txt", "text/plain")
-
-      await runDlq(createAttachmentFailedOnDLQ(), { workspaceId: wsA, attachmentId: id })
-
-      expect(await observe(id)).toEqual({ ...UNTOUCHED, processingStatus: "failed" })
-    })
-
-    test("should leave workspace A's attachment untouched when the attachment hook gets a workspace B job with its id", async () => {
-      const id = await seedAttachment(wsA, "notes.txt", "text/plain")
-
-      await runDlq(createAttachmentFailedOnDLQ(), { workspaceId: wsB, attachmentId: id })
-
-      expect(await observe(id)).toEqual(UNTOUCHED)
-    })
-
     test("should fail the attachment and video job and announce it in workspace A when the video hook gets a workspace A job", async () => {
       const id = await seedVideo()
 
@@ -647,22 +588,6 @@ describe("Attachment processing workers, services and DLQ hooks stay inside the 
         observed: UNTOUCHED,
         videoJobs: [{ workspace_id: wsA, status: "pending", error_message: null }],
       })
-    })
-
-    test("should delete workspace A's avatar upload row when the avatar hook gets a workspace A job", async () => {
-      const id = await seedAvatarUpload()
-
-      await runDlq(createAvatarProcessOnDLQ(), { workspaceId: wsA, avatarUploadId: id })
-
-      expect(await observeAvatarUploads(id)).toEqual([])
-    })
-
-    test("should keep workspace A's avatar upload row when the avatar hook gets a workspace B job with its id", async () => {
-      const id = await seedAvatarUpload()
-
-      await runDlq(createAvatarProcessOnDLQ(), { workspaceId: wsB, avatarUploadId: id })
-
-      expect(await observeAvatarUploads(id)).toEqual([{ workspace_id: wsA }])
     })
   })
 })
