@@ -1154,13 +1154,14 @@ export class PersonaAgent {
         // here instead of recomputing (avoids drift between quote-resolution and
         // workspace-tool access scopes).
         let workspaceDeps: import("./tools/tool-deps").WorkspaceToolDeps | undefined
-        if (agentContext.invokingUserId && agentContext.accessibleStreamIds) {
+        if (agentContext.invokingUserId && agentContext.accessibleStreamIds && agentContext.peopleViewer) {
           workspaceDeps = {
             db,
             workspaceId,
             accessibleStreamIds: [...agentContext.accessibleStreamIds],
             invokingUserId: agentContext.invokingUserId,
             memoViewerUserId: agentContext.memoViewerUserId,
+            peopleViewer: agentContext.peopleViewer,
             searchFlag,
             searchService,
             attachmentService,

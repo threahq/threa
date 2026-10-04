@@ -6,7 +6,7 @@ import { AgentToolNames, AuthorTypes, StreamTypes } from "@threahq/types"
 import type { UserPreferencesService } from "../../user-preferences"
 import { UserDeviceContextRepository } from "../../device-context"
 import { MessageRepository, SharedMessageRepository, collectSharedMessageIds, type Message } from "../../messaging"
-import { UserRepository, type User } from "../../workspaces"
+import { UserRepository, type PeopleViewer, type User } from "../../workspaces"
 import type { Persona } from "../persona-repository"
 import { PersonaAttachmentRepository, type PersonaAttachmentContentItem } from "../persona-attachment-repository"
 import { resolveActorNames } from "../actor-names"
@@ -35,7 +35,12 @@ import { formatRecalledMemosBlock, type PreparedRecall, type RecalledMemo } from
 import { loadCrossSurfaceStitch, formatSpawnedFromContext, type CrossSurfaceStitch } from "./cross-surface-stitch"
 import { formatMessagesWithTemporal } from "./prompt/message-format"
 import { resolveQuoteReplies, renderMessageWithQuoteContext, DEFAULT_MAX_QUOTE_DEPTH } from "../quote-resolver"
-import { computeAgentAccessSpec, resolveMemoViewer, type AgentAccessSpec } from "../researcher/access-spec"
+import {
+  computeAgentAccessSpec,
+  resolveMemoViewer,
+  resolvePeopleViewer,
+  type AgentAccessSpec,
+} from "../researcher/access-spec"
 import type { TurnPurpose } from "../turn-purpose"
 import { SearchRepository } from "../../search"
 import { logger } from "../../../lib/logger"
@@ -121,6 +126,7 @@ export interface AgentContext {
    */
   accessibleStreamIds: Set<string> | null
   memoViewerUserId: string | undefined
+  peopleViewer: PeopleViewer | undefined
   /**
    * The stream's durable brief as read for this turn (roadmap 4.2), off the
    * effective root (threads inherit — INV-62). `null` when none exists yet. The
@@ -229,12 +235,14 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   let accessibleStreamIds: Set<string> | null = null
   let memoViewerUserId: string | undefined
   let accessType: AgentAccessSpec["type"] | null = null
+  let peopleViewer: PeopleViewer | undefined
   if (invokingUserId) {
     const accessSpec = await computeAgentAccessSpec(db, { stream, invokingUserId })
     const ids = await SearchRepository.getAccessibleStreamsForAgent(db, accessSpec, workspaceId)
     accessibleStreamIds = new Set(ids)
     memoViewerUserId = resolveMemoViewer(accessSpec)
     accessType = accessSpec.type
+    peopleViewer = resolvePeopleViewer(accessSpec, stream.id)
   }
   const memoryModeStream = stream.rootStreamId ? await findMemoryModeStream(db, workspaceId, stream.id) : stream
   const selfKnowledge: SelfKnowledge =
@@ -591,6 +599,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     streamContext,
     accessibleStreamIds,
     memoViewerUserId,
+    peopleViewer,
     streamBrief,
     recalledMemos,
   }

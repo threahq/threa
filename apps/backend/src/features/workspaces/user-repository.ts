@@ -165,8 +165,8 @@ const SELECT_FIELDS_FRAGMENT = sql`${sql.raw(SELECT_FIELDS_WITH_ALIAS)}`
 export const USERS_FROM_FRAGMENT = sql`${sql.raw(USERS_WITH_PERMISSIONS_FROM)}`
 
 // No scope means a rendering or admin read of a known id; a read that picks for a viewer passes one.
-function optionalScopeSql(scope: PeopleScope | undefined): QueryConfig {
-  return scope ? peopleScopeSql(scope) : sql`TRUE`
+function optionalScopeSql(workspaceId: string, scope: PeopleScope | undefined): QueryConfig {
+  return scope ? peopleScopeSql(workspaceId, scope) : sql`TRUE`
 }
 
 function mapRowToUser(row: UserRow): User {
@@ -217,7 +217,7 @@ export const UserRepository = {
     const result = await db.query<UserRow>(composeSql`
       SELECT ${SELECT_FIELDS_FRAGMENT}
       FROM ${USERS_FROM_FRAGMENT}
-      WHERE u.workspace_id = ${workspaceId} AND u.id = ${id} AND ${optionalScopeSql(scope)}
+      WHERE u.workspace_id = ${workspaceId} AND u.id = ${id} AND ${optionalScopeSql(workspaceId, scope)}
     `)
     return result.rows[0] ? mapRowToUser(result.rows[0]) : null
   },
@@ -287,7 +287,7 @@ export const UserRepository = {
     const result = await db.query<UserRow>(composeSql`
       SELECT ${SELECT_FIELDS_FRAGMENT}
       FROM ${USERS_FROM_FRAGMENT}
-      WHERE u.workspace_id = ${workspaceId} AND u.slug = ANY(${slugs}) AND ${peopleScopeSql(scope)}
+      WHERE u.workspace_id = ${workspaceId} AND u.slug = ANY(${slugs}) AND ${peopleScopeSql(workspaceId, scope)}
     `)
     return result.rows.map(mapRowToUser)
   },
@@ -298,7 +298,7 @@ export const UserRepository = {
     const result = await db.query<UserRow>(composeSql`
       SELECT ${SELECT_FIELDS_FRAGMENT}
       FROM ${USERS_FROM_FRAGMENT}
-      WHERE u.workspace_id = ${workspaceId} AND u.id = ANY(${ids}) AND ${optionalScopeSql(scope)}
+      WHERE u.workspace_id = ${workspaceId} AND u.id = ANY(${ids}) AND ${optionalScopeSql(workspaceId, scope)}
     `)
     return result.rows.map(mapRowToUser)
   },
@@ -319,7 +319,7 @@ export const UserRepository = {
         FROM ${USERS_FROM_FRAGMENT}
         WHERE u.workspace_id = ${workspaceId}
           AND (u.name ILIKE ${pattern} OR u.email ILIKE ${pattern})
-          AND ${peopleScopeSql(scope)}
+          AND ${peopleScopeSql(workspaceId, scope)}
         ORDER BY u.joined_at, u.id
         LIMIT ${limit}
       `)
@@ -332,7 +332,7 @@ export const UserRepository = {
         FROM ${USERS_FROM_FRAGMENT}
         WHERE u.workspace_id = ${workspaceId}
           AND (u.joined_at, u.id) > (${filters.cursorJoinedAt}, ${filters.cursorId})
-          AND ${peopleScopeSql(scope)}
+          AND ${peopleScopeSql(workspaceId, scope)}
         ORDER BY u.joined_at, u.id
         LIMIT ${limit}
       `)
@@ -342,7 +342,7 @@ export const UserRepository = {
     const result = await db.query<UserRow>(composeSql`
       SELECT ${SELECT_FIELDS_FRAGMENT}
       FROM ${USERS_FROM_FRAGMENT}
-      WHERE u.workspace_id = ${workspaceId} AND ${peopleScopeSql(scope)}
+      WHERE u.workspace_id = ${workspaceId} AND ${peopleScopeSql(workspaceId, scope)}
       ORDER BY u.joined_at, u.id
       LIMIT ${limit}
     `)
@@ -582,7 +582,7 @@ export const UserRepository = {
           OR u.email ILIKE ${pattern}
           OR u.slug ILIKE ${pattern}
         )
-        AND ${peopleScopeSql(scope)}
+        AND ${peopleScopeSql(workspaceId, scope)}
       ORDER BY sim_score DESC, u.name
       LIMIT ${limit}
     `)

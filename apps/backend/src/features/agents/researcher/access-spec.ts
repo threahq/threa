@@ -3,6 +3,7 @@ import type { StreamType } from "@threahq/types"
 import { DM_PARTICIPANT_COUNT, StreamTypes, Visibilities } from "@threahq/types"
 import { StreamRepository, type Stream } from "../../streams"
 import { StreamMemberRepository } from "../../streams"
+import type { PeopleViewer } from "../../workspaces"
 
 /**
  * Specifies what streams an agent can access based on invocation context.
@@ -97,6 +98,14 @@ export async function computeAgentAccessSpec(db: Querier, params: ComputeAccessS
  */
 export function resolveMemoViewer(spec: AgentAccessSpec): string | undefined {
   return spec.type === "user_full_access" ? spec.userId : undefined
+}
+
+/**
+ * Whose people an agent turn may search. A reply reaches everyone in the room, so only a turn
+ * whose audience is the invoker alone gets their private view; every other turn gets the room's.
+ */
+export function resolvePeopleViewer(spec: AgentAccessSpec, roomStreamId: string): PeopleViewer {
+  return spec.type === "user_full_access" ? { kind: "user", userId: spec.userId } : { kind: "room", roomStreamId }
 }
 
 /**

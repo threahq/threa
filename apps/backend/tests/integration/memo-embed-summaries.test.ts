@@ -341,8 +341,9 @@ describe("MemoRepository.findEmbedSummaries", () => {
 
   // The by-stream resolver owns stream → root → memo grouping for every caller
   // that spans streams. Each citing stream is answered against its own root,
-  // and a stream this workspace has no row for only ever gets the public leg —
-  // including a foreign-workspace row that names a local private root.
+  // and a stream this workspace has no row for has no root to vet its readers
+  // against, so it only ever gets the guest_public leg — including a
+  // foreign-workspace row that names a local private root.
   test("resolveMemoSummariesByStream answers each citing stream by its root in two roundtrips", async () => {
     const ownRoom = await seedMemo(citingRoot, { title: "Own room" })
     const otherRoom = await seedMemo(privateChannel, { title: "Other room" })
@@ -398,8 +399,8 @@ describe("MemoRepository.findEmbedSummaries", () => {
       titlesByStream: {
         [citingThread]: ["Open", "Own room"],
         [privateChannel]: ["Open", "Other room"],
-        [missingStream]: ["Open"],
-        [foreignThread]: ["Open"],
+        [missingStream]: [],
+        [foreignThread]: [],
         [publicChannel]: [],
       },
     })

@@ -492,16 +492,18 @@ describe("memo embed summaries on message payloads", () => {
       expect(payload.memoEmbeds).toEqual([])
     })
 
-    // A citing stream with no row resolves against its own id, so only the
-    // public leg can match: the bootstrap still serves, and the summary the
-    // room could read while its row existed is retracted.
-    test("fails closed to public memos when the citing stream's row is missing", async () => {
+    // A citing stream with no row has no root to vet its readers against, so
+    // only the guest_public leg can match: the bootstrap still serves, and the
+    // summaries the room could read while its row existed are retracted.
+    test("fails closed to guest_public memos when the citing stream's row is missing", async () => {
       const vanishing = streamId()
       const publicElsewhere = streamId()
+      const guestPublicElsewhere = streamId()
       await withTransaction(pool, async (client) => {
         for (const [id, visibility] of [
           [vanishing, "private"],
           [publicElsewhere, "public"],
+          [guestPublicElsewhere, "guest_public"],
         ] as const) {
           await StreamRepository.insert(client, {
             id,
@@ -515,12 +517,13 @@ describe("memo embed summaries on message payloads", () => {
       })
       const ownRoomMemo = await seedMemo(vanishing, "Own room")
       const publicMemo = await seedMemo(publicElsewhere, "Public")
+      const guestPublicMemo = await seedMemo(guestPublicElsewhere, "Guest public")
       const message = await eventService.createMessage({
         workspaceId: testWorkspaceId,
         streamId: vanishing,
         authorId: testUserId,
         authorType: "user",
-        ...bodyCiting("both readable at creation", [ownRoomMemo, publicMemo]),
+        ...bodyCiting("all readable at creation", [ownRoomMemo, publicMemo, guestPublicMemo]),
       })
       const events = await eventService.listEvents(testWorkspaceId, vanishing, { limit: 200 })
       const created = events.find(
@@ -529,6 +532,7 @@ describe("memo embed summaries on message payloads", () => {
       expect((created?.payload as MessageCreatedPayload).memoEmbeds?.map((s) => s.memoId)).toEqual([
         ownRoomMemo,
         publicMemo,
+        guestPublicMemo,
       ])
 
       await pool.query(`DELETE FROM streams WHERE id = $1`, [vanishing])
@@ -541,7 +545,7 @@ describe("memo embed summaries on message payloads", () => {
       const payload = enriched.find(
         (e) => e.eventType === "message_created" && (e.payload as MessageCreatedPayload).messageId === message.id
       )?.payload as MessageCreatedPayload
-      expect(payload.memoEmbeds?.map((s) => s.memoId)).toEqual([publicMemo])
+      expect(payload.memoEmbeds?.map((s) => s.memoId)).toEqual([guestPublicMemo])
     })
 
     // The scope is the caller's statement of which streams it authorized. An
