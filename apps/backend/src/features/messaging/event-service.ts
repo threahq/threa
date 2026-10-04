@@ -725,9 +725,9 @@ export class EventService {
       client,
       params.workspaceId,
       params.contentJson,
-      // A personal persona resolves by slug only for its owner: pass the author
-      // when they are a user; a persona/bot/system author resolves none.
-      params.authorType === "user" ? params.authorId : undefined
+      // A personal persona resolves by slug only for its owner: a user author is
+      // the viewer; a persona/bot/system author resolves as the workspace.
+      params.authorType === "user" ? { kind: "user", userId: params.authorId } : { kind: "workspace" }
     )
     if (resolvedCreate.changed) {
       params.contentJson = resolvedCreate.contentJson
@@ -1359,7 +1359,7 @@ export class EventService {
             params.workspaceId,
             params.contentJson,
             // Personal personas resolve by slug only for their owner (see create).
-            actorType === "user" ? params.actorId : undefined
+            actorType === "user" ? { kind: "user", userId: params.actorId } : { kind: "workspace" }
           )
           if (resolvedEdit.changed) {
             params.contentJson = resolvedEdit.contentJson

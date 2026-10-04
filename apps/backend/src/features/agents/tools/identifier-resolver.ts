@@ -1,13 +1,10 @@
 /**
- * Resolves flexible identifiers to entity IDs so agents can reference entities
- * without knowing the exact format:
- * - Streams: "stream_xxx" (ID), "general" (slug), "#general" (prefixed slug)
- * - Users: "usr_xxx" (ID), "kristoffer-remback" (slug), "@kristoffer-remback" (prefixed slug)
+ * Resolves flexible stream identifiers to entity IDs so agents can reference streams
+ * without knowing the exact format: "stream_xxx" (ID), "general" (slug), "#general" (prefixed slug)
  */
 
 import type { Querier } from "../../../db"
 import { StreamRepository } from "../../streams"
-import { UserRepository } from "../../workspaces"
 import { logger } from "../../../lib/logger"
 
 export type ResolveResult = { resolved: true; id: string } | { resolved: false; reason: string }
@@ -16,16 +13,8 @@ function isStreamId(value: string): boolean {
   return value.startsWith("stream_")
 }
 
-function isUserId(value: string): boolean {
-  return value.startsWith("usr_")
-}
-
 function normalizeStreamRef(value: string): string {
   return value.replace(/^#/, "").trim()
-}
-
-function normalizeUserRef(value: string): string {
-  return value.replace(/^@/, "").trim()
 }
 
 /**
@@ -66,39 +55,4 @@ export async function resolveStreamIdentifier(
   logger.debug({ identifier, resolvedId: stream.id, slug }, "Resolved stream identifier")
 
   return { resolved: true, id: stream.id }
-}
-
-/**
- * Resolve a user identifier (ID, slug, or @slug) to their ID, scoped to the workspace.
- */
-export async function resolveUserIdentifier(
-  db: Querier,
-  workspaceId: string,
-  identifier: string
-): Promise<ResolveResult> {
-  const trimmed = identifier.trim()
-
-  if (!trimmed) {
-    return { resolved: false, reason: "Empty identifier" }
-  }
-
-  if (isUserId(trimmed)) {
-    const user = await UserRepository.findById(db, workspaceId, trimmed)
-    if (!user) {
-      return { resolved: false, reason: `No user found with ID: ${trimmed}` }
-    }
-    return { resolved: true, id: trimmed }
-  }
-
-  const slug = normalizeUserRef(trimmed)
-
-  const user = await UserRepository.findBySlug(db, workspaceId, slug)
-
-  if (!user) {
-    return { resolved: false, reason: `No user found with slug: ${slug}` }
-  }
-
-  logger.debug({ identifier, resolvedId: user.id, slug }, "Resolved user identifier")
-
-  return { resolved: true, id: user.id }
 }

@@ -159,7 +159,7 @@ export function createWorkspaceHandlers({
 
     async getUsers(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
-      const users = await workspaceService.getUsers(workspaceId)
+      const users = await workspaceService.getUsers(workspaceId, { kind: "user", userId: req.user!.id })
       res.json({ users })
     },
 
@@ -200,7 +200,7 @@ export function createWorkspaceHandlers({
         onboardingStreamId,
       ] = await Promise.all([
         workspaceService.getWorkspaceById(workspaceId),
-        workspaceService.getUsers(workspaceId),
+        workspaceService.getUsers(workspaceId, { kind: "user", userId }),
         streamService.listWithPreviews(workspaceId, userId),
         workspaceService.getPersonasForWorkspace(workspaceId, userId),
         BotRepository.listVisibleTo(pool, workspaceId, userId),

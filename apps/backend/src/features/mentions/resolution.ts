@@ -11,7 +11,7 @@ import {
   unresolvedTriggersToText,
 } from "@threahq/prosemirror"
 import type { Querier } from "../../db"
-import { UserRepository } from "../workspaces"
+import { PeoplePurposes, UserRepository, type PeopleViewer } from "../workspaces"
 import { PersonaRepository } from "../agents"
 // Direct module import (not the barrel) to avoid a cycle: the public-api barrel
 // pulls in handlers → messaging → this resolver.
@@ -92,7 +92,7 @@ export async function buildMentionResolutionMaps(
   querier: Querier,
   workspaceId: string,
   input: { mentionSlugs: string[]; channelSlugs: string[] },
-  authorUserId?: string
+  viewer: PeopleViewer
 ): Promise<MentionResolutionMaps> {
   const mentionSlugToActor = new Map<string, { id: string; actorType: MentionActorType }>()
   const channelSlugToStreamId = new Map<string, string>()
@@ -100,7 +100,10 @@ export async function buildMentionResolutionMaps(
   const pending = new Set(input.mentionSlugs.map((slug) => slug.toLowerCase()))
 
   if (pending.size > 0) {
-    const users = await UserRepository.findBySlugs(querier, workspaceId, [...pending])
+    const users = await UserRepository.findBySlugs(querier, workspaceId, [...pending], {
+      viewer,
+      purpose: PeoplePurposes.TARGETABLE,
+    })
     for (const user of users) {
       const key = user.slug.toLowerCase()
       if (pending.has(key)) {
@@ -111,11 +114,14 @@ export async function buildMentionResolutionMaps(
   }
 
   if (pending.size > 0) {
-    // A personal persona resolves by slug only for its owner (user-scoped-
-    // personas); `authorUserId` is the mentioning message's author when they are
-    // a user. Absent (agent/system author, or backfill) → personal rows are
-    // skipped and the slug stays plain text.
-    const personas = await PersonaRepository.findBySlugs(querier, [...pending], workspaceId, authorUserId)
+    // A personal persona resolves by slug only for its owner (user-scoped-personas); a workspace
+    // viewer (agent/system author, or backfill) skips personal rows, so the slug stays plain text.
+    const personas = await PersonaRepository.findBySlugs(
+      querier,
+      [...pending],
+      workspaceId,
+      viewer.kind === "user" ? viewer.userId : undefined
+    )
     for (const persona of personas) {
       const key = persona.slug.toLowerCase()
       if (pending.has(key)) {
@@ -161,7 +167,7 @@ export async function resolveMentionContent(
   querier: Querier,
   workspaceId: string,
   contentJson: JSONContent,
-  authorUserId?: string
+  viewer: PeopleViewer
 ): Promise<{ contentJson: JSONContent; changed: boolean }> {
   const mentionSlugs = collectUnresolvedMentionSlugs(contentJson)
   const channelSlugs = collectUnresolvedChannelLinkSlugs(contentJson)
@@ -172,7 +178,7 @@ export async function resolveMentionContent(
     return { contentJson, changed: false }
   }
 
-  const maps = await buildMentionResolutionMaps(querier, workspaceId, { mentionSlugs, channelSlugs }, authorUserId)
+  const maps = await buildMentionResolutionMaps(querier, workspaceId, { mentionSlugs, channelSlugs }, viewer)
   const resolved = applyMentionResolution(contentJson, maps)
   const demoted = unresolvedTriggersToText(resolved.contentJson)
   return { contentJson: demoted.contentJson, changed: resolved.changed || demoted.changed }

@@ -27,7 +27,7 @@ import {
   type StreamService,
   type StreamWritePrincipal,
 } from "../streams"
-import { UserRepository } from "../workspaces"
+import { PeoplePurposes, UserRepository } from "../workspaces"
 import { ConversationRepository, ConversationService, type Conversation } from "../conversations"
 import {
   E2eStreamActorsRepository,
@@ -3712,12 +3712,20 @@ export function createPublicApiHandlers({
       // Cursor pagination disabled when query is provided (relevance ordering)
       const cursor = !query && afterCursor ? decodeCursor(afterCursor) : undefined
 
-      const users = await UserRepository.listByWorkspace(pool, workspaceId, {
-        query,
-        limit: limit + 1,
-        cursorJoinedAt: cursor?.sortKey,
-        cursorId: cursor?.id,
-      })
+      const users = await UserRepository.listByWorkspace(
+        pool,
+        workspaceId,
+        {
+          viewer: req.user ? { kind: "user", userId: req.user.id } : { kind: "workspace" },
+          purpose: PeoplePurposes.TARGETABLE,
+        },
+        {
+          query,
+          limit: limit + 1,
+          cursorJoinedAt: cursor?.sortKey,
+          cursorId: cursor?.id,
+        }
+      )
 
       const hasMore = users.length > limit
       const page = hasMore ? users.slice(0, limit) : users

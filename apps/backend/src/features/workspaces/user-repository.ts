@@ -1,7 +1,9 @@
 import { WORKSPACE_USER_ROLES, resolveActiveStatus, type WorkspaceRoleSlug } from "@threahq/types"
+import type { QueryConfig } from "pg"
 import type { Querier } from "../../db"
-import { sql } from "../../db"
+import { composeSql, sql } from "../../db"
 import { HttpError } from "../../lib/errors"
+import { peopleScopeSql, type PeopleScope } from "./people"
 
 const KNOWN_ROLE_SLUGS: ReadonlySet<string> = new Set(WORKSPACE_USER_ROLES)
 
@@ -158,6 +160,14 @@ const SELECT_FIELDS_WITH_ALIAS = `
   wup.role_slugs AS mirror_role_slugs
 `
 
+// composeSql splices `{ text, values }` fragments inline and would parametrize a bare `sql.raw` value.
+const SELECT_FIELDS_FRAGMENT = sql`${sql.raw(SELECT_FIELDS_WITH_ALIAS)}`
+const USERS_FROM_FRAGMENT = sql`${sql.raw(USERS_WITH_PERMISSIONS_FROM)}`
+
+function optionalScopeSql(scope: PeopleScope | undefined): QueryConfig {
+  return scope ? peopleScopeSql(scope) : sql`TRUE`
+}
+
 function mapRowToUser(row: UserRow): User {
   const role = pickMirroredRole(row.mirror_role_slugs, row.role)
   assertWorkspaceRoleSlug(role, row.id)
@@ -202,11 +212,11 @@ function mapRowToUser(row: UserRow): User {
 }
 
 export const UserRepository = {
-  async findById(db: Querier, workspaceId: string, id: string): Promise<User | null> {
-    const result = await db.query<UserRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS_WITH_ALIAS)}
-      FROM ${sql.raw(USERS_WITH_PERMISSIONS_FROM)}
-      WHERE u.workspace_id = ${workspaceId} AND u.id = ${id}
+  async findById(db: Querier, workspaceId: string, id: string, scope?: PeopleScope): Promise<User | null> {
+    const result = await db.query<UserRow>(composeSql`
+      SELECT ${SELECT_FIELDS_FRAGMENT}
+      FROM ${USERS_FROM_FRAGMENT}
+      WHERE u.workspace_id = ${workspaceId} AND u.id = ${id} AND ${optionalScopeSql(scope)}
     `)
     return result.rows[0] ? mapRowToUser(result.rows[0]) : null
   },
@@ -270,33 +280,24 @@ export const UserRepository = {
     return { workspaceExists: true, user }
   },
 
-  async findBySlug(db: Querier, workspaceId: string, slug: string): Promise<User | null> {
-    const result = await db.query<UserRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS_WITH_ALIAS)}
-      FROM ${sql.raw(USERS_WITH_PERMISSIONS_FROM)}
-      WHERE u.workspace_id = ${workspaceId} AND u.slug = ${slug}
-    `)
-    return result.rows[0] ? mapRowToUser(result.rows[0]) : null
-  },
-
-  async findBySlugs(db: Querier, workspaceId: string, slugs: string[]): Promise<User[]> {
+  async findBySlugs(db: Querier, workspaceId: string, slugs: string[], scope: PeopleScope): Promise<User[]> {
     if (slugs.length === 0) return []
 
-    const result = await db.query<UserRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS_WITH_ALIAS)}
-      FROM ${sql.raw(USERS_WITH_PERMISSIONS_FROM)}
-      WHERE u.workspace_id = ${workspaceId} AND u.slug = ANY(${slugs})
+    const result = await db.query<UserRow>(composeSql`
+      SELECT ${SELECT_FIELDS_FRAGMENT}
+      FROM ${USERS_FROM_FRAGMENT}
+      WHERE u.workspace_id = ${workspaceId} AND u.slug = ANY(${slugs}) AND ${peopleScopeSql(scope)}
     `)
     return result.rows.map(mapRowToUser)
   },
 
-  async findByIds(db: Querier, workspaceId: string, ids: string[]): Promise<User[]> {
+  async findByIds(db: Querier, workspaceId: string, ids: string[], scope?: PeopleScope): Promise<User[]> {
     if (ids.length === 0) return []
 
-    const result = await db.query<UserRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS_WITH_ALIAS)}
-      FROM ${sql.raw(USERS_WITH_PERMISSIONS_FROM)}
-      WHERE u.workspace_id = ${workspaceId} AND u.id = ANY(${ids})
+    const result = await db.query<UserRow>(composeSql`
+      SELECT ${SELECT_FIELDS_FRAGMENT}
+      FROM ${USERS_FROM_FRAGMENT}
+      WHERE u.workspace_id = ${workspaceId} AND u.id = ANY(${ids}) AND ${optionalScopeSql(scope)}
     `)
     return result.rows.map(mapRowToUser)
   },
@@ -304,17 +305,20 @@ export const UserRepository = {
   async listByWorkspace(
     db: Querier,
     workspaceId: string,
+    scope: PeopleScope,
     filters?: { query?: string; limit?: number; cursorJoinedAt?: Date; cursorId?: string }
   ): Promise<User[]> {
-    const limit = filters?.limit ?? 200
+    // LIMIT NULL is no limit: callers that want a page pass one.
+    const limit = filters?.limit ?? null
 
     if (filters?.query) {
       const pattern = `%${filters.query}%`
-      const result = await db.query<UserRow>(sql`
-        SELECT ${sql.raw(SELECT_FIELDS_WITH_ALIAS)}
-        FROM ${sql.raw(USERS_WITH_PERMISSIONS_FROM)}
+      const result = await db.query<UserRow>(composeSql`
+        SELECT ${SELECT_FIELDS_FRAGMENT}
+        FROM ${USERS_FROM_FRAGMENT}
         WHERE u.workspace_id = ${workspaceId}
           AND (u.name ILIKE ${pattern} OR u.email ILIKE ${pattern})
+          AND ${peopleScopeSql(scope)}
         ORDER BY u.joined_at, u.id
         LIMIT ${limit}
       `)
@@ -322,21 +326,22 @@ export const UserRepository = {
     }
 
     if (filters?.cursorJoinedAt && filters?.cursorId) {
-      const result = await db.query<UserRow>(sql`
-        SELECT ${sql.raw(SELECT_FIELDS_WITH_ALIAS)}
-        FROM ${sql.raw(USERS_WITH_PERMISSIONS_FROM)}
+      const result = await db.query<UserRow>(composeSql`
+        SELECT ${SELECT_FIELDS_FRAGMENT}
+        FROM ${USERS_FROM_FRAGMENT}
         WHERE u.workspace_id = ${workspaceId}
           AND (u.joined_at, u.id) > (${filters.cursorJoinedAt}, ${filters.cursorId})
+          AND ${peopleScopeSql(scope)}
         ORDER BY u.joined_at, u.id
         LIMIT ${limit}
       `)
       return result.rows.map(mapRowToUser)
     }
 
-    const result = await db.query<UserRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS_WITH_ALIAS)}
-      FROM ${sql.raw(USERS_WITH_PERMISSIONS_FROM)}
-      WHERE u.workspace_id = ${workspaceId}
+    const result = await db.query<UserRow>(composeSql`
+      SELECT ${SELECT_FIELDS_FRAGMENT}
+      FROM ${USERS_FROM_FRAGMENT}
+      WHERE u.workspace_id = ${workspaceId} AND ${peopleScopeSql(scope)}
       ORDER BY u.joined_at, u.id
       LIMIT ${limit}
     `)
@@ -551,16 +556,22 @@ export const UserRepository = {
    * Uses pg_trgm trigram similarity for fuzzy matching (handles typos),
    * combined with ILIKE for exact substring matches.
    */
-  async searchByNameOrSlug(db: Querier, workspaceId: string, query: string, limit: number): Promise<User[]> {
+  async searchByNameOrSlug(
+    db: Querier,
+    workspaceId: string,
+    query: string,
+    limit: number,
+    scope: PeopleScope
+  ): Promise<User[]> {
     const pattern = `%${query}%`
-    const result = await db.query<UserRow>(sql`
-      SELECT DISTINCT ${sql.raw(SELECT_FIELDS_WITH_ALIAS)},
+    const result = await db.query<UserRow>(composeSql`
+      SELECT DISTINCT ${SELECT_FIELDS_FRAGMENT},
         GREATEST(
           similarity(u.name, ${query}),
           similarity(u.email, ${query}),
           similarity(u.slug, ${query})
         ) AS sim_score
-      FROM ${sql.raw(USERS_WITH_PERMISSIONS_FROM)}
+      FROM ${USERS_FROM_FRAGMENT}
       WHERE u.workspace_id = ${workspaceId}
         AND (
           u.name % ${query}
@@ -570,6 +581,7 @@ export const UserRepository = {
           OR u.email ILIKE ${pattern}
           OR u.slug ILIKE ${pattern}
         )
+        AND ${peopleScopeSql(scope)}
       ORDER BY sim_score DESC, u.name
       LIMIT ${limit}
     `)

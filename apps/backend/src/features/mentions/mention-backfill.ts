@@ -135,10 +135,12 @@ async function processChunk(
     for (const slug of collectUnresolvedChannelLinkSlugs(row.content_json)) channelSlugs.add(slug)
   }
 
-  const maps = await buildMentionResolutionMaps(ctx.pool, workspaceId, {
-    mentionSlugs: [...mentionSlugs],
-    channelSlugs: [...channelSlugs],
-  })
+  const maps = await buildMentionResolutionMaps(
+    ctx.pool,
+    workspaceId,
+    { mentionSlugs: [...mentionSlugs], channelSlugs: [...channelSlugs] },
+    { kind: "workspace" }
+  )
 
   const updates = resolveContentRows(rows, maps)
   if (updates.length > 0) {
