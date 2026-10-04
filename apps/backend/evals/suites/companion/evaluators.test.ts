@@ -21,7 +21,7 @@ function output(trajectory: CompanionTrajectoryStep[]): CompanionOutput {
 }
 
 function call(content: string, completed = true): CompanionTrajectoryStep {
-  return { stepType: "tool_call", completed, sourceUrls: [], content }
+  return { stepType: "tool_call", completed, sourceUrls: [], sourceMemoIds: [], sourceStreamIds: [], content }
 }
 
 const guideCall = (article: string, completed = true) =>
