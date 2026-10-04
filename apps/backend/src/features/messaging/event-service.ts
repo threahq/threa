@@ -981,7 +981,7 @@ export class EventService {
     // Read state is user-anchored: the born-read lands whether or not the author
     // holds a membership row (membership ≠ access ≠ read state).
     if (params.authorType === "user") {
-      const inboxClearMode = await resolveInboxClearMode(client, params.authorId)
+      const inboxClearMode = await resolveInboxClearMode(client, params.workspaceId, params.authorId)
       if (inboxClearMode === "interaction") {
         // A send is engagement: it always releases an existing hold, and never
         // starts a new one (unlike a plain read, which can hold on interleaved
@@ -2490,7 +2490,7 @@ export class EventService {
             // stream can stay in the Inbox if it's still unread). `streamId` here
             // is the locked row's stream (the retry loop above guarantees
             // existing.streamId === streamId).
-            const inboxClearMode = await resolveInboxClearMode(client, params.userId)
+            const inboxClearMode = await resolveInboxClearMode(client, params.workspaceId, params.userId)
             if (inboxClearMode === "interaction") {
               await releaseInboxHold(client, params.workspaceId, params.userId, [streamId])
             }

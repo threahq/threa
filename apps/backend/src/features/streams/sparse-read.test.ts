@@ -41,6 +41,7 @@ describe("applySparseRead", () => {
     await applySparseRead(db, { workspaceId: "ws_1", streamId: "stream_1", memberId: "usr_1", messageIds: ["msg_1"] })
 
     expect(readStateAdvance).toHaveBeenCalledWith(db, "ws_1", "stream_1", "usr_1", "evt_new", { holdInInbox: true })
+    expect(UserPreferencesRepository.findOverride).toHaveBeenCalledWith(db, "ws_1", "usr_1", "inboxClearMode")
     expect({ ordinal: ordinalForEvent.mock.calls[0], count: countThrough.mock.calls[0] }).toEqual({
       ordinal: [db, "ws_1", "stream_1", "evt_old"],
       count: [db, "ws_1", "stream_1", 20n],

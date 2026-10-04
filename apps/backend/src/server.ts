@@ -823,7 +823,8 @@ export async function startServer(): Promise<ServerInstance> {
       resolveFiredReminder: (params) => savedMessagesService.resolveFiredReminder(params),
       // Constructed further down; only called by the push.deliver worker once the queue runs.
       isRewrapOutstanding: (params) => enclaveClaimService.isRewrapOutstanding(params),
-      findAnalyticsConsentGrant: (db, userId) => userPreferencesService.findAnalyticsConsentGrant(db, userId),
+      findAnalyticsConsentGrant: (db, workspaceId, userId) =>
+        userPreferencesService.findAnalyticsConsentGrant(db, workspaceId, userId),
       isE2eRootedStream: async (db, workspaceId, streamId) =>
         (await E2eStreamsRepository.excludeE2eRootedStreamIds(db, [{ workspaceId, streamId }])).length === 0,
     },
