@@ -1,6 +1,12 @@
 import { test, expect, type Page } from "@playwright/test"
 import type { ListStreamConnectionsResponse } from "@threahq/types"
-import { enrollWorkspaceFlag, expectApiOk, loginAndCreateWorkspace, workspaceIdFromUrl } from "./helpers"
+import {
+  enrollWorkspaceFlag,
+  expectApiOk,
+  loginAndCreateWorkspace,
+  workspaceIdFromUrl,
+  type TestRegion,
+} from "./helpers"
 
 /**
  * Sharing a channel across workspaces: the host admin mints an invite link from
@@ -12,14 +18,14 @@ test.describe.configure({ timeout: 90_000 })
 
 const PHONE = { width: 390, height: 844 }
 
-async function setUpWorkspace(page: Page, prefix: string) {
-  const created = await loginAndCreateWorkspace(page, prefix)
+async function setUpWorkspace(page: Page, prefix: string, region?: TestRegion) {
+  const created = await loginAndCreateWorkspace(page, prefix, { region })
   const workspaceId = workspaceIdFromUrl(page)
-  await enrollWorkspaceFlag(page, workspaceId, "streamConnections")
+  await enrollWorkspaceFlag(page, workspaceId, "streamConnections", region)
   return { ...created, workspaceId }
 }
 
-async function setUpHostAndPartner(hostPage: Page, partnerPage: Page) {
+async function setUpHostAndPartner(hostPage: Page, partnerPage: Page, partnerRegion?: TestRegion) {
   const host = await setUpWorkspace(hostPage, "host")
   const slug = `design-${host.testId}`
   const response = await hostPage.request.post(`/api/workspaces/${host.workspaceId}/streams`, {
@@ -28,7 +34,7 @@ async function setUpHostAndPartner(hostPage: Page, partnerPage: Page) {
   await expectApiOk(response, "Create channel")
   const streamId = ((await response.json()) as { stream: { id: string } }).stream.id
 
-  const partner = await setUpWorkspace(partnerPage, "partner")
+  const partner = await setUpWorkspace(partnerPage, "partner", partnerRegion)
 
   return { host, partner, slug, streamId }
 }
@@ -86,6 +92,25 @@ test.describe("Stream connections", () => {
         .locator('[data-slot="settings-nav"]')
         .getByRole("button", { name: /Connect/ })
         .click()
+      const invitePath = await createInviteLink(page)
+
+      await acceptInvite(partnerPage, invitePath, slug, host.workspaceName, partner.workspaceName)
+      await expectSharedWith(page, [partner.workspaceName])
+    } finally {
+      await partnerContext.close()
+    }
+  })
+
+  test("should share a channel with a workspace in another region when its admin accepts", async ({
+    browser,
+    page,
+  }) => {
+    const partnerContext = await browser.newContext()
+    try {
+      const partnerPage = await partnerContext.newPage()
+      const { host, partner, slug, streamId } = await setUpHostAndPartner(page, partnerPage, "local-2")
+
+      await page.goto(settingsUrl(host.workspaceId, streamId, "connect"))
       const invitePath = await createInviteLink(page)
 
       await acceptInvite(partnerPage, invitePath, slug, host.workspaceName, partner.workspaceName)
