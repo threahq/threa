@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Threa Public API",
-    "version": "2026-07-12",
+    "version": "2026-10-01",
     "description": "The Threa Public API lets you programmatically read and write messages, list streams, and search messages, memos, and attachments.\n\n## Authentication\n\nAll requests require a Bearer token in the `Authorization` header:\n\n```\nAuthorization: Bearer threa_uk_your_api_key_here\n```\n\nKeys use two prefixes. A **personal access key** (`threa_uk_…`) carries a member's own\nidentity and access; any member creates one in the Threa app under **Settings > API keys**.\nA **bot key** (`threa_bk_…`) belongs to a bot with its own identity in the workspace\n(a personal bot or a shared workspace bot) and is minted from the bot's settings\n(personal bots by their owner, shared bots by an admin).\nEach key is scoped to a workspace and granted specific permissions (scopes).\n\nHuman-readable docs: https://threa.io/developers (agent-friendly mirror: https://threa.io/llms.txt).\n\n## Scopes\n\nAPI keys are granted specific scopes that control access:\n\n- `messages:search`: Grants access to search messages in public streams in a workspace. Application level stream grants can extend permissions to private streams.\n- `streams:read`: Grants access to list and search accessible streams in a workspace.\n- `streams:write`: Grants access to set a stream's description (rich text) and to archive or unarchive accessible streams.\n- `messages:read`: Grants access to read messages in accessible streams.\n- `messages:write`: Grants access to send, update, and delete messages in accessible streams.\n- `users:read`: Grants access to list and search workspace users.\n- `memos:read`: Grants access to search preserved workspace memos and inspect their provenance.\n- `attachments:read`: Grants access to search accessible attachments, inspect extracted content, and fetch download URLs.\n- `attachments:write`: Grants access to upload and replace attachments in accessible streams.\n- `labels:read`: Grants access to list workspace labels and their assignments on accessible resources.\n- `labels:write`: Grants access to create, edit, archive, join, and apply labels to accessible resources such as streams.\n- `bot-runtime:read`: Grants access to read bot runtime presence and invocation state.\n- `bot-runtime:write`: Grants access to heartbeat bot runtime presence and link runtime sessions.\n- `bot-invocations:read`: Grants access to read bot invocation state.\n- `bot-invocations:write`: Grants access to claim, complete, or fail bot invocations.\n- `delegations:read`: Grants access to list and inspect delegated tasks in accessible streams.\n- `delegations:write`: Grants an agent access to claim or release delegated tasks and report progress, completion (posting the result as the key's identity), or failure.\n\n## Rate Limits\n\nRequests are rate-limited per workspace and per API key. Rate limit headers are included in responses.\n\n## Pagination\n\nList endpoints return paginated results with `hasMore` and `cursor` fields.\nPass the `cursor` value as the `after` query parameter to fetch the next page."
   },
   "servers": [{ "url": "https://app.threa.io", "description": "Production" }],
@@ -102,9 +102,161 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "slots": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "ok" },
+                              "messageId": { "type": "string" },
+                              "streamId": { "type": "string" },
+                              "authorId": { "type": "string" },
+                              "authorType": { "type": "string", "enum": ["user", "persona", "system", "bot"] },
+                              "authorDisplayName": { "type": "string" },
+                              "content": {
+                                "type": "string",
+                                "description": "The pinned source content as markdown — the revision and span the pointer names, not the source as it reads now. The canonical rich-text JSON stays internal."
+                              },
+                              "version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "The source revision this slot renders."
+                              },
+                              "currentRevision": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "The source's current revision; greater than `version` once the source was edited after the reference was made."
+                              },
+                              "range": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "from": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                      "to": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }
+                                    },
+                                    "required": ["from", "to"],
+                                    "additionalProperties": false
+                                  },
+                                  { "type": "null" }
+                                ],
+                                "description": "The referenced span of the revision, or null for the whole message."
+                              },
+                              "editedAt": {
+                                "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+                              },
+                              "createdAt": { "type": "string", "format": "date-time" },
+                              "attachments": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": { "type": "string" },
+                                    "filename": { "type": "string" },
+                                    "mimeType": { "type": "string" },
+                                    "sizeBytes": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "processingStatus": {
+                                      "type": "string",
+                                      "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                    },
+                                    "width": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "height": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": ["id", "filename", "mimeType", "sizeBytes"],
+                                  "additionalProperties": false
+                                },
+                                "description": "Source attachments; empty when the slot renders a span."
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "state",
+                              "messageId",
+                              "streamId",
+                              "authorId",
+                              "authorType",
+                              "content",
+                              "version",
+                              "currentRevision",
+                              "range",
+                              "editedAt",
+                              "createdAt",
+                              "attachments"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "deleted" },
+                              "messageId": { "type": "string" },
+                              "deletedAt": { "type": "string", "format": "date-time" }
+                            },
+                            "required": ["type", "state", "messageId", "deletedAt"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "missing" },
+                              "messageId": { "type": "string" }
+                            },
+                            "required": ["type", "state", "messageId"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "private" },
+                              "messageId": { "type": "string" },
+                              "sourceStreamKind": {
+                                "type": "string",
+                                "enum": ["scratchpad", "channel", "dm", "thread", "system"]
+                              },
+                              "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
+                            },
+                            "required": ["type", "state", "messageId", "sourceStreamKind", "sourceVisibility"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "truncated" },
+                              "messageId": { "type": "string" },
+                              "streamId": { "type": "string" }
+                            },
+                            "required": ["type", "state", "messageId", "streamId"],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "description": "Hydration for shared-message pointers in the returned messages, keyed by the pointer's reference: `shared:<messageId>` (legacy, current revision), `shared:<messageId>@<version>` (pinned revision) or `shared:<messageId>@<version>:<from>-<to>` (pinned span). Always present; empty when no message references a shared source."
                     }
                   },
-                  "required": ["data"],
+                  "required": ["data", "slots"],
                   "additionalProperties": false
                 }
               }
@@ -300,115 +452,6 @@
                     }
                   },
                   "required": ["data"],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$schema": "https://json-schema.org/draft/2020-12/schema",
-                  "type": "object",
-                  "properties": {
-                    "error": { "type": "string" },
-                    "code": {
-                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
-                      "type": "string"
-                    },
-                    "details": {
-                      "type": "object",
-                      "propertyNames": { "type": "string" },
-                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
-                    }
-                  },
-                  "required": ["error"],
-                  "additionalProperties": false
-                }
-              }
-            }
-          },
-          "401": { "description": "Missing or invalid API key" },
-          "403": { "description": "Insufficient permissions or inaccessible resource" }
-        }
-      }
-    },
-    "/api/v1/workspaces/{workspaceId}/memos/recall": {
-      "post": {
-        "operationId": "recallMemos",
-        "summary": "Recall memos for a message",
-        "tags": ["Memos"],
-        "description": "Find the memos a reply to this message should take into account, the same preparation Threa's own agent gets before it answers. Candidates are judged for relevance and only the ones that bear on the message come back, best first, at most five. An empty `data` with outcome `nothing_relevant` or `no_candidates` means memory holds nothing for it. `unscored`, `timeout` and `failed` mean recall could not judge, so fall back to memo search. Long messages are truncated.",
-        "security": [{ "apiKey": ["memos:read"] }],
-        "parameters": [
-          { "$ref": "#/components/parameters/ThreaVersion" },
-          {
-            "name": "workspaceId",
-            "in": "path",
-            "required": true,
-            "schema": { "type": "string" },
-            "description": "Workspace ID (prefixed ULID)"
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$schema": "https://json-schema.org/draft/2020-12/schema",
-                "type": "object",
-                "properties": { "query": { "type": "string", "minLength": 1 } },
-                "required": ["query"],
-                "additionalProperties": false
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$schema": "https://json-schema.org/draft/2020-12/schema",
-                  "type": "object",
-                  "properties": {
-                    "data": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "properties": {
-                          "id": { "type": "string" },
-                          "title": { "type": "string" },
-                          "abstract": { "type": "string" },
-                          "knowledgeType": {
-                            "type": "string",
-                            "enum": ["decision", "learning", "procedure", "context", "reference"]
-                          },
-                          "sourceMessageIds": { "type": "array", "items": { "type": "string" } },
-                          "createdAt": { "type": "string", "format": "date-time" },
-                          "score": { "type": "number" }
-                        },
-                        "required": [
-                          "id",
-                          "title",
-                          "abstract",
-                          "knowledgeType",
-                          "sourceMessageIds",
-                          "createdAt",
-                          "score"
-                        ],
-                        "additionalProperties": false
-                      }
-                    },
-                    "outcome": {
-                      "type": "string",
-                      "enum": ["recalled", "nothing_relevant", "no_candidates", "unscored", "timeout", "failed"]
-                    }
-                  },
-                  "required": ["data", "outcome"],
                   "additionalProperties": false
                 }
               }
@@ -3891,9 +3934,161 @@
                       },
                       "required": ["invocationId", "message"],
                       "additionalProperties": false
+                    },
+                    "slots": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "ok" },
+                              "messageId": { "type": "string" },
+                              "streamId": { "type": "string" },
+                              "authorId": { "type": "string" },
+                              "authorType": { "type": "string", "enum": ["user", "persona", "system", "bot"] },
+                              "authorDisplayName": { "type": "string" },
+                              "content": {
+                                "type": "string",
+                                "description": "The pinned source content as markdown — the revision and span the pointer names, not the source as it reads now. The canonical rich-text JSON stays internal."
+                              },
+                              "version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "The source revision this slot renders."
+                              },
+                              "currentRevision": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "The source's current revision; greater than `version` once the source was edited after the reference was made."
+                              },
+                              "range": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "from": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                      "to": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }
+                                    },
+                                    "required": ["from", "to"],
+                                    "additionalProperties": false
+                                  },
+                                  { "type": "null" }
+                                ],
+                                "description": "The referenced span of the revision, or null for the whole message."
+                              },
+                              "editedAt": {
+                                "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+                              },
+                              "createdAt": { "type": "string", "format": "date-time" },
+                              "attachments": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": { "type": "string" },
+                                    "filename": { "type": "string" },
+                                    "mimeType": { "type": "string" },
+                                    "sizeBytes": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "processingStatus": {
+                                      "type": "string",
+                                      "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                    },
+                                    "width": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "height": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": ["id", "filename", "mimeType", "sizeBytes"],
+                                  "additionalProperties": false
+                                },
+                                "description": "Source attachments; empty when the slot renders a span."
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "state",
+                              "messageId",
+                              "streamId",
+                              "authorId",
+                              "authorType",
+                              "content",
+                              "version",
+                              "currentRevision",
+                              "range",
+                              "editedAt",
+                              "createdAt",
+                              "attachments"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "deleted" },
+                              "messageId": { "type": "string" },
+                              "deletedAt": { "type": "string", "format": "date-time" }
+                            },
+                            "required": ["type", "state", "messageId", "deletedAt"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "missing" },
+                              "messageId": { "type": "string" }
+                            },
+                            "required": ["type", "state", "messageId"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "private" },
+                              "messageId": { "type": "string" },
+                              "sourceStreamKind": {
+                                "type": "string",
+                                "enum": ["scratchpad", "channel", "dm", "thread", "system"]
+                              },
+                              "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
+                            },
+                            "required": ["type", "state", "messageId", "sourceStreamKind", "sourceVisibility"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "truncated" },
+                              "messageId": { "type": "string" },
+                              "streamId": { "type": "string" }
+                            },
+                            "required": ["type", "state", "messageId", "streamId"],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "description": "Hydration for shared-message pointers in the returned messages, keyed by the pointer's reference: `shared:<messageId>` (legacy, current revision), `shared:<messageId>@<version>` (pinned revision) or `shared:<messageId>@<version>:<from>-<to>` (pinned span). Always present; empty when no message references a shared source."
                     }
                   },
-                  "required": ["data"],
+                  "required": ["data", "slots"],
                   "additionalProperties": false
                 }
               }
@@ -4691,7 +4886,7 @@
         "operationId": "completeDelegation",
         "summary": "Complete a delegation",
         "tags": ["Delegations"],
-        "description": "Complete the claimed delegation. When resultMarkdown is given, a compact resultMessageId anchor is posted to the delegation stream and the full result is posted in resultThreadId. Both writes share the completion transaction. Authenticated with the per-claim token in the X-Threa-Callback-Token header.",
+        "description": "Complete the claimed delegation. When `resultMarkdown` is provided, the result is posted as a reply in the thread anchored on the delegation card, in the same transaction as the completion; it is authored as the key's user (with via-API provenance) for a user-scoped key, or as the bot for a workspace key. The response then includes `resultMessageId` and `resultThreadId`, and the result enters the normal message pipeline so workspace memory can capture it. Without `resultMarkdown`, the response contains only the delegation summary and no result ids. Send the per-claim token in X-Threa-Callback-Token.",
         "security": [{ "apiKey": ["delegations:write"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -5519,13 +5714,16 @@
                           },
                           "parentStreamId": { "type": "string" },
                           "rootStreamId": { "type": "string" },
+                          "anchorId": {
+                            "description": "Canonical id of the timeline item a thread anchors on. The prefix is the kind: 'msg_…' for a message, 'event_…' for a card. Present on threads only.",
+                            "type": "string"
+                          },
                           "e2eEnabled": {
                             "description": "True when the stream is end-to-end encrypted. Its message bodies arrive as `sealed` ciphertext with an opaque `content` placeholder, and a plaintext send is rejected with E2E_STREAM_REQUIRES_CIPHERTEXT.",
                             "type": "boolean"
                           },
                           "createdAt": { "type": "string", "format": "date-time" },
-                          "archivedAt": { "type": "string", "format": "date-time" },
-                          "parentMessageId": { "type": "string" }
+                          "archivedAt": { "type": "string", "format": "date-time" }
                         },
                         "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
                         "additionalProperties": false
@@ -5621,13 +5819,16 @@
                         },
                         "parentStreamId": { "type": "string" },
                         "rootStreamId": { "type": "string" },
+                        "anchorId": {
+                          "description": "Canonical id of the timeline item a thread anchors on. The prefix is the kind: 'msg_…' for a message, 'event_…' for a card. Present on threads only.",
+                          "type": "string"
+                        },
                         "e2eEnabled": {
                           "description": "True when the stream is end-to-end encrypted. Its message bodies arrive as `sealed` ciphertext with an opaque `content` placeholder, and a plaintext send is rejected with E2E_STREAM_REQUIRES_CIPHERTEXT.",
                           "type": "boolean"
                         },
                         "createdAt": { "type": "string", "format": "date-time" },
-                        "archivedAt": { "type": "string", "format": "date-time" },
-                        "parentMessageId": { "type": "string" }
+                        "archivedAt": { "type": "string", "format": "date-time" }
                       },
                       "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
                       "additionalProperties": false
@@ -5734,13 +5935,16 @@
                         },
                         "parentStreamId": { "type": "string" },
                         "rootStreamId": { "type": "string" },
+                        "anchorId": {
+                          "description": "Canonical id of the timeline item a thread anchors on. The prefix is the kind: 'msg_…' for a message, 'event_…' for a card. Present on threads only.",
+                          "type": "string"
+                        },
                         "e2eEnabled": {
                           "description": "True when the stream is end-to-end encrypted. Its message bodies arrive as `sealed` ciphertext with an opaque `content` placeholder, and a plaintext send is rejected with E2E_STREAM_REQUIRES_CIPHERTEXT.",
                           "type": "boolean"
                         },
                         "createdAt": { "type": "string", "format": "date-time" },
-                        "archivedAt": { "type": "string", "format": "date-time" },
-                        "parentMessageId": { "type": "string" }
+                        "archivedAt": { "type": "string", "format": "date-time" }
                       },
                       "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
                       "additionalProperties": false
@@ -5835,13 +6039,16 @@
                         },
                         "parentStreamId": { "type": "string" },
                         "rootStreamId": { "type": "string" },
+                        "anchorId": {
+                          "description": "Canonical id of the timeline item a thread anchors on. The prefix is the kind: 'msg_…' for a message, 'event_…' for a card. Present on threads only.",
+                          "type": "string"
+                        },
                         "e2eEnabled": {
                           "description": "True when the stream is end-to-end encrypted. Its message bodies arrive as `sealed` ciphertext with an opaque `content` placeholder, and a plaintext send is rejected with E2E_STREAM_REQUIRES_CIPHERTEXT.",
                           "type": "boolean"
                         },
                         "createdAt": { "type": "string", "format": "date-time" },
-                        "archivedAt": { "type": "string", "format": "date-time" },
-                        "parentMessageId": { "type": "string" }
+                        "archivedAt": { "type": "string", "format": "date-time" }
                       },
                       "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
                       "additionalProperties": false
@@ -5936,13 +6143,16 @@
                         },
                         "parentStreamId": { "type": "string" },
                         "rootStreamId": { "type": "string" },
+                        "anchorId": {
+                          "description": "Canonical id of the timeline item a thread anchors on. The prefix is the kind: 'msg_…' for a message, 'event_…' for a card. Present on threads only.",
+                          "type": "string"
+                        },
                         "e2eEnabled": {
                           "description": "True when the stream is end-to-end encrypted. Its message bodies arrive as `sealed` ciphertext with an opaque `content` placeholder, and a plaintext send is rejected with E2E_STREAM_REQUIRES_CIPHERTEXT.",
                           "type": "boolean"
                         },
                         "createdAt": { "type": "string", "format": "date-time" },
-                        "archivedAt": { "type": "string", "format": "date-time" },
-                        "parentMessageId": { "type": "string" }
+                        "archivedAt": { "type": "string", "format": "date-time" }
                       },
                       "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
                       "additionalProperties": false
@@ -6224,9 +6434,161 @@
                         "additionalProperties": false
                       }
                     },
-                    "hasMore": { "type": "boolean" }
+                    "hasMore": { "type": "boolean" },
+                    "slots": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "ok" },
+                              "messageId": { "type": "string" },
+                              "streamId": { "type": "string" },
+                              "authorId": { "type": "string" },
+                              "authorType": { "type": "string", "enum": ["user", "persona", "system", "bot"] },
+                              "authorDisplayName": { "type": "string" },
+                              "content": {
+                                "type": "string",
+                                "description": "The pinned source content as markdown — the revision and span the pointer names, not the source as it reads now. The canonical rich-text JSON stays internal."
+                              },
+                              "version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "The source revision this slot renders."
+                              },
+                              "currentRevision": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "The source's current revision; greater than `version` once the source was edited after the reference was made."
+                              },
+                              "range": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "from": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                      "to": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }
+                                    },
+                                    "required": ["from", "to"],
+                                    "additionalProperties": false
+                                  },
+                                  { "type": "null" }
+                                ],
+                                "description": "The referenced span of the revision, or null for the whole message."
+                              },
+                              "editedAt": {
+                                "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+                              },
+                              "createdAt": { "type": "string", "format": "date-time" },
+                              "attachments": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": { "type": "string" },
+                                    "filename": { "type": "string" },
+                                    "mimeType": { "type": "string" },
+                                    "sizeBytes": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "processingStatus": {
+                                      "type": "string",
+                                      "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                    },
+                                    "width": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "height": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": ["id", "filename", "mimeType", "sizeBytes"],
+                                  "additionalProperties": false
+                                },
+                                "description": "Source attachments; empty when the slot renders a span."
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "state",
+                              "messageId",
+                              "streamId",
+                              "authorId",
+                              "authorType",
+                              "content",
+                              "version",
+                              "currentRevision",
+                              "range",
+                              "editedAt",
+                              "createdAt",
+                              "attachments"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "deleted" },
+                              "messageId": { "type": "string" },
+                              "deletedAt": { "type": "string", "format": "date-time" }
+                            },
+                            "required": ["type", "state", "messageId", "deletedAt"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "missing" },
+                              "messageId": { "type": "string" }
+                            },
+                            "required": ["type", "state", "messageId"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "private" },
+                              "messageId": { "type": "string" },
+                              "sourceStreamKind": {
+                                "type": "string",
+                                "enum": ["scratchpad", "channel", "dm", "thread", "system"]
+                              },
+                              "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
+                            },
+                            "required": ["type", "state", "messageId", "sourceStreamKind", "sourceVisibility"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "truncated" },
+                              "messageId": { "type": "string" },
+                              "streamId": { "type": "string" }
+                            },
+                            "required": ["type", "state", "messageId", "streamId"],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "description": "Hydration for shared-message pointers in the returned messages, keyed by the pointer's reference: `shared:<messageId>` (legacy, current revision), `shared:<messageId>@<version>` (pinned revision) or `shared:<messageId>@<version>:<from>-<to>` (pinned span). Always present; empty when no message references a shared source."
+                    }
                   },
-                  "required": ["data", "hasMore"],
+                  "required": ["data", "hasMore", "slots"],
                   "additionalProperties": false
                 }
               }
@@ -6450,9 +6812,161 @@
                     "conversationId": {
                       "description": "The conversation the message was assigned to; present when the request declared a `conversation`.",
                       "type": "string"
+                    },
+                    "slots": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "ok" },
+                              "messageId": { "type": "string" },
+                              "streamId": { "type": "string" },
+                              "authorId": { "type": "string" },
+                              "authorType": { "type": "string", "enum": ["user", "persona", "system", "bot"] },
+                              "authorDisplayName": { "type": "string" },
+                              "content": {
+                                "type": "string",
+                                "description": "The pinned source content as markdown — the revision and span the pointer names, not the source as it reads now. The canonical rich-text JSON stays internal."
+                              },
+                              "version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "The source revision this slot renders."
+                              },
+                              "currentRevision": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "The source's current revision; greater than `version` once the source was edited after the reference was made."
+                              },
+                              "range": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "from": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                      "to": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }
+                                    },
+                                    "required": ["from", "to"],
+                                    "additionalProperties": false
+                                  },
+                                  { "type": "null" }
+                                ],
+                                "description": "The referenced span of the revision, or null for the whole message."
+                              },
+                              "editedAt": {
+                                "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+                              },
+                              "createdAt": { "type": "string", "format": "date-time" },
+                              "attachments": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": { "type": "string" },
+                                    "filename": { "type": "string" },
+                                    "mimeType": { "type": "string" },
+                                    "sizeBytes": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "processingStatus": {
+                                      "type": "string",
+                                      "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                    },
+                                    "width": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "height": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": ["id", "filename", "mimeType", "sizeBytes"],
+                                  "additionalProperties": false
+                                },
+                                "description": "Source attachments; empty when the slot renders a span."
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "state",
+                              "messageId",
+                              "streamId",
+                              "authorId",
+                              "authorType",
+                              "content",
+                              "version",
+                              "currentRevision",
+                              "range",
+                              "editedAt",
+                              "createdAt",
+                              "attachments"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "deleted" },
+                              "messageId": { "type": "string" },
+                              "deletedAt": { "type": "string", "format": "date-time" }
+                            },
+                            "required": ["type", "state", "messageId", "deletedAt"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "missing" },
+                              "messageId": { "type": "string" }
+                            },
+                            "required": ["type", "state", "messageId"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "private" },
+                              "messageId": { "type": "string" },
+                              "sourceStreamKind": {
+                                "type": "string",
+                                "enum": ["scratchpad", "channel", "dm", "thread", "system"]
+                              },
+                              "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
+                            },
+                            "required": ["type", "state", "messageId", "sourceStreamKind", "sourceVisibility"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "truncated" },
+                              "messageId": { "type": "string" },
+                              "streamId": { "type": "string" }
+                            },
+                            "required": ["type", "state", "messageId", "streamId"],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "description": "Hydration for shared-message pointers in the returned messages, keyed by the pointer's reference: `shared:<messageId>` (legacy, current revision), `shared:<messageId>@<version>` (pinned revision) or `shared:<messageId>@<version>:<from>-<to>` (pinned span). Always present; empty when no message references a shared source."
                     }
                   },
-                  "required": ["data"],
+                  "required": ["data", "slots"],
                   "additionalProperties": false
                 }
               }
@@ -6877,9 +7391,161 @@
                       }
                     },
                     "hasMore": { "type": "boolean" },
-                    "cursor": { "anyOf": [{ "type": "string" }, { "type": "null" }] }
+                    "cursor": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
+                    "slots": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "ok" },
+                              "messageId": { "type": "string" },
+                              "streamId": { "type": "string" },
+                              "authorId": { "type": "string" },
+                              "authorType": { "type": "string", "enum": ["user", "persona", "system", "bot"] },
+                              "authorDisplayName": { "type": "string" },
+                              "content": {
+                                "type": "string",
+                                "description": "The pinned source content as markdown — the revision and span the pointer names, not the source as it reads now. The canonical rich-text JSON stays internal."
+                              },
+                              "version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "The source revision this slot renders."
+                              },
+                              "currentRevision": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "The source's current revision; greater than `version` once the source was edited after the reference was made."
+                              },
+                              "range": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "from": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                      "to": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }
+                                    },
+                                    "required": ["from", "to"],
+                                    "additionalProperties": false
+                                  },
+                                  { "type": "null" }
+                                ],
+                                "description": "The referenced span of the revision, or null for the whole message."
+                              },
+                              "editedAt": {
+                                "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+                              },
+                              "createdAt": { "type": "string", "format": "date-time" },
+                              "attachments": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": { "type": "string" },
+                                    "filename": { "type": "string" },
+                                    "mimeType": { "type": "string" },
+                                    "sizeBytes": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "processingStatus": {
+                                      "type": "string",
+                                      "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                    },
+                                    "width": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "height": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": ["id", "filename", "mimeType", "sizeBytes"],
+                                  "additionalProperties": false
+                                },
+                                "description": "Source attachments; empty when the slot renders a span."
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "state",
+                              "messageId",
+                              "streamId",
+                              "authorId",
+                              "authorType",
+                              "content",
+                              "version",
+                              "currentRevision",
+                              "range",
+                              "editedAt",
+                              "createdAt",
+                              "attachments"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "deleted" },
+                              "messageId": { "type": "string" },
+                              "deletedAt": { "type": "string", "format": "date-time" }
+                            },
+                            "required": ["type", "state", "messageId", "deletedAt"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "missing" },
+                              "messageId": { "type": "string" }
+                            },
+                            "required": ["type", "state", "messageId"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "private" },
+                              "messageId": { "type": "string" },
+                              "sourceStreamKind": {
+                                "type": "string",
+                                "enum": ["scratchpad", "channel", "dm", "thread", "system"]
+                              },
+                              "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
+                            },
+                            "required": ["type", "state", "messageId", "sourceStreamKind", "sourceVisibility"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "truncated" },
+                              "messageId": { "type": "string" },
+                              "streamId": { "type": "string" }
+                            },
+                            "required": ["type", "state", "messageId", "streamId"],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "description": "Hydration for shared-message pointers in the returned messages, keyed by the pointer's reference: `shared:<messageId>` (legacy, current revision), `shared:<messageId>@<version>` (pinned revision) or `shared:<messageId>@<version>:<from>-<to>` (pinned span). Always present; empty when no message references a shared source."
+                    }
                   },
-                  "required": ["data", "hasMore", "cursor"],
+                  "required": ["data", "hasMore", "cursor", "slots"],
                   "additionalProperties": false
                 }
               }
@@ -7073,9 +7739,161 @@
                         ],
                         "additionalProperties": false
                       }
+                    },
+                    "slots": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "ok" },
+                              "messageId": { "type": "string" },
+                              "streamId": { "type": "string" },
+                              "authorId": { "type": "string" },
+                              "authorType": { "type": "string", "enum": ["user", "persona", "system", "bot"] },
+                              "authorDisplayName": { "type": "string" },
+                              "content": {
+                                "type": "string",
+                                "description": "The pinned source content as markdown — the revision and span the pointer names, not the source as it reads now. The canonical rich-text JSON stays internal."
+                              },
+                              "version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "The source revision this slot renders."
+                              },
+                              "currentRevision": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "The source's current revision; greater than `version` once the source was edited after the reference was made."
+                              },
+                              "range": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "from": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                      "to": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }
+                                    },
+                                    "required": ["from", "to"],
+                                    "additionalProperties": false
+                                  },
+                                  { "type": "null" }
+                                ],
+                                "description": "The referenced span of the revision, or null for the whole message."
+                              },
+                              "editedAt": {
+                                "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+                              },
+                              "createdAt": { "type": "string", "format": "date-time" },
+                              "attachments": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": { "type": "string" },
+                                    "filename": { "type": "string" },
+                                    "mimeType": { "type": "string" },
+                                    "sizeBytes": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "processingStatus": {
+                                      "type": "string",
+                                      "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                    },
+                                    "width": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "height": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": ["id", "filename", "mimeType", "sizeBytes"],
+                                  "additionalProperties": false
+                                },
+                                "description": "Source attachments; empty when the slot renders a span."
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "state",
+                              "messageId",
+                              "streamId",
+                              "authorId",
+                              "authorType",
+                              "content",
+                              "version",
+                              "currentRevision",
+                              "range",
+                              "editedAt",
+                              "createdAt",
+                              "attachments"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "deleted" },
+                              "messageId": { "type": "string" },
+                              "deletedAt": { "type": "string", "format": "date-time" }
+                            },
+                            "required": ["type", "state", "messageId", "deletedAt"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "missing" },
+                              "messageId": { "type": "string" }
+                            },
+                            "required": ["type", "state", "messageId"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "private" },
+                              "messageId": { "type": "string" },
+                              "sourceStreamKind": {
+                                "type": "string",
+                                "enum": ["scratchpad", "channel", "dm", "thread", "system"]
+                              },
+                              "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
+                            },
+                            "required": ["type", "state", "messageId", "sourceStreamKind", "sourceVisibility"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "truncated" },
+                              "messageId": { "type": "string" },
+                              "streamId": { "type": "string" }
+                            },
+                            "required": ["type", "state", "messageId", "streamId"],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "description": "Hydration for shared-message pointers in the returned messages, keyed by the pointer's reference: `shared:<messageId>` (legacy, current revision), `shared:<messageId>@<version>` (pinned revision) or `shared:<messageId>@<version>:<from>-<to>` (pinned span). Always present; empty when no message references a shared source."
                     }
                   },
-                  "required": ["data"],
+                  "required": ["data", "slots"],
                   "additionalProperties": false
                 }
               }
@@ -7247,9 +8065,161 @@
                         "createdAt"
                       ],
                       "additionalProperties": false
+                    },
+                    "slots": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": {
+                        "oneOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "ok" },
+                              "messageId": { "type": "string" },
+                              "streamId": { "type": "string" },
+                              "authorId": { "type": "string" },
+                              "authorType": { "type": "string", "enum": ["user", "persona", "system", "bot"] },
+                              "authorDisplayName": { "type": "string" },
+                              "content": {
+                                "type": "string",
+                                "description": "The pinned source content as markdown — the revision and span the pointer names, not the source as it reads now. The canonical rich-text JSON stays internal."
+                              },
+                              "version": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "The source revision this slot renders."
+                              },
+                              "currentRevision": {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991,
+                                "description": "The source's current revision; greater than `version` once the source was edited after the reference was made."
+                              },
+                              "range": {
+                                "anyOf": [
+                                  {
+                                    "type": "object",
+                                    "properties": {
+                                      "from": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+                                      "to": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }
+                                    },
+                                    "required": ["from", "to"],
+                                    "additionalProperties": false
+                                  },
+                                  { "type": "null" }
+                                ],
+                                "description": "The referenced span of the revision, or null for the whole message."
+                              },
+                              "editedAt": {
+                                "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+                              },
+                              "createdAt": { "type": "string", "format": "date-time" },
+                              "attachments": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "id": { "type": "string" },
+                                    "filename": { "type": "string" },
+                                    "mimeType": { "type": "string" },
+                                    "sizeBytes": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "processingStatus": {
+                                      "type": "string",
+                                      "enum": ["pending", "processing", "completed", "failed", "skipped"]
+                                    },
+                                    "width": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "height": {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": ["id", "filename", "mimeType", "sizeBytes"],
+                                  "additionalProperties": false
+                                },
+                                "description": "Source attachments; empty when the slot renders a span."
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "state",
+                              "messageId",
+                              "streamId",
+                              "authorId",
+                              "authorType",
+                              "content",
+                              "version",
+                              "currentRevision",
+                              "range",
+                              "editedAt",
+                              "createdAt",
+                              "attachments"
+                            ],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "deleted" },
+                              "messageId": { "type": "string" },
+                              "deletedAt": { "type": "string", "format": "date-time" }
+                            },
+                            "required": ["type", "state", "messageId", "deletedAt"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "missing" },
+                              "messageId": { "type": "string" }
+                            },
+                            "required": ["type", "state", "messageId"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "private" },
+                              "messageId": { "type": "string" },
+                              "sourceStreamKind": {
+                                "type": "string",
+                                "enum": ["scratchpad", "channel", "dm", "thread", "system"]
+                              },
+                              "sourceVisibility": { "type": "string", "enum": ["public", "private"] }
+                            },
+                            "required": ["type", "state", "messageId", "sourceStreamKind", "sourceVisibility"],
+                            "additionalProperties": false
+                          },
+                          {
+                            "type": "object",
+                            "properties": {
+                              "type": { "type": "string", "const": "sharedMessage" },
+                              "state": { "type": "string", "const": "truncated" },
+                              "messageId": { "type": "string" },
+                              "streamId": { "type": "string" }
+                            },
+                            "required": ["type", "state", "messageId", "streamId"],
+                            "additionalProperties": false
+                          }
+                        ]
+                      },
+                      "description": "Hydration for shared-message pointers in the returned messages, keyed by the pointer's reference: `shared:<messageId>` (legacy, current revision), `shared:<messageId>@<version>` (pinned revision) or `shared:<messageId>@<version>:<from>-<to>` (pinned span). Always present; empty when no message references a shared source."
                     }
                   },
-                  "required": ["data"],
+                  "required": ["data", "slots"],
                   "additionalProperties": false
                 }
               }
@@ -7387,7 +8357,7 @@
                           "avatarUrl": { "type": "string" },
                           "role": { "type": "string" }
                         },
-                        "required": ["id", "name", "slug", "email", "role"],
+                        "required": ["id", "name", "slug", "role"],
                         "additionalProperties": false
                       }
                     },

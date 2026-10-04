@@ -207,7 +207,7 @@ export function ProfileSettings() {
             </TooltipContent>
           </Tooltip>
         </div>
-        <Input id="profile-email" value={currentUser.email} disabled className="mt-1.5" />
+        <Input id="profile-email" value={currentUser.email ?? ""} disabled className="mt-1.5" />
       </div>
 
       <div>

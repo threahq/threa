@@ -415,8 +415,7 @@ describe("VERSION_CHANGES: the 2026-08-21 pinned-reference change", () => {
     range,
   })
 
-  test("is the current version and scopes the same seven operations as the slots change", () => {
-    expect(CURRENT_API_VERSION).toBe("2026-08-21")
+  test("scopes the same seven operations as the slots change", () => {
     expect([...pinChange.operations].sort()).toEqual(
       [...VERSION_CHANGES.find((c) => c.version === "2026-07-24")!.operations].sort()
     )
@@ -509,6 +508,60 @@ describe("VERSION_CHANGES: the 2026-08-21 pinned-reference change", () => {
               "Hydration for cross-stream shared-message pointers in the returned messages, keyed by `shared:<messageId>`. Always present; empty when no message references a shared source.",
           },
         },
+      },
+    })
+  })
+})
+
+describe("VERSION_CHANGES: the 2026-10-01 unclaimed-user change", () => {
+  const unclaimedChange = VERSION_CHANGES.find((c) => c.version === "2026-10-01")!
+
+  test("is the current version and scopes listUsers only", () => {
+    expect({ current: CURRENT_API_VERSION, operations: [...unclaimedChange.operations] }).toEqual({
+      current: "2026-10-01",
+      operations: ["listUsers"],
+    })
+  })
+
+  test("downgradeResponse drops users without an email and keeps the page metadata", () => {
+    const payload = {
+      data: [
+        { id: "usr_a", name: "A", slug: "a", email: "a@example.com", role: "member" },
+        { id: "usr_b", name: "B", slug: "b", role: "member" },
+      ],
+      hasMore: true,
+      cursor: "c1",
+    }
+    expect(unclaimedChange.downgradeResponse!(payload, { operationId: "listUsers" })).toEqual({
+      data: [{ id: "usr_a", name: "A", slug: "a", email: "a@example.com", role: "member" }],
+      hasMore: true,
+      cursor: "c1",
+    })
+  })
+
+  test("downgradeResponse leaves other operations alone", () => {
+    const payload = { data: [{ id: "stream_1" }] }
+    expect(unclaimedChange.downgradeResponse!(payload, { operationId: "listStreams" })).toBe(payload)
+  })
+
+  test("downgradeSpec makes email required again on listUsers, in property order, and nowhere else", () => {
+    const userItem = (required: string[]) => ({
+      type: "object",
+      properties: { id: {}, name: {}, slug: {}, email: {}, avatarUrl: {}, role: {} },
+      required,
+    })
+    const spec = {
+      paths: {
+        "/users": { get: { operationId: "listUsers", responses: { "200": userItem(["id", "name", "slug", "role"]) } } },
+        "/other": { get: { operationId: "whoami", responses: { "200": userItem(["id", "name", "slug", "role"]) } } },
+      },
+    }
+    expect(unclaimedChange.downgradeSpec!(spec)).toEqual({
+      paths: {
+        "/users": {
+          get: { operationId: "listUsers", responses: { "200": userItem(["id", "name", "slug", "email", "role"]) } },
+        },
+        "/other": { get: { operationId: "whoami", responses: { "200": userItem(["id", "name", "slug", "role"]) } } },
       },
     })
   })

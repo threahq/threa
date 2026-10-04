@@ -178,6 +178,26 @@ describe("createWorkspaceMemberManagementHandlers", () => {
     expect(controlPlaneClient.removeWorkspaceMember).not.toHaveBeenCalled()
   })
 
+  test("should refuse with 409 USER_UNCLAIMED when the target user has not claimed an account", async () => {
+    spyOn(UserRepository, "findById").mockResolvedValue({ ...fakeUser, workosUserId: null, email: null })
+    const controlPlaneClient = createControlPlaneClientStub()
+    const handlers = createWorkspaceMemberManagementHandlers({ pool: {} as Pool, controlPlaneClient })
+    const res = createResponse()
+
+    await expect(
+      handlers.removeMember(
+        {
+          workspaceId: "ws_1",
+          user: { workosUserId: "workos_caller" },
+          params: { userId: "usr_target" },
+          body: {},
+        } as never,
+        res as never
+      )
+    ).rejects.toMatchObject({ status: 409, code: "USER_UNCLAIMED" })
+    expect(controlPlaneClient.removeWorkspaceMember).not.toHaveBeenCalled()
+  })
+
   test("returns 503 when control plane is not configured", async () => {
     const handlers = createWorkspaceMemberManagementHandlers({ pool: {} as Pool, controlPlaneClient: null })
     const res = createResponse()
