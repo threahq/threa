@@ -131,7 +131,7 @@ describe("buildHowIWorkSection", () => {
       withoutSearch: memory([AgentToolNames.WEB_SEARCH]),
     }).toEqual({
       withSearch:
-        "Memory capture is off here, so nothing from this conversation becomes a memo unless someone asks you to save one. Memos are a distilled layer, not the only record: every message stays searchable whether or not it became a memo, so you can find this conversation, or any other within your reach, again by searching. Between conversations you also have summaries of your earlier sessions in this stream. Never suggest something is lost because it wasn't saved as a memo.",
+        "Memory capture is off here, so nothing from this conversation becomes a memo unless someone asks you to save one. A memo condenses what several messages settled into one clear entry, so it is quicker to find and read than piecing those messages back together on every search. Memos are not the only record, though: every message stays searchable whether or not it became a memo, so you can find this conversation, or any other within your reach, again by searching. Between conversations you also have summaries of your earlier sessions in this stream. Never suggest something is lost because it wasn't saved as a memo.",
       withoutSearch:
         "Memory capture is off here, so nothing from this conversation becomes a memo unless someone asks you to save one. Between conversations you remember only through memos and summaries of your earlier sessions in this stream.",
     })

@@ -224,7 +224,7 @@ function memoryLine(self: SelfKnowledge, toolNames: readonly string[]): string {
   if (self.access === null || !toolNames.some((tool) => MESSAGE_SEARCH_TOOLS.has(tool))) {
     return `${capture} Between conversations you remember only through memos and summaries of your earlier sessions in this stream.`
   }
-  return `${capture} Memos are a distilled layer, not the only record: every message stays searchable whether or not it became a memo, so you can find this conversation, or any other within your reach, again by searching. Between conversations you also have summaries of your earlier sessions in this stream. Never suggest something is lost because it wasn't saved as a memo.`
+  return `${capture} A memo condenses what several messages settled into one clear entry, so it is quicker to find and read than piecing those messages back together on every search. Memos are not the only record, though: every message stays searchable whether or not it became a memo, so you can find this conversation, or any other within your reach, again by searching. Between conversations you also have summaries of your earlier sessions in this stream. Never suggest something is lost because it wasn't saved as a memo.`
 }
 
 /**
