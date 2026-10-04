@@ -229,6 +229,8 @@ test.describe("Stream connections", () => {
     browser,
     page,
   }) => {
+    // Six writes, each waiting on a cross-region pull.
+    test.setTimeout(180_000)
     const partnerContext = await browser.newContext()
     try {
       const partnerPage = await partnerContext.newPage()
@@ -275,6 +277,56 @@ test.describe("Stream connections", () => {
       await deleteMessage(partnerPage, timelineMessage(partnerPage, edited))
       await expect(timelineMessage(partnerPage, edited)).toHaveCount(0, { timeout: 15_000 })
       await expect(timelineMessage(page, edited)).toHaveCount(0, { timeout: 30_000 })
+    } finally {
+      await partnerContext.close()
+    }
+  })
+
+  test("should carry a partner's file to the host and keep it in the partner's copy when the partner lives in another region", async ({
+    browser,
+    page,
+  }) => {
+    const partnerContext = await browser.newContext()
+    try {
+      const partnerPage = await partnerContext.newPage()
+      const { host, partner, slug, streamId } = await setUpHostAndPartner(page, partnerPage, "local-2")
+      await page.goto(settingsUrl(host.workspaceId, streamId, "connect"))
+      await acceptInvite(partnerPage, await createInviteLink(page), slug, host.workspaceName, partner.workspaceName)
+
+      const text = `Partner mockups ${host.testId}`
+      await partnerPage.goto(`/w/${partner.workspaceId}/s/${streamId}`)
+      const editor = partnerPage.locator("[data-message-composer-root] [contenteditable='true']").first()
+      await editor.click()
+      await editor.pressSequentially(text)
+      await pasteImage(partnerPage)
+      await expect(editor.locator("span[data-type='attachment-reference']")).toBeVisible({ timeout: 10_000 })
+      await partnerPage.getByRole("main").getByRole("button", { name: "Send", exact: true }).click()
+      await expect(editor.locator("span[data-type='attachment-reference']")).toHaveCount(0, { timeout: 15_000 })
+
+      const partnerImage = timelineMessage(partnerPage, text).locator("img[src*='/content?variant=thumbnail']")
+      await expect(partnerImage).toBeAttached({ timeout: 30_000 })
+      expect(await partnerImage.getAttribute("src")).toContain(`/api/workspaces/${partner.workspaceId}/attachments/`)
+
+      await page.goto(`/w/${host.workspaceId}/s/${streamId}`)
+      await expect(timelineMessage(page, text)).toContainText(partner.name, { timeout: 30_000 })
+      const hostImage = timelineMessage(page, text).locator("img[src*='/content?variant=thumbnail']")
+      await expect(hostImage).toBeAttached({ timeout: 30_000 })
+      const src = await hostImage.getAttribute("src")
+      expect(src).toContain(`/api/workspaces/${host.workspaceId}/attachments/`)
+
+      const rawUrl = src!.replace("?variant=thumbnail", "")
+      await expect
+        .poll(
+          async () => {
+            const response = await page.request.get(rawUrl)
+            return response.ok() && Buffer.compare(await response.body(), TEST_PNG) === 0
+          },
+          { timeout: 60_000 }
+        )
+        .toBe(true)
+      await expect
+        .poll(() => hostImage.evaluate((node: HTMLImageElement) => node.naturalWidth), { timeout: 30_000 })
+        .toBe(1)
     } finally {
       await partnerContext.close()
     }

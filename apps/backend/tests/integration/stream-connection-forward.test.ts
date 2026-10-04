@@ -541,6 +541,7 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
         ...asPat(world),
         messageId: sent.id,
         contentJson: testContentJson("second draft"),
+        attachmentIds: [],
       })
     )
 
