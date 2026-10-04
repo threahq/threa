@@ -40,7 +40,7 @@ function messageRow(
 
 /** The socket echo of a reaction, as the sync handler patches it onto the message row. */
 async function echoReaction(messageId: string, emoji: string, userId: string, added: boolean) {
-  await updateMessageEvent(STREAM.id, messageId, (payload) => {
+  await updateMessageEvent(WS, STREAM.id, messageId, (payload) => {
     const current = payload.reactions as Record<string, string[]>
     const users = (current[emoji] ?? []).filter((id) => id !== userId)
     const reactions = { ...current, [emoji]: added ? [...users, userId] : users }

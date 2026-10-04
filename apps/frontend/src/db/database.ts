@@ -32,6 +32,7 @@ const WORKSPACE_USERS_STORE = "workspaceUsers"
 const STREAMS_STORE = "streamsByWorkspace"
 const SLOTS_STORE = "slotsByWorkspace"
 const BOARD_MUTED_STREAMS_STORE = "boardMutedStreamsByWorkspace"
+const EVENTS_STORE = "eventsByWorkspace"
 const LEGACY_WORKSPACE_USERS_STORE = "workspaceMembers"
 
 export interface CachedWorkspace {
@@ -1139,7 +1140,7 @@ export class ThreaDatabase extends Dexie {
   streamMemberships!: EntityTable<CachedStreamMembership, "id">
   streamReadState!: EntityTable<CachedStreamReadState, "id">
   dmPeers!: EntityTable<CachedDmPeer, "id">
-  events!: EntityTable<CachedEvent, "id">
+  events!: Table<CachedEvent, [string, string]>
   personas!: EntityTable<CachedPersona, "id">
   bots!: EntityTable<CachedBot, "id">
   pendingMessages!: EntityTable<PendingMessage, "clientId">
@@ -1707,10 +1708,33 @@ export class ThreaDatabase extends Dexie {
         await moveRows(tx, "boardMutedStreams", BOARD_MUTED_STREAMS_STORE)
       })
 
+    // v53: events are keyed by workspace, for the same reason as v52: a copied
+    // stream's events keep their `event_`/`msg_` ids and sequences in the partner
+    // workspace, so a bare-id key overwrote the other workspace's row and a
+    // [streamId+…] range returned both workspaces' rows. The old store moves to a
+    // new physical store under the same property name. Every bare or
+    // cross-workspace index is dropped so a missed call site throws instead of
+    // mixing workspaces. `_status` stays bare: the unsent-row queue is
+    // account-wide and optimistic ids are client-generated. Rows without a
+    // `workspaceId` are dropped; the bootstrap refetches them.
+    // One-way door: once a client has opened at v53, code declaring only v52
+    // cannot open the database (IndexedDB refuses a version downgrade), so a
+    // revert of this bump is not available — reverting means a v54.
+    this.version(53)
+      .stores({
+        [EVENTS_STORE]:
+          "[workspaceId+id], [workspaceId+streamId], [workspaceId+streamId+_sequenceNum], [workspaceId+streamId+eventType], [workspaceId+payload.messageId], _status",
+        events: null,
+      })
+      .upgrade(async (tx) => {
+        await moveRows(tx, "events", EVENTS_STORE)
+      })
+
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
     this.streams = this.table(STREAMS_STORE)
     this.slots = this.table(SLOTS_STORE)
     this.boardMutedStreams = this.table(BOARD_MUTED_STREAMS_STORE)
+    this.events = this.table(EVENTS_STORE)
 
     // Dexie holds every other transaction until this resolves, so nothing reads
     // or writes a database before its contents are known to belong to the

@@ -1,4 +1,4 @@
-import type { EntityTable } from "dexie"
+import type { Table } from "dexie"
 import type { CachedEvent } from "@/db/database"
 
 /**
@@ -9,7 +9,7 @@ import type { CachedEvent } from "@/db/database"
  */
 export const EVENT_BULK_PUT_LIMIT = 49
 
-type EventTable = EntityTable<CachedEvent, "id">
+type EventTable = Table<CachedEvent, [string, string]>
 
 /**
  * Writes events in slices below Dexie's FULL_RANGE threshold. Opens no

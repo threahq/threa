@@ -564,7 +564,10 @@ describe("the timeline composer's durable target", () => {
     await userEvent.click(screen.getByRole("button", { name: "send" }))
 
     const dispatched = await waitFor(async () => {
-      const rows = await db.events.where("eventType").equals("command_dispatched").toArray()
+      const rows = await db.events
+        .where("[workspaceId+streamId+eventType]")
+        .equals([workspaceId, streamId, "command_dispatched"])
+        .toArray()
       expect(rows).toHaveLength(1)
       return rows[0]
     })

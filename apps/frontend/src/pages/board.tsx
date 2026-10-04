@@ -583,7 +583,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     }
     return [...set].sort()
   }, [posts, structuralIndex, conversationGraph])
-  const railsReady = useBoardRailsReady(prewarmStreamIds)
+  const railsReady = useBoardRailsReady(workspaceId, prewarmStreamIds)
   const graphReady = useConversationGraphReady(workspaceId)
   // Draft pills (card reply button, branch tails, sub-topic indicators) read the
   // shared board-drafts snapshot; hold the reveal until its first read lands so

@@ -30,13 +30,13 @@ export function useAsideAnchor(
   const anchorEvent = useLiveQuery(
     async () => {
       if (!anchorId) return null
-      // The `payload.messageId` index (v47) exists so a message anchor is a
-      // direct lookup; the `[streamId+eventType]` range would re-scan every
+      // The `[workspaceId+payload.messageId]` index exists so a message anchor is a
+      // direct lookup; the `[workspaceId+streamId+eventType]` range would re-scan every
       // message in the host stream on each new one while the aside is open.
-      const events = await db.events.where("payload.messageId").equals(anchorId).toArray()
+      const events = await db.events.where("[workspaceId+payload.messageId]").equals([workspaceId, anchorId]).toArray()
       return events.find((event) => event.streamId === hostStreamId && event.eventType === "message_created") ?? null
     },
-    [anchorId, hostStreamId],
+    [workspaceId, anchorId, hostStreamId],
     null
   )
 

@@ -986,7 +986,7 @@ function SentMessageEvent({
   // Hydrate the destination tombstone on demand for the per-message
   // "Show move details" action. Reactive — populates as soon as the row
   // lands in IDB (live socket apply or bootstrap).
-  const movedTombstoneEvent = useMovedTombstone(payload.movedFrom?.moveTombstoneId)
+  const movedTombstoneEvent = useMovedTombstone(workspaceId, payload.movedFrom?.moveTombstoneId)
 
   const isMobile = useIsMobile()
   // Gestures (long-press → action drawer, swipe → quote) are enabled whenever
@@ -1835,7 +1835,7 @@ function PendingMessageEvent({
               variant="ghost"
               size="sm"
               className="h-6 px-2 text-xs text-muted-foreground"
-              onClick={() => void deleteMessage(event.id)}
+              onClick={() => void deleteMessage(workspaceId, event.id)}
             >
               Delete
             </Button>
@@ -1850,7 +1850,7 @@ function PendingMessageEvent({
           contentMarkdown={payload.contentMarkdown}
           authorName={actorName}
           onEdit={() => void markEditing(event.id)}
-          onDelete={() => void deleteMessage(event.id)}
+          onDelete={() => void deleteMessage(workspaceId, event.id)}
         />
       )}
     </>
@@ -1902,7 +1902,7 @@ function FailedMessageEvent({
               variant="ghost"
               size="sm"
               className="h-6 px-2 text-xs text-muted-foreground"
-              onClick={() => void deleteMessage(event.id)}
+              onClick={() => void deleteMessage(workspaceId, event.id)}
             >
               Delete
             </Button>
@@ -1918,7 +1918,7 @@ function FailedMessageEvent({
           authorName={actorName}
           onRetry={() => void retryMessage(event.id)}
           onEdit={() => void markEditing(event.id)}
-          onDelete={() => void deleteMessage(event.id)}
+          onDelete={() => void deleteMessage(workspaceId, event.id)}
         />
       )}
     </>

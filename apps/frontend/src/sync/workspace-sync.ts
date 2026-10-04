@@ -2073,14 +2073,14 @@ export function registerWorkspaceSocketHandlers(
     }
 
     const events = await db.events
-      .where("[streamId+eventType]")
-      .equals([streamId, "message_created"])
+      .where("[workspaceId+streamId+eventType]")
+      .equals([workspaceId, streamId, "message_created"])
       .filter((e) => (e.payload as { messageId?: string })?.messageId === messageId)
       .toArray()
 
     if (events.length > 0) {
       const event = events[0]
-      await db.events.update(event.id, {
+      await db.events.update([workspaceId, event.id], {
         payload: updatePayload(event.payload as Record<string, unknown>),
         _cachedAt: Date.now(),
       })

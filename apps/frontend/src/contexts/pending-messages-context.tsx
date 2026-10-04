@@ -29,7 +29,7 @@ interface PendingMessagesContextValue {
    */
   retryMessage: (id: string, patch?: Record<string, unknown>) => Promise<void>
   /** Permanently delete a failed/pending message from the outbox and timeline */
-  deleteMessage: (id: string) => Promise<void>
+  deleteMessage: (workspaceId: string, id: string) => Promise<void>
   /** Kick the background message queue to process the next pending message */
   notifyQueue: () => void
   /** Register the queue's notify callback (called by useMessageQueue). Pass null to unregister. */
@@ -58,18 +58,17 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
   useEffect(() => {
     void (async () => {
       try {
-        const pending = await db.events.where("_status").equals("pending").primaryKeys()
-        const failed = await db.events.where("_status").equals("failed").primaryKeys()
-        const editing = await db.events.where("_status").equals("editing").primaryKeys()
-        if (pending.length > 0) setPendingIds(new Set(pending as string[]))
-        if (failed.length > 0) setFailedIds(new Set(failed as string[]))
+        const pending = await db.events.where("_status").equals("pending").toArray()
+        const failed = await db.events.where("_status").equals("failed").toArray()
+        const editing = await db.events.where("_status").equals("editing").toArray()
+        if (pending.length > 0) setPendingIds(new Set(pending.map((event) => event.id)))
+        if (failed.length > 0) setFailedIds(new Set(failed.map((event) => event.id)))
         if (editing.length > 0) {
           const restoredPendingIds = new Set<string>()
           const restoredFailedIds = new Set<string>()
 
           await db.transaction("rw", db.pendingMessages, db.events, async () => {
-            for (const rawId of editing) {
-              const id = rawId as string
+            for (const { id, workspaceId } of editing) {
               const pendingMessage = await db.pendingMessages.get(id)
               const preEditStatus = pendingMessage?.preEditStatus ?? "pending"
 
@@ -78,7 +77,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
                 status: undefined,
                 preEditStatus: undefined,
               })
-              await db.events.update(id, { _status: preEditStatus })
+              await db.events.update([workspaceId, id], { _status: preEditStatus })
 
               if (preEditStatus === "failed") {
                 restoredFailedIds.add(id)
@@ -183,12 +182,12 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
     // Read pre-edit status inside the transaction so the queue can't change it
     // between the read and the write
     const preEditStatus = await db.transaction("rw", db.pendingMessages, db.events, async () => {
-      const event = await db.events.get(id)
+      const event = await db.events.get([existing.workspaceId, id])
       const status: PreEditStatus = event?._status === "failed" ? "failed" : "pending"
 
       type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
       await (db.pendingMessages.update as unknown as UpdateFn)(id, { status: "editing", preEditStatus: status })
-      await db.events.update(id, { _status: "editing", _preEditStatus: status })
+      await db.events.update([existing.workspaceId, id], { _status: "editing", _preEditStatus: status })
       return status
     })
 
@@ -228,7 +227,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
         })
 
         // Update the optimistic event's payload so the timeline reflects the edit
-        const event = await db.events.get(id)
+        const event = await db.events.get([existing.workspaceId, id])
         if (event) {
           const payload = event.payload as Record<string, unknown>
           await db.events.put({
@@ -263,7 +262,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
 
         type UpdateFn = (key: string, changes: Record<string, unknown>) => Promise<number>
         await (db.pendingMessages.update as unknown as UpdateFn)(id, { status: undefined, preEditStatus: undefined })
-        await db.events.update(id, { _status: preEditStatus })
+        await db.events.update([existing.workspaceId, id], { _status: preEditStatus })
         return true
       })
 
@@ -303,21 +302,21 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
         terminalFailure: undefined,
         ...patch,
       })
-      await db.events.update(id, { _status: "pending" })
+      await db.events.update([existing.workspaceId, id], { _status: "pending" })
       markPending(id)
       notifyQueue()
     },
     [markPending, notifyQueue]
   )
 
-  const deleteMessage = useCallback(async (id: string) => {
+  const deleteMessage = useCallback(async (workspaceId: string, id: string) => {
     // Read the directive before deleting: a cancelled new-scratchpad board post
     // also drops its composer-clear optimistic card (keyed by the client-minted
     // conversation id) so it doesn't linger as a phantom that never reconciles.
     const pending = await db.pendingMessages.get(id)
     await db.transaction("rw", db.pendingMessages, db.events, async () => {
       await db.pendingMessages.delete(id)
-      await db.events.delete(id)
+      await db.events.delete([workspaceId, id])
     })
     revokeOptimisticRailEvent(id)
     if (pending?.conversation?.intent === ConversationIntents.NEW && pending.conversation.conversationId) {

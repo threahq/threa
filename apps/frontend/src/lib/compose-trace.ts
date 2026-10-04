@@ -15,6 +15,7 @@ import { useFeatureFlag } from "@/hooks/use-feature-flags"
  * own in-flight sends never inflate the horizon.
  */
 interface OpenSession {
+  workspaceId: string
   scopeId: string
   horizonStreamId: string
   openedAt: string
@@ -22,7 +23,7 @@ interface OpenSession {
   resumedDraft: boolean
 }
 
-type ReadLatestSequence = (streamId: string) => Promise<string | null>
+type ReadLatestSequence = (workspaceId: string, streamId: string) => Promise<string | null>
 
 export class ComposeTraceRecorder {
   private session: OpenSession | null = null
@@ -43,12 +44,25 @@ export class ComposeTraceRecorder {
    * not exist yet), so it travels on the trace rather than being inferred from
    * the message.
    */
-  async open(scopeId: string, horizonStreamId: string, resumedDraft: boolean): Promise<void> {
-    if (this.session?.scopeId === scopeId && this.session.horizonStreamId === horizonStreamId) return
+  async open(workspaceId: string, scopeId: string, horizonStreamId: string, resumedDraft: boolean): Promise<void> {
+    if (
+      this.session?.workspaceId === workspaceId &&
+      this.session.scopeId === scopeId &&
+      this.session.horizonStreamId === horizonStreamId
+    ) {
+      return
+    }
     const openedAt = new Date().toISOString()
-    const session: OpenSession = { scopeId, horizonStreamId, openedAt, openedAtSequence: null, resumedDraft }
+    const session: OpenSession = {
+      workspaceId,
+      scopeId,
+      horizonStreamId,
+      openedAt,
+      openedAtSequence: null,
+      resumedDraft,
+    }
     this.session = session
-    const sequence = await this.readLatestSequence(horizonStreamId)
+    const sequence = await this.readLatestSequence(workspaceId, horizonStreamId)
     // A focus in another scope (or a send) may have landed while the read was in
     // flight — only stamp the session this call actually started.
     if (this.session === session) session.openedAtSequence = toSequenceNumber(sequence)
@@ -71,7 +85,7 @@ export class ComposeTraceRecorder {
     const session = this.session
     if (!session) return undefined
     this.session = null
-    const sentAtSequence = toSequenceNumber(await this.readLatestSequence(session.horizonStreamId))
+    const sentAtSequence = toSequenceNumber(await this.readLatestSequence(session.workspaceId, session.horizonStreamId))
     return {
       horizonStreamId: session.horizonStreamId,
       openedAt: session.openedAt,
@@ -154,10 +168,11 @@ export function useComposeTrace({
     recorderRef.current.reset()
     pendingFocusRef.current = false
     return recorderRef.current
-    // Re-running on scope OR horizon-stream change is the reset: a composer that
-    // switches target — or whose host stream resolves to a different id — must
-    // not carry the previous target's horizon into its next send.
-  }, [enabled, scopeId, horizonStreamId])
+    // Re-running on workspace, scope OR horizon-stream change is the reset: a
+    // composer that switches target — or whose host stream resolves to a
+    // different id — must not carry the previous target's horizon into its next
+    // send.
+  }, [enabled, workspaceId, scopeId, horizonStreamId])
 
   const onComposerFocus = useCallback(() => {
     if (!recorder || !horizonStreamId) return
@@ -165,14 +180,14 @@ export function useComposeTrace({
       pendingFocusRef.current = true
       return
     }
-    void recorder.open(scopeId, horizonStreamId, hasDraftContentRef.current())
-  }, [recorder, scopeId, horizonStreamId, draftReady])
+    void recorder.open(workspaceId, scopeId, horizonStreamId, hasDraftContentRef.current())
+  }, [recorder, workspaceId, scopeId, horizonStreamId, draftReady])
 
   useEffect(() => {
     if (!recorder || !horizonStreamId || !draftReady || !pendingFocusRef.current) return
     pendingFocusRef.current = false
-    void recorder.open(scopeId, horizonStreamId, hasDraftContentRef.current())
-  }, [recorder, scopeId, horizonStreamId, draftReady])
+    void recorder.open(workspaceId, scopeId, horizonStreamId, hasDraftContentRef.current())
+  }, [recorder, workspaceId, scopeId, horizonStreamId, draftReady])
 
   const takeComposeTrace = useCallback(async () => recorder?.take(), [recorder])
 

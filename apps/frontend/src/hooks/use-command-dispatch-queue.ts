@@ -30,17 +30,14 @@ export async function cancelCommandDispatch(
     )
     if (operations.some((operation) => operation.startedAt != null)) return false
 
-    const dispatched = await db.events.get(commandId)
-    if (dispatched?.workspaceId !== workspaceId || dispatched.streamId !== streamId) return false
+    const dispatched = await db.events.get([workspaceId, commandId])
+    if (dispatched?.streamId !== streamId) return false
 
     await db.pendingOperations.bulkDelete(operations.map((operation) => operation.id))
     const eventIds = [commandId, `${commandId}:failed`]
-    const events = await db.events.bulkGet(eventIds)
+    const events = await db.events.bulkGet(eventIds.map((id) => [workspaceId, id]))
     await db.events.bulkDelete(
-      eventIds.filter((_, index) => {
-        const event = events[index]
-        return event?.workspaceId === workspaceId && event.streamId === streamId
-      })
+      eventIds.filter((_, index) => events[index]?.streamId === streamId).map((id) => [workspaceId, id])
     )
     return true
   })
@@ -121,8 +118,8 @@ export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
 
       await db.transaction("rw", [db.events, db.pendingOperations], async () => {
         const [anchorSequence, optimisticSequence] = await Promise.all([
-          getLatestPersistedSequence(streamId),
-          nextOptimisticSequence(streamId),
+          getLatestPersistedSequence(workspaceId, streamId),
+          nextOptimisticSequence(workspaceId, streamId),
         ])
         const optimisticEvent: StreamEvent = {
           id: optimisticEventId,

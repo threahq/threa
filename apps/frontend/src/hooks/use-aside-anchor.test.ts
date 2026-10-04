@@ -3,21 +3,34 @@ import { renderHook, waitFor } from "@testing-library/react"
 import { db } from "@/db"
 import { spyOnExport } from "@/test"
 import * as actorsModule from "./use-actors"
+import { formatTime } from "@/lib/dates"
 import { useAsideAnchor } from "./use-aside-anchor"
 
 const HOST = "stream_host"
 const ANCHOR = "msg_anchor_1"
 
-async function seedAnchorMessage(overrides: { streamId?: string; messageId?: string; createdAt?: string } = {}) {
+async function seedAnchorMessage(
+  overrides: {
+    workspaceId?: string
+    streamId?: string
+    messageId?: string
+    actorId?: string
+    contentMarkdown?: string
+    createdAt?: string
+  } = {}
+) {
   await db.events.put({
-    id: `evt_${overrides.messageId ?? ANCHOR}_${overrides.streamId ?? HOST}`,
-    workspaceId: "ws_1",
+    id: `evt_${overrides.workspaceId ?? "ws_1"}_${overrides.messageId ?? ANCHOR}_${overrides.streamId ?? HOST}`,
+    workspaceId: overrides.workspaceId ?? "ws_1",
     streamId: overrides.streamId ?? HOST,
     sequence: "1",
     _sequenceNum: 1,
     eventType: "message_created",
-    payload: { messageId: overrides.messageId ?? ANCHOR, contentMarkdown: "Churn hit 34% in Q2." },
-    actorId: "usr_dana",
+    payload: {
+      messageId: overrides.messageId ?? ANCHOR,
+      contentMarkdown: overrides.contentMarkdown ?? "Churn hit 34% in Q2.",
+    },
+    actorId: overrides.actorId ?? "usr_dana",
     actorType: "user",
     createdAt: overrides.createdAt ?? "2026-08-24T09:44:00.000Z",
     _cachedAt: Date.now(),
@@ -27,7 +40,7 @@ async function seedAnchorMessage(overrides: { streamId?: string; messageId?: str
 beforeEach(async () => {
   await db.events.clear()
   spyOnExport(actorsModule, "useActors").mockReturnValue((() => ({
-    getActorName: (id: string) => (id === "usr_dana" ? "Dana Whitfield" : id),
+    getActorName: (id: string) => ({ usr_dana: "Dana Whitfield", usr_priya: "Priya Nair" })[id] ?? id,
   })) as never)
 })
 
@@ -51,6 +64,22 @@ describe("useAsideAnchor", () => {
 
     await waitFor(() => expect(db.events.count()).resolves.toBe(1))
     expect(result.current).toBeNull()
+  })
+
+  it("resolves the anchor from the viewed workspace when another workspace caches the same message and stream ids", async () => {
+    await seedAnchorMessage({ createdAt: "2026-08-24T09:44:00.000Z" })
+    await seedAnchorMessage({
+      workspaceId: "ws_2",
+      actorId: "usr_priya",
+      contentMarkdown: "Retention is flat.",
+      createdAt: "2026-08-24T11:30:00.000Z",
+    })
+
+    const { result } = renderHook(() => useAsideAnchor("ws_2", HOST, ANCHOR))
+
+    await waitFor(() =>
+      expect(result.current).toEqual({ author: "Priya Nair", at: formatTime(new Date("2026-08-24T11:30:00.000Z")) })
+    )
   })
 
   it("stays null with no anchor id and with an uncached anchor", async () => {
