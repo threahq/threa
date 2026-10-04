@@ -9,6 +9,8 @@ order: 1
 
 Threa reads conversations after they settle and saves the lasting parts as memos, so decisions and findings don't stay buried in old messages. You can browse them on the [Memory](app:memory) page.
 
+Memos are a summary on top of your messages, not the only record. Every message stays searchable whether or not it became a memo, and Ariadne can search for and find an earlier conversation even when nothing from it was saved.
+
 ## What gets saved
 
 Threa groups related messages into conversations and looks at each one as a whole. It saves a memo only when the participants produced something worth recalling later. Each memo has one of five knowledge types:

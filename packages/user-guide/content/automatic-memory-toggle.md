@@ -30,6 +30,7 @@ A thread follows its parent stream. It has no switch of its own, and changing th
 - A conversation already waiting to be processed is skipped if the switch was off by the time Threa got to it.
 - The same switch stops automatic to-do capture from the stream and the memos agents write from their own session work.
 - Memos that already exist stay. Archive or delete them from the [Memory](app:memory) page.
+- Messages stay searchable. You and Ariadne can still find the stream's conversations through search; only the memos are skipped.
 - Someone can still ask an agent to save a memo on purpose. See [Using memory in chat](/guide/memory-in-conversations).
 
 Encrypted scratchpads never produce memos, whatever the switch says. For what is saved when it's on, see [How Threa remembers](/guide/how-memory-works).
