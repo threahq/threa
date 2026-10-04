@@ -30,8 +30,8 @@ interface Admission {
   profiles: BridgeWriteUser[]
   /** Content to clean, which is returned cleaned. It keeps references to the files this write sends, or to the targeted message's own. */
   doc?: JSONContent
-  /** Files the write sends, copied here before it lands. */
-  files?: BridgeWriteAttachment[]
+  /** A send's files, copied here before it lands, and the id its retries repeat. */
+  send?: { files: BridgeWriteAttachment[]; clientMessageId: string }
   /** A message the write targets, which must be live in the stream and, when `ownedByAuthor`, written by the author. */
   message?: { id: string; ownedByAuthor: boolean }
 }
@@ -64,7 +64,7 @@ export class StreamConnectionWriteService {
       authorId: caller.author.id,
       profiles: [caller.author, ...caller.users],
       doc: caller.contentJson,
-      files: caller.attachments,
+      send: { files: caller.attachments, clientMessageId: caller.clientMessageId },
     })
     const message = await this.eventService.createMessage({
       workspaceId: caller.workspaceId,
@@ -206,7 +206,7 @@ export class StreamConnectionWriteService {
         ? (await AttachmentRepository.findByMessageId(client, caller.workspaceId, admission.message.id)).map(
             (row) => row.id
           )
-        : await admitFiles(client, caller, connection.id, admission.authorId, admission.files ?? [])
+        : await admitFiles(client, caller, connection.id, admission.authorId, admission.send)
       return importDoc(client, {
         workspaceId: caller.workspaceId,
         callerWorkspaceId: caller.callerWorkspaceId,
@@ -225,28 +225,38 @@ export class StreamConnectionWriteService {
 
 /**
  * Copies a send's files here, unbound, for the send to bind. A retried send
- * finds its files already here; an id held for anyone else is not the author's
- * to send.
+ * finds its files already here, unbound or bound to the message it sent; an id
+ * held for anyone else, or by another message, is not the author's to send.
  */
 async function admitFiles(
   client: PoolClient,
   caller: WriteCaller,
   connectionId: string,
   authorId: string,
-  files: BridgeWriteAttachment[]
+  send: Admission["send"]
 ): Promise<string[]> {
-  if (files.length === 0) return []
-  const ids = files.map((file) => file.id)
+  if (!send || send.files.length === 0) return []
+  const ids = send.files.map((file) => file.id)
   const held = await AttachmentRepository.findByIds(client, caller.workspaceId, ids)
   if (held.some((row) => row.uploadedBy !== authorId)) throw writeRefused("Attachment is not the author's")
+  if (held.some((row) => row.messageId !== null)) {
+    const retried = await MessageRepository.findByClientMessageId(
+      client,
+      caller.workspaceId,
+      caller.streamId,
+      send.clientMessageId
+    )
+    if (held.some((row) => row.messageId !== null && row.messageId !== retried?.id)) {
+      throw writeRefused("Attachment is already sent")
+    }
+  }
   const heldIds = new Set(held.map((row) => row.id))
   await insertFileCopies(client, {
     workspaceId: caller.workspaceId,
     connectionId,
-    streamId: caller.streamId,
-    messageId: null,
+    binding: null,
     uploadedBy: authorId,
-    files: files.filter((file) => !heldIds.has(file.id)),
+    files: send.files.filter((file) => !heldIds.has(file.id)),
   })
   return ids
 }

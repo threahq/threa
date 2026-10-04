@@ -669,6 +669,29 @@ describe("A partner's writes to a shared channel", () => {
       })
     })
 
+    test("should refuse the send and leave the file with its message when the send names a file another of the author's messages holds", async () => {
+      const world = await seedWorld()
+      const file = sentFile()
+      const { messageId: first } = await send(world, withFile(file, " first"), {
+        clientMessageId: "client-first",
+        attachments: [file],
+      })
+
+      const refused = await outcome(
+        send(world, withFile(file, " again"), { clientMessageId: "client-again", attachments: [file] })
+      )
+
+      const { rows } = await pool.query(
+        "SELECT id FROM messages WHERE workspace_id = $1 AND client_message_id = 'client-again'",
+        [world.host.id]
+      )
+      expect({ refused, rows, files: await hostFiles(world, [file.id]) }).toMatchObject({
+        refused: REFUSED,
+        rows: [],
+        files: [{ id: file.id, message_id: first, referenced_by: [first] }],
+      })
+    })
+
     test("should keep the message's own file and drop any other file reference when the author edits", async () => {
       const world = await seedWorld()
       const file = sentFile()

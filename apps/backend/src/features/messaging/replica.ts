@@ -198,8 +198,7 @@ async function insertCopyAttachments(
   const copies = await insertFileCopies(client, {
     workspaceId,
     connectionId,
-    streamId: stream.id,
-    messageId: copy.id,
+    binding: { messageId: copy.id, streamId: stream.id },
     uploadedBy: copy.authorId,
     files: copy.attachments.filter((attachment) => !sent.has(attachment.id)),
   })
@@ -225,7 +224,7 @@ async function insertCopyAttachments(
 /**
  * Rows for files whose bytes are in the connected workspace, under the same
  * ids. Until a queued job copies a file's bytes it reads as uploading. A
- * `messageId` of null leaves the files for a send to bind. Plain inserts: an id
+ * `binding` of null leaves the files for a send to bind. Plain inserts: an id
  * this workspace already holds fails the transaction.
  */
 export async function insertFileCopies(
@@ -233,21 +232,20 @@ export async function insertFileCopies(
   params: {
     workspaceId: string
     connectionId: string
-    streamId: string
-    messageId: string | null
+    binding: { messageId: string; streamId: string } | null
     uploadedBy: string
     files: Array<BridgeWriteAttachment & { safetyStatus?: AttachmentSafetyStatus }>
   }
 ): Promise<Attachment[]> {
-  const { workspaceId, connectionId, messageId, uploadedBy } = params
+  const { workspaceId, connectionId, binding, uploadedBy } = params
   if (params.files.length === 0) return []
   const rows = await AttachmentRepository.insertCopies(
     client,
     workspaceId,
     params.files.map((file) => ({
       id: file.id,
-      streamId: messageId === null ? null : params.streamId,
-      messageId,
+      streamId: binding?.streamId ?? null,
+      messageId: binding?.messageId ?? null,
       uploadedBy,
       filename: file.filename,
       mimeType: file.mimeType,

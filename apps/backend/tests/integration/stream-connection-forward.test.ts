@@ -97,6 +97,22 @@ class TamperedBridgeClient extends DirectBridgeClient {
   }
 }
 
+/** Runs `afterSend` once the host has taken a send, before the partner pulls it back. */
+class AfterSendBridgeClient extends DirectBridgeClient {
+  constructor(
+    host: ConstructorParameters<typeof DirectBridgeClient>[0],
+    private readonly afterSend: () => Promise<void>
+  ) {
+    super(host)
+  }
+
+  override async sendMessage(address: Address, params: Parameters<BridgeClient["sendMessage"]>[1]) {
+    const sent = await super.sendMessage(address, params)
+    await this.afterSend()
+    return sent
+  }
+}
+
 /** Runs a competing pull between fetching its first page and returning it, so the page is stale when it arrives. */
 class RacedBridgeClient extends DirectBridgeClient {
   private rival: (() => Promise<boolean>) | null
@@ -658,6 +674,60 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
           },
         ],
         copy: { contentJson: withFile(file, " attached"), attachments: [[file]] },
+      })
+    })
+
+    test("should bind the partner's original to the copy when the partner sends a file it is still scanning", async () => {
+      const world = await seedWorld()
+      const file = await partnerUpload(world, world.pat.id, { safetyStatus: "pending_scan" })
+
+      const message = await forwardVia(world.bridge).sendMessage({
+        ...asPat(world),
+        clientMessageId: "client-scanning",
+        contentJson: withFile(file, " still scanning"),
+        attachmentIds: [file],
+      })
+
+      expect(await fileRows(world.partner.id, file)).toEqual([
+        {
+          message_id: message.id,
+          stream_id: world.channelCopy.id,
+          uploaded_by: world.pat.id,
+          safety_status: "pending_scan",
+          job_id: null,
+        },
+      ])
+    })
+
+    test("should land the copy without the file and keep pulling when the partner's original is quarantined before the pull", async () => {
+      const world = await seedWorld()
+      const file = await partnerUpload(world, world.pat.id)
+      const bridge = new AfterSendBridgeClient(host, async () => {
+        await pool.query("UPDATE attachments SET safety_status = 'quarantined' WHERE workspace_id = $1 AND id = $2", [
+          world.partner.id,
+          file,
+        ])
+      })
+
+      const message = await forwardVia(bridge).sendMessage({
+        ...asPat(world),
+        clientMessageId: "client-quarantined",
+        contentJson: withFile(file, " quarantined"),
+        attachmentIds: [file],
+      })
+      const later = await hostSays(world.host, world.channel.id, "later")
+      await pullVia(world.bridge).pull(world.ref, { streamId: world.channel.id })
+
+      expect({
+        partner: await fileRows(world.partner.id, file),
+        copyAttachments: (await createdPayloads(world, message.id)).map((payload) => payload.attachments ?? []),
+        laterCopied: (await createdPayloads(world, later.id)).length,
+      }).toEqual({
+        partner: [
+          { message_id: null, stream_id: null, uploaded_by: world.pat.id, safety_status: "quarantined", job_id: null },
+        ],
+        copyAttachments: [[]],
+        laterCopied: 1,
       })
     })
 
