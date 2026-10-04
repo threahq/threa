@@ -192,7 +192,7 @@ export function streamAccessPredicateSql(workspaceId: string, userId: string, st
  * (whose readers include every workspace user, so it is taken to hold a guest without looking) and
  * none of its members lacks browse. A missing room has no root to vet, so it is false.
  */
-export function roomReadersAllBrowseSql(workspaceId: string, roomStreamId: string): QueryConfig {
+export function roomReadersAllBrowseSql(workspaceId: string, roomStreamId: string | QueryConfig): QueryConfig {
   return composeSql`EXISTS (
     SELECT 1
     FROM streams room
