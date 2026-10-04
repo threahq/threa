@@ -32,10 +32,15 @@ export function GuestDmPolicySection({ workspaceId }: GuestDmPolicySectionProps)
   )
 
   return (
-    <div className="flex items-center justify-between gap-4">
-      <Label htmlFor="guest-dm-policy" className="text-sm font-medium">
-        Direct messages with guests
-      </Label>
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <Label htmlFor="guest-dm-policy" className="text-sm font-medium">
+          Direct messages with guests
+        </Label>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Who guests can message directly. Applies to existing DMs too: a DM this no longer allows becomes read-only.
+        </p>
+      </div>
       {canManage ? (
         <Select
           value={policy}

@@ -203,6 +203,8 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
 
   return (
     <div className="space-y-6 p-1">
+      <GuestDmPolicySection workspaceId={workspaceId} />
+
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium">Members ({users.length})</h3>
         <DropdownMenu>
@@ -422,8 +424,6 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
           ))}
         </div>
       )}
-
-      <GuestDmPolicySection workspaceId={workspaceId} />
 
       <InviteDialog
         workspaceId={workspaceId}
