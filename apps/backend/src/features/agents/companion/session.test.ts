@@ -391,9 +391,8 @@ describe("withCompanionSession", () => {
   })
 })
 
-// The running-session slot is the partial unique index on
-// agent_sessions(stream_id) WHERE status='running'
-// (20260109155152_agent_session_one_running.sql, INV-20). withCompanionSession
+// The running-session slot is the partial unique index on agent_sessions'
+// workspace and stream WHERE status='running' (INV-20). withCompanionSession
 // keys the session on the *addressed* stream id it is handed — persona-agent
 // passes the thread's own id (or, for a channel mention, the freshly created
 // thread's id), never a re-resolved root. So a channel/scratchpad and a thread

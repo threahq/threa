@@ -25,7 +25,7 @@ export type WithSessionResult =
  *
  * Race condition prevention:
  * - Uses a partial unique index on workspace and stream where status is running
- *   to ensure only one running session per stream
+ *   to ensure only one running session per workspace and stream
  * - INSERT with ON CONFLICT DO NOTHING atomically checks and creates
  */
 export async function withCompanionSession(

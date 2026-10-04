@@ -46,9 +46,8 @@ export const ContextBagRepository = {
    *
    * Workspace-scoped per INV-8: a copy of the stream in another workspace under
    * the same id never leaks its bag. The unique key on workspace, stream and
-   * intent makes the LIMIT 1 result deterministic for the v1 single-intent case;
-   * an explicit `ORDER BY created_at ASC` pins behavior if multiple intents
-   * land on the same stream later.
+   * intent allows one bag per intent; `ORDER BY created_at ASC` makes LIMIT 1
+   * pick the oldest when a stream holds bags of several intents.
    */
   async findByStream(db: Querier, workspaceId: string, streamId: string): Promise<StoredContextBag | null> {
     const result = await db.query<StreamContextAttachmentRow>(sql`
