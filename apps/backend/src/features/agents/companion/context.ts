@@ -131,8 +131,10 @@ export interface AgentContext {
   memoViewerUserId: string | undefined
   /** Who reads what this turn retrieves from workspace memory; absent when there is no invoking user, which leaves the turn without memo access. */
   memoAudience: MemoAudience | undefined
-  /** Whether everyone this turn answers to browses the workspace; with no invoker, the room it posts into. */
+  /** Whether everyone this turn answers to browses the workspace, as of turn start; with no invoker, the room it posts into. */
   memoAudienceBrowses: boolean
+  /** The audience `memoAudienceBrowses` was measured against, for re-measuring it later in the turn. */
+  memoBrowseAudience: MemoAudience
   peopleViewer: PeopleViewer | undefined
   /** Another workspace reads this room, so nothing private to this workspace may reach the answer. */
   roomShared: boolean
@@ -257,11 +259,11 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     accessType = accessSpec.type
     peopleViewer = resolvePeopleViewer(accessSpec, stream.id)
   }
-  const memoAudienceBrowses = await audienceBrowses(
-    db,
-    workspaceId,
-    memoAudience ?? { kind: "room", roomStreamId: stream.rootStreamId ?? stream.id }
-  )
+  const memoBrowseAudience: MemoAudience = memoAudience ?? {
+    kind: "room",
+    roomStreamId: stream.rootStreamId ?? stream.id,
+  }
+  const memoAudienceBrowses = await audienceBrowses(db, workspaceId, memoBrowseAudience)
   const memoryModeStream = stream.rootStreamId ? await findMemoryModeStream(db, workspaceId, stream.id) : stream
   const selfKnowledge: SelfKnowledge =
     stream.e2eEnabled === true
@@ -625,6 +627,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     memoViewerUserId,
     memoAudience,
     memoAudienceBrowses,
+    memoBrowseAudience,
     peopleViewer,
     roomShared,
     streamBrief,

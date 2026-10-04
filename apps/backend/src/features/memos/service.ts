@@ -111,6 +111,21 @@ function resolveExtractedMemoScope(stream: Stream | null): { scope: MemoScope; s
 }
 
 /**
+ * Who reads what the memorizer extracts from a stream. A user-scoped memo is read by its
+ * owner alone, so the owner's own agent memos citing their private streams stay in view;
+ * anything else is read by the whole room and sees only what the room reads.
+ */
+function memorizerAudience(memoScope: {
+  scope: MemoScope
+  scopeUserId: string | null
+  rootStreamId: string
+}): MemoAudience {
+  return memoScope.scope === MemoScopes.USER && memoScope.scopeUserId
+    ? { kind: "users", userIds: [memoScope.scopeUserId] }
+    : { kind: "room", roomStreamId: memoScope.rootStreamId }
+}
+
+/**
  * Load `streamId`'s effective root (a thread carries no type/visibility of its
  * own — INV-62) and derive the extracted-memo tier from it. `save_memo` and
  * reflective capture bind to `session.streamId`, which can be a thread inside a
@@ -409,13 +424,12 @@ export class MemoService implements MemoServiceLike {
       // the (top-level) stream — memos from a private scratchpad are the owner's
       // private tier (roadmap 6.4). The model sees only memos in that tier.
       const memoScope = await resolveMemoScopeForStreamId(client, workspaceId, streamId)
-      // A pipeline memo is read by the whole room, so the model is shown, and
-      // dedupes against, only memos the whole room reads.
-      const roomAudience: MemoAudience = { kind: "room", roomStreamId: memoScope.rootStreamId }
+      // The model is shown, and dedupes against, only memos its readers read.
+      const readerAudience = memorizerAudience(memoScope)
 
       const existingMemos = await MemoRepository.findByStream(client, workspaceId, streamId, {
         scopeUserId: memoScope.scopeUserId,
-        audiences: [roomAudience],
+        audiences: [readerAudience],
         status: MemoStatuses.ACTIVE,
         limit: MEMORY_CONTEXT_LIMIT,
         orderBy: "createdAt",
@@ -439,13 +453,13 @@ export class MemoService implements MemoServiceLike {
           // through a typo fix and a revision can supersede it. Same tier only:
           // a private memo must never feed a shared revision.
           const existingMemos = [
-            ...(await MemoRepository.findActiveBySourceConversation(client, workspaceId, convId, [roomAudience])),
+            ...(await MemoRepository.findActiveBySourceConversation(client, workspaceId, convId, [readerAudience])),
             ...(await MemoRepository.findActiveMessageMemosCitingEdited(
               client,
               workspaceId,
               conv.messageIds,
               memoScope.scopeUserId,
-              [roomAudience]
+              [readerAudience]
             )),
           ]
           existingConversationMemos.set(convId, existingMemos)
@@ -493,7 +507,7 @@ export class MemoService implements MemoServiceLike {
         authorTimezones,
         memoLanguage,
         memoScope,
-        roomAudience,
+        readerAudience,
       }
     })
 
@@ -910,7 +924,7 @@ export class MemoService implements MemoServiceLike {
           maxDistance: MEMO_DEDUP_DISTANCE,
           scope: memoData.scope,
           scopeUserId: memoData.scopeUserId,
-          audiences: [fetchedData.roomAudience],
+          audiences: [fetchedData.readerAudience],
         })
         if (duplicate && !explicitSupersedeIds.includes(duplicate.memo.id)) {
           // The reversed memos still retire even though the correction itself
@@ -1438,7 +1452,7 @@ export class MemoService implements MemoServiceLike {
       const memoScope = await resolveMemoScopeForStreamId(client, workspaceId, streamId)
       const existingMemos = await MemoRepository.findByStream(client, workspaceId, streamId, {
         scopeUserId: memoScope.scopeUserId,
-        audiences: [{ kind: "room", roomStreamId: memoScope.rootStreamId }],
+        audiences: [memorizerAudience(memoScope)],
         status: MemoStatuses.ACTIVE,
         limit: MEMORY_CONTEXT_LIMIT,
         orderBy: "createdAt",
@@ -1569,7 +1583,7 @@ export class MemoService implements MemoServiceLike {
           maxDistance: MEMO_DEDUP_DISTANCE,
           scope: context.memoScope.scope,
           scopeUserId: context.memoScope.scopeUserId,
-          audiences: [{ kind: "room", roomStreamId: context.memoScope.rootStreamId }],
+          audiences: [memorizerAudience(context.memoScope)],
         })
         if (duplicate) {
           deduped++

@@ -1,7 +1,15 @@
 import { DisabledAnalyticsReporter } from "@threahq/backend-common"
-import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { AuthoredByKinds, ConversationStatuses, MemoryModes, StreamTypes, Visibilities } from "@threahq/types"
+import {
+  AuthoredByKinds,
+  ConversationStatuses,
+  MemoryModes,
+  MemoScopes,
+  StreamTypes,
+  Visibilities,
+  type StreamType,
+} from "@threahq/types"
 import { ConversationRepository } from "../../src/features/conversations"
 import { MemoRepository, MemoService, PendingItemRepository, type MemoAudience } from "../../src/features/memos"
 import type { ConversationClassification } from "../../src/features/memos/classifier"
@@ -32,11 +40,11 @@ describe("agent memo provenance", () => {
   let embeddingsIssued = 0
   let pinnedEmbedding: number[] | null = null
 
-  async function seedChannel(id: string): Promise<void> {
+  async function seedChannel(id: string, type: StreamType = StreamTypes.CHANNEL): Promise<void> {
     await StreamRepository.insert(pool, {
       id,
       workspaceId: testWorkspaceId,
-      type: StreamTypes.CHANNEL,
+      type,
       visibility: Visibilities.PRIVATE,
       slug: `c-${id.slice(-8)}`,
       createdBy: testUserId,
@@ -320,9 +328,18 @@ describe("agent memo provenance", () => {
 
   describe("processBatch shows, dedupes against and retires only memos the room reads", () => {
     const captureEmbedding = unitVector(1400)
+    const nearCaptureEmbedding = Array.from({ length: 1536 }, (_, i) => {
+      if (i === 1400) return 0.75
+      return i === 1405 ? Math.sqrt(1 - 0.75 ** 2) : 0
+    })
     let pipeline: MemoService
     let shownToMemorizer: string[][] = []
     let supersedes: string[] = []
+
+    beforeEach(() => {
+      shownToMemorizer = []
+      supersedes = []
+    })
 
     beforeAll(() => {
       const memorize = async (
@@ -345,16 +362,18 @@ describe("agent memo provenance", () => {
       pipeline = new MemoService({
         analyticsReporter: new DisabledAnalyticsReporter(),
         pool,
-        classifier: { classifyConversation: async () => worthy } as never,
+        classifier: {
+          classifyConversation: async () => ({ ...worthy, shouldReviseExisting: true, revisionReason: "moved on" }),
+        } as never,
         memorizer: { memorizeConversation: memorize, reviseMemo: memorize } as never,
         embeddingService: { embedBatch: async (texts: string[]) => texts.map(() => captureEmbedding) } as never,
         messageFormatter: { formatMessages: async () => "formatted transcript" } as never,
       })
     })
 
-    async function seedRoom() {
+    async function seedRoom(type: StreamType = StreamTypes.CHANNEL) {
       const room = streamId()
-      await seedChannel(room)
+      await seedChannel(room, type)
       const pub = streamId()
       await StreamRepository.insert(pool, {
         id: pub,
@@ -406,12 +425,19 @@ describe("agent memo provenance", () => {
             },
           ])
         )
+        return conv
       }
       return { room, pub, anchor, conversation, queueCapture }
     }
 
     async function seedMemo(
-      fields: { sourceMessageId?: string; sourceConversationId?: string; cites?: string; sourceStreamIds?: string[] },
+      fields: {
+        sourceMessageId?: string
+        sourceConversationId?: string
+        cites?: string
+        sourceStreamIds?: string[]
+        scopeUserId?: string
+      },
       requiresBrowse: boolean,
       embedding: number[]
     ): Promise<string> {
@@ -430,6 +456,7 @@ describe("agent memo provenance", () => {
         knowledgeType: "decision",
         tags: [],
         status: "active",
+        ...(fields.scopeUserId ? { scope: MemoScopes.USER, scopeUserId: fields.scopeUserId } : {}),
         ...(fields.sourceStreamIds
           ? { authoredByKind: AuthoredByKinds.AGENT, sourceStreamIds: fields.sourceStreamIds, requiresBrowse }
           : {}),
@@ -438,10 +465,10 @@ describe("agent memo provenance", () => {
       return id
     }
 
-    async function capture(room: string) {
+    async function capture(room: string, scopeUserId: string | null = null) {
       const result = await pipeline.processBatch(testWorkspaceId, room)
       const active = await MemoRepository.findByStream(pool, testWorkspaceId, room, {
-        scopeUserId: null,
+        scopeUserId,
         audiences: [],
         status: "active",
       })
@@ -449,8 +476,6 @@ describe("agent memo provenance", () => {
     }
 
     test("should show the memorizer only the memos the room reads", async () => {
-      shownToMemorizer = []
-      supersedes = []
       const { room, anchor, queueCapture } = await seedRoom()
       const visible = await seedMemo({ sourceMessageId: anchor, sourceStreamIds: [room] }, false, unitVector(1401))
       await seedMemo({ sourceMessageId: anchor, sourceStreamIds: [room, research] }, false, unitVector(1402))
@@ -462,7 +487,6 @@ describe("agent memo provenance", () => {
     })
 
     test("should insert a new memo when the only near-identical memo cites a stream the room can't read", async () => {
-      supersedes = []
       const { room, anchor, queueCapture } = await seedRoom()
       const hidden = await seedMemo(
         { sourceMessageId: anchor, sourceStreamIds: [room, research] },
@@ -480,7 +504,6 @@ describe("agent memo provenance", () => {
     })
 
     test("should dedupe to the near-identical memo when the room reads it", async () => {
-      supersedes = []
       const { room, anchor, queueCapture } = await seedRoom()
       const visible = await seedMemo({ sourceMessageId: anchor, sourceStreamIds: [room] }, false, captureEmbedding)
       await queueCapture()
@@ -544,6 +567,170 @@ describe("agent memo provenance", () => {
       }).toEqual({
         result: { processed: 1, memosCreated: 1 },
         stored: [{ parentMemoId: retired, sourceStreamIds: null, requiresBrowse: false }],
+      })
+    })
+
+    test("should give a revision the sources and browse need of the memo it supersedes by closeness when the memorizer cites none", async () => {
+      const { room, pub, anchor, queueCapture } = await seedRoom()
+      const conv = await queueCapture()
+      const retired = await seedMemo(
+        { sourceConversationId: conv, cites: anchor, sourceStreamIds: [room, pub] },
+        true,
+        nearCaptureEmbedding
+      )
+
+      const { result, active } = await capture(room)
+
+      expect({
+        result,
+        stored: active.map(({ parentMemoId, sourceStreamIds, requiresBrowse, authoredByKind }) => ({
+          parentMemoId,
+          sourceStreamIds,
+          requiresBrowse,
+          authoredByKind,
+        })),
+      }).toEqual({
+        result: { processed: 1, memosCreated: 1 },
+        stored: [
+          {
+            parentMemoId: retired,
+            sourceStreamIds: [room, pub].sort(),
+            requiresBrowse: true,
+            authoredByKind: AuthoredByKinds.PIPELINE,
+          },
+        ],
+      })
+    })
+
+    describe("in a private scratchpad", () => {
+      async function seedOwnerDm(): Promise<string> {
+        const dm = streamId()
+        const peer = await withTransaction(pool, (client) => addTestMember(client, testWorkspaceId, userId()))
+        await StreamRepository.insert(pool, {
+          id: dm,
+          workspaceId: testWorkspaceId,
+          type: StreamTypes.DM,
+          visibility: Visibilities.PRIVATE,
+          createdBy: testUserId,
+          memoryMode: MemoryModes.AUTO,
+        })
+        for (const member of [testUserId, peer.id]) {
+          await StreamMemberRepository.insert(pool, testWorkspaceId, dm, member)
+        }
+        return dm
+      }
+
+      async function seedUnreadableChannel(): Promise<string> {
+        const id = streamId()
+        await StreamRepository.insert(pool, {
+          id,
+          workspaceId: testWorkspaceId,
+          type: StreamTypes.CHANNEL,
+          visibility: Visibilities.PRIVATE,
+          slug: `c-${id.slice(-8)}`,
+          createdBy: testUserId,
+          memoryMode: MemoryModes.AUTO,
+        })
+        return id
+      }
+
+      test("should show the memorizer the owner's agent memo citing their private DM and not one citing a stream they can't read", async () => {
+        const { room: pad, anchor, queueCapture } = await seedRoom(StreamTypes.SCRATCHPAD)
+        const dm = await seedOwnerDm()
+        const visible = await seedMemo(
+          { sourceMessageId: anchor, sourceStreamIds: [pad, dm], scopeUserId: testUserId },
+          false,
+          unitVector(1401)
+        )
+        await seedMemo(
+          { sourceMessageId: anchor, sourceStreamIds: [pad, await seedUnreadableChannel()], scopeUserId: testUserId },
+          false,
+          unitVector(1402)
+        )
+        await queueCapture()
+
+        await pipeline.processBatch(testWorkspaceId, pad)
+
+        expect(shownToMemorizer).toEqual([[visible]])
+      })
+
+      test("should dedupe to the owner's near-identical agent memo that cites their private DM", async () => {
+        const { room: pad, anchor, queueCapture } = await seedRoom(StreamTypes.SCRATCHPAD)
+        const dm = await seedOwnerDm()
+        const visible = await seedMemo(
+          { sourceMessageId: anchor, sourceStreamIds: [pad, dm], scopeUserId: testUserId },
+          false,
+          captureEmbedding
+        )
+        await queueCapture()
+
+        const { result, active } = await capture(pad, testUserId)
+
+        expect({ result, activeIds: active.map((memo) => memo.id) }).toEqual({
+          result: { processed: 1, memosCreated: 0 },
+          activeIds: [visible],
+        })
+      })
+
+      test("should insert a new memo when the only near-identical memo cites a stream the owner can't read", async () => {
+        const { room: pad, anchor, queueCapture } = await seedRoom(StreamTypes.SCRATCHPAD)
+        const hidden = await seedMemo(
+          { sourceMessageId: anchor, sourceStreamIds: [pad, await seedUnreadableChannel()], scopeUserId: testUserId },
+          false,
+          captureEmbedding
+        )
+        await queueCapture()
+
+        const { result, active } = await capture(pad, testUserId)
+
+        expect({ result, active: active.map((memo) => (memo.id === hidden ? "hidden" : "new")).sort() }).toEqual({
+          result: { processed: 1, memosCreated: 1 },
+          active: ["hidden", "new"],
+        })
+      })
+    })
+
+    describe("repository reads gate on the audience", () => {
+      test("should leave out of the conversation's memos one citing a stream the room can't read, unless no audience is given", async () => {
+        const { room, anchor, conversation } = await seedRoom()
+        const conv = await conversation()
+        const visible = await seedMemo(
+          { sourceConversationId: conv, cites: anchor, sourceStreamIds: [room] },
+          false,
+          unitVector(1410)
+        )
+        const hidden = await seedMemo(
+          { sourceConversationId: conv, cites: anchor, sourceStreamIds: [room, research] },
+          false,
+          unitVector(1411)
+        )
+        const idsFor = async (audiences: MemoAudience[]) =>
+          (await MemoRepository.findActiveBySourceConversation(pool, testWorkspaceId, conv, audiences))
+            .map((memo) => memo.id)
+            .sort()
+
+        const [gated, ungated] = await Promise.all([idsFor([{ kind: "room", roomStreamId: room }]), idsFor([])])
+
+        expect({ gated, ungated }).toEqual({ gated: [visible], ungated: [visible, hidden].sort() })
+      })
+
+      test("should leave out of the edited-citation memos one citing a stream the room can't read, unless no audience is given", async () => {
+        const { room, anchor } = await seedRoom()
+        const visible = await seedMemo({ sourceMessageId: anchor, sourceStreamIds: [room] }, false, unitVector(1412))
+        const hidden = await seedMemo(
+          { sourceMessageId: anchor, sourceStreamIds: [room, research] },
+          false,
+          unitVector(1413)
+        )
+        await pool.query(`UPDATE messages SET edited_at = NOW() + INTERVAL '1 minute' WHERE id = $1`, [anchor])
+        const idsFor = async (audiences: MemoAudience[]) =>
+          (await MemoRepository.findActiveMessageMemosCitingEdited(pool, testWorkspaceId, [anchor], null, audiences))
+            .map((memo) => memo.id)
+            .sort()
+
+        const [gated, ungated] = await Promise.all([idsFor([{ kind: "room", roomStreamId: room }]), idsFor([])])
+
+        expect({ gated, ungated }).toEqual({ gated: [visible], ungated: [visible, hidden].sort() })
       })
     })
   })

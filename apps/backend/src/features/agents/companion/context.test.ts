@@ -12,6 +12,8 @@ import { PersonaAttachmentRepository } from "../persona-attachment-repository"
 import { AgentSessionRepository } from "../session-repository"
 import { SearchRepository } from "../../search"
 import { joinSystemPrompt } from "./prompt/system-prompt"
+import * as episodeSummaries from "./episode-summaries"
+import * as turnDigests from "./turn-digests"
 import * as contextBuilder from "../context-builder"
 
 const persona: Persona = {
@@ -264,6 +266,87 @@ describe("buildAgentContext prepared recall audience", () => {
       aside: { kind: "users", userIds: ["usr_1"] },
       dm: { kind: "users", userIds: ["usr_1", "usr_2"] },
       channel: { kind: "room", roomStreamId: "stream_channel" },
+    })
+  })
+})
+
+describe("buildAgentContext memo browse flag", () => {
+  afterEach(() => mock.restore())
+
+  const buildFor = (streamId: string, rootStreamId: string | null, audienceBrowses: boolean, carryDigests: boolean) => {
+    const audienceBrowsesSpy = spyOn(memosModule, "audienceBrowses").mockResolvedValue(audienceBrowses)
+    const stream = {
+      id: streamId,
+      workspaceId: "ws_1",
+      type: rootStreamId ? StreamTypes.THREAD : StreamTypes.CHANNEL,
+      rootStreamId,
+      parentStreamId: rootStreamId,
+      displayName: "Room",
+      createdBy: "usr_1",
+    }
+    return {
+      audienceBrowsesSpy,
+      build: () =>
+        buildAgentContext(deps, {
+          workspaceId: "ws_1",
+          streamId,
+          stream: stream as never,
+          messageId: "msg_1",
+          persona,
+          purpose: { kind: "catch_up" },
+          policy: { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests },
+        }),
+    }
+  }
+
+  it("should measure the room's reach, the thread's root for a thread, when no one invoked the turn", async () => {
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_root", rootStreamId: null } as never)
+    spyOn(StreamBriefRepository, "findByStreamId").mockResolvedValue(null)
+
+    const measure = async (streamId: string, rootStreamId: string | null) => {
+      const { audienceBrowsesSpy, build } = buildFor(streamId, rootStreamId, false, false)
+      audienceBrowsesSpy.mockClear()
+      const context = await build()
+      return {
+        calls: audienceBrowsesSpy.mock.calls.map(([, workspaceId, audience]) => ({ workspaceId, audience })),
+        context: { browses: context.memoAudienceBrowses, audience: context.memoBrowseAudience },
+      }
+    }
+
+    expect({
+      channel: await measure("stream_channel", null),
+      thread: await measure("stream_thread", "stream_root"),
+    }).toEqual({
+      channel: {
+        calls: [{ workspaceId: "ws_1", audience: { kind: "room", roomStreamId: "stream_channel" } }],
+        context: { browses: false, audience: { kind: "room", roomStreamId: "stream_channel" } },
+      },
+      thread: {
+        calls: [{ workspaceId: "ws_1", audience: { kind: "room", roomStreamId: "stream_root" } }],
+        context: { browses: false, audience: { kind: "room", roomStreamId: "stream_root" } },
+      },
+    })
+  })
+
+  it("should hand the measured flag, not a constant, to the episode summary and turn digest loaders", async () => {
+    spyOn(StreamBriefRepository, "findByStreamId").mockResolvedValue(null)
+    const loaded = { text: null, sourceStreamIds: [] }
+    const summaries = spyOn(episodeSummaries, "loadEpisodeSummaryPromptBlock").mockResolvedValue(loaded)
+    const digests = spyOn(turnDigests, "loadTurnDigestPromptBlock").mockResolvedValue(loaded)
+
+    const flagsFor = async (audienceBrowses: boolean) => {
+      summaries.mockClear()
+      digests.mockClear()
+      await buildFor("stream_channel", null, audienceBrowses, true).build()
+      return {
+        summaries: summaries.mock.calls.map(([, params]) => params.memoAudienceBrowses),
+        digests: digests.mock.calls.map(([, params]) => params.memoAudienceBrowses),
+      }
+    }
+
+    expect({ browsing: await flagsFor(true), notBrowsing: await flagsFor(false) }).toEqual({
+      browsing: { summaries: [true], digests: [true] },
+      notBrowsing: { summaries: [false], digests: [false] },
     })
   })
 })
