@@ -128,7 +128,7 @@ export function TraceDialog() {
     void (async () => {
       if (workspaceId && session?.streamId) {
         const advertised = await resolveRuntimeCommands({ workspaceId, streamId: session.streamId, runtimeCommands })
-        if (advertised.has("steer")) queueComposerCommandRequest(session.streamId, "/steer ")
+        if (advertised.has("steer")) queueComposerCommandRequest(workspaceId, session.streamId, "/steer ")
       }
 
       for (const zone of document.querySelectorAll<HTMLElement>("[data-editor-zone]")) {

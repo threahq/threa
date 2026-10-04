@@ -23,10 +23,10 @@ const createSnippetCommand: Command = {
   label: "Create snippet",
   icon: FileCode2,
   keywords: ["snippet", "code", "paste", "attach", "text", "file", "current stream"],
-  action: ({ currentStreamId, closeDialog }) => {
+  action: ({ workspaceId, currentStreamId, closeDialog }) => {
     if (!currentStreamId) return
     closeDialog()
-    queueSnippetRequest(currentStreamId)
+    queueSnippetRequest(workspaceId, currentStreamId)
   },
 }
 

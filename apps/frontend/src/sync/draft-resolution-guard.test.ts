@@ -16,28 +16,45 @@ beforeEach(() => {
 
 describe("scope resolve sequence (local stale-save race)", () => {
   it("starts at 0 and increments per resolve", () => {
-    expect(getScopeResolveSeq(scope)).toBe(0)
-    recordScopeResolved(scope)
-    expect(getScopeResolveSeq(scope)).toBe(1)
-    recordScopeResolved(scope)
-    expect(getScopeResolveSeq(scope)).toBe(2)
+    expect(getScopeResolveSeq("ws_1", scope)).toBe(0)
+    recordScopeResolved("ws_1", scope)
+    expect(getScopeResolveSeq("ws_1", scope)).toBe(1)
+    recordScopeResolved("ws_1", scope)
+    expect(getScopeResolveSeq("ws_1", scope)).toBe(2)
   })
 
   it("is independent per scope", () => {
-    recordScopeResolved(scope)
-    expect(getScopeResolveSeq("stream:stream_2")).toBe(0)
+    recordScopeResolved("ws_1", scope)
+    expect(getScopeResolveSeq("ws_1", "stream:stream_2")).toBe(0)
+  })
+
+  it("should leave another workspace's seq unchanged when a resolve is recorded for the same scope", () => {
+    recordScopeResolved("ws_a", scope)
+    recordScopeResolved("ws_a", scope)
+
+    expect({
+      a: getScopeResolveSeq("ws_a", scope),
+      b: getScopeResolveSeq("ws_b", scope),
+    }).toEqual({ a: 2, b: 0 })
+
+    recordScopeResolved("ws_b", scope)
+
+    expect({
+      a: getScopeResolveSeq("ws_a", scope),
+      b: getScopeResolveSeq("ws_b", scope),
+    }).toEqual({ a: 2, b: 1 })
   })
 
   it("models the stale-save check: a save started before a resolve sees an advanced seq", () => {
-    const observed = getScopeResolveSeq(scope) // captured when the save began
-    recordScopeResolved(scope) // a send resolved the scope mid-save
-    expect(getScopeResolveSeq(scope) > observed).toBe(true) // → stale, drop the create
+    const observed = getScopeResolveSeq("ws_1", scope) // captured when the save began
+    recordScopeResolved("ws_1", scope) // a send resolved the scope mid-save
+    expect(getScopeResolveSeq("ws_1", scope) > observed).toBe(true) // → stale, drop the create
   })
 
   it("models the fresh-save check: a save started after a resolve sees no advance", () => {
-    recordScopeResolved(scope)
-    const observed = getScopeResolveSeq(scope) // captured after the resolve
-    expect(getScopeResolveSeq(scope) > observed).toBe(false) // → not stale, allowed
+    recordScopeResolved("ws_1", scope)
+    const observed = getScopeResolveSeq("ws_1", scope) // captured after the resolve
+    expect(getScopeResolveSeq("ws_1", scope) > observed).toBe(false) // → not stale, allowed
   })
 })
 

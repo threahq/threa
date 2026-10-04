@@ -212,7 +212,7 @@ describe("CommandEvent", () => {
 
       await userEvent.click(screen.getByRole("button", { name: "Put back in composer" }))
 
-      expect(peekShareHandoffBatch("stream_1")?.handoffs).toEqual([
+      expect(peekShareHandoffBatch("ws_1", "stream_1")?.handoffs).toEqual([
         {
           kind: "content",
           content: [
@@ -241,7 +241,7 @@ describe("CommandEvent", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Put back in composer" }))
 
-    expect(peekShareHandoffBatch("stream_1")?.handoffs).toEqual([
+    expect(peekShareHandoffBatch("ws_1", "stream_1")?.handoffs).toEqual([
       {
         kind: "content",
         content: [{ type: "paragraph", content: [{ type: "slashCommand", attrs: { name: "done" } }] }],

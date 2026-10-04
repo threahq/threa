@@ -231,6 +231,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
 
   const stashedDrafts = stashScope
     ? {
+        workspaceId,
         drafts: stash.drafts,
         previewById: stashPreviews,
         originById: stashOrigins,

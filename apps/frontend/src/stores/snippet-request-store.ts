@@ -1,3 +1,5 @@
+import { workspaceScopedKey } from "@/lib/workspace-scoped-key"
+
 /**
  * Ephemeral per-stream signal asking the stream's composer to open the snippet
  * editor. The command palette lives in a separate React tree from the composer,
@@ -16,19 +18,21 @@ const listeners = new Map<string, Set<() => void>>()
  * mounted is notified immediately; otherwise the request waits (briefly) to be
  * consumed on the composer's next mount.
  */
-export function queueSnippetRequest(streamId: string): void {
-  cache.set(streamId, Date.now() + HANDOFF_TTL_MS)
-  const subs = listeners.get(streamId)
+export function queueSnippetRequest(workspaceId: string, streamId: string): void {
+  const key = workspaceScopedKey(workspaceId, streamId)
+  cache.set(key, Date.now() + HANDOFF_TTL_MS)
+  const subs = listeners.get(key)
   if (subs) {
     for (const listener of subs) listener()
   }
 }
 
 /** Read + clear a pending snippet request for the stream (respecting the TTL). */
-export function consumeSnippetRequest(streamId: string): boolean {
-  const expiresAt = cache.get(streamId)
+export function consumeSnippetRequest(workspaceId: string, streamId: string): boolean {
+  const key = workspaceScopedKey(workspaceId, streamId)
+  const expiresAt = cache.get(key)
   if (expiresAt === undefined) return false
-  cache.delete(streamId)
+  cache.delete(key)
   return expiresAt >= Date.now()
 }
 
@@ -37,18 +41,19 @@ export function consumeSnippetRequest(streamId: string): boolean {
  * function. Mounted composers pair this with an on-mount {@link consumeSnippetRequest}
  * read so they catch requests queued before they subscribed.
  */
-export function subscribeSnippetRequest(streamId: string, listener: () => void): () => void {
-  let subs = listeners.get(streamId)
+export function subscribeSnippetRequest(workspaceId: string, streamId: string, listener: () => void): () => void {
+  const key = workspaceScopedKey(workspaceId, streamId)
+  let subs = listeners.get(key)
   if (!subs) {
     subs = new Set()
-    listeners.set(streamId, subs)
+    listeners.set(key, subs)
   }
   subs.add(listener)
   return () => {
-    const set = listeners.get(streamId)
+    const set = listeners.get(key)
     if (!set) return
     set.delete(listener)
-    if (set.size === 0) listeners.delete(streamId)
+    if (set.size === 0) listeners.delete(key)
   }
 }
 

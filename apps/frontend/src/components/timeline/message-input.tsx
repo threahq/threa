@@ -393,7 +393,7 @@ function MessageInputComponent({
   // The persistence key follows the route, while editor identity spans the one
   // draft→real promotion handoff so in-flight keystrokes are not rehydrated away.
   const draftKey = effectiveTarget ?? hostScope
-  const promotedFromDraftId = getDraftPromotionSource(streamId)
+  const promotedFromDraftId = getDraftPromotionSource(workspaceId, streamId)
   const composerScopeId =
     effectiveTarget ?? getDraftMessageKey({ type: "stream", streamId: promotedFromDraftId ?? streamId })
   const syncEngine = useOptionalSyncEngine()
@@ -551,11 +551,11 @@ function MessageInputComponent({
   // at the conversation's scope, which is the scope the panel's composer opens.
   const redirectReplyToPanel = useCallback(
     (conversationId: string) => {
-      requestConversationReplyOpen(conversationId)
+      requestConversationReplyOpen(workspaceId, conversationId)
       openPanel(createConversationPanelId(conversationId))
       disarm()
     },
-    [openPanel, disarm]
+    [workspaceId, openPanel, disarm]
   )
 
   // Thread-follow: route the armed reply ONCE, at first resolution of the
@@ -605,7 +605,7 @@ function MessageInputComponent({
     let processing = false
     let cancelled = false
 
-    const hasPending = () => peekShareHandoffBatch(streamId) !== null
+    const hasPending = () => peekShareHandoffBatch(workspaceId, streamId) !== null
     const waitForFrame = () =>
       new Promise<boolean>((resolve) => {
         const id = requestAnimationFrame(() => {
@@ -708,7 +708,7 @@ function MessageInputComponent({
             if (!(await retry("destination composer was removed"))) return
             continue
           }
-          const batch = peekShareHandoffBatch(streamId)
+          const batch = peekShareHandoffBatch(workspaceId, streamId)
           if (!batch) return
           const shareContent: JSONContent = {
             type: "doc",
@@ -721,7 +721,7 @@ function MessageInputComponent({
           composerRef.current.adoptAttachments(
             batch.handoffs.flatMap((handoff) => (handoff.kind === "content" ? handoff.attachments : []))
           )
-          acknowledgeShareHandoffBatch(streamId, batch)
+          acknowledgeShareHandoffBatch(workspaceId, streamId, batch)
           const persisted = await composerRef.current.flushDraftWithResult({ contentJson: shareContent })
           settleShareHandoffBatch(batch, persisted)
           if (!persisted) toast.error("Couldn't save the shared message as a draft. Keep this composer open.")
@@ -737,7 +737,7 @@ function MessageInputComponent({
     }
 
     void processPending()
-    const unsubscribe = subscribeShareHandoff(streamId, () => void processPending())
+    const unsubscribe = subscribeShareHandoff(workspaceId, streamId, () => void processPending())
     return () => {
       cancelled = true
       unsubscribe()
@@ -747,7 +747,7 @@ function MessageInputComponent({
       pendingFrame = null
       frame.resolve(false)
     }
-  }, [streamId])
+  }, [workspaceId, streamId])
 
   // Open the snippet editor when the command palette requests one for this
   // stream. Same hand-off shape as shares: consume on mount (request queued
@@ -755,11 +755,11 @@ function MessageInputComponent({
   // mounted reaches us without a remount.
   useEffect(() => {
     const open = () => composerFocusRef.current?.openSnippetEditor()
-    if (consumeSnippetRequest(streamId)) open()
-    return subscribeSnippetRequest(streamId, () => {
-      if (consumeSnippetRequest(streamId)) open()
+    if (consumeSnippetRequest(workspaceId, streamId)) open()
+    return subscribeSnippetRequest(workspaceId, streamId, () => {
+      if (consumeSnippetRequest(workspaceId, streamId)) open()
     })
-  }, [streamId])
+  }, [workspaceId, streamId])
 
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
@@ -1051,6 +1051,7 @@ function MessageInputComponent({
     stashedDrafts: isAsideComposer
       ? undefined
       : {
+          workspaceId,
           drafts: stash.drafts,
           previewById: stashPreviews,
           originById: stashOrigins,

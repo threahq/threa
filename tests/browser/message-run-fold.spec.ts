@@ -110,10 +110,10 @@ test("reload restores to a row inside a run collapsed since", async ({ page }) =
   await bravo.evaluate((row) => row.scrollIntoView({ block: "start" }))
   await expect
     .poll(() =>
-      page.evaluate((streamId) => {
+      page.evaluate((anchorId) => {
         const key = Object.keys(localStorage).find((candidate) => candidate.endsWith(":timeline-anchors"))
-        return key ? JSON.parse(localStorage.getItem(key) ?? "{}")[streamId]?.targetId : null
-      }, streamId)
+        return key ? JSON.parse(localStorage.getItem(key) ?? "{}")[anchorId]?.targetId : null
+      }, `${workspaceId}/${streamId}`)
     )
     .toBe(bravoId)
   await page.evaluate((value) => localStorage.setItem("threa:blockCollapse:v1", value!), collapsed)

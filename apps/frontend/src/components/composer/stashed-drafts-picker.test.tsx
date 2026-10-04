@@ -31,6 +31,7 @@ function makeDraft(id: string, text: string): CachedDraft {
 
 function renderPicker(overrides: Partial<Parameters<typeof StashedDraftsPicker>[0]> = {}) {
   const props = {
+    workspaceId: "ws_1",
     drafts: [makeDraft("draft_1", "Saved one")],
     canStashCurrent: true,
     onStashCurrent: vi.fn(),
@@ -536,7 +537,7 @@ describe("navigate rows (branch replies / mounted composers)", () => {
     expect(landed.textContent).toBe("/w/ws_1/s/stream_1?panel=conv%3Aconv_1&stash=draft_nav")
     // Arrival focus rides the reply-open store — a same-URL navigation is a
     // router no-op, so without this the tap can be a silent nothing.
-    expect(replyOpenSpy).toHaveBeenCalledWith("conv_1")
+    expect(replyOpenSpy).toHaveBeenCalledWith("ws_1", "conv_1")
   })
 
   it("says 'pick the draft up' for the manual-pickup fallback instead of promising its own composer", async () => {

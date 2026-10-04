@@ -50,7 +50,7 @@ export function useConversationBackfill(
     isError,
     refetch,
   } = useQuery({
-    queryKey: conversationKeys.boardMessages(conversationId),
+    queryKey: conversationKeys.boardMessages(workspaceId, conversationId),
     // Tighter bounds than the client's 20s default × 3 retries: this fetch sits
     // behind a visible "loading…" label (the card seam, the panel's loading
     // line), and on a bad connection the default cycle keeps that label up for
@@ -92,10 +92,10 @@ export function useConversationBackfill(
     // open's double fetch).
     if (!allMessages) return
     if (!hasUnknownMembers(memberIds, coveredMessageIds)) return
-    void queryClient.invalidateQueries({ queryKey: conversationKeys.boardMessages(conversationId) })
+    void queryClient.invalidateQueries({ queryKey: conversationKeys.boardMessages(workspaceId, conversationId) })
     // `memberKey` proxies `memberIds` (a fresh array per render) — keeping the
     // array itself here re-ran the effect on EVERY render.
-  }, [queryClient, conversationId, memberKey, coveredMessageIds, allMessages])
+  }, [queryClient, workspaceId, conversationId, memberKey, coveredMessageIds, allMessages])
 
   return { data: allMessages, isError, refetch }
 }

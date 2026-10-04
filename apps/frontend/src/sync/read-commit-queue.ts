@@ -45,7 +45,6 @@ interface ExplicitUnread {
  * frontier again.
  */
 export class ReadCommitQueue {
-  readonly workspaceId: string
   readonly commitRef: { current: CommitRead }
   private readonly debounceMs: number
   private readonly pending = new Map<string, ScheduledMark>()
@@ -70,8 +69,7 @@ export class ReadCommitQueue {
     }
   }
 
-  constructor(deps: { workspaceId: string; commitRef: { current: CommitRead }; debounceMs?: number }) {
-    this.workspaceId = deps.workspaceId
+  constructor(deps: { commitRef: { current: CommitRead }; debounceMs?: number }) {
     this.commitRef = deps.commitRef
     this.debounceMs = deps.debounceMs ?? READ_COMMIT_DEBOUNCE_MS
     window.addEventListener("pagehide", this.onPageHide)

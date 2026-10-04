@@ -58,7 +58,6 @@ describe("useAutoMarkAsRead", () => {
     mockGetActivityCount.mockImplementation(() => activityCount)
 
     queue = new ReadCommitQueue({
-      workspaceId: "ws_123",
       commitRef: {
         current: async (streamId, lastEventId, opts) => {
           mockMarkAsRead(streamId, lastEventId, opts)

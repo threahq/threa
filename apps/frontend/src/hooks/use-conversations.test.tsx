@@ -205,7 +205,7 @@ describe("useConversations event registration", () => {
     // Appends to the matching conversation's primary membership; others untouched.
     expect(afterAssign.find((c) => c.id === "conv_1")!.messageIds).toEqual(["msg_1", "msg_2"])
     expect(afterAssign.find((c) => c.id === "conv_2")!.messageIds).toEqual(["msg_x"])
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: conversationKeys.messages("conv_1") })
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: conversationKeys.messages(WORKSPACE_ID, "conv_1") })
 
     // Idempotent: re-emitting the same assignment adds no duplicate.
     act(() => {
@@ -700,7 +700,7 @@ describe("useSettleConversationMessage", () => {
       makeConversation("conv_0"),
       { id: "conv_1", topicSummary: "stale" } as unknown as ConversationWithStaleness,
     ])
-    queryClient.setQueryData(conversationKeys.boardPost("conv_1"), {
+    queryClient.setQueryData(conversationKeys.boardPost(WORKSPACE_ID, "conv_1"), {
       conversation: { id: "conv_1", topicSummary: "stale" },
       settlingMessageIds: ["m_1", "m_2"],
       recentMessages: [],
@@ -717,11 +717,41 @@ describe("useSettleConversationMessage", () => {
       makeConversation("conv_0"),
       { id: "conv_1", topicSummary: "stale" },
     ])
-    expect(queryClient.getQueryData(conversationKeys.boardPost("conv_1"))).toEqual({
+    expect(queryClient.getQueryData(conversationKeys.boardPost(WORKSPACE_ID, "conv_1"))).toEqual({
       conversation: { id: "conv_1", topicSummary: "stale" },
       settlingMessageIds: ["m_2"],
       recentMessages: [],
     })
+  })
+
+  it("should leave another workspace's by-id post untouched when both cache the same conversation id", async () => {
+    vi.spyOn(contextsModule, "useConversationService").mockReturnValue({
+      settleMessage: vi.fn().mockResolvedValue({
+        conversation: makeConversation("conv_1"),
+        previousConversation: null,
+        settlingMessageIds: ["m_2"],
+      }),
+    } as unknown as contextsModule.ConversationService)
+    vi.spyOn(boardStoreModule, "mergeBoardConversation").mockResolvedValue(true)
+
+    const { queryClient, wrapper } = createWrapper()
+    const postFor = (settlingMessageIds: string[]) => ({
+      conversation: { id: "conv_1", topicSummary: "stale" },
+      settlingMessageIds,
+      recentMessages: [],
+    })
+    queryClient.setQueryData(conversationKeys.boardPost(WORKSPACE_ID, "conv_1"), postFor(["m_1", "m_2"]))
+    queryClient.setQueryData(conversationKeys.boardPost("ws_other", "conv_1"), postFor(["m_1", "m_2"]))
+
+    const { result } = renderHook(() => useSettleConversationMessage(WORKSPACE_ID, STREAM_ID), { wrapper })
+    await act(async () => {
+      await result.current.mutateAsync({ messageId: "m_1", conversationId: "conv_1" })
+    })
+
+    expect({
+      own: queryClient.getQueryData(conversationKeys.boardPost(WORKSPACE_ID, "conv_1")),
+      other: queryClient.getQueryData(conversationKeys.boardPost("ws_other", "conv_1")),
+    }).toEqual({ own: postFor(["m_2"]), other: postFor(["m_1", "m_2"]) })
   })
 
   it("leaves an uncached by-id post uncached rather than seeding a partial row", async () => {
@@ -740,6 +770,6 @@ describe("useSettleConversationMessage", () => {
       await result.current.mutateAsync({ messageId: "m_1", conversationId: "conv_1" })
     })
 
-    expect(queryClient.getQueryData(conversationKeys.boardPost("conv_1"))).toBeUndefined()
+    expect(queryClient.getQueryData(conversationKeys.boardPost(WORKSPACE_ID, "conv_1"))).toBeUndefined()
   })
 })

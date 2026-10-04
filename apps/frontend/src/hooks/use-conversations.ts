@@ -83,9 +83,12 @@ export const conversationKeys = {
   workspaceLists: (workspaceId: string) => [...conversationKeysRoot, "workspaceList", workspaceId] as const,
   byId: (workspaceId: string, conversationId: string) =>
     [...conversationKeys.all, "detail", workspaceId, conversationId] as const,
-  messages: (conversationId: string) => ["conversations", conversationId, "messages"] as const,
-  boardMessages: (conversationId: string) => ["conversations", conversationId, "board-messages"] as const,
-  boardPost: (conversationId: string) => ["conversations", conversationId, "board-post"] as const,
+  messages: (workspaceId: string, conversationId: string) =>
+    [...conversationKeysRoot, workspaceId, conversationId, "messages"] as const,
+  boardMessages: (workspaceId: string, conversationId: string) =>
+    [...conversationKeysRoot, workspaceId, conversationId, "board-messages"] as const,
+  boardPost: (workspaceId: string, conversationId: string) =>
+    [...conversationKeysRoot, workspaceId, conversationId, "board-post"] as const,
 }
 
 interface ConversationCreatedPayload {
@@ -505,7 +508,7 @@ export function useConversationBoardPost(workspaceId: string, conversationId: st
     error,
     refetch,
   } = useQuery({
-    queryKey: conversationId ? conversationKeys.boardPost(conversationId) : conversationKeys.boardPost("none"),
+    queryKey: conversationKeys.boardPost(workspaceId, conversationId || "none"),
     queryFn: () => conversationService.getBoardPost(workspaceId, conversationId!),
     enabled: shouldFetch,
     staleTime: 60_000,
@@ -648,13 +651,13 @@ export function useConversations(workspaceId: string, streamId: string, options?
             return { ...c, [field]: members, settlingMessageIds }
           })
       )
-      queryClient.invalidateQueries({ queryKey: conversationKeys.messages(payload.conversationId) })
+      queryClient.invalidateQueries({ queryKey: conversationKeys.messages(workspaceId, payload.conversationId) })
     }
 
     const handleMessageReassigned = (payload: ConversationMessageReassignedPayload) => {
       if (payload.streamId !== streamId) return
-      queryClient.invalidateQueries({ queryKey: conversationKeys.messages(payload.fromConversationId) })
-      queryClient.invalidateQueries({ queryKey: conversationKeys.messages(payload.toConversationId) })
+      queryClient.invalidateQueries({ queryKey: conversationKeys.messages(workspaceId, payload.fromConversationId) })
+      queryClient.invalidateQueries({ queryKey: conversationKeys.messages(workspaceId, payload.toConversationId) })
     }
 
     // In active sync mode, register through the engine's event gate so
@@ -716,9 +719,9 @@ export function useReassignConversationMessage(workspaceId: string, streamId: st
       void mergeBoardConversation(workspaceId, conversation.id, conversation)
       if (previousConversation) void mergeBoardConversation(workspaceId, previousConversation.id, previousConversation)
       // The expanded per-conversation message panels refetch their row sets.
-      queryClient.invalidateQueries({ queryKey: conversationKeys.messages(conversation.id) })
+      queryClient.invalidateQueries({ queryKey: conversationKeys.messages(workspaceId, conversation.id) })
       if (previousConversation) {
-        queryClient.invalidateQueries({ queryKey: conversationKeys.messages(previousConversation.id) })
+        queryClient.invalidateQueries({ queryKey: conversationKeys.messages(workspaceId, previousConversation.id) })
       }
     },
   })
@@ -746,7 +749,7 @@ export function useSettleConversationMessage(workspaceId: string, streamId: stri
           old?.map((c) => (c.id === conversation.id ? mergeConversationByTitleRevision(c, conversation) : c))
       )
       void mergeBoardConversation(workspaceId, conversation.id, conversation, settlingMessageIds)
-      const boardPostKey = conversationKeys.boardPost(conversation.id)
+      const boardPostKey = conversationKeys.boardPost(workspaceId, conversation.id)
       if (queryClient.getQueryData(boardPostKey)) {
         queryClient.setQueryData<BoardPost>(boardPostKey, (prev) =>
           prev
@@ -798,7 +801,7 @@ export function useReassignMessagesToConversation(workspaceId: string, streamId:
         }
       )
       for (const id of [conversation.id, ...sourceConversations.map((c) => c.id)]) {
-        queryClient.invalidateQueries({ queryKey: conversationKeys.messages(id) })
+        queryClient.invalidateQueries({ queryKey: conversationKeys.messages(workspaceId, id) })
       }
     },
   })
@@ -846,7 +849,7 @@ export function useApplySplit(workspaceId: string, streamId: string) {
         }
       )
       for (const id of [conversation.id, ...newConversations.map((c) => c.id)]) {
-        queryClient.invalidateQueries({ queryKey: conversationKeys.messages(id) })
+        queryClient.invalidateQueries({ queryKey: conversationKeys.messages(workspaceId, id) })
       }
     },
   })
@@ -893,7 +896,7 @@ export function useUpdateConversation(workspaceId: string) {
           _status: "pending",
         })
       }
-      const boardPostKey = conversationKeys.boardPost(conversationId)
+      const boardPostKey = conversationKeys.boardPost(workspaceId, conversationId)
       const prevQuery = queryClient.getQueryData<BoardPost>(boardPostKey)
       if (prevQuery) {
         queryClient.setQueryData<BoardPost>(boardPostKey, {
@@ -905,12 +908,13 @@ export function useUpdateConversation(workspaceId: string) {
     },
     onError: (_error, _vars, ctx) => {
       if (ctx?.prevRow) void db.conversations.put(ctx.prevRow)
-      if (ctx?.prevQuery) queryClient.setQueryData(conversationKeys.boardPost(ctx.conversationId), ctx.prevQuery)
+      if (ctx?.prevQuery)
+        queryClient.setQueryData(conversationKeys.boardPost(workspaceId, ctx.conversationId), ctx.prevQuery)
       toast.error("Couldn't update the conversation")
     },
     onSuccess: ({ conversation }, { conversationId }) => {
       void mergeBoardConversation(workspaceId, conversationId, conversation)
-      const boardPostKey = conversationKeys.boardPost(conversationId)
+      const boardPostKey = conversationKeys.boardPost(workspaceId, conversationId)
       if (queryClient.getQueryData(boardPostKey)) {
         queryClient.setQueryData<BoardPost>(boardPostKey, (prev) =>
           prev ? { ...prev, conversation: mergeConversationByTitleRevision(prev.conversation, conversation) } : prev

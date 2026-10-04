@@ -604,7 +604,7 @@ describe("ConversationPanel", () => {
       captured = props.openReplySignal
       return <></>
     })
-    requestConversationReplyOpen(CONVERSATION_ID)
+    requestConversationReplyOpen(WORKSPACE_ID, CONVERSATION_ID)
     mountPanel({ cached: asCached(makePost()) })
     await screen.findByText("Opening message body.")
     await waitFor(() => expect(captured ?? 0).toBeGreaterThan(0))
@@ -670,12 +670,12 @@ describe("ConversationPanel", () => {
       captured = props.openReplySignal
       return <></>
     })
-    requestConversationReplyOpen(CONVERSATION_ID)
+    requestConversationReplyOpen(WORKSPACE_ID, CONVERSATION_ID)
     mountPanel({ cached: asCached(makePost()) })
     await screen.findByText("Opening message body.")
     await waitFor(() => expect(captured).toBe(1))
 
-    act(() => requestConversationReplyOpen(CONVERSATION_ID))
+    act(() => requestConversationReplyOpen(WORKSPACE_ID, CONVERSATION_ID))
     await waitFor(() => expect(captured).toBe(2))
   })
 
@@ -724,6 +724,7 @@ describe("ConversationPanel", () => {
     await user.click(await screen.findByText("#general"))
 
     expect(queueSpy).toHaveBeenCalledWith(
+      WORKSPACE_ID,
       "stream_target",
       expect.objectContaining({ messageId: "msg_1", conversationId: CONVERSATION_ID })
     )
@@ -1357,7 +1358,7 @@ describe("ConversationPanel", () => {
 
       // Everything is read now; force a re-render through an unrelated signal.
       frontier.lastReadAt = "2026-06-22T23:00:00.000Z"
-      act(() => requestConversationReplyOpen(CONVERSATION_ID))
+      act(() => requestConversationReplyOpen(WORKSPACE_ID, CONVERSATION_ID))
 
       await waitFor(() => expect(screen.getByText("New")).toBeTruthy())
       expect(dividerIsRightBefore("msg_2", "msg_1")).toBe(true)

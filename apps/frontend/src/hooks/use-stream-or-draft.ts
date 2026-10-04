@@ -196,7 +196,7 @@ function useDraftStream(workspaceId: string, streamId: string, enabled: boolean)
   if (lastDraftRef.current?.id !== streamId) lastDraftRef.current = undefined
   const currentDraft = enabled ? getScratchpad(streamId) : undefined
   if (currentDraft) lastDraftRef.current = currentDraft
-  const draft = currentDraft ?? (getPromotedStreamId(streamId) ? lastDraftRef.current : undefined)
+  const draft = currentDraft ?? (getPromotedStreamId(workspaceId, streamId) ? lastDraftRef.current : undefined)
 
   useEffect(() => () => promotionWaitController.abort(), [promotionWaitController])
 
@@ -245,7 +245,7 @@ function useDraftStream(workspaceId: string, streamId: string, enabled: boolean)
       // The optimistic first message renders before promotion replaces the route.
       // A follow-up can therefore enter this stale draft callback; join the first
       // promotion instead of materializing a second scratchpad.
-      const knownPromotedStreamId = getPromotedStreamId(streamId)
+      const knownPromotedStreamId = getPromotedStreamId(workspaceId, streamId)
       const promotionPending = knownPromotedStreamId
         ? null
         : await db.pendingMessages
@@ -534,7 +534,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
   // A just-promoted stream is in IDB but not yet in the workspace store's
   // resolved live query; the promotion's own copy covers that tick so the
   // header keeps the name the draft was showing.
-  const baseStream = idbStream ?? bootstrap?.stream ?? getDraftPromotionStream(streamId) ?? undefined
+  const baseStream = idbStream ?? bootstrap?.stream ?? getDraftPromotionStream(workspaceId, streamId) ?? undefined
   const renameStream = useRenameStream(workspaceId, streamId, baseStream)
   const { rename } = renameStream
   const displayName =

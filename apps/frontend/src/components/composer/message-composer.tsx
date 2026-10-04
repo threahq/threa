@@ -173,7 +173,7 @@ export interface MessageComposerProps {
   commandStreamId?: string | null
   /** False keeps workspace/stream/runtime commands out of the `/` menu; the editor's own items stay. */
   includeStreamCommands?: boolean
-  /** Workspace id; required only when `contextRefs` is non-empty so the strip can fetch source metadata. */
+  /** Workspace id; without it the `/` command hand-off, mic, link and image previews, and context-ref strip stay off. */
   workspaceId?: string
   fileInputRef: RefObject<HTMLInputElement | null>
   onFileSelect: (e: ChangeEvent<HTMLInputElement>) => void
@@ -337,16 +337,16 @@ export function MessageComposer({
   }, [onComposerFocus])
 
   useEffect(() => {
-    if (!streamId) return
+    if (!workspaceId || !streamId) return
     const consumeRequest = () => {
-      const command = consumeComposerCommandRequest(streamId)
+      const command = consumeComposerCommandRequest(workspaceId, streamId)
       if (!command) return
       onContentChange(prependComposerCommand(content, command))
       requestAnimationFrame(() => richEditorRef.current?.focus())
     }
     consumeRequest()
-    return subscribeComposerCommandRequest(streamId, consumeRequest)
-  }, [content, onContentChange, streamId])
+    return subscribeComposerCommandRequest(workspaceId, streamId, consumeRequest)
+  }, [content, onContentChange, workspaceId, streamId])
   const mobileRootRef = useRef<HTMLDivElement>(null)
   const mobileEditorScrollRef = useRef<HTMLDivElement>(null)
   const mobileEditorBottomOffsetRef = useRef(0)

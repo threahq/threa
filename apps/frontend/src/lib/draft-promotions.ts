@@ -15,6 +15,7 @@
 
 import type { CachedEvent } from "@/db"
 import type { Stream } from "@threahq/types"
+import { workspaceScopedKey } from "@/lib/workspace-scoped-key"
 
 export interface DraftPromotion {
   draftId: string
@@ -47,23 +48,24 @@ export function onDraftPromoted(listener: Listener): () => void {
   }
 }
 
-export function getPromotedStreamId(draftId: string): string | null {
-  return promotionsByDraftId.get(draftId)?.realStreamId ?? null
+export function getPromotedStreamId(workspaceId: string, draftId: string): string | null {
+  return promotionsByDraftId.get(workspaceScopedKey(workspaceId, draftId))?.realStreamId ?? null
 }
 
-export function getDraftPromotionSource(realStreamId: string): string | null {
-  return promotionsByRealStreamId.get(realStreamId)?.draftId ?? null
+export function getDraftPromotionSource(workspaceId: string, realStreamId: string): string | null {
+  return promotionsByRealStreamId.get(workspaceScopedKey(workspaceId, realStreamId))?.draftId ?? null
 }
 
 /** Handoff rows for a promotion the given draft or real stream id belongs to. */
-export function getDraftPromotionEvents(streamId: string): CachedEvent[] | null {
-  const promotion = promotionsByRealStreamId.get(streamId) ?? promotionsByDraftId.get(streamId)
+export function getDraftPromotionEvents(workspaceId: string, streamId: string): CachedEvent[] | null {
+  const key = workspaceScopedKey(workspaceId, streamId)
+  const promotion = promotionsByRealStreamId.get(key) ?? promotionsByDraftId.get(key)
   return promotion?.events && promotion.events.length > 0 ? promotion.events : null
 }
 
 /** The created stream row for a promotion, by its real stream id. */
-export function getDraftPromotionStream(realStreamId: string): Stream | null {
-  return promotionsByRealStreamId.get(realStreamId)?.stream ?? null
+export function getDraftPromotionStream(workspaceId: string, realStreamId: string): Stream | null {
+  return promotionsByRealStreamId.get(workspaceScopedKey(workspaceId, realStreamId))?.stream ?? null
 }
 
 /**
@@ -71,8 +73,8 @@ export function getDraftPromotionStream(realStreamId: string): Stream | null {
  * by the real id only: the draft id's window resolves from the pre-move
  * snapshot, so releasing there would strip the rows the real view still needs.
  */
-export function releaseDraftPromotionEvents(realStreamId: string): void {
-  const promotion = promotionsByRealStreamId.get(realStreamId)
+export function releaseDraftPromotionEvents(workspaceId: string, realStreamId: string): void {
+  const promotion = promotionsByRealStreamId.get(workspaceScopedKey(workspaceId, realStreamId))
   if (promotion) delete promotion.events
 }
 
@@ -81,8 +83,8 @@ export function waitForDraftPromotion(
   draftId: string,
   options: { signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<string> {
-  const existing = promotionsByDraftId.get(draftId)
-  if (existing?.workspaceId === workspaceId) return Promise.resolve(existing.realStreamId)
+  const existing = promotionsByDraftId.get(workspaceScopedKey(workspaceId, draftId))
+  if (existing) return Promise.resolve(existing.realStreamId)
 
   return new Promise((resolve, reject) => {
     let unsubscribe = () => {}
@@ -113,8 +115,8 @@ export function waitForDraftPromotion(
 }
 
 export function emitDraftPromoted(promotion: DraftPromotion): void {
-  promotionsByDraftId.set(promotion.draftId, promotion)
-  promotionsByRealStreamId.set(promotion.realStreamId, promotion)
+  promotionsByDraftId.set(workspaceScopedKey(promotion.workspaceId, promotion.draftId), promotion)
+  promotionsByRealStreamId.set(workspaceScopedKey(promotion.workspaceId, promotion.realStreamId), promotion)
   for (const listener of listeners) {
     listener(promotion)
   }
