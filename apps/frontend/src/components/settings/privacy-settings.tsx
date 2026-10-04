@@ -5,6 +5,7 @@ import { Switch } from "@/components/ui/switch"
 import { usePreferences } from "@/contexts"
 import { useWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { ApiError } from "@/api/client"
+import type { UpdateUserPreferencesInput } from "@threahq/types"
 
 export function PrivacySettings() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -15,17 +16,9 @@ export function PrivacySettings() {
 
   const replayOptIn = granted && preferences?.sessionReplayOptIn === true
 
-  async function toggle(checked: boolean) {
+  async function save<K extends keyof UpdateUserPreferencesInput>(key: K, value: UpdateUserPreferencesInput[K]) {
     try {
-      await updatePreference("analyticsConsent", checked ? "granted" : "denied")
-    } catch (err) {
-      toast.error(ApiError.isApiError(err) ? err.message : "Failed to update the privacy preference")
-    }
-  }
-
-  async function toggleReplay(checked: boolean) {
-    try {
-      await updatePreference("sessionReplayOptIn", checked)
+      await updatePreference(key, value)
     } catch (err) {
       toast.error(ApiError.isApiError(err) ? err.message : "Failed to update the privacy preference")
     }
@@ -48,7 +41,7 @@ export function PrivacySettings() {
             id="analytics-consent"
             checked={granted}
             disabled={!configured}
-            onCheckedChange={(checked) => void toggle(checked)}
+            onCheckedChange={(checked) => void save("analyticsConsent", checked ? "granted" : "denied")}
           />
         </div>
       </section>
@@ -68,7 +61,26 @@ export function PrivacySettings() {
             id="session-replay-opt-in"
             checked={replayOptIn}
             disabled={!granted}
-            onCheckedChange={(checked) => void toggleReplay(checked)}
+            onCheckedChange={(checked) => void save("sessionReplayOptIn", checked)}
+          />
+        </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between gap-4">
+          <div className="space-y-1">
+            <Label htmlFor="share-device-with-agents">Tell agents which device I&apos;m on</Label>
+            <p className="text-sm text-muted-foreground">
+              Agents see whether you&apos;re on the mobile or desktop layout, your operating system, and whether Threa
+              is installed, so their directions match your screen. Only the latest is kept, and turning this off deletes
+              it.
+            </p>
+          </div>
+          <Switch
+            className="shrink-0"
+            id="share-device-with-agents"
+            checked={preferences?.shareDeviceWithAgents !== false}
+            onCheckedChange={(checked) => void save("shareDeviceWithAgents", checked)}
           />
         </div>
       </section>

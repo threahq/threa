@@ -161,6 +161,8 @@ export type AnalyticsConsent = (typeof ANALYTICS_CONSENT_OPTIONS)[number]
 /** The override key analytics consent is stored under; only this value grants it. */
 export const ANALYTICS_CONSENT_KEY = "analyticsConsent" satisfies keyof UserPreferences
 export const ANALYTICS_CONSENT_GRANTED = "granted" satisfies AnalyticsConsent
+/** The override key that turns off storing the user's device for agents, when set to false. */
+export const SHARE_DEVICE_KEY = "shareDeviceWithAgents" satisfies keyof UserPreferences
 
 // Code block collapse threshold - line count above which blocks start collapsed.
 // Blocks with fewer lines render expanded by default. A user can always toggle
@@ -508,6 +510,12 @@ export interface UserPreferences {
    * recording on a PostHog instance that consent already brought up.
    */
   sessionReplayOptIn: boolean
+  /**
+   * Whether agents may know which layout, OS and install state the user's
+   * current device has. On by default; turning it off stops the client
+   * reporting it and deletes the stored value.
+   */
+  shareDeviceWithAgents: boolean
   createdAt: string
   updatedAt: string
 }
@@ -565,6 +573,7 @@ export const DEFAULT_USER_PREFERENCES: Omit<UserPreferences, "workspaceId" | "us
   performanceDiagnosticsOptIn: false,
   analyticsConsent: "unset",
   sessionReplayOptIn: false,
+  shareDeviceWithAgents: true,
 }
 
 /**
@@ -620,6 +629,7 @@ export interface UpdateUserPreferencesInput {
   performanceDiagnosticsOptIn?: boolean
   analyticsConsent?: AnalyticsConsent
   sessionReplayOptIn?: boolean
+  shareDeviceWithAgents?: boolean
 }
 
 /**

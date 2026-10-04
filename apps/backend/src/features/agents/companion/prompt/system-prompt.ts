@@ -3,9 +3,11 @@ import {
   APP_LINK_PAGES,
   APP_LINK_SETTINGS_TABS,
   APP_LINK_WORKSPACE_SETTINGS_TABS,
+  type DeviceContext,
   type UserPreferences,
 } from "@threahq/types"
 import { buildTemporalPromptSection } from "../../../../lib/temporal"
+import { buildDeviceContextSection } from "./device-context"
 import type { Persona } from "../../persona-repository"
 import type { PersonaAttachmentContentItem } from "../../persona-attachment-repository"
 import type { StreamContext } from "../../context-builder"
@@ -108,6 +110,8 @@ export interface SystemPromptInputs {
   currentSettings?: UserPreferences | null
   /** Drives the `## How You Work` card. `null` only in prompt tests that exercise other sections. */
   selfKnowledge: SelfKnowledge | null
+  /** The device the invoking user last reported using, when they share it. */
+  deviceContext?: DeviceContext | null
 }
 
 /**
@@ -164,6 +168,8 @@ export const SYSTEM_PROMPT_INPUT_STABILITY = {
   // config), or when a turn nobody triggered flips `access` to null, which
   // also changes the toolset the card lists.
   selfKnowledge: "conversation",
+  // The user can switch device or turn sharing off between any two turns.
+  deviceContext: "turn",
 } as const satisfies Record<keyof SystemPromptInputs, "conversation" | "turn" | "mixed">
 
 export function buildSystemPrompt(inputs: SystemPromptInputs): SplitSystemPrompt {
@@ -185,6 +191,7 @@ export function buildSystemPrompt(inputs: SystemPromptInputs): SplitSystemPrompt
     personaKnowledge,
     currentSettings,
     selfKnowledge,
+    deviceContext,
   } = inputs
 
   if (!persona.systemPrompt) {
@@ -386,6 +393,10 @@ ${spawnedFromContext.trim()}`
 
   if (context.temporal) {
     volatile += buildTemporalPromptSection(context.temporal, context.participantTimezones)
+  }
+
+  if (deviceContext) {
+    volatile += buildDeviceContextSection(deviceContext)
   }
 
   // Supersede reconciliation lands last so its "call exactly one of

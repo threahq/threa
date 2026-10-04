@@ -30,6 +30,7 @@ import {
   useIsServiceWorkerControlled,
 } from "@/hooks/use-app-update"
 import { formatFullDateTime, formatTime } from "@/lib/dates"
+import { isStandaloneApp } from "@/lib/device"
 import { cn } from "@/lib/utils"
 
 type AppUpdate = ReturnType<typeof useAppUpdate>
@@ -175,13 +176,6 @@ function DetailRow({ icon: Icon, label, children }: { icon: typeof Info; label: 
         <div className="mt-0.5 text-sm text-foreground">{children}</div>
       </div>
     </div>
-  )
-}
-
-function isStandaloneApp(): boolean {
-  const navigatorWithStandalone = navigator as Navigator & { standalone?: boolean }
-  return (
-    navigatorWithStandalone.standalone === true || window.matchMedia?.("(display-mode: standalone)").matches === true
   )
 }
 

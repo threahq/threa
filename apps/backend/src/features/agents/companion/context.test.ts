@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { AgentToolNames, MemoryModes, StreamTypes } from "@threahq/types"
+import { AgentToolNames, DEFAULT_USER_PREFERENCES, MemoryModes, StreamTypes } from "@threahq/types"
 import { StreamBriefRepository, StreamRepository, type StreamBrief } from "../../streams"
 import { MessageRepository } from "../../messaging"
+import { UserDeviceContextRepository } from "../../device-context"
 import { buildAgentContext } from "./context"
 import type { PreparedRecallParams } from "./prepared-recall"
 import type { Persona } from "../persona-repository"
@@ -182,6 +183,71 @@ describe("buildAgentContext prepared recall", () => {
       volatile: expect.stringMatching(/## Recalled from memory[\s\S]*<memo id="memo_allergy"/),
       recalled: ["memo_allergy"],
     })
+  })
+})
+
+describe("buildAgentContext device context", () => {
+  afterEach(() => mock.restore())
+
+  const phone = { layout: "mobile", os: "android", installed: true } as const
+
+  async function volatilePrompt(shareDeviceWithAgents: boolean) {
+    spyOn(MessageRepository, "findById").mockResolvedValue({
+      id: "msg_1",
+      streamId: "stream_pad",
+      authorType: "user",
+      authorId: "usr_1",
+      contentMarkdown: "Where do I change my theme?",
+      contentJson: { type: "doc", content: [] },
+      createdAt: new Date("2026-10-01T10:00:00Z"),
+      reactions: {},
+    } as never)
+    const getPreferences = mock(async () => ({ ...DEFAULT_USER_PREFERENCES, shareDeviceWithAgents }) as never)
+    const context = await buildAgentContext(
+      { ...deps, userPreferencesService: { getPreferences } as never },
+      {
+        workspaceId: "ws_1",
+        streamId: "stream_pad",
+        stream: {
+          id: "stream_pad",
+          workspaceId: "ws_1",
+          type: StreamTypes.SCRATCHPAD,
+          rootStreamId: null,
+          parentStreamId: null,
+          displayName: "Pad",
+          createdBy: "usr_1",
+        } as never,
+        messageId: "msg_1",
+        persona,
+        purpose: { kind: "catch_up" },
+        policy: { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests: false },
+      }
+    )
+    return context.composeSystemPrompt([], { kind: "catch_up" }).volatile
+  }
+
+  it("tells the model the invoking user's layout, OS and install state when they share it", async () => {
+    const find = spyOn(UserDeviceContextRepository, "find").mockResolvedValue(phone)
+
+    const volatile = await volatilePrompt(true)
+
+    expect(find.mock.calls.at(-1)?.slice(1)).toEqual(["ws_1", "usr_1"])
+    expect(volatile).toContain("using Threa's mobile layout on Android, as an installed app")
+  })
+
+  it("neither reads nor renders the device once sharing is off", async () => {
+    const find = spyOn(UserDeviceContextRepository, "find").mockResolvedValue(phone)
+
+    const volatile = await volatilePrompt(false)
+
+    expect(find).not.toHaveBeenCalled()
+    expect(volatile).not.toContain("## Device")
+  })
+
+  it("omits the section when the user has reported no device", async () => {
+    spyOn(UserDeviceContextRepository, "find").mockResolvedValue(null)
+
+    expect(await volatilePrompt(true)).not.toContain("## Device")
   })
 })
 

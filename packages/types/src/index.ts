@@ -982,6 +982,7 @@ export {
   ANALYTICS_CONSENT_KEY,
   ANALYTICS_CONSENT_GRANTED,
   type AnalyticsConsent,
+  SHARE_DEVICE_KEY,
   // Code block collapse threshold
   CODE_BLOCK_COLLAPSE_THRESHOLD_MIN,
   CODE_BLOCK_COLLAPSE_THRESHOLD_MAX,
@@ -1242,6 +1243,9 @@ export {
   STATUS_TEXT_MAX_LENGTH,
   MAX_STATUS_PRESETS,
 } from "./user-status"
+
+// Device context
+export { parseDeviceContext, type DeviceOs, type DeviceContext } from "./device-context"
 
 // Sidebar configuration
 export {

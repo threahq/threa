@@ -1,9 +1,10 @@
 import type { Pool } from "pg"
 import type { ModelMessage } from "ai"
 import type { AgentTool } from "@threahq/agent-runtime"
-import type { UserPreferences } from "@threahq/types"
+import type { DeviceContext, UserPreferences } from "@threahq/types"
 import { AgentToolNames, AuthorTypes, StreamTypes } from "@threahq/types"
 import type { UserPreferencesService } from "../../user-preferences"
+import { UserDeviceContextRepository } from "../../device-context"
 import { MessageRepository, SharedMessageRepository, collectSharedMessageIds, type Message } from "../../messaging"
 import { UserRepository, type User } from "../../workspaces"
 import type { Persona } from "../persona-repository"
@@ -181,11 +182,15 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
 
   let preferences: UserPreferences | undefined
   let invokingUser: User | null = null
+  let deviceContext: DeviceContext | null = null
   if (invokingUserId) {
     ;[preferences, invokingUser] = await Promise.all([
       userPreferencesService.getPreferences(workspaceId, invokingUserId),
       UserRepository.findById(db, workspaceId, invokingUserId),
     ])
+    if (preferences?.shareDeviceWithAgents) {
+      deviceContext = await UserDeviceContextRepository.find(db, workspaceId, invokingUserId)
+    }
   }
 
   const linkPreviewProcessing = triggerMessage
@@ -553,6 +558,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       styleSlots: resolvePersonaStyleSlots(persona),
       personaKnowledge,
       selfKnowledge,
+      deviceContext,
     })
     // Prior-turn digests and recalled memos are re-derived each turn, so they
     // belong outside the cached span alongside temporal grounding.

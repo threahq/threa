@@ -152,6 +152,7 @@ function makeBootstrap(): WorkspaceBootstrap {
       performanceDiagnosticsOptIn: false,
       analyticsConsent: "unset",
       sessionReplayOptIn: false,
+      shareDeviceWithAgents: true,
       accessibility: {
         fontSize: "medium",
         fontFamily: "system",

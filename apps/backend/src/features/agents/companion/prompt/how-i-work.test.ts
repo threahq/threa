@@ -48,6 +48,12 @@ describe("buildHowIWorkSection", () => {
     expect(card).toContain("Memory capture is on here")
   })
 
+  test("should say the device the user shares is part of what it sees", () => {
+    const card = buildHowIWorkSection(ariadne, privateScratchpad, [])
+
+    expect(card).toContain("and, if the user shares it, which layout and device they're using. You don't watch")
+  })
+
   test("should give every agent tool a capability line except replying and reporting back", () => {
     const toolsWithoutLine = Object.values(AgentToolNames).filter((tool) =>
       capabilities(buildHowIWorkSection(ariadne, privateScratchpad, [tool]))[0]!.startsWith("Nothing")
@@ -106,6 +112,9 @@ describe("buildHowIWorkSection", () => {
       "At most: search the web, read web pages, research the web, and read files shared in this scratchpad. Only the tools described further down are available this turn.",
     ])
     expect(card).toContain("end-to-end-encrypted scratchpad")
+    expect(card).toContain(
+      "What you see: the messages in this conversation and the files people share in it, nothing more. You don't watch"
+    )
     expect(card).toContain(
       "Memory: Nothing said here becomes a memo, because the server can't read it. Between conversations you remember only through summaries of your earlier sessions in this stream."
     )

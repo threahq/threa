@@ -13,6 +13,7 @@ import type { UserSocketRegistry } from "./lib/user-socket-registry"
 import { AgentSessionRepository, PersonaRepository } from "./features/agents"
 import type { SessionAbortRegistry } from "./features/agents"
 import { UserRepository, type WorkspaceService } from "./features/workspaces"
+import { storeHeartbeatDevice } from "./features/device-context"
 import {
   enqueueVisiblePreviewRefreshes,
   VISIBLE_REFRESH_MAX_IDS,
@@ -75,6 +76,13 @@ interface JoinedRoomAudit {
 }
 
 type JoinCallback = (result: { ok: boolean; error?: string }) => void
+
+interface HeartbeatPayload {
+  focused?: boolean
+  interacted?: boolean
+  timezone?: string
+  device?: unknown
+}
 
 interface PendingStreamJoin {
   room: string
@@ -653,7 +661,7 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
     // Interaction-driven heartbeats bypass the throttle: the client only emits
     // them on the first interaction after a quiet stretch, and we want the
     // backend to learn about renewed activity within seconds, not up to 30s.
-    socket.on("heartbeat", (payload?: { focused?: boolean; interacted?: boolean; timezone?: string }) => {
+    socket.on("heartbeat", (payload?: HeartbeatPayload) => {
       // Device-timezone refresh runs before the push gate — it must work even
       // when push is disabled. Validate only on change; steady-state heartbeats
       // repeat the same string.
@@ -666,8 +674,14 @@ export function registerSocketHandlers(io: Server, deps: Dependencies) {
         for (const [wsId, entry] of userRooms) syncDeviceTimezone(wsId, entry)
       }
 
-      if (!pushService.isEnabled()) return
       const interacted = payload?.interacted === true
+      storeHeartbeatDevice(
+        pool,
+        { device: payload?.device, interacted },
+        Array.from(userRooms, ([workspaceId, entry]) => ({ workspaceId, userId: entry.userId }))
+      )
+
+      if (!pushService.isEnabled()) return
       const now = Date.now()
       if (!interacted && now - lastHeartbeatAt < HEARTBEAT_INTERACTION_THROTTLE_MS) return
       lastHeartbeatAt = now

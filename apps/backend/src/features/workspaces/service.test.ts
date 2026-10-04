@@ -4,6 +4,7 @@ import { WorkspaceService } from "./service"
 import { UserRepository } from "./user-repository"
 import { UserApiKeyRepository } from "../user-api-keys"
 import { ReadStateRepository } from "../streams"
+import { UserDeviceContextRepository } from "../device-context"
 import { OutboxRepository } from "../../lib/outbox"
 import * as db from "../../db"
 
@@ -240,7 +241,7 @@ describe("WorkspaceService.ensureUserProvisioned", () => {
   })
 })
 
-describe("WorkspaceService.removeUser read-state cleanup", () => {
+describe("WorkspaceService.removeUser per-user cleanup", () => {
   const mockWithTransaction = spyOn(db, "withTransaction")
   let transactionClient: PoolClient
 
@@ -257,7 +258,8 @@ describe("WorkspaceService.removeUser read-state cleanup", () => {
 
   afterEach(() => mock.restore())
 
-  test("deletes the user's read state in the same transaction as account removal", async () => {
+  test("deletes the user's read state and device context in the same transaction as account removal", async () => {
+    const deleteDevice = spyOn(UserDeviceContextRepository, "delete").mockResolvedValue(undefined)
     const deleteForUser = spyOn(ReadStateRepository, "deleteForUser").mockResolvedValue(undefined as never)
     const removeUser = spyOn(UserRepository, "remove").mockResolvedValue(undefined as never)
     const service = createWorkspaceService(false)
@@ -266,6 +268,7 @@ describe("WorkspaceService.removeUser read-state cleanup", () => {
 
     expect(removeUser).toHaveBeenCalledWith(transactionClient, "ws_1", "usr_1")
     expect(deleteForUser).toHaveBeenCalledWith(transactionClient, "ws_1", "usr_1")
+    expect(deleteDevice).toHaveBeenCalledWith(transactionClient, "ws_1", "usr_1")
     expect(removeUser.mock.calls[0]?.[0]).toBe(transactionClient)
     expect(deleteForUser.mock.calls[0]?.[0]).toBe(transactionClient)
   })
