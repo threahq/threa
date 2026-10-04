@@ -69,7 +69,16 @@ describe("Read state and sparse overlay workspace scope (INV-8)", () => {
     return channel.id
   }
 
+  // Events on a shared stream id take one ascending order across workspaces, so a foreign event outranks every
+  // event seeded before it and a lookup that drops its workspace_id filter resolves to the wrong row.
   async function addEvent(wid: string, stream: string, actor: string, message: string = messageId()) {
+    const behind = await pool.query<{ gap: number }>(
+      `SELECT ((SELECT COALESCE(MAX(sequence), 0) FROM stream_events WHERE stream_id = $2)
+         - COALESCE((SELECT next_sequence - 1 FROM stream_sequences WHERE workspace_id = $1 AND stream_id = $2), 0))::int AS gap`,
+      [wid, stream]
+    )
+    const gap = behind.rows[0].gap
+    if (gap > 0) await StreamEventRepository.allocateSequences(pool, wid, stream, { total: gap, broadcast: 0 })
     const event = await StreamEventRepository.insert(pool, {
       id: eventId(),
       workspaceId: wid,
