@@ -6,6 +6,7 @@ import {
   BotTypes,
   ASIDE_COMMAND,
   CommandKinds,
+  StreamReadOnlyReasons,
   StreamTypes,
   botHasCapability,
   isAsideHostType,
@@ -150,14 +151,21 @@ export class CommandAvailabilityService {
     options?: { includeReadOnlyWorkCommands?: boolean }
   ): Promise<ResolvedCommand[]> {
     const stream = await checkStreamAccess(db, params.streamId, params.workspaceId, params.userId)
-    // A shared channel's copy runs no commands: their effects would stay on this side, unseen by the host.
-    if (!stream || stream.originWorkspaceId) return []
+    if (!stream) return []
     const projected = await projectStreamForUser(db, {
       workspaceId: params.workspaceId,
       stream,
       userId: params.userId,
     })
     if (!projected) return []
+    if (stream.originWorkspaceId) {
+      // A shared channel's copy offers only `/aside`: any other command's effects
+      // would stay on this side, unseen by the host, while an aside belongs here.
+      if (projected.readOnlyReason !== StreamReadOnlyReasons.SHARED_COPY) return []
+      return listClientActionCommandInfos()
+        .filter((info) => isClientActionAvailableInStream(info, stream))
+        .map((info) => ({ info, executionKind: CommandKinds.CLIENT_ACTION }))
+    }
     const writable = !projected.readOnly
 
     const commands: ResolvedCommand[] = []

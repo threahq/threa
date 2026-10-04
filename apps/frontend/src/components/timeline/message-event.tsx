@@ -1207,7 +1207,7 @@ function SentMessageEvent({
   const openAside = useOpenAside(workspaceId)
   // Archived hosts (directly or through any ancestor) cannot open one — the
   // aside would inherit the archive and the create path refuses it.
-  const canOpenAside = isAsideHostType(currentStream?.type ?? "") && !e2eEnabled && !hostArchived && !sharedCopy
+  const canOpenAside = isAsideHostType(currentStream?.type ?? "") && !e2eEnabled && !hostArchived
   const handleOpenAside = useCallback(() => {
     void openAside({ kind: "stream", hostStreamId: streamId, anchorId: payload.messageId }).catch(() => {
       /* toast already surfaced inside the hook */
