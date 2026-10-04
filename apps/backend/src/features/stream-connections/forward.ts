@@ -57,14 +57,21 @@ export class StreamConnectionForwardService {
   }
 
   /**
-   * The host dedupes a send by its client message id, so a send that failed to confirm is safe to retry.
-   * The sent files stay unbound here until the pull brings the host's message back and binds them to it.
+   * A send that failed to confirm is safe to retry: once the pull brought it back the copy answers it, and before
+   * that the host dedupes it by its client message id. The sent files stay unbound here until that pull binds them.
    */
   async sendMessage(
     params: ForwardCaller & { clientMessageId: string; contentJson: JSONContent; attachmentIds: string[] }
   ): Promise<Message> {
     const { clientMessageId, contentJson } = params
     const { address, ref, author } = await this.open(params)
+    const landed = await MessageRepository.findByClientMessageId(
+      this.pool,
+      params.workspaceId,
+      params.stream.id,
+      clientMessageId
+    )
+    if (landed?.authorId === params.userId) return landed
     const { messageId } = await this.bridgeClient.sendMessage(address, {
       streamId: params.stream.id,
       author,

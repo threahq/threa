@@ -6,6 +6,7 @@ import {
   StreamTypes,
   bridgeEventsSchema,
   bridgeManifestSchema,
+  type AttachmentSafetyStatus,
   type BridgeEvents,
   type BridgeManifest,
   type JSONContent,
@@ -588,7 +589,7 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
     async function partnerUpload(
       world: World,
       uploadedBy: string,
-      options: { safetyStatus?: string; boundTo?: { messageId: string; streamId: string } } = {}
+      options: { safetyStatus?: AttachmentSafetyStatus; boundTo?: { messageId: string; streamId: string } } = {}
     ) {
       const id = attachmentId()
       await AttachmentRepository.insert(pool, {
@@ -599,7 +600,7 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
         mimeType: "text/plain",
         sizeBytes: 12,
         storagePath: `${world.partner.id}/${id}/notes.txt`,
-        safetyStatus: (options.safetyStatus ?? "clean") as never,
+        safetyStatus: options.safetyStatus ?? "clean",
       })
       if (options.boundTo) {
         const { messageId: boundId, streamId: boundStream } = options.boundTo
@@ -675,6 +676,22 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
         ],
         copy: { contentJson: withFile(file, " attached"), attachments: [[file]] },
       })
+    })
+
+    test("should return the copy's message without asking the host again when the partner retries a send whose file the pull bound", async () => {
+      const world = await seedWorld()
+      const file = await partnerUpload(world, world.pat.id)
+      const send = {
+        ...asPat(world),
+        clientMessageId: "client-file-retry",
+        contentJson: withFile(file, " attached"),
+        attachmentIds: [file],
+      }
+      const first = await forwardVia(world.bridge).sendMessage(send)
+
+      const retried = await forwardVia(world.bridge).sendMessage(send)
+
+      expect({ retried: retried.id, sent: world.bridge.sent.length }).toEqual({ retried: first.id, sent: 1 })
     })
 
     test("should bind the partner's original to the copy when the partner sends a file it is still scanning", async () => {
