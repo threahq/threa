@@ -379,6 +379,132 @@ describe("Copying a shared channel's files", () => {
     })
   })
 
+  describe("the partner's attachment route", () => {
+    async function partnerFile(world: World, bytes: Buffer) {
+      const id = attachmentId()
+      const storagePath = `${world.partner.id}/${id}/notes.txt`
+      await storage.putObject(storagePath, bytes, "text/plain")
+      await AttachmentRepository.insert(pool, {
+        id,
+        workspaceId: world.partner.id,
+        uploadedBy: world.partner.adminId,
+        filename: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: bytes.length,
+        storagePath,
+        safetyStatus: AttachmentSafetyStatuses.CLEAN,
+      })
+      return { id, storagePath }
+    }
+
+    /** A host message the partner has pulled, with a partner file bound to its copy. */
+    async function fileOnCopiedMessage(world: World, bytes: Buffer) {
+      const message = await sendWithFiles(world, world.channel.id, [])
+      await world.pull()
+      const copy = await StreamConnectionRepository.findById(pool, world.partner.id, world.connectionId)
+      const file = await partnerFile(world, bytes)
+      await AttachmentRepository.attachToMessage(pool, world.partner.id, [file.id], message.id, copy!.streamId)
+      return file
+    }
+
+    const partnerAddress = (world: World) => ({
+      workspaceId: world.partner.id,
+      connectionId: world.connectionId,
+      callerWorkspaceId: world.host.id,
+    })
+
+    async function statusOf(world: World, id: string, address = partnerAddress(world)) {
+      return exporter.getAttachment({ ...address, attachmentId: id }).then(
+        () => "answered",
+        (error: { status?: number }) => error.status
+      )
+    }
+
+    test("should answer ready with a url that serves the bytes when a partner member's file is on a message in the copy", async () => {
+      const world = await seedWorld()
+      const file = await fileOnCopiedMessage(world, Buffer.from("partner bytes"))
+
+      const answer = await exporter.getAttachment({ ...partnerAddress(world), attachmentId: file.id })
+
+      expect({
+        status: answer.status,
+        body: answer.status === "ready" ? await (await fetch(answer.url)).text() : null,
+      }).toEqual({ status: "ready", body: "partner bytes" })
+    })
+
+    test("should answer 404 when the partner's file is not on a message yet", async () => {
+      const world = await seedWorld()
+      await world.pull()
+      const file = await partnerFile(world, Buffer.from("x"))
+
+      expect(await statusOf(world, file.id)).toBe(404)
+    })
+
+    test("should answer 404 when the partner's file is on a message outside the copy", async () => {
+      const world = await seedWorld()
+      await world.pull()
+      const own = await seedChannel(world.partner.id, world.partner.adminId, "own")
+      const file = await partnerFile(world, Buffer.from("x"))
+      await eventService.createMessage({
+        workspaceId: world.partner.id,
+        streamId: own.id,
+        authorId: world.partner.adminId,
+        authorType: AuthorTypes.USER,
+        ...testMessageContent("partner only"),
+        attachmentIds: [file.id],
+      })
+
+      expect(await statusOf(world, file.id)).toBe(404)
+    })
+
+    test("should answer 404 when the caller is not the connection's host", async () => {
+      const world = await seedWorld()
+      const file = await fileOnCopiedMessage(world, Buffer.from("x"))
+
+      expect(await statusOf(world, file.id, { ...partnerAddress(world), callerWorkspaceId: workspaceId() })).toBe(404)
+    })
+
+    test("should copy a partner member's file into the host's storage when the host's copy job runs", async () => {
+      const world = await seedWorld()
+      const file = await fileOnCopiedMessage(world, Buffer.from("partner bytes"))
+      const hostPath = `${world.host.id}/${file.id}/notes.txt`
+      await AttachmentRepository.insert(pool, {
+        id: file.id,
+        workspaceId: world.host.id,
+        uploadedBy: world.partner.adminId,
+        filename: "notes.txt",
+        mimeType: "text/plain",
+        sizeBytes: "partner bytes".length,
+        storagePath: hostPath,
+        safetyStatus: AttachmentSafetyStatuses.PENDING_UPLOAD,
+      })
+      await AttachmentUploadRepository.insert(pool, {
+        id: attachmentUploadId(),
+        workspaceId: world.host.id,
+        attachmentId: file.id,
+        uploadedBy: world.partner.adminId,
+        expectedSizeBytes: "partner bytes".length,
+      })
+
+      await createStreamConnectionCopyAttachmentWorker({
+        pool,
+        bridgeClient: world.bridgeClient,
+        attachmentService,
+        storage,
+      })({
+        id: `scfile_${world.host.id}_${file.id}`,
+        name: "stream_connection.copy_attachment",
+        data: { workspaceId: world.host.id, connectionId: world.connectionId, attachmentId: file.id },
+      })
+
+      const row = await AttachmentRepository.findById(pool, world.host.id, file.id)
+      expect({ copied: await objectAt(hostPath), safetyStatus: row?.safetyStatus }).toEqual({
+        copied: "partner bytes",
+        safetyStatus: "clean",
+      })
+    })
+  })
+
   describe("the partner's copy job", () => {
     test("should copy the bytes to the partner path, settle the row, drop the upload row and emit the status, when the host file is clean", async () => {
       const world = await seedWorld()
@@ -430,7 +556,7 @@ describe("Copying a shared channel's files", () => {
       await sendWithFiles(world, world.channel.id, [file.id])
       await world.pull()
 
-      await expect(world.runJob(file.id)).rejects.toThrow(`Host has not finished attachment ${file.id}`)
+      await expect(world.runJob(file.id)).rejects.toThrow(`The other side has not finished attachment ${file.id}`)
 
       expect({
         copied: await objectAt(`${world.partner.id}/${file.id}/notes.txt`),
@@ -535,7 +661,7 @@ describe("Copying a shared channel's files", () => {
       await sendWithFiles(world, world.channel.id, [file.id])
       await world.pull()
 
-      await expect(world.runJob(file.id)).rejects.toThrow("Host file is 4 bytes, not the 8 its message declares")
+      await expect(world.runJob(file.id)).rejects.toThrow("Remote file is 4 bytes, not the 8 its message declares")
 
       expect({
         copied: await objectAt(`${world.partner.id}/${file.id}/notes.txt`),

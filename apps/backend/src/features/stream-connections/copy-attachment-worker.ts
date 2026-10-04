@@ -9,7 +9,7 @@ import type { BridgeClient } from "./bridge-client"
 import { StreamConnectionRepository } from "./repository"
 
 const DOWNLOAD_TIMEOUT_FLOOR_MS = 60_000
-/** ~256 KB/s. A host transfer slower than this counts as stalled, so a large file gets a proportionally longer budget. */
+/** ~256 KB/s. A transfer slower than this counts as stalled, so a large file gets a proportionally longer budget. */
 const MIN_DOWNLOAD_BYTES_PER_MS = 256
 
 interface Dependencies {
@@ -20,10 +20,11 @@ interface Dependencies {
 }
 
 /**
- * Copies one host file into the partner's own storage. The bridge call and the
- * download run outside any transaction (INV-41); the row settles in a short one
- * afterwards. A host that has not finished with the file yet fails the job so
- * the queue retries it.
+ * Copies one file the other side of a connection holds into this region's own
+ * storage: a host's file into the partner's copy, or a partner member's file
+ * into the host's channel. The bridge call and the download run outside any
+ * transaction (INV-41); the row settles in a short one afterwards. A file the
+ * other side has not finished with yet fails the job so the queue retries it.
  */
 export function createStreamConnectionCopyAttachmentWorker(
   deps: Dependencies
@@ -36,12 +37,8 @@ export function createStreamConnectionCopyAttachmentWorker(
       return
     }
     const connection = await StreamConnectionRepository.findById(deps.pool, workspaceId, connectionId)
-    if (
-      connection?.role !== "partner" ||
-      connection.state !== StreamConnectionStates.ACTIVE ||
-      !connection.remoteWorkspaceId
-    ) {
-      logger.info({ ...job.data }, "Gave up a shared channel file copy: the connection is not an active partner")
+    if (connection?.state !== StreamConnectionStates.ACTIVE || !connection.remoteWorkspaceId) {
+      logger.info({ ...job.data }, "Gave up a shared channel file copy: the connection is not active")
       await deps.attachmentService.settleCopy(workspaceId, attachmentId, "failed")
       return
     }
@@ -60,7 +57,7 @@ export function createStreamConnectionCopyAttachmentWorker(
     )
     switch (answer.status) {
       case "pending":
-        throw new Error(`Host has not finished attachment ${attachmentId}`)
+        throw new Error(`The other side has not finished attachment ${attachmentId}`)
       case "blocked":
         await deps.attachmentService.settleCopy(workspaceId, attachmentId, "quarantined")
         return
@@ -86,12 +83,12 @@ export function createStreamConnectionCopyAttachmentOnDLQ(deps: {
   }
 }
 
-/** Reads the body, holding no more than the size the host's message declares and refusing any other length. */
+/** Reads the body, holding no more than the size the message declares and refusing any other length. */
 async function download(url: string, sizeBytes: number): Promise<Buffer> {
   const timeoutMs = DOWNLOAD_TIMEOUT_FLOOR_MS + Math.ceil(sizeBytes / MIN_DOWNLOAD_BYTES_PER_MS)
   const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
-  if (!res.ok) throw new Error(`Host storage answered ${res.status}`)
-  const tooLarge = new Error(`Host file is larger than the ${sizeBytes} bytes its message declares`)
+  if (!res.ok) throw new Error(`Remote storage answered ${res.status}`)
+  const tooLarge = new Error(`Remote file is larger than the ${sizeBytes} bytes its message declares`)
   if (Number(res.headers.get("content-length") ?? 0) > sizeBytes) throw tooLarge
   const body = res.body as unknown as AsyncIterable<Uint8Array> | null
   const chunks: Uint8Array[] = []
@@ -102,6 +99,6 @@ async function download(url: string, sizeBytes: number): Promise<Buffer> {
     chunks.push(chunk)
   }
   if (received !== sizeBytes)
-    throw new Error(`Host file is ${received} bytes, not the ${sizeBytes} its message declares`)
+    throw new Error(`Remote file is ${received} bytes, not the ${sizeBytes} its message declares`)
   return Buffer.concat(chunks)
 }
