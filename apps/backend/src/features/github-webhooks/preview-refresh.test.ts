@@ -70,6 +70,21 @@ afterEach(() => {
   mock.restore()
 })
 
+describe("queue ids", () => {
+  test("the same preview id in two workspaces yields two ids per id kind", () => {
+    expect({
+      trailing: [githubPreviewRefreshQueueId("ws_1", "lp_a", 3, 1), githubPreviewRefreshQueueId("ws_2", "lp_a", 3, 1)],
+      retry: [
+        githubPreviewRefreshRetryQueueId("ws_1", "lp_a", 3, "c1", 2),
+        githubPreviewRefreshRetryQueueId("ws_2", "lp_a", 3, "c1", 2),
+      ],
+    }).toEqual({
+      trailing: ["queue_ghprev_ws_1_lp_a_v3_h1", "queue_ghprev_ws_2_lp_a_v3_h1"],
+      retry: ["queue_ghprev_retry_ws_1_lp_a_v3_c1_2", "queue_ghprev_retry_ws_2_lp_a_v3_c1_2"],
+    })
+  })
+})
+
 describe("refreshGithubPreviewWithTrailing — debounce coalescing", () => {
   test("a debounced refresh schedules exactly one trailing job keyed on (previewId, version)", async () => {
     const fetchedAt = new Date(Date.now() - 2_000) // 2s ago → inside the 10s window
@@ -91,7 +106,7 @@ describe("refreshGithubPreviewWithTrailing — debounce coalescing", () => {
     expect(queueName).toBe("github_preview.refresh")
     // Webhook-side sender → bare hop-0 id so a storm coalesces.
     expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, hop: 0 })
-    expect(options!.messageId).toBe(githubPreviewRefreshQueueId(PREVIEW_ID, 2))
+    expect(options!.messageId).toBe(githubPreviewRefreshQueueId(WORKSPACE_ID, PREVIEW_ID, 2))
     // processAfter is past the remaining debounce window.
     expect(options!.processAfter!.getTime()).toBeGreaterThan(fetchedAt.getTime() + 10_000)
   })
@@ -110,7 +125,7 @@ describe("refreshGithubPreviewWithTrailing — debounce coalescing", () => {
     }
 
     const messageIds = new Set(jobQueue.send.mock.calls.map((call) => call[2]!.messageId))
-    expect(messageIds).toEqual(new Set([githubPreviewRefreshQueueId(PREVIEW_ID, 9)]))
+    expect(messageIds).toEqual(new Set([githubPreviewRefreshQueueId(WORKSPACE_ID, PREVIEW_ID, 9)]))
   })
 
   test("trailing worker that lands after the window refreshes the row, no reschedule", async () => {
@@ -163,9 +178,9 @@ describe("refreshGithubPreviewWithTrailing — debounce coalescing", () => {
     expect(jobQueue.send).toHaveBeenCalledTimes(1)
     const [, data, options] = jobQueue.send.mock.calls[0]!
     expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, hop: 1 })
-    expect(options!.messageId).toBe(githubPreviewRefreshQueueId(PREVIEW_ID, 11, 1))
+    expect(options!.messageId).toBe(githubPreviewRefreshQueueId(WORKSPACE_ID, PREVIEW_ID, 11, 1))
     // The rescheduled id differs from the bare id this job itself would have claimed.
-    expect(options!.messageId).not.toBe(githubPreviewRefreshQueueId(PREVIEW_ID, 11))
+    expect(options!.messageId).not.toBe(githubPreviewRefreshQueueId(WORKSPACE_ID, PREVIEW_ID, 11))
   })
 
   test("a trailing job at hop N reschedules at hop N+1 at the same version", async () => {
@@ -188,7 +203,7 @@ describe("refreshGithubPreviewWithTrailing — debounce coalescing", () => {
 
     const [, data, options] = jobQueue.send.mock.calls[0]!
     expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, hop: 3 })
-    expect(options!.messageId).toBe(githubPreviewRefreshQueueId(PREVIEW_ID, 11, 3))
+    expect(options!.messageId).toBe(githubPreviewRefreshQueueId(WORKSPACE_ID, PREVIEW_ID, 11, 3))
   })
 
   test("the hop chain stops once it passes the cap", async () => {
@@ -241,7 +256,7 @@ describe("refreshGithubPreviewWithTrailing — compare-and-set conflict", () => 
     const [queueName, data, options] = jobQueue.send.mock.calls[0]!
     expect(queueName).toBe("github_preview.refresh")
     expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, hop: 0 })
-    expect(options!.messageId).toBe(githubPreviewRefreshQueueId(PREVIEW_ID, 5))
+    expect(options!.messageId).toBe(githubPreviewRefreshQueueId(WORKSPACE_ID, PREVIEW_ID, 5))
   })
 })
 
@@ -273,7 +288,7 @@ describe("refreshGithubPreviewWithTrailing — transient fetch failure retries",
     expect(retryData).toMatchObject({ workspaceId: WORKSPACE_ID, previewId: PREVIEW_ID, attempt: 1 })
     expect(retryData.retryCycleId).toEqual(expect.any(String))
     expect(options!.messageId).toBe(
-      githubPreviewRefreshRetryQueueId(PREVIEW_ID, OUTAGE_VERSION, retryData.retryCycleId, 1)
+      githubPreviewRefreshRetryQueueId(WORKSPACE_ID, PREVIEW_ID, OUTAGE_VERSION, retryData.retryCycleId, 1)
     )
     // ~30s backoff.
     expect(options!.processAfter!.getTime()).toBeGreaterThan(Date.now() + 20_000)
@@ -294,7 +309,9 @@ describe("refreshGithubPreviewWithTrailing — transient fetch failure retries",
       attempt: 2,
       retryCycleId: "cycle-1",
     })
-    expect(options!.messageId).toBe(githubPreviewRefreshRetryQueueId(PREVIEW_ID, OUTAGE_VERSION, "cycle-1", 2))
+    expect(options!.messageId).toBe(
+      githubPreviewRefreshRetryQueueId(WORKSPACE_ID, PREVIEW_ID, OUTAGE_VERSION, "cycle-1", 2)
+    )
   })
 
   test("two outage cycles at the same version produce distinct retry ids", async () => {
@@ -313,8 +330,8 @@ describe("refreshGithubPreviewWithTrailing — transient fetch failure retries",
     const secondId = second.jobQueue.send.mock.calls[0]![2]!.messageId
 
     expect(firstId).not.toBe(secondId)
-    expect(firstId).toBe(githubPreviewRefreshRetryQueueId(PREVIEW_ID, OUTAGE_VERSION, "cycle-old", 1))
-    expect(secondId).toBe(githubPreviewRefreshRetryQueueId(PREVIEW_ID, OUTAGE_VERSION, "cycle-new", 1))
+    expect(firstId).toBe(githubPreviewRefreshRetryQueueId(WORKSPACE_ID, PREVIEW_ID, OUTAGE_VERSION, "cycle-old", 1))
+    expect(secondId).toBe(githubPreviewRefreshRetryQueueId(WORKSPACE_ID, PREVIEW_ID, OUTAGE_VERSION, "cycle-new", 1))
   })
 
   test("stops retrying after the third attempt, no further job", async () => {

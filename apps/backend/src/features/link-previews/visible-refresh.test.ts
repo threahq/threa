@@ -71,9 +71,20 @@ describe("visibleRefreshQueueId", () => {
     const sameWindow = t0 + VISIBLE_REFRESH_DEBOUNCE_MS - 1
     const nextWindow = t0 + VISIBLE_REFRESH_DEBOUNCE_MS
 
-    expect(visibleRefreshQueueId("lp_a", t0)).toBe(visibleRefreshQueueId("lp_a", sameWindow))
-    expect(visibleRefreshQueueId("lp_a", t0)).not.toBe(visibleRefreshQueueId("lp_a", nextWindow))
-    expect(visibleRefreshQueueId("lp_a", t0)).not.toBe(visibleRefreshQueueId("lp_b", t0))
+    expect(visibleRefreshQueueId(WORKSPACE_ID, "lp_a", t0)).toBe(
+      visibleRefreshQueueId(WORKSPACE_ID, "lp_a", sameWindow)
+    )
+    expect(visibleRefreshQueueId(WORKSPACE_ID, "lp_a", t0)).not.toBe(
+      visibleRefreshQueueId(WORKSPACE_ID, "lp_a", nextWindow)
+    )
+    expect(visibleRefreshQueueId(WORKSPACE_ID, "lp_a", t0)).not.toBe(visibleRefreshQueueId(WORKSPACE_ID, "lp_b", t0))
+  })
+
+  test("the same preview id in two workspaces yields two ids", () => {
+    expect([visibleRefreshQueueId("ws_1", "lp_a", 0), visibleRefreshQueueId("ws_2", "lp_a", 0)]).toEqual([
+      "queue_lpviz_ws_1_lp_a_b0",
+      "queue_lpviz_ws_2_lp_a_b0",
+    ])
   })
 })
 
@@ -90,7 +101,7 @@ describe("enqueueVisiblePreviewRefreshes", () => {
     ]
     expect(queueName).toBe(JobQueues.LINK_PREVIEW_VISIBLE_REFRESH)
     expect(data).toEqual({ workspaceId: WORKSPACE_ID, previewId: "lp_a" })
-    expect(options.messageId.startsWith("queue_lpviz_lp_a_b")).toBe(true)
+    expect(options.messageId).toMatch(/^queue_lpviz_ws_1_lp_a_b\d+$/)
   })
 
   test("a failing send (dedupe collision) is swallowed and other ids still enqueue", async () => {

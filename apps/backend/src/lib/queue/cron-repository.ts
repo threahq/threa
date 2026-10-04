@@ -186,6 +186,7 @@ export const CronRepository = {
   async findSchedulesNeedingTicks(db: Querier, params: FindSchedulesNeedingTicksParams): Promise<CronSchedule[]> {
     const lookaheadInterval = `${params.lookaheadSeconds} seconds`
     const result = await db.query<CronScheduleRow>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- cron sweep across every workspace; system schedules have no workspace
       sql`
         SELECT
           id, queue_name, interval_seconds, payload, workspace_id,
@@ -248,6 +249,7 @@ export const CronRepository = {
 
     if (updateCases.length > 0) {
       await db.query(
+        // eslint-disable-next-line threa/workspace-scoped-sql -- cron row ids are minted by cron and never copied across workspaces
         `UPDATE cron_schedules
         SET next_tick_needed_at = CASE ${updateCases.join(" ")} END,
             updated_at = NOW()
@@ -262,6 +264,7 @@ export const CronRepository = {
   /** FOR UPDATE SKIP LOCKED ensures only one worker leases each tick. */
   async batchLeaseTicks(db: Querier, params: BatchLeaseTicksParams): Promise<CronTick[]> {
     const result = await db.query<CronTickRow>(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- cron sweep across every workspace; system schedules have no workspace
       sql`
         WITH available_ticks AS (
           SELECT
@@ -300,6 +303,7 @@ export const CronRepository = {
   /** Verifies leasedBy so a worker only deletes a tick it still owns. */
   async deleteTick(db: Querier, params: DeleteTickParams): Promise<void> {
     const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- cron row ids are minted by cron and never copied across workspaces
       sql`
         DELETE FROM cron_ticks
         WHERE id = ${params.tickId}
@@ -314,6 +318,7 @@ export const CronRepository = {
 
   async deleteExpiredTicks(db: Querier, params: DeleteExpiredTicksParams): Promise<number> {
     const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- cron sweep across every workspace; system schedules have no workspace
       sql`
         DELETE FROM cron_ticks
         WHERE leased_until IS NOT NULL
@@ -327,6 +332,7 @@ export const CronRepository = {
   /** Deletes ticks whose schedule no longer exists. */
   async deleteOrphanedTicks(db: Querier): Promise<number> {
     const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- cron sweep across every workspace; system schedules have no workspace
       sql`
         DELETE FROM cron_ticks
         WHERE schedule_id NOT IN (SELECT id FROM cron_schedules)
@@ -334,93 +340,6 @@ export const CronRepository = {
     )
 
     return result.rowCount ?? 0
-  },
-
-  async disableSchedule(db: Querier, scheduleId: string): Promise<void> {
-    const result = await db.query(
-      sql`
-        UPDATE cron_schedules
-        SET enabled = false, updated_at = NOW()
-        WHERE id = ${scheduleId}
-      `
-    )
-
-    if ((result.rowCount ?? 0) === 0) {
-      throw new Error(`Failed to disable schedule ${scheduleId}: not found`)
-    }
-  },
-
-  /** Sets next_tick_needed_at to NOW so a tick regenerates immediately. */
-  async enableSchedule(db: Querier, scheduleId: string): Promise<void> {
-    const result = await db.query(
-      sql`
-        UPDATE cron_schedules
-        SET
-          enabled = true,
-          next_tick_needed_at = NOW(),
-          updated_at = NOW()
-        WHERE id = ${scheduleId}
-      `
-    )
-
-    if ((result.rowCount ?? 0) === 0) {
-      throw new Error(`Failed to enable schedule ${scheduleId}: not found`)
-    }
-  },
-
-  async deleteSchedule(db: Querier, scheduleId: string): Promise<void> {
-    // Delete pending ticks first (not currently executing)
-    await db.query(
-      sql`
-        DELETE FROM cron_ticks
-        WHERE schedule_id = ${scheduleId}
-          AND leased_until IS NULL
-      `
-    )
-
-    const result = await db.query(
-      sql`
-        DELETE FROM cron_schedules
-        WHERE id = ${scheduleId}
-      `
-    )
-
-    if ((result.rowCount ?? 0) === 0) {
-      throw new Error(`Failed to delete schedule ${scheduleId}: not found`)
-    }
-  },
-
-  /** Sets next_tick_needed_at to NOW so the next tick uses the new interval. */
-  async updateScheduleInterval(db: Querier, scheduleId: string, intervalSeconds: number): Promise<void> {
-    const result = await db.query(
-      sql`
-        UPDATE cron_schedules
-        SET
-          interval_seconds = ${intervalSeconds},
-          next_tick_needed_at = NOW(),
-          updated_at = NOW()
-        WHERE id = ${scheduleId}
-      `
-    )
-
-    if ((result.rowCount ?? 0) === 0) {
-      throw new Error(`Failed to update schedule ${scheduleId}: not found`)
-    }
-  },
-
-  /** For testing/debugging. */
-  async getScheduleById(db: Querier, id: string): Promise<CronSchedule | null> {
-    const result = await db.query<CronScheduleRow>(
-      sql`
-        SELECT
-          id, queue_name, interval_seconds, payload, workspace_id,
-          next_tick_needed_at, enabled, created_at, updated_at
-        FROM cron_schedules
-        WHERE id = ${id}
-      `
-    )
-
-    return result.rows[0] ? mapRowToSchedule(result.rows[0]) : null
   },
 
   async getScheduleByQueueAndWorkspace(
@@ -440,20 +359,5 @@ export const CronRepository = {
     )
 
     return result.rows[0] ? mapRowToSchedule(result.rows[0]) : null
-  },
-
-  /** For testing/debugging. */
-  async getTickById(db: Querier, id: string): Promise<CronTick | null> {
-    const result = await db.query<CronTickRow>(
-      sql`
-        SELECT
-          id, schedule_id, queue_name, payload, workspace_id,
-          execute_at, leased_at, leased_by, leased_until, created_at
-        FROM cron_ticks
-        WHERE id = ${id}
-      `
-    )
-
-    return result.rows[0] ? mapRowToTick(result.rows[0]) : null
   },
 }

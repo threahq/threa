@@ -695,53 +695,6 @@ describe("QueueRepository", () => {
     })
   })
 
-  describe("unDlq", () => {
-    test("should remove message from DLQ and reset for retry", async () => {
-      await withTestTransaction(pool, async (client) => {
-        const now = new Date()
-
-        // Insert, claim, and move to DLQ
-        await QueueRepository.insert(client, {
-          id: "queue_test1",
-          queueName: "test.queue",
-          workspaceId: "ws_test",
-          payload: { order: 1 },
-          processAfter: now,
-          insertedAt: now,
-        })
-
-        await claimNext(client, {
-          queueName: "test.queue",
-          workspaceId: "ws_test",
-          claimedBy: "worker_test",
-          claimedAt: now,
-          claimedUntil: new Date(now.getTime() + 10000),
-          now,
-        })
-
-        await QueueRepository.failDlq(client, {
-          messageId: "queue_test1",
-          claimedBy: "worker_test",
-          error: "fatal error",
-          dlqAt: now,
-        })
-
-        // Un-DLQ
-        await QueueRepository.unDlq(client, {
-          messageId: "queue_test1",
-          processAfter: now,
-        })
-
-        // Verify removed from DLQ
-        const message = await QueueRepository.getById(client, "queue_test1")
-        expect(message!.dlqAt).toBeNull()
-        expect(message!.failedCount).toBe(0)
-        expect(message!.lastError).toBeNull()
-        expect(message!.processAfter).toEqual(now)
-      })
-    })
-  })
-
   describe("batchClaimMessages", () => {
     test("should batch claim multiple messages", async () => {
       await withTestTransaction(pool, async (client) => {

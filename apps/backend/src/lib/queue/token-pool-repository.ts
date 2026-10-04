@@ -107,6 +107,7 @@ export const TokenPoolRepository = {
     const result =
       fairnessMode === "workspace"
         ? await db.query<QueueTokenRow>(
+            // eslint-disable-next-line threa/workspace-scoped-sql -- token leasing across every workspace, grouped and joined per (queue_name, workspace_id)
             sql`
               WITH available_pairs AS (
                 SELECT
@@ -175,6 +176,7 @@ export const TokenPoolRepository = {
             `
           )
         : await db.query<QueueTokenRow>(
+            // eslint-disable-next-line threa/workspace-scoped-sql -- token leasing across every workspace, grouped and joined per (queue_name, workspace_id)
             sql`
               WITH available_pairs AS (
                 SELECT
@@ -247,6 +249,7 @@ export const TokenPoolRepository = {
   /** Verifies leasedBy so only the holder renews; returns false if the lease was lost. */
   async renewLease(db: Querier, params: RenewLeaseParams): Promise<boolean> {
     const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- token ids are minted by the pool and never copied; leased_by pins the holder
       sql`
         UPDATE queue_tokens
         SET leased_until = ${params.leasedUntil}
@@ -261,6 +264,7 @@ export const TokenPoolRepository = {
   /** Verifies leasedBy so only the holder releases the token. */
   async deleteToken(db: Querier, params: DeleteTokenParams): Promise<void> {
     const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- token ids are minted by the pool and never copied; leased_by pins the holder
       sql`
         DELETE FROM queue_tokens
         WHERE id = ${params.tokenId}
@@ -275,6 +279,7 @@ export const TokenPoolRepository = {
 
   async deleteExpiredTokens(db: Querier, params: DeleteExpiredTokensParams): Promise<number> {
     const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- expired token sweep across every workspace
       sql`
         DELETE FROM queue_tokens
         WHERE leased_until < ${params.now}
@@ -282,18 +287,5 @@ export const TokenPoolRepository = {
     )
 
     return result.rowCount ?? 0
-  },
-
-  /** For testing/debugging. */
-  async getById(db: Querier, id: string): Promise<QueueToken | null> {
-    const result = await db.query<QueueTokenRow>(
-      sql`
-        SELECT ${SELECT_FIELDS}
-        FROM queue_tokens
-        WHERE id = ${id}
-      `
-    )
-
-    return result.rows[0] ? mapRowToToken(result.rows[0]) : null
   },
 }

@@ -38,8 +38,13 @@ export interface GithubPreviewRefreshDeps extends RefreshLinkPreviewDeps {
  * suffixed id (`_vN_h1`, …) can't pkey-dedupe against the row the trailing job
  * itself already claimed when it runs on a replica behind the scheduler's clock.
  */
-export function githubPreviewRefreshQueueId(previewId: string, refreshVersion: number, hop = 0): string {
-  const base = `queue_ghprev_${previewId}_v${refreshVersion}`
+export function githubPreviewRefreshQueueId(
+  workspaceId: string,
+  previewId: string,
+  refreshVersion: number,
+  hop = 0
+): string {
+  const base = `queue_ghprev_${workspaceId}_${previewId}_v${refreshVersion}`
   return hop > 0 ? `${base}_h${hop}` : base
 }
 
@@ -59,12 +64,13 @@ const MAX_TRAILING_HOPS = 5
  * attempt ids would collide with completed rows from the exhausted prior cycle.
  */
 export function githubPreviewRefreshRetryQueueId(
+  workspaceId: string,
   previewId: string,
   refreshVersion: number,
   retryCycleId: string,
   attempt: number
 ): string {
-  return `queue_ghprev_retry_${previewId}_v${refreshVersion}_${retryCycleId}_${attempt}`
+  return `queue_ghprev_retry_${workspaceId}_${previewId}_v${refreshVersion}_${retryCycleId}_${attempt}`
 }
 
 /**
@@ -127,7 +133,7 @@ export async function refreshGithubPreviewWithTrailing(
       )
       return
     }
-    const messageId = githubPreviewRefreshQueueId(previewId, result.refreshVersion, nextHop)
+    const messageId = githubPreviewRefreshQueueId(workspaceId, previewId, result.refreshVersion, nextHop)
 
     await deps.jobQueue.send(
       JobQueues.GITHUB_PREVIEW_REFRESH,
@@ -151,7 +157,13 @@ export async function refreshGithubPreviewWithTrailing(
   const nextAttempt = attempt + 1
   const retryCycleId = params.retryCycleId ?? Math.floor(Date.now() / FETCH_EMPTY_RETRY_CYCLE_MS).toString(36)
   const processAfter = new Date(Date.now() + FETCH_EMPTY_RETRY_DELAYS_MS[attempt]!)
-  const messageId = githubPreviewRefreshRetryQueueId(previewId, result.refreshVersion, retryCycleId, nextAttempt)
+  const messageId = githubPreviewRefreshRetryQueueId(
+    workspaceId,
+    previewId,
+    result.refreshVersion,
+    retryCycleId,
+    nextAttempt
+  )
 
   await deps.jobQueue.send(
     JobQueues.GITHUB_PREVIEW_REFRESH,
