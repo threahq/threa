@@ -8,11 +8,11 @@ import { Router } from "react-router-dom"
 import { QuickSwitcher } from "./quick-switcher"
 import { SidebarProvider } from "@/contexts/sidebar-context"
 import { SearchPanelProvider, useSearchPanel } from "@/components/search/search-panel-context"
-import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type WorkspaceBootstrap } from "@threahq/types"
+import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type GuestDmPolicy, type WorkspaceBootstrap } from "@threahq/types"
 import { createMockStream, mockStreamsList } from "@/test/fixtures"
 import { FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
 import { getAsideState, resetAsideStoreCache } from "@/stores/aside-store"
-import { mockUsers, mockUsersList } from "@/test/fixtures/users"
+import { createMockUser, mockUsers, mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
@@ -64,7 +64,7 @@ const mockWorkspaceBootstrap = {
   },
 }
 
-function createTestQueryClient() {
+function createTestQueryClient(guestDmPolicy?: GuestDmPolicy) {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -73,6 +73,7 @@ function createTestQueryClient() {
   })
   queryClient.setQueryData(workspaceKeys.bootstrap("workspace_1"), {
     viewerPermissions: [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE],
+    workspaceSettings: guestDmPolicy ? { guestDmPolicy } : undefined,
   } as WorkspaceBootstrap)
   return queryClient
 }
@@ -1139,6 +1140,43 @@ describe("QuickSwitcher Integration Tests", () => {
       await waitFor(() => {
         expect(document.querySelector('a[href="/w/workspace_1/s/draft_dm_member_3"]')).toBeInTheDocument()
       })
+    })
+  })
+
+  describe("guest DM policy", () => {
+    const guest = createMockUser({
+      id: "member_guest",
+      workosUserId: "workos_guest",
+      role: "guest",
+      slug: "alan",
+      name: "Alan",
+    })
+    const draftLink = (userId: string) => `a[href="/w/workspace_1/s/draft_dm_${userId}"]`
+
+    async function openUsersFor(policy: GuestDmPolicy | undefined) {
+      vi.spyOn(authModule, "useUser").mockReturnValue({
+        id: "workos_user_2",
+        name: "Kate",
+        slug: "kate",
+      } as unknown as ReturnType<typeof authModule.useUser>)
+      mockWorkspaceBootstrap.data.users = [...mockUsersList, guest]
+      renderWithProviders(<QuickSwitcher {...defaultProps} />, createTestQueryClient(policy))
+      await userEvent.setup().type(screen.getByLabelText("Quick switcher input"), "al")
+      await waitFor(() => {
+        expect(document.querySelector(draftLink("member_3"))).toBeInTheDocument()
+      })
+    }
+
+    it("should omit a guest from the Users group of a member when guest DMs are off", async () => {
+      await openUsersFor(undefined)
+
+      expect(document.querySelector(draftLink("member_guest"))).not.toBeInTheDocument()
+    })
+
+    it("should list a guest in the Users group of a member when guest DMs are open", async () => {
+      await openUsersFor("open")
+
+      expect(document.querySelector(draftLink("member_guest"))).toBeInTheDocument()
     })
   })
 

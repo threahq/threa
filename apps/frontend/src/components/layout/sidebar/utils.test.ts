@@ -306,6 +306,7 @@ describe("buildVirtualDmDrafts", () => {
     currentUserId: "user_self",
     workspaceUsers,
     dmPeerUserIds: [] as string[],
+    isDmOpen: () => true,
   }
 
   it("returns [] in board mode (DM drafts hidden on the board)", () => {
@@ -329,6 +330,15 @@ describe("buildVirtualDmDrafts", () => {
 
   it("returns [] when there is no current user", () => {
     expect(buildVirtualDmDrafts({ ...baseArgs, isBoardMode: false, currentUserId: null })).toEqual([])
+  })
+
+  it("should keep a draft for an open peer and drop one for a peer whose DM the guest DM policy closes", () => {
+    const drafts = buildVirtualDmDrafts({
+      ...baseArgs,
+      isBoardMode: false,
+      isDmOpen: (peerUserId) => peerUserId !== "user_pierre",
+    })
+    expect(drafts.map((d) => d.dmPeerUserId)).toEqual(["user_anna"])
   })
 
   it("should skip a copy of a host user when synthesizing drafts", () => {

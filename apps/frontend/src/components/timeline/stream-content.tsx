@@ -41,6 +41,7 @@ import { useMessageService } from "@/contexts"
 import { orderStreamEvents, useStreamEvents } from "@/stores/stream-store"
 import { getAsideState } from "@/stores/aside-store"
 import {
+  useWorkspaceDmPeers,
   useWorkspaceStreams,
   useWorkspaceStreamsSelect,
   useWorkspaceStreamMembership,
@@ -49,6 +50,8 @@ import {
 } from "@/stores/workspace-store"
 import type { CachedStreamBootstrap } from "@/sync/stream-sync"
 import { createStableSelect } from "@/lib/structural-sharing"
+import { GUEST_DM_CLOSED_REASON } from "@/lib/guest-dm-policy"
+import { useGuestDmOpen } from "@/lib/use-guest-dm-open"
 import { resolveFrontierEventId, resolveFrontierSequence } from "@/lib/read-frontier"
 import { useReadCommitQueue } from "@/sync/read-commit-queue"
 import { effectiveConversationTitle } from "@/lib/conversations/title"
@@ -706,6 +709,11 @@ export function StreamContent({
   const isThread = stream?.type === StreamTypes.THREAD
   const isSystem = stream?.type === StreamTypes.SYSTEM
   const isSharedCopy = !!stream?.originWorkspaceId
+  // The guest DM policy closes a DM and everything under it, so the peer is read off the root.
+  const dmPeers = useWorkspaceDmPeers(workspaceId)
+  const guestDmOpen = useGuestDmOpen(workspaceId)
+  const dmPeerUserId = dmPeers.find((peer) => peer.streamId === (stream?.rootStreamId ?? streamId))?.userId
+  const isGuestDmClosed = dmPeerUserId !== undefined && !guestDmOpen([dmPeerUserId])
   // Archived state is inherited down the parent chain; the shared hook walks
   // the warm workspace-stream cache and falls back to the per-stream
   // bootstrap's cold-load verdict only when a link is missing.
@@ -2383,6 +2391,8 @@ export function StreamContent({
     disabledReason = "The stream this thread belongs to has been archived. It can be read but not extended."
   } else if (stream?.disconnectedAt) {
     disabledReason = "This conversation is no longer shared with your workspace. It can be read but not extended."
+  } else if (isGuestDmClosed) {
+    disabledReason = GUEST_DM_CLOSED_REASON
   }
 
   const handleJoined = useCallback(

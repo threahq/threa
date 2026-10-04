@@ -33,8 +33,9 @@ export function buildVirtualDmDrafts(args: {
   currentUserId: string | null
   workspaceUsers: readonly VirtualDmUser[]
   dmPeerUserIds: readonly string[]
+  isDmOpen: (peerUserId: string) => boolean
 }): StreamItemData[] {
-  const { isBoardMode, workspaceId, currentUserId, workspaceUsers, dmPeerUserIds } = args
+  const { isBoardMode, workspaceId, currentUserId, workspaceUsers, dmPeerUserIds, isDmOpen } = args
   if (isBoardMode) return []
   if (workspaceUsers.length === 0 || !currentUserId) return []
 
@@ -45,6 +46,7 @@ export function buildVirtualDmDrafts(args: {
     .filter(isPickableUser)
     .filter((workspaceUser) => workspaceUser.id !== currentUserId)
     .filter((workspaceUser) => !dmPeerIds.has(workspaceUser.id))
+    .filter((workspaceUser) => isDmOpen(workspaceUser.id))
     .map(
       (workspaceUser): StreamItemData => ({
         id: createDmDraftId(workspaceUser.id),

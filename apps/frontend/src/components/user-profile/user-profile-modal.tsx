@@ -22,6 +22,7 @@ import { useAuth } from "@/auth"
 import { getAvatarUrl, resolveActiveStatus, type User } from "@threahq/types"
 import { getInitials } from "@/lib/initials"
 import { formatStatusClearLabel } from "@/lib/status"
+import { useGuestDmOpen } from "@/lib/use-guest-dm-open"
 
 /**
  * The profile Call button. A call needs a real DM stream (v1 has no message-less
@@ -115,6 +116,7 @@ export function UserProfileModal({ userId, open, onOpenChange }: UserProfileModa
   const existingDmStreamId = idbDmPeers.find((p) => p.userId === userId)?.streamId
   const messageStreamId = existingDmStreamId ?? createDmDraftId(userId)
   const messageHref = workspaceId ? `/w/${workspaceId}/s/${messageStreamId}` : undefined
+  const guestDmOpen = useGuestDmOpen(workspaceId ?? "")
 
   const callsEnabled = useFeatureFlag(workspaceId ?? "", "calls") === "on"
   const { launch: launchCall, callActive } = useCallLaunch()
@@ -189,7 +191,7 @@ export function UserProfileModal({ userId, open, onOpenChange }: UserProfileModa
             </>
           )}
 
-          {!isOwnProfile && isPickableUser(user) && messageHref && (
+          {!isOwnProfile && isPickableUser(user) && messageHref && guestDmOpen([userId]) && (
             <>
               <Separator />
               <div className="flex gap-2">

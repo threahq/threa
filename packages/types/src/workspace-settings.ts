@@ -132,6 +132,18 @@ export const DEFAULT_SUBAGENT_MODELS: string[] = SUBAGENT_MODEL_CATALOG.filter((
 export const GUEST_DM_POLICIES = { OFF: "off", ADMINS: "admins", OPEN: "open" } as const
 export type GuestDmPolicy = (typeof GUEST_DM_POLICIES)[keyof typeof GUEST_DM_POLICIES]
 
+export interface DmParty {
+  guest: boolean
+  admin: boolean
+}
+
+/** A DM with no guest party is always open; otherwise the policy decides, and `admins` needs every other party of each guest to be an admin. */
+export function isGuestDmOpen(policy: GuestDmPolicy, parties: readonly DmParty[]): boolean {
+  if (!parties.some((party) => party.guest) || policy === GUEST_DM_POLICIES.OPEN) return true
+  if (policy === GUEST_DM_POLICIES.OFF) return false
+  return parties.every((party, index) => !party.guest || parties.every((other, i) => i === index || other.admin))
+}
+
 /** Full workspace settings (wire format). */
 export interface WorkspaceSettings {
   workspaceId: string

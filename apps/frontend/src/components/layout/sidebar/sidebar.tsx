@@ -96,6 +96,7 @@ import { holdSidebarThreads, useHeldSidebarThreads } from "@/stores/sidebar-held
 import { StreamTypes, LabelableResourceTypes } from "@threahq/types"
 import { CLEAR_INBOX_STREAM_ACTION_ID, formatKeyBinding, getEffectiveKeyBinding } from "@/lib/keyboard-shortcuts"
 import { useCanManageChannels } from "@/lib/use-can-manage-channels"
+import { useGuestDmOpen } from "@/lib/use-guest-dm-open"
 
 /** Stable empty set for layouts with no Unread section (avoids a new ref each render). */
 const EMPTY_UNREAD_IDS: ReadonlySet<string> = new Set()
@@ -176,6 +177,7 @@ const SidebarBody = memo(function SidebarBody({
   const { getMentionCount, getActivityCount, unreadActivityCount } = useActivityCounts(workspaceId)
   const { openCreateChannel } = useCreateChannel()
   const canManageChannels = useCanManageChannels(workspaceId)
+  const guestDmOpen = useGuestDmOpen(workspaceId)
   const { user } = useAuth()
   const assignLabel = useAssignLabel(workspaceId)
   const unassignLabel = useUnassignLabel(workspaceId)
@@ -309,8 +311,9 @@ const SidebarBody = memo(function SidebarBody({
         currentUserId: currentUser?.id ?? null,
         workspaceUsers,
         dmPeerUserIds: idbDmPeers.map((peer) => peer.userId),
+        isDmOpen: (peerUserId) => guestDmOpen([peerUserId]),
       }),
-    [workspaceUsers, idbDmPeers, currentUser, workspaceId, isBoardPage]
+    [workspaceUsers, idbDmPeers, currentUser, workspaceId, isBoardPage, guestDmOpen]
   )
 
   const hasUserStreams = hasUserStreamsFromStreams || virtualDmStreams.length > 0

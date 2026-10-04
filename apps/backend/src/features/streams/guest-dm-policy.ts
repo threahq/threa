@@ -2,6 +2,8 @@ import {
   DEFAULT_WORKSPACE_SETTINGS,
   GUEST_DM_POLICIES,
   StreamTypes,
+  isGuestDmOpen,
+  type DmParty,
   type GuestDmPolicy,
   type WorkspaceSettings,
 } from "@threahq/types"
@@ -15,18 +17,6 @@ const GUEST_DM_POLICY_KEY = "guestDmPolicy" satisfies keyof WorkspaceSettings
 
 function isGuestDmPolicy(value: unknown): value is GuestDmPolicy {
   return (Object.values(GUEST_DM_POLICIES) as unknown[]).includes(value)
-}
-
-interface DmParty {
-  guest: boolean
-  admin: boolean
-}
-
-/** A DM with no guest party is always open; otherwise the policy decides, and `admins` needs every other party of each guest to be an admin. */
-export function isGuestDmOpen(policy: GuestDmPolicy, parties: readonly DmParty[]): boolean {
-  if (!parties.some((party) => party.guest) || policy === GUEST_DM_POLICIES.OPEN) return true
-  if (policy === GUEST_DM_POLICIES.OFF) return false
-  return parties.every((party, index) => !party.guest || parties.every((other, i) => i === index || other.admin))
 }
 
 /** Null when nobody among `userIds` is a guest or the policy is open: nothing can be closed, so no further lookups. */

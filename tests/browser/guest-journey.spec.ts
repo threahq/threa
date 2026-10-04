@@ -160,9 +160,26 @@ test.describe("Guest journey", () => {
       await expect(guestSidebar.getByRole("link", { name: `#${guestsSlug}` })).toBeVisible({ timeout: 10000 })
       await expect(guest.page.getByRole("dialog", { name: "Create a channel" })).toHaveCount(0)
 
+      await expect(async () => {
+        await guest.page.keyboard.press("Meta+k")
+        await expect(switcherTab).toBeVisible({ timeout: 2000 })
+      }).toPass({ timeout: 20000 })
+      await guest.page.keyboard.type("g6-")
+      await expect(switcher.getByRole("option", { name: new RegExp(guestsSlug) })).toBeVisible({ timeout: 10000 })
+      await expect(switcher.locator('a[href*="/s/draft_dm_"]')).toHaveCount(0)
+      await guest.page.keyboard.press("Escape")
+      await expect(switcherTab).toBeHidden()
+
       await expect(page.getByTestId("stream-timeline").getByText(message, { exact: true })).toBeVisible({
         timeout: 30000,
       })
+
+      await page.getByTestId("stream-timeline").getByRole("button", { name: guest.name }).click()
+      const profile = page.getByRole("dialog", { name: "Profile" })
+      await expect(profile.getByText(guest.name).first()).toBeVisible()
+      await expect(profile.getByRole("link", { name: "Message" })).toHaveCount(0)
+      await page.keyboard.press("Escape")
+      await expect(profile).toBeHidden()
 
       const sidebar = page.getByRole("navigation", { name: "Sidebar navigation" })
       await expect(sidebar.getByRole("link", { name: `#${guestsSlug}` }).getByLabel("Open to guests")).toBeVisible()

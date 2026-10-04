@@ -27,6 +27,8 @@ import * as openAsideModule from "@/hooks/use-open-aside"
 import { spyOnExport } from "@/test"
 import * as streamStoreModule from "@/stores/stream-store"
 import { toast } from "sonner"
+import { ApiError } from "@/api"
+import { GUEST_DM_CLOSED_REASON } from "@/lib/guest-dm-policy"
 import { MessageInput, materializePendingAttachmentReferences } from "./message-input"
 // eslint-disable-next-line no-restricted-imports -- clears the durable composer-target rows the composer reads
 import { db } from "@/db"
@@ -1278,6 +1280,20 @@ describe("MessageInput", () => {
       await userEvent.click(sendButton)
 
       expect(screen.getByText("Failed to create stream. Please try again.")).toBeInTheDocument()
+    })
+
+    it("should say the guest DM policy closed the DM when the backend refuses it", async () => {
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("Hello world")
+      mockSendMessage.mockRejectedValue(
+        new ApiError(403, "STREAM_READ_ONLY", "Stream is read-only", { reason: "guest_dm_policy" })
+      )
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      expect(screen.getByText(GUEST_DM_CLOSED_REASON)).toBeInTheDocument()
+      expect(screen.queryByText("Failed to create stream. Please try again.")).not.toBeInTheDocument()
     })
 
     it("does not restore an aborted stale send into the next stream", async () => {
