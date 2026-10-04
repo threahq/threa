@@ -70,6 +70,19 @@ describe("LinkPreviewList", () => {
     expect(screen.getByText("Preview title")).toBeInTheDocument()
   })
 
+  it("should suppress the card of a same-origin /go link, which renders as a chip", () => {
+    const goPreview: LinkPreviewSummary = {
+      ...preview,
+      id: "p_go",
+      url: `${window.location.origin}/go/settings/ai`,
+      title: "App page title",
+    }
+    renderList([goPreview, preview])
+
+    expect(screen.queryByText("App page title")).toBeNull()
+    expect(screen.getByText("Preview title")).toBeInTheDocument()
+  })
+
   it("keeps a message_link card — the inline chip is the body reference, the card is the preview below", async () => {
     vi.spyOn(linkPreviewsApi, "resolveInAppLink").mockResolvedValue({
       kind: "message",

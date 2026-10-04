@@ -10,7 +10,7 @@ import {
   parseQuoteHref,
   parseSharedMessageHref,
 } from "@threahq/prosemirror"
-import { APP_LINK_SCHEME, type ContentRange } from "@threahq/types"
+import { APP_LINK_SCHEME, parseAppLinkHref, type ContentRange } from "@threahq/types"
 import { cn } from "@/lib/utils"
 import { resolveInternalAppPath } from "@/lib/internal-url"
 import { buildConversationPanelPath } from "@/lib/stream-links"
@@ -24,7 +24,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { MemoChip } from "@/components/memo-embed/memo-chip"
 import { GifChip } from "@/components/giphy/gif-chip"
-import { AppLink } from "@/components/in-app-link/app-link"
+import { AppLink, appLinkDestinationLabel, appLinkHrefFromGoPath } from "@/components/in-app-link/app-link"
 import { AttachmentChip } from "@/components/timeline/attachment-chip"
 import { PointerMentionChip, ProcessedChildren } from "./mention-renderer"
 import { useAttachmentContext } from "./attachment-context"
@@ -348,6 +348,21 @@ function MarkdownLink({ href, title, children }: { href?: string; title?: string
   }
   if (inAppRef && inAppRef.kind === "delegation" && workspaceId) {
     return <DelegationLinkInline href={inAppRef.url} workspaceId={workspaceId} />
+  }
+
+  // A `/go/<place>` URL is an `app:` link from outside the app. Inside a
+  // workspace it opens the place directly instead of leaving the workspace for
+  // the top-level redirect route; a bare URL takes the place's name.
+  const goAppHref = internalPath ? appLinkHrefFromGoPath(internalPath) : null
+  const goDestination = goAppHref ? parseAppLinkHref(goAppHref) : null
+  if (goAppHref && goDestination && workspaceId) {
+    const label =
+      extractTextFromChildren(children) === href ? (
+        appLinkDestinationLabel(goDestination)
+      ) : (
+        <ProcessedChildren>{children}</ProcessedChildren>
+      )
+    return <AppLink href={goAppHref} label={label} />
   }
 
   if (internalPath) {
