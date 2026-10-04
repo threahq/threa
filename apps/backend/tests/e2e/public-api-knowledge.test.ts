@@ -6,7 +6,13 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
-import { AttachmentSafetyStatuses, ExtractionContentTypes, KnowledgeTypes, MemoTypes } from "@threahq/types"
+import {
+  AttachmentSafetyStatuses,
+  ExtractionContentTypes,
+  KnowledgeTypes,
+  MEMO_RECALL_OUTCOMES,
+  MemoTypes,
+} from "@threahq/types"
 import { AttachmentExtractionRepository, AttachmentRepository } from "../../src/features/attachments"
 import { MemoRepository } from "../../src/features/memos"
 import { attachmentId, extractionId, memoId } from "../../src/lib/id"
@@ -270,6 +276,25 @@ describe("Public API v1 — Knowledge Retrieval", () => {
   test("requires memos:read scope", async () => {
     const res = await apiPost(`/api/v1/workspaces/${ctx.workspaceId}/memos/search`, { query: "public" }, ctx.noScopeKey)
     expect(res.status).toBe(404)
+  })
+
+  test("serves memo recall to a memos:read key and hides it from others", async () => {
+    const res = await apiPost(
+      `/api/v1/workspaces/${ctx.workspaceId}/memos/recall`,
+      { query: `planning memo ${testRunId}` },
+      ctx.memoKey
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { data: unknown[]; outcome: (typeof MEMO_RECALL_OUTCOMES)[number] }
+    expect(Array.isArray(body.data)).toBe(true)
+    expect(MEMO_RECALL_OUTCOMES).toContain(body.outcome)
+
+    const denied = await apiPost(
+      `/api/v1/workspaces/${ctx.workspaceId}/memos/recall`,
+      { query: "public" },
+      ctx.noScopeKey
+    )
+    expect(denied.status).toBe(404)
   })
 
   test("searches accessible attachments and hides private attachment results", async () => {

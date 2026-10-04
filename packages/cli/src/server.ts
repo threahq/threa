@@ -37,7 +37,8 @@ const INSTRUCTIONS =
   "`what` accepts only its own filters. Write tools: send_message (markdown; optional conversation resume via " +
   "conversation_id or a new one via start_conversation; auto client_message_id for idempotent retries), " +
   "update_message / delete_message (only messages this key sent), and list_labels / apply_label / remove_label " +
-  "(labels are private to the key actor and found-or-created by name). Memory provenance: get_memo traces a " +
+  "(labels are private to the key actor and found-or-created by name). Memory: recall_memos returns the few " +
+  "memos relevant to a message you are about to answer (empty when nothing is), get_memo traces a " +
   "memo to its source messages. Attachments: get_attachment (metadata plus extracted text), " +
   "get_attachment_download_url (short-lived signed URL for the raw bytes). Delegations: close the loop on a " +
   "delegated task with list_delegations (the open queue; since filters availability changes) → get_delegation (inspect brief/context without claim secrets) → " +

@@ -991,6 +991,7 @@ export async function startServer(): Promise<ServerInstance> {
     searchService,
     searchQueryLogService,
     memoExplorerService,
+    preparedRecall,
     conversationService,
     boundaryExtractionService,
     userPreferencesService,

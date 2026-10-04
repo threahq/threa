@@ -137,6 +137,53 @@ test("memos list browses via a query-less memo search and renders scope + title"
   expect(abstract).toBe("  Deploy order — Regions before control plane.")
 })
 
+test("memos recall posts the message and renders recalled memos", async () => {
+  fetchSpy.mockImplementation(
+    workspaceFetch((path) =>
+      path.endsWith("/memos/recall")
+        ? jsonResponse(200, {
+            data: [
+              {
+                id: "memo_1",
+                title: "Deploy order",
+                abstract: "Regions before control plane.",
+                knowledgeType: "procedure",
+                sourceMessageIds: ["msg_1"],
+                createdAt: "2026-07-19T12:02:00.000Z",
+                score: 0.9,
+              },
+            ],
+            outcome: "recalled",
+          })
+        : undefined
+    )
+  )
+
+  const result = await run(["memos", "recall", "how", "do", "we", "deploy?"], { config: TEST_CONFIG })
+
+  expect(result.exitCode).toBe(0)
+  const recallCall = fetchSpy.mock.calls.find((c) => String(c[0]).endsWith("/memos/recall"))!
+  expect(JSON.parse(String((recallCall[1] as RequestInit).body))).toEqual({ query: "how do we deploy?" })
+  const [header, abstract] = result.stdout.split("\n")
+  expect(header).toContain("memo_1")
+  expect(header).toContain("procedure")
+  expect(header).toMatch(TS_RE)
+  expect(abstract).toBe("  Deploy order — Regions before control plane.")
+})
+
+test("memos recall tells nothing-relevant apart from recall that could not judge", async () => {
+  for (const [outcome, expected] of [
+    ["nothing_relevant", "(nothing relevant)"],
+    ["timeout", "(recall timeout; try `threa search --what memos`)"],
+  ]) {
+    fetchSpy.mockImplementation(
+      workspaceFetch((path) => (path.endsWith("/memos/recall") ? jsonResponse(200, { data: [], outcome }) : undefined))
+    )
+    const result = await run(["memos", "recall", "anything"], { config: TEST_CONFIG })
+    expect({ exitCode: result.exitCode, stdout: result.stdout.trim() }).toEqual({ exitCode: 0, stdout: expected })
+  }
+})
+
 test("attachments list browses query-less and renders filename, mime, and stream", async () => {
   fetchSpy.mockImplementation(
     workspaceFetch((path) =>

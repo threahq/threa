@@ -52,6 +52,7 @@ Read results already carry author identity, so you seldom need a second call to 
 - The query is semantic by default and optional. Pass the idea you are after even if you do not know the exact wording; leave it empty (`--what memos` with no query) to browse the most recent memos.
 - Pass `--exact` to match a literal phrase.
 - Narrow with `--stream`, `--knowledge-type`, `--memo-type`, `--tag`, `--scope`, and `--before`/`--after`.
+- When you are answering a specific message, `threa memos recall "<message>"` (tool `recall_memos`) returns only the memos a model judged relevant to it, at most 5, or `(nothing relevant)`. It runs a model per call, so recall once per message and use search to explore.
 - Follow a hit with `threa memos get <id>` (tool `get_memo`) to see the source messages it was extracted from, so you can cite or verify the origin.
 
 ## Conversation create and resume

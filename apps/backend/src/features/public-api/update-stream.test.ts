@@ -46,6 +46,7 @@ function createHandlers(streamService: StreamService) {
     searchService: {} as PublicApiDeps["searchService"],
     featureFlagService: {} as PublicApiDeps["featureFlagService"],
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
+    preparedRecall: {} as PublicApiDeps["preparedRecall"],
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService: {
       isStreamAccessibleForBot: mock(() => Promise.resolve(true)),

@@ -221,6 +221,10 @@ export function getMemo(client: ThreaApiClient, memoId: string): Promise<unknown
   return client.get(`/memos/${encodeURIComponent(memoId)}`)
 }
 
+export function recallMemos(client: ThreaApiClient, query: string): Promise<unknown> {
+  return client.post("/memos/recall", { query })
+}
+
 export function getAttachment(client: ThreaApiClient, attachmentId: string): Promise<unknown> {
   return client.get(`/attachments/${encodeURIComponent(attachmentId)}`)
 }

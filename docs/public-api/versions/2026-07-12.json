@@ -335,6 +335,115 @@
         }
       }
     },
+    "/api/v1/workspaces/{workspaceId}/memos/recall": {
+      "post": {
+        "operationId": "recallMemos",
+        "summary": "Recall memos for a message",
+        "tags": ["Memos"],
+        "description": "Find the memos a reply to this message should take into account, the same preparation Threa's own agent gets before it answers. Candidates are judged for relevance and only the ones that bear on the message come back, best first, at most five. An empty `data` with outcome `nothing_relevant` or `no_candidates` means memory holds nothing for it. `unscored`, `timeout` and `failed` mean recall could not judge, so fall back to memo search. Long messages are truncated.",
+        "security": [{ "apiKey": ["memos:read"] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/ThreaVersion" },
+          {
+            "name": "workspaceId",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "Workspace ID (prefixed ULID)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$schema": "https://json-schema.org/draft/2020-12/schema",
+                "type": "object",
+                "properties": { "query": { "type": "string", "minLength": 1 } },
+                "required": ["query"],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "title": { "type": "string" },
+                          "abstract": { "type": "string" },
+                          "knowledgeType": {
+                            "type": "string",
+                            "enum": ["decision", "learning", "procedure", "context", "reference"]
+                          },
+                          "sourceMessageIds": { "type": "array", "items": { "type": "string" } },
+                          "createdAt": { "type": "string", "format": "date-time" },
+                          "score": { "type": "number" }
+                        },
+                        "required": [
+                          "id",
+                          "title",
+                          "abstract",
+                          "knowledgeType",
+                          "sourceMessageIds",
+                          "createdAt",
+                          "score"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": ["recalled", "nothing_relevant", "no_candidates", "unscored", "timeout", "failed"]
+                    }
+                  },
+                  "required": ["data", "outcome"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$schema": "https://json-schema.org/draft/2020-12/schema",
+                  "type": "object",
+                  "properties": {
+                    "error": { "type": "string" },
+                    "code": {
+                      "description": "Machine-readable error code, e.g. INVALID_API_VERSION",
+                      "type": "string"
+                    },
+                    "details": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+                    }
+                  },
+                  "required": ["error"],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "401": { "description": "Missing or invalid API key" },
+          "403": { "description": "Insufficient permissions or inaccessible resource" }
+        }
+      }
+    },
     "/api/v1/workspaces/{workspaceId}/memos/{memoId}": {
       "get": {
         "operationId": "getMemo",

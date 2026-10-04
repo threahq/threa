@@ -26,6 +26,7 @@ import {
   KNOWLEDGE_TYPES,
   AUTHORED_BY_KINDS,
   MEMO_SCOPES,
+  MEMO_RECALL_OUTCOMES,
   PROCESSING_STATUSES,
   EXTRACTION_CONTENT_TYPES,
   THREA_CALLBACK_TOKEN_HEADER,
@@ -48,6 +49,7 @@ import {
   listMembersSchema,
   listUsersSchema,
   searchMemosSchema,
+  recallMemosSchema,
   searchAttachmentsSchema,
   findMessagesByMetadataSchema,
   upsertPresenceSchema,
@@ -458,6 +460,21 @@ const memoSearchResultSchema = z.object({
   distance: z.number(),
   sourceStream: streamRefSchema.nullable(),
   rootStream: streamRefSchema.nullable(),
+})
+
+const recalledMemoSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  abstract: z.string(),
+  knowledgeType: z.enum(KNOWLEDGE_TYPES),
+  sourceMessageIds: z.array(z.string()),
+  createdAt: z.string().datetime(),
+  score: z.number(),
+})
+
+const memoRecallSchema = z.object({
+  data: z.array(recalledMemoSchema),
+  outcome: z.enum(MEMO_RECALL_OUTCOMES),
 })
 
 const memoSourceMessageSchema = z.object({
@@ -910,6 +927,7 @@ const delegationTokenHeaderParam = {
 export type OperationId =
   | "searchMessages"
   | "searchMemos"
+  | "recallMemos"
   | "getMemo"
   | "uploadAttachment"
   | "searchAttachments"
@@ -1030,6 +1048,20 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     requestSchema: searchMemosSchema,
     requestIn: "body",
     responseSchema: dataArrayEnvelope(memoSearchResultSchema),
+  },
+  {
+    method: "post",
+    path: "/api/v1/workspaces/{workspaceId}/memos/recall",
+    operationId: "recallMemos",
+    summary: "Recall memos for a message",
+    description:
+      "Find the memos a reply to this message should take into account, the same preparation Threa's own agent gets before it answers. Candidates are judged for relevance and only the ones that bear on the message come back, best first, at most five. An empty `data` with outcome `nothing_relevant` or `no_candidates` means memory holds nothing for it. `unscored`, `timeout` and `failed` mean recall could not judge, so fall back to memo search. Long messages are truncated.",
+    tags: ["Memos"],
+    scopes: [WORKSPACE_PERMISSION_SCOPES.MEMOS_READ],
+    parameters: [workspaceIdParam],
+    requestSchema: recallMemosSchema,
+    requestIn: "body",
+    responseSchema: memoRecallSchema,
   },
   {
     method: "get",
@@ -1977,6 +2009,7 @@ export {
   botSchema,
   principalSchema,
   memoSearchResultSchema,
+  memoRecallSchema,
   memoDetailSchema,
   attachmentSearchResultSchema,
   attachmentUploadSchema,
@@ -2003,6 +2036,7 @@ export type WireUser = z.infer<typeof userSchema>
 export type WireBot = z.infer<typeof botSchema>
 export type WirePrincipal = z.infer<typeof principalSchema>
 export type WireMemoSearchResult = z.infer<typeof memoSearchResultSchema>
+export type WireMemoRecall = z.infer<typeof memoRecallSchema>
 export type WireMemoDetail = z.infer<typeof memoDetailSchema>
 export type WireAttachmentSearchResult = z.infer<typeof attachmentSearchResultSchema>
 export type WireAttachmentUpload = z.infer<typeof attachmentUploadSchema>

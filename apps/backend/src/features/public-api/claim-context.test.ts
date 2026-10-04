@@ -129,6 +129,7 @@ function arrangeClaim(params: { stream: Stream | null; surrounding?: Message[]; 
     searchService: {} as PublicApiDeps["searchService"],
     featureFlagService: {} as PublicApiDeps["featureFlagService"],
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
+    preparedRecall: {} as PublicApiDeps["preparedRecall"],
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService,
     botRuntimeService,

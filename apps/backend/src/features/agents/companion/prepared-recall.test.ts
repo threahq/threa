@@ -22,6 +22,7 @@ function result(id: string, title: string): MemoExplorerResult {
 const params = {
   workspaceId: "ws_1",
   invokingUserId: "usr_1",
+  surface: "companion" as const,
   query: "What should I bring to the picnic?",
   accessibleStreamIds: new Set(["stream_pad"]),
   memoViewerUserId: "usr_1",
@@ -50,13 +51,15 @@ describe("PreparedRecall", () => {
       scorer: { score: async () => [0.1, 1, 0.66] },
     })
 
-    const recalled = await recall.recall(params)
+    const { outcome, memos: recalled } = await recall.recall(params)
 
     expect({
+      outcome,
       ids: recalled.map((memo) => memo.id),
       permissions: search.mock.calls[0]?.[0].permissions,
       events: captureEvent.mock.calls,
     }).toEqual({
+      outcome: "recalled",
       ids: ["memo_allergy", "memo_diet"],
       permissions: { accessibleStreamIds: ["stream_pad"], userId: "usr_1" },
       events: [
@@ -65,6 +68,7 @@ describe("PreparedRecall", () => {
             distinctId: "workspace:ws_1",
             event: PREPARED_RECALL_EVENT,
             properties: {
+              surface: "companion",
               outcome: "recalled",
               candidateCount: 3,
               recalledCount: 2,
@@ -87,7 +91,7 @@ describe("PreparedRecall", () => {
     })
 
     expect({ recalled: await recall.recall(params), outcomes: outcomes(captureEvent) }).toEqual({
-      recalled: [],
+      recalled: { outcome: "unscored", memos: [] },
       outcomes: ["unscored"],
     })
   })
@@ -115,8 +119,8 @@ describe("PreparedRecall", () => {
       failing: await failing.recall(params),
       outcomes: outcomes(captureEvent),
     }).toEqual({
-      stalled: [],
-      failing: [],
+      stalled: { outcome: "timeout", memos: [] },
+      failing: { outcome: "failed", memos: [] },
       outcomes: ["timeout", "failed"],
     })
   })
@@ -143,7 +147,7 @@ describe("formatRecalledMemosBlock", () => {
       scorer: { score: async () => [1] },
     })
 
-    const block = formatRecalledMemosBlock(await recall.recall(params))
+    const block = formatRecalledMemosBlock((await recall.recall(params)).memos)
 
     expect({ block, empty: formatRecalledMemosBlock([]) }).toEqual({
       block: expect.stringContaining(

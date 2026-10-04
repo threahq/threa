@@ -110,7 +110,7 @@ import type { SyncService } from "./features/sync"
 import type { SavedMessagesService } from "./features/saved-messages"
 import type { SavedSuggestionsService } from "./features/saved-suggestions"
 import type { ScheduledMessagesService } from "./features/scheduled-messages"
-import type { AgentFollowUpService, PersonaConfigService } from "./features/agents"
+import type { AgentFollowUpService, PersonaConfigService, PreparedRecall } from "./features/agents"
 import { createDelegationHandlers, type DelegationService } from "./features/delegations"
 import { createSubagentHandlers, type SubagentService } from "./features/subagents"
 import { createAgentOutcomeHandlers, createAgentOutcomeService } from "./features/agent-outcomes"
@@ -164,6 +164,7 @@ interface Dependencies {
   searchService: SearchService
   searchQueryLogService: SearchQueryLogService
   memoExplorerService: MemoExplorerService
+  preparedRecall: PreparedRecall
   conversationService: ConversationService
   boundaryExtractionService: BoundaryExtractionService
   userPreferencesService: UserPreferencesService
@@ -243,6 +244,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     searchService,
     searchQueryLogService,
     memoExplorerService,
+    preparedRecall,
     conversationService,
     boundaryExtractionService,
     userPreferencesService,
@@ -2174,6 +2176,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     searchService,
     featureFlagService,
     memoExplorerService,
+    preparedRecall,
     attachmentService,
     botChannelService,
     botRuntimeService,
@@ -2209,6 +2212,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const publicHandlers: Record<OperationId, RequestHandler | RequestHandler[]> = {
     searchMessages: publicApi.searchMessages,
     searchMemos: publicApi.searchMemos,
+    recallMemos: publicApi.recallMemos,
     getMemo: publicApi.getMemo,
     uploadAttachment: [rateLimits.upload, upload, publicApi.uploadAttachment],
     searchAttachments: publicApi.searchAttachments,
@@ -2278,7 +2282,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   // POST-shaped reads: same §11 decision as the session search routes — a
   // breach query filtered by access_kind='read' must not miss external-caller
   // searches, nor should 'write' queries be polluted with them.
-  const publicApiReadPosts = new Set(["searchMessages", "searchMemos", "searchAttachments", "findMessagesByMetadata"])
+  const publicApiReadPosts = new Set([
+    "searchMessages",
+    "searchMemos",
+    "recallMemos",
+    "searchAttachments",
+    "findMessagesByMetadata",
+  ])
 
   for (const route of PUBLIC_API_ROUTES) {
     const handler = publicHandlers[route.operationId]

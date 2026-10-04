@@ -160,6 +160,8 @@ export {
   type AuthoredByKind,
   AuthoredByKinds,
   MEMO_SCOPES,
+  MEMO_RECALL_OUTCOMES,
+  type MemoRecallOutcome,
   type MemoScope,
   MemoScopes,
   PENDING_ITEM_TYPES,

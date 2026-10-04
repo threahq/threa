@@ -57,6 +57,11 @@ curl -X POST -H "Authorization: Bearer $THREA_API_KEY" \
   -d '{"query":"why did we pause the auth refactor"}'
 ```
 
+When you are answering a specific message, `POST /memos/recall` with that
+message as `query` returns only the memos a model judged relevant to it (at
+most 5), or none. It costs a model call, so use it once per message and keep
+`memos/search` for exploring.
+
 ## Writing
 
 Message `content` is markdown. Always set `clientMessageId` on scripted sends —
