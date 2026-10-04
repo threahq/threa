@@ -47,7 +47,7 @@ describe("buildTurnDigestPromptBlock", () => {
         digestRow({ findings: "Oldest finding.", sessionCompletedAt: new Date("2026-06-10T08:00:00.000Z") }),
       ],
       new Set<string>()
-    )
+    ).text
 
     expect(block).toContain("## Prior Tool Work (Turn Digests)")
     expect(block!.indexOf("Oldest finding.")).toBeLessThan(block!.indexOf("Newest finding."))
@@ -55,20 +55,23 @@ describe("buildTurnDigestPromptBlock", () => {
   })
 
   it("drops a digest whose workspace source streams fell out of the current access set", () => {
-    const block = buildTurnDigestPromptBlock(
+    const { text: block, sourceStreamIds } = buildTurnDigestPromptBlock(
       [
-        digestRow({ findings: "Still accessible.", sourceStreamIds: ["stream_ok"] }),
+        digestRow({ findings: "Still accessible.", sourceStreamIds: ["stream_ok", "stream_also_ok"] }),
+        digestRow({ findings: "Also accessible.", sourceStreamIds: ["stream_ok"] }),
         digestRow({ findings: "Now private.", sourceStreamIds: ["stream_ok", "stream_revoked"] }),
       ],
-      new Set(["stream_ok"])
+      new Set(["stream_ok", "stream_also_ok"])
     )
 
     expect(block).toContain("Still accessible.")
+    expect(block).toContain("Also accessible.")
     expect(block).not.toContain("Now private.")
+    expect(sourceStreamIds.sort()).toEqual(["stream_also_ok", "stream_ok"])
   })
 
   it("injects only workspace-free digests on bot turns (no invoking user → no workspace access)", () => {
-    const block = buildTurnDigestPromptBlock(
+    const { text: block, sourceStreamIds } = buildTurnDigestPromptBlock(
       [
         digestRow({ findings: "Web-only digest." }),
         digestRow({ findings: "Workspace-derived digest.", sourceStreamIds: ["stream_x"] }),
@@ -78,11 +81,15 @@ describe("buildTurnDigestPromptBlock", () => {
 
     expect(block).toContain("Web-only digest.")
     expect(block).not.toContain("Workspace-derived digest.")
+    expect(sourceStreamIds).toEqual([])
   })
 
   it("skips malformed digest content and returns null when nothing survives", () => {
-    expect(buildTurnDigestPromptBlock([digestRow({ findings: "unused", content: "not json" })], new Set())).toBeNull()
-    expect(buildTurnDigestPromptBlock([], new Set())).toBeNull()
+    const empty = { text: null, sourceStreamIds: [] }
+    expect(buildTurnDigestPromptBlock([digestRow({ findings: "unused", content: "not json" })], new Set())).toEqual(
+      empty
+    )
+    expect(buildTurnDigestPromptBlock([], new Set())).toEqual(empty)
   })
 
   it("falls back to the session's created time when completion time is missing", () => {
@@ -95,7 +102,7 @@ describe("buildTurnDigestPromptBlock", () => {
         }),
       ],
       new Set()
-    )
+    ).text
     expect(block).toContain("Turn completed 2026-06-09T07:00:00.000Z")
   })
 })

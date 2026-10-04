@@ -7,6 +7,12 @@ import {
 import type { Querier } from "../../../db"
 import { AgentSessionRepository, type RecentDigestStep } from "../session-repository"
 
+export interface CarriedPromptBlock {
+  text: string | null
+  /** Streams the kept entries drew from — what a memo written this turn may have inherited. */
+  sourceStreamIds: string[]
+}
+
 /**
  * Build the "Prior Tool Work" system-context block for a companion turn from
  * the stream's recent completed sessions' `turn_digest` steps (C-1).
@@ -24,7 +30,7 @@ import { AgentSessionRepository, type RecentDigestStep } from "../session-reposi
 export function buildTurnDigestPromptBlock(
   rows: RecentDigestStep[],
   accessibleStreamIds: Set<string> | null
-): string | null {
+): CarriedPromptBlock {
   const entries: TurnDigestPromptEntry[] = []
   // Rows arrive newest-session-first; the prompt reads oldest-first.
   for (const row of [...rows].reverse()) {
@@ -37,14 +43,17 @@ export function buildTurnDigestPromptBlock(
       digest,
     })
   }
-  return formatTurnDigestsForPrompt(entries)
+  return {
+    text: formatTurnDigestsForPrompt(entries),
+    sourceStreamIds: [...new Set(entries.flatMap((entry) => entry.digest.sourceStreamIds))],
+  }
 }
 
 /** Fetch + filter + format in one call — the context build's single entry point. */
 export async function loadTurnDigestPromptBlock(
   db: Querier,
   params: { workspaceId: string; streamId: string; personaId: string; accessibleStreamIds: Set<string> | null }
-): Promise<string | null> {
+): Promise<CarriedPromptBlock> {
   const rows = await AgentSessionRepository.findRecentDigestStepsByStream(db, params.workspaceId, {
     streamId: params.streamId,
     personaId: params.personaId,

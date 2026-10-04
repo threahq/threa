@@ -393,6 +393,7 @@ export interface PersonaAgentDeps {
     streamId: string
     sessionId: string | null
     sourceStreamIds: string[]
+    provenanceStreamIds: string[]
     title: string
     abstract: string
     keyPoints: string[]
@@ -1386,6 +1387,11 @@ export class PersonaAgent {
         // the producing stream, so it can't be widened by citing a message in a
         // broader stream the user also happens to see.
         const saveMemoStreamIds = Array.from(new Set([session.streamId, resolveBriefStreamId(stream)]))
+
+        // Collects the turn's completed tool calls (content + sources) so a
+        // turn_digest step can carry the tool work into later turns (C-1).
+        const digestCollector = new TurnDigestCollector()
+
         const saveMemoDeps: import("./tools/tool-deps").SaveMemoToolDeps | undefined = saveMemo
           ? {
               saveMemo: (params) =>
@@ -1395,6 +1401,15 @@ export class PersonaAgent {
                   streamId: session.streamId,
                   sessionId: session.id,
                   sourceStreamIds: saveMemoStreamIds,
+                  // Read at call time: the collector fills as the turn's tools complete.
+                  provenanceStreamIds: [
+                    ...new Set([
+                      ...agentContext.carriedSourceStreamIds,
+                      ...digestCollector.records
+                        .flatMap((r) => r.sources)
+                        .flatMap((s) => (s.streamId ? [s.streamId] : [])),
+                    ]),
+                  ],
                   // The human the agent serves owns a `user`-scoped save (roadmap 6.4).
                   invokingUserId: agentContext.invokingUserId,
                   ...params,
@@ -1532,10 +1547,6 @@ export class PersonaAgent {
 
         const model = ai.getLanguageModel(turnModel.model)
         const parsed = ai.parseModel(turnModel.model)
-
-        // Collects the turn's completed tool calls (content + sources) so a
-        // turn_digest step can carry the tool work into later turns (C-1).
-        const digestCollector = new TurnDigestCollector()
 
         // Split at its cache boundary: the stable half is what the prompt-cache
         // breakpoint covers (tool definitions ride the same span), the volatile

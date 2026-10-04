@@ -3,18 +3,25 @@ import { AgentSessionRepository, type RecentEpisodeSummary } from "../session-re
 import { EPISODE_SUMMARY_INJECT_COUNT } from "./config"
 import { buildEpisodeSummaryPromptBlock, loadEpisodeSummaryPromptBlock } from "./episode-summaries"
 
-function row(summary: string, createdAt: string, completedAt: string | null): RecentEpisodeSummary {
+function row(
+  summary: string,
+  createdAt: string,
+  completedAt: string | null,
+  digestSourceStreamIds: string[] = []
+): RecentEpisodeSummary {
   return {
     summary,
     sessionCreatedAt: new Date(createdAt),
     sessionCompletedAt: completedAt ? new Date(completedAt) : null,
-    turnDigests: [],
+    turnDigests: [
+      JSON.stringify({ findings: "f", toolsCalled: [], sources: [], sourceStreamIds: digestSourceStreamIds }),
+    ],
   }
 }
 
 describe("buildEpisodeSummaryPromptBlock", () => {
-  it("returns null when there are no summaries", () => {
-    expect(buildEpisodeSummaryPromptBlock([], null)).toBeNull()
+  it("returns no text and no source streams when there are no summaries", () => {
+    expect(buildEpisodeSummaryPromptBlock([], null)).toEqual({ text: null, sourceStreamIds: [] })
   })
 
   it("renders newest-first rows oldest-first under a Previous sessions header", () => {
@@ -27,8 +34,8 @@ describe("buildEpisodeSummaryPromptBlock", () => {
       null
     )
 
-    expect(block).not.toBeNull()
-    const text = block as string
+    expect(block.text).not.toBeNull()
+    const text = block.text as string
     expect(text).toContain("## Previous sessions")
     expect(text.indexOf("Older: scoped the CSV export.")).toBeLessThan(
       text.indexOf("Newer: finalized the export format.")
@@ -38,8 +45,24 @@ describe("buildEpisodeSummaryPromptBlock", () => {
   })
 
   it("falls back to the created time when a session has no completion time", () => {
-    const block = buildEpisodeSummaryPromptBlock([row("A summary.", "2026-06-10T09:00:00.000Z", null)], null)
-    expect(block).toContain("[2026-06-10T09:00:00.000Z]")
+    const { text } = buildEpisodeSummaryPromptBlock([row("A summary.", "2026-06-10T09:00:00.000Z", null)], null)
+    expect(text).toContain("[2026-06-10T09:00:00.000Z]")
+  })
+
+  it("should drop a summary and its source streams when one of its streams left the access set", () => {
+    const { text, sourceStreamIds } = buildEpisodeSummaryPromptBlock(
+      [
+        row("Revoked: read the private channel.", "2026-06-11T09:00:00.000Z", null, ["stream_ok", "stream_revoked"]),
+        row("Kept: read two channels.", "2026-06-10T09:00:00.000Z", null, ["stream_ok", "stream_also_ok"]),
+        row("Kept: read one channel.", "2026-06-09T09:00:00.000Z", null, ["stream_ok"]),
+      ],
+      new Set(["stream_ok", "stream_also_ok"])
+    )
+
+    expect(text).toContain("Kept: read two channels.")
+    expect(text).toContain("Kept: read one channel.")
+    expect(text).not.toContain("Revoked")
+    expect(sourceStreamIds.sort()).toEqual(["stream_also_ok", "stream_ok"])
   })
 })
 

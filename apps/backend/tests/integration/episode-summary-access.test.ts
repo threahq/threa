@@ -71,7 +71,7 @@ describe("episode summaries: source stream access", () => {
     accessibleStreamIds: Set<string> | null
   ): Promise<string[]> {
     const block = await loadEpisodeSummaryPromptBlock(pool, { ...ids, accessibleStreamIds })
-    return (block ?? "")
+    return (block.text ?? "")
       .split("\n")
       .filter((line) => line.startsWith("- ["))
       .map((line) => line.replace(/^- \[[^\]]+\] /, ""))

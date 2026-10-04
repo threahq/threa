@@ -139,6 +139,8 @@ export interface AgentContext {
   streamBrief: StreamBrief | null
   /** Memos prepared recall put in front of the model this turn. */
   recalledMemos: RecalledMemo[]
+  /** Source streams of the prior-session digests and summaries injected into the prompt. */
+  carriedSourceStreamIds: string[]
 }
 
 async function resolveScratchpadCustomPrompt(
@@ -313,7 +315,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   // concluded*, so "as we discussed last week" survives the window scrolling
   // past. Single pooled read (INV-30); the in-flight session has no summary yet
   // so it's excluded by construction.
-  const previousSessionsBlock = await loadEpisodeSummaryPromptBlock(db, {
+  const previousSessions = await loadEpisodeSummaryPromptBlock(db, {
     workspaceId,
     streamId: stream.id,
     personaId: persona.id,
@@ -537,14 +539,15 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   // fresh episode — the prior session's cursor fell outside this window — must
   // not carry that episode's digest chain. Bounded surfaces always carry
   // (`policy.carryDigests` is true for them).
-  const turnDigestBlock = policy.carryDigests
+  const turnDigests = policy.carryDigests
     ? await loadTurnDigestPromptBlock(db, {
         workspaceId,
         streamId: stream.id,
         personaId: persona.id,
         accessibleStreamIds,
       })
-    : null
+    : { text: null, sourceStreamIds: [] }
+  const carriedSourceStreamIds = [...new Set([...previousSessions.sourceStreamIds, ...turnDigests.sourceStreamIds])]
 
   // Render the stitched discussion once author names are fully resolved. Null
   // when there's nothing to stitch (no spawning conversation, or a deep thread
@@ -569,7 +572,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       spawnedFromContext,
       followUp,
       subagentBrief,
-      previousSessions: previousSessionsBlock,
+      previousSessions: previousSessions.text,
       // Only when the tool that can act on them is actually in this turn's
       // toolset. Elsewhere these values are tokens the model can neither use
       // nor was asked about — and `composeSystemPrompt` receives the built
@@ -585,7 +588,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     })
     // Prior-turn digests and recalled memos are re-derived each turn, so they
     // belong outside the cached span alongside temporal grounding.
-    const volatileTail = [turnDigestBlock, recalledMemosBlock].filter((block) => block !== null)
+    const volatileTail = [turnDigests.text, recalledMemosBlock].filter((block) => block !== null)
     return volatileTail.length > 0
       ? { ...systemPrompt, volatile: [systemPrompt.volatile, ...volatileTail].join("\n\n") }
       : systemPrompt
@@ -608,5 +611,6 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     roomShared,
     streamBrief,
     recalledMemos,
+    carriedSourceStreamIds,
   }
 }

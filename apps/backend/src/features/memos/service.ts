@@ -185,6 +185,12 @@ export interface SaveMemoParams {
    * `participant_ids` when it fails the scope.
    */
   sourceStreamIds: string[]
+  /**
+   * Streams whose content reached the model this turn beyond the turn's own
+   * family. Stored on the memo with the family so a reader needs access to all
+   * of them; a superset only narrows the audience, a subset leaks.
+   */
+  provenanceStreamIds: string[]
   title: string
   abstract: string
   keyPoints: string[]
@@ -1162,6 +1168,7 @@ export class MemoService implements MemoServiceLike {
       streamId,
       sessionId,
       sourceStreamIds,
+      provenanceStreamIds,
       title,
       abstract,
       keyPoints,
@@ -1295,6 +1302,7 @@ export class MemoService implements MemoServiceLike {
         status: MemoStatuses.ACTIVE,
         authoredByKind: AuthoredByKinds.AGENT,
         sourceSessionId: sessionId ?? undefined,
+        sourceStreamIds: [...provenanceStreamIds, ...sourceStreamIds],
         scope: resolvedScope,
         scopeUserId: resolvedScopeUserId,
       })
@@ -1540,6 +1548,7 @@ export class MemoService implements MemoServiceLike {
           status: MemoStatuses.ACTIVE,
           authoredByKind: AuthoredByKinds.AGENT,
           sourceSessionId: sessionId,
+          sourceStreamIds: [...citedStreamIds, streamId, context.memoScope.rootStreamId],
           scope: context.memoScope.scope,
           scopeUserId: context.memoScope.scopeUserId,
         })

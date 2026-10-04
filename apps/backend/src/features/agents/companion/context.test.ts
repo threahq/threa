@@ -8,6 +8,8 @@ import { buildAgentContext } from "./context"
 import type { PreparedRecallParams } from "./prepared-recall"
 import type { Persona } from "../persona-repository"
 import { PersonaAttachmentRepository } from "../persona-attachment-repository"
+import { AgentSessionRepository } from "../session-repository"
+import { SearchRepository } from "../../search"
 import { joinSystemPrompt } from "./prompt/system-prompt"
 import * as contextBuilder from "../context-builder"
 
@@ -194,6 +196,76 @@ describe("buildAgentContext prepared recall", () => {
       volatile: expect.stringMatching(/## Recalled from memory[\s\S]*<memo id="memo_allergy"/),
       recalled: ["memo_allergy"],
     })
+  })
+})
+
+describe("buildAgentContext carried source streams", () => {
+  afterEach(() => mock.restore())
+
+  it("should report the source streams of the summaries, and of the digests only, when the policy carries digests", async () => {
+    spyOn(MessageRepository, "findById").mockResolvedValue({
+      id: "msg_1",
+      streamId: "stream_pad",
+      authorType: "user",
+      authorId: "usr_1",
+      contentMarkdown: "Continue",
+      contentJson: { type: "doc", content: [] },
+      createdAt: new Date("2026-10-01T10:00:00Z"),
+      reactions: {},
+    } as never)
+    spyOn(UserRepository, "findById").mockResolvedValue({ name: "Alice Ek", timezone: "Europe/Stockholm" } as never)
+    spyOn(SearchRepository, "getAccessibleStreamsForAgent").mockResolvedValue([
+      "stream_pad",
+      "stream_summary",
+      "stream_digest",
+    ])
+    const digestContent = (sourceStreamIds: string[]) =>
+      JSON.stringify({ findings: "f", toolsCalled: [], sources: [], sourceStreamIds })
+    spyOn(AgentSessionRepository, "findRecentEpisodeSummariesByStream").mockResolvedValue([
+      {
+        summary: "Read the summary stream.",
+        sessionCreatedAt: new Date("2026-10-01T09:00:00Z"),
+        sessionCompletedAt: null,
+        turnDigests: [digestContent(["stream_summary"])],
+      },
+      {
+        summary: "Read a stream the viewer lost.",
+        sessionCreatedAt: new Date("2026-10-01T08:00:00Z"),
+        sessionCompletedAt: null,
+        turnDigests: [digestContent(["stream_revoked"])],
+      },
+    ])
+    spyOn(AgentSessionRepository, "findRecentDigestStepsByStream").mockResolvedValue([
+      {
+        step: { content: digestContent(["stream_digest"]) } as never,
+        sessionCreatedAt: new Date("2026-10-01T09:00:00Z"),
+        sessionCompletedAt: null,
+      },
+    ])
+
+    const build = (carryDigests: boolean) =>
+      buildAgentContext(deps, {
+        workspaceId: "ws_1",
+        streamId: "stream_pad",
+        stream: {
+          id: "stream_pad",
+          workspaceId: "ws_1",
+          type: StreamTypes.SCRATCHPAD,
+          rootStreamId: null,
+          parentStreamId: null,
+          displayName: "Pad",
+          createdBy: "usr_1",
+        } as never,
+        messageId: "msg_1",
+        persona,
+        purpose: { kind: "catch_up" },
+        policy: { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests },
+      })
+
+    expect({
+      carried: (await build(true)).carriedSourceStreamIds.sort(),
+      withoutDigests: (await build(false)).carriedSourceStreamIds,
+    }).toEqual({ carried: ["stream_digest", "stream_summary"], withoutDigests: ["stream_summary"] })
   })
 })
 

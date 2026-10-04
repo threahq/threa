@@ -718,6 +718,7 @@ const saveMemoInput = {
   streamId: STREAM_ID,
   sessionId: "agsess_1",
   sourceStreamIds: [STREAM_ID],
+  provenanceStreamIds: [] as string[],
   title: "Deploys only on Fridays after the smoke suite",
   abstract: "The team deploys only on Fridays, and only after the smoke suite passes.",
   keyPoints: ["Smoke suite gates the deploy"],
