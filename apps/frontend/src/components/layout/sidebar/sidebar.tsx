@@ -29,6 +29,7 @@ import {
   useWorkspaceUnreadState,
   useWorkspaceLabels,
   useWorkspaceLabelAssignments,
+  useWorkspaceMetadata,
 } from "@/stores/workspace-store"
 import { useCoordinatedLoading, useSidebar, usePreferencesOptional, usePanel } from "@/contexts"
 import { useCreateChannel } from "@/components/create-channel"
@@ -42,7 +43,7 @@ import { BoardLinkRow, ChatsLinkRow } from "./board-link-row"
 import { SidebarStreamList } from "./sidebar-stream-list"
 import { HeaderSkeleton, QuickLinksSkeleton, StreamListSkeleton } from "./skeletons"
 import { SidebarFooter } from "./sidebar-footer"
-import { GettingStarted, useGettingStarted } from "./getting-started"
+import { GettingStarted, hasWrittenFirstNote, useGettingStarted } from "./getting-started"
 import { SidebarEditorDialog } from "./sidebar-editor"
 import { resolveSections } from "./resolve-sections"
 import { setStreamCustomSection, setSectionFilter, setSectionOrder, setSectionReverse } from "./sidebar-config"
@@ -121,6 +122,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const workspace = useWorkspaceFromStore(workspaceId)
   const unreadState = useWorkspaceUnreadState(workspaceId)
   const workspaceUsers = useWorkspaceUsers(workspaceId)
+  const onboardingStreamId = useWorkspaceMetadata(workspaceId)?.onboardingStreamId ?? null
   const allIdbStreams = useWorkspaceStreams(workspaceId)
   // System-purpose streams (persona test scratchpads) never list in the sidebar.
   const idbStreams = useMemo(() => allIdbStreams.filter((s) => !isUtilityStream(s)), [allIdbStreams])
@@ -256,12 +258,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // System streams are auto-created infrastructure — don't count toward "has content"
   const hasUserStreamsFromStreams = processedStreams.some((s) => s.type !== StreamTypes.SYSTEM)
 
-  // Getting-started "write your first note": content in the auto-created system
-  // scratchpad, or any scratchpad the user made themselves (scratchpads only
-  // persist server-side on first send, so existence implies content).
-  const hasWrittenNote = idbStreams.some((s) =>
-    s.type === StreamTypes.SYSTEM ? s.lastMessagePreview != null : s.type === StreamTypes.SCRATCHPAD
-  )
+  const hasWrittenNote = hasWrittenFirstNote(idbStreams, onboardingStreamId)
 
   const virtualDmStreams = useMemo(
     () =>
@@ -507,6 +504,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     workspaceId,
     currentUser,
     hasWrittenNote,
+    onboardingStreamId,
     memberCount: workspaceUsers.length,
     onCreateScratchpad: handleCreateScratchpad,
   })

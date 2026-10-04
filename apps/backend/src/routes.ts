@@ -43,6 +43,7 @@ import { createSavedMessagesHandlers } from "./features/saved-messages"
 import { createSavedSuggestionsHandlers } from "./features/saved-suggestions"
 import { createScheduledMessagesHandlers } from "./features/scheduled-messages"
 import { createDraftsHandlers } from "./features/drafts"
+import { createOnboardingHandlers } from "./features/onboarding"
 import { createLabelHandlers } from "./features/labels"
 import {
   createStreamConnectionBridgeHandlers,
@@ -125,6 +126,7 @@ import { BotAccessRequestService, createBotAccessRequestHandlers } from "./featu
 import { createDecisionHandlers, type DecisionService } from "./features/decisions"
 import { createDecisionPublicApi } from "./features/public-api/decision-handlers"
 import type { DraftsService } from "./features/drafts"
+import type { OnboardingService } from "./features/onboarding"
 import type { LabelService, LabelAssignmentService, LabelMessageService } from "./features/labels"
 import type { PushService } from "./features/push"
 import { createPerfDiagnosticsHandlers, type PerfDiagnosticsService } from "./features/perf-diagnostics"
@@ -191,6 +193,7 @@ interface Dependencies {
   decisionService: DecisionService
   subagentService: SubagentService
   draftsService: DraftsService
+  onboardingService: OnboardingService
   labelService: LabelService
   labelAssignmentService: LabelAssignmentService
   labelMessageService: LabelMessageService
@@ -275,6 +278,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     decisionService,
     subagentService,
     draftsService,
+    onboardingService,
     labelService,
     labelAssignmentService,
     labelMessageService,
@@ -363,6 +367,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     avatarService,
     labelService,
     labelAssignmentService,
+    onboardingService,
     workosOrgService,
     callService,
     pool,
@@ -1694,6 +1699,15 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     drafts.resolve
   )
   app.delete("/api/workspaces/:workspaceId/drafts/:id", ...authed, audit("drafts.delete", "write"), drafts.delete)
+
+  // Onboarding — the getting-started checklist's server-owned steps.
+  const onboarding = createOnboardingHandlers({ onboardingService })
+  app.post(
+    "/api/workspaces/:workspaceId/onboarding/meet-ariadne",
+    ...authed,
+    audit("onboarding.meet_ariadne", "write"),
+    onboarding.meetAriadne
+  )
 
   const push = createPushHandlers({ pushService })
   const perfDiagnostics = createPerfDiagnosticsHandlers({ perfDiagnosticsService })

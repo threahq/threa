@@ -17,7 +17,13 @@ import {
 } from "@threahq/types"
 import type { UserPreferencesService } from "../user-preferences"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
-import { assertStreamWritable, StreamPoliciesRepository, StreamRepository, resolveBriefStreamId } from "../streams"
+import {
+  assertStreamWritable,
+  onboardingStreamUniquenessKey,
+  StreamPoliciesRepository,
+  StreamRepository,
+  resolveBriefStreamId,
+} from "../streams"
 import { MessageRepository, MessageVersionRepository } from "../messaging"
 import { UserRepository } from "../workspaces"
 import type { InjectionScreen } from "./injection-screen"
@@ -53,6 +59,7 @@ import {
   type WithSessionResult,
 } from "./companion"
 import { deriveTurnFlags, type TurnPurpose } from "./turn-purpose"
+import { ONBOARDING_GREETING_OPENER } from "./companion/prompt/turn-purpose-prompt"
 import { resolveTurnModel } from "./turn-model"
 import { resolveContextWindowPolicy } from "./context-window-policy"
 import { resolveBagForStream, persistSnapshot, appendBagToSystemPrompt, type ResolvedBag } from "./context-bag"
@@ -529,6 +536,23 @@ export class PersonaAgent {
       if (!stream) {
         return { skip: true as const, reason: "stream not found" }
       }
+      // A retry whose first attempt already posted the greeting, or a user who
+      // wrote before it ran: the greeting is only ever the stream's first word.
+      if (purpose.kind === "onboarding_greeting" && (stream.messageCount ?? 0) > 0) {
+        return { skip: true as const, reason: "onboarding stream already has messages" }
+      }
+      // The tour answers the greeting's offer, so it only rides the first few
+      // messages: greeting, reply, maybe a second line before she replies.
+      const isOnboardingTour =
+        stream.type === StreamTypes.SCRATCHPAD &&
+        (stream.messageCount ?? 0) <= 3 &&
+        (
+          await StreamRepository.findByUniquenessKey(
+            client,
+            workspaceId,
+            onboardingStreamUniquenessKey(stream.createdBy)
+          )
+        )?.id === stream.id
 
       const latestSequence = await StreamEventRepository.getLatestSequence(client, streamId)
       const triggerMessageRevision = await MessageVersionRepository.getCurrentRevision(client, messageId)
@@ -558,6 +582,7 @@ export class PersonaAgent {
         streamToolPolicy,
         rootStreamType,
         rootStreamCreatedBy,
+        isOnboardingTour,
       }
     })
 
@@ -592,6 +617,7 @@ export class PersonaAgent {
       streamToolPolicy,
       rootStreamType,
       rootStreamCreatedBy,
+      isOnboardingTour,
     } = precheck
 
     // The live subagent run this stream is the thread of, if any. One query,
@@ -651,6 +677,12 @@ export class PersonaAgent {
         skipReason: "subagent_run_not_active",
       }
     }
+
+    // Neither has a trigger message to name the user; both principals are
+    // re-checked against `assertStreamWritable` below.
+    let invokingUserOverride: string | undefined
+    if (subagentKickoffBrief) invokingUserOverride = activeSubagentRun?.createdBy
+    else if (purpose.kind === "onboarding_greeting") invokingUserOverride = input.initiatingUserId
 
     const sessionOptions = (targetStreamId: string, targetInitialSequence: bigint) => ({
       pool,
@@ -842,10 +874,7 @@ export class PersonaAgent {
             currentTime,
             followUp: followUpContext,
             subagentBrief: subagentKickoffBrief ? { title: subagentKickoffBrief.title } : undefined,
-            // A kickoff has no trigger message, so the run's `createdBy` is the
-            // invoking user — already re-checked against `assertStreamWritable`
-            // above as this turn's principal.
-            invokingUserOverride: subagentKickoffBrief ? activeSubagentRun?.createdBy : undefined,
+            invokingUserOverride,
             subagentModel: activeSubagentRun?.model,
           }
         )
@@ -977,12 +1006,14 @@ export class PersonaAgent {
 
         // The purpose as it effectively behaves this turn: a supersede rerun
         // whose target session vanished (no reusable plan), or a follow-up whose
-        // row failed to load, degrades to a plain catch-up. The purpose prompt
+        // row failed to load, degrades to a plain catch-up; any catch-up early in
+        // the user's Meet Ariadne scratchpad carries the tour. The purpose prompt
         // section and the derived runtime flags both key off this, so wording and
         // behavior match what the turn actually does.
         let effectivePurpose: TurnPurpose = purpose
         if (purpose.kind === "supersede_rerun" && !isSupersedeRerun) effectivePurpose = { kind: "catch_up" }
         else if (purpose.kind === "follow_up" && !isFollowUp) effectivePurpose = { kind: "catch_up" }
+        if (effectivePurpose.kind === "catch_up" && isOnboardingTour) effectivePurpose = { kind: "onboarding_tour" }
         const turnFlags = deriveTurnFlags(effectivePurpose)
 
         // Per-turn model resolution (roadmap 2.3), at the dispatch seam like
@@ -1528,6 +1559,24 @@ export class PersonaAgent {
           ? { stable: withBag.stable, volatile: [withBag.volatile, asideDrafts].filter(Boolean).join("\n\n") }
           : withBag
 
+        // A kickoff or greeting thread starts empty, and the provider refuses an
+        // empty history. The kickoff brief IS the relayed user request, so it
+        // opens the history as a user message — on requeue too, since the
+        // synthetic message is never persisted. The purpose section never
+        // carries the brief body (one carrier).
+        let modelHistory = agentContext.messages
+        if (subagentKickoffBrief) {
+          modelHistory = [
+            {
+              role: "user" as const,
+              content: `Hand-off brief — "${subagentKickoffBrief.title}":\n\n${subagentKickoffBrief.brief}`,
+            },
+            ...modelHistory,
+          ]
+        } else if (effectivePurpose.kind === "onboarding_greeting") {
+          modelHistory = [{ role: "user" as const, content: ONBOARDING_GREETING_OPENER }, ...modelHistory]
+        }
+
         // The turn as dispatch mints it: delivery + model binding + this
         // turn's prompt, history, toolset, and sampling params.
         const turnRequest: TurnRequest = {
@@ -1547,21 +1596,7 @@ export class PersonaAgent {
           // one dispatch, no bespoke supersede wrap at the call site (roadmap 1.5).
           systemPrompt: composedPrompt.stable,
           volatileSystemPrompt: composedPrompt.volatile,
-          // A kickoff thread starts empty, and the provider refuses an empty
-          // history. The brief IS the relayed user request, so it opens the
-          // history as a user message — on requeue too, since the synthetic
-          // message is never persisted and an earlier attempt's thread holds
-          // only what was actually said. The purpose section frames the
-          // situation but never carries the brief body (one carrier).
-          messages: subagentKickoffBrief
-            ? [
-                {
-                  role: "user" as const,
-                  content: `Hand-off brief — "${subagentKickoffBrief.title}":\n\n${subagentKickoffBrief.brief}`,
-                },
-                ...agentContext.messages,
-              ]
-            : agentContext.messages,
+          messages: modelHistory,
           initialContext,
           tools,
           // A follow-up or a kickoff answers something other than the message

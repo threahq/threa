@@ -9,6 +9,8 @@ order: 3
 
 Ariadne is the AI agent built into every Threa workspace. She is a thinking companion: she helps you explore an idea, work through a decision, and find what you or your team already said. By default her replies are short and direct.
 
+The quickest introduction is **Meet Ariadne** in the sidebar's **Getting started** checklist. It opens a scratchpad of your own where she speaks first and offers to show you how Threa can be used. Say yes and she walks you through the main places in the app. Selecting it again takes you back to the same scratchpad.
+
 ## Talking to her
 
 - **In a scratchpad with Companion on**, she reads each new message and replies in the conversation. See [Your first scratchpad](/guide/your-first-scratchpad).

@@ -6,7 +6,7 @@ export type { UpdateBriefParams, UpdateBriefResult } from "./brief-service"
 export { StreamBriefRepository } from "./brief-repository"
 export type { StreamBrief, BriefAuthorKind } from "./brief-repository"
 
-export { StreamService } from "./service"
+export { StreamService, onboardingStreamUniquenessKey } from "./service"
 export { StreamReadService } from "./read-service"
 export { resolveInboxClearMode } from "./inbox-clear-mode"
 export { releaseInboxHold } from "./inbox-release"

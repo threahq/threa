@@ -43,7 +43,7 @@ const modeConfigs: Record<Mode, ModeConfig> = {
     runner: "bun",
     cwd: path.join(rootDir, "apps/backend"),
     baseOptions: [],
-    defaultPatterns: ["src/"],
+    defaultPatterns: ["src/", "evals/"],
   },
   "backend-integration": {
     runner: "bun",

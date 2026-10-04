@@ -32,7 +32,11 @@ function makeStreamService(archivedStreams: unknown[]) {
   }
 }
 
-function makeDeps(archivedStreams: unknown[], analytics: { posthogToken: string; posthogHost: string } | null = null) {
+function makeDeps(
+  archivedStreams: unknown[],
+  analytics: { posthogToken: string; posthogHost: string } | null = null,
+  onboardingStreamId: string | null = null
+) {
   const streamService = makeStreamService(archivedStreams)
   return {
     workspaceService: {
@@ -54,6 +58,7 @@ function makeDeps(archivedStreams: unknown[], analytics: { posthogToken: string;
     avatarService: {},
     labelService: { listForActor: async () => [] },
     labelAssignmentService: { listForViewer: async () => [] },
+    onboardingService: { findMeetAriadneStreamId: async () => onboardingStreamId },
     workosOrgService: {},
     pool: {} as import("pg").Pool,
     analytics,
@@ -111,6 +116,18 @@ describe("workspace bootstrap handler", () => {
     ])
     // Active streams list stays a separate contract (empty here).
     expect(getJson().data.streams).toEqual([])
+  })
+
+  it("should report onboardingStreamId from the onboarding service when the viewer has met Ariadne", async () => {
+    spyOn(SyncLogRepository, "getHeadAndRetainedFrom").mockResolvedValue({ head: 0n, retainedFrom: 0n } as never)
+    spyOn(BotRepository, "listVisibleTo").mockResolvedValue([] as never)
+    spyOn(AgentSessionRepository, "listRunningByWorkspace").mockResolvedValue([] as never)
+
+    const handlers = createWorkspaceHandlers(makeDeps([], null, "stream_onboarding"))
+    const { req, res, getJson } = makeReqRes()
+    await handlers.bootstrap(req, res)
+
+    expect(getJson().data.onboardingStreamId).toBe("stream_onboarding")
   })
 
   it("derives unread, watermark sequences, and the streamReadState map from the effective frontier", async () => {

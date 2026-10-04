@@ -629,6 +629,23 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     expect(await db.streams.get("stream_keep")).toBeDefined()
   })
 
+  it("should persist the Meet Ariadne stream id so the checklist survives a reload", async () => {
+    await applyWorkspaceBootstrap("ws_1", makeBootstrap({ onboardingStreamId: "stream_meet" }))
+
+    expect((await db.workspaceMetadata.get("ws_1"))?.onboardingStreamId).toBe("stream_meet")
+  })
+
+  it("should keep the Meet Ariadne stream id when a snapshot fetched before the click lacks it", async () => {
+    await applyWorkspaceBootstrap("ws_1", makeBootstrap({ onboardingStreamId: "stream_meet" }))
+    await applyWorkspaceBootstrap("ws_1", makeBootstrap({ onboardingStreamId: null }))
+
+    expect((await db.workspaceMetadata.get("ws_1"))?.onboardingStreamId).toBe("stream_meet")
+    const { renderHook } = await import("@testing-library/react")
+    const { useWorkspaceMetadata } = await import("@/stores/workspace-store")
+    const { result } = renderHook(() => useWorkspaceMetadata("ws_1"))
+    expect(result.current?.onboardingStreamId).toBe("stream_meet")
+  })
+
   it("persists archived roots from bootstrap.archivedStreams and the sweep keeps them", async () => {
     const fetchStartedAt = Date.now()
     const archivedRoot = makeStream("stream_arch_root", { archivedAt: "2026-01-01T00:00:00Z" })
@@ -2982,6 +2999,60 @@ describe("registerWorkspaceSocketHandlers", () => {
 
     expect(subscribeStream).toHaveBeenCalledWith("stream_new")
     expect(await db.streamMemberships.get("ws_1:stream_new")).toBeDefined()
+
+    cleanup()
+  })
+
+  it("should mark Meet Ariadne done when the creator's onboarding scratchpad is created on another device", async () => {
+    await db.workspaceMetadata.put({
+      id: "ws_1",
+      workspaceId: "ws_1",
+      emojis: [],
+      emojiWeights: {},
+      commands: [],
+      _cachedAt: 1,
+    })
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({ users: [makeWorkspaceUser()], streams: [], streamMemberships: [], onboardingStreamId: null })
+    )
+
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream: vi.fn(),
+    })
+
+    emit("stream:created", {
+      workspaceId: "ws_1",
+      streamId: "stream_meet",
+      onboarding: true,
+      stream: {
+        id: "stream_meet",
+        workspaceId: "ws_1",
+        type: "scratchpad",
+        displayName: null,
+        slug: null,
+        description: null,
+        visibility: "private",
+        parentStreamId: null,
+        rootStreamId: null,
+        companionMode: "on",
+        companionPersonaId: "persona_system_ariadne",
+        createdBy: "member_1",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        archivedAt: null,
+      },
+    })
+
+    await Promise.resolve()
+
+    await vi.waitFor(async () =>
+      expect((await db.workspaceMetadata.get("ws_1"))?.onboardingStreamId).toBe("stream_meet")
+    )
 
     cleanup()
   })

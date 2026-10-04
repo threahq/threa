@@ -136,6 +136,7 @@ export {
   delegationId,
   subagentRunId,
   subagentKickoffId,
+  onboardingGreetingId,
   botAccessRequestId,
   decisionRequestId,
   agentConfigOverrideId,

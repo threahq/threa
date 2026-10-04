@@ -980,6 +980,8 @@ export interface CachedWorkspaceMetadata {
    * before the field shipped — absent reads as all defaults.
    */
   featureFlags?: FeatureFlagLayers
+  /** The user's Meet Ariadne scratchpad; set means the checklist item is done. Absent on rows cached before it shipped. */
+  onboardingStreamId?: string | null
   /**
    * Commands surfaced in the slash-command menu. `kind` defaults to "server"
    * for backwards compatibility with older cached rows; "client-action" items
@@ -1664,6 +1666,10 @@ export class ThreaDatabase extends Dexie {
     this.version(50).stores({
       streamConnections: "[workspaceId+id], [workspaceId+streamId]",
     })
+
+    // v51: workspaceMetadata gains optional `onboardingStreamId`, unindexed, no
+    // schema delta (see v40).
+    this.version(51).stores({})
 
     this.workspaceUsers = this.table(WORKSPACE_USERS_STORE) as EntityTable<CachedWorkspaceUser, "id">
 

@@ -27,6 +27,12 @@ export type TurnPurpose =
   // trigger message exists (`messageId` is synthetic), so without this kind the
   // turn would run as a context-less catch-up in an empty stream.
   | { kind: "subagent_kickoff"; subagentRunId: string }
+  // First turn of the "Meet Ariadne" scratchpad: no user message exists, so the
+  // persona speaks first. The invoking user is the job's `triggeredBy`.
+  | { kind: "onboarding_greeting" }
+  // A companion catch-up in that scratchpad. Derived at dispatch, never from
+  // the payload: the stream, not the job, makes it the onboarding conversation.
+  | { kind: "onboarding_tour" }
 
 export type TurnPurposeKind = TurnPurpose["kind"]
 
@@ -36,7 +42,7 @@ export type TurnPurposeKind = TurnPurpose["kind"]
  * decode), so the union is derived here rather than carried on the job.
  *
  * Precedence matches how the enqueue sites are wired — the fields never co-occur,
- * so any order that keeps the four kinds distinct is equivalent; this one reads
+ * so any order that keeps the kinds distinct is equivalent; this one reads
  * most-specific first.
  */
 export function resolveTurnPurpose(payload: {
@@ -46,11 +52,16 @@ export function resolveTurnPurpose(payload: {
   followUpId?: string
   personaDraftId?: string
   subagentRunId?: string
+  onboardingGreeting?: boolean
 }): TurnPurpose {
   // Highest precedence: a kickoff job carries no other purpose field, and its
   // synthetic messageId would otherwise decode as a plain catch-up.
   if (payload.subagentRunId) {
     return { kind: "subagent_kickoff", subagentRunId: payload.subagentRunId }
+  }
+  // Same shape as the kickoff: synthetic messageId, no other purpose field.
+  if (payload.onboardingGreeting) {
+    return { kind: "onboarding_greeting" }
   }
   if (payload.followUpId) {
     return { kind: "follow_up", followUpId: payload.followUpId }

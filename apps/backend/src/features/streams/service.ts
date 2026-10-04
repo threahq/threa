@@ -100,6 +100,14 @@ import { publishThreadUpdated } from "./thread-updated"
 
 const DM_UNIQUENESS_KEY_PREFIX = "dm"
 
+/**
+ * `uniqueness_key` of a user's "Meet Ariadne" scratchpad. One per user per
+ * workspace; its existence is the checklist item's done signal.
+ */
+export function onboardingStreamUniquenessKey(userId: string): string {
+  return `onboarding:meet-ariadne:${userId}`
+}
+
 const createScratchpadParamsSchema = z.object({
   workspaceId: z.string(),
   displayName: z.string().optional(),
@@ -113,6 +121,10 @@ const createScratchpadParamsSchema = z.object({
   purpose: streamPurposeSchema.optional(),
   /** Client draft id the scratchpad is promoted from; keys the idempotent create. */
   draftId: z.string().optional(),
+  /** Explicit idempotency key for server-minted scratchpads; mutually exclusive with `draftId`. */
+  uniquenessKey: z.string().optional(),
+  /** Marks the user's Meet Ariadne scratchpad on `stream:created`, so the creator's other devices tick the checklist. */
+  onboarding: z.literal(true).optional(),
 })
 
 /**
@@ -621,6 +633,18 @@ export class StreamService {
   }
 
   async createScratchpadInTransaction(db: Querier, params: CreateScratchpadParams): Promise<Stream> {
+    return (await this.createOrFindScratchpadInTransaction(db, params)).stream
+  }
+
+  /**
+   * Like {@link createScratchpadInTransaction}, but reports whether this call
+   * minted the stream, so a caller can tie side effects (a greeting job) to the
+   * one winning create. `created: false` only happens for keyed creates.
+   */
+  async createOrFindScratchpadInTransaction(
+    db: Querier,
+    params: CreateScratchpadParams
+  ): Promise<{ stream: Stream; created: boolean }> {
     const id = streamId()
 
     const normalizedDescription = normalizeStreamDescription({ description: params.description })
@@ -651,21 +675,26 @@ export class StreamService {
       createdBy: params.createdBy,
     }
 
-    // A promotion from a client draft is idempotent per (owner, draft id): a
-    // retried or concurrently duplicated create finds the scratchpad the first
-    // one minted instead of minting another. Same primitive as DM find-or-create.
-    const { stream, created } = params.draftId
-      ? await StreamRepository.insertOrFindByUniquenessKey(db, {
-          ...insertParams,
-          uniquenessKey: draftStreamUniquenessKey(params.createdBy, params.draftId),
-        })
+    if (params.draftId && params.uniquenessKey) {
+      throw new Error("A scratchpad is keyed by a draft id or a uniqueness key, not both")
+    }
+    const uniquenessKey = params.draftId
+      ? draftStreamUniquenessKey(params.createdBy, params.draftId)
+      : params.uniquenessKey
+
+    // A keyed create (a promotion from a client draft, a once-per-user
+    // onboarding scratchpad) is idempotent: a retried or concurrently duplicated
+    // create finds the scratchpad the first one minted instead of minting
+    // another. Same primitive as DM find-or-create.
+    const { stream, created } = uniquenessKey
+      ? await StreamRepository.insertOrFindByUniquenessKey(db, { ...insertParams, uniquenessKey })
       : { stream: await StreamRepository.insert(db, insertParams), created: true }
 
     if (!created) {
       if (stream.type !== StreamTypes.SCRATCHPAD) {
-        throw new Error(`Draft ${params.draftId} is already promoted to non-scratchpad stream ${stream.id}`)
+        throw new Error(`Uniqueness key ${uniquenessKey} is already used by non-scratchpad stream ${stream.id}`)
       }
-      return stream
+      return { stream, created }
     }
 
     await StreamMemberRepository.insert(db, id, params.createdBy)
@@ -712,6 +741,7 @@ export class StreamService {
       workspaceId: params.workspaceId,
       streamId: stream.id,
       stream,
+      ...(params.onboarding && { onboarding: true }),
     })
 
     // Announce a description set at creation as a timeline row (after
@@ -721,7 +751,7 @@ export class StreamService {
       await this.emitDescriptionSet(db, stream, params.descriptionActor.id, params.descriptionActor.type)
     }
 
-    return stream
+    return { stream, created }
   }
 
   /**

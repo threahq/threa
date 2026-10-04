@@ -1,11 +1,13 @@
 import { useCallback } from "react"
-import { useSearchParams } from "react-router-dom"
-import { Bell, Camera, Check, PenLine, UserPlus, X } from "lucide-react"
+import { useNavigate, useSearchParams } from "react-router-dom"
+import { toast } from "sonner"
+import { Bell, Camera, Check, PenLine, Sparkles, UserPlus, X } from "lucide-react"
 import { useSettings, useSidebar, usePreferencesOptional } from "@/contexts"
 import { usePushNotifications } from "@/hooks/use-push-notifications"
+import { useMeetAriadne } from "@/hooks/use-meet-ariadne"
 import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { cn } from "@/lib/utils"
-import { WORKSPACE_ROLE_SLUGS, type User } from "@threahq/types"
+import { StreamTypes, WORKSPACE_ROLE_SLUGS, type Stream, type User } from "@threahq/types"
 
 interface GettingStartedTask {
   id: string
@@ -17,11 +19,29 @@ interface GettingStartedTask {
   onSelect: () => void
 }
 
+/**
+ * "Write your first note": content in the auto-created system scratchpad, or
+ * any scratchpad the user made themselves (scratchpads only persist server-side
+ * on first send, so existence implies content). The Meet Ariadne scratchpad is
+ * server-created on click, so it is excluded — meeting Ariadne isn't a note.
+ */
+export function hasWrittenFirstNote(
+  streams: Array<Pick<Stream, "id" | "type"> & { lastMessagePreview?: unknown }>,
+  onboardingStreamId: string | null
+): boolean {
+  return streams.some((s) => {
+    if (s.id === onboardingStreamId) return false
+    return s.type === StreamTypes.SYSTEM ? s.lastMessagePreview != null : s.type === StreamTypes.SCRATCHPAD
+  })
+}
+
 export interface UseGettingStartedOptions {
   workspaceId: string
   currentUser: User | null
   /** True once the user has put content in a scratchpad (system note or own scratchpad). */
   hasWrittenNote: boolean
+  /** The viewer's Meet Ariadne scratchpad (server state, synced across devices); its existence completes that task. */
+  onboardingStreamId: string | null
   /** Workspace member count — the invite task completes once anyone else is in. */
   memberCount: number
   onCreateScratchpad: () => void | Promise<void>
@@ -51,6 +71,7 @@ export function useGettingStarted({
   workspaceId,
   currentUser,
   hasWrittenNote,
+  onboardingStreamId,
   memberCount,
   onCreateScratchpad,
 }: UseGettingStartedOptions): GettingStartedState {
@@ -58,6 +79,7 @@ export function useGettingStarted({
   const { openSettings } = useSettings()
   const { collapseOnMobile } = useSidebar()
   const [, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
   // Mounting the hook here also gives the app a persistent auto-resubscribe
   // surface — previously it only ran while the notifications settings tab
   // was open.
@@ -67,6 +89,19 @@ export function useGettingStarted({
     collapseOnMobile()
     openSettings("profile")
   }, [collapseOnMobile, openSettings])
+
+  const startMeetAriadne = useMeetAriadne(workspaceId)
+  const meetAriadne = useCallback(async () => {
+    let streamId: string
+    try {
+      streamId = await startMeetAriadne()
+    } catch {
+      toast.error("Couldn't start the conversation with Ariadne")
+      return
+    }
+    collapseOnMobile()
+    navigate(`/w/${workspaceId}/s/${streamId}`)
+  }, [workspaceId, startMeetAriadne, collapseOnMobile, navigate])
 
   const openInvites = useCallback(() => {
     collapseOnMobile()
@@ -119,6 +154,14 @@ export function useGettingStarted({
       icon: PenLine,
       done: hasWrittenNote,
       onSelect: () => void onCreateScratchpad(),
+    })
+
+    tasks.push({
+      id: "meet-ariadne",
+      label: "Meet Ariadne",
+      icon: Sparkles,
+      done: onboardingStreamId != null,
+      onSelect: () => void meetAriadne(),
     })
 
     const canInvite = currentUser.role === WORKSPACE_ROLE_SLUGS.OWNER || currentUser.role === WORKSPACE_ROLE_SLUGS.ADMIN

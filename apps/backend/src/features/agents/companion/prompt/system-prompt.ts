@@ -3,6 +3,7 @@ import {
   APP_LINK_PAGES,
   APP_LINK_SETTINGS_TABS,
   APP_LINK_WORKSPACE_SETTINGS_TABS,
+  AgentToolNames,
   type DeviceContext,
   type UserPreferences,
 } from "@threahq/types"
@@ -338,7 +339,13 @@ Safety rules:
   // follow-up-triggered turn — i.e. every turn in a channel or DM, where
   // invocation is always a mention — which is exactly the cross-turn cache
   // miss this split exists to remove.
-  volatile += buildEarlyPurposeSection(purpose, { context, mentionerName, followUp, subagentBrief })
+  volatile += buildEarlyPurposeSection(purpose, {
+    context,
+    mentionerName,
+    followUp,
+    subagentBrief,
+    guideAvailable: tools.some((tool) => tool.name === AgentToolNames.THREA_GUIDE),
+  })
 
   // Both are derived per turn, not per conversation: the topic is resolved from
   // this turn's trigger message and window, and the rolling summary is rebuilt

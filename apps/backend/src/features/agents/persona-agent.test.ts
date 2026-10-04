@@ -4,7 +4,12 @@ import * as dbModule from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { HttpError } from "../../lib/errors"
 import { MessageRepository, MessageVersionRepository } from "../messaging"
-import { StreamPoliciesRepository, StreamRepository, StreamEventRepository } from "../streams"
+import {
+  StreamPoliciesRepository,
+  StreamRepository,
+  StreamEventRepository,
+  onboardingStreamUniquenessKey,
+} from "../streams"
 import { SearchRepository } from "../search"
 import { PersonaAgent, type PersonaAgentDeps, type PersonaAgentInput } from "./persona-agent"
 import { DraftsRepository, type Draft } from "../drafts"
@@ -13,6 +18,7 @@ import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./se
 import type { SubagentRun } from "../subagents"
 import { SessionAbortRegistry } from "./session-abort-registry"
 import { TraceEmitter } from "./trace-emitter"
+import { ONBOARDING_GREETING_OPENER } from "./companion/prompt/turn-purpose-prompt"
 
 const SONNET = "openrouter:anthropic/claude-sonnet-4.6"
 const OPUS = "openrouter:anthropic/claude-opus-4.8"
@@ -244,6 +250,7 @@ async function runSupersedeRerun(params: {
   const capturedStablePrompts: string[] = []
   const capturedMessages: Array<Array<{ role: string; content: unknown }>> = []
   const capturedToolNames: string[][] = []
+  const preferenceUserIds: string[] = []
   const ai = {
     getLanguageModel: (id: string) => ({ id }),
     parseModel: (id: string) => ({ modelId: id, modelProvider: "openrouter", modelName: id }),
@@ -295,7 +302,12 @@ async function runSupersedeRerun(params: {
     ai,
     traceEmitter: new TraceEmitter({ io: makeFakeIo(), pool: emptyDb }),
     sessionAbortRegistry: new SessionAbortRegistry(),
-    userPreferencesService: { getPreferences: async () => ({}) },
+    userPreferencesService: {
+      getPreferences: async (_workspaceId: string, userId: string) => {
+        preferenceUserIds.push(userId)
+        return {}
+      },
+    },
     workspaceAgent: { search: async () => ({}) },
     generalResearcher: { research: research as unknown as () => Promise<unknown> },
     searchService: {},
@@ -344,6 +356,7 @@ async function runSupersedeRerun(params: {
     capturedStablePrompts,
     capturedMessages,
     capturedToolNames,
+    preferenceUserIds,
     escalationSteps,
     markResponseValidationFailed,
     createMessage,
@@ -435,6 +448,79 @@ describe("PersonaAgent subagent kickoff", () => {
     expect(first?.role).toBe("user")
     expect(String(first?.content)).toContain("Plan the identification search")
     expect(String(first?.content)).toContain("Find the TV host who alighted at Nacka strand this morning.")
+  })
+
+  it("should open an empty onboarding greeting turn with the opener and read the invoking user's preferences", async () => {
+    const { result, capturedMessages, capturedVolatilePrompts, preferenceUserIds } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      purpose: { kind: "onboarding_greeting" },
+    })
+
+    expect(result.status).toBe("completed")
+    expect(capturedMessages[0]).toEqual([{ role: "user", content: ONBOARDING_GREETING_OPENER }])
+    expect(capturedVolatilePrompts[0]).toContain("## First meeting")
+    expect(preferenceUserIds).toEqual(["usr_1"])
+  })
+
+  it("should skip an onboarding greeting when the stream already has a message", async () => {
+    const { result, capturedModelStrings } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      streamOverride: { messageCount: 1 },
+      purpose: { kind: "onboarding_greeting" },
+    })
+
+    expect(result).toMatchObject({ status: "skipped", skipReason: "onboarding stream already has messages" })
+    expect(capturedModelStrings).toEqual([])
+  })
+
+  it("should carry the tour into a catch-up turn in the user's Meet Ariadne scratchpad", async () => {
+    spyOn(StreamRepository, "findByUniquenessKey").mockImplementation(async (_db, _ws, key: string) =>
+      key === onboardingStreamUniquenessKey("usr_1") ? stream : null
+    )
+    const { result, capturedVolatilePrompts } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      purpose: { kind: "catch_up" },
+    })
+
+    expect(result.status).toBe("completed")
+    expect(capturedVolatilePrompts[0]).toContain("give a short tour")
+  })
+
+  it("should carry the tour into a follow-up that degrades to a catch-up", async () => {
+    spyOn(StreamRepository, "findByUniquenessKey").mockImplementation(async (_db, _ws, key: string) =>
+      key === onboardingStreamUniquenessKey("usr_1") ? stream : null
+    )
+    const { capturedVolatilePrompts } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      purpose: { kind: "follow_up", followUpId: "followup_gone" },
+    })
+
+    expect(capturedVolatilePrompts[0]).toContain("give a short tour")
+  })
+
+  it("should run a plain catch-up in a scratchpad other than the user's Meet Ariadne one", async () => {
+    spyOn(StreamRepository, "findByUniquenessKey").mockImplementation(async (_db, _ws, key: string) =>
+      key === onboardingStreamUniquenessKey("usr_1") ? { ...stream, id: "stream_meet_ariadne" } : null
+    )
+    const { capturedVolatilePrompts } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      purpose: { kind: "catch_up" },
+    })
+
+    expect(capturedVolatilePrompts[0]).not.toContain("## First meeting")
+  })
+
+  it("should drop the tour once the Meet Ariadne conversation is past its opening", async () => {
+    spyOn(StreamRepository, "findByUniquenessKey").mockImplementation(async (_db, _ws, key: string) =>
+      key === onboardingStreamUniquenessKey("usr_1") ? stream : null
+    )
+    const { capturedVolatilePrompts } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      streamOverride: { messageCount: 4 },
+      purpose: { kind: "catch_up" },
+    })
+
+    expect(capturedVolatilePrompts[0]).not.toContain("## First meeting")
   })
 
   it("skips a kickoff whose run is no longer active instead of calling the provider on an empty thread", async () => {

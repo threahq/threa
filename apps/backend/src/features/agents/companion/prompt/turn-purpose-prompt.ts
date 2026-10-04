@@ -31,6 +31,8 @@ interface EarlyPurposeContext {
    * history as the first user message.
    */
   subagentBrief?: { title: string } | null
+  /** Whether `threa_guide` is in this turn's toolset; the tour only points at it when it is. */
+  guideAvailable?: boolean
 }
 
 export function buildEarlyPurposeSection(purpose: TurnPurpose, ctx: EarlyPurposeContext): string {
@@ -41,6 +43,10 @@ export function buildEarlyPurposeSection(purpose: TurnPurpose, ctx: EarlyPurpose
       return ctx.followUp ? buildFollowUpSection(ctx.context, ctx.followUp) : ""
     case "subagent_kickoff":
       return ctx.subagentBrief ? buildSubagentKickoffSection(ctx.subagentBrief) : ""
+    case "onboarding_greeting":
+      return buildOnboardingGreetingSection()
+    case "onboarding_tour":
+      return buildOnboardingTourSection(ctx.guideAvailable === true)
     case "catch_up":
     case "supersede_rerun":
     // A draft-test turn adds no section on purpose: the editor is judging the
@@ -104,6 +110,37 @@ Another model handed you this question because the user asked for you, or becaus
 Answer the brief now. Use your tools to find whatever the brief assumes you can look up; if something load-bearing is genuinely missing, ask the user here rather than guessing. Do not delegate this onward.
 
 When the question is settled, call \`report_back\` once with your closing answer — that posts it and closes the delegation. Until then, keep talking with the user in this thread as normal.`
+}
+
+/** The only history a greeting turn opens on: the user just arrived and has said nothing. */
+export const ONBOARDING_GREETING_OPENER = "(The user has just opened this conversation. Greet them.)"
+
+function buildOnboardingGreetingSection(): string {
+  return `
+
+## First meeting
+
+This is the user's first conversation with you in Threa. They opened it from the getting-started checklist and have not written anything yet, so you speak first. Write in the user's language if their profile or preferences show one, otherwise English.
+
+Post one short greeting with \`send_message\`, then stop and wait:
+- Say hello and, in one or two sentences, what you can help with in Threa.
+- Offer to show them how Threa can be used. Make it an offer they can simply accept, not a question about their goals or why they came.
+
+Do not tour, list features or ask anything else yet.`
+}
+
+function buildOnboardingTourSection(guideAvailable: boolean): string {
+  const depth = guideAvailable ? "Use `threa_guide` for anything deeper than a pointer, and send" : "Send"
+  return `
+
+## First meeting
+
+This scratchpad is where the user first met you from the getting-started checklist. If your first message here offered to show them how Threa can be used and they take you up on it, give a short tour of the main ways to use it. If they named something they care about, lead with that instead of covering everything:
+- A few concrete places, each as an \`app:\` link, with one line on what it is for.
+- Directions for their layout when the prompt has a Device section; without one, keep directions short enough to hold on both phone and desktop.
+- ${depth} the tour as a few short messages rather than one long one.
+
+Once the tour is given, or if they have moved on to something else, just carry on the conversation.`
 }
 
 function buildSupersedeSection(rerunContext?: AgentSessionRerunContext): string {

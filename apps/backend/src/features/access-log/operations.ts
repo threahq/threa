@@ -242,6 +242,8 @@ export const ACCESS_LOG_OPERATIONS = [
   "drafts.upsert",
   "drafts.resolve",
   "drafts.delete",
+  // Onboarding
+  "onboarding.meet_ariadne",
   // Performance diagnostics
   "perf_capture.create",
   // Push

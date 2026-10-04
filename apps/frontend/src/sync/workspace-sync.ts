@@ -183,6 +183,8 @@ interface StreamPayload {
   streamId: string
   stream: Stream
   dmUserIds?: [string, string]
+  /** On create: the creator's Meet Ariadne scratchpad. */
+  onboarding?: true
   /** On archive/unarchive: the live descendants sealed or released with the stream. */
   threadStreamIds?: string[]
 }
@@ -814,6 +816,7 @@ export function registerWorkspaceSocketHandlers(
     let shouldAddDmPeer = false
     let currentUserId: string | null = null
     let dmPeerUserId: string | null = null
+    let isOwnOnboardingStream = false
     let cachedStream: StreamWithPreview = { ...payload.stream, lastMessagePreview: null }
 
     const applied = updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => {
@@ -822,6 +825,7 @@ export function registerWorkspaceSocketHandlers(
       const currentMember = currentUser && getWorkspaceUsers(old).find((u) => u.workosUserId === currentUser.id)
       currentUserId = currentMember?.id ?? null
       const isCreator = Boolean(currentMember && payload.stream.createdBy === currentMember.id)
+      isOwnOnboardingStream = Boolean(payload.onboarding && isCreator)
       const isDmParticipant =
         payload.stream.type === StreamTypes.DM &&
         currentUserId !== null &&
@@ -881,8 +885,12 @@ export function registerWorkspaceSocketHandlers(
       refs.subscribeStream(payload.stream.id)
     }
 
-    await db.transaction("rw", [db.streams, db.streamMemberships, db.dmPeers], async () => {
+    await db.transaction("rw", [db.streams, db.streamMemberships, db.dmPeers, db.workspaceMetadata], async () => {
       const now = Date.now()
+
+      if (isOwnOnboardingStream) {
+        await db.workspaceMetadata.update(workspaceId, { onboardingStreamId: payload.stream.id })
+      }
 
       // Cache to IndexedDB — skip other users' scratchpads to avoid stale
       // entries resurfacing on hydration if the event leaks during a deploy race.
@@ -2723,6 +2731,7 @@ const BOOTSTRAP_NON_ROW_FIELDS = [
   "readMessageIds",
   "inboxHeldStreamIds",
   "inboxArrivedAt",
+  "onboardingStreamId",
   "mutedStreamIds",
   "boardViews",
   "invitations",
@@ -2866,6 +2875,7 @@ export async function applyWorkspaceBootstrap(
     commands: bootstrap.commands,
     configuredToolCategories: bootstrap.configuredToolCategories,
     featureFlags: bootstrap.featureFlags,
+    onboardingStreamId: bootstrap.onboardingStreamId ?? null,
     _cachedAt: now,
   }
 
@@ -2981,6 +2991,8 @@ export async function applyWorkspaceBootstrap(
       const botsDiff = diffRows(byId(existingBots), botRows)
       const labelsDiff = diffRows(byId(existingLabels), labelRows)
       const labelAssignmentsDiff = diffRows(byId(existingLabelAssignments), labelAssignmentRows)
+      // Meet Ariadne never un-happens: a snapshot fetched before the click must not clear it.
+      metadataRow.onboardingStreamId ??= existingMetadata?.onboardingStreamId ?? null
       const metadataDiff = diffSingleton(existingMetadata, metadataRow)
       stopDiff()
 
@@ -3222,6 +3234,7 @@ export async function applyWorkspaceBootstrap(
         emojiWeights: bootstrap.emojiWeights,
         commands: bootstrap.commands,
         configuredToolCategories: bootstrap.configuredToolCategories,
+        onboardingStreamId: metadataRow.onboardingStreamId,
         _cachedAt: now,
       },
     },
@@ -3368,6 +3381,7 @@ export async function applyReconnectBootstrapBatch(
     commands: finalBootstrap.commands,
     configuredToolCategories: finalBootstrap.configuredToolCategories,
     featureFlags: finalBootstrap.featureFlags,
+    onboardingStreamId: finalBootstrap.onboardingStreamId ?? null,
     _cachedAt: now,
   }
 
@@ -3463,6 +3477,8 @@ export async function applyReconnectBootstrapBatch(
       const labelsDiff = diffRows(byId(existingLabels), labelRows)
       const labelAssignmentsDiff = diffRows(byId(existingLabelAssignments), labelAssignmentRows)
       const unreadDiff = diffSingleton(existingUnread, unreadRow)
+      // Meet Ariadne never un-happens: a snapshot fetched before the click must not clear it.
+      metadataRow.onboardingStreamId ??= existingMetadata?.onboardingStreamId ?? null
       const metadataDiff = diffSingleton(existingMetadata, metadataRow)
       stopDiff()
 
@@ -3689,6 +3705,7 @@ export async function applyReconnectBootstrapBatch(
         emojiWeights: finalBootstrap.emojiWeights,
         commands: finalBootstrap.commands,
         configuredToolCategories: finalBootstrap.configuredToolCategories,
+        onboardingStreamId: metadataRow.onboardingStreamId,
         _cachedAt: now,
       },
     },

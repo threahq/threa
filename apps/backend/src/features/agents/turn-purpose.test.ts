@@ -49,6 +49,16 @@ describe("resolveTurnPurpose", () => {
       draftId: "pcd_1",
     })
   })
+
+  it("should resolve onboarding_greeting when the payload carries the onboardingGreeting flag", () => {
+    expect(resolveTurnPurpose({ onboardingGreeting: true })).toEqual({ kind: "onboarding_greeting" })
+  })
+
+  it("should resolve onboarding_greeting over the mention trigger", () => {
+    expect(resolveTurnPurpose({ onboardingGreeting: true, trigger: AgentTriggers.MENTION })).toEqual({
+      kind: "onboarding_greeting",
+    })
+  })
 })
 
 describe("deriveTurnFlags", () => {
@@ -59,6 +69,9 @@ describe("deriveTurnFlags", () => {
     { purpose: { kind: "supersede_rerun", supersedesSessionId: "agsess_prev" }, allow: true },
     // Draft-test behaves like catch_up: it replies normally, no silent-end flag.
     { purpose: { kind: "draft_test", draftId: "pcd_1" }, allow: false },
+    // The greeting must post a message.
+    { purpose: { kind: "onboarding_greeting" }, allow: false },
+    { purpose: { kind: "onboarding_tour" }, allow: false },
   ]
 
   for (const { purpose, allow } of cases) {

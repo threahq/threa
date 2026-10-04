@@ -3,7 +3,7 @@ import { APP_LINK_PAGES, APP_LINK_SETTINGS_TABS, APP_LINK_WORKSPACE_SETTINGS_TAB
 import { createReadUrlTool, createExaEngine, createWebSearchTool } from "@threahq/agent-runtime"
 import type { Persona } from "../../persona-repository"
 import type { StreamContext } from "../../context-builder"
-import { createWorkspaceResearchTool } from "../../tools"
+import { createThreaGuideTool, createWorkspaceResearchTool } from "../../tools"
 import {
   buildSystemPrompt,
   buildResponseStyleSection,
@@ -435,6 +435,64 @@ describe("buildSystemPrompt", () => {
     })
 
     expect(prompt).not.toContain("## Superseded Session Reconciliation")
+  })
+
+  test("injects the first-meeting section, in the volatile half, for an onboarding greeting turn", () => {
+    const split = buildSystemPrompt({
+      persona,
+      context: scratchpadContext,
+      scratchpadCustomPrompt: null,
+      purpose: { kind: "onboarding_greeting" },
+      selfKnowledge: null,
+    })
+
+    expect(split.volatile).toContain("## First meeting")
+    expect(split.volatile).toContain("Offer to show them how Threa can be used")
+    expect(split.stable).not.toContain("## First meeting")
+  })
+
+  test("tours, and never greets again, on the onboarding scratchpad's later turns", () => {
+    const split = buildSystemPrompt({
+      persona,
+      context: scratchpadContext,
+      scratchpadCustomPrompt: null,
+      purpose: { kind: "onboarding_tour" },
+      selfKnowledge: null,
+    })
+
+    expect(split.volatile).toContain("give a short tour")
+    expect(split.stable).not.toContain("## First meeting")
+  })
+
+  test.each([
+    [[], "- Send the tour as a few short messages"],
+    [
+      [createThreaGuideTool({ articles: [] })],
+      "- Use `threa_guide` for anything deeper than a pointer, and send the tour",
+    ],
+  ])("points the tour at threa_guide only when the guide is in the toolset", (tools, line) => {
+    const split = buildSystemPrompt({
+      persona,
+      context: scratchpadContext,
+      scratchpadCustomPrompt: null,
+      purpose: { kind: "onboarding_tour" },
+      selfKnowledge: null,
+      tools,
+    })
+
+    expect(split.volatile).toContain(line)
+  })
+
+  test("omits the first-meeting section for a catch-up turn", () => {
+    const prompt = buildJoinedPrompt({
+      persona,
+      context: scratchpadContext,
+      scratchpadCustomPrompt: null,
+      purpose: { kind: "catch_up" },
+      selfKnowledge: null,
+    })
+
+    expect(prompt).not.toContain("## First meeting")
   })
 
   test("web search recency guidance references Current Time when the tool is temporally grounded", () => {

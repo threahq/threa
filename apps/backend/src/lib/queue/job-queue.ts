@@ -96,6 +96,8 @@ export interface PersonaAgentJobData {
    * context and runs on the run's pinned model.
    */
   subagentRunId?: string
+  /** Greeting turn of the "Meet Ariadne" scratchpad: `messageId` is synthetic, `triggeredBy` is the user greeted. */
+  onboardingGreeting?: true
 }
 
 /**
