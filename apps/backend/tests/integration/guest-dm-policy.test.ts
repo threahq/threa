@@ -11,7 +11,13 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
 import { GUEST_DM_POLICIES, type GuestDmPolicy } from "@threahq/types"
 import { BotChannelAccessRepository } from "../../src/features/api-keys"
-import { assertStreamWritable } from "../../src/features/streams"
+import {
+  StreamRepository,
+  StreamService,
+  assertStreamWritable,
+  projectStreamForPrincipal,
+  projectStreamsForPrincipal,
+} from "../../src/features/streams"
 import { botId as newBotId, botChannelAccessId } from "../../src/lib/id"
 import { getTestDatabaseTarget } from "../test-database"
 import {
@@ -84,7 +90,7 @@ describe("guest DM policy", () => {
     }
 
     const owner: Person = { client: ownerClient, userId: await getUserId(ownerClient, workspaceId, ownerUser.id) }
-    return { workspaceId, owner, add }
+    return { workspaceId, owner, add, sharedStreamId: sharedStream.id }
   }
 
   async function setPolicy(workspaceId: string, owner: Person, policy: GuestDmPolicy) {
@@ -179,7 +185,7 @@ describe("guest DM policy", () => {
   })
 
   test("should close an existing DM to every writer when the policy tightens and reopen it when it loosens", async () => {
-    const { workspaceId, owner, add } = await newWorkspace()
+    const { workspaceId, owner, add, sharedStreamId } = await newWorkspace()
     await setPolicy(workspaceId, owner, GUEST_DM_POLICIES.OPEN)
     const guest = await add("guest")
     const member = await add("member")
@@ -226,6 +232,40 @@ describe("guest DM policy", () => {
       memberByUser: CLOSED,
       bot: { status: 403, code: "STREAM_READ_ONLY", details: { reason: "guest_dm_policy" } },
     })
+
+    const memberDm = await send(workspaceId, member, { dmUserId: owner.userId }, "no guest here")
+    expect(outcomeOf(memberDm)).toEqual(SENT)
+    const streams = await StreamRepository.findByIds(pool, workspaceId, [
+      dmStreamId,
+      memberDm.message!.streamId,
+      sharedStreamId,
+    ])
+    const byId = Object.fromEntries(streams.map((stream) => [stream.id, stream]))
+    const principal = { kind: "user", userId: member.userId } as const
+    const viewOf = (stream?: { readOnly: boolean; readOnlyReason: string | null } | null) =>
+      stream && { readOnly: stream.readOnly, readOnlyReason: stream.readOnlyReason }
+    const batch = await projectStreamsForPrincipal(pool, { workspaceId, streams, principal })
+    const batchById = new Map(batch.map((stream) => [stream.id, stream]))
+    const closedView = { readOnly: true, readOnlyReason: "guest_dm_policy" }
+    const openView = { readOnly: false, readOnlyReason: null }
+    expect({
+      one: viewOf(await projectStreamForPrincipal(pool, { workspaceId, stream: byId[dmStreamId], principal })),
+      batch: {
+        guestDm: viewOf(batchById.get(dmStreamId)),
+        memberDm: viewOf(batchById.get(memberDm.message!.streamId)),
+        channel: viewOf(batchById.get(sharedStreamId)),
+      },
+    }).toEqual({ one: closedView, batch: { guestDm: closedView, memberDm: openView, channel: openView } })
+
+    const laterBotId = newBotId()
+    await pool.query("INSERT INTO bots (id, workspace_id, api_key_id, name) VALUES ($1, $2, $3, 'Late bot')", [
+      laterBotId,
+      workspaceId,
+      `key_${laterBotId}`,
+    ])
+    await expect(
+      new StreamService(pool).addBotToStream(dmStreamId, laterBotId, workspaceId, member.userId)
+    ).rejects.toMatchObject({ status: 403, code: "STREAM_READ_ONLY", details: { reason: "guest_dm_policy" } })
 
     const events = await listEvents(member.client, workspaceId, dmStreamId)
     expect(events.map((event) => (event.payload as { messageId?: string }).messageId)).toContain(first.message!.id)

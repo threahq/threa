@@ -174,26 +174,23 @@ export async function projectStreamsForPrincipal<T extends AuthorityStream>(
     principal,
     facts.filter(({ root }) => !participatingRootIds.has(root.id)).map(({ root }) => root.visibility)
   )
+  const readable = facts.filter(
+    ({ root }) => participatingRootIds.has(root.id) || readableWithoutParticipating.has(root.visibility)
+  )
   const closedDmRootIds = await findGuestPolicyClosedDmIds(
     db,
     workspaceId,
-    facts.map(({ root }) => root)
+    readable.map(({ root }) => root)
   )
-  const projected: Array<T & StreamViewerState> = []
-  for (const { target, root } of facts) {
-    const participates = participatingRootIds.has(root.id)
-    if (!participates && !readableWithoutParticipating.has(root.visibility)) continue
-    projected.push({
-      ...target,
-      ...deriveStreamViewerState({
-        target,
-        ancestorArchived: sealedIds.has(target.id),
-        participates,
-        guestDmClosed: closedDmRootIds.has(root.id),
-      }),
-    })
-  }
-  return projected
+  return readable.map(({ target, root }) => ({
+    ...target,
+    ...deriveStreamViewerState({
+      target,
+      ancestorArchived: sealedIds.has(target.id),
+      participates: participatingRootIds.has(root.id),
+      guestDmClosed: closedDmRootIds.has(root.id),
+    }),
+  }))
 }
 
 export interface LockedStreamAuthority {

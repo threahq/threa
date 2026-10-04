@@ -13,6 +13,10 @@ import type { Stream } from "./repository"
 
 const GUEST_DM_POLICY_KEY = "guestDmPolicy" satisfies keyof WorkspaceSettings
 
+function isGuestDmPolicy(value: unknown): value is GuestDmPolicy {
+  return (Object.values(GUEST_DM_POLICIES) as unknown[]).includes(value)
+}
+
 interface DmParty {
   guest: boolean
   admin: boolean
@@ -30,7 +34,8 @@ async function loadPolicyFacts(db: Querier, workspaceId: string, userIds: readon
   const guestIds = await findUserIdsWithoutBrowse(db, workspaceId, userIds)
   if (guestIds.size === 0) return null
   const override = await WorkspaceSettingsRepository.findOverride(db, workspaceId, GUEST_DM_POLICY_KEY)
-  const policy = (override?.value as GuestDmPolicy | undefined) ?? DEFAULT_WORKSPACE_SETTINGS.guestDmPolicy
+  // Validated at write time; re-check so a hand-edited row falls to the closed default, never to `admins` by accident.
+  const policy = isGuestDmPolicy(override?.value) ? override.value : DEFAULT_WORKSPACE_SETTINGS.guestDmPolicy
   if (policy === GUEST_DM_POLICIES.OPEN) return null
   const adminIds =
     policy === GUEST_DM_POLICIES.ADMINS ? await findUserIdsWithAdmin(db, workspaceId, userIds) : new Set<string>()

@@ -520,6 +520,7 @@ export class StreamService {
           target: stream,
           ancestorArchived: false,
           participates: true,
+          // findOrCreateDm already refused a pair the guest DM policy closes.
           guestDmClosed: false,
         }),
       }
@@ -2380,6 +2381,9 @@ export class StreamService {
       throw new HttpError("Stream does not belong to this workspace", { status: 403, code: "WRONG_WORKSPACE" })
     }
     if (target.archivedAt || ancestorArchived) throw new StreamNotFoundError()
+    if ((await findGuestPolicyClosedDmIds(client, workspaceId, [grantStream])).has(grantStream.id)) {
+      throw createStreamReadOnlyError(StreamReadOnlyReasons.GUEST_DM_POLICY)
+    }
     const bot = await BotRepository.findByIdForUpdate(client, workspaceId, botId)
     if (!bot || bot.archivedAt) {
       throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })

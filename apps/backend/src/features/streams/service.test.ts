@@ -58,6 +58,8 @@ spyOn(access, "usersReadingWithoutMembership").mockImplementation(async (_client
   visibility === "public" || visibility === "guest_public" ? new Set(userIds) : new Set()
 )
 const mockIsGuestDmOpenForUsers = spyOn(guestDmPolicy, "isGuestDmOpenForUsers")
+// Stands in for the policy lookup against the fake `{}` client: no existing DM is closed by the guest DM policy.
+spyOn(guestDmPolicy, "findGuestPolicyClosedDmIds").mockResolvedValue(new Set())
 const mockInsertOrFindByUniquenessKey = spyOn(StreamRepository, "insertOrFindByUniquenessKey")
 const mockInsertMember = spyOn(StreamMemberRepository, "insert")
 const mockInsertManyMembers = spyOn(StreamMemberRepository, "insertMany")
