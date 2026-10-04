@@ -66,7 +66,12 @@ describe("buildSystemPrompt", () => {
   })
 
   test("should offer exactly the app: link registry's destinations", () => {
-    const prompt = buildJoinedPrompt({ persona, context: scratchpadContext, scratchpadCustomPrompt: null })
+    const prompt = buildJoinedPrompt({
+      persona,
+      context: scratchpadContext,
+      scratchpadCustomPrompt: null,
+      selfKnowledge: null,
+    })
 
     expect(prompt).toContain(
       `Pages: ${APP_LINK_PAGES.join(", ")}. Settings tabs: ${APP_LINK_SETTINGS_TABS.join(", ")}. Workspace settings tabs: ${APP_LINK_WORKSPACE_SETTINGS_TABS.join(", ")}.`
