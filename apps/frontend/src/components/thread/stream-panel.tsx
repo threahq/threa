@@ -390,12 +390,11 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   }, [])
   const handleDraftCollapse = useCallback(() => setDraftExpanded(false), [])
 
-  // A draft thread lives under parentStream: its root type gates broadcasts, and
-  // the parent's channel decides which other workspaces' people are mentionable.
+  // A draft thread takes its parent's mention context in a thread's shape, so its
+  // first reply offers what the promoted thread's composer will.
   const parentMentionContext = useMentionStreamContext(workspaceId, parentStream)
-  const parentConnectedWorkspaceIds = parentMentionContext?.connectedWorkspaceIds
   const draftStreamContext = useMemo<MentionStreamContext | undefined>(() => {
-    if (!parentStream) return undefined
+    if (!parentStream || !parentMentionContext) return undefined
     // The draft IS a thread; use the parent's type (or root type) as rootStreamType
     const rootType = parentStream.rootStreamId
       ? ancestors.find((a) => a.id === parentStream.rootStreamId)?.type
@@ -404,12 +403,8 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
     // filterBroadcastMentions falls back to ALL_BROADCAST_MENTIONS (show all)
     // rather than incorrectly filtering to "thread" (show none).
     if (parentStream.rootStreamId && rootType === undefined) return undefined
-    return {
-      streamType: StreamTypes.THREAD,
-      rootStreamType: rootType,
-      connectedWorkspaceIds: parentConnectedWorkspaceIds,
-    }
-  }, [parentStream, ancestors, parentConnectedWorkspaceIds])
+    return { ...parentMentionContext, streamType: StreamTypes.THREAD, rootStreamType: rootType }
+  }, [parentStream, ancestors, parentMentionContext])
 
   // Listen for draft thread promotion and navigate to the real thread panel.
   // The real stream's composer is a different element, so a focused draft
