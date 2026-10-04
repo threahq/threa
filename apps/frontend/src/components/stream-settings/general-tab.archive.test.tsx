@@ -7,7 +7,13 @@ import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as descriptionSectionModule from "./description-section"
 import { resetWorkspaceStoreCache, seedWorkspaceCache } from "@/stores/workspace-store"
 import { resetWorkspaceTableRegistry } from "@/stores/workspace-table-registry"
-import { StreamTypes, Visibilities, type Stream } from "@threahq/types"
+import {
+  StreamTypes,
+  Visibilities,
+  WORKSPACE_PERMISSION_SCOPES,
+  type Stream,
+  type WorkspaceBootstrap,
+} from "@threahq/types"
 import { GeneralTab } from "./general-tab"
 
 const WS = "ws_1"
@@ -72,7 +78,15 @@ const channel = stream("chan", { type: StreamTypes.CHANNEL, slug: "general", cre
 const threadA = stream("thread_a", { parentStreamId: "chan", rootStreamId: "chan", createdBy: BYSTANDER })
 const threadB = stream("thread_b", { parentStreamId: "thread_a", rootStreamId: "chan" })
 
+function viewerWith(viewerPermissions: WorkspaceBootstrap["viewerPermissions"]) {
+  vi.spyOn(useWorkspacesModule, "useCachedWorkspaceBootstrap").mockReturnValue({
+    viewerPermissions,
+  } as WorkspaceBootstrap)
+}
+
 beforeEach(() => {
+  viewerWith([WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE])
+  vi.spyOn(useWorkspacesModule, "useCurrentWorkspaceUser").mockReturnValue(null)
   resetWorkspaceStoreCache()
   resetWorkspaceTableRegistry()
   vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue(CREATOR)
@@ -117,6 +131,35 @@ describe("GeneralTab archive section (thread archival)", () => {
     seed([channel, threadA, threadB])
     const view = renderTab({ stream: threadB, rootStream: channel, currentUserId: CREATOR })
     expect(screen.queryByTestId("sealed-by-ancestor")).toBeNull()
+    view.unmount()
+  })
+})
+
+describe("GeneralTab archive section for a guest", () => {
+  function archiveButton() {
+    return screen.getByRole("button", { name: "Archive" }) as HTMLButtonElement
+  }
+
+  it("should disable archiving a channel when the viewer lacks browse", () => {
+    viewerWith([])
+    seed([channel])
+    const view = renderTab({ stream: channel, rootStream: null, currentUserId: ROOT_CREATOR })
+    expect(archiveButton().disabled).toBe(true)
+    view.unmount()
+  })
+
+  it("should enable archiving a channel when the viewer can browse", () => {
+    seed([channel])
+    const view = renderTab({ stream: channel, rootStream: null, currentUserId: ROOT_CREATOR })
+    expect(archiveButton().disabled).toBe(false)
+    view.unmount()
+  })
+
+  it("should leave a thread archivable when the viewer lacks browse", () => {
+    viewerWith([])
+    seed([channel, threadA])
+    const view = renderTab({ stream: threadA, rootStream: channel, currentUserId: BYSTANDER })
+    expect(archiveButton().disabled).toBe(false)
     view.unmount()
   })
 })

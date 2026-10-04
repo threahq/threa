@@ -151,7 +151,8 @@ interface SidebarStreamListProps {
   getSectionState: (section: string, defaultState?: CollapseState) => CollapseState
   toggleSectionState: (section: string, defaultState?: CollapseState) => void
   onCreateScratchpad: () => void | Promise<void>
-  onCreateChannel: () => void | Promise<void>
+  /** Omitted for viewers who cannot create channels: no creator renders. */
+  onCreateChannel?: () => void | Promise<void>
   /**
    * Dropdown actions for the Scratchpads "+" button. When provided, the button
    * opens this menu (Scratchpad / Quick Note / Encrypted Scratchpad) instead of
@@ -272,9 +273,11 @@ export const SidebarStreamList = memo(function SidebarStreamList({
           <Button variant="outline" size="sm" onClick={() => void onCreateScratchpad()} className="mr-2">
             + New Scratchpad
           </Button>
-          <Button variant="outline" size="sm" onClick={() => void onCreateChannel()}>
-            + New Channel
-          </Button>
+          {onCreateChannel && (
+            <Button variant="outline" size="sm" onClick={() => void onCreateChannel()}>
+              + New Channel
+            </Button>
+          )}
         </div>
       </>
     )
@@ -293,7 +296,7 @@ export const SidebarStreamList = memo(function SidebarStreamList({
         ],
       }
     }
-    if (spec.streamType === "channel") {
+    if (spec.streamType === "channel" && onCreateChannel) {
       return { onAdd: () => void onCreateChannel(), addTooltip: "+ New Channel" }
     }
     return undefined

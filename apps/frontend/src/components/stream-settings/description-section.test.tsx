@@ -14,7 +14,7 @@ import { DescriptionSection } from "./description-section"
 // mounting TipTap (and its auth/workspace provider chain).
 let lastOnChange: ((json: JSONContent) => void) | null = null
 
-type RichEditorMockProps = { value: JSONContent; onChange: (json: JSONContent) => void }
+type RichEditorMockProps = { value: JSONContent; onChange: (json: JSONContent) => void; disabled?: boolean }
 type ActionBarMockProps = { trailingContent?: ReactNode }
 
 beforeEach(() => {
@@ -24,7 +24,11 @@ beforeEach(() => {
   spyOnExport(editorModule, "RichEditor").mockReturnValue(((props: RichEditorMockProps) => {
     lastOnChange = props.onChange
     // Render the seeded value as markdown so seeding is observable.
-    return <div data-testid="rich-editor">{serializeToMarkdown(props.value)}</div>
+    return (
+      <div data-testid="rich-editor" aria-disabled={props.disabled ?? false}>
+        {serializeToMarkdown(props.value)}
+      </div>
+    )
   }) as unknown as typeof editorModule.RichEditor)
   spyOnExport(editorModule, "EditorActionBar").mockReturnValue(((props: ActionBarMockProps) => (
     <div data-testid="action-bar">{props.trailingContent}</div>
@@ -54,12 +58,12 @@ function channel(overrides: Partial<Stream> = {}): Stream {
   }
 }
 
-function renderSection(stream: Stream, update = vi.fn().mockResolvedValue({})) {
+function renderSection(stream: Stream, update = vi.fn().mockResolvedValue({}), locked = false) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
       <ServicesProvider services={{ streams: { update } as unknown as StreamService }}>
-        <DescriptionSection workspaceId="ws_1" stream={stream} />
+        <DescriptionSection workspaceId="ws_1" stream={stream} locked={locked} />
       </ServicesProvider>
     </QueryClientProvider>
   )
@@ -83,6 +87,15 @@ describe("DescriptionSection", () => {
   it("falls back to the markdown projection when descriptionJson is absent (legacy rows)", () => {
     renderSection(channel({ description: "Hello **world**" }))
     expect(screen.getByTestId("rich-editor")).toHaveTextContent("Hello **world**")
+  })
+
+  it("should disable the editor and offer no Save when the section is locked", () => {
+    renderSection(channel({ description: "Existing" }), undefined, true)
+    expect({
+      editorDisabled: screen.getByTestId("rich-editor").getAttribute("aria-disabled"),
+      save: screen.queryByRole("button", { name: "Save" }),
+      reset: screen.queryByRole("button", { name: "Reset" }),
+    }).toEqual({ editorDisabled: "true", save: null, reset: null })
   })
 
   it("keeps Save disabled until the description changes", () => {

@@ -3,6 +3,7 @@ import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { isDraftId, useFeatureFlag } from "@/hooks"
 import { useViewerPermissions } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"
+import { useCanManageChannels } from "@/lib/use-can-manage-channels"
 import { isToleranceMatch, rankMatchesScored } from "@/lib/match-score"
 import { commands, type Command, type CommandContext } from "./commands"
 import { draftStreamCommands, streamCommands } from "./stream-commands"
@@ -47,6 +48,7 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
   // command hides for non-admins rather than opening settings to a fallback tab.
   const viewerPermissions = useViewerPermissions(commandContext.workspaceId)
   const isAdmin = hasPermission(viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
+  const canManageChannels = useCanManageChannels(commandContext.workspaceId)
   // The Diagnostics settings tab is rollout-gated; without the same gate here
   // the command opens Settings to a tab that isn't there.
   const perfDiagnostics = useFeatureFlag(commandContext.workspaceId, "perfDiagnostics")
@@ -83,7 +85,9 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
     // together (see rankGroups) and only ordered within a section afterwards.
     const globalCommands = commands.filter(
       (c) =>
-        (c.id !== "open-ai-agents" || isAdmin) && (c.id !== "settings-diagnostics" || perfDiagnostics === "available")
+        (c.id !== "open-ai-agents" || isAdmin) &&
+        (c.id !== "new-channel" || canManageChannels) &&
+        (c.id !== "settings-diagnostics" || perfDiagnostics === "available")
     )
     const [rankedContextual, rankedGlobal] = rankGroups(query, [contextualCommands, globalCommands])
     const contextualItems = rankedContextual.map((c) => toItem(c, contextualGroup))
@@ -91,7 +95,7 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
     const globalItems = rankedGlobal.map((c) => toItem(c, "Commands"))
 
     return [...contextualItems, ...globalItems]
-  }, [query, commandContext, isAdmin, perfDiagnostics])
+  }, [query, commandContext, isAdmin, canManageChannels, perfDiagnostics])
 
   return {
     items,

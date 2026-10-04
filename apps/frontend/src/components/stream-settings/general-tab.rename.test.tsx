@@ -74,6 +74,7 @@ function renderTab(stream: Stream, update: ReturnType<typeof vi.fn>) {
 }
 
 beforeEach(() => {
+  vi.spyOn(useWorkspacesModule, "useCurrentWorkspaceUser").mockReturnValue(null)
   // The description section mounts the full rich-text editor (auth + workspace
   // context); stub it so these rename tests stay focused and provider-light.
   vi.spyOn(descriptionSectionModule, "DescriptionSection").mockImplementation(() => (

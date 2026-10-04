@@ -6,7 +6,7 @@ import { HttpError } from "../../lib/errors"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamEventRepository } from "./event-repository"
 import { StreamRepository } from "./repository"
-import { assertStreamWritable, type StreamWritePrincipal } from "./write-authority"
+import { assertPrincipalMayManageChannel, assertStreamWritable, type StreamWritePrincipal } from "./write-authority"
 import { StreamBriefRepository, type BriefAuthorKind, type StreamBrief } from "./brief-repository"
 
 /**
@@ -95,6 +95,7 @@ export class StreamBriefService {
         })
         const effectiveRootId = authority.target.rootStreamId ?? authority.target.id
         if (effectiveRootId !== streamId) throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
+        await assertPrincipalMayManageChannel(client, workspaceId, authority.root, request.principal)
         const freshTarget = await StreamRepository.findById(client, request.workspaceId, request.requestedStreamId)
         if (freshTarget?.e2eEnabled) {
           throw new HttpError("Briefs are not supported on encrypted streams", {

@@ -8,7 +8,7 @@ import { Router } from "react-router-dom"
 import { QuickSwitcher } from "./quick-switcher"
 import { SidebarProvider } from "@/contexts/sidebar-context"
 import { SearchPanelProvider, useSearchPanel } from "@/components/search/search-panel-context"
-import { StreamTypes } from "@threahq/types"
+import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type WorkspaceBootstrap } from "@threahq/types"
 import { createMockStream, mockStreamsList } from "@/test/fixtures"
 import { FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
 import { getAsideState, resetAsideStoreCache } from "@/stores/aside-store"
@@ -23,6 +23,7 @@ import * as authModule from "@/auth"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as streamsApiModule from "@/api/streams"
 import { streamKeys } from "@/hooks/use-streams"
+import { workspaceKeys } from "@/hooks/use-workspaces"
 import * as contextsModule from "@/contexts"
 import * as streamSettingsModule from "@/components/stream-settings/use-stream-settings"
 
@@ -64,12 +65,16 @@ const mockWorkspaceBootstrap = {
 }
 
 function createTestQueryClient() {
-  return new QueryClient({
+  const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   })
+  queryClient.setQueryData(workspaceKeys.bootstrap("workspace_1"), {
+    viewerPermissions: [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE],
+  } as WorkspaceBootstrap)
+  return queryClient
 }
 
 function toPathString(to: { pathname: string; search?: string; hash?: string }): string {
@@ -1161,6 +1166,19 @@ describe("QuickSwitcher Integration Tests", () => {
       })
       expect(screen.queryByText("Archive this stream")).not.toBeInTheDocument()
       expect(screen.queryByText(/This stream/)).not.toBeInTheDocument()
+    })
+
+    it("should not list New Channel when the viewer lacks browse", async () => {
+      const queryClient = createTestQueryClient()
+      queryClient.setQueryData(workspaceKeys.bootstrap("workspace_1"), {
+        viewerPermissions: [],
+      } as unknown as WorkspaceBootstrap)
+      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" />, queryClient)
+
+      await waitFor(() => {
+        expect(screen.getByText("New Scratchpad")).toBeInTheDocument()
+      })
+      expect(screen.queryByText("New Channel")).not.toBeInTheDocument()
     })
 
     it("should keep contextual commands visible (with their section) while filtering", async () => {

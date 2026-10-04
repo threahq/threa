@@ -9,6 +9,7 @@ import { ReadStateRepository } from "./read-state-repository"
 import { StreamEventRepository } from "./event-repository"
 import { SparseReadRepository } from "./sparse-read-repository"
 import { OutboxRepository } from "../../lib/outbox"
+import * as workspaces from "../workspaces"
 import { UserRepository } from "../workspaces"
 import { UserPreferencesRepository } from "../user-preferences"
 import { PersonaRepository } from "../agents"
@@ -60,6 +61,8 @@ spyOn(access, "usersReadingWithoutMembership").mockImplementation(async (_client
 const mockIsGuestDmOpenForUsers = spyOn(guestDmPolicy, "isGuestDmOpenForUsers")
 // Stands in for the policy lookup against the fake `{}` client: no existing DM is closed by the guest DM policy.
 spyOn(guestDmPolicy, "findGuestPolicyClosedDmIds").mockResolvedValue(new Set())
+// Stands in for the browse lookup against the fake `{}` client: every channel manager here can browse.
+spyOn(workspaces, "findUserIdsWithoutBrowse").mockResolvedValue(new Set())
 const mockInsertOrFindByUniquenessKey = spyOn(StreamRepository, "insertOrFindByUniquenessKey")
 const mockInsertMember = spyOn(StreamMemberRepository, "insert")
 const mockInsertManyMembers = spyOn(StreamMemberRepository, "insertMany")

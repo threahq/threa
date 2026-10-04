@@ -1,5 +1,12 @@
 import { z } from "zod"
-import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, STREAM_BRIEF_MAX_CHARS } from "@threahq/types"
+import {
+  AgentStepTypes,
+  AgentToolNames,
+  StreamErrorCodes,
+  TOOL_CATEGORIES_BY_NAME,
+  STREAM_BRIEF_MAX_CHARS,
+} from "@threahq/types"
+import { HttpError } from "../../../lib/errors"
 import { logger } from "../../../lib/logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import type { UpdateStreamBriefToolDeps } from "./tool-deps"
@@ -79,6 +86,14 @@ export function createUpdateStreamBriefTool(deps: UpdateStreamBriefToolDeps, opt
         knownVersion = result.version
         return { output: JSON.stringify({ ok: true, version: result.version }) }
       } catch (error) {
+        if (error instanceof HttpError && error.code === StreamErrorCodes.CHANNEL_MANAGEMENT_FORBIDDEN) {
+          return {
+            output: JSON.stringify({
+              ok: false,
+              error: "The person who asked is a guest, and guests can't change a channel's brief.",
+            }),
+          }
+        }
         logger.error({ error }, "update_stream_brief failed")
         return { output: JSON.stringify({ ok: false, error: "Failed to update the brief" }) }
       }

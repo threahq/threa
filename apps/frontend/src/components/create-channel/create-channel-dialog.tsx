@@ -18,6 +18,7 @@ import { useCreateChannel } from "./use-create-channel"
 import { useCreateStream } from "@/hooks"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { useAuth } from "@/auth"
+import { useCanManageChannels } from "@/lib/use-can-manage-channels"
 import { toast } from "sonner"
 import type { CreatableVisibility } from "@threahq/types"
 
@@ -134,6 +135,7 @@ interface CreateChannelDialogProps {
 
 export function CreateChannelDialog({ workspaceId }: CreateChannelDialogProps) {
   const { isOpen, closeCreateChannel } = useCreateChannel()
+  const canManageChannels = useCanManageChannels(workspaceId)
   const { user } = useAuth()
   const navigate = useNavigate()
   const createStream = useCreateStream(workspaceId)
@@ -202,7 +204,7 @@ export function CreateChannelDialog({ workspaceId }: CreateChannelDialogProps) {
   const canSubmit = slug.length > 0 && slugValid && !createStream.isPending
 
   return (
-    <ResponsiveDialog open={isOpen} onOpenChange={handleOpenChange}>
+    <ResponsiveDialog open={isOpen && canManageChannels} onOpenChange={handleOpenChange}>
       <ResponsiveDialogContent
         desktopClassName="max-w-[480px] gap-0 p-0 overflow-hidden"
         drawerClassName="gap-0 p-0 overflow-hidden"

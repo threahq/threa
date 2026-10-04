@@ -34,7 +34,9 @@ import { findGuestPolicyClosedDmIds, isGuestDmOpenForUsers } from "./guest-dm-po
 import { resolveInboxClearMode } from "./inbox-clear-mode"
 import { releaseInboxHold } from "./inbox-release"
 import {
+  assertPrincipalMayManageChannel,
   assertStreamWritable,
+  assertUserMayManageChannels,
   assertViewerStreamWritable,
   canHostAside,
   createStreamReadOnlyError,
@@ -621,6 +623,7 @@ export class StreamService {
         if (!params.slug) {
           throw new Error("Slug is required for channels")
         }
+        await assertUserMayManageChannels(this.pool, params.workspaceId, params.createdBy)
         return this.createChannel({
           workspaceId: params.workspaceId,
           slug: params.slug,
@@ -1267,6 +1270,7 @@ export class StreamService {
           code: "INVALID_STREAM_TYPE",
         })
       }
+      await assertPrincipalMayManageChannel(client, workspaceId, target, { kind: "user", userId: actingUserId })
       await assertAssignablePersona(client, companionPersonaId, workspaceId, { callerUserId: actingUserId })
       const stream = await StreamRepository.update(client, workspaceId, streamId, {
         companionMode,
@@ -1384,6 +1388,7 @@ export class StreamService {
     await lockPrincipalAccess(client, workspaceId, root, principal)
     // A copy archives when its host does, through the pull.
     if (target.originWorkspaceId) throw createStreamReadOnlyError(StreamReadOnlyReasons.SHARED_COPY)
+    await assertPrincipalMayManageChannel(client, workspaceId, target, principal)
     assertCanArchive(target, root, principal)
     // Idempotent once authority is proven: a repeat flip would bump archived_at
     // and append a second lifecycle event, so retries would litter the timeline.
@@ -1511,11 +1516,12 @@ export class StreamService {
     }
     try {
       return await withTransaction(this.pool, async (client) => {
-        await assertStreamWritable(client, {
+        const { target } = await assertStreamWritable(client, {
           workspaceId: authority.workspaceId,
           streamId,
           principal: authority.principal,
         })
+        await assertPrincipalMayManageChannel(client, authority.workspaceId, target, authority.principal)
         // Snapshot the pre-update markdown so we only emit when it really changes
         // (a no-op re-save shouldn't spam the timeline).
         let previousDescription: string | null = null

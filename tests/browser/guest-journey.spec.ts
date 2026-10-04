@@ -56,15 +56,20 @@ async function joinAndPost(page: Page, slug: string, message: string): Promise<v
   await joinButton.click()
   await expect(joinButton).toBeHidden({ timeout: 10000 })
 
-  // On phones the composer card owns the tap and forwards focus to the editor.
-  await page
-    .locator("[data-composer-card]")
-    .last()
-    .click({ position: { x: 40, y: 18 } })
   const editor = page.locator("[data-editor-zone='main'] [contenteditable='true']")
-  await expect(editor).toBeFocused()
-  await page.keyboard.type(message)
-  await expect(editor).toContainText(message)
+  // Joining swaps the composer in, and a late re-render can drop focus after the assertion; retry the step from an emptied editor.
+  await expect(async () => {
+    // On phones the composer card owns the tap and forwards focus to the editor.
+    await page
+      .locator("[data-composer-card]")
+      .last()
+      .click({ position: { x: 40, y: 18 } })
+    await expect(editor).toBeFocused({ timeout: 2000 })
+    await page.keyboard.press("ControlOrMeta+a")
+    await page.keyboard.press("Backspace")
+    await page.keyboard.type(message)
+    await expect(editor).toContainText(message, { timeout: 2000 })
+  }).toPass({ timeout: 15000 })
   await page.getByRole("button", { name: "Send" }).click()
   await expect(page.getByTestId("stream-timeline").getByText(message, { exact: true })).toBeVisible({
     timeout: 15000,
@@ -147,6 +152,13 @@ test.describe("Guest journey", () => {
 
       await directoryRow(guest.page, guestsSlug).getByRole("link").click()
       await joinAndPost(guest.page, guestsSlug, message)
+
+      const guestSidebar = guest.page.getByRole("navigation", { name: "Sidebar navigation" })
+      await expect(guestSidebar.getByRole("link", { name: `#${guestsSlug}` })).toBeVisible({ timeout: 10000 })
+      await expect(guest.page.getByRole("button", { name: /New Channel/ })).toHaveCount(0)
+      await guest.page.goto(`/w/${workspaceId}/streams?create-channel=`)
+      await expect(guestSidebar.getByRole("link", { name: `#${guestsSlug}` })).toBeVisible({ timeout: 10000 })
+      await expect(guest.page.getByRole("dialog", { name: "Create a channel" })).toHaveCount(0)
 
       await expect(page.getByTestId("stream-timeline").getByText(message, { exact: true })).toBeVisible({
         timeout: 30000,

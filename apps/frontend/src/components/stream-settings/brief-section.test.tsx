@@ -45,11 +45,11 @@ function brief(overrides: Partial<StreamBrief> = {}): StreamBrief {
   }
 }
 
-function renderSection(stream: Stream = channel()) {
+function renderSection(stream: Stream = channel(), locked = false) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={queryClient}>
-      <BriefSection workspaceId="ws_1" stream={stream} />
+      <BriefSection workspaceId="ws_1" stream={stream} locked={locked} />
     </QueryClientProvider>
   )
 }
@@ -102,5 +102,20 @@ describe("BriefSection", () => {
     expect(await screen.findByText(/Someone else updated this brief/)).toBeInTheDocument()
     // The editor stays open with the user's in-progress text — nothing lost.
     expect(screen.getByRole("textbox", { name: "Stream brief editor" })).toHaveValue("Mine")
+  })
+
+  it("disables Edit on an existing brief when locked", async () => {
+    vi.spyOn(streamBriefsApi, "get").mockResolvedValue(brief({ content: "Ship behind a flag." }))
+    renderSection(channel(), true)
+
+    expect(await screen.findByText("Ship behind a flag.")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled()
+  })
+
+  it("disables adding a brief when locked", async () => {
+    vi.spyOn(streamBriefsApi, "get").mockResolvedValue(null)
+    renderSection(channel(), true)
+
+    expect(await screen.findByRole("button", { name: "Add a brief" })).toBeDisabled()
   })
 })

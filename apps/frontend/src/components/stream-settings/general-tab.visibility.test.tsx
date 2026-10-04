@@ -4,7 +4,14 @@ import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { ServicesProvider, type StreamService } from "@/contexts"
 import * as descriptionSectionModule from "./description-section"
-import { StreamTypes, Visibilities, type Stream } from "@threahq/types"
+import {
+  StreamTypes,
+  Visibilities,
+  WORKSPACE_PERMISSION_SCOPES,
+  type Stream,
+  type WorkspaceBootstrap,
+} from "@threahq/types"
+import * as workspacesModule from "@/hooks/use-workspaces"
 import { GeneralTab } from "./general-tab"
 
 const WS = "ws_1"
@@ -42,9 +49,15 @@ function renderTab(stream: Stream, update: ReturnType<typeof vi.fn>) {
   )
 }
 
+function viewerWith(viewerPermissions: WorkspaceBootstrap["viewerPermissions"]) {
+  vi.spyOn(workspacesModule, "useCachedWorkspaceBootstrap").mockReturnValue({ viewerPermissions } as WorkspaceBootstrap)
+}
+
 beforeEach(() => {
-  vi.spyOn(descriptionSectionModule, "DescriptionSection").mockImplementation(() => (
-    <div data-testid="description-section" />
+  viewerWith([WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE])
+  vi.spyOn(workspacesModule, "useCurrentWorkspaceUser").mockReturnValue(null)
+  vi.spyOn(descriptionSectionModule, "DescriptionSection").mockImplementation(({ locked }) => (
+    <div data-testid="description-section" data-locked={locked ?? false} />
   ))
 })
 
@@ -74,5 +87,41 @@ describe("GeneralTab visibility", () => {
 
     await userEvent.click(screen.getByRole("button", { name: new RegExp(option) }))
     expect(await screen.findByText(copy)).toBeInTheDocument()
+  })
+})
+
+describe("GeneralTab channel settings for a guest", () => {
+  function settingsControls() {
+    return {
+      visibilityOptions: screen
+        .getAllByRole("button", { name: /Public|Private|Open to guests/ })
+        .map((option) => (option as HTMLButtonElement).disabled),
+      slugDisabled: screen.getByPlaceholderText("channel-name").hasAttribute("disabled"),
+      memoryDisabled: screen.getByRole("switch", { name: /automatic memory/i }).hasAttribute("disabled"),
+      descriptionLocked: screen.getByTestId("description-section").getAttribute("data-locked"),
+    }
+  }
+
+  it("should disable every channel setting when the viewer lacks browse", () => {
+    viewerWith([])
+    renderTab(channel(), vi.fn())
+
+    expect(settingsControls()).toEqual({
+      visibilityOptions: [true, true, true],
+      slugDisabled: true,
+      memoryDisabled: true,
+      descriptionLocked: "true",
+    })
+  })
+
+  it("should enable every channel setting when the viewer can browse", () => {
+    renderTab(channel(), vi.fn())
+
+    expect(settingsControls()).toEqual({
+      visibilityOptions: [false, false, false],
+      slugDisabled: false,
+      memoryDisabled: false,
+      descriptionLocked: "false",
+    })
   })
 })

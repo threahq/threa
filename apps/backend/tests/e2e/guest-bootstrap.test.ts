@@ -1,18 +1,21 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { WORKSPACE_ROLE_SLUGS, permissionsForRole } from "@threahq/types"
+import { StreamErrorCodes, WORKSPACE_ROLE_SLUGS, permissionsForRole } from "@threahq/types"
 import { createTestPool } from "../integration/setup"
 import {
   TestClient,
   addStreamMember,
   createChannel,
   createScratchpad,
+  createThread,
   createWorkspace,
   getBaseUrl,
+  getStream,
   getWorkspaceBootstrap,
   joinWorkspace,
   loginAs,
   sendMessage,
+  updateStream,
   type WorkspaceUser,
 } from "../client"
 
@@ -260,6 +263,195 @@ describe("guest people surfaces", () => {
     }).toEqual({
       guest: { pointers: ["coMember"], plain: ["hiddenMember"] },
       coMember: { pointers: ["coMember", "hiddenMember"], plain: [] },
+    })
+  })
+})
+
+const outcome = ({ status, data }: { status: number; data: unknown }) => ({
+  status,
+  code: (data as { code?: string }).code,
+})
+
+describe("guest channel management", () => {
+  test("should refuse a guest creating or changing a channel while scratchpads and members are unaffected", async () => {
+    const owner = new TestClient()
+    const guestClient = new TestClient()
+    const memberClient = new TestClient()
+    await loginAs(owner, `guestmgmt-owner-${testRunId}@test.com`, "Guest Mgmt Owner")
+    await loginAs(guestClient, `guestmgmt-guest-${testRunId}@test.com`, "Guest Mgmt Guest")
+    await loginAs(memberClient, `guestmgmt-member-${testRunId}@test.com`, "Guest Mgmt Member")
+    const workspace = await createWorkspace(owner, `Guest Mgmt WS ${testRunId}`)
+
+    const openChannel = await createChannel(owner, workspace.id, `gm-open-${testRunId}`, "guest_public")
+    expect((await updateStream(owner, workspace.id, openChannel.id, { description: "original" })).status).toBe(200)
+    const guest = await joinWorkspace(guestClient, workspace.id)
+    const member = await joinWorkspace(memberClient, workspace.id)
+    for (const user of [guest, member]) {
+      expect((await addStreamMember(owner, workspace.id, openChannel.id, user.id)).status).toBe(201)
+    }
+    await pool.query(`UPDATE users SET role = $3 WHERE workspace_id = $1 AND id = $2`, [
+      workspace.id,
+      guest.id,
+      WORKSPACE_ROLE_SLUGS.GUEST,
+    ])
+
+    const createStreamAs = (client: TestClient, body: Record<string, unknown>) =>
+      client.post<unknown>(`/api/workspaces/${workspace.id}/streams`, body).then(outcome)
+    const patchAs = (client: TestClient, streamId: string, body: Record<string, unknown>) =>
+      updateStream(client, workspace.id, streamId, body).then(outcome)
+    const channelState = async () => {
+      const { slug, visibility, description } = await getStream(owner, workspace.id, openChannel.id)
+      return { slug, visibility, description }
+    }
+
+    const forbidden = { status: 403, code: StreamErrorCodes.CHANNEL_MANAGEMENT_FORBIDDEN }
+    const guestCreates = {
+      private: await createStreamAs(guestClient, {
+        type: "channel",
+        slug: `gm-g-private-${testRunId}`,
+        visibility: "private",
+      }),
+      public: await createStreamAs(guestClient, {
+        type: "channel",
+        slug: `gm-g-public-${testRunId}`,
+        visibility: "public",
+      }),
+      guestPublic: await createStreamAs(guestClient, {
+        type: "channel",
+        slug: `gm-g-open-${testRunId}`,
+        visibility: "guest_public",
+      }),
+    }
+    const guestScratchpad = await createStreamAs(guestClient, { type: "scratchpad" })
+    const memberChannel = await createStreamAs(memberClient, {
+      type: "channel",
+      slug: `gm-m-${testRunId}`,
+      visibility: "private",
+    })
+    const guestPatches = {
+      visibility: await patchAs(guestClient, openChannel.id, { visibility: "private" }),
+      slug: await patchAs(guestClient, openChannel.id, { slug: `gm-renamed-${testRunId}` }),
+      description: await patchAs(guestClient, openChannel.id, { description: "hijacked" }),
+    }
+    const channelAfterGuestPatches = await channelState()
+    const guestRenamesOwnScratchpad = await patchAs(
+      guestClient,
+      (await createScratchpad(guestClient, workspace.id)).id,
+      { displayName: "My notes" }
+    )
+    const memberPatch = await patchAs(memberClient, openChannel.id, { description: "by a member" })
+
+    expect({
+      guestCreates,
+      guestScratchpad,
+      memberChannel,
+      guestPatches,
+      channelAfterGuestPatches,
+      guestRenamesOwnScratchpad,
+      memberPatch,
+    }).toEqual({
+      guestCreates: { private: forbidden, public: forbidden, guestPublic: forbidden },
+      guestScratchpad: { status: 201, code: undefined },
+      memberChannel: { status: 201, code: undefined },
+      guestPatches: { visibility: forbidden, slug: forbidden, description: forbidden },
+      channelAfterGuestPatches: { slug: openChannel.slug, visibility: "guest_public", description: "original" },
+      guestRenamesOwnScratchpad: { status: 200, code: undefined },
+      memberPatch: { status: 200, code: undefined },
+    })
+  })
+
+  test("should refuse a guest changing a channel's companion, brief or archive state while members and the tool policy are unaffected", async () => {
+    const owner = new TestClient()
+    const guestClient = new TestClient()
+    const memberClient = new TestClient()
+    const demotedCreatorClient = new TestClient()
+    await loginAs(owner, `guestcfg-owner-${testRunId}@test.com`, "Guest Cfg Owner")
+    await loginAs(guestClient, `guestcfg-guest-${testRunId}@test.com`, "Guest Cfg Guest")
+    await loginAs(memberClient, `guestcfg-member-${testRunId}@test.com`, "Guest Cfg Member")
+    await loginAs(demotedCreatorClient, `guestcfg-creator-${testRunId}@test.com`, "Guest Cfg Creator")
+    const workspace = await createWorkspace(owner, `Guest Cfg WS ${testRunId}`)
+
+    const openChannel = await createChannel(owner, workspace.id, `gc-open-${testRunId}`, "guest_public")
+    const guest = await joinWorkspace(guestClient, workspace.id)
+    const member = await joinWorkspace(memberClient, workspace.id)
+    const demotedCreator = await joinWorkspace(demotedCreatorClient, workspace.id)
+    for (const user of [guest, member]) {
+      expect((await addStreamMember(owner, workspace.id, openChannel.id, user.id)).status).toBe(201)
+    }
+    const memberChannel = await createChannel(memberClient, workspace.id, `gc-member-${testRunId}`, "private")
+    const demotedCreatorChannel = await createChannel(
+      demotedCreatorClient,
+      workspace.id,
+      `gc-creator-${testRunId}`,
+      "private"
+    )
+    const anchor = await sendMessage(owner, workspace.id, openChannel.id, "anchor")
+    const thread = await createThread(owner, workspace.id, openChannel.id, anchor.id)
+    for (const user of [guest, demotedCreator]) {
+      await pool.query(`UPDATE users SET role = $3 WHERE workspace_id = $1 AND id = $2`, [
+        workspace.id,
+        user.id,
+        WORKSPACE_ROLE_SLUGS.GUEST,
+      ])
+    }
+
+    const streamPath = (streamId: string) => `/api/workspaces/${workspace.id}/streams/${streamId}`
+    const companionAs = (client: TestClient, streamId: string, companionMode: "on" | "off") =>
+      client.patch<unknown>(`${streamPath(streamId)}/companion`, { companionMode }).then(outcome)
+    const toolPolicyAs = (client: TestClient, streamId: string) =>
+      client.patch<unknown>(`${streamPath(streamId)}/tool-policy`, { allowedCategories: [] }).then(outcome)
+    const briefAs = (client: TestClient, streamId: string, content: string) =>
+      client.put<unknown>(`${streamPath(streamId)}/brief`, { content, version: 0 }).then(outcome)
+    const lifecycleAs = (client: TestClient, streamId: string, action: "archive" | "unarchive") =>
+      client.post<unknown>(`${streamPath(streamId)}/${action}`).then(outcome)
+    const stateOf = async (reader: TestClient, streamId: string) => {
+      const { companionMode, archivedAt } = await getStream(reader, workspace.id, streamId)
+      const { data } = await reader.get<{ brief: { content: string } | null }>(`${streamPath(streamId)}/brief`)
+      return { companionMode, archived: archivedAt !== null, brief: data.brief?.content ?? null }
+    }
+
+    const forbidden = { status: 403, code: StreamErrorCodes.CHANNEL_MANAGEMENT_FORBIDDEN }
+    const ok = { status: 200, code: undefined }
+    const before = {
+      channel: await stateOf(owner, openChannel.id),
+      demotedCreatorChannel: await stateOf(demotedCreatorClient, demotedCreatorChannel.id),
+    }
+    const guestAttempts = {
+      companion: await companionAs(guestClient, openChannel.id, before.channel.companionMode === "on" ? "off" : "on"),
+      brief: await briefAs(guestClient, openChannel.id, "hijacked"),
+      briefViaThread: await briefAs(guestClient, thread.id, "hijacked via thread"),
+      archive: await lifecycleAs(guestClient, openChannel.id, "archive"),
+      demotedCreatorArchive: await lifecycleAs(demotedCreatorClient, demotedCreatorChannel.id, "archive"),
+    }
+    const after = {
+      channel: await stateOf(owner, openChannel.id),
+      demotedCreatorChannel: await stateOf(demotedCreatorClient, demotedCreatorChannel.id),
+    }
+    const toolPolicyOnChannel = {
+      guest: await toolPolicyAs(guestClient, openChannel.id),
+      member: await toolPolicyAs(memberClient, openChannel.id),
+    }
+    const memberAttempts = {
+      companion: await companionAs(memberClient, openChannel.id, before.channel.companionMode === "on" ? "off" : "on"),
+      brief: await briefAs(memberClient, openChannel.id, "by a member"),
+      archive: await lifecycleAs(memberClient, memberChannel.id, "archive"),
+      unarchive: await lifecycleAs(memberClient, memberChannel.id, "unarchive"),
+    }
+
+    expect({ guestAttempts, after, toolPolicyOnChannel, memberAttempts }).toEqual({
+      guestAttempts: {
+        companion: forbidden,
+        brief: forbidden,
+        briefViaThread: forbidden,
+        archive: forbidden,
+        demotedCreatorArchive: forbidden,
+      },
+      after: before,
+      toolPolicyOnChannel: {
+        guest: { status: 400, code: "INVALID_STREAM_TYPE" },
+        member: { status: 400, code: "INVALID_STREAM_TYPE" },
+      },
+      memberAttempts: { companion: ok, brief: ok, archive: ok, unarchive: ok },
     })
   })
 })

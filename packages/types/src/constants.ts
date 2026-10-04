@@ -75,6 +75,7 @@ export const StreamReadOnlyReasons = {
 
 export const StreamErrorCodes = {
   READ_ONLY: "STREAM_READ_ONLY",
+  CHANNEL_MANAGEMENT_FORBIDDEN: "CHANNEL_MANAGEMENT_FORBIDDEN",
 } as const
 
 // A stream's system purpose, when it exists to power a feature rather than to be

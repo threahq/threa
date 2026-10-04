@@ -11,6 +11,7 @@ import {
 import type { Querier } from "../../db"
 import { StreamNotFoundError } from "../../lib/errors"
 import { BotChannelAccessRepository, isStreamReadableAsOwner } from "../api-keys"
+import { findUserIdsWithoutBrowse } from "../workspaces"
 import {
   isOpenToBots,
   resolveEffectiveAccessStream,
@@ -32,6 +33,25 @@ interface AuthorityStream {
   archivedAt: Date | string | null
   originWorkspaceId?: string | null
   disconnectedAt: Date | string | null
+}
+
+export async function assertUserMayManageChannels(db: Querier, workspaceId: string, userId: string): Promise<void> {
+  if ((await findUserIdsWithoutBrowse(db, workspaceId, [userId])).size === 0) return
+  throw new HttpError("Guests cannot create or change channels", {
+    status: 403,
+    code: StreamErrorCodes.CHANNEL_MANAGEMENT_FORBIDDEN,
+  })
+}
+
+/** Bots and API keys pass: channel management is a restriction on user principals only. */
+export async function assertPrincipalMayManageChannel(
+  db: Querier,
+  workspaceId: string,
+  stream: Pick<AuthorityStream, "type">,
+  principal: StreamWritePrincipal
+): Promise<void> {
+  if (stream.type !== StreamTypes.CHANNEL || principal.kind !== "user") return
+  await assertUserMayManageChannels(db, workspaceId, principal.userId)
 }
 
 export function deriveStreamViewerState(params: {

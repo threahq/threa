@@ -1,17 +1,38 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderHook } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
-import { describe, expect, it } from "vitest"
-import type { FeatureFlagLayers, WorkspaceBootstrap } from "@threahq/types"
-import { workspaceKeys } from "@/hooks/use-workspaces"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import {
+  WORKSPACE_PERMISSION_SCOPES,
+  type FeatureFlagLayers,
+  type WorkspaceBootstrap,
+  type WorkspacePermissionSlug,
+} from "@threahq/types"
+import * as workspacesModule from "@/hooks/use-workspaces"
 import { useCommandItems } from "./use-command-items"
 import type { CommandContext } from "./commands"
 
 const commandContext = { workspaceId: "ws_1" } as unknown as CommandContext
 
-function renderItems(featureFlags: FeatureFlagLayers | undefined, context = commandContext, query = "diagnostics") {
+beforeEach(() => {
+  vi.spyOn(workspacesModule, "useCurrentWorkspaceUser").mockReturnValue(null)
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
+function renderItems(
+  featureFlags: FeatureFlagLayers | undefined,
+  context = commandContext,
+  query = "diagnostics",
+  viewerPermissions: WorkspacePermissionSlug[] = []
+) {
   const queryClient = new QueryClient()
-  queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), { featureFlags } as WorkspaceBootstrap)
+  queryClient.setQueryData(workspacesModule.workspaceKeys.bootstrap("ws_1"), {
+    featureFlags,
+    viewerPermissions,
+  } as WorkspaceBootstrap)
   const wrapper = ({ children }: { children: ReactNode }) =>
     createElement(QueryClientProvider, { client: queryClient }, children)
   const { result } = renderHook(() => useCommandItems({ query, commandContext: context }), { wrapper })
@@ -39,5 +60,19 @@ describe("useCommandItems — Settle", () => {
   it("offers Settle when the stream in view is in the Inbox", () => {
     const settleable = { ...inStream, settleStream: () => {} } as CommandContext
     expect(renderItems(flags, settleable, "settle")).toContain("stream-settle")
+  })
+})
+
+describe("useCommandItems — channel creation", () => {
+  const flags = { workspace: {}, user: {} }
+
+  it("should offer New Channel when the viewer can browse", () => {
+    expect(renderItems(flags, commandContext, "new channel", [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE])).toContain(
+      "new-channel"
+    )
+  })
+
+  it("should hide New Channel when the viewer lacks browse", () => {
+    expect(renderItems(flags, commandContext, "new channel", [])).not.toContain("new-channel")
   })
 })

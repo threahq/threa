@@ -12,6 +12,7 @@ interface ChannelSlugInputProps {
   value: string
   onChange: (slug: string) => void
   onValidityChange: (valid: boolean) => void
+  disabled?: boolean
 }
 
 export function ChannelSlugInput({
@@ -21,6 +22,7 @@ export function ChannelSlugInput({
   value,
   onChange,
   onValidityChange,
+  disabled,
 }: ChannelSlugInputProps) {
   const [status, setStatus] = useState<SlugStatus>("idle")
   const checkTimer = useRef<ReturnType<typeof setTimeout>>(null)
@@ -102,6 +104,7 @@ export function ChannelSlugInput({
           value={value}
           onChange={(e) => handleChange(e.target.value)}
           placeholder="channel-name"
+          disabled={disabled}
           className="flex-1 h-10 bg-transparent px-3 text-sm placeholder:text-muted-foreground focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
         />
         <div className="flex items-center justify-center h-10 w-8 shrink-0">

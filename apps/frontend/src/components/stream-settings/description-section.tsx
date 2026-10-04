@@ -25,7 +25,15 @@ function descriptionPlaceholder(streamType: StreamType): string {
  * uses. Markdown (`stream.description`) is only the wire/integrator projection;
  * it's the seed fallback only for rows cached before `descriptionJson` existed.
  */
-export function DescriptionSection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
+export function DescriptionSection({
+  workspaceId,
+  stream,
+  locked = false,
+}: {
+  workspaceId: string
+  stream: Stream
+  locked?: boolean
+}) {
   const updateMutation = useUpdateStream(workspaceId, stream.id)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   // Selection toolbar is a hover/mouse affordance; suppress it on touch.
@@ -87,31 +95,34 @@ export function DescriptionSection({ workspaceId, stream }: { workspaceId: strin
           staticToolbarOpen={formatOpen}
           disableSelectionToolbar={disableSelectionToolbar}
           ariaLabel="Stream description editor"
+          disabled={locked}
           className="min-h-0 [&_.tiptap]:min-h-[100px] [&_.tiptap]:max-h-[320px]"
           enableCommands={false}
           enableMemoEmbed={false}
         />
-        <div className="mt-2 border-t pt-2" onMouseDown={(event) => event.preventDefault()}>
-          <EditorActionBar
-            editorHandle={editorRef.current}
-            disabled={updateMutation.isPending}
-            formatOpen={formatOpen}
-            onFormatOpenChange={setFormatOpen}
-            showAttach={false}
-            trailingContent={
-              <div className="flex items-center gap-2">
-                <Button type="button" variant="ghost" size="sm" onClick={handleReset} disabled={!isDirty}>
-                  Reset
-                </Button>
-                <Button type="button" size="sm" onClick={handleSave} disabled={!isDirty || updateMutation.isPending}>
-                  {updateMutation.isPending ? "Saving..." : "Save"}
-                </Button>
-              </div>
-            }
-          />
-        </div>
+        {!locked && (
+          <div className="mt-2 border-t pt-2" onMouseDown={(event) => event.preventDefault()}>
+            <EditorActionBar
+              editorHandle={editorRef.current}
+              disabled={updateMutation.isPending}
+              formatOpen={formatOpen}
+              onFormatOpenChange={setFormatOpen}
+              showAttach={false}
+              trailingContent={
+                <div className="flex items-center gap-2">
+                  <Button type="button" variant="ghost" size="sm" onClick={handleReset} disabled={!isDirty}>
+                    Reset
+                  </Button>
+                  <Button type="button" size="sm" onClick={handleSave} disabled={!isDirty || updateMutation.isPending}>
+                    {updateMutation.isPending ? "Saving..." : "Save"}
+                  </Button>
+                </div>
+              }
+            />
+          </div>
+        )}
       </div>
-      <p className="text-xs text-muted-foreground">Delete everything and save to clear the description.</p>
+      {!locked && <p className="text-xs text-muted-foreground">Delete everything and save to clear the description.</p>}
     </div>
   )
 }
