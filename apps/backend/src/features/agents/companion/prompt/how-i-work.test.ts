@@ -173,6 +173,18 @@ describe("buildHowIWorkSection", () => {
     })
   })
 
+  test("should count general_research as workspace search when workspace_research is the only workspace tool", () => {
+    const card = buildHowIWorkSection(ariadne, privateScratchpad, [
+      WORKSPACE_RESEARCH_TOOL_NAME,
+      AgentToolNames.GENERAL_RESEARCH,
+    ])
+
+    expect(capabilities(card)).toEqual([
+      "Research the workspace: messages, memos and files, within the reach described above.",
+      "Run deeper research that combines the workspace, the web and connected integrations.",
+    ])
+  })
+
   test("should offer saving a memo only when save_memo is wired", () => {
     const capture = (toolNames: string[]) =>
       buildHowIWorkSection(ariadne, { ...privateScratchpad, memoryCapture: "off" }, toolNames)

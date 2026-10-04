@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { mkdtempSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { parseAppLinkHref } from "@threahq/types"
 
 import { loadGuideArticles, parseGuideArticle } from "./index"
@@ -42,9 +45,29 @@ describe("guide articles", () => {
   })
 })
 
-describe("parseGuideArticle", () => {
-  const valid = "---\ntitle: A title\nsummary: One line.\nsection: memory\norder: 3\n---\n\n# A title\n\nText.\n"
+const valid = "---\ntitle: A title\nsummary: One line.\nsection: memory\norder: 3\n---\n\n# A title\n\nText.\n"
 
+describe("loadGuideArticles", () => {
+  const contentDir = (files: Record<string, string>) => {
+    const dir = mkdtempSync(join(tmpdir(), "user-guide-"))
+    for (const [name, raw] of Object.entries(files)) writeFileSync(join(dir, name), raw)
+    return dir
+  }
+
+  test("should ignore hidden files when the content directory holds OS litter", () => {
+    const dir = contentDir({ "a-title.md": valid, ".DS_Store": "\0binary" })
+
+    expect(loadGuideArticles(dir).map((article) => article.slug)).toEqual(["a-title"])
+  })
+
+  test("should reject the content when it holds a visible file that is not an article", () => {
+    const dir = contentDir({ "a-title.md": valid, "notes.txt": "draft" })
+
+    expect(() => loadGuideArticles(dir)).toThrow('Guide content holds "notes.txt", which is not a .md article')
+  })
+})
+
+describe("parseGuideArticle", () => {
   test("should return the front matter fields and the trimmed body when the article is valid", () => {
     expect(parseGuideArticle("a-title", valid)).toEqual({
       slug: "a-title",

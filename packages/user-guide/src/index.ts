@@ -110,9 +110,9 @@ export function guideArticlesFromFiles(files: Record<string, string>): GuideArti
   )
 }
 
-export function loadGuideArticles(): GuideArticle[] {
-  const dir = fileURLToPath(new URL("../content", import.meta.url))
-  const files = readdirSync(dir)
+export function loadGuideArticles(dir = fileURLToPath(new URL("../content", import.meta.url))): GuideArticle[] {
+  // Hidden files are OS litter (.DS_Store) that no build picks up, so they are neither articles nor strays.
+  const files = readdirSync(dir).filter((file) => !file.startsWith("."))
   const stray = files.find((file) => !file.endsWith(".md"))
   // The site's glob only picks up `.md`, so any other file would ship to Ariadne but never to the guide.
   if (stray) throw new Error(`Guide content holds "${stray}", which is not a .md article`)
