@@ -35,6 +35,7 @@ import { releaseInboxHold } from "./inbox-release"
 import {
   assertStreamWritable,
   assertViewerStreamWritable,
+  canHostAside,
   createStreamReadOnlyError,
   deriveStreamViewerState,
   lockEffectiveStreams,
@@ -805,16 +806,12 @@ export class StreamService {
         })
       }
 
-      // An aside inherits its host's archive state through the parent chain,
-      // so an aside opened on an archived host would be born read-only. A shared
-      // channel's copy takes one: the aside lives in this workspace and nothing
-      // in it reaches the host.
       const [{ state: parentState }] = await resolveLockedStreamAuthorities(client, {
         workspaceId: params.workspaceId,
         streamIds: [params.parentStreamId],
         principal: { kind: "user", userId: params.createdBy },
       })
-      if (parentState.readOnlyReason !== StreamReadOnlyReasons.SHARED_COPY) assertViewerStreamWritable(parentState)
+      if (!canHostAside(parentState)) assertViewerStreamWritable(parentState)
 
       const anchorId = params.parentAnchorId
       if (anchorId !== undefined) {

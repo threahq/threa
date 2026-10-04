@@ -953,7 +953,7 @@ function SentMessageEvent({
   const navigate = useNavigate()
   const location = useLocation()
   const currentStream = useStreamFromStore(workspaceId, streamId)
-  // A shared channel's copy takes reactions, edits and deletes through the host, but no threads, asides, moves or conversations.
+  // A shared channel's copy takes reactions, edits and deletes through the host, but no threads, moves or conversations.
   const sharedCopy = !!currentStream?.originWorkspaceId
   const parentStream = useStreamFromStore(workspaceId, currentStream?.parentStreamId ?? undefined)
   const rootStream = useStreamFromStore(workspaceId, currentStream?.rootStreamId ?? undefined)
