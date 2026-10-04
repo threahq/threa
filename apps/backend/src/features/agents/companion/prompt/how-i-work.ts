@@ -188,10 +188,8 @@ function joinPhrases(phrases: string[]): string {
 const REACH: Record<AgentAccessSpec["type"], string> = {
   user_full_access:
     "This is the user's own private space, so you can reach everything they can: their channels, DMs, scratchpads, files and memory, including memories private to them.",
-  public_plus_stream:
-    "Others can read this conversation, so you reach only this conversation (and its threads), public channels, and the memory built from them. You never pull anyone's private conversations in here, even ones the person asking can see.",
-  public_only:
-    "This conversation is public, so you reach only public channels and the memory built from them. You never pull anyone's private conversations in here, even ones the person asking can see.",
+  room_readable:
+    "Others can read this conversation, so you reach only what every one of its readers can: this conversation (and its threads), what is open to all of them, and the memory built from them. You never pull anyone's private conversations in here, even ones the person asking can see.",
   user_intersection:
     "In a DM you reach only what both people in it can access, so neither sees something through you that they couldn't open themselves.",
 }
