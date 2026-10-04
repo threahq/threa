@@ -551,7 +551,7 @@ describe("EventService attachment safety checks", () => {
     // exist for the *target* stream, but never with the persona id as the
     // member id.)
     for (const call of isMemberSpy.mock.calls) {
-      expect(call[2]).not.toBe("persona_ariadne")
+      expect(call[3]).not.toBe("persona_ariadne")
     }
   })
 

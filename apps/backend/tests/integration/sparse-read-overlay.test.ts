@@ -180,7 +180,7 @@ describe("Sparse read overlay", () => {
     expect(await SparseReadRepository.countOverlay(pool, threadId, reader)).toBe(0)
     // The frontier landed in stream_read_state — and NO membership row was
     // upserted (membership ≠ access ≠ read state, INV-62).
-    expect(await StreamMemberRepository.findByStreamAndMember(pool, threadId, reader)).toBeNull()
+    expect(await StreamMemberRepository.findByStreamAndMember(pool, wid, threadId, reader)).toBeNull()
     const readState = await ReadStateRepository.get(pool, threadId, reader)
     expect(readState?.lastReadEventId).toBe(lastEvent.id)
     expect(readState?.workspaceId).toBe(wid)

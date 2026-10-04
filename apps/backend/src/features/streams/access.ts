@@ -109,7 +109,7 @@ export async function checkStreamAccess(
   if (stream.rootStreamId && effective.id !== stream.rootStreamId) return null
 
   if (effective.visibility !== Visibilities.PUBLIC) {
-    const isMember = await StreamMemberRepository.isMember(db, effective.id, userId)
+    const isMember = await StreamMemberRepository.isMember(db, workspaceId, effective.id, userId)
     if (!isMember) return null
   }
   return stream
@@ -133,12 +133,12 @@ export async function checkStreamAccess(
  * carries `$1..$k` placeholders that {@link composeSql} renumbers when splicing
  * it into a larger query.
  */
-export function rootReadableConditionSql(userId: string, rootAlias: string): QueryConfig {
+export function rootReadableConditionSql(workspaceId: string, userId: string, rootAlias: string): QueryConfig {
   return sql`(
     ${sql.raw(rootAlias)}.visibility = ${Visibilities.PUBLIC}
     OR EXISTS (
       SELECT 1 FROM stream_members
-      WHERE stream_id = ${sql.raw(rootAlias)}.id AND member_id = ${userId}
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${sql.raw(rootAlias)}.id AND member_id = ${userId}
     )
   )`
 }
@@ -176,10 +176,11 @@ export function streamAccessPredicateSql(workspaceId: string, userId: string, st
     SELECT 1
     FROM streams eff_s
     JOIN streams eff_root ON eff_root.id = COALESCE(eff_s.root_stream_id, eff_s.id)
+      AND eff_root.workspace_id = eff_s.workspace_id
     WHERE ${sql`eff_s.id = ${sql.raw(streamIdColumn)}`}
       AND eff_s.workspace_id = ${workspaceId}
       AND eff_root.workspace_id = ${workspaceId}
-      AND ${rootReadableConditionSql(userId, "eff_root")}
+      AND ${rootReadableConditionSql(workspaceId, userId, "eff_root")}
   )`
 }
 
@@ -203,7 +204,7 @@ export async function listRoomReadableStreamIds(
   const result = await db.query<{ id: string }>(sql`
     SELECT s.id
     FROM streams s
-    JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id)
+    JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id
     WHERE s.workspace_id = ${workspaceId}
       AND s.id = ANY(${candidateStreamIds as string[]})
       AND (s.id = ${roomStreamId} OR root.visibility = ${Visibilities.PUBLIC})

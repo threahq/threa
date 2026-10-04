@@ -237,11 +237,12 @@ export function createWorkspaceHandlers({
       // viewer-dependent name onto the archived rows too so saved/activity
       // labels survive a reload.
       const [resolvedStreams, resolvedArchivedStreams] = await Promise.all([
-        streamService.resolveDmDisplayNames(streams, users, userId),
-        streamService.resolveDmDisplayNames(archivedStreams, users, userId),
+        streamService.resolveDmDisplayNames(workspaceId, streams, users, userId),
+        streamService.resolveDmDisplayNames(workspaceId, archivedStreams, users, userId),
       ])
 
       const streamMemberships = await streamService.getMembershipsBatch(
+        workspaceId,
         resolvedStreams.map((s) => s.id),
         userId
       )

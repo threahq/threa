@@ -326,7 +326,7 @@ async function buildChannelContext(
 ): Promise<StreamContext> {
   const [messages, members] = await Promise.all([
     MessageRepository.list(db, stream.id, { limit: maxMessages }),
-    StreamMemberRepository.list(db, { streamId: stream.id }),
+    StreamMemberRepository.list(db, stream.workspaceId, { streamId: stream.id }),
   ])
 
   const userIds = members.map((m) => m.memberId)
@@ -362,7 +362,7 @@ async function buildDmContext(
 ): Promise<StreamContext> {
   const [messages, members] = await Promise.all([
     MessageRepository.list(db, stream.id, { limit: maxMessages }),
-    StreamMemberRepository.list(db, { streamId: stream.id }),
+    StreamMemberRepository.list(db, stream.workspaceId, { streamId: stream.id }),
   ])
 
   const userIds = members.map((m) => m.memberId)

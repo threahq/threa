@@ -28,6 +28,7 @@ export const StreamDirectoryStatsRepository = {
           (ARRAY_AGG(sm.member_id ORDER BY sm.joined_at DESC, sm.member_id))[1:${RECENT_MEMBER_LIMIT}::int] AS recent_member_ids
         FROM stream_members sm
         JOIN readable r ON r.id = sm.stream_id
+        WHERE sm.workspace_id = ${workspaceId}
         GROUP BY sm.stream_id
       ),
       activity AS (
@@ -36,7 +37,8 @@ export const StreamDirectoryStatsRepository = {
           COUNT(*)::int AS n
         FROM messages m
         JOIN readable r ON r.id = m.stream_id
-        WHERE m.deleted_at IS NULL
+        WHERE m.workspace_id = ${workspaceId}
+          AND m.deleted_at IS NULL
           AND m.created_at > NOW() - make_interval(days => ${DIRECTORY_ACTIVITY_DAYS}::int)
         GROUP BY 1, 2
       )

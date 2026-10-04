@@ -245,10 +245,8 @@ describe("CallService.startCall — DM ring", () => {
     spyOn(CallParticipantRepository, "admit").mockResolvedValue(fakeParticipant())
     stubCleanEndpointAdmission()
     spyOn(CallInvitationRepository, "acceptRingingForUser").mockResolvedValue([])
-    spyOn(streamsModule.StreamMemberRepository, "list").mockResolvedValue([
-      { memberId: "usr_a" } as never,
-      { memberId: "usr_peer" } as never,
-    ])
+    spyOn(streamsModule.StreamMemberRepository, "list").mockImplementation((async (_c: unknown, workspaceId: string) =>
+      workspaceId === "ws_1" ? [{ memberId: "usr_a" }, { memberId: "usr_peer" }] : []) as never)
     const ring = spyOn(CallInvitationRepository, "insertRinging").mockResolvedValue({
       id: "callinv_1",
       expiresAt: NOW,
@@ -674,6 +672,9 @@ describe("CallService.leaveCall", () => {
     // appendCallEndedForLeave's ctx reads (stream visibility + ever-participant set).
     spyOn(streamsModule.StreamRepository, "findById").mockResolvedValue({ visibility: "public" } as never)
     spyOn(CallParticipantRepository, "listUserIdsByCall").mockResolvedValue(new Map([["call_1", ["usr_a"]]]))
+    const memberList = spyOn(streamsModule.StreamMemberRepository, "list").mockResolvedValue([
+      { memberId: "usr_a" } as never,
+    ])
     spyOn(CallInvitationRepository, "cancelRingingForCall").mockResolvedValue([])
     const bump = spyOn(CallRepository, "bumpRosterVersion").mockResolvedValue(1)
     spyOn(CallRepository, "findById").mockResolvedValue(fakeCall({ status: "ended", endedReason: "completed" }))
@@ -692,10 +693,11 @@ describe("CallService.leaveCall", () => {
     expect(end).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ reason: "completed" }))
     expect(grace).not.toHaveBeenCalled()
     // The end summary rides the outbox in the same tx (INV-4/7) so peers see the ended card.
+    expect(memberList).toHaveBeenCalledWith(expect.anything(), "ws_1", { streamId: "stream_1" })
     expect(emit).toHaveBeenCalledWith(
       expect.anything(),
       "stream:call_ended",
-      expect.objectContaining({ callId: "call_1", streamId: "stream_1" })
+      expect.objectContaining({ callId: "call_1", streamId: "stream_1", memberUserIds: ["usr_a"] })
     )
     // A leave bumps the roster version in the same tx (INV-66) so the departed tile isn't a ghost.
     expect(bump).toHaveBeenCalledWith(expect.anything(), "ws_1", "call_1")
@@ -1340,6 +1342,9 @@ describe("CallService — call_started / call_ended timeline (1.4)", () => {
     const eventInsert = spyOn(streamsModule.StreamEventRepository, "insert").mockResolvedValue({
       id: "evt_started",
     } as never)
+    const memberList = spyOn(streamsModule.StreamMemberRepository, "list").mockResolvedValue([
+      { memberId: "usr_a" } as never,
+    ])
     const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
 
     await makeService().startCall({ workspaceId: "ws_1", streamId: "stream_1", userId: "usr_a", mode: "video" })
@@ -1351,10 +1356,16 @@ describe("CallService — call_started / call_ended timeline (1.4)", () => {
         payload: expect.objectContaining({ callId: "call_1", mode: "video", startedBy: "usr_a" }),
       })
     )
+    expect(memberList).toHaveBeenCalledWith(expect.anything(), "ws_1", { streamId: "stream_1" })
     expect(emit).toHaveBeenCalledWith(
       expect.anything(),
       "stream:call_started",
-      expect.objectContaining({ callId: "call_1", streamId: "stream_1", streamVisibility: "public" })
+      expect.objectContaining({
+        callId: "call_1",
+        streamId: "stream_1",
+        streamVisibility: "public",
+        memberUserIds: ["usr_a"],
+      })
     )
     expect(emit).toHaveBeenCalledWith(
       expect.anything(),
@@ -1436,6 +1447,43 @@ describe("CallService — call_started / call_ended timeline (1.4)", () => {
     // not one single-element read per call.
     expect(listUserIds).toHaveBeenCalledTimes(1)
     expect(listUserIds).toHaveBeenCalledWith(expect.anything(), "ws_1", ["call_done", "call_reaped"])
+  })
+
+  it("should read stream members per workspace when the grace sweep ends calls that share a stream id across workspaces", async () => {
+    stubTransaction()
+    const endedAt = new Date(NOW.getTime() + 5000)
+    spyOn(CallInvitationRepository, "cancelRingingForCalls").mockResolvedValue([])
+    spyOn(CallRepository, "endGraceExpired").mockResolvedValue([
+      fakeCall({ id: "call_a", workspaceId: "ws_1", status: "ended", endedReason: "completed", endedAt }),
+      fakeCall({ id: "call_b", workspaceId: "ws_2", status: "ended", endedReason: "completed", endedAt }),
+    ])
+    spyOn(streamsModule.StreamRepository, "findByIds").mockResolvedValue([
+      { id: "stream_1", visibility: "private" },
+    ] as never)
+    spyOn(CallParticipantRepository, "listUserIdsByCall").mockImplementation(
+      async (_c: unknown, _ws: unknown, ids: readonly string[]) => new Map(ids.map((id) => [id, []]))
+    )
+    spyOn(streamsModule.StreamEventRepository, "insert").mockResolvedValue({ id: "evt_ended" } as never)
+    const memberList = spyOn(streamsModule.StreamMemberRepository, "list").mockImplementation((async (
+      _c: unknown,
+      workspaceId: string
+    ) => [{ streamId: "stream_1", memberId: workspaceId === "ws_1" ? "usr_a" : "usr_b" }]) as never)
+    const emit = spyOn(OutboxRepository, "insert").mockResolvedValue({} as never)
+
+    await makeService().endGraceExpiredCalls(NOW)
+
+    expect(memberList).toHaveBeenCalledWith(expect.anything(), "ws_1", { streamIds: ["stream_1"] })
+    expect(memberList).toHaveBeenCalledWith(expect.anything(), "ws_2", { streamIds: ["stream_1"] })
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "stream:call_ended",
+      expect.objectContaining({ workspaceId: "ws_1", callId: "call_a", memberUserIds: ["usr_a"] })
+    )
+    expect(emit).toHaveBeenCalledWith(
+      expect.anything(),
+      "stream:call_ended",
+      expect.objectContaining({ workspaceId: "ws_2", callId: "call_b", memberUserIds: ["usr_b"] })
+    )
   })
 
   it("getStreamActiveCall projects the live call with the viewer's own-participant flag", async () => {

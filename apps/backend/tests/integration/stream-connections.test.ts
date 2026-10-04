@@ -671,7 +671,7 @@ describe("StreamConnectionService", () => {
       lastEventAt: new Date(),
     })
     await UserRepository.remove(pool, host.id, removed.id)
-    await StreamMemberRepository.delete(pool, privateChannel.id, leftChannel.id)
+    await StreamMemberRepository.delete(pool, host.id, privateChannel.id, leftChannel.id)
 
     const shareable = async (streamId: string, invitedBy: string) =>
       (await service.describeChannel({ workspaceId: host.id, streamId, invitedBy })).shareable

@@ -132,7 +132,7 @@ describe("sandbox session tokens", () => {
     const session = (await service.validate(value)) as SandboxSession
     expect(await isSandboxStreamReadable(pool, session, revocable)).toBe(true)
 
-    await StreamMemberRepository.delete(pool, revocable, invokerId)
+    await StreamMemberRepository.delete(pool, ws, revocable, invokerId)
 
     expect(await isSandboxStreamReadable(pool, session, revocable)).toBe(false)
     expect(await sandboxReadableStreamIds(pool, session)).toEqual([channel])

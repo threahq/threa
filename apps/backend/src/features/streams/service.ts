@@ -321,13 +321,14 @@ async function lockPrincipalAccess(
   root: Stream,
   principal: StreamWritePrincipal
 ): Promise<void> {
-  if (principal.kind === "user") return lockActorAccess(client, root, principal.userId)
+  if (principal.kind === "user") return lockActorAccess(client, workspaceId, root, principal.userId)
   const grants = await BotChannelAccessRepository.lockGrants(client, workspaceId, principal.botId, [root.id])
   if (root.visibility !== Visibilities.PUBLIC && !grants.has(root.id)) throw new StreamNotFoundError()
 }
 
 async function lockActorAccess(
   client: Querier,
+  workspaceId: string,
   root: Stream,
   actorId: string,
   affectedMemberId?: string
@@ -335,6 +336,7 @@ async function lockActorAccess(
   const memberIds = [...new Set([actorId, affectedMemberId].filter((id): id is string => Boolean(id)))].sort()
   const memberships = await StreamMemberRepository.lockMemberPairs(
     client,
+    workspaceId,
     memberIds.map((memberId) => ({ streamId: root.id, memberId }))
   )
   if (root.visibility !== Visibilities.PUBLIC && !memberships.has(`${root.id}:${actorId}`)) {
@@ -370,7 +372,7 @@ export class StreamService {
 
   async getScratchpadsByUser(workspaceId: string, userId: string): Promise<Stream[]> {
     return withClient(this.pool, async (client) => {
-      const memberships = await StreamMemberRepository.list(client, { memberId: userId })
+      const memberships = await StreamMemberRepository.list(client, workspaceId, { memberId: userId })
       const streamIds = memberships.map((m) => m.streamId)
 
       if (streamIds.length === 0) return []
@@ -392,7 +394,7 @@ export class StreamService {
     filters?: { types?: StreamType[]; archiveStatus?: ("active" | "archived")[] }
   ): Promise<Stream[]> {
     return withClient(this.pool, async (client) => {
-      const memberships = await StreamMemberRepository.list(client, { memberId: userId })
+      const memberships = await StreamMemberRepository.list(client, workspaceId, { memberId: userId })
       const memberStreamIds = memberships.map((m) => m.streamId)
 
       return StreamRepository.list(client, workspaceId, {
@@ -413,7 +415,7 @@ export class StreamService {
     filters?: { types?: StreamType[]; archiveStatus?: ("active" | "archived")[] }
   ): Promise<StreamWithPreview[]> {
     return withClient(this.pool, async (client) => {
-      const memberships = await StreamMemberRepository.list(client, { memberId: userId })
+      const memberships = await StreamMemberRepository.list(client, workspaceId, { memberId: userId })
       const memberStreamIds = memberships.map((m) => m.streamId)
 
       return StreamRepository.listWithPreviews(client, workspaceId, {
@@ -449,6 +451,7 @@ export class StreamService {
    * This populates displayName with formatted participant names for the viewing member.
    */
   async resolveDmDisplayNames<T extends Pick<StreamWithPreview, "id" | "type" | "displayName">>(
+    workspaceId: string,
     streams: T[],
     workspaceUsers: { id: string; name: string }[],
     viewingUserId: string
@@ -457,7 +460,7 @@ export class StreamService {
     if (dmStreams.length === 0) return streams
 
     const dmStreamIds = dmStreams.map((s) => s.id)
-    const allDmMembers = await StreamMemberRepository.list(this.pool, { streamIds: dmStreamIds })
+    const allDmMembers = await StreamMemberRepository.list(this.pool, workspaceId, { streamIds: dmStreamIds })
 
     const userNameMap = new Map(workspaceUsers.map((u) => [u.id, u.name]))
 
@@ -1159,7 +1162,7 @@ export class StreamService {
     }
 
     if (params.createdByType !== "bot") {
-      const isMember = await StreamMemberRepository.isMember(client, stream.id, params.createdBy)
+      const isMember = await StreamMemberRepository.isMember(client, params.workspaceId, stream.id, params.createdBy)
       if (!isMember) {
         await StreamMemberRepository.insert(client, params.workspaceId, stream.id, params.createdBy)
       }
@@ -2204,7 +2207,7 @@ export class StreamService {
         throw new HttpError("Can only join public channels", { status: 403, code: "NOT_PUBLIC_CHANNEL" })
       }
 
-      await StreamMemberRepository.lockMemberships(client, [stream.id], memberId)
+      await StreamMemberRepository.lockMemberships(client, workspaceId, [stream.id], memberId)
       const membership = await StreamMemberRepository.insert(client, workspaceId, streamId, memberId)
 
       const evtId = eventId()
@@ -2235,7 +2238,7 @@ export class StreamService {
     actorId: string,
     actorType: "user" | "bot" = "user"
   ): Promise<StreamMember> {
-    const existing = await StreamMemberRepository.findByStreamAndMember(client, stream.id, memberId)
+    const existing = await StreamMemberRepository.findByStreamAndMember(client, stream.workspaceId, stream.id, memberId)
     if (existing) return existing
 
     const membership = await StreamMemberRepository.insert(client, stream.workspaceId, stream.id, memberId)
@@ -2270,7 +2273,7 @@ export class StreamService {
   async addMember(streamId: string, memberId: string, workspaceId: string, actorId: string): Promise<StreamMember> {
     return withTransaction(this.pool, async (client) => {
       const { target: stream, root } = await lockLifecycleStreams(client, workspaceId, streamId)
-      await lockActorAccess(client, root, actorId, memberId)
+      await lockActorAccess(client, workspaceId, root, actorId, memberId)
 
       if (stream.type === StreamTypes.DM) {
         throw new HttpError("Cannot add members to direct messages", {
@@ -2285,7 +2288,7 @@ export class StreamService {
       }
 
       if (stream.rootStreamId) {
-        const isRootMember = await StreamMemberRepository.isMember(client, stream.rootStreamId, memberId)
+        const isRootMember = await StreamMemberRepository.isMember(client, workspaceId, stream.rootStreamId, memberId)
         if (!isRootMember) {
           const rootStream = await StreamRepository.findById(client, stream.workspaceId, stream.rootStreamId)
           if (rootStream) await this.addToStream(client, rootStream, memberId, actorId)
@@ -2340,7 +2343,12 @@ export class StreamService {
       throw new HttpError("Bot not found or archived", { status: 404, code: "NOT_FOUND" })
     }
     if (personalOwnerId) {
-      const ownerMemberships = await StreamMemberRepository.lockMemberships(client, [grantStream.id], personalOwnerId)
+      const ownerMemberships = await StreamMemberRepository.lockMemberships(
+        client,
+        workspaceId,
+        [grantStream.id],
+        personalOwnerId
+      )
       if (!ownerMemberships.has(grantStream.id)) {
         throw new HttpError("Forbidden", { status: 403, code: "FORBIDDEN" })
       }
@@ -2388,7 +2396,7 @@ export class StreamService {
     memberId: string,
     actorType: "user" | "bot" = "user"
   ): Promise<StreamEvent | null> {
-    const deleted = await StreamMemberRepository.delete(client, stream.id, memberId)
+    const deleted = await StreamMemberRepository.delete(client, stream.workspaceId, stream.id, memberId)
     if (!deleted) return null
 
     // The overlay leaves with the membership: a rejoin born-reads the watermark
@@ -2419,7 +2427,7 @@ export class StreamService {
   async removeMember(streamId: string, memberId: string, workspaceId: string, actorId: string): Promise<boolean> {
     return withTransaction(this.pool, async (client) => {
       const { target: stream, root } = await lockLifecycleStreams(client, workspaceId, streamId)
-      await lockActorAccess(client, root, actorId, memberId)
+      await lockActorAccess(client, workspaceId, root, actorId, memberId)
 
       if (stream.type === StreamTypes.DM) {
         throw new HttpError("Cannot remove members from direct messages", {
@@ -2430,7 +2438,7 @@ export class StreamService {
 
       // Lock member rows and check count atomically to prevent racing removals
       // from leaving a stream with zero members
-      const memberCount = await StreamMemberRepository.countByStreamForUpdate(client, streamId)
+      const memberCount = await StreamMemberRepository.countByStreamForUpdate(client, workspaceId, streamId)
       if (memberCount <= 1) {
         throw new HttpError("Cannot remove the only member", { status: 400, code: "LAST_MEMBER" })
       }
@@ -2439,7 +2447,12 @@ export class StreamService {
 
       if (event) {
         // Batch-remove from all descendant threads the member is in (single recursive CTE)
-        const removedStreamIds = await StreamMemberRepository.deleteByMemberInDescendants(client, memberId, streamId)
+        const removedStreamIds = await StreamMemberRepository.deleteByMemberInDescendants(
+          client,
+          workspaceId,
+          memberId,
+          streamId
+        )
         await SparseReadRepository.deleteAllForStreams(client, memberId, removedStreamIds)
         for (const removedStreamId of removedStreamIds) {
           const threadEvent = await StreamEventRepository.insert(client, {
@@ -2499,20 +2512,20 @@ export class StreamService {
     })
   }
 
-  async getMembers(streamId: string): Promise<StreamMember[]> {
-    return StreamMemberRepository.list(this.pool, { streamId })
+  async getMembers(workspaceId: string, streamId: string): Promise<StreamMember[]> {
+    return StreamMemberRepository.list(this.pool, workspaceId, { streamId })
   }
 
   async getBotMemberIds(workspaceId: string, streamId: string): Promise<string[]> {
     return BotChannelAccessRepository.getGrantedBotIds(this.pool, workspaceId, streamId)
   }
 
-  async getMembership(streamId: string, memberId: string): Promise<StreamMember | null> {
-    return StreamMemberRepository.findByStreamAndMember(this.pool, streamId, memberId)
+  async getMembership(workspaceId: string, streamId: string, memberId: string): Promise<StreamMember | null> {
+    return StreamMemberRepository.findByStreamAndMember(this.pool, workspaceId, streamId, memberId)
   }
 
-  async getMembershipsBatch(streamIds: string[], memberId: string): Promise<StreamMember[]> {
-    return StreamMemberRepository.findByStreamsAndMember(this.pool, streamIds, memberId)
+  async getMembershipsBatch(workspaceId: string, streamIds: string[], memberId: string): Promise<StreamMember[]> {
+    return StreamMemberRepository.findByStreamsAndMember(this.pool, workspaceId, streamIds, memberId)
   }
 
   // TODO: This is a permission check masquerading as a membership check. "isMember" is
@@ -2528,7 +2541,7 @@ export class StreamService {
    * check can compose into an outer transaction.
    */
   async isMemberOn(db: Querier, workspaceId: string, streamId: string, memberId: string): Promise<boolean> {
-    const directMember = await StreamMemberRepository.isMember(db, streamId, memberId)
+    const directMember = await StreamMemberRepository.isMember(db, workspaceId, streamId, memberId)
     if (directMember) {
       return true
     }
@@ -2536,7 +2549,7 @@ export class StreamService {
     // Threads inherit participation rights from root stream
     const stream = await StreamRepository.findById(db, workspaceId, streamId)
     if (stream?.rootStreamId) {
-      return StreamMemberRepository.isMember(db, stream.rootStreamId, memberId)
+      return StreamMemberRepository.isMember(db, workspaceId, stream.rootStreamId, memberId)
     }
 
     return false
@@ -2559,7 +2572,9 @@ export class StreamService {
           })
         }
       }
-      const membership = await StreamMemberRepository.update(client, streamId, memberId, { notificationLevel: level })
+      const membership = await StreamMemberRepository.update(client, workspaceId, streamId, memberId, {
+        notificationLevel: level,
+      })
       if (membership) {
         // Mirror the mute/notify choice to the user's other sessions (and the
         // sync log, so catch-up replays it) in the same transaction — otherwise
@@ -2607,7 +2622,7 @@ export class StreamService {
       // Explicit no-op: a null readState tells the caller nothing was written,
       // so a 200 can never be mistaken for a committed frontier.
       return {
-        membership: await StreamMemberRepository.findByStreamAndMember(client, streamId, memberId),
+        membership: await StreamMemberRepository.findByStreamAndMember(client, workspaceId, streamId, memberId),
         readState: null,
         lastReadOrdinal: null,
         readMessageIds: null,
@@ -2619,7 +2634,7 @@ export class StreamService {
     // every viewer with access (validated in the handler) whether or not a
     // membership row exists. Membership is fetched read-only for participation
     // only — it is never written on a read (membership ≠ access ≠ read state).
-    const membership = await StreamMemberRepository.findByStreamAndMember(client, streamId, memberId)
+    const membership = await StreamMemberRepository.findByStreamAndMember(client, workspaceId, streamId, memberId)
     // Source the payload from the post-write row: the store is monotonic, so a
     // stale-device advance is rejected and the post-write frontier — not the raw
     // event — is the read position this user's other sessions adopt.
@@ -2710,7 +2725,7 @@ export class StreamService {
       // The regress runs for every viewer with access (membership is fetched
       // read-only for participation, never written — membership ≠ read state).
       // Explicit unread is one of the sanctioned downward moves.
-      const membership = await StreamMemberRepository.findByStreamAndMember(client, streamId, memberId)
+      const membership = await StreamMemberRepository.findByStreamAndMember(client, workspaceId, streamId, memberId)
       const postWrite = await ReadStateRepository.set(client, streamId, memberId, lastReadEventId)
       // Mark-unread means "this message and everything after it is unread", so
       // overlay rows at/above the target contradict the intent — drop them. The
@@ -2840,7 +2855,7 @@ export class StreamService {
     memberId: string
   ): Promise<{ updatedStreamIds: string[]; frontiers: StreamReadFrontierSnapshot[] }> {
     return withTransaction(this.pool, async (client) => {
-      const memberships = await StreamMemberRepository.list(client, { memberId })
+      const memberships = await StreamMemberRepository.list(client, workspaceId, { memberId })
 
       const streams = await StreamRepository.list(client, workspaceId)
       const workspaceStreamIds = new Set(streams.map((s) => s.id))

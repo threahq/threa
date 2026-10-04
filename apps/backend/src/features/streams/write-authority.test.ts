@@ -81,7 +81,7 @@ describe("viewer projection", () => {
     const result = await projectStreamForUser(db, { workspaceId: "ws_1", stream: thread, userId: "usr_1" })
 
     expect(result).toMatchObject({ id: thread.id, readOnly: true, readOnlyReason: "not_a_member" })
-    expect(membership).toHaveBeenCalledWith(db, root.id, "usr_1")
+    expect(membership).toHaveBeenCalledWith(db, "ws_1", root.id, "usr_1")
   })
 
   test("single private descendant without root membership is inaccessible", async () => {
@@ -91,7 +91,7 @@ describe("viewer projection", () => {
     const membership = spyOn(StreamMemberRepository, "isMember").mockResolvedValue(false)
 
     expect(await projectStreamForUser(db, { workspaceId: "ws_1", stream: thread, userId: "usr_1" })).toBeNull()
-    expect(membership).toHaveBeenCalledWith(db, root.id, "usr_1")
+    expect(membership).toHaveBeenCalledWith(db, "ws_1", root.id, "usr_1")
   })
 
   test("single bot descendant is writable when only its effective root is granted", async () => {
@@ -137,7 +137,7 @@ describe("viewer projection", () => {
       { id: root.id, readOnly: false, readOnlyReason: null },
     ])
     expect(thread).toEqual(original)
-    expect(memberships).toHaveBeenCalledWith(db, [root.id], "usr_1")
+    expect(memberships).toHaveBeenCalledWith(db, "ws_1", [root.id], "usr_1")
   })
 
   test("returns public nonparticipants as read-only and hides private nonparticipants", async () => {
@@ -158,7 +158,7 @@ describe("viewer projection", () => {
       { id: publicRoot.id, readOnlyReason: "not_a_member" },
       { id: publicThread.id, readOnlyReason: "not_a_member" },
     ])
-    expect(memberships).toHaveBeenCalledWith(db, [privateRoot.id, publicRoot.id], "usr_1")
+    expect(memberships).toHaveBeenCalledWith(db, "ws_1", [privateRoot.id, publicRoot.id], "usr_1")
   })
 
   test("batch bot descendant is writable when only its effective root is granted", async () => {
@@ -185,7 +185,7 @@ describe("viewer projection", () => {
     const memberships = spyOn(StreamMemberRepository, "findByStreamsAndMember")
 
     expect(await projectStreamsForUser(db, { workspaceId: "ws_1", streams: [thread], userId: "usr_1" })).toEqual([])
-    expect(memberships).toHaveBeenCalledWith(db, [], "usr_1")
+    expect(memberships).toHaveBeenCalledWith(db, "ws_1", [], "usr_1")
   })
 
   test("a live thread sealed by an archived ancestor projects as archived, its own flag untouched", async () => {
@@ -296,7 +296,7 @@ describe("transactional write authority", () => {
         })
       ).root.id
     ).toBe(root.id)
-    expect(members).toHaveBeenCalledWith(db, [root.id], "usr_1")
+    expect(members).toHaveBeenCalledWith(db, "ws_1", [root.id], "usr_1")
     expect(chain).toHaveBeenCalledWith(db, "ws_1", [thread.id])
     expect(locks).toHaveBeenCalledWith(db, "ws_1", [root.id, thread.id])
     mock.restore()
