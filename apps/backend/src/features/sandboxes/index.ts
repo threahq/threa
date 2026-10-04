@@ -17,4 +17,4 @@ export {
   isSandboxStreamReadable,
   recordSandboxReads,
 } from "./session-tokens"
-export type { SandboxReadStream, SandboxSession } from "./session-tokens"
+export type { SandboxSession } from "./session-tokens"

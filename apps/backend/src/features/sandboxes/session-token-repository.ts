@@ -56,26 +56,33 @@ export const SandboxSessionTokenRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
-  /** False once the token is revoked or expired: the caller must not serve the read. */
+  /**
+   * Records the reads on the token's stream's sandbox, so a file the command
+   * writes from them is known before any byte is served. False once the token is
+   * revoked or expired, or its stream has no sandbox: the caller must not serve
+   * the read.
+   */
   async recordReads(db: Querier, workspaceId: string, id: string, streamIds: string[]): Promise<boolean> {
     const result = await db.query(sql`
-      UPDATE sandbox_session_tokens
-      SET read_stream_ids = ARRAY(SELECT DISTINCT unnest(read_stream_ids || ${streamIds}::text[]))
-      WHERE workspace_id = ${workspaceId} AND id = ${id} AND revoked_at IS NULL AND expires_at > NOW()
-      RETURNING id
+      WITH token AS (
+        SELECT stream_id FROM sandbox_session_tokens
+        WHERE workspace_id = ${workspaceId} AND id = ${id} AND revoked_at IS NULL AND expires_at > NOW()
+      )
+      UPDATE stream_sandboxes
+      SET content_stream_ids = ARRAY(SELECT DISTINCT unnest(content_stream_ids || ${streamIds}::text[]))
+      FROM token
+      WHERE stream_sandboxes.workspace_id = ${workspaceId} AND stream_sandboxes.stream_id = token.stream_id
+      RETURNING stream_sandboxes.sandbox_id
     `)
     return result.rows.length > 0
   },
 
-  /** The streams the token served; empty when it was already revoked. */
-  async revoke(db: Querier, workspaceId: string, id: string): Promise<string[]> {
-    const result = await db.query<{ read_stream_ids: string[] }>(sql`
+  async revoke(db: Querier, workspaceId: string, id: string): Promise<void> {
+    await db.query(sql`
       UPDATE sandbox_session_tokens
       SET revoked_at = NOW()
       WHERE workspace_id = ${workspaceId} AND id = ${id} AND revoked_at IS NULL
-      RETURNING read_stream_ids
     `)
-    return result.rows[0]?.read_stream_ids ?? []
   },
 
   async deleteExpiredBefore(db: Querier, cutoffSec: number): Promise<void> {
