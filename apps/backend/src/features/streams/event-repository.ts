@@ -291,8 +291,7 @@ export const StreamEventRepository = {
     const result = await db.query<{ stream_id: string; head: string }>(sql`
       SELECT q.stream_id, q.next_sequence - 1 AS head
       FROM stream_sequences q
-      JOIN streams s ON s.id = q.stream_id
-      WHERE s.workspace_id = ${workspaceId} AND q.stream_id = ANY(${streamIds})
+      WHERE q.workspace_id = ${workspaceId} AND q.stream_id = ANY(${streamIds})
     `)
     return new Map(result.rows.map((row) => [row.stream_id, BigInt(row.head)]))
   },

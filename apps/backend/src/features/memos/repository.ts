@@ -729,13 +729,12 @@ export const MemoRepository = {
           OR (
             SELECT max(msg.created_at)
             FROM messages msg
-            JOIN streams s ON s.id = msg.stream_id AND s.workspace_id = m.workspace_id
-            WHERE msg.id = ANY(array_append(m.source_message_ids, m.source_message_id))
+            WHERE msg.workspace_id = m.workspace_id
+              AND msg.id = ANY(array_append(m.source_message_ids, m.source_message_id))
           ) <= (
             SELECT max(msg.created_at)
             FROM messages msg
-            JOIN streams s ON s.id = msg.stream_id AND s.workspace_id = m.workspace_id
-            WHERE msg.id = ANY(${candidate.sourceMessageIds}::text[])
+            WHERE msg.workspace_id = m.workspace_id AND msg.id = ANY(${candidate.sourceMessageIds}::text[])
           )
         )
     `)
