@@ -159,8 +159,8 @@ function interceptPreviewWrite(onWrite: () => void) {
         sameDatabase: transaction?.db === getActiveDb(),
       }).toEqual({ active: true, mode: "readwrite", sameDatabase: true })
       return transaction!
-        .table("events")
-        .get("evt_stream_a_2")
+        .table(getActiveDb().events.name)
+        .get(["ws_1", "evt_stream_a_2"])
         .then((event) => {
           expect(event).toMatchObject({ id: "evt_stream_a_2", streamId: "stream_a" })
           // UI ownership changes run outside the preview's transaction context.
@@ -221,7 +221,7 @@ describe("preview history recovery", () => {
       await Promise.all([connecting, recovery])
       await vi.waitFor(async () =>
         expect({
-          preview: (await db.events.get("evt_stream_a_2"))?.streamId,
+          preview: (await db.events.get(["ws_1", "evt_stream_a_2"]))?.streamId,
           pending: await db.pendingOperations.toArray(),
           draft: (await db.drafts.get(draft.id))?.contentJson,
         }).toEqual({ preview: "stream_a", pending: [], draft: draft.contentJson })
@@ -256,12 +256,12 @@ describe("preview history recovery", () => {
       await pause()
       expect({
         catchUp: deps.syncService.catchUp.mock.calls,
-        user: await db.workspaceUsers.get("user_after_setup"),
+        user: await db.workspaceUsers.get(["ws_1", "user_after_setup"]),
       }).toEqual({ catchUp: [], user: undefined })
       required.resolve()
       await recovery
       await vi.waitFor(async () =>
-        expect(await db.workspaceUsers.get("user_after_setup")).toMatchObject({ name: "After setup" })
+        expect(await db.workspaceUsers.get(["ws_1", "user_after_setup"])).toMatchObject({ name: "After setup" })
       )
     }
   )
@@ -323,12 +323,14 @@ describe("preview history recovery", () => {
         syncId: "11",
         user: { id: "user_after_full_retirement", workspaceId: "ws_1", name: "Recovered" },
       })
-      await vi.waitFor(async () => expect(await db.workspaceUsers.get("user_after_full_retirement")).toBeTruthy())
+      await vi.waitFor(async () =>
+        expect(await db.workspaceUsers.get(["ws_1", "user_after_full_retirement"])).toBeTruthy()
+      )
       held.resolve()
       await pause()
       expect({
-        streams: await db.streams.bulkGet(ids),
-        events: await db.events.bulkGet(ids.map((id) => `evt_2_${id}`)),
+        streams: await db.streams.bulkGet(ids.map((id) => ["ws_1", id])),
+        events: await db.events.bulkGet(ids.map((id) => ["ws_1", `evt_2_${id}`])),
         errors: ids.map((id) => deps.syncStatus.getError(`stream:${id}`)),
         cursor: engine.getSyncCursor(),
         workspace: deps.syncStatus.get("workspace:ws_1"),
@@ -387,7 +389,7 @@ describe("preview history recovery", () => {
       await vi.waitFor(() => expect(deps.syncService.catchUp).toHaveBeenCalledOnce())
       expect({
         cursor: engine.getSyncCursor(),
-        stream: (await db.streams.get("stream_full_shared"))?.id,
+        stream: (await db.streams.get(["ws_1", "stream_full_shared"]))?.id,
         error: deps.syncStatus.getError("stream:stream_full_shared"),
       }).toEqual({ cursor: "10", stream: "stream_full_shared", error: null })
     }
@@ -439,8 +441,8 @@ describe("preview history recovery", () => {
     snapshot.resolve(workspace)
     await Promise.all([first, next])
     expect({
-      name: (await db.streams.get(cached.id))?.displayName,
-      event: await db.events.get("evt_2"),
+      name: (await db.streams.get(["ws_1", cached.id]))?.displayName,
+      event: await db.events.get(["ws_1", "evt_2"]),
       query: deps.queryClient.getQueryData(streamKeys.bootstrap("ws_1", cached.id)),
       error: deps.syncStatus.getError(`stream:${cached.id}`),
     }).toEqual({ name: "cached title", event: undefined, query: undefined, error: null })
@@ -459,15 +461,15 @@ describe("preview history recovery", () => {
     await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledOnce())
     await deps.streamService.bootstrap.mock.results[0].value
     await pause()
-    expect(await db.events.get("evt_2")).toBeUndefined()
+    expect(await db.events.get(["ws_1", "evt_2"])).toBeUndefined()
     disconnect(engine, socket)
     engine.setBoardStreamIds([])
     const next = track(engine.onConnect(asSocket(new MockSocket())))
     markInitialRevealComplete("ws_1")
     await Promise.all([first, next])
     expect({
-      stream: await db.streams.get("stream_full_reveal"),
-      event: await db.events.get("evt_2"),
+      stream: await db.streams.get(["ws_1", "stream_full_reveal"]),
+      event: await db.events.get(["ws_1", "evt_2"]),
       query: deps.queryClient.getQueryData(streamKeys.bootstrap("ws_1", "stream_full_reveal")),
       error: deps.syncStatus.getError("stream:stream_full_reveal"),
       cursor: engine.getSyncCursor(),
@@ -508,7 +510,7 @@ describe("preview history recovery", () => {
       active: 0,
       peak: 6,
     })
-    expect((await db.streams.bulkGet(newIds)).map((stream) => stream?.id)).toEqual(newIds)
+    expect((await db.streams.bulkGet(newIds.map((id) => ["ws_1", id]))).map((stream) => stream?.id)).toEqual(newIds)
   })
 
   it("should abort failed-sweep transports before admitting replacement board recovery", async () => {
@@ -546,13 +548,15 @@ describe("preview history recovery", () => {
     await vi.waitFor(() => expect(signals).toHaveLength(12))
     expect(lanes).toEqual({ active: 6, peak: 6 })
     held.resolve()
-    await vi.waitFor(async () => expect((await db.streams.bulkGet(newIds)).map((stream) => stream?.id)).toEqual(newIds))
+    await vi.waitFor(async () =>
+      expect((await db.streams.bulkGet(newIds.map((id) => ["ws_1", id]))).map((stream) => stream?.id)).toEqual(newIds)
+    )
     expect({ ids: deps.streamService.bootstrap.mock.calls.map((call) => call[1]), ...lanes }).toEqual({
       ids: [...oldIds.slice(0, 6), ...newIds],
       active: 0,
       peak: 6,
     })
-    expect(await db.events.bulkGet(oldIds.map((id) => `evt_2_${id}`))).toEqual(oldIds.map(() => undefined))
+    expect(await db.events.bulkGet(oldIds.map((id) => ["ws_1", `evt_2_${id}`]))).toEqual(oldIds.map(() => undefined))
   })
 
   it("should preserve a queued force-full upgrade after retiring an obsolete cold sweep", async () => {
@@ -605,7 +609,7 @@ describe("preview history recovery", () => {
     await pause()
     expect({
       workspace: await db.workspaces.get("ws_1"),
-      stream: await db.streams.get("stream_full_teardown"),
+      stream: await db.streams.get(["ws_1", "stream_full_teardown"]),
       cache: deps.queryClient.getQueryData(streamKeys.bootstrap("ws_1", "stream_full_teardown")),
       claim: await claim,
     }).toEqual({ workspace: undefined, stream: undefined, cache: undefined, claim: null })
@@ -670,7 +674,7 @@ describe("preview history recovery", () => {
       held.resolve()
       await reconnect
       await pause()
-      expect(await db.streams.bulkGet(oldIds)).toEqual(oldIds.map(() => undefined))
+      expect(await db.streams.bulkGet(oldIds.map((id) => ["ws_1", id]))).toEqual(oldIds.map(() => undefined))
     } finally {
       // Obsolete bodies must settle against a live engine before destruction.
       held.resolve()
@@ -753,7 +757,7 @@ describe("preview history recovery", () => {
       engine.setBoardStreamIds(["stream_other"])
       deps.syncService.catchUp.mockClear()
       const reconnect = track(engine.onConnect(asSocket(new MockSocket())))
-      await vi.waitFor(async () => expect(await db.streams.get("stream_other")).toBeTruthy())
+      await vi.waitFor(async () => expect(await db.streams.get(["ws_1", "stream_other"])).toBeTruthy())
       expect({
         aborted: signal.aborted,
         sharedRequests: deps.streamService.bootstrap.mock.calls.filter((call) => call[1] === "stream_shared").length,
@@ -763,7 +767,7 @@ describe("preview history recovery", () => {
       await reconnect
       await vi.waitFor(() => expect(deps.syncService.catchUp).toHaveBeenCalledOnce())
       expect({
-        stream: (await db.streams.get("stream_shared"))?.id,
+        stream: (await db.streams.get(["ws_1", "stream_shared"]))?.id,
         status: deps.syncStatus.get("stream:stream_shared"),
         workspace: deps.syncStatus.get("workspace:ws_1"),
       }).toEqual({ stream: "stream_shared", status: "synced", workspace: "synced" })
@@ -832,9 +836,9 @@ describe("preview history recovery", () => {
     await recovery
     await vi.waitFor(() => expect(engine.getSyncCursor()).toBe("11"))
     expect({
-      sequences: (await db.events.where("streamId").equals(streamId).sortBy("_sequenceNum")).map(
-        (event) => event.sequence
-      ),
+      sequences: (
+        await db.events.where("[workspaceId+streamId]").equals(["ws_1", streamId]).sortBy("_sequenceNum")
+      ).map((event) => event.sequence),
       cursors: deps.streamService.bootstrap.mock.calls.map((call) => call[2]?.after ?? null),
       status: deps.syncStatus.get(`stream:${streamId}`),
       ...lanes,
@@ -875,9 +879,9 @@ describe("preview history recovery", () => {
     await reconnect
     expect({
       aborted: params?.signal?.aborted,
-      sequences: (await db.events.where("streamId").equals(streamId).sortBy("_sequenceNum")).map(
-        (event) => event.sequence
-      ),
+      sequences: (
+        await db.events.where("[workspaceId+streamId]").equals(["ws_1", streamId]).sortBy("_sequenceNum")
+      ).map((event) => event.sequence),
     }).toEqual({ aborted: true, sequences: ["2"] })
   })
 
@@ -890,7 +894,7 @@ describe("preview history recovery", () => {
     const signal = deps.streamService.bootstrap.mock.calls[0][2]!.signal!
     disconnect(engine, socket)
     const reconnect = track(engine.onConnect(asSocket(new MockSocket())))
-    await vi.waitFor(async () => expect(await db.streams.get("stream_retry")).toBeTruthy())
+    await vi.waitFor(async () => expect(await db.streams.get(["ws_1", "stream_retry"])).toBeTruthy())
     await reconnect
     expect({ aborted: signal.aborted, requests: deps.streamService.bootstrap.mock.calls.length }).toEqual({
       aborted: true,
@@ -901,8 +905,8 @@ describe("preview history recovery", () => {
     held.resolve(stale)
     await pause()
     expect({
-      name: (await db.streams.get("stream_retry"))?.displayName,
-      obsoleteEvent: await db.events.get("evt_99"),
+      name: (await db.streams.get(["ws_1", "stream_retry"]))?.displayName,
+      obsoleteEvent: await db.events.get(["ws_1", "evt_99"]),
       cacheName: deps.queryClient.getQueryData<ReturnType<typeof makeStreamBootstrap>>(
         streamKeys.bootstrap("ws_1", "stream_retry")
       )?.stream.displayName,
@@ -948,8 +952,8 @@ describe("preview history recovery", () => {
     held.resolve(makeStreamBootstrap("stream_old_account"))
     await pause()
     expect({
-      stream: await db.streams.get("stream_old_account"),
-      event: await db.events.get("evt_2"),
+      stream: await db.streams.get(["ws_1", "stream_old_account"]),
+      event: await db.events.get(["ws_1", "evt_2"]),
       cache: deps.queryClient.getQueryData(streamKeys.bootstrap("ws_1", "stream_old_account")),
     }).toEqual({ stream: undefined, event: undefined, cache: undefined })
   })
@@ -984,11 +988,11 @@ describe("preview history recovery", () => {
   it("should retain offline history but remove recovery demand when the last mounted surface closes", async () => {
     const { deps, engine, socket } = await setup()
     const mounted = render(surface(engine, ["stream_a"]))
-    await vi.waitFor(async () => expect(await db.events.get("evt_stream_a_2")).toBeTruthy())
+    await vi.waitFor(async () => expect(await db.events.get(["ws_1", "evt_stream_a_2"])).toBeTruthy())
     mounted.unmount()
     deps.streamService.previewHistory.mockClear()
     disconnect(engine, socket)
-    expect((await db.events.get("evt_stream_a_2"))?.payload).toMatchObject({ contentMarkdown: "new" })
+    expect((await db.events.get(["ws_1", "evt_stream_a_2"]))?.payload).toMatchObject({ contentMarkdown: "new" })
     socket.connected = true
     await engine.onConnect(asSocket(socket))
     await pause()
@@ -999,7 +1003,7 @@ describe("preview history recovery", () => {
     const { deps, engine } = await setup()
     engine.warmStreams(["stream_same_task"])
     await track(engine.refreshAfterConnectivityResume())
-    await vi.waitFor(async () => expect(await db.events.get("evt_stream_same_task_2")).toBeTruthy())
+    await vi.waitFor(async () => expect(await db.events.get(["ws_1", "evt_stream_same_task_2"])).toBeTruthy())
     expect(
       deps.streamService.previewHistory.mock.calls.map((call) => ({ ids: call[1], aborted: call[2]?.aborted }))
     ).toEqual([{ ids: ["stream_same_task"], aborted: false }])
@@ -1009,7 +1013,7 @@ describe("preview history recovery", () => {
     const { deps, engine, socket } = await setup()
     const release = engine.warmStreams(["stream_a"])
     const other = render(surface(engine, ["stream_a"]))
-    await vi.waitFor(async () => expect(await db.events.get("evt_stream_a_2")).toBeTruthy())
+    await vi.waitFor(async () => expect(await db.events.get(["ws_1", "evt_stream_a_2"])).toBeTruthy())
     release()
     release()
     deps.streamService.previewHistory.mockClear()
@@ -1021,9 +1025,9 @@ describe("preview history recovery", () => {
   it("should only fetch newly added rows and ignore reorders", async () => {
     const { deps, engine } = await setup()
     const mounted = render(surface(engine, ["stream_a"]))
-    await vi.waitFor(async () => expect(await db.events.get("evt_stream_a_2")).toBeTruthy())
+    await vi.waitFor(async () => expect(await db.events.get(["ws_1", "evt_stream_a_2"])).toBeTruthy())
     mounted.rerender(surface(engine, ["stream_b", "stream_a"]))
-    await vi.waitFor(async () => expect(await db.events.get("evt_stream_b_2")).toBeTruthy())
+    await vi.waitFor(async () => expect(await db.events.get(["ws_1", "evt_stream_b_2"])).toBeTruthy())
     mounted.rerender(surface(engine, ["stream_a", "stream_b"]))
     await pause()
     expect(deps.streamService.previewHistory.mock.calls.map((call) => call[1])).toEqual([["stream_a"], ["stream_b"]])
@@ -1051,7 +1055,7 @@ describe("preview history recovery", () => {
     held.resolve(stale)
     await vi.waitFor(async () => expect(await db.events.count()).toBe(36))
     expect(deps.streamService.previewHistory.mock.calls.map((call) => call[1].length)).toEqual([25, 25, 11])
-    expect((await db.events.get("evt_stream_gap_0_2"))?.payload).toMatchObject({ contentMarkdown: "new" })
+    expect((await db.events.get(["ws_1", "evt_stream_gap_0_2"]))?.payload).toMatchObject({ contentMarkdown: "new" })
   })
 
   it("should drop queued declarations and not apply previews that become active", async () => {
@@ -1066,7 +1070,7 @@ describe("preview history recovery", () => {
     engine.setCurrentStreamId("stream_a")
     held.resolve(await original("ws_1", ["stream_a"]))
     await pause()
-    expect(await db.events.get("evt_stream_a_2")).toBeUndefined()
+    expect(await db.events.get(["ws_1", "evt_stream_a_2"])).toBeUndefined()
     expect(deps.streamService.previewHistory).toHaveBeenCalledOnce()
   })
 
@@ -1087,18 +1091,18 @@ describe("preview history recovery", () => {
       try {
         release = engine.warmStreams(["stream_a"])
         engine.warmStreams(siblings)
-        await vi.waitFor(async () => expect(await db.events.get("evt_stream_sibling_23_2")).toBeTruthy())
+        await vi.waitFor(async () => expect(await db.events.get(["ws_1", "evt_stream_sibling_23_2"])).toBeTruthy())
         expect(changed).toBe(true)
-        const siblingEvents = await db.events.bulkGet(siblings.map((id) => `evt_${id}_2`))
+        const siblingEvents = await db.events.bulkGet(siblings.map((id) => ["ws_1", `evt_${id}_2`]))
         expect({
-          cancelled: await db.events.get("evt_stream_a_2"),
-          cancelledStream: await db.streams.get("stream_a"),
+          cancelled: await db.events.get(["ws_1", "evt_stream_a_2"]),
+          cancelledStream: await db.streams.get(["ws_1", "stream_a"]),
           siblings: siblingEvents.map((event) => event?.streamId),
           batches: deps.streamService.previewHistory.mock.calls.map((call) => call[1]),
         }).toEqual({ cancelled: undefined, cancelledStream: undefined, siblings, batches: [["stream_a", ...siblings]] })
         engine.setCurrentStreamId(undefined)
         engine.warmStreams(["stream_a"])
-        await vi.waitFor(async () => expect(await db.events.get("evt_stream_a_2")).toBeTruthy())
+        await vi.waitFor(async () => expect(await db.events.get(["ws_1", "evt_stream_a_2"])).toBeTruthy())
         expect(deps.streamService.previewHistory.mock.calls.map((call) => call[1])).toEqual([
           ["stream_a", ...siblings],
           ["stream_a"],
@@ -1127,8 +1131,14 @@ describe("preview history recovery", () => {
       engine.warmStreams(["stream_a", "stream_b"])
       await vi.waitFor(() => expect(changed).toBe(true))
       expect({
-        events: await db.events.bulkGet(["evt_stream_a_2", "evt_stream_b_2"]),
-        streams: await db.streams.bulkGet(["stream_a", "stream_b"]),
+        events: await db.events.bulkGet([
+          ["ws_1", "evt_stream_a_2"],
+          ["ws_1", "evt_stream_b_2"],
+        ]),
+        streams: await db.streams.bulkGet([
+          ["ws_1", "stream_a"],
+          ["ws_1", "stream_b"],
+        ]),
       }).toEqual({ events: [undefined, undefined], streams: [undefined, undefined] })
       expect(deps.streamService.previewHistory).toHaveBeenCalledOnce()
     }
@@ -1200,8 +1210,8 @@ describe("preview history recovery", () => {
     const counters = await db.unreadState.get("ws_1")
     deps.streamService.previewHistory.mockClear()
     engine.warmStreams(["stream_a"])
-    await vi.waitFor(async () => expect(await db.events.get("evt_stream_a_2")).toBeTruthy())
-    expect(await db.streams.get("stream_a")).toMatchObject({ notificationLevel: "everything", contextBag })
+    await vi.waitFor(async () => expect(await db.events.get(["ws_1", "evt_stream_a_2"])).toBeTruthy())
+    expect(await db.streams.get(["ws_1", "stream_a"])).toMatchObject({ notificationLevel: "everything", contextBag })
     expect(await db.streamReadState.get(read.id)).toEqual(read)
     expect(await db.unreadState.get("ws_1")).toEqual(counters)
     expect(deps.queryClient.getQueryData(streamKeys.bootstrap("ws_1", "stream_a"))).toBeUndefined()
@@ -1234,8 +1244,8 @@ describe("preview history recovery", () => {
     }
     await db.streams.put(fresh)
     held.resolve(stale)
-    await vi.waitFor(async () => expect(await db.events.get("evt_stream_a_2")).toBeTruthy())
-    expect(await db.streams.get("stream_a")).toEqual(fresh)
+    await vi.waitFor(async () => expect(await db.events.get(["ws_1", "evt_stream_a_2"])).toBeTruthy())
+    expect(await db.streams.get(["ws_1", "stream_a"])).toEqual(fresh)
   })
 
   it("should heal missed edits and remove deleted rows within the replacement window", async () => {
@@ -1262,12 +1272,12 @@ describe("preview history recovery", () => {
     deps.streamService.previewHistory.mockResolvedValueOnce(response)
     engine.warmStreams(["stream_a"])
     await vi.waitFor(async () =>
-      expect((await db.events.get("evt_edited"))?.payload).toEqual({
+      expect((await db.events.get(["ws_1", "evt_edited"]))?.payload).toEqual({
         messageId: "msg_edited",
         contentMarkdown: "edited",
       })
     )
-    expect(await db.events.get("evt_deleted")).toBeUndefined()
+    expect(await db.events.get(["ws_1", "evt_deleted"])).toBeUndefined()
   })
 
   it("should ignore an abort-ignoring preview response after the account generation changes", async () => {
@@ -1280,8 +1290,8 @@ describe("preview history recovery", () => {
     eventWrites.bumpAccountGeneration()
     held.resolve(await original("ws_1", ["stream_a"]))
     await pause()
-    expect(await db.events.get("evt_stream_a_2")).toBeUndefined()
-    expect(await db.streams.get("stream_a")).toBeUndefined()
+    expect(await db.events.get(["ws_1", "evt_stream_a_2"])).toBeUndefined()
+    expect(await db.streams.get(["ws_1", "stream_a"])).toBeUndefined()
   })
 
   it.each([401, 404])(
@@ -1289,14 +1299,14 @@ describe("preview history recovery", () => {
     async (status) => {
       const { deps, engine } = await setup()
       engine.warmStreams(["stream_a"])
-      await vi.waitFor(async () => expect(await db.events.get("evt_stream_a_2")).toBeTruthy())
+      await vi.waitFor(async () => expect(await db.events.get(["ws_1", "evt_stream_a_2"])).toBeTruthy())
       await engine.refreshAfterConnectivityResume()
       await pause()
       deps.streamService.previewHistory.mockRejectedValueOnce(new ApiError(status, "REQUEST_FAILED", "failed"))
       await engine.refreshAfterConnectivityResume()
       await pause()
       expect(deps.syncStatus.getError("stream:stream_a")).toBeNull()
-      expect(await db.events.get("evt_stream_a_2")).toBeTruthy()
+      expect(await db.events.get(["ws_1", "evt_stream_a_2"])).toBeTruthy()
       const before = deps.streamService.previewHistory.mock.calls.length
       engine.warmStreams(["stream_a"])
       await vi.waitFor(() => expect(deps.streamService.previewHistory.mock.calls.length).toBe(before + 1))
@@ -1309,7 +1319,7 @@ describe("preview history recovery", () => {
     initial.events[0].payload = { messageId: "msg_initial", contentMarkdown: "cached timeline" }
     deps.streamService.bootstrap.mockResolvedValueOnce(initial)
     engine.setCurrentStreamId("stream_current")
-    await vi.waitFor(async () => expect(await db.events.get("evt_1")).toBeTruthy())
+    await vi.waitFor(async () => expect(await db.events.get(["ws_1", "evt_1"])).toBeTruthy())
     deps.streamService.bootstrap.mockClear()
     const missed = makeStreamBootstrap("stream_current", "2")
     missed.events[0].payload = { messageId: "msg_missed", contentMarkdown: "HTTP recovered" }
@@ -1317,14 +1327,14 @@ describe("preview history recovery", () => {
     disconnect(engine, socket)
     await engine.refreshAfterConnectivityResume()
     expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_current", { after: "1" })
-    expect((await db.events.get("evt_2"))?.payload).toMatchObject({ contentMarkdown: "HTTP recovered" })
+    expect((await db.events.get(["ws_1", "evt_2"]))?.payload).toMatchObject({ contentMarkdown: "HTTP recovered" })
   }, 10_000)
 
   it("should recover a URL-visible bare panel over HTTP without recovering background board roots", async () => {
     const { deps, engine, socket } = await setup()
     deps.streamService.bootstrap.mockResolvedValueOnce(makeStreamBootstrap("stream_panel", "1"))
     engine.setVisibleStreamIds(["stream_panel"])
-    await vi.waitFor(async () => expect(await db.events.get("evt_1")).toBeTruthy())
+    await vi.waitFor(async () => expect(await db.events.get(["ws_1", "evt_1"])).toBeTruthy())
     disconnect(engine, socket)
     engine.setBoardStreamIds(["stream_background"])
     engine.setPanelStreamIds(["stream_conversation_root"])
@@ -1336,7 +1346,7 @@ describe("preview history recovery", () => {
     await engine.refreshAfterConnectivityResume()
 
     expect(deps.streamService.bootstrap.mock.calls).toEqual([["ws_1", "stream_panel", { after: "1" }]])
-    expect((await db.events.get("evt_2"))?.payload).toMatchObject({ contentMarkdown: "panel recovered" })
+    expect((await db.events.get(["ws_1", "evt_2"]))?.payload).toMatchObject({ contentMarkdown: "panel recovered" })
   })
 
   it.each(
@@ -1396,7 +1406,10 @@ describe("preview history recovery", () => {
       }
       release()
       await warm
-      expect({ original: await a.events.get("evt_2"), incoming: await b.events.get("evt_2") }).toEqual({
+      expect({
+        original: await a.events.get(["ws_1", "evt_2"]),
+        incoming: await b.events.get(["ws_1", "evt_2"]),
+      }).toEqual({
         original: undefined,
         incoming: undefined,
       })
@@ -1442,7 +1455,7 @@ describe("preview history recovery", () => {
       expect({
         requests: fetch.mock.calls.length,
         cursorReads: cursorRead.mock.calls.map((call) => call[0]),
-        event: await incoming.events.get("evt_2"),
+        event: await incoming.events.get(["ws_1", "evt_2"]),
       }).toEqual({
         requests: 0,
         cursorReads: [],
@@ -1539,7 +1552,7 @@ describe("preview history recovery", () => {
     await resume
     joined.resolve()
     expect({
-      event: (await db.events.get("evt_2"))?.payload,
+      event: (await db.events.get(["ws_1", "evt_2"]))?.payload,
       requests: deps.streamService.bootstrap.mock.calls.map((call) => call[1]),
       connected: socket.connected,
     }).toEqual({
@@ -1581,7 +1594,7 @@ describe("preview history recovery", () => {
     heldResponse.resolve()
     await resume
     await vi.waitFor(() => expect(deps.syncStatus.get(`stream:${streamId}`)).toBe("synced"))
-    expect(await db.events.get("evt_3")).toBeTruthy()
+    expect(await db.events.get(["ws_1", "evt_3"])).toBeTruthy()
   })
 
   it("should recheck the warm-fetch account after its persisted cursor read", async () => {
@@ -1623,7 +1636,7 @@ describe("preview history recovery", () => {
       await applyStreamBootstrap("ws_1", "stream_private", makeStreamBootstrap("stream_private", "1"))
       held.resolve()
       await warm
-      expect({ requests: fetch.mock.calls.length, event: await incoming.events.get("evt_2") }).toEqual({
+      expect({ requests: fetch.mock.calls.length, event: await incoming.events.get(["ws_1", "evt_2"]) }).toEqual({
         requests: 0,
         event: undefined,
       })
@@ -1648,12 +1661,12 @@ describe("preview history recovery", () => {
     engine.warmStreams(["stream_writefailure"])
     const drain: Promise<void> = Reflect.get(engine, "previewDrain")
     await track(drain)
-    expect({ messages: error.mock.calls, event: await db.events.get("evt_stream_writefailure_2") }).toEqual({
+    expect({ messages: error.mock.calls, event: await db.events.get(["ws_1", "evt_stream_writefailure_2"]) }).toEqual({
       messages: [["Preview history cache write failed"]],
       event: undefined,
     })
     engine.warmStreams(["stream_writefailure"])
-    await vi.waitFor(async () => expect(await db.events.get("evt_stream_writefailure_2")).toBeTruthy())
+    await vi.waitFor(async () => expect(await db.events.get(["ws_1", "evt_stream_writefailure_2"])).toBeTruthy())
     expect(deps.streamService.previewHistory).toHaveBeenCalledTimes(2)
   })
 
@@ -1669,7 +1682,7 @@ describe("preview history recovery", () => {
       return response
     })
     engine.warmStreams(["stream_ok", "stream_denied", "stream_missing"])
-    await vi.waitFor(async () => expect(await db.events.get("evt_stream_ok_2")).toBeTruthy())
+    await vi.waitFor(async () => expect(await db.events.get(["ws_1", "evt_stream_ok_2"])).toBeTruthy())
     expect(deps.syncStatus.getError("stream:stream_denied")).toMatchObject({ status: 403 })
     expect(deps.syncStatus.getError("stream:stream_missing")).toMatchObject({ status: 404 })
   })

@@ -132,7 +132,7 @@ describe("SyncEngine connection setup", () => {
           user: { id: "user_latest_connection", workspaceId: "ws_1", name: "Latest" },
         })
         await vi.waitFor(async () =>
-          expect(await db.workspaceUsers.get("user_latest_connection")).toMatchObject({ name: "Latest" })
+          expect(await db.workspaceUsers.get(["ws_1", "user_latest_connection"])).toMatchObject({ name: "Latest" })
         )
       } else {
         expect(deps.draftsService.list).not.toHaveBeenCalled()
@@ -182,8 +182,8 @@ describe("SyncEngine connection setup", () => {
         })
         await vi.waitFor(async () =>
           expect({
-            user: (await db.workspaceUsers.get("user_setup"))?.name,
-            stream: (await db.streams.get("stream_setup"))?.displayName,
+            user: (await db.workspaceUsers.get(["ws_1", "user_setup"]))?.name,
+            stream: (await db.streams.get(["ws_1", "stream_setup"]))?.displayName,
             query: deps.queryClient.getQueryData<{ displayName: string }>(streamKeys.detail("ws_1", "stream_setup"))
               ?.displayName,
           }).toEqual({ user: "Recovered", stream: "Recovered stream", query: "Recovered stream" })
@@ -1121,7 +1121,7 @@ describe("SyncEngine.warmStreams", () => {
 
     await vi.waitFor(async () => {
       expect(deps.streamService.previewHistory).toHaveBeenCalledWith("ws_1", ["stream_member"], expect.any(AbortSignal))
-      expect(await db.events.get("evt_stream_member_2")).toBeTruthy()
+      expect(await db.events.get(["ws_1", "evt_stream_member_2"])).toBeTruthy()
     })
   })
 
@@ -2732,7 +2732,7 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
       await vi.waitFor(() => expect(catchUp.mock.calls.length).toBeGreaterThan(before), { timeout: 3500 })
       held.resolve()
       await vi.waitFor(() => expect(bootstrap.mock.calls.map((call) => call[1])).toEqual(ids))
-      await vi.waitFor(async () => expect(await db.events.get(`evt_${ids[11]}`)).toBeTruthy())
+      await vi.waitFor(async () => expect(await db.events.get(["ws_1", `evt_${ids[11]}`])).toBeTruthy())
     } finally {
       held.resolve()
       engine.destroy()
