@@ -237,6 +237,7 @@ export const StreamEventRepository = {
 
   async listPreviewWindows(
     db: Querier,
+    workspaceId: string,
     streamIds: string[],
     viewerId: string
   ): Promise<Map<string, { events: StreamEvent[]; hasOlderEvents: boolean; latestSequence: bigint | null }>> {
@@ -253,13 +254,13 @@ export const StreamEventRepository = {
       FROM unnest(${streamIds}::text[]) AS requested(stream_id)
       LEFT JOIN LATERAL (
         SELECT sequence FROM stream_events
-        WHERE stream_id = requested.stream_id
+        WHERE workspace_id = ${workspaceId} AND stream_id = requested.stream_id
         ORDER BY sequence DESC LIMIT 1
       ) head ON TRUE
       LEFT JOIN LATERAL (
         SELECT id, stream_id, sequence, broadcast_sequence, event_type, payload, actor_id, actor_type, created_at
         FROM stream_events
-        WHERE stream_id = requested.stream_id
+        WHERE workspace_id = ${workspaceId} AND stream_id = requested.stream_id
           AND (event_type != ALL(${AUTHOR_SCOPED_EVENT_TYPES}::text[]) OR actor_id = ${viewerId})
           AND event_type != ALL(${projectionPatchTypes}::text[])
         ORDER BY sequence DESC LIMIT ${EVENTS_DEFAULT_LIMIT + 1}

@@ -297,7 +297,7 @@ describe("batched preview history", () => {
       payload: {},
       actorId: other,
     })
-    const windows = await StreamEventRepository.listPreviewWindows(pool, [windowStream, empty], viewer)
+    const windows = await StreamEventRepository.listPreviewWindows(pool, workspace, [windowStream, empty], viewer)
     const window = windows.get(windowStream)!
     expect({
       ids: window.events.map((event) => event.id),
@@ -318,7 +318,7 @@ describe("batched preview history", () => {
         payload: {},
       }))
     )
-    const exactWindow = (await StreamEventRepository.listPreviewWindows(pool, [empty], viewer)).get(empty)!
+    const exactWindow = (await StreamEventRepository.listPreviewWindows(pool, workspace, [empty], viewer)).get(empty)!
     expect({ ids: exactWindow.events.map((event) => event.id), older: exactWindow.hasOlderEvents }).toEqual({
       ids: exact.map((event) => event.id),
       older: false,
