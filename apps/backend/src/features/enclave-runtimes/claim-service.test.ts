@@ -17,7 +17,13 @@ import type { StorageProvider } from "../../lib/storage/s3-client"
 import type { Message } from "../messaging"
 import { UserRepository } from "../workspaces"
 import type { UserPreferencesService } from "../user-preferences"
-import { EnclaveInvocationsRepository, type EnclaveInvocation } from "./invocations-repository"
+import {
+  ENCLAVE_CLAIM_MAX_ATTEMPTS,
+  ENCLAVE_CLAIM_TTL_SECONDS,
+  EnclaveInvocationsRepository,
+  type EnclaveInvocation,
+} from "./invocations-repository"
+import { HttpError } from "../../lib/errors"
 import { RewrapNotificationsRepository } from "../e2e-streams"
 import { EnclaveClaimService, enqueueEnclaveInvocation } from "./claim-service"
 import { ENCLAVE_INVOCATION_CHANNEL } from "./claim-nudge"
@@ -81,7 +87,7 @@ function arrangeClaim(invocation: EnclaveInvocation = INVOCATION) {
     .mockResolvedValue(null)
   const claimNext = spyOn(EnclaveInvocationsRepository, "claimNext").mockResolvedValue(invocation)
   const completeClaimed = spyOn(EnclaveInvocationsRepository, "completeClaimed").mockResolvedValue(undefined)
-  spyOn(EnclaveInvocationsRepository, "failClaimed").mockResolvedValue(undefined)
+  const failClaimed = spyOn(EnclaveInvocationsRepository, "failClaimed").mockResolvedValue(undefined)
   const attachSession = spyOn(EnclaveInvocationsRepository, "attachSession").mockResolvedValue(undefined)
   spyOn(EnclaveInvocationsRepository, "parkExhausted").mockResolvedValue([])
   spyOn(E2eStreamsRepository, "getByStreamId").mockResolvedValue(E2E)
@@ -102,8 +108,10 @@ function arrangeClaim(invocation: EnclaveInvocation = INVOCATION) {
   const tx = { __tx: true } as never
   spyOn(db, "withTransaction").mockImplementation((async (_pool: unknown, fn: (client: never) => unknown) =>
     fn(tx)) as never)
-  return { tx, findNextClaimable, claimNext, completeClaimed, attachSession }
+  return { tx, findNextClaimable, claimNext, completeClaimed, failClaimed, attachSession }
 }
+
+const argsAfterDb = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.map((c) => c.slice(1))
 
 const ALLOW_ALL: SpendGate = { admit: async () => ({ allowed: true }) }
 
@@ -136,7 +144,7 @@ describe("EnclaveClaimService.claimTurn", () => {
     expect(insertSession.mock.calls[0]![0]).toBe(tx)
     expect(insertEvent.mock.calls[0]![0]).toBe(tx)
     expect(attach.mock.calls[0]![0]).toBe(tx)
-    expect(attach.mock.calls[0]![1]).toMatchObject({ id: "einv_1" })
+    expect(argsAfterDb(attach)).toEqual([[{ workspaceId: "ws_1", id: "einv_1", sessionId: expect.any(String) }]])
     expect(insertEvent.mock.calls[0]![1]).toMatchObject({
       streamId: "stream_1",
       eventType: "agent_session:started",
@@ -438,7 +446,7 @@ describe("EnclaveClaimService.claimTurn", () => {
     expect(await service().claimTurn("eik_live")).toBeNull()
 
     expect(insertEvent).not.toHaveBeenCalled()
-    expect(completeClaimed).toHaveBeenCalledWith(pool, "einv_1")
+    expect(completeClaimed).toHaveBeenCalledWith(pool, "ws_1", "einv_1")
     // The loop went back for the next item (and found the queue empty).
     expect(findNextClaimable).toHaveBeenCalledTimes(2)
   })
@@ -454,7 +462,7 @@ describe("EnclaveClaimService.claimTurn", () => {
 
     expect(await service().claimTurn("eik_live")).toBeNull()
     expect(insertSession).not.toHaveBeenCalled()
-    expect(completeClaimed).toHaveBeenCalledWith(pool, "einv_1")
+    expect(completeClaimed).toHaveBeenCalledWith(pool, "ws_1", "einv_1")
   })
 
   it("defers — leaving the claim to its TTL — when the trigger's RUNNING session looks runnerless (stale heartbeat)", async () => {
@@ -491,6 +499,105 @@ describe("EnclaveClaimService.claimTurn", () => {
     const assignment = await service().claimTurn("eik_live")
     expect(assignment).not.toBeNull()
     expect(insertSession).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe("EnclaveClaimService invocation writes carry the claimed row's workspace", () => {
+  const CLAIM_PARAMS = {
+    invocationId: "einv_1",
+    keyId: "eik_live",
+    claimToken: expect.any(String),
+    claimTtlSeconds: ENCLAVE_CLAIM_TTL_SECONDS,
+    maxAttempts: ENCLAVE_CLAIM_MAX_ATTEMPTS,
+  }
+  const failedClaim = (errorMessage: string) => [
+    [{ workspaceId: "ws_1", id: "einv_1", keyId: "eik_live", claimToken: expect.any(String), errorMessage }],
+  ]
+
+  function stubSessionInsert(id: string) {
+    spyOn(AgentSessionRepository, "insertRunningOrSkip").mockResolvedValue({ id, createdAt: new Date() } as never)
+    spyOn(StreamEventRepository, "insert").mockResolvedValue({ id: "evt_1" } as never)
+    spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
+  }
+
+  it("claims the polled candidate by id inside its own workspace", async () => {
+    const { claimNext } = arrangeClaim()
+    stubSessionInsert("session_1")
+
+    await service().claimTurn("eik_live")
+
+    expect(argsAfterDb(claimNext)).toEqual([["ws_1", CLAIM_PARAMS]])
+  })
+
+  it("fails the claim in its workspace when the trigger has no initiating user", async () => {
+    const { claimNext, failClaimed } = arrangeClaim()
+    spyOn(MessageRepository, "findById").mockResolvedValue({ ...TRIGGER, authorType: "bot" } as Message)
+
+    expect(await service().claimTurn("eik_live")).toBeNull()
+
+    expect(argsAfterDb(claimNext)).toEqual([["ws_1", CLAIM_PARAMS]])
+    expect(argsAfterDb(failClaimed)).toEqual(failedClaim("STREAM_READ_ONLY:missing_initiating_user"))
+  })
+
+  it("fails the claim in its workspace when the stream is read-only at claim time", async () => {
+    const { claimNext, failClaimed } = arrangeClaim()
+    spyOn(streamsModule, "assertStreamWritable").mockRejectedValue(
+      new HttpError("read only", { status: 403, code: "STREAM_READ_ONLY", details: { reason: "archived" } })
+    )
+
+    expect(await service().claimTurn("eik_live")).toBeNull()
+
+    expect(argsAfterDb(claimNext)).toEqual([["ws_1", CLAIM_PARAMS]])
+    expect(argsAfterDb(failClaimed)).toEqual(failedClaim("STREAM_READ_ONLY:archived"))
+  })
+
+  it("fails the claim in its workspace when the trigger lost its user between claim and build", async () => {
+    const { tx, failClaimed } = arrangeClaim()
+    let txReads = 0
+    spyOn(MessageRepository, "findById").mockImplementation((async (executor: unknown) =>
+      executor === tx && ++txReads > 1 ? { ...TRIGGER, authorType: "bot" } : TRIGGER) as never)
+
+    expect(await service().claimTurn("eik_live")).toBeNull()
+
+    expect(argsAfterDb(failClaimed)).toEqual(failedClaim("STREAM_READ_ONLY:missing_initiating_user"))
+  })
+
+  it("fails the claim in its workspace when the stream turned read-only between claim and build", async () => {
+    const { failClaimed } = arrangeClaim()
+    spyOn(streamsModule, "assertStreamWritable")
+      .mockResolvedValueOnce({} as never)
+      .mockRejectedValueOnce(new HttpError("gone", { status: 404, code: "STREAM_NOT_FOUND" }))
+
+    expect(await service().claimTurn("eik_live")).toBeNull()
+
+    expect(argsAfterDb(failClaimed)).toEqual(failedClaim("STREAM_READ_ONLY:not_a_member"))
+  })
+
+  it("stamps the denied session and fails the claim in its workspace when AI spend is denied", async () => {
+    const { attachSession, failClaimed } = arrangeClaim()
+    stubSessionInsert("session_denied")
+    const failSession = spyOn(agents, "failSessionWithLifecycleInTransaction").mockImplementation((async (
+      tx: never,
+      _session: unknown,
+      _stream: unknown,
+      _error: string,
+      onFailed?: (tx: never) => Promise<void>
+    ) => {
+      await onFailed?.(tx)
+      return true
+    }) as never)
+    const denying = new EnclaveClaimService({
+      pool,
+      storage: FAKE_STORAGE,
+      userPreferencesService: FAKE_PREFERENCES,
+      spendGate: { admit: async () => ({ allowed: false, reason: "user_disabled" }) },
+    })
+
+    expect(await denying.claimTurn("eik_live")).toBeNull()
+
+    const deniedSessionId = (failSession.mock.calls[0]![1] as { id: string }).id
+    expect(argsAfterDb(attachSession)).toEqual([[{ workspaceId: "ws_1", id: "einv_1", sessionId: deniedSessionId }]])
+    expect(argsAfterDb(failClaimed)).toEqual(failedClaim("AI_SPEND_DENIED:user_disabled"))
   })
 })
 
