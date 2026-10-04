@@ -2,6 +2,7 @@ import { forwardRef, useCallback, useEffect, useMemo, useState, type ComponentPr
 import {
   ArrowLeftRight,
   Bell,
+  BookOpen,
   BellOff,
   ChevronUp,
   DollarSign,
@@ -43,6 +44,8 @@ import { StatusPicker } from "@/components/status/status-picker"
 import { PauseNotificationsDialog } from "@/components/notifications/pause-notifications-dialog"
 import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { SidebarActionDrawer, SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
+
+const USER_GUIDE_URL = "https://threa.io/guide"
 
 const THEME_MODES = [
   { value: "system", label: "System", icon: Monitor },
@@ -491,6 +494,14 @@ export function SidebarFooter({
             } satisfies SidebarActionItem,
           ]
         : []),
+      {
+        id: "user-guide",
+        label: "User guide",
+        icon: BookOpen,
+        href: USER_GUIDE_URL,
+        external: true,
+        onSelect: collapseOnMobile,
+      },
       {
         id: "app-status",
         label: "App status",
