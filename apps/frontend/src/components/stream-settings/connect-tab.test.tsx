@@ -473,7 +473,11 @@ describe("ConnectTab", () => {
   })
 
   it("should drop a cached invite the load no longer lists", async () => {
+    // A row cached in the load's own millisecond counts as written after it started, so it would stay.
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["Date"] })
+    vi.setSystemTime(new Date(2026, 9, 1, 10, 0))
     await putStreamConnection("ws_host", makeConnection())
+    vi.setSystemTime(new Date(2026, 9, 1, 10, 1))
     vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([makePartner("strconn_2", "Gamma")])
 
     renderTab()
