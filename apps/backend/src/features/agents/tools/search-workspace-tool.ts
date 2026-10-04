@@ -408,7 +408,7 @@ export function createSearchStreamsTool(deps: WorkspaceToolDeps) {
 }
 
 export function createSearchUsersTool(deps: WorkspaceToolDeps) {
-  const { db, workspaceId, invokingUserId } = deps
+  const { db, workspaceId, peopleViewer } = deps
 
   return defineAgentTool({
     name: "search_users",
@@ -422,7 +422,7 @@ export function createSearchUsersTool(deps: WorkspaceToolDeps) {
     execute: async (input): Promise<AgentToolResult> => {
       try {
         const members = await UserRepository.searchByNameOrSlug(db, workspaceId, input.query, 10, {
-          viewer: { kind: "user", userId: invokingUserId },
+          viewer: peopleViewer,
           purpose: PeoplePurposes.TARGETABLE,
         })
         const results: UserSearchResult[] = members.map((m) => ({ id: m.id, name: m.name, email: m.email }))

@@ -8,6 +8,7 @@ import type {
 } from "@threahq/types"
 import type { AttachmentService } from "../../attachments"
 import type { MemoExplorerService } from "../../memos"
+import type { PeopleViewer } from "../../workspaces"
 import type { SearchService } from "../../search"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
 import type { StartSubagentOutcome, ReportBackOutcome } from "../../subagents"
@@ -24,6 +25,7 @@ export interface WorkspaceToolDeps {
    * everyone in the stream, so this is not `invokingUserId`.
    */
   memoViewerUserId: string | undefined
+  peopleViewer: PeopleViewer
   /** The invoking user's resolved `search` flag; "off" keeps the pre-rework tool prompt and ranking. */
   searchFlag: FeatureFlagValue<"search">
   searchService: SearchService

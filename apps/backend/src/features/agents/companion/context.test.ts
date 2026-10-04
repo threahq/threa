@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { AgentToolNames, DEFAULT_USER_PREFERENCES, MemoryModes, StreamTypes } from "@threahq/types"
+import { AgentToolNames, DEFAULT_USER_PREFERENCES, MemoryModes, StreamTypes, Visibilities } from "@threahq/types"
 import { StreamBriefRepository, StreamRepository, type StreamBrief } from "../../streams"
 import { MessageRepository } from "../../messaging"
 import { UserDeviceContextRepository } from "../../device-context"
@@ -259,6 +259,44 @@ describe("buildAgentContext device context", () => {
     spyOn(UserDeviceContextRepository, "find").mockResolvedValue(null)
 
     expect(await volatilePrompt(true)).not.toContain("## Device")
+  })
+})
+
+describe("buildAgentContext people viewer", () => {
+  afterEach(() => mock.restore())
+
+  it("should scope people reads to the invoker in a solo private scratchpad and to the room in a channel", async () => {
+    const viewerIn = async (stream: { id: string; type: string; visibility: string }) => {
+      const context = await buildAgentContext(deps, {
+        workspaceId: "ws_1",
+        streamId: stream.id,
+        stream: {
+          ...stream,
+          workspaceId: "ws_1",
+          rootStreamId: null,
+          parentStreamId: null,
+          createdBy: "usr_1",
+        } as never,
+        messageId: "msg_1",
+        invokingUserOverride: "usr_1",
+        persona,
+        purpose: { kind: "catch_up" },
+        policy: { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests: false },
+      })
+      return context.peopleViewer
+    }
+
+    expect({
+      soloScratchpad: await viewerIn({
+        id: "stream_pad",
+        type: StreamTypes.SCRATCHPAD,
+        visibility: Visibilities.PRIVATE,
+      }),
+      channel: await viewerIn({ id: "stream_channel", type: StreamTypes.CHANNEL, visibility: Visibilities.PUBLIC }),
+    }).toEqual({
+      soloScratchpad: { kind: "user", userId: "usr_1" },
+      channel: { kind: "room", roomStreamId: "stream_channel" },
+    })
   })
 })
 

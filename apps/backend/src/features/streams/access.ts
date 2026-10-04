@@ -188,12 +188,33 @@ export function streamAccessPredicateSql(workspaceId: string, userId: string, st
 }
 
 /**
+ * True when no reader of `roomStreamId`'s room lacks browse: the room's root is not `guest_public`
+ * (whose readers include every workspace user, so it is taken to hold a guest without looking) and
+ * none of its members lacks browse. A missing room has no root to vet, so it is false.
+ */
+export function roomReadersAllBrowseSql(workspaceId: string, roomStreamId: string): QueryConfig {
+  return composeSql`EXISTS (
+    SELECT 1
+    FROM streams room
+    JOIN streams room_root ON room_root.id = COALESCE(room.root_stream_id, room.id)
+      AND room_root.workspace_id = room.workspace_id
+    WHERE room.workspace_id = ${workspaceId}
+      AND room.id = ${roomStreamId}
+      AND room_root.visibility <> ${Visibilities.GUEST_PUBLIC}
+      AND NOT ${anyUserLacksBrowseSql(
+        workspaceId,
+        sql`SELECT rm.member_id FROM stream_members rm WHERE rm.workspace_id = ${workspaceId} AND rm.stream_id = room_root.id`
+      )}
+  )`
+}
+
+/**
  * Room-uniform readability for a payload delivered to everyone in `roomStreamId`'s room: a reader
  * of the room's root is any member of it, plus every workspace user when it is `guest_public`.
  * `guest_public` content is readable by all of them; `public` content only when no reader lacks
- * browse. A `guest_public` room is taken to hold a guest without looking, and a missing room has
- * no root to vet, so both let only `guest_public` through. `rootAlias` is a
- * trusted SQL alias for the content's effective root, never user input.
+ * browse ({@link roomReadersAllBrowseSql}), so a `guest_public` or missing room lets only
+ * `guest_public` through. `rootAlias` is a trusted SQL alias for the content's effective root,
+ * never user input.
  */
 export function roomReadableWithoutMembershipSql(
   workspaceId: string,
@@ -203,19 +224,7 @@ export function roomReadableWithoutMembershipSql(
   const root = sql`${sql.raw(rootAlias)}`
   return composeSql`(
     ${root}.visibility = ${Visibilities.GUEST_PUBLIC}
-    OR (${root}.visibility = ${Visibilities.PUBLIC} AND EXISTS (
-      SELECT 1
-      FROM streams room
-      JOIN streams room_root ON room_root.id = COALESCE(room.root_stream_id, room.id)
-        AND room_root.workspace_id = room.workspace_id
-      WHERE room.workspace_id = ${workspaceId}
-        AND room.id = ${roomStreamId}
-        AND room_root.visibility <> ${Visibilities.GUEST_PUBLIC}
-        AND NOT ${anyUserLacksBrowseSql(
-          workspaceId,
-          sql`SELECT rm.member_id FROM stream_members rm WHERE rm.workspace_id = ${workspaceId} AND rm.stream_id = room_root.id`
-        )}
-    ))
+    OR (${root}.visibility = ${Visibilities.PUBLIC} AND ${roomReadersAllBrowseSql(workspaceId, roomStreamId)})
   )`
 }
 

@@ -56,6 +56,7 @@ const workspace: WorkspaceToolDeps = {
   accessibleStreamIds: ["stream_1"],
   invokingUserId: "usr_1",
   memoViewerUserId: undefined,
+  peopleViewer: { kind: "user", userId: "usr_1" },
   searchFlag: "on",
   searchService: {} as WorkspaceToolDeps["searchService"],
   storage: {} as WorkspaceToolDeps["storage"],

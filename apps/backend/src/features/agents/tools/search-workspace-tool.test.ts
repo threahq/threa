@@ -1,10 +1,15 @@
 import { describe, expect, mock, spyOn, test } from "bun:test"
 import type { FeatureFlagValue } from "@threahq/types"
-import { createGetStreamMessagesTool, createSearchMessagesTool, createSearchStreamsTool } from "./search-workspace-tool"
+import {
+  createGetStreamMessagesTool,
+  createSearchMessagesTool,
+  createSearchStreamsTool,
+  createSearchUsersTool,
+} from "./search-workspace-tool"
 import type { WorkspaceToolDeps } from "./tool-deps"
 import { MessageRepository, type Message } from "../../messaging"
 import { StreamRepository, type Stream } from "../../streams"
-import { UserRepository } from "../../workspaces"
+import { PeoplePurposes, UserRepository } from "../../workspaces"
 import { PersonaRepository } from "../persona-repository"
 
 function makeTool(searchFlag: FeatureFlagValue<"search">) {
@@ -15,6 +20,7 @@ function makeTool(searchFlag: FeatureFlagValue<"search">) {
     accessibleStreamIds: ["stream_1"],
     invokingUserId: "usr_1",
     memoViewerUserId: undefined,
+    peopleViewer: { kind: "user", userId: "usr_1" },
     searchFlag,
     searchService: { search } as unknown as WorkspaceToolDeps["searchService"],
     storage: {} as WorkspaceToolDeps["storage"],
@@ -31,6 +37,7 @@ function makeDeps(searchFlag: FeatureFlagValue<"search">, searchService?: unknow
     accessibleStreamIds: ["stream_1", "stream_2"],
     invokingUserId: "usr_1",
     memoViewerUserId: undefined,
+    peopleViewer: { kind: "user", userId: "usr_1" },
     searchFlag,
     searchService: (searchService ?? {
       search: async () => ({ results: [], conversations: [], excludedE2eStreamCount: 0 }),
@@ -182,6 +189,25 @@ describe("search_streams and get_stream_messages carry URLs", () => {
       expect(list).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_1", { limit: 10 })
     } finally {
       ;[list, streams, users, personas].forEach((spy) => spy.mockRestore())
+    }
+  })
+})
+
+describe("search_users people scope", () => {
+  test("should search people with the turn's people viewer when the audience is wider than the invoker", async () => {
+    const search = spyOn(UserRepository, "searchByNameOrSlug").mockResolvedValue([])
+    const tool = createSearchUsersTool({
+      ...makeDeps("off"),
+      peopleViewer: { kind: "room", roomStreamId: "stream_room" },
+    })
+    try {
+      await tool.config.execute({ query: "ada" }, { toolCallId: "t1" })
+      expect(search.mock.calls[0]?.[4]).toEqual({
+        viewer: { kind: "room", roomStreamId: "stream_room" },
+        purpose: PeoplePurposes.TARGETABLE,
+      })
+    } finally {
+      search.mockRestore()
     }
   })
 })

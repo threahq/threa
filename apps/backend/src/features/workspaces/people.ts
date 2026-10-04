@@ -1,6 +1,8 @@
 import type { QueryConfig } from "pg"
 import { AuthorTypes } from "@threahq/types"
-import { sql } from "../../db"
+import { composeSql, sql } from "../../db"
+import { roomReadableWithoutMembershipSql, roomReadersAllBrowseSql, streamAccessPredicateSql } from "../streams"
+import { viewerLacksBrowseSql } from "./viewer-browse"
 
 export const PeoplePurposes = {
   VISIBLE: "visible",
@@ -9,8 +11,15 @@ export const PeoplePurposes = {
 
 type PeoplePurpose = (typeof PeoplePurposes)[keyof typeof PeoplePurposes]
 
-/** `workspace` is a reader acting for no user: bot keys, system work, agent or persona authors, backfills. */
-export type PeopleViewer = { kind: "user"; userId: string } | { kind: "workspace" }
+/**
+ * `room` is an agent answering everyone in a stream's room, so it sees what every reader of that room
+ * could. `workspace` is a reader acting for no user: bot keys, system work, agent or persona authors,
+ * backfills.
+ */
+export type PeopleViewer =
+  | { kind: "user"; userId: string }
+  | { kind: "room"; roomStreamId: string }
+  | { kind: "workspace" }
 
 export interface PeopleScope {
   viewer: PeopleViewer
@@ -21,14 +30,57 @@ export function peopleViewerForActor(actorType: string, actorId: string): People
   return actorType === AuthorTypes.USER ? { kind: "user", userId: actorId } : { kind: "workspace" }
 }
 
+/** Members and non-deleted authors of the streams `streamIdsSql` selects; bot and persona ids match no user row. */
+function peopleOfStreamsSql(workspaceId: string, streamIdsSql: QueryConfig): QueryConfig {
+  return composeSql`u.id IN (
+    SELECT sm.member_id FROM stream_members sm
+    WHERE sm.workspace_id = ${workspaceId} AND sm.stream_id IN (${streamIdsSql})
+    UNION ALL
+    SELECT DISTINCT m.author_id FROM messages m
+    WHERE m.workspace_id = ${workspaceId} AND m.stream_id IN (${streamIdsSql}) AND m.deleted_at IS NULL
+  )`
+}
+
 /**
  * Which workspace users `scope.viewer` may see (`visible`) or pick (`targetable`). Reads that list,
  * pick or resolve users on a viewer's behalf pass a scope; rendering reads of ids taken from content
  * the viewer already accesses, and admin routes keyed by a route-param id, do not.
  *
+ * A viewer with browse sees everyone. A viewer without it (a guest) sees themselves plus the members
+ * and authors of the streams they read, by the single stream access rule (INV-62). A room viewer sees
+ * everyone when no reader of the room lacks browse, else the members and authors of the room's root
+ * and its threads plus the `guest_public` roots every reader reads. A thread room is its root's room.
+ *
  * Spliced after `AND` into a WHERE over `users u`, so it stays one parenthesized boolean; other
  * tables are reached through subqueries.
  */
-export function peopleScopeSql(_scope: PeopleScope): QueryConfig {
-  return sql`(TRUE)`
+export function peopleScopeSql(workspaceId: string, scope: PeopleScope): QueryConfig {
+  const { viewer } = scope
+  switch (viewer.kind) {
+    case "workspace":
+      return sql`(TRUE)`
+    case "user":
+      return composeSql`(
+        NOT ${viewerLacksBrowseSql(workspaceId, viewer.userId)}
+        OR u.id = ${viewer.userId}
+        OR ${peopleOfStreamsSql(
+          workspaceId,
+          composeSql`SELECT s.id FROM streams s
+            WHERE s.workspace_id = ${workspaceId} AND ${streamAccessPredicateSql(workspaceId, viewer.userId, "s.id")}`
+        )}
+      )`
+    case "room":
+      return composeSql`(
+        ${roomReadersAllBrowseSql(workspaceId, viewer.roomStreamId)}
+        OR ${peopleOfStreamsSql(
+          workspaceId,
+          composeSql`SELECT s.id FROM streams s
+            JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id
+            WHERE s.workspace_id = ${workspaceId}
+              AND (root.id = (SELECT COALESCE(room.root_stream_id, room.id) FROM streams room
+                  WHERE room.workspace_id = ${workspaceId} AND room.id = ${viewer.roomStreamId})
+                OR ${roomReadableWithoutMembershipSql(workspaceId, viewer.roomStreamId, "root")})`
+        )}
+      )`
+  }
 }
