@@ -1,19 +1,12 @@
-import { Globe, Lock, UsersRound } from "lucide-react"
+import { Globe, Lock } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { GuestPublicIcon, VISIBILITY_LABELS } from "@/lib/stream-visuals"
 import type { Visibility } from "@threahq/types"
 
 interface VisibilityPickerProps {
   value: Visibility
   onChange: (value: Visibility) => void
   disabled?: boolean
-}
-
-export const GuestPublicIcon = UsersRound
-
-export const VISIBILITY_LABELS: Record<Visibility, string> = {
-  public: "Public",
-  guest_public: "Open to guests",
-  private: "Private",
 }
 
 export function VisibilityPicker({ value, onChange, disabled }: VisibilityPickerProps) {

@@ -1180,6 +1180,28 @@ describe("QuickSwitcher Integration Tests", () => {
     })
   })
 
+  describe("guest DM policy for a guest viewer", () => {
+    const guestViewer = createMockUser({ id: "member_guest", workosUserId: "workos_guest", role: "guest" })
+    const draftLink = (userId: string) => `a[href="/w/workspace_1/s/draft_dm_${userId}"]`
+
+    it("should list only admins in the Users group of a guest when only admins may DM guests", async () => {
+      vi.spyOn(authModule, "useUser").mockReturnValue({ id: "workos_guest" } as unknown as ReturnType<
+        typeof authModule.useUser
+      >)
+      mockWorkspaceBootstrap.data.users = [...mockUsersList, guestViewer]
+      renderWithProviders(<QuickSwitcher {...defaultProps} />, createTestQueryClient("admins"))
+      await userEvent.setup().type(screen.getByLabelText("Quick switcher input"), "a")
+      await waitFor(() => {
+        expect(document.querySelector(draftLink("member_1"))).toBeInTheDocument()
+      })
+
+      expect({
+        member2: document.querySelector(draftLink("member_2")),
+        member3: document.querySelector(draftLink("member_3")),
+      }).toEqual({ member2: null, member3: null })
+    })
+  })
+
   describe("contextual stream commands", () => {
     it("should surface current-stream commands under a stream-named section in command mode", async () => {
       renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_channel1" />)

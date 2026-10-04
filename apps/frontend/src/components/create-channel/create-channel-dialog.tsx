@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react"
+import { useState, useCallback, useEffect, useMemo } from "react"
 import { useNavigate } from "react-router-dom"
 import {
   ResponsiveDialog,
@@ -19,6 +19,7 @@ import { useCreateStream } from "@/hooks"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { useAuth } from "@/auth"
 import { useCanManageChannels } from "@/lib/use-can-manage-channels"
+import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { toast } from "sonner"
 import type { Visibility } from "@threahq/types"
 
@@ -130,6 +131,7 @@ interface CreateChannelDialogProps {
 export function CreateChannelDialog({ workspaceId }: CreateChannelDialogProps) {
   const { isOpen, closeCreateChannel } = useCreateChannel()
   const canManageChannels = useCanManageChannels(workspaceId)
+  const bootstrapLoaded = useCachedWorkspaceBootstrap(workspaceId) !== null
   const { user } = useAuth()
   const navigate = useNavigate()
   const createStream = useCreateStream(workspaceId)
@@ -163,6 +165,10 @@ export function CreateChannelDialog({ workspaceId }: CreateChannelDialogProps) {
     },
     [closeCreateChannel, resetForm]
   )
+
+  useEffect(() => {
+    if (isOpen && bootstrapLoaded && !canManageChannels) closeCreateChannel()
+  }, [isOpen, bootstrapLoaded, canManageChannels, closeCreateChannel])
 
   const handleSubmit = useCallback(async () => {
     if (!slug || !slugValid) return

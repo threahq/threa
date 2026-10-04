@@ -17,7 +17,6 @@ import {
   Tag,
 } from "lucide-react"
 import { Link } from "react-router-dom"
-import { GuestPublicIcon, VISIBILITY_LABELS } from "@/components/ui/visibility-picker"
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
@@ -37,7 +36,7 @@ import { useActiveCallsForStream } from "@/stores/active-calls-store"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
-import { streamTypeVisual } from "@/lib/stream-visuals"
+import { GuestPublicIcon, streamTypeVisual, VISIBILITY_LABELS } from "@/lib/stream-visuals"
 import { copyStreamLink } from "@/lib/stream-links"
 import { BADGE_CONFIG } from "./config"
 import {

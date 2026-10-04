@@ -1,5 +1,13 @@
-import { Bell, FileEdit, Hash, MessageSquareText, User, type LucideIcon } from "lucide-react"
-import { StreamTypes } from "@threahq/types"
+import { Bell, FileEdit, Hash, MessageSquareText, User, UsersRound, type LucideIcon } from "lucide-react"
+import { StreamTypes, type Visibility } from "@threahq/types"
+
+export const GuestPublicIcon = UsersRound
+
+export const VISIBILITY_LABELS: Record<Visibility, string> = {
+  public: "Public",
+  guest_public: "Open to guests",
+  private: "Private",
+}
 
 /**
  * The leading visual for a stream type — glyph + tile tint. The single source of

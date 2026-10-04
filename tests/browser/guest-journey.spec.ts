@@ -20,18 +20,20 @@ async function createChannelViaApi(
   await expectApiOk(res, `Create ${visibility} channel`)
 }
 
-async function joinAsGuest(
+async function joinAs(
   browser: Browser,
   workspaceId: string,
   testId: string,
+  role: "guest" | "member",
   options?: { viewport?: typeof PHONE }
 ): Promise<GuestSession & { name: string }> {
-  const name = `Visitor ${testId}`
+  const label = role === "guest" ? "Visitor" : "Teammate"
+  const name = `${label} ${testId}`
   const context = await browser.newContext(options?.viewport ? { viewport: options.viewport } : {})
   const page = await context.newPage()
-  await devLogin(page, `visitor-${testId}@example.com`, name)
-  const joinRes = await page.request.post(`/api/dev/workspaces/${workspaceId}/join`, { data: { role: "guest", name } })
-  await expectApiOk(joinRes, "Join workspace as guest")
+  await devLogin(page, `${label.toLowerCase()}-${testId}@example.com`, name)
+  const joinRes = await page.request.post(`/api/dev/workspaces/${workspaceId}/join`, { data: { role, name } })
+  await expectApiOk(joinRes, `Join workspace as ${role}`)
   return { context, page, name }
 }
 
@@ -89,7 +91,7 @@ async function horizontalOverflow(locator: Locator): Promise<number> {
 }
 
 test.describe("Guest journey", () => {
-  test("should keep a guest to open-to-guests channels when the owner invites and admits a guest", async ({
+  test("should keep a guest to open-to-guests channels and closed DMs after the owner invites a guest", async ({
     page,
     browser,
   }) => {
@@ -129,7 +131,7 @@ test.describe("Guest journey", () => {
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
     await expect(page.getByRole("heading", { name: `#${guestsSlug}`, level: 1 })).toBeVisible({ timeout: 10000 })
 
-    const guest = await joinAsGuest(browser, workspaceId, testId)
+    const guest = await joinAs(browser, workspaceId, testId, "guest")
     try {
       await guest.page.goto(`/w/${workspaceId}`)
       const switcherTab = guest.page.getByRole("tab", { name: "Stream search" })
@@ -184,13 +186,34 @@ test.describe("Guest journey", () => {
       const sidebar = page.getByRole("navigation", { name: "Sidebar navigation" })
       await expect(sidebar.getByRole("link", { name: `#${guestsSlug}` }).getByLabel("Open to guests")).toBeVisible()
 
+      const openDms = await page.request.patch(`/api/workspaces/${workspaceId}/workspace-settings`, {
+        data: { guestDmPolicy: "open" },
+      })
+      await expectApiOk(openDms, "Open guest DMs")
+      await page.reload()
+      await page.getByTestId("stream-timeline").getByRole("button", { name: guest.name }).click()
+      await expect(profile.getByRole("link", { name: "Message" })).toBeVisible({ timeout: 10000 })
+      await profile.getByRole("button", { name: "Close" }).click()
+      await expect(profile).toBeHidden()
+
+      await guest.page.reload()
+      await expect(guestSidebar.getByRole("link", { name: `#${guestsSlug}` })).toBeVisible({ timeout: 10000 })
+      await expect(async () => {
+        await guest.page.keyboard.press("Meta+k")
+        await expect(switcherTab).toBeVisible({ timeout: 2000 })
+      }).toPass({ timeout: 20000 })
+      await guest.page.keyboard.type("g6-")
+      await expect(switcher.locator('a[href*="/s/draft_dm_"]').first()).toBeVisible({ timeout: 10000 })
+      await guest.page.keyboard.press("Escape")
+
+      const teammate = await joinAs(browser, workspaceId, testId, "member")
+      await teammate.context.close()
       await page.goto(`/w/${workspaceId}?ws-settings=users`)
-      const guestRoleCell = settings
-        .locator("div")
-        .filter({ has: page.getByRole("button", { name: `Manage ${guest.name}` }) })
-        .last()
-      await expect(guestRoleCell.getByText("Guest", { exact: true })).toBeVisible({ timeout: 10000 })
-      await expect(guestRoleCell.getByRole("combobox")).toHaveCount(0)
+      const userRow = (name: string) =>
+        settings.getByRole("listitem").filter({ has: page.getByRole("button", { name: `Manage ${name}` }) })
+      await expect(userRow(teammate.name).getByRole("combobox")).toBeVisible({ timeout: 10000 })
+      await expect(userRow(guest.name).getByText("Guest", { exact: true })).toBeVisible()
+      await expect(userRow(guest.name).getByRole("combobox")).toHaveCount(0)
     } finally {
       await guest.context.close()
     }
@@ -227,7 +250,7 @@ test.describe("Guest journey", () => {
 
     await createOpenToGuestsChannel(page, guestsSlug)
 
-    const guest = await joinAsGuest(browser, workspaceId, testId, { viewport: PHONE })
+    const guest = await joinAs(browser, workspaceId, testId, "guest", { viewport: PHONE })
     try {
       await guest.page.goto(`/w/${workspaceId}/streams`)
       await directoryRow(guest.page, guestsSlug).getByRole("link").click()

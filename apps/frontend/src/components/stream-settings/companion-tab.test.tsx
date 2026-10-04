@@ -190,6 +190,13 @@ describe("CompanionTab channel settings for a guest", () => {
     expect(disabledControls()).toEqual({ modeOptions: [false, false], agentPicker: false, addBrief: true })
   })
 
+  it("should lock the shared brief on a thread whose root is not cached yet when the viewer lacks browse", () => {
+    viewerWith([])
+    renderTab({ id: "stream_thread", type: "thread", rootStreamId: "stream_chan" })
+
+    expect(disabledControls()).toEqual({ modeOptions: [false, false], agentPicker: false, addBrief: true })
+  })
+
   it("should leave a guest's own scratchpad controls enabled", () => {
     viewerWith([])
     renderTab({ type: "scratchpad" })

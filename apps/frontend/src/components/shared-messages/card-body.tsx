@@ -6,7 +6,7 @@ import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-co
 import { AttachmentList } from "@/components/timeline/attachment-list"
 import { type SharedMessageSource } from "@/hooks/use-shared-message-source"
 import { streamFallbackLabel } from "@/lib/streams"
-import { VISIBILITY_LABELS } from "@/components/ui/visibility-picker"
+import { VISIBILITY_LABELS } from "@/lib/stream-visuals"
 import { Visibilities, type StreamType, type Visibility } from "@threahq/types"
 
 /**

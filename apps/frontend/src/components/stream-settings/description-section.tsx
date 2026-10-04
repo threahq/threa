@@ -85,7 +85,9 @@ export function DescriptionSection({
           editorRef.current?.focus()
         }}
       >
+        {/* TipTap ignores a changed `editable` after creation, so a lock change remounts the editor. */}
         <RichEditor
+          key={String(locked)}
           ref={editorRef}
           value={contentJson}
           onChange={setContentJson}

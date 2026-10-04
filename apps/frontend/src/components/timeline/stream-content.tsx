@@ -50,7 +50,7 @@ import {
 } from "@/stores/workspace-store"
 import type { CachedStreamBootstrap } from "@/sync/stream-sync"
 import { createStableSelect } from "@/lib/structural-sharing"
-import { GUEST_DM_CLOSED_REASON } from "@/lib/guest-dm-policy"
+import { GUEST_DM_READ_ONLY_REASON } from "@/lib/guest-dm-policy"
 import { useGuestDmOpen } from "@/lib/use-guest-dm-open"
 import { resolveFrontierEventId, resolveFrontierSequence } from "@/lib/read-frontier"
 import { useReadCommitQueue } from "@/sync/read-commit-queue"
@@ -2392,7 +2392,7 @@ export function StreamContent({
   } else if (stream?.disconnectedAt) {
     disabledReason = "This conversation is no longer shared with your workspace. It can be read but not extended."
   } else if (isGuestDmClosed) {
-    disabledReason = GUEST_DM_CLOSED_REASON
+    disabledReason = GUEST_DM_READ_ONLY_REASON
   }
 
   const handleJoined = useCallback(

@@ -24,18 +24,23 @@ function viewerWith(viewerPermissions: WorkspaceBootstrap["viewerPermissions"]) 
 }
 
 describe("CreateChannelDialog", () => {
-  it("should render no dialog when a guest opens the create-channel URL", () => {
+  it("should render no dialog and drop the create-channel param when a guest opens the create-channel URL", async () => {
     viewerWith([])
     vi.spyOn(hooksModule, "useCreateStream").mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as never)
     vi.spyOn(authModule, "useAuth").mockReturnValue({ user: null } as never)
     vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
+    function Search() {
+      return <output data-testid="search">{useLocation().search}</output>
+    }
 
     render(
-      <MemoryRouter initialEntries={["/w/ws_1?create-channel="]}>
+      <MemoryRouter initialEntries={["/w/ws_1?other=1&create-channel="]}>
         <CreateChannelDialog workspaceId="ws_1" />
+        <Search />
       </MemoryRouter>
     )
 
+    await waitFor(() => expect(screen.getByTestId("search")).toHaveTextContent(/^\?other=1$/))
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
   })
 

@@ -360,7 +360,7 @@ describe("guest channel management", () => {
     })
   })
 
-  test("should refuse a guest changing a channel's companion, brief or archive state while members and the tool policy are unaffected", async () => {
+  test("should refuse a guest changing a channel's companion, brief or archive state while members and the guest's own scratchpad tool policy are unaffected", async () => {
     const owner = new TestClient()
     const guestClient = new TestClient()
     const memberClient = new TestClient()
@@ -427,10 +427,10 @@ describe("guest channel management", () => {
       channel: await stateOf(owner, openChannel.id),
       demotedCreatorChannel: await stateOf(demotedCreatorClient, demotedCreatorChannel.id),
     }
-    const toolPolicyOnChannel = {
-      guest: await toolPolicyAs(guestClient, openChannel.id),
-      member: await toolPolicyAs(memberClient, openChannel.id),
-    }
+    const guestToolPolicyOnOwnScratchpad = await toolPolicyAs(
+      guestClient,
+      (await createScratchpad(guestClient, workspace.id)).id
+    )
     const memberAttempts = {
       companion: await companionAs(memberClient, openChannel.id, before.channel.companionMode === "on" ? "off" : "on"),
       brief: await briefAs(memberClient, openChannel.id, "by a member"),
@@ -438,7 +438,7 @@ describe("guest channel management", () => {
       unarchive: await lifecycleAs(memberClient, memberChannel.id, "unarchive"),
     }
 
-    expect({ guestAttempts, after, toolPolicyOnChannel, memberAttempts }).toEqual({
+    expect({ guestAttempts, after, guestToolPolicyOnOwnScratchpad, memberAttempts }).toEqual({
       guestAttempts: {
         companion: forbidden,
         brief: forbidden,
@@ -447,10 +447,7 @@ describe("guest channel management", () => {
         demotedCreatorArchive: forbidden,
       },
       after: before,
-      toolPolicyOnChannel: {
-        guest: { status: 400, code: "INVALID_STREAM_TYPE" },
-        member: { status: 400, code: "INVALID_STREAM_TYPE" },
-      },
+      guestToolPolicyOnOwnScratchpad: ok,
       memberAttempts: { companion: ok, brief: ok, archive: ok, unarchive: ok },
     })
   })

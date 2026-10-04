@@ -6,7 +6,7 @@ import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type GuestDmPolicy, type Work
 import { spyOnExport } from "@/test"
 import { createMockStream } from "@/test/fixtures"
 import { createMockUser } from "@/test/fixtures/users"
-import { GUEST_DM_CLOSED_REASON } from "@/lib/guest-dm-policy"
+import { GUEST_DM_READ_ONLY_REASON } from "@/lib/guest-dm-policy"
 import * as authModule from "@/auth"
 import * as contextsModule from "@/contexts"
 import { CoordinatedLoadingProvider, PanelProvider, ServicesProvider } from "@/contexts"
@@ -81,7 +81,7 @@ describe("StreamContent guest DM policy", () => {
   it("should disable the composer with the reason when the guest DM policy closes the DM", () => {
     renderDm("off")
 
-    expect(composerState()).toEqual({ disabled: "true", reason: GUEST_DM_CLOSED_REASON })
+    expect(composerState()).toEqual({ disabled: "true", reason: GUEST_DM_READ_ONLY_REASON })
   })
 
   it("should leave the composer enabled when the guest DM policy is open", () => {
@@ -101,6 +101,24 @@ describe("StreamContent guest DM policy", () => {
     expect(composerState()).toEqual({ disabled: "false", reason: "" })
   })
 
+  it("should leave the composer enabled for an admin and disable it for a member when only admins may DM guests", () => {
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([
+      { ...viewer, role: "admin" },
+      guest,
+    ] as StoreUsers)
+    const { unmount } = renderDm("admins")
+    const asAdmin = composerState()
+    unmount()
+
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([viewer, guest] as StoreUsers)
+    renderDm("admins")
+
+    expect({ asAdmin, asMember: composerState() }).toEqual({
+      asAdmin: { disabled: "false", reason: "" },
+      asMember: { disabled: "true", reason: GUEST_DM_READ_ONLY_REASON },
+    })
+  })
+
   it("should disable the composer of a thread under a closed DM", () => {
     const thread = createMockStream({
       id: "stream_dm_thread",
@@ -111,6 +129,6 @@ describe("StreamContent guest DM policy", () => {
 
     renderDm("off", thread)
 
-    expect(composerState()).toEqual({ disabled: "true", reason: GUEST_DM_CLOSED_REASON })
+    expect(composerState()).toEqual({ disabled: "true", reason: GUEST_DM_READ_ONLY_REASON })
   })
 })

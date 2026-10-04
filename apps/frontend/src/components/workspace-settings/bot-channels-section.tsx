@@ -6,7 +6,7 @@ import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { SearchableSelect } from "@/components/ui/searchable-select"
-import { VISIBILITY_LABELS } from "@/components/ui/visibility-picker"
+import { VISIBILITY_LABELS } from "@/lib/stream-visuals"
 import { Hash, X } from "lucide-react"
 
 interface BotChannelsSectionProps {

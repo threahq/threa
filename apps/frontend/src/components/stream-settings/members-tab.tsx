@@ -135,10 +135,14 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
           className="h-8"
         />
 
-        <div className="space-y-1 max-h-64 overflow-y-auto">
+        <div role="list" className="space-y-1 max-h-64 overflow-y-auto">
           {filteredMembers.map((member) => {
             return (
-              <div key={member.memberId} className="flex items-center justify-between rounded-md border px-3 py-2">
+              <div
+                key={member.memberId}
+                role="listitem"
+                className="flex items-center justify-between rounded-md border px-3 py-2"
+              >
                 <div className="flex items-center gap-2.5 min-w-0">
                   <ActorAvatar
                     actorId={member.memberId}

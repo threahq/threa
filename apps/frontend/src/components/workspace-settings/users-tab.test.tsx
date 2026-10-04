@@ -42,7 +42,9 @@ function renderUsersTab(invitations: WorkspaceInvitation[]) {
 }
 
 function userRow(name: string): HTMLElement {
-  return screen.getByText(name).closest(".rounded-md") as HTMLElement
+  const row = screen.getAllByRole("listitem").find((item) => within(item).queryByText(name))
+  if (!row) throw new Error(`No user row for ${name}`)
+  return row
 }
 
 it("should show a guest's role as a Guest badge with no role picker when the viewer manages members", () => {

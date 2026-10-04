@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { render, screen, within } from "@testing-library/react"
+import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { StreamTypes, Visibilities, type WorkspaceBootstrap } from "@threahq/types"
@@ -46,14 +46,10 @@ describe("BotChannelsSection", () => {
     )
     await userEvent.click(screen.getByRole("combobox"))
 
-    const badges = screen.getAllByRole("option").map((option) => ({
-      slug: within(option).getByText(/^[abc]-/).textContent,
-      badge: option.lastElementChild?.textContent,
-    }))
-    expect(badges).toEqual([
-      { slug: "a-public", badge: "Public" },
-      { slug: "b-guests", badge: "Open to guests" },
-      { slug: "c-private", badge: "Private" },
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual([
+      "a-publicPublic",
+      "b-guestsOpen to guests",
+      "c-privatePrivate",
     ])
   })
 })

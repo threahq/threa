@@ -50,8 +50,9 @@ export function CompanionTab({
   const isE2e = stream.e2eEnabled === true
   const canManageChannels = useCanManageChannels(workspaceId)
   const channelLocked = stream.type === StreamTypes.CHANNEL && !canManageChannels
-  const briefLocked =
-    (stream.type === StreamTypes.CHANNEL || rootStream?.type === StreamTypes.CHANNEL) && !canManageChannels
+  // A thread whose root is not cached yet locks too: the backend gates the brief on the root's type.
+  const briefRootType = stream.type === StreamTypes.THREAD ? (rootStream?.type ?? StreamTypes.CHANNEL) : stream.type
+  const briefLocked = briefRootType === StreamTypes.CHANNEL && !canManageChannels
   const disabled = isPending || channelLocked
 
   // Bootstrap-backed store read (no fetch) — instant on open, offline-capable.
