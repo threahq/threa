@@ -68,7 +68,6 @@ describe("loadGuideArticles", () => {
 })
 
 describe("parseGuideArticle", () => {
-
   test("should return the front matter fields and the trimmed body when the article is valid", () => {
     expect(parseGuideArticle("a-title", valid)).toEqual({
       slug: "a-title",
