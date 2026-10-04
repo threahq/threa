@@ -110,6 +110,8 @@ export interface User {
   notificationsPausedIndefinitely: boolean
   setupCompleted: boolean
   joinedAt: string
+  /** The host workspace a shared channel copied this user from; null for this workspace's own people. */
+  originWorkspaceId?: string | null
 }
 
 /**

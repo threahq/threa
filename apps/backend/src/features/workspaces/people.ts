@@ -55,7 +55,14 @@ function peopleOfStreamsSql(workspaceId: string, streamIdsSql: QueryConfig): Que
  * tables are reached through subqueries.
  */
 export function peopleScopeSql(workspaceId: string, scope: PeopleScope): QueryConfig {
-  const { viewer } = scope
+  const visible = visibleToViewerSql(workspaceId, scope.viewer)
+  // A shared channel's copy of a host user shows who wrote and reacted there, but nobody here can reach them.
+  return scope.purpose === PeoplePurposes.TARGETABLE
+    ? composeSql`(u.origin_workspace_id IS NULL AND ${visible})`
+    : visible
+}
+
+function visibleToViewerSql(workspaceId: string, viewer: PeopleViewer): QueryConfig {
   switch (viewer.kind) {
     case "workspace":
       return sql`(TRUE)`
