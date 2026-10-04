@@ -16,13 +16,16 @@ interface PendingMessagesContextValue {
   /**
    * Show a just-sent row on its stream's timeline in the sending tick. The
    * durable write reaches the timeline a write commit plus a live-query re-read
-   * later, after the composer has already cleared. The row is held until the
-   * send leaves the pending set; the timeline stops reading it as soon as its
-   * own events carry the id.
+   * later, after the composer has already cleared. Publishing an id again
+   * replaces its row. The timeline revokes the row once its own events carry
+   * the id: the send settling does not prove the timeline has re-read, so
+   * settling never drops it.
    */
   publishOptimisticEvent: (event: CachedEvent) => void
-  /** Take a published row back when its durable write failed. */
+  /** Take a published row back: its write failed, or the timeline carries it. */
   revokeOptimisticEvent: (id: string) => void
+  /** Drop a stream's published rows when its timeline goes away. */
+  clearOptimisticEvents: (streamId: string) => void
   markFailed: (id: string) => void
   markSent: (id: string) => void
   /** Put a pending/failed message into editing mode so the queue skips it */
@@ -141,11 +144,23 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
   )
 
   const publishOptimisticEvent = useCallback((event: CachedEvent) => {
-    setOptimisticEvents((prev) => new Map(prev).set(event.streamId, [...(prev.get(event.streamId) ?? []), event]))
+    setOptimisticEvents((prev) => {
+      const others = (prev.get(event.streamId) ?? []).filter((published) => published.id !== event.id)
+      return new Map(prev).set(event.streamId, [...others, event])
+    })
   }, [])
 
   const revokeOptimisticEvent = useCallback((id: string) => {
     setOptimisticEvents((prev) => withoutOptimisticEvent(prev, id))
+  }, [])
+
+  const clearOptimisticEvents = useCallback((streamId: string) => {
+    setOptimisticEvents((prev) => {
+      if (!prev.has(streamId)) return prev
+      const next = new Map(prev)
+      next.delete(streamId)
+      return next
+    })
   }, [])
 
   const markPending = useCallback((id: string) => {
@@ -164,7 +179,6 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
   }, [])
 
   const markFailed = useCallback((id: string) => {
-    setOptimisticEvents((prev) => withoutOptimisticEvent(prev, id))
     setFailedIds((prev) => new Set(prev).add(id))
     setPendingIds((prev) => {
       const next = new Set(prev)
@@ -180,7 +194,6 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
   }, [])
 
   const markSent = useCallback((id: string) => {
-    setOptimisticEvents((prev) => withoutOptimisticEvent(prev, id))
     setPendingIds((prev) => {
       const next = new Set(prev)
       next.delete(id)
@@ -384,6 +397,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
       markPending,
       publishOptimisticEvent,
       revokeOptimisticEvent,
+      clearOptimisticEvents,
       markFailed,
       markSent,
       markEditing,
@@ -398,6 +412,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
       markPending,
       publishOptimisticEvent,
       revokeOptimisticEvent,
+      clearOptimisticEvents,
       markFailed,
       markSent,
       markEditing,

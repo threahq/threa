@@ -348,7 +348,7 @@ describe("useEvents live-tail jump bridge", () => {
         { client: queryClient },
         createElement(ServicesProvider, {
           services: { streams: { getEventsAround } as unknown as StreamService },
-          children,
+          children: createElement(PendingMessagesProvider, undefined, children),
         })
       )
     }
@@ -404,6 +404,26 @@ describe("useEvents live-tail jump bridge", () => {
 
     rerender({ currentStreamId: "stream_other" })
     await waitFor(() => expect(result.current.events.map((candidate) => candidate.id)).toEqual([other.id]))
+  })
+
+  it("does not show a published row beside its echo when only the bridge carries the echo", async () => {
+    const stale = event("stale", 1)
+    const echo = { ...event("echo", 2), payload: { messageId: "msg_echo", clientMessageId: "temp_sent" } }
+    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation(cachedRowsFor({ [streamId]: [stale] }))
+    getEventsAround.mockResolvedValue({ events: [stale, echo], hasOlder: false, hasNewer: false })
+
+    const { result } = renderHook(
+      () => ({ timeline: useEvents(workspaceId, streamId), pending: usePendingMessages() }),
+      { wrapper: wrapper() }
+    )
+    act(() => result.current.pending.publishOptimisticEvent({ ...event("sent", 5), id: "temp_sent" }))
+    expect(result.current.timeline.events.map((candidate) => candidate.id)).toEqual([stale.id, "temp_sent"])
+
+    await act(async () => {
+      await result.current.timeline.jumpToEvent("msg_echo")
+    })
+
+    expect(result.current.timeline.events.map((candidate) => candidate.id)).toEqual([stale.id, echo.id])
   })
 })
 
@@ -465,6 +485,51 @@ describe("useEvents published send rows", () => {
     cached = [earlier, row("event_real", 2, { payload: { messageId: "msg_real", clientMessageId: "temp_sent" } })]
     rerender()
     expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id, "event_real"])
+  })
+
+  it("keeps a published row through the send settling until the cache carries it, then lets go of it for good", async () => {
+    const earlier = row("event_earlier", 1)
+    const sent = row("temp_sent", 5, { _clientId: "temp_sent", _status: "pending" })
+    let cached: CachedEvent[] = [earlier]
+    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation(() => cached)
+
+    const { result, rerender } = renderHook(
+      () => ({ timeline: useEvents(workspaceId, streamId), pending: usePendingMessages() }),
+      { wrapper: wrapper() }
+    )
+    await waitFor(() => expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id]))
+
+    act(() => result.current.pending.publishOptimisticEvent(sent))
+    act(() => result.current.pending.markSent(sent.id))
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id, sent.id])
+
+    cached = [earlier, sent]
+    rerender()
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id, sent.id])
+
+    cached = [earlier]
+    rerender()
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id])
+  })
+
+  it("drops a stream's published rows when its timeline moves to another stream", async () => {
+    const sent = row("temp_sent", 5, { _clientId: "temp_sent", _status: "pending" })
+    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation(() => [])
+
+    const { result, rerender } = renderHook(
+      ({ currentStreamId }) => ({
+        timeline: useEvents(workspaceId, currentStreamId),
+        pending: usePendingMessages(),
+      }),
+      { initialProps: { currentStreamId: streamId }, wrapper: wrapper() }
+    )
+    act(() => result.current.pending.publishOptimisticEvent(sent))
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([sent.id])
+
+    rerender({ currentStreamId: "stream_elsewhere" })
+    rerender({ currentStreamId: streamId })
+
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([])
   })
 })
 

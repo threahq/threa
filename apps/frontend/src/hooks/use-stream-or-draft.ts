@@ -639,7 +639,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
       const contentMarkdown = serializeToMarkdown(input.contentJson)
 
-      const optimisticEvent: StreamEvent = {
+      let optimisticEvent: StreamEvent = {
         id: clientId,
         streamId,
         sequence: "0",
@@ -658,6 +658,22 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         actorType: "user",
         createdAt: now,
       }
+
+      // Published before anything is awaited: the composer has already cleared,
+      // and sealing or the durable write can each outlast a frame.
+      markPending(clientId)
+      const publishedSequence = Date.now().toString()
+      const publish = (event: StreamEvent) =>
+        publishOptimisticEvent({
+          ...event,
+          workspaceId,
+          sequence: publishedSequence,
+          _sequenceNum: sequenceToNum(publishedSequence),
+          _clientId: clientId,
+          _status: "pending",
+          _cachedAt: Date.now(),
+        })
+      publish(optimisticEvent)
 
       // If the destination is an E2E scratchpad, encrypt the markdown body
       // to the owner's UIK and stash the ciphertext on the pending row. The
@@ -680,6 +696,9 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           messageId: clientId,
           contentMarkdown,
           attachmentIds: input.attachmentIds,
+        }).catch((err) => {
+          revokeOptimisticEvent(clientId)
+          throw err
         })
         e2eFields = sealed.e2eFields
         // Heal-on-send: if an invited actor's key went stale (an enclave
@@ -703,21 +722,13 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         // surface the refs, and the row falls through to the opaque server
         // placeholder.
         if (sealed.attachmentRefs && sealed.attachmentRefs.length > 0) {
-          ;(optimisticEvent.payload as Record<string, unknown>).attachmentRefs = sealed.attachmentRefs
+          optimisticEvent = {
+            ...optimisticEvent,
+            payload: { ...(optimisticEvent.payload as object), attachmentRefs: sealed.attachmentRefs },
+          }
+          publish(optimisticEvent)
         }
       }
-
-      markPending(clientId)
-      const publishedSequence = Date.now().toString()
-      publishOptimisticEvent({
-        ...optimisticEvent,
-        workspaceId,
-        sequence: publishedSequence,
-        _sequenceNum: sequenceToNum(publishedSequence),
-        _clientId: clientId,
-        _status: "pending",
-        _cachedAt: Date.now(),
-      })
 
       // A steered message stays one queue item so replay cannot dispatch the
       // command before the message reaches the server.

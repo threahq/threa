@@ -417,11 +417,36 @@ describe("PendingMessagesContext", () => {
       })
     })
 
-    it.each(["markSent", "markFailed", "revokeOptimisticEvent"] as const)("drops the row on %s", (settle) => {
+    it("replaces the row when its id is published again", () => {
+      const { result } = renderPublished()
+      const resealed = { ...sent, payload: { attachmentRefs: ["ref"] } } as dbModule.CachedEvent
+
+      act(() => result.current.publishOptimisticEvent(sent))
+      act(() => result.current.publishOptimisticEvent(resealed))
+
+      expect(result.current.published).toEqual([resealed])
+    })
+
+    it.each(["markSent", "markFailed"] as const)(
+      "keeps the row on %s, which does not prove the timeline has re-read it",
+      (settle) => {
+        const { result } = renderPublished()
+        act(() => result.current.publishOptimisticEvent(sent))
+
+        act(() => result.current[settle]("temp_sent"))
+
+        expect(result.current.published).toEqual([sent])
+      }
+    )
+
+    it.each([
+      ["revokeOptimisticEvent", "temp_sent"],
+      ["clearOptimisticEvents", "stream_a"],
+    ] as const)("drops the row on %s", (drop, key) => {
       const { result } = renderPublished()
       act(() => result.current.publishOptimisticEvent(sent))
 
-      act(() => result.current[settle]("temp_sent"))
+      act(() => result.current[drop](key))
 
       expect(result.current.published).toEqual([])
     })

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useStreamBootstrap } from "./use-streams"
-import { useOptimisticEvents, useStreamService } from "@/contexts"
+import { useOptimisticEvents, usePendingMessages, useStreamService } from "@/contexts"
 import { useQueryClient, useInfiniteQuery } from "@tanstack/react-query"
 import { db, sequenceToNum, type CachedEvent } from "@/db"
 import { putEventsBounded, skipNoOpEventRewrites } from "@/db/event-writes"
@@ -505,10 +505,22 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
   // propagated to useLiveQuery (see getEffectiveEvents docstring).
   const effectiveEvents: DisplayableEvent[] = getEffectiveEvents(idbResolved, idbEvents ?? [], bootstrap?.events ?? [])
   const optimisticEvents = useOptimisticEvents(streamId)
-  const unpersistedEvents = useMemo(
-    () => getUnpersistedOptimisticEvents(optimisticEvents, effectiveEvents),
-    [optimisticEvents, effectiveEvents]
-  )
+  const { revokeOptimisticEvent, clearOptimisticEvents } = usePendingMessages()
+  const unpersistedEvents = useMemo(() => {
+    const bridged = liveTailBridge?.streamId === streamId ? liveTailBridge.events : []
+    return getUnpersistedOptimisticEvents(
+      optimisticEvents,
+      bridged.length > 0 ? [...effectiveEvents, ...bridged] : effectiveEvents
+    )
+  }, [optimisticEvents, effectiveEvents, liveTailBridge, streamId])
+  // A carried row is revoked for good: left published, it would come back as a
+  // second copy once the persisted one scrolls out of the read window.
+  useEffect(() => {
+    for (const event of optimisticEvents) {
+      if (!unpersistedEvents.includes(event)) revokeOptimisticEvent(event.id)
+    }
+  }, [optimisticEvents, unpersistedEvents, revokeOptimisticEvent])
+  useEffect(() => () => clearOptimisticEvents(streamId), [streamId, clearOptimisticEvents])
   const hasAnyEvents =
     effectiveEvents.length > 0 ||
     unpersistedEvents.length > 0 ||
