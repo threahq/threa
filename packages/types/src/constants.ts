@@ -58,7 +58,7 @@ export type StreamReadOnlyReason = (typeof STREAM_READ_ONLY_REASONS)[number]
 export const StreamReadOnlyReasons = {
   ARCHIVED: "archived",
   SYSTEM_STREAM: "system_stream",
-  /** A partner workspace's copy of a channel another workspace shares with it. */
+  /** A partner member's view of the copy of a channel another workspace shares with it: writable only through the host. */
   SHARED_COPY: "shared_copy",
   NOT_A_MEMBER: "not_a_member",
 } as const satisfies Record<string, StreamReadOnlyReason>

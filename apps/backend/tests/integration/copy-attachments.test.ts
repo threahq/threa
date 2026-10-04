@@ -343,10 +343,12 @@ describe("Attachments in a shared channel's copy", () => {
       body: (await MessageRepository.findById(pool, world.partner.id, message.id))?.contentMarkdown,
       context: (await partnerRows(world)).context,
     }).toEqual({ body: "after the edit", context: before })
-    expect(before).toEqual([
-      { category: "media", ref_id: image.id, source_message_id: message.id },
-      { category: "file", ref_id: pdf.id, source_message_id: message.id },
-    ])
+    expect(before).toEqual(
+      [
+        { category: "media", ref_id: image.id, source_message_id: message.id },
+        { category: "file", ref_id: pdf.id, source_message_id: message.id },
+      ].sort((a, b) => a.ref_id.localeCompare(b.ref_id))
+    )
   })
 
   test("should refuse the page and leave no copy message when it names an attachment the partner already owns", async () => {

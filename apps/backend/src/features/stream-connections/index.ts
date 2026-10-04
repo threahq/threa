@@ -1,5 +1,6 @@
 export { BridgeClient } from "./bridge-client"
 export { StreamConnectionExportService } from "./export"
+export { StreamConnectionForwardService } from "./forward"
 export { createStreamConnectionBridgeHandlers, createStreamConnectionHandlers } from "./handlers"
 export { StreamConnectionImportService } from "./import"
 export { StreamConnectionPokeHandler } from "./poke-outbox-handler"
@@ -12,3 +13,4 @@ export {
 export { createStreamConnectionPullWorker } from "./pull-worker"
 export { StreamConnectionService } from "./service"
 export { STREAM_CONNECTION_SWEEP_INTERVAL_SECONDS, createStreamConnectionSweepWorker } from "./sweep-worker"
+export { StreamConnectionWriteService } from "./write"

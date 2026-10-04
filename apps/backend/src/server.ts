@@ -221,9 +221,11 @@ import { LabelService, LabelAssignmentService, LabelMessageService } from "./fea
 import {
   BridgeClient,
   StreamConnectionExportService,
+  StreamConnectionForwardService,
   StreamConnectionImportService,
   StreamConnectionPokeHandler,
   StreamConnectionService,
+  StreamConnectionWriteService,
   createStreamConnectionSweepWorker,
   createStreamConnectionPullWorker,
   createStreamConnectionCopyAttachmentOnDLQ,
@@ -528,7 +530,20 @@ export async function startServer(): Promise<ServerInstance> {
   const streamConnectionService = new StreamConnectionService({ pool, controlPlaneClient, featureFlagService })
   const streamConnectionExportService = new StreamConnectionExportService({ pool, featureFlagService, storage })
   const streamConnectionImportService = new StreamConnectionImportService({ pool, featureFlagService })
+  const streamConnectionWriteService = new StreamConnectionWriteService({ pool, featureFlagService, eventService })
   const bridgeClient = config.bridge ? new BridgeClient(config.bridge) : null
+  const streamConnectionPullService = bridgeClient
+    ? new StreamConnectionPullService({ pool, bridgeClient, featureFlagService })
+    : null
+  const streamConnectionForwardService =
+    bridgeClient && streamConnectionPullService
+      ? new StreamConnectionForwardService({
+          pool,
+          bridgeClient,
+          pullService: streamConnectionPullService,
+          featureFlagService,
+        })
+      : null
 
   const scheduleManager = new ScheduleManager(pool, {
     lookaheadSeconds: 60,
@@ -1016,6 +1031,8 @@ export async function startServer(): Promise<ServerInstance> {
     streamConnectionService,
     streamConnectionExportService,
     streamConnectionImportService,
+    streamConnectionWriteService,
+    streamConnectionForwardService,
     pushService,
     perfDiagnosticsService,
     s3Config: config.s3,
@@ -1496,13 +1513,12 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  if (bridgeClient) {
+  if (bridgeClient && streamConnectionPullService) {
     jobQueue.registerHandler(
       JobQueues.STREAM_CONNECTION_SWEEP,
       createStreamConnectionSweepWorker({ streamConnectionImportService }),
       { tier: QueueTiers.LIGHT, fairness: QueueFairness.NONE }
     )
-    const streamConnectionPullService = new StreamConnectionPullService({ pool, bridgeClient, featureFlagService })
     jobQueue.registerHandler(
       JobQueues.STREAM_CONNECTION_PULL,
       createStreamConnectionPullWorker({ streamConnectionPullService }),

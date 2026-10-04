@@ -86,10 +86,11 @@ describe("message + steer composite send", () => {
       pool: {} as Pool,
       eventService: eventService as never,
       streamService: {
-        resolveWritableMessageStream: mock(async () => ({ id: "stream_1", e2eEnabled: false })),
+        resolveMessageWriteTarget: mock(async () => ({ kind: "local", stream: { id: "stream_1", e2eEnabled: false } })),
       } as never,
       commandRegistry: {} as never,
       steeredMessageService,
+      streamConnectionForwardService: null,
     })
     const response = {
       statusCode: 200,

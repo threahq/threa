@@ -13,7 +13,12 @@ import * as diagnosticsModule from "@/lib/connectivity-diagnostics/facade"
 import * as sharePrivacyToastModule from "@/lib/share-privacy-toast"
 import * as useDraftMessageModule from "./use-draft-message"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { MessageErrorCodes, MessageReferenceErrorCodes, ShareErrorCodes } from "@threahq/types"
+import {
+  MessageErrorCodes,
+  MessageReferenceErrorCodes,
+  ShareErrorCodes,
+  StreamConnectionErrorCodes,
+} from "@threahq/types"
 import { toast } from "sonner"
 import { ApiError } from "@/api/client"
 import { retireAccountWork } from "@/sync/account-fence"
@@ -665,6 +670,75 @@ describe("useMessageQueue", () => {
     })
     expect(mockEventsUpdate).toHaveBeenCalledWith(["ws_1", "temp_steer_gone"], { _status: "failed" })
     expect(mockMarkFailed).toHaveBeenCalledWith("temp_steer_gone")
+  })
+
+  it.each([
+    [StreamConnectionErrorCodes.WRITE_REFUSED, 403, "The shared channel's host workspace didn't accept that message."],
+    [
+      StreamConnectionErrorCodes.COPY_WRITE_UNSUPPORTED,
+      400,
+      "That kind of message can't be sent in a shared channel yet.",
+    ],
+  ])(
+    "should park a message and say why once when a shared channel refuses it with %s",
+    async (code, status, message) => {
+      const errorToast = vi.spyOn(toast, "error").mockReturnValue("t3")
+      mockCreate.mockRejectedValue(new ApiError(status, code, "Refused"))
+      mockPendingMessages = [
+        {
+          clientId: "temp_shared_refused",
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          content: "Hello host",
+          contentFormat: "markdown",
+          createdAt: 1000,
+          retryCount: 0,
+        },
+      ]
+
+      renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 10))
+      })
+
+      expect({
+        toasts: errorToast.mock.calls,
+        update: mockUpdate.mock.calls,
+        failed: mockMarkFailed.mock.calls,
+      }).toEqual({
+        toasts: [[message, { id: "shared-channel-refusal-temp_shared_refused" }]],
+        update: [["temp_shared_refused", { terminalFailure: true, retryAfter: undefined }]],
+        failed: [["temp_shared_refused"]],
+      })
+    }
+  )
+
+  it("should schedule a retry without a toast when the shared channel's host is unreachable", async () => {
+    const errorToast = vi.spyOn(toast, "error").mockReturnValue("t4")
+    mockCreate.mockRejectedValue(
+      new ApiError(503, StreamConnectionErrorCodes.HOST_UNREACHABLE, "The host's region didn't answer")
+    )
+    mockPendingMessages = [
+      {
+        clientId: "temp_host_down",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        content: "Hello host",
+        contentFormat: "markdown",
+        createdAt: 1000,
+        retryCount: 0,
+      },
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 10))
+    })
+
+    expect({ toasts: errorToast.mock.calls, update: mockUpdate.mock.calls }).toEqual({
+      toasts: [],
+      update: [["temp_host_down", { retryCount: 1, retryAfter: expect.any(Number) }]],
+    })
   })
 
   it("parks a quote whose reference the server cannot resolve, and says so once", async () => {

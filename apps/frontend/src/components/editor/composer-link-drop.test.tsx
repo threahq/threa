@@ -181,3 +181,35 @@ describe("dropping a link into the composer", () => {
     expect(inAppLinkNodes(getContent())).toEqual([])
   })
 })
+
+describe("dropping a file into an editor that takes no uploads", () => {
+  it("should keep the browser from opening the file in place of the app when no upload handler is set", () => {
+    const { editor, getContent } = mountEditor()
+    const dataTransfer = {
+      ...stubDataTransfer({}),
+      files: [new File(["x"], "photo.png", { type: "image/png" })] as unknown as FileList,
+    }
+
+    const notCancelled = fireEvent.drop(editor.view.dom, { dataTransfer })
+
+    expect({ notCancelled, content: getContent() }).toEqual({
+      notCancelled: false,
+      content: { type: "doc", content: [{ type: "paragraph" }] },
+    })
+  })
+
+  it("should drop the link a file carries when it is dragged off a page and no upload handler is set", () => {
+    const { editor, getContent } = mountEditor()
+    const url = `${window.location.origin}/w/ws_1/s/stream_1`
+    const dataTransfer = {
+      ...stubDataTransfer({ "text/uri-list": url }),
+      files: [new File(["x"], "photo.png", { type: "image/png" })] as unknown as FileList,
+    }
+
+    fireEvent.drop(editor.view.dom, { dataTransfer })
+
+    expect(inAppLinkNodes(getContent()).map((node) => node.attrs)).toEqual([
+      { url, streamId: "stream_1", messageId: null, name: "" },
+    ])
+  })
+})

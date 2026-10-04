@@ -25,6 +25,7 @@ const mockInsertFiles = vi.fn(() => true)
 const mockInsertTranscribedText = vi.fn()
 // The `/attachment` picker's "Upload a file…" entry, as the editor hands it up.
 let capturedRequestFileUpload: (() => void) | undefined
+let capturedEditorFileUpload: unknown
 const mockInsertDictationChunk = vi.fn()
 const mockCancelPendingInlineUpload = vi.fn()
 
@@ -58,13 +59,26 @@ const MockRichEditor = forwardRef<
     ariaLabel?: string
     ariaDescribedBy?: string
     onRequestFileUpload?: () => void
+    onFileUpload?: unknown
     onFocus?: () => void
   }
 >(function MockRichEditor(
-  { value, onChange, onSubmit, placeholder, disabled, ariaLabel, ariaDescribedBy, onRequestFileUpload, onFocus },
+  {
+    value,
+    onChange,
+    onSubmit,
+    placeholder,
+    disabled,
+    ariaLabel,
+    ariaDescribedBy,
+    onRequestFileUpload,
+    onFileUpload,
+    onFocus,
+  },
   ref
 ) {
   capturedRequestFileUpload = onRequestFileUpload
+  capturedEditorFileUpload = onFileUpload
   const valueRef = { current: value }
   valueRef.current = value
   const [editorInstance, setEditorInstance] = useState<MockEditorInstance | null>(null)
@@ -151,7 +165,11 @@ const MockEditorToolbar = ({
   ) : null
 
 const MockEditorActionBar = (props: Record<string, unknown>) => (
-  <div data-testid="editor-action-bar">
+  <div
+    data-testid="editor-action-bar"
+    data-can-attach={props.onAttachClick ? "yes" : "no"}
+    data-can-foot-attach={(props.footMenu as { onAttach?: () => void } | undefined)?.onAttach ? "yes" : "no"}
+  >
     <button
       type="button"
       aria-label="Formatting"
@@ -191,6 +209,7 @@ describe("MessageComposer", () => {
     mockInsertFiles.mockClear()
     mockCancelPendingInlineUpload.mockClear()
     capturedRequestFileUpload = undefined
+    capturedEditorFileUpload = undefined
     mockInsertTranscribedText.mockClear()
     mockInsertDictationChunk.mockClear()
     isMobileMockValue = false
@@ -660,6 +679,79 @@ describe("MessageComposer", () => {
         selectedFiles: Array.from(onFileSelect.mock.calls[0]?.[0].target.files ?? []),
         inlineInsertCalls: mockInsertFiles.mock.calls,
       }).toEqual({ selectedFiles: [file], inlineInsertCalls: [] })
+    })
+
+    it("should hand the editor its upload handlers and show the attach control when attachments are enabled", () => {
+      const onFileUpload = vi.fn()
+      const { container } = render(<MessageComposer {...defaultProps} onFileUpload={onFileUpload} />)
+
+      expect({
+        attachButton: screen.queryByRole("button", { name: /attach files/i }) !== null,
+        fileInput: container.querySelector('input[type="file"]') !== null,
+        editorFileUpload: capturedEditorFileUpload,
+        editorInlineUpload: typeof capturedRequestFileUpload,
+      }).toEqual({
+        attachButton: true,
+        fileInput: true,
+        editorFileUpload: onFileUpload,
+        editorInlineUpload: "function",
+      })
+    })
+
+    it("should offer no way to add a file when attachments are disabled", () => {
+      const { container } = render(<MessageComposer {...defaultProps} onFileUpload={vi.fn()} attachmentsDisabled />)
+
+      expect({
+        attachButton: screen.queryByRole("button", { name: /attach files/i }),
+        fileInput: container.querySelector('input[type="file"]'),
+        editorFileUpload: capturedEditorFileUpload,
+        editorInlineUpload: capturedRequestFileUpload,
+      }).toEqual({ attachButton: null, fileInput: null, editorFileUpload: undefined, editorInlineUpload: undefined })
+    })
+
+    it("should offer no way to add a file in the expanded touch composer when attachments are disabled", () => {
+      isMobileMockValue = true
+      const { container } = render(
+        <MessageComposer {...defaultProps} onFileUpload={vi.fn()} expanded attachmentsDisabled />
+      )
+
+      expect({
+        canAttach: screen.getByTestId("editor-action-bar").getAttribute("data-can-attach"),
+        fileInput: container.querySelector('input[type="file"]'),
+        editorFileUpload: capturedEditorFileUpload,
+      }).toEqual({ canAttach: "no", fileInput: null, editorFileUpload: undefined })
+    })
+
+    it("should offer no way to add a file in the expanded floating bar when attachments are disabled", () => {
+      const { container } = render(
+        <MessageComposer {...defaultProps} onFileUpload={vi.fn()} expanded attachmentsDisabled />
+      )
+
+      expect({
+        attachButton: screen.queryByRole("button", { name: /attach files/i }),
+        fileInput: container.querySelector('input[type="file"]'),
+        editorFileUpload: capturedEditorFileUpload,
+      }).toEqual({ attachButton: null, fileInput: null, editorFileUpload: undefined })
+    })
+
+    it("should offer no attach row in the phone foot menu when attachments are disabled", () => {
+      isMobileMockValue = true
+      const { container } = render(<MessageComposer {...defaultProps} onFileUpload={vi.fn()} attachmentsDisabled />)
+      fireEvent.click(screen.getByTestId("rich-editor-wrapper"))
+
+      expect({
+        footAttach: screen.getByTestId("editor-action-bar").getAttribute("data-can-foot-attach"),
+        fileInput: container.querySelector('input[type="file"]'),
+        editorFileUpload: capturedEditorFileUpload,
+      }).toEqual({ footAttach: "no", fileInput: null, editorFileUpload: undefined })
+    })
+
+    it("should offer an attach row in the phone foot menu when attachments are enabled", () => {
+      isMobileMockValue = true
+      render(<MessageComposer {...defaultProps} onFileUpload={vi.fn()} />)
+      fireEvent.click(screen.getByTestId("rich-editor-wrapper"))
+
+      expect(screen.getByTestId("editor-action-bar").getAttribute("data-can-foot-attach")).toBe("yes")
     })
 
     it("keeps the attachment-row flow when inline insertion is disabled", async () => {

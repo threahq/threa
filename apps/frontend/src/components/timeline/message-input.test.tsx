@@ -309,6 +309,7 @@ beforeEach(async () => {
     scheduledMessagesTrigger,
     stashedDrafts,
     onExpandClick,
+    attachmentsDisabled,
   }: {
     content: JSONContent
     onContentChange: (v: JSONContent) => void
@@ -323,6 +324,7 @@ beforeEach(async () => {
     scheduledMessagesTrigger?: ReactNode
     stashedDrafts?: unknown
     onExpandClick?: () => void
+    attachmentsDisabled?: boolean
   }) => {
     if (composerRef) {
       composerRef.current = {
@@ -337,6 +339,7 @@ beforeEach(async () => {
         data-testid="message-composer"
         data-stash={stashedDrafts ? "yes" : "no"}
         data-expand={onExpandClick ? "yes" : "no"}
+        data-attachments={attachmentsDisabled ? "off" : "on"}
       >
         <textarea data-testid="rich-editor" />
         {pendingAttachments.map((a) => (
@@ -460,6 +463,15 @@ describe("MessageInput", () => {
         stash: channel.getAttribute("data-stash"),
         expand: channel.getAttribute("data-expand"),
       }).toEqual({ schedule: true, stash: "yes", expand: "yes" })
+    })
+
+    it("should keep scheduling and files off the composer when it writes into a shared channel's copy", () => {
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} sharedCopy />)
+
+      expect({
+        schedule: screen.queryByTestId("scheduled-messages-picker") !== null,
+        attachments: screen.getByTestId("message-composer").getAttribute("data-attachments"),
+      }).toEqual({ schedule: false, attachments: "off" })
     })
 
     it("should disable send button when canSend is false", () => {

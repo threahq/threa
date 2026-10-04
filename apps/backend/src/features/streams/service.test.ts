@@ -410,6 +410,46 @@ describe("StreamService.resolveWritableMessageStream", () => {
   })
 })
 
+describe("StreamService.resolveMessageWriteTarget", () => {
+  let service: StreamService
+  const channel = { id: "stream_1", workspaceId: "ws_1", type: "channel", visibility: "private", archivedAt: null }
+
+  beforeEach(() => {
+    service = new StreamService({} as never)
+    spyOn(StreamRepository, "findNearestArchivedAncestor").mockResolvedValue(null)
+  })
+
+  const resolve = () =>
+    service.resolveMessageWriteTarget({ workspaceId: "ws_1", userId: "usr_1", target: { streamId: "stream_1" } })
+
+  test("should resolve a participant's own stream as local and a participant's copy as copy", async () => {
+    spyOn(service, "isMember").mockResolvedValue(true)
+    const getStream = spyOn(service, "getStreamById")
+
+    getStream.mockResolvedValue({ ...channel, originWorkspaceId: null } as never)
+    const own = await resolve()
+    getStream.mockResolvedValue({ ...channel, originWorkspaceId: "ws_host" } as never)
+    const copy = await resolve()
+
+    expect([own.kind, copy.kind]).toEqual(["local", "copy"])
+  })
+
+  test("should refuse a copy with the reason that holds when the writer doesn't participate or the copy is archived", async () => {
+    const copy = { ...channel, visibility: "public", originWorkspaceId: "ws_host" }
+    spyOn(service, "getStreamById").mockResolvedValue(copy as never)
+    const isMember = spyOn(service, "isMember")
+    const reason = async () => ((await resolve().catch((e) => e)) as HttpError).details
+
+    isMember.mockResolvedValue(false)
+    const stranger = await reason()
+    isMember.mockResolvedValue(true)
+    spyOn(service, "getStreamById").mockResolvedValue({ ...copy, archivedAt: new Date() } as never)
+    const archived = await reason()
+
+    expect({ stranger, archived }).toEqual({ stranger: { reason: "not_a_member" }, archived: { reason: "archived" } })
+  })
+})
+
 describe("StreamService.findOrCreateDm", () => {
   let service: StreamService
 

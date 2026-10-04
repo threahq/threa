@@ -3,15 +3,23 @@ import { z } from "zod"
 import {
   BRIDGE_WORKSPACE_HEADER,
   acceptStreamConnectionSchema,
+  bridgeAddReactionSchema,
+  bridgeDeleteMessageQuerySchema,
+  bridgeEditMessageSchema,
+  bridgeRemoveReactionQuerySchema,
+  bridgeSendMessageSchema,
   streamConnectionIdSchema,
   streamConnectionSnapshotSchema,
 } from "@threahq/types"
 import { setAuditSubjects } from "../access-log"
+import { HttpError } from "../../lib/errors"
 import { validateRequest } from "../../lib/validation"
+import { toShortcode } from "../emoji"
 import { connectionNotFound } from "./errors"
 import type { StreamConnectionExportService } from "./export"
 import type { StreamConnectionImportService } from "./import"
 import type { StreamConnectionService } from "./service"
+import type { StreamConnectionWriteService } from "./write"
 
 declare global {
   namespace Express {
@@ -99,6 +107,8 @@ export function createStreamConnectionHandlers({ streamConnectionService }: Depe
 
 const bridgeParamsSchema = z.object({ workspaceId: z.string().min(1), connectionId: streamConnectionIdSchema })
 const bridgeStreamParamsSchema = bridgeParamsSchema.extend({ streamId: z.string().min(1) })
+const bridgeMessageParamsSchema = bridgeStreamParamsSchema.extend({ messageId: z.string().min(1) })
+const bridgeReactionParamsSchema = bridgeMessageParamsSchema.extend({ emoji: z.string().min(1) })
 const bridgeAttachmentParamsSchema = bridgeParamsSchema.extend({ attachmentId: z.string().min(1) })
 const bridgeEventsQuerySchema = z.object({
   after: z
@@ -111,12 +121,14 @@ const bridgeEventsQuerySchema = z.object({
 interface BridgeDependencies {
   streamConnectionExportService: StreamConnectionExportService
   streamConnectionImportService: StreamConnectionImportService
+  streamConnectionWriteService: StreamConnectionWriteService
 }
 
-/** Another region's calls about a shared channel: the partner's reads of a channel this workspace hosts, and the host's pokes. */
+/** Another region's calls about a shared channel: the partner's reads and writes on a channel this workspace hosts, and the host's pokes. */
 export function createStreamConnectionBridgeHandlers({
   streamConnectionExportService,
   streamConnectionImportService,
+  streamConnectionWriteService,
 }: BridgeDependencies) {
   return {
     async manifest(req: Request, res: Response) {
@@ -164,6 +176,71 @@ export function createStreamConnectionBridgeHandlers({
       res.json(answer)
     },
 
+    async sendMessage(req: Request, res: Response) {
+      const params = validateRequest(bridgeStreamParamsSchema, req.params)
+      const body = validateRequest(bridgeSendMessageSchema, req.body)
+      const { messageId } = await streamConnectionWriteService.sendMessage({
+        ...params,
+        ...body,
+        callerWorkspaceId: identifyCaller(req, params.connectionId),
+      })
+      setAuditSubjects(res, [
+        { type: "stream", id: params.streamId },
+        { type: "message", id: messageId },
+      ])
+      res.status(201).json({ messageId })
+    },
+
+    async editMessage(req: Request, res: Response) {
+      const params = validateRequest(bridgeMessageParamsSchema, req.params)
+      const body = validateRequest(bridgeEditMessageSchema, req.body)
+      await streamConnectionWriteService.editMessage({
+        ...params,
+        ...body,
+        callerWorkspaceId: identifyCaller(req, params.connectionId),
+      })
+      setAuditSubjects(res, [{ type: "message", id: params.messageId }])
+      res.status(204).end()
+    },
+
+    async deleteMessage(req: Request, res: Response) {
+      const params = validateRequest(bridgeMessageParamsSchema, req.params)
+      const { authorId } = validateRequest(bridgeDeleteMessageQuerySchema, req.query)
+      await streamConnectionWriteService.deleteMessage({
+        ...params,
+        authorId,
+        callerWorkspaceId: identifyCaller(req, params.connectionId),
+      })
+      setAuditSubjects(res, [{ type: "message", id: params.messageId }])
+      res.status(204).end()
+    },
+
+    async addReaction(req: Request, res: Response) {
+      const { emoji: rawEmoji, ...params } = validateRequest(bridgeReactionParamsSchema, req.params)
+      const body = validateRequest(bridgeAddReactionSchema, req.body)
+      await streamConnectionWriteService.addReaction({
+        ...params,
+        ...body,
+        emoji: requireShortcode(rawEmoji),
+        callerWorkspaceId: identifyCaller(req, params.connectionId),
+      })
+      setAuditSubjects(res, [{ type: "message", id: params.messageId }])
+      res.status(204).end()
+    },
+
+    async removeReaction(req: Request, res: Response) {
+      const { emoji: rawEmoji, ...params } = validateRequest(bridgeReactionParamsSchema, req.params)
+      const { authorId } = validateRequest(bridgeRemoveReactionQuerySchema, req.query)
+      await streamConnectionWriteService.removeReaction({
+        ...params,
+        authorId,
+        emoji: requireShortcode(rawEmoji),
+        callerWorkspaceId: identifyCaller(req, params.connectionId),
+      })
+      setAuditSubjects(res, [{ type: "message", id: params.messageId }])
+      res.status(204).end()
+    },
+
     async poke(req: Request, res: Response) {
       const params = validateRequest(bridgeParamsSchema, req.params)
       await streamConnectionImportService.requestPull({
@@ -175,6 +252,12 @@ export function createStreamConnectionBridgeHandlers({
       res.status(204).end()
     },
   }
+}
+
+function requireShortcode(emoji: string): string {
+  const shortcode = toShortcode(emoji)
+  if (!shortcode) throw new HttpError("Invalid emoji", { status: 400, code: "INVALID_EMOJI" })
+  return shortcode
 }
 
 /** The workspace the request names itself as, recorded as the access log's actor. */

@@ -137,6 +137,46 @@ describe("squeezed trigger mounting", () => {
   })
 })
 
+describe("attach action", () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function renderBar(onAttachClick?: () => void) {
+    render(
+      <TooltipProvider>
+        <ComposerActionBar
+          formatOpen={false}
+          onToggleFormat={() => {}}
+          onInsertEmoji={() => {}}
+          onInsertMention={() => {}}
+          onInsertCommand={() => {}}
+          onAttachClick={onAttachClick}
+          sendButton={<button type="button">Send</button>}
+        />
+      </TooltipProvider>
+    )
+  }
+
+  it("should show no attach control when the host supplies no attach handler", () => {
+    renderBar()
+    expect(screen.queryByRole("button", { name: "Attach files" })).not.toBeInTheDocument()
+  })
+
+  it("should not list attach in the overflow menu when the host supplies no attach handler", async () => {
+    // 170px folds every collapsible action into the "+" menu.
+    vi.spyOn(elementWidthModule, "useElementWidth").mockReturnValue(170)
+    renderBar()
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }))
+    expect(screen.queryByRole("menuitem", { name: "Attach files" })).not.toBeInTheDocument()
+  })
+
+  it("should show the attach control when the host supplies an attach handler", () => {
+    renderBar(() => {})
+    expect(screen.getByRole("button", { name: "Attach files" })).toBeInTheDocument()
+  })
+})
+
 describe("action side", () => {
   afterEach(() => {
     vi.restoreAllMocks()

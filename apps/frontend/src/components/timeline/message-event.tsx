@@ -953,7 +953,7 @@ function SentMessageEvent({
   const navigate = useNavigate()
   const location = useLocation()
   const currentStream = useStreamFromStore(workspaceId, streamId)
-  // A shared channel's copy takes no writes from here; per-viewer actions (save, label, remind, read state) stay.
+  // A shared channel's copy takes reactions, edits and deletes through the host, but no threads, asides, moves or conversations.
   const sharedCopy = !!currentStream?.originWorkspaceId
   const parentStream = useStreamFromStore(workspaceId, currentStream?.parentStreamId ?? undefined)
   const rootStream = useStreamFromStore(workspaceId, currentStream?.rootStreamId ?? undefined)
@@ -1272,8 +1272,8 @@ function SentMessageEvent({
       // before the Dialog opens — Radix emits synthetic pointer events on menu
       // close that trigger the Dialog's "click outside" handler otherwise.
       onShowHistory: () => setTimeout(() => setHistoryOpen(true), 0),
-      onReact: sharedCopy ? undefined : handleAddReaction,
-      onOpenFullPicker: sharedCopy ? undefined : () => setMobilePickerOpen(true),
+      onReact: handleAddReaction,
+      onOpenFullPicker: () => setMobilePickerOpen(true),
       reactions: payload.reactions,
       isSaved,
       onToggleSave: handleToggleSave,
@@ -1477,7 +1477,6 @@ function SentMessageEvent({
           workspaceId={workspaceId}
           messageId={payload.messageId}
           currentUserId={currentUserId}
-          readOnly={sharedCopy}
         />
         {/* Grouped continuations have no header row, so their labels trail the
             footer; standalone rows render them in the header beside the time
@@ -1536,14 +1535,12 @@ function SentMessageEvent({
             // Desktop-only hover toolbar floated above the row. Mobile users reach
             // these actions via the long-press drawer (MessageActionDrawer).
             <>
-              {!sharedCopy && (
-                <ReactionEmojiPicker
-                  workspaceId={workspaceId}
-                  onSelect={handleAddReaction}
-                  activeShortcodes={activeReactionShortcodes}
-                  allReactionShortcodes={allReactionShortcodes}
-                />
-              )}
+              <ReactionEmojiPicker
+                workspaceId={workspaceId}
+                onSelect={handleAddReaction}
+                activeShortcodes={activeReactionShortcodes}
+                allReactionShortcodes={allReactionShortcodes}
+              />
               <SaveMessageButton workspaceId={workspaceId} messageId={payload.messageId} />
               {actionContext.onQuoteReply && (
                 <Tooltip>

@@ -66,6 +66,8 @@ interface MessageInputProps {
   streamId: string
   disabled?: boolean
   disabledReason?: string
+  /** A shared channel's copy, whose host takes neither files nor scheduled sends from it yet. */
+  sharedCopy?: boolean
   autoFocus?: boolean
   /**
    * Notified when the composer's measured height changes (or when the initial
@@ -258,6 +260,7 @@ function MessageInputComponent({
   streamId,
   disabled,
   disabledReason,
+  sharedCopy = false,
   autoFocus,
   onComposerHeightChange,
   onMobileTypingChange,
@@ -408,6 +411,7 @@ function MessageInputComponent({
   // no stash pile (its drafts live in the aside's own dock), no fullscreen
   // document editor — the pane is the surface. Those three slots stay off.
   const isAsideComposer = useStreamFromStore(workspaceId, streamId)?.type === StreamTypes.ASIDE
+  const schedulingHidden = isAsideComposer || sharedCopy
 
   // Stashed drafts — explicit "Save for later" pile scoped to this stream.
   // Active DraftMessage stays one-per-scope; this hook manages the sibling
@@ -1009,6 +1013,7 @@ function MessageInputComponent({
     fileInputRef: composer.fileInputRef,
     onFileSelect: composer.handleFileSelect,
     onFileUpload: composer.uploadFile,
+    attachmentsDisabled: sharedCopy,
     imageCount: composer.imageCount,
     onSubmit: handleSubmit,
     canSubmit: composer.canSend,
@@ -1062,7 +1067,7 @@ function MessageInputComponent({
           onOpenChange: stash.setPileOpen,
           controlsDisabled: composer.isSending,
         },
-    scheduledMessagesTrigger: isAsideComposer ? undefined : (
+    scheduledMessagesTrigger: schedulingHidden ? undefined : (
       <ScheduledMessagesPicker
         workspaceId={workspaceId}
         streamId={streamId}
@@ -1072,7 +1077,7 @@ function MessageInputComponent({
       />
     ),
     onOpenAside: !isAsideComposer && canOpenAside ? openAsideHere : undefined,
-    scheduledMessagesTriggerFab: isAsideComposer ? undefined : (
+    scheduledMessagesTriggerFab: schedulingHidden ? undefined : (
       <ScheduledMessagesPicker
         workspaceId={workspaceId}
         streamId={streamId}

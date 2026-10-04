@@ -8,6 +8,7 @@ import {
   TitleSources,
   type BridgeActor,
   type BridgeEvents,
+  type BridgeMessage,
   type BridgeStream,
   type StreamConnection,
 } from "@threahq/types"
@@ -31,7 +32,7 @@ import {
   type Stream,
 } from "../streams"
 import { ActorCopyRepository, UserRepository, syncActorCopies, syncUserCopies } from "../workspaces"
-import type { BridgeClient } from "./bridge-client"
+import type { BridgeClient, ConnectionAddress } from "./bridge-client"
 import { StreamConnectionCursorRepository } from "./cursor-repository"
 import { namedAuthors } from "./named-authors"
 import { StreamConnectionRepository, type ConnectionRef } from "./repository"
@@ -74,11 +75,17 @@ export class StreamConnectionPullService {
     this.featureFlagService = deps.featureFlagService
   }
 
-  async pull(ref: ConnectionRef): Promise<void> {
+  /**
+   * Syncs the whole shared tree, or only `options.streamId` of it. Returns
+   * whether every stream it set out to sync reached the manifest head: false
+   * when it stopped early because the connection is no longer active or
+   * another pull moved a cursor first, or when the stream is not in the tree.
+   */
+  async pull(ref: ConnectionRef, options: { streamId?: string } = {}): Promise<boolean> {
     const flag = await this.featureFlagService.getWorkspaceFlag(ref.workspaceId, "streamConnections")
     if (flag !== "on") {
       logger.info({ ...ref }, "Skipped a shared channel pull: connections are off for the workspace")
-      return
+      return false
     }
     const connection = toActivePartner(
       ref,
@@ -86,14 +93,10 @@ export class StreamConnectionPullService {
     )
     if (!connection) {
       logger.info({ ...ref }, "Skipped a shared channel pull: the connection is not an active partner")
-      return
+      return false
     }
 
-    const address = {
-      workspaceId: connection.hostWorkspaceId,
-      connectionId: connection.connectionId,
-      callerWorkspaceId: connection.workspaceId,
-    }
+    const address = bridgeAddress(connection)
     const manifest = await this.bridgeClient.getManifest(address)
     const [root] = manifest.streams
     if (!root || root.id !== connection.rootStreamId || root.parentStreamId !== null) {
@@ -102,9 +105,13 @@ export class StreamConnectionPullService {
 
     // The manifest lists every parent before its threads, so a thread's parent
     // copy and the message it hangs off are in place by the time it is reached.
-    for (const hostStream of manifest.streams) {
+    const streams = options.streamId
+      ? manifest.streams.filter((stream) => stream.id === options.streamId)
+      : manifest.streams
+    if (streams.length === 0) return false
+    for (const hostStream of streams) {
       const after = await this.locked(connection, (client) => ensureCopyStream(client, connection, hostStream))
-      if (after === null) return
+      if (after === null) return false
       let cursor = after
       const head = BigInt(hostStream.head)
       while (cursor < head) {
@@ -120,11 +127,12 @@ export class StreamConnectionPullService {
         const applied = await this.locked(connection, (client) =>
           applyPage(client, connection, hostStream.id, cursor, page)
         )
-        if (!applied) return
+        if (!applied) return false
         cursor = next
         if (!page.hasMore) break
       }
     }
+    return true
   }
 
   /**
@@ -147,7 +155,10 @@ export class StreamConnectionPullService {
   }
 }
 
-function toActivePartner(ref: ConnectionRef, connection: StreamConnection | null): ActivePartnerConnection | null {
+export function toActivePartner(
+  ref: ConnectionRef,
+  connection: StreamConnection | null
+): ActivePartnerConnection | null {
   if (connection?.role !== "partner" || connection.state !== StreamConnectionStates.ACTIVE) return null
   const { remoteWorkspaceId, remoteWorkspaceName, partnerVisibility, acceptedBy } = connection
   if (!remoteWorkspaceId || !remoteWorkspaceName || !partnerVisibility || !acceptedBy) {
@@ -161,6 +172,14 @@ function toActivePartner(ref: ConnectionRef, connection: StreamConnection | null
     rootStreamId: connection.streamId,
     partnerVisibility,
     acceptedBy,
+  }
+}
+
+export function bridgeAddress(connection: ActivePartnerConnection): ConnectionAddress {
+  return {
+    workspaceId: connection.hostWorkspaceId,
+    connectionId: connection.connectionId,
+    callerWorkspaceId: connection.workspaceId,
   }
 }
 
@@ -378,8 +397,9 @@ async function applyPage(
     originWorkspaceId: connection.hostWorkspaceId,
     actors: page.actors,
   })
-  const named = namedAuthors(page.changes.flatMap((change) => (change.kind === "message" ? [change.message] : [])))
-  await assertUsersAreCopies(client, connection, named.userIds)
+  const messages = page.changes.flatMap((change) => (change.kind === "message" ? [change.message] : []))
+  const named = namedAuthors(messages)
+  await assertUsersAreCopies(client, connection, messages, named.userIds)
   await assertActorsAreCopies(client, connection, named, page.actors)
   await applyCopyChanges(client, workspaceId, stream, page.changes, connectionId)
   await StreamConnectionCursorRepository.upsert(client, {
@@ -392,19 +412,30 @@ async function applyPage(
 }
 
 /**
- * A user a page names as author or reactor must be a copy from the host, never
- * a person of this workspace. One with no row here is a user the host no
- * longer has, so the page names it with no profile to copy, as the host shows it.
+ * A user a page names as author or reactor must be a copy from the host or one
+ * of this workspace's own users, never a copy from another workspace. An own
+ * user wrote through the bridge, so the host holds a copy of them under the
+ * same id and the page names them with no profile to copy. One with no row here
+ * is a user the host no longer has, so the page names it with no profile to
+ * copy, as the host shows it. A user id only ever authors as a user, so one
+ * typed as a persona or bot is refused rather than passed on as that actor.
  */
 async function assertUsersAreCopies(
   client: PoolClient,
   connection: ActivePartnerConnection,
+  messages: BridgeMessage[],
   ids: Set<string>
 ): Promise<void> {
   const origins = await UserRepository.findOrigins(client, connection.workspaceId, [...ids])
   for (const id of ids) {
-    if (origins.has(id) && origins.get(id) !== connection.hostWorkspaceId) {
+    const origin = origins.get(id)
+    if (origin && origin !== connection.hostWorkspaceId) {
       throw new Error(`User ${id} in a page of connection ${connection.connectionId} is not a copy from its host`)
+    }
+  }
+  for (const { authorId, authorType } of messages) {
+    if (authorId.startsWith("usr_") && authorType !== AuthorTypes.USER) {
+      throw new Error(`User ${authorId} in a page of connection ${connection.connectionId} is typed as a ${authorType}`)
     }
   }
 }

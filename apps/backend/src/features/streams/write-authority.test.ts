@@ -63,6 +63,11 @@ describe("deriveStreamViewerState", () => {
       deriveStreamViewerState({
         target: stream({ originWorkspaceId: "ws_host" }),
         ancestorArchived: false,
+        participates: true,
+      }),
+      deriveStreamViewerState({
+        target: stream({ originWorkspaceId: "ws_host" }),
+        ancestorArchived: false,
         participates: false,
       }),
       deriveStreamViewerState({
@@ -77,6 +82,7 @@ describe("deriveStreamViewerState", () => {
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.SYSTEM_STREAM },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.SHARED_COPY },
+      { readOnly: true, readOnlyReason: StreamReadOnlyReasons.NOT_A_MEMBER },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.NOT_A_MEMBER },
     ])

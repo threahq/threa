@@ -16,7 +16,6 @@ interface MessageReactionsProps {
   workspaceId: string
   messageId: string
   currentUserId: string | null
-  readOnly?: boolean
 }
 
 type Reaction = [shortcode: string, userIds: string[]]
@@ -156,7 +155,6 @@ function ReactionRow({
   workspaceId,
   messageId,
   currentUserId,
-  readOnly,
   shown,
   overflowCount,
 }: MessageReactionsProps & { shown: ShownReaction[]; overflowCount: number }) {
@@ -190,7 +188,7 @@ function ReactionRow({
               emoji={toEmoji(shortcode) ?? shortcode}
               userIds={userIds}
               currentUserId={currentUserId}
-              onToggle={readOnly ? undefined : () => handleToggleReaction(shortcode)}
+              onToggle={() => handleToggleReaction(shortcode)}
             />
           </ReactionPillDetails>
         </PopIn>
@@ -207,23 +205,21 @@ function ReactionRow({
         </AllReactionsPopover>
       )}
 
-      {!readOnly && (
-        <ReactionEmojiPicker
-          workspaceId={workspaceId}
-          onSelect={(emoji) => toggleByEmoji(emoji, reactions, currentUserId)}
-          activeShortcodes={activeShortcodes}
-          allReactionShortcodes={allReactionShortcodes}
-          trigger={
-            <button
-              type="button"
-              className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:bg-primary/[0.08] hover:text-primary"
-              aria-label="Add reaction"
-            >
-              <SmilePlus className="h-3.5 w-3.5" />
-            </button>
-          }
-        />
-      )}
+      <ReactionEmojiPicker
+        workspaceId={workspaceId}
+        onSelect={(emoji) => toggleByEmoji(emoji, reactions, currentUserId)}
+        activeShortcodes={activeShortcodes}
+        allReactionShortcodes={allReactionShortcodes}
+        trigger={
+          <button
+            type="button"
+            className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:bg-primary/[0.08] hover:text-primary"
+            aria-label="Add reaction"
+          >
+            <SmilePlus className="h-3.5 w-3.5" />
+          </button>
+        }
+      />
     </div>
   )
 }

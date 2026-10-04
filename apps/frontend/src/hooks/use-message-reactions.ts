@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react"
 import { toast } from "sonner"
+import { isPermanentApiError } from "@/api"
 import { messagesApi } from "@/api/messages"
 import { useWorkspaceEmoji } from "./use-workspace-emoji"
 import { enqueueOperation } from "@/sync/operation-queue"
@@ -48,8 +49,20 @@ export function useMessageReactions(workspaceId: string, messageId: string): Use
 
   const addReaction = useCallback(
     async (emoji: string) => {
-      // Optimistically bump the local emoji weight so the quick-bar re-ranks
-      // without needing a page reload. Fire-and-forget — non-critical.
+      try {
+        await messagesApi.addReaction(workspaceId, messageId, emoji)
+      } catch (err) {
+        if (isPermanentApiError(err)) {
+          toast.error("Couldn't add that reaction.")
+          return
+        }
+        // Enqueue for retry when back online
+        await enqueueOperation(workspaceId, "add_reaction", { messageId, emoji })
+        syncEngine.kickOperationQueue()
+      }
+
+      // Bump the local emoji weight once the reaction is made or queued, so the
+      // quick-bar re-ranks without needing a page reload. Fire-and-forget — non-critical.
       const shortcode = emojiToShortcode.get(emoji)
       if (shortcode) {
         db.workspaceMetadata.get(workspaceId).then((meta) => {
@@ -59,14 +72,6 @@ export function useMessageReactions(workspaceId: string, messageId: string): Use
           })
         })
       }
-
-      try {
-        await messagesApi.addReaction(workspaceId, messageId, emoji)
-      } catch {
-        // Enqueue for retry when back online
-        await enqueueOperation(workspaceId, "add_reaction", { messageId, emoji })
-        syncEngine.kickOperationQueue()
-      }
     },
     [workspaceId, messageId, syncEngine, emojiToShortcode]
   )
@@ -75,7 +80,11 @@ export function useMessageReactions(workspaceId: string, messageId: string): Use
     async (emoji: string) => {
       try {
         await messagesApi.removeReaction(workspaceId, messageId, emoji)
-      } catch {
+      } catch (err) {
+        if (isPermanentApiError(err)) {
+          toast.error("Couldn't remove that reaction.")
+          return
+        }
         await enqueueOperation(workspaceId, "remove_reaction", { messageId, emoji })
         syncEngine.kickOperationQueue()
       }

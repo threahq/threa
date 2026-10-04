@@ -120,6 +120,11 @@ export const ACCESS_LOG_OPERATIONS = [
   "stream_connections.bridge_events",
   "stream_connections.bridge_attachment",
   "stream_connections.bridge_poke",
+  "stream_connections.bridge_send_message",
+  "stream_connections.bridge_edit_message",
+  "stream_connections.bridge_delete_message",
+  "stream_connections.bridge_add_reaction",
+  "stream_connections.bridge_remove_reaction",
   // Search
   "search.messages",
   "search.memos",

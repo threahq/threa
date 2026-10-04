@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test"
+import { test, expect, type Locator, type Page } from "@playwright/test"
 import type { ListStreamConnectionsResponse } from "@threahq/types"
 import {
   enrollWorkspaceFlag,
@@ -85,6 +85,47 @@ async function pasteImage(page: Page) {
     dataTransfer.items.add(new File([new Uint8Array(bytes)], "mockup.png", { type: "image/png" }))
     editor.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dataTransfer }))
   }, Array.from(TEST_PNG))
+}
+
+async function sendText(page: Page, text: string) {
+  const editor = page.locator("[data-message-composer-root] [contenteditable='true']").first()
+  await editor.click()
+  await editor.pressSequentially(text)
+  await page.getByRole("main").getByRole("button", { name: "Send", exact: true }).click()
+  await expect(editor).toHaveText("", { timeout: 15_000 })
+}
+
+function timelineMessage(page: Page, text: string) {
+  return page.getByRole("main").locator(".message-item").filter({ hasText: text }).first()
+}
+
+async function editMessage(page: Page, message: Locator, text: string) {
+  await message.hover()
+  await message.getByRole("button", { name: "Message actions" }).click()
+  await page.getByRole("menuitem", { name: "Edit message" }).click()
+  const editor = page.locator("[data-inline-edit] [contenteditable='true']")
+  await editor.click()
+  await editor.press("ControlOrMeta+a")
+  await editor.pressSequentially(text)
+  await page.getByRole("main").getByRole("button", { name: "Save", exact: true }).click()
+}
+
+async function deleteMessage(page: Page, message: Locator) {
+  await message.hover()
+  await message.getByRole("button", { name: "Message actions" }).click()
+  await page.getByRole("menuitem", { name: "Delete message" }).click()
+  await page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click()
+}
+
+async function reactToMessage(page: Page, message: Locator): Promise<string> {
+  await message.hover()
+  await message.getByRole("button", { name: "Add reaction" }).first().click()
+  const option = page.locator("[role='listbox']").last().locator("button[role='option']").first()
+  await expect(option).toBeVisible({ timeout: 5000 })
+  const emoji = (await option.textContent())?.trim()
+  if (!emoji) throw new Error("First emoji option rendered without visible emoji content")
+  await option.click()
+  return emoji
 }
 
 async function expectSharedWith(page: Page, partnerNames: string[]) {
@@ -179,6 +220,61 @@ test.describe("Stream connections", () => {
       await expect
         .poll(() => image.evaluate((node: HTMLImageElement) => node.naturalWidth), { timeout: 30_000 })
         .toBe(1)
+    } finally {
+      await partnerContext.close()
+    }
+  })
+
+  test("should carry a partner's reply, edit, reaction and delete to the host and the host's answer back when the partner lives in another region", async ({
+    browser,
+    page,
+  }) => {
+    const partnerContext = await browser.newContext()
+    try {
+      const partnerPage = await partnerContext.newPage()
+      const { host, partner, slug, streamId } = await setUpHostAndPartner(page, partnerPage, "local-2")
+      await page.goto(settingsUrl(host.workspaceId, streamId, "connect"))
+      await acceptInvite(partnerPage, await createInviteLink(page), slug, host.workspaceName, partner.workspaceName)
+
+      const opener = `Mockups for review ${host.testId}`
+      const opened = await page.request.post(`/api/workspaces/${host.workspaceId}/messages`, {
+        data: { streamId, content: opener },
+      })
+      await expectApiOk(opened, "Send host message")
+
+      await partnerPage.goto(`/w/${partner.workspaceId}/s/${streamId}`)
+      await expect(timelineMessage(partnerPage, opener)).toBeVisible({ timeout: 30_000 })
+
+      const reply = `Looks good to me ${host.testId}`
+      await sendText(partnerPage, reply)
+      await expect(timelineMessage(partnerPage, reply)).toBeVisible({ timeout: 15_000 })
+
+      await page.goto(`/w/${host.workspaceId}/s/${streamId}`)
+      await expect(timelineMessage(page, reply)).toBeVisible({ timeout: 30_000 })
+      await expect(timelineMessage(page, reply)).toContainText(partner.name)
+
+      const answer = `Thanks, shipping it ${host.testId}`
+      await sendText(page, answer)
+      await expect(timelineMessage(partnerPage, answer)).toBeVisible({ timeout: 30_000 })
+      await expect(timelineMessage(partnerPage, answer)).toContainText(host.name)
+
+      const edited = `Looks great to me ${host.testId}`
+      await editMessage(partnerPage, timelineMessage(partnerPage, reply), edited)
+      await expect(timelineMessage(partnerPage, edited)).toBeVisible({ timeout: 15_000 })
+      await expect(timelineMessage(page, edited)).toBeVisible({ timeout: 30_000 })
+      await expect(timelineMessage(page, reply)).toHaveCount(0)
+
+      const emoji = await reactToMessage(partnerPage, timelineMessage(partnerPage, answer))
+      await expect(timelineMessage(partnerPage, answer).getByRole("button").filter({ hasText: emoji })).toBeVisible({
+        timeout: 15_000,
+      })
+      const hostPill = timelineMessage(page, answer).getByRole("button").filter({ hasText: emoji })
+      await expect(hostPill).toBeVisible({ timeout: 30_000 })
+      await expect(hostPill).toContainText("1")
+
+      await deleteMessage(partnerPage, timelineMessage(partnerPage, edited))
+      await expect(timelineMessage(partnerPage, edited)).toHaveCount(0, { timeout: 15_000 })
+      await expect(timelineMessage(page, edited)).toHaveCount(0, { timeout: 30_000 })
     } finally {
       await partnerContext.close()
     }

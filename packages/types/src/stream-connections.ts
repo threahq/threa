@@ -38,6 +38,12 @@ export const StreamConnectionErrorCodes = {
   TOO_MANY_INVITES: "STREAM_CONNECTION_TOO_MANY_INVITES",
   /** The host's region didn't answer, so the invite can be neither shown nor accepted for now. */
   HOST_REGION_UNAVAILABLE: "STREAM_CONNECTION_HOST_REGION_UNAVAILABLE",
+  /** The host refused a partner's write: the channel, message or author isn't one the partner may write as. */
+  WRITE_REFUSED: "STREAM_CONNECTION_WRITE_REFUSED",
+  /** The host's region didn't answer a partner's write, so it was not applied. */
+  HOST_UNREACHABLE: "STREAM_CONNECTION_HOST_UNREACHABLE",
+  /** A write into a shared channel's copy that can't cross to the host as sent: files, steering, or a send with no client message id. */
+  COPY_WRITE_UNSUPPORTED: "STREAM_CONNECTION_COPY_WRITE_UNSUPPORTED",
 } as const
 export type StreamConnectionErrorCode = (typeof StreamConnectionErrorCodes)[keyof typeof StreamConnectionErrorCodes]
 
@@ -178,6 +184,19 @@ const bridgeContentSchema = z.custom<JSONContent>(
   (value) => typeof value === "object" && value !== null && (value as { type?: unknown }).type === "doc"
 )
 
+const bridgeContentNodeSchema: z.ZodType<JSONContent> = z.lazy(() =>
+  z.object({
+    type: z.string(),
+    attrs: z.record(z.string(), z.unknown()).optional(),
+    content: z.array(bridgeContentNodeSchema).optional(),
+    marks: z.array(z.object({ type: z.string(), attrs: z.record(z.string(), z.unknown()).optional() })).optional(),
+    text: z.string().optional(),
+  })
+)
+
+/** A partner's document, checked node by node so the host only judges which nodes it carries, never their shape. */
+const bridgeWriteContentSchema = bridgeContentNodeSchema.refine((doc) => doc.type === "doc")
+
 /** One stream of the shared tree: the channel, or a thread anchored on one of the tree's messages. */
 export const bridgeStreamSchema = z.object({
   id: z.string().min(1),
@@ -231,6 +250,8 @@ export const bridgeMessageSchema = z.object({
   editedAt: z.iso.datetime().nullable(),
   createdAt: z.iso.datetime(),
   attachments: z.array(bridgeAttachmentSchema),
+  /** Set only on a message written by one of the caller's own users, so it can match it to the send it made. */
+  clientMessageId: z.string().nullable().default(null),
 })
 export type BridgeMessage = z.infer<typeof bridgeMessageSchema>
 
@@ -241,6 +262,41 @@ export const bridgeUserSchema = z.object({
   slug: z.string().min(1),
 })
 export type BridgeUser = z.infer<typeof bridgeUserSchema>
+
+/**
+ * What a partner's write carries about one of its own users. The host keeps a
+ * copy under this id, so it must be a user id: a persona or bot id would put
+ * a row in the host's users that isn't one.
+ */
+export const bridgeWriteUserSchema = bridgeUserSchema.extend({ id: z.string().regex(/^usr_/) })
+export type BridgeWriteUser = z.infer<typeof bridgeWriteUserSchema>
+
+/** A partner's message into a shared stream, written as one of its users. `users` names the partner users its content mentions. */
+export const bridgeSendMessageSchema = z.object({
+  author: bridgeWriteUserSchema,
+  users: z.array(bridgeWriteUserSchema),
+  clientMessageId: z.string().min(1),
+  contentJson: bridgeWriteContentSchema,
+})
+export type BridgeSendMessage = z.infer<typeof bridgeSendMessageSchema>
+
+export const bridgeSendMessageResponseSchema = z.object({ messageId: z.string().min(1) })
+export type BridgeSendMessageResponse = z.infer<typeof bridgeSendMessageResponseSchema>
+
+export const bridgeEditMessageSchema = z.object({
+  author: bridgeWriteUserSchema,
+  users: z.array(bridgeWriteUserSchema),
+  contentJson: bridgeWriteContentSchema,
+})
+export type BridgeEditMessage = z.infer<typeof bridgeEditMessageSchema>
+
+/** The emoji is in the path. */
+export const bridgeAddReactionSchema = z.object({ author: bridgeWriteUserSchema })
+export type BridgeAddReaction = z.infer<typeof bridgeAddReactionSchema>
+
+/** A delete names its author in the query, since a DELETE carries no body. */
+export const bridgeDeleteMessageQuerySchema = z.object({ authorId: z.string().regex(/^usr_/) })
+export const bridgeRemoveReactionQuerySchema = z.object({ authorId: z.string().regex(/^usr_/) })
 
 /** A host custom persona or bot that wrote or reacted in the shared tree, as the partner shows it. */
 export const bridgeActorSchema = z.object({
