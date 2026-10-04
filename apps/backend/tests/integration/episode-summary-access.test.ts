@@ -70,7 +70,7 @@ describe("episode summaries: source stream access", () => {
     ids: { workspaceId: string; streamId: string; personaId: string },
     accessibleStreamIds: Set<string> | null
   ): Promise<string[]> {
-    const block = await loadEpisodeSummaryPromptBlock(pool, { ...ids, accessibleStreamIds })
+    const block = await loadEpisodeSummaryPromptBlock(pool, { ...ids, accessibleStreamIds, memoAudienceBrowses: true })
     return (block.text ?? "")
       .split("\n")
       .filter((line) => line.startsWith("- ["))
