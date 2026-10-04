@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react"
 import { VitePWA } from "vite-plugin-pwa"
 import { execSync } from "child_process"
 import { createHash } from "node:crypto"
-import { readFile } from "node:fs/promises"
+import { readdir, readFile, stat } from "node:fs/promises"
 import path from "path"
 import { postHogSourceMapPlugins } from "./scripts/posthog-source-maps"
 
@@ -49,6 +49,11 @@ const REACT_PACKAGES = ["react", "react-dom", "scheduler"]
 
 /** Workbox's per-file precache limit: a larger file fails the deploy build. */
 const PRECACHE_FILE_LIMIT_BYTES = 2 * 1024 * 1024
+const PRECACHE_EXTENSIONS = ["js", "mjs", "css", "html", "ico", "png", "svg", "woff", "woff2"]
+// recover.html is the nuclear-option SW-unregister page (public/recover.html).
+// It must stay network-served even when the app shell is broken; precaching
+// it would route recovery through the SW it is trying to unregister.
+const PRECACHE_IGNORED_FILE = "recover.html"
 
 let buildOutputDir: string
 
@@ -92,16 +97,25 @@ function versionJsonPlugin(): Plugin {
  * CI passes a build the deploy then refuses. This holds every build to the limit.
  */
 function precacheSizeGuardPlugin(): Plugin {
+  let outDir: string
   return {
     name: "precache-size-guard",
     apply: "build",
-    generateBundle(_options, bundle) {
-      const oversized = Object.values(bundle).filter(
-        (file) => file.type === "chunk" && Buffer.byteLength(file.code) > PRECACHE_FILE_LIMIT_BYTES
+    configResolved(config) {
+      outDir = path.resolve(config.root, config.build.outDir)
+    },
+    async writeBundle() {
+      const files = (await readdir(outDir, { recursive: true })).filter(
+        (file) =>
+          PRECACHE_EXTENSIONS.includes(path.extname(file).slice(1)) && path.basename(file) !== PRECACHE_IGNORED_FILE
       )
+      const sizes = await Promise.all(
+        files.map(async (file) => ({ file, bytes: (await stat(path.join(outDir, file))).size }))
+      )
+      const oversized = sizes.filter(({ bytes }) => bytes > PRECACHE_FILE_LIMIT_BYTES)
       if (oversized.length === 0) return
       this.error(
-        `${oversized.map((file) => file.fileName).join(", ")} exceeds the ${PRECACHE_FILE_LIMIT_BYTES}-byte precache limit; split it with manualChunks`
+        `${oversized.map(({ file }) => file).join(", ")} exceeds workbox's ${PRECACHE_FILE_LIMIT_BYTES}-byte precache limit`
       )
     },
   }
@@ -186,11 +200,8 @@ export default defineConfig({
         // hundreds of background requests per test and competes with the run.
         // The SW still registers (push tests need it) and its navigation handler
         // falls through to the network when nothing is precached.
-        globPatterns: isE2ETest ? [] : ["**/*.{js,mjs,css,html,ico,png,svg,woff,woff2}"],
-        // recover.html is the nuclear-option SW-unregister page (public/recover.html).
-        // It must stay network-served even when the app shell is broken; precaching
-        // it would route recovery through the SW it is trying to unregister.
-        globIgnores: ["**/recover.html"],
+        globPatterns: isE2ETest ? [] : [`**/*.{${PRECACHE_EXTENSIONS.join(",")}}`],
+        globIgnores: [`**/${PRECACHE_IGNORED_FILE}`],
         maximumFileSizeToCacheInBytes: PRECACHE_FILE_LIMIT_BYTES,
         // Add Subresource Integrity to each precache entry. A failed integrity
         // match aborts the install, so a stale HTTP response or mis-served HTML
