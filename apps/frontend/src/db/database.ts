@@ -1734,8 +1734,8 @@ export class ThreaDatabase extends Dexie {
         await moveRows(tx, "events", EVENTS_STORE)
       })
 
-    // v53: conversations, their message backfill, board hides and context rows
-    // are keyed by workspace like v51/v52. A copied stream keeps its message ids
+    // v54: conversations, their message backfill, board hides and context rows
+    // are keyed by workspace like v52/v53. A copied stream keeps its message ids
     // in the partner workspace, so the message-keyed backfill rows and the
     // context rows (whose `key` embeds the source message id) overwrote the
     // other workspace's copy. Every unused or cross-workspace index is dropped
@@ -1743,10 +1743,10 @@ export class ThreaDatabase extends Dexie {
     // `*conversation.messageIds` stays bare because IndexedDB has no compound
     // multiEntry index. Rows without a `workspaceId` are dropped; the bootstrap
     // refetches them.
-    // One-way door: once a client has opened at v53, code declaring only v52
+    // One-way door: once a client has opened at v54, code declaring only v53
     // cannot open the database (IndexedDB refuses a version downgrade), so a
-    // revert of this bump is not available — reverting means a v54.
-    this.version(53)
+    // revert of this bump is not available — reverting means a v55.
+    this.version(54)
       .stores({
         [CONVERSATIONS_STORE]: "[workspaceId+id], workspaceId, [workspaceId+_lastActivityMs], *conversation.messageIds",
         [CONVERSATION_MESSAGES_STORE]: "[workspaceId+messageId], [workspaceId+conversationId]",

@@ -94,7 +94,7 @@ function withoutWorkspace<T extends { workspaceId: string }>(row: T): Omit<T, "w
 
 async function seedV52(name: string, seed: (legacy: Dexie) => Promise<void>): Promise<void> {
   const legacy = new Dexie(name)
-  legacy.version(52).stores({
+  legacy.version(53).stores({
     conversations: V48_CONVERSATIONS,
     conversationMessages: V46_CONVERSATION_MESSAGES,
     boardHiddenConversations: V38_BOARD_HIDDEN,
@@ -105,8 +105,8 @@ async function seedV52(name: string, seed: (legacy: Dexie) => Promise<void>): Pr
   legacy.close()
 }
 
-describe("v53 conversations, conversation messages, hidden conversations and stream context keyed by workspace", () => {
-  it("should carry rows that name a workspace to the new keys and drop the rest when upgrading from v52", async () => {
+describe("v54 conversations, conversation messages, hidden conversations and stream context keyed by workspace", () => {
+  it("should carry rows that name a workspace to the new keys and drop the rest when upgrading from v53", async () => {
     const name = `threa_test_${Math.random().toString(36).slice(2)}`
     const postTwo = cachedPost("conv_2", "ws_1", ["msg_c"], 20)
     const postOne = cachedPost("conv_1", "ws_1", ["msg_a", "msg_b"], 10)
