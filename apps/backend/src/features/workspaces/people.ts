@@ -105,7 +105,6 @@ function visibleToViewerSql(workspaceId: string, viewer: PeopleViewer): QueryCon
 
 /** The users lacking browse, other than `userId`, who see `userId` by `peopleScopeSql`'s user arm. */
 export async function listGuestViewerIds(db: Querier, workspaceId: string, userId: string): Promise<string[]> {
-  const guestId = sql`${sql.raw("g.id")}`
   // eslint-disable-next-line threa/workspace-scoped-sql -- streamPeopleSql pins workspace_id in both arms, checked where it is written
   const result = await db.query<{ id: string }>(composeSql`
     WITH subject_streams AS MATERIALIZED (
@@ -115,7 +114,7 @@ export async function listGuestViewerIds(db: Querier, workspaceId: string, userI
     SELECT g.id FROM guests g
     WHERE g.id <> ${userId}
       AND EXISTS (
-        SELECT 1 FROM subject_streams ss WHERE ${streamAccessPredicateSql(workspaceId, guestId, "ss.stream_id")}
+        SELECT 1 FROM subject_streams ss WHERE ${streamAccessPredicateSql(workspaceId, sql`g.id`, "ss.stream_id")}
       )
   `)
   return result.rows.map((row) => row.id)

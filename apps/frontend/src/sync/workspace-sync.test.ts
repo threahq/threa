@@ -5973,36 +5973,16 @@ describe("a guest's people roster refresh (real IndexedDB)", () => {
     cleanup()
   })
 
-  it("should request the roster when a guest is added to a stream themselves", async () => {
+  it.each([
+    ["is added to a stream themselves", "stream:member_added", () => memberAdded(self.id)],
+    ["sees a member_joined for someone unknown", "stream:member_joined", () => memberJoined("usr_new")],
+    ["sees a stream:activity from an unknown user", "stream:activity", () => activity("usr_new")],
+  ])("should request the roster when a guest %s", async (_name, event, payload) => {
     const newcomer = person("usr_new")
     listUsers.mockResolvedValue([self, newcomer])
     const { emit, cleanup } = register(GUEST_PERMISSIONS)
 
-    emit("stream:member_added", memberAdded(self.id))
-
-    await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, newcomer])))
-    expect(listUsers).toHaveBeenCalledTimes(1)
-    cleanup()
-  })
-
-  it("should request the roster when a guest sees a member_joined for someone unknown", async () => {
-    const newcomer = person("usr_new")
-    listUsers.mockResolvedValue([self, newcomer])
-    const { emit, cleanup } = register(GUEST_PERMISSIONS)
-
-    emit("stream:member_joined", memberJoined(newcomer.id))
-
-    await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, newcomer])))
-    expect(listUsers).toHaveBeenCalledTimes(1)
-    cleanup()
-  })
-
-  it("should request the roster when a guest sees a stream:activity from an unknown user", async () => {
-    const newcomer = person("usr_new")
-    listUsers.mockResolvedValue([self, newcomer])
-    const { emit, cleanup } = register(GUEST_PERMISSIONS)
-
-    emit("stream:activity", activity(newcomer.id))
+    emit(event, payload())
 
     await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, newcomer])))
     expect(listUsers).toHaveBeenCalledTimes(1)
