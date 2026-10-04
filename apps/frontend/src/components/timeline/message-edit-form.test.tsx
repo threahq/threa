@@ -242,7 +242,7 @@ describe("MessageEditForm saving", () => {
     await db.pendingOperations.clear()
   })
 
-  it("should toast an error, keep the form open and not queue the edit when the server refuses it permanently", async () => {
+  it("should toast an error and neither save nor queue the edit when the server refuses it permanently", async () => {
     const errorToast = vi.spyOn(toast, "error").mockReturnValue("e1")
     const infoToast = vi.spyOn(toast, "info").mockReturnValue("i1")
     vi.spyOn(contextsModule, "useMessageService").mockReturnValue({

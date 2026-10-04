@@ -922,10 +922,17 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
 
         const files = event.dataTransfer?.files
         if (files && files.length > 0) {
-          // Without an upload handler the browser would open the dropped file in place of the app.
-          event.preventDefault()
-          if (onFileUploadRef.current && editorRef.current) handleFilesInsert(Array.from(files), editorRef.current)
-          return true
+          if (onFileUploadRef.current && editorRef.current) {
+            event.preventDefault()
+            handleFilesInsert(Array.from(files), editorRef.current)
+            return true
+          }
+          // With nowhere to upload it, a bare file would open in place of the app. A file
+          // dragged off a page also carries its URL or markup, which drops below as a link or text.
+          if (!["text/plain", "text/uri-list", "text/html"].some((type) => event.dataTransfer?.getData(type))) {
+            event.preventDefault()
+            return true
+          }
         }
 
         // A dragged in-app link chips the same as a pasted one. Other URLs fall
