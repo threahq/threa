@@ -2,7 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { spyOnExport } from "@/test/spy"
 import { renderHook, act, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { PendingMessagesProvider, usePendingMessages, usePendingMessageStatus } from "./pending-messages-context"
+import {
+  PendingMessagesProvider,
+  useOptimisticEvents,
+  usePendingMessages,
+  usePendingMessageStatus,
+} from "./pending-messages-context"
 import * as dbModule from "@/db"
 import * as boardStoreModule from "@/stores/board-store"
 
@@ -384,6 +389,53 @@ describe("PendingMessagesContext", () => {
         "temp_steer_edit",
         expect.objectContaining({ steer: expectedSteer, terminalFailure: undefined })
       )
+    })
+  })
+
+  describe("published send rows", () => {
+    const sent = { id: "temp_sent", streamId: "stream_a" } as dbModule.CachedEvent
+
+    function renderPublished() {
+      return renderHook(
+        () => ({
+          ...usePendingMessages(),
+          published: useOptimisticEvents("stream_a"),
+          elsewhere: useOptimisticEvents("stream_b"),
+        }),
+        { wrapper }
+      )
+    }
+
+    it("shows a published row on its own stream only", () => {
+      const { result } = renderPublished()
+
+      act(() => result.current.publishOptimisticEvent(sent))
+
+      expect({ published: result.current.published, elsewhere: result.current.elsewhere }).toEqual({
+        published: [sent],
+        elsewhere: [],
+      })
+    })
+
+    it.each(["markSent", "markFailed", "revokeOptimisticEvent"] as const)("drops the row on %s", (settle) => {
+      const { result } = renderPublished()
+      act(() => result.current.publishOptimisticEvent(sent))
+
+      act(() => result.current[settle]("temp_sent"))
+
+      expect(result.current.published).toEqual([])
+    })
+
+    it("drops the row when the unsent message is deleted", async () => {
+      mockGet.mockResolvedValue({ clientId: "temp_sent", workspaceId: "ws_1", retryCount: 0, status: undefined })
+      const { result } = renderPublished()
+      act(() => result.current.publishOptimisticEvent(sent))
+
+      await act(async () => {
+        await result.current.deleteMessage("ws_1", "temp_sent")
+      })
+
+      expect(result.current.published).toEqual([])
     })
   })
 

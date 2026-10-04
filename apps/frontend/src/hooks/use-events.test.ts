@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act, renderHook, waitFor } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { ServicesProvider, type StreamService } from "@/contexts"
+import { PendingMessagesProvider, ServicesProvider, usePendingMessages, type StreamService } from "@/contexts"
 import type { StreamEvent } from "@threahq/types"
 import { db, type CachedEvent } from "@/db"
 import { loadStreamPrefix, loadStreamTail, unionStreamRanges } from "@/stores/stream-store"
@@ -16,6 +16,7 @@ import {
   getNextBootstrapFloorState,
   getOldestSequence,
   getRenderableEvents,
+  getUnpersistedOptimisticEvents,
   cacheToIndexedDB,
   useEvents,
 } from "./use-events"
@@ -235,6 +236,30 @@ describe("getEffectiveEvents", () => {
   })
 })
 
+describe("getUnpersistedOptimisticEvents", () => {
+  const published = (id: string) => ({ id }) as CachedEvent
+
+  it("keeps only the published rows the persisted read carries neither by id nor by clientMessageId", () => {
+    const unsent = published("temp_unsent")
+    const written = published("temp_written")
+    const echoed = published("temp_echoed")
+
+    expect(
+      getUnpersistedOptimisticEvents(
+        [unsent, written, echoed],
+        [{ id: "temp_written" }, { id: "event_real", payload: { clientMessageId: "temp_echoed" } }]
+      )
+    ).toEqual([unsent])
+  })
+
+  it("returns the same empty list while every published row is carried, so the timeline is not rebuilt", () => {
+    const first = getUnpersistedOptimisticEvents([published("temp_a")], [{ id: "temp_a" }])
+    const second = getUnpersistedOptimisticEvents([], [{ id: "temp_a" }])
+
+    expect(first).toBe(second)
+  })
+})
+
 describe("cacheToIndexedDB with eventWriteChunking on", () => {
   beforeEach(async () => {
     await db.events.clear()
@@ -379,6 +404,67 @@ describe("useEvents live-tail jump bridge", () => {
 
     rerender({ currentStreamId: "stream_other" })
     await waitFor(() => expect(result.current.events.map((candidate) => candidate.id)).toEqual([other.id]))
+  })
+})
+
+describe("useEvents published send rows", () => {
+  const workspaceId = "ws_publish"
+  const streamId = "stream_publish"
+
+  function row(id: string, sequence: number, extra: Partial<CachedEvent> = {}): CachedEvent {
+    return {
+      id,
+      workspaceId,
+      streamId,
+      sequence: String(sequence),
+      _sequenceNum: sequence,
+      _cachedAt: 1,
+      eventType: "message_created",
+      payload: { messageId: id, contentMarkdown: id },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date(2026, 0, 1, 0, 0, sequence).toISOString(),
+      ...extra,
+    }
+  }
+
+  function wrapper() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return function Wrapper({ children }: { children: ReactNode }) {
+      return createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(ServicesProvider, {
+          services: { streams: {} as unknown as StreamService },
+          children: createElement(PendingMessagesProvider, undefined, children),
+        })
+      )
+    }
+  }
+
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    await db.events.clear()
+  })
+
+  it("shows a published row at the tail before the cache carries it, and once after the echo replaces it", async () => {
+    const earlier = row("event_earlier", 1)
+    const sent = row("temp_sent", 5, { _clientId: "temp_sent", _status: "pending" })
+    let cached: CachedEvent[] = [earlier]
+    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation(() => cached)
+
+    const { result, rerender } = renderHook(
+      () => ({ timeline: useEvents(workspaceId, streamId), pending: usePendingMessages() }),
+      { wrapper: wrapper() }
+    )
+    await waitFor(() => expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id]))
+
+    act(() => result.current.pending.publishOptimisticEvent(sent))
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id, sent.id])
+
+    cached = [earlier, row("event_real", 2, { payload: { messageId: "msg_real", clientMessageId: "temp_sent" } })]
+    rerender()
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id, "event_real"])
   })
 })
 

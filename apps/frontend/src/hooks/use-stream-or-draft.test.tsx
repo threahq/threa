@@ -4,7 +4,7 @@ import { createElement, type ReactNode } from "react"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type MessageService, type StreamService } from "@/contexts"
-import { PendingMessagesProvider } from "@/contexts/pending-messages-context"
+import { PendingMessagesProvider, useOptimisticEvents } from "@/contexts/pending-messages-context"
 import { clearAllCachedData, db, type CachedDraft } from "@/db"
 import { AuthContext } from "@/auth/context"
 import { streamKeys } from "./use-streams"
@@ -89,6 +89,10 @@ async function seedWorkspaceCacheAndIdb(
 describe("useStreamOrDraft real stream send", () => {
   beforeEach(async () => {
     await clearAllCachedData()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
   })
 
   /** Seed the workspace cache + bootstrap for a plain channel and mount the hook on it. */
@@ -204,9 +208,13 @@ describe("useStreamOrDraft real stream send", () => {
       latestSequence: "0",
     })
 
-    const { result } = renderHook(() => useStreamOrDraft("ws_1", "stream_socket_seen"), {
-      wrapper: createWrapper(queryClient),
-    })
+    const { result } = renderHook(
+      () => ({
+        ...useStreamOrDraft("ws_1", "stream_socket_seen"),
+        published: useOptimisticEvents("stream_socket_seen"),
+      }),
+      { wrapper: createWrapper(queryClient) }
+    )
 
     await waitFor(() => {
       expect(result.current.stream?.id).toBe("stream_socket_seen")
@@ -250,6 +258,28 @@ describe("useStreamOrDraft real stream send", () => {
       eventType: "message_created",
       _status: "pending",
     })
+  })
+
+  it("shows the sent row while its durable write is still in flight, and takes it back if the write fails", async () => {
+    const { result } = await mountRealStreamSend()
+
+    vi.spyOn(db.pendingMessages, "add").mockRejectedValue(new Error("quota"))
+
+    let sending: Promise<unknown> = Promise.resolve()
+    act(() => {
+      sending = result.current.sendMessage({
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "eager" }] }] },
+      })
+    })
+
+    expect(result.current.published).toMatchObject([
+      { streamId: "stream_socket_seen", actorId: "member_1", eventType: "message_created", _status: "pending" },
+    ])
+
+    await act(async () => {
+      await expect(sending).rejects.toThrow("quota")
+    })
+    expect(result.current.published).toEqual([])
   })
 
   it("keeps steer on the same durable message queue item", async () => {

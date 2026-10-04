@@ -534,7 +534,7 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
 function useRealStream(workspaceId: string, streamId: string, enabled: boolean): UseStreamOrDraftReturn {
   const queryClient = useQueryClient()
   const streamService = useStreamService()
-  const { markPending, notifyQueue } = usePendingMessages()
+  const { markPending, publishOptimisticEvent, revokeOptimisticEvent, notifyQueue } = usePendingMessages()
   const user = useUser()
   const idbUsers = useWorkspaceUsers(workspaceId)
   const idbDmPeers = useWorkspaceDmPeers(workspaceId)
@@ -708,11 +708,20 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
       }
 
       markPending(clientId)
+      const publishedSequence = Date.now().toString()
+      publishOptimisticEvent({
+        ...optimisticEvent,
+        workspaceId,
+        sequence: publishedSequence,
+        _sequenceNum: sequenceToNum(publishedSequence),
+        _clientId: clientId,
+        _status: "pending",
+        _cachedAt: Date.now(),
+      })
 
-      // The durable send and its optimistic row appear together. A steered
-      // message stays one queue item so replay cannot dispatch the command
-      // before the message reaches the server.
-      await db.transaction("rw", [db.pendingMessages, db.events], async () => {
+      // A steered message stays one queue item so replay cannot dispatch the
+      // command before the message reaches the server.
+      const durableWrite = db.transaction("rw", [db.pendingMessages, db.events], async () => {
         const [anchorSequence, allocatedSequence] = await Promise.all([
           getLatestPersistedSequence(workspaceId, streamId),
           nextOptimisticSequence(workspaceId, streamId),
@@ -744,12 +753,27 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           _cachedAt: Date.now(),
         })
       })
+      try {
+        await durableWrite
+      } catch (err) {
+        revokeOptimisticEvent(clientId)
+        throw err
+      }
 
       notifyQueue()
 
       return {}
     },
-    [streamId, workspaceId, markPending, notifyQueue, currentUserId, baseStream]
+    [
+      streamId,
+      workspaceId,
+      markPending,
+      publishOptimisticEvent,
+      revokeOptimisticEvent,
+      notifyQueue,
+      currentUserId,
+      baseStream,
+    ]
   )
 
   return {

@@ -33,7 +33,12 @@ export {
   useSocketIsReconnecting,
   type SocketStatus,
 } from "./socket-context"
-export { PendingMessagesProvider, usePendingMessages, usePendingMessageStatus } from "./pending-messages-context"
+export {
+  PendingMessagesProvider,
+  usePendingMessages,
+  usePendingMessageStatus,
+  useOptimisticEvents,
+} from "./pending-messages-context"
 export {
   PanelProvider,
   usePanel,
