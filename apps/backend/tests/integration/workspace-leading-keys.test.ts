@@ -4,7 +4,7 @@ import path from "node:path"
 import type { Pool } from "pg"
 import { setupIsolatedTestDatabase } from "./setup"
 
-/** Every key that spans copied ids: the old single-id definition is gone and the old name leads with workspace_id. */
+/** Every unique key on a table that holds copied ids: led by workspace_id so each workspace keeps its own row. */
 const CONTRACTED_KEYS: Record<string, { primary: boolean; def: string }> = {
   streams_pkey: {
     primary: true,

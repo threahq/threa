@@ -444,17 +444,20 @@ describe("Read state and sparse overlay workspace scope (INV-8)", () => {
   test("should land its own read state beside another workspace's row when both hold the same stream and user ids", async () => {
     const stream = await seedChannel(wsA)
     const user = userId()
-    await addReadState(wsB, stream, user)
+    await addReadState(wsB, stream, user, { held: true })
 
     const own = await ReadStateRepository.ensureForUpdate(pool, wsA, stream, user)
-    const rows = await pool.query<{ workspace_id: string }>(
-      "SELECT workspace_id FROM stream_read_state WHERE stream_id = $1 AND user_id = $2 ORDER BY workspace_id",
+    const rows = await pool.query<{ workspace_id: string; inbox_held: boolean }>(
+      "SELECT workspace_id, inbox_held FROM stream_read_state WHERE stream_id = $1 AND user_id = $2 ORDER BY inbox_held",
       [stream, user]
     )
 
-    expect({ own: own?.workspaceId, workspaces: rows.rows.map((row) => row.workspace_id) }).toEqual({
+    expect({ own: own?.workspaceId, rows: rows.rows }).toEqual({
       own: wsA,
-      workspaces: [wsA, wsB].sort(),
+      rows: [
+        { workspace_id: wsA, inbox_held: false },
+        { workspace_id: wsB, inbox_held: true },
+      ],
     })
   })
 

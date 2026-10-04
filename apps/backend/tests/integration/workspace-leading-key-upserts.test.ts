@@ -709,7 +709,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     },
   ]
 
-  // Workspace B writes ids workspace A already holds. An arbiter still on the old columns would take the
+  // Workspace B writes ids workspace A already holds. An arbiter without workspace_id would take the
   // conflict path: update A's row or drop B's write without an error.
   for (const { name, write, read, landsAs } of sharedKeyCases) {
     test(`should land workspace B's own row and leave workspace A's untouched when B writes ${name} for the same ids`, async () => {
