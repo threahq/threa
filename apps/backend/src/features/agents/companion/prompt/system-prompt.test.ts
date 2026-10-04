@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { StreamTypes } from "@threahq/types"
+import { APP_LINK_PAGES, APP_LINK_SETTINGS_TABS, APP_LINK_WORKSPACE_SETTINGS_TABS, StreamTypes } from "@threahq/types"
 import { createReadUrlTool, createExaEngine, createWebSearchTool } from "@threahq/agent-runtime"
 import type { Persona } from "../../persona-repository"
 import type { StreamContext } from "../../context-builder"
@@ -63,6 +63,19 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("Base system prompt\n\n## Scratchpad Custom Instructions")
     expect(prompt).toContain("Be concise and prioritize concrete next steps.")
     expect(prompt.indexOf("## Scratchpad Custom Instructions")).toBeLessThan(prompt.indexOf("## Context"))
+  })
+
+  test("should offer exactly the app: link registry's destinations", () => {
+    const prompt = buildJoinedPrompt({
+      persona,
+      context: scratchpadContext,
+      scratchpadCustomPrompt: null,
+      selfKnowledge: null,
+    })
+
+    expect(prompt).toContain(
+      `Pages: ${APP_LINK_PAGES.join(", ")}. Settings tabs: ${APP_LINK_SETTINGS_TABS.join(", ")}. Workspace settings tabs: ${APP_LINK_WORKSPACE_SETTINGS_TABS.join(", ")}.`
+    )
   })
 
   test("tells the agent to label attachment pointers with filenames", () => {

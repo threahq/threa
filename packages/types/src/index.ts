@@ -1465,3 +1465,15 @@ export {
   type BridgeChange,
   type BridgeEvents,
 } from "./stream-connections"
+
+// In-app links (`app:` hrefs) for agents and the user guide
+export {
+  WORKSPACE_SETTINGS_TABS,
+  type WorkspaceSettingsTab,
+  APP_LINK_PAGES,
+  APP_LINK_SETTINGS_TABS,
+  APP_LINK_WORKSPACE_SETTINGS_TABS,
+  type AppLinkDestination,
+  APP_LINK_SCHEME,
+  parseAppLinkHref,
+} from "./app-links"
