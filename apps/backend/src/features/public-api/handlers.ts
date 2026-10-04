@@ -838,7 +838,7 @@ export function createPublicApiHandlers({
   function memoAudienceForRequest(req: Request, accessibleStreamIds: string[]): MemoAudience {
     return req.userApiKey
       ? { kind: "users", userIds: [req.user!.id] }
-      : { kind: "streams", streamIds: accessibleStreamIds }
+      : { kind: "streams", streamIds: accessibleStreamIds, browses: !req.sandboxSession }
   }
 
   /**

@@ -656,6 +656,7 @@ function fakeMemoRow(id: string, overrides: Partial<import("./repository").Memo>
     createdAt: new Date(),
     updatedAt: new Date(),
     sourceStreamIds: null,
+    requiresBrowse: false,
     archivedAt: null,
     ...overrides,
   }
@@ -719,6 +720,7 @@ const saveMemoInput = {
   sessionId: "agsess_1",
   sourceStreamIds: [STREAM_ID],
   provenanceStreamIds: [] as string[],
+  requiresBrowse: false,
   title: "Deploys only on Fridays after the smoke suite",
   abstract: "The team deploys only on Fridays, and only after the smoke suite passes.",
   keyPoints: ["Smoke suite gates the deploy"],
@@ -1042,6 +1044,7 @@ const reflectionInput = {
   participantIds: ["usr_1"],
   citedStreamIds: [],
   citedMessageIds: [],
+  requiresBrowse: false,
 }
 
 describe("MemoService.captureSessionReflection — reflective capture (roadmap 6.3)", () => {

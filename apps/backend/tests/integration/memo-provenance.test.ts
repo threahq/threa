@@ -132,6 +132,7 @@ describe("agent memo provenance", () => {
       sessionId: null,
       sourceStreamIds: [home],
       provenanceStreamIds: [research, otherResearch, home, research],
+      requiresBrowse: true,
       title: "Rollout plan",
       abstract: "The rollout starts on Monday with the flag off.",
       keyPoints: [],
@@ -146,6 +147,7 @@ describe("agent memo provenance", () => {
     expect(memo).toMatchObject({
       authoredByKind: AuthoredByKinds.AGENT,
       sourceStreamIds: [home, research, otherResearch].sort(),
+      requiresBrowse: true,
     })
   })
 
@@ -163,6 +165,7 @@ describe("agent memo provenance", () => {
       participantIds: [testUserId],
       citedStreamIds: [research, otherResearch],
       citedMessageIds: [researchMessageId],
+      requiresBrowse: true,
     })
     expect(result).toMatchObject({ classified: true, captured: 1 })
 
@@ -173,6 +176,45 @@ describe("agent memo provenance", () => {
       authoredByKind: AuthoredByKinds.AGENT,
       sourceSessionId: session,
       sourceStreamIds: [home, thread, research, otherResearch].sort(),
+      requiresBrowse: true,
+    })
+  })
+
+  test("should store requiresBrowse false for a saved memo and a reflective capture when the agent wrote for an audience that needs no browse", async () => {
+    const saved = await service.saveMemo({
+      workspaceId: testWorkspaceId,
+      streamId: home,
+      sessionId: null,
+      sourceStreamIds: [home],
+      provenanceStreamIds: [home],
+      requiresBrowse: false,
+      title: "Rollout plan",
+      abstract: "The rollout starts on Monday with the flag off.",
+      keyPoints: [],
+      tags: [],
+      knowledgeType: "decision",
+      sourceMessageIds: [anchorId],
+    })
+    const session = `session_${streamId()}`
+    await service.captureSessionReflection({
+      workspaceId: testWorkspaceId,
+      streamId: home,
+      sessionId: session,
+      digest: "Trigger: when does the rollout start?",
+      anchorMessageId: anchorId,
+      participantIds: [testUserId],
+      citedStreamIds: [],
+      citedMessageIds: [],
+      requiresBrowse: false,
+    })
+
+    const { rows } = await pool.query<{ id: string }>(`SELECT id FROM memos WHERE source_session_id = $1`, [session])
+    const reflected = await MemoRepository.findById(pool, testWorkspaceId, rows[0].id)
+    const memo = await MemoRepository.findById(pool, testWorkspaceId, (saved as { memoId: string }).memoId)
+
+    expect({ saved: memo?.requiresBrowse, reflected: reflected?.requiresBrowse }).toEqual({
+      saved: false,
+      reflected: false,
     })
   })
 })

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import type { Pool } from "pg"
-import { MemoryModes, StreamTypes } from "@threahq/types"
+import { AuthorTypes, MemoryModes, StreamTypes } from "@threahq/types"
 import type { Message } from "../messaging"
 import { MessageRepository } from "../messaging"
 import type { MemoServiceLike, CaptureSessionReflectionResult } from "../memos"
@@ -114,8 +114,14 @@ describe("ReflectiveCaptureService", () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(makeStream())
   })
 
-  function service(memoService: MemoServiceLike) {
-    return new ReflectiveCaptureService({ pool: {} as Pool, memoService })
+  /** A pool whose only query is the audience-browse probe, answering `browses`. */
+  function browsePool(browses: boolean) {
+    const query = mock(async () => ({ rows: [{ browses }] }))
+    return { pool: { query } as unknown as Pool, query }
+  }
+
+  function service(memoService: MemoServiceLike, pool: Pool = browsePool(true).pool) {
+    return new ReflectiveCaptureService({ pool, memoService })
   }
 
   test("captures a research session: claims the marker then delegates to the memo pipeline", async () => {
@@ -147,8 +153,50 @@ describe("ReflectiveCaptureService", () => {
         sessionId: "session_1",
         anchorMessageId: "msg_trigger_1",
         participantIds: ["usr_1"],
+        requiresBrowse: true,
       })
     )
+  })
+
+  test("records that the memo needs no browse when the session's audience lacks it", async () => {
+    const { service: memoService, captureSessionReflection } = makeMemoService({
+      classified: true,
+      captured: 1,
+      deduped: 0,
+    })
+    const { pool, query } = browsePool(false)
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(makeSession())
+    spyOn(MessageRepository, "findById").mockResolvedValue(makeMessage("msg_trigger_1", "how do we deploy?"))
+    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([digestStep("Deploys run Fridays.")])
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
+    spyOn(AgentSessionRepository, "setReflectiveCaptured").mockResolvedValue(true)
+
+    await service(memoService, pool).capture({ workspaceId: "ws_1", sessionId: "session_1" })
+
+    expect(query).toHaveBeenCalledTimes(1)
+    expect(captureSessionReflection).toHaveBeenCalledWith(expect.objectContaining({ requiresBrowse: false }))
+  })
+
+  test("requires browse without probing the audience when the trigger is not a user's message", async () => {
+    const { service: memoService, captureSessionReflection } = makeMemoService({
+      classified: true,
+      captured: 1,
+      deduped: 0,
+    })
+    const { pool, query } = browsePool(false)
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(makeSession())
+    spyOn(MessageRepository, "findById").mockResolvedValue({
+      ...makeMessage("msg_trigger_1", "scheduled follow-up"),
+      authorType: AuthorTypes.PERSONA,
+    })
+    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([digestStep("Deploys run Fridays.")])
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
+    spyOn(AgentSessionRepository, "setReflectiveCaptured").mockResolvedValue(true)
+
+    await service(memoService, pool).capture({ workspaceId: "ws_1", sessionId: "session_1" })
+
+    expect(query).not.toHaveBeenCalled()
+    expect(captureSessionReflection).toHaveBeenCalledWith(expect.objectContaining({ requiresBrowse: true }))
   })
 
   test("no-ops without claiming when the session is not completed", async () => {

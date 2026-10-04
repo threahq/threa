@@ -11,7 +11,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { AuthoredByKinds, StreamTypes, Visibilities, type Visibility } from "@threahq/types"
-import { MemoRepository, type MemoAudience } from "../../src/features/memos"
+import { audienceBrowses, MemoRepository, type MemoAudience } from "../../src/features/memos"
 import { MessageRepository } from "../../src/features/messaging"
 import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"
@@ -50,7 +50,13 @@ describe("memoAudienceVisibleSql", () => {
 
   async function seedMemo(
     label: string,
-    options: { sources: string[] | null; kind?: "agent" | "pipeline"; locatedIn?: string; tags?: string[] }
+    options: {
+      sources: string[] | null
+      kind?: "agent" | "pipeline"
+      locatedIn?: string
+      tags?: string[]
+      requiresBrowse?: boolean
+    }
   ): Promise<void> {
     const id = memoId()
     const msgId = messageId()
@@ -80,6 +86,7 @@ describe("memoAudienceVisibleSql", () => {
         status: "active",
         authoredByKind: options.kind === "pipeline" ? AuthoredByKinds.PIPELINE : AuthoredByKinds.AGENT,
         ...(options.sources ? { sourceStreamIds: options.sources } : {}),
+        requiresBrowse: options.requiresBrowse,
       })
       await MemoRepository.updateEmbedding(client, ws, id, axis(0))
     })
@@ -202,7 +209,7 @@ describe("memoAudienceVisibleSql", () => {
     const [guestRoom, memberRoom, streams] = await Promise.all([
       visibleTo([{ kind: "room", roomStreamId: stream.roomGuest }]),
       visibleTo([{ kind: "room", roomStreamId: stream.roomAll }]),
-      visibleTo([{ kind: "streams", streamIds: [stream.gp, stream.pub] }]),
+      visibleTo([{ kind: "streams", streamIds: [stream.gp, stream.pub], browses: true }]),
     ])
 
     expect({ guestRoom, memberRoom, streams }).toEqual({
@@ -315,6 +322,65 @@ describe("memoAudienceVisibleSql", () => {
       room: ["roomCitesPub"],
       gpTags: ["g5-gp-cites-gp"],
       roomTags: ["g5-gp-cites-gp", "g5-gp-cites-pub", "g5-room-cites-pub"],
+    })
+  })
+
+  test("should hide a browse-requiring agent memo from audiences that cannot browse when its sources are readable", async () => {
+    await seedMemo("gpRequiresBrowse", { sources: [stream.gp], requiresBrowse: true })
+    await seedMemo("gpOpen", { sources: [stream.gp], requiresBrowse: false })
+    const among = async (audiences: MemoAudience[]) => {
+      const ids = [memos.gpRequiresBrowse, memos.gpOpen, memos.legacyAgent]
+      return [...(await MemoRepository.filterVisibleIds(pool, ws, ids, audiences))].map(labelOf).sort()
+    }
+    const sources = [stream.gp]
+
+    const [forGuest, forMember, guestRoom, memberRoom, browsingStreams, nonBrowsingStreams] = await Promise.all([
+      among([{ kind: "users", userIds: [guest] }]),
+      among([{ kind: "users", userIds: [member] }]),
+      among([{ kind: "room", roomStreamId: stream.roomGuest }]),
+      among([{ kind: "room", roomStreamId: stream.roomAll }]),
+      among([{ kind: "streams", streamIds: sources, browses: true }]),
+      among([{ kind: "streams", streamIds: sources, browses: false }]),
+    ])
+
+    expect({ forGuest, forMember, guestRoom, memberRoom, browsingStreams, nonBrowsingStreams }).toEqual({
+      forGuest: ["gpOpen"],
+      forMember: ["gpOpen", "gpRequiresBrowse", "legacyAgent"],
+      guestRoom: ["gpOpen"],
+      memberRoom: ["gpOpen", "gpRequiresBrowse", "legacyAgent"],
+      browsingStreams: ["gpOpen", "gpRequiresBrowse"],
+      nonBrowsingStreams: ["gpOpen"],
+    })
+  })
+
+  test("should report whether every reader browses the workspace when the audience is users, a room or streams", async () => {
+    const [forMember, forGuest, forBoth, allMemberRoom, guestPublicRoom, browsingStreams, nonBrowsingStreams] =
+      await Promise.all([
+        audienceBrowses(pool, ws, { kind: "users", userIds: [member] }),
+        audienceBrowses(pool, ws, { kind: "users", userIds: [guest] }),
+        audienceBrowses(pool, ws, { kind: "users", userIds: [member, guest] }),
+        audienceBrowses(pool, ws, { kind: "room", roomStreamId: stream.roomAll }),
+        audienceBrowses(pool, ws, { kind: "room", roomStreamId: stream.gp }),
+        audienceBrowses(pool, ws, { kind: "streams", streamIds: [], browses: true }),
+        audienceBrowses(pool, ws, { kind: "streams", streamIds: [], browses: false }),
+      ])
+
+    expect({
+      forMember,
+      forGuest,
+      forBoth,
+      allMemberRoom,
+      guestPublicRoom,
+      browsingStreams,
+      nonBrowsingStreams,
+    }).toEqual({
+      forMember: true,
+      forGuest: false,
+      forBoth: false,
+      allMemberRoom: true,
+      guestPublicRoom: false,
+      browsingStreams: true,
+      nonBrowsingStreams: false,
     })
   })
 })

@@ -129,6 +129,11 @@ describe("reflective capture: research sources", () => {
     return rows.map((row) => ({ scope: row.scope, sourceMessageIds: row.source_message_ids }))
   }
 
+  async function requiresBrowseOf(session: string) {
+    const { rows } = await pool.query(`SELECT requires_browse FROM memos WHERE source_session_id = $1`, [session])
+    return rows.map((row) => row.requires_browse)
+  }
+
   beforeAll(async () => {
     pool = await setupTestDatabase()
     testWorkspaceId = workspaceId()
@@ -182,6 +187,21 @@ describe("reflective capture: research sources", () => {
     await captureService().capture({ workspaceId: testWorkspaceId, sessionId: session })
 
     expect(await capturedMemos(session)).toEqual([{ scope: "workspace", sourceMessageIds: [trigger, threadReply] }])
+  })
+
+  test("should record whether the session's audience browses when capturing from a member channel or a guest-visible one", async () => {
+    const memberChannel = await seedStream({ type: "channel", visibility: "public" })
+    const guestChannel = await seedStream({ type: "channel", visibility: "guest_public" })
+    const memberSession = await seedSession(memberChannel, await seedMessage(memberChannel), [])
+    const guestSession = await seedSession(guestChannel, await seedMessage(guestChannel), [])
+
+    await captureService().capture({ workspaceId: testWorkspaceId, sessionId: memberSession })
+    await captureService().capture({ workspaceId: testWorkspaceId, sessionId: guestSession })
+
+    expect({
+      memberChannel: await requiresBrowseOf(memberSession),
+      guestChannel: await requiresBrowseOf(guestSession),
+    }).toEqual({ memberChannel: [true], guestChannel: [false] })
   })
 
   test("the capture is placed at the session's anchor, not at its cited research", async () => {

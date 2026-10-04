@@ -191,6 +191,8 @@ export interface SaveMemoParams {
    * of them; a superset only narrows the audience, a subset leaks.
    */
   provenanceStreamIds: string[]
+  /** The agent wrote for readers who browse the workspace, so its prompt may have held member-only content: readers who cannot browse never see the memo. */
+  requiresBrowse: boolean
   title: string
   abstract: string
   keyPoints: string[]
@@ -246,6 +248,8 @@ export interface CaptureSessionReflectionParams {
   citedStreamIds: string[]
   /** Messages the session's research cited; those in the session's root become memo sources after the anchor. */
   citedMessageIds: string[]
+  /** The session ran for readers who browse the workspace, so its digest may hold member-only content: readers who cannot browse never see the memos. */
+  requiresBrowse: boolean
   authorTimezone?: string
 }
 
@@ -1169,6 +1173,7 @@ export class MemoService implements MemoServiceLike {
       sessionId,
       sourceStreamIds,
       provenanceStreamIds,
+      requiresBrowse,
       title,
       abstract,
       keyPoints,
@@ -1303,6 +1308,7 @@ export class MemoService implements MemoServiceLike {
         authoredByKind: AuthoredByKinds.AGENT,
         sourceSessionId: sessionId ?? undefined,
         sourceStreamIds: [...provenanceStreamIds, ...sourceStreamIds],
+        requiresBrowse,
         scope: resolvedScope,
         scopeUserId: resolvedScopeUserId,
       })
@@ -1378,6 +1384,7 @@ export class MemoService implements MemoServiceLike {
       participantIds,
       citedStreamIds,
       citedMessageIds,
+      requiresBrowse,
       authorTimezone,
     } = params
     const none = { classified: false, captured: 0, deduped: 0 }
@@ -1549,6 +1556,7 @@ export class MemoService implements MemoServiceLike {
           authoredByKind: AuthoredByKinds.AGENT,
           sourceSessionId: sessionId,
           sourceStreamIds: [...citedStreamIds, streamId, context.memoScope.rootStreamId],
+          requiresBrowse,
           scope: context.memoScope.scope,
           scopeUserId: context.memoScope.scopeUserId,
         })

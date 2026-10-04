@@ -77,6 +77,7 @@ interface MemoRow {
   authored_by_kind: string
   source_session_id: string | null
   source_stream_ids: string[] | null
+  requires_browse: boolean
   scope: string
   scope_user_id: string | null
   created_at: Date
@@ -107,6 +108,8 @@ export interface Memo {
   sourceSessionId: string | null
   /** Streams an agent-authored memo's content came from, as cited (threads stay threads); null when not recorded. */
   sourceStreamIds: string[] | null
+  /** The agent wrote this memo for readers who browse the workspace, so only those readers see it. */
+  requiresBrowse: boolean
   scope: MemoScope
   scopeUserId: string | null
   createdAt: Date
@@ -136,6 +139,8 @@ export interface InsertMemoParams {
   sourceSessionId?: string
   /** Streams an agent-authored memo's content came from; stored deduped and sorted. */
   sourceStreamIds?: string[]
+  /** Hides the memo from readers who cannot browse the workspace; defaults to false. */
+  requiresBrowse?: boolean
   /** Visibility tier (roadmap 6.4); defaults to `'workspace'`. */
   scope?: MemoScope
   /** Owner for `'user'` scope; must be set iff `scope === 'user'` (DB CHECK). */
@@ -282,6 +287,7 @@ function mapRowToMemo(row: MemoRow): Memo {
     authoredByKind: row.authored_by_kind as AuthoredByKind,
     sourceSessionId: row.source_session_id,
     sourceStreamIds: row.source_stream_ids,
+    requiresBrowse: row.requires_browse,
     scope: row.scope as MemoScope,
     scopeUserId: row.scope_user_id,
     createdAt: row.created_at,
@@ -294,7 +300,7 @@ const SELECT_FIELDS = `
   id, workspace_id, memo_type, source_message_id, source_conversation_id,
   title, abstract, key_points, source_message_ids, participant_ids,
   knowledge_type, tags, parent_memo_id, status, version, card_version, revision_reason,
-  authored_by_kind, source_session_id, source_stream_ids, scope, scope_user_id,
+  authored_by_kind, source_session_id, source_stream_ids, requires_browse, scope, scope_user_id,
   created_at, updated_at, archived_at
 `
 
@@ -302,7 +308,7 @@ const SELECT_FIELDS_PREFIXED = `
   m.id, m.workspace_id, m.memo_type, m.source_message_id, m.source_conversation_id,
   m.title, m.abstract, m.key_points, m.source_message_ids, m.participant_ids,
   m.knowledge_type, m.tags, m.parent_memo_id, m.status, m.version, m.card_version, m.revision_reason,
-  m.authored_by_kind, m.source_session_id, m.source_stream_ids, m.scope, m.scope_user_id,
+  m.authored_by_kind, m.source_session_id, m.source_stream_ids, m.requires_browse, m.scope, m.scope_user_id,
   m.created_at, m.updated_at, m.archived_at
 `
 const SELECT_FIELDS_PREFIXED_SQL = rawSql(SELECT_FIELDS_PREFIXED)
@@ -828,7 +834,7 @@ export const MemoRepository = {
         id, workspace_id, memo_type, source_message_id, source_conversation_id,
         title, abstract, key_points, search_config, source_message_ids, participant_ids,
         knowledge_type, tags, parent_memo_id, status, version,
-        authored_by_kind, source_session_id, source_stream_ids, scope, scope_user_id
+        authored_by_kind, source_session_id, source_stream_ids, requires_browse, scope, scope_user_id
       )
       VALUES (
         ${params.id},
@@ -850,6 +856,7 @@ export const MemoRepository = {
         ${params.authoredByKind ?? "pipeline"},
         ${params.sourceSessionId ?? null},
         ${params.sourceStreamIds ? [...new Set(params.sourceStreamIds)].sort() : null},
+        ${params.requiresBrowse ?? false},
         ${params.scope ?? "workspace"},
         ${params.scopeUserId ?? null}
       )

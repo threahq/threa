@@ -68,6 +68,7 @@ function memoHit(id: string, sourceMessageIds: string[]): MemoExplorerResult {
     createdAt: new Date("2026-01-01T00:00:00Z"),
     updatedAt: new Date("2026-01-01T00:00:00Z"),
     sourceStreamIds: null,
+    requiresBrowse: false,
     archivedAt: null,
   }
   return { memo, distance: 0.1, sourceStream: { id: "stream_1", type: "scratchpad", name: null }, rootStream: null }

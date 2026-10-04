@@ -186,6 +186,7 @@ describe("memo capture: model context honors memo scope", () => {
       participantIds: [ws.ownerId],
       citedStreamIds: [],
       citedMessageIds: [],
+      requiresBrowse: false,
     })
   }
 

@@ -42,7 +42,7 @@ import type { AI, CostContext, PageBrowser, WebSearchEngine } from "@threahq/age
 import type { SearchService } from "../search"
 import type { ConversationSummaryService } from "./conversation-summary-service"
 import type { AttachmentService } from "../attachments"
-import type { MemoExplorerService } from "../memos"
+import { audienceBrowses, type MemoExplorerService } from "../memos"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import type { DecisionsAvailability, ModelRegistry } from "@threahq/agent-runtime"
 import type { AIResidencyPolicy } from "../ai-usage"
@@ -394,6 +394,7 @@ export interface PersonaAgentDeps {
     sessionId: string | null
     sourceStreamIds: string[]
     provenanceStreamIds: string[]
+    requiresBrowse: boolean
     title: string
     abstract: string
     keyPoints: string[]
@@ -1400,7 +1401,7 @@ export class PersonaAgent {
 
         const saveMemoDeps: import("./tools/tool-deps").SaveMemoToolDeps | undefined = saveMemo
           ? {
-              saveMemo: (params) =>
+              saveMemo: async (params) =>
                 saveMemo({
                   initiatingUserId: input.initiatingUserId,
                   workspaceId,
@@ -1411,6 +1412,9 @@ export class PersonaAgent {
                   provenanceStreamIds: [
                     ...new Set([...agentContext.carriedSourceStreamIds, ...digestCollector.provenanceStreamIds]),
                   ],
+                  requiresBrowse: agentContext.memoAudience
+                    ? await audienceBrowses(pool, workspaceId, agentContext.memoAudience)
+                    : true,
                   // The human the agent serves owns a `user`-scoped save (roadmap 6.4).
                   invokingUserId: agentContext.invokingUserId,
                   ...params,

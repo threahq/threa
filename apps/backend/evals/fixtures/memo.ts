@@ -80,6 +80,7 @@ export function toMemo(m: { title: string; abstract: string; createdDaysAgo?: nu
     createdAt,
     updatedAt: createdAt,
     sourceStreamIds: null,
+    requiresBrowse: false,
     archivedAt: null,
   }
 }

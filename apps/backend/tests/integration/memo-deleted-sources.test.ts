@@ -443,6 +443,7 @@ describe("memo sources: deleted and edited messages", () => {
         sessionId: null,
         sourceStreamIds: [threadId, seeded.streamId],
         provenanceStreamIds: [],
+        requiresBrowse: false,
         title: "Flag flip",
         abstract: "The flag flips on Wednesday.",
         keyPoints: [],
@@ -477,6 +478,7 @@ describe("memo sources: deleted and edited messages", () => {
         participantIds: [testUserId],
         citedStreamIds: [cited.streamId],
         citedMessageIds: [cited.messageId],
+        requiresBrowse: false,
       })
       const { rows } = await pool.query(`SELECT source_message_ids FROM memos WHERE source_session_id = $1`, [session])
       return rows.map((row) => row.source_message_ids)

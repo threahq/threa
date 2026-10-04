@@ -526,7 +526,7 @@ describe("SearchService memo leg", () => {
         permissions: {
           accessibleStreamIds: ["stream_1"],
           userId: undefined,
-          audiences: [{ kind: "streams", streamIds: ["stream_1"] }],
+          audiences: [{ kind: "streams", streamIds: ["stream_1"], browses: true }],
         },
         query: "launch date",
         mode: "fast",

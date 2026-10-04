@@ -361,7 +361,7 @@ export class SearchService {
               audiences: [
                 permissions.userId
                   ? { kind: "users", userIds: [permissions.userId] }
-                  : { kind: "streams", streamIds: permissions.accessibleStreamIds },
+                  : { kind: "streams", streamIds: permissions.accessibleStreamIds, browses: true },
               ],
             },
             query: memoQuery,

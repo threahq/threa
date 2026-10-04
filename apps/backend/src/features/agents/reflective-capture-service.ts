@@ -1,7 +1,8 @@
 import type { Pool } from "pg"
-import type { MemoServiceLike } from "../memos"
-import { findMemoryModeStream, isMemoryAutomationOn } from "../streams"
-import { AgentSessionRepository, SessionStatuses } from "./session-repository"
+import { audienceBrowses, type MemoServiceLike } from "../memos"
+import { findMemoryModeStream, isMemoryAutomationOn, StreamRepository } from "../streams"
+import { computeAgentAccessSpec, memoAudienceForSpec } from "./researcher"
+import { AgentSessionRepository, SessionStatuses, type AgentSession } from "./session-repository"
 import { buildSessionDigest } from "./session-digest"
 import { logger } from "../../lib/logger"
 
@@ -87,6 +88,7 @@ export class ReflectiveCaptureService {
         participantIds: digest.participantUserIds,
         citedStreamIds: digest.citedStreamIds,
         citedMessageIds: digest.citedMessageIds,
+        requiresBrowse: await this.requiresBrowse(session, digest.triggerAuthorUserId),
       })
       logger.info({ sessionId, workspaceId, ...result }, "reflective capture processed")
       return { captured: result.captured }
@@ -104,5 +106,15 @@ export class ReflectiveCaptureService {
       )
       throw err
     }
+  }
+
+  /** Whether the memos need browse to read: the session's audience browses, so its prompt may hold member-only content, or cannot be resolved (fail closed). */
+  private async requiresBrowse(session: AgentSession, invokingUserId: string | null): Promise<boolean> {
+    const { pool } = this.deps
+    if (!invokingUserId) return true
+    const stream = await StreamRepository.findById(pool, session.workspaceId, session.streamId)
+    if (!stream) return true
+    const spec = await computeAgentAccessSpec(pool, { stream, invokingUserId })
+    return audienceBrowses(pool, session.workspaceId, memoAudienceForSpec(spec))
   }
 }
