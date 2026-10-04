@@ -171,6 +171,18 @@ export const StreamConnectionRepository = {
     return result.rows.map(mapRow)
   },
 
+  /** The workspaces this channel is actively shared with, seen from either side: the host's partners, or a partner's host. */
+  async listConnectedWorkspaceIds(db: Querier, workspaceId: string, rootStreamId: string): Promise<string[]> {
+    const result = await db.query<{ remote_workspace_id: string }>(sql`
+      SELECT DISTINCT remote_workspace_id
+      FROM stream_connections
+      WHERE workspace_id = ${workspaceId} AND stream_id = ${rootStreamId}
+        AND state = 'active' AND remote_workspace_id IS NOT NULL
+      ORDER BY remote_workspace_id
+    `)
+    return result.rows.map((row) => row.remote_workspace_id)
+  },
+
   /** The active connections whose shared tree holds any of these streams, seen from each host workspace. */
   async listActiveHostConnectionsForStreams(db: Querier, refs: StreamRef[]): Promise<HostConnectionRef[]> {
     if (refs.length === 0) return []

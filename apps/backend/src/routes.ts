@@ -391,6 +391,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     botRuntimeService,
     commandAvailabilityService,
     workspaceIntegrationService,
+    streamConnectionService,
     callService,
   })
   const message = createMessageHandlers({

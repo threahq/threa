@@ -18,6 +18,7 @@ import { StreamRepository } from "../streams"
 import { UserRepository, syncUserCopies } from "../workspaces"
 import { connectionNotFound, writeRefused } from "./errors"
 import { importDoc, loadSharedTree, type BridgeCaller, type ImportedContent } from "./export"
+import { StreamConnectionRepository } from "./repository"
 
 type WriteCaller = BridgeCaller & { streamId: string }
 type MessageCaller = WriteCaller & { messageId: string }
@@ -210,6 +211,11 @@ export class StreamConnectionWriteService {
       return importDoc(client, {
         workspaceId: caller.workspaceId,
         callerWorkspaceId: caller.callerWorkspaceId,
+        partnerWorkspaceIds: await StreamConnectionRepository.listConnectedWorkspaceIds(
+          client,
+          caller.workspaceId,
+          connection.streamId
+        ),
         tree,
         attachmentIds,
         doc: admission.doc,

@@ -152,6 +152,14 @@ export class StreamConnectionService {
     return StreamConnectionRepository.listLiveForStream(this.pool, params.workspaceId, params.streamId)
   }
 
+  async listConnectedWorkspaceIds(params: { workspaceId: string; stream: Stream }): Promise<string[]> {
+    return StreamConnectionRepository.listConnectedWorkspaceIds(
+      this.pool,
+      params.workspaceId,
+      params.stream.rootStreamId ?? params.stream.id
+    )
+  }
+
   /**
    * The control plane keeps no copy of the channel, so it asks here before an
    * accept and to name the channel on the invite page.

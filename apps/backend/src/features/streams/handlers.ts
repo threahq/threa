@@ -10,6 +10,7 @@ import type { LinkPreviewService } from "../link-previews"
 import { serializeBotRuntimePresence, type BotRuntimeService } from "../bot-runtimes"
 import type { CommandAvailabilityService } from "../commands"
 import type { WorkspaceIntegrationService } from "../workspace-integrations"
+import type { StreamConnectionService } from "../stream-connections"
 import { setAuditSubjects, type AuditSubjectRef } from "../access-log"
 import { EVENTS_DEFAULT_LIMIT, type StreamEvent } from "./event-repository"
 import type { EventType, StreamType, E2eKeyWrapsResponse, ToolPrivacyPolicy, ToolPrivacyCategory } from "@threahq/types"
@@ -451,6 +452,7 @@ interface Dependencies {
   botRuntimeService: BotRuntimeService
   commandAvailabilityService: CommandAvailabilityService
   workspaceIntegrationService: WorkspaceIntegrationService
+  streamConnectionService: StreamConnectionService
   callService?: import("../calls").CallService
 }
 
@@ -473,6 +475,7 @@ export function createStreamHandlers({
   botRuntimeService,
   commandAvailabilityService,
   workspaceIntegrationService,
+  streamConnectionService,
   callService,
 }: Dependencies) {
   const previewHistoryService = new StreamPreviewHistoryService({ pool, eventService, linkPreviewService })
@@ -964,18 +967,27 @@ export function createStreamHandlers({
       // value. See `writeBootstrapEventsAndStream` in stream-sync.ts.
       const snapshotAt = new Date().toISOString()
 
-      const [members, botMemberIds, membership, viewerReadState, latestSequence, activityCounts, archivedAncestor] =
-        await Promise.all([
-          streamService.getMembers(workspaceId, streamId),
-          streamService.getBotMemberIds(workspaceId, streamId),
-          streamService.getMembership(workspaceId, streamId, userId),
-          streamService.getViewerReadState(workspaceId, streamId, userId),
-          eventService.getLatestSequence(workspaceId, streamId),
-          activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
-          // Archiving writes only the target row, so a stream's own
-          // `archivedAt` cannot tell the client it is sealed by an ancestor.
-          stream.parentStreamId ? streamService.findArchivedAncestor(workspaceId, streamId) : Promise.resolve(null),
-        ])
+      const [
+        members,
+        botMemberIds,
+        membership,
+        viewerReadState,
+        latestSequence,
+        activityCounts,
+        archivedAncestor,
+        connectedWorkspaceIds,
+      ] = await Promise.all([
+        streamService.getMembers(workspaceId, streamId),
+        streamService.getBotMemberIds(workspaceId, streamId),
+        streamService.getMembership(workspaceId, streamId, userId),
+        streamService.getViewerReadState(workspaceId, streamId, userId),
+        eventService.getLatestSequence(workspaceId, streamId),
+        activityService?.getUnreadCountsForStream(userId, workspaceId, streamId),
+        // Archiving writes only the target row, so a stream's own
+        // `archivedAt` cannot tell the client it is sealed by an ancestor.
+        stream.parentStreamId ? streamService.findArchivedAncestor(workspaceId, streamId) : Promise.resolve(null),
+        streamConnectionService.listConnectedWorkspaceIds({ workspaceId, stream }),
+      ])
       const botRuntimePresences = await botRuntimeService.findLatestPresences({ workspaceId, botIds: botMemberIds })
       const commands = await commandAvailabilityService.listStreamCommands({ workspaceId, userId, streamId })
       const botRuntimeLinkByBotId =
@@ -1109,6 +1121,7 @@ export function createStreamHandlers({
         sharedMessages,
         members,
         botMemberIds,
+        connectedWorkspaceIds,
         botRuntimePresence,
         commands,
         membership,

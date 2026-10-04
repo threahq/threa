@@ -200,6 +200,7 @@ export function makeStreamBootstrap(streamId = "stream_1", sequence = "2"): Stre
     ],
     members: [],
     botMemberIds: [],
+    connectedWorkspaceIds: [],
     membership: {
       streamId,
       memberId: "user_1",
