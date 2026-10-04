@@ -1,9 +1,12 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
 import type { ListStreamConnectionsResponse } from "@threahq/types"
 import {
+  clickReplyInThread,
   enrollWorkspaceFlag,
   expectApiOk,
+  getPanelEditor,
   loginAndCreateWorkspace,
+  waitForRealThreadPanel,
   workspaceIdFromUrl,
   type TestRegion,
 } from "./helpers"
@@ -93,6 +96,26 @@ async function sendText(page: Page, text: string) {
   await editor.pressSequentially(text)
   await page.getByRole("main").getByRole("button", { name: "Send", exact: true }).click()
   await expect(editor).toHaveText("", { timeout: 15_000 })
+}
+
+async function sendMentionOf(editor: Locator, send: Locator, query: string, person: string, text: string) {
+  await editor.click()
+  await editor.pressSequentially(`@${query}`)
+  const option = editor
+    .page()
+    .getByRole("listbox", { name: "Mention suggestions" })
+    .getByRole("option", { name: person })
+  await expect(option).toBeVisible({ timeout: 10_000 })
+  await option.click()
+  await editor.pressSequentially(text)
+  await send.click()
+  await expect(editor).toHaveText("", { timeout: 15_000 })
+}
+
+async function expectMentionActivity(page: Page, workspaceId: string, text: string) {
+  await page.goto(`/w/${workspaceId}/activity`)
+  const mention = page.getByRole("main").getByRole("link").filter({ hasText: "mentioned you in" })
+  await expect(mention.getByText(text)).toBeVisible({ timeout: 30_000 })
 }
 
 function timelineMessage(page: Page, text: string) {
@@ -277,6 +300,52 @@ test.describe("Stream connections", () => {
       await deleteMessage(partnerPage, timelineMessage(partnerPage, edited))
       await expect(timelineMessage(partnerPage, edited)).toHaveCount(0, { timeout: 15_000 })
       await expect(timelineMessage(page, edited)).toHaveCount(0, { timeout: 30_000 })
+    } finally {
+      await partnerContext.close()
+    }
+  })
+
+  test("should notify a person in the other workspace when someone picks them from the mention picker in a shared channel or a new thread in it", async ({
+    browser,
+    page,
+  }) => {
+    test.setTimeout(180_000)
+    const partnerContext = await browser.newContext()
+    try {
+      const partnerPage = await partnerContext.newPage()
+      const { host, partner, slug, streamId } = await setUpHostAndPartner(page, partnerPage, "local-2")
+      await page.goto(settingsUrl(host.workspaceId, streamId, "connect"))
+      await acceptInvite(partnerPage, await createInviteLink(page), slug, host.workspaceName, partner.workspaceName)
+
+      const opened = await page.request.post(`/api/workspaces/${host.workspaceId}/messages`, {
+        data: { streamId, content: `Mockups for review ${host.testId}` },
+      })
+      await expectApiOk(opened, "Send host message")
+
+      await partnerPage.goto(`/w/${partner.workspaceId}/s/${streamId}`)
+      await expect(timelineMessage(partnerPage, host.testId)).toBeVisible({ timeout: 30_000 })
+      const reply = `Looks good to me ${host.testId}`
+      await sendText(partnerPage, reply)
+
+      await page.goto(`/w/${host.workspaceId}/s/${streamId}`)
+      await expect(timelineMessage(page, reply)).toBeVisible({ timeout: 30_000 })
+
+      await clickReplyInThread(timelineMessage(page, reply))
+      const hostAsk = ` can you check the colours ${host.testId}`
+      const panelSend = page.getByTestId("panel").getByRole("button", { name: /^(Send|Reply)$/ })
+      await sendMentionOf(getPanelEditor(page), panelSend, "partner", partner.name, hostAsk)
+      await waitForRealThreadPanel(page)
+      const partnerAsk = ` can you ship it ${host.testId}`
+      await sendMentionOf(
+        partnerPage.locator("[data-message-composer-root] [contenteditable='true']").first(),
+        partnerPage.getByRole("main").getByRole("button", { name: "Send", exact: true }),
+        "host",
+        host.name,
+        partnerAsk
+      )
+
+      await expectMentionActivity(partnerPage, partner.workspaceId, hostAsk.trim())
+      await expectMentionActivity(page, host.workspaceId, partnerAsk.trim())
     } finally {
       await partnerContext.close()
     }

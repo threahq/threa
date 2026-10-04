@@ -130,6 +130,29 @@ describe("A partner's writes to a shared channel", () => {
     return user
   }
 
+  /** A user of another partner of the world's channel, whose copy the host holds. */
+  async function seedOtherPartnerUser(world: World, name: string, state: "active" | "revoked") {
+    const other = await seedWorkspace("Writes other partner")
+    const user = partnerUser(name)
+    await StreamConnectionRepository.applySnapshots(pool, [
+      {
+        ...world.snapshot,
+        id: streamConnectionId(),
+        state,
+        partnerWorkspaceId: other.id,
+        partnerWorkspaceName: other.name,
+        acceptedBy: other.adminId,
+      },
+    ])
+    await syncUserCopies(pool, {
+      workspaceId: world.host.id,
+      originWorkspaceId: other.id,
+      originWorkspaceName: other.name,
+      users: [user],
+    })
+    return user
+  }
+
   function send(
     world: World,
     content: JSONContent | string,
@@ -410,6 +433,33 @@ describe("A partner's writes to a shared channel", () => {
             { type: "text", text: " " },
             { type: "text", text: "@Here" },
           ],
+        },
+      ],
+    })
+  })
+
+  test("should keep a mention of another active partner's user and flatten a revoked partner's when the partner sends", async () => {
+    const world = await seedWorld()
+    const active = await seedOtherPartnerUser(world, "Olle", "active")
+    const revoked = await seedOtherPartnerUser(world, "Rune", "revoked")
+    const content: JSONContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [mention(active.id, "olle"), { type: "text", text: " " }, mention(revoked.id, "rune")],
+        },
+      ],
+    }
+
+    const { messageId: id } = await send(world, content)
+
+    expect((await stored(world, id))?.contentJson).toEqual({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [mention(active.id, "olle"), { type: "text", text: " " }, { type: "text", text: "@rune" }],
         },
       ],
     })

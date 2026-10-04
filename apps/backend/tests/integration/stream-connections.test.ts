@@ -408,6 +408,64 @@ describe("StreamConnectionService", () => {
     })
   })
 
+  test("should list the workspaces a channel is actively shared with, leaving out peer partners, when asked for the host's channel, a thread in it, or the partner's copy", async () => {
+    const host = await seedWorkspace("Acme")
+    const second = await seedWorkspace("Globex")
+    const third = await seedWorkspace("Initech")
+    const channel = await seedStream(host.id, host.adminId)
+    const thread = await StreamRepository.insert(pool, {
+      id: streamId(),
+      workspaceId: host.id,
+      type: StreamTypes.THREAD,
+      parentStreamId: channel.id,
+      parentAnchorId: "msg_anchor",
+      rootStreamId: channel.id,
+      createdBy: host.adminId,
+    })
+    const copy = await StreamRepository.insert(pool, {
+      id: channel.id,
+      workspaceId: second.id,
+      type: StreamTypes.CHANNEL,
+      slug: channel.slug!,
+      displayName: "Launch",
+      visibility: "private",
+      createdBy: second.adminId,
+    })
+    await StreamConnectionRepository.applySnapshots(pool, [
+      { ...activated(snapshot(host, channel.id), second), peerWorkspaceIds: [third.id] },
+      { ...activated(snapshot(host, channel.id), third), peerWorkspaceIds: [second.id] },
+    ])
+
+    expect({
+      channel: await service.listConnectedWorkspaceIds({ workspaceId: host.id, stream: channel }),
+      thread: await service.listConnectedWorkspaceIds({ workspaceId: host.id, stream: thread }),
+      copy: await service.listConnectedWorkspaceIds({ workspaceId: second.id, stream: copy }),
+    }).toEqual({
+      channel: [second.id, third.id].toSorted(),
+      thread: [second.id, third.id].toSorted(),
+      copy: [host.id],
+    })
+  })
+
+  test("should list no workspaces when the channel has only an invite, a revoked connection, or no connection", async () => {
+    const host = await seedWorkspace("Acme")
+    const partner = await seedWorkspace("Globex")
+    const invitedOnly = await seedStream(host.id, host.adminId)
+    const revoked = await seedStream(host.id, host.adminId)
+    const unshared = await seedStream(host.id, host.adminId)
+    const toRevoked = activated(snapshot(host, revoked.id), partner)
+    await StreamConnectionRepository.applySnapshots(pool, [
+      snapshot(host, invitedOnly.id),
+      { ...toRevoked, revision: toRevoked.revision + 1, state: "revoked" },
+    ])
+
+    expect({
+      invitedOnly: await service.listConnectedWorkspaceIds({ workspaceId: host.id, stream: invitedOnly }),
+      revoked: await service.listConnectedWorkspaceIds({ workspaceId: host.id, stream: revoked }),
+      unshared: await service.listConnectedWorkspaceIds({ workspaceId: host.id, stream: unshared }),
+    }).toEqual({ invitedOnly: [], revoked: [], unshared: [] })
+  })
+
   test("should project a peer row in a region that holds neither the host nor the connection's partner", async () => {
     const remoteHost = { id: workspaceId(), name: "Acme" }
     const remotePartner = { id: workspaceId(), name: "Globex" }

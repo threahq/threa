@@ -19,10 +19,11 @@ import {
   testContentJson,
   testMessageContent,
 } from "./setup"
+import { ActivityService } from "../../src/features/activity"
 import { AttachmentRepository } from "../../src/features/attachments"
 import { CommandAvailabilityService, CommandRegistry } from "../../src/features/commands"
 import { EventService, MessageRepository } from "../../src/features/messaging"
-import { StreamRepository, type Stream } from "../../src/features/streams"
+import { StreamMemberRepository, StreamRepository, type Stream } from "../../src/features/streams"
 import { FeatureFlagOverrideRepository, FeatureFlagService } from "../../src/features/feature-flags"
 import { UserRepository, WorkspaceRepository, syncUserCopies } from "../../src/features/workspaces"
 import {
@@ -34,6 +35,7 @@ import {
   StreamConnectionWriteService,
 } from "../../src/features/stream-connections"
 import { attachmentId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { parseMessagePayload } from "../../src/lib/outbox"
 
 const REFUSED = { status: 403, code: StreamConnectionErrorCodes.WRITE_REFUSED }
 const UNREACHABLE = { status: 503, code: StreamConnectionErrorCodes.HOST_UNREACHABLE }
@@ -155,6 +157,7 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
   let cleanup: () => Promise<void>
   let featureFlagService: FeatureFlagService
   let eventService: EventService
+  let activityService: ActivityService
   let host: ConstructorParameters<typeof DirectBridgeClient>[0]
   let stubs: Array<{ stop: (force: boolean) => unknown }> = []
 
@@ -164,6 +167,7 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
     cleanup = isolated.cleanup
     featureFlagService = new FeatureFlagService(pool)
     eventService = new EventService(pool)
+    activityService = new ActivityService({ pool })
     host = {
       exporter: new StreamConnectionExportService({ pool, featureFlagService, storage: createTestStorage() }),
       writer: new StreamConnectionWriteService({ pool, featureFlagService, eventService }),
@@ -309,6 +313,44 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
     )
     return rows.map((row) => row.payload)
   }
+
+  /** Runs a stored message:created event through mention processing, as the activity feed does. */
+  async function mentionActivities(workspaceId: string, id: string) {
+    const { rows } = await pool.query(
+      `SELECT payload FROM outbox
+       WHERE event_type = 'message:created' AND payload->>'workspaceId' = $1
+         AND payload->'event'->'payload'->>'messageId' = $2`,
+      [workspaceId, id]
+    )
+    const created = parseMessagePayload(rows[0].payload)!
+    const activities = await activityService.processMessageMentions({
+      workspaceId,
+      streamId: created.streamId,
+      messageId: created.event.payload.messageId,
+      actorId: created.event.actorId!,
+      actorType: created.event.actorType,
+      contentMarkdown: created.event.payload.contentMarkdown,
+      contentJson: created.event.payload.contentJson,
+    })
+    return activities.map(({ userId: recipient, activityType, messageId: mentioned }) => ({
+      userId: recipient,
+      activityType,
+      messageId: mentioned,
+    }))
+  }
+
+  const mentioning = (user: { id: string; slug: string }): JSONContent => ({
+    type: "doc",
+    content: [
+      {
+        type: "paragraph",
+        content: [
+          { type: "mention", attrs: { id: user.id, slug: user.slug, mentionType: "user" } },
+          { type: "text", text: " hello" },
+        ],
+      },
+    ],
+  })
 
   async function messageIdsByClientId(world: World, clientMessageId: string) {
     const { rows } = await pool.query("SELECT id FROM messages WHERE workspace_id = $1 AND client_message_id = $2", [
@@ -808,6 +850,40 @@ describe("A partner's writes forwarded to a shared channel's host", () => {
         revision: 2,
         refused: UNSUPPORTED,
       })
+    })
+  })
+
+  describe("when a message mentions a user of the other workspace", () => {
+    test("should notify the partner's user when a host member's message reaches the copy by a pull", async () => {
+      const world = await seedWorld()
+      await StreamMemberRepository.insertMany(pool, world.partner.id, world.channelCopy.id, [world.pat.id])
+      await forwardVia(world.bridge).sendMessage(patSend(world, "client-intro", "hi from the partner"))
+      const sent = await eventService.createMessage({
+        workspaceId: world.host.id,
+        streamId: world.channel.id,
+        authorId: world.host.adminId,
+        authorType: AuthorTypes.USER,
+        contentJson: mentioning(world.pat),
+        contentMarkdown: `@${world.pat.slug} hello`,
+      })
+
+      await pullVia(world.bridge).pull(world.ref)
+
+      expect(await mentionActivities(world.partner.id, sent.id)).toEqual([
+        { userId: world.pat.id, activityType: "mention", messageId: sent.id },
+      ])
+    })
+
+    test("should notify the host's user when a partner member's forwarded message is admitted", async () => {
+      const world = await seedWorld()
+      const forwarded = await forwardVia(world.bridge).sendMessage({
+        ...patSend(world, "client-mention", "unused"),
+        contentJson: mentioning({ id: world.host.adminId, slug: world.host.adminSlug }),
+      })
+
+      expect(await mentionActivities(world.host.id, forwarded.id)).toEqual([
+        { userId: world.host.adminId, activityType: "mention", messageId: forwarded.id },
+      ])
     })
   })
 

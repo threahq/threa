@@ -70,7 +70,7 @@ import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { ThreadHeader } from "./thread-header"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
 import { LabelableResourceTypes, StreamTypes } from "@threahq/types"
-import type { MentionStreamContext } from "@/hooks/use-mentionables"
+import { useMentionStreamContext, type MentionStreamContext } from "@/hooks/use-mentionables"
 import { streamLabel } from "@/lib/streams"
 import { useDecryptedStreamName } from "@/hooks/use-decrypted-stream-name"
 import { copyStreamLink } from "@/lib/stream-links"
@@ -390,10 +390,11 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   }, [])
   const handleDraftCollapse = useCallback(() => setDraftExpanded(false), [])
 
-  // Stream context for draft thread broadcast mention filtering.
-  // A draft thread lives under parentStream — its root type determines eligibility.
+  // A draft thread takes its parent's mention context in a thread's shape, so its
+  // first reply offers what the promoted thread's composer will.
+  const parentMentionContext = useMentionStreamContext(workspaceId, parentStream)
   const draftStreamContext = useMemo<MentionStreamContext | undefined>(() => {
-    if (!parentStream) return undefined
+    if (!parentStream || !parentMentionContext) return undefined
     // The draft IS a thread; use the parent's type (or root type) as rootStreamType
     const rootType = parentStream.rootStreamId
       ? ancestors.find((a) => a.id === parentStream.rootStreamId)?.type
@@ -402,8 +403,8 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
     // filterBroadcastMentions falls back to ALL_BROADCAST_MENTIONS (show all)
     // rather than incorrectly filtering to "thread" (show none).
     if (parentStream.rootStreamId && rootType === undefined) return undefined
-    return { streamType: StreamTypes.THREAD, rootStreamType: rootType }
-  }, [parentStream, ancestors])
+    return { ...parentMentionContext, streamType: StreamTypes.THREAD, rootStreamType: rootType }
+  }, [parentStream, ancestors, parentMentionContext])
 
   // Listen for draft thread promotion and navigate to the real thread panel.
   // The real stream's composer is a different element, so a focused draft

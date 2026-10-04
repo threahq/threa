@@ -258,6 +258,12 @@ export interface StreamBootstrap {
   /** Bot IDs that have been granted access to this stream. */
   botMemberIds: string[]
   /**
+   * Workspaces this stream's channel is actively shared with: the host's
+   * partners on the host, the host on a partner. A shared channel's pickers list
+   * the users whose origin is one of these.
+   */
+  connectedWorkspaceIds: string[]
+  /**
    * The nearest archived ancestor up `parentStreamId`, or null when none is.
    * Archiving writes only the target row, so a stream sealed by an ancestor
    * still carries `archivedAt: null`. The workspace bootstrap excludes sealed
