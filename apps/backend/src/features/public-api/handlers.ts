@@ -433,7 +433,7 @@ function normalizeMemoSearchMode(query: string, exact?: boolean): { query: strin
   return { query: unquoted, exact: unquoted.length > 0 }
 }
 
-function serializeMemo(memo: Memo) {
+function serializeMemo({ cardVersion: _cardVersion, ...memo }: Memo) {
   return {
     ...memo,
     createdAt: memo.createdAt.toISOString(),

@@ -29,24 +29,30 @@ describe("memo capture: a cited memo is retired only by knowledge at least as ne
   let pool: Pool
   let nextSequence = 1n
 
-  /** A service whose memorizer reverses `target` in every conversation it sees. */
-  function reversing(target: string): MemoService {
+  /**
+   * A service whose memorizer reverses `target` in every conversation it sees,
+   * running `duringInference` before it answers.
+   */
+  function reversing(target: string, duringInference: () => Promise<void> = async () => {}): MemoService {
     return new MemoService({
       analyticsReporter: new DisabledAnalyticsReporter(),
       pool,
       classifier: { classifyConversation: async () => worthy },
       memorizer: {
-        memorizeConversation: async (_formatted: string, context: { content: { id: string }[] }) => [
-          {
-            title: "Price is $12",
-            abstract: "The plan costs $12 a month.",
-            keyPoints: [],
-            sourceMessageIds: context.content.map((m) => m.id),
-            knowledgeType: "decision",
-            tags: [],
-            supersedesMemoIds: [target],
-          },
-        ],
+        memorizeConversation: async (_formatted: string, context: { content: { id: string }[] }) => {
+          await duringInference()
+          return [
+            {
+              title: "Price is $12",
+              abstract: "The plan costs $12 a month.",
+              keyPoints: [],
+              sourceMessageIds: context.content.map((m) => m.id),
+              knowledgeType: "decision",
+              tags: [],
+              supersedesMemoIds: [target],
+            },
+          ]
+        },
       } as never,
       embeddingService: { embedBatch: async (texts: string[]) => texts.map(() => nextEmbedding()) } as never,
       messageFormatter: { formatMessages: async () => "formatted transcript" } as never,
@@ -162,5 +168,20 @@ describe("memo capture: a cited memo is retired only by knowledge at least as ne
     await reversing(older).processBatch(ws, channel)
 
     expect(await memoStatuses(ws)).toEqual({ "Price is $9": "superseded", "Price is $12": "active" })
+  })
+  test("a memo edited while the model ran survives, and the conversation re-runs against the edit", async () => {
+    const { ws, author, channel } = await seedChannel()
+    const older = await seedMemo(ws, author, channel)
+    await queueConversation(ws, author, channel)
+
+    await reversing(older, async () => {
+      await MemoRepository.update(pool, ws, older, { title: "Price is $9, edited" })
+    }).processBatch(ws, channel)
+
+    expect(await memoStatuses(ws)).toEqual({ "Price is $9, edited": "active" })
+
+    await reversing(older).processBatch(ws, channel)
+
+    expect(await memoStatuses(ws)).toEqual({ "Price is $9, edited": "superseded", "Price is $12": "active" })
   })
 })

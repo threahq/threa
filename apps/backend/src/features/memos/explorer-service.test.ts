@@ -30,6 +30,7 @@ function fakeMemo(overrides: Partial<Memo> = {}): Memo {
     parentMemoId: null,
     status: "active",
     version: 1,
+    cardVersion: 1,
     revisionReason: null,
     authoredByKind: "pipeline",
     sourceSessionId: null,

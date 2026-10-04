@@ -763,9 +763,54 @@ export class MemoService implements MemoServiceLike {
         client,
         memosToCreate.flatMap((m) => m.sourceMessageIds)
       )
-      const savable = memoryOn
+      const sourced = memoryOn
         ? memosToCreate.filter((m) => m.sourceMessageIds.every((id) => !sources.get(id)?.deletedAt))
         : []
+
+      // A memo edited while the model ran was judged on its old text, so
+      // retiring it would discard the edit. A conversation that could retire
+      // one is re-run against the edit instead. Row-locked so no edit lands
+      // between this check and the supersede below (INV-20).
+      const observedVersions = new Map(
+        [...memoryContext, ...[...fetchedData.existingConversationMemos.values()].flat()].map((m) => [
+          m.id,
+          m.cardVersion,
+        ])
+      )
+      const retirableByConversation = new Map<string, string[]>()
+      for (const memo of sourced) {
+        if (!memo.sourceConversationId) continue
+        const retirable = retirableByConversation.get(memo.sourceConversationId) ?? [
+          ...(fetchedData.existingConversationMemos.get(memo.sourceConversationId) ?? []).map((m) => m.id),
+        ]
+        retirable.push(...(memo.supersedesMemoIds ?? []))
+        retirableByConversation.set(memo.sourceConversationId, retirable)
+      }
+      const currentVersions = await MemoRepository.lockCardVersions(client, workspaceId, [
+        ...new Set([...retirableByConversation.values()].flat()),
+      ])
+      const editedConversationIds = new Set(
+        [...retirableByConversation]
+          .filter(([, ids]) =>
+            ids.some((id) => currentVersions.has(id) && currentVersions.get(id) !== observedVersions.get(id))
+          )
+          .map(([conversationId]) => conversationId)
+      )
+      for (const item of fetchedData.pending) {
+        if (item.itemType !== "conversation" || !editedConversationIds.has(item.itemId)) continue
+        deferredItemIds.add(item.id)
+        const fingerprintIndex = classifiedFingerprints.findIndex((entry) => entry.id === item.id)
+        if (fingerprintIndex !== -1) classifiedFingerprints.splice(fingerprintIndex, 1)
+      }
+      if (editedConversationIds.size > 0) {
+        logger.info(
+          { workspaceId, streamId, conversationIds: [...editedConversationIds] },
+          "Deferred conversations whose prior memos were edited while the model ran"
+        )
+      }
+      const savable = sourced.filter(
+        (m) => !m.sourceConversationId || !editedConversationIds.has(m.sourceConversationId)
+      )
 
       const createdMemos: MemoToCreate[] = []
       for (const memoData of savable) {

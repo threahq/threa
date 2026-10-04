@@ -637,6 +637,7 @@ function fakeMemoRow(id: string, overrides: Partial<import("./repository").Memo>
     parentMemoId: null,
     status: "active",
     version: 1,
+    cardVersion: 1,
     revisionReason: null,
     authoredByKind: "pipeline",
     sourceSessionId: null,

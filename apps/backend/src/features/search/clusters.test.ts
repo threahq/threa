@@ -59,6 +59,7 @@ function memoHit(id: string, sourceMessageIds: string[]): MemoExplorerResult {
     parentMemoId: null,
     status: "active",
     version: 1,
+    cardVersion: 1,
     revisionReason: null,
     authoredByKind: "pipeline",
     sourceSessionId: null,
