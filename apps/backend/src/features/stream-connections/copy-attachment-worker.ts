@@ -76,15 +76,14 @@ export function createStreamConnectionCopyAttachmentOnDLQ(deps: {
 async function download(url: string, limit: number): Promise<Buffer> {
   const res = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
   if (!res.ok) throw new Error(`Host storage answered ${res.status}`)
-  if (Number(res.headers.get("content-length") ?? 0) > limit) {
-    throw new Error(`Host file is larger than the ${limit} bytes its message declares`)
-  }
+  const tooLarge = new Error(`Host file is larger than the ${limit} bytes its message declares`)
+  if (Number(res.headers.get("content-length") ?? 0) > limit) throw tooLarge
   const body = res.body as unknown as AsyncIterable<Uint8Array> | null
   const chunks: Uint8Array[] = []
   let received = 0
   for await (const chunk of body ?? []) {
     received += chunk.byteLength
-    if (received > limit) throw new Error(`Host file is larger than the ${limit} bytes its message declares`)
+    if (received > limit) throw tooLarge
     chunks.push(chunk)
   }
   return Buffer.concat(chunks)

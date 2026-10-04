@@ -412,8 +412,6 @@ export class AttachmentService {
       return
     }
 
-    const upload = await AttachmentUploadRepository.findByAttachmentId(client, workspaceId, attachmentId)
-    if (!upload) return
     await this.transitionReservedSafety(
       client,
       current,

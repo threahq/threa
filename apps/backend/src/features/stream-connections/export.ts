@@ -224,10 +224,8 @@ export class StreamConnectionExportService {
       const tree = await this.loadSharedTree(client, caller)
       const attachment = await AttachmentRepository.findById(client, caller.workspaceId, caller.attachmentId)
       const message = attachment?.messageId
-        ? (await MessageRepository.findByIds(client, caller.workspaceId, [attachment.messageId])).get(
-            attachment.messageId
-          )
-        : undefined
+        ? await MessageRepository.findById(client, caller.workspaceId, attachment.messageId)
+        : null
       if (!attachment || !message || message.deletedAt !== null || !tree.some((s) => s.id === message.streamId)) {
         throw connectionNotFound()
       }
