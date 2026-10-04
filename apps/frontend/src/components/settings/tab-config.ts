@@ -70,7 +70,7 @@ export const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
   },
   privacy: {
     label: "Privacy",
-    description: "Crash reports and usage data",
-    keywords: ["privacy", "analytics", "posthog", "consent", "tracking", "telemetry", "errors"],
+    description: "Crash reports, usage data and the device agents see",
+    keywords: ["privacy", "analytics", "posthog", "consent", "tracking", "telemetry", "errors", "device", "agents"],
   },
 }

@@ -9,36 +9,31 @@ const pool = { query: async () => ({ rows: [] }), release() {} } as unknown as P
 const targets = [{ workspaceId: "ws_1", userId: "usr_1" }]
 const phone: DeviceContext = { layout: "mobile", os: "android", installed: true }
 
-const lockUser = spyOn(UserDeviceContextRepository, "lockUser")
+const lockMembers = spyOn(UserDeviceContextRepository, "lockMembers")
 const upsert = spyOn(UserDeviceContextRepository, "upsert")
 
 function writes() {
-  return upsert.mock.calls.map(([, workspaceId, userId, device]) => ({ workspaceId, userId, device }))
+  return upsert.mock.calls.map(([, members, device]) => ({ members, device }))
 }
 
 afterEach(() => {
-  lockUser.mockReset()
+  lockMembers.mockReset()
   upsert.mockReset()
 })
 afterAll(() => {
-  lockUser.mockRestore()
+  lockMembers.mockRestore()
   upsert.mockRestore()
 })
 
 describe("storeHeartbeatDevice", () => {
-  test("should write the device for every workspace when the heartbeat is interacted", async () => {
-    lockUser.mockResolvedValue(true)
+  test("should write the device for every member workspace in one write when the heartbeat is interacted", async () => {
+    const both = [...targets, { workspaceId: "ws_2", userId: "usr_2" }]
+    lockMembers.mockResolvedValue(both)
     upsert.mockResolvedValue(undefined)
-    storeHeartbeatDevice(pool, { device: phone, interacted: true }, [
-      ...targets,
-      { workspaceId: "ws_2", userId: "usr_2" },
-    ])
+    storeHeartbeatDevice(pool, { device: phone, interacted: true }, both)
     await Bun.sleep(0)
 
-    expect(writes()).toEqual([
-      { workspaceId: "ws_1", userId: "usr_1", device: phone },
-      { workspaceId: "ws_2", userId: "usr_2", device: phone },
-    ])
+    expect(writes()).toEqual([{ members: both, device: phone }])
   })
 
   test.each([
@@ -46,7 +41,7 @@ describe("storeHeartbeatDevice", () => {
     ["the device is absent", { device: undefined, interacted: true }],
     ["the device is off-shape", { device: { layout: "tablet", os: "ios", installed: true }, interacted: true }],
   ])("should write nothing when %s", async (_name, heartbeat) => {
-    lockUser.mockResolvedValue(true)
+    lockMembers.mockResolvedValue(targets)
     upsert.mockResolvedValue(undefined)
     storeHeartbeatDevice(pool, heartbeat, targets)
     await Bun.sleep(0)

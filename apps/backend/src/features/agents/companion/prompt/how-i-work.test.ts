@@ -113,6 +113,9 @@ describe("buildHowIWorkSection", () => {
     ])
     expect(card).toContain("end-to-end-encrypted scratchpad")
     expect(card).toContain(
+      "What you see: the messages in this conversation and the files people share in it, nothing more. You don't watch"
+    )
+    expect(card).toContain(
       "Memory: Nothing said here becomes a memo, because the server can't read it. Between conversations you remember only through summaries of your earlier sessions in this stream."
     )
     expect(card).not.toContain("may rerun")

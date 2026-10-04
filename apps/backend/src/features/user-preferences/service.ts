@@ -219,7 +219,7 @@ export class UserPreferencesService {
       // Held until commit, so a device report in flight either lands before
       // the delete below or sees the opt-out and writes nothing.
       const sharingOff = updates.shareDeviceWithAgents === false
-      if (sharingOff) await UserDeviceContextRepository.lockUser(client, workspaceId, userId, "opt-out")
+      if (sharingOff) await UserDeviceContextRepository.lockUser(client, workspaceId, userId)
 
       if (toSet.length > 0) {
         await UserPreferencesRepository.bulkSetOverrides(client, userId, toSet)

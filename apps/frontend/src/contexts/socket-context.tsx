@@ -70,9 +70,10 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
   const pageInteraction = usePageInteraction()
   const accountId = useAccountScopeOptional()?.activeWorkosUserId ?? null
   // SocketProvider sits outside PreferencesProvider, so read the store directly. A ref keeps
-  // the heartbeat effects from re-subscribing when the toggle flips.
-  const shareDeviceWithAgentsRef = useRef(true)
-  shareDeviceWithAgentsRef.current = useWorkspaceUserPreferences(workspaceId)?.shareDeviceWithAgents !== false
+  // the heartbeat effects from re-subscribing when the toggle flips. Until preferences load the
+  // choice is unknown, so nothing is shared.
+  const shareDeviceWithAgentsRef = useRef(false)
+  shareDeviceWithAgentsRef.current = useWorkspaceUserPreferences(workspaceId)?.shareDeviceWithAgents === true
 
   // Track if we've ever been connected (to distinguish initial connect from reconnect)
   const hasEverConnectedRef = useRef(false)

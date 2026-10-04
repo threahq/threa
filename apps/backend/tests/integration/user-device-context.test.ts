@@ -6,7 +6,7 @@ import { storeDevice, UserDeviceContextRepository } from "../../src/features/dev
 import { UserPreferencesRepository, UserPreferencesService } from "../../src/features/user-preferences"
 import { UserRepository } from "../../src/features/workspaces"
 import { userId, workspaceId } from "../../src/lib/id"
-import type { DeviceContext } from "@threahq/types"
+import { DEFAULT_USER_PREFERENCES, type DeviceContext } from "@threahq/types"
 
 const laptop: DeviceContext = { layout: "desktop", os: "linux", installed: false }
 const phone: DeviceContext = { layout: "mobile", os: "android", installed: true }
@@ -42,12 +42,12 @@ describe("UserDeviceContextRepository", () => {
 
     expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toBeNull()
 
-    await storeDevice(pool, wsId, usrId, laptop)
+    await storeDevice(pool, [{ workspaceId: wsId, userId: usrId }], laptop)
     expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toEqual(laptop)
 
-    await storeDevice(pool, wsId, usrId, phone)
+    await storeDevice(pool, [{ workspaceId: wsId, userId: usrId }], phone)
     const changed = await version()
-    await storeDevice(pool, wsId, usrId, phone)
+    await storeDevice(pool, [{ workspaceId: wsId, userId: usrId }], phone)
     expect({ device: await UserDeviceContextRepository.find(pool, wsId, usrId), version: await version() }).toEqual({
       device: phone,
       version: changed,
@@ -57,12 +57,38 @@ describe("UserDeviceContextRepository", () => {
     expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toBeNull()
   })
 
+  test("should store the device for every member in one report and skip users who left or opted out", async () => {
+    const first = await seedUser()
+    const second = await seedUser()
+    const left = await seedUser()
+    const optedOut = await seedUser()
+    await UserRepository.remove(pool, left.wsId, left.usrId)
+    await new UserPreferencesService(pool).updatePreferences(optedOut.wsId, optedOut.usrId, {
+      shareDeviceWithAgents: false,
+    })
+
+    await storeDevice(
+      pool,
+      [first, second, left, optedOut].map(({ wsId, usrId }) => ({ workspaceId: wsId, userId: usrId })),
+      phone
+    )
+
+    expect({
+      // The write treats "no override" as sharing on, so the default must stay on.
+      default: DEFAULT_USER_PREFERENCES.shareDeviceWithAgents,
+      first: await UserDeviceContextRepository.find(pool, first.wsId, first.usrId),
+      second: await UserDeviceContextRepository.find(pool, second.wsId, second.usrId),
+      left: await UserDeviceContextRepository.find(pool, left.wsId, left.usrId),
+      optedOut: await UserDeviceContextRepository.find(pool, optedOut.wsId, optedOut.usrId),
+    }).toEqual({ default: true, first: phone, second: phone, left: null, optedOut: null })
+  })
+
   test("should leave other users' devices when one user's device is deleted", async () => {
     const { wsId, usrId } = await seedUser()
     const other = await seedUser(wsId)
 
-    await storeDevice(pool, wsId, usrId, phone)
-    await storeDevice(pool, wsId, other.usrId, laptop)
+    await storeDevice(pool, [{ workspaceId: wsId, userId: usrId }], phone)
+    await storeDevice(pool, [{ workspaceId: wsId, userId: other.usrId }], laptop)
     await UserDeviceContextRepository.delete(pool, wsId, usrId)
 
     expect({
@@ -74,31 +100,31 @@ describe("UserDeviceContextRepository", () => {
   test("should delete the device and refuse later reports when the user turns sharing off", async () => {
     const { wsId, usrId } = await seedUser()
     const preferences = new UserPreferencesService(pool)
-    await storeDevice(pool, wsId, usrId, laptop)
+    await storeDevice(pool, [{ workspaceId: wsId, userId: usrId }], laptop)
 
     await preferences.updatePreferences(wsId, usrId, { shareDeviceWithAgents: false })
     expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toBeNull()
 
-    await storeDevice(pool, wsId, usrId, phone)
+    await storeDevice(pool, [{ workspaceId: wsId, userId: usrId }], phone)
     expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toBeNull()
 
     await preferences.updatePreferences(wsId, usrId, { shareDeviceWithAgents: true })
-    await storeDevice(pool, wsId, usrId, phone)
+    await storeDevice(pool, [{ workspaceId: wsId, userId: usrId }], phone)
     expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toEqual(phone)
   })
 
   test("should not land a report that races the opt-out when the opt-out commits first", async () => {
     const { wsId, usrId } = await seedUser()
-    await storeDevice(pool, wsId, usrId, laptop)
+    await storeDevice(pool, [{ workspaceId: wsId, userId: usrId }], laptop)
 
     const optOut = await pool.connect()
     try {
       await optOut.query("BEGIN")
-      await UserDeviceContextRepository.lockUser(optOut, wsId, usrId, "opt-out")
+      await UserDeviceContextRepository.lockUser(optOut, wsId, usrId)
       await UserPreferencesRepository.bulkSetOverrides(optOut, usrId, [{ key: "shareDeviceWithAgents", value: false }])
       await UserDeviceContextRepository.delete(optOut, wsId, usrId)
 
-      const report = storeDevice(pool, wsId, usrId, phone)
+      const report = storeDevice(pool, [{ workspaceId: wsId, userId: usrId }], phone)
       await Bun.sleep(100)
       await optOut.query("COMMIT")
       await report
@@ -113,7 +139,7 @@ describe("UserDeviceContextRepository", () => {
     const { wsId, usrId } = await seedUser()
     await UserRepository.remove(pool, wsId, usrId)
 
-    await storeDevice(pool, wsId, usrId, phone)
+    await storeDevice(pool, [{ workspaceId: wsId, userId: usrId }], phone)
 
     expect(await UserDeviceContextRepository.find(pool, wsId, usrId)).toBeNull()
   })

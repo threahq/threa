@@ -168,6 +168,7 @@ describe("system prompt cache stability", () => {
       spawnedFromContext: "parent one",
       previousSessions: "## Previous Sessions\n\nsession one",
       currentSettings: { ...BASE_PREFERENCES, timezone: "Europe/Stockholm" },
+      deviceContext: { layout: "mobile", os: "android", installed: true },
     })
     const turnTwo = buildSystemPrompt({
       ...BASE,
@@ -178,6 +179,7 @@ describe("system prompt cache stability", () => {
       spawnedFromContext: "parent two",
       previousSessions: "## Previous Sessions\n\nsession two",
       currentSettings: { ...BASE_PREFERENCES, timezone: "America/New_York" },
+      deviceContext: { layout: "desktop", os: "linux", installed: false },
     })
 
     expect(turnOne.stable).toBe(turnTwo.stable)

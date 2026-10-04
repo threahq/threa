@@ -305,7 +305,7 @@ describe("UserPreferencesService.updatePreferences shareDeviceWithAgents", () =>
     const bulkDelete = spyOn(UserPreferencesRepository, "bulkDeleteOverrides").mockResolvedValue(undefined as any)
     spyOn(UserPreferencesRepository, "findOverrides").mockResolvedValue([])
     spyOn(OutboxRepository, "insert").mockResolvedValue({} as any)
-    const lockUser = spyOn(UserDeviceContextRepository, "lockUser").mockResolvedValue(true)
+    const lockUser = spyOn(UserDeviceContextRepository, "lockUser").mockResolvedValue(undefined)
     const deleteDevice = spyOn(UserDeviceContextRepository, "delete").mockResolvedValue(undefined)
     return { bulkSet, bulkDelete, lockUser, deleteDevice, service: new UserPreferencesService({} as any) }
   }
@@ -315,9 +315,11 @@ describe("UserPreferencesService.updatePreferences shareDeviceWithAgents", () =>
 
     await service.updatePreferences(WORKSPACE_ID, USER_ID, { shareDeviceWithAgents: false })
 
-    expect(lockUser).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, "opt-out")
+    expect(lockUser).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID)
     expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "shareDeviceWithAgents", value: false }])
     expect(deleteDevice).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID)
+    const order = [lockUser, bulkSet, deleteDevice].map((spy) => spy.mock.invocationCallOrder[0])
+    expect(order).toEqual([...order].sort((a, b) => a! - b!))
   })
 
   it("keeps the stored device when sharing is turned on", async () => {
