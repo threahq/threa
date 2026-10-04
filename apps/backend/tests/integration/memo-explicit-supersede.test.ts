@@ -221,6 +221,80 @@ describe("memo capture: a cited memo is retired only by knowledge at least as ne
     })
   })
 
+  test("a reversal queued ahead of the older one it overtook still retires it", async () => {
+    const { ws, author, channel } = await seedChannel()
+    const original = await seedMemo(ws, author, channel)
+    const older = await queueConversation(ws, author, channel)
+    await queueConversation(ws, author, channel)
+    await pool.query(
+      "UPDATE memo_pending_items SET queued_at = NOW() + INTERVAL '1 minute' WHERE workspace_id = $1 AND item_id = $2",
+      [ws, older]
+    )
+    const captures = ["Price is $8", "Price is $12"]
+
+    await new MemoService({
+      analyticsReporter: new DisabledAnalyticsReporter(),
+      pool,
+      classifier: { classifyConversation: async () => worthy },
+      memorizer: {
+        memorizeConversation: async (_formatted: string, context: { content: { id: string }[] }) => [
+          {
+            title: captures.shift(),
+            abstract: "The plan's monthly price.",
+            keyPoints: [],
+            sourceMessageIds: context.content.map((m) => m.id),
+            knowledgeType: "decision",
+            tags: [],
+            supersedesMemoIds: [original],
+          },
+        ],
+      } as never,
+      embeddingService: { embedBatch: async (texts: string[]) => texts.map(() => nextEmbedding()) } as never,
+      messageFormatter: { formatMessages: async () => "formatted transcript" } as never,
+    }).processBatch(ws, channel)
+
+    expect(await memoStatuses(ws)).toEqual({
+      "Price is $9": "superseded",
+      "Price is $12": "superseded",
+      "Price is $8": "active",
+    })
+  })
+
+  test("a reversal of a memo two batch-mates replaced retires neither of them", async () => {
+    const { ws, author, channel } = await seedChannel()
+    const original = await seedMemo(ws, author, channel)
+    await queueConversation(ws, author, channel)
+    await queueConversation(ws, author, channel)
+    const captures = [["Price is $12", "Billing is yearly"], ["Price is $8"]]
+
+    await new MemoService({
+      analyticsReporter: new DisabledAnalyticsReporter(),
+      pool,
+      classifier: { classifyConversation: async () => worthy },
+      memorizer: {
+        memorizeConversation: async (_formatted: string, context: { content: { id: string }[] }) =>
+          captures.shift()!.map((title) => ({
+            title,
+            abstract: title,
+            keyPoints: [],
+            sourceMessageIds: context.content.map((m) => m.id),
+            knowledgeType: "decision",
+            tags: [],
+            supersedesMemoIds: [original],
+          })),
+      } as never,
+      embeddingService: { embedBatch: async (texts: string[]) => texts.map(() => nextEmbedding()) } as never,
+      messageFormatter: { formatMessages: async () => "formatted transcript" } as never,
+    }).processBatch(ws, channel)
+
+    expect(await memoStatuses(ws)).toEqual({
+      "Price is $9": "superseded",
+      "Price is $12": "active",
+      "Billing is yearly": "active",
+      "Price is $8": "active",
+    })
+  })
+
   test("two memos from one conversation citing the same memo both stand", async () => {
     const { ws, author, channel } = await seedChannel()
     const original = await seedMemo(ws, author, channel)

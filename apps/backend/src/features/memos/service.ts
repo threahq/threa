@@ -808,9 +808,13 @@ export class MemoService implements MemoServiceLike {
           "Deferred conversations whose prior memos were edited while the model ran"
         )
       }
-      const savable = sourced.filter(
-        (m) => !m.sourceConversationId || !editedConversationIds.has(m.sourceConversationId)
-      )
+      // Oldest knowledge first, so a retirement chain below runs in the order
+      // the knowledge was said, whatever order the conversations were queued in.
+      const newestSourceAt = (memo: MemoToCreate) =>
+        Math.max(...memo.sourceMessageIds.map((id) => sources.get(id)?.createdAt.getTime() ?? 0))
+      const savable = sourced
+        .filter((m) => !m.sourceConversationId || !editedConversationIds.has(m.sourceConversationId))
+        .sort((a, b) => newestSourceAt(a) - newestSourceAt(b))
 
       const createdMemos: MemoToCreate[] = []
       // Every memo in the batch saw the stream as it was before the batch, so
@@ -818,14 +822,16 @@ export class MemoService implements MemoServiceLike {
       // batch-mate already retired it. Following the retirement chain makes it
       // retire that batch-mate instead of deduping against it. Memos from one
       // conversation never chain: they are siblings, not successive versions.
-      const retiredBy = new Map<string, MemoToCreate>()
+      // A memo several batch-mates retired has no single successor to follow,
+      // so the chain stops there.
+      const retiredBy = new Map<string, MemoToCreate[]>()
       const latestOf = (id: string, conversationId: string | undefined): string => {
         let current = id
-        for (let next = retiredBy.get(current); next && next.sourceConversationId !== conversationId; ) {
-          current = next.id
-          next = retiredBy.get(current)
+        for (;;) {
+          const next = (retiredBy.get(current) ?? []).filter((m) => m.sourceConversationId !== conversationId)
+          if (next.length !== 1) return current
+          current = next[0].id
         }
-        return current
       }
       for (const memoData of savable) {
         // Authoritative dedup (INV-20): under the lock this sees committed
@@ -948,7 +954,9 @@ export class MemoService implements MemoServiceLike {
           )
         }
 
-        for (const id of [...explicitSupersedeIds, ...toSupersede.map((s) => s.memo.id)]) retiredBy.set(id, memoData)
+        for (const id of [...explicitSupersedeIds, ...toSupersede.map((s) => s.memo.id)]) {
+          retiredBy.set(id, [...(retiredBy.get(id) ?? []), memoData])
+        }
 
         const { embedding, ...memoFields } = memoData
         await MemoRepository.insert(client, memoFields)
