@@ -749,17 +749,17 @@ const schema = [
 
       <section class="install-panel" data-platform="firefox">
         <h3>Firefox</h3>
-        <p class="install-lead">
-          Firefox on a computer doesn't install web apps the way Chrome, Edge,
-          and Safari do. Threa works in a regular Firefox tab, and notifications
-          arrive while Firefox is running. For a separate window with its own
-          icon, open <a href={apiBase}>{appHost}</a> in one of those browsers.
-        </p>
+        <ol class="install-steps">
+          <li>On Windows, open <a href={apiBase}>{appHost}</a> in Firefox.</li>
+          <li>Click <span class="ui">Add to taskbar</span> <span class="glyph" aria-hidden="true"><svg><use href="#icon-install"/></svg></span> at the right end of the address bar.</li>
+          <li>Threa opens in its own window and stays pinned to your taskbar.</li>
+        </ol>
         <p class="install-note">
-          Recent versions of Firefox on Windows can pin a site to the taskbar.
-          If you see <span class="ui">Add to taskbar</span>
-          <span class="glyph" aria-hidden="true"><svg><use href="#icon-install"/></svg></span> in the
-          address bar, that works too.
+          Firefox on Mac and Linux, and the Microsoft Store version of Firefox,
+          can't install web apps. Threa works in a regular Firefox tab there,
+          and notifications arrive while Firefox is running. For a separate
+          window with its own icon, open <a href={apiBase}>{appHost}</a> in
+          Chrome, Edge, or Safari.
         </p>
       </section>
     </div>

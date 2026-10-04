@@ -1980,12 +1980,6 @@ body {
   top: 0;
   color: hsl(var(--muted));
 }
-.install-lead {
-  margin: 0;
-  font-size: 15px;
-  line-height: 1.6;
-  color: hsl(var(--ink-soft));
-}
 .install-note {
   margin: 20px 0 0;
   padding-top: 16px;
