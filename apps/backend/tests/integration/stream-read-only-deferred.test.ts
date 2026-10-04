@@ -260,6 +260,7 @@ describe("deferred generated output authority", () => {
       botChannelService: new BotChannelService({ pool }),
       searchService: {} as PublicApiDeps["searchService"],
       memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
+      preparedRecall: {} as PublicApiDeps["preparedRecall"],
       attachmentService: {} as PublicApiDeps["attachmentService"],
       labelService: {} as PublicApiDeps["labelService"],
       labelAssignmentService: {} as PublicApiDeps["labelAssignmentService"],

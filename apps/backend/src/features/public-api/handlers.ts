@@ -37,7 +37,7 @@ import {
 } from "../e2e-streams"
 import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { isSandboxStreamReadable, recordSandboxReads, sandboxReadableStreamIds } from "../sandboxes"
-import { failSessionWithLifecycleInTransaction, PersonaRepository } from "../agents"
+import { failSessionWithLifecycleInTransaction, PersonaRepository, type PreparedRecall } from "../agents"
 import { type Memo, type MemoExplorerService, type MemoExplorerDetail, type MemoExplorerResult } from "../memos"
 import {
   AttachmentExtractionRepository,
@@ -130,6 +130,7 @@ import type {
   WireMember,
   WirePrincipal,
   WireMemoSearchResult,
+  WireMemoRecall,
   WireMemoDetail,
   WireAttachmentSearchResult,
   WireAttachmentDetails,
@@ -153,6 +154,7 @@ import {
   listMembersSchema,
   listUsersSchema,
   searchMemosSchema,
+  recallMemosSchema,
   searchAttachmentsSchema,
   findMessagesByMetadataSchema,
   upsertPresenceSchema,
@@ -762,6 +764,7 @@ export interface PublicApiDeps {
   searchService: SearchService
   featureFlagService: FeatureFlagService
   memoExplorerService: MemoExplorerService
+  preparedRecall: PreparedRecall
   attachmentService: AttachmentService
   botChannelService: BotChannelService
   botRuntimeService: BotRuntimeService
@@ -790,6 +793,7 @@ export function createPublicApiHandlers({
   searchService,
   featureFlagService,
   memoExplorerService,
+  preparedRecall,
   attachmentService,
   botChannelService,
   botRuntimeService,
@@ -2907,6 +2911,36 @@ export function createPublicApiHandlers({
         results.map((r) => ({ type: "memo", id: r.memo.id }))
       )
       res.json({ data: results.map(serializeMemoSearchResult) })
+    },
+
+    async recallMemos(req: Request, res: Response) {
+      const workspaceId = req.workspaceId!
+      const { query } = validateRequest(recallMemosSchema, req.body)
+      const accessibleStreamIds = await getAccessibleStreamIds(req, {
+        archiveStatus: ["active", "archived"],
+      })
+      // Same principal rule as searchMemos: a bot key has no user, so user-scoped
+      // memos stay invisible to it.
+      const userId = req.userApiKey ? req.user!.id : undefined
+
+      const { outcome, memos } = await preparedRecall.recall({
+        workspaceId,
+        invokingUserId: userId,
+        surface: "public_api",
+        query,
+        accessibleStreamIds: new Set(accessibleStreamIds),
+        memoViewerUserId: userId,
+      })
+
+      setAuditSubjects(
+        res,
+        memos.map((memo) => ({ type: "memo", id: memo.id }))
+      )
+      const payload: WireMemoRecall = {
+        data: memos.map((memo) => ({ ...memo, createdAt: memo.createdAt.toISOString() })),
+        outcome,
+      }
+      res.json(payload)
     },
 
     async getMemo(req: Request, res: Response) {

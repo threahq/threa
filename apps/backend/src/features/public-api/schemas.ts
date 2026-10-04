@@ -37,11 +37,7 @@ import {
   LABELABLE_RESOURCE_TYPES,
   STREAM_DESCRIPTION_MAX_MARKDOWN_LENGTH,
 } from "@threahq/types"
-import {
-  messageMetadataSchema,
-  messageMetadataFilterSchema,
-  sealedBodySchema,
-} from "../messaging"
+import { messageMetadataSchema, messageMetadataFilterSchema, sealedBodySchema } from "../messaging"
 import { botE2eKeyringFields, botIdentityKeyFields, bothOrNeitherBotIdentityKey } from "../../lib/schemas"
 
 const PUBLIC_SEARCH_MAX_LIMIT = 50
@@ -71,6 +67,10 @@ export const searchMemosSchema = z.object({
   before: z.string().datetime().optional(),
   after: z.string().datetime().optional(),
   limit: z.coerce.number().int().min(1).max(PUBLIC_MEMO_SEARCH_MAX_LIMIT).optional().default(20),
+})
+
+export const recallMemosSchema = z.object({
+  query: z.string().trim().min(1),
 })
 
 export const searchAttachmentsSchema = z.object({

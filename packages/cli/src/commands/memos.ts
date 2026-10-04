@@ -1,4 +1,4 @@
-import { getMemo, search } from "../ops"
+import { getMemo, recallMemos, search } from "../ops"
 import { arrayFlag, intFlag, UsageError, type NounSpec, type VerbSpec } from "../output"
 import { renderSearchResult } from "./search"
 
@@ -50,8 +50,34 @@ const getVerb: VerbSpec = {
   },
 }
 
+const recallVerb: VerbSpec = {
+  name: "recall",
+  summary: "Recall the memos relevant to a message",
+  usage: "threa memos recall <message>",
+  help:
+    "threa memos recall <message>\n\n" +
+    "Pass the message you are about to answer; get back the few memos that help with it (at most 5), " +
+    "scored for relevance by a model. Nothing comes back when memory holds nothing relevant. To explore " +
+    "memory by idea or filter, use `threa search --what memos`.\n\n" +
+    "Flags:\n" +
+    "  --json    force JSON output\n" +
+    "  --help    show this help",
+  options: {},
+  run: (ctx, positionals) => {
+    const message = positionals.join(" ").trim()
+    if (!message) throw new UsageError("memos recall requires a <message>")
+    return recallMemos(ctx.client, message)
+  },
+  render: (payload) => {
+    const { data = [], outcome } = payload as { data?: Array<Record<string, unknown>>; outcome?: string }
+    if (data.length > 0) return data.map((memo) => renderSearchResult({ memo })).join("\n")
+    if (outcome === "nothing_relevant" || outcome === "no_candidates") return "(nothing relevant)"
+    return `(recall ${outcome ?? "failed"}; try \`threa search --what memos\`)`
+  },
+}
+
 export const memosNoun: NounSpec = {
   name: "memos",
-  summary: "List memos and get one by id",
-  verbs: [listVerb, getVerb],
+  summary: "List, recall, and get memos",
+  verbs: [listVerb, recallVerb, getVerb],
 }

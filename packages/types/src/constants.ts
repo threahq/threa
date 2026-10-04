@@ -714,6 +714,20 @@ export const MemoScopes = {
   WORKSPACE: "workspace",
 } as const satisfies Record<string, MemoScope>
 
+/**
+ * How a prepared recall ended. Only `recalled` carries memos; `nothing_relevant`
+ * and `no_candidates` are real answers, the rest mean recall could not judge.
+ */
+export const MEMO_RECALL_OUTCOMES = [
+  "recalled",
+  "nothing_relevant",
+  "no_candidates",
+  "unscored",
+  "timeout",
+  "failed",
+] as const
+export type MemoRecallOutcome = (typeof MEMO_RECALL_OUTCOMES)[number]
+
 // Pending memo item types
 export const PENDING_ITEM_TYPES = ["message", "conversation"] as const
 export type PendingItemType = (typeof PENDING_ITEM_TYPES)[number]

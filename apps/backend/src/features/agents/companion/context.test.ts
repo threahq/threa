@@ -41,7 +41,7 @@ const deps = {
   db: emptyDb,
   userPreferencesService: { getPreferences: mock(async () => undefined) } as never,
   conversationSummaryService: { updateForContext: mock(async () => null) } as never,
-  preparedRecall: { recall: mock(async () => []) } as never,
+  preparedRecall: { recall: mock(async () => ({ outcome: "nothing_relevant", memos: [] })) } as never,
 }
 
 function fakeBrief(streamId: string): StreamBrief {
@@ -147,10 +147,10 @@ describe("buildAgentContext prepared recall", () => {
       createdAt: new Date("2026-09-30T10:00:00Z"),
       score: 1,
     })
-    const recall = mock(async (_params: PreparedRecallParams) => [
-      memo("memo_allergy", "msg_elsewhere"),
-      memo("memo_picnic", "msg_1"),
-    ])
+    const recall = mock(async (_params: PreparedRecallParams) => ({
+      outcome: "recalled" as const,
+      memos: [memo("memo_allergy", "msg_elsewhere"), memo("memo_picnic", "msg_1")],
+    }))
 
     const context = await buildAgentContext(
       { ...deps, preparedRecall: { recall } as never },

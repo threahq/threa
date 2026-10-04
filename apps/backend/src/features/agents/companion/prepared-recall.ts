@@ -1,4 +1,4 @@
-import type { KnowledgeType } from "@threahq/types"
+import type { KnowledgeType, MemoRecallOutcome } from "@threahq/types"
 import type { AnalyticsReporter } from "@threahq/backend-common"
 import type { MemoExplorerService, RelevanceScorerLike } from "../../memos"
 import { logger } from "../../../lib/logger"
@@ -21,9 +21,14 @@ export interface RecalledMemo {
   score: number
 }
 
+/** Who asked: Ariadne's turn, or an external agent through the public API. Kept apart so one never skews the other's hit rate. */
+export type RecallSurface = "companion" | "public_api"
+
 export interface PreparedRecallParams {
   workspaceId: string
-  invokingUserId: string
+  /** Absent for a bot key, which has no user to attribute the scoring call to. */
+  invokingUserId: string | undefined
+  surface: RecallSurface
   query: string
   accessibleStreamIds: Set<string>
   /** Set only for a turn private to its user; admits that user's own memos (`resolveMemoViewer`). */
@@ -32,12 +37,13 @@ export interface PreparedRecallParams {
 
 export const PREPARED_RECALL_EVENT = "prepared_recall"
 
-type RecallOutcome = "recalled" | "nothing_relevant" | "no_candidates" | "unscored" | "timeout" | "failed"
-
-interface Found {
-  outcome: RecallOutcome
-  candidateCount: number
+export interface RecallResult {
+  outcome: MemoRecallOutcome
   memos: RecalledMemo[]
+}
+
+interface Found extends RecallResult {
+  candidateCount: number
 }
 
 /**
@@ -70,7 +76,7 @@ export class PreparedRecall {
     this.timeoutMs = deps.timeoutMs ?? PREPARED_RECALL_TIMEOUT_MS
   }
 
-  async recall(params: PreparedRecallParams): Promise<RecalledMemo[]> {
+  async recall(params: PreparedRecallParams): Promise<RecallResult> {
     const startedAt = Date.now()
     let found: Found = { outcome: "failed", candidateCount: 0, memos: [] }
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -110,6 +116,7 @@ export class PreparedRecall {
       distinctId: `workspace:${params.workspaceId}`,
       event: PREPARED_RECALL_EVENT,
       properties: {
+        surface: params.surface,
         outcome: found.outcome,
         candidateCount: found.candidateCount,
         recalledCount: found.memos.length,
@@ -118,7 +125,7 @@ export class PreparedRecall {
       },
       groups: { workspace: params.workspaceId },
     })
-    return found.memos
+    return { outcome: found.outcome, memos: found.memos }
   }
 
   private async find(params: PreparedRecallParams): Promise<Found> {

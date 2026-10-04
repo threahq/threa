@@ -125,6 +125,7 @@ function arrangeCompletion(params: { existingSteps: unknown[]; manifest?: unknow
     searchService: {} as PublicApiDeps["searchService"],
     featureFlagService: {} as PublicApiDeps["featureFlagService"],
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
+    preparedRecall: {} as PublicApiDeps["preparedRecall"],
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService,
     botRuntimeService: botRuntimeService as unknown as PublicApiDeps["botRuntimeService"],

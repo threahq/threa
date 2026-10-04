@@ -167,6 +167,7 @@ function arrangeSealedClaim(params: {
     searchService: {} as PublicApiDeps["searchService"],
     featureFlagService: {} as PublicApiDeps["featureFlagService"],
     memoExplorerService: {} as PublicApiDeps["memoExplorerService"],
+    preparedRecall: {} as PublicApiDeps["preparedRecall"],
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService: {} as PublicApiDeps["botChannelService"],
     botRuntimeService,

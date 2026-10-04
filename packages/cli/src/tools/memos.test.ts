@@ -36,3 +36,24 @@ test("get_memo surfaces a 404 as an isError result with the scope hint", async (
   expect(result.isError).toBe(true)
   expect(textPayload(result).code).toBe("NOT_FOUND")
 })
+
+test("recall_memos posts the message to the recall path and passes the envelope through", async () => {
+  const envelope = { data: [{ id: "memo_1", title: "Deploy order", score: 0.9 }], outcome: "recalled" }
+  fetchSpy.mockResolvedValue(jsonResponse(200, envelope))
+  const client = await connectClient()
+
+  const result = (await client.callTool({
+    name: "recall_memos",
+    arguments: { message: "how do we deploy?" },
+  })) as CallToolResult
+  expect(result.isError).toBeFalsy()
+
+  const init = requestInit(fetchSpy)
+  const url = new URL(String(fetchSpy.mock.calls[0]?.[0]))
+  expect({ method: init.method, path: url.pathname, body: JSON.parse(String(init.body)) }).toEqual({
+    method: "POST",
+    path: "/api/v1/workspaces/ws_1/memos/recall",
+    body: { query: "how do we deploy?" },
+  })
+  expect(textPayload(result)).toEqual(envelope)
+})

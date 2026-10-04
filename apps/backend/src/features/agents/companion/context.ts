@@ -226,7 +226,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
 
   // Recall runs beside the window build: its embedding and scoring calls are
   // the slow part, and nothing in the window depends on them.
-  const [streamContext, recalled] = await Promise.all([
+  const [streamContext, { memos: recalled }] = await Promise.all([
     buildStreamContext(db, stream, {
       preferences,
       // users.timezone is the heartbeat-fresh device timezone; it wins over the
@@ -243,11 +243,12 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       ? preparedRecall.recall({
           workspaceId,
           invokingUserId,
+          surface: "companion",
           query: triggerMessage.contentMarkdown,
           accessibleStreamIds,
           memoViewerUserId,
         })
-      : Promise.resolve([]),
+      : Promise.resolve({ memos: [] }),
   ])
 
   // The window already carries these memos' sources, and an edit may have
