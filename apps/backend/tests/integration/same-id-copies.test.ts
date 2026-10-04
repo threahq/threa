@@ -1,19 +1,25 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { AuthorTypes, StreamTypes, Visibilities } from "@threahq/types"
+import { AuthorTypes, NotificationLevels, StreamTypes, Visibilities } from "@threahq/types"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { AttachmentRepository } from "../../src/features/attachments"
-import { MessageRepository } from "../../src/features/messaging"
-import { StreamEventRepository, StreamRepository } from "../../src/features/streams"
+import { MessageRepository, MessageVersionRepository } from "../../src/features/messaging"
+import {
+  ReadStateRepository,
+  StreamEventRepository,
+  StreamMemberRepository,
+  StreamRepository,
+} from "../../src/features/streams"
 import { UserRepository } from "../../src/features/workspaces"
-import { attachmentId, eventId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { attachmentId, eventId, messageId, messageVersionId, streamId, userId, workspaceId } from "../../src/lib/id"
 
 const CLIENT_MESSAGE_ID = "client-message-1"
 
 /**
- * Threa Connect copies rows into a partner workspace under the same ids, so the
- * six copied tables must let workspace A and workspace B each hold a row for
- * one id and read back only their own.
+ * Threa Connect copies rows into a partner workspace under the same ids and
+ * writes per-copy state beside them, so every table keyed by a copied id must
+ * let workspace A and workspace B each hold a row for one id and read back only
+ * their own.
  */
 describe("same-id copies across workspaces", () => {
   let pool: Pool
@@ -33,9 +39,12 @@ describe("same-id copies across workspaces", () => {
     message: string
     attachment: string
     user: string
+    version: string
   }
 
-  async function seedWorkspace(ws: string, ids: Ids, label: "a" | "b") {
+  const NOTIFICATION_LEVEL = { a: NotificationLevels.MUTED, b: NotificationLevels.MENTIONS } as const
+
+  async function seedWorkspace(ws: string, ids: Ids, label: "a" | "b", events: string[]) {
     await StreamRepository.insert(pool, {
       id: ids.stream,
       workspaceId: ws,
@@ -84,6 +93,28 @@ describe("same-id copies across workspaces", () => {
       sizeBytes: 1,
       storagePath: `${ws}/${ids.attachment}`,
     })
+    await StreamMemberRepository.insert(pool, ws, ids.stream, ids.user)
+    await StreamMemberRepository.update(pool, ws, ids.stream, ids.user, {
+      notificationLevel: NOTIFICATION_LEVEL[label],
+    })
+    for (const id of events) {
+      await StreamEventRepository.insert(pool, {
+        id,
+        workspaceId: ws,
+        streamId: ids.stream,
+        eventType: "message_created",
+        payload: { messageId: ids.message, origin: label },
+      })
+    }
+    await ReadStateRepository.set(pool, ws, ids.stream, ids.user, events[events.length - 1])
+    await MessageVersionRepository.insert(pool, {
+      id: ids.version,
+      workspaceId: ws,
+      messageId: ids.message,
+      versionNumber: 1,
+      editedBy: ids.user,
+      ...testMessageContent(`message ${label} before edit`),
+    })
   }
 
   async function seedPair() {
@@ -96,23 +127,12 @@ describe("same-id copies across workspaces", () => {
       message: messageId(),
       attachment: attachmentId(),
       user: userId(),
+      version: messageVersionId(),
     }
-    await seedWorkspace(wsA, ids, "a")
-    await StreamEventRepository.insert(pool, {
-      id: ids.event,
-      workspaceId: wsA,
-      streamId: ids.stream,
-      eventType: "message_created",
-      payload: { messageId: ids.message, origin: "a" },
-    })
-    await seedWorkspace(wsB, ids, "b")
-    // stream_sequences keeps its single-column key until the follow-up contract, so the allocating insert cannot run for a second workspace.
-    await pool.query(
-      `INSERT INTO stream_events (id, workspace_id, stream_id, sequence, broadcast_sequence, event_type, payload)
-       VALUES ($1, $2, $3, 1, 1, 'message_created', $4)`,
-      [ids.event, wsB, ids.stream, JSON.stringify({ messageId: ids.message, origin: "b" })]
-    )
-    return { wsA, wsB, ids }
+    const events = { a: [ids.event], b: [ids.event, eventId()] }
+    await seedWorkspace(wsA, ids, "a", events.a)
+    await seedWorkspace(wsB, ids, "b", events.b)
+    return { wsA, wsB, ids, events }
   }
 
   async function readWorkspace(ws: string, ids: Ids) {
@@ -124,6 +144,9 @@ describe("same-id copies across workspaces", () => {
     const user = await UserRepository.findById(pool, ws, ids.user)
     const timeline = await StreamEventRepository.list(pool, ws, ids.stream)
     const event = await StreamEventRepository.findById(pool, ws, ids.event)
+    const member = await StreamMemberRepository.findByStreamAndMember(pool, ws, ids.stream, ids.user)
+    const readState = await ReadStateRepository.get(pool, ws, ids.stream, ids.user)
+    const versions = await MessageVersionRepository.listByMessageId(pool, ws, ids.message)
 
     return {
       stream: stream && { id: stream.id, workspaceId: stream.workspaceId, displayName: stream.displayName },
@@ -136,12 +159,24 @@ describe("same-id copies across workspaces", () => {
         filename: attachment.filename,
       },
       user: user && { id: user.id, workspaceId: user.workspaceId, name: user.name },
-      timeline: timeline.map((row) => ({ id: row.id, sequence: row.sequence, payload: row.payload })),
+      timeline: timeline.map((row) => ({
+        id: row.id,
+        sequence: row.sequence,
+        broadcastSequence: row.broadcastSequence,
+        payload: row.payload,
+      })),
       event: event && { id: event.id, payload: event.payload },
+      member: member && { memberId: member.memberId, notificationLevel: member.notificationLevel },
+      readState: readState && { workspaceId: readState.workspaceId, lastReadEventId: readState.lastReadEventId },
+      versions: versions.map((row) => ({
+        id: row.id,
+        versionNumber: row.versionNumber,
+        contentMarkdown: row.contentMarkdown,
+      })),
     }
   }
 
-  function expectedRows(ws: string, ids: Ids, label: "a" | "b", reactions: Record<string, string[]>) {
+  function expectedRows(ws: string, ids: Ids, label: "a" | "b", reactions: Record<string, string[]>, events: string[]) {
     const payload = { messageId: ids.message, origin: label }
     return {
       stream: { id: ids.stream, workspaceId: ws, displayName: `stream ${label}` },
@@ -150,21 +185,29 @@ describe("same-id copies across workspaces", () => {
       sent: { id: ids.message, contentMarkdown: `message ${label}` },
       attachment: { id: ids.attachment, workspaceId: ws, filename: `file-${label}.png` },
       user: { id: ids.user, workspaceId: ws, name: `user ${label}` },
-      timeline: [{ id: ids.event, sequence: 1n, payload }],
+      timeline: events.map((id, index) => ({
+        id,
+        sequence: BigInt(index + 1),
+        broadcastSequence: BigInt(index + 1),
+        payload,
+      })),
       event: { id: ids.event, payload },
+      member: { memberId: ids.user, notificationLevel: NOTIFICATION_LEVEL[label] },
+      readState: { workspaceId: ws, lastReadEventId: events[events.length - 1] },
+      versions: [{ id: ids.version, versionNumber: 1, contentMarkdown: `message ${label} before edit` }],
     }
   }
 
   test("should read only its own row on every table when both workspaces hold the same ids", async () => {
-    const { wsA, wsB, ids } = await seedPair()
+    const { wsA, wsB, ids, events } = await seedPair()
     const reactions = { "👍": [ids.user] }
 
-    expect(await readWorkspace(wsA, ids)).toEqual(expectedRows(wsA, ids, "a", reactions))
-    expect(await readWorkspace(wsB, ids)).toEqual(expectedRows(wsB, ids, "b", reactions))
+    expect(await readWorkspace(wsA, ids)).toEqual(expectedRows(wsA, ids, "a", reactions, events.a))
+    expect(await readWorkspace(wsB, ids)).toEqual(expectedRows(wsB, ids, "b", reactions, events.b))
   })
 
   test("should leave the first workspace's rows unchanged when the second one writes the same ids again", async () => {
-    const { wsA, wsB, ids } = await seedPair()
+    const { wsA, wsB, ids, events } = await seedPair()
 
     const writes = {
       threadAgain: await StreamRepository.insertThreadOrFind(pool, {
@@ -190,6 +233,7 @@ describe("same-id copies across workspaces", () => {
       }),
       reactionAgain: await MessageRepository.addReaction(pool, wsB, ids.message, "👍", ids.user),
       reactionAdded: await MessageRepository.addReaction(pool, wsB, ids.message, "🎉", ids.user),
+      memberAgain: await StreamMemberRepository.insert(pool, wsB, ids.stream, ids.user),
     }
 
     expect({
@@ -201,13 +245,17 @@ describe("same-id copies across workspaces", () => {
       messageAgain: { id: writes.messageAgain.id, contentMarkdown: writes.messageAgain.contentMarkdown },
       reactionAgain: writes.reactionAgain?.reactions,
       reactionAdded: writes.reactionAdded?.reactions,
+      memberAgain: writes.memberAgain.notificationLevel,
     }).toEqual({
       threadAgain: { id: ids.thread, workspaceId: wsB, created: false },
       messageAgain: { id: ids.message, contentMarkdown: "message b" },
       reactionAgain: { "👍": [ids.user] },
       reactionAdded: { "👍": [ids.user], "🎉": [ids.user] },
+      memberAgain: NOTIFICATION_LEVEL.b,
     })
-    expect(await readWorkspace(wsA, ids)).toEqual(expectedRows(wsA, ids, "a", { "👍": [ids.user] }))
-    expect(await readWorkspace(wsB, ids)).toEqual(expectedRows(wsB, ids, "b", { "👍": [ids.user], "🎉": [ids.user] }))
+    expect(await readWorkspace(wsA, ids)).toEqual(expectedRows(wsA, ids, "a", { "👍": [ids.user] }, events.a))
+    expect(await readWorkspace(wsB, ids)).toEqual(
+      expectedRows(wsB, ids, "b", { "👍": [ids.user], "🎉": [ids.user] }, events.b)
+    )
   })
 })

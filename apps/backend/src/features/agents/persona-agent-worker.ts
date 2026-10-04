@@ -128,8 +128,8 @@ export function createPersonaAgentWorker(deps: PersonaAgentWorkerDeps): JobHandl
  * IMPORTANT: We only check for USER messages, not all messages. Otherwise the
  * agent's own responses would trigger follow-up jobs in an infinite loop.
  *
- * Exported because any worker that holds the `(stream_id) WHERE status='running'`
- * session slot during its AI call must call this on completion — `CompanionHandler`
+ * Exported because any worker that holds a stream's running-session slot
+ * during its AI call must call this on completion — `CompanionHandler`
  * suppresses duplicate dispatches while a session is active, so without a follow-up
  * nudge any user message that lands during the AI call gets stranded.
  */

@@ -24,8 +24,8 @@ export type WithSessionResult =
  * 3. Phase 3: Acquire connection -> atomically complete session -> release
  *
  * Race condition prevention:
- * - Uses a partial unique index (stream_id WHERE status='running') to ensure
- *   only one running session per stream
+ * - Uses a partial unique index on workspace and stream where status is running
+ *   to ensure only one running session per workspace and stream
  * - INSERT with ON CONFLICT DO NOTHING atomically checks and creates
  */
 export async function withCompanionSession(

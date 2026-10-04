@@ -1,0 +1,4 @@
+SET LOCAL lock_timeout = '5s';
+
+DROP INDEX idx_agent_conversation_summaries_stream_persona;
+ALTER INDEX idx_agent_conversation_summaries_stream_persona_ws RENAME TO idx_agent_conversation_summaries_stream_persona;
