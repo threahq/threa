@@ -900,15 +900,19 @@ export class MemoService implements MemoServiceLike {
         // dedup–supersede band would otherwise stack forever — the observed
         // prod failure). Nearest old memo becomes the parent; all matches are
         // retired. Batch-mates are excluded so two new memos can't supersede
-        // each other.
+        // each other. Only memos locked and version-checked above may retire:
+        // one restored from the archive while the model ran was never shown
+        // to it, and unarchive leaves its card_version unchanged.
         const toSupersede = memoData.sourceConversationId
-          ? await MemoRepository.findSameConversationNear(client, {
-              workspaceId,
-              conversationId: memoData.sourceConversationId,
-              embedding: memoData.embedding,
-              maxDistance: MEMO_SUPERSEDE_DISTANCE,
-              excludeIds: [...createdMemos.map((m) => m.id), ...explicitSupersedeIds],
-            })
+          ? (
+              await MemoRepository.findSameConversationNear(client, {
+                workspaceId,
+                conversationId: memoData.sourceConversationId,
+                embedding: memoData.embedding,
+                maxDistance: MEMO_SUPERSEDE_DISTANCE,
+                excludeIds: [...createdMemos.map((m) => m.id), ...explicitSupersedeIds],
+              })
+            ).filter((s) => currentVersions.has(s.memo.id))
           : []
         if (toSupersede.length > 0) {
           memoData.parentMemoId = memoData.parentMemoId ?? toSupersede[0].memo.id

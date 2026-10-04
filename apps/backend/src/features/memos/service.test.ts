@@ -305,6 +305,7 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-69)", 
     const findNear = spyOn(MemoRepository, "findSameConversationNear").mockResolvedValue([
       { memo: prior, distance: 0.22 },
     ])
+    spyOn(MemoRepository, "lockCardVersions").mockResolvedValue(new Map([["memo_prior", 1]]))
     const markSuperseded = spyOn(MemoRepository, "markSuperseded").mockResolvedValue(undefined as never)
     const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
 
@@ -339,6 +340,12 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-69)", 
       { memo: nearest, distance: 0.18 },
       { memo: farther, distance: 0.31 },
     ])
+    spyOn(MemoRepository, "lockCardVersions").mockResolvedValue(
+      new Map([
+        ["memo_nearest", 1],
+        ["memo_farther", 1],
+      ])
+    )
     const markSuperseded = spyOn(MemoRepository, "markSuperseded").mockResolvedValue(undefined as never)
     const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
 

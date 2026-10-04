@@ -30,10 +30,18 @@ describe("memo capture: a cited memo is retired only by knowledge at least as ne
   let nextSequence = 1n
 
   /**
-   * A service whose memorizer reverses `target` in every conversation it sees,
-   * running `duringInference` before it answers.
+   * A service whose memorizer captures "Price is $12" from every conversation
+   * it sees, citing `supersedes`, running `duringInference` before it answers.
    */
-  function reversing(target: string, duringInference: () => Promise<void> = async () => {}): MemoService {
+  function capturing({
+    supersedes = [],
+    embedding,
+    duringInference = async () => {},
+  }: {
+    supersedes?: string[]
+    embedding?: number[]
+    duringInference?: () => Promise<void>
+  }): MemoService {
     return new MemoService({
       analyticsReporter: new DisabledAnalyticsReporter(),
       pool,
@@ -49,14 +57,20 @@ describe("memo capture: a cited memo is retired only by knowledge at least as ne
               sourceMessageIds: context.content.map((m) => m.id),
               knowledgeType: "decision",
               tags: [],
-              supersedesMemoIds: [target],
+              supersedesMemoIds: supersedes,
             },
           ]
         },
       } as never,
-      embeddingService: { embedBatch: async (texts: string[]) => texts.map(() => nextEmbedding()) } as never,
+      embeddingService: {
+        embedBatch: async (texts: string[]) => texts.map(() => embedding ?? nextEmbedding()),
+      } as never,
       messageFormatter: { formatMessages: async () => "formatted transcript" } as never,
     })
+  }
+
+  function reversing(target: string, duringInference?: () => Promise<void>): MemoService {
+    return capturing({ supersedes: [target], duringInference })
   }
 
   async function seedChannel(): Promise<{ ws: string; author: string; channel: string }> {
@@ -115,7 +129,7 @@ describe("memo capture: a cited memo is retired only by knowledge at least as ne
   }
 
   /** A settled conversation whose messages are posted now, queued for capture. */
-  async function queueConversation(ws: string, author: string, channel: string): Promise<void> {
+  async function queueConversation(ws: string, author: string, channel: string): Promise<string> {
     const id = conversationId()
     const messages = [await seedMessage(author, channel), await seedMessage(author, channel)]
     await withTransaction(pool, async (client) => {
@@ -132,6 +146,7 @@ describe("memo capture: a cited memo is retired only by knowledge at least as ne
         { id: pendingItemId(), workspaceId: ws, streamId: channel, itemType: "conversation", itemId: id },
       ])
     })
+    return id
   }
 
   async function memoStatuses(ws: string): Promise<Record<string, string>> {
@@ -183,5 +198,38 @@ describe("memo capture: a cited memo is retired only by knowledge at least as ne
     await reversing(older).processBatch(ws, channel)
 
     expect(await memoStatuses(ws)).toEqual({ "Price is $9, edited": "superseded", "Price is $12": "active" })
+  })
+
+  test("a memo restored from the archive while the model ran is not superseded unseen", async () => {
+    const { ws, author, channel } = await seedChannel()
+    const conversation = await queueConversation(ws, author, channel)
+    const restored = memoId()
+    const source = await seedMessage(author, channel)
+    await MemoRepository.insert(pool, {
+      id: restored,
+      workspaceId: ws,
+      memoType: "conversation",
+      sourceConversationId: conversation,
+      title: "Price is $9",
+      abstract: "The plan costs $9 a month.",
+      sourceMessageIds: [source],
+      participantIds: [],
+      knowledgeType: "decision",
+      tags: [],
+      status: "archived",
+    })
+    // Cosine distance 0.25: inside the same-conversation supersede band, outside dedup.
+    const axis = (i: number, weight: number) => Array.from({ length: 1536 }, (_, j) => (j === i ? weight : 0))
+    await MemoRepository.updateEmbedding(pool, restored, axis(1500, 1))
+    const capture = axis(1500, 0.75).map((v, i) => (i === 1501 ? Math.sqrt(1 - 0.75 ** 2) : v))
+
+    await capturing({
+      embedding: capture,
+      duringInference: async () => {
+        await MemoRepository.unarchive(pool, restored)
+      },
+    }).processBatch(ws, channel)
+
+    expect(await memoStatuses(ws)).toEqual({ "Price is $9": "active", "Price is $12": "active" })
   })
 })
