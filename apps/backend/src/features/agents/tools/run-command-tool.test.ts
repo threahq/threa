@@ -218,31 +218,31 @@ describe("bindStreamSandbox", () => {
     })
   })
 
-  test("adds what the command's token read to the box's content once it is revoked", async () => {
+  test("returns the output when everything the box holds is readable or the command's own token read it", async () => {
     const { deps, calls } = bind({
       sealed: false,
       run: async (p) => {
         await p.api!()
-        return { ...ok, contentStreamIds: ["stream_2", "stream_3"] }
+        return { ...ok, contentStreamIds: ["stream_1", "stream_3"] }
       },
     })
 
     expect({ result: await deps!.run(params), calls }).toEqual({
-      result: { ...ok, contentStreamIds: ["stream_2", "stream_3"] },
+      result: { ...ok, contentStreamIds: ["stream_1", "stream_3"] },
       calls: ["run", "mint ttl=90 captured=stream_1,stream_2", "revoke sbx_1"],
     })
   })
 
-  test("cites the token's reads even when a concurrent replace reset the box", async () => {
+  test("withholds the output when the box holds a stream the turn cannot read and the command did not read", async () => {
     const { deps } = bind({
       sealed: false,
       run: async (p) => {
         await p.api!()
-        return ok
+        return { ...ok, stdout: "private notes", contentStreamIds: ["stream_3", "stream_9"] }
       },
     })
 
-    expect((await deps!.run(params)).contentStreamIds).toEqual(["stream_3"])
+    await expect(deps!.run(params)).rejects.toThrow("output is withheld")
   })
 
   test("withholds the output when the reads it was built from cannot be retrieved", async () => {

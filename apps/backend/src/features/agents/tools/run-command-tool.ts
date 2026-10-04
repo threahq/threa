@@ -74,6 +74,19 @@ export interface StreamSandboxDeps {
 }
 
 /**
+ * A concurrent turn with wider reach can reuse this stream's box while the
+ * command runs and land content this turn cannot read; the command may have
+ * read it, so its output must not reach this turn.
+ */
+function withholdForeign(result: SandboxRunResult, readableStreamIds: string[]): SandboxRunResult {
+  const readable = new Set(readableStreamIds)
+  if (result.contentStreamIds.every((id) => readable.has(id))) return result
+  throw new Error(
+    "another turn put files in this stream's sandbox while the command ran, so its output is withheld; run it again"
+  )
+}
+
+/**
  * Binds `run_command` to one stream's sandbox, or withholds it on a sealed
  * stream, whose plaintext and files must not reach a server-side box. Internet
  * needs the workspace setting AND the stream policy's `web` grant; the setting
@@ -106,7 +119,10 @@ export function bindStreamSandbox(
       return settings.sandboxInternet && isToolCategoryAllowed(streamToolPolicy, ToolPrivacyCategories.WEB)
     },
     run: async (params) => {
-      if (!invokingUserId) return sandbox.service.run({ workspaceId, streamId, ...params })
+      if (!invokingUserId) {
+        const result = await sandbox.service.run({ workspaceId, streamId, ...params })
+        return withholdForeign(result, params.readableStreamIds)
+      }
       let tokenId = null as string | null
       const api = async () => {
         const { session, value } = await sandbox.sessionTokens.mint({
@@ -131,11 +147,10 @@ export function bindStreamSandbox(
         )
         throw error
       }
-      // A concurrent replace resets the box's content, so what this command read
-      // survives only on its token. Output without those sources would escape the
-      // digest access check, so a failed revoke fails the command.
+      // What the token read is the only way to tell this command's own reads
+      // from another turn's, so a failed revoke fails the command.
       const read = await revoke()
-      return { ...result, contentStreamIds: [...new Set([...result.contentStreamIds, ...read])] }
+      return withholdForeign(result, [...params.readableStreamIds, ...read])
     },
   }
 }

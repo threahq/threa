@@ -3,7 +3,7 @@ export type { SandboxReplacedReason, SandboxRunResult } from "./service"
 export type { SandboxRunner, SandboxFile, SandboxExecResult, SandboxExecOptions } from "./runner"
 export { DockerSandboxRunner } from "./docker-runner"
 export { RailwaySandboxRunner } from "./railway-runner"
-export { StreamSandboxRepository } from "./repository"
+export { StreamSandboxLeaseRepository, StreamSandboxRepository } from "./repository"
 export {
   SANDBOX_MAX_OUTPUT_BYTES,
   SANDBOX_DEFAULT_TIMEOUT_SEC,

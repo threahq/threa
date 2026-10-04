@@ -6,6 +6,7 @@ import { StreamRepository } from "../../src/features/streams"
 import {
   SandboxService,
   SandboxSessionTokenService,
+  StreamSandboxLeaseRepository,
   StreamSandboxRepository,
   recordSandboxReads,
   type SandboxExecOptions,
@@ -178,9 +179,15 @@ describe("SandboxService", () => {
     const service = new SandboxService({ pool, runner })
     const at = target()
 
-    // The second run starts and binds while the first is still creating its box.
+    // Another replica, its lease expired, binds while this run is still creating its box.
     runner.beforeCreateReturns = async () => {
-      await run(service, at)
+      runner.live.add("other-1")
+      await StreamSandboxRepository.insertIfAbsent(pool, {
+        ...at,
+        internet: false,
+        sandboxId: "other-1",
+        runner: "fake",
+      })
     }
     const result = await run(service, at)
     const row = await StreamSandboxRepository.find(pool, at.workspaceId, at.streamId)
@@ -192,9 +199,9 @@ describe("SandboxService", () => {
       ran: runner.ran.map((r) => r.sandboxId),
     }).toEqual({
       replaced: null,
-      bound: "fake-2",
+      bound: "other-1",
       destroyed: ["fake-1"],
-      ran: ["fake-2", "fake-2"],
+      ran: ["other-1"],
     })
   })
 
@@ -205,16 +212,23 @@ describe("SandboxService", () => {
 
     await run(service, at)
     runner.live.delete("fake-1")
-    // The other run replaces the dead box while this one is still creating its own.
+    // Another replica, its lease expired, replaces the dead box while this run is still creating its own.
     runner.beforeCreateReturns = async () => {
-      await run(service, at)
+      runner.live.add("other-1")
+      await StreamSandboxRepository.replace(pool, {
+        ...at,
+        internet: false,
+        sandboxId: "other-1",
+        runner: "fake",
+        expectedSandboxId: "fake-1",
+      })
     }
     const result = await run(service, at)
 
     expect({ replaced: result.replaced, destroyed: runner.destroyed, ranIn: runner.ran.at(-1)?.sandboxId }).toEqual({
       replaced: "expired",
       destroyed: ["fake-2"],
-      ranIn: "fake-3",
+      ranIn: "other-1",
     })
   })
 
@@ -290,6 +304,59 @@ describe("SandboxService", () => {
       ranIn: runner.ran.at(-1)?.sandboxId,
       content: row?.contentStreamIds,
     }).toEqual({ replaced: "access_changed", destroyed: ["fake-1"], ranIn: "fake-2", content: [] })
+  })
+
+  test("a wider turn's run waits for a narrower turn's command, so its content never lands while that command runs", async () => {
+    const runner = new FakeRunner()
+    const service = new SandboxService({ pool, runner })
+    const at = target()
+    const secret = streamId()
+    const seen: string[][] = []
+    let wider: Promise<unknown> = Promise.resolve()
+    runner.duringExec = async () => {
+      runner.duringExec = null
+      wider = run(service, at, false, { readableStreamIds: [at.streamId, secret], contentStreamIds: [secret] })
+      await new Promise((resolve) => setTimeout(resolve, 600))
+      const row = await StreamSandboxRepository.find(pool, at.workspaceId, at.streamId)
+      seen.push(row?.contentStreamIds ?? [])
+    }
+
+    const narrower = await run(service, at)
+    await wider
+
+    expect({ seen, narrower: narrower.contentStreamIds, ran: runner.ran.map((r) => r.sandboxId) }).toEqual({
+      seen: [[]],
+      narrower: [],
+      ran: ["fake-1", "fake-1"],
+    })
+  })
+
+  test("a run takes over a lease its holder stopped renewing", async () => {
+    const runner = new FakeRunner()
+    const service = new SandboxService({ pool, runner })
+    const at = target()
+    await StreamSandboxLeaseRepository.take(pool, { ...at, leaseId: "sbl_crashed", ttlSec: 0 })
+
+    const result = await run(service, at)
+
+    expect(result.stdout).toBe("ok\n")
+  })
+
+  test("a command whose box was replaced while it ran has its output withheld", async () => {
+    const runner = new FakeRunner()
+    const service = new SandboxService({ pool, runner })
+    const at = target()
+    runner.duringExec = async () => {
+      await StreamSandboxRepository.replace(pool, {
+        ...at,
+        internet: false,
+        sandboxId: "other-1",
+        runner: "fake",
+        expectedSandboxId: "fake-1",
+      })
+    }
+
+    await expect(run(service, at)).rejects.toThrow("output is withheld")
   })
 
   test("a turn that can read everything the box holds keeps it and reports what it holds", async () => {
@@ -433,6 +500,20 @@ describe("run_command", () => {
       contentFrom: [{ streamId: notes, title: "notes" }],
       content: [notes],
     })
+  })
+
+  test("a command whose box another turn filled with unreadable content while it ran has its output withheld", async () => {
+    const at = target()
+    const runner = new FakeRunner()
+    runner.duringExec = async () => {
+      await StreamSandboxRepository.addContent(pool, { ...at, sandboxId: "fake-1", streamIds: [streamId()] })
+    }
+
+    const { output } = await runCommand(commandTool(runner, at, null, "usr_invoker"))
+
+    expect(output.error).toBe(
+      "Sandbox failed: another turn put files in this stream's sandbox while the command ran, so its output is withheld; run it again"
+    )
   })
 
   test("a turn without an invoking user runs commands without a token", async () => {

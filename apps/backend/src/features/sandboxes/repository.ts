@@ -86,3 +86,42 @@ export const StreamSandboxRepository = {
     return result.rows.length > 0
   },
 }
+
+interface SandboxLease {
+  workspaceId: string
+  streamId: string
+  leaseId: string
+}
+
+export const StreamSandboxLeaseRepository = {
+  /** True when `leaseId` now holds the stream's sandbox: nobody held it, or the holder's lease expired. */
+  async take(db: Querier, lease: SandboxLease & { ttlSec: number }): Promise<boolean> {
+    const result = await db.query(sql`
+      INSERT INTO stream_sandbox_leases (workspace_id, stream_id, lease_id, expires_at)
+      VALUES (${lease.workspaceId}, ${lease.streamId}, ${lease.leaseId}, NOW() + make_interval(secs => ${lease.ttlSec}))
+      ON CONFLICT (workspace_id, stream_id) DO UPDATE
+        SET lease_id = EXCLUDED.lease_id, expires_at = EXCLUDED.expires_at
+        WHERE stream_sandbox_leases.expires_at < NOW()
+      RETURNING lease_id
+    `)
+    return result.rows.length > 0
+  },
+
+  /** False when the lease expired and someone else took it. */
+  async renew(db: Querier, lease: SandboxLease & { ttlSec: number }): Promise<boolean> {
+    const result = await db.query(sql`
+      UPDATE stream_sandbox_leases
+      SET expires_at = NOW() + make_interval(secs => ${lease.ttlSec})
+      WHERE workspace_id = ${lease.workspaceId} AND stream_id = ${lease.streamId} AND lease_id = ${lease.leaseId}
+      RETURNING lease_id
+    `)
+    return result.rows.length > 0
+  },
+
+  async release(db: Querier, lease: SandboxLease): Promise<void> {
+    await db.query(sql`
+      DELETE FROM stream_sandbox_leases
+      WHERE workspace_id = ${lease.workspaceId} AND stream_id = ${lease.streamId} AND lease_id = ${lease.leaseId}
+    `)
+  },
+}
