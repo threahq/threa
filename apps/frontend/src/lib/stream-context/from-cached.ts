@@ -28,8 +28,10 @@ import type { ContextItem } from "./types"
  * The wire `detail` is joined live server-side and is empty on a locally derived
  * row that hasn't reconciled yet, so every field is treated as optional here:
  * a link with no preview falls back to its href, an attachment with no metadata
- * to its ref id. Returns null only when the row can't be rendered at all
- * (a file row with no attachment id, a PR row whose ref isn't a PR URL).
+ * to its ref id. Returns null when the row can't be rendered at all (a file row
+ * with no attachment id, a PR row whose ref isn't a PR URL), and for a `link`
+ * row holding a PR URL: projected before PRs had their own category, it can
+ * outlive the server-side backfill in this device's cache.
  */
 export function contextItemFromCached(row: CachedStreamContextItem): ContextItem | null {
   const base = {
@@ -60,6 +62,7 @@ export function contextItemFromCached(row: CachedStreamContextItem): ContextItem
     }
     case "link": {
       const detail = row.detail as Partial<StreamContextLinkDetail>
+      if (parseGitHubPullRequestUrl(detail.url ?? row.refId)) return null
       const { previewKind, badge } = linkPreviewBadge({
         previewType: detail.previewType ?? null,
         contentType: detail.contentType ?? null,

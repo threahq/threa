@@ -329,6 +329,26 @@ describe("StreamContextPanel", () => {
     expect(screen.queryByText("Alpha")).not.toBeInTheDocument()
   })
 
+  it("hides a PR cached as a link row from before PRs had their own section", async () => {
+    const PR = "https://github.com/threahq/threa/pull/1826/files"
+    await db.streamContextItems.bulkPut([
+      cachedRow(serverItem({ category: "link", refId: PR, detail: { url: PR, title: "Stream PR section" } })),
+      cachedRow(
+        serverItem({
+          category: "link",
+          refId: "https://a.example",
+          detail: { url: "https://a.example", title: "Alpha" },
+        })
+      ),
+    ])
+    vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse({ counts: { ...EMPTY_COUNTS, link: 1 } }))
+
+    renderPanel()
+
+    expect(await screen.findByText("Alpha")).toBeInTheDocument()
+    expect(screen.queryByText("Stream PR section")).not.toBeInTheDocument()
+  })
+
   it("keeps server counts across a chip change while the new page is in flight", async () => {
     await db.streamContextItems.bulkPut([
       cachedRow(serverItem({ category: "link", refId: "https://a.example", detail: { url: "https://a.example" } })),
