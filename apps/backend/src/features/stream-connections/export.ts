@@ -177,6 +177,7 @@ export class StreamConnectionExportService {
       })
       const attachments = await AttachmentRepository.findByMessageIds(
         client,
+        caller.workspaceId,
         shared.map((message) => message.id)
       )
       const scope = await loadContentScope(

@@ -8,3 +8,4 @@ export type { VideoTranscodingServiceDeps, VideoTranscodingServiceLike } from ".
 export { StubVideoTranscodingService } from "./service.stub"
 export { createVideoTranscodeSubmitWorker } from "./submit-worker"
 export { createVideoTranscodeCheckWorker } from "./check-worker"
+export { createVideoTranscodeOnDLQ } from "./on-dlq"

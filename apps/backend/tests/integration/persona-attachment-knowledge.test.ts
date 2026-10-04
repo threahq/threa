@@ -522,7 +522,7 @@ describe("PersonaConfigService.attachFromExisting → copy-on-attach (integratio
       })
 
       // The copied extraction carries the content AND the embedding (no re-embed).
-      const copyExtraction = await AttachmentExtractionRepository.findByAttachmentId(pool, copyId)
+      const copyExtraction = await AttachmentExtractionRepository.findByAttachmentId(pool, workspaceId, copyId)
       expect(copyExtraction?.fullText).toBe(sourceText)
       expect(copyExtraction?.hasSummaryEmbedding).toBe(true)
 
@@ -546,12 +546,12 @@ describe("PersonaConfigService.attachFromExisting → copy-on-attach (integratio
       expect(prompt).toContain(sourceText)
 
       // INDEPENDENCE: delete the SOURCE row + its extraction; the copy survives.
-      const sourceDeleted = await attachmentService.delete(sourceId)
+      const sourceDeleted = await attachmentService.delete(workspaceId, sourceId)
       expect(sourceDeleted).toBe(true)
       const sourceGone = await pool.query(sql`SELECT 1 FROM attachments WHERE id = ${sourceId}`)
       expect(sourceGone.rows).toHaveLength(0)
 
-      const survivingExtraction = await AttachmentExtractionRepository.findByAttachmentId(pool, copyId)
+      const survivingExtraction = await AttachmentExtractionRepository.findByAttachmentId(pool, workspaceId, copyId)
       expect(survivingExtraction?.fullText).toBe(sourceText)
       const survivingKnowledge = await PersonaAttachmentRepository.listForPersonaWithContent(
         pool,

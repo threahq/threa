@@ -1,5 +1,10 @@
 import { describe, it, expect, spyOn } from "bun:test"
-import { AttachmentExtractionRepository, EXCEL_MAX_ROWS_PER_REQUEST } from "../../attachments"
+import * as XLSX from "xlsx"
+import {
+  AttachmentExtractionRepository,
+  EXCEL_MAX_ROWS_PER_REQUEST,
+  PdfPageExtractionRepository,
+} from "../../attachments"
 import type { AttachmentService } from "../../attachments"
 import { createReadAttachmentTool } from "./read-attachment-tool"
 import type { WorkspaceToolDeps } from "./tool-deps"
@@ -75,6 +80,7 @@ describe("read_attachment — whole-file read", () => {
       summary: "A Cargo.lock merge conflict snippet",
       fullText: "<<<<<<< conflict ... =======",
     })
+    expect(extractionSpy).toHaveBeenCalledWith(deps.db, "workspace_test", "attach_1")
 
     extractionSpy.mockRestore()
   })
@@ -183,8 +189,90 @@ describe("read_attachment — section paging", () => {
     )
     const parsed = JSON.parse(output)
 
-    expect(parsed.content).toBe("line1\nline2")
-    expect(parsed.lineRange).toBe("1-2 of 4")
+    expect({
+      content: parsed.content,
+      lineRange: parsed.lineRange,
+      extractionLookups: extractionSpy.mock.calls,
+    }).toEqual({
+      content: "line1\nline2",
+      lineRange: "1-2 of 4",
+      extractionLookups: [[deps.db, "workspace_test", "attach_1"]],
+    })
+
+    extractionSpy.mockRestore()
+  })
+
+  it("returns a page range for a PDF through the workspace-scoped page lookup", async () => {
+    const deps = makeDeps({ attachmentService: makeAttachmentService(async () => textAttachment as any) })
+    const extractionSpy = spyOn(AttachmentExtractionRepository, "findByAttachmentId").mockResolvedValue({
+      sourceType: "pdf",
+      pdfMetadata: { totalPages: 3 },
+    } as any)
+    const pagesSpy = spyOn(PdfPageExtractionRepository, "findByAttachmentAndPageRange").mockResolvedValue([
+      { markdownContent: "page one", ocrText: null, rawText: null },
+      { markdownContent: null, ocrText: null, rawText: "page two" },
+    ] as any)
+
+    const tool = createReadAttachmentTool(deps, { supportsVision: false })
+    const { output } = await tool.config.execute(
+      { attachmentId: "attach_1", section: { kind: "pages", startPage: 1, endPage: 2 } },
+      toolOpts
+    )
+    const parsed = JSON.parse(output)
+
+    expect({
+      content: parsed.content,
+      pageRange: parsed.pageRange,
+      extractionLookups: extractionSpy.mock.calls,
+      pageLookups: pagesSpy.mock.calls,
+    }).toEqual({
+      content: "page one\n\n---\n\npage two",
+      pageRange: "1-2 of 3",
+      extractionLookups: [[deps.db, "workspace_test", "attach_1"]],
+      pageLookups: [[deps.db, "workspace_test", "attach_1", 1, 2]],
+    })
+
+    extractionSpy.mockRestore()
+    pagesSpy.mockRestore()
+  })
+
+  it("returns a row range for a spreadsheet through the workspace-scoped extraction lookup", async () => {
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(
+      workbook,
+      XLSX.utils.aoa_to_sheet([
+        ["apple", "1"],
+        ["pear", "2"],
+      ]),
+      "Sheet1"
+    )
+    const deps = makeDeps({
+      attachmentService: makeAttachmentService(async () => textAttachment as any),
+      storage: {
+        getObject: async () => Buffer.from(XLSX.write(workbook, { type: "buffer", bookType: "xlsx" })),
+      } as unknown as WorkspaceToolDeps["storage"],
+    })
+    const extractionSpy = spyOn(AttachmentExtractionRepository, "findByAttachmentId").mockResolvedValue({
+      sourceType: "excel",
+      excelMetadata: { sheets: [{ name: "Sheet1", rows: 2 }] },
+    } as any)
+
+    const tool = createReadAttachmentTool(deps, { supportsVision: false })
+    const { output } = await tool.config.execute(
+      { attachmentId: "attach_1", section: { kind: "rows", sheetName: "Sheet1", startRow: 0, endRow: 2 } },
+      toolOpts
+    )
+    const parsed = JSON.parse(output)
+
+    expect({
+      content: parsed.content,
+      rowRange: parsed.rowRange,
+      extractionLookups: extractionSpy.mock.calls,
+    }).toEqual({
+      content: "| A | B |\n| --- | --- |\n| apple | 1 |\n| pear | 2 |",
+      rowRange: "0-1 of 2",
+      extractionLookups: [[deps.db, "workspace_test", "attach_1"]],
+    })
 
     extractionSpy.mockRestore()
   })

@@ -11,11 +11,11 @@ export function createPdfPageWorker(deps: PdfPageWorkerDeps): JobHandler<PdfProc
   const { pdfProcessingService } = deps
 
   return async (job) => {
-    const { attachmentId, pageNumber, pdfJobId } = job.data
+    const { attachmentId, workspaceId, pageNumber, pdfJobId } = job.data
 
     logger.info({ jobId: job.id, attachmentId, pageNumber, pdfJobId }, "Processing PDF page job")
 
-    await pdfProcessingService.processPage(attachmentId, pageNumber, pdfJobId)
+    await pdfProcessingService.processPage(workspaceId, attachmentId, pageNumber, pdfJobId)
 
     logger.info({ jobId: job.id, attachmentId, pageNumber }, "PDF page job completed")
   }

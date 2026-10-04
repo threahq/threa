@@ -97,6 +97,7 @@ describe("EventService attachment safety checks", () => {
       })
     ).rejects.toThrow("Invalid attachment IDs: must be malware-scan clean")
 
+    expect(AttachmentRepository.findByIds).toHaveBeenCalledWith(expect.anything(), "ws_1", ["attach_1"])
     expect(AttachmentRepository.attachToMessage).not.toHaveBeenCalled()
   })
 
@@ -239,9 +240,10 @@ describe("EventService attachment safety checks", () => {
       attachmentIds: ["attach_e2e"],
     })
 
-    // Bind the fresh e2e_unscanned row to this message: (client, ids, msgId, streamId).
+    // Bind the fresh e2e_unscanned row to this message: (client, workspaceId, ids, msgId, streamId).
     expect(AttachmentRepository.attachToMessage).toHaveBeenCalledWith(
       expect.anything(),
+      "ws_1",
       ["attach_e2e"],
       expect.stringMatching(/^msg_/),
       "stream_1"
@@ -327,6 +329,7 @@ describe("EventService attachment safety checks", () => {
 
     expect(AttachmentRepository.attachToMessage).toHaveBeenCalledWith(
       expect.anything(),
+      "ws_1",
       ["attach_pending"],
       expect.stringMatching(/^msg_/),
       "stream_1"

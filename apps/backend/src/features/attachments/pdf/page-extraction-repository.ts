@@ -144,17 +144,17 @@ export const PdfPageExtractionRepository = {
     return count
   },
 
-  async findById(client: Querier, id: string): Promise<PdfPageExtraction | null> {
+  async findById(client: Querier, workspaceId: string, id: string): Promise<PdfPageExtraction | null> {
     const result = await client.query<PdfPageExtractionRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM pdf_page_extractions WHERE id = ${id}`
+      sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM pdf_page_extractions WHERE workspace_id = ${workspaceId} AND id = ${id}`
     )
     return result.rows[0] ? mapRowToExtraction(result.rows[0]) : null
   },
 
-  async findByAttachmentId(client: Querier, attachmentId: string): Promise<PdfPageExtraction[]> {
+  async findByAttachmentId(client: Querier, workspaceId: string, attachmentId: string): Promise<PdfPageExtraction[]> {
     const result = await client.query<PdfPageExtractionRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM pdf_page_extractions
-      WHERE attachment_id = ${attachmentId}
+      WHERE workspace_id = ${workspaceId} AND attachment_id = ${attachmentId}
       ORDER BY page_number ASC
     `)
     return result.rows.map(mapRowToExtraction)
@@ -162,25 +162,28 @@ export const PdfPageExtractionRepository = {
 
   async findByAttachmentAndPage(
     client: Querier,
+    workspaceId: string,
     attachmentId: string,
     pageNumber: number
   ): Promise<PdfPageExtraction | null> {
     const result = await client.query<PdfPageExtractionRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM pdf_page_extractions
-      WHERE attachment_id = ${attachmentId} AND page_number = ${pageNumber}
+      WHERE workspace_id = ${workspaceId} AND attachment_id = ${attachmentId} AND page_number = ${pageNumber}
     `)
     return result.rows[0] ? mapRowToExtraction(result.rows[0]) : null
   },
 
   async findByAttachmentAndPageRange(
     client: Querier,
+    workspaceId: string,
     attachmentId: string,
     startPage: number,
     endPage: number
   ): Promise<PdfPageExtraction[]> {
     const result = await client.query<PdfPageExtractionRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM pdf_page_extractions
-      WHERE attachment_id = ${attachmentId}
+      WHERE workspace_id = ${workspaceId}
+        AND attachment_id = ${attachmentId}
         AND page_number >= ${startPage}
         AND page_number <= ${endPage}
       ORDER BY page_number ASC
@@ -188,9 +191,14 @@ export const PdfPageExtractionRepository = {
     return result.rows.map(mapRowToExtraction)
   },
 
-  async update(client: Querier, id: string, params: UpdatePdfPageExtractionParams): Promise<PdfPageExtraction | null> {
+  async update(
+    client: Querier,
+    workspaceId: string,
+    id: string,
+    params: UpdatePdfPageExtractionParams
+  ): Promise<PdfPageExtraction | null> {
     // Read-modify-write the whole row to avoid building dynamic SET clauses.
-    const current = await this.findById(client, id)
+    const current = await this.findById(client, workspaceId, id)
     if (!current) return null
 
     let embeddedImages = current.embeddedImages
@@ -208,7 +216,7 @@ export const PdfPageExtractionRepository = {
         processing_status = ${params.processingStatus !== undefined ? params.processingStatus : current.processingStatus},
         error_message = ${params.errorMessage !== undefined ? params.errorMessage : current.errorMessage},
         updated_at = NOW()
-      WHERE id = ${id}
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     return result.rows[0] ? mapRowToExtraction(result.rows[0]) : null
@@ -216,6 +224,7 @@ export const PdfPageExtractionRepository = {
 
   async updateProcessingStatus(
     client: Querier,
+    workspaceId: string,
     id: string,
     status: ProcessingStatus,
     options?: { errorMessage?: string; onlyIfStatusIn?: ProcessingStatus[] }
@@ -226,7 +235,7 @@ export const PdfPageExtractionRepository = {
         SET processing_status = ${status},
             error_message = ${options.errorMessage ?? null},
             updated_at = NOW()
-        WHERE id = ${id} AND processing_status = ANY(${options.onlyIfStatusIn})
+        WHERE workspace_id = ${workspaceId} AND id = ${id} AND processing_status = ANY(${options.onlyIfStatusIn})
       `)
       return (result.rowCount ?? 0) > 0
     }
@@ -236,35 +245,8 @@ export const PdfPageExtractionRepository = {
       SET processing_status = ${status},
           error_message = ${options?.errorMessage ?? null},
           updated_at = NOW()
-      WHERE id = ${id}
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
     `)
     return (result.rowCount ?? 0) > 0
-  },
-
-  async deleteByAttachmentId(client: Querier, attachmentId: string): Promise<number> {
-    const result = await client.query(sql`
-      DELETE FROM pdf_page_extractions WHERE attachment_id = ${attachmentId}
-    `)
-    return result.rowCount ?? 0
-  },
-
-  async countByStatus(
-    client: Querier,
-    attachmentId: string
-  ): Promise<{ pending: number; processing: number; completed: number; failed: number }> {
-    const result = await client.query<{ status: string; count: string }>(sql`
-      SELECT processing_status as status, COUNT(*)::integer as count
-      FROM pdf_page_extractions
-      WHERE attachment_id = ${attachmentId}
-      GROUP BY processing_status
-    `)
-
-    const counts = { pending: 0, processing: 0, completed: 0, failed: 0 }
-    for (const row of result.rows) {
-      if (row.status in counts) {
-        counts[row.status as keyof typeof counts] = Number(row.count)
-      }
-    }
-    return counts
   },
 }

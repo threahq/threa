@@ -181,7 +181,7 @@ export class AttachmentService {
     const { attachment } = params
     const upload = await AttachmentUploadRepository.findByAttachmentId(this.pool, attachment.workspaceId, attachment.id)
     if (!upload) {
-      const settled = await this.settledDuplicate(attachment.id)
+      const settled = await this.settledDuplicate(attachment.workspaceId, attachment.id)
       if (settled) return { status: "created", attachment: settled }
       throw new Error(`No upload reservation found for attachment ${attachment.id}`)
     }
@@ -203,7 +203,7 @@ export class AttachmentService {
           message: `Expected ${upload.expectedSizeBytes} bytes, received ${storedStat.sizeBytes}`,
         })
         if (failed) {
-          const row = await AttachmentRepository.findById(client, attachment.id)
+          const row = await AttachmentRepository.findById(client, attachment.workspaceId, attachment.id)
           if (row) await this.publishUploadStatusChanged(client, row, AttachmentUploadStatuses.FAILED)
         }
       })
@@ -218,20 +218,25 @@ export class AttachmentService {
       const settled = await withTransaction(this.pool, async (client) => {
         // Lock the row so this settle serializes with a concurrent
         // send binding the id — whichever commits second sees the other.
-        const current = await AttachmentRepository.findByIdForUpdate(client, attachment.id)
+        const current = await AttachmentRepository.findByIdForUpdate(client, attachment.workspaceId, attachment.id)
         if (!current) throw new Error(`Attachment row missing for reservation ${attachment.id}`)
         const marked = await AttachmentUploadRepository.markUploaded(client, attachment.workspaceId, attachment.id)
         if (!marked) return null // concurrent duplicate — resolved below
         await this.transitionReservedSafety(client, current, AttachmentSafetyStatuses.E2E_UNSCANNED)
-        await AttachmentRepository.updateProcessingStatus(client, attachment.id, ProcessingStatuses.SKIPPED)
-        await AttachmentUploadRepository.deleteByAttachmentId(client, attachment.id)
-        const updated = await AttachmentRepository.findById(client, attachment.id)
+        await AttachmentRepository.updateProcessingStatus(
+          client,
+          attachment.workspaceId,
+          attachment.id,
+          ProcessingStatuses.SKIPPED
+        )
+        await AttachmentUploadRepository.deleteByAttachmentId(client, attachment.workspaceId, attachment.id)
+        const updated = await AttachmentRepository.findById(client, attachment.workspaceId, attachment.id)
         if (!updated) throw new Error(`Attachment not found after upload completion: ${attachment.id}`)
         await this.publishUploadStatusChanged(client, updated, AttachmentUploadStatuses.UPLOADED)
         return updated
       })
       if (!settled) {
-        const duplicate = await this.settledDuplicate(attachment.id)
+        const duplicate = await this.settledDuplicate(attachment.workspaceId, attachment.id)
         if (duplicate) return { status: "created", attachment: duplicate }
         throw new Error(`Attachment upload ${attachment.id} is not in a completable state`)
       }
@@ -241,7 +246,7 @@ export class AttachmentService {
     // Bytes exist now — enter the scan window. Scan runs outside any
     // transaction (INV-41), then the settle transaction applies the verdict.
     const enteredScan = await withTransaction(this.pool, async (client) => {
-      const current = await AttachmentRepository.findByIdForUpdate(client, attachment.id)
+      const current = await AttachmentRepository.findByIdForUpdate(client, attachment.workspaceId, attachment.id)
       if (!current) throw new Error(`Attachment row missing for reservation ${attachment.id}`)
       const marked = await AttachmentUploadRepository.markUploaded(client, attachment.workspaceId, attachment.id)
       if (!marked) return false // concurrent duplicate — resolved below
@@ -249,7 +254,7 @@ export class AttachmentService {
       return true
     })
     if (!enteredScan) {
-      const duplicate = await this.settledDuplicate(attachment.id)
+      const duplicate = await this.settledDuplicate(attachment.workspaceId, attachment.id)
       if (duplicate) return { status: "created", attachment: duplicate }
       throw new Error(`Attachment upload ${attachment.id} is not in a completable state`)
     }
@@ -275,7 +280,7 @@ export class AttachmentService {
           message: "Stored bytes changed while the scan ran",
         })
         if (failed) {
-          const row = await AttachmentRepository.findById(client, attachment.id)
+          const row = await AttachmentRepository.findById(client, attachment.workspaceId, attachment.id)
           if (row) await this.publishUploadStatusChanged(client, row, AttachmentUploadStatuses.FAILED)
         }
       })
@@ -283,7 +288,7 @@ export class AttachmentService {
     }
 
     const settled = await withTransaction(this.pool, async (client) => {
-      const current = await AttachmentRepository.findByIdForUpdate(client, attachment.id)
+      const current = await AttachmentRepository.findByIdForUpdate(client, attachment.workspaceId, attachment.id)
       if (!current) throw new Error(`Attachment ${attachment.id} was deleted before safety status could be updated`)
 
       await this.transitionReservedSafety(client, current, scanResult.status)
@@ -300,15 +305,20 @@ export class AttachmentService {
           storagePath: attachment.storagePath,
         })
       } else {
-        await AttachmentRepository.updateProcessingStatus(client, attachment.id, ProcessingStatuses.SKIPPED)
+        await AttachmentRepository.updateProcessingStatus(
+          client,
+          attachment.workspaceId,
+          attachment.id,
+          ProcessingStatuses.SKIPPED
+        )
         logger.warn(
           { attachmentId: attachment.id, reason: scanResult.reason ?? "unknown" },
           "Reserved attachment upload quarantined by malware scanner"
         )
       }
 
-      await AttachmentUploadRepository.deleteByAttachmentId(client, attachment.id)
-      const updated = await AttachmentRepository.findById(client, attachment.id)
+      await AttachmentUploadRepository.deleteByAttachmentId(client, attachment.workspaceId, attachment.id)
+      const updated = await AttachmentRepository.findById(client, attachment.workspaceId, attachment.id)
       if (!updated) throw new Error(`Attachment not found after safety update: ${attachment.id}`)
       await this.publishUploadStatusChanged(client, updated, AttachmentUploadStatuses.UPLOADED)
       return updated
@@ -322,7 +332,7 @@ export class AttachmentService {
     // message renders, minus its S3 object.
     if (!settled.messageId) {
       try {
-        await this.delete(settled.id)
+        await this.delete(attachment.workspaceId, settled.id)
       } catch (err) {
         logger.error({ err, attachmentId: settled.id }, "Failed to clean up quarantined reserved upload")
       }
@@ -363,7 +373,7 @@ export class AttachmentService {
       // CAS miss: already failed (idempotent re-report) or already settled —
       // a late report must not clobber an upload that actually completed.
       if (!failed) return upload.status === AttachmentUploadStatuses.FAILED ? "reported" : "already_settled"
-      const row = await AttachmentRepository.findById(client, params.attachmentId)
+      const row = await AttachmentRepository.findById(client, params.workspaceId, params.attachmentId)
       if (row) await this.publishUploadStatusChanged(client, row, AttachmentUploadStatuses.FAILED)
       return "reported"
     })
@@ -402,17 +412,14 @@ export class AttachmentService {
         olderThan: new Date(Date.now() - failAfterMs),
         limit: batchSize,
       })
-      const quarantinedIds =
-        scanOrphans.length > 0
-          ? new Set(
-              await AttachmentRepository.quarantineStuckPendingScans(
-                client,
-                scanOrphans.map((u) => u.attachmentId)
-              )
-            )
-          : new Set<string>()
+      const quarantined = await AttachmentRepository.quarantineStuckPendingScans(client, scanOrphans)
       const scanOrphanEvents = scanOrphans
-        .filter((u) => u.messageId && u.streamId && quarantinedIds.has(u.attachmentId))
+        .filter(
+          (u) =>
+            u.messageId &&
+            u.streamId &&
+            quarantined.some((q) => q.workspaceId === u.workspaceId && q.attachmentId === u.attachmentId)
+        )
         .map((u) => ({
           eventType: "attachment:upload_status_changed" as const,
           payload: {
@@ -451,9 +458,14 @@ export class AttachmentService {
       // commit (partial uploads may have left bytes at the reserved key).
       const orphans = abandoned.filter((u) => !u.messageId)
       if (orphans.length > 0) {
-        const orphanIds = orphans.map((u) => u.attachmentId)
-        await AttachmentRepository.deleteUnattachedByIds(client, orphanIds)
-        await AttachmentUploadRepository.deleteByAttachmentIds(client, orphanIds)
+        const orphanIdsByWorkspace = new Map<string, string[]>()
+        for (const u of orphans) {
+          orphanIdsByWorkspace.set(u.workspaceId, [...(orphanIdsByWorkspace.get(u.workspaceId) ?? []), u.attachmentId])
+        }
+        for (const [workspaceId, orphanIds] of orphanIdsByWorkspace) {
+          await AttachmentRepository.deleteUnattachedByIds(client, workspaceId, orphanIds)
+          await AttachmentUploadRepository.deleteByAttachmentIds(client, workspaceId, orphanIds)
+        }
       }
 
       return {
@@ -483,8 +495,8 @@ export class AttachmentService {
    * persisted job both stream the same bytes, so the loser is a success too.
    * Returns the settled attachment, or null when the state is genuinely wrong.
    */
-  private async settledDuplicate(attachmentId: string): Promise<Attachment | null> {
-    const current = await AttachmentRepository.findById(this.pool, attachmentId)
+  private async settledDuplicate(workspaceId: string, attachmentId: string): Promise<Attachment | null> {
+    const current = await AttachmentRepository.findById(this.pool, workspaceId, attachmentId)
     if (current && isAttachmentSafeForSharing(current.safetyStatus)) return current
     return null
   }
@@ -500,7 +512,7 @@ export class AttachmentService {
     to: AttachmentSafetyStatus
   ): Promise<void> {
     if (current.safetyStatus === to) return
-    const updated = await AttachmentRepository.updateSafetyStatus(client, current.id, to, {
+    const updated = await AttachmentRepository.updateSafetyStatus(client, current.workspaceId, current.id, to, {
       onlyIfStatusIn: [AttachmentSafetyStatuses.PENDING_UPLOAD, AttachmentSafetyStatuses.PENDING_SCAN],
     })
     if (!updated) {
@@ -590,11 +602,17 @@ export class AttachmentService {
     })
 
     return withTransaction(this.pool, async (client) => {
-      const safetyUpdated = await AttachmentRepository.updateSafetyStatus(client, params.id, scanResult.status, {
-        onlyIfStatus: AttachmentSafetyStatuses.PENDING_SCAN,
-      })
+      const safetyUpdated = await AttachmentRepository.updateSafetyStatus(
+        client,
+        params.workspaceId,
+        params.id,
+        scanResult.status,
+        {
+          onlyIfStatus: AttachmentSafetyStatuses.PENDING_SCAN,
+        }
+      )
       if (!safetyUpdated) {
-        const current = await AttachmentRepository.findById(client, params.id)
+        const current = await AttachmentRepository.findById(client, params.workspaceId, params.id)
         if (!current) {
           throw new Error(`Attachment ${params.id} was deleted before safety status could be updated`)
         }
@@ -614,7 +632,12 @@ export class AttachmentService {
           storagePath: params.storagePath,
         })
       } else {
-        await AttachmentRepository.updateProcessingStatus(client, params.id, ProcessingStatuses.SKIPPED)
+        await AttachmentRepository.updateProcessingStatus(
+          client,
+          params.workspaceId,
+          params.id,
+          ProcessingStatuses.SKIPPED
+        )
         logger.warn(
           {
             attachmentId: params.id,
@@ -626,7 +649,7 @@ export class AttachmentService {
         )
       }
 
-      const updated = await AttachmentRepository.findById(client, attachment.id)
+      const updated = await AttachmentRepository.findById(client, params.workspaceId, attachment.id)
       if (!updated) {
         throw new Error(`Attachment not found after safety update: ${attachment.id}`)
       }
@@ -647,7 +670,7 @@ export class AttachmentService {
     }
 
     try {
-      const deleted = await this.delete(attachment.id)
+      const deleted = await this.delete(params.workspaceId, attachment.id)
       if (!deleted) {
         logger.error({ attachmentId: attachment.id }, "Quarantined attachment cleanup did not delete attachment")
         return { status: "cleanup_failed", attachmentId: attachment.id }
@@ -711,7 +734,7 @@ export class AttachmentService {
           processingStatus: source.processingStatus,
         })
         if (newThumbnailStoragePath && source.width != null && source.height != null) {
-          await AttachmentRepository.updateImageVariant(client, newId, {
+          await AttachmentRepository.updateImageVariant(client, source.workspaceId, newId, {
             thumbnailStoragePath: newThumbnailStoragePath,
             width: source.width,
             height: source.height,
@@ -764,8 +787,8 @@ export class AttachmentService {
     return safetyStatusBlockReason(attachment.safetyStatus)
   }
 
-  async getById(id: string): Promise<Attachment | null> {
-    return AttachmentRepository.findById(this.pool, id)
+  async getById(workspaceId: string, id: string): Promise<Attachment | null> {
+    return AttachmentRepository.findById(this.pool, workspaceId, id)
   }
 
   /**
@@ -791,8 +814,8 @@ export class AttachmentService {
     id: string,
     { workspaceId, accessibleStreamIds }: { workspaceId: string; accessibleStreamIds: string[] }
   ): Promise<{ attachment: Attachment; viaStreamIds: string[] } | null> {
-    const attachment = await AttachmentRepository.findById(this.pool, id)
-    if (!attachment || attachment.workspaceId !== workspaceId) {
+    const attachment = await AttachmentRepository.findById(this.pool, workspaceId, id)
+    if (!attachment) {
       return null
     }
     const accessibleSet = new Set(accessibleStreamIds)
@@ -810,16 +833,16 @@ export class AttachmentService {
     return { attachment, viaStreamIds }
   }
 
-  async getByIds(ids: string[]): Promise<Attachment[]> {
-    return AttachmentRepository.findByIds(this.pool, ids)
+  async getByIds(workspaceId: string, ids: string[]): Promise<Attachment[]> {
+    return AttachmentRepository.findByIds(this.pool, workspaceId, ids)
   }
 
-  async getByMessageId(messageId: string): Promise<Attachment[]> {
-    return AttachmentRepository.findByMessageId(this.pool, messageId)
+  async getByMessageId(workspaceId: string, messageId: string): Promise<Attachment[]> {
+    return AttachmentRepository.findByMessageId(this.pool, workspaceId, messageId)
   }
 
-  async getByMessageIds(messageIds: string[]): Promise<Map<string, Attachment[]>> {
-    return AttachmentRepository.findByMessageIds(this.pool, messageIds)
+  async getByMessageIds(workspaceId: string, messageIds: string[]): Promise<Map<string, Attachment[]>> {
+    return AttachmentRepository.findByMessageIds(this.pool, workspaceId, messageIds)
   }
 
   getContent(attachment: Attachment): Promise<ObjectContent> {
@@ -838,21 +861,21 @@ export class AttachmentService {
    * every row-delete path so a new child table can't get cascaded in one deleter
    * but not the other.
    */
-  private async cascadeChildRows(client: PoolClient, id: string): Promise<void> {
-    await AttachmentExtractionRepository.deleteByAttachmentId(client, id)
-    await AttachmentUploadRepository.deleteByAttachmentId(client, id)
-    await AttachmentRepository.deletePersonaBindings(client, id)
+  private async cascadeChildRows(client: PoolClient, workspaceId: string, id: string): Promise<void> {
+    await AttachmentExtractionRepository.deleteByAttachmentId(client, workspaceId, id)
+    await AttachmentUploadRepository.deleteByAttachmentId(client, workspaceId, id)
+    await AttachmentRepository.deletePersonaBindings(client, workspaceId, id)
   }
 
-  async delete(id: string): Promise<boolean> {
+  async delete(workspaceId: string, id: string): Promise<boolean> {
     const storagePath = await withTransaction(this.pool, async (client) => {
-      const attachment = await AttachmentRepository.findByIdForUpdate(client, id)
+      const attachment = await AttachmentRepository.findByIdForUpdate(client, workspaceId, id)
       if (!attachment) {
         return null
       }
 
-      await this.cascadeChildRows(client, id)
-      const deleted = await AttachmentRepository.delete(client, id)
+      await this.cascadeChildRows(client, workspaceId, id)
+      const deleted = await AttachmentRepository.delete(client, workspaceId, id)
       if (!deleted) {
         throw new Error(`Attachment ${id} could not be deleted after row lock`)
       }
@@ -876,13 +899,13 @@ export class AttachmentService {
    * message has claimed it. Returns `{ deleted }`: `false` (extraction/upload
    * rows and the S3 object left intact) when the row was already claimed or gone.
    */
-  async deleteIfUnbound(id: string): Promise<{ deleted: boolean }> {
+  async deleteIfUnbound(workspaceId: string, id: string): Promise<{ deleted: boolean }> {
     const storagePath = await withTransaction(this.pool, async (client) => {
-      const path = await AttachmentRepository.deleteIfUnbound(client, id)
+      const path = await AttachmentRepository.deleteIfUnbound(client, workspaceId, id)
       if (path == null) {
         return null
       }
-      await this.cascadeChildRows(client, id)
+      await this.cascadeChildRows(client, workspaceId, id)
       return path
     })
 

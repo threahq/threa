@@ -197,7 +197,7 @@ describe("pinned hydration", () => {
       attachments: [],
     })
     // The source's files are never looked up for a span reference.
-    expect(findAttachments).toHaveBeenCalledWith({}, [])
+    expect(findAttachments).toHaveBeenCalledWith({}, "ws_1", [])
   })
 
   it("hydrates the same source at two pins into two independent slots", async () => {
@@ -644,8 +644,7 @@ describe("hydrateSharedMessageRefs", () => {
 
     await hydrateSharedMessageRefs({} as any, "ws_1", VIEWER_ID, [ref("msg_a"), ref("msg_b")])
     expect(findAttachments).toHaveBeenCalledTimes(1)
-    const calledWith = (findAttachments as any).mock.calls[0][1].sort()
-    expect(calledWith).toEqual(["msg_a", "msg_b"])
+    expect(findAttachments).toHaveBeenCalledWith(expect.anything(), "ws_1", ["msg_a", "msg_b"])
   })
 
   it("does not fetch attachments when no ok-state messages survive", async () => {
