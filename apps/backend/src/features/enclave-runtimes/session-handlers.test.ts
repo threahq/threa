@@ -315,7 +315,11 @@ describe("createEnclaveSessionHandlers.pollMessages (interjection pull)", () => 
     await handlers.pollMessages(getReq("session_1", "3"), res)
 
     // Clamped to the trigger sequence (5), not the requested 3.
-    expect(list.mock.calls[0]![2]).toMatchObject({ afterSequence: 5n, types: ["message_created"] })
+    expect(list.mock.calls[0]!.slice(1)).toMatchObject([
+      "ws_1",
+      "stream_1",
+      { afterSequence: 5n, types: ["message_created"] },
+    ])
     expect(res.statusCode).toBe(200)
     expect(res.jsonBody).toEqual({
       messages: [
@@ -756,7 +760,7 @@ describe("createEnclaveSessionHandlers.complete", () => {
     expect(res.statusCode).toBe(204)
     // The boundary is the reported sequence (9), not the trigger (5), so the
     // message the reply already addressed isn't re-triggered.
-    expect(unseen.mock.calls[0]![2]).toBe(9n)
+    expect(unseen.mock.calls[0]!.slice(1)).toEqual(["ws_1", "stream_1", 9n])
     expect(enqueueCatchUp).not.toHaveBeenCalled()
   })
 

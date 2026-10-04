@@ -258,6 +258,7 @@ export function createWorkspaceHandlers({
       const inboxArrivalCandidateIds = [...new Set([...membershipStreamIds, ...inboxHeldStreamIds])]
       const [unreadCountsMap, activityCounts, unreadActivities, inboxArrivedAtDates] = await Promise.all([
         streamService.getUnreadCounts(
+          workspaceId,
           streamMemberships.map((m) => ({
             streamId: m.streamId,
             memberId: userId,
@@ -290,7 +291,7 @@ export function createWorkspaceHandlers({
       }
       const [readOverlayMap, watermarkSequences] = await Promise.all([
         streamService.getReadOverlayForMember(userId, membershipStreamIds),
-        streamService.getSequencesByEventIds([...watermarkEventIds]),
+        streamService.getSequencesByEventIds(workspaceId, [...watermarkEventIds]),
       ])
       const readMessageIds: Record<string, string[]> = {}
       for (const [streamId, ids] of readOverlayMap) {

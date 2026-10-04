@@ -68,7 +68,7 @@ describe("message revision", () => {
     expect(message.revision).toBe(1)
     expect(await MessageVersionRepository.getCurrentRevision(pool, message.id)).toBe(1)
 
-    const events = await eventService.listEvents(channel, { limit: 200 })
+    const events = await eventService.listEvents(testWorkspaceId, channel, { limit: 200 })
     const created = events.find(
       (e) => e.eventType === "message_created" && (e.payload as MessageCreatedPayload).messageId === message.id
     )?.payload as MessageCreatedPayload
@@ -104,7 +104,7 @@ describe("message revision", () => {
       { versionNumber: 2, contentMarkdown: "v2 body" },
     ])
 
-    const events = await eventService.listEvents(channel, { limit: 200 })
+    const events = await eventService.listEvents(testWorkspaceId, channel, { limit: 200 })
     const edits = events
       .filter((e) => e.eventType === "message_edited" && (e.payload as MessageEditedPayload).messageId === message.id)
       .map((e) => (e.payload as MessageEditedPayload).revision)
@@ -161,7 +161,7 @@ describe("message revision", () => {
     const versions = await MessageVersionRepository.listByMessageId(pool, message.id)
     expect(versions.map((v) => v.versionNumber)).toEqual([1, 2, 3])
     expect((await MessageRepository.findById(pool, message.id))?.revision).toBe(4)
-    const lastEdit = (await eventService.listEvents(channel, { limit: 200 }))
+    const lastEdit = (await eventService.listEvents(testWorkspaceId, channel, { limit: 200 }))
       .filter((e) => e.eventType === "message_edited" && (e.payload as MessageEditedPayload).messageId === message.id)
       .map((e) => (e.payload as MessageEditedPayload).revision)
       .at(-1)

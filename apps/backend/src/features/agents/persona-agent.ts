@@ -554,7 +554,7 @@ export class PersonaAgent {
           )
         )?.id === stream.id
 
-      const latestSequence = await StreamEventRepository.getLatestSequence(client, streamId)
+      const latestSequence = await StreamEventRepository.getLatestSequence(client, workspaceId, streamId)
       const triggerMessageRevision = await MessageVersionRepository.getCurrentRevision(client, messageId)
 
       // Per-stream tool-privacy policy. Rows live on the non-thread root —
@@ -998,6 +998,7 @@ export class PersonaAgent {
 
         const targetStreamId = sessionStreamId
         const supersededMessagePlan = await this.loadSupersededMessagePlan(db, {
+          workspaceId,
           supersedesSessionId,
           streamId: targetStreamId,
           personaId: persona.id,
@@ -1728,7 +1729,7 @@ export class PersonaAgent {
           runAbortSignal: sessionAbortController.signal,
           newMessages: {
             check: async (checkStreamId, sinceSequence, excludeAuthorId) => {
-              const events = await StreamEventRepository.list(db, checkStreamId, {
+              const events = await StreamEventRepository.list(db, workspaceId, checkStreamId, {
                 types: ["message_created", "message_edited", "message_deleted"],
                 afterSequence: sinceSequence,
                 limit: 50,
@@ -1989,13 +1990,14 @@ export class PersonaAgent {
   private async loadSupersededMessagePlan(
     db: Querier,
     params: {
+      workspaceId: string
       supersedesSessionId?: string
       streamId: string
       personaId: string
       triggerMessageId: string
     }
   ): Promise<SupersededMessagePlan | null> {
-    const { supersedesSessionId, streamId, personaId, triggerMessageId } = params
+    const { workspaceId, supersedesSessionId, streamId, personaId, triggerMessageId } = params
     if (!supersedesSessionId) return null
 
     const supersededSession = await AgentSessionRepository.findById(db, supersedesSessionId)
@@ -2024,7 +2026,12 @@ export class PersonaAgent {
       return null
     }
 
-    const eventMessageIds = await StreamEventRepository.listMessageIdsBySession(db, streamId, supersededSession.id)
+    const eventMessageIds = await StreamEventRepository.listMessageIdsBySession(
+      db,
+      workspaceId,
+      streamId,
+      supersededSession.id
+    )
     const candidateMessageIds = dedupeMessageIds([...eventMessageIds, ...supersededSession.sentMessageIds])
     if (candidateMessageIds.length === 0) {
       return { messageIds: [], nextIndex: 0, supersededSession }

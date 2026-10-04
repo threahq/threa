@@ -59,7 +59,7 @@ export class StreamPreviewHistoryService {
     const streams = await StreamRepository.findByIds(pool, workspaceId, streamIds)
     const streamsById = new Map(streams.map((stream) => [stream.id, stream]))
     const authorizedIds = streamIds.filter((id) => accessible.has(id))
-    const windows = await StreamEventRepository.listPreviewWindows(pool, authorizedIds, userId)
+    const windows = await StreamEventRepository.listPreviewWindows(pool, workspaceId, authorizedIds, userId)
     const events = [...windows.values()].flatMap((window) => window.events)
     const anchors = collectThreadAnchorIds(events)
     const [threadData, threadSummaries] = await Promise.all([

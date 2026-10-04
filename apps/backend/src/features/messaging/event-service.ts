@@ -1104,7 +1104,12 @@ export class EventService {
     // rather than incrementing, so replayed/duplicated events converge. Exact
     // under concurrency because the sequence allocator's row lock serializes
     // message inserts per stream until commit.
-    const messageOrdinal = await StreamEventRepository.countMessagesThrough(client, params.streamId, event.sequence)
+    const messageOrdinal = await StreamEventRepository.countMessagesThrough(
+      client,
+      params.workspaceId,
+      params.streamId,
+      event.sequence
+    )
     await OutboxRepository.insert(client, "stream:activity", {
       workspaceId: params.workspaceId,
       streamId: params.streamId,
@@ -1863,6 +1868,7 @@ export class EventService {
 
       const sourceEvents = await StreamEventRepository.findMessageCreatedByMessageIdsForUpdate(
         client,
+        params.workspaceId,
         params.sourceStreamId,
         uniqueMessageIds
       )
@@ -1879,6 +1885,7 @@ export class EventService {
       })
       const sourceAgentSessionEvents = await StreamEventRepository.findAgentSessionEventsBySessionIdsForUpdate(
         client,
+        params.workspaceId,
         params.sourceStreamId,
         agentSessionIds
       )
@@ -1949,7 +1956,7 @@ export class EventService {
       const destinationTombstoneId = eventId()
 
       const movedAt = new Date()
-      const movedEvents = await StreamEventRepository.moveMessageCreatedEvents(client, {
+      const movedEvents = await StreamEventRepository.moveMessageCreatedEvents(client, params.workspaceId, {
         sourceStreamId: params.sourceStreamId,
         destinationStreamId: destinationThread.id,
         updates,
@@ -1962,7 +1969,7 @@ export class EventService {
           moveTombstoneId: destinationTombstoneId,
         },
       })
-      const movedAgentSessionEvents = await StreamEventRepository.moveEventsById(client, {
+      const movedAgentSessionEvents = await StreamEventRepository.moveEventsById(client, params.workspaceId, {
         sourceStreamId: params.sourceStreamId,
         destinationStreamId: destinationThread.id,
         updates: agentSessionEventUpdates,
@@ -2211,7 +2218,7 @@ export class EventService {
       // A1 (sparse-read design): the move dropped the source's true message count.
       // Ship the post-move source ordinal so the client SETs `latestOrdinals` down
       // (no applier corrects it downward otherwise → sticky phantom unread).
-      const sourceMessageCounts = await StreamEventRepository.countMessagesByStreamBatch(client, [
+      const sourceMessageCounts = await StreamEventRepository.countMessagesByStreamBatch(client, params.workspaceId, [
         params.sourceStreamId,
       ])
       const sourceMessageOrdinal = sourceMessageCounts.get(params.sourceStreamId) ?? 0
@@ -2529,6 +2536,7 @@ export class EventService {
   }
 
   async listEvents(
+    workspaceId: string,
     streamId: string,
     filters?: {
       types?: EventType[]
@@ -2538,7 +2546,7 @@ export class EventService {
       viewerId?: string
     }
   ): Promise<StreamEvent[]> {
-    return StreamEventRepository.list(this.pool, streamId, filters)
+    return StreamEventRepository.list(this.pool, workspaceId, streamId, filters)
   }
 
   /**
@@ -2546,6 +2554,7 @@ export class EventService {
    * (search results return message IDs, not event IDs).
    */
   async listEventsAround(
+    workspaceId: string,
     streamId: string,
     targetId: string,
     options?: { idType?: "event" | "message"; limit?: number; viewerId?: string }
@@ -2553,16 +2562,16 @@ export class EventService {
     return withClient(this.pool, async (client) => {
       let targetEvent: StreamEvent | null = null
       if (!options?.idType || options.idType === "event") {
-        targetEvent = await StreamEventRepository.findById(client, targetId)
+        targetEvent = await StreamEventRepository.findById(client, workspaceId, targetId)
         if (targetEvent && targetEvent.streamId !== streamId) targetEvent = null
       }
       if (!targetEvent && options?.idType !== "event") {
-        targetEvent = await StreamEventRepository.findByMessageId(client, streamId, targetId)
+        targetEvent = await StreamEventRepository.findByMessageId(client, workspaceId, streamId, targetId)
       }
       if (!targetEvent) {
         return { events: [], hasOlder: false, hasNewer: false }
       }
-      return StreamEventRepository.listAround(client, streamId, targetEvent.sequence, options)
+      return StreamEventRepository.listAround(client, workspaceId, streamId, targetEvent.sequence, options)
     })
   }
 
@@ -2573,24 +2582,20 @@ export class EventService {
    * window is empty and the client falls back to the live tail.
    */
   async listEventsAroundDate(
+    workspaceId: string,
     streamId: string,
     date: Date,
     options?: { limit?: number; viewerId?: string }
   ): Promise<{ events: StreamEvent[]; hasOlder: boolean; hasNewer: boolean; anchorMessageId: string | null }> {
     return withClient(this.pool, async (client) => {
-      const anchor = await StreamEventRepository.findFirstMessageOnOrAfter(client, streamId, date)
+      const anchor = await StreamEventRepository.findFirstMessageOnOrAfter(client, workspaceId, streamId, date)
       if (!anchor) {
         return { events: [], hasOlder: false, hasNewer: false, anchorMessageId: null }
       }
-      const around = await StreamEventRepository.listAround(client, streamId, anchor.sequence, options)
+      const around = await StreamEventRepository.listAround(client, workspaceId, streamId, anchor.sequence, options)
       const anchorMessageId = (anchor.payload as { messageId?: string })?.messageId ?? null
       return { ...around, anchorMessageId }
     })
-  }
-
-  /** Count message_created events per stream, used to derive thread reply counts. */
-  async countMessagesByStreams(streamIds: string[]): Promise<Map<string, number>> {
-    return StreamEventRepository.countMessagesByStreamBatch(this.pool, streamIds)
   }
 
   async getMessageVersions(messageId: string): Promise<MessageVersion[]> {
@@ -2614,8 +2619,8 @@ export class EventService {
     return MessageRepository.findByMetadata(this.pool, params)
   }
 
-  async getLatestSequence(streamId: string): Promise<bigint | null> {
-    return StreamEventRepository.getLatestSequence(this.pool, streamId)
+  async getLatestSequence(workspaceId: string, streamId: string): Promise<bigint | null> {
+    return StreamEventRepository.getLatestSequence(this.pool, workspaceId, streamId)
   }
 
   /**
