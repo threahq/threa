@@ -198,9 +198,10 @@ export const BotRepository = {
    */
   async listVisibleTo(db: Querier, workspaceId: string, userId: string): Promise<Bot[]> {
     const result = await db.query<BotRow>(composeSql`
-      ${sql`SELECT ${sql.raw(BOT_COLUMNS)} FROM bots`}
-      WHERE workspace_id = ${workspaceId}
-        AND archived_at IS NULL
+      ${sql`
+        SELECT ${sql.raw(BOT_COLUMNS)} FROM bots
+        WHERE workspace_id = ${workspaceId} AND archived_at IS NULL
+      `}
         AND ${visibleBotPredicateSql(workspaceId, userId)}
       ORDER BY created_at ASC
     `)
@@ -209,10 +210,10 @@ export const BotRepository = {
 
   async findVisibleTo(db: Querier, workspaceId: string, userId: string, id: string): Promise<Bot | null> {
     const result = await db.query<BotRow>(composeSql`
-      ${sql`SELECT ${sql.raw(BOT_COLUMNS)} FROM bots`}
-      WHERE workspace_id = ${workspaceId}
-        AND id = ${id}
-        AND archived_at IS NULL
+      ${sql`
+        SELECT ${sql.raw(BOT_COLUMNS)} FROM bots
+        WHERE workspace_id = ${workspaceId} AND id = ${id} AND archived_at IS NULL
+      `}
         AND ${visibleBotPredicateSql(workspaceId, userId)}
     `)
     return result.rows[0] ? mapRowToBot(result.rows[0]) : null
