@@ -3,6 +3,7 @@ import { act, render, renderHook, waitFor } from "@testing-library/react"
 import {
   db,
   type CachedActorCopy,
+  type CachedBot,
   type CachedPersona,
   type CachedWorkspaceMetadata,
   type CachedWorkspaceUser,
@@ -61,6 +62,25 @@ function makePersona(id: string, name: string): CachedPersona {
     managedBy: "system",
     ownerUserId: null,
     status: "active",
+    createdAt: "2026-03-01T10:00:00Z",
+    updatedAt: "2026-03-01T10:00:00Z",
+    _cachedAt: 1,
+  }
+}
+
+function makeBot(id: string, name: string): CachedBot {
+  return {
+    id,
+    workspaceId: WORKSPACE,
+    type: "shared",
+    ownerUserId: null,
+    traits: [],
+    slug: name.toLowerCase(),
+    name,
+    description: null,
+    avatarEmoji: null,
+    avatarUrl: null,
+    archivedAt: null,
     createdAt: "2026-03-01T10:00:00Z",
     updatedAt: "2026-03-01T10:00:00Z",
     _cachedAt: 1,
@@ -233,13 +253,19 @@ describe("actor lookup", () => {
     }).toEqual({ persona: undefined, bot: undefined })
   })
 
-  it("should prefer the local persona over a host copy when both carry the id", async () => {
+  it("should prefer the local persona and bot over a host copy when both carry the id", async () => {
     await db.workspaceMetadata.put(makeMetadata())
     await db.personas.put(makePersona("persona_1", "Ariadne"))
-    await db.actorCopies.put(makeCopy("persona_1", "Host Copy"))
+    await db.bots.put(makeBot("bot_1", "Deployer"))
+    await db.actorCopies.bulkPut([makeCopy("persona_1", "Host Persona"), makeCopy("bot_1", "Host Bot")])
     const { result } = renderHook(() => useActors(WORKSPACE))
 
-    await waitFor(() => expect(result.current.getActorName("persona_1", "persona")).toBe("Ariadne"))
+    await waitFor(() =>
+      expect({
+        persona: result.current.getActorName("persona_1", "persona"),
+        bot: result.current.getActorName("bot_1", "bot"),
+      }).toEqual({ persona: "Ariadne", bot: "Deployer" })
+    )
   })
 
   it("should change the lookup identity when a copy changes, and keep it when nothing does", async () => {

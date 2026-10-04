@@ -3818,7 +3818,6 @@ async function cleanupStaleEntities(
   const bootstrapDmPeerIds = new Set(bootstrap.dmPeers.map((dp) => `${workspaceId}:${dp.streamId}`))
   const bootstrapPersonaIds = new Set(bootstrap.personas.map((p) => p.id))
   const bootstrapBotIds = new Set(bootstrap.bots.map((b) => b.id))
-  const bootstrapActorCopyIds = new Set((bootstrap.actorCopies ?? []).map((c) => c.id))
   const bootstrapLabelIds = new Set(bootstrap.labels.map((l) => l.id))
   const bootstrapLabelAssignmentIds = new Set(
     bootstrap.labelAssignments.map((a) =>
@@ -3833,7 +3832,17 @@ async function cleanupStaleEntities(
   const staleStreamIds = await staleEntityIds(db.streams, "workspaceId", workspaceId, bootstrapStreamIds, now)
   const staleUserIds = await staleEntityIds(db.workspaceUsers, "workspaceId", workspaceId, bootstrapUserIds, now)
   const stalePersonaIds = await staleEntityIds(db.personas, "workspaceId", workspaceId, bootstrapPersonaIds, now)
-  const staleActorCopyIds = await staleEntityIds(db.actorCopies, "workspaceId", workspaceId, bootstrapActorCopyIds, now)
+  // A bootstrap from a server older than actor copies omits them; that is no
+  // authority to delete the copies a newer server already sent.
+  const staleActorCopyIds = bootstrap.actorCopies
+    ? await staleEntityIds(
+        db.actorCopies,
+        "workspaceId",
+        workspaceId,
+        new Set(bootstrap.actorCopies.map((c) => c.id)),
+        now
+      )
+    : []
 
   const [, , , staleMembershipIds, staleDmPeerIds, , staleBotIds, , staleLabelIds, staleLabelAssignmentIds] =
     await Promise.all([

@@ -620,6 +620,16 @@ describe("applyWorkspaceBootstrap (real IndexedDB)", () => {
     ])
   })
 
+  it("should keep cached actor copies when a bootstrap from an older server omits them", async () => {
+    const fetchStartedAt = Date.now() - 1000
+    const cached = { ...makeActorCopy("persona_host", "Host Persona"), _cachedAt: fetchStartedAt - 86400000 }
+    await db.actorCopies.put(cached)
+
+    await applyWorkspaceBootstrap("ws_1", makeBootstrap(), fetchStartedAt)
+
+    expect(await db.actorCopies.toArray()).toEqual([cached])
+  })
+
   it("persists host actor copies from a reconnect bootstrap batch", async () => {
     await applyReconnectBootstrapBatch(
       "ws_1",

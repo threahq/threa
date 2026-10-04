@@ -1,7 +1,6 @@
 import type { Pool, PoolClient } from "pg"
 import { UnknownNodeTypeError } from "@threahq/prosemirror"
 import {
-  AuthorTypes,
   StreamConnectionStates,
   type BridgeActor,
   type BridgeChange,
@@ -23,6 +22,7 @@ import { BotRepository } from "../public-api"
 import { StreamEventRepository, StreamRepository, normalizeStreamDescription, type Stream } from "../streams"
 import { UserRepository } from "../workspaces"
 import { connectionNotFound } from "./errors"
+import { namedAuthors } from "./named-authors"
 import { StreamConnectionRepository } from "./repository"
 
 type EventRule = "message" | "moved" | "withheld"
@@ -199,8 +199,9 @@ export class StreamConnectionExportService {
           ? { kind: "message", message: toBridgeMessage(message, attachments.get(id) ?? [], scope) }
           : { kind: "message_removed", messageId: id }
       })
-      const users = await loadNamedUsers(client, caller.workspaceId, shared)
-      const actors = await loadNamedActors(client, caller.workspaceId, shared)
+      const named = namedAuthors(shared)
+      const users = await loadNamedUsers(client, caller.workspaceId, named.userIds)
+      const actors = await loadNamedActors(client, caller.workspaceId, named)
       return { changes, users, actors, cursor: cursor.toString(), hasMore }
     })
   }
@@ -269,13 +270,8 @@ function toBridgeStream(stream: Stream, head: bigint, scope: ContentScope): Brid
   }
 }
 
-/** The users the messages name as author or reactor. Reactors that are personas or bots match no user row. */
-async function loadNamedUsers(client: PoolClient, workspaceId: string, messages: Message[]): Promise<BridgeUser[]> {
-  const ids = new Set<string>()
-  for (const message of messages) {
-    if (message.authorType === AuthorTypes.USER) ids.add(message.authorId)
-    for (const reactors of Object.values(message.reactions)) reactors.forEach((id) => ids.add(id))
-  }
+/** The profiles of the named users the host still has. */
+async function loadNamedUsers(client: PoolClient, workspaceId: string, ids: Set<string>): Promise<BridgeUser[]> {
   const users = await UserRepository.findByIds(client, workspaceId, [...ids])
   return users.map((user) => ({ id: user.id, name: user.name, slug: user.slug }))
 }
@@ -286,19 +282,11 @@ async function loadNamedUsers(client: PoolClient, workspaceId: string, messages:
  * persona is invisible to every host member but its owner, so its name stays
  * home too.
  */
-async function loadNamedActors(client: PoolClient, workspaceId: string, messages: Message[]): Promise<BridgeActor[]> {
-  const personaIds = new Set<string>()
-  const botIds = new Set<string>()
-  for (const message of messages) {
-    if (message.authorType === AuthorTypes.PERSONA) personaIds.add(message.authorId)
-    if (message.authorType === AuthorTypes.BOT) botIds.add(message.authorId)
-    for (const reactors of Object.values(message.reactions)) {
-      for (const id of reactors) {
-        if (id.startsWith("persona_")) personaIds.add(id)
-        if (id.startsWith("bot_")) botIds.add(id)
-      }
-    }
-  }
+async function loadNamedActors(
+  client: PoolClient,
+  workspaceId: string,
+  { personaIds, botIds }: { personaIds: Set<string>; botIds: Set<string> }
+): Promise<BridgeActor[]> {
   const personas = await PersonaRepository.findByIds(client, workspaceId, [...personaIds])
   const bots = await BotRepository.findByIds(client, workspaceId, [...botIds])
   const custom = personas.filter((persona) => persona.workspaceId === workspaceId && persona.managedBy !== "user")

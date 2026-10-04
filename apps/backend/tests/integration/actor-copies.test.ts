@@ -389,26 +389,36 @@ describe("Actor copies", () => {
     }).toEqual({ authorId: ARIADNE_AGENT_ID, reactions: { ":+1:": [ARIADNE_AGENT_ID] }, copies: [] })
   })
 
-  test("should refuse the page and keep the copy when an actor id already has a copy from another workspace", async () => {
-    const world = await seedWorld()
-    const elsewhere = await seedWorkspace("Elsewhere host")
-    await ActorCopyRepository.upsert(pool, {
-      workspaceId: world.partner.id,
-      originWorkspaceId: elsewhere.id,
-      actors: [{ id: world.persona.id, name: "Original", avatarEmoji: null }],
-    })
-    await say(world, world.persona.id, AuthorTypes.PERSONA, "hello")
+  describe("when an actor id already has a copy from another workspace", () => {
+    const unlisted: Tamper = (page) => ({ ...page, actors: [] })
+    const cases = [
+      ["lists it", undefined],
+      ["names it without listing it", unlisted],
+    ] as const
 
-    await expect(world.pull()).rejects.toThrow(`Actor ${world.persona.id} from workspace ${world.host.id}`)
+    for (const [how, tamper] of cases) {
+      test(`should refuse the page, keep that copy and copy nothing when the page ${how}`, async () => {
+        const world = await seedWorld()
+        const elsewhere = await seedWorkspace("Elsewhere host")
+        const original = { id: world.persona.id, name: "Original", avatarEmoji: null }
+        await ActorCopyRepository.upsert(pool, {
+          workspaceId: world.partner.id,
+          originWorkspaceId: elsewhere.id,
+          actors: [original],
+        })
+        const message = await say(world, world.persona.id, AuthorTypes.PERSONA, "hello")
+        await react(world, message.id, world.bot.id, AuthorTypes.BOT)
 
-    expect(await ActorCopyRepository.listByWorkspace(pool, world.partner.id)).toEqual([
-      {
-        id: world.persona.id,
-        workspaceId: world.partner.id,
-        originWorkspaceId: elsewhere.id,
-        name: "Original",
-        avatarEmoji: null,
-      },
-    ])
+        await expect(world.pull(tamper)).rejects.toThrow(`Actor ${world.persona.id} in a page of connection`)
+
+        expect({
+          copies: await ActorCopyRepository.listByWorkspace(pool, world.partner.id),
+          announced: await announced(world.partner.id),
+        }).toEqual({
+          copies: [{ ...original, workspaceId: world.partner.id, originWorkspaceId: elsewhere.id }],
+          announced: [],
+        })
+      })
+    }
   })
 })

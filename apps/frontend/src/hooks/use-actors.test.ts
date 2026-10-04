@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
 import { useActors } from "./use-actors"
 import type { User, Bot } from "@threahq/types"
-import type { CachedWorkspaceUser, CachedPersona, CachedBot, CachedActorCopy } from "@/db"
+import type { CachedWorkspaceUser, CachedPersona, CachedBot } from "@/db"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as useWorkspaceEmojiModule from "./use-workspace-emoji"
 
@@ -12,7 +12,6 @@ import * as useWorkspaceEmojiModule from "./use-workspace-emoji"
 let mockUsers: CachedWorkspaceUser[] = []
 let mockPersonas: CachedPersona[] = []
 let mockBots: CachedBot[] = []
-let mockActorCopies: CachedActorCopy[] = []
 
 function createTestWrapper(queryClient: QueryClient) {
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -93,18 +92,6 @@ function createBot(overrides: Partial<Bot> & { _cachedAt?: number } = {}): Cache
   }
 }
 
-function createActorCopy(overrides: Partial<CachedActorCopy> = {}): CachedActorCopy {
-  return {
-    id: "persona_host",
-    workspaceId: "ws_123",
-    originWorkspaceId: "ws_host",
-    name: "Host Persona",
-    avatarEmoji: null,
-    _cachedAt: Date.now(),
-    ...overrides,
-  }
-}
-
 describe("useActors", () => {
   const workspaceId = "ws_123"
   let queryClient: QueryClient
@@ -115,12 +102,11 @@ describe("useActors", () => {
     mockUsers = []
     mockPersonas = []
     mockBots = []
-    mockActorCopies = []
 
     vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockImplementation(() => mockUsers)
     vi.spyOn(workspaceStoreModule, "useWorkspacePersonas").mockImplementation(() => mockPersonas)
     vi.spyOn(workspaceStoreModule, "useWorkspaceBots").mockImplementation(() => mockBots)
-    vi.spyOn(workspaceStoreModule, "useWorkspaceActorCopies").mockImplementation(() => mockActorCopies)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceActorCopies").mockReturnValue([])
     vi.spyOn(useWorkspaceEmojiModule, "useWorkspaceEmoji").mockReturnValue({
       toEmoji: (shortcode: string) => {
         if (shortcode === ":thread:") return "🧵"
@@ -263,26 +249,6 @@ describe("useActors", () => {
         wrapper: createTestWrapper(queryClient),
       })
       expect(result.current.getPersona("nonexistent")).toBeUndefined()
-    })
-  })
-
-  describe("host actor copies", () => {
-    it("should prefer the local persona and bot over a copy with the same id", () => {
-      mockPersonas = [createPersona({ id: "persona_host", name: "Local Persona" })]
-      mockBots = [createBot({ id: "bot_host", name: "Local Bot" })]
-      mockActorCopies = [
-        createActorCopy({ id: "persona_host", name: "Host Persona" }),
-        createActorCopy({ id: "bot_host", name: "Host Bot" }),
-      ]
-
-      const { result } = renderHook(() => useActors(workspaceId), {
-        wrapper: createTestWrapper(queryClient),
-      })
-
-      expect({
-        persona: result.current.getActorName("persona_host", "persona"),
-        bot: result.current.getActorName("bot_host", "bot"),
-      }).toEqual({ persona: "Local Persona", bot: "Local Bot" })
     })
   })
 
