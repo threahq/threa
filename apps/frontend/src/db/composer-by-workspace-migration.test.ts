@@ -18,14 +18,14 @@ function target(host: string, workspaceId: string, scope: string): ComposerTarge
 
 async function seedV54(name: string, seed: (legacy: Dexie) => Promise<void>): Promise<void> {
   const legacy = new Dexie(name)
-  legacy.version(54).stores({ composerLoaded: V34_COMPOSER_LOADED, composerTarget: V48_COMPOSER_TARGET })
+  legacy.version(55).stores({ composerLoaded: V34_COMPOSER_LOADED, composerTarget: V48_COMPOSER_TARGET })
   await legacy.open()
   await seed(legacy)
   legacy.close()
 }
 
-describe("v55 composer pointers keyed by workspace", () => {
-  it("should carry rows that name a workspace to the new keys and drop the rest when upgrading from v54", async () => {
+describe("v56 composer pointers keyed by workspace", () => {
+  it("should carry rows that name a workspace to the new keys and drop the rest when upgrading from v55", async () => {
     const name = `threa_test_${Math.random().toString(36).slice(2)}`
     const pointerA = loadedPointer("stream:stream_a", "ws_1", "draft_a")
     const pointerB = loadedPointer("thread:msg_b", "ws_2", null)
