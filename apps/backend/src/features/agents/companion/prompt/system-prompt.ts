@@ -101,8 +101,8 @@ export interface SystemPromptInputs {
    * `update_user_settings` is in the toolset. Absent everywhere else.
    */
   currentSettings?: UserPreferences | null
-  /** Drives the `## How You Work` card. Both production callers pass it; only prompt tests omit it. */
-  selfKnowledge?: SelfKnowledge | null
+  /** Drives the `## How You Work` card. `null` only in prompt tests that exercise other sections. */
+  selfKnowledge: SelfKnowledge | null
 }
 
 /**

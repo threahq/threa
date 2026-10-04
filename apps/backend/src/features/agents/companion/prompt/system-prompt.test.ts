@@ -54,6 +54,7 @@ const scratchpadContext: StreamContext = {
 describe("buildSystemPrompt", () => {
   test("injects scratchpad custom instructions immediately after the base system prompt", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: "Be concise and prioritize concrete next steps.",
@@ -65,7 +66,12 @@ describe("buildSystemPrompt", () => {
   })
 
   test("tells the agent to label attachment pointers with filenames", () => {
-    const prompt = buildJoinedPrompt({ persona, context: scratchpadContext, scratchpadCustomPrompt: null })
+    const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
+      persona,
+      context: scratchpadContext,
+      scratchpadCustomPrompt: null,
+    })
 
     expect(prompt).toContain("[filename.ext](attachment:att_xxx)")
     expect(prompt).toContain("label the pointer with the filename")
@@ -73,7 +79,12 @@ describe("buildSystemPrompt", () => {
   })
 
   test("instructs inline linking, source-backed claims, and cards only on request", () => {
-    const prompt = buildJoinedPrompt({ persona, context: scratchpadContext, scratchpadCustomPrompt: null })
+    const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
+      persona,
+      context: scratchpadContext,
+      scratchpadCustomPrompt: null,
+    })
 
     expect(prompt).toContain("### Linking when you point at things")
     expect(prompt).toContain("include the actual link")
@@ -82,13 +93,19 @@ describe("buildSystemPrompt", () => {
   })
 
   test("omits the custom instruction section when no scratchpad prompt exists", () => {
-    const prompt = buildJoinedPrompt({ persona, context: scratchpadContext, scratchpadCustomPrompt: null })
+    const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
+      persona,
+      context: scratchpadContext,
+      scratchpadCustomPrompt: null,
+    })
 
     expect(prompt).not.toContain("## Scratchpad Custom Instructions")
   })
 
   test("tool sections come from the ACTUAL toolset — no tools means no tool prose", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -113,6 +130,7 @@ describe("buildSystemPrompt", () => {
       createReadUrlTool(),
     ]
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -132,6 +150,7 @@ describe("buildSystemPrompt", () => {
 
   test("web search recency guidance references tool metadata when the tool has no invocation time", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -148,6 +167,7 @@ describe("buildSystemPrompt", () => {
 
   test("injects the Current Topic highlight before Conversation Memory when a topic is provided", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -163,6 +183,7 @@ describe("buildSystemPrompt", () => {
 
   test("omits the Current Topic section when no topic is provided", () => {
     const provided = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -171,6 +192,7 @@ describe("buildSystemPrompt", () => {
       conversationTopic: null,
     })
     const blank = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -185,6 +207,7 @@ describe("buildSystemPrompt", () => {
 
   test("injects the spawned-from discussion block before Conversation Memory when context is provided", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -203,6 +226,7 @@ describe("buildSystemPrompt", () => {
 
   test("omits the spawned-from discussion block when no context is provided", () => {
     const provided = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -212,6 +236,7 @@ describe("buildSystemPrompt", () => {
       spawnedFromContext: null,
     })
     const blank = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -227,6 +252,7 @@ describe("buildSystemPrompt", () => {
 
   test("injects the scheduled-follow-up section when the turn is a fired follow-up", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: {
         ...scratchpadContext,
@@ -259,6 +285,7 @@ describe("buildSystemPrompt", () => {
 
   test("omits the scheduled-follow-up section for a normal turn", () => {
     const provided = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -268,6 +295,7 @@ describe("buildSystemPrompt", () => {
       spawnedFromContext: null,
     })
     const explicitNull = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -284,6 +312,7 @@ describe("buildSystemPrompt", () => {
 
   test("injects the Previous sessions block when episode summaries are provided", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -302,6 +331,7 @@ describe("buildSystemPrompt", () => {
 
   test("omits the Previous sessions block when none are provided", () => {
     const provided = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -312,6 +342,7 @@ describe("buildSystemPrompt", () => {
       followUp: null,
     })
     const blank = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -329,6 +360,7 @@ describe("buildSystemPrompt", () => {
 
   test("injects the mention invocation section, naming the mentioner, for a mention turn", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -344,6 +376,7 @@ describe("buildSystemPrompt", () => {
 
   test("omits the mention invocation section for a catch-up turn", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -355,6 +388,7 @@ describe("buildSystemPrompt", () => {
 
   test("injects the supersede reconciliation section last for a supersede rerun", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -380,6 +414,7 @@ describe("buildSystemPrompt", () => {
 
   test("omits the supersede reconciliation section for a catch-up turn", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -391,6 +426,7 @@ describe("buildSystemPrompt", () => {
 
   test("web search recency guidance references Current Time when the tool is temporally grounded", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: {
         ...scratchpadContext,
@@ -420,6 +456,7 @@ describe("buildSystemPrompt", () => {
 
   test("injects the Stream Brief early — before the stream context — when the stream carries one (roadmap 4.1)", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -459,6 +496,7 @@ describe("buildSystemPrompt", () => {
 
   test("injects the persona ## Knowledge block after the persona prompt and before the stream context", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -485,6 +523,7 @@ describe("buildSystemPrompt", () => {
 
   test("no persona attachments → byte-identical to the pre-feature prompt", () => {
     const base = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -492,6 +531,7 @@ describe("buildSystemPrompt", () => {
       tools: [],
     })
     const withUndefined = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -504,6 +544,7 @@ describe("buildSystemPrompt", () => {
       streamBrief: null,
     })
     const withEmpty = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -517,6 +558,7 @@ describe("buildSystemPrompt", () => {
       personaKnowledge: [],
     })
     const withNull = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -538,6 +580,7 @@ describe("buildSystemPrompt", () => {
 
   test("omits the Stream Brief section when the stream has no brief (or a blank one)", () => {
     const absent = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -545,6 +588,7 @@ describe("buildSystemPrompt", () => {
       tools: [],
     })
     const blank = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -565,6 +609,7 @@ describe("buildSystemPrompt", () => {
 
   test("styleSlots absent → Response Style section is the verbatim pre-slot default", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -576,6 +621,7 @@ describe("buildSystemPrompt", () => {
 
   test("a set styleSlots preset fragment lands in the Response Style section", () => {
     const prompt = buildJoinedPrompt({
+      selfKnowledge: null,
       persona,
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
@@ -642,6 +688,7 @@ describe("buildSystemPrompt cache split", () => {
   // must produce a byte-identical stable half whatever drifts between them.
   test("produces a byte-identical stable half across differing topics and summaries", () => {
     const a = buildSystemPrompt({
+      selfKnowledge: null,
       persona,
       context: temporalContext,
       scratchpadCustomPrompt: null,
@@ -651,6 +698,7 @@ describe("buildSystemPrompt cache split", () => {
       conversationTopic: "topic A",
     })
     const b = buildSystemPrompt({
+      selfKnowledge: null,
       persona,
       context: temporalContext,
       scratchpadCustomPrompt: null,
@@ -669,6 +717,7 @@ describe("buildSystemPrompt cache split", () => {
 
   test("keeps a shrinking cross-surface stitch out of the cacheable half", () => {
     const withStitch = buildSystemPrompt({
+      selfKnowledge: null,
       persona,
       context: temporalContext,
       scratchpadCustomPrompt: null,
@@ -679,6 +728,7 @@ describe("buildSystemPrompt cache split", () => {
       spawnedFromContext: "PARENT DISCUSSION",
     })
     const without = buildSystemPrompt({
+      selfKnowledge: null,
       persona,
       context: temporalContext,
       scratchpadCustomPrompt: null,
@@ -690,7 +740,12 @@ describe("buildSystemPrompt cache split", () => {
   })
 
   test("keeps temporal grounding out of the cacheable half", () => {
-    const split = buildSystemPrompt({ persona, context: temporalContext, scratchpadCustomPrompt: null })
+    const split = buildSystemPrompt({
+      selfKnowledge: null,
+      persona,
+      context: temporalContext,
+      scratchpadCustomPrompt: null,
+    })
 
     expect(split.stable).not.toContain("## Current Time")
     expect(split.volatile).toContain("## Current Time")
@@ -702,6 +757,7 @@ describe("buildSystemPrompt cache split", () => {
   // cross-turn cache miss — no test failure, no error, just a 0% hit rate.
   test("produces a byte-identical stable half across differing turn purposes", () => {
     const mention = buildSystemPrompt({
+      selfKnowledge: null,
       persona,
       context: temporalContext,
       scratchpadCustomPrompt: null,
@@ -709,6 +765,7 @@ describe("buildSystemPrompt cache split", () => {
       mentionerName: "Kris",
     })
     const otherMentioner = buildSystemPrompt({
+      selfKnowledge: null,
       persona,
       context: temporalContext,
       scratchpadCustomPrompt: null,
@@ -716,6 +773,7 @@ describe("buildSystemPrompt cache split", () => {
       mentionerName: "Sam",
     })
     const catchUp = buildSystemPrompt({
+      selfKnowledge: null,
       persona,
       context: temporalContext,
       scratchpadCustomPrompt: null,
@@ -731,6 +789,7 @@ describe("buildSystemPrompt cache split", () => {
 
   test("keeps a fired follow-up's note and time out of the stable half", () => {
     const followUp = buildSystemPrompt({
+      selfKnowledge: null,
       persona,
       context: temporalContext,
       scratchpadCustomPrompt: null,
@@ -745,6 +804,7 @@ describe("buildSystemPrompt cache split", () => {
       },
     })
     const catchUp = buildSystemPrompt({
+      selfKnowledge: null,
       persona,
       context: temporalContext,
       scratchpadCustomPrompt: null,
@@ -756,7 +816,12 @@ describe("buildSystemPrompt cache split", () => {
   })
 
   test("rejoins to exactly the prompt a single-string caller would have got", () => {
-    const split = buildSystemPrompt({ persona, context: temporalContext, scratchpadCustomPrompt: "Be concise." })
+    const split = buildSystemPrompt({
+      selfKnowledge: null,
+      persona,
+      context: temporalContext,
+      scratchpadCustomPrompt: "Be concise.",
+    })
 
     expect(joinSystemPrompt(split)).toBe(split.stable + split.volatile)
     expect(joinSystemPrompt(split)).toContain("## Current Time")

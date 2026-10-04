@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { AgentToolNames } from "@threahq/types"
+import { AgentToolNames, TOOL_CATEGORIES_BY_NAME } from "@threahq/types"
 import { WORKSPACE_RESEARCH_TOOL_NAME } from "../../tools"
-import { buildHowIWorkSection, type SelfKnowledge } from "./how-i-work"
+import { buildHowIWorkSection, WORKSPACE_REACH_TOOLS, type SelfKnowledge } from "./how-i-work"
 
 const ariadne = {
   name: "Ariadne",
@@ -44,7 +44,7 @@ describe("buildHowIWorkSection", () => {
       "Change the user's own settings (theme, date and time format, timezone, language, notifications, working hours) when they ask.",
     ])
     expect(card).toContain("including memories private to them")
-    expect(card).toContain("If a reply fails Threa's checks, the retry runs on `openrouter:openai/gpt-5.6-terra`")
+    expect(card).toContain("Threa may rerun a reply that fails its checks on `openrouter:openai/gpt-5.6-terra`")
     expect(card).toContain("Memory capture is on here")
   })
 
@@ -67,7 +67,7 @@ describe("buildHowIWorkSection", () => {
 
     expect(capabilities(card)).toEqual([
       "Read web pages.",
-      "Find people, within the reach described above.",
+      "Find people in the workspace.",
       "Cancel scheduled follow-ups.",
       "Read GitHub pull requests and issues. Read-only.",
     ])
@@ -95,7 +95,8 @@ describe("buildHowIWorkSection", () => {
     )
 
     expect(card).toContain("In this thread you run on `openrouter:anthropic/claude-opus-5-5`")
-    expect(card).not.toContain("retry runs on")
+    expect(card).not.toContain("Your model, tools")
+    expect(card).not.toContain("may rerun")
   })
 
   test("should defer to the enclave's tools, drop escalation and mention no memos when sealed", () => {
@@ -108,7 +109,7 @@ describe("buildHowIWorkSection", () => {
     expect(card).toContain(
       "Memory: Nothing said here becomes a memo, because the server can't read it. Between conversations you remember only through summaries of your earlier sessions in this stream."
     )
-    expect(card).not.toContain("retry runs on")
+    expect(card).not.toContain("may rerun")
   })
 
   test("should say private conversations stay out when the channel is public", () => {
@@ -120,20 +121,84 @@ describe("buildHowIWorkSection", () => {
     expect(card).toContain("Memory capture is off here")
   })
 
-  test("should say messages stay searchable without a memo when a message search tool is wired", () => {
-    const memory = (toolNames: string[]) =>
-      buildHowIWorkSection(ariadne, { ...privateScratchpad, memoryCapture: "off" }, toolNames)
-        .split("Memory: ")[1]!
-        .split("\n")[0]
+  test("should say messages stay searchable without a memo only when a message search tool is wired", () => {
+    const searchable = (toolNames: string[]) =>
+      buildHowIWorkSection(ariadne, privateScratchpad, toolNames).includes("every message stays searchable")
 
     expect({
-      withSearch: memory([AgentToolNames.SEARCH_MESSAGES]),
-      withoutSearch: memory([AgentToolNames.WEB_SEARCH]),
+      searchMessages: searchable([AgentToolNames.SEARCH_MESSAGES]),
+      webSearch: searchable([AgentToolNames.WEB_SEARCH]),
+    }).toEqual({ searchMessages: true, webSearch: false })
+  })
+
+  test("should count general_research as workspace search only when the policy left a workspace tool", () => {
+    const fullPolicy = buildHowIWorkSection(ariadne, privateScratchpad, [
+      AgentToolNames.GENERAL_RESEARCH,
+      AgentToolNames.DESCRIBE_MEMO,
+    ])
+    const webOnly = buildHowIWorkSection(ariadne, privateScratchpad, [
+      AgentToolNames.WEB_SEARCH,
+      AgentToolNames.GENERAL_RESEARCH,
+    ])
+
+    expect({
+      fullPolicy: {
+        research: capabilities(fullPolicy)[0],
+        reachesWorkspace: fullPolicy.includes("including memories private to them"),
+        searchable: fullPolicy.includes("every message stays searchable"),
+      },
+      webOnly: {
+        research: capabilities(webOnly)[1],
+        reachesWorkspace: webOnly.includes("including memories private to them"),
+        searchable: webOnly.includes("every message stays searchable"),
+      },
     }).toEqual({
-      withSearch:
-        "Memory capture is off here, so nothing from this conversation becomes a memo unless someone asks you to save one. As time passes, the few messages that settled something get buried in the past under everything said since. A memo condenses what they settled into one clear entry, so a search still finds it long after, and nobody has to piece those messages back together each time. Memos are not the only record, though: every message stays searchable whether or not it became a memo, so you can find this conversation, or any other within your reach, again by searching. Between conversations you also have summaries of your earlier sessions in this stream. Never suggest something is lost because it wasn't saved as a memo.",
-      withoutSearch:
-        "Memory capture is off here, so nothing from this conversation becomes a memo unless someone asks you to save one. Between conversations you remember only through memos and summaries of your earlier sessions in this stream.",
+      fullPolicy: {
+        research: "Run deeper research that combines the workspace, the web and connected integrations.",
+        reachesWorkspace: true,
+        searchable: true,
+      },
+      webOnly: { research: "Run deeper research on the web.", reachesWorkspace: false, searchable: false },
     })
+  })
+
+  test("should offer saving a memo only when save_memo is wired", () => {
+    const capture = (toolNames: string[]) =>
+      buildHowIWorkSection(ariadne, { ...privateScratchpad, memoryCapture: "off" }, toolNames)
+        .split("Memory: ")[1]!
+        .split(". ")[0]
+
+    expect({
+      withSave: capture([AgentToolNames.SAVE_MEMO]),
+      withoutSave: capture([]),
+    }).toEqual({
+      withSave:
+        "Memory capture is off here, so nothing from this conversation becomes a memo unless someone asks you to save one",
+      withoutSave: "Memory capture is off here, so nothing from this conversation becomes a memo",
+    })
+  })
+
+  test("should claim no memo recall on an untriggered turn", () => {
+    const card = buildHowIWorkSection(ariadne, { ...privateScratchpad, access: null }, [AgentToolNames.SEARCH_MESSAGES])
+
+    expect(card).toContain("you remember only through summaries of your earlier sessions")
+  })
+
+  test("should treat every workspace read tool as reaching beyond the conversation", () => {
+    // Workspace-category tools that write, run code or look up people rather than read conversations.
+    const notConversationReads = new Set<string>([
+      AgentToolNames.SAVE_MEMO,
+      AgentToolNames.UPDATE_USER_SETTINGS,
+      AgentToolNames.RUN_COMMAND,
+      AgentToolNames.SEARCH_USERS,
+    ])
+    const workspaceReads = Object.entries(TOOL_CATEGORIES_BY_NAME)
+      .filter(
+        ([tool, categories]) =>
+          (categories as readonly string[]).includes("workspace") && !notConversationReads.has(tool)
+      )
+      .map(([tool]) => tool)
+
+    expect(workspaceReads.filter((tool) => !WORKSPACE_REACH_TOOLS.has(tool))).toEqual([])
   })
 })
