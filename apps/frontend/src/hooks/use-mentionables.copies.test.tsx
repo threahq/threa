@@ -123,6 +123,7 @@ describe("useMentionStreamContext connected workspaces", () => {
     return createElement(
       QueryClientProvider,
       { client: queryClient },
+      // No socket is provided, so the bootstrap is read from the seeded cache and never fetched.
       createElement(ServicesProvider, {
         services: { streams: {} as StreamService },
         children: wrapper({ children }),
@@ -177,7 +178,7 @@ describe("useMentionStreamContext connected workspaces", () => {
     await waitFor(() => expect(result.current?.connectedWorkspaceIds).toEqual(new Set(["ws_partner"])))
   })
 
-  it("should connect no workspaces when the cached bootstrap predates the field", async () => {
+  it("should connect no workspaces when the bootstrap omits the field", async () => {
     seedBootstrap("stream_shared", {})
 
     const { result } = renderHook(

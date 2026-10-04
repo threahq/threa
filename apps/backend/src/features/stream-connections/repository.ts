@@ -177,7 +177,7 @@ export const StreamConnectionRepository = {
       SELECT DISTINCT remote_workspace_id
       FROM stream_connections
       WHERE workspace_id = ${workspaceId} AND stream_id = ${rootStreamId}
-        AND state = 'active' AND remote_workspace_id IS NOT NULL
+        AND state = 'active' AND role <> 'peer' AND remote_workspace_id IS NOT NULL
       ORDER BY remote_workspace_id
     `)
     return result.rows.map((row) => row.remote_workspace_id)

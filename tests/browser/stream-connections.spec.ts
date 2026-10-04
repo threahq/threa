@@ -1,9 +1,12 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
 import type { ListStreamConnectionsResponse } from "@threahq/types"
 import {
+  clickReplyInThread,
   enrollWorkspaceFlag,
   expectApiOk,
+  getPanelEditor,
   loginAndCreateWorkspace,
+  waitForRealThreadPanel,
   workspaceIdFromUrl,
   type TestRegion,
 } from "./helpers"
@@ -95,15 +98,17 @@ async function sendText(page: Page, text: string) {
   await expect(editor).toHaveText("", { timeout: 15_000 })
 }
 
-async function sendMentionOf(page: Page, query: string, person: string, text: string) {
-  const editor = page.locator("[data-message-composer-root] [contenteditable='true']").first()
+async function sendMentionOf(editor: Locator, send: Locator, query: string, person: string, text: string) {
   await editor.click()
   await editor.pressSequentially(`@${query}`)
-  const option = page.getByRole("listbox", { name: "Mention suggestions" }).getByRole("option", { name: person })
+  const option = editor
+    .page()
+    .getByRole("listbox", { name: "Mention suggestions" })
+    .getByRole("option", { name: person })
   await expect(option).toBeVisible({ timeout: 10_000 })
   await option.click()
   await editor.pressSequentially(text)
-  await page.getByRole("main").getByRole("button", { name: "Send", exact: true }).click()
+  await send.click()
   await expect(editor).toHaveText("", { timeout: 15_000 })
 }
 
@@ -300,7 +305,7 @@ test.describe("Stream connections", () => {
     }
   })
 
-  test("should notify a person in the other workspace when someone picks them from the mention picker in a shared channel", async ({
+  test("should notify a person in the other workspace when someone picks them from the mention picker in a shared channel or a new thread in it", async ({
     browser,
     page,
   }) => {
@@ -325,10 +330,19 @@ test.describe("Stream connections", () => {
       await page.goto(`/w/${host.workspaceId}/s/${streamId}`)
       await expect(timelineMessage(page, reply)).toBeVisible({ timeout: 30_000 })
 
+      await clickReplyInThread(timelineMessage(page, reply))
       const hostAsk = ` can you check the colours ${host.testId}`
-      await sendMentionOf(page, "partner", partner.name, hostAsk)
+      const panelSend = page.getByTestId("panel").getByRole("button", { name: /^(Send|Reply)$/ })
+      await sendMentionOf(getPanelEditor(page), panelSend, "partner", partner.name, hostAsk)
+      await waitForRealThreadPanel(page)
       const partnerAsk = ` can you ship it ${host.testId}`
-      await sendMentionOf(partnerPage, "host", host.name, partnerAsk)
+      await sendMentionOf(
+        partnerPage.locator("[data-message-composer-root] [contenteditable='true']").first(),
+        partnerPage.getByRole("main").getByRole("button", { name: "Send", exact: true }),
+        "host",
+        host.name,
+        partnerAsk
+      )
 
       await expectMentionActivity(partnerPage, partner.workspaceId, hostAsk.trim())
       await expectMentionActivity(page, host.workspaceId, partnerAsk.trim())

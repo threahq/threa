@@ -70,7 +70,7 @@ import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { ThreadHeader } from "./thread-header"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
 import { LabelableResourceTypes, StreamTypes } from "@threahq/types"
-import type { MentionStreamContext } from "@/hooks/use-mentionables"
+import { useMentionStreamContext, type MentionStreamContext } from "@/hooks/use-mentionables"
 import { streamLabel } from "@/lib/streams"
 import { useDecryptedStreamName } from "@/hooks/use-decrypted-stream-name"
 import { copyStreamLink } from "@/lib/stream-links"
@@ -390,8 +390,10 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   }, [])
   const handleDraftCollapse = useCallback(() => setDraftExpanded(false), [])
 
-  // Stream context for draft thread broadcast mention filtering.
-  // A draft thread lives under parentStream — its root type determines eligibility.
+  // A draft thread lives under parentStream: its root type gates broadcasts, and
+  // the parent's channel decides which other workspaces' people are mentionable.
+  const parentMentionContext = useMentionStreamContext(workspaceId, parentStream)
+  const parentConnectedWorkspaceIds = parentMentionContext?.connectedWorkspaceIds
   const draftStreamContext = useMemo<MentionStreamContext | undefined>(() => {
     if (!parentStream) return undefined
     // The draft IS a thread; use the parent's type (or root type) as rootStreamType
@@ -402,8 +404,12 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
     // filterBroadcastMentions falls back to ALL_BROADCAST_MENTIONS (show all)
     // rather than incorrectly filtering to "thread" (show none).
     if (parentStream.rootStreamId && rootType === undefined) return undefined
-    return { streamType: StreamTypes.THREAD, rootStreamType: rootType }
-  }, [parentStream, ancestors])
+    return {
+      streamType: StreamTypes.THREAD,
+      rootStreamType: rootType,
+      connectedWorkspaceIds: parentConnectedWorkspaceIds,
+    }
+  }, [parentStream, ancestors, parentConnectedWorkspaceIds])
 
   // Listen for draft thread promotion and navigate to the real thread panel.
   // The real stream's composer is a different element, so a focused draft

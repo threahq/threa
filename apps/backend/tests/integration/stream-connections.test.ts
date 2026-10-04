@@ -408,7 +408,7 @@ describe("StreamConnectionService", () => {
     })
   })
 
-  test("should list the workspaces a channel is actively shared with when asked for the host's channel, a thread in it, or the partner's copy", async () => {
+  test("should list the workspaces a channel is actively shared with, leaving out peer partners, when asked for the host's channel, a thread in it, or the partner's copy", async () => {
     const host = await seedWorkspace("Acme")
     const second = await seedWorkspace("Globex")
     const third = await seedWorkspace("Initech")
@@ -432,8 +432,8 @@ describe("StreamConnectionService", () => {
       createdBy: second.adminId,
     })
     await StreamConnectionRepository.applySnapshots(pool, [
-      activated(snapshot(host, channel.id), second),
-      activated(snapshot(host, channel.id), third),
+      { ...activated(snapshot(host, channel.id), second), peerWorkspaceIds: [third.id] },
+      { ...activated(snapshot(host, channel.id), third), peerWorkspaceIds: [second.id] },
     ])
 
     expect({

@@ -100,7 +100,7 @@ export function useMentionStreamContext(
       ctx.memberIds = ids
     }
     if (accessBootstrap?.botMemberIds) ctx.botMemberIds = new Set(accessBootstrap.botMemberIds)
-    // A bootstrap cached before the field shipped lacks it at runtime.
+    // A backend still on the previous deploy omits the field.
     if (accessBootstrap) ctx.connectedWorkspaceIds = new Set(accessBootstrap.connectedWorkspaceIds ?? [])
     ctx.canInviteBots = currentUserRole === "admin" || currentUserRole === "owner"
     return ctx
