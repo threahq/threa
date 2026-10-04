@@ -30,8 +30,11 @@ async function localState(page: Page, accountId: string, workspaceId: string) {
         request.onerror = () => reject(request.error)
         request.onsuccess = () => {
           const database = request.result
-          const transaction = database.transaction(["events", "unreadState", "streamMemberships"], "readonly")
-          const events = transaction.objectStore("events").getAll()
+          const transaction = database.transaction(
+            ["eventsByWorkspace", "unreadState", "streamMemberships"],
+            "readonly"
+          )
+          const events = transaction.objectStore("eventsByWorkspace").getAll()
           const unread = transaction.objectStore("unreadState").get(workspaceId)
           const memberships = transaction.objectStore("streamMemberships").getAll()
           transaction.onerror = () => {
