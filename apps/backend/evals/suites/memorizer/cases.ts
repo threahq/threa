@@ -11,6 +11,10 @@ import type { MemorizerInput, MemorizerExpected } from "./types"
 
 const KRIS = { authorId: "usr_eval_a", authorType: "user" as const, authorName: "Kim" }
 const PIERRE = { authorId: "usr_eval_b", authorType: "user" as const, authorName: "Pelle" }
+const DAY_MINUTES = 24 * 60
+const daysAhead = (days: number) =>
+  new Date(Date.now() + days * DAY_MINUTES * 60_000).toLocaleDateString("en-US", { month: "short", day: "numeric" })
+const OFFSITE_DATES = `${daysAhead(60)} to ${daysAhead(62)}`
 
 export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
   {
@@ -386,6 +390,89 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
       maxMemos: 2,
       mustCoverAny: [["Stripe"]],
       expectSupersedes: null,
+    },
+  },
+
+  {
+    id: "team-event-booking-001",
+    name: "A team event the participants booked is a decision, however logistical",
+    input: {
+      category: "extraction",
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown: `Proposal for the offsite: Villa Fjällhem in Åre, ${OFFSITE_DATES}. Room for all 14 of us and a ski-in lodge.`,
+          minutesAgo: 30 * DAY_MINUTES,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: `Love it. Let's book Fjällhem for ${OFFSITE_DATES} then.`,
+          minutesAgo: 30 * DAY_MINUTES - 1,
+        },
+        { ...PIERRE, contentMarkdown: "Booked, deposit paid.", minutesAgo: 30 * DAY_MINUTES - 2 },
+      ],
+    },
+    expectedOutput: {
+      minMemos: 1,
+      maxMemos: 1,
+      mustCoverAny: [["Fjällhem"]],
+    },
+  },
+
+  {
+    id: "team-event-moved-001",
+    name: "A team event moved to a new venue is captured where it landed",
+    input: {
+      category: "extraction",
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown:
+            "Bad news: Fjällhem raised the price 40% and the train strike makes Åre a mess. I cancelled and got the deposit back.",
+          minutesAgo: 9 * DAY_MINUTES,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "Ugh. Can we keep the dates and do it in Stockholm instead?",
+          minutesAgo: 9 * DAY_MINUTES - 1,
+        },
+        {
+          ...PIERRE,
+          contentMarkdown: `Hotel Skeppsholmen has the conference wing free ${OFFSITE_DATES}. Same dates, no travel.`,
+          minutesAgo: 9 * DAY_MINUTES - 2,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: `Decided: offsite moves to Hotel Skeppsholmen in Stockholm, ${OFFSITE_DATES}. No ski gear needed.`,
+          minutesAgo: 9 * DAY_MINUTES - 3,
+        },
+      ],
+    },
+    expectedOutput: {
+      minMemos: 1,
+      maxMemos: 2,
+      conclusionMustState: `The offsite is at Hotel Skeppsholmen in Stockholm on ${OFFSITE_DATES}`,
+      conclusionMustNotState: "The offsite is at Villa Fjällhem in Åre",
+    },
+  },
+
+  {
+    id: "booked-dinner-yields-nothing-001",
+    name: "Selectivity: a booked table for this week is short-lived logistics, not a memo",
+    input: {
+      category: "transient",
+      messages: [
+        { ...PIERRE, contentMarkdown: "Ramen on Friday after work?", minutesAgo: 3 * DAY_MINUTES },
+        {
+          ...KRIS,
+          contentMarkdown: "Yes! Booked a table at Ramen Ki for 18:00, four of us.",
+          minutesAgo: 3 * DAY_MINUTES - 2,
+        },
+        { ...PIERRE, contentMarkdown: "Perfect", minutesAgo: 3 * DAY_MINUTES - 3 },
+      ],
+    },
+    expectedOutput: {
+      maxMemos: 0,
     },
   },
 ]
