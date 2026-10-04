@@ -35,19 +35,18 @@ export function peopleViewerForActor(actorType: string, actorId: string): People
   return actorType === AuthorTypes.USER ? { kind: "user", userId: actorId } : { kind: "workspace" }
 }
 
-const USER_ID_COLUMN = sql`${sql.raw("u.id")}`
-
-/**
- * True when `person` (a user id, or a column reference) is a member or non-deleted author of the
- * streams `streamIdsSql` selects; bot and persona ids match no user row.
- */
-function peopleOfStreamsSql(workspaceId: string, person: string | QueryConfig, streamIdsSql: QueryConfig): QueryConfig {
-  return composeSql`${person} IN (
-    SELECT sm.member_id FROM stream_members sm
-    WHERE sm.workspace_id = ${workspaceId} AND sm.stream_id IN (${streamIdsSql})
+/** One row per stream and its member or non-deleted author; bot and persona ids match no user row. */
+function streamPeopleSql(workspaceId: string): QueryConfig {
+  return composeSql`
+    SELECT sm.stream_id, sm.member_id AS person_id FROM stream_members sm WHERE sm.workspace_id = ${workspaceId}
     UNION ALL
-    SELECT DISTINCT m.author_id FROM messages m
-    WHERE m.workspace_id = ${workspaceId} AND m.stream_id IN (${streamIdsSql}) AND m.deleted_at IS NULL
+    SELECT m.stream_id, m.author_id FROM messages m WHERE m.workspace_id = ${workspaceId} AND m.deleted_at IS NULL`
+}
+
+function peopleOfStreamsSql(workspaceId: string, streamIdsSql: QueryConfig): QueryConfig {
+  // eslint-disable-next-line threa/workspace-scoped-sql -- streamPeopleSql pins workspace_id in both arms, checked where it is written
+  return composeSql`u.id IN (
+    SELECT sp.person_id FROM (${streamPeopleSql(workspaceId)}) sp WHERE sp.stream_id IN (${streamIdsSql})
   )`
 }
 
@@ -82,7 +81,6 @@ function visibleToViewerSql(workspaceId: string, viewer: PeopleViewer): QueryCon
         OR u.id = ${viewer.userId}
         OR ${peopleOfStreamsSql(
           workspaceId,
-          USER_ID_COLUMN,
           composeSql`SELECT s.id FROM streams s
             WHERE s.workspace_id = ${workspaceId} AND ${streamAccessPredicateSql(workspaceId, viewer.userId, "s.id")}`
         )}
@@ -93,7 +91,6 @@ function visibleToViewerSql(workspaceId: string, viewer: PeopleViewer): QueryCon
         (${unshared} AND ${roomReadersAllBrowseSql(workspaceId, viewer.roomStreamId)})
         OR ${peopleOfStreamsSql(
           workspaceId,
-          USER_ID_COLUMN,
           composeSql`SELECT s.id FROM streams s
             JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id
             WHERE s.workspace_id = ${workspaceId}
@@ -106,23 +103,20 @@ function visibleToViewerSql(workspaceId: string, viewer: PeopleViewer): QueryCon
   }
 }
 
-/**
- * The users lacking browse, other than `userId`, who see `userId` by `peopleScopeSql`'s user arm.
- * The correlated alias `g` must stay unbound by the inner fragments: `u`, `wup`, `eff_s`, `eff_root`,
- * `s`, `sm`, `m`.
- */
+/** The users lacking browse, other than `userId`, who see `userId` by `peopleScopeSql`'s user arm. */
 export async function listGuestViewerIds(db: Querier, workspaceId: string, userId: string): Promise<string[]> {
   const guestId = sql`${sql.raw("g.id")}`
+  // eslint-disable-next-line threa/workspace-scoped-sql -- streamPeopleSql pins workspace_id in both arms, checked where it is written
   const result = await db.query<{ id: string }>(composeSql`
-    WITH guests AS (${userIdsLackingBrowseSql(workspaceId)})
+    WITH subject_streams AS MATERIALIZED (
+      SELECT DISTINCT sp.stream_id FROM (${streamPeopleSql(workspaceId)}) sp WHERE sp.person_id = ${userId}
+    ),
+    guests AS (${userIdsLackingBrowseSql(workspaceId)})
     SELECT g.id FROM guests g
     WHERE g.id <> ${userId}
-      AND ${peopleOfStreamsSql(
-        workspaceId,
-        userId,
-        composeSql`SELECT s.id FROM streams s
-          WHERE s.workspace_id = ${workspaceId} AND ${streamAccessPredicateSql(workspaceId, guestId, "s.id")}`
-      )}
+      AND EXISTS (
+        SELECT 1 FROM subject_streams ss WHERE ${streamAccessPredicateSql(workspaceId, guestId, "ss.stream_id")}
+      )
   `)
   return result.rows.map((row) => row.id)
 }
