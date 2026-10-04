@@ -26,6 +26,7 @@ const params = {
   query: "What should I bring to the picnic?",
   accessibleStreamIds: new Set(["stream_pad"]),
   memoViewerUserId: "usr_1",
+  asker: undefined,
 }
 
 function recordingReporter() {
@@ -122,6 +123,29 @@ describe("PreparedRecall", () => {
       stalled: { outcome: "timeout", memos: [] },
       failing: { outcome: "failed", memos: [] },
       outcomes: ["timeout", "failed"],
+    })
+  })
+
+  it("searches with the bare message and scores knowing who asks and on which day", async () => {
+    const search = mock(async (_params: Parameters<MemoExplorerService["search"]>[0]) => [
+      result("memo_fridays", "Fridays off"),
+    ])
+    const score = mock(async (_query: string) => [1])
+    const recall = new PreparedRecall({
+      analyticsReporter: new DisabledAnalyticsReporter(),
+      memoExplorerService: { search },
+      scorer: { score },
+    })
+
+    await recall.recall({
+      ...params,
+      query: "Suggest a slot next week",
+      asker: { name: "Alice Ek", askedAt: new Date("2026-10-04T23:30:00Z"), timezone: "Europe/Stockholm" },
+    })
+
+    expect({ searched: search.mock.calls[0]?.[0].query, scored: score.mock.calls[0]?.[0] }).toEqual({
+      searched: "Suggest a slot next week",
+      scored: "Alice Ek, Monday 2026-10-05: Suggest a slot next week",
     })
   })
 

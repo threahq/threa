@@ -3,6 +3,7 @@ import { AgentToolNames, DEFAULT_USER_PREFERENCES, MemoryModes, StreamTypes } fr
 import { StreamBriefRepository, StreamRepository, type StreamBrief } from "../../streams"
 import { MessageRepository } from "../../messaging"
 import { UserDeviceContextRepository } from "../../device-context"
+import { UserRepository } from "../../workspaces"
 import { buildAgentContext } from "./context"
 import type { PreparedRecallParams } from "./prepared-recall"
 import type { Persona } from "../persona-repository"
@@ -134,6 +135,7 @@ describe("buildAgentContext prepared recall", () => {
       reactions: {},
     }
     spyOn(MessageRepository, "findById").mockResolvedValue(trigger as never)
+    spyOn(UserRepository, "findById").mockResolvedValue({ name: "Alice Ek", timezone: null } as never)
     const buildStreamContext = contextBuilder.buildStreamContext
     spyOn(contextBuilder, "buildStreamContext").mockImplementation(async (...args) => ({
       ...(await buildStreamContext(...args)),
@@ -154,7 +156,11 @@ describe("buildAgentContext prepared recall", () => {
     }))
 
     const context = await buildAgentContext(
-      { ...deps, preparedRecall: { recall } as never },
+      {
+        ...deps,
+        preparedRecall: { recall } as never,
+        userPreferencesService: { getPreferences: async () => ({ timezone: "Europe/Stockholm" }) } as never,
+      },
       {
         workspaceId: "ws_1",
         streamId: "stream_pad",
@@ -179,7 +185,11 @@ describe("buildAgentContext prepared recall", () => {
       volatile: context.composeSystemPrompt([], { kind: "catch_up" }).volatile,
       recalled: context.recalledMemos.map((m) => m.id),
     }).toEqual({
-      query: expect.objectContaining({ invokingUserId: "usr_1", query: "What should I bring to the picnic?" }),
+      query: expect.objectContaining({
+        invokingUserId: "usr_1",
+        query: "What should I bring to the picnic?",
+        asker: { name: "Alice Ek", askedAt: trigger.createdAt, timezone: "Europe/Stockholm" },
+      }),
       volatile: expect.stringMatching(/## Recalled from memory[\s\S]*<memo id="memo_allergy"/),
       recalled: ["memo_allergy"],
     })

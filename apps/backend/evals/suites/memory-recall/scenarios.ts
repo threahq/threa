@@ -388,7 +388,7 @@ export const questions: Question[] = [
     askIn: "scratchpad",
     message: "Suggest a slot next week for a two-hour planning session with Bob.",
     expected:
-      "A slot Monday to Thursday morning; not Friday (Alice is off Fridays) and ideally not Thursday afternoon.",
+      "Any slot from Monday through Wednesday, or Thursday morning. Not Friday (Alice is off Fridays) and not Thursday afternoon (her deep-work time).",
     relevant: ["alice-fridays"],
   },
   {

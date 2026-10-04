@@ -1,6 +1,7 @@
 import type { TonePreset, BrevityPreset } from "@threahq/types"
 import { BUILT_IN_AGENTS, ARIADNE_AGENT_ID } from "../built-in-agents"
 import type { Persona } from "../persona-repository"
+import { getDateKey } from "../../../lib/temporal"
 
 export const COMPANION_MODEL_ID = BUILT_IN_AGENTS[ARIADNE_AGENT_ID].model
 
@@ -85,6 +86,23 @@ export const PREPARED_RECALL_QUESTION = {
     "a reply that ignored it would be wrong, unsafe, or contradict what the people involved have said",
   ],
 } as const
+
+export interface RecallAsker {
+  name: string
+  askedAt: Date
+  timezone: string
+}
+
+/**
+ * What the scorer judges candidates against. Bearing on a reply depends on who
+ * asks and when: their own day off matters to their scheduling, a colleague's
+ * leave only to the weeks it spans. The memo search embeds the bare message.
+ */
+export function preparedRecallScoringQuery(message: string, asker: RecallAsker | undefined): string {
+  if (!asker) return message
+  const weekday = new Intl.DateTimeFormat("en-US", { timeZone: asker.timezone, weekday: "long" }).format(asker.askedAt)
+  return `${asker.name}, ${weekday} ${getDateKey(asker.askedAt, asker.timezone)}: ${message}`
+}
 
 /** Between the second and third rungs: a memo is kept only when a good reply would use it. */
 export const PREPARED_RECALL_MIN_SCORE = 0.5

@@ -2930,6 +2930,7 @@ export function createPublicApiHandlers({
         query,
         accessibleStreamIds: new Set(accessibleStreamIds),
         memoViewerUserId: userId,
+        asker: undefined,
       })
 
       setAuditSubjects(

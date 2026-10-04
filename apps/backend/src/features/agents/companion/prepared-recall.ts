@@ -9,6 +9,8 @@ import {
   PREPARED_RECALL_MIN_SCORE,
   PREPARED_RECALL_QUERY_MAX_CHARS,
   PREPARED_RECALL_TIMEOUT_MS,
+  preparedRecallScoringQuery,
+  type RecallAsker,
 } from "./config"
 
 export interface RecalledMemo {
@@ -33,6 +35,8 @@ export interface PreparedRecallParams {
   accessibleStreamIds: Set<string>
   /** Set only for a turn private to its user; admits that user's own memos (`resolveMemoViewer`). */
   memoViewerUserId: string | undefined
+  /** The person whose message this is; an external agent's query has none. */
+  asker: RecallAsker | undefined
 }
 
 export const PREPARED_RECALL_EVENT = "prepared_recall"
@@ -146,7 +150,7 @@ export class PreparedRecall {
     if (candidates.length === 0) return { outcome: "no_candidates", candidateCount: 0, memos: [] }
 
     const scores = await this.scorer.score(
-      query,
+      preparedRecallScoringQuery(query, params.asker),
       candidates.map(({ memo }) => ({ title: memo.title, abstract: memo.abstract })),
       { workspaceId, userId: invokingUserId }
     )
