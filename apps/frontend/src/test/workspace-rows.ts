@@ -88,3 +88,8 @@ export async function seedStream(
 ): Promise<void> {
   await db.streams.put(makeCachedStream(workspaceId, id, overrides))
 }
+
+export function withoutWorkspace<T extends { workspaceId: string }>(row: T): Omit<T, "workspaceId"> {
+  const { workspaceId: _omitted, ...rest } = row
+  return rest
+}

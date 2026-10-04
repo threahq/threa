@@ -3,7 +3,7 @@ import { renderHook } from "@testing-library/react"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { createElement, type ReactNode } from "react"
 import { useActors } from "./use-actors"
-import type { User, Persona, Bot } from "@threahq/types"
+import type { User, Bot } from "@threahq/types"
 import type { CachedWorkspaceUser, CachedPersona, CachedBot } from "@/db"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as useWorkspaceEmojiModule from "./use-workspace-emoji"
@@ -48,10 +48,10 @@ function createMember(overrides: Partial<User> & { _cachedAt?: number } = {}): C
   }
 }
 
-function createPersona(overrides: Partial<Persona> & { _cachedAt?: number } = {}): CachedPersona {
+function createPersona(overrides: Partial<CachedPersona> = {}): CachedPersona {
   return {
     id: "persona_123",
-    workspaceId: null,
+    workspaceId: "ws_123",
     slug: "test-persona",
     name: "Test Persona",
     description: null,
