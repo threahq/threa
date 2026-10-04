@@ -38,7 +38,7 @@ export function buildEpisodeSummaryPromptBlock(
       "",
       ...lines,
     ].join("\n"),
-    sourceStreamIds: [...new Set(kept.flatMap(({ sourceStreamIds }) => sourceStreamIds))],
+    sourceStreamIds: kept.flatMap(({ sourceStreamIds }) => sourceStreamIds),
   }
 }
 

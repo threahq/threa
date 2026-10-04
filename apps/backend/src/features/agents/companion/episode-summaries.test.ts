@@ -62,7 +62,7 @@ describe("buildEpisodeSummaryPromptBlock", () => {
     expect(text).toContain("Kept: read two channels.")
     expect(text).toContain("Kept: read one channel.")
     expect(text).not.toContain("Revoked")
-    expect(sourceStreamIds.sort()).toEqual(["stream_also_ok", "stream_ok"])
+    expect([...new Set(sourceStreamIds)].sort()).toEqual(["stream_also_ok", "stream_ok"])
   })
 })
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { AgentToolNames, DEFAULT_USER_PREFERENCES, MemoryModes, StreamTypes, Visibilities } from "@threahq/types"
-import { StreamBriefRepository, StreamRepository, type StreamBrief } from "../../streams"
+import { StreamBriefRepository, StreamMemberRepository, StreamRepository, type StreamBrief } from "../../streams"
 import { MessageRepository } from "../../messaging"
 import { UserDeviceContextRepository } from "../../device-context"
 import { UserRepository } from "../../workspaces"
@@ -195,6 +195,70 @@ describe("buildAgentContext prepared recall", () => {
       }),
       volatile: expect.stringMatching(/## Recalled from memory[\s\S]*<memo id="memo_allergy"/),
       recalled: ["memo_allergy"],
+    })
+  })
+})
+
+describe("buildAgentContext prepared recall audience", () => {
+  afterEach(() => mock.restore())
+
+  it("should recall for the audience the stream's access spec names when the turn runs in an aside, a DM or a channel", async () => {
+    const trigger = {
+      id: "msg_1",
+      streamId: "stream_x",
+      authorType: "user",
+      authorId: "usr_1",
+      contentMarkdown: "What did we decide?",
+      contentJson: { type: "doc", content: [] },
+      createdAt: new Date("2026-10-01T10:00:00Z"),
+      reactions: {},
+    }
+    spyOn(MessageRepository, "findById").mockResolvedValue(trigger as never)
+    spyOn(UserRepository, "findById").mockResolvedValue({ name: "Alice Ek", timezone: null } as never)
+    spyOn(StreamMemberRepository, "list").mockResolvedValue([{ memberId: "usr_1" }, { memberId: "usr_2" }] as never)
+
+    const recalledAudienceIn = async (stream: { id: string; type: string; visibility: string }) => {
+      const recall = mock(async (_params: PreparedRecallParams) => ({
+        outcome: "nothing_relevant" as const,
+        memos: [],
+      }))
+      await buildAgentContext(
+        { ...deps, preparedRecall: { recall } as never },
+        {
+          workspaceId: "ws_1",
+          streamId: stream.id,
+          stream: {
+            ...stream,
+            workspaceId: "ws_1",
+            rootStreamId: null,
+            parentStreamId: null,
+            createdBy: "usr_1",
+          } as never,
+          messageId: "msg_1",
+          persona,
+          purpose: { kind: "catch_up" },
+          policy: { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests: false },
+        }
+      )
+      return recall.mock.calls[0]?.[0].memoAudience
+    }
+
+    expect({
+      aside: await recalledAudienceIn({
+        id: "stream_aside",
+        type: StreamTypes.ASIDE,
+        visibility: Visibilities.PRIVATE,
+      }),
+      dm: await recalledAudienceIn({ id: "stream_dm", type: StreamTypes.DM, visibility: Visibilities.PRIVATE }),
+      channel: await recalledAudienceIn({
+        id: "stream_channel",
+        type: StreamTypes.CHANNEL,
+        visibility: Visibilities.PUBLIC,
+      }),
+    }).toEqual({
+      aside: { kind: "users", userIds: ["usr_1"] },
+      dm: { kind: "users", userIds: ["usr_1", "usr_2"] },
+      channel: { kind: "room", roomStreamId: "stream_channel" },
     })
   })
 })

@@ -40,6 +40,8 @@ export interface ToolWorkRecord {
   /** The tool's trace content (`trace.formatContent` output), clipped. */
   content: string
   sources: TraceSource[]
+  /** Streams the tool put in front of the model, beyond its cited sources. */
+  provenanceStreamIds: string[]
 }
 
 /**
@@ -74,6 +76,7 @@ export class TurnDigestCollector implements AgentObserver {
           toolName: event.toolName,
           content: clip(event.trace.content, MAX_RECORD_CHARS),
           sources: event.trace.sources ?? [],
+          provenanceStreamIds: event.provenanceStreamIds ?? [],
         })
         return
       }
@@ -140,7 +143,9 @@ export async function generateTurnDigest(params: GenerateTurnDigestParams): Prom
     findings,
     toolsCalled: dedupe(records.map((r) => r.toolName)),
     sources: dedupeSources(records.flatMap((r) => r.sources)).slice(0, MAX_DIGEST_SOURCES),
-    sourceStreamIds: dedupe(records.flatMap((r) => r.sources).flatMap((s) => (s.streamId ? [s.streamId] : []))),
+    sourceStreamIds: dedupe(
+      records.flatMap((r) => [...r.provenanceStreamIds, ...r.sources.flatMap((s) => (s.streamId ? [s.streamId] : []))])
+    ),
   }
 }
 
@@ -174,6 +179,7 @@ export function parseTurnDigestStepContent(raw: unknown): TurnDigestStepContent 
     sourceStreamIds: Array.isArray(record.sourceStreamIds)
       ? record.sourceStreamIds.filter((s): s is string => typeof s === "string")
       : [],
+    ...(typeof record.audienceBrowses === "boolean" ? { audienceBrowses: record.audienceBrowses } : {}),
   }
 }
 

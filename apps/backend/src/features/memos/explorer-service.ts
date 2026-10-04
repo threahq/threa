@@ -439,6 +439,13 @@ export class MemoExplorerService {
     const sourceMessages = await this.loadSourceMessages(workspaceId, memo, permissions.accessibleStreamIds)
     const successor =
       memo.status === "superseded" ? await MemoRepository.findSupersededBy(this.pool, workspaceId, memo.id) : null
+    const visibleSuccessorId =
+      successor &&
+      (await MemoRepository.filterVisibleIds(this.pool, workspaceId, [successor.id], permissions.audiences)).has(
+        successor.id
+      )
+        ? successor.id
+        : null
     const capturedByPersonaName = await this.resolveCapturedByPersonaName(workspaceId, memo)
 
     return {
@@ -447,7 +454,7 @@ export class MemoExplorerService {
       sourceStream: this.toStreamRef(sourceContext.sourceStream),
       rootStream: this.toStreamRef(sourceContext.rootStream),
       sourceMessages,
-      successorMemoId: successor?.id ?? null,
+      successorMemoId: visibleSuccessorId,
       capturedByPersonaName,
     }
   }

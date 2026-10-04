@@ -2,12 +2,12 @@ import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { AuthoredByKinds, MemoryModes, StreamTypes, Visibilities } from "@threahq/types"
-import { MemoRepository, MemoService } from "../../src/features/memos"
+import { MemoRepository, MemoService, type MemoAudience } from "../../src/features/memos"
 import type { ConversationClassification } from "../../src/features/memos/classifier"
 import { MessageRepository } from "../../src/features/messaging"
 import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { messageId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { memoId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { addTestMember, setupTestDatabase, testMessageContent, withTransaction } from "./setup"
 
 const worthy: ConversationClassification = {
@@ -29,6 +29,7 @@ describe("agent memo provenance", () => {
   let anchorId: string
   let researchMessageId: string
   let embeddingsIssued = 0
+  let pinnedEmbedding: number[] | null = null
 
   async function seedChannel(id: string): Promise<void> {
     await StreamRepository.insert(pool, {
@@ -74,20 +75,51 @@ describe("agent memo provenance", () => {
     return id
   }
 
-  const saveAgentMemo = (params: { provenanceStreamIds: string[]; requiresBrowse: boolean }) =>
+  const saveAgentMemo = (params: {
+    provenanceStreamIds: string[]
+    audience: MemoAudience | null
+    streamId?: string
+    anchor?: string
+  }) =>
     service.saveMemo({
       workspaceId: testWorkspaceId,
-      streamId: home,
+      streamId: params.streamId ?? home,
       sessionId: null,
-      sourceStreamIds: [home],
+      sourceStreamIds: [params.streamId ?? home],
       title: "Rollout plan",
       abstract: "The rollout starts on Monday with the flag off.",
       keyPoints: [],
       tags: [],
       knowledgeType: "decision",
-      sourceMessageIds: [anchorId],
-      ...params,
+      sourceMessageIds: [params.anchor ?? anchorId],
+      provenanceStreamIds: params.provenanceStreamIds,
+      audience: params.audience,
     })
+
+  const unitVector = (index: number) => Array.from({ length: 1536 }, (_, i) => (i === index ? 1 : 0))
+
+  async function seedAgentMemo(stream: string, anchor: string, sourceStreamIds: string[]): Promise<string> {
+    const id = memoId()
+    await MemoRepository.insert(pool, {
+      id,
+      workspaceId: testWorkspaceId,
+      memoType: "message",
+      sourceMessageId: anchor,
+      title: "Rollout plan",
+      abstract: "The rollout starts on Monday with the flag off.",
+      keyPoints: [],
+      sourceMessageIds: [anchor],
+      participantIds: [testUserId],
+      knowledgeType: "decision",
+      tags: [],
+      status: "active",
+      authoredByKind: AuthoredByKinds.AGENT,
+      sourceStreamIds,
+      requiresBrowse: false,
+    })
+    await MemoRepository.updateEmbedding(pool, testWorkspaceId, id, pinnedEmbedding!)
+    return id
+  }
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
@@ -108,11 +140,7 @@ describe("agent memo provenance", () => {
         ],
       } as never,
       embeddingService: {
-        embedBatch: async (texts: string[]) =>
-          texts.map(() => {
-            const index = embeddingsIssued++
-            return Array.from({ length: 1536 }, (_, i) => (i === index ? 1 : 0))
-          }),
+        embedBatch: async (texts: string[]) => texts.map(() => pinnedEmbedding ?? unitVector(embeddingsIssued++)),
       } as never,
       messageFormatter: {} as never,
     })
@@ -143,7 +171,7 @@ describe("agent memo provenance", () => {
   test("should store the turn's streams together with every stream whose content reached the model when an agent saves a memo", async () => {
     const saved = await saveAgentMemo({
       provenanceStreamIds: [research, otherResearch, home, research],
-      requiresBrowse: true,
+      audience: { kind: "streams", streamIds: [home], browses: true },
     })
     expect(saved).toMatchObject({ ok: true, deduped: false })
 
@@ -185,8 +213,23 @@ describe("agent memo provenance", () => {
     })
   })
 
-  test("should store requiresBrowse false for a saved memo and a reflective capture when the agent wrote for an audience that needs no browse", async () => {
-    const saved = await saveAgentMemo({ provenanceStreamIds: [home], requiresBrowse: false })
+  test("should store requiresBrowse by the saved audience's browse when an agent saves a memo, and true when no audience resolved", async () => {
+    const audiences: Array<MemoAudience | null> = [
+      { kind: "streams", streamIds: [home], browses: false },
+      { kind: "streams", streamIds: [home], browses: true },
+      null,
+    ]
+    const requiresBrowse: Array<boolean | undefined> = []
+    for (const audience of audiences) {
+      const saved = await saveAgentMemo({ provenanceStreamIds: [home], audience })
+      const memo = await MemoRepository.findById(pool, testWorkspaceId, (saved as { memoId: string }).memoId)
+      requiresBrowse.push(memo?.requiresBrowse)
+    }
+
+    expect(requiresBrowse).toEqual([false, true, true])
+  })
+
+  test("should store requiresBrowse false for a reflective capture when the session ran for an audience that needs no browse", async () => {
     const session = `session_${streamId()}`
     await service.captureSessionReflection({
       workspaceId: testWorkspaceId,
@@ -202,11 +245,74 @@ describe("agent memo provenance", () => {
 
     const { rows } = await pool.query<{ id: string }>(`SELECT id FROM memos WHERE source_session_id = $1`, [session])
     const reflected = await MemoRepository.findById(pool, testWorkspaceId, rows[0].id)
-    const memo = await MemoRepository.findById(pool, testWorkspaceId, (saved as { memoId: string }).memoId)
 
-    expect({ saved: memo?.requiresBrowse, reflected: reflected?.requiresBrowse }).toEqual({
-      saved: false,
-      reflected: false,
+    expect(reflected?.requiresBrowse).toBe(false)
+  })
+
+  describe("dedupe against what the saver's audience can read", () => {
+    const readersOf = (stream: string): MemoAudience => ({ kind: "streams", streamIds: [stream], browses: true })
+
+    beforeAll(() => {
+      pinnedEmbedding = unitVector(1535)
+    })
+
+    afterAll(() => {
+      pinnedEmbedding = null
+    })
+
+    test("should insert a new memo when the only near-identical memo is hidden from the saver's audience", async () => {
+      const stream = streamId()
+      await seedChannel(stream)
+      const anchor = await seedMessage(stream, "the rollout starts on Monday")
+      const hidden = await seedAgentMemo(stream, anchor, [stream, research])
+
+      const saved = await saveAgentMemo({
+        streamId: stream,
+        anchor,
+        provenanceStreamIds: [],
+        audience: readersOf(stream),
+      })
+
+      expect(saved).toEqual({
+        ok: true,
+        memoId: expect.not.stringContaining(hidden),
+        title: "Rollout plan",
+        deduped: false,
+        scope: "workspace",
+      })
+    })
+
+    test("should dedupe to the existing memo when it is visible to the saver's audience", async () => {
+      const stream = streamId()
+      await seedChannel(stream)
+      const anchor = await seedMessage(stream, "the rollout starts on Monday")
+      const visible = await seedAgentMemo(stream, anchor, [stream])
+
+      const saved = await saveAgentMemo({
+        streamId: stream,
+        anchor,
+        provenanceStreamIds: [],
+        audience: readersOf(stream),
+      })
+
+      expect(saved).toEqual({ ok: true, memoId: visible, title: "Rollout plan", deduped: true, scope: "workspace" })
+    })
+
+    test("should insert a new memo when no audience resolved and the near-identical memo cites a stream the room can't read", async () => {
+      const stream = streamId()
+      await seedChannel(stream)
+      const anchor = await seedMessage(stream, "the rollout starts on Monday")
+      const hidden = await seedAgentMemo(stream, anchor, [stream, research])
+
+      const saved = await saveAgentMemo({ streamId: stream, anchor, provenanceStreamIds: [], audience: null })
+
+      expect(saved).toEqual({
+        ok: true,
+        memoId: expect.not.stringContaining(hidden),
+        title: "Rollout plan",
+        deduped: false,
+        scope: "workspace",
+      })
     })
   })
 })

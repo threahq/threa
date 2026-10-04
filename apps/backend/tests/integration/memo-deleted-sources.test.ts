@@ -443,7 +443,7 @@ describe("memo sources: deleted and edited messages", () => {
         sessionId: null,
         sourceStreamIds: [threadId, seeded.streamId],
         provenanceStreamIds: [],
-        requiresBrowse: false,
+        audience: null,
         title: "Flag flip",
         abstract: "The flag flips on Wednesday.",
         keyPoints: [],

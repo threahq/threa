@@ -210,9 +210,7 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
         )
 
         return {
-          provenanceStreamIds: [
-            ...new Set([...results.map((r) => r.streamId), ...conversations.map((c) => c.streamId)]),
-          ],
+          provenanceStreamIds: [...results.map((r) => r.streamId), ...conversations.map((c) => c.streamId)],
           output: JSON.stringify({
             query: input.query,
             stream: input.stream,
@@ -542,7 +540,7 @@ You can reference streams by their ID (stream_xxx), slug (general), or prefixed 
         logger.debug({ stream: input.stream, messageCount: results.length }, "Stream messages retrieved")
 
         return {
-          provenanceStreamIds: [...new Set([resolved.id, ...messages.map((m) => m.streamId)])],
+          provenanceStreamIds: [resolved.id, ...messages.map((m) => m.streamId)],
           output: JSON.stringify({
             stream: input.stream,
             streamId: resolved.id,

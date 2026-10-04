@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { AgentStepTypes, MemoryModes, type StreamType, type Visibility } from "@threahq/types"
 import { AgentSessionRepository, ReflectiveCaptureService, SessionStatuses } from "../../src/features/agents"
-import { MemoService } from "../../src/features/memos"
+import { MemoRepository, MemoService } from "../../src/features/memos"
 import type { ConversationClassification } from "../../src/features/memos/classifier"
 import { MessageRepository } from "../../src/features/messaging"
 import { StreamRepository } from "../../src/features/streams"
@@ -95,7 +95,8 @@ describe("reflective capture: research sources", () => {
   async function seedSession(
     stream: string,
     triggerMessageId: string,
-    cited: { streamId: string; messageId: string }[]
+    cited: { streamId: string; messageId: string }[],
+    audienceBrowses?: boolean
   ): Promise<string> {
     const id = sessionId()
     await AgentSessionRepository.insert(pool, {
@@ -116,6 +117,7 @@ describe("reflective capture: research sources", () => {
         toolsCalled: ["search_messages"],
         sources: cited.map((c) => ({ type: "workspace_message", title: "cited", ...c })),
         sourceStreamIds: [...new Set(cited.map((c) => c.streamId))],
+        ...(audienceBrowses === undefined ? {} : { audienceBrowses }),
       },
       startedAt: new Date(),
     })
@@ -130,8 +132,9 @@ describe("reflective capture: research sources", () => {
   }
 
   async function requiresBrowseOf(session: string) {
-    const { rows } = await pool.query(`SELECT requires_browse FROM memos WHERE source_session_id = $1`, [session])
-    return rows.map((row) => row.requires_browse)
+    const { rows } = await pool.query(`SELECT id FROM memos WHERE source_session_id = $1`, [session])
+    const memos = await Promise.all(rows.map((row) => MemoRepository.findById(pool, testWorkspaceId, row.id)))
+    return memos.map((memo) => memo?.requiresBrowse)
   }
 
   beforeAll(async () => {
@@ -189,19 +192,21 @@ describe("reflective capture: research sources", () => {
     expect(await capturedMemos(session)).toEqual([{ scope: "workspace", sourceMessageIds: [trigger, threadReply] }])
   })
 
-  test("should record whether the session's audience browses when capturing from a member channel or a guest-visible one", async () => {
-    const memberChannel = await seedStream({ type: "channel", visibility: "public" })
-    const guestChannel = await seedStream({ type: "channel", visibility: "guest_public" })
-    const memberSession = await seedSession(memberChannel, await seedMessage(memberChannel), [])
-    const guestSession = await seedSession(guestChannel, await seedMessage(guestChannel), [])
+  test("should store requiresBrowse from the turn digest's audience when capturing, absent counting as browsing", async () => {
+    const channel = await seedStream({ type: "channel", visibility: "public" })
+    const unrestricted = await seedSession(channel, await seedMessage(channel), [], true)
+    const restricted = await seedSession(channel, await seedMessage(channel), [], false)
+    const legacy = await seedSession(channel, await seedMessage(channel), [])
 
-    await captureService().capture({ workspaceId: testWorkspaceId, sessionId: memberSession })
-    await captureService().capture({ workspaceId: testWorkspaceId, sessionId: guestSession })
+    for (const session of [unrestricted, restricted, legacy]) {
+      await captureService().capture({ workspaceId: testWorkspaceId, sessionId: session })
+    }
 
     expect({
-      memberChannel: await requiresBrowseOf(memberSession),
-      guestChannel: await requiresBrowseOf(guestSession),
-    }).toEqual({ memberChannel: [true], guestChannel: [false] })
+      browses: await requiresBrowseOf(unrestricted),
+      cannotBrowse: await requiresBrowseOf(restricted),
+      absent: await requiresBrowseOf(legacy),
+    }).toEqual({ browses: [true], cannotBrowse: [false], absent: [true] })
   })
 
   test("the capture is placed at the session's anchor, not at its cited research", async () => {

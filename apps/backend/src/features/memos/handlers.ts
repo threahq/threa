@@ -110,7 +110,12 @@ function normalizeSearchMode(query: string, exact?: boolean): { query: string; e
   return { query: unquoted, exact: unquoted.length > 0 }
 }
 
-function serializeMemo({ cardVersion: _cardVersion, ...memo }: Memo) {
+function serializeMemo({
+  cardVersion: _cardVersion,
+  sourceStreamIds: _sourceStreamIds,
+  requiresBrowse: _requiresBrowse,
+  ...memo
+}: Memo) {
   return {
     ...memo,
     createdAt: memo.createdAt.toISOString(),

@@ -19,7 +19,8 @@ export type DescribeMemoInput = z.infer<typeof DescribeMemoSchema>
  * Access scope: gated by `accessibleStreamIds` inside `MemoExplorerService.getById`,
  * which rejects memos whose source stream is outside the turn's reach and
  * filters per-source-message access; user-scoped memos resolve only for
- * `memoViewerUserId`. Outputs only ids the caller could have obtained directly
+ * `memoViewerUserId`; agent memos also need `memoAudience` to read their recorded
+ * provenance. Outputs only ids the caller could have obtained directly
  * via `search_messages`, so emitting them as pointer URLs does not widen the
  * access surface.
  */

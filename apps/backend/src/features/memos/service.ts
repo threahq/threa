@@ -20,6 +20,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
 import { WorkspaceSettingsRepository } from "../workspace-settings"
 import { StreamContextRepository, contextSnippet, type NewStreamContextItem } from "../stream-context"
+import { audienceBrowses, type MemoAudience } from "./audience"
 import { MemoRepository, type Memo } from "./repository"
 import { PendingItemRepository, type PendingMemoItem } from "./pending-item-repository"
 import { classificationFingerprint } from "./classification-fingerprint"
@@ -191,8 +192,8 @@ export interface SaveMemoParams {
    * of them; a superset only narrows the audience, a subset leaks.
    */
   provenanceStreamIds: string[]
-  /** The agent wrote for readers who browse the workspace, so its prompt may have held member-only content: readers who cannot browse never see the memo. */
-  requiresBrowse: boolean
+  /** Who the agent wrote for: readers who browse the workspace may have had member-only content in its prompt, so the memo is hidden from readers who cannot browse. Null when unresolved: the memo then needs browse, and only memos the room reads count as duplicates. */
+  audience: MemoAudience | null
   title: string
   abstract: string
   keyPoints: string[]
@@ -1173,7 +1174,7 @@ export class MemoService implements MemoServiceLike {
       sessionId,
       sourceStreamIds,
       provenanceStreamIds,
-      requiresBrowse,
+      audience,
       title,
       abstract,
       keyPoints,
@@ -1283,6 +1284,7 @@ export class MemoService implements MemoServiceLike {
         maxDistance: MEMO_DEDUP_DISTANCE,
         scope: resolvedScope,
         scopeUserId: resolvedScopeUserId,
+        audiences: [audience ?? { kind: "room", roomStreamId: natural.rootStreamId }],
       })
       if (duplicate) {
         logger.info(
@@ -1308,7 +1310,7 @@ export class MemoService implements MemoServiceLike {
         authoredByKind: AuthoredByKinds.AGENT,
         sourceSessionId: sessionId ?? undefined,
         sourceStreamIds: [...provenanceStreamIds, ...sourceStreamIds],
-        requiresBrowse,
+        requiresBrowse: audience ? await audienceBrowses(client, workspaceId, audience) : true,
         scope: resolvedScope,
         scopeUserId: resolvedScopeUserId,
       })

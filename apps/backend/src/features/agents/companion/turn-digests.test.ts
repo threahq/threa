@@ -67,7 +67,7 @@ describe("buildTurnDigestPromptBlock", () => {
     expect(block).toContain("Still accessible.")
     expect(block).toContain("Also accessible.")
     expect(block).not.toContain("Now private.")
-    expect(sourceStreamIds.sort()).toEqual(["stream_also_ok", "stream_ok"])
+    expect([...new Set(sourceStreamIds)].sort()).toEqual(["stream_also_ok", "stream_ok"])
   })
 
   it("injects only workspace-free digests on bot turns (no invoking user → no workspace access)", () => {

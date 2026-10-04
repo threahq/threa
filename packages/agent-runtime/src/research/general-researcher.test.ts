@@ -143,7 +143,7 @@ describe("runGeneralResearch", () => {
 })
 
 describe("runGeneralResearch provenance", () => {
-  function readingTool(): GeneralResearchRunInput["tools"][number] {
+  function readingTool(onRead: () => void = () => {}): GeneralResearchRunInput["tools"][number] {
     return {
       name: "get_stream_messages",
       config: {
@@ -152,7 +152,7 @@ describe("runGeneralResearch provenance", () => {
         categories: [],
         inputSchema: z.object({}),
         execute: async () => {
-          await new Promise((resolve) => setTimeout(resolve, 80))
+          onRead()
           return { output: "{}", provenanceStreamIds: ["stream_private"] }
         },
         trace: { stepType: "workspace_search" as const, hidden: true, formatContent: () => "{}" },
@@ -183,12 +183,37 @@ describe("runGeneralResearch provenance", () => {
   })
 
   test("should return the streams an inner tool read before the deadline when the run times out", async () => {
-    const result = await runGeneralResearch(
-      readThenAnswer(),
-      baseInput({ tools: [readingTool()], deadlineAt: Date.now() + 40 })
-    )
+    const input: GeneralResearchRunInput = baseInput({
+      tools: [
+        readingTool(() => {
+          input.deadlineAt = Date.now() - 1
+        }),
+      ],
+    })
+
+    const result = await runGeneralResearch(readThenAnswer(), input)
 
     expect(result).toMatchObject({ partial: true, partialReason: "timeout", provenanceStreamIds: ["stream_private"] })
+  })
+
+  test("should return the streams an inner tool read when the run exits at max_iterations without a brief", async () => {
+    const deps = {
+      ...buildDeps(() => ({
+        text: "",
+        toolCalls: [{ toolCallId: "tc_1", toolName: "get_stream_messages", input: {} }],
+        response: { messages: [{ role: "assistant", content: "" }] },
+      })),
+      maxIterations: 1,
+    }
+
+    const result = await runGeneralResearch(deps, baseInput({ tools: [readingTool()] }))
+
+    expect(result).toMatchObject({
+      brief: "",
+      partial: true,
+      partialReason: "max_iterations",
+      provenanceStreamIds: ["stream_private"],
+    })
   })
 })
 

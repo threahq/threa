@@ -123,7 +123,7 @@ describe("search_messages carries ready-to-use links", () => {
     try {
       const result = await tool.config.execute({ query: "bun", exact: false }, { toolCallId: "t1" })
       const output = JSON.parse(result.output)
-      expect(result.provenanceStreamIds).toEqual(["stream_1"])
+      expect(result.provenanceStreamIds).toEqual(["stream_1", "stream_1"])
       expect(output.results[0]).toMatchObject({
         id: "msg_1",
         streamId: "stream_1",

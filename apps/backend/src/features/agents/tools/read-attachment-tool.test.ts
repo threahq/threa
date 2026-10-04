@@ -12,9 +12,16 @@ import type { WorkspaceToolDeps } from "./tool-deps"
 const toolOpts = { toolCallId: "test" }
 
 function makeAttachmentService(
-  getAccessible: AttachmentService["getAccessible"] = async () => null
+  getAccessible: AttachmentService["getAccessible"] = async () => null,
+  viaStreamIds?: string[]
 ): AttachmentService {
-  return { getAccessible } as unknown as AttachmentService
+  return {
+    getAccessibleVia: async (...args: Parameters<AttachmentService["getAccessible"]>) => {
+      const attachment = await getAccessible(...args)
+      if (!attachment) return null
+      return { attachment, viaStreamIds: viaStreamIds ?? (attachment.streamId ? [attachment.streamId] : []) }
+    },
+  } as unknown as AttachmentService
 }
 
 function makeDeps(overrides?: Partial<WorkspaceToolDeps>): WorkspaceToolDeps {
@@ -152,6 +159,40 @@ describe("read_attachment — whole-file read", () => {
 
     expect(parsed.extraction).toBeNull()
     expect(parsed.processingStatus).toBe("pending")
+
+    extractionSpy.mockRestore()
+  })
+
+  it("should report the reference stream that grants access when the attachment lives in a stream the reader cannot read", async () => {
+    const referenced = { ...textAttachment, streamId: "stream_private" }
+    const deps = makeDeps({
+      attachmentService: makeAttachmentService(async () => referenced as any, ["stream_2"]),
+    })
+    const extractionSpy = spyOn(AttachmentExtractionRepository, "findByAttachmentId").mockResolvedValue(null as any)
+
+    const tool = createReadAttachmentTool(deps, { supportsVision: true })
+    const result = await tool.config.execute({ attachmentId: "attach_1" }, toolOpts)
+
+    expect({ provenanceStreamIds: result.provenanceStreamIds, id: JSON.parse(result.output).id }).toEqual({
+      provenanceStreamIds: ["stream_2"],
+      id: "attach_1",
+    })
+
+    extractionSpy.mockRestore()
+  })
+
+  it("should return the tool's error output when reading the attachment rejects", async () => {
+    const deps = makeDeps({ attachmentService: makeAttachmentService(async () => textAttachment as any) })
+    const extractionSpy = spyOn(AttachmentExtractionRepository, "findByAttachmentId").mockRejectedValue(
+      new Error("extraction store down")
+    )
+
+    const tool = createReadAttachmentTool(deps, { supportsVision: true })
+    const result = await tool.config.execute({ attachmentId: "attach_1" }, toolOpts)
+
+    expect(result).toEqual({
+      output: JSON.stringify({ error: "Failed to read attachment: extraction store down", attachmentId: "attach_1" }),
+    })
 
     extractionSpy.mockRestore()
   })

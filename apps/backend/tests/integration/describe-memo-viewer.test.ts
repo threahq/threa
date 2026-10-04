@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
-import { MemoScopes, StreamTypes, Visibilities } from "@threahq/types"
+import { AuthoredByKinds, MemoScopes, StreamTypes, Visibilities } from "@threahq/types"
 import { computeAgentAccessSpec, memoAudienceForSpec, resolveMemoViewer } from "../../src/features/agents/researcher"
 import { createDescribeMemoTool, type WorkspaceToolDeps } from "../../src/features/agents/tools"
 import { MemoExplorerService, MemoRepository, StubEmbeddingService, StubReranker } from "../../src/features/memos"
@@ -23,6 +23,10 @@ describe("describe_memo viewer", () => {
   let sharedMemoId: string
   let supersededMemoId: string
   let archivedMemoId: string
+  let guestUserId: string
+  let guestChannelId: string
+  let memberOnlyMemoId: string
+  let guestReadableMemoId: string
 
   /** Tool deps as a turn in `invocationStreamId` gets them: scope and memo viewer both from the access spec. */
   async function describeFrom(invocationStreamId: string, memo: string): Promise<Record<string, unknown>> {
@@ -33,6 +37,21 @@ describe("describe_memo viewer", () => {
       workspaceId: testWorkspaceId,
       accessibleStreamIds,
       invokingUserId: ownerId,
+      memoViewerUserId: resolveMemoViewer(accessSpec),
+      memoAudience: memoAudienceForSpec(accessSpec),
+      memoExplorer: explorer,
+    } as WorkspaceToolDeps)
+    const { output } = await tool.config.execute({ memoId: memo }, { toolCallId: "test" })
+    return JSON.parse(output)
+  }
+
+  /** Tool deps as a turn whose audience is the guest alone gets them. */
+  async function describeAsGuest(memo: string): Promise<Record<string, unknown>> {
+    const accessSpec = { type: "user_full_access", userId: guestUserId } as const
+    const tool = createDescribeMemoTool({
+      workspaceId: testWorkspaceId,
+      accessibleStreamIds: await SearchRepository.getAccessibleStreamsForAgent(pool, accessSpec, testWorkspaceId),
+      invokingUserId: guestUserId,
       memoViewerUserId: resolveMemoViewer(accessSpec),
       memoAudience: memoAudienceForSpec(accessSpec),
       memoExplorer: explorer,
@@ -56,6 +75,9 @@ describe("describe_memo viewer", () => {
     sharedMemoId = memoId()
     supersededMemoId = memoId()
     archivedMemoId = memoId()
+    guestChannelId = streamId()
+    memberOnlyMemoId = memoId()
+    guestReadableMemoId = memoId()
     const ownerWorkosUserId = userId()
 
     await withTransaction(pool, async (client) => {
@@ -132,6 +154,48 @@ describe("describe_memo viewer", () => {
       await MemoRepository.markSuperseded(client, testWorkspaceId, [supersededMemoId], "revised")
       await MemoRepository.insert(client, { ...memoBase, id: archivedMemoId, title: "Archived" })
       await MemoRepository.archive(client, testWorkspaceId, archivedMemoId)
+
+      // Agent memos located in a channel the guest reads: one also drew on the
+      // member-only public channel, the other only on what the guest reads.
+      guestUserId = (await addTestMember(client, testWorkspaceId, userId(), "guest")).id
+      await StreamRepository.insert(client, {
+        id: guestChannelId,
+        workspaceId: testWorkspaceId,
+        type: StreamTypes.CHANNEL,
+        visibility: Visibilities.GUEST_PUBLIC,
+        slug: `g-${guestChannelId.slice(-8)}`,
+        createdBy: ownerId,
+      })
+      const guestMessageId = messageId()
+      await MessageRepository.insert(client, {
+        workspaceId: testWorkspaceId,
+        id: guestMessageId,
+        streamId: guestChannelId,
+        sequence: 1n,
+        authorId: ownerId,
+        authorType: "user",
+        ...testMessageContent("guest-visible source"),
+      })
+      const agentMemoBase = {
+        ...memoBase,
+        sourceMessageId: guestMessageId,
+        sourceMessageIds: [guestMessageId],
+        authoredByKind: AuthoredByKinds.AGENT,
+      }
+      await MemoRepository.insert(client, {
+        ...agentMemoBase,
+        id: memberOnlyMemoId,
+        title: "Drew on member-only content",
+        sourceStreamIds: [guestChannelId, publicChannelId],
+        requiresBrowse: true,
+      })
+      await MemoRepository.insert(client, {
+        ...agentMemoBase,
+        id: guestReadableMemoId,
+        title: "Drew on guest-readable content",
+        sourceStreamIds: [guestChannelId],
+        requiresBrowse: false,
+      })
     })
   })
 
@@ -171,6 +235,13 @@ describe("describe_memo viewer", () => {
     ]).toEqual([
       { error: "Memo not found, archived, or you don't have access to its source stream", memoId: supersededMemoId },
       { error: "Memo not found, archived, or you don't have access to its source stream", memoId: archivedMemoId },
+    ])
+  })
+
+  test("should describe an agent memo only when a guest audience can read its provenance", async () => {
+    expect([await describeAsGuest(memberOnlyMemoId), await describeAsGuest(guestReadableMemoId)]).toEqual([
+      { error: "Memo not found, archived, or you don't have access to its source stream", memoId: memberOnlyMemoId },
+      expect.objectContaining({ id: guestReadableMemoId, title: "Drew on guest-readable content" }),
     ])
   })
 })

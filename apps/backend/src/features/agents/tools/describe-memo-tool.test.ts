@@ -141,6 +141,22 @@ describe("describe_memo tool", () => {
     expect(provenanceStreamIds).toEqual(["stream_9", "stream_3", "stream_thread"])
   })
 
+  it("should report the source stream and the source messages' streams as provenance when the memo records no source streams", async () => {
+    const detail = {
+      memo: { status: "active", sourceStreamIds: null },
+      sourceStream: { id: "stream_1", type: "channel", name: "general" },
+      rootStream: null,
+      sourceMessages: [
+        { id: "msg_1", streamId: "stream_thread", content: "hi", createdAt: new Date("2026-04-30T08:50:00Z") },
+      ],
+    } as unknown as MemoExplorerDetail
+    const tool = createDescribeMemoTool(makeDeps(makeMemoExplorer(async () => detail)))
+
+    const { provenanceStreamIds } = await tool.config.execute({ memoId: "memo_pipeline" }, toolOpts)
+
+    expect(provenanceStreamIds).toEqual(["stream_1", "stream_thread"])
+  })
+
   it("forwards workspaceId and accessibleStreamIds to MemoExplorerService.getById for access gating", async () => {
     let captured: {
       workspaceId?: string

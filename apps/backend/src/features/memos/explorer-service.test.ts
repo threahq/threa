@@ -252,11 +252,25 @@ describe("MemoExplorerService.getById (roadmap 6.1)", () => {
     stubSourceStreamResolution()
     spyOn(MemoRepository, "findById").mockResolvedValue(fakeMemo({ status: "superseded" }))
     spyOn(MemoRepository, "findSupersededBy").mockResolvedValue(fakeMemo({ id: "memo_2" }))
+    const visible = spyOn(MemoRepository, "filterVisibleIds").mockResolvedValue(new Set([MEMO_ID, "memo_2"]))
 
     const result = await service.getById(WORKSPACE_ID, MEMO_ID, ACCESS)
 
     expect(result?.memo.status).toBe("superseded")
     expect(result?.successorMemoId).toBe("memo_2")
+    expect(visible.mock.calls.map((c) => c.slice(1))).toContainEqual([WORKSPACE_ID, ["memo_2"], READERS])
+  })
+
+  it("withholds the successor link when the successor is not visible to the reader", async () => {
+    const { service } = buildService()
+    stubSourceStreamResolution()
+    spyOn(MemoRepository, "findById").mockResolvedValue(fakeMemo({ status: "superseded" }))
+    spyOn(MemoRepository, "findSupersededBy").mockResolvedValue(fakeMemo({ id: "memo_2", requiresBrowse: true }))
+
+    const result = await service.getById(WORKSPACE_ID, MEMO_ID, ACCESS)
+
+    expect(result?.memo.status).toBe("superseded")
+    expect(result?.successorMemoId).toBeNull()
   })
 })
 

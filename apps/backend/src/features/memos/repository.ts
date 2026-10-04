@@ -680,14 +680,25 @@ export const MemoRepository = {
       maxDistance: number
       scope?: MemoScope
       scopeUserId?: string | null
+      /** Only memos every audience may read count as duplicates, so a save never resolves to a memo its writer's readers cannot open. */
+      audiences?: readonly MemoAudience[]
     }
   ): Promise<{ memo: Memo; distance: number } | null> {
-    const { workspaceId, streamId, embedding, maxDistance, scope = "workspace", scopeUserId = null } = params
+    const {
+      workspaceId,
+      streamId,
+      embedding,
+      maxDistance,
+      scope = "workspace",
+      scopeUserId = null,
+      audiences = [],
+    } = params
     const embeddingLiteral = `[${embedding.join(",")}]`
+    const audienceVisible = memoAudienceVisibleSql(workspaceId, audiences, "m")
 
-    const result = await db.query<MemoRow & { distance: number }>(sql`
+    const result = await db.query<MemoRow & { distance: number }>(composeSql`
       WITH stream_memos AS (
-        SELECT ${sql.raw(SELECT_FIELDS_PREFIXED)},
+        SELECT ${SELECT_FIELDS_PREFIXED_SQL},
                m.embedding <=> ${embeddingLiteral}::vector AS distance
         FROM memos m
         JOIN conversations c ON m.source_conversation_id = c.id AND c.workspace_id = m.workspace_id
@@ -698,8 +709,9 @@ export const MemoRepository = {
           AND m.scope_user_id IS NOT DISTINCT FROM ${scopeUserId}
           AND m.embedding IS NOT NULL
           AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
+          AND ${audienceVisible}
         UNION
-        SELECT ${sql.raw(SELECT_FIELDS_PREFIXED)},
+        SELECT ${SELECT_FIELDS_PREFIXED_SQL},
                m.embedding <=> ${embeddingLiteral}::vector AS distance
         FROM memos m
         JOIN messages msg ON m.source_message_id = msg.id AND msg.workspace_id = m.workspace_id
@@ -710,6 +722,7 @@ export const MemoRepository = {
           AND m.scope_user_id IS NOT DISTINCT FROM ${scopeUserId}
           AND m.embedding IS NOT NULL
           AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
+          AND ${audienceVisible}
       )
       SELECT * FROM stream_memos
       ORDER BY distance ASC

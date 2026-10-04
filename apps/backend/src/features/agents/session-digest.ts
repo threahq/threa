@@ -23,8 +23,8 @@ export interface SessionDigest {
    * has nothing to anchor and skips it.
    */
   anchorMessageId: string | null
-  /** The human who wrote the trigger message; null when the trigger is synthetic or not a user's. */
-  triggerAuthorUserId: string | null
+  /** Some turn ran for an audience that browses the workspace, or predates the flag (fail closed): the memos need browse to read. */
+  requiresBrowse: boolean
   /** Distinct human authors across the trigger + replies (a memo's `participant_ids`). */
   participantUserIds: string[]
   /** Streams the research cited, across every turn digest. */
@@ -84,7 +84,7 @@ export async function buildSessionDigest(pool: Pool, session: AgentSession): Pro
     text: sections.join("\n\n"),
     hasResearch,
     anchorMessageId,
-    triggerAuthorUserId: trigger?.authorType === AuthorTypes.USER ? trigger.authorId : null,
+    requiresBrowse: digests.some((d) => d.audienceBrowses !== false),
     participantUserIds: Array.from(participantUserIds),
     citedStreamIds: [...new Set(digests.flatMap((d) => d.sourceStreamIds))],
     citedMessageIds: [...new Set(digests.flatMap((d) => d.sources.flatMap((s) => (s.messageId ? [s.messageId] : []))))],

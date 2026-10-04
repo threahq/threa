@@ -339,7 +339,8 @@ export class WorkspaceAgent {
     // researcher's reply + broadcast trace sources reach every participant of the
     // invocation stream — so a private memo may only be retrieved when the audience
     // is exactly that owner. `resolveMemoViewer` is the single authority for that
-    // gate (undefined ⇒ user-scoped memos excluded); see its doc for the rule.
+    // gate (undefined ⇒ user-scoped memos excluded); `audiences` gates agent memos
+    // by whether the audience can read the streams they were written from.
     const memoReaders: MemoReaders = {
       viewerUserId: resolveMemoViewer(accessSpec),
       audiences: [memoAudienceForSpec(accessSpec)],

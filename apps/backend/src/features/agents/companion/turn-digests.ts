@@ -45,7 +45,7 @@ export function buildTurnDigestPromptBlock(
   }
   return {
     text: formatTurnDigestsForPrompt(entries),
-    sourceStreamIds: [...new Set(entries.flatMap((entry) => entry.digest.sourceStreamIds))],
+    sourceStreamIds: entries.flatMap((entry) => entry.digest.sourceStreamIds),
   }
 }
 
