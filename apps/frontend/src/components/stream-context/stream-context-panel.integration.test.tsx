@@ -30,7 +30,7 @@ const STREAM = "stream_root"
 const THREAD = "stream_thread"
 const WORKOS_ME = "workos_me"
 
-const EMPTY_COUNTS = { link: 0, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 }
+const EMPTY_COUNTS = { pull_request: 0, link: 0, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 }
 
 /** jsdom has no IntersectionObserver; capture the callbacks so a test can fire them. */
 let observerCallbacks: IntersectionObserverCallback[] = []
@@ -284,6 +284,49 @@ describe("StreamContextPanel", () => {
     // loads. Without the held counts this reads "1" (the cached row) mid-flight.
     expect(screen.getByRole("button", { name: /^Links/ })).toHaveTextContent("9")
     expect(screen.getByRole("button", { name: /^Memories/ })).toHaveTextContent("4")
+  })
+
+  it("lists referenced PRs under their own chip, each showing its live state", async () => {
+    const PR = "https://github.com/threahq/threa/pull/1826"
+    await db.streamContextItems.bulkPut([
+      cachedRow(
+        serverItem({
+          category: "pull_request",
+          refId: PR,
+          occurrenceCount: 2,
+          detail: {
+            url: PR,
+            owner: "threahq",
+            repo: "threa",
+            number: 1826,
+            title: "Stream PR section",
+            state: "open",
+            previewStatus: "completed",
+          },
+        })
+      ),
+      cachedRow(
+        serverItem({
+          category: "link",
+          refId: "https://a.example",
+          detail: { url: "https://a.example", title: "Alpha" },
+        })
+      ),
+    ])
+    vi.spyOn(streamContextApi, "list").mockResolvedValue(
+      listResponse({ counts: { ...EMPTY_COUNTS, pull_request: 1, link: 1 } })
+    )
+
+    renderPanel()
+
+    const chip = await screen.findByRole("button", { name: /^Pull requests/ })
+    expect(chip).toHaveTextContent("1")
+
+    await userEvent.click(chip)
+    expect(await screen.findByRole("link", { name: "Open Stream PR section" })).toHaveAttribute("href", PR)
+    expect(screen.getByText("Open")).toBeInTheDocument()
+    expect(screen.getByText("threahq/threa#1826 · 2×")).toBeInTheDocument()
+    expect(screen.queryByText("Alpha")).not.toBeInTheDocument()
   })
 
   it("keeps server counts across a chip change while the new page is in flight", async () => {

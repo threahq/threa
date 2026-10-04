@@ -2,7 +2,13 @@ import { beforeEach, describe, expect, it } from "vitest"
 import type { JSONContent } from "@threahq/types"
 import type { CachedEvent } from "@/db"
 import { deriveStreamContext } from "./derive"
-import type { FileContextItem, LinkContextItem, MediaContextItem, ThreadContextItem } from "./types"
+import type {
+  FileContextItem,
+  LinkContextItem,
+  MediaContextItem,
+  PullRequestContextItem,
+  ThreadContextItem,
+} from "./types"
 
 let seq = 0
 beforeEach(() => {
@@ -65,10 +71,19 @@ describe("deriveStreamContext", () => {
     const result = deriveStreamContext(undefined)
     expect(result.total).toBe(0)
     expect(result.items).toEqual([])
-    expect(result.counts).toEqual({ link: 0, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 })
+    expect(result.counts).toEqual({
+      pull_request: 0,
+      link: 0,
+      media: 0,
+      file: 0,
+      memo: 0,
+      delegation: 0,
+      follow_up: 0,
+      thread: 0,
+    })
   })
 
-  it("extracts external links from rich previews and the document body, with a github badge", () => {
+  it("splits a PR URL into a state-colored pull_request item and keeps other body links as links", () => {
     const events = [
       messageEvent("2026-06-23T10:00:00.000Z", {
         contentJson: {
@@ -99,6 +114,11 @@ describe("deriveStreamContext", () => {
             siteName: "GitHub",
             contentType: "website",
             previewType: "github_pr",
+            previewData: {
+              type: "github_pr",
+              url: "https://github.com/acme/repo/pull/42",
+              data: { title: "Fix the thing", number: 42, state: "merged" },
+            },
             position: 0,
           },
         ],
@@ -106,13 +126,20 @@ describe("deriveStreamContext", () => {
     ]
 
     const { items, counts } = deriveStreamContext(events)
-    expect(counts.link).toBe(2)
+    expect(counts).toMatchObject({ pull_request: 1, link: 1 })
 
-    const pr = items.find((i): i is LinkContextItem => i.category === "link" && i.url.includes("/pull/42"))
-    expect(pr?.title).toBe("Fix the thing")
-    expect(pr?.previewKind).toBe("github")
-    expect(pr?.badge).toBe("PR")
-    expect(pr?.sourceMessageId).toBe("msg_1")
+    const pr = items.find((i): i is PullRequestContextItem => i.category === "pull_request")
+    expect(pr).toMatchObject({
+      key: "pull_request:https://github.com/acme/repo/pull/42",
+      url: "https://github.com/acme/repo/pull/42",
+      owner: "acme",
+      repo: "repo",
+      number: 42,
+      title: "Fix the thing",
+      state: "merged",
+      sourceMessageId: "msg_1",
+      refCount: 1,
+    })
 
     // The plain-text URL in the body with no preview still surfaces.
     const bare = items.find((i): i is LinkContextItem => i.category === "link" && i.url.includes("example.com"))
@@ -121,7 +148,7 @@ describe("deriveStreamContext", () => {
   })
 
   it("uses the canonical document URL when a stale rich preview has trailing punctuation", () => {
-    const canonicalUrl = "https://github.com/acme/repo/pull/42"
+    const canonicalUrl = "https://github.com/acme/repo/issues/42"
     const events = [
       messageEvent("2026-06-23T10:00:00.000Z", {
         contentJson: {
@@ -138,7 +165,7 @@ describe("deriveStreamContext", () => {
             faviconUrl: "https://github.com/favicon.ico",
             siteName: "GitHub",
             contentType: "website",
-            previewType: "github_pr",
+            previewType: "github_issue",
             position: 0,
           },
         ],
@@ -238,7 +265,7 @@ describe("deriveStreamContext", () => {
     })
   })
 
-  it("surfaces a PR link stored as a channelLink node with a link mark (the [#1358](url) parse quirk)", () => {
+  it("surfaces a PR stored as a channelLink node with a link mark (the [#1358](url) parse quirk)", () => {
     const events = [
       messageEvent("2026-06-23T10:00:00.000Z", {
         contentJson: {
@@ -260,9 +287,34 @@ describe("deriveStreamContext", () => {
       }),
     ]
 
-    const links = deriveStreamContext(events).items.filter((i): i is LinkContextItem => i.category === "link")
-    expect(links).toHaveLength(1)
-    expect(links[0].url).toBe("https://github.com/threahq/threa/pull/1358")
+    const { items } = deriveStreamContext(events)
+    expect(items.map((i) => [i.category, i.key])).toEqual([
+      ["pull_request", "pull_request:https://github.com/threahq/threa/pull/1358"],
+    ])
+  })
+
+  it("folds every view of one PR into a single item with no state until its preview lands", () => {
+    const pr = "https://github.com/threahq/threa/pull/1826"
+    const events = [
+      messageEvent("2026-06-23T09:00:00.000Z", { contentJson: linkDoc(`${pr}/files`, `${pr}#issuecomment-1`) }),
+      messageEvent("2026-06-23T11:00:00.000Z", {
+        contentJson: {
+          type: "doc",
+          content: [{ type: "codeBlock", content: [{ type: "text", text: `gh pr view ${pr}/commits/abc` }] }],
+        },
+      }),
+    ]
+
+    const { items, counts } = deriveStreamContext(events)
+    expect(counts).toMatchObject({ pull_request: 1, link: 0 })
+    expect(items[0]).toMatchObject({
+      category: "pull_request",
+      url: pr,
+      title: null,
+      state: null,
+      refCount: 2,
+      sourceMessageId: "msg_2",
+    })
   })
 
   it("buckets image/gif/video attachments as media and others as files", () => {

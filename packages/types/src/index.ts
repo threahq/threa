@@ -1385,6 +1385,8 @@ export {
   MESSAGE_BODY_CONTEXT_CATEGORIES,
   STREAM_CONTEXT_SCOPES,
   streamContextItemKey,
+  parseGitHubPullRequestUrl,
+  type StreamContextPullRequestDetail,
   type ContextCategory,
   type StreamContextRefKind,
   type StreamContextScope,

@@ -83,7 +83,7 @@ describe("ContextTimeline virtualization wiring", () => {
 })
 
 describe("the Agent chip", () => {
-  const counts = { link: 3, media: 0, file: 0, memo: 0, delegation: 2, follow_up: 4, thread: 0 }
+  const counts = { pull_request: 0, link: 3, media: 0, file: 0, memo: 0, delegation: 2, follow_up: 4, thread: 0 }
 
   it("stands for both agent categories: one chip, their summed count, ahead of the per-category chips", () => {
     expect(chipsFromCounts(counts, 9)).toEqual([

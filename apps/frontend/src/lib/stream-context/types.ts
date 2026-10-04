@@ -1,13 +1,28 @@
-import type { AttachmentCategory, DelegationStatus, FollowUpStatus, KnowledgeType } from "@threahq/types"
+import type {
+  AttachmentCategory,
+  DelegationStatus,
+  FollowUpStatus,
+  GitHubPrPreviewData,
+  KnowledgeType,
+} from "@threahq/types"
 
 /**
  * The buckets the "In this stream" panel groups derived context into. `"all"`
  * is a virtual category (the interleaved recency feed), not a member of any
  * single item.
  */
-export type ContextCategory = "link" | "media" | "file" | "memo" | "delegation" | "follow_up" | "thread"
+export type ContextCategory =
+  | "pull_request"
+  | "link"
+  | "media"
+  | "file"
+  | "memo"
+  | "delegation"
+  | "follow_up"
+  | "thread"
 
 export const CONTEXT_CATEGORIES: ContextCategory[] = [
+  "pull_request",
   "link",
   "media",
   "file",
@@ -47,6 +62,20 @@ export interface LinkContextItem extends ContextItemBase {
   /** A short label for the preview kind ("PR", "Issue", "Message", …) or null. */
   badge: string | null
   /** How many loaded messages referenced this URL. */
+  refCount: number
+}
+
+export interface PullRequestContextItem extends ContextItemBase {
+  category: "pull_request"
+  /** Canonical `https://github.com/{owner}/{repo}/pull/{number}`. */
+  url: string
+  owner: string
+  repo: string
+  number: number
+  title: string | null
+  /** Null until the PR's GitHub preview has landed. */
+  state: GitHubPrPreviewData["state"] | null
+  /** How many messages referenced this PR. */
   refCount: number
 }
 
@@ -112,6 +141,7 @@ export interface ThreadContextItem extends ContextItemBase {
 }
 
 export type ContextItem =
+  | PullRequestContextItem
   | LinkContextItem
   | MediaContextItem
   | FileContextItem

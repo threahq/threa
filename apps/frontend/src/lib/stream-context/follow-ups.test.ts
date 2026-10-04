@@ -45,7 +45,7 @@ function linkItem(createdAt: string, key: string): LinkContextItem {
 function derived(items: LinkContextItem[]): DerivedStreamContext {
   return {
     items,
-    counts: { link: items.length, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 },
+    counts: { pull_request: 0, link: items.length, media: 0, file: 0, memo: 0, delegation: 0, follow_up: 0, thread: 0 },
     total: items.length,
   }
 }

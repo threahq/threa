@@ -1,5 +1,11 @@
 import { collectGiphyEmbeds } from "@threahq/prosemirror"
-import { categoryFromMime, stripMarkdownToInline, type AttachmentSummary, type JSONContent } from "@threahq/types"
+import {
+  categoryFromMime,
+  parseGitHubPullRequestUrl,
+  stripMarkdownToInline,
+  type AttachmentSummary,
+  type JSONContent,
+} from "@threahq/types"
 import { streamContextItemId } from "../../lib/id"
 import { extractUrls, normalizeUrl, getAppOrigins } from "../link-previews"
 import type { ContextCategory, StreamContextRefKind, NewStreamContextItem } from "./types"
@@ -28,9 +34,12 @@ export function contextSnippet(contentMarkdown: string): string {
 }
 
 /**
- * Projection rows for a single message: links, inline Giphy embeds, and
- * attachments. Deduped within the message by `(category, refId)` — occurrences
- * across messages are separate rows by design.
+ * Projection rows for a single message: pull requests, links, inline Giphy
+ * embeds, and attachments. Any URL into a pull request (the PR page or a view
+ * under it) is a `pull_request` row keyed by the canonical PR URL — never also a
+ * `link` row, so the PR section is the one place a PR shows up. Deduped within
+ * the message by `(category, refId)` — occurrences across messages are separate
+ * rows by design.
  */
 export function contextRowsForMessage(params: ContextRowsForMessageParams): NewStreamContextItem[] {
   const snippet = contextSnippet(params.contentMarkdown)
@@ -67,6 +76,11 @@ export function contextRowsForMessage(params: ContextRowsForMessageParams): NewS
 
   for (const href of extractUrls(params.contentMarkdown, getAppOrigins(), params.contentJson)) {
     if (href.length > MAX_URL_LENGTH) continue
+    const pullRequest = parseGitHubPullRequestUrl(href)
+    if (pullRequest) {
+      push("pull_request", "url", pullRequest.url, pullRequest.url, { ...pullRequest })
+      continue
+    }
     push("link", "url", href, normalizeUrl(href), { url: href })
   }
 

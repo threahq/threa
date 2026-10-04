@@ -3,9 +3,19 @@
 // for sealed streams and reconciles the two sets by `key`, so the literals and
 // the key derivation live here rather than in either app (INV-33).
 
+import type { GitHubPrPreviewData } from "./domain"
 import type { FollowUpStatus, LinkPreviewContentType, LinkPreviewStatus, RichLinkPreviewType } from "./constants"
 
-export const CONTEXT_CATEGORIES = ["link", "media", "file", "memo", "delegation", "follow_up", "thread"] as const
+export const CONTEXT_CATEGORIES = [
+  "pull_request",
+  "link",
+  "media",
+  "file",
+  "memo",
+  "delegation",
+  "follow_up",
+  "thread",
+] as const
 export type ContextCategory = (typeof CONTEXT_CATEGORIES)[number]
 
 /**
@@ -14,7 +24,7 @@ export type ContextCategory = (typeof CONTEXT_CATEGORIES)[number]
  * memo, delegation and thread landmarks are anchored on a message but written by
  * other paths and nothing re-creates them.
  */
-export const MESSAGE_BODY_CONTEXT_CATEGORIES = ["link", "media", "file"] as const
+export const MESSAGE_BODY_CONTEXT_CATEGORIES = ["pull_request", "link", "media", "file"] as const
 
 export const STREAM_CONTEXT_REF_KINDS = [
   "url",
@@ -37,6 +47,33 @@ export function streamContextItemKey(input: {
   sourceMessageId: string | null
 }): string {
   return `${input.category}:${input.refId}:${input.sourceMessageId ?? ""}`
+}
+
+export interface GitHubPullRequestRef {
+  owner: string
+  repo: string
+  number: number
+  /** `https://github.com/{owner}/{repo}/pull/{number}` — stable under the backend's URL normalizer. */
+  url: string
+}
+
+const GITHUB_PULL_REQUEST_URL =
+  /^https?:\/\/(?:www\.)?github\.com\/([A-Za-z0-9][A-Za-z0-9-]*)\/([A-Za-z0-9._-]+)\/pull\/(\d+)(?=[/?#]|$)/i
+
+/**
+ * The pull request a URL points into — the PR page itself or any view under it
+ * (`/files`, `/commits`, `#issuecomment-…`). Shorthand refs (`#12`,
+ * `owner/repo#12`) are deliberately not PR refs: `#12` names no repo, `#` is
+ * the channel-link sigil, and GitHub shares the number space between issues
+ * and PRs, so the shorthand alone cannot say which one it is.
+ */
+export function parseGitHubPullRequestUrl(url: string): GitHubPullRequestRef | null {
+  const match = GITHUB_PULL_REQUEST_URL.exec(url)
+  if (!match) return null
+  const [, owner, repo, rawNumber] = match
+  const number = Number.parseInt(rawNumber!, 10)
+  if (number <= 0) return null
+  return { owner: owner!, repo: repo!, number, url: `https://github.com/${owner}/${repo}/pull/${number}` }
 }
 
 /** Joined live from `link_previews`; every field is null until the preview lands. */
@@ -65,6 +102,20 @@ export interface StreamContextAttachmentDetail {
   mediaKind: string | null
   giphyUrl: string | null
   giphyTitle: string | null
+}
+
+/**
+ * The ref is parsed from the message; `title` and `state` are joined live from
+ * the PR's `link_previews` row and stay null until that preview lands.
+ */
+export interface StreamContextPullRequestDetail {
+  url: string
+  owner: string
+  repo: string
+  number: number
+  title: string | null
+  state: GitHubPrPreviewData["state"] | null
+  previewStatus: LinkPreviewStatus | null
 }
 
 export interface StreamContextMemoDetail {
@@ -96,6 +147,7 @@ export interface StreamContextThreadDetail {
 
 export type StreamContextItemDetail =
   | StreamContextLinkDetail
+  | StreamContextPullRequestDetail
   | StreamContextAttachmentDetail
   | StreamContextMemoDetail
   | StreamContextDelegationDetail

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react"
+import type { GitHubPrPreviewData } from "@threahq/types"
 import { cn } from "@/lib/utils"
 
 /**
@@ -14,6 +15,21 @@ import { cn } from "@/lib/utils"
  * card never changes its footprint and stacked cards line up.
  */
 export const PREVIEW_CARD_WIDTH = "w-80 max-w-full"
+
+// GitHub state hues mirror github.com: green (open), purple (merged / done), red
+// (closed). One source drives the card's state pill and accent glow and the
+// "In this stream" pull request rows.
+export const GITHUB_OPEN_COLOR = "#22c55e"
+export const GITHUB_DONE_COLOR = "#a855f7"
+export const GITHUB_CLOSED_COLOR = "#ef4444"
+
+export const PR_STATE_LABELS = { merged: "Merged", closed: "Closed", open: "Open" } as const
+
+export function prStateColor(state: GitHubPrPreviewData["state"]): string {
+  if (state === "merged") return GITHUB_DONE_COLOR
+  if (state === "closed") return GITHUB_CLOSED_COLOR
+  return GITHUB_OPEN_COLOR
+}
 
 /** Converts a `#rrggbb` (or bare `rrggbb`) hex to `rgba(...)`, falling back to a neutral slate. */
 export function colorWithAlpha(hex: string, alpha: number): string {

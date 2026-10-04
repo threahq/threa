@@ -131,4 +131,107 @@ describe("contextRowsForMessage", () => {
 
     expect(rows.map((row) => `${row.category}:${row.refId}`)).toEqual(["link:https://example.com/a", "media:attach_1"])
   })
+
+  describe("pull request references", () => {
+    function text(value: string): JSONContent {
+      return { type: "text", text: value }
+    }
+
+    function refs(content: JSONContent[]) {
+      return run({ contentJson: { type: "doc", content } }).map((row) => ({
+        category: row.category,
+        refId: row.refId,
+        groupKey: row.groupKey,
+      }))
+    }
+
+    it("projects a PR link as a pull_request row keyed by the canonical PR URL, with the ref in detail", () => {
+      const rows = run({
+        contentJson: { type: "doc", content: [paragraph(linkText("https://github.com/threahq/threa/pull/1826"))] },
+      })
+
+      expect(
+        rows.map(({ category, refKind, refId, groupKey, detail }) => ({ category, refKind, refId, groupKey, detail }))
+      ).toEqual([
+        {
+          category: "pull_request",
+          refKind: "url",
+          refId: "https://github.com/threahq/threa/pull/1826",
+          groupKey: "https://github.com/threahq/threa/pull/1826",
+          detail: { url: "https://github.com/threahq/threa/pull/1826", owner: "threahq", repo: "threa", number: 1826 },
+        },
+      ])
+    })
+
+    it("finds PR URLs in bare text, inline code, code blocks and quotes", () => {
+      expect(
+        refs([
+          paragraph(text("see https://github.com/a/one/pull/1 for context")),
+          paragraph({ type: "text", text: "https://github.com/a/two/pull/2", marks: [{ type: "code" }] }),
+          { type: "codeBlock", content: [text("gh pr view https://github.com/a/three/pull/3")] },
+          { type: "blockquote", content: [paragraph(text("> https://github.com/a/four/pull/4"))] },
+        ])
+      ).toEqual([
+        {
+          category: "pull_request",
+          refId: "https://github.com/a/one/pull/1",
+          groupKey: "https://github.com/a/one/pull/1",
+        },
+        {
+          category: "pull_request",
+          refId: "https://github.com/a/two/pull/2",
+          groupKey: "https://github.com/a/two/pull/2",
+        },
+        {
+          category: "pull_request",
+          refId: "https://github.com/a/three/pull/3",
+          groupKey: "https://github.com/a/three/pull/3",
+        },
+        {
+          category: "pull_request",
+          refId: "https://github.com/a/four/pull/4",
+          groupKey: "https://github.com/a/four/pull/4",
+        },
+      ])
+    })
+
+    it("folds every view into a PR — files, commits, comments, www, trailing slash — into one row, never a link row", () => {
+      expect(
+        refs([
+          paragraph(
+            linkText("https://github.com/a/r/pull/7/files"),
+            linkText("https://github.com/a/r/pull/7/commits/abc123"),
+            linkText("https://github.com/a/r/pull/7#issuecomment-99"),
+            linkText("https://www.github.com/a/r/pull/7/"),
+            linkText("http://github.com/a/r/pull/7?w=1")
+          ),
+        ])
+      ).toEqual([
+        { category: "pull_request", refId: "https://github.com/a/r/pull/7", groupKey: "https://github.com/a/r/pull/7" },
+      ])
+    })
+
+    it("does not treat shorthand refs, issues, repos or other hosts as pull requests", () => {
+      expect(
+        refs([
+          paragraph(text("fixed in #1826 and threahq/threa#1827")),
+          paragraph(
+            linkText("https://github.com/a/r/issues/5"),
+            linkText("https://github.com/a/r/pulls"),
+            linkText("https://gitlab.com/a/r/pull/5"),
+            linkText("https://github.com/a/r/pull/new/branch")
+          ),
+        ])
+      ).toEqual([
+        { category: "link", refId: "https://github.com/a/r/issues/5", groupKey: "https://github.com/a/r/issues/5" },
+        { category: "link", refId: "https://github.com/a/r/pulls", groupKey: "https://github.com/a/r/pulls" },
+        { category: "link", refId: "https://gitlab.com/a/r/pull/5", groupKey: "https://gitlab.com/a/r/pull/5" },
+        {
+          category: "link",
+          refId: "https://github.com/a/r/pull/new/branch",
+          groupKey: "https://github.com/a/r/pull/new/branch",
+        },
+      ])
+    })
+  })
 })

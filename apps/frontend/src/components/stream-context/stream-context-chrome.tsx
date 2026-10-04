@@ -45,6 +45,7 @@ export interface StreamContextPanelProps {
 }
 
 export const CATEGORY_LABELS: Record<ContextCategory, string> = {
+  pull_request: "Pull requests",
   link: "Links",
   media: "Media",
   file: "Files",

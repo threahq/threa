@@ -277,6 +277,32 @@ describe("stream context feed: collapse, display joins, filters", () => {
     })
     channelId = channel.id
 
+    // Seeded BEFORE any message carries this url, in ONE transaction: the
+    // message pipeline upserts the same row and a link-preview worker can claim
+    // it as soon as it is pending, and `updateMetadata` only applies
+    // `WHERE status = 'pending'`. Seeding after the messages lost that race
+    // intermittently and left the title null.
+    const seeded = await withTransaction(pool, async (client) => {
+      const preview = await LinkPreviewRepository.insert(client, {
+        id: linkPreviewId(),
+        workspaceId: wsId,
+        url: REPORT_URL,
+        normalizedUrl: normalizeUrl(REPORT_URL),
+        contentType: "website",
+      })
+      return LinkPreviewRepository.updateMetadata(client, wsId, preview.id, {
+        title: "Quarterly budget",
+        description: "The numbers",
+        siteName: "example.com",
+        contentType: "website",
+        status: "completed",
+      })
+    })
+    // Fail on the seed, not three assertions later on a missing join.
+    if (seeded?.title !== "Quarterly budget") {
+      throw new Error(`link preview seed did not apply: ${JSON.stringify(seeded)}`)
+    }
+
     const first = await eventService.createMessage({
       workspaceId: wsId,
       streamId: channelId,
@@ -306,32 +332,6 @@ describe("stream context feed: collapse, display joins, filters", () => {
       authorType: "user",
       ...testMessageContent(`budget notes ${OTHER_URL}`),
     })
-
-    // Insert and fill in ONE transaction: the messages above carry this url, so
-    // a link-preview worker can claim the row the moment it is visible, and
-    // `updateMetadata` only applies `WHERE status = 'pending'` — losing that
-    // race leaves the title null and silently returns null, which showed up as
-    // two intermittently-red cases here rather than as a failed seed.
-    const seeded = await withTransaction(pool, async (client) => {
-      const preview = await LinkPreviewRepository.insert(client, {
-        id: linkPreviewId(),
-        workspaceId: wsId,
-        url: REPORT_URL,
-        normalizedUrl: normalizeUrl(REPORT_URL),
-        contentType: "website",
-      })
-      return LinkPreviewRepository.updateMetadata(client, wsId, preview.id, {
-        title: "Quarterly budget",
-        description: "The numbers",
-        siteName: "example.com",
-        contentType: "website",
-        status: "completed",
-      })
-    })
-    // Fail on the seed, not three assertions later on a missing join.
-    if (seeded?.title !== "Quarterly budget") {
-      throw new Error(`link preview seed did not apply: ${JSON.stringify(seeded)}`)
-    }
 
     await withTransaction(pool, async (client) => {
       await MemoRepository.insert(client, {
@@ -526,7 +526,7 @@ describe("stream context feed: collapse, display joins, filters", () => {
 
     expect({ items: response.items.map((item) => item.refId), counts: response.counts }).toEqual({
       items: [memoRefId],
-      counts: { link: 2, media: 1, file: 0, memo: 1, delegation: 0, follow_up: 0, thread: 0 },
+      counts: { pull_request: 0, link: 2, media: 1, file: 0, memo: 1, delegation: 0, follow_up: 0, thread: 0 },
     })
   })
 
@@ -629,5 +629,151 @@ describe("stream context feed: collapse, display joins, filters", () => {
         giphyTitle: "dancing",
       },
     ])
+  })
+})
+
+describe("stream context feed: pull requests", () => {
+  const wsId = workspaceId()
+  const authorId = userId()
+  const MERGED_PR = "https://github.com/threahq/threa/pull/1826"
+  const UNPREVIEWED_PR = "https://github.com/threahq/threa/pull/1827"
+
+  let service: ReturnType<typeof createStreamContextService>
+  let channelId: string
+
+  beforeAll(async () => {
+    const streamService = new StreamService(pool)
+    const eventService = new EventService(pool)
+    service = createStreamContextService({ pool })
+
+    await withTransaction(pool, async (client) => {
+      await WorkspaceRepository.insert(client, {
+        id: wsId,
+        name: "PR WS",
+        slug: `pr-ws-${wsId}`,
+        createdBy: authorId,
+      })
+      await addTestMember(client, wsId, authorId)
+    })
+
+    const channel = await streamService.create({
+      workspaceId: wsId,
+      type: StreamTypes.CHANNEL,
+      name: "pr-channel",
+      slug: `pr-channel-${wsId.slice(-8)}`,
+      visibility: Visibilities.PUBLIC,
+      createdBy: authorId,
+    })
+    channelId = channel.id
+
+    // Seeded before the messages, for the same race as the link case above.
+    const seeded = await withTransaction(pool, async (client) => {
+      const preview = await LinkPreviewRepository.insert(client, {
+        id: linkPreviewId(),
+        workspaceId: wsId,
+        url: MERGED_PR,
+        normalizedUrl: normalizeUrl(MERGED_PR),
+        contentType: "website",
+      })
+      return LinkPreviewRepository.updateMetadata(client, wsId, preview.id, {
+        title: "PR #1826: Stream PR section",
+        siteName: "GitHub",
+        contentType: "website",
+        previewType: "github_pr",
+        previewData: {
+          type: "github_pr",
+          url: MERGED_PR,
+          data: {
+            title: "Stream PR section",
+            number: 1826,
+            state: "merged",
+            author: null,
+            baseBranch: "main",
+            headBranch: "feat/stream-pr-section",
+            additions: 10,
+            deletions: 2,
+            reviewStatusSummary: null,
+            createdAt: "2026-10-01T00:00:00Z",
+            updatedAt: "2026-10-02T00:00:00Z",
+          },
+        } as never,
+        status: "completed",
+      })
+    })
+    if (seeded?.previewType !== "github_pr") {
+      throw new Error(`pull request preview seed did not apply: ${JSON.stringify(seeded)}`)
+    }
+
+    for (const text of [`shipped ${MERGED_PR}`, `diff at ${MERGED_PR}/files and ${UNPREVIEWED_PR}`]) {
+      await eventService.createMessage({
+        workspaceId: wsId,
+        streamId: channelId,
+        authorId,
+        authorType: "user",
+        ...testMessageContent(text),
+      })
+    }
+  })
+
+  test("every view of a PR collapses onto one pull_request row carrying the preview's title and state", async () => {
+    const response = await service.list({
+      workspaceId: wsId,
+      userId: authorId,
+      streamId: channelId,
+      scope: "tree",
+      limit: 40,
+    })
+
+    expect({
+      counts: { pullRequest: response.counts?.pull_request, link: response.counts?.link },
+      // Both refs share their newest message, so feed order between them is the
+      // row-id tiebreak; sort by ref to assert content, not that tiebreak.
+      items: response.items
+        .map((item) => ({ category: item.category, occurrenceCount: item.occurrenceCount, detail: item.detail }))
+        .sort((a, b) => a.detail.url.localeCompare(b.detail.url)),
+    }).toEqual({
+      counts: { pullRequest: 2, link: 0 },
+      items: [
+        {
+          category: "pull_request",
+          occurrenceCount: 2,
+          detail: {
+            url: MERGED_PR,
+            owner: "threahq",
+            repo: "threa",
+            number: 1826,
+            title: "Stream PR section",
+            state: "merged",
+            previewStatus: "completed",
+          },
+        },
+        {
+          category: "pull_request",
+          occurrenceCount: 1,
+          detail: {
+            url: UNPREVIEWED_PR,
+            owner: "threahq",
+            repo: "threa",
+            number: 1827,
+            title: null,
+            state: null,
+            previewStatus: null,
+          },
+        },
+      ],
+    })
+  })
+
+  test("free text reaches the PR title joined from its preview", async () => {
+    const response = await service.list({
+      workspaceId: wsId,
+      userId: authorId,
+      streamId: channelId,
+      scope: "tree",
+      queryText: "PR section",
+      limit: 40,
+    })
+
+    expect(response.items.map((item) => item.refId)).toEqual([MERGED_PR])
   })
 })

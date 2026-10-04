@@ -1,5 +1,6 @@
 import type {
   FollowUpStatus,
+  GitHubPrPreviewData,
   LinkPreviewContentType,
   LinkPreviewStatus,
   RichLinkPreviewType,
@@ -73,6 +74,8 @@ interface DbRow {
   link_preview_type: RichLinkPreviewType | null
   link_content_type: LinkPreviewContentType | null
   link_status: LinkPreviewStatus | null
+  pull_request_title: string | null
+  pull_request_state: GitHubPrPreviewData["state"] | null
   attachment_id: string | null
   attachment_filename: string | null
   attachment_mime_type: string | null
@@ -117,6 +120,16 @@ function detailFor(row: DbRow): StreamContextItemDetail {
         imageUrl: row.link_image_url,
         previewType: row.link_preview_type,
         contentType: row.link_content_type,
+        previewStatus: row.link_status,
+      }
+    case "pull_request":
+      return {
+        url: stringOrNull(row.detail.url) ?? row.ref_id,
+        owner: stringOrNull(row.detail.owner) ?? "",
+        repo: stringOrNull(row.detail.repo) ?? "",
+        number: numberOrNull(row.detail.number) ?? 0,
+        title: row.pull_request_title,
+        state: row.pull_request_state,
         previewStatus: row.link_status,
       }
     case "media":
@@ -235,6 +248,8 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
       lp.preview_type AS link_preview_type,
       lp.content_type AS link_content_type,
       lp.status AS link_status,
+      CASE WHEN lp.preview_type = 'github_pr' THEN lp.preview_data->'data'->>'title' END AS pull_request_title,
+      CASE WHEN lp.preview_type = 'github_pr' THEN lp.preview_data->'data'->>'state' END AS pull_request_state,
       att.id AS attachment_id,
       att.filename AS attachment_filename,
       att.mime_type AS attachment_mime_type,
@@ -259,7 +274,7 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
       th.parent_anchor_id AS thread_anchor_event_id
     FROM stream_context_items sci
     LEFT JOIN link_previews lp
-      ON sci.category = 'link'
+      ON sci.category IN ('link', 'pull_request')
      AND lp.workspace_id = sci.workspace_id
      AND lp.normalized_url = sci.group_key
     LEFT JOIN attachments att
