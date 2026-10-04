@@ -16,7 +16,6 @@ interface MessageReactionsProps {
   workspaceId: string
   messageId: string
   currentUserId: string | null
-  /** Show who reacted without offering to add or toggle a reaction. */
   readOnly?: boolean
 }
 
