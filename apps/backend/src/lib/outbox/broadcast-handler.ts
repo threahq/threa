@@ -3,7 +3,6 @@ import type { Pool } from "pg"
 import {
   OutboxRepository,
   isOutboxEventType,
-  isOneOfOutboxEventType,
   type OutboxEvent,
   botInvocationControlPayloadSchema,
   botInvocationCancelledPayloadSchema,
@@ -23,10 +22,11 @@ import {
   type WorkspaceUserRemovedOutboxPayload,
   type WorkspaceUserUpdatedOutboxPayload,
 } from "./repository"
-import { resolveDeliveryGroups, emitToGroups, syncPermissionRooms, userGroup } from "./delivery-groups"
+import { resolveDeliveryGroups, emitToGroups, syncPermissionRooms } from "./delivery-groups"
 import { logger } from "../logger"
 import { SyncLogRepository, type SyncLogEntryInput } from "../../features/sync"
-import { UserRepository, listGuestViewerIds } from "../../features/workspaces"
+import { UserRepository } from "../../features/workspaces"
+import { resolveAudiences } from "./audiences"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threahq/backend-common"
 import type { OutboxHandler } from "@threahq/backend-common"
 import type { DelegationStatusChangedEventPayload } from "@threahq/types"
@@ -189,8 +189,7 @@ export class BroadcastHandler implements OutboxHandler {
     const routed = new Map<bigint, RoutedEvent>()
     const byWorkspace = new Map<string, SyncLogEntryInput[]>()
 
-    for (const event of events) {
-      const groups = await this.withGuestAudience(event, resolveDeliveryGroups(event))
+    for (const { event, groups } of await resolveAudiences(this.db, events)) {
       routed.set(event.id, { groups })
       if (groups === null || groups.length === 0) {
         continue
@@ -220,25 +219,6 @@ export class BroadcastHandler implements OutboxHandler {
     }
 
     return routed
-  }
-
-  /**
-   * The people directory goes to browsers, but a guest still sees the members and authors of the
-   * streams they read. Which guests is read here, not carried in the payload, which every recipient
-   * receives and the sync log stores.
-   */
-  private async withGuestAudience(event: OutboxEvent, groups: string[] | null): Promise<string[] | null> {
-    if (groups === null) return groups
-    let subject: string
-    if (isOneOfOutboxEventType(event, ["workspace_user:added", "workspace_user:updated"])) {
-      subject = event.payload.user.id
-    } else if (isOutboxEventType(event, "workspace_user:removed")) {
-      subject = event.payload.removedUserId
-    } else {
-      return groups
-    }
-    const guestIds = await listGuestViewerIds(this.db, event.payload.workspaceId, subject)
-    return [...groups, ...guestIds.map(userGroup)]
   }
 
   /**

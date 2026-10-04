@@ -103,19 +103,32 @@ function visibleToViewerSql(workspaceId: string, viewer: PeopleViewer): QueryCon
   }
 }
 
-/** The users lacking browse, other than `userId`, who see `userId` by `peopleScopeSql`'s user arm. */
-export async function listGuestViewerIds(db: Querier, workspaceId: string, userId: string): Promise<string[]> {
+/** For each of `userIds`, the users lacking browse, other than that user, who see it by `peopleScopeSql`'s user arm. */
+export async function listGuestViewers(
+  db: Querier,
+  workspaceId: string,
+  userIds: readonly string[]
+): Promise<Map<string, string[]>> {
+  const viewers = new Map<string, string[]>()
+  if (userIds.length === 0) return viewers
   // eslint-disable-next-line threa/workspace-scoped-sql -- streamPeopleSql pins workspace_id in both arms, checked where it is written
-  const result = await db.query<{ id: string }>(composeSql`
+  const result = await db.query<{ subject_id: string; id: string }>(composeSql`
     WITH subject_streams AS MATERIALIZED (
-      SELECT DISTINCT sp.stream_id FROM (${streamPeopleSql(workspaceId)}) sp WHERE sp.person_id = ${userId}
+      SELECT DISTINCT sp.person_id AS subject_id, sp.stream_id FROM (${streamPeopleSql(workspaceId)}) sp
+      WHERE sp.person_id = ANY(${userIds as string[]})
     ),
     guests AS (${userIdsLackingBrowseSql(workspaceId)})
-    SELECT g.id FROM guests g
-    WHERE g.id <> ${userId}
-      AND EXISTS (
-        SELECT 1 FROM subject_streams ss WHERE ${streamAccessPredicateSql(workspaceId, sql`g.id`, "ss.stream_id")}
-      )
+    SELECT s.subject_id, g.id FROM (SELECT DISTINCT subject_id FROM subject_streams) s
+    JOIN guests g ON g.id <> s.subject_id
+    WHERE EXISTS (
+      SELECT 1 FROM subject_streams ss
+      WHERE ss.subject_id = s.subject_id AND ${streamAccessPredicateSql(workspaceId, sql`g.id`, "ss.stream_id")}
+    )
   `)
-  return result.rows.map((row) => row.id)
+  for (const row of result.rows) {
+    const ids = viewers.get(row.subject_id)
+    if (ids) ids.push(row.id)
+    else viewers.set(row.subject_id, [row.id])
+  }
+  return viewers
 }

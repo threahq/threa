@@ -18,7 +18,7 @@ import type { Querier } from "../../src/db"
 import {
   PeoplePurposes,
   UserRepository,
-  listGuestViewerIds,
+  listGuestViewers,
   type PeopleScope,
   type PeopleViewer,
 } from "../../src/features/workspaces"
@@ -315,19 +315,25 @@ describe("guest people", () => {
   })
 
   const labelsOf = (userIds: string[]) => userIds.map((id) => LABELS.find((label) => ids[label] === id) ?? id).sort()
-  const guestsOf = async (label: Label) => labelsOf(await listGuestViewerIds(pool, wsA, ids[label]))
+  const guestsOf = async (label: Label) =>
+    labelsOf((await listGuestViewers(pool, wsA, [ids[label]])).get(ids[label]) ?? [])
 
-  test("should list the guests whose visible people include the person when asked for any user", async () => {
+  test("should list each person's guests in one call, matching the people every guest sees", async () => {
     const visibleToGuests = new Map<Label, Set<string>>()
     for (const guest of GUESTS) {
       const visible = await UserRepository.listByWorkspace(pool, wsA, userScope(guest))
       visibleToGuests.set(guest, new Set(visible.map((user) => user.id)))
     }
+    const batched = await listGuestViewers(
+      pool,
+      wsA,
+      LABELS.map((label) => ids[label])
+    )
     const expected: Record<string, string[]> = {}
     const actual: Record<string, string[]> = {}
     for (const label of LABELS) {
       expected[label] = GUESTS.filter((guest) => guest !== label && visibleToGuests.get(guest)!.has(ids[label])).sort()
-      actual[label] = await guestsOf(label)
+      actual[label] = labelsOf(batched.get(ids[label]) ?? [])
     }
 
     expect(actual).toEqual(expected)
@@ -375,10 +381,13 @@ describe("guest people", () => {
       [wsA, leaverStream, leaver, ids.guest]
     )
 
-    const before = await listGuestViewerIds(pool, wsA, leaver)
+    const before = await listGuestViewers(pool, wsA, [leaver])
     await UserRepository.remove(pool, wsA, leaver)
-    const after = await listGuestViewerIds(pool, wsA, leaver)
+    const after = await listGuestViewers(pool, wsA, [leaver])
 
-    expect({ before, after }).toEqual({ before: [ids.guest], after: [ids.guest] })
+    expect({ before, after }).toEqual({
+      before: new Map([[leaver, [ids.guest]]]),
+      after: new Map([[leaver, [ids.guest]]]),
+    })
   })
 })

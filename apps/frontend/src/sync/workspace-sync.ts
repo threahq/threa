@@ -29,7 +29,12 @@ import {
   semanticEqual,
   SERVER_STAMP_IGNORED_KEYS,
 } from "./bootstrap-diff"
-import { getCachedWorkspaceTables, seedWorkspaceCache, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
+import {
+  getCachedWorkspaceTables,
+  replaceWorkspaceUsersInCache,
+  seedWorkspaceCache,
+  upsertWorkspaceUserInCache,
+} from "@/stores/workspace-store"
 import {
   seedAgentActivity,
   upsertAgentSession,
@@ -1107,26 +1112,29 @@ export function registerWorkspaceSocketHandlers(
 
   // A guest's roster holds only the people of what they read, so someone who
   // appears later stays unknown until the roster is fetched again.
-  let rosterEpoch = 0
   let rosterInFlight = false
   let rosterRerun = false
   const rosterWanted = new Set<string>()
   const rosterUnresolved = new Set<string>()
 
+  const cachedRoster = (): User[] | undefined =>
+    queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))?.users
+
   const refreshRosterOnce = async (): Promise<void> => {
-    const epoch = rosterEpoch
+    const before = cachedRoster()
     const requested = [...rosterWanted]
     let users: User[]
     try {
       users = await workspacesApi.listUsers(workspaceId)
-    } catch {
-      // Best-effort freshness — requested ids stay eligible, so the next trigger retries.
+    } catch (error) {
+      // Requested ids stay eligible, so the next trigger retries.
+      console.warn("Failed to fetch the people roster", error)
       return
     }
     if (abortController.signal.aborted) return
-    // A workspace_user event handled in flight is newer than this response, which
-    // could resurrect a removed user or undo a newer profile.
-    if (epoch !== rosterEpoch) {
+    // A workspace_user event or bootstrap refetch landing in flight is newer than
+    // this response, which could resurrect a removed user or undo a newer profile.
+    if (cachedRoster() !== before) {
       rosterRerun = true
       return
     }
@@ -1137,6 +1145,7 @@ export function registerWorkspaceSocketHandlers(
       if (!fetchedIds.has(id)) rosterUnresolved.add(id)
     }
     const now = Date.now()
+    const cachedUsers = users.map((user) => ({ ...user, _cachedAt: now }))
     updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => withWorkspaceUsers(old, users))
     await db.transaction("rw", db.workspaceUsers, async () => {
       const staleKeys = await db.workspaceUsers
@@ -1145,8 +1154,9 @@ export function registerWorkspaceSocketHandlers(
         .filter((row) => !fetchedIds.has(row.id))
         .primaryKeys()
       await db.workspaceUsers.bulkDelete(staleKeys)
-      await db.workspaceUsers.bulkPut(users.map((user) => ({ ...user, _cachedAt: now })))
+      await db.workspaceUsers.bulkPut(cachedUsers)
     })
+    replaceWorkspaceUsersInCache(workspaceId, cachedUsers)
   }
 
   const refreshRoster = async (): Promise<void> => {
@@ -1170,7 +1180,6 @@ export function registerWorkspaceSocketHandlers(
     refreshRoster().catch((error) => console.error("Failed to refresh the people roster", error))
   }
 
-  // The roster of a viewer without `workspace:browse`; null for anyone else.
   const getGuestRoster = (): User[] | null => {
     const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
     if (!bootstrap) return null
@@ -1180,6 +1189,7 @@ export function registerWorkspaceSocketHandlers(
 
   const refreshRosterForUnknown = (roster: User[], userId: string): void => {
     if (rosterUnresolved.has(userId) || roster.some((u) => u.id === userId)) return
+    if (rosterInFlight && rosterWanted.has(userId)) return
     rosterWanted.add(userId)
     startRosterRefresh()
   }
@@ -1190,7 +1200,6 @@ export function registerWorkspaceSocketHandlers(
   }
 
   const handleWorkspaceUserAdded = async (payload: WorkspaceUserAddedPayload) => {
-    rosterEpoch++
     const now = Date.now()
     const { user } = payload
 
@@ -1209,7 +1218,6 @@ export function registerWorkspaceSocketHandlers(
   }
 
   const handleWorkspaceUserRemoved = async (payload: WorkspaceUserRemovedPayload) => {
-    rosterEpoch++
     queryClient.setQueryData(workspaceKeys.bootstrap(workspaceId), (old: unknown) => {
       if (!old || typeof old !== "object") return old
       const bootstrap = old as WorkspaceBootstrap
@@ -1224,7 +1232,6 @@ export function registerWorkspaceSocketHandlers(
   }
 
   const handleWorkspaceUserUpdated = async (payload: WorkspaceUserUpdatedPayload) => {
-    rosterEpoch++
     const now = Date.now()
     const { user } = payload
 

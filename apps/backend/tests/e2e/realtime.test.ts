@@ -747,12 +747,12 @@ describe("Guest roster", () => {
     })
   })
 
-  test("should deliver a co-member's removal to a guest when the owner removes them from the workspace", async () => {
+  test("should deliver a co-member's removal to a guest when the workspace emits it", async () => {
     const ownerRemoval = waitForEvent<RemovedEvent>(ownerSocket, "workspace_user:removed")
     const guestRemoval = waitForEvent<RemovedEvent>(guestSocket, "workspace_user:removed")
 
-    // The member-removal route is a control-plane call that no test server has; the service is what its
-    // regional side runs.
+    // No route reaches removeUser today (control-plane removal only marks the permission row), so the
+    // test drives the one writer of this event directly.
     await new WorkspaceService(pool, {} as never, {} as never).removeUser(workspaceId, coMember.id)
     const [ownerHeard, guestHeard] = await Promise.all([ownerRemoval, guestRemoval])
 

@@ -50,7 +50,12 @@ import {
   resetAgentActivityStore,
 } from "@/stores/agent-activity-store"
 import * as agentSubstep from "@/lib/crypto/agent-substep"
-import { getCachedWorkspaceTables, resetWorkspaceStoreCache, subscribeWorkspaceCache } from "@/stores/workspace-store"
+import {
+  getCachedWorkspaceTables,
+  resetWorkspaceStoreCache,
+  seedWorkspaceCache,
+  subscribeWorkspaceCache,
+} from "@/stores/workspace-store"
 import type { Socket } from "socket.io-client"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
 
@@ -5952,6 +5957,7 @@ describe("a guest's people roster refresh (real IndexedDB)", () => {
 
   afterEach(() => {
     listUsers.mockRestore()
+    resetWorkspaceStoreCache()
   })
 
   it("should replace the roster with the fetched people when a guest sees a member_added for someone unknown", async () => {
@@ -5959,16 +5965,31 @@ describe("a guest's people roster refresh (real IndexedDB)", () => {
     const gone = person("usr_gone")
     const newcomer = person("usr_new")
     const fetched = [self, known, newcomer]
-    await db.workspaceUsers.bulkPut([self, known, gone].map((user) => ({ ...user, _cachedAt: OLD })))
+    const cachedBefore = [self, known, gone].map((user) => ({ ...user, _cachedAt: OLD }))
+    await db.workspaceUsers.bulkPut(cachedBefore)
+    seedWorkspaceCache("ws_1", {
+      workspace: { ...makeBootstrap().workspace, _cachedAt: OLD },
+      users: cachedBefore,
+      streams: [],
+      memberships: [],
+      dmPeers: [],
+      personas: [],
+      bots: [],
+    })
     listUsers.mockResolvedValue(fetched)
     const { emit, cleanup, bootstrapUsers } = register(GUEST_PERMISSIONS, [self, known, gone])
 
     emit("stream:member_added", memberAdded(newcomer.id))
 
     await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored(fetched)))
-    expect({ requests: listUsers.mock.calls, users: bootstrapUsers() }).toEqual({
+    expect({
+      requests: listUsers.mock.calls,
+      users: bootstrapUsers(),
+      cached: getCachedWorkspaceTables("ws_1").users,
+    }).toEqual({
       requests: [["ws_1"]],
       users: fetched,
+      cached: fetched.map((user) => ({ ...user, _cachedAt: expect.any(Number) })),
     })
     cleanup()
   })
@@ -6065,6 +6086,44 @@ describe("a guest's people roster refresh (real IndexedDB)", () => {
     await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, a, b, c])))
     await settleTick()
     expect(listUsers).toHaveBeenCalledTimes(2)
+    cleanup()
+  })
+
+  it("should not rerun when the same unknown author posts again while the request is in flight", async () => {
+    const newcomer = person("usr_new")
+    const pending = deferred<User[]>()
+    listUsers.mockReturnValueOnce(pending.promise)
+    const { emit, cleanup } = register(GUEST_PERMISSIONS)
+
+    emit("stream:activity", activity(newcomer.id))
+    emit("stream:activity", activity(newcomer.id))
+    pending.resolve([self, newcomer])
+
+    await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, newcomer])))
+    await settleTick()
+    expect(listUsers).toHaveBeenCalledTimes(1)
+    cleanup()
+  })
+
+  it("should refetch when a bootstrap refetch replaces the roster while the request is in flight", async () => {
+    const leaver = person("usr_leaver")
+    const newcomer = person("usr_new")
+    const first = deferred<User[]>()
+    listUsers.mockReturnValueOnce(first.promise).mockResolvedValueOnce([self, newcomer])
+    const { emit, cleanup, bootstrapUsers, queryClient } = register(GUEST_PERMISSIONS, [self, leaver])
+
+    emit("stream:activity", activity(newcomer.id))
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({ users: [self], viewerPermissions: GUEST_PERMISSIONS })
+    )
+    first.resolve([self, leaver, newcomer])
+
+    await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, newcomer])))
+    expect({ requests: listUsers.mock.calls.length, users: bootstrapUsers() }).toEqual({
+      requests: 2,
+      users: [self, newcomer],
+    })
     cleanup()
   })
 

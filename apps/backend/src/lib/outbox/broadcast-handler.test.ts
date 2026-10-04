@@ -101,7 +101,7 @@ describe("BroadcastHandler", () => {
     // routing tests don't exercise the DB, so resolve with no assigned sync
     // ids (payloads pass through unchanged).
     spyOn(SyncLogRepository, "appendForWorkspace").mockResolvedValue(new Map())
-    spyOn(workspacesModule, "listGuestViewerIds").mockResolvedValue([])
+    spyOn(workspacesModule, "listGuestViewers").mockResolvedValue(new Map())
   })
 
   afterEach(() => {
@@ -184,7 +184,9 @@ describe("BroadcastHandler", () => {
     })
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
     spyOn(UserRepository, "findById").mockResolvedValue({ id: "usr_alice", role: "member" } as never)
-    const audienceSpy = spyOn(workspacesModule, "listGuestViewerIds").mockResolvedValue(["usr_guest"])
+    const audienceSpy = spyOn(workspacesModule, "listGuestViewers").mockResolvedValue(
+      new Map([["usr_alice", ["usr_guest"]]])
+    )
     const appendSpy = spyOn(SyncLogRepository, "appendForWorkspace").mockResolvedValue(new Map())
 
     const { handler, emitChains } = createHandler()
@@ -197,7 +199,7 @@ describe("BroadcastHandler", () => {
       rooms: emitChains.map((emitted) => emitted.room).sort(),
       payloads: emitChains.map((emitted) => emitted.payload),
     }).toEqual({
-      audienceQuery: [["ws_1", "usr_alice"]],
+      audienceQuery: [["ws_1", ["usr_alice"]]],
       loggedGroups: [["permission:workspace:browse", "user:usr_alice", "user:usr_guest"]],
       rooms: ["ws:ws_1:permission:workspace:browse", "ws:ws_1:user:usr_alice", "ws:ws_1:user:usr_guest"],
       payloads: [event.payload, event.payload, event.payload],
@@ -207,7 +209,9 @@ describe("BroadcastHandler", () => {
   it("should name the guests of the removed user when a workspace user is removed", async () => {
     const event = makeEvent(1n, "workspace_user:removed", { workspaceId: "ws_1", removedUserId: "usr_gone" })
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
-    const audienceSpy = spyOn(workspacesModule, "listGuestViewerIds").mockResolvedValue(["usr_guest"])
+    const audienceSpy = spyOn(workspacesModule, "listGuestViewers").mockResolvedValue(
+      new Map([["usr_gone", ["usr_guest"]]])
+    )
 
     const { handler, emitChains } = createHandler()
     handler.handle()
@@ -217,7 +221,7 @@ describe("BroadcastHandler", () => {
       audienceQuery: audienceSpy.mock.calls.map((call) => call.slice(1)),
       rooms: emitChains.map((emitted) => emitted.room).sort(),
     }).toEqual({
-      audienceQuery: [["ws_1", "usr_gone"]],
+      audienceQuery: [["ws_1", ["usr_gone"]]],
       rooms: ["ws:ws_1:permission:workspace:browse", "ws:ws_1:user:usr_gone", "ws:ws_1:user:usr_guest"],
     })
   })

@@ -354,6 +354,14 @@ export function upsertWorkspaceUserInCache(workspaceId: string, user: CachedWork
   publishWorkspaceCache(workspaceId)
 }
 
+/** Replace the cached users wholesale after an out-of-band roster write to IDB; same no-op rule as the upsert. */
+export function replaceWorkspaceUsersInCache(workspaceId: string, users: CachedWorkspaceUser[]): void {
+  if (!cache.users.has(workspaceId)) return
+  cache.users.set(workspaceId, users)
+  cacheVersion.set(workspaceId, (cacheVersion.get(workspaceId) ?? 0) + 1)
+  publishWorkspaceCache(workspaceId)
+}
+
 // Array-valued hooks read live from IDB but fall back to the in-memory
 // cache while the first query is in flight, so the first visible render after
 // the coordinated-loading gate opens shows real data instead of a flash of

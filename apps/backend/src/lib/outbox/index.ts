@@ -5,6 +5,7 @@ export { OutboxRetentionWorker, type OutboxRetentionWorkerConfig } from "@threah
 // Domain-specific outbox code
 export { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig } from "./debounced-handler"
 export { BroadcastHandler, type BroadcastHandlerConfig } from "./broadcast-handler"
+export { resolveAudiences } from "./audiences"
 export {
   resolveDeliveryGroups,
   emitToGroups,
