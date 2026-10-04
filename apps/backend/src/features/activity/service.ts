@@ -1,6 +1,6 @@
 import type { Pool, PoolClient } from "pg"
 import { ActivityRepository, type Activity, type ClearedActivity } from "./repository"
-import { PeoplePurposes, UserRepository } from "../workspaces"
+import { PeoplePurposes, peopleViewerForActor, UserRepository } from "../workspaces"
 import {
   StreamRepository,
   StreamMemberRepository,
@@ -136,7 +136,7 @@ export class ActivityService {
         // stream's filterByAccess grants read to everyone, so without this a
         // stale or forged `usr_…` id would notify a non-workspace user.
         const candidateUsers = await UserRepository.findByIds(client, workspaceId, candidateIds, {
-          viewer: actorType === "user" ? { kind: "user", userId: actorId } : { kind: "workspace" },
+          viewer: peopleViewerForActor(actorType, actorId),
           purpose: PeoplePurposes.TARGETABLE,
         })
         const workspaceUserIds = new Set(candidateUsers.map((user) => user.id))

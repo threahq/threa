@@ -164,6 +164,7 @@ const SELECT_FIELDS_WITH_ALIAS = `
 const SELECT_FIELDS_FRAGMENT = sql`${sql.raw(SELECT_FIELDS_WITH_ALIAS)}`
 const USERS_FROM_FRAGMENT = sql`${sql.raw(USERS_WITH_PERMISSIONS_FROM)}`
 
+// No scope means a rendering or admin read of a known id; a read that picks for a viewer passes one.
 function optionalScopeSql(scope: PeopleScope | undefined): QueryConfig {
   return scope ? peopleScopeSql(scope) : sql`TRUE`
 }

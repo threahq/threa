@@ -67,6 +67,7 @@ import { messagesTotal } from "../../lib/observability"
 import { HttpError, MessageNotFoundError, StreamNotFoundError } from "../../lib/errors"
 import { OperationLeaseRepository } from "../../lib/operation-leases"
 import { resolveMentionContent } from "../mentions"
+import { peopleViewerForActor } from "../workspaces"
 import { deriveContentMarkdown } from "./content"
 import { logger } from "../../lib/logger"
 import {
@@ -725,9 +726,9 @@ export class EventService {
       client,
       params.workspaceId,
       params.contentJson,
-      // A personal persona resolves by slug only for its owner: a user author is
-      // the viewer; a persona/bot/system author resolves as the workspace.
-      params.authorType === "user" ? { kind: "user", userId: params.authorId } : { kind: "workspace" }
+      // The author is the viewer: it scopes which users a bare slug can pick, and a
+      // personal persona resolves only for its owner.
+      peopleViewerForActor(params.authorType, params.authorId)
     )
     if (resolvedCreate.changed) {
       params.contentJson = resolvedCreate.contentJson
@@ -1358,8 +1359,8 @@ export class EventService {
             client,
             params.workspaceId,
             params.contentJson,
-            // Personal personas resolve by slug only for their owner (see create).
-            actorType === "user" ? { kind: "user", userId: params.actorId } : { kind: "workspace" }
+            // The actor is the viewer, as on create.
+            peopleViewerForActor(actorType, params.actorId)
           )
           if (resolvedEdit.changed) {
             params.contentJson = resolvedEdit.contentJson
