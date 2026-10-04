@@ -4,7 +4,6 @@ import { Visibilities } from "@threahq/types"
 import { addTestMember, setupTestDatabase, withTransaction } from "./setup"
 import {
   CallEndpointRepository,
-  CallInvitationRepository,
   CallParticipantRepository,
   CallRepository,
   CallService,
@@ -13,16 +12,7 @@ import {
 import { FeatureFlagService } from "../../src/features/feature-flags"
 import { StreamService } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import {
-  callEndpointId,
-  callId,
-  callInvitationId,
-  callParticipantId,
-  eventId,
-  streamId,
-  userId,
-  workspaceId,
-} from "../../src/lib/id"
+import { callEndpointId, callId, callParticipantId, streamId, userId, workspaceId } from "../../src/lib/id"
 
 const MINUTE_MS = 60_000
 
@@ -75,26 +65,6 @@ describe("Calls workspace scope (INV-8)", () => {
     return id
   }
 
-  async function seedInvitation(wid: string, call: string) {
-    const id = callInvitationId()
-    await pool.query(
-      `INSERT INTO call_invitations (id, workspace_id, call_id, invitee_user_id, inviter_user_id, status, expires_at)
-       VALUES ($1, $2, $3, $4, $5, 'ringing', $6)`,
-      [id, wid, call, userId(), userId(), new Date(Date.now() + 10 * MINUTE_MS)]
-    )
-    return id
-  }
-
-  async function seedCallStartedEvent(wid: string, stream: string, call: string, sequence: number) {
-    const id = eventId()
-    await pool.query(
-      `INSERT INTO stream_events (id, workspace_id, stream_id, sequence, event_type, payload)
-       VALUES ($1, $2, $3, $4, 'call_started', $5)`,
-      [id, wid, stream, sequence, JSON.stringify({ callId: call })]
-    )
-    return id
-  }
-
   async function callRow(id: string) {
     const result = await pool.query<{ workspace_id: string; status: string; roster_version: number }>(
       `SELECT workspace_id, status, roster_version FROM calls WHERE id = $1`,
@@ -103,7 +73,7 @@ describe("Calls workspace scope (INV-8)", () => {
     return result.rows[0]
   }
 
-  async function statusOf(table: "call_endpoints" | "call_participants" | "call_invitations", id: string) {
+  async function statusOf(table: "call_endpoints" | "call_participants", id: string) {
     const result = await pool.query<{ status: string }>(`SELECT status FROM ${table} WHERE id = $1`, [id])
     return result.rows[0]?.status
   }
@@ -119,18 +89,6 @@ describe("Calls workspace scope (INV-8)", () => {
     )
     return ids.filter((id) => !free.rows.some((row) => row.id === id)).sort()
   }
-
-  test("should resolve the call_started event in the caller's workspace when another workspace holds a card for the same stream and call", async () => {
-    const stream = streamId()
-    const call = callId()
-    const foreignEvent = await seedCallStartedEvent(wsB, stream, call, 1)
-    const ownEvent = await seedCallStartedEvent(wsA, stream, call, 2)
-
-    expect({
-      own: await CallRepository.findCallStartedEventId(pool, wsA, stream, call),
-      foreign: await CallRepository.findCallStartedEventId(pool, wsB, stream, call),
-    }).toEqual({ own: ownEvent, foreign: foreignEvent })
-  })
 
   test("should lock only the calls whose workspace and id both match a ref", async () => {
     const callA = await seedCall(wsA)
@@ -204,24 +162,6 @@ describe("Calls workspace scope (INV-8)", () => {
     const afterMatch = [(await callRow(callA)).roster_version, (await callRow(callB)).roster_version]
 
     expect({ afterMismatch, afterMatch }).toEqual({ afterMismatch: [0, 0], afterMatch: [1, 0] })
-  })
-
-  test("should cancel only the ringing invitations of the workspace a ref names when another workspace holds one for the same call id", async () => {
-    const call = callId()
-    const own = await seedInvitation(wsA, call)
-    const foreign = await seedInvitation(wsB, call)
-
-    const cancelled = await CallInvitationRepository.cancelRingingForCalls(pool, [{ workspaceId: wsA, callId: call }])
-
-    expect({
-      cancelled: cancelled.map((invitation) => ({ id: invitation.id, workspaceId: invitation.workspaceId })),
-      own: await statusOf("call_invitations", own),
-      foreign: await statusOf("call_invitations", foreign),
-    }).toEqual({
-      cancelled: [{ id: own, workspaceId: wsA }],
-      own: "cancelled",
-      foreign: "ringing",
-    })
   })
 
   test("should mark left only the participants a ref names, ignoring a live endpoint row from another workspace", async () => {

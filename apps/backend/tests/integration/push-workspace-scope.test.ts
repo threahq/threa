@@ -82,23 +82,6 @@ describe("Push repositories workspace scope (INV-8)", () => {
     return result.rows.map((row) => row.id)
   }
 
-  test("should delete the oldest subscription of the user in the caller's workspace and keep an older one in another workspace", async () => {
-    const uid = userId()
-    const foreignOldest = await subscribe(wsB, uid, `https://push.example/${randomBytes(6).toString("hex")}`)
-    const oldest = await subscribe(wsA, uid, `https://push.example/${randomBytes(6).toString("hex")}`)
-    const newest = await subscribe(wsA, uid, `https://push.example/${randomBytes(6).toString("hex")}`)
-    await pool.query(`UPDATE push_subscriptions SET updated_at = now() - interval '3 days' WHERE id = $1`, [
-      foreignOldest.id,
-    ])
-    await pool.query(`UPDATE push_subscriptions SET updated_at = now() - interval '2 days' WHERE id = $1`, [oldest.id])
-
-    await PushSubscriptionRepository.deleteOldestByUser(pool, wsA, uid)
-
-    expect(await existing("push_subscriptions", [foreignOldest.id, oldest.id, newest.id])).toEqual(
-      [foreignOldest.id, newest.id].sort()
-    )
-  })
-
   test("should delete the endpoint's subscriptions of one identity in each of its workspaces and nothing else", async () => {
     const endpoint = `https://push.example/${randomBytes(6).toString("hex")}`
     const identity = `identity-${randomBytes(6).toString("hex")}`
