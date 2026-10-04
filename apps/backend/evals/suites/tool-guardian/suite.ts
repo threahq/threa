@@ -13,7 +13,8 @@
  * ## Permutations
  *
  * - decision model: the path every unpinned workspace runs. The decision
- *   model may allow on its own; anything else falls to the inference review.
+ *   model allows or denies on its own when confident; the uncertain band falls
+ *   to the inference review.
  * - inference model: the residency-pinned path, inference review only.
  *
  * ## Key Evaluators

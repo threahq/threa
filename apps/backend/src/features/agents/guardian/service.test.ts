@@ -4,6 +4,7 @@ import { AISpendDeniedError, DecisionsAvailability } from "@threahq/agent-runtim
 import { DELEGATION_BRIEF_MAX_CHARS } from "@threahq/types"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
 import {
+  TOOL_GUARDIAN_DECISIONS_DENY_REASON,
   TOOL_GUARDIAN_DECISIONS_TIMEOUT_MS,
   TOOL_GUARDIAN_MESSAGE_CHARS,
   TOOL_GUARDIAN_HISTORY_MESSAGES,
@@ -271,7 +272,7 @@ describe("ToolGuardianService", () => {
   })
 })
 
-describe("ToolGuardianService decision-model fast path", () => {
+describe("ToolGuardianService decision-model path", () => {
   const request = {
     toolName: "run_command",
     toolDescription: "Run a shell command in the sandbox.",
@@ -308,10 +309,22 @@ describe("ToolGuardianService decision-model fast path", () => {
     expect({ allowed: verdict.allowed, calls }).toEqual({ allowed: true, calls: { decisions: 1, inference: 0 } })
   })
 
-  // The decision model cannot write a reason, and a doubtful "no" may be wrong:
-  // the inference review decides and explains every call it does not allow.
-  test("anything short of a confident allow goes to the inference review, which decides and explains", async () => {
-    const { ai, calls } = routedAI(belief(0.2))
+  test("a confident deny skips the inference review and tells the assistant to ask", async () => {
+    const { ai, calls } = routedAI(belief(0.1))
+
+    const verdict = await new ToolGuardianService(
+      { ai, configResolver, residency: unpinned, availability: new DecisionsAvailability() },
+      turn
+    ).review(request)
+
+    expect({ verdict, calls }).toEqual({
+      verdict: { allowed: false, reason: TOOL_GUARDIAN_DECISIONS_DENY_REASON },
+      calls: { decisions: 1, inference: 0 },
+    })
+  })
+
+  test("an uncertain belief goes to the inference review, which decides and explains", async () => {
+    const { ai, calls } = routedAI(belief(0.7))
 
     const verdict = await new ToolGuardianService(
       { ai, configResolver, residency: unpinned, availability: new DecisionsAvailability() },
