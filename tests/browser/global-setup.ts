@@ -201,6 +201,7 @@ export default async function globalSetup(): Promise<void> {
     await waitForPostgresReady(containers.postgres)
     await ensureTestDatabase(dbName, containers.postgres)
     await ensureTestDatabase(`${dbName}_cp`, containers.postgres)
+    await ensureTestDatabase(`${dbName}_r2`, containers.postgres)
   }
 
   console.log("=== Setup Complete ===\n")

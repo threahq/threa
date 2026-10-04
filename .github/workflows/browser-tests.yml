@@ -158,30 +158,19 @@ jobs:
 
       - name: Create test databases
         run: |
-          # Backend test database
-          exists="$(
-            PGPASSWORD=threa psql -h localhost -p 5454 -U threa -d postgres -tAc \
-              "SELECT 1 FROM pg_database WHERE datname='${PLAYWRIGHT_TEST_DB_NAME}'"
-          )"
-          if [ "$exists" != "1" ]; then
-            PGPASSWORD=threa psql -h localhost -p 5454 -U threa -d postgres -c \
-              "CREATE DATABASE ${PLAYWRIGHT_TEST_DB_NAME}"
-          else
-            echo "Database already exists: ${PLAYWRIGHT_TEST_DB_NAME}"
-          fi
-
-          # Control-plane test database
-          cp_db="${PLAYWRIGHT_TEST_DB_NAME}_cp"
-          cp_exists="$(
-            PGPASSWORD=threa psql -h localhost -p 5454 -U threa -d postgres -tAc \
-              "SELECT 1 FROM pg_database WHERE datname='${cp_db}'"
-          )"
-          if [ "$cp_exists" != "1" ]; then
-            PGPASSWORD=threa psql -h localhost -p 5454 -U threa -d postgres -c \
-              "CREATE DATABASE ${cp_db}"
-          else
-            echo "Database already exists: ${cp_db}"
-          fi
+          # Backend (local region), control-plane and second-region (local-2) databases
+          for db in "${PLAYWRIGHT_TEST_DB_NAME}" "${PLAYWRIGHT_TEST_DB_NAME}_cp" "${PLAYWRIGHT_TEST_DB_NAME}_r2"; do
+            exists="$(
+              PGPASSWORD=threa psql -h localhost -p 5454 -U threa -d postgres -tAc \
+                "SELECT 1 FROM pg_database WHERE datname='${db}'"
+            )"
+            if [ "$exists" != "1" ]; then
+              PGPASSWORD=threa psql -h localhost -p 5454 -U threa -d postgres -c \
+                "CREATE DATABASE ${db}"
+            else
+              echo "Database already exists: ${db}"
+            fi
+          done
 
       - name: Download frontend build
         uses: actions/download-artifact@v4

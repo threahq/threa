@@ -61,6 +61,7 @@ function getOrAllocatePort(envVar: string): number {
 // Find free ports for this test run (allows parallel execution across worktrees)
 // Ports are cached in env vars so worker processes use the same ports
 const backendPort = getOrAllocatePort("PLAYWRIGHT_BACKEND_PORT")
+const backend2Port = getOrAllocatePort("PLAYWRIGHT_BACKEND2_PORT")
 const controlPlanePort = getOrAllocatePort("PLAYWRIGHT_CONTROL_PLANE_PORT")
 const routerPort = getOrAllocatePort("PLAYWRIGHT_ROUTER_PORT")
 const routerInspectorPort = getOrAllocatePort("PLAYWRIGHT_ROUTER_INSPECTOR_PORT")
@@ -71,6 +72,7 @@ const internalApiKey = "test-internal-key"
 process.env.PLAYWRIGHT_INTERNAL_API_KEY = internalApiKey
 const dbName = deriveTestDatabaseName()
 const cpDbName = `${dbName}_cp`
+const r2DbName = `${dbName}_r2`
 const setupBrowserInfraCommand = "bun tests/browser/setup-infra.ts"
 // In CI the backend, control-plane and router boot concurrently with the
 // CPU-heavy frontend prod build (`vite build`) on a 4-vCPU runner, so their
@@ -103,9 +105,70 @@ const frontendServerTimeout = useProdFrontend ? 180000 : webServerTimeout
 // Only log once (when ports are first allocated)
 if (!process.env.PLAYWRIGHT_PORTS_LOGGED) {
   console.log(
-    `Playwright config: backend=${backendPort}, control-plane=${controlPlanePort}, router=${routerPort}, frontend=${frontendPort}, db=${dbName}, cp_db=${cpDbName}, postgres=${DB_PORT}, minio=${MINIO_PORT}`
+    `Playwright config: backend=${backendPort}, backend2=${backend2Port}, control-plane=${controlPlanePort}, router=${routerPort}, frontend=${frontendPort}, db=${dbName}, cp_db=${cpDbName}, r2_db=${r2DbName}, postgres=${DB_PORT}, minio=${MINIO_PORT}`
   )
   process.env.PLAYWRIGHT_PORTS_LOGGED = "true"
+}
+
+const sharedBackendEnv = {
+  USE_STUB_AUTH: "true",
+  SESSION_COOKIE_NAME: "wos_session_browser_test",
+  USE_STUB_COMPANION: "true",
+  USE_STUB_BOUNDARY_EXTRACTION: "true",
+  USE_STUB_AI: "true",
+  THREA_TEST_LOG_FILE: process.env.THREA_TEST_LOG_FILE,
+  // Calls media plane → the fake CF server (negotiationless). App id/secret
+  // present ⇒ `cloudflareRealtime.enabled`; the `calls` flag defaults on, so
+  // the workspace has calls with no per-test enable step. Grace + sweep driven
+  // low so an ended call's timeline card lands inside the test window.
+  CLOUDFLARE_REALTIME_APP_ID: "e2e-calls-app",
+  CLOUDFLARE_REALTIME_APP_SECRET: "e2e-calls-secret",
+  CLOUDFLARE_REALTIME_API_BASE: `http://localhost:${fakeCfPort}/v1/apps`,
+  CLOUDFLARE_TURN_KEY_ID: "e2e-turn-key",
+  CLOUDFLARE_TURN_KEY_API_TOKEN: "e2e-turn-token",
+  CLOUDFLARE_TURN_API_BASE: `http://localhost:${fakeCfPort}/v1`,
+  CALL_EMPTY_GRACE_MS: "2000",
+  CALL_SWEEP_INTERVAL_MS: "1000",
+  // MinIO S3-compatible storage for file uploads
+  S3_BUCKET: "threa-browser-test",
+  S3_REGION: "us-east-1",
+  S3_ACCESS_KEY_ID: "minioadmin",
+  S3_SECRET_ACCESS_KEY: "minioadmin",
+  S3_ENDPOINT: `http://localhost:${MINIO_PORT}`,
+  // Security hardening: disable rate limits
+  GLOBAL_RATE_LIMIT_MAX: "10000",
+  AUTH_RATE_LIMIT_MAX: "10000",
+  CONTROL_PLANE_URL: `http://localhost:${controlPlanePort}`,
+  INTERNAL_API_KEY: internalApiKey,
+  ENCLAVE_INTERNAL_API_KEY: "test-enclave-key",
+  BRIDGE_API_KEY: "test-bridge-key",
+  WORKSPACE_ROUTER_URL: `http://localhost:${routerPort}`,
+  // VAPID keys for push notification E2E tests
+  VAPID_PUBLIC_KEY: "BM1RQ2UEVpAlbEgYOQ3bDrGAOrJGBmmh4_4UkmtGRzhi-5WPFmPuJbA6zv4kCp0iycvTaH6eveCXedCE0xSnZbk",
+  VAPID_PRIVATE_KEY: "eHUfakWGHrS4ft0HiSGyhTOBCQJ9VAKWl4XK53qsjMg",
+  VAPID_SUBJECT: "mailto:test@threa.app",
+}
+
+const routerRegions = {
+  local: { apiUrl: `http://localhost:${backendPort}`, wsUrl: `ws://localhost:${backendPort}` },
+  "local-2": { apiUrl: `http://localhost:${backend2Port}`, wsUrl: `ws://localhost:${backend2Port}` },
+}
+
+function regionalBackendServer(region: string, port: number, databaseName: string) {
+  return {
+    command: `${setupBrowserInfraCommand} && bun run test:browser:backend`,
+    url: `http://localhost:${port}/readyz`,
+    reuseExistingServer: !process.env.CI,
+    timeout: webServerTimeout,
+    env: {
+      ...sharedBackendEnv,
+      PORT: String(port),
+      DATABASE_URL: `postgresql://threa:threa@localhost:${DB_PORT}/${databaseName}`,
+      // Security hardening: allow test origins through CORS
+      CORS_ALLOWED_ORIGINS: `http://localhost:${port},http://localhost:${frontendPort}`,
+      REGION: region,
+    },
+  }
 }
 
 /**
@@ -122,8 +185,8 @@ export default defineConfig({
   fullyParallel: true, // Each test creates unique user + workspace — safe to parallelize
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  // CI: 2 workers. The 4-vCPU runner also hosts the backend, control-plane,
-  // wrangler and the Vite preview server, so 3 workers (3 Chromiums + backend ≈
+  // CI: 2 workers. The 4-vCPU runner also hosts both regional backends, the
+  // control-plane, wrangler and the Vite preview server, so 3 workers (3 Chromiums + backend ≈
   // 4 saturated cores) left no headroom — a rotating ~1-test-per-shard tail kept
   // tripping on contention (slow assertions, clicks that never settle) and only
   // passing on the in-run retry. 2 workers leaves a spare core and the suite is
@@ -185,54 +248,8 @@ export default defineConfig({
       timeout: webServerTimeout,
       env: { FAKE_CF_PORT: String(fakeCfPort) },
     },
-    {
-      command: `${setupBrowserInfraCommand} && bun run test:browser:backend`,
-      url: `http://localhost:${backendPort}/readyz`,
-      reuseExistingServer: !process.env.CI,
-      timeout: webServerTimeout,
-      env: {
-        PORT: String(backendPort),
-        DATABASE_URL: `postgresql://threa:threa@localhost:${DB_PORT}/${dbName}`,
-        USE_STUB_AUTH: "true",
-        SESSION_COOKIE_NAME: "wos_session_browser_test",
-        USE_STUB_COMPANION: "true",
-        USE_STUB_BOUNDARY_EXTRACTION: "true",
-        USE_STUB_AI: "true",
-        THREA_TEST_LOG_FILE: process.env.THREA_TEST_LOG_FILE,
-        // Calls media plane → the fake CF server (negotiationless). App id/secret
-        // present ⇒ `cloudflareRealtime.enabled`; the `calls` flag defaults on, so
-        // the workspace has calls with no per-test enable step. Grace + sweep driven
-        // low so an ended call's timeline card lands inside the test window.
-        CLOUDFLARE_REALTIME_APP_ID: "e2e-calls-app",
-        CLOUDFLARE_REALTIME_APP_SECRET: "e2e-calls-secret",
-        CLOUDFLARE_REALTIME_API_BASE: `http://localhost:${fakeCfPort}/v1/apps`,
-        CLOUDFLARE_TURN_KEY_ID: "e2e-turn-key",
-        CLOUDFLARE_TURN_KEY_API_TOKEN: "e2e-turn-token",
-        CLOUDFLARE_TURN_API_BASE: `http://localhost:${fakeCfPort}/v1`,
-        CALL_EMPTY_GRACE_MS: "2000",
-        CALL_SWEEP_INTERVAL_MS: "1000",
-        // MinIO S3-compatible storage for file uploads
-        S3_BUCKET: "threa-browser-test",
-        S3_REGION: "us-east-1",
-        S3_ACCESS_KEY_ID: "minioadmin",
-        S3_SECRET_ACCESS_KEY: "minioadmin",
-        S3_ENDPOINT: `http://localhost:${MINIO_PORT}`,
-        // Security hardening: allow test origins through CORS, disable rate limits
-        CORS_ALLOWED_ORIGINS: `http://localhost:${backendPort},http://localhost:${frontendPort}`,
-        GLOBAL_RATE_LIMIT_MAX: "10000",
-        AUTH_RATE_LIMIT_MAX: "10000",
-        CONTROL_PLANE_URL: `http://localhost:${controlPlanePort}`,
-        INTERNAL_API_KEY: internalApiKey,
-        ENCLAVE_INTERNAL_API_KEY: "test-enclave-key",
-        BRIDGE_API_KEY: "test-bridge-key",
-        WORKSPACE_ROUTER_URL: `http://localhost:${routerPort}`,
-        REGION: "local",
-        // VAPID keys for push notification E2E tests
-        VAPID_PUBLIC_KEY: "BM1RQ2UEVpAlbEgYOQ3bDrGAOrJGBmmh4_4UkmtGRzhi-5WPFmPuJbA6zv4kCp0iycvTaH6eveCXedCE0xSnZbk",
-        VAPID_PRIVATE_KEY: "eHUfakWGHrS4ft0HiSGyhTOBCQJ9VAKWl4XK53qsjMg",
-        VAPID_SUBJECT: "mailto:test@threa.app",
-      },
-    },
+    regionalBackendServer("local", backendPort, dbName),
+    regionalBackendServer("local-2", backend2Port, r2DbName),
     {
       command: `${setupBrowserInfraCommand} && bun run test:browser:control-plane`,
       url: `http://localhost:${controlPlanePort}/readyz`,
@@ -244,7 +261,10 @@ export default defineConfig({
         USE_STUB_AUTH: "true",
         SESSION_COOKIE_NAME: "wos_session_browser_test",
         INTERNAL_API_KEY: internalApiKey,
-        REGIONS: JSON.stringify({ local: { internalUrl: `http://localhost:${backendPort}` } }),
+        REGIONS: JSON.stringify({
+          local: { internalUrl: `http://localhost:${backendPort}` },
+          "local-2": { internalUrl: `http://localhost:${backend2Port}` },
+        }),
         CORS_ALLOWED_ORIGINS: `http://localhost:${controlPlanePort},http://localhost:${frontendPort}`,
         GLOBAL_RATE_LIMIT_MAX: "10000",
         // Every worker shares one IP; /api/invitations/lookup and /claim sit
@@ -254,7 +274,7 @@ export default defineConfig({
       },
     },
     {
-      command: `bunx wrangler dev --port ${routerPort} --inspector-port ${routerInspectorPort} --var CONTROL_PLANE_URL:http://localhost:${controlPlanePort} --var INTERNAL_API_KEY:${internalApiKey} --var 'REGIONS:${JSON.stringify({ local: { apiUrl: `http://localhost:${backendPort}`, wsUrl: `ws://localhost:${backendPort}` } })}'`,
+      command: `bunx wrangler dev --port ${routerPort} --inspector-port ${routerInspectorPort} --var CONTROL_PLANE_URL:http://localhost:${controlPlanePort} --var INTERNAL_API_KEY:${internalApiKey} --var 'REGIONS:${JSON.stringify(routerRegions)}'`,
       cwd: "./apps/workspace-router",
       url: `http://localhost:${routerPort}/readyz`,
       reuseExistingServer: !process.env.CI,
