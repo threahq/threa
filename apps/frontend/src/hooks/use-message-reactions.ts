@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react"
 import { toast } from "sonner"
+import { isPermanentApiError } from "@/api"
 import { messagesApi } from "@/api/messages"
 import { useWorkspaceEmoji } from "./use-workspace-emoji"
 import { enqueueOperation } from "@/sync/operation-queue"
@@ -62,7 +63,11 @@ export function useMessageReactions(workspaceId: string, messageId: string): Use
 
       try {
         await messagesApi.addReaction(workspaceId, messageId, emoji)
-      } catch {
+      } catch (err) {
+        if (isPermanentApiError(err)) {
+          toast.error("Couldn't add that reaction.")
+          return
+        }
         // Enqueue for retry when back online
         await enqueueOperation(workspaceId, "add_reaction", { messageId, emoji })
         syncEngine.kickOperationQueue()
@@ -75,7 +80,11 @@ export function useMessageReactions(workspaceId: string, messageId: string): Use
     async (emoji: string) => {
       try {
         await messagesApi.removeReaction(workspaceId, messageId, emoji)
-      } catch {
+      } catch (err) {
+        if (isPermanentApiError(err)) {
+          toast.error("Couldn't remove that reaction.")
+          return
+        }
         await enqueueOperation(workspaceId, "remove_reaction", { messageId, emoji })
         syncEngine.kickOperationQueue()
       }

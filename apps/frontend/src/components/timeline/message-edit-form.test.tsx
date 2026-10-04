@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { spyOnExport } from "@/test/spy"
-import { render, screen, fireEvent } from "@testing-library/react"
+import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -9,8 +9,12 @@ import * as drawerModule from "@/components/ui/drawer"
 import * as editorModule from "@/components/editor"
 import * as prosemirrorModule from "@threahq/prosemirror"
 import * as contextsModule from "@/contexts"
+import { toast } from "sonner"
+import { ApiError } from "@/api"
+// eslint-disable-next-line no-restricted-imports -- test reads the real outbox the form writes to
+import { db } from "@/db"
 import { MessageEditForm } from "./message-edit-form"
-import type { JSONContent } from "@threahq/types"
+import { StreamConnectionErrorCodes, type JSONContent } from "@threahq/types"
 
 let inputModeMockValue: inputModeModule.InputMode = "mouse"
 
@@ -216,5 +220,67 @@ describe("MessageEditForm", () => {
     await user.click(screen.getByRole("button", { name: "Save" }))
 
     expect(onSave).not.toHaveBeenCalled()
+  })
+})
+
+describe("MessageEditForm saving", () => {
+  const editedContent: JSONContent = {
+    type: "doc",
+    content: [{ type: "paragraph", content: [{ type: "text", text: "Edited" }] }],
+  }
+
+  async function submitEdit(onSave: () => void) {
+    const user = userEvent.setup()
+    renderForm({ onSave })
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+      target: { value: JSON.stringify(editedContent) },
+    })
+    await user.click(screen.getByRole("button", { name: "Save" }))
+  }
+
+  beforeEach(async () => {
+    await db.pendingOperations.clear()
+  })
+
+  it("should toast an error, keep the form open and not queue the edit when the server refuses it permanently", async () => {
+    const errorToast = vi.spyOn(toast, "error").mockReturnValue("e1")
+    const infoToast = vi.spyOn(toast, "info").mockReturnValue("i1")
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update: vi.fn().mockRejectedValue(new ApiError(403, StreamConnectionErrorCodes.WRITE_REFUSED, "Refused")),
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+    const onSave = vi.fn()
+
+    await submitEdit(onSave)
+
+    await waitFor(() => expect(errorToast).toHaveBeenCalled())
+    expect({
+      errors: errorToast.mock.calls,
+      infos: infoToast.mock.calls,
+      saved: onSave.mock.calls,
+      queued: await db.pendingOperations.toArray(),
+      formOpen: screen.getByRole("textbox", { name: "Edit message" }) !== null,
+    }).toEqual({ errors: [["Couldn't save your edit."]], infos: [], saved: [], queued: [], formOpen: true })
+  })
+
+  it("should queue the edit and close the form when the request fails without a server verdict", async () => {
+    const errorToast = vi.spyOn(toast, "error").mockReturnValue("e2")
+    const infoToast = vi.spyOn(toast, "info").mockReturnValue("i2")
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update: vi.fn().mockRejectedValue(new TypeError("Failed to fetch")),
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+    const onSave = vi.fn()
+
+    await submitEdit(onSave)
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce())
+    expect({
+      errors: errorToast.mock.calls,
+      infos: infoToast.mock.calls,
+      queued: (await db.pendingOperations.toArray()).map(({ type, payload }) => ({ type, payload })),
+    }).toEqual({
+      errors: [],
+      infos: [["Edit queued — will be saved when back online"]],
+      queued: [{ type: "edit_message", payload: { messageId: "msg_1", contentJson: editedContent } }],
+    })
   })
 })

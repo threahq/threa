@@ -2342,8 +2342,6 @@ export function StreamContent({
     disabledReason = "This thread has been sealed in the labyrinth. It can be read but not extended."
   } else if (ancestorArchived) {
     disabledReason = "The stream this thread belongs to has been archived. It can be read but not extended."
-  } else if (isSharedCopy) {
-    disabledReason = "Shared from another workspace. It can be read here but not posted to."
   }
 
   const handleJoined = useCallback(
@@ -3117,8 +3115,9 @@ export function StreamContent({
                     <MessageInput
                       workspaceId={workspaceId}
                       streamId={streamId}
-                      disabled={isArchived || isSystem || isSharedCopy}
+                      disabled={isArchived || isSystem}
                       disabledReason={disabledReason}
+                      attachmentsDisabled={isSharedCopy}
                       autoFocus={autoFocus}
                       onComposerHeightChange={handleComposerHeightChange}
                       onMobileTypingChange={setMobileComposerTyping}

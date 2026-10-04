@@ -66,6 +66,8 @@ interface MessageInputProps {
   streamId: string
   disabled?: boolean
   disabledReason?: string
+  /** Removes every way to add a file to this composer. */
+  attachmentsDisabled?: boolean
   autoFocus?: boolean
   /**
    * Notified when the composer's measured height changes (or when the initial
@@ -258,6 +260,7 @@ function MessageInputComponent({
   streamId,
   disabled,
   disabledReason,
+  attachmentsDisabled,
   autoFocus,
   onComposerHeightChange,
   onMobileTypingChange,
@@ -1009,6 +1012,7 @@ function MessageInputComponent({
     fileInputRef: composer.fileInputRef,
     onFileSelect: composer.handleFileSelect,
     onFileUpload: composer.uploadFile,
+    attachmentsDisabled,
     imageCount: composer.imageCount,
     onSubmit: handleSubmit,
     canSubmit: composer.canSend,

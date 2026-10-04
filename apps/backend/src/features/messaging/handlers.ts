@@ -3,16 +3,18 @@ import type { Request, Response } from "express"
 import type { Pool, PoolClient } from "pg"
 import { withTransaction } from "../../db"
 import type { EventService } from "./event-service"
-import type { StreamService } from "../streams"
+import type { Stream, StreamService } from "../streams"
 import type { Message } from "./repository"
 import { StreamEventRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import type { CommandRegistry } from "../commands"
+import type { StreamConnectionForwardService } from "../stream-connections"
 import {
   type CommandDispatchedPayload,
   type ComposeTrace,
   type ConversationDirective,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+  StreamConnectionErrorCodes,
 } from "@threahq/types"
 import { serializeBigInt, HttpError } from "@threahq/backend-common"
 import { MessageNotFoundError } from "../../lib/errors"
@@ -264,12 +266,18 @@ function detectCommand(contentJson: JSONContent): DetectedCommand | null {
   }
 }
 
+function copyWriteUnsupported(reason: string): HttpError {
+  return new HttpError(reason, { status: 400, code: StreamConnectionErrorCodes.COPY_WRITE_UNSUPPORTED })
+}
+
 interface Dependencies {
   pool: Pool
   eventService: EventService
   streamService: StreamService
   commandRegistry: CommandRegistry
   steeredMessageService: SteeredMessageService
+  /** Absent when this deployment has no bridge to other regions, so a shared channel's host can't be reached. */
+  streamConnectionForwardService: StreamConnectionForwardService | null
 }
 
 export function createMessageHandlers({
@@ -278,7 +286,33 @@ export function createMessageHandlers({
   streamService,
   commandRegistry,
   steeredMessageService,
+  streamConnectionForwardService,
 }: Dependencies) {
+  function requireForwardService(): StreamConnectionForwardService {
+    if (!streamConnectionForwardService) {
+      throw new HttpError("The shared channel's host can't be reached from this deployment", {
+        status: 503,
+        code: StreamConnectionErrorCodes.HOST_UNREACHABLE,
+      })
+    }
+    return streamConnectionForwardService
+  }
+
+  /**
+   * How a write into an existing message's stream reaches the host, or null
+   * when the stream is this workspace's own. A copy always resolves as `copy`
+   * or throws read-only (archived, or the user isn't a participant).
+   */
+  async function resolveCopyWrite(workspaceId: string, userId: string, accessible: Stream) {
+    if (!accessible.originWorkspaceId) return null
+    const { stream } = await streamService.resolveMessageWriteTarget({
+      workspaceId,
+      userId,
+      target: { streamId: accessible.id },
+    })
+    return { stream, forward: requireForwardService() }
+  }
+
   return {
     async create(req: Request, res: Response) {
       const userId = req.user!.id
@@ -286,11 +320,12 @@ export function createMessageHandlers({
 
       const data = validateRequest(createMessageSchema, req.body)
 
-      const stream = await streamService.resolveWritableMessageStream({
+      const target = await streamService.resolveMessageWriteTarget({
         workspaceId,
         userId: userId,
         target: "dmUserId" in data ? { dmUserId: data.dmUserId } : { streamId: data.streamId },
       })
+      const stream = target.stream
       const streamId = stream.id
       const insertSteeredInvocations =
         "steer" in data && data.steer
@@ -303,7 +338,8 @@ export function createMessageHandlers({
       // produce a row that violates the encryption guarantee, so we mismatch
       // here before any insert occurs. `resolveWritableMessageStream` already
       // populates `e2eEnabled` off the `e2e_streams` LEFT JOIN, so we read
-      // it off the resolved stream instead of issuing a second SELECT.
+      // it off the resolved stream instead of issuing a second SELECT. A copy is
+      // never E2E, so a ciphertext request into one fails this check.
       const isE2eStream = stream.e2eEnabled === true
       const isE2eRequest = "ciphertext" in data
       if (isE2eStream !== isE2eRequest) {
@@ -343,6 +379,34 @@ export function createMessageHandlers({
         return res.status(201).json({ message: serializeMessage(message) })
       }
 
+      // Check for slash command in first node BEFORE normalization (normalization loses command nodes)
+      const originalContentJson = "contentJson" in data ? data.contentJson : undefined
+      const detectedCommand = originalContentJson ? detectCommand(originalContentJson) : null
+
+      if (target.kind === "copy") {
+        // The host dedupes a send by this id, which is what makes a retry across regions safe.
+        if (!data.clientMessageId) throw copyWriteUnsupported("A send into a shared channel needs a clientMessageId")
+        if ("steer" in data && data.steer) throw copyWriteUnsupported("Steering isn't available in a shared channel")
+        if (data.metadata || data.conversation) {
+          throw copyWriteUnsupported("Metadata and conversation directives aren't available in a shared channel")
+        }
+        if (detectedCommand && commandRegistry.has(detectedCommand.name)) {
+          throw copyWriteUnsupported("Commands aren't available in a shared channel")
+        }
+        const { contentJson } = normalizeContent(data)
+        if ((data.attachmentIds?.length ?? 0) > 0 || collectAttachmentReferenceIds(contentJson).length > 0) {
+          throw copyWriteUnsupported("Files can't be sent to a shared channel yet")
+        }
+        const message = await requireForwardService().sendMessage({
+          workspaceId,
+          userId,
+          stream,
+          clientMessageId: data.clientMessageId,
+          contentJson,
+        })
+        return res.status(201).json({ message: serializeMessage(message) })
+      }
+
       // Explicit `data.attachmentIds` is the fresh-upload list (each row's
       // `messageId === null`, claimed by `attachToMessage` on send).
       // The contentJson-derived list catches inline `attachment:` references
@@ -350,10 +414,6 @@ export function createMessageHandlers({
       // Merging both into the deduped union covers all flavors with one
       // gate run + one projection write (mirrors the edit path).
       const explicitAttachmentIds = data.attachmentIds ?? []
-
-      // Check for slash command in first node BEFORE normalization (normalization loses command nodes)
-      const originalContentJson = "contentJson" in data ? data.contentJson : undefined
-      const detectedCommand = originalContentJson ? detectCommand(originalContentJson) : null
 
       if (detectedCommand && commandRegistry.has(detectedCommand.name)) {
         const cmdId = generateCommandId()
@@ -462,6 +522,19 @@ export function createMessageHandlers({
       // content), so this is reference-only by construction.
       const attachmentIds = collectAttachmentReferenceIds(contentJson)
 
+      const copy = await resolveCopyWrite(workspaceId, userId, accessibleStream)
+      if (copy) {
+        if (attachmentIds.length > 0) throw copyWriteUnsupported("Files can't be sent to a shared channel yet")
+        const edited = await copy.forward.editMessage({
+          workspaceId,
+          userId,
+          stream: copy.stream,
+          messageId,
+          contentJson,
+        })
+        return res.json({ message: serializeMessage(edited) })
+      }
+
       const message = await eventService.editMessageForPrincipal(
         { kind: "user", userId },
         {
@@ -563,6 +636,12 @@ export function createMessageHandlers({
         throw new HttpError("Can only delete your own messages", { status: 403, code: "FORBIDDEN" })
       }
 
+      const copy = await resolveCopyWrite(workspaceId, userId, accessibleStream)
+      if (copy) {
+        await copy.forward.deleteMessage({ workspaceId, userId, stream: copy.stream, messageId })
+        return res.status(204).send()
+      }
+
       await eventService.deleteMessageForPrincipal(
         { kind: "user", userId },
         {
@@ -600,6 +679,18 @@ export function createMessageHandlers({
       const accessibleStream = await streamService.tryAccess(existing.streamId, workspaceId, userId)
       if (!accessibleStream) {
         throw new MessageNotFoundError()
+      }
+
+      const copy = await resolveCopyWrite(workspaceId, userId, accessibleStream)
+      if (copy) {
+        const reacted = await copy.forward.addReaction({
+          workspaceId,
+          userId,
+          stream: copy.stream,
+          messageId,
+          emoji: shortcode,
+        })
+        return res.json({ message: serializeMessage(reacted) })
       }
 
       const message = await eventService.addReactionForPrincipal(
@@ -641,6 +732,18 @@ export function createMessageHandlers({
       const accessibleStream = await streamService.tryAccess(existing.streamId, workspaceId, userId)
       if (!accessibleStream) {
         throw new MessageNotFoundError()
+      }
+
+      const copy = await resolveCopyWrite(workspaceId, userId, accessibleStream)
+      if (copy) {
+        const unreacted = await copy.forward.removeReaction({
+          workspaceId,
+          userId,
+          stream: copy.stream,
+          messageId,
+          emoji: shortcode,
+        })
+        return res.json({ message: serializeMessage(unreacted) })
       }
 
       const message = await eventService.removeReactionForPrincipal(

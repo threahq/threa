@@ -1,11 +1,13 @@
 import { useState, useCallback } from "react"
 import { toast } from "sonner"
 import { useMessageService } from "@/contexts"
+import { isPermanentApiError } from "@/api"
 import { enqueueOperation } from "@/sync/operation-queue"
 
 /**
  * Delete a confirmed message, falling back to the offline operation queue when
- * the request fails. Shared by the stream timeline (`MessageEvent`) and the
+ * the request fails (a permanent 4xx toasts instead: queuing it would only be
+ * dropped). Shared by the stream timeline (`MessageEvent`) and the
  * out-of-stream row (`MessageItem`) so both delete surfaces stay one path
  * (INV-35). Owns its own `isDeleting`; the caller owns any confirm-dialog state
  * and closes it after `deleteMessage` settles (this never throws).
@@ -21,7 +23,11 @@ export function useDeleteMessage(workspaceId: string): {
       setIsDeleting(true)
       try {
         await messageService.delete(workspaceId, messageId)
-      } catch {
+      } catch (err) {
+        if (isPermanentApiError(err)) {
+          toast.error("Couldn't delete that message.")
+          return
+        }
         await enqueueOperation(workspaceId, "delete_message", { messageId })
         toast.info("Delete queued — will complete when back online")
       } finally {

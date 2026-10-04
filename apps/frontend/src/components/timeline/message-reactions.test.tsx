@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest"
-import { act, fireEvent, render, screen } from "@testing-library/react"
+import { act, render, screen } from "@testing-library/react"
 import * as hooksModule from "@/hooks"
 import * as workspaceEmojiModule from "@/hooks/use-workspace-emoji"
 import * as reactionPickerModule from "./reaction-emoji-picker"
@@ -111,24 +111,6 @@ describe("MessageReactions", () => {
     for (let i = 0; i < 8; i++) many[`:emoji_${i}:`] = [`user_${i}`]
     render(<MessageReactions reactions={many} workspaceId="ws_1" messageId="msg_1" currentUserId={null} />)
     expect(screen.getByText("+3")).toBeInTheDocument()
-  })
-
-  it("should show reactions without add or toggle when the row is read-only", () => {
-    render(
-      <MessageReactions
-        reactions={{ ":tada:": ["user_a"] }}
-        workspaceId="ws_1"
-        messageId="msg_1"
-        currentUserId="user_me"
-        readOnly
-      />
-    )
-    fireEvent.click(screen.getByText("1"))
-    expect({
-      addButton: screen.queryByRole("button", { name: "Add reaction" }),
-      toggled: mockToggleReaction.mock.calls,
-      pillDisabled: screen.getByText("1").closest("button")?.getAttribute("aria-disabled"),
-    }).toEqual({ addButton: null, toggled: [], pillDisabled: "true" })
   })
 })
 

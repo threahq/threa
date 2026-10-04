@@ -88,7 +88,8 @@ export interface ComposerActionBarProps {
   onInsertEmoji: () => void
   onInsertMention: () => void
   onInsertCommand: () => void
-  onAttachClick: () => void
+  /** Omitted when files can't be added; the attach action is then absent. */
+  onAttachClick?: () => void
   /** Desktop fullscreen-expand entry point; omitted by hosts without one. */
   onExpandClick?: () => void
   /**
@@ -171,15 +172,17 @@ export function ComposerActionBar({
         icon: <Slash className="h-4 w-4" />,
         onSelect: onInsertCommand,
         collapsePriority: 0,
-      },
-      {
+      }
+    )
+    if (onAttachClick) {
+      list.push({
         key: "attach",
         label: "Attach files",
         icon: <Paperclip className="h-4 w-4" />,
         onSelect: onAttachClick,
         collapsePriority: 4,
-      }
-    )
+      })
+    }
     return list
   }, [onInsertEmoji, onInsertMention, onInsertCommand, onAttachClick, onExpandClick])
 

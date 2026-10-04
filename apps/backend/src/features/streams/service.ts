@@ -70,6 +70,7 @@ import {
   type AuthorType,
   type DescriptionSetEventPayload,
   type StreamReadFrontier,
+  type StreamViewerState,
   type StreamReadFrontierSnapshot,
   TitleSources,
   StreamReadOnlyReasons,
@@ -279,6 +280,9 @@ interface ResolveWritableMessageStreamParams {
   target: { streamId: string } | { dmUserId: string }
 }
 
+/** Where a user's message write lands: in this workspace's own stream, or through the host of a shared channel's copy. */
+export type MessageWriteTarget = { kind: "local" | "copy"; stream: Stream }
+
 function normalizeDmUserPair(userOneId: string, userTwoId: string): { userAId: string; userBId: string } {
   return userOneId < userTwoId ? { userAId: userOneId, userBId: userTwoId } : { userAId: userTwoId, userBId: userOneId }
 }
@@ -479,6 +483,22 @@ export class StreamService {
   }
 
   async resolveWritableMessageStream(params: ResolveWritableMessageStreamParams): Promise<Stream> {
+    const { stream, state } = await this.resolveMessageStreamState(params)
+    assertViewerStreamWritable(state)
+    return stream
+  }
+
+  /** A shared channel's copy resolves as `copy`: its participants write through the host, so the caller forwards. */
+  async resolveMessageWriteTarget(params: ResolveWritableMessageStreamParams): Promise<MessageWriteTarget> {
+    const { stream, state } = await this.resolveMessageStreamState(params)
+    if (state.readOnlyReason === StreamReadOnlyReasons.SHARED_COPY) return { kind: "copy", stream }
+    assertViewerStreamWritable(state)
+    return { kind: "local", stream }
+  }
+
+  private async resolveMessageStreamState(
+    params: ResolveWritableMessageStreamParams
+  ): Promise<{ stream: Stream; state: StreamViewerState }> {
     if ("dmUserId" in params.target) {
       const stream = await this.findOrCreateDm({
         workspaceId: params.workspaceId,
@@ -490,10 +510,7 @@ export class StreamService {
         throw new StreamNotFoundError()
       }
 
-      assertViewerStreamWritable(
-        deriveStreamViewerState({ target: stream, ancestorArchived: false, participates: true })
-      )
-      return stream
+      return { stream, state: deriveStreamViewerState({ target: stream, ancestorArchived: false, participates: true }) }
     }
 
     const stream = await this.getStreamById(params.workspaceId, params.target.streamId)
@@ -509,8 +526,7 @@ export class StreamService {
     }
     const ancestorArchived =
       (await StreamRepository.findNearestArchivedAncestor(this.pool, params.workspaceId, stream.id)) !== null
-    assertViewerStreamWritable(deriveStreamViewerState({ target: stream, ancestorArchived, participates }))
-    return stream
+    return { stream, state: deriveStreamViewerState({ target: stream, ancestorArchived, participates }) }
   }
 
   async findOrCreateDm(params: FindOrCreateDmParams): Promise<Stream> {

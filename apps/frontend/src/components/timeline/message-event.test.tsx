@@ -951,7 +951,7 @@ describe("MessageEvent stream-row reads", () => {
     expect(get).not.toHaveBeenCalled()
   })
 
-  it("should offer no reaction or thread controls when the row sits in a shared channel's copy", async () => {
+  it("should offer reactions but no thread controls when the row sits in a shared channel's copy", async () => {
     await seedStream(workspaceId, streamId, { displayName: "Shared Channel", originWorkspaceId: "ws_host" })
     release = await primeStreamRegistry()
     const event: StreamEvent = {
@@ -969,11 +969,11 @@ describe("MessageEvent stream-row reads", () => {
     expect(await screen.findByTestId("stream-row-probe")).toHaveTextContent("Shared Channel")
 
     expect({
-      reactionPill: screen.getByText("1").closest("button") !== null,
-      addReaction: screen.queryAllByRole("button", { name: "Add reaction" }),
+      pillToggles: screen.getByText("1").closest("button")?.getAttribute("aria-disabled") ?? null,
+      addReaction: screen.queryAllByRole("button", { name: "Add reaction" }).length > 0,
       replyLink: screen.queryByRole("link", { name: "Reply in thread" }),
       replyButton: screen.queryByRole("button", { name: "Reply in thread" }),
-    }).toEqual({ reactionPill: true, addReaction: [], replyLink: null, replyButton: null })
+    }).toEqual({ pillToggles: null, addReaction: true, replyLink: null, replyButton: null })
   })
 
   it("an E2E row still holds at pending until its stream row hydrates", async () => {

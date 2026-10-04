@@ -256,12 +256,13 @@ async function insertCopy(
       contentMarkdown: copy.contentMarkdown,
       revision: 1,
       ...(attachments.length > 0 && { attachments }),
+      ...(copy.clientMessageId && { clientMessageId: copy.clientMessageId }),
     } satisfies MessageCreatedPayload,
     actorId: copy.authorId,
     actorType: copy.authorType,
     createdAt,
   })
-  await MessageRepository.insert(client, {
+  const inserted = await MessageRepository.insert(client, {
     id: copy.id,
     workspaceId,
     streamId: stream.id,
@@ -270,9 +271,13 @@ async function insertCopy(
     authorType: copy.authorType,
     contentJson: copy.contentJson,
     contentMarkdown: copy.contentMarkdown,
+    clientMessageId: copy.clientMessageId ?? undefined,
     createdAt,
     editedAt: copy.editedAt ? new Date(copy.editedAt) : null,
   })
+  if (inserted.id !== copy.id) {
+    throw new Error(`Message copy ${copy.id} reuses the client message id of ${inserted.id} in stream ${stream.id}`)
+  }
   await StreamContextRepository.insertMany(
     client,
     contextRowsForMessage({

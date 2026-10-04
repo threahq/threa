@@ -13,7 +13,7 @@ import {
 } from "@threahq/types"
 import { StreamRepository } from "../../src/features/streams"
 import { UserRepository } from "../../src/features/workspaces"
-import { streamId, workspaceId } from "../../src/lib/id"
+import { streamId, userId, workspaceId } from "../../src/lib/id"
 import {
   TestClient,
   addReaction,
@@ -164,6 +164,7 @@ describe("Stream connection bridge", () => {
         editedAt: message.editedAt,
         createdAt: message.createdAt,
         attachments: [],
+        clientMessageId: null,
         ...overrides,
       },
     }
@@ -419,6 +420,70 @@ describe("Stream connection bridge", () => {
         ],
       },
     ])
+  })
+
+  test("should land the partner's message in the host channel and record the write when the partner posts through the bridge", async () => {
+    const { workspace, channel, connection, partnerWorkspaceId, partner } = await setup()
+    const author = { id: userId(), name: "Pat Partner", slug: "pat" }
+    const post = (headers: Record<string, string>) =>
+      new TestClient().request<{ messageId: string }>(
+        "POST",
+        `/api/workspaces/${workspace.id}/stream-connections/${connection.id}/bridge/streams/${channel.id}/messages`,
+        { author, users: [], clientMessageId: "client-e2e", contentJson: doc(paragraph(text("hello host"))) },
+        headers
+      )
+
+    const stranger = await post(partnerHeaders(workspaceId()))
+    const sent = await post(partnerHeaders(partnerWorkspaceId))
+    const page = await events(partner, channel.id)
+
+    let rows: unknown[] = []
+    for (let attempt = 0; attempt < 40 && rows.length === 0; attempt++) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 50))
+      ;({ rows } = await pool.query(
+        `SELECT actor_type, actor_id, auth_ref, access_kind, subjects FROM access_log
+         WHERE workspace_id = $1 AND operation = 'stream_connections.bridge_send_message' AND outcome = 'success'`,
+        [workspace.id]
+      ))
+    }
+    expect({
+      statuses: [stranger.status, sent.status],
+      messages: page.changes.map((change) =>
+        change.kind === "message"
+          ? {
+              id: change.message.id,
+              authorId: change.message.authorId,
+              contentMarkdown: change.message.contentMarkdown,
+              clientMessageId: change.message.clientMessageId,
+            }
+          : change
+      ),
+      users: page.users,
+      log: rows,
+    }).toEqual({
+      statuses: [404, 201],
+      messages: [
+        {
+          id: sent.data.messageId,
+          authorId: author.id,
+          contentMarkdown: "hello host",
+          clientMessageId: "client-e2e",
+        },
+      ],
+      users: [],
+      log: [
+        {
+          actor_type: "system",
+          actor_id: partnerWorkspaceId,
+          auth_ref: connection.id,
+          access_kind: "write",
+          subjects: [
+            { type: "stream", id: channel.id },
+            { type: "message", id: sent.data.messageId },
+          ],
+        },
+      ],
+    })
   })
 
   test("should hand the partner a url for a shared message's file, refuse a file outside the tree, and record both reads", async () => {

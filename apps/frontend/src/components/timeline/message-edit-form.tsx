@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef, useId, useMemo } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { enqueueOperation } from "@/sync/operation-queue"
+import { isPermanentApiError } from "@/api"
 import { Expand } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -95,7 +96,12 @@ export function MessageEditForm({
         await messageService.update(workspaceId, messageId, { contentJson: json })
         queryClient.invalidateQueries({ queryKey: messageKeys.versions(workspaceId, messageId) })
         onSave()
-      } catch {
+      } catch (err) {
+        if (isPermanentApiError(err)) {
+          setContentJson(json)
+          toast.error("Couldn't save your edit.")
+          return
+        }
         await enqueueOperation(workspaceId, "edit_message", { messageId, contentJson: json })
         onSave() // Close the edit form — the edit will be retried
         toast.info("Edit queued — will be saved when back online")

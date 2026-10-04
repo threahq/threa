@@ -44,11 +44,11 @@ export function deriveStreamViewerState(params: {
   if (params.target.type === StreamTypes.SYSTEM) {
     return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.SYSTEM_STREAM }
   }
-  if (params.target.originWorkspaceId) {
-    return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.SHARED_COPY }
-  }
   if (!params.participates) {
     return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.NOT_A_MEMBER }
+  }
+  if (params.target.originWorkspaceId) {
+    return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.SHARED_COPY }
   }
   return { readOnly: false, readOnlyReason: null }
 }

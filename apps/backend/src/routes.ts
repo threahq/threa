@@ -49,8 +49,10 @@ import {
   createStreamConnectionBridgeHandlers,
   createStreamConnectionHandlers,
   type StreamConnectionExportService,
+  type StreamConnectionForwardService,
   type StreamConnectionImportService,
   type StreamConnectionService,
+  type StreamConnectionWriteService,
 } from "./features/stream-connections"
 import { createPushHandlers, pushReceiptBodyParser, pushReceiptErrors } from "./features/push"
 import { createDebugHandlers } from "./handlers/debug-handlers"
@@ -200,6 +202,8 @@ interface Dependencies {
   streamConnectionService: StreamConnectionService
   streamConnectionExportService: StreamConnectionExportService
   streamConnectionImportService: StreamConnectionImportService
+  streamConnectionWriteService: StreamConnectionWriteService
+  streamConnectionForwardService: StreamConnectionForwardService | null
   pushService: PushService
   perfDiagnosticsService: PerfDiagnosticsService
   s3Config: S3Config
@@ -285,6 +289,8 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     streamConnectionService,
     streamConnectionExportService,
     streamConnectionImportService,
+    streamConnectionWriteService,
+    streamConnectionForwardService,
     pushService,
     perfDiagnosticsService,
     s3Config,
@@ -393,6 +399,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     streamService,
     commandRegistry,
     steeredMessageService,
+    streamConnectionForwardService,
   })
   const attachment = createAttachmentHandlers({ attachmentService, streamService, storage, pool })
   const search = createSearchHandlers({ pool, searchService, searchQueryLogService, featureFlagService })
@@ -514,6 +521,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     const bridge = createStreamConnectionBridgeHandlers({
       streamConnectionExportService,
       streamConnectionImportService,
+      streamConnectionWriteService,
     })
     app.get(
       "/api/workspaces/:workspaceId/stream-connections/:connectionId/bridge/manifest",
@@ -532,6 +540,37 @@ export function registerRoutes(app: Express, deps: Dependencies) {
       audit("stream_connections.bridge_attachment", "disclose"),
       bridgeAuth,
       bridge.attachment
+    )
+    const streamPath = "/api/workspaces/:workspaceId/stream-connections/:connectionId/bridge/streams/:streamId"
+    app.post(
+      `${streamPath}/messages`,
+      audit("stream_connections.bridge_send_message", "write"),
+      bridgeAuth,
+      bridge.sendMessage
+    )
+    app.patch(
+      `${streamPath}/messages/:messageId`,
+      audit("stream_connections.bridge_edit_message", "write"),
+      bridgeAuth,
+      bridge.editMessage
+    )
+    app.delete(
+      `${streamPath}/messages/:messageId`,
+      audit("stream_connections.bridge_delete_message", "write"),
+      bridgeAuth,
+      bridge.deleteMessage
+    )
+    app.put(
+      `${streamPath}/messages/:messageId/reactions/:emoji`,
+      audit("stream_connections.bridge_add_reaction", "write"),
+      bridgeAuth,
+      bridge.addReaction
+    )
+    app.delete(
+      `${streamPath}/messages/:messageId/reactions/:emoji`,
+      audit("stream_connections.bridge_remove_reaction", "write"),
+      bridgeAuth,
+      bridge.removeReaction
     )
     // Mounted under the partner workspace's path, the other way round.
     app.post(

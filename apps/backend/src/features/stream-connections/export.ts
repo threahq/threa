@@ -3,7 +3,9 @@ import { UnknownNodeTypeError } from "@threahq/prosemirror"
 import {
   AttachmentSafetyStatuses,
   AttachmentUploadStatuses,
+  AuthorTypes,
   StreamConnectionStates,
+  type StreamConnection,
   type BridgeActor,
   type BridgeAttachmentResponse,
   type BridgeChange,
@@ -25,7 +27,7 @@ import { MessageRepository, deriveContentMarkdown, type Message } from "../messa
 import { BotRepository } from "../public-api"
 import { StreamEventRepository, StreamRepository, normalizeStreamDescription, type Stream } from "../streams"
 import { UserRepository } from "../workspaces"
-import { connectionNotFound } from "./errors"
+import { connectionNotFound, writeRefused } from "./errors"
 import { namedAuthors } from "./named-authors"
 import { StreamConnectionRepository } from "./repository"
 
@@ -73,7 +75,15 @@ const EVENT_RULES: Record<EventType, EventRule> = {
   "aside:anchored": "withheld",
 }
 
-type NodeRule = "keep" | "messageRef" | "channelLink" | "inAppLink" | "attachmentReference" | "memoEmbed"
+type NodeRule =
+  | "keep"
+  | "agentBlock"
+  | "mention"
+  | "messageRef"
+  | "channelLink"
+  | "inAppLink"
+  | "attachmentReference"
+  | "memoEmbed"
 
 /**
  * How each node leaves the host. A pointer survives only when it resolves
@@ -86,7 +96,7 @@ export const BRIDGE_NODE_RULES: ReadonlyMap<string, NodeRule> = new Map<string, 
   ["heading", "keep"],
   ["codeBlock", "keep"],
   ["blockquote", "keep"],
-  ["agentBlock", "keep"],
+  ["agentBlock", "agentBlock"],
   ["bulletList", "keep"],
   ["orderedList", "keep"],
   ["listItem", "keep"],
@@ -97,7 +107,7 @@ export const BRIDGE_NODE_RULES: ReadonlyMap<string, NodeRule> = new Map<string, 
   ["text", "keep"],
   ["hardBreak", "keep"],
   ["horizontalRule", "keep"],
-  ["mention", "keep"],
+  ["mention", "mention"],
   ["slashCommand", "keep"],
   ["command", "keep"],
   ["emoji", "keep"],
@@ -114,7 +124,7 @@ export const BRIDGE_NODE_RULES: ReadonlyMap<string, NodeRule> = new Map<string, 
 // Keyed by every mark type, so a new mark fails the typecheck until it is given a rule here.
 const BRIDGE_MARKS: Record<ThreaMark["type"], true> = { bold: true, italic: true, strike: true, code: true, link: true }
 
-interface BridgeCaller {
+export interface BridgeCaller {
   workspaceId: string
   connectionId: string
   /** The partner workspace the request names itself as. */
@@ -126,6 +136,8 @@ interface ContentScope {
   tree: ReadonlySet<string>
   messages: ReadonlyMap<string, Message>
   attachmentIds: ReadonlySet<string>
+  /** Set for a partner's document arriving here, null for one leaving: the mention ids that survive, every other mention flattens to text. */
+  inboundMentions: ReadonlySet<string> | null
 }
 
 interface Dependencies {
@@ -149,7 +161,7 @@ export class StreamConnectionExportService {
   async getManifest(caller: BridgeCaller): Promise<BridgeManifest> {
     await this.assertEnabled(caller.workspaceId)
     return withClient(this.pool, async (client) => {
-      const tree = await this.loadSharedTree(client, caller)
+      const { tree } = await loadSharedTree(client, caller)
       const treeIds = new Set(tree.map((stream) => stream.id))
       const heads = await StreamEventRepository.listHeadSequences(client, caller.workspaceId, [...treeIds])
       const descriptions = tree.flatMap((stream) => (stream.descriptionJson ? [stream.descriptionJson] : []))
@@ -161,7 +173,7 @@ export class StreamConnectionExportService {
   async listEvents(caller: BridgeCaller & { streamId: string; after: bigint; limit: number }): Promise<BridgeEvents> {
     await this.assertEnabled(caller.workspaceId)
     return withClient(this.pool, async (client) => {
-      const tree = await this.loadSharedTree(client, caller)
+      const { tree } = await loadSharedTree(client, caller)
       const treeIds = new Set(tree.map((stream) => stream.id))
       if (!treeIds.has(caller.streamId)) throw connectionNotFound()
 
@@ -200,14 +212,15 @@ export class StreamConnectionExportService {
         shared.map((message) => message.contentJson)
       )
 
+      const callerAuthors = await findCallerAuthors(client, caller, shared)
       const changes = messageIds.map((id): BridgeChange => {
         const message = messages.get(id)!
         return isShared(message, caller.streamId)
-          ? { kind: "message", message: toBridgeMessage(message, attachments.get(id) ?? [], scope) }
+          ? { kind: "message", message: toBridgeMessage(message, attachments.get(id) ?? [], scope, callerAuthors) }
           : { kind: "message_removed", messageId: id }
       })
       const named = namedAuthors(shared)
-      const users = await loadNamedUsers(client, caller.workspaceId, named.userIds)
+      const users = await loadNamedUsers(client, caller, named.userIds)
       const actors = await loadNamedActors(client, caller.workspaceId, named)
       return { changes, users, actors, cursor: cursor.toString(), hasMore }
     })
@@ -221,7 +234,7 @@ export class StreamConnectionExportService {
   async getAttachment(caller: BridgeCaller & { attachmentId: string }): Promise<BridgeAttachmentResponse> {
     await this.assertEnabled(caller.workspaceId)
     const { attachment, upload } = await withClient(this.pool, async (client) => {
-      const tree = await this.loadSharedTree(client, caller)
+      const { tree } = await loadSharedTree(client, caller)
       const attachment = await AttachmentRepository.findById(client, caller.workspaceId, caller.attachmentId)
       const message = attachment?.messageId
         ? await MessageRepository.findById(client, caller.workspaceId, attachment.messageId)
@@ -249,36 +262,43 @@ export class StreamConnectionExportService {
     }
   }
 
-  /**
-   * The shared channel and the threads under it that hang off one of its
-   * messages, at any depth. Every refusal is the same 404, so a caller learns
-   * nothing about connections that are not its own.
-   */
-  private async loadSharedTree(client: PoolClient, caller: BridgeCaller): Promise<Stream[]> {
-    const connection = await StreamConnectionRepository.findById(client, caller.workspaceId, caller.connectionId)
-    const shared =
-      connection?.role === "host" &&
-      connection.state === StreamConnectionStates.ACTIVE &&
-      connection.remoteWorkspaceId === caller.callerWorkspaceId
-    if (!shared) throw connectionNotFound()
-
-    const root = await StreamRepository.findById(client, caller.workspaceId, connection.streamId)
-    if (!root) throw new Error(`Shared channel ${connection.streamId} is missing from ${caller.workspaceId}`)
-
-    const threadsByParent = new Map<string, Stream[]>()
-    for (const thread of await StreamRepository.listThreadsByRoot(client, caller.workspaceId, root.id)) {
-      if (!thread.parentStreamId || !thread.parentAnchorId?.startsWith("msg_")) continue
-      threadsByParent.set(thread.parentStreamId, [...(threadsByParent.get(thread.parentStreamId) ?? []), thread])
-    }
-    const tree = [root]
-    for (let i = 0; i < tree.length; i++) tree.push(...(threadsByParent.get(tree[i].id) ?? []))
-    return tree
-  }
-
   private async assertEnabled(workspaceId: string): Promise<void> {
     const flag = await this.featureFlagService.getWorkspaceFlag(workspaceId, "streamConnections")
     if (flag !== "on") throw connectionNotFound()
   }
+}
+
+/**
+ * The shared channel and the threads under it that hang off one of its
+ * messages, at any depth. Every refusal is the same 404, so a caller learns
+ * nothing about connections that are not its own. `lock` holds the connection
+ * row until the caller's transaction ends.
+ */
+export async function loadSharedTree(
+  client: PoolClient,
+  caller: BridgeCaller,
+  { lock = false }: { lock?: boolean } = {}
+): Promise<{ connection: StreamConnection; tree: Stream[] }> {
+  const connection = lock
+    ? await StreamConnectionRepository.findByIdForUpdate(client, caller.workspaceId, caller.connectionId)
+    : await StreamConnectionRepository.findById(client, caller.workspaceId, caller.connectionId)
+  const shared =
+    connection?.role === "host" &&
+    connection.state === StreamConnectionStates.ACTIVE &&
+    connection.remoteWorkspaceId === caller.callerWorkspaceId
+  if (!shared) throw connectionNotFound()
+
+  const root = await StreamRepository.findById(client, caller.workspaceId, connection.streamId)
+  if (!root) throw new Error(`Shared channel ${connection.streamId} is missing from ${caller.workspaceId}`)
+
+  const threadsByParent = new Map<string, Stream[]>()
+  for (const thread of await StreamRepository.listThreadsByRoot(client, caller.workspaceId, root.id)) {
+    if (!thread.parentStreamId || !thread.parentAnchorId?.startsWith("msg_")) continue
+    threadsByParent.set(thread.parentStreamId, [...(threadsByParent.get(thread.parentStreamId) ?? []), thread])
+  }
+  const tree = [root]
+  for (let i = 0; i < tree.length; i++) tree.push(...(threadsByParent.get(tree[i].id) ?? []))
+  return { connection, tree }
 }
 
 function changedMessageIds(eventType: string, payload: unknown): string[] {
@@ -313,10 +333,23 @@ function toBridgeStream(stream: Stream, head: bigint, scope: ContentScope): Brid
   }
 }
 
-/** The profiles of the named users the host still has. */
-async function loadNamedUsers(client: PoolClient, workspaceId: string, ids: Set<string>): Promise<BridgeUser[]> {
-  const users = await UserRepository.findByIds(client, workspaceId, [...ids])
-  return users.map((user) => ({ id: user.id, name: user.name, slug: user.slug }))
+/** The profiles of the named users the host still has, except the caller's own: it knows them better than the host's copy does. */
+async function loadNamedUsers(client: PoolClient, caller: BridgeCaller, ids: Set<string>): Promise<BridgeUser[]> {
+  const users = await UserRepository.findByIds(client, caller.workspaceId, [...ids])
+  return users
+    .filter((user) => user.originWorkspaceId !== caller.callerWorkspaceId)
+    .map((user) => ({ id: user.id, name: user.name, slug: user.slug }))
+}
+
+/** The authors among the messages that are the caller's own users, whose copies here it wrote. */
+async function findCallerAuthors(client: PoolClient, caller: BridgeCaller, messages: Message[]): Promise<Set<string>> {
+  const userAuthorIds = [
+    ...new Set(
+      messages.filter((message) => message.authorType === AuthorTypes.USER).map((message) => message.authorId)
+    ),
+  ]
+  const origins = await UserRepository.findOrigins(client, caller.workspaceId, userAuthorIds)
+  return new Set(userAuthorIds.filter((id) => origins.get(id) === caller.callerWorkspaceId))
 }
 
 /**
@@ -346,7 +379,12 @@ function isShared(message: Message, streamId: string): boolean {
   return message.streamId === streamId && message.deletedAt === null
 }
 
-function toBridgeMessage(message: Message, attachments: Attachment[], scope: ContentScope): BridgeMessage {
+function toBridgeMessage(
+  message: Message,
+  attachments: Attachment[],
+  scope: ContentScope,
+  callerAuthors: ReadonlySet<string>
+): BridgeMessage {
   if (message.ciphertext) throw new Error(`Message ${message.id} is end-to-end encrypted and cannot be shared`)
   const contentJson = exportDoc(message.contentJson, scope)
   return {
@@ -369,6 +407,7 @@ function toBridgeMessage(message: Message, attachments: Attachment[], scope: Con
       width: attachment.width,
       height: attachment.height,
     })),
+    clientMessageId: callerAuthors.has(message.authorId) ? message.clientMessageId : null,
   }
 }
 
@@ -401,7 +440,60 @@ async function loadContentScope(
     [...attachmentIds],
     [...tree]
   )
-  return { tree, messages, attachmentIds: reachable }
+  return { tree, messages, attachmentIds: reachable, inboundMentions: null }
+}
+
+export interface ImportedContent {
+  contentJson: JSONContent
+  contentMarkdown: string
+}
+
+/**
+ * Cleans a partner's document before the host stores it, with the markdown it
+ * reads as. A mention stays only when it names a host user or one of the
+ * caller's own users, so the partner can't point at a user, persona or bot it
+ * has no standing to name. Quotes, shares and file references drop: the
+ * partner's users hold no membership here to read what they point at. An agent
+ * block becomes a blockquote, so it credits no agent. The caller's users must
+ * already be copied here.
+ */
+export async function importDoc(
+  client: PoolClient,
+  params: { workspaceId: string; callerWorkspaceId: string; tree: Stream[]; doc: JSONContent }
+): Promise<ImportedContent> {
+  const { workspaceId, callerWorkspaceId, doc } = params
+  const userIds = [...new Set(collectMentionIds(doc).filter((id) => id.startsWith("usr_")))]
+  const origins = await UserRepository.findOrigins(client, workspaceId, userIds)
+  const mentions = new Set(
+    userIds.filter((id) => {
+      const origin = origins.get(id)
+      return origin === null || origin === callerWorkspaceId
+    })
+  )
+  try {
+    const contentJson = exportDoc(doc, {
+      tree: new Set(params.tree.map((stream) => stream.id)),
+      messages: new Map(),
+      attachmentIds: new Set(),
+      inboundMentions: mentions,
+    })
+    return { contentJson, contentMarkdown: deriveContentMarkdown(contentJson) }
+  } catch {
+    throw writeRefused("Content is not valid")
+  }
+}
+
+/** Reads a document that may not be one, so a malformed node is for `exportDoc` to refuse rather than a throw here. */
+function collectMentionIds(root: JSONContent): string[] {
+  const ids: string[] = []
+  const pending: unknown[] = [root]
+  while (pending.length > 0) {
+    const node = pending.pop() as JSONContent | null
+    if (typeof node !== "object" || node === null) continue
+    if (BRIDGE_NODE_RULES.get(node.type ?? "") === "mention") ids.push(attr(node, "id") ?? "")
+    if (Array.isArray(node.content)) for (const child of node.content) pending.push(child)
+  }
+  return ids
 }
 
 function exportDoc(doc: JSONContent, scope: ContentScope): JSONContent {
@@ -418,6 +510,15 @@ function exportNode(node: JSONContent, scope: ContentScope): JSONContent | null 
 
   switch (rule) {
     case "keep":
+      break
+    case "agentBlock":
+      if (scope.inboundMentions) return exportNode({ type: "blockquote", content: node.content }, scope)
+      break
+    case "mention":
+      if (scope.inboundMentions && !scope.inboundMentions.has(attr(node, "id") ?? "")) {
+        const slug = attr(node, "slug")
+        return asText(node, slug ? `@${slug}` : null)
+      }
       break
     case "messageRef":
       if (!pointsIntoTree(attr(node, "messageId"), scope) || !scope.tree.has(attr(node, "streamId") ?? "")) return null

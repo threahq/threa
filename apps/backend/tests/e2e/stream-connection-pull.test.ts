@@ -512,9 +512,6 @@ describe("Stream connection pull", () => {
     }
 
     expect({
-      send: await refusal(
-        partnerClient.post(`/api/workspaces/${partner.id}/messages`, { streamId: channel.id, content: "hi" })
-      ),
       thread: await refusal(
         partnerClient.post(`/api/workspaces/${partner.id}/streams`, {
           type: "thread",
@@ -522,11 +519,8 @@ describe("Stream connection pull", () => {
           parentAnchorId: root.id,
         })
       ),
-      react: await refusal(
-        partnerClient.post(`/api/workspaces/${partner.id}/messages/${root.id}/reactions`, { emoji: ":+1:" })
-      ),
       archive: await refusal(partnerClient.post(`/api/workspaces/${partner.id}/streams/${channel.id}/archive`)),
-    }).toEqual({ send: readOnly, thread: readOnly, react: readOnly, archive: readOnly })
+    }).toEqual({ thread: readOnly, archive: readOnly })
   }, 30_000)
 
   test("should record no emoji use in the partner workspace when copies carry emoji", async () => {
