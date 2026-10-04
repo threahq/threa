@@ -1708,7 +1708,7 @@ export class ThreaDatabase extends Dexie {
         await moveRows(tx, "boardMutedStreams", BOARD_MUTED_STREAMS_STORE)
       })
 
-    // v52: events are keyed by workspace, for the same reason as v51: a copied
+    // v53: events are keyed by workspace, for the same reason as v52: a copied
     // stream's events keep their `event_`/`msg_` ids and sequences in the partner
     // workspace, so a bare-id key overwrote the other workspace's row and a
     // [streamId+…] range returned both workspaces' rows. The old store moves to a
@@ -1717,10 +1717,10 @@ export class ThreaDatabase extends Dexie {
     // mixing workspaces. `_status` stays bare: the unsent-row queue is
     // account-wide and optimistic ids are client-generated. Rows without a
     // `workspaceId` are dropped; the bootstrap refetches them.
-    // One-way door: once a client has opened at v52, code declaring only v51
+    // One-way door: once a client has opened at v53, code declaring only v52
     // cannot open the database (IndexedDB refuses a version downgrade), so a
-    // revert of this bump is not available — reverting means a v53.
-    this.version(52)
+    // revert of this bump is not available — reverting means a v54.
+    this.version(53)
       .stores({
         [EVENTS_STORE]:
           "[workspaceId+id], [workspaceId+streamId], [workspaceId+streamId+_sequenceNum], [workspaceId+streamId+eventType], [workspaceId+payload.messageId], _status",

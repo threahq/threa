@@ -23,14 +23,14 @@ function cachedEvent(overrides: Partial<CachedEvent> & Pick<CachedEvent, "id" | 
 
 async function seedV51(name: string, seed: (legacy: Dexie) => Promise<void>): Promise<void> {
   const legacy = new Dexie(name)
-  legacy.version(51).stores({ events: V47_EVENTS })
+  legacy.version(52).stores({ events: V47_EVENTS })
   await legacy.open()
   await seed(legacy)
   legacy.close()
 }
 
-describe("v52 events keyed by workspace", () => {
-  it("should carry rows that name a workspace to the new keys and drop the rest when upgrading from v51", async () => {
+describe("v53 events keyed by workspace", () => {
+  it("should carry rows that name a workspace to the new keys and drop the rest when upgrading from v52", async () => {
     const name = `threa_test_${Math.random().toString(36).slice(2)}`
     const second = cachedEvent({ id: "evt_2", workspaceId: "ws_1", _sequenceNum: 2 })
     const first = cachedEvent({ id: "evt_1", workspaceId: "ws_1", _sequenceNum: 1 })
