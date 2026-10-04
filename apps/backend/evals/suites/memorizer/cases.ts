@@ -11,6 +11,7 @@ import type { MemorizerInput, MemorizerExpected } from "./types"
 
 const KRIS = { authorId: "usr_eval_a", authorType: "user" as const, authorName: "Kim" }
 const PIERRE = { authorId: "usr_eval_b", authorType: "user" as const, authorName: "Pelle" }
+const DAY_MINUTES = 24 * 60
 
 export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
   {
@@ -386,6 +387,70 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
       maxMemos: 2,
       mustCoverAny: [["Stripe"]],
       expectSupersedes: null,
+    },
+  },
+
+  {
+    id: "team-event-booking-001",
+    name: "A team event the participants booked is a decision, however logistical",
+    input: {
+      category: "extraction",
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown:
+            "Proposal for the offsite: Villa Fjällhem in Åre, November 12–14. Room for all 14 of us and a ski-in lodge.",
+          minutesAgo: 30 * DAY_MINUTES,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "Love it. Let's book Fjällhem for Nov 12–14 then.",
+          minutesAgo: 30 * DAY_MINUTES - 1,
+        },
+        { ...PIERRE, contentMarkdown: "Booked, deposit paid.", minutesAgo: 30 * DAY_MINUTES - 2 },
+      ],
+    },
+    expectedOutput: {
+      minMemos: 1,
+      maxMemos: 1,
+      mustCoverAny: [["Fjällhem"]],
+    },
+  },
+
+  {
+    id: "team-event-moved-001",
+    name: "A team event moved to a new venue is captured where it landed",
+    input: {
+      category: "extraction",
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown:
+            "Bad news: Fjällhem raised the price 40% and the train strike makes Åre a mess. I cancelled and got the deposit back.",
+          minutesAgo: 9 * DAY_MINUTES,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "Ugh. Can we keep the dates and do it in Stockholm instead?",
+          minutesAgo: 9 * DAY_MINUTES - 1,
+        },
+        {
+          ...PIERRE,
+          contentMarkdown: "Hotel Skeppsholmen has the conference wing free Nov 12–14. Same dates, no travel.",
+          minutesAgo: 9 * DAY_MINUTES - 2,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "Decided: offsite moves to Hotel Skeppsholmen in Stockholm, Nov 12–14. No ski gear needed.",
+          minutesAgo: 9 * DAY_MINUTES - 3,
+        },
+      ],
+    },
+    expectedOutput: {
+      minMemos: 1,
+      maxMemos: 2,
+      conclusionMustState: "The offsite is at Hotel Skeppsholmen in Stockholm on Nov 12–14",
+      conclusionMustNotState: "The offsite is at Villa Fjällhem in Åre",
     },
   },
 ]

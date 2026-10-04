@@ -11,6 +11,7 @@ import type { MemoClassifierInput, MemoClassifierExpected } from "./types"
 
 const KRIS = { authorId: "usr_eval_a", authorType: "user" as const, authorName: "Kim" }
 const PIERRE = { authorId: "usr_eval_b", authorType: "user" as const, authorName: "Pelle" }
+const DAY_MINUTES = 24 * 60
 
 export const memoClassifierCases: EvalCase<MemoClassifierInput, MemoClassifierExpected>[] = [
   {
@@ -345,5 +346,34 @@ export const memoClassifierCases: EvalCase<MemoClassifierInput, MemoClassifierEx
       ],
     },
     expectedOutput: { expectKnowledgeWorthy: false },
+  },
+
+  {
+    id: "own-negotiation-days-old-001",
+    name: "Agency: a confidential deal note stays worthy days later, with no topic yet",
+    input: {
+      topicSummary: null,
+      category: "knowledge",
+      messages: [
+        {
+          ...KRIS,
+          contentMarkdown:
+            "Confidential: second meeting with Halvard Robotics about them acquiring us. Internal codename KESTREL.",
+          minutesAgo: 6 * DAY_MINUTES,
+        },
+        {
+          ...KRIS,
+          contentMarkdown:
+            "They floated a 42 million EUR valuation. Board meets on the 20th to decide whether to continue talks.",
+          minutesAgo: 6 * DAY_MINUTES - 1,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "Nobody outside the board knows yet. Do not mention Halvard anywhere shared.",
+          minutesAgo: 6 * DAY_MINUTES - 2,
+        },
+      ],
+    },
+    expectedOutput: { expectKnowledgeWorthy: true },
   },
 ]
