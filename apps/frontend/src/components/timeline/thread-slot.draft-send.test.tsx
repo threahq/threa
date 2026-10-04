@@ -141,7 +141,7 @@ describe("thread draft send transition", () => {
 
   it("resolves the sent draft by identity when the promotion rescope wins the race", async () => {
     await upsertLoadedDraft(workspaceId, scope, { contentJson: doc("typed but unsent"), attachments: [] })
-    const draftId = (await db.composerLoaded.get(scope))?.draftId
+    const draftId = (await db.composerLoaded.get([workspaceId, scope]))?.draftId
     expect(draftId).toBeTruthy()
 
     // Promotion wins the race: promoteDraft's rescope moves the row AND its
@@ -154,7 +154,7 @@ describe("thread draft send transition", () => {
     await resolveLoadedDraft(workspaceId, scope, draftId)
 
     expect(await db.drafts.get(draftId!)).toBeUndefined()
-    expect(await db.composerLoaded.get(`stream:${threadId}`)).toBeUndefined()
+    expect(await db.composerLoaded.get([workspaceId, `stream:${threadId}`])).toBeUndefined()
 
     const ready = renderHook(() => useBoardDraftsReady(workspaceId))
     const { result } = renderHook(() => useThreadDraft(workspaceId, anchorId, threadId))

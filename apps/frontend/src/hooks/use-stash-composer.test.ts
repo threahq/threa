@@ -131,7 +131,7 @@ describe("stash restore — no-limbo invariant (real data layer)", () => {
     await waitFor(() => expect(result.current.composer.pendingAttachments.map((a) => a.id)).toContain("attach_big"))
     // 3) The draft row was never destroyed — it is still on disk and now the loaded one.
     expect(await db.drafts.get(bigId)).toBeDefined()
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(bigId)
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe(bigId)
     // 4) The previously-loaded ambient draft is preserved as a stash sibling (swap, not clobber).
     await waitFor(() => expect(result.current.stash.drafts.some((d) => d.id === ambientId)).toBe(true))
   })
@@ -155,7 +155,7 @@ describe("stash restore — no-limbo invariant (real data layer)", () => {
     })
 
     expect(detachSpy).not.toHaveBeenCalled()
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(ambientId)
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe(ambientId)
     expect(result.current.composer.content).toEqual(AMBIENT_BODY)
   })
 
@@ -175,7 +175,7 @@ describe("stash restore — no-limbo invariant (real data layer)", () => {
     })
 
     expect(restoreSpy).not.toHaveBeenCalled()
-    expect((await db.composerLoaded.get(foreignKey))?.draftId).not.toBe(bigId)
+    expect((await db.composerLoaded.get([workspaceId, foreignKey]))?.draftId).not.toBe(bigId)
     expect((await db.drafts.get(bigId))?.scope).toBe(draftKey)
   })
 
@@ -194,12 +194,12 @@ describe("stash restore — no-limbo invariant (real data layer)", () => {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50))
     })
-    expect((await db.composerLoaded.get(foreignKey))?.draftId).not.toBe(bigId)
+    expect((await db.composerLoaded.get([workspaceId, foreignKey]))?.draftId).not.toBe(bigId)
     foreign.unmount()
 
     // The owning host consumes it and checks the row out.
     renderHook(() => useRestoreHarness(), { wrapper: urlWrapper })
-    await waitFor(async () => expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(bigId))
+    await waitFor(async () => expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe(bigId))
   })
 
   it("restores exactly once when two composers are mounted on the same scope", async () => {
@@ -222,13 +222,13 @@ describe("stash restore — no-limbo invariant (real data layer)", () => {
     expect(result.current.first.composer.isStashClaimant).toBe(true)
     expect(result.current.second.composer.isStashClaimant).toBe(false)
 
-    await waitFor(async () => expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(bigId))
+    await waitFor(async () => expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe(bigId))
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 50))
     })
     // One restore, not two: the non-claimant left the param alone.
     expect(restoreSpy.mock.calls.map((call) => call[2])).toEqual([bigId])
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(bigId)
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe(bigId)
     expect(await db.drafts.get(ambientId)).toBeDefined()
   })
 
@@ -253,6 +253,32 @@ describe("stash restore — no-limbo invariant (real data layer)", () => {
       await seedDraftCacheFromIdb(workspaceId)
     })
     await waitFor(() => expect(result.current?.isLoadedForScope).toBe(true))
+  })
+
+  it("should report a deep-linked row as loaded by its own workspace's pointer when another workspace holds a different draft at the same scope", async () => {
+    const row = (id: string, rowWorkspaceId: string): CachedDraft => ({
+      id,
+      workspaceId: rowWorkspaceId,
+      scope: draftKey,
+      contentJson: AMBIENT_BODY,
+      attachments: [],
+      clientUpdatedAt: 1000,
+    })
+    await db.drafts.bulkPut([row("draft_mine", workspaceId), row("draft_theirs", "ws_other")])
+    await db.composerLoaded.bulkPut([
+      { scope: draftKey, workspaceId, draftId: "draft_mine" },
+      { scope: draftKey, workspaceId: "ws_other", draftId: "draft_theirs" },
+    ])
+
+    function urlWrapper({ children }: { children: ReactNode }) {
+      return createElement(MemoryRouter, { initialEntries: ["/?stash=draft_mine"] }, children)
+    }
+
+    const { result } = renderHook(() => useStashParamDraftRow(workspaceId), { wrapper: urlWrapper })
+
+    await waitFor(() =>
+      expect(result.current).toEqual({ draftId: "draft_mine", scope: draftKey, isLoadedForScope: true })
+    )
   })
 })
 
@@ -312,7 +338,7 @@ function useAoHarness(key: string, targetHost?: string) {
     key,
     // Stands in for `message-input`'s disarm, which also clears its gesture latch;
     // that half is pinned in `message-input.composer-target.test.tsx`.
-    targetHost ? { targetHost, disarmTarget: () => clearComposerTarget(targetHost) } : undefined
+    targetHost ? { targetHost, disarmTarget: () => clearComposerTarget(aoWorkspaceId, targetHost) } : undefined
   )
   return { composer, stash }
 }
@@ -360,10 +386,10 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
     expect(await upsertOpsFor("draft_conv")).toHaveLength(0)
     // Checked out under its OWN scope, with the host pointed at it — that durable
     // target is what raises the "Replying in <C>" strip and files the send into C.
-    expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_conv")
-    expect((await db.composerTarget.get(aoHostScope))?.scope).toBe(aoConversationScope)
+    expect((await db.composerLoaded.get([aoWorkspaceId, aoConversationScope]))?.draftId).toBe("draft_conv")
+    expect((await db.composerTarget.get([aoWorkspaceId, aoHostScope]))?.scope).toBe(aoConversationScope)
     // The stream's own draft is untouched, still checked out under its own scope.
-    expect((await db.composerLoaded.get(aoHostScope))?.draftId).toBe("draft_host")
+    expect((await db.composerLoaded.get([aoWorkspaceId, aoHostScope]))?.draftId).toBe("draft_host")
   })
 
   // The timeline holds a `board:branch-reply:` target exactly as it holds a
@@ -411,8 +437,8 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
     })
 
     expect((await db.drafts.get("draft_host"))?.scope).toBe(aoHostScope)
-    expect(await db.composerTarget.get(aoHostScope)).toBeUndefined()
-    expect((await db.composerLoaded.get(aoHostScope))?.draftId).toBe("draft_host")
+    expect(await db.composerTarget.get([aoWorkspaceId, aoHostScope])).toBeUndefined()
+    expect((await db.composerLoaded.get([aoWorkspaceId, aoHostScope]))?.draftId).toBe("draft_host")
   })
 
   it("moves a stream draft into a conversation composer, preserving the row and forcing the push", async () => {
@@ -450,7 +476,7 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
     expect(ops[0].startedAt).toBeUndefined()
     expect(ops[0].payload.priorWriteIds).toContain("write_inflight")
     // Swap, not clobber: the host's own draft survives as a stash sibling.
-    expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_stream")
+    expect((await db.composerLoaded.get([aoWorkspaceId, aoConversationScope]))?.draftId).toBe("draft_stream")
     expect(await db.drafts.get("draft_host")).toBeDefined()
   })
 
@@ -477,8 +503,8 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
     // Moved here, taken here; the old holder's pointer is detached, and nothing
     // was deleted anywhere.
     expect((await db.drafts.get("draft_stream"))?.scope).toBe(aoConversationScope)
-    expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_stream")
-    expect(await db.composerLoaded.get(aoHostScope)).toBeUndefined()
+    expect((await db.composerLoaded.get([aoWorkspaceId, aoConversationScope]))?.draftId).toBe("draft_stream")
+    expect(await db.composerLoaded.get([aoWorkspaceId, aoHostScope])).toBeUndefined()
     expect(await db.drafts.get("draft_host")).toBeDefined()
   })
 
@@ -499,8 +525,8 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
       })
     })
 
-    expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_host")
-    expect(await db.composerTarget.get(aoHostScope)).toBeUndefined()
+    expect((await db.composerLoaded.get([aoWorkspaceId, aoConversationScope]))?.draftId).toBe("draft_host")
+    expect(await db.composerTarget.get([aoWorkspaceId, aoHostScope])).toBeUndefined()
   })
 
   // The E2EE item this feature creates: a plaintext board draft targeted from a
@@ -527,8 +553,8 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
       })
     })
 
-    expect(await db.composerTarget.get(aoHostScope)).toBeUndefined()
-    expect(await db.composerLoaded.get(aoConversationScope)).toBeUndefined()
+    expect(await db.composerTarget.get([aoWorkspaceId, aoHostScope])).toBeUndefined()
+    expect(await db.composerLoaded.get([aoWorkspaceId, aoConversationScope])).toBeUndefined()
     expect((await db.drafts.get("draft_conv"))?.scope).toBe(aoConversationScope)
   })
 
@@ -558,8 +584,8 @@ describe("restoring a draft that belongs to another surface (adopt vs move)", ()
     // Adopted: the conversation's composer now points at our row (which kept its
     // filing — scope unchanged), the host is armed at the conversation, and the
     // displaced draft survives as a stash entry.
-    expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_conv")
-    expect((await db.composerTarget.get(aoHostScope))?.scope).toBe(aoConversationScope)
+    expect((await db.composerLoaded.get([aoWorkspaceId, aoConversationScope]))?.draftId).toBe("draft_conv")
+    expect((await db.composerTarget.get([aoWorkspaceId, aoHostScope]))?.scope).toBe(aoConversationScope)
     expect((await db.drafts.get("draft_conv"))?.scope).toBe(aoConversationScope)
     expect(await db.drafts.get("draft_other")).toBeDefined()
   })
@@ -611,7 +637,7 @@ describe("restoreDraftHere — re-plan on mid-restore drift", () => {
       }
       const stash = useStashComposer(wrapped as never, aoWorkspaceId, aoHostScope, {
         targetHost: aoHostScope,
-        disarmTarget: () => clearComposerTarget(aoHostScope),
+        disarmTarget: () => clearComposerTarget(aoWorkspaceId, aoHostScope),
       })
       return { stash }
     }
@@ -626,8 +652,8 @@ describe("restoreDraftHere — re-plan on mid-restore drift", () => {
     // Re-planned: adopted where it now lives — filing KEPT, host armed at the
     // conversation; never moved onto the host scope.
     expect((await db.drafts.get("draft_drift"))?.scope).toBe(aoConversationScope)
-    expect((await db.composerTarget.get(aoHostScope))?.scope).toBe(aoConversationScope)
-    expect((await db.composerLoaded.get(aoConversationScope))?.draftId).toBe("draft_drift")
+    expect((await db.composerTarget.get([aoWorkspaceId, aoHostScope]))?.scope).toBe(aoConversationScope)
+    expect((await db.composerLoaded.get([aoWorkspaceId, aoConversationScope]))?.draftId).toBe("draft_drift")
   })
 })
 

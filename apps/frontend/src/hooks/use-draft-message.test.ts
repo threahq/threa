@@ -8,13 +8,16 @@ import {
   clearLoadedDraft,
   stashLoadedDraft,
   restoreStashedDraftToComposer,
+  purgeScopeDrafts,
+  purgePlaintextScopeDrafts,
+  relocateLoadedDraft,
 } from "./use-draft-message"
 import { readStagedDraft, stageDraftContent } from "@/lib/drafts/draft-staging"
 import { getScopeResolveSeq, resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
 import { migrateLocalDraftScope } from "@/sync/draft-sync"
 import { ContextRefKinds, type JSONContent } from "@threahq/types"
 import type { DraftContextRef } from "@/lib/context-bag/types"
-import { db } from "@/db"
+import { db, type CachedDraft } from "@/db"
 import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-store"
 import * as currentUserHook from "./use-current-workspace-user-id"
 import * as e2eSessionStore from "@/stores/e2e-session-store"
@@ -42,7 +45,7 @@ const LOCKED_SESSION = {
 
 /** Read back the single loaded draft for a scope (or undefined). */
 async function loadedDraft(scope: string) {
-  const id = (await db.composerLoaded.get(scope))?.draftId ?? null
+  const id = (await db.composerLoaded.get([workspaceId, scope]))?.draftId ?? null
   return id ? db.drafts.get(id) : undefined
 }
 
@@ -164,7 +167,7 @@ describe("useDraftMessage", () => {
 
       // ...is purged on mount, and nothing new persists while the session is locked.
       await waitFor(async () => expect(await db.drafts.where("scope").equals(draftKey).count()).toBe(0))
-      expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
+      expect(await db.composerLoaded.get([workspaceId, draftKey])).toBeUndefined()
     })
 
     it("cancels a debounced plaintext save when the stream becomes encrypted mid-flight (E2EE-4 race)", async () => {
@@ -196,7 +199,7 @@ describe("useDraftMessage", () => {
       })
 
       expect(await loadedDraft(draftKey)).toBeUndefined()
-      expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
+      expect(await db.composerLoaded.get([workspaceId, draftKey])).toBeUndefined()
     })
 
     it("can keep an existing empty row alive for a filing-only scope move", async () => {
@@ -212,7 +215,7 @@ describe("useDraftMessage", () => {
       })
 
       expect(await loadedDraft(draftKey)).toMatchObject({ id: row.id, contentJson: EMPTY_DOC })
-      expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(row.id)
+      expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe(row.id)
     })
 
     it("should preserve existing attachments when saving content", async () => {
@@ -370,7 +373,7 @@ describe("useDraftMessage", () => {
       // one's create resolves. Honoring their null identity forked a detached
       // row per file (ten one-attachment drafts in a DM, all surviving the send).
       await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("typed"), attachments: [] })
-      const pointerId = (await db.composerLoaded.get(draftKey))?.draftId
+      const pointerId = (await db.composerLoaded.get([workspaceId, draftKey]))?.draftId
       const contentDraftIdRef = { current: null as string | null }
       const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
 
@@ -458,7 +461,7 @@ describe("useDraftMessage", () => {
       })
 
       expect(await loadedDraft(draftKey)).toBeUndefined()
-      expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
+      expect(await db.composerLoaded.get([workspaceId, draftKey])).toBeUndefined()
     })
 
     it("should cancel a pending debounced save", async () => {
@@ -500,7 +503,7 @@ describe("useDraftMessage", () => {
       })
 
       expect(await db.drafts.get("draft_confirmed")).toBeUndefined()
-      expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
+      expect(await db.composerLoaded.get([workspaceId, draftKey])).toBeUndefined()
       const resolves = await db.pendingOperations.where("type").equals("resolve_draft").toArray()
       expect(resolves).toHaveLength(1)
       expect(resolves[0]?.payload).toMatchObject({ draftId: "draft_confirmed", expectedVersion: 2 })
@@ -551,7 +554,7 @@ describe("useDraftMessage", () => {
         { observedResolveSeq }
       )
 
-      expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
+      expect(await db.composerLoaded.get([workspaceId, draftKey])).toBeUndefined()
       const scoped = (await db.drafts.toArray()).filter((d) => d.scope === draftKey)
       expect(scoped).toHaveLength(0)
     })
@@ -588,7 +591,7 @@ describe("useDraftMessage", () => {
         { observedResolveSeq }
       )
 
-      expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
+      expect(await db.composerLoaded.get([workspaceId, draftKey])).toBeUndefined()
       const scoped = (await db.drafts.toArray()).filter((d) => d.scope === draftKey)
       expect(scoped).toHaveLength(0)
     })
@@ -617,7 +620,7 @@ describe("useDraftMessage", () => {
         { observedResolveSeq }
       )
 
-      expect(await db.composerLoaded.get(draftKey)).toBeDefined()
+      expect(await db.composerLoaded.get([workspaceId, draftKey])).toBeDefined()
     })
 
     it("a create from a non-debounce path (no observed seq) is never blocked post-send", async () => {
@@ -638,7 +641,7 @@ describe("useDraftMessage", () => {
       await resolveLoadedDraft(workspaceId, draftKey)
       await upsertLoadedDraft(workspaceId, draftKey, { contentJson: makeDoc("shared content"), attachments: [] })
 
-      expect(await db.composerLoaded.get(draftKey)).toBeDefined()
+      expect(await db.composerLoaded.get([workspaceId, draftKey])).toBeDefined()
     })
   })
 
@@ -752,7 +755,7 @@ describe("useDraftMessage", () => {
         { contentJson: makeDoc("first edit"), attachments: [] },
         { senderId: "user_1", streamId: e2eStreamId }
       )
-      const id = (await db.composerLoaded.get(draftKey))!.draftId!
+      const id = (await db.composerLoaded.get([workspaceId, draftKey]))!.draftId!
       expect(getCachedDecryption(id)?.value?.contentJson).toEqual(makeDoc("first edit"))
 
       await upsertLoadedDraft(
@@ -1145,7 +1148,7 @@ describe("upsertLoadedDraft — save races the sync engine (in-transaction reval
     const migrated = await db.drafts.get("draft_new")
     // The save landed on the migrated row, preserving its post-split basis.
     expect(migrated).toMatchObject({ ciphertext: "ct_sealed", baseVersion: 5 })
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_new")
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe("draft_new")
     const ops = await db.pendingOperations.where("type").equals("upsert_draft").toArray()
     expect(ops.map((op) => op.payload.draftId)).toEqual(["draft_new"])
   })
@@ -1224,7 +1227,7 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
 
     expect((await db.drafts.get("draft_X"))?.contentJson).toEqual(makeDoc("late keystrokes"))
     expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe("draft_Y")
   })
 
   it("carries the expected row's baseVersion forward (no split on the next push)", async () => {
@@ -1256,14 +1259,14 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
     // (or a fork of it) back. Only a just-minted detached id may create.
     expect(created).toBeNull()
     expect((await db.drafts.toArray()).map((row) => row.id).sort()).toEqual(rowsBefore)
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe("draft_Y")
     expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
   })
 
   it("claims the pointer on the MINTED-id create when the scope has none; a deleted named id still drops", async () => {
     await seedXY()
     await db.drafts.delete("draft_X")
-    await db.composerLoaded.delete(draftKey)
+    await db.composerLoaded.delete([workspaceId, draftKey])
 
     // Named-but-deleted: dropped even with a free pointer (no resurrection).
     const dropped = await upsertLoadedDraft(
@@ -1274,7 +1277,7 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
       { expectedDraftId: "draft_X" }
     )
     expect(dropped).toBeNull()
-    expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
+    expect(await db.composerLoaded.get([workspaceId, draftKey])).toBeUndefined()
 
     // The detached-create path (a just-minted id) may create — and claims the
     // free pointer.
@@ -1286,7 +1289,7 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
       { expectedDraftId: "draft_fresh_minted", createIfMissing: true }
     )
     expect(created).not.toBeNull()
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(created!.id)
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe(created!.id)
   })
 
   it("clearLoadedDraft deletes the expected row by id and leaves a moved-on pointer alone", async () => {
@@ -1297,7 +1300,7 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
 
     expect(await db.drafts.get("draft_X")).toBeUndefined()
     expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe("draft_Y")
   })
 
   it("a debounced save landing after a repoint writes its own row, not the new pointer's", async () => {
@@ -1318,7 +1321,7 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
       expect((await db.drafts.get("draft_X"))?.contentJson).toEqual(makeDoc("typed into X"))
     })
     expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe("draft_Y")
     // The stale save spoke for a superseded row, so it must not repoint the ref.
     expect(contentDraftIdRef.current).toBe("draft_Y")
   })
@@ -1339,7 +1342,7 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
       expect(await db.drafts.get("draft_X")).toBeUndefined()
     })
     expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe("draft_Y")
     expect(contentDraftIdRef.current).toBe("draft_Y")
   })
 
@@ -1383,7 +1386,7 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
     expect(await db.drafts.get("draft_X")).toBeUndefined()
     // X2 and Y only — a forked third row is the bug this closes.
     expect((await db.drafts.toArray()).map((row) => row.id).sort()).toEqual(["draft_X2", "draft_Y"])
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_X2")
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe("draft_X2")
   })
 
   it("seals into the expected row when the pointer moved off it (E2E path)", async () => {
@@ -1430,7 +1433,7 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
 
     expect(await db.drafts.get("draft_X")).toMatchObject({ ciphertext: "ct_X_new", baseVersion: 4 })
     expect((await db.drafts.get("draft_Y"))?.ciphertext).toBe("ct_Y")
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe("draft_Y")
   })
 
   it("does not drag the identity ref back when an addAttachment for a superseded row resolves", async () => {
@@ -1510,7 +1513,7 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
     // The armed empty save was pointer-addressed (null identity): had it fired it
     // would have cleared the scope's loaded row.
     expect((await db.drafts.get("draft_X"))?.contentJson).toEqual(makeDoc("X body"))
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_X")
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe("draft_X")
   })
 
   it("saveDraft reports null when the E2E gate refused to persist", async () => {
@@ -1550,7 +1553,7 @@ describe("upsertLoadedDraft — identity-addressed saves (repoint safety)", () =
       await result.current.saveDraft(makeDoc("first words"))
     })
 
-    const pointerId = (await db.composerLoaded.get(draftKey))?.draftId
+    const pointerId = (await db.composerLoaded.get([workspaceId, draftKey]))?.draftId
     expect(pointerId).toBeDefined()
     expect(contentDraftIdRef.current).toBe(pointerId)
     expect((await db.drafts.get(pointerId!))?.contentJson).toEqual(makeDoc("first words"))
@@ -1589,8 +1592,8 @@ describe("take-over (chunk 2) — a restore detaches every other holder; only di
 
     await restoreStashedDraftToComposer(workspaceId, draftKey, "draft_T")
 
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_T")
-    expect(await db.composerLoaded.get(otherScope)).toBeUndefined()
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe("draft_T")
+    expect(await db.composerLoaded.get([workspaceId, otherScope])).toBeUndefined()
     expect((await db.drafts.get("draft_T"))?.contentJson).toEqual(makeDoc("taken body"))
   })
 
@@ -1619,8 +1622,8 @@ describe("take-over (chunk 2) — a restore detaches every other holder; only di
     expect(saved?.id).toBe("draft_T")
     expect(await db.drafts.get("draft_T")).toMatchObject({ scope: otherScope, contentJson: makeDoc("same body") })
     expect((await db.drafts.toArray()).map((draft) => draft.id)).toEqual(["draft_T"])
-    expect(await db.composerLoaded.get(draftKey)).toBeUndefined()
-    expect((await db.composerLoaded.get(otherScope))?.draftId).toBe("draft_T")
+    expect(await db.composerLoaded.get([workspaceId, draftKey])).toBeUndefined()
+    expect((await db.composerLoaded.get([workspaceId, otherScope]))?.draftId).toBe("draft_T")
   })
 
   it("splits a divergent identity-addressed save for a row another scope now holds", async () => {
@@ -1653,9 +1656,9 @@ describe("take-over (chunk 2) — a restore detaches every other holder; only di
     expect(saved!.scope).toBe(draftKey)
     expect((await db.drafts.get(saved!.id))?.contentJson).toEqual(makeDoc("displaced keystrokes"))
     expect((await db.drafts.get("draft_T"))?.contentJson).toEqual(makeDoc("original body"))
-    expect((await db.composerLoaded.get(otherScope))?.draftId).toBe("draft_T")
+    expect((await db.composerLoaded.get([workspaceId, otherScope]))?.draftId).toBe("draft_T")
     // Our scope's pointer was freed by the take-over, so the split claims it.
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(saved!.id)
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe(saved!.id)
   })
 })
 
@@ -1695,7 +1698,7 @@ describe("take-over aftermath — the displaced composer can neither delete nor 
     await clearLoadedDraft(workspaceId, draftKey, "draft_D")
 
     expect((await db.drafts.get("draft_D"))?.contentJson).toEqual(makeDoc("taken body"))
-    expect((await db.composerLoaded.get(otherScope))?.draftId).toBe("draft_D")
+    expect((await db.composerLoaded.get([workspaceId, otherScope]))?.draftId).toBe("draft_D")
     expect(await db.pendingOperations.where("workspaceId").equals(workspaceId).count()).toBe(0)
   })
 
@@ -1725,7 +1728,7 @@ describe("take-over aftermath — the displaced composer can neither delete nor 
     expect(saved!.id).not.toBe("draft_Y")
     expect((await db.drafts.get("draft_Y"))?.contentJson).toEqual(makeDoc("Y body"))
     expect((await db.drafts.get(saved!.id))?.contentJson).toEqual(makeDoc("orphan fragment"))
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe("draft_Y")
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe("draft_Y")
   })
 })
 
@@ -1768,6 +1771,260 @@ describe("write serialization — concurrent typing saves never fork", () => {
 
     const rows = await db.drafts.toArray()
     expect(rows.map((row) => row.contentJson)).toEqual([makeDoc("Should we ship")])
-    expect((await db.composerLoaded.get(draftKey))?.draftId).toBe(rows[0].id)
+    expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe(rows[0].id)
+  })
+})
+
+describe("composer pointers are per workspace (the same scope in two workspaces)", () => {
+  const wsA = "ws_a"
+  const wsB = "ws_b"
+  const sharedScope = "stream:stream_1"
+  const hostScope = "board:reply:conv_1"
+
+  function draftRow(id: string, workspace: string, scope: string): CachedDraft {
+    return {
+      id,
+      workspaceId: workspace,
+      scope,
+      contentJson: makeDoc(`${id} body`),
+      attachments: [],
+      clientUpdatedAt: 1000,
+    }
+  }
+
+  const draftA = draftRow("draft_a", wsA, sharedScope)
+  const draftB = draftRow("draft_b", wsB, sharedScope)
+
+  async function seed(opts: {
+    drafts: CachedDraft[]
+    pointers: Array<[workspace: string, scope: string, id: string]>
+  }) {
+    await db.drafts.bulkPut(opts.drafts)
+    await db.composerLoaded.bulkPut(
+      opts.pointers.map(([workspaceId, scope, draftId]) => ({ scope, workspaceId, draftId }))
+    )
+    await seedDraftCacheFromIdb(wsA)
+  }
+
+  async function seedPair(scope: string) {
+    await seed({
+      drafts: [draftRow("draft_a", wsA, scope), draftRow("draft_b", wsB, scope)],
+      pointers: [
+        [wsA, scope, "draft_a"],
+        [wsB, scope, "draft_b"],
+      ],
+    })
+  }
+
+  async function stateOf(workspace: string) {
+    return {
+      pointers: await db.composerLoaded.where("workspaceId").equals(workspace).toArray(),
+      drafts: (await db.drafts.toArray()).filter((row) => row.workspaceId === workspace),
+      targets: await db.composerTarget.where("workspaceId").equals(workspace).toArray(),
+    }
+  }
+
+  const untouchedB = {
+    pointers: [{ scope: sharedScope, workspaceId: wsB, draftId: "draft_b" }],
+    drafts: [draftB],
+    targets: [],
+  }
+
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    resetDraftStoreCache()
+    resetDraftResolutionGuard()
+    await db.drafts.clear()
+    await db.composerLoaded.clear()
+    await db.composerTarget.clear()
+    await db.pendingOperations.clear()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it("should create its own draft and pointer when saving while only the other workspace has one", async () => {
+    await seed({ drafts: [draftB], pointers: [[wsB, sharedScope, "draft_b"]] })
+
+    const saved = await upsertLoadedDraft(wsA, sharedScope, { contentJson: makeDoc("typed in a"), attachments: [] })
+
+    expect({ a: await stateOf(wsA), b: await stateOf(wsB) }).toEqual({
+      a: {
+        pointers: [{ scope: sharedScope, workspaceId: wsA, draftId: saved.id }],
+        drafts: [
+          expect.objectContaining({
+            id: saved.id,
+            workspaceId: wsA,
+            scope: sharedScope,
+            contentJson: makeDoc("typed in a"),
+          }),
+        ],
+        targets: [],
+      },
+      b: untouchedB,
+    })
+  })
+
+  it("should write into its own loaded draft when both workspaces have one", async () => {
+    await seedPair(sharedScope)
+
+    await upsertLoadedDraft(wsA, sharedScope, { contentJson: makeDoc("edited in a"), attachments: [] })
+
+    expect({ a: await stateOf(wsA), b: await stateOf(wsB) }).toEqual({
+      a: {
+        pointers: [{ scope: sharedScope, workspaceId: wsA, draftId: "draft_a" }],
+        drafts: [expect.objectContaining({ id: "draft_a", contentJson: makeDoc("edited in a") })],
+        targets: [],
+      },
+      b: untouchedB,
+    })
+  })
+
+  it("should detach only its own pointer when stashing", async () => {
+    await seedPair(sharedScope)
+
+    const stashed = await stashLoadedDraft(wsA, sharedScope)
+
+    expect({ stashed, a: await stateOf(wsA), b: await stateOf(wsB) }).toEqual({
+      stashed: "draft_a",
+      a: { pointers: [], drafts: [{ ...draftA, stashedAt: expect.any(Number) }], targets: [] },
+      b: untouchedB,
+    })
+  })
+
+  it.each([
+    ["clearLoadedDraft", (workspace: string, scope: string) => clearLoadedDraft(workspace, scope)],
+    ["purgeScopeDrafts", (workspace: string, scope: string) => purgeScopeDrafts(workspace, scope)],
+    ["purgePlaintextScopeDrafts", (workspace: string, scope: string) => purgePlaintextScopeDrafts(workspace, scope)],
+  ])("should discard only its own draft and pointer through %s", async (_name, discard) => {
+    await seedPair(sharedScope)
+
+    await discard(wsA, sharedScope)
+
+    expect({ a: await stateOf(wsA), b: await stateOf(wsB) }).toEqual({
+      a: { pointers: [], drafts: [], targets: [] },
+      b: untouchedB,
+    })
+  })
+
+  it("should clear every pointer in its own workspace that names the discarded draft and none in the other", async () => {
+    await seed({
+      drafts: [draftA, draftB],
+      pointers: [
+        [wsA, sharedScope, "draft_a"],
+        [wsA, hostScope, "draft_a"],
+        [wsB, sharedScope, "draft_b"],
+        [wsB, hostScope, "draft_b"],
+      ],
+    })
+
+    await clearLoadedDraft(wsA, sharedScope)
+
+    expect({ a: await stateOf(wsA), b: await stateOf(wsB) }).toEqual({
+      a: { pointers: [], drafts: [], targets: [] },
+      b: {
+        pointers: [
+          { scope: hostScope, workspaceId: wsB, draftId: "draft_b" },
+          { scope: sharedScope, workspaceId: wsB, draftId: "draft_b" },
+        ],
+        drafts: [draftB],
+        targets: [],
+      },
+    })
+  })
+
+  it("should leave the other workspace's pointer at the same scope when an identity-addressed discard targets a moved-on pointer", async () => {
+    await seed({
+      drafts: [draftA, draftRow("draft_a2", wsA, sharedScope), draftB],
+      pointers: [
+        [wsA, sharedScope, "draft_a2"],
+        [wsB, sharedScope, "draft_b"],
+      ],
+    })
+
+    await clearLoadedDraft(wsA, sharedScope, "draft_a")
+
+    expect({ a: await stateOf(wsA), b: await stateOf(wsB) }).toEqual({
+      a: {
+        pointers: [{ scope: sharedScope, workspaceId: wsA, draftId: "draft_a2" }],
+        drafts: [draftRow("draft_a2", wsA, sharedScope)],
+        targets: [],
+      },
+      b: untouchedB,
+    })
+  })
+
+  it("should discard its own draft and pointer when an identity-addressed discard names the draft its pointer holds", async () => {
+    await seedPair(sharedScope)
+
+    await clearLoadedDraft(wsA, sharedScope, "draft_a")
+
+    expect({ a: await stateOf(wsA), b: await stateOf(wsB) }).toEqual({
+      a: { pointers: [], drafts: [], targets: [] },
+      b: untouchedB,
+    })
+  })
+
+  it("should take over only within its own workspace when restoring a draft held by another scope", async () => {
+    await seedPair(hostScope)
+
+    const restored = await restoreStashedDraftToComposer(wsA, sharedScope, "draft_a")
+
+    expect({ restored, a: await stateOf(wsA), b: await stateOf(wsB) }).toEqual({
+      restored: true,
+      a: {
+        pointers: [{ scope: sharedScope, workspaceId: wsA, draftId: "draft_a" }],
+        drafts: [draftRow("draft_a", wsA, hostScope)],
+        targets: [],
+      },
+      b: {
+        pointers: [{ scope: hostScope, workspaceId: wsB, draftId: "draft_b" }],
+        drafts: [draftRow("draft_b", wsB, hostScope)],
+        targets: [],
+      },
+    })
+  })
+
+  it("should move only its own pointer and clear only its own target when a draft returns to its host", async () => {
+    await seedPair(hostScope)
+    await db.composerTarget.bulkPut([
+      { host: sharedScope, workspaceId: wsA, scope: hostScope },
+      { host: sharedScope, workspaceId: wsB, scope: hostScope },
+    ])
+
+    await relocateLoadedDraft(wsA, hostScope, sharedScope, { targetHost: sharedScope })
+
+    expect({ a: await stateOf(wsA), b: await stateOf(wsB) }).toEqual({
+      a: {
+        pointers: [{ scope: sharedScope, workspaceId: wsA, draftId: "draft_a" }],
+        drafts: [draftRow("draft_a", wsA, sharedScope)],
+        targets: [],
+      },
+      b: {
+        pointers: [{ scope: hostScope, workspaceId: wsB, draftId: "draft_b" }],
+        drafts: [draftRow("draft_b", wsB, hostScope)],
+        targets: [{ host: sharedScope, workspaceId: wsB, scope: hostScope }],
+      },
+    })
+  })
+
+  it("should point only its own target at the new scope when a draft moves off its host", async () => {
+    await seedPair(sharedScope)
+    await db.composerTarget.put({ host: sharedScope, workspaceId: wsB, scope: sharedScope })
+
+    await relocateLoadedDraft(wsA, sharedScope, hostScope, { targetHost: sharedScope })
+
+    expect({ a: await stateOf(wsA), b: await stateOf(wsB) }).toEqual({
+      a: {
+        pointers: [{ scope: hostScope, workspaceId: wsA, draftId: "draft_a" }],
+        drafts: [draftRow("draft_a", wsA, hostScope)],
+        targets: [{ host: sharedScope, workspaceId: wsA, scope: hostScope }],
+      },
+      b: {
+        ...untouchedB,
+        targets: [{ host: sharedScope, workspaceId: wsB, scope: sharedScope }],
+      },
+    })
   })
 })

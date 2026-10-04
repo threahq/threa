@@ -152,7 +152,7 @@ export function useStashParamDraftRow(
     if (!draftId) return undefined
     const draft = await db.drafts.get(draftId)
     if (!draft) return undefined
-    const pointer = await db.composerLoaded.get(draft.scope)
+    const pointer = await db.composerLoaded.get([draft.workspaceId, draft.scope])
     return { draft, isLoadedForScope: pointer?.draftId === draftId }
   }, [draftId])
   if (!draftId || !found || found.draft.workspaceId !== workspaceId) return null
