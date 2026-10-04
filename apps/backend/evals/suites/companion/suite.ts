@@ -301,7 +301,7 @@ async function setupTestData(
             participantIds: [ctx.userId],
             knowledgeType: memo.knowledgeType,
           })
-          await MemoRepository.updateEmbedding(pool, id, embeddings[index])
+          await MemoRepository.updateEmbedding(pool, ctx.workspaceId, id, embeddings[index])
         }
       }
     }

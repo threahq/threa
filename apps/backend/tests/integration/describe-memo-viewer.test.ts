@@ -130,7 +130,7 @@ describe("describe_memo viewer", () => {
       await MemoRepository.insert(client, { ...memoBase, id: supersededMemoId, title: "Superseded" })
       await MemoRepository.markSuperseded(client, testWorkspaceId, [supersededMemoId], "revised")
       await MemoRepository.insert(client, { ...memoBase, id: archivedMemoId, title: "Archived" })
-      await MemoRepository.archive(client, archivedMemoId)
+      await MemoRepository.archive(client, testWorkspaceId, archivedMemoId)
     })
   })
 

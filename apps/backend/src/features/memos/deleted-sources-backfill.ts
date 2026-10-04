@@ -13,7 +13,7 @@ export async function plan(ctx: BackfillContext, workspaceId: string): Promise<M
   const result = await ctx.pool.query<{ id: string }>(composeSql`
     SELECT DISTINCT msg.id
     FROM memos m
-    JOIN messages msg ON msg.id = ANY(m.source_message_ids)
+    JOIN messages msg ON msg.id = ANY(m.source_message_ids) AND msg.workspace_id = m.workspace_id
     JOIN streams s ON s.id = msg.stream_id AND s.workspace_id = m.workspace_id
     WHERE m.workspace_id = ${workspaceId} AND m.status = 'active' AND msg.deleted_at IS NOT NULL
     ORDER BY msg.id

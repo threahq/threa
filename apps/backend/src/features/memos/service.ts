@@ -367,7 +367,7 @@ export class MemoService implements MemoServiceLike {
 
       // Queued before memory was switched off: dropped, not captured.
       if (!isMemoryAutomationOn(await findMemoryModeStream(client, workspaceId, streamId))) {
-        await PendingItemRepository.markProcessed(client, pending)
+        await PendingItemRepository.markProcessed(client, workspaceId, pending)
         return null
       }
 
@@ -376,7 +376,7 @@ export class MemoService implements MemoServiceLike {
       // private tier (roadmap 6.4). The model sees only memos in that tier.
       const memoScope = await resolveMemoScopeForStreamId(client, workspaceId, streamId)
 
-      const existingMemos = await MemoRepository.findByStream(client, streamId, {
+      const existingMemos = await MemoRepository.findByStream(client, workspaceId, streamId, {
         scopeUserId: memoScope.scopeUserId,
         status: MemoStatuses.ACTIVE,
         limit: MEMORY_CONTEXT_LIMIT,
@@ -401,7 +401,7 @@ export class MemoService implements MemoServiceLike {
           // through a typo fix and a revision can supersede it. Same tier only:
           // a private memo must never feed a shared revision.
           const existingMemos = [
-            ...(await MemoRepository.findActiveBySourceConversation(client, convId)),
+            ...(await MemoRepository.findActiveBySourceConversation(client, workspaceId, convId)),
             ...(await MemoRepository.findActiveMessageMemosCitingEdited(
               client,
               workspaceId,
@@ -745,9 +745,7 @@ export class MemoService implements MemoServiceLike {
       // the switch can't commit between this read and the memo writes (INV-20).
       // The stream row is locked before the save lock below, the order
       // save_memo takes them in, so the two can't deadlock.
-      const memoryOn = isMemoryAutomationOn(
-        await StreamRepository.findByIdForShare(client, workspaceId, streamId)
-      )
+      const memoryOn = isMemoryAutomationOn(await StreamRepository.findByIdForShare(client, workspaceId, streamId))
 
       // Serialize batches for this stream so a concurrent batch can't read the
       // dedup gate and insert the same memo in the window before this one
@@ -936,7 +934,7 @@ export class MemoService implements MemoServiceLike {
 
         const { embedding, ...memoFields } = memoData
         await MemoRepository.insert(client, memoFields)
-        await MemoRepository.updateEmbedding(client, memoData.id, embedding)
+        await MemoRepository.updateEmbedding(client, workspaceId, memoData.id, embedding)
         await OutboxRepository.insert(client, "memo:created", {
           workspaceId,
           streamId: fetchedData.memoScope.rootStreamId,
@@ -1009,11 +1007,11 @@ export class MemoService implements MemoServiceLike {
       // already older than the quiet threshold.
       // Written before markProcessed so a conversation that reached the model
       // this pass can be recognised as unchanged on the next one.
-      await PendingItemRepository.recordClassifiedFingerprints(client, classifiedFingerprints)
+      await PendingItemRepository.recordClassifiedFingerprints(client, workspaceId, classifiedFingerprints)
 
       const itemsToMark = fetchedData.pending.filter((p) => !deferredItemIds.has(p.id) && !failedItemIds.has(p.id))
       if (itemsToMark.length > 0) {
-        await PendingItemRepository.markProcessed(client, itemsToMark)
+        await PendingItemRepository.markProcessed(client, workspaceId, itemsToMark)
       }
 
       const givenUp = (
@@ -1274,7 +1272,7 @@ export class MemoService implements MemoServiceLike {
         scope: resolvedScope,
         scopeUserId: resolvedScopeUserId,
       })
-      await MemoRepository.updateEmbedding(client, newMemoId, embedding)
+      await MemoRepository.updateEmbedding(client, workspaceId, newMemoId, embedding)
       await OutboxRepository.insert(client, "memo:created", {
         workspaceId,
         streamId: natural.rootStreamId,
@@ -1358,7 +1356,7 @@ export class MemoService implements MemoServiceLike {
       // thread-backed session still inherits the scratchpad tier. The model sees
       // only memos in that tier.
       const memoScope = await resolveMemoScopeForStreamId(client, workspaceId, streamId)
-      const existingMemos = await MemoRepository.findByStream(client, streamId, {
+      const existingMemos = await MemoRepository.findByStream(client, workspaceId, streamId, {
         scopeUserId: memoScope.scopeUserId,
         status: MemoStatuses.ACTIVE,
         limit: MEMORY_CONTEXT_LIMIT,
@@ -1459,11 +1457,7 @@ export class MemoService implements MemoServiceLike {
     return withTransaction(this.pool, async (client) => {
       // Memory switched off while the model calls ran: save nothing. Same
       // share-locked gate and lock order as the passive batch.
-      const root = await StreamRepository.findByIdForShare(
-        client,
-        workspaceId,
-        context.memoScope.rootStreamId
-      )
+      const root = await StreamRepository.findByIdForShare(client, workspaceId, context.memoScope.rootStreamId)
       if (!isMemoryAutomationOn(root)) {
         logger.info({ sessionId, streamId }, "reflective capture — memory switched off before save")
         return { classified: true, captured: 0, deduped: 0 }
@@ -1523,7 +1517,7 @@ export class MemoService implements MemoServiceLike {
           scope: context.memoScope.scope,
           scopeUserId: context.memoScope.scopeUserId,
         })
-        await MemoRepository.updateEmbedding(client, newMemoId, embedding)
+        await MemoRepository.updateEmbedding(client, workspaceId, newMemoId, embedding)
         await OutboxRepository.insert(client, "memo:created", {
           workspaceId,
           streamId: context.memoScope.rootStreamId,

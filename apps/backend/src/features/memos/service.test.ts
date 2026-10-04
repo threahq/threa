@@ -124,22 +124,22 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
     fn(fakeClient)) as typeof dbModule.withTransaction)
 
   spyOn(PendingItemRepository, "findUnprocessed").mockResolvedValue([fakePendingItem(options.pendingItem)])
-  spyOn(PendingItemRepository, "markProcessed").mockResolvedValue(undefined as never)
+  const markProcessed = spyOn(PendingItemRepository, "markProcessed").mockResolvedValue(undefined as never)
   const recordFingerprints = spyOn(PendingItemRepository, "recordClassifiedFingerprints").mockResolvedValue(
     undefined as never
   )
-  spyOn(MemoRepository, "findByStream").mockResolvedValue([])
+  const findByStream = spyOn(MemoRepository, "findByStream").mockResolvedValue([])
   spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
   spyOn(StreamRepository, "findByIdForShare").mockResolvedValue(fakeStream())
   spyOn(MemoRepository, "getAllTags").mockResolvedValue([])
-  spyOn(MemoRepository, "findActiveBySourceConversation").mockResolvedValue([])
+  const findActiveBySourceConversation = spyOn(MemoRepository, "findActiveBySourceConversation").mockResolvedValue([])
   spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
   spyOn(MemoRepository, "findSameConversationNear").mockResolvedValue([])
   spyOn(MemoRepository, "markSuperseded").mockResolvedValue(undefined as never)
   spyOn(MemoRepository, "filterSupersedable").mockImplementation(async (_db, _workspaceId, ids) => ids)
   spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([])
   spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
-  spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined as never)
+  const updateEmbedding = spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined as never)
   spyOn(ConversationRepository, "findById").mockResolvedValue(fakeConversation())
   const findSourceMessages = spyOn(MessageRepository, "findByIds").mockResolvedValue(fakeMessages())
   spyOn(LinkPreviewRepository, "findByMessageIds").mockResolvedValue(new Map())
@@ -195,6 +195,10 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
     classifyConversation,
     recordFingerprints,
     captureEvent,
+    markProcessed,
+    findByStream,
+    findActiveBySourceConversation,
+    updateEmbedding,
   }
 }
 
@@ -667,7 +671,7 @@ function setupSaveMemo() {
   const insert = spyOn(MemoRepository, "insert").mockImplementation(
     async (_db, params) => fakeMemoRow(params.id, { title: params.title }) as never
   )
-  spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined as never)
+  const updateEmbedding = spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined as never)
   const outboxInsert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
   const outboxInsertMany = spyOn(OutboxRepository, "insertMany").mockResolvedValue([] as never)
   const captureEvent: StreamEvent = {
@@ -699,6 +703,7 @@ function setupSaveMemo() {
     clientQuery,
     findNearDuplicate,
     insert,
+    updateEmbedding,
     streamEventInsertMany,
     outboxInsert,
     outboxInsertMany,
@@ -948,14 +953,14 @@ function setupReflection(opts: { classification?: Partial<ConversationClassifica
   spyOn(dbModule, "withTransaction").mockImplementation((async (_pool: unknown, fn: (c: PoolClient) => unknown) =>
     fn(fakeClient)) as typeof dbModule.withTransaction)
 
-  spyOn(MemoRepository, "findByStream").mockResolvedValue([])
+  const findByStream = spyOn(MemoRepository, "findByStream").mockResolvedValue([])
   spyOn(MemoRepository, "getAllTags").mockResolvedValue([])
   spyOn(WorkspaceSettingsRepository, "findOverrides").mockResolvedValue([])
   const findNearDuplicate = spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
   const insert = spyOn(MemoRepository, "insert").mockImplementation(
     async (_db, params) => fakeMemoRow(params.id, { title: params.title }) as never
   )
-  spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined as never)
+  const updateEmbedding = spyOn(MemoRepository, "updateEmbedding").mockResolvedValue(undefined as never)
   const outboxInsert = spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
   const outboxInsertMany = spyOn(OutboxRepository, "insertMany").mockResolvedValue([] as never)
   const captureEvent: StreamEvent = {
@@ -1014,6 +1019,8 @@ function setupReflection(opts: { classification?: Partial<ConversationClassifica
     clientQuery,
     insert,
     findNearDuplicate,
+    findByStream,
+    updateEmbedding,
     streamEventInsertMany,
     outboxInsert,
     outboxInsertMany,
@@ -1262,6 +1269,61 @@ describe("MemoService — stream-context projection privacy + scoping", () => {
   })
 })
 
+describe("MemoService — memo and pending-item repository calls carry the caller's workspace (INV-8)", () => {
+  afterEach(() => mock.restore())
+
+  it("passes the batch's workspace and stream, in order, to every memo and pending-item call in processBatch", async () => {
+    const {
+      service,
+      findByStream,
+      findActiveBySourceConversation,
+      updateEmbedding,
+      markProcessed,
+      recordFingerprints,
+    } = setupService({ memoContents: [memoContent] })
+
+    await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect({
+      findByStream: findByStream.mock.calls.map((c) => c.slice(1)),
+      findActiveBySourceConversation: findActiveBySourceConversation.mock.calls.map((c) => c.slice(1)),
+      updateEmbedding: updateEmbedding.mock.calls.map((c) => c.slice(1)),
+      recordClassifiedFingerprints: recordFingerprints.mock.calls.map((c) => c.slice(1)),
+      markProcessed: markProcessed.mock.calls.map((c) => c.slice(1)),
+    }).toEqual({
+      findByStream: [[WORKSPACE_ID, STREAM_ID, expect.objectContaining({ status: "active", orderBy: "createdAt" })]],
+      findActiveBySourceConversation: [[WORKSPACE_ID, CONVERSATION_ID]],
+      updateEmbedding: [[WORKSPACE_ID, expect.stringMatching(/^memo_/), [0.1, 0.2]]],
+      recordClassifiedFingerprints: [[WORKSPACE_ID, [{ id: "pend_1", fingerprint: expect.any(String) }]]],
+      markProcessed: [[WORKSPACE_ID, [expect.objectContaining({ id: "pend_1", version: 0 })]]],
+    })
+  })
+
+  it("passes the workspace and the inserted memo's id to updateEmbedding in saveMemo", async () => {
+    const { service, insert, updateEmbedding } = setupSaveMemo()
+
+    await service.saveMemo(saveMemoInput)
+
+    expect(updateEmbedding.mock.calls.map((c) => c.slice(1))).toEqual([
+      [WORKSPACE_ID, insert.mock.calls[0]![1].id, [0.4, 0.5]],
+    ])
+  })
+
+  it("passes the workspace and stream to findByStream and the workspace to updateEmbedding in captureSessionReflection", async () => {
+    const { service, insert, findByStream, updateEmbedding } = setupReflection({})
+
+    await service.captureSessionReflection(reflectionInput)
+
+    expect({
+      findByStream: findByStream.mock.calls.map((c) => c.slice(1)),
+      updateEmbedding: updateEmbedding.mock.calls.map((c) => c.slice(1)),
+    }).toEqual({
+      findByStream: [[WORKSPACE_ID, STREAM_ID, expect.objectContaining({ status: "active", orderBy: "createdAt" })]],
+      updateEmbedding: [[WORKSPACE_ID, insert.mock.calls[0]![1].id, [0.3, 0.6]]],
+    })
+  })
+})
+
 describe("MemoService.processBatch — re-classification change gate", () => {
   afterEach(() => mock.restore())
 
@@ -1271,7 +1333,7 @@ describe("MemoService.processBatch — re-classification change gate", () => {
     await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
     expect(classifyConversation).toHaveBeenCalledTimes(1)
-    expect(recordFingerprints.mock.calls[0]?.[1]).toEqual([
+    expect(recordFingerprints.mock.calls[0]?.[2]).toEqual([
       { id: "pend_1", fingerprint: expect.any(String) as unknown as string },
     ])
   })
@@ -1290,7 +1352,7 @@ describe("MemoService.processBatch — re-classification change gate", () => {
 
     expect({
       result,
-      fingerprints: recordFingerprints.mock.calls[0]?.[1],
+      fingerprints: recordFingerprints.mock.calls[0]?.[2],
       markProcessedCalls: markProcessed.mock.calls.length,
     }).toEqual({ result: { processed: 0, memosCreated: 0 }, fingerprints: [], markProcessedCalls: 0 })
   })
@@ -1309,7 +1371,7 @@ describe("MemoService.processBatch — re-classification change gate", () => {
     expect(classifyConversation).not.toHaveBeenCalled()
     expect(result.memosCreated).toBe(0)
     // Nothing new was asked, so nothing new is recorded — the stored digest still stands.
-    expect(recordFingerprints.mock.calls[0]?.[1]).toEqual([])
+    expect(recordFingerprints.mock.calls[0]?.[2]).toEqual([])
   })
 
   it("still marks a skipped item processed, so it does not re-queue forever", async () => {
@@ -1322,7 +1384,7 @@ describe("MemoService.processBatch — re-classification change gate", () => {
 
     await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
-    expect(markProcessed.mock.calls[0]?.[1]).toEqual([expect.objectContaining({ id: "pend_1", version: 0 })])
+    expect(markProcessed.mock.calls[0]?.[2]).toEqual([expect.objectContaining({ id: "pend_1", version: 0 })])
   })
 
   it("classifies again when the stored digest is stale", async () => {

@@ -140,7 +140,7 @@ describe("memo batch: pending items", () => {
   }
 
   async function memoCount(convId: string): Promise<number> {
-    return (await MemoRepository.findActiveBySourceConversation(pool, convId)).length
+    return (await MemoRepository.findActiveBySourceConversation(pool, testWorkspaceId, convId)).length
   }
 
   beforeAll(async () => {
