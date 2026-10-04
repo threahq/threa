@@ -37,6 +37,7 @@ function stream(overrides: Partial<Stream> = {}): Stream {
     lastReplyAt: null,
     companionMode: "off",
     companionPersonaId: null,
+    originWorkspaceId: null,
     createdBy: "usr_1",
     createdAt: new Date(0),
     updatedAt: new Date(0),
@@ -59,12 +60,24 @@ describe("deriveStreamViewerState", () => {
       }),
       deriveStreamViewerState({ target: writable, ancestorArchived: true, participates: true }),
       deriveStreamViewerState({ target: stream({ type: "system" }), ancestorArchived: false, participates: false }),
+      deriveStreamViewerState({
+        target: stream({ originWorkspaceId: "ws_host" }),
+        ancestorArchived: false,
+        participates: false,
+      }),
+      deriveStreamViewerState({
+        target: stream({ originWorkspaceId: "ws_host" }),
+        ancestorArchived: true,
+        participates: true,
+      }),
       deriveStreamViewerState({ target: writable, ancestorArchived: false, participates: false }),
     ]).toEqual([
       { readOnly: false, readOnlyReason: null },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.SYSTEM_STREAM },
+      { readOnly: true, readOnlyReason: StreamReadOnlyReasons.SHARED_COPY },
+      { readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.NOT_A_MEMBER },
     ])
   })

@@ -148,6 +148,17 @@ export const StreamConnectionRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
+  /** Locks the row, so writes driven by one connection run one at a time. */
+  async findByIdForUpdate(db: Querier, workspaceId: string, id: string): Promise<StreamConnection | null> {
+    const result = await db.query<StreamConnectionRow>(sql`
+      SELECT ${sql.raw(COLUMNS)}
+      FROM stream_connections
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
+      FOR UPDATE
+    `)
+    return result.rows[0] ? mapRow(result.rows[0]) : null
+  },
+
   /** The channel's connections and invite links that still work, newest first. */
   async listLiveForStream(db: Querier, workspaceId: string, streamId: string): Promise<StreamConnection[]> {
     const result = await db.query<StreamConnectionRow>(sql`

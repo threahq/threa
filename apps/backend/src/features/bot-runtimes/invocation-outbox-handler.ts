@@ -12,6 +12,7 @@ import {
 import { logger } from "../../lib/logger"
 import type { BotRuntimeService } from "./service"
 import { EventService } from "../messaging"
+import { StreamRepository } from "../streams"
 
 const DEFAULT_CONFIG = {
   batchSize: 100,
@@ -130,17 +131,25 @@ export class BotInvocationOutboxHandler implements OutboxHandler {
   private async processMessageDeleted(payload: unknown): Promise<void> {
     if (!payload || typeof payload !== "object") return
     const value = payload as Record<string, unknown>
-    if (typeof value.workspaceId !== "string" || typeof value.messageId !== "string") return
-    await this.reconcileMessage(value.workspaceId, value.messageId)
+    if (
+      typeof value.workspaceId !== "string" ||
+      typeof value.streamId !== "string" ||
+      typeof value.messageId !== "string"
+    ) {
+      return
+    }
+    await this.reconcileMessage(value.workspaceId, value.streamId, value.messageId)
   }
 
   private async processMessageMutation(payload: unknown): Promise<void> {
     const message = parseMessagePayload(payload)
     if (!message?.event.actorId) return
-    await this.reconcileMessage(message.workspaceId, message.event.payload.messageId)
+    await this.reconcileMessage(message.workspaceId, message.streamId, message.event.payload.messageId)
   }
 
-  private async reconcileMessage(workspaceId: string, sourceMessageId: string): Promise<void> {
+  private async reconcileMessage(workspaceId: string, streamId: string, sourceMessageId: string): Promise<void> {
+    // A shared copy mirrors another workspace's channel; its automation runs there.
+    if (await StreamRepository.isSharedCopy(this.pool, workspaceId, streamId)) return
     const notices = await this.service.reconcileInvocationSource({ workspaceId, sourceMessageId })
     for (const notice of notices) {
       await this.createMissingLinkNotice({

@@ -1,4 +1,4 @@
-import { WORKSPACE_USER_ROLES, resolveActiveStatus, type WorkspaceRoleSlug } from "@threahq/types"
+import { WORKSPACE_ROLE_SLUGS, WORKSPACE_USER_ROLES, resolveActiveStatus, type WorkspaceRoleSlug } from "@threahq/types"
 import type { QueryConfig } from "pg"
 import type { Querier } from "../../db"
 import { composeSql, sql } from "../../db"
@@ -102,6 +102,15 @@ export interface InsertUserParams {
   timezone?: string | null
   locale?: string | null
   setupCompleted?: boolean
+}
+
+/** A partner workspace's copy of a host user who wrote or reacted in a shared channel. */
+export interface InsertUserCopyParams {
+  id: string
+  workspaceId: string
+  originWorkspaceId: string
+  name: string
+  slug: string
 }
 
 export interface UpdateUserParams {
@@ -550,6 +559,63 @@ export const UserRepository = {
       WHERE workspace_id = ${workspaceId} AND slug = ${slug}
     `)
     return result.rows.length > 0
+  },
+
+  /** The workspace each user was copied from, null for a local user. Ids with no row here are absent. */
+  async findOrigins(db: Querier, workspaceId: string, ids: string[]): Promise<Map<string, string | null>> {
+    if (ids.length === 0) return new Map()
+    const result = await db.query<{ id: string; origin_workspace_id: string | null }>(sql`
+      SELECT id, origin_workspace_id FROM users
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids})
+    `)
+    return new Map(result.rows.map((row) => [row.id, row.origin_workspace_id]))
+  },
+
+  /**
+   * A copy has no login and no email, so nobody can sign in as it. Returns null
+   * when a row with this id already exists here.
+   */
+  async insertCopy(db: Querier, params: InsertUserCopyParams): Promise<User | null> {
+    const result = await db.query<UserRow>(sql`
+      WITH inserted AS (
+        INSERT INTO users (id, workspace_id, workos_user_id, email, role, slug, name, origin_workspace_id)
+        VALUES (
+          ${params.id},
+          ${params.workspaceId},
+          NULL,
+          NULL,
+          ${WORKSPACE_ROLE_SLUGS.MEMBER},
+          ${params.slug},
+          ${params.name},
+          ${params.originWorkspaceId}
+        )
+        ON CONFLICT (workspace_id, id) DO NOTHING
+        RETURNING ${sql.raw(SELECT_FIELDS)}
+      )
+      SELECT ${sql.raw(SELECT_FIELDS_WITH_ALIAS)}
+      FROM inserted u ${sql.raw(JOIN_AUTHZ_MIRROR)}
+    `)
+    return result.rows[0] ? mapRowToUser(result.rows[0]) : null
+  },
+
+  /** Renames copied users. Returns only the copies whose name changed. */
+  async renameCopies(db: Querier, workspaceId: string, users: { id: string; name: string }[]): Promise<User[]> {
+    if (users.length === 0) return []
+    const result = await db.query<UserRow>(sql`
+      WITH updated AS (
+        UPDATE users SET name = renamed.copy_name
+        FROM unnest(${users.map((user) => user.id)}::text[], ${users.map((user) => user.name)}::text[])
+          AS renamed(copy_id, copy_name)
+        WHERE users.workspace_id = ${workspaceId}
+          AND users.id = renamed.copy_id
+          AND users.origin_workspace_id IS NOT NULL
+          AND users.name IS DISTINCT FROM renamed.copy_name
+        RETURNING ${sql.raw(SELECT_FIELDS)}
+      )
+      SELECT ${sql.raw(SELECT_FIELDS_WITH_ALIAS)}
+      FROM updated u ${sql.raw(JOIN_AUTHZ_MIRROR)}
+    `)
+    return result.rows.map(mapRowToUser)
   },
 
   /**

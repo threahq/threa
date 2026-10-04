@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { StreamRepository } from "../streams"
 import { JobQueues } from "../../lib/queue"
 import { EmbeddingHandler } from "./embedding-outbox-handler"
 import type { OutboxEvent } from "../../lib/outbox"
@@ -49,6 +50,7 @@ describe("EmbeddingHandler conversation assignment events", () => {
 
   function arrange(isE2eStream: boolean) {
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(isE2eStream)
+    spyOn(StreamRepository, "isSharedCopy").mockResolvedValue(false)
     const jobQueue = { send: mock() }
     const handler = new TestableEmbeddingHandler({} as any, jobQueue as any)
     return { handler, jobQueue }
@@ -88,6 +90,15 @@ describe("EmbeddingHandler conversation assignment events", () => {
 
   it("does not enqueue when the assignment's stream is E2E", async () => {
     const { handler, jobQueue } = arrange(true)
+
+    await handler.run(assignmentEvent())
+
+    expect(jobQueue.send).not.toHaveBeenCalled()
+  })
+
+  it("should not enqueue when the assignment's stream is a shared copy", async () => {
+    const { handler, jobQueue } = arrange(false)
+    spyOn(StreamRepository, "isSharedCopy").mockResolvedValue(true)
 
     await handler.run(assignmentEvent())
 

@@ -283,6 +283,26 @@ describe("CompanionHandler", () => {
     expect(jobQueue.send).not.toHaveBeenCalled()
   })
 
+  it("should not dispatch when the message is in a shared copy", async () => {
+    mockUserMessageEvent("stream_copy")
+    spyOn(StreamRepository, "findById").mockResolvedValue(
+      makeStream({
+        id: "stream_copy",
+        companionMode: CompanionModes.ON,
+        companionPersonaId: "persona_pinned",
+        originWorkspaceId: "ws_host",
+      })
+    )
+    spyOn(PersonaRepository, "findById").mockResolvedValue({ id: "persona_pinned", status: "active" } as any)
+    spyOn(AgentSessionRepository, "findLatestByStream").mockResolvedValue(null)
+
+    const { handler, jobQueue } = createHandler()
+    handler.handle()
+    await waitForDebounce()
+
+    expect(jobQueue.send).not.toHaveBeenCalled()
+  })
+
   it("carries personaDraftId when the message lands in a bound test scratchpad", async () => {
     mockUserMessageEvent("stream_test")
 

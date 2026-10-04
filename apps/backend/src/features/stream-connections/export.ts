@@ -1,12 +1,14 @@
 import type { Pool, PoolClient } from "pg"
 import { UnknownNodeTypeError } from "@threahq/prosemirror"
 import {
+  AuthorTypes,
   StreamConnectionStates,
   type BridgeChange,
   type BridgeEvents,
   type BridgeManifest,
   type BridgeMessage,
   type BridgeStream,
+  type BridgeUser,
   type EventType,
   type JSONContent,
   type ThreaMark,
@@ -16,6 +18,7 @@ import { AttachmentRepository, type Attachment } from "../attachments"
 import type { FeatureFlagService } from "../feature-flags"
 import { MessageRepository, deriveContentMarkdown, type Message } from "../messaging"
 import { StreamEventRepository, StreamRepository, normalizeStreamDescription, type Stream } from "../streams"
+import { UserRepository } from "../workspaces"
 import { connectionNotFound } from "./errors"
 import { StreamConnectionRepository } from "./repository"
 
@@ -173,7 +176,7 @@ export class StreamConnectionExportService {
       const shared = messageIds.flatMap((id) => {
         const message = messages.get(id)
         if (!message) throw new Error(`Message ${id} named by an event of stream ${caller.streamId} does not exist`)
-        return isShared(message, treeIds) ? [message] : []
+        return isShared(message, caller.streamId) ? [message] : []
       })
       const attachments = await AttachmentRepository.findByMessageIds(
         client,
@@ -189,11 +192,12 @@ export class StreamConnectionExportService {
 
       const changes = messageIds.map((id): BridgeChange => {
         const message = messages.get(id)!
-        return isShared(message, treeIds)
+        return isShared(message, caller.streamId)
           ? { kind: "message", message: toBridgeMessage(message, attachments.get(id) ?? [], scope) }
           : { kind: "message_removed", messageId: id }
       })
-      return { changes, cursor: cursor.toString(), hasMore }
+      const users = await loadNamedUsers(client, caller.workspaceId, shared)
+      return { changes, users, cursor: cursor.toString(), hasMore }
     })
   }
 
@@ -252,6 +256,7 @@ function toBridgeStream(stream: Stream, head: bigint, scope: ContentScope): Brid
     id: stream.id,
     parentStreamId: stream.parentStreamId,
     parentAnchorId: stream.parentAnchorId,
+    slug: stream.slug,
     displayName: stream.displayName,
     description: description?.description ?? null,
     descriptionJson: description?.descriptionJson ?? null,
@@ -260,12 +265,25 @@ function toBridgeStream(stream: Stream, head: bigint, scope: ContentScope): Brid
   }
 }
 
+/** The users the messages name as author or reactor. Reactors that are personas or bots match no user row. */
+async function loadNamedUsers(client: PoolClient, workspaceId: string, messages: Message[]): Promise<BridgeUser[]> {
+  const ids = new Set<string>()
+  for (const message of messages) {
+    if (message.authorType === AuthorTypes.USER) ids.add(message.authorId)
+    for (const reactors of Object.values(message.reactions)) reactors.forEach((id) => ids.add(id))
+  }
+  const users = await UserRepository.findByIds(client, workspaceId, [...ids])
+  return users.map((user) => ({ id: user.id, name: user.name, slug: user.slug }))
+}
+
 /**
- * A deleted message leaves the partner's copy: in-app it shows as a bare
- * placeholder, so its author and times stay with the host.
+ * Whether a page of `streamId` shares the message. A deleted message leaves the
+ * partner's copy: in-app it shows as a bare placeholder, so its author and
+ * times stay with the host. One moved away before the share is removed here and
+ * arrives with the destination's own page.
  */
-function isShared(message: Message, treeIds: ReadonlySet<string>): boolean {
-  return treeIds.has(message.streamId) && message.deletedAt === null
+function isShared(message: Message, streamId: string): boolean {
+  return message.streamId === streamId && message.deletedAt === null
 }
 
 function toBridgeMessage(message: Message, attachments: Attachment[], scope: ContentScope): BridgeMessage {

@@ -136,6 +136,8 @@ export interface CachedStream {
    * via `isUtilityStream`; optional so older cached rows still parse.
    */
   purpose?: StreamPurpose | null
+  /** Set on a partner's read-only copy of a shared channel; optional so older cached rows still parse. */
+  originWorkspaceId?: string | null
   createdBy: string
   createdAt: string
   updatedAt: string

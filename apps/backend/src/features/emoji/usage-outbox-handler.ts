@@ -8,6 +8,7 @@ import { emojiUsageId } from "../../lib/id"
 import { isValidShortcode } from "./emoji"
 import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { StreamRepository } from "../streams"
 
 export type EmojiUsageHandlerConfig = DebouncedOutboxHandlerConfig
 
@@ -81,6 +82,8 @@ export class EmojiUsageHandler extends DebouncedOutboxHandler {
     if (emojiCounts.size === 0) {
       return
     }
+    // A shared copy mirrors another workspace's channel; its automation runs there.
+    if (await StreamRepository.isSharedCopy(this.db, payload.workspaceId, payload.streamId)) return
 
     const items = Array.from(emojiCounts.entries()).map(([shortcode, count]) => ({
       id: emojiUsageId(),
@@ -136,6 +139,8 @@ export class EmojiUsageHandler extends DebouncedOutboxHandler {
       )
       return
     }
+
+    if (await StreamRepository.isSharedCopy(this.db, payload.workspaceId, payload.streamId)) return
 
     // Single insert query, INV-30
     await EmojiUsageRepository.insert(this.db, {

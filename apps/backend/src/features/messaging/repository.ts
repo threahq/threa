@@ -102,6 +102,9 @@ export interface InsertMessageParams {
   ciphertext?: Buffer
   envelope?: unknown
   e2eVersion?: number
+  /** A partner's copy keeps the host's times; omit both for a message written here. */
+  createdAt?: Date
+  editedAt?: Date | null
 }
 
 // Local alias so message-side callers read in messaging vocabulary while the
@@ -473,7 +476,7 @@ export const MessageRepository = {
       INSERT INTO messages (
         id, workspace_id, stream_id, sequence, author_id, author_type,
         content_json, content_markdown, search_config, client_message_id, sent_via, metadata,
-        conversation_intent, ciphertext, envelope, e2e_version
+        conversation_intent, ciphertext, envelope, e2e_version, created_at, edited_at
       )
       VALUES (
         ${params.id},
@@ -491,7 +494,9 @@ export const MessageRepository = {
         ${conversationIntent},
         ${ciphertext},
         ${envelope},
-        ${e2eVersion}
+        ${e2eVersion},
+        COALESCE(${params.createdAt ?? null}::timestamptz, NOW()),
+        ${params.editedAt ?? null}
       )
       ${sql.raw(onConflict)}
       RETURNING ${sql.raw(SELECT_FIELDS)}
@@ -711,12 +716,14 @@ export const MessageRepository = {
     workspaceId: string,
     id: string,
     contentJson: JSONContent,
-    contentMarkdown: string
+    contentMarkdown: string,
+    /** A partner's copy keeps the host's edit time; omit for an edit made here. */
+    editedAt?: Date
   ): Promise<Message | null> {
     const result = await db.query<MessageRow>(sql`
       UPDATE messages
       SET content_json = ${JSON.stringify(contentJson)}, content_markdown = ${contentMarkdown},
-          search_config = ${detectSearchConfig(contentMarkdown)}, edited_at = NOW(),
+          search_config = ${detectSearchConfig(contentMarkdown)}, edited_at = COALESCE(${editedAt ?? null}::timestamptz, NOW()),
           revision = GREATEST(
             revision + 1,
             (
@@ -731,6 +738,26 @@ export const MessageRepository = {
     return this.findById(db, workspaceId, id)
   },
 
+  /**
+   * Replaces the body without making it an edit: no edit time, no new
+   * revision, as when a partner's copy follows a host rewrite of a message
+   * nobody edited.
+   */
+  async rewriteContent(
+    db: Querier,
+    workspaceId: string,
+    id: string,
+    contentJson: JSONContent,
+    contentMarkdown: string
+  ): Promise<void> {
+    await db.query(sql`
+      UPDATE messages
+      SET content_json = ${JSON.stringify(contentJson)}, content_markdown = ${contentMarkdown},
+          search_config = ${detectSearchConfig(contentMarkdown)}
+      WHERE workspace_id = ${workspaceId} AND id = ${id}
+    `)
+  },
+
   async softDelete(db: Querier, workspaceId: string, id: string): Promise<Message | null> {
     const result = await db.query<MessageRow>(sql`
       UPDATE messages
@@ -740,6 +767,21 @@ export const MessageRepository = {
     `)
     if (!result.rows[0]) return null
     return this.findById(db, workspaceId, id)
+  },
+
+  /**
+   * A deleted message's unread activity rows would otherwise keep a phantom
+   * badge until the user opens that exact stream; clients drop held rows for
+   * the id on the `message_deleted` stream event.
+   */
+  async markActivityReadForDeleted(db: Querier, workspaceId: string, messageId: string): Promise<void> {
+    await db.query(sql`
+      UPDATE user_activity
+      SET read_at = NOW()
+      WHERE workspace_id = ${workspaceId}
+        AND message_id = ${messageId}
+        AND read_at IS NULL
+    `)
   },
 
   async addReaction(

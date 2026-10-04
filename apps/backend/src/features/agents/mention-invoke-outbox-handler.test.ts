@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import * as cursorLockModule from "@threahq/backend-common"
 import type { ProcessResult } from "@threahq/backend-common"
 import { AuthorTypes } from "@threahq/types"
 import { OutboxRepository } from "../../lib/outbox"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { StreamRepository } from "../streams"
 import { PersonaRepository } from "./persona-repository"
 import { MentionInvokeHandler } from "./mention-invoke-outbox-handler"
 import { JobQueues } from "../../lib/queue"
@@ -88,6 +89,10 @@ function makeMessageCreatedEvent(
 const ACTIVE_PERSONA = { id: "persona_ariadne", slug: "ariadne", status: "active" }
 
 describe("MentionInvokeHandler", () => {
+  beforeEach(() => {
+    spyOn(StreamRepository, "isSharedCopy").mockResolvedValue(false)
+  })
+
   afterEach(() => {
     mock.restore()
   })
@@ -115,6 +120,23 @@ describe("MentionInvokeHandler", () => {
       triggeredBy: "usr_author",
       trigger: "mention",
     })
+  })
+
+  it("should dispatch nothing when the message is in a shared copy", async () => {
+    const event = makeMessageCreatedEvent(1n, {
+      contentMarkdown: "hey @ariadne",
+      contentJson: mentionDoc(["persona_ariadne", "ariadne"]),
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event] as any)
+    spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
+    spyOn(StreamRepository, "isSharedCopy").mockResolvedValue(true)
+    spyOn(PersonaRepository, "findByIds").mockResolvedValue([ACTIVE_PERSONA] as any)
+
+    const { handler, send, ran } = createHandler()
+    handler.handle()
+    await ran
+
+    expect(send).not.toHaveBeenCalled()
   })
 
   it("ignores the message a slash command was persisted as", async () => {

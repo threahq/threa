@@ -12,6 +12,7 @@ import {
   type StreamMemberJoinedOutboxPayload,
 } from "../../lib/outbox"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { StreamRepository } from "../streams"
 import { UserPreferencesRepository, userOverrideRefKey } from "../user-preferences"
 
 interface Candidate {
@@ -24,6 +25,10 @@ interface Candidate {
 
 interface Reportable extends Candidate {
   uuid: string
+}
+
+function streamRefKey(ref: { workspaceId: string; streamId: string }): string {
+  return JSON.stringify([ref.workspaceId, ref.streamId])
 }
 
 /** Random constant; only its fixedness matters (RFC 4122 §4.3). */
@@ -146,7 +151,13 @@ export class AnalyticsOutboxHandler extends DebouncedOutboxHandler {
           candidates.map(({ workspaceId, streamId }) => ({ workspaceId, streamId }))
         )
       )
-      const reportable = candidates.filter((candidate) => nonE2eStreamIds.has(candidate.streamId))
+      // A copy mirrors activity the host reports; the bridge, not its named creator, made the copy.
+      const copyKeys = new Set(
+        (await StreamRepository.findSharedCopyRefs(this.db, candidates)).map((ref) => streamRefKey(ref))
+      )
+      const reportable = candidates.filter(
+        (candidate) => nonE2eStreamIds.has(candidate.streamId) && !copyKeys.has(streamRefKey(candidate))
+      )
       const actorRefs = new Map(
         reportable.map(({ workspaceId, actorId }) => [
           userOverrideRefKey(workspaceId, actorId),

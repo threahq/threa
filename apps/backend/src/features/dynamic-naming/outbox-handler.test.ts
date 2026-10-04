@@ -96,6 +96,17 @@ describe("dynamic naming outbox handler", () => {
     expect(schedule).not.toHaveBeenCalled()
   })
 
+  test("should not schedule when the message is in a shared copy's thread", async () => {
+    const handler = new TestHandler({} as never, { schedule })
+    ;(StreamRepository.findById as ReturnType<typeof mock>).mockResolvedValueOnce({
+      ...stream,
+      type: StreamTypes.THREAD,
+      originWorkspaceId: "ws_host",
+    })
+    await handler.process(event)
+    expect(schedule).not.toHaveBeenCalled()
+  })
+
   test("schedules primary non-scratchpad conversation assignments", async () => {
     ;(StreamRepository.findById as ReturnType<typeof mock>).mockResolvedValueOnce({
       ...stream,

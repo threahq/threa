@@ -88,6 +88,8 @@ export class CompanionHandler extends DebouncedOutboxHandler {
       logger.warn({ streamId }, "CompanionHandler: stream not found")
       return
     }
+    // A shared copy mirrors another workspace's channel; its automation runs there.
+    if (stream.originWorkspaceId) return
 
     // A live subagent thread answers regardless of companion mode: it may hang
     // off a CHANNEL, which has none, and the user answering the delegated model

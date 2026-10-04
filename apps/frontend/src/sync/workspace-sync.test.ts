@@ -1544,6 +1544,21 @@ describe("mergeReconnectWorkspaceBootstrap", () => {
     expect(merged.streams.map((s) => s.id)).toEqual(["stream_active_fresh"])
   })
 
+  it("should keep a shared copy's origin when a locally fresher row is promoted", () => {
+    const merged = mergeReconnectWorkspaceBootstrap({
+      workspaceBootstrap: makeBootstrap({ streams: [] }),
+      successfulStreamBootstraps: new Map(),
+      staleStreamIds: new Set(),
+      terminalStreamIds: new Set(),
+      localStreams: [{ ...makeStream("stream_copy", { originWorkspaceId: "ws_host" }), _cachedAt: Date.now() }],
+      localMemberships: [],
+      localReadStates: [],
+      fetchStartedAt: Date.now() - 1000,
+    })
+
+    expect(merged.streams.map((s) => [s.id, s.originWorkspaceId])).toEqual([["stream_copy", "ws_host"]])
+  })
+
   it("preserves prior local state for visible streams that fail reconnect bootstrap", () => {
     const workspaceBootstrap = makeBootstrap({
       streams: [],

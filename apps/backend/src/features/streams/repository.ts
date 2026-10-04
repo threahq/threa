@@ -47,6 +47,7 @@ interface StreamRow {
   companion_persona_id: string | null
   memory_mode: string
   purpose: string | null
+  origin_workspace_id: string | null
   created_by: string
   created_at: Date
   updated_at: Date
@@ -152,6 +153,11 @@ export interface Stream {
    * Readers treat an absent value as `"auto"`.
    */
   memoryMode?: MemoryMode
+  /**
+   * The host workspace a partner's copy of a shared channel, or a thread in it,
+   * was copied from; null on an ordinary stream.
+   */
+  originWorkspaceId: string | null
   createdBy: string
   createdAt: Date
   updatedAt: Date
@@ -193,6 +199,7 @@ export interface InsertStreamParams {
   memoryMode?: MemoryMode
   /** System-purpose marker (`StreamPurposes`); omit/null for an ordinary stream. */
   purpose?: StreamPurpose | null
+  originWorkspaceId?: string | null
   uniquenessKey?: string
   createdBy: string
 }
@@ -252,6 +259,7 @@ function mapRowToStream(row: StreamRow): Stream {
     companionPersonaId: row.companion_persona_id,
     memoryMode: row.memory_mode as MemoryMode,
     purpose: (row.purpose as StreamPurpose | null) ?? null,
+    originWorkspaceId: row.origin_workspace_id,
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -299,7 +307,7 @@ function mapRowToStreamWithPreview(row: StreamWithPreviewRow): StreamWithPreview
 const SELECT_FIELDS = `
   id, workspace_id, type, display_name, display_name_source, display_name_revision, display_name_updated_by_user_id, slug, description, description_json, visibility,
   parent_stream_id, parent_anchor_id, root_stream_id, reply_count, last_reply_at, message_count, message_count_revision,
-  companion_mode, companion_persona_id, memory_mode, purpose,
+  companion_mode, companion_persona_id, memory_mode, purpose, origin_workspace_id,
   created_by, created_at, updated_at, archived_at
 `
 
@@ -309,7 +317,7 @@ const SELECT_FIELDS = `
 const SELECT_FIELDS_WITH_E2E = `
   s.id, s.workspace_id, s.type, s.display_name, s.display_name_source, s.display_name_revision, s.display_name_updated_by_user_id, s.slug, s.description, s.description_json, s.visibility,
   s.parent_stream_id, s.parent_anchor_id, s.root_stream_id, s.reply_count, s.last_reply_at, s.message_count, s.message_count_revision,
-  s.companion_mode, s.companion_persona_id, s.memory_mode, s.purpose,
+  s.companion_mode, s.companion_persona_id, s.memory_mode, s.purpose, s.origin_workspace_id,
   s.created_by, s.created_at, s.updated_at, s.archived_at,
   e.owner_user_key_id AS e2e_owner_user_key_id,
   e.name_ciphertext AS e2e_name_ciphertext,
@@ -486,6 +494,33 @@ export const StreamRepository = {
         AND NOT ${sql.raw(effectivelyArchivedSql("s"))}
     `)
     return result.rows.map((row) => row.id)
+  },
+
+  /** Whether `streamId` is a copy of another workspace's shared channel or one of its threads. */
+  async isSharedCopy(db: Querier, workspaceId: string, streamId: string): Promise<boolean> {
+    const result = await db.query<{ exists: boolean }>(sql`
+      SELECT EXISTS (
+        SELECT 1 FROM streams
+        WHERE workspace_id = ${workspaceId} AND id = ${streamId} AND origin_workspace_id IS NOT NULL
+      ) AS exists
+    `)
+    return result.rows[0]?.exists ?? false
+  },
+
+  /** The refs that name a shared copy, for callers spanning several workspaces. */
+  async findSharedCopyRefs(
+    db: Querier,
+    refs: { workspaceId: string; streamId: string }[]
+  ): Promise<{ workspaceId: string; streamId: string }[]> {
+    if (refs.length === 0) return []
+    const result = await db.query<{ workspace_id: string; id: string }>(sql`
+      SELECT s.workspace_id, s.id
+      FROM unnest(${refs.map((ref) => ref.workspaceId)}::text[], ${refs.map((ref) => ref.streamId)}::text[])
+        AS ref(workspace_id, stream_id)
+      JOIN streams s ON s.workspace_id = ref.workspace_id AND s.id = ref.stream_id
+      WHERE s.origin_workspace_id IS NOT NULL
+    `)
+    return result.rows.map((row) => ({ workspaceId: row.workspace_id, streamId: row.id }))
   },
 
   /** Whether `streamId` is archived itself or sealed by an ancestor. */
@@ -951,7 +986,7 @@ export const StreamRepository = {
       INSERT INTO streams (
         id, workspace_id, type, display_name, display_name_source, display_name_revision, display_name_updated_by_user_id, slug, description, description_json, visibility,
         parent_stream_id, parent_anchor_id, root_stream_id,
-        companion_mode, companion_persona_id, memory_mode, purpose, uniqueness_key, created_by
+        companion_mode, companion_persona_id, memory_mode, purpose, origin_workspace_id, uniqueness_key, created_by
       ) VALUES (
         ${params.id},
         ${params.workspaceId},
@@ -971,6 +1006,7 @@ export const StreamRepository = {
         ${params.companionPersonaId ?? null},
         ${params.memoryMode ?? "auto"},
         ${params.purpose ?? null},
+        ${params.originWorkspaceId ?? null},
         ${params.uniquenessKey ?? null},
         ${params.createdBy}
       )
@@ -985,7 +1021,7 @@ export const StreamRepository = {
    */
   async insertOrFindByUniquenessKey(
     db: Querier,
-    params: InsertStreamParams & { uniquenessKey: string }
+    params: Omit<InsertStreamParams, "originWorkspaceId"> & { uniquenessKey: string }
   ): Promise<{ stream: Stream; created: boolean }> {
     const insertResult = await db.query<StreamRow>(sql`
       INSERT INTO streams (
@@ -1038,7 +1074,10 @@ export const StreamRepository = {
    *
    * @returns { stream, created } - The stream and whether it was newly created
    */
-  async insertThreadOrFind(db: Querier, params: InsertStreamParams): Promise<{ stream: Stream; created: boolean }> {
+  async insertThreadOrFind(
+    db: Querier,
+    params: Omit<InsertStreamParams, "originWorkspaceId">
+  ): Promise<{ stream: Stream; created: boolean }> {
     const anchorId = params.parentAnchorId ?? null
     if (!params.parentStreamId || !anchorId) {
       throw new Error("parentStreamId and parentAnchorId are required for thread creation")
@@ -1171,10 +1210,16 @@ export const StreamRepository = {
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
 
-  async slugExistsInWorkspace(db: Querier, workspaceId: string, slug: string): Promise<boolean> {
+  async slugExistsInWorkspace(
+    db: Querier,
+    workspaceId: string,
+    slug: string,
+    exceptStreamId: string | null = null
+  ): Promise<boolean> {
     const result = await db.query(sql`
       SELECT 1 FROM streams
       WHERE workspace_id = ${workspaceId} AND slug = ${slug}
+        AND id IS DISTINCT FROM ${exceptStreamId}
     `)
     return result.rows.length > 0
   },

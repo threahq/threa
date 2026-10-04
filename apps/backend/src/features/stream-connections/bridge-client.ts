@@ -1,6 +1,21 @@
-import { BRIDGE_WORKSPACE_HEADER, INTERNAL_API_KEY_HEADER } from "@threahq/types"
+import {
+  BRIDGE_WORKSPACE_HEADER,
+  INTERNAL_API_KEY_HEADER,
+  bridgeEventsSchema,
+  bridgeManifestSchema,
+  type BridgeEvents,
+  type BridgeManifest,
+} from "@threahq/types"
 
-const POKE_TIMEOUT_MS = 5_000
+const REQUEST_TIMEOUT_MS = 5_000
+
+interface ConnectionAddress {
+  /** The workspace whose bridge is called. */
+  workspaceId: string
+  connectionId: string
+  /** The workspace calling, which the bridge checks against the connection's other end. */
+  callerWorkspaceId: string
+}
 
 /** This region's calls to another workspace's bridge, routed to that workspace's region by the workspace router. */
 export class BridgeClient {
@@ -14,12 +29,41 @@ export class BridgeClient {
 
   /** Tells a partner its shared channel changed, so it pulls. Carries nothing about the change. */
   async poke(params: { partnerWorkspaceId: string; connectionId: string; hostWorkspaceId: string }): Promise<void> {
-    const url = `${this.routerUrl}/api/workspaces/${encodeURIComponent(params.partnerWorkspaceId)}/stream-connections/${encodeURIComponent(params.connectionId)}/bridge/poke`
+    await this.request(
+      {
+        workspaceId: params.partnerWorkspaceId,
+        connectionId: params.connectionId,
+        callerWorkspaceId: params.hostWorkspaceId,
+      },
+      "/poke",
+      "POST"
+    )
+  }
+
+  /** The host's shared tree: every stream a partner copies, with its current name and head. */
+  async getManifest(address: ConnectionAddress): Promise<BridgeManifest> {
+    const res = await this.request(address, "/manifest", "GET")
+    return bridgeManifestSchema.parse(await res.json())
+  }
+
+  /** A page of one host stream's changes after a cursor. */
+  async listEvents(
+    address: ConnectionAddress,
+    params: { streamId: string; after: bigint; limit: number }
+  ): Promise<BridgeEvents> {
+    const query = new URLSearchParams({ after: params.after.toString(), limit: String(params.limit) })
+    const res = await this.request(address, `/streams/${encodeURIComponent(params.streamId)}/events?${query}`, "GET")
+    return bridgeEventsSchema.parse(await res.json())
+  }
+
+  private async request(address: ConnectionAddress, path: string, method: "GET" | "POST"): Promise<Response> {
+    const url = `${this.routerUrl}/api/workspaces/${encodeURIComponent(address.workspaceId)}/stream-connections/${encodeURIComponent(address.connectionId)}/bridge${path}`
     const res = await fetch(url, {
-      method: "POST",
-      headers: { [INTERNAL_API_KEY_HEADER]: this.apiKey, [BRIDGE_WORKSPACE_HEADER]: params.hostWorkspaceId },
-      signal: AbortSignal.timeout(POKE_TIMEOUT_MS),
+      method,
+      headers: { [INTERNAL_API_KEY_HEADER]: this.apiKey, [BRIDGE_WORKSPACE_HEADER]: address.callerWorkspaceId },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     })
-    if (!res.ok) throw new Error(`Bridge poke answered ${res.status}`)
+    if (!res.ok) throw new Error(`Bridge ${method} ${path.split("?")[0]} answered ${res.status}`)
+    return res
   }
 }

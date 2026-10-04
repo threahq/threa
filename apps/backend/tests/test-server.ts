@@ -108,6 +108,8 @@ const MUTABLE_TABLES = [
   "call_transfer_obligations",
   "cron_schedules",
   "cron_ticks",
+  "stream_connections",
+  "stream_connection_cursors",
 ]
 
 async function cleanupStaleData(): Promise<void> {

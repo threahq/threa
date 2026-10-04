@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from "pg"
-import { withTransaction, withClient, sql } from "../../db"
+import { withTransaction, withClient } from "../../db"
 import { StreamEventRepository, type StreamEvent, type MoveEventIdSequenceUpdate } from "../streams"
 import {
   StreamRepository,
@@ -48,6 +48,7 @@ import { AgentSessionRepository, StreamPersonaParticipantRepository } from "../a
 import { settleMessagesOnEngagement } from "../conversations"
 import { DraftsRepository, toDraftView } from "../drafts"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { StreamConnectionRepository } from "../stream-connections"
 import { StreamContextRepository, contextRowsForMessage, contextSnippet } from "../stream-context"
 import { MemoRepository, resolveMemoEmbedSummaries, resolveMemoSummariesByStream } from "../memos"
 import {
@@ -360,6 +361,20 @@ export interface MoveMessagesToThreadResult {
 const MOVE_MESSAGES_TO_THREAD_OPERATION = "messages.move_to_thread"
 
 /**
+ * A move re-sequences messages into another stream, which a partner's copy of
+ * a shared channel cannot follow, so neither side of a share moves messages.
+ */
+async function assertNotShared(client: PoolClient, workspaceId: string, stream: Stream): Promise<void> {
+  const rootStreamId = stream.rootStreamId ?? stream.id
+  const shared =
+    stream.originWorkspaceId !== null ||
+    (await StreamConnectionRepository.listLiveForStream(client, workspaceId, rootStreamId)).length > 0
+  if (shared) {
+    throw new HttpError("Cannot move messages in a shared channel", { status: 403, code: "STREAM_SHARED" })
+  }
+}
+
+/**
  * Cap each moved-message content excerpt embedded in a `messages:moved`
  * payload. Long messages are truncated server-side so the wire size is
  * bounded for big moves; the drill-in drawer shows a one-liner per
@@ -507,7 +522,7 @@ export type GetComposeTraceMode = (workspaceId: string) => Promise<FeatureFlagVa
  * bumping the anchor's reply stats or emitting `thread:updated` for it would
  * hand the host message the aside as its thread.
  */
-function isThreadReplyStream(
+export function isThreadReplyStream(
   stream: { type: string; parentStreamId: string | null; parentAnchorId?: string | null } | null | undefined
 ): stream is { type: string; parentStreamId: string; parentAnchorId: string } {
   return stream?.type === StreamTypes.THREAD && !!stream.parentStreamId && !!stream.parentAnchorId
@@ -1725,17 +1740,7 @@ export class EventService {
 
           const message = await MessageRepository.softDelete(client, params.workspaceId, params.messageId)
 
-          // A2 (sparse-read design): a deleted message's unread activity rows would
-          // otherwise survive forever unless the user opens that exact stream, keeping
-          // a phantom badge. Mark them read in the delete transaction; clients drop
-          // held rows for the id on the `message_deleted` stream event.
-          await client.query(sql`
-        UPDATE user_activity
-        SET read_at = NOW()
-        WHERE workspace_id = ${params.workspaceId}
-          AND message_id = ${params.messageId}
-          AND read_at IS NULL
-      `)
+          await MessageRepository.markActivityReadForDeleted(client, params.workspaceId, params.messageId)
 
           await StreamContextRepository.deleteByMessageId(client, params.workspaceId, params.messageId)
 
@@ -1837,6 +1842,7 @@ export class EventService {
       if (sourceStream.archivedAt) {
         throw new HttpError("Cannot move messages from an archived stream", { status: 403, code: "STREAM_ARCHIVED" })
       }
+      await assertNotShared(client, params.workspaceId, sourceStream)
 
       const isMember = await StreamMemberRepository.isMember(
         client,
@@ -2348,6 +2354,7 @@ export class EventService {
       if (sourceStream.archivedAt) {
         throw new HttpError("Cannot move messages from an archived stream", { status: 403, code: "STREAM_ARCHIVED" })
       }
+      await assertNotShared(client, params.workspaceId, sourceStream)
 
       const isMember = await StreamMemberRepository.isMember(
         client,

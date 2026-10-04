@@ -5,6 +5,7 @@ import type { QueueManager } from "../../lib/queue"
 import { logger } from "@threahq/backend-common"
 import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { StreamRepository } from "../streams"
 
 const LINK_PREVIEW_EVENT_TYPES = new Set(["message:created", "message:edited"])
 
@@ -43,6 +44,8 @@ export class LinkPreviewOutboxHandler extends DebouncedOutboxHandler {
     if (!isEdit && !contentMarkdown) {
       return
     }
+    // A shared copy mirrors another workspace's channel; its automation runs there.
+    if (await StreamRepository.isSharedCopy(this.db, workspaceId, streamId)) return
 
     await this.jobQueue.send(JobQueues.LINK_PREVIEW_EXTRACT, {
       workspaceId,

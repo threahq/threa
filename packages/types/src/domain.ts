@@ -287,6 +287,11 @@ export interface Stream {
    * shipped — treat a missing value as `null`.
    */
   purpose?: StreamPurpose | null
+  /**
+   * The workspace a partner's copy of a shared channel, or a thread in it, was
+   * copied from; null/absent on an ordinary stream. Absent on legacy cached rows.
+   */
+  originWorkspaceId?: string | null
   createdBy: string
   createdAt: string
   updatedAt: string

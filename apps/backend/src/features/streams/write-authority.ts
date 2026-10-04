@@ -29,10 +29,11 @@ interface AuthorityStream {
   type: StreamType
   visibility: Visibility
   archivedAt: Date | string | null
+  originWorkspaceId?: string | null
 }
 
 export function deriveStreamViewerState(params: {
-  target: Pick<AuthorityStream, "type" | "archivedAt">
+  target: Pick<AuthorityStream, "type" | "archivedAt" | "originWorkspaceId">
   /** Whether any stream up the target's `parent_stream_id` chain is archived. */
   ancestorArchived: boolean
   participates: boolean
@@ -42,6 +43,9 @@ export function deriveStreamViewerState(params: {
   }
   if (params.target.type === StreamTypes.SYSTEM) {
     return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.SYSTEM_STREAM }
+  }
+  if (params.target.originWorkspaceId) {
+    return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.SHARED_COPY }
   }
   if (!params.participates) {
     return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.NOT_A_MEMBER }
