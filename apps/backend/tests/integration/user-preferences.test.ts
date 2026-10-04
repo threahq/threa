@@ -395,7 +395,7 @@ describe("User Preferences - Sparse Override Pattern", () => {
       // A replica that predates the column: its statements never name it.
       await pool.query(
         `INSERT INTO user_preference_overrides (workspace_id, user_id, key, value) VALUES ($1, $2, $3, $4::jsonb)
-         ON CONFLICT (user_id, key) DO UPDATE SET value = $4::jsonb, updated_at = NOW()`,
+         ON CONFLICT (workspace_id, user_id, key) DO UPDATE SET value = $4::jsonb, updated_at = NOW()`,
         [testWorkspaceId, testUserId, ANALYTICS_CONSENT_KEY, JSON.stringify("granted")]
       )
       seen.legacyInsert = await rowGeneration()

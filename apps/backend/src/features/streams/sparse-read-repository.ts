@@ -41,7 +41,7 @@ export const SparseReadRepository = {
        AND e.stream_id = ${params.streamId}
        AND e.event_type = 'message_created'
        AND e.payload->>'messageId' = ids.message_id
-      ON CONFLICT (stream_id, member_id, message_id) DO NOTHING
+      ON CONFLICT (workspace_id, stream_id, member_id, message_id) DO NOTHING
     `)
   },
 

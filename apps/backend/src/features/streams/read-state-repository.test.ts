@@ -24,7 +24,7 @@ function sqlValues(call: unknown[]): unknown[] {
 }
 
 describe("ReadStateRepository.advance", () => {
-  test("is a single monotonic upsert keyed on (stream_id, user_id) returning the post-write row", async () => {
+  test("is a single monotonic upsert returning the post-write row", async () => {
     // A returned row means the monotonic guard accepted (or inserted), so the
     // advance is one statement — no read-back.
     const { db, query } = makeDb([
@@ -42,7 +42,6 @@ describe("ReadStateRepository.advance", () => {
     expect(query).toHaveBeenCalledTimes(1)
     const text = flat(sqlText(query.mock.calls[0]))
     expect(text).toContain("INSERT INTO stream_read_state")
-    expect(text).toContain("ON CONFLICT (stream_id, user_id) DO UPDATE")
     // Monotonic rule: new event sequence strictly greater than current watermark
     // sequence, both resolved via stream_events, NULL watermark counting as 0.
     expect(text).toContain("> COALESCE")
@@ -161,7 +160,6 @@ describe("ReadStateRepository.set", () => {
     await ReadStateRepository.set(db, "ws_1", "stream_1", "usr_1", "evt_3")
 
     const text = flat(sqlText(query.mock.calls[0]))
-    expect(text).toContain("ON CONFLICT (stream_id, user_id) DO UPDATE")
     // Regress path: no monotonic guard anywhere in the statement.
     expect(text).not.toContain("stream_events")
     expect(text).not.toMatch(/DO UPDATE SET .* WHERE/)
@@ -198,7 +196,6 @@ describe("ReadStateRepository.batchAdvance", () => {
     expect(query).toHaveBeenCalledTimes(2)
     const text = flat(sqlText(query.mock.calls[0]))
     expect(text).toContain("unnest($2::text[])")
-    expect(text).toContain("ON CONFLICT (stream_id, user_id) DO UPDATE")
     expect(text).toContain("> COALESCE")
     expect(sqlValues(query.mock.calls[0])).toEqual(["ws_1", ["stream_1", "stream_2"], ["evt_a", "evt_b"], "usr_1"])
   })
@@ -319,7 +316,6 @@ describe("ReadStateRepository.setForUsers", () => {
     await ReadStateRepository.setForUsers(db, "ws_1", "stream_1", ["usr_a", "usr_b"], "evt_1")
     const text = flat(sqlText(query.mock.calls[0]))
     expect(text).toContain("unnest($4::text[])")
-    expect(text).toContain("ON CONFLICT (stream_id, user_id) DO UPDATE")
     expect(text).not.toContain("stream_events")
     expect(sqlValues(query.mock.calls[0])).toEqual(["ws_1", "stream_1", "evt_1", ["usr_a", "usr_b"]])
   })
@@ -421,9 +417,7 @@ describe("ReadStateRepository.ensureForUpdate", () => {
     expect(query).toHaveBeenCalledTimes(2)
     const seed = flat(sqlText(query.mock.calls[0]))
     expect(seed).toContain("INSERT INTO stream_read_state")
-    // DO NOTHING (not DO UPDATE): an existing row's watermark is never touched
-    // by the seed — the lock is the point. Workspace derived from streams (INV-8).
-    expect(seed).toContain("ON CONFLICT (stream_id, user_id) DO NOTHING")
+    // Workspace derived from streams (INV-8).
     expect(seed).toContain("SELECT s.workspace_id")
     const lock = flat(sqlText(query.mock.calls[1]))
     expect(lock).toContain("FOR UPDATE")

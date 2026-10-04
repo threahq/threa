@@ -1,27 +1,32 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { AuthorTypes, ContextIntents, ContextRefKinds, StreamTypes, Visibilities } from "@threahq/types"
+import { ActivityTypes, AuthorTypes, ContextIntents, ContextRefKinds, StreamTypes, Visibilities } from "@threahq/types"
 import { setupTestDatabase, testMessageContent, withClient } from "./setup"
+import { ActivityRepository } from "../../src/features/activity"
 import {
   ContextBagRepository,
   ConversationSummaryRepository,
   StreamPersonaParticipantRepository,
 } from "../../src/features/agents"
 import { AttachmentReferenceRepository, VideoTranscodeJobRepository } from "../../src/features/attachments"
-import { MessageConversationStateRepository } from "../../src/features/conversations"
+import { BoardExclusionRepository, MessageConversationStateRepository } from "../../src/features/conversations"
 import { MessageComposeTraceRepository, MessageRepository } from "../../src/features/messaging"
 import {
+  ReadStateRepository,
+  SparseReadRepository,
   StreamBriefRepository,
   StreamEventRepository,
   StreamMemberRepository,
   StreamPoliciesRepository,
   StreamRepository,
 } from "../../src/features/streams"
+import { UserPreferencesRepository } from "../../src/features/user-preferences"
 import {
   agentConversationSummaryId,
   attachmentId,
   attachmentReferenceId,
   conversationId,
+  eventId,
   messageId,
   personaId,
   streamBriefId,
@@ -256,6 +261,39 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     })
   })
 
+  test("should keep one hidden row stamped by the second hide when a conversation is hidden twice", async () => {
+    const ws = workspaceId()
+    const conversation = conversationId()
+    const viewer = userId()
+    const hide = () =>
+      BoardExclusionRepository.hideConversation(pool, { workspaceId: ws, conversationId: conversation, userId: viewer })
+
+    const backdated = new Date("2000-01-01T00:00:00Z")
+
+    await hide()
+    await pool.query(
+      "UPDATE board_hidden_conversations SET hidden_at = $3 WHERE workspace_id = $1 AND conversation_id = $2",
+      [ws, conversation, backdated]
+    )
+    const second = await hide()
+
+    expect({
+      rows: await BoardExclusionRepository.listHiddenConversations(pool, ws, viewer),
+      restamped: second.hiddenAt > backdated,
+    }).toEqual({ rows: [{ conversationId: conversation, hiddenAt: second.hiddenAt }], restamped: true })
+  })
+
+  test("should keep one muted row when a stream is muted twice", async () => {
+    const ws = workspaceId()
+    const stream = streamId()
+    const viewer = userId()
+
+    await BoardExclusionRepository.muteStream(pool, { workspaceId: ws, streamId: stream, userId: viewer })
+    await BoardExclusionRepository.muteStream(pool, { workspaceId: ws, streamId: stream, userId: viewer })
+
+    expect(await BoardExclusionRepository.listMutedStreamIds(pool, ws, viewer)).toEqual([stream])
+  })
+
   interface SharedIds {
     root: string
     anchor: string
@@ -264,14 +302,43 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     persona: string
     message: string
     attachment: string
+    conversation: string
     refStreams: [string, string]
+    events: [string, string]
   }
 
   const firstRow =
-    (columns: string, table: string, by: "stream" | "message" | "attachment" = "stream") =>
+    (columns: string, table: string, by: "stream" | "message" | "attachment" | "conversation" = "stream") =>
     async (ws: string, ids: SharedIds) =>
       (await pool.query(`SELECT ${columns} FROM ${table} WHERE workspace_id = $1 AND ${by}_id = $2`, [ws, ids[by]]))
         .rows[0] ?? null
+
+  // The old single-column streams key keeps one stream id out of two workspaces at once, so workspace B
+  // takes the stream over from workspace A before its read-state write.
+  const ownStream = async (ws: string, ids: SharedIds, writer: 0 | 1) => {
+    if (writer === 0) {
+      await StreamRepository.insert(pool, {
+        id: ids.stream,
+        workspaceId: ws,
+        type: StreamTypes.CHANNEL,
+        createdBy: ids.member,
+      })
+      return
+    }
+    await pool.query("UPDATE streams SET workspace_id = $1 WHERE id = $2", [ws, ids.stream])
+  }
+
+  // Writer 1 is self-authored, so its row lands already read: an arbiter that updates A's row changes its read_at.
+  const activity = (ws: string, ids: SharedIds, writer: 0 | 1, activityType: string) => ({
+    workspaceId: ws,
+    activityType,
+    streamId: ids.stream,
+    messageId: ids.message,
+    actorId: ids.persona,
+    actorType: AuthorTypes.PERSONA,
+    emoji: activityType === ActivityTypes.REACTION ? "👍" : null,
+    isSelf: writer === 1,
+  })
 
   const sharedKeyCases: Array<{
     name: string
@@ -483,6 +550,145 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
       },
       read: firstRow("id, status, mediaconvert_job_id", "video_transcode_jobs", "attachment"),
     },
+    {
+      name: "a read watermark through advance",
+      oldKey: "stream_read_state_pkey",
+      write: async (ws, ids, writer) => {
+        await ownStream(ws, ids, writer)
+        return ReadStateRepository.advance(pool, ws, ids.stream, ids.member, ids.events[writer], { holdInInbox: false })
+      },
+      read: firstRow("last_read_event_id", "stream_read_state"),
+    },
+    {
+      name: "a read watermark through set",
+      oldKey: "stream_read_state_pkey",
+      write: async (ws, ids, writer) => {
+        await ownStream(ws, ids, writer)
+        return ReadStateRepository.set(pool, ws, ids.stream, ids.member, ids.events[writer])
+      },
+      read: firstRow("last_read_event_id", "stream_read_state"),
+    },
+    {
+      name: "a read watermark through batchAdvance",
+      oldKey: "stream_read_state_pkey",
+      write: async (ws, ids, writer) => {
+        await ownStream(ws, ids, writer)
+        return ReadStateRepository.batchAdvance(pool, ws, ids.member, new Map([[ids.stream, ids.events[writer]]]))
+      },
+      read: firstRow("last_read_event_id", "stream_read_state"),
+    },
+    {
+      name: "a read watermark through ensureForUpdate",
+      oldKey: "stream_read_state_pkey",
+      write: async (ws, ids, writer) => {
+        await ownStream(ws, ids, writer)
+        return ReadStateRepository.ensureForUpdate(pool, ws, ids.stream, ids.member)
+      },
+      read: firstRow("last_read_event_id", "stream_read_state"),
+    },
+    {
+      name: "a read watermark through ensureBatchForUpdate",
+      oldKey: "stream_read_state_pkey",
+      write: async (ws, ids, writer) => {
+        await ownStream(ws, ids, writer)
+        return ReadStateRepository.ensureBatchForUpdate(pool, ws, ids.member, [ids.stream])
+      },
+      read: firstRow("last_read_event_id", "stream_read_state"),
+    },
+    {
+      name: "a read watermark through setForUsers",
+      oldKey: "stream_read_state_pkey",
+      write: async (ws, ids, writer) => {
+        await ownStream(ws, ids, writer)
+        return ReadStateRepository.setForUsers(pool, ws, ids.stream, [ids.member], ids.events[writer])
+      },
+      read: firstRow("last_read_event_id", "stream_read_state"),
+    },
+    {
+      name: "a sparse message read",
+      oldKey: "stream_member_message_reads_pkey",
+      write: async (ws, ids, writer) => {
+        // The old event keys still span workspaces, so each workspace's event takes its own id and sequence.
+        await pool.query(
+          `INSERT INTO stream_events (id, workspace_id, stream_id, sequence, event_type, payload)
+           VALUES ($1, $2, $3, $4, 'message_created', $5)`,
+          [ids.events[writer], ws, ids.stream, writer + 1, JSON.stringify({ messageId: ids.message })]
+        )
+        return SparseReadRepository.insertReads(pool, {
+          workspaceId: ws,
+          streamId: ids.stream,
+          memberId: ids.member,
+          messageIds: [ids.message],
+        })
+      },
+      read: firstRow("event_id", "stream_member_message_reads"),
+    },
+    {
+      name: "a hidden board conversation",
+      oldKey: "board_hidden_conversations_pkey",
+      write: (ws, ids) =>
+        BoardExclusionRepository.hideConversation(pool, {
+          workspaceId: ws,
+          conversationId: ids.conversation,
+          userId: ids.member,
+        }),
+      read: firstRow("hidden_at", "board_hidden_conversations", "conversation"),
+    },
+    {
+      name: "a muted board stream",
+      oldKey: "board_muted_streams_pkey",
+      write: (ws, ids) =>
+        BoardExclusionRepository.muteStream(pool, { workspaceId: ws, streamId: ids.stream, userId: ids.member }),
+      read: firstRow("user_id", "board_muted_streams"),
+    },
+    {
+      name: "a reaction activity through insert",
+      oldKey: "idx_user_activity_dedup_reaction",
+      write: (ws, ids, writer) =>
+        ActivityRepository.insert(pool, { ...activity(ws, ids, writer, ActivityTypes.REACTION), userId: ids.member }),
+      read: firstRow("activity_type, read_at", "user_activity", "message"),
+    },
+    {
+      name: "a reaction activity through insertBatch",
+      oldKey: "idx_user_activity_dedup_reaction",
+      write: (ws, ids, writer) =>
+        ActivityRepository.insertBatch(pool, {
+          ...activity(ws, ids, writer, ActivityTypes.REACTION),
+          userIds: [ids.member],
+        }),
+      read: firstRow("activity_type, read_at", "user_activity", "message"),
+    },
+    {
+      name: "a mention activity through insert",
+      oldKey: "idx_user_activity_dedup_non_reaction",
+      write: (ws, ids, writer) =>
+        ActivityRepository.insert(pool, { ...activity(ws, ids, writer, ActivityTypes.MENTION), userId: ids.member }),
+      read: firstRow("activity_type, read_at", "user_activity", "message"),
+    },
+    {
+      name: "a mention activity through insertBatch",
+      oldKey: "idx_user_activity_dedup_non_reaction",
+      write: (ws, ids, writer) =>
+        ActivityRepository.insertBatch(pool, {
+          ...activity(ws, ids, writer, ActivityTypes.MENTION),
+          userIds: [ids.member],
+        }),
+      read: firstRow("activity_type, read_at", "user_activity", "message"),
+    },
+    {
+      name: "a preference override through setOverride",
+      oldKey: "user_preference_overrides_pkey",
+      write: (ws, ids, writer) =>
+        UserPreferencesRepository.setOverride(pool, ws, ids.member, "theme", `theme ${writer}`),
+      read: (ws, ids) => UserPreferencesRepository.findOverride(pool, ws, ids.member, "theme"),
+    },
+    {
+      name: "a preference override through bulkSetOverrides",
+      oldKey: "user_preference_overrides_pkey",
+      write: (ws, ids, writer) =>
+        UserPreferencesRepository.bulkSetOverrides(pool, ws, ids.member, [{ key: "theme", value: `theme ${writer}` }]),
+      read: (ws, ids) => UserPreferencesRepository.findOverride(pool, ws, ids.member, "theme"),
+    },
   ]
 
   // While the old keys exist, workspace B's write for a shared id is rejected by the old key. An arbiter still
@@ -499,7 +705,9 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
         persona: personaId(),
         message: messageId(),
         attachment: attachmentId(),
+        conversation: conversationId(),
         refStreams: [streamId(), streamId()],
+        events: [eventId(), eventId()],
       }
 
       await write(wsA, ids, 0)

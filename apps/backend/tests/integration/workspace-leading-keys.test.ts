@@ -45,6 +45,13 @@ const TWINNED_KEYS: string[] = [
   "pdf_processing_jobs_attachment_id_key",
   "video_transcode_jobs_attachment_id_key",
   "persona_attachments_pkey",
+  "stream_read_state_pkey",
+  "stream_member_message_reads_pkey",
+  "board_hidden_conversations_pkey",
+  "board_muted_streams_pkey",
+  "idx_user_activity_dedup_non_reaction",
+  "idx_user_activity_dedup_reaction",
+  "user_preference_overrides_pkey",
 ]
 
 /** Unique keys that need no twin of their own, each with its reason. */
@@ -69,17 +76,6 @@ const EXEMPT_KEYS: Record<string, string> = {
   cron_schedules_queue_workspace_key:
     "code-defined queue name plus workspace_id (NULL when system-wide); no copied id in the key",
 }
-
-/** Keys later W3 steps twin; each step deletes its entries and the last one deletes the list. */
-const NOT_YET_TWINNED: string[] = [
-  "stream_read_state_pkey",
-  "stream_member_message_reads_pkey",
-  "board_hidden_conversations_pkey",
-  "board_muted_streams_pkey",
-  "idx_user_activity_dedup_non_reaction",
-  "idx_user_activity_dedup_reaction",
-  "user_preference_overrides_pkey",
-]
 
 const MIGRATIONS_DIR = path.resolve(import.meta.dir, "../../src/db/migrations")
 const STREAM_MEMBERS_MIGRATION_SUFFIX = "_workspace_leading_keys_stream_members.sql"
@@ -154,7 +150,6 @@ describe("workspace-leading twin keys", () => {
     const lists: Record<string, Set<string>> = {
       TWINNED_KEYS: new Set(TWINNED_KEYS),
       EXEMPT_KEYS: new Set(Object.keys(EXEMPT_KEYS)),
-      NOT_YET_TWINNED: new Set(NOT_YET_TWINNED),
     }
     const listsNaming = (name: string) =>
       Object.entries(lists)
