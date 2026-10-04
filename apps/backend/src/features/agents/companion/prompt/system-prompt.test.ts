@@ -446,7 +446,7 @@ describe("buildSystemPrompt", () => {
     })
 
     expect(split.volatile).toContain("## First meeting")
-    expect(split.volatile).toContain("exactly ONE question")
+    expect(split.volatile).toContain("Offer to show them how Threa can be used")
     expect(split.stable).not.toContain("## First meeting")
   })
 

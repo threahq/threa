@@ -541,8 +541,8 @@ export class PersonaAgent {
       if (purpose.kind === "onboarding_greeting" && (stream.messageCount ?? 0) > 0) {
         return { skip: true as const, reason: "onboarding stream already has messages" }
       }
-      // The tour answers the greeting's question, so it only rides the first few
-      // messages: greeting, answer, maybe a second line before she replies.
+      // The tour answers the greeting's offer, so it only rides the first few
+      // messages: greeting, reply, maybe a second line before she replies.
       const isOnboardingTour =
         stream.type === StreamTypes.SCRATCHPAD &&
         (stream.messageCount ?? 0) <= 3 &&

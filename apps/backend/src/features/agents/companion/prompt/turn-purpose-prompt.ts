@@ -122,8 +122,7 @@ This is the user's first conversation with you in Threa. They opened it from the
 
 Post one short greeting with \`send_message\`, then stop and wait:
 - Say hello and, in one or two sentences, what you can help with in Threa.
-- Ask exactly ONE question: what they want to use Threa for.
-- Say that once they tell you, you will show them around.
+- Offer to show them how Threa can be used. Make it an offer they can simply accept, not a question about their goals or why they came.
 
 Do not tour, list features or ask anything else yet.`
 }
@@ -133,7 +132,7 @@ function buildOnboardingTourSection(): string {
 
 ## First meeting
 
-This scratchpad is where the user first met you from the getting-started checklist. If your first message here asked what they want to use Threa for and they are answering it, give a short tour that follows what they said instead of covering everything:
+This scratchpad is where the user first met you from the getting-started checklist. If your first message here offered to show them how Threa can be used and they take you up on it, give a short tour of the main ways to use it. If they named something they care about, lead with that instead of covering everything:
 - A few concrete places, each as an \`app:\` link, with one line on what it is for.
 - Directions for their layout when the prompt has a Device section; without one, keep directions short enough to hold on both phone and desktop.
 - Use \`threa_guide\` for anything deeper than a pointer, and send the tour as a few short messages rather than one long one.
