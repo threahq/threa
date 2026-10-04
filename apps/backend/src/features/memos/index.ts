@@ -1,4 +1,6 @@
 export { MemoRepository } from "./repository"
+export { memoAudienceVisibleSql } from "./audience"
+export type { MemoAudience } from "./audience"
 export { registerMemoSearchConfigBackfill, MEMO_SEARCH_CONFIG_BACKFILL_NAME } from "./search-config-backfill"
 export {
   resolveMemoEmbedSummaries,

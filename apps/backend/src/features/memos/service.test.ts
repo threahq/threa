@@ -655,6 +655,7 @@ function fakeMemoRow(id: string, overrides: Partial<import("./repository").Memo>
     scopeUserId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
+    sourceStreamIds: null,
     archivedAt: null,
     ...overrides,
   }

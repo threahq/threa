@@ -39,6 +39,7 @@ function fakeMemo(overrides: Partial<Memo> = {}): Memo {
     scopeUserId: null,
     createdAt: new Date("2026-05-01T00:00:00Z"),
     updatedAt: new Date("2026-05-01T00:00:00Z"),
+    sourceStreamIds: null,
     archivedAt: null,
     ...overrides,
   }
