@@ -25,7 +25,7 @@ export async function assertAssignablePersona(
   opts?: { callerUserId?: string }
 ): Promise<void> {
   if (personaId == null) return
-  const persona = await PersonaRepository.findById(db, personaId, workspaceId)
+  const persona = await PersonaRepository.findById(db, workspaceId, personaId)
   if (!persona || persona.status !== "active") {
     throw new HttpError("Persona not available", { status: 400, code: "PERSONA_NOT_AVAILABLE" })
   }

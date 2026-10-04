@@ -106,7 +106,7 @@ describe("reflective capture: research sources", () => {
       triggerMessageId,
       status: SessionStatuses.COMPLETED,
     })
-    await AgentSessionRepository.upsertStep(pool, {
+    await AgentSessionRepository.upsertStep(pool, testWorkspaceId, {
       id: stepId(),
       sessionId: id,
       stepNumber: 0,

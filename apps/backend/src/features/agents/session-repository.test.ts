@@ -71,15 +71,16 @@ describe("AgentSessionRepository.updateStatus SQL guards", () => {
     const captured = { text: null as string | null, values: null as unknown[] | null }
     const db = createQuerierCapture(captured)
 
-    await AgentSessionRepository.updateStatus(db, "session_1", SessionStatuses.SUPERSEDED, {
+    await AgentSessionRepository.updateStatus(db, "ws_1", "session_1", SessionStatuses.SUPERSEDED, {
       error: "Superseded by invoking message edit",
       onlyIfStatusIn: [SessionStatuses.COMPLETED, SessionStatuses.FAILED],
     })
 
     expect(captured.text).not.toBeNull()
-    expect(captured.text).toContain("WHERE id = $")
+    expect(captured.text).toContain("WHERE workspace_id = $")
     expect(captured.text).toContain("AND status = ANY($")
-    expect(captured.text).not.toMatch(/WHERE id = \$\d+\s+\$\d+/)
+    expect(captured.text).not.toMatch(/AND id = \$\d+\s+\$\d+/)
+    expect(captured.values).toContain("ws_1")
     expect(captured.values).toContainEqual([SessionStatuses.COMPLETED, SessionStatuses.FAILED])
   })
 
@@ -87,12 +88,12 @@ describe("AgentSessionRepository.updateStatus SQL guards", () => {
     const captured = { text: null as string | null, values: null as unknown[] | null }
     const db = createQuerierCapture(captured)
 
-    await AgentSessionRepository.updateStatus(db, "session_1", SessionStatuses.FAILED, {
+    await AgentSessionRepository.updateStatus(db, "ws_1", "session_1", SessionStatuses.FAILED, {
       error: "Agent loop completed without sending a message",
     })
 
     expect(captured.text).not.toBeNull()
-    expect(captured.text).toContain("WHERE id = $")
+    expect(captured.text).toContain("WHERE workspace_id = $")
     expect(captured.text).not.toContain("AND status = ANY(")
   })
 })
@@ -173,7 +174,7 @@ describe("AgentSessionRepository.updateStep finalize-race guard", () => {
     const captured = { text: null as string | null, values: null as unknown[] | null }
     const db = createQuerierCapture(captured)
 
-    await AgentSessionRepository.updateStep(db, "step_1", {
+    await AgentSessionRepository.updateStep(db, "ws_1", "step_1", {
       contentCiphertext: "ct",
       contentEnvelope: { keyGeneration: 1 },
       requireRunning: true,
@@ -186,7 +187,7 @@ describe("AgentSessionRepository.updateStep finalize-race guard", () => {
     const captured = { text: null as string | null, values: null as unknown[] | null }
     const db = createQuerierCapture(captured)
 
-    await AgentSessionRepository.updateStep(db, "step_1", { completedAt: new Date(), content: { done: true } })
+    await AgentSessionRepository.updateStep(db, "ws_1", "step_1", { completedAt: new Date(), content: { done: true } })
 
     expect(captured.text).not.toContain("AND completed_at IS NULL")
   })
@@ -228,7 +229,7 @@ describe("AgentSessionRepository.findRecentDigestStepsByStream", () => {
       }),
     }
 
-    const rows = await AgentSessionRepository.findRecentDigestStepsByStream(db, {
+    const rows = await AgentSessionRepository.findRecentDigestStepsByStream(db, "ws_1", {
       streamId: "stream_1",
       personaId: "persona_1",
       limit: 5,
@@ -240,7 +241,7 @@ describe("AgentSessionRepository.findRecentDigestStepsByStream", () => {
     expect(captured.text).toContain("s.status =")
     expect(captured.text).toContain("st.step_type =")
     expect(captured.text).toContain("ORDER BY s.created_at DESC, st.step_number DESC")
-    expect(captured.values).toEqual(["stream_1", "persona_1", SessionStatuses.COMPLETED, "turn_digest", 5])
+    expect(captured.values).toEqual(["ws_1", "stream_1", "persona_1", SessionStatuses.COMPLETED, "turn_digest", 5])
 
     expect(rows).toEqual([
       {
@@ -281,12 +282,12 @@ describe("AgentSessionRepository.setEpisodeSummary", () => {
       }),
     }
 
-    const wrote = await AgentSessionRepository.setEpisodeSummary(db, "session_1", "did X, concluded Y")
+    const wrote = await AgentSessionRepository.setEpisodeSummary(db, "ws_1", "session_1", "did X, concluded Y")
 
     expect(captured.text).toContain("SET episode_summary =")
-    expect(captured.text).toContain("WHERE id = $")
+    expect(captured.text).toContain("WHERE workspace_id = $")
     expect(captured.text).toContain("AND episode_summary IS NULL")
-    expect(captured.values).toEqual(["did X, concluded Y", "session_1"])
+    expect(captured.values).toEqual(["did X, concluded Y", "ws_1", "session_1"])
     expect(wrote).toBe(true)
   })
 
@@ -294,7 +295,7 @@ describe("AgentSessionRepository.setEpisodeSummary", () => {
     const db: Querier = {
       query: mock(async () => ({ rows: [], rowCount: 0 }) as unknown as QueryResult),
     }
-    const wrote = await AgentSessionRepository.setEpisodeSummary(db, "session_1", "s")
+    const wrote = await AgentSessionRepository.setEpisodeSummary(db, "ws_1", "session_1", "s")
     expect(wrote).toBe(false)
   })
 })

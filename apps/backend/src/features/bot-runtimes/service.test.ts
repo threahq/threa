@@ -433,6 +433,7 @@ describe("BotRuntimeService outbox emission", () => {
 
       expect(updateStatus).toHaveBeenCalledWith(
         fakeQuerier,
+        "ws_1",
         "inv_1",
         SessionStatuses.DELETED,
         expect.objectContaining({ onlyIfStatusIn: [SessionStatuses.RUNNING, SessionStatuses.COMPLETED] })
@@ -464,6 +465,7 @@ describe("BotRuntimeService outbox emission", () => {
 
       expect(updateStatus).toHaveBeenCalledWith(
         fakeQuerier,
+        "ws_1",
         "inv_1",
         SessionStatuses.SUPERSEDED,
         expect.objectContaining({ onlyIfStatusIn: [SessionStatuses.RUNNING] })

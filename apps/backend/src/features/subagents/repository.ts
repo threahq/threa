@@ -259,6 +259,7 @@ export const SubagentRunRepository = {
     // transaction into an unbounded per-card event loop; the hourly sweep
     // drains the remainder on later passes. The CAS on `status` keeps a row
     // selected by two concurrent sweeps single-transition.
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the idle sweep covers every workspace
     const result = await db.query<SubagentRunRow>(sql`
       UPDATE subagent_runs SET
         status = ${SubagentStatuses.EXPIRED},
@@ -266,8 +267,8 @@ export const SubagentRunRepository = {
         status_changed_at = NOW(),
         updated_at = NOW()
       WHERE status = ${SubagentStatuses.ACTIVE}
-        AND id IN (
-          SELECT id FROM subagent_runs
+        AND (workspace_id, id) IN (
+          SELECT workspace_id, id FROM subagent_runs
           WHERE status = ${SubagentStatuses.ACTIVE}
             AND updated_at <= NOW() - (${params.idleDays} || ' days')::interval
           LIMIT ${params.limit}

@@ -52,6 +52,6 @@ export async function resolveDefaultPersona(
 /** A stored pointer resolves only when it is a string id for an active persona in the workspace. */
 async function resolvePointer(db: Querier, value: unknown, workspaceId: string): Promise<Persona | null> {
   if (typeof value !== "string" || value.length === 0) return null
-  const persona = await PersonaRepository.findById(db, value, workspaceId)
+  const persona = await PersonaRepository.findById(db, workspaceId, value)
   return persona?.status === "active" ? persona : null
 }

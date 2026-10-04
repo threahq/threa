@@ -186,7 +186,7 @@ export async function enrichMessageSearchResults(
 
   const [members, personas, streams] = await Promise.all([
     userIds.size > 0 ? UserRepository.findByIds(db, workspaceId, [...userIds]) : Promise.resolve([]),
-    personaIds.size > 0 ? PersonaRepository.findByIds(db, [...personaIds], workspaceId) : Promise.resolve([]),
+    personaIds.size > 0 ? PersonaRepository.findByIds(db, workspaceId, [...personaIds]) : Promise.resolve([]),
     StreamRepository.findByIds(db, workspaceId, [...streamIds]),
   ])
 

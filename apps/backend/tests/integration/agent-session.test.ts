@@ -31,7 +31,7 @@ describe("Agent Session Repository", () => {
     test("should return null when no running session exists", async () => {
       const testStreamId = streamId()
 
-      const result = await AgentSessionRepository.findRunningByStream(pool, testStreamId)
+      const result = await AgentSessionRepository.findRunningByStream(pool, testWorkspaceId, testStreamId)
       expect(result).toBeNull()
     })
 
@@ -52,7 +52,7 @@ describe("Agent Session Repository", () => {
           serverId: "test-server",
         })
 
-        const result = await AgentSessionRepository.findRunningByStream(client, testStreamId)
+        const result = await AgentSessionRepository.findRunningByStream(client, testWorkspaceId, testStreamId)
 
         expect(result).not.toBeNull()
         expect(result!.id).toBe(testSessionId)
@@ -77,9 +77,9 @@ describe("Agent Session Repository", () => {
           serverId: "test-server",
         })
 
-        await AgentSessionRepository.updateStatus(client, testSessionId, SessionStatuses.COMPLETED)
+        await AgentSessionRepository.updateStatus(client, testWorkspaceId, testSessionId, SessionStatuses.COMPLETED)
 
-        const result = await AgentSessionRepository.findRunningByStream(client, testStreamId)
+        const result = await AgentSessionRepository.findRunningByStream(client, testWorkspaceId, testStreamId)
         expect(result).toBeNull()
       })
     })
@@ -100,7 +100,7 @@ describe("Agent Session Repository", () => {
           serverId: "test-server",
         })
 
-        const result = await AgentSessionRepository.findRunningByStream(client, testStreamId2)
+        const result = await AgentSessionRepository.findRunningByStream(client, testWorkspaceId, testStreamId2)
         expect(result).toBeNull()
       })
     })
@@ -110,7 +110,7 @@ describe("Agent Session Repository", () => {
     test("should return null when no sessions exist", async () => {
       const testStreamId = streamId()
 
-      const result = await AgentSessionRepository.findLatestByStream(pool, testStreamId)
+      const result = await AgentSessionRepository.findLatestByStream(pool, testWorkspaceId, testStreamId)
       expect(result).toBeNull()
     })
 
@@ -144,7 +144,7 @@ describe("Agent Session Repository", () => {
           serverId: "test-server",
         })
 
-        const result = await AgentSessionRepository.findLatestByStream(client, testStreamId)
+        const result = await AgentSessionRepository.findLatestByStream(client, testWorkspaceId, testStreamId)
 
         expect(result).not.toBeNull()
         expect(result!.id).toBe(session2Id)
@@ -169,9 +169,9 @@ describe("Agent Session Repository", () => {
           serverId: "test-server",
         })
 
-        await AgentSessionRepository.updateLastSeenSequence(client, testSessionId, BigInt(42))
+        await AgentSessionRepository.updateLastSeenSequence(client, testWorkspaceId, testSessionId, BigInt(42))
 
-        const session = await AgentSessionRepository.findById(client, testSessionId)
+        const session = await AgentSessionRepository.findById(client, testWorkspaceId, testSessionId)
 
         expect(session).not.toBeNull()
         expect(session!.lastSeenSequence).toBe(BigInt(42))
@@ -199,9 +199,9 @@ describe("Agent Session Repository", () => {
         // Small delay
         await new Promise((r) => setTimeout(r, 10))
 
-        await AgentSessionRepository.updateLastSeenSequence(client, testSessionId, BigInt(1))
+        await AgentSessionRepository.updateLastSeenSequence(client, testWorkspaceId, testSessionId, BigInt(1))
 
-        const session = await AgentSessionRepository.findById(client, testSessionId)
+        const session = await AgentSessionRepository.findById(client, testWorkspaceId, testSessionId)
 
         expect(session!.heartbeatAt!.getTime()).toBeGreaterThan(initialHeartbeat!.getTime())
       })
@@ -243,12 +243,12 @@ describe("Agent Session - sentMessageIds", () => {
         serverId: "test-server",
       })
 
-      await AgentSessionRepository.updateStatus(client, testSessionId, SessionStatuses.COMPLETED, {
+      await AgentSessionRepository.updateStatus(client, testWorkspaceId, testSessionId, SessionStatuses.COMPLETED, {
         responseMessageId: sentIds[0],
         sentMessageIds: sentIds,
       })
 
-      const session = await AgentSessionRepository.findById(client, testSessionId)
+      const session = await AgentSessionRepository.findById(client, testWorkspaceId, testSessionId)
 
       expect(session).not.toBeNull()
       expect(session!.sentMessageIds).toEqual(sentIds)
@@ -327,7 +327,7 @@ describe("Agent Session - Concurrency", () => {
     const firstTx = withClient(pool, async (client) => {
       await client.query("BEGIN")
 
-      firstResult = await AgentSessionRepository.findRunningByStream(client, testStreamId)
+      firstResult = await AgentSessionRepository.findRunningByStream(client, testWorkspaceId, testStreamId)
       resolveFirstAcquired!() // Signal that lock is held
 
       await firstRelease // Wait for signal to release
@@ -342,7 +342,7 @@ describe("Agent Session - Concurrency", () => {
     const secondTx = withClient(pool, async (client) => {
       await client.query("BEGIN")
 
-      secondResult = await AgentSessionRepository.findRunningByStream(client, testStreamId)
+      secondResult = await AgentSessionRepository.findRunningByStream(client, testWorkspaceId, testStreamId)
 
       await client.query("COMMIT")
     })
@@ -457,13 +457,13 @@ describe("Agent Session - Concurrency", () => {
     const results = await Promise.all([
       withClient(pool, async (client) => {
         await client.query("BEGIN")
-        const result = await AgentSessionRepository.findRunningByStream(client, stream1Id)
+        const result = await AgentSessionRepository.findRunningByStream(client, testWorkspaceId, stream1Id)
         await client.query("COMMIT")
         return result
       }),
       withClient(pool, async (client) => {
         await client.query("BEGIN")
-        const result = await AgentSessionRepository.findRunningByStream(client, stream2Id)
+        const result = await AgentSessionRepository.findRunningByStream(client, testWorkspaceId, stream2Id)
         await client.query("COMMIT")
         return result
       }),
@@ -497,7 +497,7 @@ describe("Agent Session - Concurrency", () => {
 
         // Insert initial step
         const originalStart = new Date("2026-01-01T10:00:00Z")
-        const step1 = await AgentSessionRepository.upsertStep(client, {
+        const step1 = await AgentSessionRepository.upsertStep(client, testWorkspaceId, {
           id: testStepId,
           sessionId: testSessionId,
           stepNumber: 1,
@@ -510,17 +510,19 @@ describe("Agent Session - Concurrency", () => {
 
         // Complete the step
         const completionTime = new Date("2026-01-01T10:00:05Z")
-        await AgentSessionRepository.updateStep(client, testStepId, {
+        await AgentSessionRepository.updateStep(client, testWorkspaceId, testStepId, {
           completedAt: completionTime,
         })
 
         // Verify completion
-        const completedStep = await AgentSessionRepository.findLatestStep(client, testSessionId)
+        const completedStep = (
+          await AgentSessionRepository.findStepsBySession(client, testWorkspaceId, testSessionId)
+        ).at(-1)
         expect(completedStep!.completedAt).toEqual(completionTime)
 
         // Retry the step (simulates crash recovery) - this would happen if agent restarts
         const retryStart = new Date("2026-01-01T10:01:00Z")
-        const retriedStep = await AgentSessionRepository.upsertStep(client, {
+        const retriedStep = await AgentSessionRepository.upsertStep(client, testWorkspaceId, {
           id: stepId(), // New ID but same step_number triggers conflict
           sessionId: testSessionId,
           stepNumber: 1,
@@ -554,14 +556,14 @@ describe("Agent Session - Concurrency", () => {
           serverId: "test-server",
         })
 
-        const step1 = await AgentSessionRepository.appendStep(client, {
+        const step1 = await AgentSessionRepository.appendStep(client, testWorkspaceId, {
           id: stepId(),
           sessionId: testSessionId,
           stepType: AgentStepTypes.THINKING,
           content: "first",
           startedAt: new Date(),
         })
-        const step2 = await AgentSessionRepository.appendStep(client, {
+        const step2 = await AgentSessionRepository.appendStep(client, testWorkspaceId, {
           id: stepId(),
           sessionId: testSessionId,
           stepType: AgentStepTypes.TOOL_CALL,
@@ -595,7 +597,7 @@ describe("Agent Session - Concurrency", () => {
           withClient(pool, async (client) => {
             await client.query("BEGIN")
             try {
-              const step = await AgentSessionRepository.appendStep(client, {
+              const step = await AgentSessionRepository.appendStep(client, testWorkspaceId, {
                 id: stepId(),
                 sessionId: testSessionId,
                 stepType: AgentStepTypes.TOOL_CALL,
@@ -628,7 +630,7 @@ describe("Agent Session - Concurrency", () => {
 
     test("throws when session does not exist", async () => {
       await expect(
-        AgentSessionRepository.appendStep(pool, {
+        AgentSessionRepository.appendStep(pool, testWorkspaceId, {
           id: stepId(),
           sessionId: sessionId(),
           stepType: AgentStepTypes.THINKING,
@@ -699,7 +701,7 @@ describe("Agent Session - Concurrency", () => {
       expect(session1).not.toBeNull()
 
       // Complete the first session
-      await AgentSessionRepository.completeSession(pool, session1!.id, {
+      await AgentSessionRepository.completeSession(pool, testWorkspaceId, session1!.id, {
         lastSeenSequence: BigInt(10),
       })
 

@@ -41,9 +41,9 @@ export function buildEpisodeSummaryPromptBlock(
 /** Fetch + filter + format in one call — the context build's single entry point. */
 export async function loadEpisodeSummaryPromptBlock(
   db: Querier,
-  params: { streamId: string; personaId: string; accessibleStreamIds: Set<string> | null }
+  params: { workspaceId: string; streamId: string; personaId: string; accessibleStreamIds: Set<string> | null }
 ): Promise<string | null> {
-  const rows = await AgentSessionRepository.findRecentEpisodeSummariesByStream(db, {
+  const rows = await AgentSessionRepository.findRecentEpisodeSummariesByStream(db, params.workspaceId, {
     streamId: params.streamId,
     personaId: params.personaId,
     limit: EPISODE_SUMMARY_INJECT_COUNT,

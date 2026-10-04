@@ -48,7 +48,7 @@ export async function buildSessionDigest(pool: Pool, session: AgentSession): Pro
     if (trigger.contentMarkdown.trim()) sections.push(`Trigger message:\n${trigger.contentMarkdown.trim()}`)
   }
 
-  const steps = await AgentSessionRepository.findStepsBySession(pool, session.id)
+  const steps = await AgentSessionRepository.findStepsBySession(pool, session.workspaceId, session.id)
   const digests = steps
     .filter((s) => s.stepType === AgentStepTypes.TURN_DIGEST)
     .map((s) => parseTurnDigestStepContent(s.content))

@@ -1035,7 +1035,7 @@ export class BotRuntimeService {
       // delivery; a deleted source ends it, a superseding route never does.
       const terminal = invocation.status === "cancelled" || (invocation.status === "completed" && status === "deleted")
       if (!terminal) continue
-      const updated = await AgentSessionRepository.updateStatus(db, invocation.id, status, {
+      const updated = await AgentSessionRepository.updateStatus(db, workspaceId, invocation.id, status, {
         error: status === "deleted" ? "Invocation source deleted" : "Invocation route superseded",
         onlyIfStatusIn:
           status === "deleted" ? [SessionStatuses.RUNNING, SessionStatuses.COMPLETED] : [SessionStatuses.RUNNING],

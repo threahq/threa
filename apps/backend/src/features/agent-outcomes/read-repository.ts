@@ -135,7 +135,7 @@ function scopedSql(filters: AgentOutcomeFilters) {
     scoped_streams AS (
       SELECT acc.id
       FROM accessible_streams acc
-      LEFT JOIN streams s ON s.id = acc.id
+      LEFT JOIN streams s ON s.id = acc.id AND s.workspace_id = ${workspaceId}
       WHERE
         ${!hasStreamScope}
         OR acc.id = ANY(${streamIds as string[]})
@@ -232,9 +232,10 @@ export const AgentOutcomeReadRepository = {
    * as an agenda: soonest first, so overdue and running work heads page 1.
    */
   async list(db: Querier, params: ListAgentOutcomesParams): Promise<AgentOutcomeRow[]> {
-    const cursor = params.cursor
+    const { workspaceId, cursor } = params
     const order = params.ascending ? SQL_ASC : SQL_DESC
     const comparison = params.ascending ? SQL_GT : SQL_LT
+    // eslint-disable-next-line threa/workspace-scoped-sql -- outcomes is scopedSql's CTE, pinned by workspace_id in every branch
     const result = await db.query<DbRow>(composeSql`
       ${scopedSql(params)},
       page AS (
@@ -256,11 +257,13 @@ export const AgentOutcomeReadRepository = {
       FROM page p
       LEFT JOIN stream_events de
         ON p.kind = 'delegation'
+       AND de.workspace_id = ${workspaceId}
        AND de.stream_id = p.stream_id
        AND de.event_type = 'delegation:created'
        AND de.payload->>'delegationId' = p.id
       LEFT JOIN stream_events fe
         ON p.kind = 'follow_up'
+       AND fe.workspace_id = ${workspaceId}
        AND fe.stream_id = p.stream_id
        AND fe.event_type = 'agent:follow_up_scheduled'
        AND fe.payload->>'followUpId' = p.id
@@ -271,6 +274,7 @@ export const AgentOutcomeReadRepository = {
         SELECT se.payload->>'lastAgentMessageAt' AS last_agent_message_at
         FROM stream_events se
         WHERE p.kind = 'subagent'
+          AND se.workspace_id = ${workspaceId}
           AND se.stream_id = p.stream_id
           AND se.event_type = 'subagent:status_changed'
           AND se.payload->>'subagentId' = p.id
@@ -285,6 +289,7 @@ export const AgentOutcomeReadRepository = {
 
   /** Whole-scope total for the same filters — the first page's `outstandingCount`. */
   async count(db: Querier, filters: AgentOutcomeFilters): Promise<number> {
+    // eslint-disable-next-line threa/workspace-scoped-sql -- outcomes is scopedSql's CTE, pinned by workspace_id in every branch
     const result = await db.query<{ count: number }>(composeSql`
       ${scopedSql(filters)}
       SELECT COUNT(*)::int AS count FROM outcomes o

@@ -146,7 +146,7 @@ describe("bot invocation canonical source mutations", () => {
         sourceMessageId: message.id,
       })
 
-      const session = await AgentSessionRepository.findById(pool, completed.invocation.id)
+      const session = await AgentSessionRepository.findById(pool, workspace, completed.invocation.id)
       const row = await pool.query<{ status: string; cancellation_reason: string | null }>(
         "SELECT status, cancellation_reason FROM bot_invocations WHERE id = $1",
         [completed.invocation.id]

@@ -136,7 +136,7 @@ describe("WorkspaceSettingsService.updateSettings defaultCompanionPersonaId", ()
 
     const settings = await service.updateSettings(WORKSPACE_ID, { defaultCompanionPersonaId: "persona_x" })
 
-    expect(findById).toHaveBeenCalledWith({}, "persona_x", WORKSPACE_ID)
+    expect(findById).toHaveBeenCalledWith({}, WORKSPACE_ID, "persona_x")
     expect(setOverride).toHaveBeenCalledWith({}, WORKSPACE_ID, "defaultCompanionPersonaId", "persona_x")
     expect(settings.defaultCompanionPersonaId).toBe("persona_x")
   })

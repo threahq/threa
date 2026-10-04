@@ -81,7 +81,7 @@ export class SessionTrace {
     if (params.stepType === "message_sent" || params.stepType === "message_edited") this.messageCount++
     const now = new Date()
 
-    const step = await AgentSessionRepository.upsertStep(this.deps.pool, {
+    const step = await AgentSessionRepository.upsertStep(this.deps.pool, this.params.workspaceId, {
       id: generateStepId(),
       sessionId: this.params.sessionId,
       stepNumber: this.stepNumber,
@@ -97,7 +97,12 @@ export class SessionTrace {
 
     // Update session's current step type for cross-stream display
     // Use DB-returned stepType for consistency with persisted value
-    await AgentSessionRepository.updateCurrentStepType(this.deps.pool, this.params.sessionId, stepType)
+    await AgentSessionRepository.updateCurrentStepType(
+      this.deps.pool,
+      this.params.workspaceId,
+      this.params.sessionId,
+      stepType
+    )
 
     // Emit to session room (detailed, for trace dialog)
     this.deps.io.to(this.sessionRoom).emit("agent_session:step:started", {
@@ -134,6 +139,7 @@ export class SessionTrace {
     target.emit("agent_session:progress", progressPayload)
 
     return new ActiveStep(this.deps, {
+      workspaceId: this.params.workspaceId,
       stepId,
       sessionId: this.params.sessionId,
       sessionRoom: this.sessionRoom,
@@ -220,6 +226,7 @@ export class ActiveStep {
   constructor(
     private readonly deps: TraceEmitterDeps,
     private readonly params: {
+      workspaceId: string
       stepId: string
       sessionId: string
       sessionRoom: string
@@ -263,7 +270,7 @@ export class ActiveStep {
     // `complete()` finalized the row — it must not overwrite the final
     // content with a mid-run partial. Once finalized this no-ops, the same
     // guard the enclave's substep-snapshot path uses.
-    await AgentSessionRepository.updateStep(this.deps.pool, this.params.stepId, {
+    await AgentSessionRepository.updateStep(this.deps.pool, this.params.workspaceId, this.params.stepId, {
       content: JSON.stringify({ substeps }),
       requireRunning: true,
     })
@@ -278,7 +285,7 @@ export class ActiveStep {
    * moves through both states rather than two rows.
    */
   async verify(params: { status: ToolVerificationStatus; reason?: string }): Promise<void> {
-    await AgentSessionRepository.updateStep(this.deps.pool, this.params.stepId, {
+    await AgentSessionRepository.updateStep(this.deps.pool, this.params.workspaceId, this.params.stepId, {
       verification: { status: params.status, ...(params.reason ? { reason: params.reason } : {}) },
     })
 
@@ -297,7 +304,7 @@ export class ActiveStep {
    * the `agent_session:step:completed` frame the live trace already consumes.
    */
   async effects(effects: AgentToolEffect[]): Promise<void> {
-    await AgentSessionRepository.updateStep(this.deps.pool, this.params.stepId, { effects })
+    await AgentSessionRepository.updateStep(this.deps.pool, this.params.workspaceId, this.params.stepId, { effects })
   }
 
   /** Complete the step. Persists to DB + emits to socket. */
@@ -313,12 +320,17 @@ export class ActiveStep {
     const completedAt =
       params?.durationMs !== undefined ? new Date(this.params.startedAt.getTime() + params.durationMs) : new Date()
 
-    const updated = await AgentSessionRepository.updateStep(this.deps.pool, this.params.stepId, {
-      content: params?.content,
-      sources: params?.sources,
-      messageId: params?.messageId,
-      completedAt,
-    })
+    const updated = await AgentSessionRepository.updateStep(
+      this.deps.pool,
+      this.params.workspaceId,
+      this.params.stepId,
+      {
+        content: params?.content,
+        sources: params?.sources,
+        messageId: params?.messageId,
+        completedAt,
+      }
+    )
 
     this.deps.io.to(this.params.sessionRoom).emit("agent_session:step:completed", {
       sessionId: this.params.sessionId,

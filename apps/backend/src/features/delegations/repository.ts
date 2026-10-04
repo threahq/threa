@@ -144,7 +144,8 @@ export const DelegatedTaskRepository = {
       SELECT ${sql.raw(QUALIFIED_COLUMNS)}, ce.id AS created_event_id
       FROM delegated_tasks dt
       LEFT JOIN stream_events ce
-        ON ce.stream_id = dt.stream_id
+        ON ce.workspace_id = dt.workspace_id
+        AND ce.stream_id = dt.stream_id
         AND ce.event_type = 'delegation:created'
         AND ce.payload->>'delegationId' = dt.id
       WHERE dt.id = ${id} AND dt.workspace_id = ${workspaceId}
@@ -162,7 +163,8 @@ export const DelegatedTaskRepository = {
   async findCreatedEventId(db: Querier, workspaceId: string, id: string): Promise<string | null> {
     const result = await db.query<{ id: string }>(sql`
       SELECT id FROM stream_events
-      WHERE stream_id = (SELECT stream_id FROM delegated_tasks WHERE id = ${id} AND workspace_id = ${workspaceId})
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = (SELECT stream_id FROM delegated_tasks WHERE id = ${id} AND workspace_id = ${workspaceId})
         AND event_type = 'delegation:created'
         AND payload->>'delegationId' = ${id}
       LIMIT 1
@@ -203,7 +205,8 @@ export const DelegatedTaskRepository = {
       SELECT ${sql.raw(QUALIFIED_COLUMNS)}, ce.id AS created_event_id
       FROM delegated_tasks dt
       LEFT JOIN stream_events ce
-        ON ce.stream_id = dt.stream_id
+        ON ce.workspace_id = dt.workspace_id
+        AND ce.stream_id = dt.stream_id
         AND ce.event_type = 'delegation:created'
         AND ce.payload->>'delegationId' = dt.id
       WHERE dt.workspace_id = ${workspaceId} AND dt.stream_id = ${streamId}
@@ -490,6 +493,7 @@ export const DelegatedTaskRepository = {
    * sweeps idempotent — the second one matches nothing.
    */
   async reopenLapsedClaims(db: Querier): Promise<DelegatedTask[]> {
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the lapsed-claim sweep covers every workspace
     const result = await db.query<DelegatedTaskRow>(sql`
       UPDATE delegated_tasks SET
         status = ${DelegationStatuses.OPEN},

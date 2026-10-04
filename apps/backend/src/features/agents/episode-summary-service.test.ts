@@ -91,7 +91,7 @@ describe("EpisodeSummaryService", () => {
 
   test("summarizes a completed session and persists the model output via the CAS", async () => {
     const { ai, generateText } = makeAI()
-    spyOn(AgentSessionRepository, "findById").mockResolvedValue(makeSession())
+    const findSession = spyOn(AgentSessionRepository, "findById").mockResolvedValue(makeSession())
     spyOn(MessageRepository, "findById").mockResolvedValue(makeMessage("msg_trigger_1", "how often do we deploy?"))
     spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([])
     spyOn(MessageRepository, "findByIds").mockResolvedValue(
@@ -107,8 +107,10 @@ describe("EpisodeSummaryService", () => {
     const opts = generateText.mock.calls[0][0] as { telemetry?: { functionId?: string }; context?: unknown }
     expect(opts.telemetry?.functionId).toBe("agent.episode-summary")
     expect(opts.context).toMatchObject({ workspaceId: "ws_1", sessionId: "session_1", origin: "system" })
+    expect(findSession).toHaveBeenCalledWith(expect.anything(), "ws_1", "session_1")
     expect(setSpy).toHaveBeenCalledWith(
       expect.anything(),
+      "ws_1",
       "session_1",
       "Investigated the deploy cadence and concluded deploys happen Fridays only."
     )

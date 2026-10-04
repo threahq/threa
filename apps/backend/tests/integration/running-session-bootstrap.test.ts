@@ -33,7 +33,7 @@ describe("running-session bootstrap reads for a batch of joined streams", () => 
 
     const steps = [AgentStepTypes.TOOL_CALL, AgentStepTypes.MESSAGE_SENT, AgentStepTypes.MESSAGE_EDITED]
     for (const stepType of steps) {
-      await AgentSessionRepository.appendStep(pool, {
+      await AgentSessionRepository.appendStep(pool, testWorkspaceId, {
         id: stepId(),
         sessionId: busy,
         stepType,
@@ -49,8 +49,8 @@ describe("running-session bootstrap reads for a batch of joined streams", () => 
   })
 
   test("finds only running sessions and counts steps the way the live emitter does", async () => {
-    const sessions = await AgentSessionRepository.findRunningByStreams(pool, streams)
-    const counts = await AgentSessionRepository.countStepsBySessions(pool, [running, busy])
+    const sessions = await AgentSessionRepository.findRunningByStreams(pool, testWorkspaceId, streams)
+    const counts = await AgentSessionRepository.countStepsBySessions(pool, testWorkspaceId, [running, busy])
 
     expect({
       sessions: Object.fromEntries(sessions.map((session) => [session.streamId, session.id])),

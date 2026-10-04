@@ -31,8 +31,10 @@ describe("UserPreferencesService.updatePreferences defaultCompanionPersonaId", (
 
     const prefs = await service.updatePreferences(WORKSPACE_ID, USER_ID, { defaultCompanionPersonaId: "persona_x" })
 
-    expect(findById).toHaveBeenCalledWith({}, "persona_x", WORKSPACE_ID)
-    expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [{ key: "defaultCompanionPersonaId", value: "persona_x" }])
+    expect(findById).toHaveBeenCalledWith({}, WORKSPACE_ID, "persona_x")
+    expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [
+      { key: "defaultCompanionPersonaId", value: "persona_x" },
+    ])
     expect(bulkDelete).not.toHaveBeenCalled()
     expect(prefs.defaultCompanionPersonaId).toBe("persona_x")
   })
@@ -260,7 +262,9 @@ describe("UserPreferencesService.updatePreferences codeBlockWrapOverrides", () =
     const service = new UserPreferencesService({} as any)
 
     await service.updatePreferences(WORKSPACE_ID, USER_ID, { codeBlockWrapOverrides: { sql: "wrap" } })
-    expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [{ key: "codeBlockWrapOverrides", value: { sql: "wrap" } }])
+    expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [
+      { key: "codeBlockWrapOverrides", value: { sql: "wrap" } },
+    ])
 
     await service.updatePreferences(WORKSPACE_ID, USER_ID, { codeBlockWrapOverrides: {} })
     expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["codeBlockWrapOverrides"])
