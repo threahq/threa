@@ -34,7 +34,6 @@ import {
   type Stream,
   type StreamType,
   type NotificationLevel,
-  type CreatableVisibility,
   type Visibility,
 } from "@threahq/types"
 import { toast } from "sonner"
@@ -229,7 +228,7 @@ function NotificationSection({
   )
 }
 
-function visibilityChangeCopy(from: Visibility, to: CreatableVisibility): string {
+function visibilityChangeCopy(from: Visibility, to: Visibility): string {
   if (to === Visibilities.PRIVATE) {
     return "Making this channel private will hide it from non-members. They won't be able to find or join it."
   }
@@ -244,10 +243,10 @@ function visibilityChangeCopy(from: Visibility, to: CreatableVisibility): string
 
 function VisibilitySection({ workspaceId, stream, locked }: { workspaceId: string; stream: Stream; locked: boolean }) {
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [pendingVisibility, setPendingVisibility] = useState<CreatableVisibility | null>(null)
+  const [pendingVisibility, setPendingVisibility] = useState<Visibility | null>(null)
   const updateMutation = useUpdateStream(workspaceId, stream.id)
 
-  const handleVisibilityChange = (value: CreatableVisibility) => {
+  const handleVisibilityChange = (value: Visibility) => {
     if (value === stream.visibility) return
     setPendingVisibility(value)
     setConfirmOpen(true)

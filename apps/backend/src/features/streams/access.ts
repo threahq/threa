@@ -1,7 +1,7 @@
 import type { QueryConfig } from "pg"
 import type { Querier } from "../../db"
 import { sql, composeSql } from "../../db"
-import { OPEN_VISIBILITIES, Visibilities, isOpenVisibility, type Visibility } from "@threahq/types"
+import { Visibilities, type Visibility } from "@threahq/types"
 import { anyUserLacksBrowseSql, findUserIdsWithoutBrowse, viewerLacksBrowseSql } from "../workspaces"
 import { StreamRepository, type Stream } from "./repository"
 
@@ -355,11 +355,4 @@ export async function usersReadingWithoutMembership(
     default:
       return new Set()
   }
-}
-
-/** Bots have no role to lack browse with, so every open root, `public` or `guest_public`, is readable without a grant. */
-export const OPEN_TO_BOTS_VISIBILITIES: readonly Visibility[] = OPEN_VISIBILITIES
-
-export function isOpenToBots(visibility: Visibility): boolean {
-  return isOpenVisibility(visibility)
 }

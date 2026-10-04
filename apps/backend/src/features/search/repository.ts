@@ -2,6 +2,7 @@ import type { Querier } from "../../db"
 import { sql, composeSql } from "../../db"
 import {
   DM_PARTICIPANT_COUNT,
+  OPEN_VISIBILITIES,
   type AuthorType,
   type ConversationStatus,
   type JSONContent,
@@ -9,12 +10,7 @@ import {
 } from "@threahq/types"
 import { archiveStatusSql, type ArchiveStatus } from "../../lib/sql-filters"
 import { tsqueryAcrossConfigsSql } from "../../lib/text-search-config"
-import {
-  OPEN_TO_BOTS_VISIBILITIES,
-  roomReadableWithoutMembershipSql,
-  roomSharedSql,
-  streamAccessPredicateSql,
-} from "../streams"
+import { roomReadableWithoutMembershipSql, roomSharedSql, streamAccessPredicateSql } from "../streams"
 import { REPLY_COUNT_SUBQUERY } from "../messaging"
 import type { AgentAccessSpec } from "../agents"
 import { LEGACY_SEMANTIC_DISTANCE_THRESHOLD, SEARCH_HYBRID_LEG_LIMIT, type SearchRanking } from "./config"
@@ -763,7 +759,7 @@ export const SearchRepository = {
       SELECT s.id FROM streams s
       JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id
       WHERE s.workspace_id = ${workspaceId}
-        AND root.visibility = ANY(${[...OPEN_TO_BOTS_VISIBILITIES]})
+        AND root.visibility = ANY(${[...OPEN_VISIBILITIES]})
         AND (${!hasTypeFilter} OR s.type = ANY(${options?.streamTypes ?? []}))
         AND ${archiveCondition}
     `)

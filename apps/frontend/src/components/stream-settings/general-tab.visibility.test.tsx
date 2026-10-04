@@ -12,30 +12,22 @@ import {
   type WorkspaceBootstrap,
 } from "@threahq/types"
 import * as workspacesModule from "@/hooks/use-workspaces"
+import { createMockStream } from "@/test/fixtures"
 import { GeneralTab } from "./general-tab"
 
 const WS = "ws_1"
 const USER = "usr_alice"
 
 function channel(overrides: Partial<Stream> = {}): Stream {
-  return {
+  return createMockStream({
     id: "stream_general",
-    workspaceId: WS,
     type: StreamTypes.CHANNEL,
-    displayName: null,
+    workspaceId: WS,
     slug: "general",
-    description: null,
     visibility: Visibilities.PUBLIC,
-    parentStreamId: null,
-    rootStreamId: null,
-    companionMode: "off",
-    companionPersonaId: null,
     createdBy: USER,
-    createdAt: "2026-03-31T10:00:00Z",
-    updatedAt: "2026-03-31T10:00:00Z",
-    archivedAt: null,
     ...overrides,
-  }
+  })
 }
 
 function renderTab(stream: Stream, update: ReturnType<typeof vi.fn>) {

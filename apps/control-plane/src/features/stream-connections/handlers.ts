@@ -1,7 +1,7 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
 import { HttpError } from "@threahq/backend-common"
-import { CREATABLE_VISIBILITIES, streamConnectionIdSchema, streamConnectionTokenSchema } from "@threahq/types"
+import { VISIBILITY_OPTIONS, streamConnectionIdSchema, streamConnectionTokenSchema } from "@threahq/types"
 import { parseRequest } from "../../lib/validation"
 import type { StreamConnectionService } from "./service"
 
@@ -17,7 +17,7 @@ const disconnectSchema = z.object({ workspaceId: idSchema })
 const acceptSchema = z.object({
   token: streamConnectionTokenSchema,
   partnerWorkspaceId: idSchema,
-  visibility: z.enum(CREATABLE_VISIBILITIES),
+  visibility: z.enum(VISIBILITY_OPTIONS),
   acceptedBy: idSchema,
 })
 const lookupSchema = z.object({ token: streamConnectionTokenSchema })

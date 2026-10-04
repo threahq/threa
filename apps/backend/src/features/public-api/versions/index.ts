@@ -11,7 +11,6 @@ import { API_VERSIONS, CURRENT_API_VERSION, type ApiVersion, type OpenApiSpec, t
  */
 const STREAM_ANCHOR_OPERATIONS = new Set<OperationId>(["listStreams", "getStream", "updateStream"])
 const THREAD_ANCHOR_CHANGE_OPERATIONS = new Set<OperationId>([...STREAM_ANCHOR_OPERATIONS, "completeDelegation"])
-/** Every operation whose response `data` is a stream object. */
 const STREAM_OBJECT_OPERATIONS = new Set<OperationId>([...STREAM_ANCHOR_OPERATIONS, "archiveStream", "unarchiveStream"])
 
 /** Lower one serialized stream object from the anchorId shape to the legacy parentMessageId shape. */
@@ -25,7 +24,6 @@ function downgradeStreamAnchor(stream: Record<string, unknown>): Record<string, 
   return rest
 }
 
-/** Apply `lower` to each stream object in a stream operation's `data`, a page of streams or a single one. */
 function lowerStreams(payload: unknown, lower: (stream: Record<string, unknown>) => Record<string, unknown>): unknown {
   if (payload === null || typeof payload !== "object") return payload
   const envelope = payload as Record<string, unknown>

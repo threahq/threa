@@ -1,9 +1,9 @@
 import type { Pool } from "pg"
-import { StreamTypes } from "@threahq/types"
+import { StreamTypes, isOpenVisibility } from "@threahq/types"
 import { BotChannelAccessRepository } from "./repository"
 import { isStreamReadableAsOwner } from "./read-as-owner"
 import { SearchRepository, resolveUserAccessibleStreamIds } from "../search"
-import { StreamRepository, isOpenToBots, resolveEffectiveAccessStream } from "../streams"
+import { StreamRepository, resolveEffectiveAccessStream } from "../streams"
 import { E2eStreamsRepository } from "../e2e-streams"
 
 interface BotChannelServiceDeps {
@@ -92,7 +92,7 @@ export class BotChannelService {
     // fail closed to the grant check, never the stale copied value.
     const effective = await resolveEffectiveAccessStream(this.pool, stream)
     const rootResolved = !stream.rootStreamId || effective.id === stream.rootStreamId
-    if (rootResolved && isOpenToBots(effective.visibility)) return true
+    if (rootResolved && isOpenVisibility(effective.visibility)) return true
 
     const grantStreamId = stream.type === StreamTypes.THREAD && stream.rootStreamId ? stream.rootStreamId : stream.id
 

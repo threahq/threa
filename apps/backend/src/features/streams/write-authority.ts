@@ -3,6 +3,7 @@ import {
   StreamErrorCodes,
   StreamReadOnlyReasons,
   StreamTypes,
+  isOpenVisibility,
   type StreamReadOnlyReason,
   type StreamViewerState,
   type StreamType,
@@ -12,12 +13,7 @@ import type { Querier } from "../../db"
 import { StreamNotFoundError } from "../../lib/errors"
 import { BotChannelAccessRepository, isStreamReadableAsOwner } from "../api-keys"
 import { findUserIdsWithoutBrowse } from "../workspaces"
-import {
-  isOpenToBots,
-  resolveEffectiveAccessStream,
-  resolveEffectiveAccessStreams,
-  usersReadingWithoutMembership,
-} from "./access"
+import { resolveEffectiveAccessStream, resolveEffectiveAccessStreams, usersReadingWithoutMembership } from "./access"
 import { findGuestPolicyClosedDmIds } from "./guest-dm-policy"
 import { StreamMemberRepository } from "./member-repository"
 import { StreamRepository, type Stream } from "./repository"
@@ -130,7 +126,7 @@ async function visibilitiesReadWithoutParticipating(
   for (const visibility of new Set(visibilities)) {
     const reads =
       principal.kind === "bot"
-        ? isOpenToBots(visibility)
+        ? isOpenVisibility(visibility)
         : (await usersReadingWithoutMembership(db, workspaceId, visibility, [principal.userId])).has(principal.userId)
     if (reads) open.add(visibility)
   }

@@ -115,10 +115,6 @@ export const Visibilities = {
   PRIVATE: "private",
 } as const satisfies Record<string, Visibility>
 
-/** The visibilities a request may set: every one a channel can have. */
-export const CREATABLE_VISIBILITIES = VISIBILITY_OPTIONS
-export type CreatableVisibility = (typeof CREATABLE_VISIBILITIES)[number]
-
 /** Visibilities readable without a membership row by whoever may read them: `public` by members who can browse, `guest_public` by every workspace user. */
 export const OPEN_VISIBILITIES = [Visibilities.PUBLIC, Visibilities.GUEST_PUBLIC] as const
 

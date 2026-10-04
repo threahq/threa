@@ -20,7 +20,7 @@ import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { useAuth } from "@/auth"
 import { useCanManageChannels } from "@/lib/use-can-manage-channels"
 import { toast } from "sonner"
-import type { CreatableVisibility } from "@threahq/types"
+import type { Visibility } from "@threahq/types"
 
 function ChannelDialogHeader() {
   return (
@@ -66,13 +66,7 @@ function SlugField({
   )
 }
 
-function VisibilityField({
-  value,
-  onChange,
-}: {
-  value: CreatableVisibility
-  onChange: (v: CreatableVisibility) => void
-}) {
+function VisibilityField({ value, onChange }: { value: Visibility; onChange: (v: Visibility) => void }) {
   return (
     <div className="space-y-2">
       <Label className="text-sm font-medium">Visibility</Label>
@@ -143,7 +137,7 @@ export function CreateChannelDialog({ workspaceId }: CreateChannelDialogProps) {
 
   const [slug, setSlug] = useState("")
   const [slugValid, setSlugValid] = useState(false)
-  const [visibility, setVisibility] = useState<CreatableVisibility>("public")
+  const [visibility, setVisibility] = useState<Visibility>("public")
   const [description, setDescription] = useState("")
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
 

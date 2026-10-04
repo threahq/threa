@@ -9,7 +9,7 @@ import {
   WORKSPACE_ROLE_SLUGS,
   type ActorCopy,
   type CommandInfo,
-  type CreatableVisibility,
+  type Visibility,
   type MoveMessagesToThreadResponse,
   type ValidateMoveMessagesToThreadResponse,
   type WorkspaceInvitableRole,
@@ -235,7 +235,7 @@ export async function createStream(
   options?: {
     slug?: string
     companionMode?: "off" | "on"
-    visibility?: CreatableVisibility
+    visibility?: Visibility
   }
 ): Promise<Stream> {
   const { status, data } = await client.post<{ stream: Stream }>(`/api/workspaces/${workspaceId}/streams`, {
@@ -260,7 +260,7 @@ export async function createChannel(
   client: TestClient,
   workspaceId: string,
   slug: string,
-  visibility: CreatableVisibility = "private"
+  visibility: Visibility = "private"
 ): Promise<Stream> {
   return createStream(client, workspaceId, "channel", { slug, visibility })
 }

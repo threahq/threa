@@ -29,7 +29,7 @@ import {
   isUniqueViolation,
 } from "../../lib/errors"
 import { formatParticipantNames } from "./display-name"
-import { checkStreamAccess, isOpenToBots, listAccessibleStreamIds, usersReadingWithoutMembership } from "./access"
+import { checkStreamAccess, listAccessibleStreamIds, usersReadingWithoutMembership } from "./access"
 import { findGuestPolicyClosedDmIds, isGuestDmOpenForUsers } from "./guest-dm-policy"
 import { resolveInboxClearMode } from "./inbox-clear-mode"
 import { releaseInboxHold } from "./inbox-release"
@@ -58,7 +58,7 @@ import {
   E2eKeyWrapRecipientKinds,
   type E2eActorKind,
   type StreamType,
-  type CreatableVisibility,
+  type Visibility,
   type CompanionMode,
   type MemoryMode,
   type NotificationLevel,
@@ -79,6 +79,7 @@ import {
   type StreamReadFrontierSnapshot,
   TitleSources,
   StreamReadOnlyReasons,
+  isOpenVisibility,
   type StreamDirectoryStats,
 } from "@threahq/types"
 import { ContextBagRepository, PersonaRepository, assertAssignablePersona } from "../agents"
@@ -334,7 +335,7 @@ async function lockPrincipalAccess(
 ): Promise<void> {
   if (principal.kind === "user") return lockActorAccess(client, workspaceId, root, principal.userId)
   const grants = await BotChannelAccessRepository.lockGrants(client, workspaceId, principal.botId, [root.id])
-  if (!grants.has(root.id) && !isOpenToBots(root.visibility)) throw new StreamNotFoundError()
+  if (!grants.has(root.id) && !isOpenVisibility(root.visibility)) throw new StreamNotFoundError()
 }
 
 async function lockActorAccess(
@@ -1472,7 +1473,7 @@ export class StreamService {
        */
       actorId?: string
       actorType?: AuthorType
-      visibility?: CreatableVisibility
+      visibility?: Visibility
       memoryMode?: MemoryMode
       /**
        * Sealed (encrypted) display name for an E2E stream — stored on
