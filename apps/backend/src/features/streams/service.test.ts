@@ -2,6 +2,7 @@ import { afterAll, describe, test, expect, mock, spyOn, beforeEach } from "bun:t
 import type { PoolClient } from "pg"
 import { StreamService } from "./service"
 import * as access from "./access"
+import * as guestDmPolicy from "./guest-dm-policy"
 import { StreamRepository } from "./repository"
 import { StreamMemberRepository, type StreamMember } from "./member-repository"
 import { ReadStateRepository } from "./read-state-repository"
@@ -56,6 +57,7 @@ const mockLockGrants = spyOn(BotChannelAccessRepository, "lockGrants").mockResol
 spyOn(access, "usersReadingWithoutMembership").mockImplementation(async (_client, _workspaceId, visibility, userIds) =>
   visibility === "public" || visibility === "guest_public" ? new Set(userIds) : new Set()
 )
+const mockIsGuestDmOpenForUsers = spyOn(guestDmPolicy, "isGuestDmOpenForUsers")
 const mockInsertOrFindByUniquenessKey = spyOn(StreamRepository, "insertOrFindByUniquenessKey")
 const mockInsertMember = spyOn(StreamMemberRepository, "insert")
 const mockInsertManyMembers = spyOn(StreamMemberRepository, "insertMany")
@@ -456,6 +458,7 @@ describe("StreamService.findOrCreateDm", () => {
   beforeEach(() => {
     service = new StreamService({} as never)
     mockFindMembersByIds.mockReset()
+    mockIsGuestDmOpenForUsers.mockReset().mockResolvedValue(true)
     mockInsertOrFindByUniquenessKey.mockReset()
     mockInsertManyMembers.mockReset().mockResolvedValue([] as never)
     mockInsertOutbox.mockReset().mockResolvedValue({
@@ -529,6 +532,31 @@ describe("StreamService.findOrCreateDm", () => {
     })
 
     expect(mockInsertOutbox).not.toHaveBeenCalled()
+  })
+
+  test("should refuse a pair the guest DM policy closes before creating the dm", async () => {
+    mockFindMembersByIds.mockResolvedValue([
+      { id: "usr_1", workspaceId: "ws_1" },
+      { id: "usr_2", workspaceId: "ws_1" },
+    ] as never)
+    mockIsGuestDmOpenForUsers.mockResolvedValue(false)
+
+    const error = await service
+      .findOrCreateDm({ workspaceId: "ws_1", userOneId: "usr_1", userTwoId: "usr_2" })
+      .catch((e) => e)
+
+    expect({
+      error: error instanceof HttpError,
+      status: error.status,
+      code: error.code,
+      details: error.details,
+    }).toEqual({
+      error: true,
+      status: 403,
+      code: "STREAM_READ_ONLY",
+      details: { reason: "guest_dm_policy" },
+    })
+    expect(mockInsertOrFindByUniquenessKey).not.toHaveBeenCalled()
   })
 
   test("should throw when either member is outside the workspace", async () => {

@@ -58,6 +58,7 @@ export const STREAM_READ_ONLY_REASONS = [
   "shared_copy",
   "disconnected",
   "not_a_member",
+  "guest_dm_policy",
 ] as const
 export type StreamReadOnlyReason = (typeof STREAM_READ_ONLY_REASONS)[number]
 
@@ -69,6 +70,7 @@ export const StreamReadOnlyReasons = {
   /** A copy whose share has ended: it still reads, but nothing writes to it. */
   DISCONNECTED: "disconnected",
   NOT_A_MEMBER: "not_a_member",
+  GUEST_DM_POLICY: "guest_dm_policy",
 } as const satisfies Record<string, StreamReadOnlyReason>
 
 export const StreamErrorCodes = {

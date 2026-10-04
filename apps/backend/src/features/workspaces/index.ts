@@ -10,7 +10,12 @@ export { syncActorCopies } from "./actor-copies"
 export type { User, ClaimedUser, InsertUserParams, CopyProfileUpdate } from "./user-repository"
 export { PeoplePurposes, listGuestViewers, peopleViewerForActor } from "./people"
 export type { PeopleScope, PeopleViewer } from "./people"
-export { anyUserLacksBrowseSql, findUserIdsWithoutBrowse, viewerLacksBrowseSql } from "./viewer-browse"
+export {
+  anyUserLacksBrowseSql,
+  findUserIdsWithoutAdmin,
+  findUserIdsWithoutBrowse,
+  viewerLacksBrowseSql,
+} from "./viewer-browse"
 export { AvatarService, userAvatarToken } from "./avatar-service"
 export { AvatarProcessingService } from "./avatar-processing-service"
 export { AvatarUploadRepository } from "./avatar-upload-repository"

@@ -30,6 +30,7 @@ import {
 } from "../../lib/errors"
 import { formatParticipantNames } from "./display-name"
 import { checkStreamAccess, isOpenToBots, listAccessibleStreamIds, usersReadingWithoutMembership } from "./access"
+import { findGuestPolicyClosedDmIds, isGuestDmOpenForUsers } from "./guest-dm-policy"
 import { resolveInboxClearMode } from "./inbox-clear-mode"
 import { releaseInboxHold } from "./inbox-release"
 import {
@@ -46,6 +47,7 @@ import {
 import { PeoplePurposes, UserRepository } from "../workspaces"
 import { BotChannelAccessRepository } from "../api-keys"
 import {
+  StreamReadOnlyReasons,
   StreamTypes,
   isAsideHostType,
   Visibilities,
@@ -512,7 +514,15 @@ export class StreamService {
         throw new StreamNotFoundError()
       }
 
-      return { stream, state: deriveStreamViewerState({ target: stream, ancestorArchived: false, participates: true }) }
+      return {
+        stream,
+        state: deriveStreamViewerState({
+          target: stream,
+          ancestorArchived: false,
+          participates: true,
+          guestDmClosed: false,
+        }),
+      }
     }
 
     const stream = await this.getStreamById(params.workspaceId, params.target.streamId)
@@ -528,7 +538,10 @@ export class StreamService {
     }
     const ancestorArchived =
       (await StreamRepository.findNearestArchivedAncestor(this.pool, params.workspaceId, stream.id)) !== null
-    return { stream, state: deriveStreamViewerState({ target: stream, ancestorArchived, participates }) }
+    const guestDmClosed =
+      root.type === StreamTypes.DM &&
+      (await findGuestPolicyClosedDmIds(this.pool, params.workspaceId, [root.id])).has(root.id)
+    return { stream, state: deriveStreamViewerState({ target: stream, ancestorArchived, participates, guestDmClosed }) }
   }
 
   async findOrCreateDm(params: FindOrCreateDmParams): Promise<Stream> {
@@ -552,6 +565,9 @@ export class StreamService {
           status: 404,
           code: "MEMBER_NOT_FOUND",
         })
+      }
+      if (!(await isGuestDmOpenForUsers(client, params.workspaceId, [userAId, userBId]))) {
+        throw createStreamReadOnlyError(StreamReadOnlyReasons.GUEST_DM_POLICY)
       }
 
       const { stream, created } = await StreamRepository.insertOrFindByUniquenessKey(client, {
