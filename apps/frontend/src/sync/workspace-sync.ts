@@ -885,12 +885,12 @@ export function registerWorkspaceSocketHandlers(
       refs.subscribeStream(payload.stream.id)
     }
 
-    if (isOwnOnboardingStream) {
-      await db.workspaceMetadata.update(workspaceId, { onboardingStreamId: payload.stream.id })
-    }
-
-    await db.transaction("rw", [db.streams, db.streamMemberships, db.dmPeers], async () => {
+    await db.transaction("rw", [db.streams, db.streamMemberships, db.dmPeers, db.workspaceMetadata], async () => {
       const now = Date.now()
+
+      if (isOwnOnboardingStream) {
+        await db.workspaceMetadata.update(workspaceId, { onboardingStreamId: payload.stream.id })
+      }
 
       // Cache to IndexedDB — skip other users' scratchpads to avoid stale
       // entries resurfacing on hydration if the event leaks during a deploy race.

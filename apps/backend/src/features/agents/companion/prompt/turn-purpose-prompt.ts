@@ -31,6 +31,8 @@ interface EarlyPurposeContext {
    * history as the first user message.
    */
   subagentBrief?: { title: string } | null
+  /** Whether `threa_guide` is in this turn's toolset; the tour only points at it when it is. */
+  guideAvailable?: boolean
 }
 
 export function buildEarlyPurposeSection(purpose: TurnPurpose, ctx: EarlyPurposeContext): string {
@@ -44,7 +46,7 @@ export function buildEarlyPurposeSection(purpose: TurnPurpose, ctx: EarlyPurpose
     case "onboarding_greeting":
       return buildOnboardingGreetingSection()
     case "onboarding_tour":
-      return buildOnboardingTourSection()
+      return buildOnboardingTourSection(ctx.guideAvailable === true)
     case "catch_up":
     case "supersede_rerun":
     // A draft-test turn adds no section on purpose: the editor is judging the
@@ -127,7 +129,8 @@ Post one short greeting with \`send_message\`, then stop and wait:
 Do not tour, list features or ask anything else yet.`
 }
 
-function buildOnboardingTourSection(): string {
+function buildOnboardingTourSection(guideAvailable: boolean): string {
+  const depth = guideAvailable ? "Use `threa_guide` for anything deeper than a pointer, and send" : "Send"
   return `
 
 ## First meeting
@@ -135,7 +138,7 @@ function buildOnboardingTourSection(): string {
 This scratchpad is where the user first met you from the getting-started checklist. If your first message here offered to show them how Threa can be used and they take you up on it, give a short tour of the main ways to use it. If they named something they care about, lead with that instead of covering everything:
 - A few concrete places, each as an \`app:\` link, with one line on what it is for.
 - Directions for their layout when the prompt has a Device section; without one, keep directions short enough to hold on both phone and desktop.
-- Use \`threa_guide\` for anything deeper than a pointer, and send the tour as a few short messages rather than one long one.
+- ${depth} the tour as a few short messages rather than one long one.
 
 Once the tour is given, or if they have moved on to something else, just carry on the conversation.`
 }

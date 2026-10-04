@@ -3,7 +3,7 @@ import { APP_LINK_PAGES, APP_LINK_SETTINGS_TABS, APP_LINK_WORKSPACE_SETTINGS_TAB
 import { createReadUrlTool, createExaEngine, createWebSearchTool } from "@threahq/agent-runtime"
 import type { Persona } from "../../persona-repository"
 import type { StreamContext } from "../../context-builder"
-import { createWorkspaceResearchTool } from "../../tools"
+import { createThreaGuideTool, createWorkspaceResearchTool } from "../../tools"
 import {
   buildSystemPrompt,
   buildResponseStyleSection,
@@ -459,8 +459,25 @@ describe("buildSystemPrompt", () => {
     })
 
     expect(split.volatile).toContain("give a short tour")
-    expect(split.volatile).not.toContain("exactly ONE question")
     expect(split.stable).not.toContain("## First meeting")
+  })
+
+  test.each([
+    [[], "- Send the tour as a few short messages"],
+    [
+      [createThreaGuideTool({ articles: [] })],
+      "- Use `threa_guide` for anything deeper than a pointer, and send the tour",
+    ],
+  ])("points the tour at threa_guide only when the guide is in the toolset", (tools, line) => {
+    const split = buildSystemPrompt({
+      persona,
+      context: scratchpadContext,
+      scratchpadCustomPrompt: null,
+      purpose: { kind: "onboarding_tour" },
+      tools,
+    })
+
+    expect(split.volatile).toContain(line)
   })
 
   test("omits the first-meeting section for a catch-up turn", () => {
