@@ -99,6 +99,7 @@ export function createStreamConnectionHandlers({ streamConnectionService }: Depe
 
 const bridgeParamsSchema = z.object({ workspaceId: z.string().min(1), connectionId: streamConnectionIdSchema })
 const bridgeStreamParamsSchema = bridgeParamsSchema.extend({ streamId: z.string().min(1) })
+const bridgeAttachmentParamsSchema = bridgeParamsSchema.extend({ attachmentId: z.string().min(1) })
 const bridgeEventsQuerySchema = z.object({
   after: z
     .string()
@@ -150,6 +151,17 @@ export function createStreamConnectionBridgeHandlers({
       ])
       res.setHeader("Cache-Control", "no-store")
       res.json(events)
+    },
+
+    async attachment(req: Request, res: Response) {
+      const params = validateRequest(bridgeAttachmentParamsSchema, req.params)
+      const answer = await streamConnectionExportService.getAttachment({
+        ...params,
+        callerWorkspaceId: identifyCaller(req, params.connectionId),
+      })
+      setAuditSubjects(res, [{ type: "attachment", id: params.attachmentId }])
+      res.setHeader("Cache-Control", "no-store")
+      res.json(answer)
     },
 
     async poke(req: Request, res: Response) {

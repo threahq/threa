@@ -527,6 +527,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
       bridgeAuth,
       bridge.events
     )
+    app.get(
+      "/api/workspaces/:workspaceId/stream-connections/:connectionId/bridge/attachments/:attachmentId",
+      audit("stream_connections.bridge_attachment", "disclose"),
+      bridgeAuth,
+      bridge.attachment
+    )
     // Mounted under the partner workspace's path, the other way round.
     app.post(
       "/api/workspaces/:workspaceId/stream-connections/:connectionId/bridge/poke",

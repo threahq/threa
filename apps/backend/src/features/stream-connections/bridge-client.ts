@@ -1,8 +1,10 @@
 import {
   BRIDGE_WORKSPACE_HEADER,
   INTERNAL_API_KEY_HEADER,
+  bridgeAttachmentResponseSchema,
   bridgeEventsSchema,
   bridgeManifestSchema,
+  type BridgeAttachmentResponse,
   type BridgeEvents,
   type BridgeManifest,
 } from "@threahq/types"
@@ -54,6 +56,12 @@ export class BridgeClient {
     const query = new URLSearchParams({ after: params.after.toString(), limit: String(params.limit) })
     const res = await this.request(address, `/streams/${encodeURIComponent(params.streamId)}/events?${query}`, "GET")
     return bridgeEventsSchema.parse(await res.json())
+  }
+
+  /** Whether a host attachment's bytes can be fetched yet, and from where. */
+  async getAttachment(address: ConnectionAddress, attachmentId: string): Promise<BridgeAttachmentResponse> {
+    const res = await this.request(address, `/attachments/${encodeURIComponent(attachmentId)}`, "GET")
+    return bridgeAttachmentResponseSchema.parse(await res.json())
   }
 
   private async request(address: ConnectionAddress, path: string, method: "GET" | "POST"): Promise<Response> {

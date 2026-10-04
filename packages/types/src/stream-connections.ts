@@ -198,7 +198,7 @@ export type BridgeManifest = z.infer<typeof bridgeManifestSchema>
 
 export const bridgeAttachmentSchema = z.object({
   id: z.string().regex(/^attach_[0-9A-Za-z]+$/),
-  filename: z.string(),
+  filename: z.string().min(1).max(255),
   mimeType: z.string(),
   sizeBytes: z.number().int().nonnegative(),
   safetyStatus: z.enum(ATTACHMENT_SAFETY_STATUSES),
@@ -207,6 +207,14 @@ export const bridgeAttachmentSchema = z.object({
   height: z.number().int().positive().nullable().default(null),
 })
 export type BridgeAttachment = z.infer<typeof bridgeAttachmentSchema>
+
+/** Whether a partner can fetch a host attachment's bytes yet, and where from. */
+export const bridgeAttachmentResponseSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ready"), url: z.string().min(1) }),
+  z.object({ status: z.literal("pending") }),
+  z.object({ status: z.literal("blocked") }),
+])
+export type BridgeAttachmentResponse = z.infer<typeof bridgeAttachmentResponseSchema>
 
 /** A message's current state. */
 export const bridgeMessageSchema = z.object({

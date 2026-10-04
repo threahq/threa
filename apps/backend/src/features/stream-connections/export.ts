@@ -1,8 +1,11 @@
 import type { Pool, PoolClient } from "pg"
 import { UnknownNodeTypeError } from "@threahq/prosemirror"
 import {
+  AttachmentSafetyStatuses,
+  AttachmentUploadStatuses,
   StreamConnectionStates,
   type BridgeActor,
+  type BridgeAttachmentResponse,
   type BridgeChange,
   type BridgeEvents,
   type BridgeManifest,
@@ -14,8 +17,9 @@ import {
   type ThreaMark,
 } from "@threahq/types"
 import { withClient } from "../../db"
+import type { StorageProvider } from "../../lib/storage/s3-client"
 import { PersonaRepository } from "../agents"
-import { AttachmentRepository, type Attachment } from "../attachments"
+import { AttachmentRepository, AttachmentUploadRepository, type Attachment } from "../attachments"
 import type { FeatureFlagService } from "../feature-flags"
 import { MessageRepository, deriveContentMarkdown, type Message } from "../messaging"
 import { BotRepository } from "../public-api"
@@ -127,16 +131,19 @@ interface ContentScope {
 interface Dependencies {
   pool: Pool
   featureFlagService: FeatureFlagService
+  storage: StorageProvider
 }
 
 /** Serves a shared channel's tree to a partner's region: what is shared, and each stream's changes. */
 export class StreamConnectionExportService {
   private readonly pool: Pool
   private readonly featureFlagService: FeatureFlagService
+  private readonly storage: StorageProvider
 
   constructor(deps: Dependencies) {
     this.pool = deps.pool
     this.featureFlagService = deps.featureFlagService
+    this.storage = deps.storage
   }
 
   async getManifest(caller: BridgeCaller): Promise<BridgeManifest> {
@@ -204,6 +211,43 @@ export class StreamConnectionExportService {
       const actors = await loadNamedActors(client, caller.workspaceId, named)
       return { changes, users, actors, cursor: cursor.toString(), hasMore }
     })
+  }
+
+  /**
+   * Where a partner can fetch one file of a shared message from. Only a file
+   * owned by a live message in the shared tree is served; any other id is the
+   * same 404 as an unknown connection.
+   */
+  async getAttachment(caller: BridgeCaller & { attachmentId: string }): Promise<BridgeAttachmentResponse> {
+    await this.assertEnabled(caller.workspaceId)
+    const { attachment, upload } = await withClient(this.pool, async (client) => {
+      const tree = await this.loadSharedTree(client, caller)
+      const attachment = await AttachmentRepository.findById(client, caller.workspaceId, caller.attachmentId)
+      const message = attachment?.messageId
+        ? (await MessageRepository.findByIds(client, caller.workspaceId, [attachment.messageId])).get(
+            attachment.messageId
+          )
+        : undefined
+      if (!attachment || !message || message.deletedAt !== null || !tree.some((s) => s.id === message.streamId)) {
+        throw connectionNotFound()
+      }
+      const upload = await AttachmentUploadRepository.findByAttachmentId(client, caller.workspaceId, attachment.id)
+      return { attachment, upload }
+    })
+
+    switch (attachment.safetyStatus) {
+      case AttachmentSafetyStatuses.CLEAN:
+        return { status: "ready", url: await this.storage.getSignedDownloadUrl(attachment.storagePath) }
+      case AttachmentSafetyStatuses.PENDING_UPLOAD:
+      case AttachmentSafetyStatuses.PENDING_SCAN:
+        return upload?.status === AttachmentUploadStatuses.FAILED ||
+          upload?.status === AttachmentUploadStatuses.ABANDONED
+          ? { status: "blocked" }
+          : { status: "pending" }
+      case AttachmentSafetyStatuses.QUARANTINED:
+      case AttachmentSafetyStatuses.E2E_UNSCANNED:
+        return { status: "blocked" }
+    }
   }
 
   /**

@@ -10,6 +10,7 @@ import { botChannelAccessId, streamId, userId, workspaceId } from "../../src/lib
 import type { Querier } from "../../src/db"
 import { UserRepository, type InsertUserParams } from "../../src/features/workspaces"
 import { getTestDatabaseTarget, quoteDatabaseIdentifier } from "../test-database"
+import { createS3Storage, type StorageProvider } from "../../src/lib/storage/s3-client"
 import { BotRuntimeService } from "../../src/features/bot-runtimes"
 import { StreamService } from "../../src/features/streams"
 import { LabelAssignmentService, LabelService } from "../../src/features/labels"
@@ -28,6 +29,17 @@ export function botRuntimeServiceFor(pool: Pool): BotRuntimeService {
     botChannelService: new BotChannelService({ pool }),
   })
   return new BotRuntimeService({ pool, streamService: new StreamService(pool), labelAssignmentService })
+}
+
+/** Storage on the test bucket the preloaded test server created; call it from a hook, after the preload has set the S3 env. */
+export function createTestStorage(): StorageProvider {
+  return createS3Storage({
+    bucket: process.env.S3_BUCKET ?? "threa-test-uploads",
+    region: process.env.S3_REGION ?? "us-east-1",
+    accessKeyId: process.env.S3_ACCESS_KEY_ID ?? "minioadmin",
+    secretAccessKey: process.env.S3_SECRET_ACCESS_KEY ?? "minioadmin",
+    endpoint: process.env.S3_ENDPOINT,
+  })
 }
 
 /**

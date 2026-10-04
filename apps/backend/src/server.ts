@@ -226,6 +226,8 @@ import {
   StreamConnectionService,
   createStreamConnectionSweepWorker,
   createStreamConnectionPullWorker,
+  createStreamConnectionCopyAttachmentOnDLQ,
+  createStreamConnectionCopyAttachmentWorker,
   StreamConnectionPullService,
   STREAM_CONNECTION_SWEEP_INTERVAL_SECONDS,
 } from "./features/stream-connections"
@@ -524,7 +526,7 @@ export async function startServer(): Promise<ServerInstance> {
       : null
   const invitationService = new InvitationService(pool, workspaceService)
   const streamConnectionService = new StreamConnectionService({ pool, controlPlaneClient, featureFlagService })
-  const streamConnectionExportService = new StreamConnectionExportService({ pool, featureFlagService })
+  const streamConnectionExportService = new StreamConnectionExportService({ pool, featureFlagService, storage })
   const streamConnectionImportService = new StreamConnectionImportService({ pool, featureFlagService })
   const bridgeClient = config.bridge ? new BridgeClient(config.bridge) : null
 
@@ -1505,6 +1507,16 @@ export async function startServer(): Promise<ServerInstance> {
       JobQueues.STREAM_CONNECTION_PULL,
       createStreamConnectionPullWorker({ streamConnectionPullService }),
       { tier: QueueTiers.LIGHT, fairness: QueueFairness.WORKSPACE }
+    )
+    jobQueue.registerHandler(
+      JobQueues.STREAM_CONNECTION_COPY_ATTACHMENT,
+      createStreamConnectionCopyAttachmentWorker({ pool, bridgeClient, attachmentService, storage }),
+      {
+        tier: QueueTiers.LIGHT,
+        fairness: QueueFairness.WORKSPACE,
+        maxRetries: 20,
+        hooks: { onDLQ: createStreamConnectionCopyAttachmentOnDLQ({ attachmentService }) },
+      }
     )
   }
 
