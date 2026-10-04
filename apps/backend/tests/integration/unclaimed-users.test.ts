@@ -2,7 +2,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import type { NextFunction, Request, Response } from "express"
 import { Pool } from "pg"
 import { setupTestDatabase, addTestMember } from "./setup"
-import { WorkspaceRepository, UserRepository } from "../../src/features/workspaces"
+import { PeoplePurposes, WorkspaceRepository, UserRepository } from "../../src/features/workspaces"
 import { createPublicApiAuthMiddleware } from "../../src/middleware/public-api-auth"
 import type { HttpError } from "../../src/lib/errors"
 import { userId, workspaceId } from "../../src/lib/id"
@@ -49,7 +49,10 @@ describe("unclaimed users", () => {
     const alice = await insertUnclaimed(pool, wsId, "Alice")
     const bob = await insertUnclaimed(pool, wsId, "Bob")
 
-    const users = await UserRepository.listByWorkspace(pool, wsId)
+    const users = await UserRepository.listByWorkspace(pool, wsId, {
+      viewer: { kind: "user", userId: owner.id },
+      purpose: PeoplePurposes.VISIBLE,
+    })
 
     expect(users.map((u) => ({ id: u.id, workosUserId: u.workosUserId, email: u.email, role: u.role }))).toEqual(
       expect.arrayContaining([

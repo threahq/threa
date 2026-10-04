@@ -2,6 +2,7 @@ import { Pool } from "pg"
 import { withTransaction, withClient, type Querier } from "../../db"
 import { WorkspaceRepository, Workspace } from "./repository"
 import { UserRepository, type User } from "./user-repository"
+import { PeoplePurposes, type PeopleViewer } from "./people"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamRepository, StreamMemberRepository, ReadStateRepository } from "../streams"
 import { UserDeviceContextRepository } from "../device-context"
@@ -334,8 +335,8 @@ export class WorkspaceService {
     })
   }
 
-  async getUsers(workspaceId: string): Promise<User[]> {
-    return UserRepository.listByWorkspace(this.pool, workspaceId)
+  async getUsers(workspaceId: string, viewer: PeopleViewer): Promise<User[]> {
+    return UserRepository.listByWorkspace(this.pool, workspaceId, { viewer, purpose: PeoplePurposes.VISIBLE })
   }
 
   async isMember(workspaceId: string, workosUserId: string): Promise<boolean> {

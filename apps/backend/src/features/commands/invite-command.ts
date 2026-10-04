@@ -1,7 +1,7 @@
 import type { Pool } from "pg"
 import type { Command, CommandContext, CommandResult } from "./registry"
 import { StreamRepository, type Stream, type StreamService } from "../streams"
-import { UserRepository } from "../workspaces"
+import { PeoplePurposes, UserRepository, type PeopleScope } from "../workspaces"
 import { BotRepository } from "../public-api"
 import { parseMarkdown } from "@threahq/prosemirror"
 import {
@@ -68,10 +68,11 @@ export class InviteCommand implements Command {
       // persona/broadcast pointers are not invitable; they surface as unknown below
     }
 
+    const scope: PeopleScope = { viewer: { kind: "user", userId: ctx.userId }, purpose: PeoplePurposes.TARGETABLE }
     const [usersById, botsByIdRaw, usersBySlug, botsBySlug, actor] = await Promise.all([
-      userIds.length > 0 ? UserRepository.findByIds(this.deps.pool, ctx.workspaceId, userIds) : [],
+      userIds.length > 0 ? UserRepository.findByIds(this.deps.pool, ctx.workspaceId, userIds, scope) : [],
       botIds.length > 0 ? BotRepository.findByIds(this.deps.pool, ctx.workspaceId, botIds) : [],
-      slugs.length > 0 ? UserRepository.findBySlugs(this.deps.pool, ctx.workspaceId, slugs) : [],
+      slugs.length > 0 ? UserRepository.findBySlugs(this.deps.pool, ctx.workspaceId, slugs, scope) : [],
       slugs.length > 0 ? BotRepository.findBySlugs(this.deps.pool, ctx.workspaceId, slugs) : [],
       UserRepository.findById(this.deps.pool, ctx.workspaceId, ctx.userId),
     ])

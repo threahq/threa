@@ -40,7 +40,7 @@ import {
   type LockedStreamFacts,
   type StreamWritePrincipal,
 } from "./write-authority"
-import { UserRepository } from "../workspaces"
+import { PeoplePurposes, UserRepository } from "../workspaces"
 import { BotChannelAccessRepository } from "../api-keys"
 import {
   StreamTypes,
@@ -525,7 +525,10 @@ export class StreamService {
     const uniquenessKey = buildDmUniquenessKey(userAId, userBId)
 
     return withTransaction(this.pool, async (client) => {
-      const users = await UserRepository.findByIds(client, params.workspaceId, [userAId, userBId])
+      const users = await UserRepository.findByIds(client, params.workspaceId, [userAId, userBId], {
+        viewer: { kind: "user", userId: params.userOneId },
+        purpose: PeoplePurposes.TARGETABLE,
+      })
       const workspaceUserIds = new Set(
         users.filter((user) => user.workspaceId === params.workspaceId).map((user) => user.id)
       )
@@ -936,7 +939,10 @@ export class StreamService {
       const additionalMemberIds = (params.memberIds ?? []).filter((mid) => mid !== params.createdBy)
       if (additionalMemberIds.length > 0) {
         // Validate members belong to this workspace (INV-20: batch lookup)
-        const members = await UserRepository.findByIds(client, params.workspaceId, additionalMemberIds)
+        const members = await UserRepository.findByIds(client, params.workspaceId, additionalMemberIds, {
+          viewer: { kind: "user", userId: params.createdBy },
+          purpose: PeoplePurposes.TARGETABLE,
+        })
         const validMemberIds = members.filter((m) => m.workspaceId === params.workspaceId).map((m) => m.id)
 
         // INV-11: warn on invalid member IDs rather than silently dropping
@@ -2282,7 +2288,10 @@ export class StreamService {
         })
       }
 
-      const member = await UserRepository.findById(client, workspaceId, memberId)
+      const member = await UserRepository.findById(client, workspaceId, memberId, {
+        viewer: { kind: "user", userId: actorId },
+        purpose: PeoplePurposes.TARGETABLE,
+      })
       if (!member) {
         throw new HttpError("Member not found in this workspace", { status: 404, code: "MEMBER_NOT_FOUND" })
       }

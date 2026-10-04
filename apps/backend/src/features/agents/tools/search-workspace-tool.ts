@@ -3,7 +3,7 @@ import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, STREAM_TYPES, 
 import { logger } from "../../../lib/logger"
 import { searchDmStreamsByParticipant, StreamRepository } from "../../streams"
 import { SearchRepository } from "../../search"
-import { UserRepository } from "../../workspaces"
+import { PeoplePurposes, UserRepository } from "../../workspaces"
 import { MessageRepository } from "../../messaging"
 import { PersonaRepository } from "../persona-repository"
 import { enrichMessageSearchResults } from "../researcher"
@@ -408,7 +408,7 @@ export function createSearchStreamsTool(deps: WorkspaceToolDeps) {
 }
 
 export function createSearchUsersTool(deps: WorkspaceToolDeps) {
-  const { db, workspaceId } = deps
+  const { db, workspaceId, invokingUserId } = deps
 
   return defineAgentTool({
     name: "search_users",
@@ -421,7 +421,10 @@ export function createSearchUsersTool(deps: WorkspaceToolDeps) {
 
     execute: async (input): Promise<AgentToolResult> => {
       try {
-        const members = await UserRepository.searchByNameOrSlug(db, workspaceId, input.query, 10)
+        const members = await UserRepository.searchByNameOrSlug(db, workspaceId, input.query, 10, {
+          viewer: { kind: "user", userId: invokingUserId },
+          purpose: PeoplePurposes.TARGETABLE,
+        })
         const results: UserSearchResult[] = members.map((m) => ({ id: m.id, name: m.name, email: m.email }))
 
         if (results.length === 0) {

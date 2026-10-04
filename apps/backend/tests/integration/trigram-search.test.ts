@@ -11,10 +11,12 @@
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
 import { withTestTransaction, withTransaction } from "./setup"
-import { UserRepository, WorkspaceRepository } from "../../src/features/workspaces"
+import { PeoplePurposes, UserRepository, WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository } from "../../src/features/streams"
 import { setupTestDatabase } from "./setup"
 import { userId, workspaceId, streamId } from "../../src/lib/id"
+
+const scope = { viewer: { kind: "workspace" }, purpose: PeoplePurposes.TARGETABLE } as const
 
 describe("Trigram Search", () => {
   let pool: Pool
@@ -113,7 +115,7 @@ describe("Trigram Search", () => {
   describe("UserRepository.searchByNameOrSlug", () => {
     test("finds user by exact name", async () => {
       await withTestTransaction(pool, async (client) => {
-        const results = await UserRepository.searchByNameOrSlug(client, testWorkspaceId, "John Smith", 10)
+        const results = await UserRepository.searchByNameOrSlug(client, testWorkspaceId, "John Smith", 10, scope)
 
         expect(results.length).toBeGreaterThan(0)
         expect(results[0].name).toBe("John Smith")
@@ -122,7 +124,7 @@ describe("Trigram Search", () => {
 
     test("finds user by partial name (ILIKE fallback)", async () => {
       await withTestTransaction(pool, async (client) => {
-        const results = await UserRepository.searchByNameOrSlug(client, testWorkspaceId, "john", 10)
+        const results = await UserRepository.searchByNameOrSlug(client, testWorkspaceId, "john", 10, scope)
 
         expect(results.length).toBeGreaterThan(0)
         expect(results.some((u) => u.name === "John Smith")).toBe(true)
@@ -133,7 +135,7 @@ describe("Trigram Search", () => {
       await withTestTransaction(pool, async (client) => {
         // "Jonh" (transposition typo) should match "John" via trigram similarity
         // Note: very short strings like "jhon" vs "john" may not meet the 0.3 threshold
-        const results = await UserRepository.searchByNameOrSlug(client, testWorkspaceId, "John Smth", 10)
+        const results = await UserRepository.searchByNameOrSlug(client, testWorkspaceId, "John Smth", 10, scope)
 
         expect(results.length).toBeGreaterThan(0)
         expect(results.some((u) => u.name === "John Smith")).toBe(true)
@@ -143,7 +145,7 @@ describe("Trigram Search", () => {
     test("finds user with typo in longer name", async () => {
       await withTestTransaction(pool, async (client) => {
         // "kristofer" should match "Kristoffer" via trigram similarity
-        const results = await UserRepository.searchByNameOrSlug(client, testWorkspaceId, "kristofer", 10)
+        const results = await UserRepository.searchByNameOrSlug(client, testWorkspaceId, "kristofer", 10, scope)
 
         expect(results.length).toBeGreaterThan(0)
         expect(results.some((u) => u.name === "Kristoffer Remback")).toBe(true)
@@ -153,7 +155,7 @@ describe("Trigram Search", () => {
     test("finds user by email (partial)", async () => {
       await withTestTransaction(pool, async (client) => {
         // Email has unique suffix but "kristoffer" should still match
-        const results = await UserRepository.searchByNameOrSlug(client, testWorkspaceId, "kristoffer", 10)
+        const results = await UserRepository.searchByNameOrSlug(client, testWorkspaceId, "kristoffer", 10, scope)
 
         expect(results.length).toBeGreaterThan(0)
         expect(results.some((u) => u.name === "Kristoffer Remback")).toBe(true)
@@ -163,7 +165,7 @@ describe("Trigram Search", () => {
     test("finds user by slug (partial)", async () => {
       await withTestTransaction(pool, async (client) => {
         // Slug has unique suffix but "jane-doe" should still match
-        const results = await UserRepository.searchByNameOrSlug(client, testWorkspaceId, "jane-doe", 10)
+        const results = await UserRepository.searchByNameOrSlug(client, testWorkspaceId, "jane-doe", 10, scope)
 
         expect(results.length).toBeGreaterThan(0)
         expect(results.some((u) => u.name === "Jane Doe")).toBe(true)
@@ -172,7 +174,7 @@ describe("Trigram Search", () => {
 
     test("returns empty array for no matches", async () => {
       await withTestTransaction(pool, async (client) => {
-        const results = await UserRepository.searchByNameOrSlug(client, testWorkspaceId, "zzzznotauser", 10)
+        const results = await UserRepository.searchByNameOrSlug(client, testWorkspaceId, "zzzznotauser", 10, scope)
 
         expect(results).toEqual([])
       })
