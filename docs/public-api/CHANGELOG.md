@@ -2,6 +2,12 @@
 
 Generated from the version-change modules. Do not edit by hand.
 
+## 2026-10-04
+
+Streams gain the `guest_public` visibility: readable by guests, who cannot browse `public` channels. A `private` shared-message slot's `sourceVisibility` can now be `guest_public`. Pins before this version see `public` there instead.
+
+Affected operations: completeBotInvocation, findMessagesByMetadata, listConversationMessages, listMessages, searchMessages, sendMessage, updateMessage
+
 ## 2026-10-01
 
 A workspace can list people who have not claimed an account yet. Such a user may have no `email`, so `email` is optional on users. Pins before this version never see a user without an email.

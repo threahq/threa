@@ -12,6 +12,7 @@ import { ActivityService } from "./service"
 import { ActivityRepository } from "./repository"
 import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
+import * as workspacesBarrel from "../workspaces"
 import {
   StreamRepository,
   StreamMemberRepository,
@@ -83,6 +84,8 @@ function setupService() {
   // up", so recipients insert unread as before; born-read tests override these.
   spyOn(StreamEventRepository, "findByMessageId").mockResolvedValue(null)
   spyOn(streamsBarrel, "usersReadThroughEffective").mockResolvedValue(new Set())
+  // Every candidate holds browse, so public streams read without membership.
+  spyOn(workspacesBarrel, "findUserIdsWithoutBrowse").mockResolvedValue(new Set())
 
   return new ActivityService({ pool: {} as any })
 }

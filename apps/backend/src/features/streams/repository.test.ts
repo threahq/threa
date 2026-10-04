@@ -85,9 +85,9 @@ describe("purpose marker (sidebar exclusion)", () => {
     await StreamRepository.listWithPreviews(db1, "ws_1")
     expect(queryText(db1)).toContain("s.purpose IS NULL")
 
-    // Membership-filtered branch (the workspace bootstrap's real caller shape).
+    // Viewer-filtered branch (the workspace bootstrap's real caller shape).
     const db2 = makeDb([])
-    await StreamRepository.listWithPreviews(db2, "ws_1", { userMembershipStreamIds: ["stream_a"] })
+    await StreamRepository.listWithPreviews(db2, "ws_1", { viewerUserId: "usr_1" })
     expect(queryText(db2)).toContain("s.purpose IS NULL")
 
     // Type-filtered branch.
@@ -112,15 +112,15 @@ describe("purpose marker (sidebar exclusion)", () => {
     await StreamRepository.list(db3, "ws_1", { types: ["scratchpad"] })
     expect(queryText(db3)).toContain("purpose IS NULL")
 
-    // Membership branch (GET /streams — the Cmd-K archived-search caller).
+    // Viewer branch (GET /streams — the Cmd-K archived-search caller).
     const db4 = makeDb([])
-    await StreamRepository.list(db4, "ws_1", { userMembershipStreamIds: ["stream_a"] })
+    await StreamRepository.list(db4, "ws_1", { viewerUserId: "usr_1" })
     expect(queryText(db4)).toContain("purpose IS NULL")
 
-    // Membership + type branch.
+    // Viewer + type branch.
     const db5 = makeDb([])
     await StreamRepository.list(db5, "ws_1", {
-      userMembershipStreamIds: ["stream_a"],
+      viewerUserId: "usr_1",
       types: ["scratchpad"],
     })
     expect(queryText(db5)).toContain("purpose IS NULL")

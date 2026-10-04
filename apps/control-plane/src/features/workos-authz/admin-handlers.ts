@@ -2,7 +2,7 @@ import type { Request, Response } from "express"
 import { z } from "zod/v4"
 import type { Pool } from "pg"
 import { HttpError } from "@threahq/backend-common"
-import { WORKSPACE_USER_ROLES } from "@threahq/types"
+import { WORKSPACE_ASSIGNABLE_ROLES } from "@threahq/types"
 import type { AdminActor, WorkosAuthzAdminService } from "./admin-service"
 import { WorkspaceRegistryRepository } from "../workspaces"
 
@@ -11,7 +11,7 @@ interface Dependencies {
   adminService: WorkosAuthzAdminService
 }
 
-const roleSlugSchema = z.enum(WORKSPACE_USER_ROLES)
+const roleSlugSchema = z.enum(WORKSPACE_ASSIGNABLE_ROLES)
 
 const internalActor = z.object({ workosUserId: z.string().min(1) })
 

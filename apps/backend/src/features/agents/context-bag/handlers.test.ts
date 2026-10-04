@@ -3,7 +3,7 @@ import { ContextIntents, ContextRefKinds } from "@threahq/types"
 import { createContextBagHandlers } from "./handlers"
 import * as precomputeService from "./precompute-service"
 import * as dbModule from "../../../db"
-import { StreamRepository, StreamMemberRepository } from "../../streams"
+import { StreamRepository } from "../../streams"
 import { MessageRepository } from "../../messaging"
 import { ContextBagRepository } from "./repository"
 import { ThreadResolver } from "./resolvers/thread-resolver"
@@ -133,6 +133,15 @@ describe("createContextBagHandlers.getStreamBag", () => {
     spyOn(dbModule, "withClient").mockImplementation(async (pool: any, fn: any) => fn(pool))
   }
 
+  function poolReading(...readableStreamIds: string[]) {
+    return {
+      query: async ({ text }: { text: string }) => {
+        if (!text.includes("s.id = ANY(")) throw new Error(`Unstubbed query: ${text}`)
+        return { rows: readableStreamIds.map((id) => ({ id })) }
+      },
+    } as any
+  }
+
   function stubAccessOk() {
     spyOn(StreamRepository, "findById").mockImplementation(
       async (_db, _workspaceId: string, id: string) =>
@@ -144,7 +153,6 @@ describe("createContextBagHandlers.getStreamBag", () => {
           displayName: id === "stream_src" ? "Intro" : null,
         }) as any
     )
-    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(true)
   }
 
   it("returns the bag with enriched per-ref source metadata", async () => {
@@ -173,7 +181,7 @@ describe("createContextBagHandlers.getStreamBag", () => {
     spyOn(ThreadResolver, "assertAccess").mockResolvedValue(undefined)
     spyOn(MessageRepository, "countByStreams").mockResolvedValue(new Map([["stream_src", 12]]))
 
-    const handlers = createContextBagHandlers({ pool: {} as any, ai: {} as any })
+    const handlers = createContextBagHandlers({ pool: poolReading("stream_scratch"), ai: {} as any })
     const req = mockReq(undefined, { streamId: "stream_scratch" })
     const res = mockRes() as any
     await handlers.getStreamBag(req, res)
@@ -231,7 +239,7 @@ describe("createContextBagHandlers.getStreamBag", () => {
     spyOn(ThreadResolver, "assertAccess").mockResolvedValue(undefined)
     spyOn(MessageRepository, "countByStreams").mockResolvedValue(new Map([["stream_src", 487]]))
 
-    const handlers = createContextBagHandlers({ pool: {} as any, ai: {} as any })
+    const handlers = createContextBagHandlers({ pool: poolReading("stream_scratch"), ai: {} as any })
     const req = mockReq(undefined, { streamId: "stream_scratch" })
     const res = mockRes() as any
     await handlers.getStreamBag(req, res)
@@ -245,7 +253,7 @@ describe("createContextBagHandlers.getStreamBag", () => {
     stubAccessOk()
     spyOn(ContextBagRepository, "findByStream").mockResolvedValue(null)
 
-    const handlers = createContextBagHandlers({ pool: {} as any, ai: {} as any })
+    const handlers = createContextBagHandlers({ pool: poolReading("stream_scratch"), ai: {} as any })
     const req = mockReq(undefined, { streamId: "stream_scratch" })
     const res = mockRes() as any
     await handlers.getStreamBag(req, res)
@@ -274,9 +282,8 @@ describe("createContextBagHandlers.getStreamBag", () => {
       workspaceId: "ws_1",
       type: "scratchpad",
     } as any)
-    spyOn(StreamMemberRepository, "isMember").mockResolvedValue(false)
 
-    const handlers = createContextBagHandlers({ pool: {} as any, ai: {} as any })
+    const handlers = createContextBagHandlers({ pool: poolReading(), ai: {} as any })
     const req = mockReq(undefined, { streamId: "stream_scratch" })
     const res = mockRes() as any
     await expect(handlers.getStreamBag(req, res)).rejects.toThrow("No access to stream")

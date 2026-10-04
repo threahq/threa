@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { HttpError, StubWorkosOrgService } from "@threahq/backend-common"
-import { WORKSPACE_ROLE_SLUGS, type WorkspaceRoleSlug } from "@threahq/types"
+import { WORKSPACE_ROLE_SLUGS, type WorkspaceAssignableRole } from "@threahq/types"
 import { WorkosAuthzAdminService, WorkosAuthzRepository, type AdminActor } from "../../src/features/workos-authz"
 import { setupTestDatabase } from "./setup"
 
@@ -89,7 +89,19 @@ describe("WorkosAuthzAdminService", () => {
           actor: ownerActor,
           organizationId: orgId,
           targetUserId: "user_test_new",
-          roleSlug: "viewer" as unknown as WorkspaceRoleSlug,
+          roleSlug: "viewer" as unknown as WorkspaceAssignableRole,
+        }),
+        { status: 400, code: "INVALID_ROLE" }
+      )
+    })
+
+    test("guest role is rejected with INVALID_ROLE", async () => {
+      await expectHttpError(
+        service.assignRole({
+          actor: ownerActor,
+          organizationId: orgId,
+          targetUserId: "user_test_new",
+          roleSlug: WORKSPACE_ROLE_SLUGS.GUEST as unknown as WorkspaceAssignableRole,
         }),
         { status: 400, code: "INVALID_ROLE" }
       )
@@ -97,6 +109,18 @@ describe("WorkosAuthzAdminService", () => {
   })
 
   describe("changeRole", () => {
+    test("guest role is rejected with INVALID_ROLE", async () => {
+      await expectHttpError(
+        service.changeRole({
+          actor: ownerActor,
+          organizationId: orgId,
+          targetUserId: memberUserId,
+          roleSlug: WORKSPACE_ROLE_SLUGS.GUEST as unknown as WorkspaceAssignableRole,
+        }),
+        { status: 400, code: "INVALID_ROLE" }
+      )
+    })
+
     test("owner can promote a member to admin", async () => {
       await service.changeRole({
         actor: ownerActor,

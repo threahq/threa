@@ -17,6 +17,9 @@ import {
 
 const db = {} as Querier
 
+/** Answers the browse lookup for a public root: no user lacks browse. */
+const viewerDb = { query: async () => ({ rows: [] }) } as unknown as Querier
+
 function stream(overrides: Partial<Stream> = {}): Stream {
   return {
     id: "stream_root",
@@ -78,10 +81,10 @@ describe("viewer projection", () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(root)
     const membership = spyOn(StreamMemberRepository, "isMember").mockResolvedValue(false)
 
-    const result = await projectStreamForUser(db, { workspaceId: "ws_1", stream: thread, userId: "usr_1" })
+    const result = await projectStreamForUser(viewerDb, { workspaceId: "ws_1", stream: thread, userId: "usr_1" })
 
     expect(result).toMatchObject({ id: thread.id, readOnly: true, readOnlyReason: "not_a_member" })
-    expect(membership).toHaveBeenCalledWith(db, "ws_1", root.id, "usr_1")
+    expect(membership).toHaveBeenCalledWith(viewerDb, "ws_1", root.id, "usr_1")
   })
 
   test("single private descendant without root membership is inaccessible", async () => {
@@ -148,7 +151,7 @@ describe("viewer projection", () => {
     spyOn(StreamRepository, "findByIds").mockResolvedValue([publicRoot, privateRoot])
     const memberships = spyOn(StreamMemberRepository, "findByStreamsAndMember").mockResolvedValue([])
 
-    const result = await projectStreamsForUser(db, {
+    const result = await projectStreamsForUser(viewerDb, {
       workspaceId: "ws_1",
       streams: [privateRoot, privateThread, publicRoot, publicThread],
       userId: "usr_1",
@@ -158,7 +161,7 @@ describe("viewer projection", () => {
       { id: publicRoot.id, readOnlyReason: "not_a_member" },
       { id: publicThread.id, readOnlyReason: "not_a_member" },
     ])
-    expect(memberships).toHaveBeenCalledWith(db, "ws_1", [privateRoot.id, publicRoot.id], "usr_1")
+    expect(memberships).toHaveBeenCalledWith(viewerDb, "ws_1", [privateRoot.id, publicRoot.id], "usr_1")
   })
 
   test("batch bot descendant is writable when only its effective root is granted", async () => {
@@ -247,7 +250,7 @@ describe("transactional write authority", () => {
     spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockResolvedValue(chain)
     spyOn(StreamMemberRepository, "lockMemberships").mockResolvedValue(new Set())
     await expect(
-      assertStreamWritable(db, {
+      assertStreamWritable(viewerDb, {
         workspaceId: "ws_1",
         streamId: target.id,
         principal: { kind: "user", userId: "usr_1" },

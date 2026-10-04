@@ -1,4 +1,4 @@
-import { StreamTypes, type StreamType } from "@threahq/types"
+import { StreamTypes, type StreamType, type Visibility } from "@threahq/types"
 import { collectSealedStreamIds, hiddenStreamIds, isUtilityStream } from "@/lib/streams"
 import { getActivityTime } from "@/components/layout/sidebar/utils"
 
@@ -29,7 +29,7 @@ export type DirectoryMembership = (typeof DIRECTORY_MEMBERSHIPS)[number]
 export interface DirectoryStream {
   id: string
   type: StreamType
-  visibility: "public" | "private"
+  visibility: Visibility
   parentStreamId?: string | null
   rootStreamId: string | null
   purpose?: string | null

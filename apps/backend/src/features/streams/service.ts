@@ -29,7 +29,7 @@ import {
   isUniqueViolation,
 } from "../../lib/errors"
 import { formatParticipantNames } from "./display-name"
-import { checkStreamAccess, listAccessibleStreamIds } from "./access"
+import { checkStreamAccess, isOpenToBots, listAccessibleStreamIds, usersReadingWithoutMembership } from "./access"
 import { resolveInboxClearMode } from "./inbox-clear-mode"
 import { releaseInboxHold } from "./inbox-release"
 import {
@@ -52,7 +52,7 @@ import {
   E2eKeyWrapRecipientKinds,
   type E2eActorKind,
   type StreamType,
-  type Visibility,
+  type CreatableVisibility,
   type CompanionMode,
   type MemoryMode,
   type NotificationLevel,
@@ -323,7 +323,7 @@ async function lockPrincipalAccess(
 ): Promise<void> {
   if (principal.kind === "user") return lockActorAccess(client, workspaceId, root, principal.userId)
   const grants = await BotChannelAccessRepository.lockGrants(client, workspaceId, principal.botId, [root.id])
-  if (root.visibility !== Visibilities.PUBLIC && !grants.has(root.id)) throw new StreamNotFoundError()
+  if (!grants.has(root.id) && !isOpenToBots(root.visibility)) throw new StreamNotFoundError()
 }
 
 async function lockActorAccess(
@@ -339,9 +339,9 @@ async function lockActorAccess(
     workspaceId,
     memberIds.map((memberId) => ({ streamId: root.id, memberId }))
   )
-  if (root.visibility !== Visibilities.PUBLIC && !memberships.has(`${root.id}:${actorId}`)) {
-    throw new StreamNotFoundError()
-  }
+  if (memberships.has(`${root.id}:${actorId}`)) return
+  const readers = await usersReadingWithoutMembership(client, workspaceId, root.visibility, [actorId])
+  if (!readers.has(actorId)) throw new StreamNotFoundError()
 }
 
 export class StreamService {
@@ -393,15 +393,10 @@ export class StreamService {
     userId: string,
     filters?: { types?: StreamType[]; archiveStatus?: ("active" | "archived")[] }
   ): Promise<Stream[]> {
-    return withClient(this.pool, async (client) => {
-      const memberships = await StreamMemberRepository.list(client, workspaceId, { memberId: userId })
-      const memberStreamIds = memberships.map((m) => m.streamId)
-
-      return StreamRepository.list(client, workspaceId, {
-        types: filters?.types,
-        archiveStatus: filters?.archiveStatus,
-        userMembershipStreamIds: memberStreamIds,
-      })
+    return StreamRepository.list(this.pool, workspaceId, {
+      types: filters?.types,
+      archiveStatus: filters?.archiveStatus,
+      viewerUserId: userId,
     })
   }
 
@@ -414,15 +409,10 @@ export class StreamService {
     userId: string,
     filters?: { types?: StreamType[]; archiveStatus?: ("active" | "archived")[] }
   ): Promise<StreamWithPreview[]> {
-    return withClient(this.pool, async (client) => {
-      const memberships = await StreamMemberRepository.list(client, workspaceId, { memberId: userId })
-      const memberStreamIds = memberships.map((m) => m.streamId)
-
-      return StreamRepository.listWithPreviews(client, workspaceId, {
-        types: filters?.types,
-        archiveStatus: filters?.archiveStatus,
-        userMembershipStreamIds: memberStreamIds,
-      })
+    return StreamRepository.listWithPreviews(this.pool, workspaceId, {
+      types: filters?.types,
+      archiveStatus: filters?.archiveStatus,
+      viewerUserId: userId,
     })
   }
 
@@ -509,7 +499,12 @@ export class StreamService {
     const root = stream.rootStreamId ? await this.getStreamById(params.workspaceId, stream.rootStreamId) : stream
     if (!root) throw new StreamNotFoundError()
     const participates = await this.isMember(params.workspaceId, root.id, params.userId)
-    if (root.visibility !== Visibilities.PUBLIC && !participates) throw new StreamNotFoundError()
+    if (!participates) {
+      const readers = await usersReadingWithoutMembership(this.pool, params.workspaceId, root.visibility, [
+        params.userId,
+      ])
+      if (!readers.has(params.userId)) throw new StreamNotFoundError()
+    }
     const ancestorArchived =
       (await StreamRepository.findNearestArchivedAncestor(this.pool, params.workspaceId, stream.id)) !== null
     assertViewerStreamWritable(deriveStreamViewerState({ target: stream, ancestorArchived, participates }))
@@ -1437,7 +1432,7 @@ export class StreamService {
        */
       actorId?: string
       actorType?: AuthorType
-      visibility?: Visibility
+      visibility?: CreatableVisibility
       memoryMode?: MemoryMode
       /**
        * Sealed (encrypted) display name for an E2E stream — stored on
@@ -2209,7 +2204,10 @@ export class StreamService {
         throw new StreamNotFoundError()
       }
 
-      if (stream.type !== StreamTypes.CHANNEL || stream.visibility !== Visibilities.PUBLIC) {
+      const joinable =
+        stream.type === StreamTypes.CHANNEL &&
+        (await usersReadingWithoutMembership(client, workspaceId, stream.visibility, [memberId])).has(memberId)
+      if (!joinable) {
         throw new HttpError("Can only join public channels", { status: 403, code: "NOT_PUBLIC_CHANNEL" })
       }
 

@@ -1,5 +1,5 @@
 import type { Pool } from "pg"
-import { Visibilities, SavedStatuses, type SavedStatus, type SavedMessageView } from "@threahq/types"
+import { SavedStatuses, type SavedStatus, type SavedMessageView } from "@threahq/types"
 import { withTransaction } from "../../db"
 import { HttpError } from "../../lib/errors"
 // Side-effect import: preloads workspaces → public-api → schemas → messaging
@@ -9,7 +9,7 @@ import { HttpError } from "../../lib/errors"
 // via its own workspaces import.
 import "../workspaces"
 import { OutboxRepository } from "../../lib/outbox"
-import { StreamRepository, StreamMemberRepository } from "../streams"
+import { StreamRepository, listAccessibleStreamIds, type Stream } from "../streams"
 import { MessageRepository } from "../messaging"
 import { ConversationRepository, settleMessagesOnEngagement } from "../conversations"
 import { E2eStreamsRepository } from "../e2e-streams"
@@ -120,14 +120,8 @@ export class SavedMessagesService {
         throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
       }
 
+      await ensureStreamAccess(client, params.workspaceId, stream, params.userId)
       const accessStreamId = stream.rootStreamId ?? stream.id
-      await ensureStreamAccess(client, {
-        workspaceId: params.workspaceId,
-        accessStreamId,
-        userId: params.userId,
-        directStreamVisibility: stream.visibility,
-        isThread: stream.rootStreamId !== null,
-      })
 
       // Validate the conversation origin before persisting it: it must be a
       // conversation in this workspace whose root stream matches the message's
@@ -527,36 +521,15 @@ function clampRemindAt(remindAt: Date | null): Date | null {
 
 async function ensureStreamAccess(
   client: import("pg").PoolClient,
-  params: {
-    workspaceId: string
-    accessStreamId: string
-    userId: string
-    /** Visibility of the message's direct stream. Used only when `isThread` is false. */
-    directStreamVisibility: string
-    isThread: boolean
-  }
+  workspaceId: string,
+  stream: Stream,
+  userId: string
 ): Promise<void> {
-  // Threads inherit access from their root stream; the thread stream's own
-  // visibility is not authoritative. Non-thread messages use the direct
-  // stream's visibility.
-  let visibility = params.directStreamVisibility
-  if (params.isThread) {
-    const root = await StreamRepository.findById(client, params.workspaceId, params.accessStreamId)
-    if (!root) {
-      throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
-    }
-    visibility = root.visibility
-  }
+  const accessible = await listAccessibleStreamIds(client, workspaceId, userId, [stream.id])
+  if (accessible.has(stream.id)) return
 
-  if (visibility === Visibilities.PUBLIC) return
-
-  const isMember = await StreamMemberRepository.isMember(
-    client,
-    params.workspaceId,
-    params.accessStreamId,
-    params.userId
-  )
-  if (!isMember) {
-    throw new HttpError("Forbidden", { status: 403, code: "FORBIDDEN" })
+  if (stream.rootStreamId && !(await StreamRepository.findById(client, workspaceId, stream.rootStreamId))) {
+    throw new HttpError("Message not found", { status: 404, code: "MESSAGE_NOT_FOUND" })
   }
+  throw new HttpError("Forbidden", { status: 403, code: "FORBIDDEN" })
 }

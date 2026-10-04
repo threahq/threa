@@ -5,7 +5,7 @@ import { composeSql, sql } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { peopleScopeSql, type PeopleScope } from "./people"
 
-const KNOWN_ROLE_SLUGS: ReadonlySet<string> = new Set(WORKSPACE_USER_ROLES)
+export const KNOWN_ROLE_SLUGS: ReadonlySet<string> = new Set(WORKSPACE_USER_ROLES)
 
 function assertWorkspaceRoleSlug(value: string, userId: string): asserts value is WorkspaceRoleSlug {
   if (!KNOWN_ROLE_SLUGS.has(value)) {
@@ -162,7 +162,7 @@ const SELECT_FIELDS_WITH_ALIAS = `
 
 // composeSql splices `{ text, values }` fragments inline and would parametrize a bare `sql.raw` value.
 const SELECT_FIELDS_FRAGMENT = sql`${sql.raw(SELECT_FIELDS_WITH_ALIAS)}`
-const USERS_FROM_FRAGMENT = sql`${sql.raw(USERS_WITH_PERMISSIONS_FROM)}`
+export const USERS_FROM_FRAGMENT = sql`${sql.raw(USERS_WITH_PERMISSIONS_FROM)}`
 
 // No scope means a rendering or admin read of a known id; a read that picks for a viewer passes one.
 function optionalScopeSql(scope: PeopleScope | undefined): QueryConfig {

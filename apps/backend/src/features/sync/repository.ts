@@ -1,7 +1,6 @@
 import type { Pool } from "pg"
-import { Visibilities } from "@threahq/types"
 import { sql, composeSql, withTransaction, type Querier } from "../../db"
-import { rootReadableConditionSql } from "../streams"
+import { rootReadableConditionSql, rootReadableWithoutMembershipSql } from "../streams"
 
 /** One client-routed outbox event headed for the sync log. */
 export interface SyncLogEntryInput {
@@ -139,23 +138,25 @@ export const SyncLogRepository = {
    *      destination thread), which is access granted directly rather than
    *      inherited through the root.
    *   2. Inherited access — any stream whose EFFECTIVE ROOT
-   *      (`COALESCE(root_stream_id, id)`) is readable: public, or one the user
+   *      (`COALESCE(root_stream_id, id)`) is readable: open to this viewer, or one the user
    *      is a member of. This is `streamAccessPredicateSql`'s rule expressed as
    *      a set, so a channel member receives thread events (previews, replies by
-   *      others) for threads they never joined, and a non-member receives a
-   *      public channel's (and its threads') events.
+   *      others) for threads they never joined, and a viewer who can browse
+   *      receives a public channel's (and its threads') events.
    *
    * Each grant is bounded below by a sync id so joining a stream never replays
    * its pre-join history (over-delivery would leak no-history private streams):
    * a membership grant uses the join position (the sync id of the user's latest
-   * `stream:member_added` entry; threads inherit the ROOT's), while a public
-   * grant uses bound 0 — a public channel's history is readable regardless of
-   * when, or whether, the viewer joined. A membership predating the log has no
+   * `stream:member_added` entry; threads inherit the ROOT's), while a root
+   * readable without membership (`guest_public`, or `public` for a viewer with
+   * browse) uses bound 0 — its history is readable regardless of when, or
+   * whether, the viewer joined. A guest who joined a `public` channel has no
+   * such grant and reads from their join. A membership predating the log has no
    * `member_added` entry, so its bound is 0 and every log entry postdates the
    * join anyway; the `member_added` entry itself reaches the joiner through
    * their user group. When several grants cover one stream (e.g. a public
    * channel the user also joined), any grant whose bound passes admits the
-   * entry — so the public grant's bound 0 wins and pre-join public history shows.
+   * entry — so the open grant's bound 0 wins and pre-join history shows.
    */
   async listEntriesForUser(
     db: Querier,
@@ -182,14 +183,15 @@ export const SyncLogRepository = {
         WHERE sm.workspace_id = ${workspaceId} AND sm.member_id = ${userId}
         UNION ALL
         -- Inherited access: any stream whose EFFECTIVE ROOT is readable —
-        -- public, or one the user is a member of. The readable test is shared
-        -- verbatim with streamAccessPredicateSql (rootReadableConditionSql), so
-        -- the public-without-membership leg cannot drift out of one and not the
-        -- other. A public root carries bound 0 (its whole history is readable);
-        -- a private root the user joined inherits the root's join position, so
+        -- readable without membership, or one the user is a member of. The
+        -- readable test is shared verbatim with streamAccessPredicateSql
+        -- (rootReadableConditionSql), so the without-membership leg cannot
+        -- drift out of one and not the other. A root readable without
+        -- membership carries bound 0 (its whole history is readable); any
+        -- other root the user joined inherits the root's join position, so
         -- threads never replay pre-join history.
         SELECT s.id,
-               CASE WHEN root.visibility = ${Visibilities.PUBLIC} THEN 0
+               CASE WHEN ${rootReadableWithoutMembershipSql(workspaceId, userId, "root")} THEN 0
                     ELSE COALESCE(jb.join_sync_id, 0) END AS bound
         FROM streams s
         JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id

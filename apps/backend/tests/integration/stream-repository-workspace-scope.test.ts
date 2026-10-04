@@ -23,7 +23,6 @@ describe("StreamRepository workspace scope (INV-8)", () => {
   let replyA: string
   let channelB: string
   let threadB: string
-  let membershipIdsA: string[]
 
   async function seedWorkspace(label: string) {
     const id = workspaceId()
@@ -90,8 +89,6 @@ describe("StreamRepository workspace scope (INV-8)", () => {
       ...testMessageContent("Reply"),
     })
     replyA = reply.id
-
-    membershipIdsA = [channelA]
 
     const channelOfB = await streamService.createChannel({
       workspaceId: wsB,
@@ -227,16 +224,16 @@ describe("StreamRepository workspace scope (INV-8)", () => {
       }).toEqual({ a: [threadA], b: [threadB] })
     })
 
-    test("should list only its own workspace's streams when filtering by membership", async () => {
-      const filters = { userMembershipStreamIds: membershipIdsA }
+    test("should list only its own workspace's streams when filtering by viewer", async () => {
+      const filters = { viewerUserId: userA }
       expect({
         a: sortedIds(await StreamRepository.listWithPreviews(pool, wsA, filters)),
         b: sortedIds(await StreamRepository.listWithPreviews(pool, wsB, filters)),
       }).toEqual({ a: [channelA, threadA].sort(), b: [channelB] })
     })
 
-    test("should list only its own workspace's streams when filtering by types and membership", async () => {
-      const filters = { types: [StreamTypes.THREAD], userMembershipStreamIds: membershipIdsA }
+    test("should list only its own workspace's streams when filtering by types and viewer", async () => {
+      const filters = { types: [StreamTypes.THREAD], viewerUserId: userA }
       expect({
         a: sortedIds(await StreamRepository.listWithPreviews(pool, wsA, filters)),
         b: sortedIds(await StreamRepository.listWithPreviews(pool, wsB, filters)),

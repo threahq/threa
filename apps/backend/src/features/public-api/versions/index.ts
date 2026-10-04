@@ -1,4 +1,5 @@
 import { HttpError } from "@threahq/backend-common"
+import { Visibilities } from "@threahq/types"
 import type { OperationId } from "../routes"
 import { API_VERSIONS, CURRENT_API_VERSION, type ApiVersion, type OpenApiSpec, type VersionChange } from "./types"
 
@@ -212,6 +213,30 @@ function requireUserEmailInSpec(node: unknown): unknown {
   return node
 }
 
+/** A `private` slot names its source's visibility, which pins before 2026-10-04 only know as `public` or `private`. */
+function downgradeSourceVisibility(slot: unknown): unknown {
+  if (!slot || typeof slot !== "object") return slot
+  const { sourceVisibility } = slot as Record<string, unknown>
+  return sourceVisibility === Visibilities.GUEST_PUBLIC ? { ...slot, sourceVisibility: Visibilities.PUBLIC } : slot
+}
+
+function dropGuestPublicFromSpec(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(dropGuestPublicFromSpec)
+  if (node && typeof node === "object") {
+    const out = Object.fromEntries(Object.entries(node).map(([key, value]) => [key, dropGuestPublicFromSpec(value)]))
+    const props = out.properties as Record<string, unknown> | undefined
+    const visibility = props?.sourceVisibility as Record<string, unknown> | undefined
+    if (visibility && Array.isArray(visibility.enum)) {
+      out.properties = {
+        ...props,
+        sourceVisibility: { ...visibility, enum: visibility.enum.filter((v) => v !== Visibilities.GUEST_PUBLIC) },
+      }
+    }
+    return out
+  }
+  return node
+}
+
 export const VERSION_CHANGES: VersionChange[] = [
   {
     version: "2026-07-22",
@@ -280,6 +305,25 @@ export const VERSION_CHANGES: VersionChange[] = [
       }
     },
     downgradeSpec: (spec) => requireUserEmailInSpec(spec) as OpenApiSpec,
+  },
+  {
+    version: "2026-10-04",
+    description:
+      "Streams gain the `guest_public` visibility: readable by guests, who cannot browse `public` channels. A `private` shared-message slot's `sourceVisibility` can now be `guest_public`. Pins before this version see `public` there instead.",
+    operations: SLOT_MAP_OPERATIONS,
+    downgradeResponse: (payload, context) => {
+      if (!SLOT_MAP_OPERATIONS.has(context.operationId)) return payload
+      if (payload === null || typeof payload !== "object") return payload
+      const envelope = payload as Record<string, unknown>
+      if (!envelope.slots || typeof envelope.slots !== "object") return payload
+      return {
+        ...envelope,
+        slots: Object.fromEntries(
+          Object.entries(envelope.slots).map(([key, slot]) => [key, downgradeSourceVisibility(slot)])
+        ),
+      }
+    },
+    downgradeSpec: (spec) => dropGuestPublicFromSpec(spec) as OpenApiSpec,
   },
 ]
 

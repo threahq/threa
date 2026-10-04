@@ -442,6 +442,20 @@ describe("API E2E Tests", () => {
       expect(privData.stream.visibility).toBe("private")
     })
 
+    test("should reject creating a channel with guest_public visibility", async () => {
+      const client = new TestClient()
+      await loginAs(client, testEmail("channel-guest-vis"), "Channel Guest Visibility Test")
+      const workspace = await createWorkspace(client, `Chan Guest Vis WS ${testRunId}`)
+
+      const response = await client.post(`/api/workspaces/${workspace.id}/streams`, {
+        type: "channel",
+        slug: `guest-public-${testRunId}`,
+        visibility: "guest_public",
+      })
+
+      expect(response).toMatchObject({ status: 400, data: { code: "VALIDATION_ERROR" } })
+    })
+
     test("should send messages in channel", async () => {
       const client = new TestClient()
       await loginAs(client, testEmail("channel-msg"), "Channel Msg Test")
