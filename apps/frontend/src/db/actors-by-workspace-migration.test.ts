@@ -67,14 +67,14 @@ function cachedPersona(id: string, workspaceId: string, overrides: Partial<Cache
 
 async function seedV53(name: string, seed: (legacy: Dexie) => Promise<void>): Promise<void> {
   const legacy = new Dexie(name)
-  legacy.version(53).stores({ workspaceUsers: V12_WORKSPACE_USERS, personas: V4_PERSONAS })
+  legacy.version(54).stores({ workspaceUsers: V12_WORKSPACE_USERS, personas: V4_PERSONAS })
   await legacy.open()
   await seed(legacy)
   legacy.close()
 }
 
-describe("v54 workspace users and personas keyed by workspace", () => {
-  it("should carry rows that name a workspace to the new keys and drop the rest when upgrading from v53", async () => {
+describe("v55 workspace users and personas keyed by workspace", () => {
+  it("should carry rows that name a workspace to the new keys and drop the rest when upgrading from v54", async () => {
     const name = `threa_test_${Math.random().toString(36).slice(2)}`
     const userTwo = cachedUser("usr_2", "ws_1", { role: "admin" })
     const userOne = cachedUser("usr_1", "ws_1")
