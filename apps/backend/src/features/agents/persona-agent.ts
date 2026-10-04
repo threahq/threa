@@ -42,7 +42,7 @@ import type { AI, CostContext, PageBrowser, WebSearchEngine } from "@threahq/age
 import type { SearchService } from "../search"
 import type { ConversationSummaryService } from "./conversation-summary-service"
 import type { AttachmentService } from "../attachments"
-import { audienceBrowses, type MemoAudience, type MemoExplorerService } from "../memos"
+import type { MemoAudience, MemoExplorerService } from "../memos"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import type { DecisionsAvailability, ModelRegistry } from "@threahq/agent-runtime"
 import type { AIResidencyPolicy } from "../ai-usage"
@@ -395,6 +395,7 @@ export interface PersonaAgentDeps {
     sourceStreamIds: string[]
     provenanceStreamIds: string[]
     audience: MemoAudience | null
+    requiresBrowse: boolean
     title: string
     abstract: string
     keyPoints: string[]
@@ -1401,7 +1402,7 @@ export class PersonaAgent {
 
         const saveMemoDeps: import("./tools/tool-deps").SaveMemoToolDeps | undefined = saveMemo
           ? {
-              saveMemo: async (params) =>
+              saveMemo: (params) =>
                 saveMemo({
                   initiatingUserId: input.initiatingUserId,
                   workspaceId,
@@ -1411,6 +1412,7 @@ export class PersonaAgent {
                   // Read at call time: the collector fills as the turn's tools complete.
                   provenanceStreamIds: [...agentContext.carriedSourceStreamIds, ...digestCollector.provenanceStreamIds],
                   audience: agentContext.memoAudience ?? null,
+                  requiresBrowse: agentContext.memoAudienceBrowses,
                   // The human the agent serves owns a `user`-scoped save (roadmap 6.4).
                   invokingUserId: agentContext.invokingUserId,
                   ...params,
@@ -1929,7 +1931,7 @@ export class PersonaAgent {
             workspaceId,
             streamId,
             invokingUserId: agentContext.invokingUserId,
-            memoAudience: agentContext.memoAudience,
+            audienceBrowses: agentContext.memoAudienceBrowses,
             replyText: loopResult.sentContents.at(-1),
           })
 
@@ -1962,10 +1964,10 @@ export class PersonaAgent {
     workspaceId: string
     streamId: string
     invokingUserId: string | undefined
-    memoAudience: MemoAudience | undefined
+    audienceBrowses: boolean
     replyText: string | undefined
   }): Promise<void> {
-    const { ai, digestCollector, trace, sessionId, workspaceId, streamId, invokingUserId, memoAudience, replyText } =
+    const { ai, digestCollector, trace, sessionId, workspaceId, streamId, invokingUserId, audienceBrowses, replyText } =
       params
     if (!digestCollector.hasToolWork) return
 
@@ -1997,10 +1999,7 @@ export class PersonaAgent {
 
       const step = await trace.startStep({
         stepType: AgentStepTypes.TURN_DIGEST,
-        content: JSON.stringify({
-          ...digest,
-          audienceBrowses: memoAudience ? await audienceBrowses(this.deps.pool, workspaceId, memoAudience) : true,
-        }),
+        content: JSON.stringify({ ...digest, audienceBrowses }),
       })
       await step.complete({})
     } catch (err) {

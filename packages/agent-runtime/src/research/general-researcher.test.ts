@@ -197,22 +197,26 @@ describe("runGeneralResearch provenance", () => {
   })
 
   test("should return the streams an inner tool read when the run exits at max_iterations without a brief", async () => {
+    let turn = 0
     const deps = {
-      ...buildDeps(() => ({
-        text: "",
-        toolCalls: [{ toolCallId: "tc_1", toolName: "get_stream_messages", input: {} }],
-        response: { messages: [{ role: "assistant", content: "" }] },
-      })),
-      maxIterations: 1,
+      ...buildDeps(() => {
+        turn += 1
+        return turn === 1
+          ? {
+              text: "",
+              toolCalls: [{ toolCallId: "tc_1", toolName: "get_stream_messages", input: {} }],
+              response: { messages: [{ role: "assistant", content: "" }] },
+            }
+          : { text: "", toolCalls: [], response: { messages: [{ role: "assistant", content: "" }] } }
+      }),
+      maxIterations: 2,
     }
 
     const result = await runGeneralResearch(deps, baseInput({ tools: [readingTool()] }))
 
-    expect(result).toMatchObject({
-      brief: "",
-      partial: true,
-      partialReason: "max_iterations",
-      provenanceStreamIds: ["stream_private"],
+    expect({ result, turnsRun: turn }).toMatchObject({
+      result: { brief: "", partial: true, partialReason: "max_iterations", provenanceStreamIds: ["stream_private"] },
+      turnsRun: 2,
     })
   })
 })

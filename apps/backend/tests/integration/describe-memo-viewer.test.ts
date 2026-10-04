@@ -187,7 +187,7 @@ describe("describe_memo viewer", () => {
         id: memberOnlyMemoId,
         title: "Drew on member-only content",
         sourceStreamIds: [guestChannelId, publicChannelId],
-        requiresBrowse: true,
+        requiresBrowse: false,
       })
       await MemoRepository.insert(client, {
         ...agentMemoBase,

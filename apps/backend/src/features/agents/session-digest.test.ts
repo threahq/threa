@@ -61,13 +61,13 @@ function makeMessage(id: string, content: string, authorType = "user", authorId 
   } as Message
 }
 
-function digestStep(findings: string): AgentSessionStep {
+function digestStep(findings: string, audienceBrowses?: boolean): AgentSessionStep {
   return {
     id: "step_1",
     sessionId: "session_1",
     stepNumber: 1,
     stepType: "turn_digest",
-    content: { findings },
+    content: { findings, ...(audienceBrowses === undefined ? {} : { audienceBrowses }) },
     contentCiphertext: null,
     contentEnvelope: null,
     sources: null,
@@ -125,5 +125,32 @@ describe("buildSessionDigest", () => {
     const digest = await buildSessionDigest({} as Pool, makeSession({ sentMessageIds: [] }))
 
     expect(digest).toBeNull()
+  })
+
+  test("should require browse when any turn's audience browsed or did not record it", async () => {
+    spyOn(MessageRepository, "findById").mockResolvedValue(makeMessage("msg_trigger_1", "how do we deploy?"))
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
+    const steps = spyOn(AgentSessionRepository, "findStepsBySession")
+    const cases = {
+      cannotBrowse: [digestStep("Deploys run Fridays.", false)],
+      browses: [digestStep("Deploys run Fridays.", true)],
+      unrecorded: [digestStep("Deploys run Fridays.")],
+      browsedInAnyTurn: [digestStep("Deploys run Fridays.", false), digestStep("Smoke suite first.", true)],
+      unrecordedInAnyTurn: [digestStep("Deploys run Fridays.", false), digestStep("Smoke suite first.")],
+    }
+
+    const requiresBrowse: Record<string, boolean | undefined> = {}
+    for (const [name, digests] of Object.entries(cases)) {
+      steps.mockResolvedValue(digests)
+      requiresBrowse[name] = (await buildSessionDigest({} as Pool, makeSession()))?.requiresBrowse
+    }
+
+    expect(requiresBrowse).toEqual({
+      cannotBrowse: false,
+      browses: true,
+      unrecorded: true,
+      browsedInAnyTurn: true,
+      unrecordedInAnyTurn: true,
+    })
   })
 })

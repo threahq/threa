@@ -207,6 +207,7 @@ describe("Aside foundations", () => {
       sourceStreamIds: [aside.id],
       provenanceStreamIds: [],
       audience: null,
+      requiresBrowse: true,
       title: "Churn numbers are quarterly",
       abstract: "The churn figures in the deck are quarterly, not monthly.",
       keyPoints: ["quarterly"],

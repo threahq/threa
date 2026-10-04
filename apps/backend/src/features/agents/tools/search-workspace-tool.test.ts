@@ -165,7 +165,7 @@ describe("search_streams and get_stream_messages carry URLs", () => {
     const createdAt = new Date("2026-07-01T10:00:00Z")
     const message = {
       id: "msg_1",
-      streamId: "stream_thread",
+      streamId: "stream_1",
       contentMarkdown: "hello",
       authorType: "user",
       authorId: "usr_1",
@@ -181,7 +181,7 @@ describe("search_streams and get_stream_messages carry URLs", () => {
     try {
       const result = await tool.config.execute({ stream: "stream_1", limit: 10 }, { toolCallId: "t1" })
       const output = JSON.parse(result.output)
-      expect(result.provenanceStreamIds).toEqual(["stream_1", "stream_thread"])
+      expect(result.provenanceStreamIds).toEqual(["stream_1"])
       expect(output).toMatchObject({
         stream: "stream_1",
         streamId: "stream_1",

@@ -25,11 +25,15 @@ export interface CarriedPromptBlock {
  * partially filtered). Web-derived content is exempt (public): a web-only
  * digest carries no source stream ids and always passes. Bot-initiated turns
  * have no invoking user (`accessibleStreamIds === null`), which means no
- * workspace access — only workspace-free digests inject.
+ * workspace access — only workspace-free digests inject. When the turn's audience
+ * does not browse (`audienceBrowses` false), only digests written for an audience
+ * that also did not browse inject, since a browsing turn's digest can hold
+ * member-only content no source covers.
  */
 export function buildTurnDigestPromptBlock(
   rows: RecentDigestStep[],
-  accessibleStreamIds: Set<string> | null
+  accessibleStreamIds: Set<string> | null,
+  audienceBrowses: boolean
 ): CarriedPromptBlock {
   const entries: TurnDigestPromptEntry[] = []
   // Rows arrive newest-session-first; the prompt reads oldest-first.
@@ -38,6 +42,7 @@ export function buildTurnDigestPromptBlock(
     if (!digest) continue
     const inaccessible = digest.sourceStreamIds.some((id) => !accessibleStreamIds?.has(id))
     if (inaccessible) continue
+    if (!audienceBrowses && digest.audienceBrowses !== false) continue
     entries.push({
       completedAt: (row.sessionCompletedAt ?? row.sessionCreatedAt).toISOString(),
       digest,
@@ -52,12 +57,18 @@ export function buildTurnDigestPromptBlock(
 /** Fetch + filter + format in one call — the context build's single entry point. */
 export async function loadTurnDigestPromptBlock(
   db: Querier,
-  params: { workspaceId: string; streamId: string; personaId: string; accessibleStreamIds: Set<string> | null }
+  params: {
+    workspaceId: string
+    streamId: string
+    personaId: string
+    accessibleStreamIds: Set<string> | null
+    memoAudienceBrowses: boolean
+  }
 ): Promise<CarriedPromptBlock> {
   const rows = await AgentSessionRepository.findRecentDigestStepsByStream(db, params.workspaceId, {
     streamId: params.streamId,
     personaId: params.personaId,
     limit: TURN_DIGEST_INJECT_COUNT,
   })
-  return buildTurnDigestPromptBlock(rows, params.accessibleStreamIds)
+  return buildTurnDigestPromptBlock(rows, params.accessibleStreamIds, params.memoAudienceBrowses)
 }

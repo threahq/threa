@@ -10,12 +10,14 @@ function digestRow(over: {
   sessionCreatedAt?: Date
   sessionCompletedAt?: Date | null
   content?: unknown
+  audienceBrowses?: boolean
 }): RecentDigestStep {
   const digest: TurnDigestStepContent = {
     findings: over.findings,
     toolsCalled: ["web_search"],
     sources: [],
     sourceStreamIds: over.sourceStreamIds ?? [],
+    ...(over.audienceBrowses !== undefined ? { audienceBrowses: over.audienceBrowses } : {}),
   }
   const step: AgentSessionStep = {
     id: "step_1",
@@ -46,7 +48,8 @@ describe("buildTurnDigestPromptBlock", () => {
         digestRow({ findings: "Newest finding.", sessionCompletedAt: new Date("2026-06-11T08:00:00.000Z") }),
         digestRow({ findings: "Oldest finding.", sessionCompletedAt: new Date("2026-06-10T08:00:00.000Z") }),
       ],
-      new Set<string>()
+      new Set<string>(),
+      true
     ).text
 
     expect(block).toContain("## Prior Tool Work (Turn Digests)")
@@ -61,7 +64,8 @@ describe("buildTurnDigestPromptBlock", () => {
         digestRow({ findings: "Also accessible.", sourceStreamIds: ["stream_ok"] }),
         digestRow({ findings: "Now private.", sourceStreamIds: ["stream_ok", "stream_revoked"] }),
       ],
-      new Set(["stream_ok", "stream_also_ok"])
+      new Set(["stream_ok", "stream_also_ok"]),
+      true
     )
 
     expect(block).toContain("Still accessible.")
@@ -76,7 +80,8 @@ describe("buildTurnDigestPromptBlock", () => {
         digestRow({ findings: "Web-only digest." }),
         digestRow({ findings: "Workspace-derived digest.", sourceStreamIds: ["stream_x"] }),
       ],
-      null
+      null,
+      true
     )
 
     expect(block).toContain("Web-only digest.")
@@ -86,10 +91,10 @@ describe("buildTurnDigestPromptBlock", () => {
 
   it("skips malformed digest content and returns null when nothing survives", () => {
     const empty = { text: null, sourceStreamIds: [] }
-    expect(buildTurnDigestPromptBlock([digestRow({ findings: "unused", content: "not json" })], new Set())).toEqual(
-      empty
-    )
-    expect(buildTurnDigestPromptBlock([], new Set())).toEqual(empty)
+    expect(
+      buildTurnDigestPromptBlock([digestRow({ findings: "unused", content: "not json" })], new Set(), true)
+    ).toEqual(empty)
+    expect(buildTurnDigestPromptBlock([], new Set(), true)).toEqual(empty)
   })
 
   it("falls back to the session's created time when completion time is missing", () => {
@@ -101,9 +106,36 @@ describe("buildTurnDigestPromptBlock", () => {
           sessionCreatedAt: new Date("2026-06-09T07:00:00.000Z"),
         }),
       ],
-      new Set()
+      new Set(),
+      true
     ).text
     expect(block).toContain("Turn completed 2026-06-09T07:00:00.000Z")
+  })
+
+  it("should carry a digest into a non-browsing turn only when it was written for a non-browsing audience", () => {
+    const rows = [
+      digestRow({ findings: "Written for guests.", sourceStreamIds: ["stream_guests"], audienceBrowses: false }),
+      digestRow({ findings: "Written for members.", sourceStreamIds: ["stream_members"], audienceBrowses: true }),
+      digestRow({ findings: "Written before the flag.", sourceStreamIds: ["stream_legacy"] }),
+    ]
+    const accessible = new Set(["stream_guests", "stream_members", "stream_legacy"])
+    const kept = (browses: boolean) => {
+      const { text, sourceStreamIds } = buildTurnDigestPromptBlock(rows, accessible, browses)
+      return {
+        findings: ["Written for guests.", "Written for members.", "Written before the flag."].filter((f) =>
+          text?.includes(f)
+        ),
+        sourceStreamIds: [...sourceStreamIds].sort(),
+      }
+    }
+
+    expect({ browsing: kept(true), notBrowsing: kept(false) }).toEqual({
+      browsing: {
+        findings: ["Written for guests.", "Written for members.", "Written before the flag."],
+        sourceStreamIds: ["stream_guests", "stream_legacy", "stream_members"],
+      },
+      notBrowsing: { findings: ["Written for guests."], sourceStreamIds: ["stream_guests"] },
+    })
   })
 })
 
@@ -118,6 +150,7 @@ describe("loadTurnDigestPromptBlock", () => {
       streamId: "stream_1",
       personaId: "persona_1",
       accessibleStreamIds: null,
+      memoAudienceBrowses: true,
     })
 
     expect(find).toHaveBeenCalledWith(expect.anything(), "ws_1", {

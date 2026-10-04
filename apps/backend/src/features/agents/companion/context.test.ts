@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
+import * as memosModule from "../../memos"
 import { AgentToolNames, DEFAULT_USER_PREFERENCES, MemoryModes, StreamTypes, Visibilities } from "@threahq/types"
 import { StreamBriefRepository, StreamMemberRepository, StreamRepository, type StreamBrief } from "../../streams"
 import { MessageRepository } from "../../messaging"
@@ -40,6 +41,10 @@ const persona: Persona = {
 
 /** Every unstubbed repository read sees an empty database. */
 const emptyDb = { query: async () => ({ rows: [], rowCount: 0 }) } as never
+
+beforeEach(() => {
+  spyOn(memosModule, "audienceBrowses").mockResolvedValue(true)
+})
 
 const deps = {
   db: emptyDb,

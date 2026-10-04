@@ -65,13 +65,13 @@ function makeMessage(id: string, content: string): Message {
 }
 
 /** A turn_digest step carrying research findings — the reflective-capture gate. */
-function digestStep(findings: string, audienceBrowses?: boolean): AgentSessionStep {
+function digestStep(findings: string): AgentSessionStep {
   return {
     id: "step_1",
     sessionId: "session_1",
     stepNumber: 1,
     stepType: "turn_digest",
-    content: { findings, ...(audienceBrowses === undefined ? {} : { audienceBrowses }) },
+    content: { findings },
     contentCiphertext: null,
     contentEnvelope: null,
     sources: null,
@@ -115,7 +115,7 @@ describe("ReflectiveCaptureService", () => {
   })
 
   function service(memoService: MemoServiceLike) {
-    return new ReflectiveCaptureService({ pool: {} as unknown as Pool, memoService })
+    return new ReflectiveCaptureService({ pool: {} as Pool, memoService })
   }
 
   test("captures a research session: claims the marker then delegates to the memo pipeline", async () => {
@@ -151,39 +151,6 @@ describe("ReflectiveCaptureService", () => {
       })
     )
   })
-
-  const browseCases = [
-    { audience: "cannot browse", steps: [digestStep("Deploys run Fridays.", false)], requiresBrowse: false },
-    { audience: "browses", steps: [digestStep("Deploys run Fridays.", true)], requiresBrowse: true },
-    {
-      audience: "is unrecorded (digest predates the flag)",
-      steps: [digestStep("Deploys run Fridays.")],
-      requiresBrowse: true,
-    },
-    {
-      audience: "browsed in any turn",
-      steps: [digestStep("Deploys run Fridays.", false), digestStep("Smoke suite first.", true)],
-      requiresBrowse: true,
-    },
-  ]
-  for (const { audience, steps, requiresBrowse } of browseCases) {
-    test(`should capture with requiresBrowse ${requiresBrowse} when the turn digests' audience ${audience}`, async () => {
-      const { service: memoService, captureSessionReflection } = makeMemoService({
-        classified: true,
-        captured: 1,
-        deduped: 0,
-      })
-      spyOn(AgentSessionRepository, "findById").mockResolvedValue(makeSession())
-      spyOn(MessageRepository, "findById").mockResolvedValue(makeMessage("msg_trigger_1", "how do we deploy?"))
-      spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue(steps)
-      spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
-      spyOn(AgentSessionRepository, "setReflectiveCaptured").mockResolvedValue(true)
-
-      await service(memoService).capture({ workspaceId: "ws_1", sessionId: "session_1" })
-
-      expect(captureSessionReflection).toHaveBeenCalledWith(expect.objectContaining({ requiresBrowse }))
-    })
-  }
 
   test("no-ops without claiming when the session is not completed", async () => {
     const { service: memoService, captureSessionReflection } = makeMemoService({

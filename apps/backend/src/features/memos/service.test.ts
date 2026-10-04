@@ -721,6 +721,7 @@ const saveMemoInput = {
   sourceStreamIds: [STREAM_ID],
   provenanceStreamIds: [] as string[],
   audience: null,
+  requiresBrowse: true,
   title: "Deploys only on Fridays after the smoke suite",
   abstract: "The team deploys only on Fridays, and only after the smoke suite passes.",
   keyPoints: ["Smoke suite gates the deploy"],
@@ -1297,8 +1298,18 @@ describe("MemoService — memo and pending-item repository calls carry the calle
       recordClassifiedFingerprints: recordFingerprints.mock.calls.map((c) => c.slice(1)),
       markProcessed: markProcessed.mock.calls.map((c) => c.slice(1)),
     }).toEqual({
-      findByStream: [[WORKSPACE_ID, STREAM_ID, expect.objectContaining({ status: "active", orderBy: "createdAt" })]],
-      findActiveBySourceConversation: [[WORKSPACE_ID, CONVERSATION_ID]],
+      findByStream: [
+        [
+          WORKSPACE_ID,
+          STREAM_ID,
+          expect.objectContaining({
+            status: "active",
+            orderBy: "createdAt",
+            audiences: [{ kind: "room", roomStreamId: STREAM_ID }],
+          }),
+        ],
+      ],
+      findActiveBySourceConversation: [[WORKSPACE_ID, CONVERSATION_ID, [{ kind: "room", roomStreamId: STREAM_ID }]]],
       updateEmbedding: [[WORKSPACE_ID, expect.stringMatching(/^memo_/), [0.1, 0.2]]],
       recordClassifiedFingerprints: [[WORKSPACE_ID, [{ id: "pend_1", fingerprint: expect.any(String) }]]],
       markProcessed: [[WORKSPACE_ID, [expect.objectContaining({ id: "pend_1", version: 0 })]]],

@@ -540,7 +540,7 @@ You can reference streams by their ID (stream_xxx), slug (general), or prefixed 
         logger.debug({ stream: input.stream, messageCount: results.length }, "Stream messages retrieved")
 
         return {
-          provenanceStreamIds: [resolved.id, ...messages.map((m) => m.streamId)],
+          provenanceStreamIds: [resolved.id],
           output: JSON.stringify({
             stream: input.stream,
             streamId: resolved.id,

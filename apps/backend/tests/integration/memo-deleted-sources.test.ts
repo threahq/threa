@@ -444,6 +444,7 @@ describe("memo sources: deleted and edited messages", () => {
         sourceStreamIds: [threadId, seeded.streamId],
         provenanceStreamIds: [],
         audience: null,
+        requiresBrowse: true,
         title: "Flag flip",
         abstract: "The flag flips on Wednesday.",
         keyPoints: [],

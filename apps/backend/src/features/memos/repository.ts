@@ -311,6 +311,7 @@ const SELECT_FIELDS_PREFIXED = `
   m.authored_by_kind, m.source_session_id, m.source_stream_ids, m.requires_browse, m.scope, m.scope_user_id,
   m.created_at, m.updated_at, m.archived_at
 `
+const SELECT_FIELDS_SQL = rawSql(SELECT_FIELDS)
 const SELECT_FIELDS_PREFIXED_SQL = rawSql(SELECT_FIELDS_PREFIXED)
 
 interface MemoSearchRow extends MemoRow {
@@ -516,45 +517,39 @@ export const MemoRepository = {
 
   /**
    * `scopeUserId` is the tier the reader writes into: private memos come back
-   * only for their owner, null returns shared memos only.
+   * only for their owner, null returns shared memos only. Only memos every
+   * audience may read come back.
    */
   async findByStream(
     db: Querier,
     workspaceId: string,
     streamId: string,
-    options: { scopeUserId: string | null; status?: MemoStatus; limit?: number; orderBy?: "createdAt" | "updatedAt" }
+    options: {
+      scopeUserId: string | null
+      audiences: readonly MemoAudience[]
+      status?: MemoStatus
+      limit?: number
+      orderBy?: "createdAt" | "updatedAt"
+    }
   ): Promise<Memo[]> {
-    const limit = options.limit ?? 50
-    const orderBy = options.orderBy === "updatedAt" ? "updated_at" : "created_at"
+    const orderBy = rawSql(options.orderBy === "updatedAt" ? "updated_at" : "created_at")
+    const filters = composeSql`(m.scope <> 'user' OR m.scope_user_id = ${options.scopeUserId})
+        ${options.status ? composeSql`AND m.status = ${options.status}` : rawSql("")}
+        AND ${memoAudienceVisibleSql(workspaceId, options.audiences, "m")}`
 
     // UNION over the two source paths: conversation memos (via source_conversation_id)
     // and message memos (via source_message_id), each resolving to a stream_id.
-    const values: unknown[] = [workspaceId, streamId, options.scopeUserId]
-    let paramIndex = 4
-    let statusClause = ""
-
-    if (options.status) {
-      statusClause = `AND m.status = $${paramIndex}`
-      values.push(options.status)
-      paramIndex++
-    }
-
-    values.push(limit)
-
-    const scopeClause = `AND (m.scope <> 'user' OR m.scope_user_id = $3)`
-    const query = `
-      SELECT ${SELECT_FIELDS_PREFIXED} FROM memos m
+    const result = await db.query<MemoRow>(composeSql`
+      SELECT ${SELECT_FIELDS_PREFIXED_SQL} FROM memos m
       JOIN conversations c ON m.source_conversation_id = c.id AND c.workspace_id = m.workspace_id
-      WHERE m.workspace_id = $1 AND c.stream_id = $2 ${scopeClause} ${statusClause}
+      WHERE m.workspace_id = ${workspaceId} AND c.stream_id = ${streamId} AND ${filters}
       UNION
-      SELECT ${SELECT_FIELDS_PREFIXED} FROM memos m
+      SELECT ${SELECT_FIELDS_PREFIXED_SQL} FROM memos m
       JOIN messages msg ON m.source_message_id = msg.id AND msg.workspace_id = m.workspace_id
-      WHERE m.workspace_id = $1 AND msg.stream_id = $2 ${scopeClause} ${statusClause}
+      WHERE m.workspace_id = ${workspaceId} AND msg.stream_id = ${streamId} AND ${filters}
       ORDER BY ${orderBy} DESC
-      LIMIT $${paramIndex}
-    `
-
-    const result = await db.query<MemoRow>(query, values)
+      LIMIT ${options.limit ?? 50}
+    `)
     return result.rows.map(mapRowToMemo)
   },
 
@@ -582,10 +577,17 @@ export const MemoRepository = {
     return new Set(result.rows.map((row) => row.source_conversation_id))
   },
 
-  async findActiveBySourceConversation(db: Querier, workspaceId: string, conversationId: string): Promise<Memo[]> {
-    const result = await db.query<MemoRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM memos
+  /** Only memos every audience may read come back. */
+  async findActiveBySourceConversation(
+    db: Querier,
+    workspaceId: string,
+    conversationId: string,
+    audiences: readonly MemoAudience[]
+  ): Promise<Memo[]> {
+    const result = await db.query<MemoRow>(composeSql`
+      SELECT ${SELECT_FIELDS_SQL} FROM memos
       WHERE workspace_id = ${workspaceId} AND source_conversation_id = ${conversationId} AND status = 'active'
+        AND ${memoAudienceVisibleSql(workspaceId, audiences, "memos")}
       ORDER BY created_at ASC
     `)
     return result.rows.map(mapRowToMemo)
@@ -596,16 +598,18 @@ export const MemoRepository = {
    * of `messageIds` edited after the memo was made: everything but private memos,
    * plus `scopeUserId`'s own when the batch is that owner's. A conversation
    * memo is reconsidered through its own conversation, so it is not returned here.
+   * Only memos every audience may read come back.
    */
   async findActiveMessageMemosCitingEdited(
     db: Querier,
     workspaceId: string,
     messageIds: string[],
-    scopeUserId: string | null
+    scopeUserId: string | null,
+    audiences: readonly MemoAudience[]
   ): Promise<Memo[]> {
     if (messageIds.length === 0) return []
-    const result = await db.query<MemoRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM memos
+    const result = await db.query<MemoRow>(composeSql`
+      SELECT ${SELECT_FIELDS_SQL} FROM memos
       WHERE workspace_id = ${workspaceId}
         AND status = 'active'
         AND memo_type = 'message'
@@ -618,6 +622,7 @@ export const MemoRepository = {
             AND messages.id = ANY(${messageIds}::text[])
             AND messages.edited_at > memos.created_at
         )
+        AND ${memoAudienceVisibleSql(workspaceId, audiences, "memos")}
       ORDER BY created_at ASC
     `)
     return result.rows.map(mapRowToMemo)
@@ -681,18 +686,10 @@ export const MemoRepository = {
       scope?: MemoScope
       scopeUserId?: string | null
       /** Only memos every audience may read count as duplicates, so a save never resolves to a memo its writer's readers cannot open. */
-      audiences?: readonly MemoAudience[]
+      audiences: readonly MemoAudience[]
     }
   ): Promise<{ memo: Memo; distance: number } | null> {
-    const {
-      workspaceId,
-      streamId,
-      embedding,
-      maxDistance,
-      scope = "workspace",
-      scopeUserId = null,
-      audiences = [],
-    } = params
+    const { workspaceId, streamId, embedding, maxDistance, scope = "workspace", scopeUserId = null, audiences } = params
     const embeddingLiteral = `[${embedding.join(",")}]`
     const audienceVisible = memoAudienceVisibleSql(workspaceId, audiences, "m")
 

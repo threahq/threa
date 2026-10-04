@@ -1,13 +1,14 @@
 import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
-import { AuthoredByKinds, MemoryModes, StreamTypes, Visibilities } from "@threahq/types"
-import { MemoRepository, MemoService, type MemoAudience } from "../../src/features/memos"
+import { AuthoredByKinds, ConversationStatuses, MemoryModes, StreamTypes, Visibilities } from "@threahq/types"
+import { ConversationRepository } from "../../src/features/conversations"
+import { MemoRepository, MemoService, PendingItemRepository, type MemoAudience } from "../../src/features/memos"
 import type { ConversationClassification } from "../../src/features/memos/classifier"
 import { MessageRepository } from "../../src/features/messaging"
 import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { memoId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { conversationId, memoId, messageId, pendingItemId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { addTestMember, setupTestDatabase, testMessageContent, withTransaction } from "./setup"
 
 const worthy: ConversationClassification = {
@@ -78,6 +79,7 @@ describe("agent memo provenance", () => {
   const saveAgentMemo = (params: {
     provenanceStreamIds: string[]
     audience: MemoAudience | null
+    requiresBrowse?: boolean
     streamId?: string
     anchor?: string
   }) =>
@@ -94,6 +96,7 @@ describe("agent memo provenance", () => {
       sourceMessageIds: [params.anchor ?? anchorId],
       provenanceStreamIds: params.provenanceStreamIds,
       audience: params.audience,
+      requiresBrowse: params.requiresBrowse ?? true,
     })
 
   const unitVector = (index: number) => Array.from({ length: 1536 }, (_, i) => (i === index ? 1 : 0))
@@ -213,20 +216,19 @@ describe("agent memo provenance", () => {
     })
   })
 
-  test("should store requiresBrowse by the saved audience's browse when an agent saves a memo, and true when no audience resolved", async () => {
-    const audiences: Array<MemoAudience | null> = [
-      { kind: "streams", streamIds: [home], browses: false },
-      { kind: "streams", streamIds: [home], browses: true },
-      null,
-    ]
-    const requiresBrowse: Array<boolean | undefined> = []
-    for (const audience of audiences) {
-      const saved = await saveAgentMemo({ provenanceStreamIds: [home], audience })
+  test("should store the requiresBrowse the turn observed when an agent saves a memo", async () => {
+    const stored: Array<boolean | undefined> = []
+    for (const requiresBrowse of [false, true]) {
+      const saved = await saveAgentMemo({
+        provenanceStreamIds: [home],
+        audience: { kind: "streams", streamIds: [home], browses: !requiresBrowse },
+        requiresBrowse,
+      })
       const memo = await MemoRepository.findById(pool, testWorkspaceId, (saved as { memoId: string }).memoId)
-      requiresBrowse.push(memo?.requiresBrowse)
+      stored.push(memo?.requiresBrowse)
     }
 
-    expect(requiresBrowse).toEqual([false, true, true])
+    expect(stored).toEqual([false, true])
   })
 
   test("should store requiresBrowse false for a reflective capture when the session ran for an audience that needs no browse", async () => {
@@ -312,6 +314,236 @@ describe("agent memo provenance", () => {
         title: "Rollout plan",
         deduped: false,
         scope: "workspace",
+      })
+    })
+  })
+
+  describe("processBatch shows, dedupes against and retires only memos the room reads", () => {
+    const captureEmbedding = unitVector(1400)
+    let pipeline: MemoService
+    let shownToMemorizer: string[][] = []
+    let supersedes: string[] = []
+
+    beforeAll(() => {
+      const memorize = async (
+        _formatted: string,
+        context: { memoryContext: { id: string }[]; content: { id: string }[] }
+      ) => {
+        shownToMemorizer.push(context.memoryContext.map((memo) => memo.id).sort())
+        return [
+          {
+            title: "Rollout plan",
+            abstract: "The rollout starts on Monday with the flag off.",
+            keyPoints: [],
+            sourceMessageIds: context.content.map((message) => message.id),
+            knowledgeType: "decision",
+            tags: [],
+            supersedesMemoIds: supersedes,
+          },
+        ]
+      }
+      pipeline = new MemoService({
+        analyticsReporter: new DisabledAnalyticsReporter(),
+        pool,
+        classifier: { classifyConversation: async () => worthy } as never,
+        memorizer: { memorizeConversation: memorize, reviseMemo: memorize } as never,
+        embeddingService: { embedBatch: async (texts: string[]) => texts.map(() => captureEmbedding) } as never,
+        messageFormatter: { formatMessages: async () => "formatted transcript" } as never,
+      })
+    })
+
+    async function seedRoom() {
+      const room = streamId()
+      await seedChannel(room)
+      const pub = streamId()
+      await StreamRepository.insert(pool, {
+        id: pub,
+        workspaceId: testWorkspaceId,
+        type: StreamTypes.CHANNEL,
+        visibility: Visibilities.PUBLIC,
+        slug: `p-${pub.slice(-8)}`,
+        createdBy: testUserId,
+        memoryMode: MemoryModes.AUTO,
+      })
+      let sequence = 0n
+      const post = async (text: string) => {
+        const id = messageId()
+        await MessageRepository.insert(pool, {
+          workspaceId: testWorkspaceId,
+          id,
+          streamId: room,
+          sequence: ++sequence,
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent(text),
+        })
+        return id
+      }
+      const anchor = await post("the rollout starts on Monday")
+      const conversation = async () => {
+        const id = conversationId()
+        await ConversationRepository.insert(pool, {
+          id,
+          streamId: room,
+          workspaceId: testWorkspaceId,
+          status: ConversationStatuses.RESOLVED,
+        })
+        return id
+      }
+      const queueCapture = async () => {
+        const conv = await conversation()
+        for (const text of ["when does the rollout start?", "Monday, flag off"]) {
+          await ConversationRepository.addPrimaryMessage(pool, testWorkspaceId, conv, await post(text), testUserId)
+        }
+        await withTransaction(pool, (client) =>
+          PendingItemRepository.queue(client, [
+            {
+              id: pendingItemId(),
+              workspaceId: testWorkspaceId,
+              streamId: room,
+              itemType: "conversation",
+              itemId: conv,
+            },
+          ])
+        )
+      }
+      return { room, pub, anchor, conversation, queueCapture }
+    }
+
+    async function seedMemo(
+      fields: { sourceMessageId?: string; sourceConversationId?: string; cites?: string; sourceStreamIds?: string[] },
+      requiresBrowse: boolean,
+      embedding: number[]
+    ): Promise<string> {
+      const id = memoId()
+      await MemoRepository.insert(pool, {
+        id,
+        workspaceId: testWorkspaceId,
+        memoType: fields.sourceMessageId ? "message" : "conversation",
+        sourceMessageId: fields.sourceMessageId,
+        sourceConversationId: fields.sourceConversationId,
+        title: "Rollout plan",
+        abstract: "The rollout starts on Monday with the flag off.",
+        keyPoints: [],
+        sourceMessageIds: [fields.sourceMessageId ?? fields.cites].filter((id): id is string => id !== undefined),
+        participantIds: [testUserId],
+        knowledgeType: "decision",
+        tags: [],
+        status: "active",
+        ...(fields.sourceStreamIds
+          ? { authoredByKind: AuthoredByKinds.AGENT, sourceStreamIds: fields.sourceStreamIds, requiresBrowse }
+          : {}),
+      })
+      await MemoRepository.updateEmbedding(pool, testWorkspaceId, id, embedding)
+      return id
+    }
+
+    async function capture(room: string) {
+      const result = await pipeline.processBatch(testWorkspaceId, room)
+      const active = await MemoRepository.findByStream(pool, testWorkspaceId, room, {
+        scopeUserId: null,
+        audiences: [],
+        status: "active",
+      })
+      return { result, active }
+    }
+
+    test("should show the memorizer only the memos the room reads", async () => {
+      shownToMemorizer = []
+      supersedes = []
+      const { room, anchor, queueCapture } = await seedRoom()
+      const visible = await seedMemo({ sourceMessageId: anchor, sourceStreamIds: [room] }, false, unitVector(1401))
+      await seedMemo({ sourceMessageId: anchor, sourceStreamIds: [room, research] }, false, unitVector(1402))
+      await queueCapture()
+
+      await pipeline.processBatch(testWorkspaceId, room)
+
+      expect(shownToMemorizer).toEqual([[visible]])
+    })
+
+    test("should insert a new memo when the only near-identical memo cites a stream the room can't read", async () => {
+      supersedes = []
+      const { room, anchor, queueCapture } = await seedRoom()
+      const hidden = await seedMemo(
+        { sourceMessageId: anchor, sourceStreamIds: [room, research] },
+        false,
+        captureEmbedding
+      )
+      await queueCapture()
+
+      const { result, active } = await capture(room)
+
+      expect({ result, active: active.map((memo) => (memo.id === hidden ? "hidden" : "new")).sort() }).toEqual({
+        result: { processed: 1, memosCreated: 1 },
+        active: ["hidden", "new"],
+      })
+    })
+
+    test("should dedupe to the near-identical memo when the room reads it", async () => {
+      supersedes = []
+      const { room, anchor, queueCapture } = await seedRoom()
+      const visible = await seedMemo({ sourceMessageId: anchor, sourceStreamIds: [room] }, false, captureEmbedding)
+      await queueCapture()
+
+      const { result, active } = await capture(room)
+
+      expect({ result, activeIds: active.map((memo) => memo.id) }).toEqual({
+        result: { processed: 1, memosCreated: 0 },
+        activeIds: [visible],
+      })
+    })
+
+    test("should give a revision the sources and browse need of the agent memo it supersedes", async () => {
+      const { room, pub, anchor, queueCapture } = await seedRoom()
+      const retired = await seedMemo({ sourceMessageId: anchor, sourceStreamIds: [room, pub] }, true, unitVector(1403))
+      supersedes = [retired]
+      await queueCapture()
+
+      const { result, active } = await capture(room)
+
+      expect({
+        result,
+        stored: active.map(({ parentMemoId, sourceStreamIds, requiresBrowse, authoredByKind }) => ({
+          parentMemoId,
+          sourceStreamIds,
+          requiresBrowse,
+          authoredByKind,
+        })),
+      }).toEqual({
+        result: { processed: 1, memosCreated: 1 },
+        stored: [
+          {
+            parentMemoId: retired,
+            sourceStreamIds: [room, pub].sort(),
+            requiresBrowse: true,
+            authoredByKind: AuthoredByKinds.PIPELINE,
+          },
+        ],
+      })
+    })
+
+    test("should leave a revision without sources when it supersedes a pipeline memo", async () => {
+      const { room, anchor, conversation, queueCapture } = await seedRoom()
+      const retired = await seedMemo(
+        { sourceConversationId: await conversation(), cites: anchor },
+        false,
+        unitVector(1404)
+      )
+      supersedes = [retired]
+      await queueCapture()
+
+      const { result, active } = await capture(room)
+
+      expect({
+        result,
+        stored: active.map(({ parentMemoId, sourceStreamIds, requiresBrowse }) => ({
+          parentMemoId,
+          sourceStreamIds,
+          requiresBrowse,
+        })),
+      }).toEqual({
+        result: { processed: 1, memosCreated: 1 },
+        stored: [{ parentMemoId: retired, sourceStreamIds: null, requiresBrowse: false }],
       })
     })
   })

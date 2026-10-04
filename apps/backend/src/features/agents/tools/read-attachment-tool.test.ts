@@ -163,7 +163,7 @@ describe("read_attachment — whole-file read", () => {
     extractionSpy.mockRestore()
   })
 
-  it("should report the reference stream that grants access when the attachment lives in a stream the reader cannot read", async () => {
+  it("should report the streams the access check granted the read through as its provenance", async () => {
     const referenced = { ...textAttachment, streamId: "stream_private" }
     const deps = makeDeps({
       attachmentService: makeAttachmentService(async () => referenced as any, ["stream_2"]),

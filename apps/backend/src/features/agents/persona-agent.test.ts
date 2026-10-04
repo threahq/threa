@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
+import * as memosModule from "../memos"
 import { AgentToolNames, AuthorTypes, StreamTypes } from "@threahq/types"
 import * as dbModule from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
@@ -151,6 +152,10 @@ function makeTriggerMessage(authorId: string) {
 
 /** Every unstubbed repository read hits this and sees an empty database. */
 const emptyDb = { query: async () => ({ rows: [], rowCount: 0 }) } as any
+
+beforeEach(() => {
+  spyOn(memosModule, "audienceBrowses").mockResolvedValue(true)
+})
 
 function makeFakeIo() {
   const target: any = { emit: () => target, to: () => target }

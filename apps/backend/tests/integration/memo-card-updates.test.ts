@@ -255,7 +255,7 @@ describe("memo:updated", () => {
       })
     })
 
-    await explorer.update(
+    const updated = await explorer.update(
       testWorkspaceId,
       uncited,
       {
@@ -266,7 +266,13 @@ describe("memo:updated", () => {
       { title: "Still nobody" }
     )
 
-    expect(await outboxFor(uncited)).toEqual([])
+    expect({
+      updated: updated && { id: updated.memo.id, title: updated.memo.title },
+      events: await outboxFor(uncited),
+    }).toEqual({
+      updated: { id: uncited, title: "Still nobody" },
+      events: [],
+    })
   })
 
   test("carries only the card's fields — never the memo's substance", async () => {

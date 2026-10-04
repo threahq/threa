@@ -1,8 +1,8 @@
 /**
- * The readers of memo content pass who reads them. Every case uses ONE agent memo located in a
- * stream the reader can browse but sourced from streams the reader cannot read, so a reader that
- * only checks location (the pre-gate behaviour) returns it and one that passes its audience does
- * not. Real rows, real statements (INV-68).
+ * The readers of memo content pass who reads them. Every case uses three agent memos located in
+ * the guest_public stream `loc`, sourced from `loc`, `pub` and `priv` respectively, so a reader that
+ * only checks location (the pre-gate behaviour) returns all three and one that passes its audience
+ * returns only those whose source it reads. Real rows, real statements (INV-68).
  *
  * `loc` is guest_public, so a guest passes the location filter for every memo here.
  */
@@ -24,6 +24,8 @@ import {
 import { MessageRepository } from "../../src/features/messaging"
 import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { createStreamContextService, StreamContextRepository } from "../../src/features/stream-context"
+import { LinkPreviewService } from "../../src/features/link-previews"
+import { getAppOrigins } from "../../src/features/link-previews/config"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { memoId, messageId, streamContextItemId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { addTestMember, setupTestDatabase, testMessageContent, withTransaction } from "./setup"
@@ -252,17 +254,17 @@ describe("memo readers pass their audience", () => {
     })
   })
 
-  test("should list a memo landmark in a room only when the room can read the memo's sources", async () => {
+  test("should list the memo landmarks in a room that the viewer reads, whoever else is in the room", async () => {
     const service = createStreamContextService({ pool })
     const landmarks = Object.values(memos).flatMap((id) =>
       [stream.roomGuest, stream.roomAll].map((room) => memoLandmark(id, room, room))
     )
     await StreamContextRepository.insertMany(pool, landmarks)
 
-    const feed = async (room: string) => {
+    const feed = async (viewer: string, room: string) => {
       const response = await service.list({
         workspaceId: ws,
-        userId: member,
+        userId: viewer,
         streamId: room,
         scope: "tree",
         category: "memo",
@@ -271,31 +273,44 @@ describe("memo readers pass their audience", () => {
       return { shown: labels(response.items.map((item) => item.refId)), counted: response.counts?.memo }
     }
 
-    const [guestRoom, memberRoom] = await Promise.all([feed(stream.roomGuest), feed(stream.roomAll)])
+    const [memberInGuestRoom, memberInMemberRoom, guestInGuestRoom] = await Promise.all([
+      feed(member, stream.roomGuest),
+      feed(member, stream.roomAll),
+      feed(guest, stream.roomGuest),
+    ])
 
-    expect({ guestRoom, memberRoom }).toEqual({
-      guestRoom: { shown: ["visible"], counted: 1 },
-      memberRoom: { shown: ["leaksPublic", "visible"], counted: 2 },
+    expect({ memberInGuestRoom, memberInMemberRoom, guestInGuestRoom }).toEqual({
+      memberInGuestRoom: { shown: ["leaksPrivate", "leaksPublic", "visible"], counted: 3 },
+      memberInMemberRoom: { shown: ["leaksPrivate", "leaksPublic", "visible"], counted: 3 },
+      guestInGuestRoom: { shown: ["visible"], counted: 1 },
     })
   })
 
-  test("should gate a thread's memo landmarks by the room of its root when the thread is not a member stream", async () => {
+  test("should list a thread's memo landmarks by what the viewer reads", async () => {
     const service = createStreamContextService({ pool })
     await StreamContextRepository.insertMany(
       pool,
       Object.values(memos).map((id) => memoLandmark(id, stream.roomGuestThread, stream.roomGuest))
     )
 
-    const response = await service.list({
-      workspaceId: ws,
-      userId: member,
-      streamId: stream.roomGuestThread,
-      scope: "stream",
-      category: "memo",
-      limit: 40,
-    })
+    const feed = async (viewer: string) => {
+      const response = await service.list({
+        workspaceId: ws,
+        userId: viewer,
+        streamId: stream.roomGuestThread,
+        scope: "stream",
+        category: "memo",
+        limit: 40,
+      })
+      return labels(response.items.map((item) => item.refId))
+    }
 
-    expect(labels(response.items.map((item) => item.refId))).toEqual(["visible"])
+    const [memberView, guestView] = await Promise.all([feed(member), feed(guest)])
+
+    expect({ memberView, guestView }).toEqual({
+      memberView: ["leaksPrivate", "leaksPublic", "visible"],
+      guestView: ["visible"],
+    })
   })
 
   test("should hide from an anchored memo search what the anchor room cannot read when the member could", async () => {
@@ -322,6 +337,33 @@ describe("memo readers pass their audience", () => {
     expect({ anchored, unanchored }).toEqual({
       anchored: ["visible"],
       unanchored: ["leaksPrivate", "leaksPublic", "visible"],
+    })
+  })
+
+  test("should preview a memo link as private to a guest who cannot read its sources and in full to a member", async () => {
+    const previews = new LinkPreviewService({
+      pool,
+      memoExplorerService: explorer,
+      streamService: {} as never,
+      delegationService: {} as never,
+    })
+    const url = `${getAppOrigins()[0]}/w/${ws}/memos/${memos.leaksPrivate}`
+
+    const [guestPreview, memberPreview] = await Promise.all([
+      previews.resolveInAppLinkByUrl(ws, guest, url),
+      previews.resolveInAppLinkByUrl(ws, member, url),
+    ])
+
+    expect({ guestPreview, memberPreview }).toEqual({
+      guestPreview: { kind: "memo", accessTier: "private" },
+      memberPreview: {
+        kind: "memo",
+        accessTier: "full",
+        title: `${TOKEN} leaksPrivate`,
+        abstract: "abstract",
+        knowledgeType: "decision",
+        sourceStreamName: `s-${stream.loc.slice(-8)}`,
+      },
     })
   })
 })

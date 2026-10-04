@@ -686,7 +686,7 @@ describe("Memo Repositories", () => {
         })
 
         const found = await withTransaction(pool, async (client) => {
-          return MemoRepository.findActiveBySourceConversation(client, testWorkspaceId, convId)
+          return MemoRepository.findActiveBySourceConversation(client, testWorkspaceId, convId, [])
         })
 
         expect(found.map((m) => m.id).sort()).toEqual([firstId, secondId].sort())
@@ -720,7 +720,7 @@ describe("Memo Repositories", () => {
         })
 
         const found = await withTransaction(pool, async (client) => {
-          return MemoRepository.findActiveBySourceConversation(client, testWorkspaceId, convId)
+          return MemoRepository.findActiveBySourceConversation(client, testWorkspaceId, convId, [])
         })
 
         expect(found).toEqual([])
@@ -869,6 +869,7 @@ describe("Memo Repositories", () => {
           return MemoRepository.findByStream(client, testWorkspaceId, localStreamId, {
             scopeUserId: null,
             status: "active",
+            audiences: [],
           })
         })
 
@@ -918,7 +919,11 @@ describe("Memo Repositories", () => {
         })
 
         const memos = await withTransaction(pool, async (client) => {
-          return MemoRepository.findByStream(client, testWorkspaceId, localStreamId, { scopeUserId: null, limit: 3 })
+          return MemoRepository.findByStream(client, testWorkspaceId, localStreamId, {
+            scopeUserId: null,
+            limit: 3,
+            audiences: [],
+          })
         })
 
         expect(memos.length).toBe(3)

@@ -43,13 +43,11 @@ describe("WorkspaceAgent memo search audience", () => {
     guestPad: streamId(),
     memberPad: streamId(),
   }
-  const memos = {} as Record<string, string>
   let sequence = 1n
 
   async function seedMemo(label: string, requiresBrowse: boolean): Promise<void> {
     const id = memoId()
     const msgId = messageId()
-    memos[label] = id
     await withTransaction(pool, async (client) => {
       await MessageRepository.insert(client, {
         workspaceId: ws,

@@ -7,7 +7,7 @@ import type { UserPreferencesService } from "../../user-preferences"
 import { UserDeviceContextRepository } from "../../device-context"
 import { MessageRepository, SharedMessageRepository, collectSharedMessageIds, type Message } from "../../messaging"
 import { UserRepository, type PeopleViewer, type User } from "../../workspaces"
-import type { MemoAudience } from "../../memos"
+import { audienceBrowses, type MemoAudience } from "../../memos"
 import type { Persona } from "../persona-repository"
 import { PersonaAttachmentRepository, type PersonaAttachmentContentItem } from "../persona-attachment-repository"
 import { resolveActorNames } from "../actor-names"
@@ -131,6 +131,8 @@ export interface AgentContext {
   memoViewerUserId: string | undefined
   /** Who reads what this turn retrieves from workspace memory; absent when there is no invoking user, which leaves the turn without memo access. */
   memoAudience: MemoAudience | undefined
+  /** Whether everyone this turn answers to browses the workspace; with no invoker, the room it posts into. */
+  memoAudienceBrowses: boolean
   peopleViewer: PeopleViewer | undefined
   /** Another workspace reads this room, so nothing private to this workspace may reach the answer. */
   roomShared: boolean
@@ -255,6 +257,11 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     accessType = accessSpec.type
     peopleViewer = resolvePeopleViewer(accessSpec, stream.id)
   }
+  const memoAudienceBrowses = await audienceBrowses(
+    db,
+    workspaceId,
+    memoAudience ?? { kind: "room", roomStreamId: stream.rootStreamId ?? stream.id }
+  )
   const memoryModeStream = stream.rootStreamId ? await findMemoryModeStream(db, workspaceId, stream.id) : stream
   const selfKnowledge: SelfKnowledge =
     stream.e2eEnabled === true
@@ -327,6 +334,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     streamId: stream.id,
     personaId: persona.id,
     accessibleStreamIds,
+    memoAudienceBrowses,
   })
 
   // Durable stream brief (roadmap 4.1): the stream's standing working document,
@@ -552,6 +560,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
         streamId: stream.id,
         personaId: persona.id,
         accessibleStreamIds,
+        memoAudienceBrowses,
       })
     : { text: null, sourceStreamIds: [] }
   const carriedSourceStreamIds = [...previousSessions.sourceStreamIds, ...turnDigests.sourceStreamIds]
@@ -615,6 +624,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     accessibleStreamIds,
     memoViewerUserId,
     memoAudience,
+    memoAudienceBrowses,
     peopleViewer,
     roomShared,
     streamBrief,
