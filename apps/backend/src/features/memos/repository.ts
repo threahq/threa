@@ -1,4 +1,5 @@
-import { sql, type Querier } from "../../db"
+import { composeSql, sql, type Querier } from "../../db"
+import { roomReadableWithoutMembershipSql } from "../streams"
 import { detectSearchConfig } from "../../lib/text-search-config"
 import type { MemoType, KnowledgeType, MemoStatus, AuthoredByKind, MemoScope, MemoEmbedSummary } from "@threahq/types"
 import {
@@ -361,7 +362,9 @@ export const MemoRepository = {
    * The access predicate is ROOM-UNIFORM, not per-viewer, because the payload
    * is delivered to a room: a summary is emitted only when every viewer of the
    * citing stream can open the memo. That means the memo's source stream
-   * RESOLVED TO ITS ROOT is the citing root, or that root is public.
+   * RESOLVED TO ITS ROOT is the citing root, or is readable by the whole room
+   * (`roomReadableWithoutMembershipSql`: `guest_public`, or `public` when no
+   * reader of the room lacks browse).
    *
    * Resolving to the root is the load-bearing part. A thread copies its root's
    * `visibility` at creation and is never re-synced, so a thread of a channel
@@ -406,7 +409,7 @@ export const MemoRepository = {
       tags: string[]
       updated_at: Date
       card_version: number
-    }>(sql`
+    }>(composeSql`
       SELECT DISTINCT requested.citing_root_stream_id,
         m.id, m.title, m.knowledge_type, m.memo_type, m.tags, m.updated_at, m.card_version
       FROM unnest(
@@ -425,7 +428,8 @@ export const MemoRepository = {
       WHERE m.workspace_id = ${workspaceId}
         AND m.scope <> 'user'
         AND root.id IS NOT NULL
-        AND (root.id = requested.citing_root_stream_id OR root.visibility = 'public')
+        AND (root.id = requested.citing_root_stream_id
+          OR ${roomReadableWithoutMembershipSql(workspaceId, sql`${sql.raw("requested.citing_root_stream_id")}`, "root")})
     `)
     const summariesByRoot = new Map<string, Map<string, MemoEmbedSummary>>()
     for (const row of result.rows) {
@@ -986,15 +990,15 @@ export const MemoRepository = {
 
   /**
    * Tags a capture into `rootStreamId` may show its model: shared memos whose
-   * source root is that root or public (resolved through the root, as
-   * `findEmbedSummaries` does), plus `scopeUserId`'s own private memos.
+   * source root is that root or readable by its whole room (resolved through the
+   * root, as `findEmbedSummaries` does), plus `scopeUserId`'s own private memos.
    */
   async getAllTags(
     db: Querier,
     workspaceId: string,
     scope: { scopeUserId: string | null; rootStreamId: string }
   ): Promise<string[]> {
-    const result = await db.query<{ tag: string }>(sql`
+    const result = await db.query<{ tag: string }>(composeSql`
       SELECT DISTINCT unnest(m.tags) as tag
       FROM memos m
       LEFT JOIN messages src_msg ON src_msg.id = m.source_message_id AND src_msg.workspace_id = m.workspace_id
@@ -1007,7 +1011,10 @@ export const MemoRepository = {
       WHERE m.workspace_id = ${workspaceId} AND m.status = 'active'
         AND (
           (m.scope = 'user' AND m.scope_user_id = ${scope.scopeUserId})
-          OR (m.scope <> 'user' AND (root.id = ${scope.rootStreamId} OR root.visibility = 'public'))
+          OR (m.scope <> 'user' AND (
+            root.id = ${scope.rootStreamId}
+            OR ${roomReadableWithoutMembershipSql(workspaceId, scope.rootStreamId, "root")}
+          ))
         )
       ORDER BY tag
     `)

@@ -17,7 +17,7 @@ import { describe, test, expect, beforeAll, afterAll, spyOn } from "bun:test"
 import { Pool } from "pg"
 import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { StreamRepository } from "../../src/features/streams"
+import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
 import { MemoRepository, resolveMemoSummariesByStream } from "../../src/features/memos"
 import { userId, workspaceId, streamId, messageId, memoId } from "../../src/lib/id"
@@ -274,6 +274,65 @@ describe("MemoRepository.findEmbedSummaries", () => {
     )
 
     expect([...summaries.keys()].sort()).toEqual([allowed, alsoAllowed].sort())
+  })
+
+  test("should withhold a public memo and keep a guest_public one when the room has a guest member", async () => {
+    const guestRoom = streamId()
+    const guestPublicChannel = streamId()
+    await withTransaction(pool, async (client) => {
+      const guest = await addTestMember(client, testWorkspaceId, userId(), "guest")
+      for (const [id, visibility] of [
+        [guestRoom, "private"],
+        [guestPublicChannel, "guest_public"],
+      ] as const) {
+        await StreamRepository.insert(client, {
+          id,
+          workspaceId: testWorkspaceId,
+          type: "channel",
+          visibility,
+          slug: `s-${id.slice(-8)}`,
+          createdBy: testUserId,
+        })
+      }
+      await StreamMemberRepository.insert(client, testWorkspaceId, guestRoom, guest.id)
+    })
+    const publicMemo = await seedMemo(publicChannel, { title: "Public", tags: ["from-public"] })
+    const guestPublicMemo = await seedMemo(guestPublicChannel, { title: "Guest public", tags: ["from-guest-public"] })
+    const ownMemo = await seedMemo(guestRoom, { title: "Own", tags: ["from-own-room"] })
+
+    const summaries = await MemoRepository.findEmbedSummaries(
+      pool,
+      testWorkspaceId,
+      [publicMemo, guestPublicMemo, ownMemo],
+      guestRoom
+    )
+    const tags = await MemoRepository.getAllTags(pool, testWorkspaceId, { scopeUserId: null, rootStreamId: guestRoom })
+
+    expect({ summaries: [...summaries.keys()].sort(), tags }).toEqual({
+      summaries: [guestPublicMemo, ownMemo].sort(),
+      tags: ["from-guest-public", "from-own-room"],
+    })
+  })
+
+  test("should keep a public memo's tag when no reader of the room is a guest", async () => {
+    const openRoom = streamId()
+    await withTransaction(pool, async (client) => {
+      await StreamRepository.insert(client, {
+        id: openRoom,
+        workspaceId: testWorkspaceId,
+        type: "channel",
+        visibility: "private",
+        slug: `s-${openRoom.slice(-8)}`,
+        createdBy: testUserId,
+      })
+      await StreamMemberRepository.insert(client, testWorkspaceId, openRoom, testUserId)
+    })
+    await seedMemo(publicChannel, { title: "Public", tags: ["open-from-public"] })
+    await seedMemo(openRoom, { title: "Own", tags: ["open-from-own-room"] })
+
+    const tags = await MemoRepository.getAllTags(pool, testWorkspaceId, { scopeUserId: null, rootStreamId: openRoom })
+
+    expect(tags.filter((tag) => tag.startsWith("open-"))).toEqual(["open-from-own-room", "open-from-public"])
   })
 
   test("returns an empty map for no ids without touching the database", async () => {

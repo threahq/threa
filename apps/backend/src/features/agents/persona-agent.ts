@@ -1137,8 +1137,8 @@ export class PersonaAgent {
             // Personas have no `stream_members` rows; pass the agent's
             // scope-restricted `AgentAccessSpec` reach so inline-attachment
             // and share gates run against the same set the workspace tools
-            // already use (private channel = that channel + public, public
-            // channel = public only, scratchpad = user-full). NOT the
+            // already use (channel = what every reader of the room can read,
+            // scratchpad = user-full). NOT the
             // invoking user's full access — that would be a scope escalation.
             // Always pass an array (even empty) so the persona path uses the
             // set-membership gate. Falling back to `undefined` would route

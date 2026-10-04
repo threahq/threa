@@ -122,9 +122,11 @@ describe("buildHowIWorkSection", () => {
   })
 
   test("should say private conversations stay out when the channel is public", () => {
-    const card = buildHowIWorkSection(ariadne, { ...privateScratchpad, access: "public_only", memoryCapture: "off" }, [
-      AgentToolNames.SEARCH_MESSAGES,
-    ])
+    const card = buildHowIWorkSection(
+      ariadne,
+      { ...privateScratchpad, access: "room_readable", memoryCapture: "off" },
+      [AgentToolNames.SEARCH_MESSAGES]
+    )
 
     expect(card).toContain("You never pull anyone's private conversations in here")
     expect(card).toContain("Memory capture is off here")

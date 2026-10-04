@@ -34,6 +34,11 @@ export function viewerLacksBrowseSql(workspaceId: string, userId: string): Query
   return composeSql`EXISTS (SELECT 1 ${viewersLackingBrowseSql(workspaceId, sql`u.id = ${userId}`)})`
 }
 
+/** True when any user `userIdsSql` selects (one column of ids) lacks browse; false for an empty selection. */
+export function anyUserLacksBrowseSql(workspaceId: string, userIdsSql: QueryConfig): QueryConfig {
+  return composeSql`EXISTS (SELECT 1 ${viewersLackingBrowseSql(workspaceId, composeSql`u.id IN (${userIdsSql})`)})`
+}
+
 export async function findUserIdsWithoutBrowse(
   db: Querier,
   workspaceId: string,

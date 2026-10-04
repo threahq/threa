@@ -258,7 +258,7 @@ export class StreamConnectionService {
     const audiences = new Map<string, { visibility: Visibility; adminMemberUserIds: string[] }>()
     for (const [workspaceId, ids] of streamIdsByWorkspace) {
       const streams = await StreamRepository.findByIds(client, workspaceId, [...ids])
-      const privateIds = streams.filter((s) => s.visibility !== Visibilities.PUBLIC).map((s) => s.id)
+      const privateIds = streams.filter((s) => s.visibility === Visibilities.PRIVATE).map((s) => s.id)
       const members =
         privateIds.length > 0 ? await StreamMemberRepository.list(client, workspaceId, { streamIds: privateIds }) : []
       const users = await UserRepository.findByIds(client, workspaceId, [...new Set(members.map((m) => m.memberId))])
@@ -277,7 +277,7 @@ export class StreamConnectionService {
       const audience = audiences.get(`${workspaceId}/${connection.streamId}`)
       if (!audience) return []
       // A private channel with no admin among its members has no Connect tab open to update.
-      if (audience.visibility !== Visibilities.PUBLIC && audience.adminMemberUserIds.length === 0) return []
+      if (audience.visibility === Visibilities.PRIVATE && audience.adminMemberUserIds.length === 0) return []
       return [
         {
           eventType: "stream_connection:updated" as const,

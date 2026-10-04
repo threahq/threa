@@ -1139,7 +1139,6 @@ export const sqlTextAssertionAllowlist = {
   "apps/backend/src/features/saved-messages/repository.test.ts": 48,
   "apps/backend/src/features/scheduled-messages/repository.test.ts": 51,
   "apps/backend/src/features/search/repository.test.ts": 8,
-  "apps/backend/src/features/streams/access.test.ts": 4,
   "apps/backend/src/features/streams/brief-repository.test.ts": 8,
   "apps/backend/src/features/streams/effective-read-state.test.ts": 1,
   "apps/backend/src/features/streams/policy-repository.test.ts": 8,

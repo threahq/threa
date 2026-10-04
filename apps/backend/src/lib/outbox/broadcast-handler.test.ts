@@ -147,6 +147,31 @@ describe("BroadcastHandler", () => {
         room: "ws:ws_1:user:usr_alice",
         leave: ["ws:ws_1:permission:members:write", "ws:ws_1:permission:workspace:admin"],
       },
+      { room: "ws:ws_1:user:usr_alice", join: ["ws:ws_1:permission:workspace:browse"] },
+    ])
+  })
+
+  it("should move a member's tabs out of every permission room when they are demoted to guest", async () => {
+    const event = makeEvent(1n, "workspace_user:updated", {
+      workspaceId: "ws_1",
+      user: { id: "usr_alice", role: "member" },
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+    spyOn(UserRepository, "findById").mockResolvedValue({ id: "usr_alice", role: "guest" } as never)
+
+    const { handler, roomMoves } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(roomMoves).toEqual([
+      {
+        room: "ws:ws_1:user:usr_alice",
+        leave: [
+          "ws:ws_1:permission:members:write",
+          "ws:ws_1:permission:workspace:admin",
+          "ws:ws_1:permission:workspace:browse",
+        ],
+      },
     ])
   })
 
@@ -279,11 +304,11 @@ describe("BroadcastHandler", () => {
     })
   })
 
-  it("should emit workspace-scoped event to workspace room", async () => {
+  it("should emit stream:updated to the browse room and the stream room", async () => {
     const event = makeEvent(1n, "stream:updated", {
       workspaceId: "ws_1",
       streamId: "stream_1",
-      stream: { id: "stream_1" },
+      stream: { id: "stream_1", visibility: "public" },
     })
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
@@ -292,11 +317,10 @@ describe("BroadcastHandler", () => {
     handler.handle()
     await new Promise((r) => setTimeout(r, 300))
 
-    expect(emitChains).toContainEqual({
-      room: "ws:ws_1",
-      eventType: "stream:updated",
-      payload: event.payload,
-    })
+    expect(emitChains).toEqual([
+      { room: "ws:ws_1:permission:workspace:browse", eventType: "stream:updated", payload: event.payload },
+      { room: "ws:ws_1:stream:stream_1", eventType: "stream:updated", payload: event.payload },
+    ])
   })
 
   it("should emit stream:created thread to parent stream room", async () => {
@@ -339,11 +363,11 @@ describe("BroadcastHandler", () => {
     })
   })
 
-  it("should emit stream:created public channel to workspace room", async () => {
+  it("should emit stream:created public channel to the browse room and the creator", async () => {
     const event = makeEvent(1n, "stream:created", {
       workspaceId: "ws_1",
       streamId: "stream_new",
-      stream: { id: "stream_new", parentAnchorId: null, type: "channel", visibility: "public" },
+      stream: { id: "stream_new", parentAnchorId: null, type: "channel", visibility: "public", createdBy: "usr_bob" },
     })
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
@@ -352,11 +376,10 @@ describe("BroadcastHandler", () => {
     handler.handle()
     await new Promise((r) => setTimeout(r, 300))
 
-    expect(emitChains).toContainEqual({
-      room: "ws:ws_1",
-      eventType: "stream:created",
-      payload: event.payload,
-    })
+    expect(emitChains).toEqual([
+      { room: "ws:ws_1:permission:workspace:browse", eventType: "stream:created", payload: event.payload },
+      { room: "ws:ws_1:user:usr_bob", eventType: "stream:created", payload: event.payload },
+    ])
   })
 
   it("should emit stream:created private stream to creator user room only", async () => {
@@ -440,7 +463,7 @@ describe("BroadcastHandler", () => {
     expect(emitChains.some((chain) => chain.room === "ws:ws_1")).toBe(false)
   })
 
-  it("should emit stream:display_name_updated for public stream to workspace room", async () => {
+  it("should emit stream:display_name_updated for public stream to the browse room and the stream room", async () => {
     const event = makeEvent(1n, "stream:display_name_updated", {
       workspaceId: "ws_1",
       streamId: "stream_1",
@@ -454,11 +477,10 @@ describe("BroadcastHandler", () => {
     handler.handle()
     await new Promise((r) => setTimeout(r, 300))
 
-    expect(emitChains).toContainEqual({
-      room: "ws:ws_1",
-      eventType: "stream:display_name_updated",
-      payload: event.payload,
-    })
+    expect(emitChains).toEqual([
+      { room: "ws:ws_1:permission:workspace:browse", eventType: "stream:display_name_updated", payload: event.payload },
+      { room: "ws:ws_1:stream:stream_1", eventType: "stream:display_name_updated", payload: event.payload },
+    ])
   })
 
   it("should emit stream:display_name_updated for private stream to stream room", async () => {

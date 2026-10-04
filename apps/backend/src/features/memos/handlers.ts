@@ -42,9 +42,8 @@ const memoUpdateSchema = z
  * anchor: the stream the search is being run from. The memory explorer has no
  * anchor and browses everything the user can access. The inline `/memo` picker
  * anchors to the stream being composed in, and must be scoped exactly like an
- * agent invoked there (`computeAgentAccessSpec`): a private channel sees public
- * memos + that channel, a public channel or DM sees only what is shareable into
- * it. Without this, a memo from an unrelated private stream could be surfaced —
+ * agent invoked there (`computeAgentAccessSpec`): a channel sees what every reader
+ * of it can read, a DM what both parties can. Without this, a memo from an unrelated private stream could be surfaced —
  * and embedded as a reference — into a stream it does not belong to, leaking it
  * (or a link to it) to that stream's audience.
  *

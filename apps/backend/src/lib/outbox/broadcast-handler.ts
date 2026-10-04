@@ -68,7 +68,8 @@ const DEFAULT_CONFIG = {
  * Handler that broadcasts outbox events to Socket.io rooms.
  *
  * Stream-scoped events (messages, reactions) are broadcast to stream rooms: `ws:${workspaceId}:stream:${streamId}`
- * Workspace-scoped events (stream metadata, attachments) are broadcast to workspace rooms: `ws:${workspaceId}`
+ * Workspace-scoped events are broadcast to workspace rooms: `ws:${workspaceId}`
+ * Permission-scoped events are broadcast to permission rooms: `ws:${workspaceId}:permission:${slug}`
  * User-scoped events (activity) are broadcast to user rooms: `ws:${workspaceId}:user:${userId}`
  * Author-scoped events (commands, read state) are broadcast to user rooms: `ws:${workspaceId}:user:${authorId}`
  *

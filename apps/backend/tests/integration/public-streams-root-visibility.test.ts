@@ -5,7 +5,7 @@
  * thread row can say "public" long after its root went private (and vice
  * versa). Every "is this stream public" consumer has to resolve the root —
  * trusting the thread's own row leaked stale-public threads into agent
- * research scopes (`public_only` / `public_plus_stream`) and bot access.
+ * research scopes (`room_readable`) and bot access.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"

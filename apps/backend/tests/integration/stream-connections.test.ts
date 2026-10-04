@@ -824,6 +824,25 @@ describe("StreamConnectionService", () => {
     expect(await connectionEvents([host.id, partner.id])).toEqual([event(invited, null), event(active, partner)])
   })
 
+  test("should name no admin members when the host channel is guest_public, whoever belongs to it", async () => {
+    const host = await seedWorkspace("Acme")
+    const stream = await seedStream(host.id, host.adminId, StreamTypes.CHANNEL, "guest_public")
+    await StreamMemberRepository.insert(pool, host.id, stream.id, host.adminId)
+    const invited = snapshot(host, stream.id)
+
+    await service.applySnapshot(invited)
+
+    expect(await connectionEvents([host.id])).toEqual([
+      {
+        workspaceId: host.id,
+        streamId: stream.id,
+        streamVisibility: "guest_public",
+        adminMemberUserIds: [],
+        connection: seenBy(invited, "host", null),
+      },
+    ])
+  })
+
   test("should address a private channel's change to the admins who are its members", async () => {
     const host = await seedWorkspace("Acme")
     // An admin outside the channel, and a member who isn't an admin.

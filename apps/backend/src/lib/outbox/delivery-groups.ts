@@ -38,6 +38,12 @@ import {
   type StreamCallEndedOutboxPayload,
   type StreamMessageCountOutboxPayload,
   type StreamConnectionUpdatedOutboxPayload,
+  type StreamUpdatedOutboxPayload,
+  type WorkspaceUserAddedOutboxPayload,
+  type WorkspaceUserRemovedOutboxPayload,
+  type WorkspaceUserUpdatedOutboxPayload,
+  type BotCreatedOutboxPayload,
+  type BotUpdatedOutboxPayload,
 } from "./repository"
 
 /**
@@ -74,6 +80,24 @@ export function permissionGroup(slug: WorkspacePermissionSlug): string {
 }
 
 /**
+ * Everyone who may browse the workspace — members and up, never guests. The
+ * `workspace` group reaches guests too, so anything a guest may not see (a
+ * plain `public` stream, the people directory) goes here instead.
+ */
+export const BROWSE_GROUP = permissionGroup(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE)
+
+/**
+ * The workspace-wide audience of an open stream's events: `guest_public` reaches
+ * everyone including guests, `public` only browsers, anything else no one beyond
+ * its own rooms.
+ */
+function openAudienceGroups(visibility: string | undefined): string[] {
+  if (visibility === Visibilities.GUEST_PUBLIC) return [WORKSPACE_GROUP]
+  if (visibility === Visibilities.PUBLIC) return [BROWSE_GROUP]
+  return []
+}
+
+/**
  * Single source of truth for permission-scoped event routing: each permission
  * scope maps to the outbox event types delivered only to holders of that scope.
  * `resolveDeliveryGroups` routes an event by reverse-lookup here, and sockets +
@@ -95,8 +119,11 @@ const PERMISSION_SCOPED_EVENTS = {
     "invitation:link-created",
     "invitation:link-claimed",
   ],
-  // Public channels only: a private channel's change goes to its admin members, routed in resolveDeliveryGroups.
+  // Open channels only: a private channel's change goes to its admin members, routed in resolveDeliveryGroups.
   [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN]: ["stream_connection:updated"],
+  // Listed so members join the browse room; its events are routed by stream visibility and as the
+  // fallthrough in resolveDeliveryGroups.
+  [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE]: [],
 } as const satisfies Partial<Record<WorkspacePermissionSlug, readonly OutboxEventType[]>>
 
 /** Permission scopes that get their own delivery group (keys of the routing map). */
@@ -224,9 +251,10 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   // stream:created — threads go to the parent stream's audience; DMs to the
   // two participants; private streams (scratchpads, asides, private channels)
   // to the creator only (additional members learn via stream:member_added);
-  // public streams to the whole workspace. The anchored branch is thread-only:
-  // an aside is anchored too, but routing it to the parent's audience would
-  // broadcast a private stream to every host-stream member.
+  // open streams to their audience plus the creator, who may be a guest outside
+  // it. The anchored branch is thread-only: an aside is anchored too, but routing
+  // it to the parent's audience would broadcast a private stream to every
+  // host-stream member.
   if (isOutboxEventType(event, "stream:created")) {
     const payload = event.payload as StreamCreatedOutboxPayload
     if (payload.stream.parentAnchorId && payload.stream.type === StreamTypes.THREAD) {
@@ -235,10 +263,17 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     if (payload.stream.type === StreamTypes.DM && payload.dmUserIds?.length === 2) {
       return [...new Set(payload.dmUserIds)].map(userGroup)
     }
-    if (payload.stream.visibility === Visibilities.PRIVATE) {
-      return [userGroup(payload.stream.createdBy)]
-    }
-    return [WORKSPACE_GROUP]
+    return [...openAudienceGroups(payload.stream.visibility), userGroup(payload.stream.createdBy)]
+  }
+
+  // stream:updated — members keep learning of a visibility change workspace-wide
+  // (the sidebar adds or drops the stream on it); guests learn through the stream
+  // room unless the stream is a guest_public root. A thread's own visibility copy
+  // goes stale when its root flips, so it never opens the workspace.
+  if (isOutboxEventType(event, "stream:updated")) {
+    const { streamId, stream } = event.payload as StreamUpdatedOutboxPayload
+    const openToGuests = stream.visibility === Visibilities.GUEST_PUBLIC && !stream.rootStreamId
+    return [openToGuests ? WORKSPACE_GROUP : BROWSE_GROUP, streamGroup(streamId)]
   }
 
   // stream:member_added — existing members (stream group) AND the added user,
@@ -249,7 +284,7 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   }
 
   // Conversation aggregate events reach the stream + optionally its parent for
-  // discoverability, AND the whole workspace when the access-root stream is a
+  // discoverability, AND the open audience when the access-root stream is a
   // public channel — so the workspace board (which sits in the workspace room,
   // not in every stream room) sees public-channel activity live. Private/DM/
   // scratchpad conversations stay scoped to their stream's members (INV-62);
@@ -260,9 +295,7 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     if (payload.parentStreamId) {
       groups.push(streamGroup(payload.parentStreamId))
     }
-    if (payload.streamVisibility === Visibilities.PUBLIC) {
-      groups.push(WORKSPACE_GROUP)
-    }
+    groups.push(...openAudienceGroups(payload.streamVisibility))
     return groups
   }
 
@@ -283,12 +316,12 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     return [streamGroup(payload.sourceStreamId), streamGroup(payload.destinationStreamId)]
   }
 
-  // Public stream names go workspace-wide (activity/search name resolution on
+  // Open stream names go to their audience (activity/search name resolution on
   // streams the user isn't a member of); private names stay stream-scoped to
   // avoid leaking DM/scratchpad thread names.
   if (isOutboxEventType(event, "stream:display_name_updated")) {
     const payload = event.payload as StreamDisplayNameUpdatedPayload
-    return payload.visibility === "public" ? [WORKSPACE_GROUP] : [streamGroup(payload.streamId)]
+    return [...openAudienceGroups(payload.visibility), streamGroup(payload.streamId)]
   }
 
   // Attachment lifecycle — stream-scoped when attached to a message,
@@ -345,8 +378,8 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   // Persona config updates for a PERSONAL persona reach only its owner
   // (user-scoped-personas): the persona is invisible to every other member, so
   // its create/update/archive broadcast must not leak into the workspace room.
-  // Built-in and workspace-custom updates carry a null `ownerUserId` and fall
-  // through to the whole-workspace default below (every member inherits them).
+  // Built-in and workspace-custom updates carry a null `ownerUserId` and reach
+  // the whole workspace (every member inherits them).
   if (isOutboxEventType(event, "agent_config:updated")) {
     const payload = event.payload as AgentConfigUpdatedOutboxPayload
     if (payload.persona.ownerUserId) {
@@ -357,29 +390,26 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
 
   // Call lifecycle (roadmap 1.4): the timeline card lands in the host stream's
   // room (every v1 participant is a stream member), AND the sidebar live-call dot
-  // must reach members NOT currently in that room. Public channels fan
-  // workspace-wide (the dot lives in the sidebar, which sits in the workspace
-  // room); private/DM calls fan to each member's user room (a private stream name
-  // must never leak workspace-wide). The public-channel-conversation precedent.
+  // must reach members NOT currently in that room: every member through their
+  // user room (a guest member of a public channel is outside its audience), plus
+  // an open channel's audience. A private stream name never leaks workspace-wide.
   if (isOneOfOutboxEventType(event, ["stream:call_started", "stream:call_ended"])) {
     const payload = event.payload as StreamCallStartedOutboxPayload | StreamCallEndedOutboxPayload
-    const groups = [streamGroup(payload.streamId)]
-    if (payload.streamVisibility === Visibilities.PUBLIC) {
-      groups.push(WORKSPACE_GROUP)
-    } else {
-      for (const userId of payload.memberUserIds) groups.push(userGroup(userId))
-    }
-    return groups
+    return [
+      streamGroup(payload.streamId),
+      ...openAudienceGroups(payload.streamVisibility),
+      ...payload.memberUserIds.map(userGroup),
+    ]
   }
 
   // The Streams page shows counts for public channels the viewer never joined,
-  // so a public access root fans workspace-wide; otherwise the stream's room
+  // so an open access root fans to its audience; otherwise the stream's room
   // plus, for a thread, its root's room (members of the root see the thread).
   if (isOutboxEventType(event, "stream:message_count")) {
     const { streamId, rootStreamId, streamVisibility } = event.payload as StreamMessageCountOutboxPayload
     const groups = [streamGroup(streamId)]
     if (rootStreamId && rootStreamId !== streamId) groups.push(streamGroup(rootStreamId))
-    if (streamVisibility === Visibilities.PUBLIC) groups.push(WORKSPACE_GROUP)
+    groups.push(...openAudienceGroups(streamVisibility))
     return groups
   }
 
@@ -413,11 +443,34 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
   }
 
   // A private channel's connection change must not reach admins outside it, so
-  // it goes to its admin members one by one; a public one falls through to the
+  // it goes to its admin members one by one; an open one falls through to the
   // admin permission group below.
   if (isOutboxEventType(event, "stream_connection:updated")) {
     const payload = event.payload as StreamConnectionUpdatedOutboxPayload
-    if (payload.streamVisibility !== Visibilities.PUBLIC) return payload.adminMemberUserIds.map(userGroup)
+    if (payload.streamVisibility === Visibilities.PRIVATE) return payload.adminMemberUserIds.map(userGroup)
+  }
+
+  // The people directory is for browsers; the user themselves still hears of
+  // their own change, which is how a guest sees their own profile.
+  if (isOneOfOutboxEventType(event, ["workspace_user:added", "workspace_user:updated"])) {
+    const { user } = event.payload as WorkspaceUserAddedOutboxPayload | WorkspaceUserUpdatedOutboxPayload
+    return [BROWSE_GROUP, userGroup(user.id)]
+  }
+
+  if (isOutboxEventType(event, "workspace_user:removed")) {
+    const { removedUserId } = event.payload as WorkspaceUserRemovedOutboxPayload
+    return [BROWSE_GROUP, userGroup(removedUserId)]
+  }
+
+  // A shared bot is workspace-wide; a personal one stays with members and its owner.
+  if (isOneOfOutboxEventType(event, ["bot:created", "bot:updated"])) {
+    const { bot } = event.payload as BotCreatedOutboxPayload | BotUpdatedOutboxPayload
+    return bot.type === "personal" ? [BROWSE_GROUP, userGroup(bot.ownerUserId)] : [WORKSPACE_GROUP]
+  }
+
+  // Safe for guests to hear: workspace settings carry no stream content.
+  if (isOneOfOutboxEventType(event, ["workspace_settings:updated", "feature_flags:workspace_updated"])) {
+    return [WORKSPACE_GROUP]
   }
 
   // Permission-scoped events (e.g. invitation lifecycle → members:write) go to
@@ -432,5 +485,6 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
     return [streamGroup(streamId)]
   }
 
-  return [WORKSPACE_GROUP]
+  // Fail closed: an event nobody routed explicitly stays out of guests' hands.
+  return [BROWSE_GROUP]
 }
