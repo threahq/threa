@@ -289,6 +289,8 @@ See `.env.example` at the repo root for the full list with descriptions. The cri
 | `OPENROUTER_API_KEY`                                                 | AI model access                                                              |
 | `CONTROL_PLANE_URL`                                                  | `http://control-plane.railway.internal:8080`                                 |
 | `INTERNAL_API_KEY`                                                   | Shared inter-service secret                                                  |
+| `BRIDGE_API_KEY`                                                     | Region-to-region secret for shared channels, same value in every region      |
+| `WORKSPACE_ROUTER_URL`                                               | Workspace router URL; regions reach shared-channel partners through it       |
 | `REGION`                                                             | `eu-north-1`                                                                 |
 | `ATTACHMENT_MALWARE_SCAN_ENABLED`                                    | EICAR test-signature check; enabled unless explicitly `false`                |
 | `POSTHOG_PROJECT_TOKEN`, `POSTHOG_HOST`                              | PostHog project token + ingest host for this region — see below              |

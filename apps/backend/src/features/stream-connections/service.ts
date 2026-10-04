@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from "pg"
 import {
   StreamConnectionErrorCodes,
+  StreamConnectionStates,
   StreamTypes,
   Visibilities,
   WORKSPACE_PERMISSION_SCOPES,
@@ -21,6 +22,8 @@ import type { FeatureFlagService } from "../feature-flags"
 import { StreamMemberRepository, StreamRepository, checkStreamAccess, type Stream } from "../streams"
 import { WorkspaceUserPermissionsRepository } from "../workspace-authz"
 import { UserRepository, WorkspaceRepository } from "../workspaces"
+import { connectionNotFound } from "./errors"
+import { enqueuePulls } from "./import"
 import { StreamConnectionRepository, type AppliedStreamConnection } from "./repository"
 
 interface Dependencies {
@@ -82,9 +85,7 @@ export class StreamConnectionService {
     await this.requireAdmin(params)
     const cp = this.requireControlPlane()
     const connection = await StreamConnectionRepository.findById(this.pool, params.workspaceId, params.connectionId)
-    if (!connection || connection.role !== "host") {
-      throw new HttpError("Connection not found", { status: 404, code: StreamConnectionErrorCodes.NOT_FOUND })
-    }
+    if (!connection || connection.role !== "host") throw connectionNotFound()
     await this.requireStream({ ...params, streamId: connection.streamId })
 
     const snapshot = await cp.revokeStreamConnectionInvite({
@@ -220,11 +221,24 @@ export class StreamConnectionService {
     }
   }
 
-  /** Writes the snapshots and an event for each row they changed in one transaction. Returns the local row count. */
+  /**
+   * Writes the snapshots, an event for each row they changed, and a pull of
+   * each active partner row they changed, in one transaction: a partner that
+   * just accepted reads the channel's history without waiting for the host to
+   * post. Returns the local row count.
+   */
   private async project(snapshots: StreamConnectionSnapshot[]): Promise<number> {
     return withTransaction(this.pool, async (client) => {
       const { localRows, changed } = await StreamConnectionRepository.applySnapshots(client, snapshots)
       await this.publishChanges(client, changed)
+      await enqueuePulls(
+        client,
+        changed
+          .filter(
+            ({ connection }) => connection.role === "partner" && connection.state === StreamConnectionStates.ACTIVE
+          )
+          .map(({ workspaceId, connection }) => ({ workspaceId, connectionId: connection.id }))
+      )
       return localRows
     })
   }

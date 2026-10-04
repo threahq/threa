@@ -37,6 +37,22 @@ export interface ApplySnapshotsResult {
   changed: AppliedStreamConnection[]
 }
 
+interface StreamRef {
+  workspaceId: string
+  streamId: string
+}
+
+export interface ConnectionRef {
+  workspaceId: string
+  connectionId: string
+}
+
+export interface HostConnectionRef {
+  hostWorkspaceId: string
+  connectionId: string
+  partnerWorkspaceId: string
+}
+
 function mapRow(row: StreamConnectionRow): StreamConnection {
   return {
     id: row.id,
@@ -142,5 +158,32 @@ export const StreamConnectionRepository = {
       ORDER BY id DESC
     `)
     return result.rows.map(mapRow)
+  },
+
+  /** The active connections whose shared tree holds any of these streams, seen from each host workspace. */
+  async listActiveHostConnectionsForStreams(db: Querier, refs: StreamRef[]): Promise<HostConnectionRef[]> {
+    if (refs.length === 0) return []
+    const result = await db.query<{ workspace_id: string; id: string; remote_workspace_id: string }>(sql`
+      SELECT DISTINCT sc.workspace_id, sc.id, sc.remote_workspace_id
+      FROM unnest(${refs.map((ref) => ref.workspaceId)}::text[], ${refs.map((ref) => ref.streamId)}::text[])
+        AS ref(workspace_id, stream_id)
+      JOIN streams s ON s.workspace_id = ref.workspace_id AND s.id = ref.stream_id
+      JOIN stream_connections sc
+        ON sc.workspace_id = s.workspace_id AND sc.stream_id = COALESCE(s.root_stream_id, s.id)
+      WHERE sc.role = 'host' AND sc.state = 'active' AND sc.remote_workspace_id IS NOT NULL
+    `)
+    return result.rows.map((row) => ({
+      hostWorkspaceId: row.workspace_id,
+      connectionId: row.id,
+      partnerWorkspaceId: row.remote_workspace_id,
+    }))
+  },
+
+  /** Every active connection a workspace of this region joined as a partner. */
+  async listActivePartnerConnections(db: Querier): Promise<ConnectionRef[]> {
+    const result = await db.query<{ workspace_id: string; id: string }>(sql`
+      SELECT workspace_id, id FROM stream_connections WHERE role = 'partner' AND state = 'active'
+    `)
+    return result.rows.map((row) => ({ workspaceId: row.workspace_id, connectionId: row.id }))
   },
 }

@@ -142,6 +142,29 @@ function parseSandboxRunner(env: NodeJS.ProcessEnv): SandboxRunnerConfig | null 
   throw new Error(`SANDBOX_RUNNER must be "docker", "railway" or unset, got "${kind}"`)
 }
 
+export interface BridgeConfig {
+  /**
+   * Secret regions present to each other about a shared channel. Its own
+   * credential so neither the control-plane key nor the enclave key can read
+   * workspace content across organizations.
+   */
+  apiKey: string
+  /** The workspace router's base URL, which lands a call in the region holding the workspace it names. */
+  routerUrl: string
+}
+
+function parseBridge(env: NodeJS.ProcessEnv): BridgeConfig | null {
+  const apiKey = env.BRIDGE_API_KEY
+  if (!apiKey) return null
+  const routerUrl = env.WORKSPACE_ROUTER_URL
+  if (!routerUrl) {
+    throw new Error(
+      "WORKSPACE_ROUTER_URL is required when BRIDGE_API_KEY is set — a shared channel's region reaches its partners through the router"
+    )
+  }
+  return { apiKey, routerUrl }
+}
+
 export interface Config {
   port: number
   databaseUrl: string
@@ -186,12 +209,10 @@ export interface Config {
    */
   enclaveInternalApiKey: string | null
   /**
-   * Secret regions present to read each other's shared-channel exports (Threa
-   * Connect). Its own credential so neither the control-plane key nor the
-   * enclave key can read workspace content across organizations. Required when
-   * CONTROL_PLANE_URL is set (INV-11).
+   * How regions reach each other about a shared channel (Threa Connect).
+   * Required when CONTROL_PLANE_URL is set (INV-11).
    */
-  bridgeApiKey: string | null
+  bridge: BridgeConfig | null
   /** This instance's region name (e.g., "eu-north-1") */
   region: string | null
   posthog: PostHogConfig | null
@@ -333,7 +354,7 @@ export function loadConfig(): Config {
     controlPlaneUrl: process.env.CONTROL_PLANE_URL || null,
     internalApiKey: process.env.INTERNAL_API_KEY || null,
     enclaveInternalApiKey: process.env.ENCLAVE_INTERNAL_API_KEY || null,
-    bridgeApiKey: process.env.BRIDGE_API_KEY || null,
+    bridge: parseBridge(process.env),
     region: process.env.REGION || null,
     posthog: loadPostHogConfig(
       {
@@ -451,7 +472,7 @@ export function loadConfig(): Config {
     )
   }
 
-  if (config.controlPlaneUrl && !config.bridgeApiKey) {
+  if (config.controlPlaneUrl && !config.bridge) {
     throw new Error("BRIDGE_API_KEY is required when CONTROL_PLANE_URL is set — shared channels replicate on it")
   }
 

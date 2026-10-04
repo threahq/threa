@@ -14,9 +14,10 @@ import { WorkspaceUserPermissionsRepository } from "../../src/features/workspace
 import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
 import { FeatureFlagOverrideRepository, FeatureFlagService } from "../../src/features/feature-flags"
-import { StreamConnectionService } from "../../src/features/stream-connections"
+import { StreamConnectionImportService, StreamConnectionService } from "../../src/features/stream-connections"
 import { StreamConnectionRepository } from "../../src/features/stream-connections/repository"
 import { ControlPlaneClient } from "../../src/lib/control-plane-client"
+import { JobQueues } from "../../src/lib/queue"
 import type { StreamConnectionUpdatedOutboxPayload } from "../../src/lib/outbox"
 import { streamId, userId, workspaceId } from "../../src/lib/id"
 
@@ -869,5 +870,74 @@ describe("StreamConnectionService", () => {
     await expect(
       isolated.createInvite({ workspaceId: host.id, streamId: stream.id, userId: host.adminId })
     ).rejects.toMatchObject({ status: 502, code: "CONTROL_PLANE_UNAVAILABLE" })
+  })
+
+  test("should map a change anywhere in a shared tree to each live host connection of its channel, once", async () => {
+    const host = await seedWorkspace("Acme")
+    const second = await seedWorkspace("Globex")
+    const third = await seedWorkspace("Initech")
+    const fourth = await seedWorkspace("Umbrella")
+    const shared = await seedStream(host.id, host.adminId)
+    const unshared = await seedStream(host.id, host.adminId)
+    const thread = await StreamRepository.insert(pool, {
+      id: streamId(),
+      workspaceId: host.id,
+      type: StreamTypes.THREAD,
+      parentStreamId: shared.id,
+      parentAnchorId: "msg_anchor",
+      rootStreamId: shared.id,
+      createdBy: host.adminId,
+    })
+    const toSecond = activated(snapshot(host, shared.id), second, [third.id])
+    const toThird = activated(snapshot(host, shared.id), third, [second.id])
+    const toFourth = activated(snapshot(host, shared.id), fourth)
+    const pending = snapshot(host, shared.id)
+    await StreamConnectionRepository.applySnapshots(pool, [
+      toSecond,
+      toThird,
+      { ...toFourth, revision: toFourth.revision + 1, state: "revoked" },
+      pending,
+    ])
+
+    const found = await StreamConnectionRepository.listActiveHostConnectionsForStreams(pool, [
+      { workspaceId: host.id, streamId: shared.id },
+      { workspaceId: host.id, streamId: thread.id },
+      { workspaceId: host.id, streamId: unshared.id },
+      { workspaceId: second.id, streamId: shared.id },
+    ])
+
+    const byConnection = (rows: { connectionId: string }[]) =>
+      rows.toSorted((a, b) => a.connectionId.localeCompare(b.connectionId))
+    expect(byConnection(found)).toEqual(
+      byConnection([
+        { hostWorkspaceId: host.id, connectionId: toSecond.id, partnerWorkspaceId: second.id },
+        { hostWorkspaceId: host.id, connectionId: toThird.id, partnerWorkspaceId: third.id },
+      ])
+    )
+  })
+
+  test("should queue a pull for each partner's active connection when the sweep runs", async () => {
+    const host = await seedWorkspace("Acme")
+    const second = await seedWorkspace("Globex")
+    const third = await seedWorkspace("Initech")
+    const stream = await seedStream(host.id, host.adminId)
+    const toSecond = activated(snapshot(host, stream.id), second)
+    const toThird = activated(snapshot(host, stream.id), third)
+    await StreamConnectionRepository.applySnapshots(pool, [
+      toSecond,
+      { ...toThird, revision: toThird.revision + 1, state: "revoked" },
+    ])
+    const importService = new StreamConnectionImportService({ pool, featureFlagService: new FeatureFlagService(pool) })
+
+    await importService.enqueueAllPulls()
+
+    const queued = await pool.query<{ workspace_id: string; payload: unknown; deferred: boolean }>(
+      `SELECT workspace_id, payload, process_after > inserted_at AS deferred FROM queue_messages
+       WHERE queue_name = $1 AND workspace_id = ANY($2)`,
+      [JobQueues.STREAM_CONNECTION_PULL, [host.id, second.id, third.id]]
+    )
+    expect(queued.rows).toEqual([
+      { workspace_id: second.id, payload: { workspaceId: second.id, connectionId: toSecond.id }, deferred: true },
+    ])
   })
 })

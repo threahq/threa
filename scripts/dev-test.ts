@@ -128,6 +128,7 @@ async function main() {
       INTERNAL_API_KEY: backendEnv.INTERNAL_API_KEY ?? "dev-internal-key",
       ENCLAVE_INTERNAL_API_KEY: backendEnv.ENCLAVE_INTERNAL_API_KEY ?? "dev-enclave-internal-key",
       BRIDGE_API_KEY: backendEnv.BRIDGE_API_KEY ?? "dev-bridge-key",
+      WORKSPACE_ROUTER_URL: `http://localhost:${routerPort}`,
       REGION: "local",
     }
 

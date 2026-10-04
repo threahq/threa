@@ -1,7 +1,6 @@
 import type { Pool, PoolClient } from "pg"
 import { UnknownNodeTypeError } from "@threahq/prosemirror"
 import {
-  StreamConnectionErrorCodes,
   StreamConnectionStates,
   type BridgeChange,
   type BridgeEvents,
@@ -13,11 +12,11 @@ import {
   type ThreaMark,
 } from "@threahq/types"
 import { withClient } from "../../db"
-import { HttpError } from "../../lib/errors"
 import { AttachmentRepository, type Attachment } from "../attachments"
 import type { FeatureFlagService } from "../feature-flags"
 import { MessageRepository, deriveContentMarkdown, type Message } from "../messaging"
 import { StreamEventRepository, StreamRepository, normalizeStreamDescription, type Stream } from "../streams"
+import { connectionNotFound } from "./errors"
 import { StreamConnectionRepository } from "./repository"
 
 type EventRule = "message" | "moved" | "withheld"
@@ -227,10 +226,6 @@ export class StreamConnectionExportService {
     const flag = await this.featureFlagService.getWorkspaceFlag(workspaceId, "streamConnections")
     if (flag !== "on") throw connectionNotFound()
   }
-}
-
-function connectionNotFound(): HttpError {
-  return new HttpError("Connection not found", { status: 404, code: StreamConnectionErrorCodes.NOT_FOUND })
 }
 
 function changedMessageIds(eventType: string, payload: unknown): string[] {

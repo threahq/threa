@@ -2,21 +2,21 @@ import type { Request, Response } from "express"
 import { z } from "zod"
 import {
   BRIDGE_WORKSPACE_HEADER,
-  StreamConnectionErrorCodes,
   acceptStreamConnectionSchema,
   streamConnectionIdSchema,
   streamConnectionSnapshotSchema,
 } from "@threahq/types"
-import { HttpError } from "../../lib/errors"
 import { setAuditSubjects } from "../access-log"
 import { validateRequest } from "../../lib/validation"
+import { connectionNotFound } from "./errors"
 import type { StreamConnectionExportService } from "./export"
+import type { StreamConnectionImportService } from "./import"
 import type { StreamConnectionService } from "./service"
 
 declare global {
   namespace Express {
     interface Request {
-      /** Set on a partner region's bridge read once it names its workspace. */
+      /** Set on another region's bridge call once it names its workspace. */
       bridgeCaller?: { workspaceId: string; connectionId: string }
     }
   }
@@ -109,10 +109,14 @@ const bridgeEventsQuerySchema = z.object({
 
 interface BridgeDependencies {
   streamConnectionExportService: StreamConnectionExportService
+  streamConnectionImportService: StreamConnectionImportService
 }
 
-/** The partner region's reads of a channel this workspace hosts. */
-export function createStreamConnectionBridgeHandlers({ streamConnectionExportService }: BridgeDependencies) {
+/** Another region's calls about a shared channel: the partner's reads of a channel this workspace hosts, and the host's pokes. */
+export function createStreamConnectionBridgeHandlers({
+  streamConnectionExportService,
+  streamConnectionImportService,
+}: BridgeDependencies) {
   return {
     async manifest(req: Request, res: Response) {
       const params = validateRequest(bridgeParamsSchema, req.params)
@@ -147,14 +151,24 @@ export function createStreamConnectionBridgeHandlers({ streamConnectionExportSer
       res.setHeader("Cache-Control", "no-store")
       res.json(events)
     },
+
+    async poke(req: Request, res: Response) {
+      const params = validateRequest(bridgeParamsSchema, req.params)
+      await streamConnectionImportService.requestPull({
+        ...params,
+        callerWorkspaceId: identifyCaller(req, params.connectionId),
+      })
+      // Every shared-channel change sends one and it carries no data, so only a refusal earns a row.
+      res.locals.auditSkip = true
+      res.status(204).end()
+    },
   }
 }
 
-/** The partner workspace the request names itself as, recorded as the access log's actor. */
+/** The workspace the request names itself as, recorded as the access log's actor. */
 function identifyCaller(req: Request, connectionId: string): string {
   const workspaceId = req.get(BRIDGE_WORKSPACE_HEADER)
-  if (!workspaceId)
-    throw new HttpError("Connection not found", { status: 404, code: StreamConnectionErrorCodes.NOT_FOUND })
+  if (!workspaceId) throw connectionNotFound()
   req.bridgeCaller = { workspaceId, connectionId }
   return workspaceId
 }

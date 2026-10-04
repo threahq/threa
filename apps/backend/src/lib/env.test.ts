@@ -23,6 +23,7 @@ function setBaseEnv() {
   delete process.env.INTERNAL_API_KEY
   delete process.env.ENCLAVE_INTERNAL_API_KEY
   delete process.env.BRIDGE_API_KEY
+  delete process.env.WORKSPACE_ROUTER_URL
   delete process.env.CONTROL_PLANE_URL
   delete process.env.REGION
   delete process.env.CLOUDFLARE_REALTIME_APP_ID
@@ -356,6 +357,7 @@ describe("loadConfig github app configuration", () => {
     process.env.INTERNAL_API_KEY = "internal-key"
     process.env.ENCLAVE_INTERNAL_API_KEY = "enclave-key"
     process.env.BRIDGE_API_KEY = "bridge-key"
+    process.env.WORKSPACE_ROUTER_URL = "https://router.example.com"
 
     const config = loadConfig()
     expect(config.github.enabled).toBe(true)
@@ -540,6 +542,15 @@ describe("loadConfig bridge credential", () => {
     process.env.ENCLAVE_INTERNAL_API_KEY = "enclave-key"
 
     expect(() => loadConfig()).toThrow("BRIDGE_API_KEY is required when CONTROL_PLANE_URL is set")
+  })
+
+  test("should throw when BRIDGE_API_KEY is set without WORKSPACE_ROUTER_URL", () => {
+    setBaseEnv()
+    process.env.NODE_ENV = "development"
+    process.env.USE_STUB_AUTH = "true"
+    process.env.BRIDGE_API_KEY = "bridge-key"
+
+    expect(() => loadConfig()).toThrow("WORKSPACE_ROUTER_URL is required when BRIDGE_API_KEY is set")
   })
 })
 
