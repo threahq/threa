@@ -237,7 +237,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
     if (session?.status === SessionStatuses.RUNNING) {
       await failSessionWithLifecycle(pool, io, session, terminalError, async (tx) => {
         await EnclaveInvocationsRepository.failBySession(tx, { sessionId: session.id, errorMessage: terminalError })
-        await DynamicNamingStateRepository.releaseOwnedClaim(tx, session.id)
+        await DynamicNamingStateRepository.releaseOwnedClaim(tx, session.workspaceId, session.id)
       })
     }
     throw error
@@ -280,6 +280,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         claimTtlSeconds: ENCLAVE_CLAIM_TTL_SECONDS,
       })
       await DynamicNamingStateRepository.renewOwnedClaimLease(pool, {
+        workspaceId: session.workspaceId,
         ownerId: id,
         leaseSeconds: DYNAMIC_NAMING_CLAIM_LEASE_SECONDS,
       })
@@ -496,7 +497,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         const decision = parsed.data
         const source = stream.displayNameSource ?? (stream.displayName ? TitleSources.LEGACY : null)
         if (source !== null && source !== TitleSources.GENERATED) {
-          await DynamicNamingStateRepository.releaseOwnedClaim(tx, id)
+          await DynamicNamingStateRepository.releaseOwnedClaim(tx, session.workspaceId, id)
           return
         }
         const state = await DynamicNamingStateRepository.find(tx, stream.workspaceId, "stream", stream.id)
@@ -530,11 +531,12 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         ) {
           // `keep` is meaningful only for an existing title. A buggy or mixed-
           // version enclave must not advance/settle an unnamed scratchpad.
-          await DynamicNamingStateRepository.releaseOwnedClaim(tx, id)
+          await DynamicNamingStateRepository.releaseOwnedClaim(tx, session.workspaceId, id)
           return
         }
 
         const observedState = await DynamicNamingStateRepository.advanceOwnedClaimObservation(tx, {
+          workspaceId: session.workspaceId,
           ownerId: id,
           token: state.claimToken!,
           expectedVersion: state.version,
@@ -892,7 +894,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
         await EnclaveInvocationsRepository.completeBySession(tx, id)
         // A new-protocol callback consumes this first; an old enclave never calls
         // it, so completion releases the otherwise-unused session-owned claim.
-        await DynamicNamingStateRepository.releaseOwnedClaim(tx, id)
+        await DynamicNamingStateRepository.releaseOwnedClaim(tx, session.workspaceId, id)
         // Broadcast needs the workspace (room addressing). A missing stream is an
         // edge (deleted mid-turn): the session is still marked COMPLETED durably,
         // but the lifecycle event/outbox are skipped — same tradeoff the orphan
@@ -1033,7 +1035,7 @@ export function createEnclaveSessionHandlers({ pool, eventService, io, costServi
       const error = `Enclave session failed: ${parsed.data.errorName}`
       const won = await failSessionWithLifecycle(pool, io, session, error, async (tx) => {
         await EnclaveInvocationsRepository.failBySession(tx, { sessionId: id, errorMessage: error })
-        await DynamicNamingStateRepository.releaseOwnedClaim(tx, id)
+        await DynamicNamingStateRepository.releaseOwnedClaim(tx, session.workspaceId, id)
       })
 
       const { model, usage } = parsed.data

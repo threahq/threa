@@ -19,22 +19,17 @@ export type MessageEmbeddingChunk = { ids: string[] }
  * recheck (INV-20) so the two can't drift.
  */
 const ELIGIBLE_PREDICATE = sql`
-  NOT EXISTS (SELECT 1 FROM e2e_streams e WHERE e.stream_id = s.id)
+  NOT EXISTS (SELECT 1 FROM e2e_streams e WHERE e.stream_id = m.stream_id AND e.workspace_id = m.workspace_id)
   AND m.deleted_at IS NULL
   AND m.author_type <> ${AuthorTypes.SYSTEM}
   AND length(btrim(m.content_markdown)) >= 10
 `
 
-/**
- * `messages` has no `workspace_id` column, so the workspace filter joins through
- * `streams` (INV-68).
- */
 export async function plan(ctx: BackfillContext, workspaceId: string): Promise<MessageEmbeddingChunk[]> {
   const result = await ctx.pool.query<{ id: string }>(composeSql`
     SELECT m.id
     FROM messages m
-    JOIN streams s ON s.id = m.stream_id
-    WHERE s.workspace_id = ${workspaceId}
+    WHERE m.workspace_id = ${workspaceId}
       AND ${ELIGIBLE_PREDICATE}
     ORDER BY m.id
   `)
@@ -60,8 +55,7 @@ export async function processChunk(
   const eligible = await ctx.pool.query<{ id: string }>(composeSql`
     SELECT m.id
     FROM messages m
-    JOIN streams s ON s.id = m.stream_id
-    WHERE s.workspace_id = ${workspaceId}
+    WHERE m.workspace_id = ${workspaceId}
       AND m.id = ANY(${chunk.ids}::text[])
       AND ${ELIGIBLE_PREDICATE}
   `)

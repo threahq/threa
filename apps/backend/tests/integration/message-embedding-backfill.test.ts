@@ -1,10 +1,10 @@
 /**
  * The backfill's SQL, against a real schema.
  *
- * `plan`'s join through `streams` (messages has no `workspace_id` column) and
- * the e2e-sealed exclusion can't be proven from a unit test's fake pool
- * (INV-68) — the same gap that let a workspace-less `messages` predicate reach
- * production and dead-letter every backfill plan job for a month.
+ * `plan`'s `workspace_id` pin and the e2e-sealed exclusion can't be proven from
+ * a unit test's fake pool (INV-68) — the same gap that let a workspace-less
+ * `messages` predicate reach production and dead-letter every backfill plan job
+ * for a month.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
