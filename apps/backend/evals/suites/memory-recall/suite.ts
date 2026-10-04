@@ -188,7 +188,7 @@ async function seedAndCapture(ctx: EvalContext): Promise<void> {
     await memoService.processBatch(workspaceId, streamId)
 
     scenarioByConversation.set(id, scenario.key)
-    const memos = await MemoRepository.findActiveBySourceConversation(pool, id)
+    const memos = await MemoRepository.findActiveBySourceConversation(pool, workspaceId, id)
     memoCountByScenario.set(scenario.key, memoCountByScenario.get(scenario.key)! + memos.length)
   }
 
