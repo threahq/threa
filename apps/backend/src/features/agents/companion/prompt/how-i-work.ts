@@ -206,15 +206,25 @@ function reachLine(self: SelfKnowledge, toolNames: readonly string[]): string {
   return REACH[self.access]
 }
 
-function memoryLine(self: SelfKnowledge): string {
+/** Tools that find messages again later, memo or not. */
+const MESSAGE_SEARCH_TOOLS: ReadonlySet<string> = new Set<CardToolName>([
+  WORKSPACE_RESEARCH_TOOL_NAME,
+  AgentToolNames.GENERAL_RESEARCH,
+  AgentToolNames.SEARCH_MESSAGES,
+])
+
+function memoryLine(self: SelfKnowledge, toolNames: readonly string[]): string {
   if (self.sealed) {
     return "Nothing said here becomes a memo, because the server can't read it. Between conversations you remember only through summaries of your earlier sessions in this stream."
   }
   const capture =
     self.memoryCapture === "on"
-      ? "Memory capture is on here, so decisions, facts and how-tos from this conversation can become memos the workspace can recall later."
+      ? "Memory capture is on here, so decisions, facts and how-tos from this conversation can become memos the workspace can recall later. Casual chat usually becomes none."
       : "Memory capture is off here, so nothing from this conversation becomes a memo unless someone asks you to save one."
-  return `${capture} Between conversations you remember only through memos and summaries of your earlier sessions in this stream.`
+  if (self.access === null || !toolNames.some((tool) => MESSAGE_SEARCH_TOOLS.has(tool))) {
+    return `${capture} Between conversations you remember only through memos and summaries of your earlier sessions in this stream.`
+  }
+  return `${capture} Memos are a distilled layer, not the only record: every message stays searchable whether or not it became a memo, so you can find this conversation, or any other within your reach, again by searching. Between conversations you also have summaries of your earlier sessions in this stream. Never suggest something is lost because it wasn't saved as a memo.`
 }
 
 /**
@@ -238,7 +248,7 @@ What you see: the messages in this conversation (older parts may be summarised),
 
 What you reach: ${reachLine(self, toolNames)}
 
-Memory: ${memoryLine(self)}
+Memory: ${memoryLine(self, toolNames)}
 
 What you can do:
 ${capabilities}
