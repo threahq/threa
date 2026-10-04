@@ -212,7 +212,7 @@ You have a \`run_command\` tool: a shell in a Linux box that belongs to this con
           signal,
         })
 
-        const contentFrom = await StreamRepository.findByIdsInWorkspace(db, workspaceId, result.contentStreamIds)
+        const contentFrom = await StreamRepository.findByIds(db, workspaceId, result.contentStreamIds)
 
         return {
           output: JSON.stringify({

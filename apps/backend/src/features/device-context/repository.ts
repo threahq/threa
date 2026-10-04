@@ -49,7 +49,7 @@ export const UserDeviceContextRepository = {
         AS t(workspace_id, user_id)
       WHERE NOT EXISTS (
         SELECT 1 FROM user_preference_overrides o
-        WHERE o.user_id = t.user_id AND o.key = ${SHARE_DEVICE_KEY} AND o.value = 'false'::jsonb
+        WHERE o.workspace_id = t.workspace_id AND o.user_id = t.user_id AND o.key = ${SHARE_DEVICE_KEY} AND o.value = 'false'::jsonb
       )
       ON CONFLICT (workspace_id, user_id) DO UPDATE SET
         layout = EXCLUDED.layout,

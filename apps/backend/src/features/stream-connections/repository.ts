@@ -181,6 +181,7 @@ export const StreamConnectionRepository = {
 
   /** Every active connection a workspace of this region joined as a partner. */
   async listActivePartnerConnections(db: Querier): Promise<ConnectionRef[]> {
+    // eslint-disable-next-line threa/workspace-scoped-sql -- every partner connection in the region, across workspaces by design
     const result = await db.query<{ workspace_id: string; id: string }>(sql`
       SELECT workspace_id, id FROM stream_connections WHERE role = 'partner' AND state = 'active'
     `)

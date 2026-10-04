@@ -93,17 +93,20 @@ export const PerformanceCaptureRepository = {
    * long transaction; the eligible set only shrinks, so re-running converges.
    */
   async pruneOlderThan(db: Querier, params: { cutoff: Date; limit: number }): Promise<{ deletedCount: number }> {
-    const result = await db.query(sql`
-      WITH victims AS (
-        SELECT ctid
-        FROM performance_captures
-        WHERE created_at < ${params.cutoff}
-        LIMIT ${params.limit}
-      )
-      DELETE FROM performance_captures c
-      USING victims v
-      WHERE c.ctid = v.ctid
-    `)
+    const result = await db.query(
+      // eslint-disable-next-line threa/workspace-scoped-sql -- retention sweep across every workspace; victims are matched by ctid
+      sql`
+        WITH victims AS (
+          SELECT ctid
+          FROM performance_captures
+          WHERE created_at < ${params.cutoff}
+          LIMIT ${params.limit}
+        )
+        DELETE FROM performance_captures c
+        USING victims v
+        WHERE c.ctid = v.ctid
+      `
+    )
     return { deletedCount: result.rowCount ?? 0 }
   },
 }

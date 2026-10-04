@@ -50,6 +50,7 @@ describe("batched preview history", () => {
     const content = { ...testMessageContent(text), ...(contentJson ? { contentJson } : {}) }
     const event = await StreamEventRepository.insert(pool, {
       id: eventId(),
+      workspaceId: workspace,
       streamId: stream,
       eventType: "message_created",
       actorId: viewer,
@@ -58,6 +59,7 @@ describe("batched preview history", () => {
     })
     await MessageRepository.insert(pool, {
       id,
+      workspaceId: workspace,
       streamId: stream,
       sequence: event.sequence,
       authorId: viewer,
@@ -166,9 +168,9 @@ describe("batched preview history", () => {
     const citing = await seedMessage(moveSource, "moving citation", body)
     const events = new EventService(pool)
     const original = events.getMessagesByIds.bind(events)
-    const spy = spyOn(events, "getMessagesByIds").mockImplementation(async (ids) => {
+    const spy = spyOn(events, "getMessagesByIds").mockImplementation(async (workspaceId, ids) => {
       await pool.query("UPDATE messages SET stream_id = $2 WHERE id = $1", [citing.id, destination])
-      return original(ids)
+      return original(workspaceId, ids)
     })
     try {
       const movingService = new StreamPreviewHistoryService({
@@ -206,12 +208,12 @@ describe("batched preview history", () => {
     await seedChannel("private", { id: foreign, inWorkspace: workspaceId() })
     await seedChannel("public", { id: empty })
     await seedChannel("public", { id: windowStream })
-    await StreamMemberRepository.insert(pool, memberRoot, viewer)
+    await StreamMemberRepository.insert(pool, workspace, memberRoot, viewer)
     anchor = (await seedMessage(memberRoot, "anchor")).id
     await seedThread(memberRoot, anchor, { id: thread })
     await seedThread(deniedRoot, messageId(), { id: deniedThread })
     await seedMessage(thread, "latest reply")
-    await StreamRepository.bumpThreadReplyCount(pool, thread, 1)
+    await StreamRepository.bumpThreadReplyCount(pool, workspace, thread, 1)
     await seedMessage(publicRoot, "public preview")
     await seedMessage(deniedRoot, "private secret")
     await seedMessage(deniedThread, "private thread secret")
@@ -277,6 +279,7 @@ describe("batched preview history", () => {
       pool,
       Array.from({ length: 51 }, () => ({
         id: eventId(),
+        workspaceId: workspace,
         streamId: windowStream,
         eventType: "member_joined" as const,
         payload: {},
@@ -285,6 +288,7 @@ describe("batched preview history", () => {
     )
     const mine = await StreamEventRepository.insert(pool, {
       id: eventId(),
+      workspaceId: workspace,
       streamId: windowStream,
       eventType: AUTHOR_SCOPED_EVENT_TYPES[0],
       payload: {},
@@ -292,6 +296,7 @@ describe("batched preview history", () => {
     })
     const hidden = await StreamEventRepository.insert(pool, {
       id: eventId(),
+      workspaceId: workspace,
       streamId: windowStream,
       eventType: AUTHOR_SCOPED_EVENT_TYPES[0],
       payload: {},
@@ -313,6 +318,7 @@ describe("batched preview history", () => {
       pool,
       Array.from({ length: 50 }, () => ({
         id: eventId(),
+        workspaceId: workspace,
         streamId: empty,
         eventType: "member_joined" as const,
         payload: {},
@@ -330,6 +336,7 @@ describe("batched preview history", () => {
     const deleted = await seedMessage(publicRoot, "deleted")
     const sealed = await StreamEventRepository.insert(pool, {
       id: eventId(),
+      workspaceId: workspace,
       streamId: publicRoot,
       eventType: "message_created",
       actorId: viewer,
@@ -342,12 +349,14 @@ describe("batched preview history", () => {
     await pool.query("UPDATE messages SET deleted_at = NOW() WHERE id = $1", [deleted.id])
     await StreamEventRepository.insert(pool, {
       id: eventId(),
+      workspaceId: workspace,
       streamId: publicRoot,
       eventType: "message_edited",
       payload: { messageId: edited.id },
     })
     await StreamEventRepository.insert(pool, {
       id: eventId(),
+      workspaceId: workspace,
       streamId: publicRoot,
       eventType: "message_deleted",
       payload: { messageId: deleted.id },
@@ -426,7 +435,7 @@ describe("batched preview history", () => {
       content: [{ type: "sharedMessage", attrs: { messageId: source.id, streamId: memberRoot } }],
     }
     const citing = await seedMessage(publicRoot, "shared pointer", sharedBody)
-    await MessageRepository.addReaction(pool, citing.id, "👍", viewer)
+    await MessageRepository.addReaction(pool, workspace, citing.id, "👍", viewer)
     const attachment = attachmentId()
     await AttachmentRepository.insert(pool, {
       id: attachment,
@@ -493,6 +502,7 @@ describe("batched preview history", () => {
     for (let index = 0; index < 51; index++) {
       await StreamEventRepository.insert(pool, {
         id: eventId(),
+        workspaceId: workspace,
         streamId: patchStream,
         eventType: "message_edited",
         actorId: viewer,
@@ -511,12 +521,13 @@ describe("batched preview history", () => {
     const stream = await seedChannel("public")
     const reacting = await seedMessage(stream, "reacted message")
     const deleted = await seedMessage(stream, "deleted message")
-    await MessageRepository.addReaction(pool, reacting.id, "👍", viewer)
+    await MessageRepository.addReaction(pool, workspace, reacting.id, "👍", viewer)
     await pool.query("UPDATE messages SET deleted_at = NOW() WHERE id = $1", [deleted.id])
     const patches = await StreamEventRepository.insertMany(
       pool,
       Array.from({ length: 51 }, (_, index) => ({
         id: eventId(),
+        workspaceId: workspace,
         streamId: stream,
         eventType: (["reaction_added", "reaction_removed", "message_deleted"] as const)[index % 3],
         payload: { messageId: index % 3 === 2 ? deleted.id : reacting.id },
@@ -563,6 +574,7 @@ describe("batched preview history", () => {
     const largeSequences = await seedChannel("public")
     const hidden = await StreamEventRepository.insert(pool, {
       id: eventId(),
+      workspaceId: workspace,
       streamId: hiddenOnly,
       eventType: AUTHOR_SCOPED_EVENT_TYPES[0],
       payload: {},
@@ -572,6 +584,7 @@ describe("batched preview history", () => {
       pool,
       [0, 1, 2].map(() => ({
         id: eventId(),
+        workspaceId: workspace,
         streamId: largeSequences,
         eventType: "member_joined" as const,
         payload: {},

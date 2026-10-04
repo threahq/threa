@@ -144,8 +144,7 @@ function mapRow(row: DbRow): AccessLogRow {
 }
 
 const COLUMNS =
-  "id, workspace_id, occurred_at, actor_type, actor_id, on_behalf_of_user_id, auth_ref, " +
-  "operation, access_kind, outcome, subjects, detail, ip, user_agent, request_id"
+  "id, workspace_id, occurred_at, actor_type, actor_id, on_behalf_of_user_id, auth_ref, operation, access_kind, outcome, subjects, detail, ip, user_agent, request_id"
 
 function rowValues(row: AccessLogInsert): unknown[] {
   return [
@@ -206,25 +205,20 @@ export const AccessLogRepository = {
   },
 
   async listByActor(querier: Querier, params: ListByActorParams): Promise<AccessLogRow[]> {
-    const values: unknown[] = [params.actorId]
-    const clauses = ["actor_id = $1"]
-    if (params.workspaceId === null) {
-      clauses.push("workspace_id IS NULL")
-    } else {
-      values.push(params.workspaceId)
-      clauses.push(`workspace_id = $${values.length}`)
-    }
+    const values: unknown[] = [params.actorId, params.workspaceId]
+    const range: string[] = []
     if (params.from) {
       values.push(params.from)
-      clauses.push(`occurred_at >= $${values.length}`)
+      range.push(`AND occurred_at >= $${values.length}`)
     }
     if (params.to) {
       values.push(params.to)
-      clauses.push(`occurred_at < $${values.length}`)
+      range.push(`AND occurred_at < $${values.length}`)
     }
     values.push(params.limit ?? DEFAULT_LIMIT)
     const result = await querier.query<DbRow>(
-      `SELECT ${COLUMNS} FROM access_log WHERE ${clauses.join(" AND ")}
+      `SELECT ${COLUMNS} FROM access_log
+       WHERE actor_id = $1 AND workspace_id IS NOT DISTINCT FROM $2 ${range.join(" ")}
        ORDER BY occurred_at DESC LIMIT $${values.length}`,
       values
     )
@@ -233,25 +227,20 @@ export const AccessLogRepository = {
 
   async listBySubject(querier: Querier, params: ListBySubjectParams): Promise<AccessLogRow[]> {
     const containment = JSON.stringify([{ type: params.subjectType, id: params.subjectId }])
-    const values: unknown[] = [containment]
-    const clauses = ["subjects @> $1::jsonb"]
-    if (params.workspaceId === null) {
-      clauses.push("workspace_id IS NULL")
-    } else {
-      values.push(params.workspaceId)
-      clauses.push(`workspace_id = $${values.length}`)
-    }
+    const values: unknown[] = [containment, params.workspaceId]
+    const range: string[] = []
     if (params.from) {
       values.push(params.from)
-      clauses.push(`occurred_at >= $${values.length}`)
+      range.push(`AND occurred_at >= $${values.length}`)
     }
     if (params.to) {
       values.push(params.to)
-      clauses.push(`occurred_at < $${values.length}`)
+      range.push(`AND occurred_at < $${values.length}`)
     }
     values.push(params.limit ?? DEFAULT_LIMIT)
     const result = await querier.query<DbRow>(
-      `SELECT ${COLUMNS} FROM access_log WHERE ${clauses.join(" AND ")}
+      `SELECT ${COLUMNS} FROM access_log
+       WHERE subjects @> $1::jsonb AND workspace_id IS NOT DISTINCT FROM $2 ${range.join(" ")}
        ORDER BY occurred_at DESC LIMIT $${values.length}`,
       values
     )
@@ -328,6 +317,7 @@ export const AccessLogRepository = {
          FROM intervals i
          JOIN stream_events e
            ON e.stream_id = $3
+           AND e.workspace_id = $1
            -- Edges widened by the skew pad: subscribe rows are app-clock
            -- stamped, stream_events are DB-clocked (ReconstructDeliveredParams).
            AND e.created_at >= i.started_at - make_interval(secs => $6::numeric / 1000.0)

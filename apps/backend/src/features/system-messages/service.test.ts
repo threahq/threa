@@ -208,7 +208,7 @@ describe("SystemMessageService", () => {
     it("should notify the inviter with the accepting user's name", async () => {
       const inviterStream = fakeStream({ createdBy: INVITER_ID })
 
-      spyOn(InvitationRepository, "findById").mockResolvedValue({
+      const findInvitation = spyOn(InvitationRepository, "findById").mockResolvedValue({
         id: INVITATION_ID,
         workspaceId: WORKSPACE_ID,
         email: "newuser@test.com",
@@ -233,6 +233,7 @@ describe("SystemMessageService", () => {
         userName: "New User",
       })
 
+      expect(findInvitation).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, INVITATION_ID)
       expect(createMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           workspaceId: WORKSPACE_ID,
@@ -245,7 +246,7 @@ describe("SystemMessageService", () => {
     it("should fall back to email when payload has no user name", async () => {
       const inviterStream = fakeStream({ createdBy: INVITER_ID })
 
-      spyOn(InvitationRepository, "findById").mockResolvedValue({
+      const findInvitation = spyOn(InvitationRepository, "findById").mockResolvedValue({
         id: INVITATION_ID,
         workspaceId: WORKSPACE_ID,
         email: "anonymous@test.com",
@@ -270,6 +271,7 @@ describe("SystemMessageService", () => {
         userName: "",
       })
 
+      expect(findInvitation).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, INVITATION_ID)
       expect(createMessage).toHaveBeenCalledWith(
         expect.objectContaining({
           content: "**anonymous@test.com** accepted your invitation and joined the workspace.",
@@ -278,7 +280,7 @@ describe("SystemMessageService", () => {
     })
 
     it("should skip notification when invitation is not found", async () => {
-      spyOn(InvitationRepository, "findById").mockResolvedValue(null)
+      const findInvitation = spyOn(InvitationRepository, "findById").mockResolvedValue(null)
 
       const { service, createMessage } = createService()
       await service.sendInvitationAccepted({
@@ -289,6 +291,7 @@ describe("SystemMessageService", () => {
         userName: "Test",
       })
 
+      expect(findInvitation).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "inv_nonexistent")
       expect(createMessage).not.toHaveBeenCalled()
     })
   })

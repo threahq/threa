@@ -68,7 +68,7 @@ describe("meet ariadne onboarding", () => {
         uniqueness_key: onboardingStreamUniquenessKey(newUser),
       },
     ])
-    const members = await StreamMemberRepository.list(pool, { streamId })
+    const members = await StreamMemberRepository.list(pool, wsId, { streamId })
     expect(members.map((member) => member.memberId)).toEqual([newUser])
 
     const jobs = await greetingJobs(streamId)

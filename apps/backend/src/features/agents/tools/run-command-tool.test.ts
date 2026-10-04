@@ -322,7 +322,7 @@ describe("run_command sources", () => {
       replaced: null,
       contentStreamIds: [] as string[],
     }
-    const named = spyOn(streams.StreamRepository, "findByIdsInWorkspace").mockImplementation(async (_db, _ws, ids) =>
+    const named = spyOn(streams.StreamRepository, "findByIds").mockImplementation(async (_db, _ws, ids) =>
       ids.map((id) => ({ id, type: "channel", slug: "design" }) as never)
     )
     const reading = setup(

@@ -96,10 +96,11 @@ describe("memo capture: a cited memo is retired only by knowledge at least as ne
     })
   }
 
-  async function seedMessage(author: string, channel: string): Promise<string> {
+  async function seedMessage(ws: string, author: string, channel: string): Promise<string> {
     const id = messageId()
     await MessageRepository.insert(pool, {
       id,
+      workspaceId: ws,
       streamId: channel,
       sequence: nextSequence++,
       authorId: author,
@@ -112,7 +113,7 @@ describe("memo capture: a cited memo is retired only by knowledge at least as ne
   /** An active memo whose only source is a message posted now. */
   async function seedMemo(ws: string, author: string, channel: string): Promise<string> {
     const id = memoId()
-    const source = await seedMessage(author, channel)
+    const source = await seedMessage(ws, author, channel)
     await MemoRepository.insert(pool, {
       id,
       workspaceId: ws,
@@ -131,7 +132,7 @@ describe("memo capture: a cited memo is retired only by knowledge at least as ne
   /** A settled conversation whose messages are posted now, queued for capture. */
   async function queueConversation(ws: string, author: string, channel: string): Promise<string> {
     const id = conversationId()
-    const messages = [await seedMessage(author, channel), await seedMessage(author, channel)]
+    const messages = [await seedMessage(ws, author, channel), await seedMessage(ws, author, channel)]
     await withTransaction(pool, async (client) => {
       await ConversationRepository.insert(client, {
         id,
@@ -204,7 +205,7 @@ describe("memo capture: a cited memo is retired only by knowledge at least as ne
     const { ws, author, channel } = await seedChannel()
     const conversation = await queueConversation(ws, author, channel)
     const restored = memoId()
-    const source = await seedMessage(author, channel)
+    const source = await seedMessage(ws, author, channel)
     await MemoRepository.insert(pool, {
       id: restored,
       workspaceId: ws,
@@ -220,13 +221,13 @@ describe("memo capture: a cited memo is retired only by knowledge at least as ne
     })
     // Cosine distance 0.25: inside the same-conversation supersede band, outside dedup.
     const axis = (i: number, weight: number) => Array.from({ length: 1536 }, (_, j) => (j === i ? weight : 0))
-    await MemoRepository.updateEmbedding(pool, restored, axis(1500, 1))
+    await MemoRepository.updateEmbedding(pool, ws, restored, axis(1500, 1))
     const capture = axis(1500, 0.75).map((v, i) => (i === 1501 ? Math.sqrt(1 - 0.75 ** 2) : v))
 
     await capturing({
       embedding: capture,
       duringInference: async () => {
-        await MemoRepository.unarchive(pool, restored)
+        await MemoRepository.unarchive(pool, ws, restored)
       },
     }).processBatch(ws, channel)
 

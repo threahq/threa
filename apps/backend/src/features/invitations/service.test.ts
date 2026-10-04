@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
+import { afterAll, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import type { PoolClient } from "pg"
 import * as db from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
@@ -44,6 +44,10 @@ spyOn(db, "withTransaction").mockImplementation((_pool, callback) => callback(cl
 const insertOutbox = spyOn(OutboxRepository, "insert")
 const findUserById = spyOn(UserRepository, "findById")
 const findEmails = spyOn(UserRepository, "findEmails")
+
+afterAll(() => {
+  mock.restore()
+})
 
 beforeEach(() => {
   client.query = mock(() => Promise.resolve({ rows: [], rowCount: 0 })) as never
@@ -257,6 +261,130 @@ describe("InvitationService.updateLink", () => {
       expiresAt: null,
       maxUses: null,
       revision: 2,
+    })
+  })
+})
+
+const argsAfterDb = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.map((call) => call.slice(1))
+
+describe("InvitationService invitation acceptance", () => {
+  const identity = { workosUserId: "workos_1", email: "new@example.com", name: "New User" }
+  const findWorkspaceId = spyOn(InvitationRepository, "findWorkspaceIdByInvitationId")
+  const findPendingByEmail = spyOn(InvitationRepository, "findPendingByEmail")
+  const findById = spyOn(InvitationRepository, "findById")
+  const findByIdForUpdate = spyOn(InvitationRepository, "findByIdForUpdate")
+  const lockIdentity = spyOn(InvitationRepository, "lockMembershipIdentity")
+  const accept = spyOn(InvitationRepository, "accept")
+  const incrementRevision = spyOn(InvitationRepository, "incrementRevision")
+  const isMember = spyOn(UserRepository, "isMember")
+  const service = new InvitationService(
+    {} as never,
+    { createUserInTransaction: mock(() => Promise.resolve()) } as never
+  )
+
+  beforeEach(() => {
+    findWorkspaceId.mockReset().mockResolvedValue("ws_1")
+    findPendingByEmail.mockReset().mockResolvedValue([child])
+    findById.mockReset().mockImplementation(async (_db, _workspaceId, id) => (id === root.id ? root : child))
+    findByIdForUpdate.mockReset().mockImplementation(async (_db, _workspaceId, id) => (id === root.id ? root : child))
+    lockIdentity.mockReset().mockResolvedValue(undefined)
+    accept.mockReset().mockResolvedValue(true)
+    incrementRevision.mockReset().mockResolvedValue(undefined as never)
+    isMember.mockReset().mockResolvedValue(false)
+  })
+
+  test("should discover the workspace from the invitation id and pin every later lookup to it", async () => {
+    await expect(service.acceptInvitation("inv_child", identity)).resolves.toBe("ws_1")
+
+    expect(argsAfterDb(findWorkspaceId)).toEqual([["inv_child"]])
+    expect(argsAfterDb(findById)).toEqual([
+      ["ws_1", "inv_child"],
+      ["ws_1", "inv_root"],
+    ])
+    expect(argsAfterDb(findByIdForUpdate)).toEqual([
+      ["ws_1", "inv_root"],
+      ["ws_1", "inv_child"],
+    ])
+    expect(accept.mock.calls.map((call) => [call[1], call[2], call[4], call[5]])).toEqual([
+      ["ws_1", "inv_child", "workos_1", true],
+    ])
+    expect(argsAfterDb(incrementRevision)).toEqual([["ws_1", "inv_root"]])
+  })
+
+  test("should return null without reading the invitation when no workspace holds the id", async () => {
+    findWorkspaceId.mockResolvedValue(null)
+
+    await expect(service.acceptInvitation("inv_unknown", identity)).resolves.toBeNull()
+
+    expect(argsAfterDb(findWorkspaceId)).toEqual([["inv_unknown"]])
+    expect(findById).not.toHaveBeenCalled()
+    expect(accept).not.toHaveBeenCalled()
+  })
+
+  test("should return null when the pinned lookup finds no invitation in the discovered workspace", async () => {
+    findById.mockResolvedValue(null)
+
+    await expect(service.acceptInvitation("inv_child", identity)).resolves.toBeNull()
+
+    expect(argsAfterDb(findById)).toEqual([["ws_1", "inv_child"]])
+    expect(accept).not.toHaveBeenCalled()
+  })
+
+  test("should accept a pending invitation in the workspace its row names without rediscovering it", async () => {
+    await expect(service.acceptPendingForEmail("New@Example.com", identity)).resolves.toEqual({
+      accepted: ["ws_1"],
+      failed: [],
+    })
+
+    expect(findWorkspaceId).not.toHaveBeenCalled()
+    expect(argsAfterDb(findPendingByEmail)).toEqual([["new@example.com"]])
+    expect(argsAfterDb(findById)).toEqual([
+      ["ws_1", "inv_child"],
+      ["ws_1", "inv_root"],
+    ])
+    expect(argsAfterDb(findByIdForUpdate)).toEqual([
+      ["ws_1", "inv_root"],
+      ["ws_1", "inv_child"],
+    ])
+  })
+})
+
+describe("InvitationService.resendInvitation", () => {
+  const service = new InvitationService({} as never, {} as never)
+  const findById = spyOn(InvitationRepository, "findById")
+  const revoke = spyOn(InvitationRepository, "revoke")
+  const sendInvitations = spyOn(service, "sendInvitations")
+
+  beforeEach(() => {
+    findById.mockReset()
+    revoke.mockReset()
+    sendInvitations.mockReset()
+  })
+
+  test("should return null when the caller's workspace holds no such invitation", async () => {
+    findById.mockResolvedValue(null)
+
+    await expect(service.resendInvitation("inv_child", "ws_1")).resolves.toBeNull()
+
+    expect(argsAfterDb(findById)).toEqual([["ws_1", "inv_child"]])
+    expect(sendInvitations).not.toHaveBeenCalled()
+  })
+
+  test("should revoke and resend a pending email invitation read from the caller's workspace", async () => {
+    const pending = { ...child, id: "inv_email", kind: "email" as const, parentLinkId: null }
+    findById.mockResolvedValue(pending)
+    revoke.mockResolvedValue(pending)
+    sendInvitations.mockResolvedValue({ sent: [pending], skipped: [] })
+
+    await expect(service.resendInvitation("inv_email", "ws_1")).resolves.toEqual(pending)
+
+    expect(argsAfterDb(findById)).toEqual([["ws_1", "inv_email"]])
+    expect(revoke.mock.calls.map((call) => [call[1], call[2]])).toEqual([["inv_email", "ws_1"]])
+    expect(sendInvitations).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      invitedBy: "usr_admin",
+      emails: ["new@example.com"],
+      role: "member",
     })
   })
 })
