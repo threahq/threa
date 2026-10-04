@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import type { MemoExplorerDetail, MemoExplorerService } from "../../memos"
+import type { MemoExplorerDetail, MemoExplorerPermissions, MemoExplorerService } from "../../memos"
 import { createDescribeMemoTool } from "./describe-memo-tool"
 import type { WorkspaceToolDeps } from "./tool-deps"
 
@@ -16,6 +16,7 @@ function makeDeps(memoExplorer: MemoExplorerService): WorkspaceToolDeps {
     accessibleStreamIds: ["stream_1", "stream_2"],
     invokingUserId: "usr_test",
     memoViewerUserId: undefined,
+    memoAudience: { kind: "users", userIds: ["usr_test"] },
     peopleViewer: { kind: "user", userId: "usr_test" },
     searchFlag: "on",
     searchService: {} as WorkspaceToolDeps["searchService"],
@@ -140,9 +141,19 @@ describe("describe_memo tool", () => {
   })
 
   it("forwards workspaceId and accessibleStreamIds to MemoExplorerService.getById for access gating", async () => {
-    let captured: { workspaceId?: string; memoId?: string; streamIds?: string[] } = {}
+    let captured: {
+      workspaceId?: string
+      memoId?: string
+      streamIds?: string[]
+      audiences?: MemoExplorerPermissions["audiences"]
+    } = {}
     const memoExplorer = makeMemoExplorer(async (workspaceId, memoId, permissions) => {
-      captured = { workspaceId, memoId, streamIds: permissions.accessibleStreamIds }
+      captured = {
+        workspaceId,
+        memoId,
+        streamIds: permissions.accessibleStreamIds,
+        audiences: permissions.audiences,
+      }
       return null
     })
     const tool = createDescribeMemoTool(makeDeps(memoExplorer))
@@ -152,6 +163,7 @@ describe("describe_memo tool", () => {
     expect(captured.workspaceId).toBe("workspace_test")
     expect(captured.memoId).toBe("memo_xyz")
     expect(captured.streamIds).toEqual(["stream_1", "stream_2"])
+    expect(captured.audiences).toEqual([{ kind: "users", userIds: ["usr_test"] }])
   })
 
   it("truncates long source-message previews to 400 chars with an ellipsis", async () => {

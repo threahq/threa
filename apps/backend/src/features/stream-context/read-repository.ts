@@ -13,6 +13,7 @@ import type {
 import { CONTEXT_CATEGORIES, streamContextItemKey } from "@threahq/types"
 import { composeSql, sql, type Querier } from "../../db"
 import { KEYSET_EPOCH, type KeysetCursor } from "../../lib/keyset-cursor"
+import { memoAudienceVisibleSql } from "../memos"
 
 export interface StreamContextFeedFilters {
   workspaceId: string
@@ -224,7 +225,7 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
   const hasQuery = Boolean(queryText)
   const likePattern = `%${(queryText ?? "").replace(/[\\%_]/g, "\\$&")}%`
 
-  return sql`
+  return composeSql`
     SELECT
       sci.id,
       sci.stream_id,
@@ -313,6 +314,11 @@ function scopedSql(filters: StreamContextFeedFilters, extra?: { groupKey?: strin
       AND (
         (${isTree} AND sci.root_stream_id = ${filters.rootStreamId})
         OR (${!isTree} AND sci.stream_id = ${filters.streamId})
+      )
+      AND (
+        sci.category <> 'memo'
+        OR mem.id IS NULL
+        OR ${memoAudienceVisibleSql(filters.workspaceId, [{ kind: "room", roomStreamId: sql`sci.root_stream_id` }], "mem")}
       )
       AND (${filters.category === undefined} OR sci.category = ${filters.category ?? ""})
       AND (${filters.categories === undefined} OR sci.category = ANY(${filters.categories ?? [""]}))

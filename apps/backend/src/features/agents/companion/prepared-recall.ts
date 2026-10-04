@@ -1,6 +1,6 @@
 import type { KnowledgeType, MemoRecallOutcome } from "@threahq/types"
 import type { AnalyticsReporter } from "@threahq/backend-common"
-import type { MemoExplorerService, RelevanceScorerLike } from "../../memos"
+import type { MemoAudience, MemoExplorerService, RelevanceScorerLike } from "../../memos"
 import { logger } from "../../../lib/logger"
 import { escapeXmlAttr } from "../../../lib/xml"
 import {
@@ -35,6 +35,8 @@ export interface PreparedRecallParams {
   accessibleStreamIds: Set<string>
   /** Set only for a turn private to its user; admits that user's own memos (`resolveMemoViewer`). */
   memoViewerUserId: string | undefined
+  /** Who reads the recalled memos: the turn's audience, or a bot key's fixed readable set. */
+  memoAudience: MemoAudience
   /** The person whose message this is; an external agent's query has none. */
   asker: RecallAsker | undefined
 }
@@ -133,13 +135,17 @@ export class PreparedRecall {
   }
 
   private async find(params: PreparedRecallParams): Promise<Found> {
-    const { workspaceId, invokingUserId, accessibleStreamIds, memoViewerUserId } = params
+    const { workspaceId, invokingUserId, accessibleStreamIds, memoViewerUserId, memoAudience } = params
     const query = params.query.trim().slice(0, PREPARED_RECALL_QUERY_MAX_CHARS)
     if (!query || accessibleStreamIds.size === 0) return { outcome: "no_candidates", candidateCount: 0, memos: [] }
 
     const candidates = await this.memoExplorerService.search({
       workspaceId,
-      permissions: { accessibleStreamIds: [...accessibleStreamIds], userId: memoViewerUserId },
+      permissions: {
+        accessibleStreamIds: [...accessibleStreamIds],
+        userId: memoViewerUserId,
+        audiences: [memoAudience],
+      },
       query,
       limit: PREPARED_RECALL_CANDIDATE_LIMIT,
       mode: "fast",

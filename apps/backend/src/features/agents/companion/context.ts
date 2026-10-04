@@ -7,6 +7,7 @@ import type { UserPreferencesService } from "../../user-preferences"
 import { UserDeviceContextRepository } from "../../device-context"
 import { MessageRepository, SharedMessageRepository, collectSharedMessageIds, type Message } from "../../messaging"
 import { UserRepository, type PeopleViewer, type User } from "../../workspaces"
+import type { MemoAudience } from "../../memos"
 import type { Persona } from "../persona-repository"
 import { PersonaAttachmentRepository, type PersonaAttachmentContentItem } from "../persona-attachment-repository"
 import { resolveActorNames } from "../actor-names"
@@ -38,6 +39,7 @@ import { formatMessagesWithTemporal } from "./prompt/message-format"
 import { resolveQuoteReplies, renderMessageWithQuoteContext, DEFAULT_MAX_QUOTE_DEPTH } from "../quote-resolver"
 import {
   computeAgentAccessSpec,
+  memoAudienceForSpec,
   resolveMemoViewer,
   resolvePeopleViewer,
   type AgentAccessSpec,
@@ -127,6 +129,8 @@ export interface AgentContext {
    */
   accessibleStreamIds: Set<string> | null
   memoViewerUserId: string | undefined
+  /** Who reads what this turn retrieves from workspace memory; absent when there is no invoking user, which leaves the turn without memo access. */
+  memoAudience: MemoAudience | undefined
   peopleViewer: PeopleViewer | undefined
   /** Another workspace reads this room, so nothing private to this workspace may reach the answer. */
   roomShared: boolean
@@ -239,6 +243,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   // (no invoking user) get `null`; downstream consumers decide how to treat it.
   let accessibleStreamIds: Set<string> | null = null
   let memoViewerUserId: string | undefined
+  let memoAudience: MemoAudience | undefined
   let accessType: AgentAccessSpec["type"] | null = null
   let peopleViewer: PeopleViewer | undefined
   if (invokingUserId) {
@@ -246,6 +251,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     const ids = await SearchRepository.getAccessibleStreamsForAgent(db, accessSpec, workspaceId)
     accessibleStreamIds = new Set(ids)
     memoViewerUserId = resolveMemoViewer(accessSpec)
+    memoAudience = memoAudienceForSpec(accessSpec)
     accessType = accessSpec.type
     peopleViewer = resolvePeopleViewer(accessSpec, stream.id)
   }
@@ -275,7 +281,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       includeAttachments: true,
       includeLinkPreviews: true,
     }),
-    invokingUserId && accessibleStreamIds && triggerMessage
+    invokingUserId && accessibleStreamIds && memoAudience && triggerMessage
       ? preparedRecall.recall({
           workspaceId,
           invokingUserId,
@@ -283,6 +289,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
           query: triggerMessage.contentMarkdown,
           accessibleStreamIds,
           memoViewerUserId,
+          memoAudience,
           asker:
             invokingUser && preferences
               ? {
@@ -607,6 +614,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     streamContext,
     accessibleStreamIds,
     memoViewerUserId,
+    memoAudience,
     peopleViewer,
     roomShared,
     streamBrief,

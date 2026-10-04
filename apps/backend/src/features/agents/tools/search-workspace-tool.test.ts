@@ -20,6 +20,7 @@ function makeTool(searchFlag: FeatureFlagValue<"search">) {
     accessibleStreamIds: ["stream_1"],
     invokingUserId: "usr_1",
     memoViewerUserId: undefined,
+    memoAudience: { kind: "users", userIds: ["usr_1"] },
     peopleViewer: { kind: "user", userId: "usr_1" },
     searchFlag,
     searchService: { search } as unknown as WorkspaceToolDeps["searchService"],
@@ -37,6 +38,7 @@ function makeDeps(searchFlag: FeatureFlagValue<"search">, searchService?: unknow
     accessibleStreamIds: ["stream_1", "stream_2"],
     invokingUserId: "usr_1",
     memoViewerUserId: undefined,
+    memoAudience: { kind: "users", userIds: ["usr_1"] },
     peopleViewer: { kind: "user", userId: "usr_1" },
     searchFlag,
     searchService: (searchService ?? {

@@ -24,7 +24,7 @@ export type DescribeMemoInput = z.infer<typeof DescribeMemoSchema>
  * access surface.
  */
 export function createDescribeMemoTool(deps: WorkspaceToolDeps) {
-  const { workspaceId, accessibleStreamIds, memoViewerUserId, memoExplorer } = deps
+  const { workspaceId, accessibleStreamIds, memoViewerUserId, memoAudience, memoExplorer } = deps
 
   return defineAgentTool({
     name: "describe_memo",
@@ -54,6 +54,7 @@ Returns the source messages with their \`messageId\`, \`streamId\`, and \`author
         const detail = await memoExplorer.getById(workspaceId, input.memoId, {
           accessibleStreamIds,
           userId: memoViewerUserId,
+          audiences: [memoAudience],
         })
         if (detail?.memo.status !== MemoStatuses.ACTIVE) {
           return {

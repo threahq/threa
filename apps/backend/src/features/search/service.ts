@@ -355,7 +355,15 @@ export class SearchService {
       legs.memos && ranking === "improved" && memoQuery.length > 0 && filters.authorId === undefined
         ? this.memoSearch.search({
             workspaceId,
-            permissions: { accessibleStreamIds: streamIds, userId: permissions.userId },
+            permissions: {
+              accessibleStreamIds: streamIds,
+              userId: permissions.userId,
+              audiences: [
+                permissions.userId
+                  ? { kind: "users", userIds: [permissions.userId] }
+                  : { kind: "streams", streamIds: permissions.accessibleStreamIds },
+              ],
+            },
             query: memoQuery,
             filters: { before: filters.before, after: filters.after },
             limit: MEMO_SEARCH_LIMIT,

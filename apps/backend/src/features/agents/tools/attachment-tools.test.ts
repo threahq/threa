@@ -12,6 +12,7 @@ function makeDeps(overrides?: Partial<WorkspaceToolDeps>): WorkspaceToolDeps {
     accessibleStreamIds: ["stream_1", "stream_2"],
     invokingUserId: "usr_test",
     memoViewerUserId: undefined,
+    memoAudience: { kind: "users", userIds: ["usr_test"] },
     peopleViewer: { kind: "user", userId: "usr_test" },
     searchFlag: "on",
     searchService: {} as WorkspaceToolDeps["searchService"],

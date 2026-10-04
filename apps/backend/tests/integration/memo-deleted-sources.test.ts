@@ -306,7 +306,11 @@ describe("memo sources: deleted and edited messages", () => {
       pool,
       embeddingService: new StubEmbeddingService(),
       reranker: new StubReranker(),
-    }).getById(testWorkspaceId, memo, { accessibleStreamIds: [seeded.streamId], userId: testUserId })
+    }).getById(testWorkspaceId, memo, {
+      accessibleStreamIds: [seeded.streamId],
+      userId: testUserId,
+      audiences: [{ kind: "users", userIds: [testUserId] }],
+    })
 
     expect(detail?.sourceMessages.map((m) => m.id)).toEqual([liveId])
   })

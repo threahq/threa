@@ -160,7 +160,7 @@ describe("Per-row text-search config for memos and attachments", () => {
       await makeExplorer().update(
         ws.workspaceId,
         memo,
-        { accessibleStreamIds: [ws.streamId], userId: ws.userId },
+        { accessibleStreamIds: [ws.streamId], userId: ws.userId, audiences: [{ kind: "users", userIds: [ws.userId] }] },
         { abstract: SWEDISH_ABSTRACT }
       )
 
@@ -183,7 +183,11 @@ describe("Per-row text-search config for memos and attachments", () => {
         const edit = makeExplorer().update(
           ws.workspaceId,
           memo,
-          { accessibleStreamIds: [ws.streamId], userId: ws.userId },
+          {
+            accessibleStreamIds: [ws.streamId],
+            userId: ws.userId,
+            audiences: [{ kind: "users", userIds: [ws.userId] }],
+          },
           { keyPoints: ["Noted"] }
         )
         await waitForRowLockWaiter()

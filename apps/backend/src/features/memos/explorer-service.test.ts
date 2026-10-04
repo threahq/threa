@@ -72,10 +72,12 @@ function stubSourceStreamResolution() {
   spyOn(MessageRepository, "findById").mockResolvedValue({ streamId: STREAM_ID } as never)
   spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream() as never)
   spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map())
+  spyOn(MemoRepository, "filterVisibleIds").mockResolvedValue(new Set([MEMO_ID]))
 }
 
-const ACCESS = { accessibleStreamIds: [STREAM_ID] }
-const NO_ACCESS = { accessibleStreamIds: ["stream_other"] }
+const READERS = [{ kind: "users" as const, userIds: ["usr_1"] }]
+const ACCESS = { accessibleStreamIds: [STREAM_ID], audiences: READERS }
+const NO_ACCESS = { accessibleStreamIds: ["stream_other"], audiences: READERS }
 
 afterEach(() => {
   mock.restore()
@@ -306,9 +308,17 @@ describe("MemoExplorerService.getById — agent provenance (roadmap 6.6)", () =>
 })
 
 describe("MemoExplorerService — user-scope owner gate (roadmap 6.4)", () => {
-  const OWNER = { accessibleStreamIds: [STREAM_ID], userId: "usr_owner" }
-  const OTHER_USER = { accessibleStreamIds: [STREAM_ID], userId: "usr_other" }
-  const NO_USER = { accessibleStreamIds: [STREAM_ID] }
+  const OWNER = {
+    accessibleStreamIds: [STREAM_ID],
+    userId: "usr_owner",
+    audiences: [{ kind: "users" as const, userIds: ["usr_owner"] }],
+  }
+  const OTHER_USER = {
+    accessibleStreamIds: [STREAM_ID],
+    userId: "usr_other",
+    audiences: [{ kind: "users" as const, userIds: ["usr_other"] }],
+  }
+  const NO_USER = { accessibleStreamIds: [STREAM_ID], audiences: READERS }
   const userMemo = () => fakeMemo({ scope: "user", scopeUserId: "usr_owner" })
 
   it("resolves a user-scoped memo for its owner", async () => {
@@ -399,5 +409,33 @@ describe("MemoExplorerService — user-scope owner gate (roadmap 6.4)", () => {
 
     expect(await service.delete(WORKSPACE_ID, MEMO_ID, OTHER_USER)).toBe("not_found")
     expect(del).not.toHaveBeenCalled()
+  })
+})
+
+describe("MemoExplorerService — audience gate", () => {
+  it("should return null for a memo when the caller's audience cannot read it despite source-stream access", async () => {
+    const { service } = buildService()
+    stubSourceStreamResolution()
+    spyOn(MemoRepository, "findById").mockResolvedValue(fakeMemo())
+    const filterVisibleIds = spyOn(MemoRepository, "filterVisibleIds").mockResolvedValue(new Set())
+
+    expect(await service.getById(WORKSPACE_ID, MEMO_ID, ACCESS)).toBeNull()
+    expect(filterVisibleIds).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, [MEMO_ID], READERS)
+  })
+
+  it("should forward the audiences to every search leg when searching in each mode", async () => {
+    const { service } = buildService()
+    const hybrid = spyOn(MemoRepository, "hybridSearch").mockResolvedValue([])
+    const fullText = spyOn(MemoRepository, "fullTextSearch").mockResolvedValue([])
+    const exact = spyOn(MemoRepository, "exactSearch").mockResolvedValue([])
+    const base = { workspaceId: WORKSPACE_ID, permissions: ACCESS }
+
+    await service.search({ ...base, query: "prefs" })
+    await service.search({ ...base, query: "" })
+    await service.search({ ...base, query: "prefs", exact: true })
+
+    expect(
+      [hybrid, fullText, exact].map((spy) => spy.mock.calls.map(([, params]) => params.filters?.audiences))
+    ).toEqual([[READERS], [READERS, READERS], [READERS]])
   })
 })

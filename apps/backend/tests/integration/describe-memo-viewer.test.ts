@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
 import { MemoScopes, StreamTypes, Visibilities } from "@threahq/types"
-import { computeAgentAccessSpec, resolveMemoViewer } from "../../src/features/agents/researcher"
+import { computeAgentAccessSpec, memoAudienceForSpec, resolveMemoViewer } from "../../src/features/agents/researcher"
 import { createDescribeMemoTool, type WorkspaceToolDeps } from "../../src/features/agents/tools"
 import { MemoExplorerService, MemoRepository, StubEmbeddingService, StubReranker } from "../../src/features/memos"
 import { MessageRepository } from "../../src/features/messaging"
@@ -34,6 +34,7 @@ describe("describe_memo viewer", () => {
       accessibleStreamIds,
       invokingUserId: ownerId,
       memoViewerUserId: resolveMemoViewer(accessSpec),
+      memoAudience: memoAudienceForSpec(accessSpec),
       memoExplorer: explorer,
     } as WorkspaceToolDeps)
     const { output } = await tool.config.execute({ memoId: memo }, { toolCallId: "test" })

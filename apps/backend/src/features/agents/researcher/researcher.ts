@@ -5,13 +5,13 @@ import { composeAbortSignal, isAbortError, type AI } from "@threahq/agent-runtim
 import type { ConfigResolver, ResearcherConfig } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
 import type { AuthoredByKind, FeatureFlagValue, TraceSource } from "@threahq/types"
-import type { EmbeddingServiceLike } from "../../memos"
+import type { EmbeddingServiceLike, MemoAudience } from "../../memos"
 import { MessageRepository, type Message } from "../../messaging"
 import { MemoRepository, classifyMemoQueryIntent } from "../../memos"
 import { SearchRepository } from "../../search"
 import { StreamRepository } from "../../streams"
 import { AttachmentRepository } from "../../attachments"
-import { computeAgentAccessSpec, resolveMemoViewer, type AgentAccessSpec } from "./access-spec"
+import { computeAgentAccessSpec, memoAudienceForSpec, resolveMemoViewer, type AgentAccessSpec } from "./access-spec"
 import {
   formatRetrievedContext,
   enrichMessageSearchResults,
@@ -175,6 +175,11 @@ const evaluationSchema = z.object({
 
 type SearchQuery = z.infer<typeof retrievalPlanSchema>["queries"][number]
 
+interface MemoReaders {
+  viewerUserId: string | undefined
+  audiences: readonly MemoAudience[]
+}
+
 function mergeMemoResults(existing: EnrichedMemoResult[], incoming: EnrichedMemoResult[]): EnrichedMemoResult[] {
   const merged = [...existing]
   const seen = new Set(existing.map((memo) => memo.memo.id))
@@ -335,7 +340,10 @@ export class WorkspaceAgent {
     // invocation stream — so a private memo may only be retrieved when the audience
     // is exactly that owner. `resolveMemoViewer` is the single authority for that
     // gate (undefined ⇒ user-scoped memos excluded); see its doc for the rule.
-    const memoViewerUserId = resolveMemoViewer(accessSpec)
+    const memoReaders: MemoReaders = {
+      viewerUserId: resolveMemoViewer(accessSpec),
+      audiences: [memoAudienceForSpec(accessSpec)],
+    }
 
     // Resolve config for workspace agent
     const config = (await configResolver.resolve(COMPONENT_PATHS.COMPANION_RESEARCHER)) as ResearcherConfig
@@ -375,7 +383,7 @@ export class WorkspaceAgent {
             workspaceId,
             accessibleStreamIds,
             embeddingService,
-            memoViewerUserId,
+            memoReaders,
             true,
             excludedMessageIds,
             ranking
@@ -422,7 +430,7 @@ export class WorkspaceAgent {
         workspaceId,
         accessibleStreamIds,
         embeddingService,
-        memoViewerUserId,
+        memoReaders,
         true,
         excludedMessageIds,
         ranking
@@ -505,7 +513,7 @@ export class WorkspaceAgent {
         workspaceId,
         accessibleStreamIds,
         embeddingService,
-        memoViewerUserId,
+        memoReaders,
         true,
         excludedMessageIds,
         ranking
@@ -815,7 +823,7 @@ Each query must have:
     workspaceId: string,
     accessibleStreamIds: string[],
     embeddingService: EmbeddingServiceLike,
-    memoViewerUserId: string | undefined,
+    memoReaders: MemoReaders,
     includeSurroundingContext: boolean,
     excludedMessageIds: Set<string>,
     ranking: SearchRanking
@@ -833,7 +841,7 @@ Each query must have:
             query,
             workspaceId,
             accessibleStreamIds,
-            memoViewerUserId,
+            memoReaders,
             embeddingService
           )
           return {
@@ -925,14 +933,14 @@ Each query must have:
     query: SearchQuery,
     workspaceId: string,
     accessibleStreamIds: string[],
-    memoViewerUserId: string | undefined,
+    memoReaders: MemoReaders,
     embeddingService: EmbeddingServiceLike
   ): Promise<EnrichedMemoResult[]> {
-    // Gates user-scoped memos (roadmap 6.4): set only when the invocation audience
-    // is exactly the invoking user (a private scratchpad), so a private-tier memo
+    // Gates user-scoped memos (roadmap 6.4): `viewerUserId` is set only when the invocation
+    // audience is exactly the invoking user (a private scratchpad), so a private-tier memo
     // is never retrieved into — and thus cited/broadcast to — a shared room.
     // Undefined ⇒ user-scoped memos excluded (fail closed).
-    const filterBase = { streamIds: accessibleStreamIds, viewerUserId: memoViewerUserId }
+    const filterBase = { streamIds: accessibleStreamIds, ...memoReaders }
     // For semantic search, generate embedding (AI, no DB, ~200-500ms)
     if (query.type === "semantic") {
       try {

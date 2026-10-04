@@ -150,7 +150,11 @@ describe("memo:updated", () => {
     await explorer.update(
       testWorkspaceId,
       memo,
-      { accessibleStreamIds: [sourceChannel, publicChannel, otherPrivateChannel], userId: testUserId },
+      {
+        accessibleStreamIds: [sourceChannel, publicChannel, otherPrivateChannel],
+        userId: testUserId,
+        audiences: [{ kind: "users", userIds: [testUserId] }],
+      },
       { title: "Launch in June" }
     )
 
@@ -209,7 +213,11 @@ describe("memo:updated", () => {
     await explorer.update(
       testWorkspaceId,
       privateMemo,
-      { accessibleStreamIds: [otherPrivateChannel, publicChannel], userId: testUserId },
+      {
+        accessibleStreamIds: [otherPrivateChannel, publicChannel],
+        userId: testUserId,
+        audiences: [{ kind: "users", userIds: [testUserId] }],
+      },
       { title: "Acquisition target: Initech" }
     )
 
@@ -250,7 +258,11 @@ describe("memo:updated", () => {
     await explorer.update(
       testWorkspaceId,
       uncited,
-      { accessibleStreamIds: [publicChannel], userId: testUserId },
+      {
+        accessibleStreamIds: [publicChannel],
+        userId: testUserId,
+        audiences: [{ kind: "users", userIds: [testUserId] }],
+      },
       { title: "Still nobody" }
     )
 
@@ -357,7 +369,11 @@ describe("memo:updated", () => {
     await explorer.update(
       testWorkspaceId,
       memo,
-      { accessibleStreamIds: [sourceChannel, publicChannel, otherPrivateChannel], userId: testUserId },
+      {
+        accessibleStreamIds: [sourceChannel, publicChannel, otherPrivateChannel],
+        userId: testUserId,
+        audiences: [{ kind: "users", userIds: [testUserId] }],
+      },
       { title: "Launch in July" }
     )
 

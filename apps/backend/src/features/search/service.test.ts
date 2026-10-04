@@ -482,7 +482,11 @@ describe("SearchService memo leg", () => {
 
     expect(search).toHaveBeenCalledWith({
       workspaceId: "ws_1",
-      permissions: { accessibleStreamIds: ["stream_1"], userId: "usr_1" },
+      permissions: {
+        accessibleStreamIds: ["stream_1"],
+        userId: "usr_1",
+        audiences: [{ kind: "users", userIds: ["usr_1"] }],
+      },
       query: "launch date mid June",
       filters: { before, after: undefined },
       limit: 3,
@@ -518,7 +522,16 @@ describe("SearchService memo leg", () => {
     })
 
     expect(search).toHaveBeenCalledWith(
-      expect.objectContaining({ query: "launch date", mode: "fast", embedding: [0.5, 0.5] })
+      expect.objectContaining({
+        permissions: {
+          accessibleStreamIds: ["stream_1"],
+          userId: undefined,
+          audiences: [{ kind: "streams", streamIds: ["stream_1"] }],
+        },
+        query: "launch date",
+        mode: "fast",
+        embedding: [0.5, 0.5],
+      })
     )
   })
 

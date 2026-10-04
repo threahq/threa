@@ -26,6 +26,7 @@ const params = {
   query: "What should I bring to the picnic?",
   accessibleStreamIds: new Set(["stream_pad"]),
   memoViewerUserId: "usr_1",
+  memoAudience: { kind: "users" as const, userIds: ["usr_1"] },
   asker: undefined,
 }
 
@@ -62,7 +63,11 @@ describe("PreparedRecall", () => {
     }).toEqual({
       outcome: "recalled",
       ids: ["memo_allergy", "memo_diet"],
-      permissions: { accessibleStreamIds: ["stream_pad"], userId: "usr_1" },
+      permissions: {
+        accessibleStreamIds: ["stream_pad"],
+        userId: "usr_1",
+        audiences: [{ kind: "users", userIds: ["usr_1"] }],
+      },
       events: [
         [
           {

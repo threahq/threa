@@ -5,10 +5,15 @@ import { KNOWLEDGE_TYPES, MEMO_SCOPES, MEMO_STATUSES, MEMO_TYPES } from "@threah
 import { HttpError } from "../../lib/errors"
 import { MEMO_ABSTRACT_MAX_CHARS, MEMO_KEY_POINTS_MAX, MEMO_TAGS_MAX, MEMO_TITLE_MAX_CHARS } from "./config"
 import { resolveUserAccessibleStreamIds, SearchRepository } from "../search"
-import { computeAgentAccessSpec } from "../agents"
+import { computeAgentAccessSpec, memoAudienceForSpec } from "../agents"
 import { setAuditSubjects } from "../access-log"
 import { StreamRepository } from "../streams"
-import type { MemoExplorerDetail, MemoExplorerResult, MemoExplorerService } from "./explorer-service"
+import type {
+  MemoExplorerDetail,
+  MemoExplorerPermissions,
+  MemoExplorerResult,
+  MemoExplorerService,
+} from "./explorer-service"
 import type { Memo } from "./repository"
 
 const memoSearchSchema = z.object({
@@ -35,8 +40,12 @@ const memoUpdateSchema = z
   })
   .refine((data) => Object.keys(data).length > 0, { message: "At least one field must be provided" })
 
+function viewerPermissions(accessibleStreamIds: string[], userId: string): MemoExplorerPermissions {
+  return { accessibleStreamIds, userId, audiences: [{ kind: "users", userIds: [userId] }] }
+}
+
 /**
- * Resolve which streams a memo search may read from.
+ * Resolve which streams and audiences a memo search may read from.
  *
  * `anchorStreamId` is not a "memos in this stream" filter — it is the access
  * anchor: the stream the search is being run from. The memory explorer has no
@@ -56,13 +65,13 @@ async function resolveMemoSearchScope(
   workspaceId: string,
   userId: string,
   anchorStreamId: string | undefined
-): Promise<string[]> {
+): Promise<MemoExplorerPermissions> {
   const userAccessibleStreamIds = await resolveUserAccessibleStreamIds(pool, workspaceId, userId, {
     archiveStatus: ["active", "archived"],
   })
 
   if (!anchorStreamId) {
-    return userAccessibleStreamIds
+    return viewerPermissions(userAccessibleStreamIds, userId)
   }
 
   const anchorStream = await StreamRepository.findById(pool, workspaceId, anchorStreamId)
@@ -79,7 +88,11 @@ async function resolveMemoSearchScope(
   // intersect with the user's own access: the scoped result can never exceed
   // what the user could already see, even if they anchor to a stream they aren't in.
   const userAccessibleSet = new Set(userAccessibleStreamIds)
-  return scopedStreamIds.filter((id) => userAccessibleSet.has(id))
+  const permissions = viewerPermissions(
+    scopedStreamIds.filter((id) => userAccessibleSet.has(id)),
+    userId
+  )
+  return { ...permissions, audiences: [...permissions.audiences, memoAudienceForSpec(accessSpec)] }
 }
 
 function normalizeSearchMode(query: string, exact?: boolean): { query: string; exact: boolean } {
@@ -159,11 +172,11 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
       } = result.data
       const normalized = normalizeSearchMode(query, exact)
 
-      const accessibleStreamIds = await resolveMemoSearchScope(pool, workspaceId, userId, anchorStreamId)
+      const permissions = await resolveMemoSearchScope(pool, workspaceId, userId, anchorStreamId)
 
       const results = await memoExplorerService.search({
         workspaceId,
-        permissions: { accessibleStreamIds, userId },
+        permissions,
         query: normalized.query,
         exact: normalized.exact,
         filters: {
@@ -196,10 +209,11 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
         archiveStatus: ["active", "archived"],
       })
 
-      const memo = await memoExplorerService.getById(workspaceId, memoId, {
-        accessibleStreamIds,
-        userId,
-      })
+      const memo = await memoExplorerService.getById(
+        workspaceId,
+        memoId,
+        viewerPermissions(accessibleStreamIds, userId)
+      )
 
       if (!memo) {
         throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
@@ -223,7 +237,12 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
         archiveStatus: ["active", "archived"],
       })
 
-      const memo = await memoExplorerService.update(workspaceId, memoId, { accessibleStreamIds, userId }, parsed.data)
+      const memo = await memoExplorerService.update(
+        workspaceId,
+        memoId,
+        viewerPermissions(accessibleStreamIds, userId),
+        parsed.data
+      )
       if (!memo) {
         throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
       }
@@ -240,7 +259,11 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
         archiveStatus: ["active", "archived"],
       })
 
-      const memo = await memoExplorerService.archive(workspaceId, memoId, { accessibleStreamIds, userId })
+      const memo = await memoExplorerService.archive(
+        workspaceId,
+        memoId,
+        viewerPermissions(accessibleStreamIds, userId)
+      )
       if (!memo) {
         throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
       }
@@ -257,7 +280,11 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
         archiveStatus: ["active", "archived"],
       })
 
-      const memo = await memoExplorerService.unarchive(workspaceId, memoId, { accessibleStreamIds, userId })
+      const memo = await memoExplorerService.unarchive(
+        workspaceId,
+        memoId,
+        viewerPermissions(accessibleStreamIds, userId)
+      )
       if (!memo) {
         throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
       }
@@ -274,7 +301,11 @@ export function createMemoHandlers({ pool, memoExplorerService }: Dependencies) 
         archiveStatus: ["active", "archived"],
       })
 
-      const outcome = await memoExplorerService.delete(workspaceId, memoId, { accessibleStreamIds, userId })
+      const outcome = await memoExplorerService.delete(
+        workspaceId,
+        memoId,
+        viewerPermissions(accessibleStreamIds, userId)
+      )
       if (outcome === "not_found") {
         throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })
       }
