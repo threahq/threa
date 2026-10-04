@@ -274,7 +274,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
             invokingUser && preferences
               ? {
                   name: invokingUser.name,
-                  askedAt: triggerMessage.createdAt,
+                  askedAt: currentTime ?? new Date(),
                   timezone: invokingUser.timezone ?? preferences.timezone,
                 }
               : undefined,

@@ -135,7 +135,7 @@ describe("buildAgentContext prepared recall", () => {
       reactions: {},
     }
     spyOn(MessageRepository, "findById").mockResolvedValue(trigger as never)
-    spyOn(UserRepository, "findById").mockResolvedValue({ name: "Alice Ek", timezone: null } as never)
+    spyOn(UserRepository, "findById").mockResolvedValue({ name: "Alice Ek", timezone: "America/New_York" } as never)
     const buildStreamContext = contextBuilder.buildStreamContext
     spyOn(contextBuilder, "buildStreamContext").mockImplementation(async (...args) => ({
       ...(await buildStreamContext(...args)),
@@ -174,6 +174,7 @@ describe("buildAgentContext prepared recall", () => {
           createdBy: "usr_1",
         } as never,
         messageId: "msg_1",
+        currentTime: new Date("2026-10-08T09:00:00Z"),
         persona,
         purpose: { kind: "catch_up" },
         policy: { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests: false },
@@ -188,7 +189,7 @@ describe("buildAgentContext prepared recall", () => {
       query: expect.objectContaining({
         invokingUserId: "usr_1",
         query: "What should I bring to the picnic?",
-        asker: { name: "Alice Ek", askedAt: trigger.createdAt, timezone: "Europe/Stockholm" },
+        asker: { name: "Alice Ek", askedAt: new Date("2026-10-08T09:00:00Z"), timezone: "America/New_York" },
       }),
       volatile: expect.stringMatching(/## Recalled from memory[\s\S]*<memo id="memo_allergy"/),
       recalled: ["memo_allergy"],
