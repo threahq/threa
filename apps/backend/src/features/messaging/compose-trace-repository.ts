@@ -74,7 +74,7 @@ export const MessageComposeTraceRepository = {
         ${params.sentAtSequence},
         ${params.resumedDraft}
       )
-      ON CONFLICT (message_id) DO NOTHING
+      ON CONFLICT (workspace_id, message_id) DO NOTHING
     `)
   },
 

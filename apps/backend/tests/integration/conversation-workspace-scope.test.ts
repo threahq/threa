@@ -450,23 +450,28 @@ describe("Conversation, settling and embedding backfill workspace scope (INV-8)"
     })
   })
 
-  test("should leave another workspace's state row untouched when a user placement conflicts with it", async () => {
+  test("should reject the placement and leave another workspace's state row untouched when a user placement conflicts with it", async () => {
     const stream = await seedStream(wsA, authorA)
     const conversation = await seedConversation(wsA, stream)
     const foreignOwner = conversationId()
     const own = await seedMessage(wsA, stream, authorA, 1)
     await seedSettling(wsB, stream, foreignOwner, own)
 
-    const settled = await MessageConversationStateRepository.settleForConversationTargets(
+    // The old single-column key on the state table still exists, so the colliding placement is rejected
+    // instead of landing beside the foreign row; dropping that key flips this to a landed row.
+    const rejectedBy = await MessageConversationStateRepository.settleForConversationTargets(
       pool,
       wsA,
       [own],
       conversation,
       "user"
+    ).then(
+      () => null,
+      (error: { code?: string; constraint?: string }) => ({ code: error.code, constraint: error.constraint })
     )
 
-    expect({ settled, stored: await storedStates([own]) }).toEqual({
-      settled: [],
+    expect({ rejectedBy, stored: await storedStates([own]) }).toEqual({
+      rejectedBy: { code: "23505", constraint: "message_conversation_state_pkey" },
       stored: {
         [own]: expect.objectContaining({ workspaceId: wsB, conversationId: foreignOwner, state: "settling" }),
       },

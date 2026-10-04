@@ -23,6 +23,17 @@ const TWINNED_KEYS: string[] = [
   "idx_agent_conversation_summaries_stream_persona",
   "idx_agent_sessions_one_running_per_stream",
   "idx_subagent_runs_one_active",
+  "messages_pkey",
+  "messages_stream_id_client_message_id_unique",
+  "message_versions_pkey",
+  "idx_message_versions_message_seq",
+  "message_compose_traces_pkey",
+  "message_conversation_state_pkey",
+  "reactions_pkey",
+  "researcher_cache_message_id_key",
+  "conversations_pkey",
+  "memos_pkey",
+  "link_previews_pkey",
 ]
 
 /** Unique keys that need no twin of their own, each with its reason. */
@@ -50,12 +61,6 @@ const EXEMPT_KEYS: Record<string, string> = {
 
 /** Keys later W3 steps twin; each step deletes its entries and the last one deletes the list. */
 const NOT_YET_TWINNED: string[] = [
-  "messages_stream_id_client_message_id_unique",
-  "idx_message_versions_message_seq",
-  "message_compose_traces_pkey",
-  "message_conversation_state_pkey",
-  "reactions_pkey",
-  "researcher_cache_message_id_key",
   "attachment_references_pair_idx",
   "attachment_extractions_attachment_id_key",
   "attachment_uploads_attachment_id_key",
