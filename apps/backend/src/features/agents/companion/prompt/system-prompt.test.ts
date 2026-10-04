@@ -443,6 +443,7 @@ describe("buildSystemPrompt", () => {
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
       purpose: { kind: "onboarding_greeting" },
+      selfKnowledge: null,
     })
 
     expect(split.volatile).toContain("## First meeting")
@@ -456,6 +457,7 @@ describe("buildSystemPrompt", () => {
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
       purpose: { kind: "onboarding_tour" },
+      selfKnowledge: null,
     })
 
     expect(split.volatile).toContain("give a short tour")
@@ -474,6 +476,7 @@ describe("buildSystemPrompt", () => {
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
       purpose: { kind: "onboarding_tour" },
+      selfKnowledge: null,
       tools,
     })
 
@@ -486,6 +489,7 @@ describe("buildSystemPrompt", () => {
       context: scratchpadContext,
       scratchpadCustomPrompt: null,
       purpose: { kind: "catch_up" },
+      selfKnowledge: null,
     })
 
     expect(prompt).not.toContain("## First meeting")
