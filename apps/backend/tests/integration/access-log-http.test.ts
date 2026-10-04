@@ -28,6 +28,7 @@ interface AccessLogDbRow {
   access_kind: string
   outcome: string
   subjects: { type: string; id?: string }[] | null
+  detail: Record<string, unknown> | null
   request_id: string | null
 }
 
@@ -50,16 +51,18 @@ describe("access-log HTTP capture", () => {
     params: unknown[],
     predicate: (rows: AccessLogDbRow[]) => boolean = (rows) => rows.length > 0
   ): Promise<AccessLogDbRow[]> {
+    let rows: AccessLogDbRow[] = []
     for (let attempt = 0; attempt < 40; attempt++) {
-      const { rows } = await pool.query<AccessLogDbRow>(
-        `SELECT workspace_id, actor_type, actor_id, operation, access_kind, outcome, subjects, request_id
+      ;({ rows } = await pool.query<AccessLogDbRow>(
+        `SELECT workspace_id, actor_type, actor_id, operation, access_kind, outcome, subjects, detail, request_id
          FROM access_log WHERE ${where} ORDER BY occurred_at DESC`,
         params
-      )
+      ))
       if (predicate(rows)) return rows
       await new Promise((r) => setTimeout(r, 50))
     }
-    return []
+    // On timeout hand back what did land, so a failing assertion shows the rows rather than nothing.
+    return rows
   }
 
   test("annotated read (stream bootstrap) records actor/workspace/operation/kind/outcome/subjects", async () => {
@@ -107,6 +110,60 @@ describe("access-log HTTP capture", () => {
     )
     expect(rows.length).toBeGreaterThan(0)
     expect(rows[0].access_kind).toBe("read")
+  })
+
+  test("mixed preview batch records only delivered streams as read and each refusal as a denial", async () => {
+    const owner = new TestClient()
+    await loginAs(owner, email("preview-owner"), "Preview Owner")
+    const ws = await createWorkspace(owner, "Preview WS")
+    const ownerOnly = await createScratchpad(owner, ws.id)
+
+    const memberClient = new TestClient()
+    const member = await loginAs(memberClient, email("preview-member"), "Preview Member")
+    await joinWorkspace(memberClient, ws.id)
+    const memberId = await getUserId(memberClient, ws.id, member.id)
+    const readable = await createScratchpad(memberClient, ws.id)
+    await sendMessage(memberClient, ws.id, readable.id, "delivered")
+    const missingId = "stream_doesnotexist"
+
+    const { status, data } = await memberClient.post<{ results: { streamId: string; status: number }[] }>(
+      `/api/workspaces/${ws.id}/streams/preview-history`,
+      { streamIds: [readable.id, ownerOnly.id, missingId] }
+    )
+    expect(status).toBe(200)
+    expect(data.results.map((result) => [result.streamId, result.status])).toEqual([
+      [readable.id, 200],
+      [ownerOnly.id, 403],
+      [missingId, 404],
+    ])
+
+    const rows = await pollRow(
+      "workspace_id = $1 AND operation = 'streams.preview_history' AND actor_id = $2",
+      [ws.id, memberId],
+      (found) => found.length >= 3
+    )
+    const requestId = rows[0]?.request_id
+    expect(requestId).toBeTruthy()
+    const statusOf = (row: AccessLogDbRow) => Number(row.detail?.status ?? 200)
+    expect(rows.sort((a, b) => statusOf(a) - statusOf(b))).toEqual(
+      [
+        {
+          outcome: "success",
+          subjects: [{ type: "stream", id: readable.id, fromSeq: expect.any(Number), toSeq: expect.any(Number) }],
+          detail: null,
+        },
+        { outcome: "denied", subjects: [{ type: "stream", id: ownerOnly.id }], detail: { status: 403 } },
+        { outcome: "denied", subjects: [{ type: "stream", id: missingId }], detail: { status: 404 } },
+      ].map((row) => ({
+        ...row,
+        workspace_id: ws.id,
+        actor_type: "user",
+        actor_id: memberId,
+        operation: "streams.preview_history",
+        access_kind: "read",
+        request_id: requestId,
+      }))
+    )
   })
 
   test("mutation records access_kind 'write'", async () => {

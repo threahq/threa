@@ -177,6 +177,7 @@ export function streamAccessPredicateSql(workspaceId: string, userId: string, st
     JOIN streams eff_root ON eff_root.id = COALESCE(eff_s.root_stream_id, eff_s.id)
     WHERE ${sql`eff_s.id = ${sql.raw(streamIdColumn)}`}
       AND eff_s.workspace_id = ${workspaceId}
+      AND eff_root.workspace_id = ${workspaceId}
       AND ${rootReadableConditionSql(userId, "eff_root")}
   )`
 }

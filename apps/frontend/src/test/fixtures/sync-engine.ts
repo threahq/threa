@@ -8,6 +8,8 @@ import {
   DEFAULT_SIDEBAR_CONFIG,
   type WorkspaceBootstrap,
   type StreamBootstrap,
+  type StreamPreviewHistory,
+  type StreamPreviewHistoryBatchResponse,
 } from "@threahq/types"
 
 type EventHandler = (...args: unknown[]) => void
@@ -103,6 +105,14 @@ export class MockSocket {
 
 export function asSocket(mock: MockSocket): Socket {
   return mock as unknown as Socket
+}
+
+export function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
+  return { promise, resolve }
 }
 
 export function makeWorkspaceBootstrap(): WorkspaceBootstrap {
@@ -209,12 +219,41 @@ export function makeStreamBootstrap(streamId = "stream_1", sequence = "2"): Stre
 
 export function makeDeps() {
   const workspaceBootstrap = vi.fn(async () => makeWorkspaceBootstrap())
-  const streamBootstrap = vi.fn(async (_workspaceId: string, streamId: string) => makeStreamBootstrap(streamId))
+  const streamBootstrap = vi.fn(
+    async (_workspaceId: string, streamId: string, _params?: { after?: string; signal?: AbortSignal }) =>
+      makeStreamBootstrap(streamId)
+  )
   return {
     workspaceId: "ws_1",
     syncStatus: new SyncStatusStore(),
     queryClient: new QueryClient(),
     workspaceService: { bootstrap: workspaceBootstrap },
-    streamService: { bootstrap: streamBootstrap },
+    streamService: {
+      bootstrap: streamBootstrap,
+      previewHistory: vi.fn(
+        async (
+          _workspaceId: string,
+          streamIds: string[],
+          _signal?: AbortSignal
+        ): Promise<StreamPreviewHistoryBatchResponse> => ({
+          results: streamIds.map((streamId) => {
+            const full = makeStreamBootstrap(streamId)
+            const history: StreamPreviewHistory = {
+              stream: full.stream,
+              events: full.events.map((event) => ({
+                ...event,
+                id: `evt_${streamId}_${event.sequence}`,
+                payload: { ...(event.payload as object), messageId: `msg_${streamId}_${event.sequence}` },
+              })),
+              latestSequence: full.latestSequence,
+              hasOlderEvents: full.hasOlderEvents,
+              snapshotAt: new Date().toISOString(),
+              syncMode: "replace",
+            }
+            return { streamId, status: 200 as const, history }
+          }),
+        })
+      ),
+    },
   }
 }

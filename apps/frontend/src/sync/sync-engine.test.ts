@@ -10,6 +10,7 @@ import { conversationKeys } from "@/hooks/use-conversations"
 import { db, getActiveDb, setActiveDb, ThreaDatabase } from "@/db/database"
 import { bumpAccountGeneration } from "@/db/event-writes"
 import { CatchUpBatch } from "./catch-up-batch"
+import { SyncLogCursor } from "./sync-log-cursor"
 import { ApiError } from "@/api/client"
 import {
   DEFAULT_SIDEBAR_CONFIG,
@@ -21,6 +22,7 @@ import {
 import {
   MockSocket,
   asSocket,
+  deferred,
   makeWorkspaceBootstrap,
   makeStreamBootstrap,
   makeDeps,
@@ -70,6 +72,131 @@ async function seedRevealableWorkspace(workspaceId: string): Promise<void> {
     db.sidebarConfigs.put({ id: workspaceId, workspaceId, config: DEFAULT_SIDEBAR_CONFIG, _cachedAt: cachedAt }),
   ])
 }
+
+/** Lets the first cursor load finish, then holds connection setup behind `gate`. */
+function holdCursorLoad(gate?: Promise<void>) {
+  const load = SyncLogCursor.prototype.load
+  return vi.spyOn(SyncLogCursor.prototype, "load").mockImplementationOnce(async function (this: SyncLogCursor) {
+    await load.call(this)
+    if (gate) await gate
+  })
+}
+
+describe("SyncEngine connection setup", () => {
+  it.each([
+    ["cursor", "disconnect"],
+    ["cursor", "same-socket reconnect"],
+    ["cursor", "destroy"],
+    ["cursor", "account change"],
+    ["snapshot", "disconnect"],
+    ["snapshot", "same-socket reconnect"],
+    ["snapshot", "destroy"],
+    ["snapshot", "account change"],
+  ])("should fence setup after %s waiting is retired by %s", async (boundary, change) => {
+    const deps = {
+      ...makeDeps(),
+      syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) },
+      draftsService: { list: vi.fn(async () => ({ drafts: [] })), upsert: vi.fn(), resolve: vi.fn(), delete: vi.fn() },
+    }
+    const held = deferred<void>()
+    const snapshot = { ...makeWorkspaceBootstrap(), syncHead: "10" }
+    deps.workspaceService.bootstrap.mockImplementation(async () => {
+      if (boundary === "snapshot") await held.promise
+      return snapshot
+    })
+    const spy = holdCursorLoad(boundary === "cursor" ? held.promise : undefined)
+    const engine = new SyncEngine(deps)
+    const socket = new MockSocket()
+    const older = engine.onConnect(asSocket(socket))
+    let newer: Promise<void> | undefined
+    try {
+      if (boundary === "snapshot")
+        await vi.waitFor(() => expect(deps.workspaceService.bootstrap).toHaveBeenCalledOnce())
+      if (change === "destroy") engine.destroy()
+      else if (change === "account change") bumpAccountGeneration()
+      else {
+        socket.connected = false
+        engine.onDisconnect()
+        if (change === "same-socket reconnect") {
+          socket.connected = true
+          newer = engine.onConnect(asSocket(socket))
+        }
+      }
+      held.resolve()
+      await Promise.all([older, newer])
+      if (newer) {
+        await vi.waitFor(() => expect(deps.draftsService.list).toHaveBeenCalledExactlyOnceWith("ws_1"))
+        socket.trigger("workspace_user:added", {
+          workspaceId: "ws_1",
+          syncId: "11",
+          user: { id: "user_latest_connection", workspaceId: "ws_1", name: "Latest" },
+        })
+        await vi.waitFor(async () =>
+          expect(await db.workspaceUsers.get("user_latest_connection")).toMatchObject({ name: "Latest" })
+        )
+      } else {
+        expect(deps.draftsService.list).not.toHaveBeenCalled()
+      }
+    } finally {
+      held.resolve()
+      await Promise.all([older, newer])
+      spy.mockRestore()
+      engine.destroy()
+    }
+  })
+
+  beforeEach(async () => {
+    resetRevealGate()
+    await Promise.all([db.workspaces.clear(), db.syncCursors.clear(), db.workspaceUsers.clear(), db.streams.clear()])
+  })
+
+  it.each(["resume", "pull"])(
+    "should register live workspace handlers when %s overlaps cursor loading",
+    async (trigger) => {
+      const deps = {
+        ...makeDeps(),
+        syncService: { catchUp: vi.fn(async () => ({ entries: [], head: "10" })) },
+      }
+      deps.workspaceService.bootstrap.mockResolvedValue({ ...makeWorkspaceBootstrap(), syncHead: "10" })
+      const engine = new SyncEngine(deps)
+      const socket = new MockSocket()
+      const held = deferred<void>()
+      const spy = holdCursorLoad(held.promise)
+      const connecting = engine.onConnect(asSocket(socket))
+      let recovery: Promise<void> | undefined
+      try {
+        recovery = trigger === "resume" ? engine.refreshAfterConnectivityResume() : engine.refreshAfterPull()
+        await recovery
+        held.resolve()
+        await connecting
+        await db.streams.put({ ...makeStreamBootstrap("stream_setup").stream, _cachedAt: 1 })
+        socket.trigger("workspace_user:added", {
+          workspaceId: "ws_1",
+          syncId: "11",
+          user: { id: "user_setup", workspaceId: "ws_1", name: "Recovered" },
+        })
+        socket.trigger("stream:updated", {
+          workspaceId: "ws_1",
+          syncId: "12",
+          stream: { ...makeStreamBootstrap("stream_setup").stream, displayName: "Recovered stream" },
+        })
+        await vi.waitFor(async () =>
+          expect({
+            user: (await db.workspaceUsers.get("user_setup"))?.name,
+            stream: (await db.streams.get("stream_setup"))?.displayName,
+            query: deps.queryClient.getQueryData<{ displayName: string }>(streamKeys.detail("ws_1", "stream_setup"))
+              ?.displayName,
+          }).toEqual({ user: "Recovered", stream: "Recovered stream", query: "Recovered stream" })
+        )
+      } finally {
+        held.resolve()
+        await Promise.all([connecting, recovery])
+        spy.mockRestore()
+        engine.destroy()
+      }
+    }
+  )
+})
 
 describe("SyncEngine.handlePageResume", () => {
   beforeEach(async () => {
@@ -563,7 +690,10 @@ describe("SyncEngine reconnect catch-up cursor (INV-53 gap safety)", () => {
 
     await engine.onConnect(asSocket(socket)) // second connect → reconnect
 
-    expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { after: "1" })
+    expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", {
+      after: "1",
+      signal: expect.any(AbortSignal),
+    })
   })
 
   it("reads the navigation refresh cursor before the room join can deliver live events", async () => {
@@ -795,7 +925,7 @@ describe("SyncEngine.setBoardStreamIds", () => {
     engine.setBoardStreamIds(["thread_1"])
 
     await vi.waitFor(() => {
-      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_1", undefined)
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_1", { signal: expect.any(AbortSignal) })
     })
   })
 
@@ -843,7 +973,9 @@ describe("SyncEngine.setBoardStreamIds", () => {
     engine.setBoardStreamIds(["stream_member"])
 
     await vi.waitFor(() => {
-      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_member", undefined)
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_member", {
+        signal: expect.any(AbortSignal),
+      })
     })
   })
 
@@ -897,13 +1029,13 @@ describe("SyncEngine.setBoardStreamIds", () => {
 
     engine.setBoardStreamIds(["thread_a"])
     await vi.waitFor(() => {
-      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_a", undefined)
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_a", { signal: expect.any(AbortSignal) })
     })
     deps.streamService.bootstrap.mockClear()
 
     engine.setBoardStreamIds(["thread_a", "thread_b"])
     await vi.waitFor(() => {
-      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_b", undefined)
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_b", { signal: expect.any(AbortSignal) })
     })
     expect(deps.streamService.bootstrap.mock.calls.filter((call) => call[1] === "thread_a")).toHaveLength(0)
   })
@@ -933,7 +1065,9 @@ describe("SyncEngine.setBoardStreamIds", () => {
 
     engine.setBoardStreamIds(["thread_live"])
     await vi.waitFor(() => {
-      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_live", undefined)
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "thread_live", {
+        signal: expect.any(AbortSignal),
+      })
     })
     deps.streamService.bootstrap.mockClear()
 
@@ -985,8 +1119,9 @@ describe("SyncEngine.warmStreams", () => {
     engine.warmStreams(["stream_member"])
     await primeConnectedEngine(engine, new MockSocket())
 
-    await vi.waitFor(() => {
-      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_member", undefined)
+    await vi.waitFor(async () => {
+      expect(deps.streamService.previewHistory).toHaveBeenCalledWith("ws_1", ["stream_member"], expect.any(AbortSignal))
+      expect(await db.events.get("evt_stream_member_2")).toBeTruthy()
     })
   })
 
@@ -997,7 +1132,7 @@ describe("SyncEngine.warmStreams", () => {
     const engine = new SyncEngine(deps)
     const socket = new MockSocket()
     await primeConnectedEngine(engine, socket)
-    const warmCalls = () => deps.streamService.bootstrap.mock.calls.filter((call) => call[1] === "stream_member")
+    const warmCalls = () => deps.streamService.previewHistory.mock.calls
 
     engine.warmStreams(["stream_member"])
     await vi.waitFor(() => expect(warmCalls()).toHaveLength(1))
@@ -1016,9 +1151,9 @@ describe("SyncEngine.warmStreams", () => {
     await persistMessage("stream_member", 3)
     const engine = new SyncEngine(deps)
     await primeConnectedEngine(engine, new MockSocket())
-    const warmCalls = () => deps.streamService.bootstrap.mock.calls.filter((call) => call[1] === "stream_member")
+    const warmCalls = () => deps.streamService.previewHistory.mock.calls
 
-    deps.streamService.bootstrap.mockRejectedValueOnce(new Error("network"))
+    deps.streamService.previewHistory.mockRejectedValueOnce(new Error("network"))
     engine.warmStreams(["stream_member"])
     await vi.waitFor(() => expect(warmCalls()).toHaveLength(1))
     await new Promise((resolve) => setTimeout(resolve, 25))
@@ -2573,14 +2708,43 @@ describe("SyncEngine sync:heartbeat (active mode)", () => {
    *  settle (one page), so heartbeat-triggered calls are distinguishable. */
   async function connectSettledEngine(catchUp: ReturnType<typeof vi.fn>) {
     await db.syncCursors.put({ key: "ws_1:sync-log", cursor: "10", updatedAt: Date.now() })
-    const engine = new SyncEngine(makeActiveDeps(catchUp))
+    const deps = makeActiveDeps(catchUp)
+    const engine = new SyncEngine(deps)
     const socket = new MockSocket()
     await engine.onConnect(asSocket(socket))
     await vi.waitFor(() => expect(catchUp).toHaveBeenCalled())
     // Drain the connect catch-up's remaining microtasks (gate resume).
     await new Promise((resolve) => setTimeout(resolve, 0))
-    return { engine, socket }
+    return { engine, socket, deps }
   }
+
+  it("should finish queued cold board history when heartbeat catch-up runs during the first fetches", async () => {
+    const catchUp = vi.fn().mockResolvedValue(emptyPage("10"))
+    const { engine, socket, deps } = await connectSettledEngine(catchUp)
+    const held = deferred<void>()
+    const bootstrap = deps.streamService.bootstrap
+    bootstrap.mockImplementation(async (_workspaceId, streamId) => {
+      await held.promise
+      const result = makeStreamBootstrap(streamId)
+      result.events[0].id = `evt_${streamId}`
+      return result
+    })
+    const ids = Array.from({ length: 12 }, (_, index) => `stream_heartbeat_board_${index}`)
+    try {
+      engine.setBoardStreamIds(ids)
+      await vi.waitFor(() => expect(bootstrap).toHaveBeenCalledTimes(6))
+      const before = catchUp.mock.calls.length
+      catchUp.mockResolvedValue(emptyPage("11"))
+      socket.trigger("sync:heartbeat", heartbeat("11"))
+      await vi.waitFor(() => expect(catchUp.mock.calls.length).toBeGreaterThan(before), { timeout: 3500 })
+      held.resolve()
+      await vi.waitFor(() => expect(bootstrap.mock.calls.map((call) => call[1])).toEqual(ids))
+      await vi.waitFor(async () => expect(await db.events.get(`evt_${ids[11]}`)).toBeTruthy())
+    } finally {
+      held.resolve()
+      engine.destroy()
+    }
+  }, 10_000)
 
   it("ignores a head already covered by max(cursor, lastSeenHead) — including invisible-entry inflation", async () => {
     // Connect catch-up reports head 12 with nothing visible: the cursor stays
@@ -2970,7 +3134,10 @@ describe("SyncEngine active-mode reconnect bootstrap slimming", () => {
     // worker copy bypassed) plus the open stream's delta, then the log replay,
     // all before the pull resolves; the window is closed by then.
     expect(deps.workspaceService.bootstrap).toHaveBeenCalledWith("ws_1", { fresh: true })
-    expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { after: expect.any(String) })
+    expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", {
+      after: expect.any(String),
+      signal: expect.any(AbortSignal),
+    })
     expect(deps.syncService.catchUp).toHaveBeenCalled()
     expect(isApplyWindowOpen()).toBe(false)
     engine.destroy()
@@ -3176,7 +3343,7 @@ describe("SyncEngine first-connect sweep", () => {
     await engine.onConnect(asSocket(new MockSocket()))
     stop()
 
-    expect(deps.streamService.bootstrap.mock.calls).toEqual([["ws_1", "stream_1", undefined]])
+    expect(deps.streamService.bootstrap.mock.calls).toEqual([["ws_1", "stream_1", { signal: expect.any(AbortSignal) }]])
     expect(seen).toEqual([
       { open: true, workspace: false, stream: false },
       { open: false, workspace: true, stream: true },
@@ -3193,7 +3360,7 @@ describe("SyncEngine first-connect sweep", () => {
     await connecting
 
     await expect(claim).resolves.toMatchObject({ stream: { id: "stream_2" }, windowVersion: expect.any(Number) })
-    expect(deps.streamService.bootstrap.mock.calls).toEqual([["ws_1", "stream_2", undefined]])
+    expect(deps.streamService.bootstrap.mock.calls).toEqual([["ws_1", "stream_2", { signal: expect.any(AbortSignal) }]])
     engine.destroy()
   })
 
@@ -3318,7 +3485,9 @@ describe("SyncEngine first-connect sweep", () => {
     const engine = new SyncEngine(deps)
     engine.setCurrentStreamId("stream_1")
     const connecting = engine.onConnect(asSocket(new MockSocket()))
-    await vi.waitFor(() => expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", undefined))
+    await vi.waitFor(() =>
+      expect(deps.streamService.bootstrap).toHaveBeenCalledWith("ws_1", "stream_1", { signal: expect.any(AbortSignal) })
+    )
     // Navigated to again mid-sweep (a panel reopening it): deferred to the sweep.
     engine.setVisibleStreamIds(["stream_1"])
 

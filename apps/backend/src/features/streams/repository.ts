@@ -1400,7 +1400,7 @@ export const StreamRepository = {
    */
   async findThreadsWithReplyCounts(
     db: Querier,
-    parentStreamId: string,
+    parentStreamId: string | string[],
     anchorIds?: string[]
   ): Promise<Map<string, { threadId: string; replyCount: number }>> {
     // An empty scope matches nothing — skip the round-trip entirely.
@@ -1416,7 +1416,7 @@ export const StreamRepository = {
         s.id,
         s.reply_count
       FROM streams s
-      WHERE s.parent_stream_id = ${parentStreamId}
+      WHERE s.parent_stream_id = ANY(${Array.isArray(parentStreamId) ? parentStreamId : [parentStreamId]})
         AND s.type = 'thread'
         AND s.parent_anchor_id IS NOT NULL
         AND (${anchorIds === undefined} OR s.parent_anchor_id = ANY(${anchorIds ?? []}))
@@ -1535,7 +1535,7 @@ export const StreamRepository = {
    */
   async findThreadSummaries(
     db: Querier,
-    parentStreamId: string,
+    parentStreamId: string | string[],
     anchorIds?: string[]
   ): Promise<Map<string, ThreadSummary>> {
     // An empty scope matches nothing — skip the round-trip entirely.
@@ -1558,7 +1558,7 @@ export const StreamRepository = {
           s.archived_at
         FROM streams s
         JOIN messages m ON m.stream_id = s.id
-        WHERE s.parent_stream_id = ${parentStreamId}
+        WHERE s.parent_stream_id = ANY(${Array.isArray(parentStreamId) ? parentStreamId : [parentStreamId]})
           AND s.type = 'thread'
           AND s.parent_anchor_id IS NOT NULL
           AND m.deleted_at IS NULL

@@ -49,7 +49,7 @@ import { settleMessagesOnEngagement } from "../conversations"
 import { DraftsRepository, toDraftView } from "../drafts"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { StreamContextRepository, contextRowsForMessage, contextSnippet } from "../stream-context"
-import { MemoRepository, resolveMemoEmbedSummaries } from "../memos"
+import { MemoRepository, resolveMemoEmbedSummaries, resolveMemoSummariesByStream } from "../memos"
 import {
   attachmentReferenceId,
   eventId,
@@ -2593,7 +2593,8 @@ export class EventService {
   private async refreshMemoEmbeds(
     messagesMap: Map<string, Message>,
     messageIdsWithKey: Set<string>,
-    scope?: { workspaceId: string; streamId: string }
+    sourceStreamByMessage: ReadonlyMap<string, string>,
+    scope?: { workspaceId: string } & ({ streamId: string } | { streamIds: string[] })
   ): Promise<Map<string, MemoEmbedSummary[]>> {
     const refreshed = new Map<string, MemoEmbedSummary[]>()
     if (!scope) return refreshed
@@ -2618,19 +2619,25 @@ export class EventService {
 
     const byMessage = new Map([...edited.map((m) => [m.id, collectMemoEmbedIds(m.contentJson)] as const), ...citing])
     const editedIds = new Set(edited.map((m) => m.id))
-    const allIds = [...new Set([...byMessage.values()].flat())]
-
-    const summaries =
-      allIds.length > 0
-        ? await MemoRepository.findEmbedSummaries(
-            this.pool,
-            scope.workspaceId,
-            allIds,
-            (await StreamRepository.findById(this.pool, scope.streamId))?.rootStreamId ?? scope.streamId
-          )
-        : new Map<string, MemoEmbedSummary>()
+    // The citing stream is the creation EVENT's, never the message projection's
+    // (a move rewrites that). The scope is what the caller authorized, so an
+    // event from outside it is a caller bug, not something to resolve.
+    const scopeStreamIds = new Set("streamIds" in scope ? scope.streamIds : [scope.streamId])
+    const memoIdsByStream = new Map<string, Set<string>>()
     for (const [messageId, ids] of byMessage) {
-      const resolved = ids.map((id) => summaries.get(id)).filter((s): s is MemoEmbedSummary => s !== undefined)
+      const streamId = sourceStreamByMessage.get(messageId)
+      if (!streamId || !scopeStreamIds.has(streamId)) {
+        throw new Error("Memo embed message is outside bootstrap stream scope")
+      }
+      if (ids.length === 0) continue
+      const streamMemoIds = memoIdsByStream.get(streamId) ?? new Set<string>()
+      for (const id of ids) streamMemoIds.add(id)
+      memoIdsByStream.set(streamId, streamMemoIds)
+    }
+    const summariesByStream = await resolveMemoSummariesByStream(this.pool, scope.workspaceId, memoIdsByStream)
+    for (const [messageId, ids] of byMessage) {
+      const summaries = summariesByStream.get(sourceStreamByMessage.get(messageId)!)
+      const resolved = ids.map((id) => summaries?.get(id)).filter((s): s is MemoEmbedSummary => s !== undefined)
       const mustSet = editedIds.has(messageId) || messageIdsWithKey.has(messageId)
       if (!mustSet && resolved.length === 0) continue
       refreshed.set(messageId, resolved)
@@ -2651,7 +2658,7 @@ export class EventService {
     events: StreamEvent[],
     threadDataMap: Map<string, { threadId: string; replyCount: number }>,
     threadSummaryMap: Map<string, ThreadSummary> = new Map(),
-    memoEmbedScope?: { workspaceId: string; streamId: string }
+    memoEmbedScope?: { workspaceId: string } & ({ streamId: string } | { streamIds: string[] })
   ): Promise<StreamEvent[]> {
     const messageCreatedEvents = events.filter((e) => e.eventType === "message_created")
     const messageIds = messageCreatedEvents.map((e) => (e.payload as MessageCreatedPayload).messageId)
@@ -2719,7 +2726,15 @@ export class EventService {
         .filter((e) => (e.payload as MessageCreatedPayload).memoEmbeds !== undefined)
         .map((e) => (e.payload as MessageCreatedPayload).messageId)
     )
-    const memoEmbedsByMessageId = await this.refreshMemoEmbeds(messagesMap, messageIdsWithKey, memoEmbedScope)
+    const sourceStreamByMessage = new Map(
+      messageCreatedEvents.map((event) => [(event.payload as MessageCreatedPayload).messageId, event.streamId])
+    )
+    const memoEmbedsByMessageId = await this.refreshMemoEmbeds(
+      messagesMap,
+      messageIdsWithKey,
+      sourceStreamByMessage,
+      memoEmbedScope
+    )
 
     return events
       .filter((e) => e.eventType !== "message_edited" && e.eventType !== "message_deleted")

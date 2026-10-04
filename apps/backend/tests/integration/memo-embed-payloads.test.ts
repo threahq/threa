@@ -11,7 +11,7 @@
  * present-and-empty rather than omitted, or a removed reference keeps its card.
  */
 
-import { describe, test, expect, beforeAll, afterAll } from "bun:test"
+import { describe, test, expect, beforeAll, afterAll, spyOn } from "bun:test"
 import { Pool } from "pg"
 import { setupTestDatabase, withTransaction, addTestMember, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
@@ -223,6 +223,100 @@ describe("memo embed summaries on message payloads", () => {
     expect(payload.memoEmbeds).toEqual([])
   })
 
+  test("should batch root-specific summaries in one roundtrip and skip empty requests", async () => {
+    const publicRoot = streamId()
+    const stalePublicThread = streamId()
+    const foreignRoot = streamId()
+    const foreignSource = streamId()
+    const foreignWorkspace = workspaceId()
+    await WorkspaceRepository.insert(pool, {
+      id: foreignWorkspace,
+      name: "Foreign memo sources",
+      slug: `foreign-${foreignWorkspace}`,
+      createdBy: testUserId,
+    })
+    for (const [id, workspace, type, rootStreamId] of [
+      [publicRoot, testWorkspaceId, "channel", null],
+      [stalePublicThread, testWorkspaceId, "thread", channel],
+      [foreignRoot, foreignWorkspace, "channel", null],
+      [foreignSource, testWorkspaceId, "thread", foreignRoot],
+    ] as const) {
+      await StreamRepository.insert(pool, {
+        id,
+        workspaceId: workspace,
+        type,
+        rootStreamId,
+        visibility: "public",
+        createdBy: testUserId,
+      })
+    }
+    const publicMemo = await seedMemo(publicRoot, "Public source")
+    const threadMemo = await seedMemo(stalePublicThread, "Private effective root")
+    const userMemo = await seedMemo(channel, "User only")
+    const foreignRootMemo = await seedMemo(foreignSource, "Foreign effective root")
+    const foreignSourceMemo = await seedMemo(foreignRoot, "Foreign source")
+    const missingSourceMemo = await seedMemo(channel, "Missing source")
+    await pool.query("UPDATE memos SET scope = 'user', scope_user_id = $2 WHERE id = $1", [userMemo, testUserId])
+    await pool.query("UPDATE memos SET status = 'archived' WHERE id = $1", [publicMemo])
+    await pool.query("UPDATE memos SET status = 'superseded' WHERE id = $1", [threadMemo])
+    await pool.query("DELETE FROM messages WHERE id = (SELECT source_message_id FROM memos WHERE id = $1)", [
+      missingSourceMemo,
+    ])
+    const ids = [
+      sameStreamMemo,
+      publicMemo,
+      threadMemo,
+      userMemo,
+      foreignRootMemo,
+      foreignSourceMemo,
+      missingSourceMemo,
+      memoId(),
+    ]
+    const pairs = [channel, publicRoot].flatMap((citingRootStreamId) =>
+      ids.map((memoId) => ({ memoId, citingRootStreamId }))
+    )
+    pairs.push(pairs[0]!)
+    const querySpy = spyOn(pool, "query")
+    try {
+      const summaries = await MemoRepository.findEmbedSummariesByRoot(pool, testWorkspaceId, pairs)
+      expect(querySpy).toHaveBeenCalledTimes(1)
+      const summary = (memoId: string, title: string) => ({
+        memoId,
+        title,
+        knowledgeType: "decision",
+        memoType: "message",
+        tags: ["settings"],
+        updatedAt: expect.any(String),
+        version: expect.any(Number),
+      })
+      expect(summaries).toEqual(
+        new Map([
+          [
+            channel,
+            new Map([
+              [sameStreamMemo, summary(sameStreamMemo, "Theme switch")],
+              [publicMemo, summary(publicMemo, "Public source")],
+              [threadMemo, summary(threadMemo, "Private effective root")],
+            ]),
+          ],
+          [publicRoot, new Map([[publicMemo, summary(publicMemo, "Public source")]])],
+        ])
+      )
+      querySpy.mockClear()
+      expect(await MemoRepository.findEmbedSummariesByRoot(pool, testWorkspaceId, [])).toEqual(new Map())
+      expect(querySpy).toHaveBeenCalledTimes(0)
+      expect(await MemoRepository.findEmbedSummaries(pool, testWorkspaceId, ids, channel)).toEqual(
+        summaries.get(channel)!
+      )
+      expect(querySpy).toHaveBeenCalledTimes(1)
+      querySpy.mockClear()
+      expect(await MemoRepository.findEmbedSummaries(pool, testWorkspaceId, [], channel)).toEqual(new Map())
+      expect(querySpy).toHaveBeenCalledTimes(0)
+    } finally {
+      querySpy.mockRestore()
+    }
+  })
+
   describe("bootstrap enrichment", () => {
     // `message_edited` is filtered out of a bootstrap response and the create
     // payload is overlaid with current content, so without a refresh the window
@@ -395,6 +489,81 @@ describe("memo embed summaries on message payloads", () => {
         (e) => e.eventType === "message_created" && (e.payload as MessageCreatedPayload).messageId === message.id
       )?.payload as MessageCreatedPayload
       expect(payload.memoEmbeds).toEqual([])
+    })
+
+    // A citing stream with no row resolves against its own id, so only the
+    // public leg can match: the bootstrap still serves, and the summary the
+    // room could read while its row existed is retracted.
+    test("fails closed to public memos when the citing stream's row is missing", async () => {
+      const vanishing = streamId()
+      const publicElsewhere = streamId()
+      await withTransaction(pool, async (client) => {
+        for (const [id, visibility] of [
+          [vanishing, "private"],
+          [publicElsewhere, "public"],
+        ] as const) {
+          await StreamRepository.insert(client, {
+            id,
+            workspaceId: testWorkspaceId,
+            type: "channel",
+            visibility,
+            slug: `s-${id.slice(-8)}`,
+            createdBy: testUserId,
+          })
+        }
+      })
+      const ownRoomMemo = await seedMemo(vanishing, "Own room")
+      const publicMemo = await seedMemo(publicElsewhere, "Public")
+      const message = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: vanishing,
+        authorId: testUserId,
+        authorType: "user",
+        ...bodyCiting("both readable at creation", [ownRoomMemo, publicMemo]),
+      })
+      const events = await eventService.listEvents(vanishing, { limit: 200 })
+      const created = events.find(
+        (e) => e.eventType === "message_created" && (e.payload as MessageCreatedPayload).messageId === message.id
+      )
+      expect((created?.payload as MessageCreatedPayload).memoEmbeds?.map((s) => s.memoId)).toEqual([
+        ownRoomMemo,
+        publicMemo,
+      ])
+
+      await pool.query(`DELETE FROM streams WHERE id = $1`, [vanishing])
+
+      const enriched = await eventService.enrichBootstrapEvents(events, new Map(), new Map(), {
+        workspaceId: testWorkspaceId,
+        streamId: vanishing,
+      })
+
+      const payload = enriched.find(
+        (e) => e.eventType === "message_created" && (e.payload as MessageCreatedPayload).messageId === message.id
+      )?.payload as MessageCreatedPayload
+      expect(payload.memoEmbeds?.map((s) => s.memoId)).toEqual([publicMemo])
+    })
+
+    // The scope is the caller's statement of which streams it authorized. An
+    // event from any other stream is a caller bug, and resolving its memos
+    // would answer for a room nobody checked.
+    test("rejects a window holding an event from outside the declared scope", async () => {
+      const message = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: channel,
+        authorId: testUserId,
+        authorType: "user",
+        ...bodyCiting("cited in the channel", [sameStreamMemo]),
+      })
+      const events = (await eventService.listEvents(channel, { limit: 200 })).filter(
+        (e) => (e.payload as { messageId?: string }).messageId === message.id
+      )
+
+      await expect(
+        eventService.enrichBootstrapEvents(events, new Map(), new Map(), {
+          workspaceId: testWorkspaceId,
+          streamId: privateElsewhere,
+        })
+      ).rejects.toThrow("Memo embed message is outside bootstrap stream scope")
     })
   })
 })
