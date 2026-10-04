@@ -667,7 +667,7 @@ describe("stream access without membership", () => {
     for (const key of allKeys()) {
       archive[key] = await gateOutcome(
         () => service().setStreamArchived(wsA, idOfKey(key), principal, true),
-        ["FORBIDDEN"]
+        ["FORBIDDEN", "CHANNEL_MANAGEMENT_FORBIDDEN"]
       )
       if (principal.kind === "user") {
         addMember[key] = await gateOutcome(
