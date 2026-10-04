@@ -66,7 +66,7 @@ interface MessageInputProps {
   streamId: string
   disabled?: boolean
   disabledReason?: string
-  /** A shared channel's copy, whose host takes neither files nor scheduled sends from it yet. */
+  /** A shared channel's copy, whose host takes no scheduled sends from it yet. */
   sharedCopy?: boolean
   autoFocus?: boolean
   /**
@@ -1013,7 +1013,6 @@ function MessageInputComponent({
     fileInputRef: composer.fileInputRef,
     onFileSelect: composer.handleFileSelect,
     onFileUpload: composer.uploadFile,
-    attachmentsDisabled: sharedCopy,
     imageCount: composer.imageCount,
     onSubmit: handleSubmit,
     canSubmit: composer.canSend,
