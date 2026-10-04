@@ -45,6 +45,11 @@ const MARKDOWN_HTML_PACKAGES = [
   "rehype-sanitize",
 ]
 
+const REACT_PACKAGES = ["react", "react-dom", "scheduler"]
+
+/** Workbox's per-file precache limit: a larger file fails the deploy build. */
+const PRECACHE_FILE_LIMIT_BYTES = 2 * 1024 * 1024
+
 let buildOutputDir: string
 
 /**
@@ -78,6 +83,26 @@ function versionJsonPlugin(): Plugin {
         fileName: "version.json",
         source: JSON.stringify({ version: buildVersion, builtAt: buildTimestamp }),
       })
+    },
+  }
+}
+
+/**
+ * E2E builds precache nothing, so workbox never sees an oversized file there and
+ * CI passes a build the deploy then refuses. This holds every build to the limit.
+ */
+function precacheSizeGuardPlugin(): Plugin {
+  return {
+    name: "precache-size-guard",
+    apply: "build",
+    generateBundle(_options, bundle) {
+      const oversized = Object.values(bundle).filter(
+        (file) => file.type === "chunk" && Buffer.byteLength(file.code) > PRECACHE_FILE_LIMIT_BYTES
+      )
+      if (oversized.length === 0) return
+      this.error(
+        `${oversized.map((file) => file.fileName).join(", ")} exceeds the ${PRECACHE_FILE_LIMIT_BYTES}-byte precache limit; split it with manualChunks`
+      )
     },
   }
 }
@@ -147,6 +172,7 @@ export default defineConfig({
     react(),
     versionJsonPlugin(),
     katexWoff2OnlyPlugin(),
+    precacheSizeGuardPlugin(),
     ...postHogSourceMapPlugins(),
     VitePWA({
       strategies: "injectManifest",
@@ -165,6 +191,7 @@ export default defineConfig({
         // It must stay network-served even when the app shell is broken; precaching
         // it would route recovery through the SW it is trying to unregister.
         globIgnores: ["**/recover.html"],
+        maximumFileSizeToCacheInBytes: PRECACHE_FILE_LIMIT_BYTES,
         // Add Subresource Integrity to each precache entry. A failed integrity
         // match aborts the install, so a stale HTTP response or mis-served HTML
         // can never silently become the precached shell for the next build.
@@ -216,10 +243,11 @@ export default defineConfig({
         // chunk crosses workbox's 2 MiB per-file precache limit and the build
         // fails outright. The chunk is still a static import of the entry, so it
         // loads before first paint and math never renders twice.
-        // The HTML parser behind GitHub previews (parse5 via rehype-raw) sits
-        // in its own chunk for the same reason.
+        // The HTML parser behind GitHub previews (parse5 via rehype-raw) and
+        // React's 560 kB sit in their own chunks for the same reason.
         manualChunks: (id: string) => {
           if (id.includes("/node_modules/katex/")) return "katex"
+          if (REACT_PACKAGES.some((name) => id.includes(`/node_modules/${name}/`))) return "react"
           if (MARKDOWN_HTML_PACKAGES.some((name) => id.includes(`/node_modules/${name}/`))) return "markdown-html"
           return undefined
         },
