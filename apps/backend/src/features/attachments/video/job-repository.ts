@@ -77,7 +77,7 @@ export const VideoTranscodeJobRepository = {
     const result = await client.query<VideoTranscodeJobRow>(sql`
       INSERT INTO video_transcode_jobs (id, attachment_id, workspace_id)
       VALUES (${params.id}, ${params.attachmentId}, ${params.workspaceId})
-      ON CONFLICT (attachment_id) DO UPDATE SET
+      ON CONFLICT (workspace_id, attachment_id) DO UPDATE SET
         status = 'pending',
         mediaconvert_job_id = NULL,
         processed_storage_path = NULL,

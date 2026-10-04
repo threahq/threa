@@ -7,6 +7,7 @@ import {
   ConversationSummaryRepository,
   StreamPersonaParticipantRepository,
 } from "../../src/features/agents"
+import { AttachmentReferenceRepository, VideoTranscodeJobRepository } from "../../src/features/attachments"
 import { MessageConversationStateRepository } from "../../src/features/conversations"
 import { MessageComposeTraceRepository, MessageRepository } from "../../src/features/messaging"
 import {
@@ -18,12 +19,15 @@ import {
 } from "../../src/features/streams"
 import {
   agentConversationSummaryId,
+  attachmentId,
+  attachmentReferenceId,
   conversationId,
   messageId,
   personaId,
   streamBriefId,
   streamId,
   userId,
+  videoTranscodeJobId,
   workspaceId,
 } from "../../src/lib/id"
 
@@ -209,6 +213,49 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     expect(rows.rows).toEqual([{ persona_id: persona }])
   })
 
+  test("should keep one reference row when the same attachment is referenced twice by a message", async () => {
+    const ws = workspaceId()
+    const attachment = attachmentId()
+    const message = messageId()
+    const stream = streamId()
+    const reference = () => ({
+      id: attachmentReferenceId(),
+      workspaceId: ws,
+      attachmentId: attachment,
+      messageId: message,
+      streamId: stream,
+    })
+
+    const first = await AttachmentReferenceRepository.insertMany(pool, [reference()])
+    const second = await AttachmentReferenceRepository.insertMany(pool, [reference()])
+
+    expect({
+      first,
+      second,
+      stored: (await AttachmentReferenceRepository.findByAttachmentId(pool, ws, attachment)).map(
+        (row) => row.messageId
+      ),
+    }).toEqual({ first: 1, second: 0, stored: [message] })
+  })
+
+  test("should reset the existing job when a video job is upserted twice for one attachment", async () => {
+    const ws = workspaceId()
+    const attachment = attachmentId()
+    const firstId = videoTranscodeJobId()
+    const params = (id: string) => ({ id, workspaceId: ws, attachmentId: attachment })
+
+    await VideoTranscodeJobRepository.upsert(pool, params(firstId))
+    const submitted = await VideoTranscodeJobRepository.updateSubmitted(pool, ws, firstId, "mc_1")
+    const second = await VideoTranscodeJobRepository.upsert(pool, params(videoTranscodeJobId()))
+
+    expect({ submitted, id: second.id, status: second.status, mediaconvertJobId: second.mediaconvertJobId }).toEqual({
+      submitted: true,
+      id: firstId,
+      status: "pending",
+      mediaconvertJobId: null,
+    })
+  })
+
   interface SharedIds {
     root: string
     anchor: string
@@ -216,11 +263,12 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     member: string
     persona: string
     message: string
+    attachment: string
     refStreams: [string, string]
   }
 
   const firstRow =
-    (columns: string, table: string, by: "stream" | "message" = "stream") =>
+    (columns: string, table: string, by: "stream" | "message" | "attachment" = "stream") =>
     async (ws: string, ids: SharedIds) =>
       (await pool.query(`SELECT ${columns} FROM ${table} WHERE workspace_id = $1 AND ${by}_id = $2`, [ws, ids[by]]))
         .rows[0] ?? null
@@ -407,6 +455,34 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
       },
       read: (ws, ids) => MessageConversationStateRepository.findByMessageId(pool, ws, ids.message),
     },
+    {
+      name: "an attachment reference",
+      oldKey: "attachment_references_pair_idx",
+      write: (ws, ids) =>
+        AttachmentReferenceRepository.insertMany(pool, [
+          {
+            id: attachmentReferenceId(),
+            workspaceId: ws,
+            attachmentId: ids.attachment,
+            messageId: ids.message,
+            streamId: ids.stream,
+          },
+        ]),
+      read: firstRow("id", "attachment_references", "attachment"),
+    },
+    {
+      name: "a video transcode job",
+      oldKey: "video_transcode_jobs_attachment_id_key",
+      write: async (ws, ids) => {
+        const job = await VideoTranscodeJobRepository.upsert(pool, {
+          id: videoTranscodeJobId(),
+          workspaceId: ws,
+          attachmentId: ids.attachment,
+        })
+        await VideoTranscodeJobRepository.updateSubmitted(pool, ws, job.id, "mc_1")
+      },
+      read: firstRow("id, status, mediaconvert_job_id", "video_transcode_jobs", "attachment"),
+    },
   ]
 
   // While the old keys exist, workspace B's write for a shared id is rejected by the old key. An arbiter still
@@ -422,6 +498,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
         member: userId(),
         persona: personaId(),
         message: messageId(),
+        attachment: attachmentId(),
         refStreams: [streamId(), streamId()],
       }
 

@@ -34,6 +34,17 @@ const TWINNED_KEYS: string[] = [
   "conversations_pkey",
   "memos_pkey",
   "link_previews_pkey",
+  "attachments_pkey",
+  "attachment_references_pkey",
+  "attachment_references_pair_idx",
+  "attachment_extractions_pkey",
+  "attachment_extractions_attachment_id_key",
+  "attachment_uploads_attachment_id_key",
+  "pdf_page_extractions_pkey",
+  "pdf_page_extractions_attachment_id_page_number_key",
+  "pdf_processing_jobs_attachment_id_key",
+  "video_transcode_jobs_attachment_id_key",
+  "persona_attachments_pkey",
 ]
 
 /** Unique keys that need no twin of their own, each with its reason. */
@@ -61,13 +72,6 @@ const EXEMPT_KEYS: Record<string, string> = {
 
 /** Keys later W3 steps twin; each step deletes its entries and the last one deletes the list. */
 const NOT_YET_TWINNED: string[] = [
-  "attachment_references_pair_idx",
-  "attachment_extractions_attachment_id_key",
-  "attachment_uploads_attachment_id_key",
-  "pdf_page_extractions_attachment_id_page_number_key",
-  "pdf_processing_jobs_attachment_id_key",
-  "video_transcode_jobs_attachment_id_key",
-  "persona_attachments_pkey",
   "stream_read_state_pkey",
   "stream_member_message_reads_pkey",
   "board_hidden_conversations_pkey",

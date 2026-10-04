@@ -42,10 +42,9 @@ const SELECT_FIELDS = `id, workspace_id, attachment_id, message_id, stream_id, c
 
 export const AttachmentReferenceRepository = {
   /**
-   * Insert one row per (attachment, referencing message) pair. Idempotent
-   * on `(attachment_id, message_id)` so repeat sends of the same payload
-   * during a retry don't error out and the backfill can coexist with
-   * application-level inserts.
+   * Insert one row per (attachment, referencing message) pair. Idempotent so
+   * repeat sends of the same payload during a retry don't error out and the
+   * backfill can coexist with application-level inserts.
    */
   async insertMany(client: Querier, params: InsertAttachmentReferenceParams[]): Promise<number> {
     if (params.length === 0) return 0
@@ -63,7 +62,7 @@ export const AttachmentReferenceRepository = {
         ${messageIds}::text[],
         ${streamIds}::text[]
       )
-      ON CONFLICT (attachment_id, message_id) DO NOTHING
+      ON CONFLICT (workspace_id, attachment_id, message_id) DO NOTHING
     `)
     return result.rowCount ?? 0
   },
