@@ -182,14 +182,8 @@ export const WORKSPACE_ROLE_SLUGS = {
 
 export type WorkspaceRoleSlug = (typeof WORKSPACE_ROLE_SLUGS)[keyof typeof WORKSPACE_ROLE_SLUGS]
 
-/**
- * Roles that can be granted via invitation. Owner promotion is an explicit
- * post-join action and guests are not invitable yet, so both are excluded here.
- */
-export type WorkspaceInvitableRole = Exclude<
-  WorkspaceRoleSlug,
-  typeof WORKSPACE_ROLE_SLUGS.OWNER | typeof WORKSPACE_ROLE_SLUGS.GUEST
->
+/** Roles that can be granted via invitation. Owner promotion is an explicit post-join action, so it is excluded here. */
+export type WorkspaceInvitableRole = Exclude<WorkspaceRoleSlug, typeof WORKSPACE_ROLE_SLUGS.OWNER>
 
 export type WorkspaceAssignableRole = Exclude<WorkspaceRoleSlug, typeof WORKSPACE_ROLE_SLUGS.GUEST>
 
@@ -279,14 +273,14 @@ export const WORKSPACE_USER_ROLES = WORKSPACE_ROLE_DEFINITIONS.map((r) => r.slug
 
 /**
  * Roles that can be granted via invitation (everything except `owner`, which
- * is reached via post-join promotion, and `guest`, which is not invitable yet).
- * Declared as a non-empty tuple so it works with `z.enum(...)` directly, and
- * type-checked against `WorkspaceInvitableRole` so any catalog change forces a
- * deliberate update.
+ * is reached via post-join promotion). Declared as a non-empty tuple so it
+ * works with `z.enum(...)` directly, and type-checked against
+ * `WorkspaceInvitableRole` so any catalog change forces a deliberate update.
  */
 export const WORKSPACE_INVITABLE_ROLES: readonly [WorkspaceInvitableRole, ...WorkspaceInvitableRole[]] = [
   WORKSPACE_ROLE_SLUGS.MEMBER,
   WORKSPACE_ROLE_SLUGS.ADMIN,
+  WORKSPACE_ROLE_SLUGS.GUEST,
 ]
 
 /** Roles a role-change surface offers: every role except `guest`, which is not assignable yet. */

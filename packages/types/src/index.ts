@@ -57,6 +57,8 @@ export {
   VISIBILITY_OPTIONS,
   CREATABLE_VISIBILITIES,
   type CreatableVisibility,
+  OPEN_VISIBILITIES,
+  isOpenVisibility,
   type Visibility,
   Visibilities,
   // Labelable resources

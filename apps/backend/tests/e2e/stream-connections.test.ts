@@ -103,14 +103,19 @@ describe("Stream connections E2E", () => {
     expect(responses.map((r) => r.status)).toEqual([403, 403, 403, 403, 403])
   })
 
-  test("should refuse guest_public as an accepted channel's visibility before any other check", async () => {
+  test("should validate the accepted channel's visibility before any other check and take every channel visibility", async () => {
     const accept = (visibility: string) =>
       owner.post(`/api/workspaces/${workspaceId}/stream-connections/accept`, { token: "tok", visibility })
-    const [guestPublic, privateControl] = await Promise.all([accept("guest_public"), accept("private")])
+    const [guestPublic, privateControl, unknown] = await Promise.all([
+      accept("guest_public"),
+      accept("private"),
+      accept("everyone"),
+    ])
 
-    expect({ guestPublic, privateControl }).toMatchObject({
-      guestPublic: { status: 400, data: { code: "VALIDATION_ERROR" } },
+    expect({ guestPublic, privateControl, unknown }).toMatchObject({
+      guestPublic: { status: 404, data: { code: "STREAM_CONNECTIONS_DISABLED" } },
       privateControl: { status: 404, data: { code: "STREAM_CONNECTIONS_DISABLED" } },
+      unknown: { status: 400, data: { code: "VALIDATION_ERROR" } },
     })
   })
 

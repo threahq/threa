@@ -10,7 +10,7 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
-import { TestClient, createWorkspace, loginAs } from "../client"
+import { TestClient, createChannel, createWorkspace, loginAs } from "../client"
 import { createTestPool } from "../integration/setup"
 import { API_VERSIONS, CURRENT_API_VERSION } from "../../src/features/public-api/versions"
 
@@ -214,5 +214,44 @@ describe("Public API header versioning", () => {
       { apiVersion: CURRENT_API_VERSION }
     )
     expect((repin.data as { data: { apiVersion: string | null } }).data.apiVersion).toBe(CURRENT_API_VERSION)
+  })
+
+  test("a stream created as guest_public reads as public to an older pin on every stream operation and as guest_public at the current version", async () => {
+    const channel = await createChannel(ctx.client, ctx.workspaceId, `ver-open-${testRunId}`, "guest_public")
+    const keyRes = await ctx.client.post<{ value: string }>(`/api/workspaces/${ctx.workspaceId}/user-api-keys`, {
+      name: `ver-streams-${testRunId}`,
+      scopes: ["streams:read", "streams:write"],
+    })
+    const key = (keyRes.data as { value: string }).value
+    const streamUrl = `${baseUrl()}/api/v1/workspaces/${ctx.workspaceId}/streams`
+    const call = async (version: string, method: string, path: string) => {
+      const res = await fetch(`${streamUrl}${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${key}`, "Threa-Version": version, "Content-Type": "application/json" },
+        ...(method === "PATCH" && { body: JSON.stringify({ description: "open" }) }),
+      })
+      const { data } = (await res.json()) as {
+        data: { visibility: string } | Array<{ id: string; visibility: string }>
+      }
+      return Array.isArray(data) ? data.find((stream) => stream.id === channel.id)?.visibility : data.visibility
+    }
+    const visibilitiesAt = async (version: string) => ({
+      list: await call(version, "GET", "?type=channel"),
+      get: await call(version, "GET", `/${channel.id}`),
+      update: await call(version, "PATCH", `/${channel.id}`),
+      archive: await call(version, "POST", `/${channel.id}/archive`),
+      unarchive: await call(version, "POST", `/${channel.id}/unarchive`),
+    })
+
+    expect({ older: await visibilitiesAt("2026-10-01"), current: await visibilitiesAt(CURRENT_API_VERSION) }).toEqual({
+      older: { list: "public", get: "public", update: "public", archive: "public", unarchive: "public" },
+      current: {
+        list: "guest_public",
+        get: "guest_public",
+        update: "guest_public",
+        archive: "guest_public",
+        unarchive: "guest_public",
+      },
+    })
   })
 })

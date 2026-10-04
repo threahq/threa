@@ -83,6 +83,40 @@ describe("guest workspace bootstrap", () => {
   })
 })
 
+describe("guest reads of channels created over HTTP", () => {
+  test("should let a guest read a guest_public channel's messages and not a public channel's", async () => {
+    const owner = new TestClient()
+    const guestClient = new TestClient()
+    await loginAs(owner, `guestread-owner-${testRunId}@test.com`, "Guest Read Owner")
+    await loginAs(guestClient, `guestread-guest-${testRunId}@test.com`, "Guest Read Guest")
+    const workspace = await createWorkspace(owner, `Guest Read WS ${testRunId}`)
+
+    const guestPublic = await createChannel(owner, workspace.id, `gr-open-${testRunId}`, "guest_public")
+    const memberOnly = await createChannel(owner, workspace.id, `gr-public-${testRunId}`, "public")
+    await sendMessage(owner, workspace.id, guestPublic.id, "for everyone")
+    await sendMessage(owner, workspace.id, memberOnly.id, "for members")
+
+    const guest = await joinWorkspace(guestClient, workspace.id)
+    await pool.query(`UPDATE users SET role = $3 WHERE workspace_id = $1 AND id = $2`, [
+      workspace.id,
+      guest.id,
+      WORKSPACE_ROLE_SLUGS.GUEST,
+    ])
+
+    const read = async (streamId: string) => {
+      const response = await guestClient.get<{ events?: Array<{ payload: { contentMarkdown: string } }> }>(
+        `/api/workspaces/${workspace.id}/streams/${streamId}/events?type=message_created`
+      )
+      return { status: response.status, messages: response.data.events?.map((e) => e.payload.contentMarkdown) }
+    }
+
+    expect({ guestPublic: await read(guestPublic.id), public: await read(memberOnly.id) }).toEqual({
+      guestPublic: { status: 200, messages: ["for everyone"] },
+      public: { status: 404, messages: undefined },
+    })
+  })
+})
+
 describe("guest people surfaces", () => {
   let workspaceId: string
   let sharedChannelId: string

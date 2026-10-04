@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { Pool } from "pg"
-import type { CreateInvitationLinkResponse, UpdateInvitationLinkResponse, WorkspaceInvitation } from "@threahq/types"
+import type {
+  CreateInvitationLinkResponse,
+  SendInvitationsResponse,
+  UpdateInvitationLinkResponse,
+  WorkspaceInvitation,
+} from "@threahq/types"
 import { hashInvitationToken } from "../../src/features/invitations/service"
 import { invitationId } from "../../src/lib/id"
-import { createWorkspace, loginAs, TestClient } from "../client"
+import { createWorkspace, getWorkspaceBootstrap, loginAs, TestClient } from "../client"
 import { getTestDatabaseTarget } from "../test-database"
 
 const runId = crypto.randomUUID().slice(0, 8)
@@ -173,5 +178,36 @@ describe("multi-use invitation API", () => {
       maxUses: 3,
     })
     expect(editRevoked).toMatchObject({ status: 409, data: { code: "INVITATION_NOT_EDITABLE" } })
+  })
+
+  test("should make the user a guest when an email invitation for the guest role is accepted", async () => {
+    const admin = new TestClient()
+    await loginAs(admin, `invite-guest-admin-${runId}@test.com`, "Invite Admin")
+    const workspace = await createWorkspace(admin, `Invite guest ${runId}`)
+    const email = `invite-guest-${runId}@test.com`
+
+    const sent = await admin.post<SendInvitationsResponse>(`/api/workspaces/${workspace.id}/invitations`, {
+      emails: [email],
+      role: "guest",
+    })
+    const invitation = sent.data.sent[0]
+    const accepted = await admin.internalRequest<{ workspaceId: string }>(
+      "POST",
+      `/internal/invitations/${invitation.id}/accept`,
+      { workosUserId: `workos_invite_guest_${runId}`, email, name: "Invite Guest" }
+    )
+    const joined = (await getWorkspaceBootstrap(admin, workspace.id)).users.find((user) => user.email === email)
+
+    expect({
+      sent: sent.status,
+      invitedAs: invitation.role,
+      accepted: accepted.status,
+      joinedAs: joined?.role,
+    }).toEqual({
+      sent: 201,
+      invitedAs: "guest",
+      accepted: 200,
+      joinedAs: "guest",
+    })
   })
 })

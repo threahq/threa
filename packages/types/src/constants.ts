@@ -114,9 +114,16 @@ export const Visibilities = {
   PRIVATE: "private",
 } as const satisfies Record<string, Visibility>
 
-/** The visibilities a request may set; `guest_public` is not one of them. */
-export const CREATABLE_VISIBILITIES = [Visibilities.PUBLIC, Visibilities.PRIVATE] as const
+/** The visibilities a request may set: every one a channel can have. */
+export const CREATABLE_VISIBILITIES = VISIBILITY_OPTIONS
 export type CreatableVisibility = (typeof CREATABLE_VISIBILITIES)[number]
+
+/** Visibilities readable without a membership row by whoever may read them: `public` by members who can browse, `guest_public` by every workspace user. */
+export const OPEN_VISIBILITIES = [Visibilities.PUBLIC, Visibilities.GUEST_PUBLIC] as const
+
+export function isOpenVisibility(visibility: Visibility): boolean {
+  return (OPEN_VISIBILITIES as readonly Visibility[]).includes(visibility)
+}
 
 // Labelable resource types — the polymorphic target of a label assignment.
 // Labeling is resource-agnostic: the table, service, events, sync, and UI
