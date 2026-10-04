@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, spyOn, test } from "bun:test"
 import type { AttachmentService } from "../../attachments"
+import * as streams from "../../streams"
 import type { SandboxFile, SandboxService } from "../../sandboxes"
 import { bindStreamSandbox, createRunCommandTool } from "./run-command-tool"
 import type { RunCommandToolDeps, WorkspaceToolDeps } from "./tool-deps"
@@ -14,38 +15,54 @@ const attachment = {
   e2eOnly: false,
 }
 
-function setup(getAccessible: AttachmentService["getAccessible"], run?: RunCommandToolDeps["run"], threaApi = false) {
-  const sent: SandboxFile[][] = []
+function setup(
+  getAccessibleVia: AttachmentService["getAccessibleVia"],
+  run?: RunCommandToolDeps["run"],
+  threaApi = false
+) {
+  const sent: Parameters<RunCommandToolDeps["run"]>[0][] = []
   const workspace = {
     workspaceId: "ws_1",
     accessibleStreamIds: ["stream_1"],
     storage: { getObject: async () => Buffer.from("a,b\n1,2\n") },
-    attachmentService: { getAccessible },
+    attachmentService: { getAccessibleVia },
   } as unknown as WorkspaceToolDeps
   const deps: RunCommandToolDeps = {
     threaApi,
     internet: async () => run !== undefined,
     run:
       run ??
-      (async ({ files }) => {
-        sent.push(files)
-        return { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, replaced: null }
+      (async (params) => {
+        sent.push(params)
+        return {
+          exitCode: 0,
+          stdout: "",
+          stderr: "",
+          timedOut: false,
+          truncated: false,
+          replaced: null,
+          contentStreamIds: [],
+        }
       }),
   }
   return { tool: createRunCommandTool(workspace, deps), sent }
 }
 
 describe("run_command attachments", () => {
-  test("copies an accessible attachment under its id with a path-safe filename", async () => {
-    const { tool, sent } = setup(async () => attachment as never)
+  test("copies an accessible attachment under its id with a path-safe filename, tainted by its stream", async () => {
+    const { tool, sent } = setup(async () => ({ attachment, viaStreamIds: ["stream_1"] }) as never)
 
     const result = await tool.config.execute({ command: "wc -l", attachmentIds: ["attach_1"] }, toolOpts)
 
     expect({
-      files: sent[0].map((f) => ({ path: f.path, text: new TextDecoder().decode(f.data) })),
+      files: sent[0].files.map((f: SandboxFile) => ({ path: f.path, text: new TextDecoder().decode(f.data) })),
+      contentStreamIds: sent[0].contentStreamIds,
+      readableStreamIds: sent[0].readableStreamIds,
       reported: JSON.parse(result.output).files,
     }).toEqual({
       files: [{ path: "/work/attachments/attach_1/Q3 report_.csv", text: "a,b\n1,2\n" }],
+      contentStreamIds: ["stream_1"],
+      readableStreamIds: ["stream_1"],
       reported: ["/work/attachments/attach_1/Q3 report_.csv"],
     })
   })
@@ -62,7 +79,9 @@ describe("run_command attachments", () => {
   })
 
   test("refuses a sealed attachment without running", async () => {
-    const { tool, sent } = setup(async () => ({ ...attachment, e2eOnly: true }) as never)
+    const { tool, sent } = setup(
+      async () => ({ attachment: { ...attachment, e2eOnly: true }, viaStreamIds: ["stream_1"] }) as never
+    )
 
     const result = await tool.config.execute({ command: "ls", attachmentIds: ["attach_1"] }, toolOpts)
 
@@ -73,7 +92,9 @@ describe("run_command attachments", () => {
   })
 
   test("refuses attachments over the per-call size limit before reading any", async () => {
-    const { tool, sent } = setup(async () => ({ ...attachment, sizeBytes: 30 * 1024 * 1024 }) as never)
+    const { tool, sent } = setup(
+      async () => ({ attachment: { ...attachment, sizeBytes: 30 * 1024 * 1024 }, viaStreamIds: ["stream_1"] }) as never
+    )
 
     const result = await tool.config.execute({ command: "ls", attachmentIds: ["attach_1", "attach_2"] }, toolOpts)
 
@@ -98,7 +119,15 @@ describe("run_command attachments", () => {
 })
 
 describe("bindStreamSandbox", () => {
-  const ok = { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, replaced: null }
+  const ok = {
+    exitCode: 0,
+    stdout: "",
+    stderr: "",
+    timedOut: false,
+    truncated: false,
+    replaced: null,
+    contentStreamIds: [],
+  }
 
   function bind(params: {
     sealed: boolean
@@ -126,7 +155,7 @@ describe("bindStreamSandbox", () => {
           revoke: async (_ws, id) => {
             calls.push(`revoke ${id}`)
             if (params.revokeError) throw params.revokeError
-            return [{ streamId: "stream_2", title: "design" }]
+            return ["stream_3"]
           },
         },
       },
@@ -144,7 +173,14 @@ describe("bindStreamSandbox", () => {
     return { deps, calls }
   }
 
-  const params = { internet: false, command: "true", files: [], timeoutSec: 60 }
+  const params = {
+    internet: false,
+    readableStreamIds: ["stream_1"],
+    command: "true",
+    files: [],
+    contentStreamIds: [],
+    timeoutSec: 60,
+  }
 
   test("withholds the sandbox on a sealed stream", () => {
     expect(bind({ sealed: true, sandboxInternet: true, streamToolPolicy: null }).deps).toBeUndefined()
@@ -182,8 +218,23 @@ describe("bindStreamSandbox", () => {
     })
   })
 
-  test("reports the streams the command's token served once it is revoked", async () => {
+  test("adds what the command's token read to the box's content once it is revoked", async () => {
     const { deps, calls } = bind({
+      sealed: false,
+      run: async (p) => {
+        await p.api!()
+        return { ...ok, contentStreamIds: ["stream_2", "stream_3"] }
+      },
+    })
+
+    expect({ result: await deps!.run(params), calls }).toEqual({
+      result: { ...ok, contentStreamIds: ["stream_2", "stream_3"] },
+      calls: ["run", "mint ttl=90 captured=stream_1,stream_2", "revoke sbx_1"],
+    })
+  })
+
+  test("cites the token's reads even when a concurrent replace reset the box", async () => {
+    const { deps } = bind({
       sealed: false,
       run: async (p) => {
         await p.api!()
@@ -191,10 +242,7 @@ describe("bindStreamSandbox", () => {
       },
     })
 
-    expect({ result: await deps!.run(params), calls }).toEqual({
-      result: { ...ok, streamsRead: [{ streamId: "stream_2", title: "design" }] },
-      calls: ["run", "mint ttl=90 captured=stream_1,stream_2", "revoke sbx_1"],
-    })
+    expect((await deps!.run(params)).contentStreamIds).toEqual(["stream_3"])
   })
 
   test("withholds the output when the reads it was built from cannot be retrieved", async () => {
@@ -264,11 +312,22 @@ describe("run_command prompt", () => {
 })
 
 describe("run_command sources", () => {
-  test("cites each stream the command read through Threa, and nothing when it read none", async () => {
-    const ran = { exitCode: 0, stdout: "", stderr: "", timedOut: false, truncated: false, replaced: null }
+  test("cites each stream the box's files may hold content from, and nothing when there are none", async () => {
+    const ran = {
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      truncated: false,
+      replaced: null,
+      contentStreamIds: [] as string[],
+    }
+    const named = spyOn(streams.StreamRepository, "findByIdsInWorkspace").mockImplementation(async (_db, _ws, ids) =>
+      ids.map((id) => ({ id, type: "channel", slug: "design" }) as never)
+    )
     const reading = setup(
       async () => null,
-      async () => ({ ...ran, streamsRead: [{ streamId: "stream_2", title: "design" }] })
+      async () => ({ ...ran, contentStreamIds: ["stream_2"] })
     ).tool
     const silent = setup(
       async () => null,
@@ -284,6 +343,7 @@ describe("run_command sources", () => {
       reading: [{ type: "workspace", title: "design", url: "/w/ws_1/s/stream_2", streamId: "stream_2" }],
       silent: [],
     })
+    named.mockRestore()
   })
 })
 

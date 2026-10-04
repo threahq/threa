@@ -8,8 +8,8 @@
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
-import { SandboxSessionTokenService } from "../../src/features/sandboxes"
-import { personaId, sessionId } from "../../src/lib/id"
+import { SandboxSessionTokenService, StreamSandboxRepository } from "../../src/features/sandboxes"
+import { personaId, sessionId, streamId } from "../../src/lib/id"
 import {
   TestClient,
   createChannel,
@@ -52,16 +52,28 @@ describe("Public API v1 — sandbox tokens", () => {
   let token: string
   let tokenId: string
 
-  function mint() {
+  /** A token for a command in `agentStreamId`'s sandbox, which must exist for its reads to be served. */
+  async function mint(agentStreamId = capturedId, capturedStreamIds = [capturedId]) {
+    await StreamSandboxRepository.insertIfAbsent(pool, {
+      workspaceId,
+      streamId: agentStreamId,
+      sandboxId: `box-${agentStreamId}`,
+      runner: "fake",
+      internet: false,
+    })
     return tokens.mint({
       workspaceId,
       invokingUserId: invokerId,
       personaId: persona,
       sessionId: sessionId(),
-      streamId: capturedId,
-      capturedStreamIds: [capturedId],
+      streamId: agentStreamId,
+      capturedStreamIds,
       ttlSec: 300,
     })
+  }
+
+  async function boxContent(agentStreamId: string) {
+    return (await StreamSandboxRepository.find(pool, workspaceId, agentStreamId))?.contentStreamIds.sort()
   }
 
   beforeAll(async () => {
@@ -187,8 +199,9 @@ describe("Public API v1 — sandbox tokens", () => {
     })
   })
 
-  test("should hand back the streams a search served when revoked", async () => {
-    const searcher = await mint()
+  test("should record the streams a search served on the sandbox", async () => {
+    const box = streamId()
+    const searcher = await mint(box)
     const search = await api(`/api/v1/workspaces/${workspaceId}/messages/search`, searcher.value, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -196,38 +209,40 @@ describe("Public API v1 — sandbox tokens", () => {
     })
     const found = ((await search.json()) as { data: Array<{ streamId: string }> }).data.map((r) => r.streamId)
 
-    const served = await tokens.revoke(workspaceId, searcher.session.id)
-
-    expect({ found, served: served.map((s) => s.streamId) }).toEqual({ found: [capturedId], served: [capturedId] })
+    expect({ found, content: await boxContent(box) }).toEqual({ found: [capturedId], content: [capturedId] })
   })
 
-  test("should hand back the stream of a quoted message it hydrated", async () => {
-    const reader = await tokens.mint({
+  test("should record the stream of a quoted message it hydrated on the sandbox", async () => {
+    const reader = await mint(quotingId, [quotingId, uncapturedId])
+    const list = await api(`/api/v1/workspaces/${workspaceId}/streams/${quotingId}/messages`, reader.value)
+    const slots = Object.values(((await list.json()) as { slots: Record<string, { state: string }> }).slots)
+
+    expect({ slots: slots.map((s) => s.state), content: await boxContent(quotingId) }).toEqual({
+      slots: ["ok"],
+      content: [quotingId, uncapturedId].sort(),
+    })
+  })
+
+  test("should refuse a read when the token's stream has no sandbox to record it on", async () => {
+    const orphan = await tokens.mint({
       workspaceId,
       invokingUserId: invokerId,
       personaId: persona,
       sessionId: sessionId(),
-      streamId: quotingId,
-      capturedStreamIds: [quotingId, uncapturedId],
+      streamId: streamId(),
+      capturedStreamIds: [capturedId],
       ttlSec: 300,
     })
-    const list = await api(`/api/v1/workspaces/${workspaceId}/streams/${quotingId}/messages`, reader.value)
-    const slots = Object.values(((await list.json()) as { slots: Record<string, { state: string }> }).slots)
-
-    const served = await tokens.revoke(workspaceId, reader.session.id)
-
-    expect({ slots: slots.map((s) => s.state), served: served.map((s) => s.streamId).sort() }).toEqual({
-      slots: ["ok"],
-      served: [quotingId, uncapturedId].sort(),
-    })
+    const res = await api(`/api/v1/workspaces/${workspaceId}/streams/${capturedId}/messages`, orphan.value)
+    expect(res.status).toBe(401)
   })
 
-  test("should stop answering once the token is revoked, handing back the streams it read", async () => {
-    const served = await tokens.revoke(workspaceId, tokenId)
+  test("should stop answering once the token is revoked, its reads kept on the sandbox", async () => {
+    await tokens.revoke(workspaceId, tokenId)
     const res = await api(`/api/v1/workspaces/${workspaceId}/streams`, token)
-    expect({ status: res.status, served }).toEqual({
+    expect({ status: res.status, content: await boxContent(capturedId) }).toEqual({
       status: 401,
-      served: [{ streamId: capturedId, title: `sandbox-captured-${testRunId}` }],
+      content: [capturedId],
     })
   })
 })

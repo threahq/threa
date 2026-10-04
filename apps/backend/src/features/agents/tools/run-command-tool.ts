@@ -18,10 +18,10 @@ import {
   type SandboxService,
   type SandboxSessionTokenService,
   type SandboxFile,
-  type SandboxReadStream,
-  type SandboxRunResult,
   type SandboxReplacedReason,
+  type SandboxRunResult,
 } from "../../sandboxes"
+import { StreamRepository, getEffectiveDisplayName } from "../../streams"
 import type { WorkspaceSettingsService } from "../../workspace-settings"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import { workspaceStreamUrl } from "../workspace-links"
@@ -53,6 +53,8 @@ const REPLACED_NOTICES: Record<SandboxReplacedReason, string> = {
   [SandboxReplacedReasons.EXPIRED]: "New sandbox: the previous one expired and its files are gone",
   [SandboxReplacedReasons.NETWORK_CHANGED]:
     "New sandbox: its internet access changed (the workspace setting or this conversation's web permission), and the previous sandbox's files are gone",
+  [SandboxReplacedReasons.ACCESS_CHANGED]:
+    "New sandbox: the previous one held files from a stream this turn cannot read, and they are gone",
 }
 
 function safeFilename(name: string): string {
@@ -79,9 +81,8 @@ export interface StreamSandboxDeps {
  *
  * Each command gets its own API token, reading what this turn could read
  * (`capturedStreamIds`) as the invoking user, minted when the command is about
- * to start and revoked once it ends. Revoking returns the streams it served,
- * which become the command's sources.
- * A turn with no invoking user has nobody to read as, so its commands get none.
+ * to start and revoked once it ends. A turn with no invoking user has nobody to
+ * read as, so its commands get none.
  */
 export function bindStreamSandbox(
   sandbox: StreamSandboxDeps,
@@ -120,8 +121,7 @@ export function bindStreamSandbox(
         tokenId = session.id
         return { token: value, workspaceId }
       }
-      const revoke = async (): Promise<SandboxReadStream[]> =>
-        tokenId ? sandbox.sessionTokens.revoke(workspaceId, tokenId) : []
+      const revoke = async (): Promise<string[]> => (tokenId ? sandbox.sessionTokens.revoke(workspaceId, tokenId) : [])
       let result: SandboxRunResult
       try {
         result = await sandbox.service.run({ workspaceId, streamId, ...params, api })
@@ -131,9 +131,11 @@ export function bindStreamSandbox(
         )
         throw error
       }
-      // Output without its sources would escape the digest access check, so a
-      // failed revoke fails the command rather than returning stdout.
-      return { ...result, streamsRead: await revoke() }
+      // A concurrent replace resets the box's content, so what this command read
+      // survives only on its token. Output without those sources would escape the
+      // digest access check, so a failed revoke fails the command.
+      const read = await revoke()
+      return { ...result, contentStreamIds: [...new Set([...result.contentStreamIds, ...read])] }
     },
   }
 }
@@ -144,7 +146,7 @@ export function bindStreamSandbox(
  * on the trace step, because work the user saw earlier is gone.
  */
 export function createRunCommandTool(workspace: WorkspaceToolDeps, deps: RunCommandToolDeps) {
-  const { workspaceId, accessibleStreamIds, attachmentService, storage } = workspace
+  const { db, workspaceId, accessibleStreamIds, attachmentService, storage } = workspace
 
   return defineAgentTool({
     name: "run_command",
@@ -171,12 +173,14 @@ You have a \`run_command\` tool: a shell in a Linux box that belongs to this con
       let internet = false
       try {
         const attachments = []
+        const contentStreamIds = new Set<string>()
         for (const attachmentId of input.attachmentIds ?? []) {
-          const attachment = await attachmentService.getAccessible(attachmentId, { workspaceId, accessibleStreamIds })
-          if (!attachment || attachment.e2eOnly) {
+          const access = await attachmentService.getAccessibleVia(attachmentId, { workspaceId, accessibleStreamIds })
+          if (!access || access.attachment.e2eOnly) {
             return { output: JSON.stringify({ error: "Attachment not found or not accessible", attachmentId }) }
           }
-          attachments.push(attachment)
+          attachments.push(access.attachment)
+          for (const streamId of access.viaStreamIds) contentStreamIds.add(streamId)
         }
         const totalBytes = attachments.reduce((sum, a) => sum + a.sizeBytes, 0)
         if (totalBytes > MAX_ATTACHMENT_BYTES_PER_CALL) {
@@ -200,11 +204,15 @@ You have a \`run_command\` tool: a shell in a Linux box that belongs to this con
         internet = await deps.internet()
         const result = await deps.run({
           internet,
+          readableStreamIds: accessibleStreamIds,
           command: input.command,
           files,
+          contentStreamIds: [...contentStreamIds],
           timeoutSec: input.timeoutSec ?? SANDBOX_DEFAULT_TIMEOUT_SEC,
           signal,
         })
+
+        const contentFrom = await StreamRepository.findByIdsInWorkspace(db, workspaceId, result.contentStreamIds)
 
         return {
           output: JSON.stringify({
@@ -216,7 +224,9 @@ You have a \`run_command\` tool: a shell in a Linux box that belongs to this con
             internet,
             ...(result.replaced && { sandboxReplaced: REPLACED_NOTICES[result.replaced] }),
             ...(files.length > 0 && { files: files.map((f) => f.path) }),
-            ...(result.streamsRead?.length && { streamsRead: result.streamsRead }),
+            ...(contentFrom.length > 0 && {
+              contentFrom: contentFrom.map((s) => ({ streamId: s.id, title: getEffectiveDisplayName(s).displayName })),
+            }),
           }),
         }
       } catch (error) {
@@ -255,11 +265,11 @@ You have a \`run_command\` tool: a shell in a Linux box that belongs to this con
         ].filter(Boolean)
         return JSON.stringify({ format: PI_TOOL_TRACE_FORMAT, headline, sections })
       },
-      // Turn digests re-check these against access, so a command that read a stream
+      // Turn digests re-check these against access, so output drawn from a stream
       // the conversation later loses is not recalled from its digest.
       extractSources: (_input, result) => {
-        const parsed = JSON.parse(result.output) as { streamsRead?: SandboxReadStream[] }
-        return (parsed.streamsRead ?? []).map(({ streamId, title }) => ({
+        const parsed = JSON.parse(result.output) as { contentFrom?: { streamId: string; title: string }[] }
+        return (parsed.contentFrom ?? []).map(({ streamId, title }) => ({
           type: "workspace" as const,
           title,
           url: workspaceStreamUrl(workspaceId, streamId),

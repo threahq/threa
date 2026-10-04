@@ -56,13 +56,25 @@ export const SandboxSessionTokenRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
-  /** False once the token is revoked or expired: the caller must not serve the read. */
+  /**
+   * Records the reads on the token, which outlives a concurrent replace of the
+   * box, and on the token's stream's sandbox, so a file the command writes from
+   * them is known before any byte is served. False once the token is revoked or
+   * expired, or its stream has no sandbox: the caller must not serve the read.
+   */
   async recordReads(db: Querier, workspaceId: string, id: string, streamIds: string[]): Promise<boolean> {
     const result = await db.query(sql`
-      UPDATE sandbox_session_tokens
-      SET read_stream_ids = ARRAY(SELECT DISTINCT unnest(read_stream_ids || ${streamIds}::text[]))
-      WHERE workspace_id = ${workspaceId} AND id = ${id} AND revoked_at IS NULL AND expires_at > NOW()
-      RETURNING id
+      WITH token AS (
+        UPDATE sandbox_session_tokens
+        SET read_stream_ids = ARRAY(SELECT DISTINCT unnest(read_stream_ids || ${streamIds}::text[]))
+        WHERE workspace_id = ${workspaceId} AND id = ${id} AND revoked_at IS NULL AND expires_at > NOW()
+        RETURNING stream_id
+      )
+      UPDATE stream_sandboxes
+      SET content_stream_ids = ARRAY(SELECT DISTINCT unnest(content_stream_ids || ${streamIds}::text[]))
+      FROM token
+      WHERE stream_sandboxes.workspace_id = ${workspaceId} AND stream_sandboxes.stream_id = token.stream_id
+      RETURNING stream_sandboxes.sandbox_id
     `)
     return result.rows.length > 0
   },

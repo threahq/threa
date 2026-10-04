@@ -8,7 +8,8 @@
  * - losing access mid-run removes the stream on the next call
  * - E2EE-rooted streams and their threads are never readable
  * - revoked and expired tokens stop validating
- * - revoking hands back the streams the token served, and a revoked token records no more
+ * - reads are recorded on the token and on its stream's sandbox, and a revoked token or one without a sandbox records none
+ * - the token's record survives a replace that resets the box, and revoking returns it
  * - expired rows are kept a day, then deleted
  */
 
@@ -21,6 +22,7 @@ import { StreamMemberRepository, StreamRepository } from "../../src/features/str
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
 import {
   SandboxSessionTokenService,
+  StreamSandboxRepository,
   isSandboxStreamReadable,
   recordSandboxReads,
   sandboxReadableStreamIds,
@@ -149,21 +151,48 @@ describe("sandbox session tokens", () => {
     expect(await service.validate(`threa_uk_${live.value.slice(9)}`)).toBeNull()
   })
 
-  test("should hand back the streams the token served, once each and named, when revoked", async () => {
+  test("should refuse to record reads for a token whose stream has no sandbox", async () => {
+    const { session } = await mint([channel])
+    await expect(recordSandboxReads(pool, session, [channel])).rejects.toMatchObject({ status: 401 })
+  })
+
+  test("should record the streams the token served on the token and its stream's sandbox, once each, until revoked", async () => {
+    await StreamSandboxRepository.insertIfAbsent(pool, {
+      workspaceId: ws,
+      streamId: channel,
+      sandboxId: "box-channel",
+      runner: "fake",
+      internet: false,
+    })
     const { session } = await mint([channel, nonMemberThread])
     await recordSandboxReads(pool, session, [channel])
     await recordSandboxReads(pool, session, [nonMemberThread, channel])
 
     const served = await service.revoke(ws, session.id)
 
-    await expect(recordSandboxReads(pool, session, [channel])).rejects.toMatchObject({ status: 401 })
-    expect(new Set(served)).toEqual(
-      new Set([
-        { streamId: channel, title: `s-${channel.slice(-10)}` },
-        { streamId: nonMemberThread, title: "New thread" },
-      ])
-    )
-    expect(await service.revoke(ws, session.id)).toEqual([])
+    await expect(recordSandboxReads(pool, session, [uncaptured])).rejects.toMatchObject({ status: 401 })
+    const box = await StreamSandboxRepository.find(pool, ws, channel)
+    expect({ served: served.sort(), box: box?.contentStreamIds.sort() }).toEqual({
+      served: [channel, nonMemberThread].sort(),
+      box: [channel, nonMemberThread].sort(),
+    })
+  })
+
+  test("should return a command's reads at revoke even after a concurrent replace reset its box", async () => {
+    const current = await StreamSandboxRepository.find(pool, ws, channel)
+    const { session } = await mint([channel, nonMemberThread])
+    await recordSandboxReads(pool, session, [nonMemberThread])
+
+    await StreamSandboxRepository.replace(pool, {
+      workspaceId: ws,
+      streamId: channel,
+      sandboxId: "box-channel-replaced",
+      runner: "fake",
+      internet: true,
+      expectedSandboxId: current!.sandboxId,
+    })
+
+    expect(await service.revoke(ws, session.id)).toEqual([nonMemberThread])
   })
 
   test("should delete rows a day past expiry at the next mint and keep recently expired ones", async () => {

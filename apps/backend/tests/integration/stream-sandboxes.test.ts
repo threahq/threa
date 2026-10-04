@@ -1,10 +1,13 @@
 import { beforeAll, describe, expect, spyOn, test } from "bun:test"
 import type { Pool } from "pg"
 import { setupTestDatabase } from "./setup"
+import { StreamTypes, Visibilities } from "@threahq/types"
+import { StreamRepository } from "../../src/features/streams"
 import {
   SandboxService,
   SandboxSessionTokenService,
   StreamSandboxRepository,
+  recordSandboxReads,
   type SandboxExecOptions,
   type SandboxExecResult,
   type SandboxFile,
@@ -72,8 +75,21 @@ describe("SandboxService", () => {
     pool = await setupTestDatabase()
   })
 
-  function run(service: SandboxService, at: { workspaceId: string; streamId: string }, internet = false) {
-    return service.run({ ...at, internet, command: "echo ok", files: [], timeoutSec: 5 })
+  function run(
+    service: SandboxService,
+    at: { workspaceId: string; streamId: string },
+    internet = false,
+    reach: { readableStreamIds?: string[]; contentStreamIds?: string[] } = {}
+  ) {
+    return service.run({
+      ...at,
+      internet,
+      readableStreamIds: reach.readableStreamIds ?? [at.streamId],
+      contentStreamIds: reach.contentStreamIds ?? [],
+      command: "echo ok",
+      files: [],
+      timeoutSec: 5,
+    })
   }
 
   test("a stream keeps its sandbox between runs", async () => {
@@ -229,6 +245,8 @@ describe("SandboxService", () => {
       service.run({
         ...target(),
         internet: false,
+        readableStreamIds: [],
+        contentStreamIds: [],
         command: "echo ok",
         files: [],
         timeoutSec: 5,
@@ -246,12 +264,48 @@ describe("SandboxService", () => {
     await service.run({
       ...at,
       internet: false,
+      readableStreamIds: [at.streamId],
+      contentStreamIds: [],
       command: "cat /work/attachments/a.txt",
       files: [{ path: "/work/attachments/a.txt", data: new TextEncoder().encode("hi") }],
       timeoutSec: 5,
     })
 
     expect(runner.written).toEqual([{ sandboxId: "fake-1", path: "/work/attachments/a.txt" }])
+  })
+
+  test("a turn that cannot read everything the box holds gets a fresh box, and the old one is removed", async () => {
+    const runner = new FakeRunner()
+    const service = new SandboxService({ pool, runner })
+    const at = target()
+    const secret = streamId()
+
+    await run(service, at, false, { readableStreamIds: [at.streamId, secret], contentStreamIds: [secret] })
+    const narrower = await run(service, at, false)
+    const row = await StreamSandboxRepository.find(pool, at.workspaceId, at.streamId)
+
+    expect({
+      replaced: narrower.replaced,
+      destroyed: runner.destroyed,
+      ranIn: runner.ran.at(-1)?.sandboxId,
+      content: row?.contentStreamIds,
+    }).toEqual({ replaced: "access_changed", destroyed: ["fake-1"], ranIn: "fake-2", content: [] })
+  })
+
+  test("a turn that can read everything the box holds keeps it and reports what it holds", async () => {
+    const runner = new FakeRunner()
+    const service = new SandboxService({ pool, runner })
+    const at = target()
+    const design = streamId()
+
+    await run(service, at, false, { readableStreamIds: [at.streamId, design], contentStreamIds: [design] })
+    const later = await run(service, at, false, { readableStreamIds: [at.streamId, design] })
+
+    expect({
+      replaced: later.replaced,
+      ranIn: runner.ran.map((r) => r.sandboxId),
+      contentStreamIds: later.contentStreamIds,
+    }).toEqual({ replaced: null, ranIn: ["fake-1", "fake-1"], contentStreamIds: [design] })
   })
 })
 
@@ -273,7 +327,7 @@ describe("run_command", () => {
     invokingUserId: string | null = null
   ) {
     const service = new SandboxService({ pool, runner })
-    const workspace = { workspaceId: at.workspaceId, accessibleStreamIds: [at.streamId] } as WorkspaceToolDeps
+    const workspace = { db: pool, workspaceId: at.workspaceId, accessibleStreamIds: [at.streamId] } as WorkspaceToolDeps
     return createRunCommandTool(
       workspace,
       bindStreamSandbox(
@@ -352,6 +406,32 @@ describe("run_command", () => {
         },
       ],
       after: null,
+    })
+  })
+
+  test("a stream the command's token read is cited by that command and held against the box", async () => {
+    const at = target()
+    const runner = new FakeRunner()
+    const notes = streamId()
+    await StreamRepository.insert(pool, {
+      id: notes,
+      workspaceId: at.workspaceId,
+      type: StreamTypes.CHANNEL,
+      visibility: Visibilities.PRIVATE,
+      slug: "notes",
+      createdBy: "usr_invoker",
+    })
+    runner.duringExec = async (options) => {
+      const session = await sessionTokens.validate((await options.api!()).token)
+      await recordSandboxReads(pool, session!, [notes])
+    }
+
+    const { output } = await runCommand(commandTool(runner, at, null, "usr_invoker"))
+    const row = await StreamSandboxRepository.find(pool, at.workspaceId, at.streamId)
+
+    expect({ contentFrom: output.contentFrom, content: row?.contentStreamIds }).toEqual({
+      contentFrom: [{ streamId: notes, title: "notes" }],
+      content: [notes],
     })
   })
 

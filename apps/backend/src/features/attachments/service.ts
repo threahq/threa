@@ -781,25 +781,33 @@ export class AttachmentService {
    */
   async getAccessible(
     id: string,
-    { workspaceId, accessibleStreamIds }: { workspaceId: string; accessibleStreamIds: string[] }
+    scope: { workspaceId: string; accessibleStreamIds: string[] }
   ): Promise<Attachment | null> {
+    return (await this.getAccessibleVia(id, scope))?.attachment ?? null
+  }
+
+  /** `getAccessible`, plus the accessible streams that grant the access. */
+  async getAccessibleVia(
+    id: string,
+    { workspaceId, accessibleStreamIds }: { workspaceId: string; accessibleStreamIds: string[] }
+  ): Promise<{ attachment: Attachment; viaStreamIds: string[] } | null> {
     const attachment = await AttachmentRepository.findById(this.pool, id)
     if (!attachment || attachment.workspaceId !== workspaceId) {
       return null
     }
     const accessibleSet = new Set(accessibleStreamIds)
-    let directlyAccessible = !!attachment.streamId && accessibleSet.has(attachment.streamId)
-    if (!directlyAccessible) {
+    let viaStreamIds = attachment.streamId && accessibleSet.has(attachment.streamId) ? [attachment.streamId] : []
+    if (viaStreamIds.length === 0) {
       const refStreamIds = await AttachmentReferenceRepository.findReferencingStreamIds(this.pool, workspaceId, id)
-      directlyAccessible = refStreamIds.some((streamId) => accessibleSet.has(streamId))
+      viaStreamIds = refStreamIds.filter((streamId) => accessibleSet.has(streamId))
     }
-    if (!directlyAccessible) {
+    if (viaStreamIds.length === 0) {
       return null
     }
     if (this.getSharingBlockReason(attachment)) {
       return null
     }
-    return attachment
+    return { attachment, viaStreamIds }
   }
 
   async getByIds(ids: string[]): Promise<Attachment[]> {
