@@ -32,7 +32,7 @@ export function GuestDmPolicySection({ workspaceId }: GuestDmPolicySectionProps)
   )
 
   return (
-    <div className="flex items-start justify-between gap-4">
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
       <div>
         <Label htmlFor="guest-dm-policy" className="text-sm font-medium">
           Direct messages with guests
@@ -47,7 +47,7 @@ export function GuestDmPolicySection({ workspaceId }: GuestDmPolicySectionProps)
           disabled={settings == null || mutation.isPending}
           onValueChange={(value) => mutation.mutate(value as GuestDmPolicy)}
         >
-          <SelectTrigger id="guest-dm-policy" className="h-8 w-[140px] shrink-0">
+          <SelectTrigger id="guest-dm-policy" className="h-8 w-full shrink-0 sm:w-[140px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

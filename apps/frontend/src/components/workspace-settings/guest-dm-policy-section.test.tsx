@@ -64,9 +64,9 @@ describe("GuestDmPolicySection", () => {
   it("should show the stored policy read-only when the viewer is not an admin", () => {
     renderSection([], GUEST_DM_POLICIES.OPEN)
 
-    expect({ control: screen.queryByRole("combobox"), value: screen.getByText("Everyone").textContent }).toEqual({
+    expect({ control: screen.queryByRole("combobox"), value: screen.queryByText("Everyone") !== null }).toEqual({
       control: null,
-      value: "Everyone",
+      value: true,
     })
   })
 })

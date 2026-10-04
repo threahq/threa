@@ -275,7 +275,7 @@ export async function resolveLockedStreamAuthorities(
   const closedDmRootIds = await findGuestPolicyClosedDmIds(
     db,
     params.workspaceId,
-    facts.map(({ root }) => root)
+    facts.filter(({ root }) => participatingRootIds.has(root.id)).map(({ root }) => root)
   )
   const authorities: LockedStreamAuthority[] = []
   for (const { target, root, ancestorArchived } of facts) {
