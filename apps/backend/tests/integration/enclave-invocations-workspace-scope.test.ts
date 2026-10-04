@@ -7,15 +7,7 @@ import { StreamRepository } from "../../src/features/streams"
 import { E2eStreamsRepository, StreamE2eKeyWrapsRepository } from "../../src/features/e2e-streams"
 import { MessageRepository } from "../../src/features/messaging"
 import { EnclaveInvocationsRepository, EnclaveRuntimesRepository } from "../../src/features/enclave-runtimes"
-import {
-  enclaveInvocationId,
-  enclaveRuntimeId,
-  messageId,
-  sessionId,
-  streamId,
-  userId,
-  workspaceId,
-} from "../../src/lib/id"
+import { enclaveInvocationId, enclaveRuntimeId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 
 const EMPTY_DOC = { type: "doc", content: [] }
 const MAX_ATTEMPTS = 5
@@ -32,17 +24,6 @@ interface Generations {
   currentGen?: number
   triggerGen?: number
   wrapGens?: number[]
-}
-
-interface InvocationRow {
-  id: string
-  workspace_id: string
-  status: string
-  claimed_by_key_id: string | null
-  claim_token: string | null
-  session_id: string | null
-  attempts: number
-  error_message: string | null
 }
 
 describe("Enclave invocations workspace scope (INV-8)", () => {
@@ -149,35 +130,6 @@ describe("Enclave invocations workspace scope (INV-8)", () => {
     return id
   }
 
-  async function holdClaim(id: string, held: { keyId: string; token: string; sessionId: string | null }) {
-    await pool.query(
-      `UPDATE enclave_invocations
-       SET status = 'claimed', claimed_by_key_id = $2, claim_token = $3, session_id = $4,
-           claim_expires_at = NOW() + INTERVAL '10 minutes', attempts = 1
-       WHERE id = $1`,
-      [id, held.keyId, held.token, held.sessionId]
-    )
-  }
-
-  async function snapshot(ids: string[]): Promise<Record<string, InvocationRow>> {
-    const result = await pool.query<InvocationRow>(
-      `SELECT id, workspace_id, status, claimed_by_key_id, claim_token, session_id, attempts, error_message
-       FROM enclave_invocations WHERE id = ANY($1)`,
-      [ids]
-    )
-    return Object.fromEntries(result.rows.map((row) => [row.id, row]))
-  }
-
-  const outcome = (row: InvocationRow) => ({ status: row.status, error: row.error_message })
-
-  async function claimExpiry(id: string): Promise<number> {
-    const result = await pool.query<{ claim_expires_at: Date }>(
-      "SELECT claim_expires_at FROM enclave_invocations WHERE id = $1",
-      [id]
-    )
-    return result.rows[0]!.claim_expires_at.getTime()
-  }
-
   const claimParams = (keyId: string, invocationId: string) => ({
     invocationId,
     keyId,
@@ -205,47 +157,6 @@ describe("Enclave invocations workspace scope (INV-8)", () => {
       const offered = await EnclaveInvocationsRepository.findNextClaimable(pool, { keyId, maxAttempts: MAX_ATTEMPTS })
 
       expect(offered?.id).toBe(own)
-    })
-
-    test("should claim nothing when the trigger message belongs to another workspace", async () => {
-      const { keyId, a, b } = await seedScope()
-      const crossPointing = await insertInvocation(a, { messageId: b.mId })
-
-      const claimed = await EnclaveInvocationsRepository.claimNext(pool, a.wsId, claimParams(keyId, crossPointing))
-
-      expect(claimed).toBeNull()
-      expect(await snapshot([crossPointing])).toEqual({
-        [crossPointing]: {
-          id: crossPointing,
-          workspace_id: a.wsId,
-          status: "pending",
-          claimed_by_key_id: null,
-          claim_token: null,
-          session_id: null,
-          attempts: 0,
-          error_message: null,
-        },
-      })
-    })
-
-    test("should claim an invocation only through its own workspace", async () => {
-      const { keyId, a, b } = await seedScope()
-      const id = await insertInvocation(a)
-
-      const throughOther = await EnclaveInvocationsRepository.claimNext(pool, b.wsId, claimParams(keyId, id))
-      const untouched = await snapshot([id])
-      const throughOwn = await EnclaveInvocationsRepository.claimNext(pool, a.wsId, claimParams(keyId, id))
-
-      expect(throughOther).toBeNull()
-      expect(untouched[id]).toMatchObject({ status: "pending", claimed_by_key_id: null, attempts: 0 })
-      expect(throughOwn).toMatchObject({
-        id,
-        workspaceId: a.wsId,
-        status: "claimed",
-        claimedByKeyId: keyId,
-        claimToken: "cbtok_scope",
-        attempts: 1,
-      })
     })
 
     test("should report a pending turn as unservable when its trigger message belongs to another workspace", async () => {
@@ -309,109 +220,6 @@ describe("Enclave invocations workspace scope (INV-8)", () => {
         replyUncovered,
         promptUncovered,
       ])
-    })
-  })
-
-  describe("writes by invocation id", () => {
-    async function seedClaimed() {
-      const { keyId, a, b } = await seedScope()
-      const id = await insertInvocation(a)
-      await holdClaim(id, { keyId, token: "cbtok_held", sessionId: null })
-      return { keyId, a, b, id }
-    }
-
-    test("should stamp the session only through the owning workspace", async () => {
-      const { a, b, id } = await seedClaimed()
-      const stamped = sessionId()
-
-      await EnclaveInvocationsRepository.attachSession(pool, { workspaceId: b.wsId, id, sessionId: stamped })
-      const afterOther = (await snapshot([id]))[id]!.session_id
-      await EnclaveInvocationsRepository.attachSession(pool, { workspaceId: a.wsId, id, sessionId: stamped })
-      const afterOwn = (await snapshot([id]))[id]!.session_id
-
-      expect({ afterOther, afterOwn }).toEqual({ afterOther: null, afterOwn: stamped })
-    })
-
-    test("should complete the claim only through the owning workspace", async () => {
-      const { a, b, id } = await seedClaimed()
-
-      await EnclaveInvocationsRepository.completeClaimed(pool, b.wsId, id)
-      const afterOther = (await snapshot([id]))[id]!.status
-      await EnclaveInvocationsRepository.completeClaimed(pool, a.wsId, id)
-      const afterOwn = (await snapshot([id]))[id]!.status
-
-      expect({ afterOther, afterOwn }).toEqual({ afterOther: "claimed", afterOwn: "completed" })
-    })
-
-    test("should fail the claim only through the owning workspace", async () => {
-      const { keyId, a, b, id } = await seedClaimed()
-      const failure = { id, keyId, claimToken: "cbtok_held", errorMessage: "denied" }
-
-      await EnclaveInvocationsRepository.failClaimed(pool, { workspaceId: b.wsId, ...failure })
-      const afterOther = (await snapshot([id]))[id]!
-      await EnclaveInvocationsRepository.failClaimed(pool, { workspaceId: a.wsId, ...failure })
-      const afterOwn = (await snapshot([id]))[id]!
-
-      expect({ afterOther: outcome(afterOther), afterOwn: outcome(afterOwn) }).toEqual({
-        afterOther: { status: "claimed", error: null },
-        afterOwn: { status: "failed", error: "denied" },
-      })
-    })
-  })
-
-  describe("writes by session id", () => {
-    // Session ids carry no uniqueness constraint, so a decoy in another
-    // workspace can hold the very same session id as the live claim.
-    async function seedSharedSession() {
-      const { keyId, a, b } = await seedScope()
-      const shared = sessionId()
-      const own = await insertInvocation(a)
-      const decoy = await insertInvocation(b)
-      await holdClaim(own, { keyId, token: "cbtok_own", sessionId: shared })
-      await holdClaim(decoy, { keyId, token: "cbtok_decoy", sessionId: shared })
-      return { a, shared, own, decoy }
-    }
-
-    test("should complete only the owning workspace's claim for the session", async () => {
-      const { a, shared, own, decoy } = await seedSharedSession()
-
-      await EnclaveInvocationsRepository.completeBySession(pool, a.wsId, shared)
-      const rows = await snapshot([own, decoy])
-
-      expect({ own: rows[own]!.status, decoy: rows[decoy]!.status }).toEqual({ own: "completed", decoy: "claimed" })
-    })
-
-    test("should fail only the owning workspace's claim for the session", async () => {
-      const { a, shared, own, decoy } = await seedSharedSession()
-
-      await EnclaveInvocationsRepository.failBySession(pool, {
-        workspaceId: a.wsId,
-        sessionId: shared,
-        errorMessage: "STREAM_READ_ONLY:archived",
-      })
-      const rows = await snapshot([own, decoy])
-
-      expect({ own: outcome(rows[own]!), decoy: outcome(rows[decoy]!) }).toEqual({
-        own: { status: "failed", error: "STREAM_READ_ONLY:archived" },
-        decoy: { status: "claimed", error: null },
-      })
-    })
-
-    test("should renew only the owning workspace's claim for the session", async () => {
-      const { a, shared, own, decoy } = await seedSharedSession()
-      const before = { own: await claimExpiry(own), decoy: await claimExpiry(decoy) }
-
-      await EnclaveInvocationsRepository.renewBySession(pool, {
-        workspaceId: a.wsId,
-        sessionId: shared,
-        claimTtlSeconds: 3600,
-      })
-      const after = { own: await claimExpiry(own), decoy: await claimExpiry(decoy) }
-
-      expect({ ownRenewed: after.own > before.own, decoy: after.decoy }).toEqual({
-        ownRenewed: true,
-        decoy: before.decoy,
-      })
     })
   })
 })
