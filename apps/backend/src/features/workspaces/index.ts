@@ -12,7 +12,7 @@ export { PeoplePurposes, listGuestViewers, peopleViewerForActor } from "./people
 export type { PeopleScope, PeopleViewer } from "./people"
 export {
   anyUserLacksBrowseSql,
-  findUserIdsWithoutAdmin,
+  findUserIdsWithAdmin,
   findUserIdsWithoutBrowse,
   viewerLacksBrowseSql,
 } from "./viewer-browse"

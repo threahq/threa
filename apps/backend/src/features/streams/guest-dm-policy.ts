@@ -6,7 +6,7 @@ import {
 } from "@threahq/types"
 import type { Querier } from "../../db"
 import { WorkspaceSettingsRepository } from "../workspace-settings"
-import { findUserIdsWithoutAdmin, findUserIdsWithoutBrowse } from "../workspaces"
+import { findUserIdsWithAdmin, findUserIdsWithoutBrowse } from "../workspaces"
 import { StreamMemberRepository } from "./member-repository"
 
 const GUEST_DM_POLICY_KEY = "guestDmPolicy" satisfies keyof WorkspaceSettings
@@ -38,11 +38,11 @@ async function loadPolicyFacts(db: Querier, workspaceId: string, userIds: readon
   if (guestIds.size === 0) return null
   const policy = await resolveGuestDmPolicy(db, workspaceId)
   if (policy === GUEST_DM_POLICIES.OPEN) return null
-  const nonAdminIds =
-    policy === GUEST_DM_POLICIES.ADMINS ? await findUserIdsWithoutAdmin(db, workspaceId, userIds) : new Set<string>()
+  const adminIds =
+    policy === GUEST_DM_POLICIES.ADMINS ? await findUserIdsWithAdmin(db, workspaceId, userIds) : new Set<string>()
   return {
     policy,
-    party: (userId: string): DmParty => ({ guest: guestIds.has(userId), admin: !nonAdminIds.has(userId) }),
+    party: (userId: string): DmParty => ({ guest: guestIds.has(userId), admin: adminIds.has(userId) }),
   }
 }
 

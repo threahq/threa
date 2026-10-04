@@ -17,6 +17,7 @@ import { getTestDatabaseTarget } from "../test-database"
 import {
   TestClient,
   createChannel,
+  createThread,
   createWorkspace,
   getUserId,
   joinWorkspace,
@@ -232,6 +233,60 @@ describe("guest DM policy", () => {
     await setPolicy(workspaceId, owner, GUEST_DM_POLICIES.OPEN)
     expect(outcomeOf(await send(workspaceId, member, { streamId: dmStreamId }, "again"))).toEqual(SENT)
     expect(await botWrite()).toBe("writable")
+  })
+
+  test("should close a guest's DM under admins when the other party was removed from the workspace", async () => {
+    const { workspaceId, owner, add } = await newWorkspace()
+    await setPolicy(workspaceId, owner, GUEST_DM_POLICIES.OPEN)
+    const guest = await add("guest")
+    const member = await add("member")
+
+    const first = await send(workspaceId, guest, { dmUserId: member.userId }, "before")
+    expect(outcomeOf(first)).toEqual(SENT)
+    await pool.query("DELETE FROM users WHERE workspace_id = $1 AND id = $2", [workspaceId, member.userId])
+    await setPolicy(workspaceId, owner, GUEST_DM_POLICIES.ADMINS)
+
+    expect(outcomeOf(await send(workspaceId, guest, { streamId: first.message!.streamId }, "after"))).toEqual(CLOSED)
+  })
+
+  test("should close a thread under a guest DM through its root when the policy tightens", async () => {
+    const { workspaceId, owner, add } = await newWorkspace()
+    await setPolicy(workspaceId, owner, GUEST_DM_POLICIES.OPEN)
+    const guest = await add("guest")
+    const member = await add("member")
+
+    const first = await send(workspaceId, guest, { dmUserId: member.userId }, "root")
+    expect(outcomeOf(first)).toEqual(SENT)
+    const thread = await createThread(member.client, workspaceId, first.message!.streamId, first.message!.id)
+    const inThread = await send(workspaceId, guest, { streamId: thread.id }, "in thread")
+    expect(outcomeOf(inThread)).toEqual(SENT)
+
+    await setPolicy(workspaceId, owner, GUEST_DM_POLICIES.OFF)
+
+    const lockedWrite = await assertStreamWritable(pool, {
+      workspaceId,
+      streamId: thread.id,
+      principal: { kind: "user", userId: member.userId },
+    }).then(
+      () => "writable",
+      (error: { status: number; code: string; details: unknown }) => ({
+        status: error.status,
+        code: error.code,
+        details: error.details,
+      })
+    )
+    expect({
+      guest: outcomeOf(await send(workspaceId, guest, { streamId: thread.id }, "after")),
+      member: outcomeOf(await send(workspaceId, member, { streamId: thread.id }, "after")),
+      lockedWrite,
+    }).toEqual({
+      guest: CLOSED,
+      member: CLOSED,
+      lockedWrite: { status: 403, code: "STREAM_READ_ONLY", details: { reason: "guest_dm_policy" } },
+    })
+
+    const events = await listEvents(guest.client, workspaceId, thread.id)
+    expect(events.map((event) => (event.payload as { messageId?: string }).messageId)).toContain(inThread.message!.id)
   })
 
   test("should leave a DM without a guest writable when the policy is off", async () => {

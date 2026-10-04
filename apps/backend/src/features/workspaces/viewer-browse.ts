@@ -15,26 +15,23 @@ const ADMIN_ROLE_SLUGS = roleSlugsHolding(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_
  * A permission is read from the user row, never the JWT claim: sessions minted before the scope
  * existed lack it until refresh. Roles resolve like `expandRoleSlugs`: an active mirror row holding
  * any known slug decides, otherwise `users.role` does. Ids that are not user rows (bots, personas,
- * system) match no row, so they never lack the permission.
+ * system, removed users) match no row, so they never lack browse and never hold admin.
  */
-function viewersLackingRoleSlugsSql(
-  workspaceId: string,
-  holdingRoleSlugs: readonly string[],
-  viewerFilter: QueryConfig
-): QueryConfig {
+function holdsRoleSlugsSql(holdingRoleSlugs: readonly string[]): QueryConfig {
+  return composeSql`CASE WHEN wup.role_slugs && ${[...KNOWN_ROLE_SLUGS]}::text[]
+    THEN wup.role_slugs && ${holdingRoleSlugs as string[]}::text[]
+    ELSE u.role = ANY(${holdingRoleSlugs as string[]}::text[])
+  END`
+}
+
+function workspaceUsersSql(workspaceId: string, filter: QueryConfig): QueryConfig {
   return composeSql`FROM ${USERS_FROM_FRAGMENT}
     WHERE u.workspace_id = ${workspaceId}
-      AND ${viewerFilter}
-      AND NOT (
-        CASE WHEN wup.role_slugs && ${[...KNOWN_ROLE_SLUGS]}::text[]
-          THEN wup.role_slugs && ${holdingRoleSlugs as string[]}::text[]
-          ELSE u.role = ANY(${holdingRoleSlugs as string[]}::text[])
-        END
-      )`
+      AND ${filter}`
 }
 
 function viewersLackingBrowseSql(workspaceId: string, viewerFilter: QueryConfig): QueryConfig {
-  return viewersLackingRoleSlugsSql(workspaceId, BROWSE_ROLE_SLUGS, viewerFilter)
+  return workspaceUsersSql(workspaceId, composeSql`${viewerFilter} AND NOT (${holdsRoleSlugsSql(BROWSE_ROLE_SLUGS)})`)
 }
 
 /**
@@ -68,15 +65,18 @@ export async function findUserIdsWithoutBrowse(
   return new Set(result.rows.map((row) => row.id))
 }
 
-/** The ids among `userIds` that are users of the workspace without the admin permission. */
-export async function findUserIdsWithoutAdmin(
+/** The ids among `userIds` that are users of the workspace holding the admin permission; any other id is not an admin. */
+export async function findUserIdsWithAdmin(
   db: Querier,
   workspaceId: string,
   userIds: readonly string[]
 ): Promise<Set<string>> {
   if (userIds.length === 0) return new Set()
   const result = await db.query<{ id: string }>(
-    composeSql`SELECT u.id ${viewersLackingRoleSlugsSql(workspaceId, ADMIN_ROLE_SLUGS, sql`u.id = ANY(${userIds as string[]})`)}`
+    composeSql`SELECT u.id ${workspaceUsersSql(
+      workspaceId,
+      composeSql`u.id = ANY(${userIds as string[]}) AND (${holdsRoleSlugsSql(ADMIN_ROLE_SLUGS)})`
+    )}`
   )
   return new Set(result.rows.map((row) => row.id))
 }
