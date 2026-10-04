@@ -209,9 +209,11 @@ export const WorkspaceRegistryRepository = {
     return result.rows[0]
   },
 
-  /** False when no such workspace exists. */
   async updateTier(db: Querier, id: string, tier: WorkspaceTier): Promise<boolean> {
-    const result = await db.query("UPDATE workspace_registry SET tier = $2 WHERE id = $1", [id, tier])
+    const result = await db.query("UPDATE workspace_registry SET tier = $2, updated_at = NOW() WHERE id = $1", [
+      id,
+      tier,
+    ])
     return (result.rowCount ?? 0) > 0
   },
 

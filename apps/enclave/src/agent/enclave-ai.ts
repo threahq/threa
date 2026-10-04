@@ -40,7 +40,7 @@ export function createEnclaveAI(rawChat: RawChatFn, usage: UsageAccumulator): Ag
       // never the `provider:model` form, so the provider segment is read off the
       // front. The predicate itself lives in agent-runtime so host and enclave
       // cannot drift to different provider sets.
-      const modelId = options.modelString ?? String(options.model)
+      const modelId = options.modelString
       const cacheBreakpoint = providerRequiresCacheBreakpoints(modelId.split("/")[0] ?? "")
 
       const result = await rawChat({

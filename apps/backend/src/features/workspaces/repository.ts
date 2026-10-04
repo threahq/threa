@@ -100,10 +100,9 @@ export const WorkspaceRepository = {
       UPDATE workspaces SET workos_organization_id = ${orgId} WHERE id = ${workspaceId}
     `)
   },
-  /** False when no such workspace exists. */
   async updateTier(db: Querier, workspaceId: string, tier: WorkspaceTier): Promise<boolean> {
     const result = await db.query(sql`
-      UPDATE workspaces SET tier = ${tier} WHERE id = ${workspaceId}
+      UPDATE workspaces SET tier = ${tier}, updated_at = NOW() WHERE id = ${workspaceId}
     `)
     return (result.rowCount ?? 0) > 0
   },

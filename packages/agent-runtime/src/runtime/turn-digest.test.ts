@@ -227,6 +227,7 @@ describe("generateTurnDigest", () => {
       context: TEST_COST_CONTEXT,
       ai,
       model: MODEL,
+      modelString: "stub/model",
       records: collector.records,
     })
 
@@ -240,7 +241,13 @@ describe("generateTurnDigest", () => {
 
   it("returns null with no records and never calls the model", async () => {
     const { ai, seen } = stubAI("unused")
-    const digest = await generateTurnDigest({ context: TEST_COST_CONTEXT, ai, model: MODEL, records: [] })
+    const digest = await generateTurnDigest({
+      context: TEST_COST_CONTEXT,
+      ai,
+      model: MODEL,
+      modelString: "stub/model",
+      records: [],
+    })
     expect(digest).toBeNull()
     expect(seen).toHaveLength(0)
   })
@@ -251,6 +258,7 @@ describe("generateTurnDigest", () => {
       context: TEST_COST_CONTEXT,
       ai,
       model: MODEL,
+      modelString: "stub/model",
       records: [{ toolName: "web_search", content: "results", sources: [], provenanceStreamIds: [] }],
     })
     expect(digest).toBeNull()
@@ -262,6 +270,7 @@ describe("generateTurnDigest", () => {
       context: TEST_COST_CONTEXT,
       ai,
       model: MODEL,
+      modelString: "stub/model",
       records: [{ toolName: "web_search", content: "results", sources: [], provenanceStreamIds: [] }],
     })
     expect(digest!.findings).toHaveLength(1200)

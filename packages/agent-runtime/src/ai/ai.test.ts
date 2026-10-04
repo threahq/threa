@@ -173,6 +173,7 @@ describe("spend admission", () => {
         }),
         ai.generateTextWithTools({
           model: ai.getLanguageModel("openrouter:openai/gpt-5.6-luna"),
+          modelString: "openrouter:openai/gpt-5.6-luna",
           messages,
           tools: {},
           context,
@@ -524,8 +525,13 @@ describe("GPT-6 Luna Responses", () => {
       const ai = createAI({ openrouter: { apiKey: "test-key" } })
       const model = ai.getLanguageModel(modelString)
       await expect(
-        ai.generateTextWithTools({ context: TEST_COST_CONTEXT, model, messages: [{ role: "user", content: "find x" }] })
-      ).rejects.toThrow("require modelString")
+        ai.generateTextWithTools({
+          context: TEST_COST_CONTEXT,
+          model,
+          modelString: "openrouter:openai/gpt-5.6-luna",
+          messages: [{ role: "user", content: "find x" }],
+        })
+      ).rejects.toThrow("require the matching modelString")
       const tools = { lookup: tool({ inputSchema: z.object({ query: z.string() }), execute: async () => "result x" }) }
       const first = await ai.generateTextWithTools({
         context: TEST_COST_CONTEXT,

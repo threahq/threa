@@ -88,7 +88,10 @@ describe("workspace tier", () => {
 
   afterAll(async () => {
     await pool.query("DELETE FROM workspace_registry WHERE id = ANY($1)", [workspaceIds])
-    await pool.query("DELETE FROM outbox WHERE event_type = $1", [OUTBOX_WORKSPACE_TIER_SYNC])
+    await pool.query("DELETE FROM outbox WHERE event_type = $1 AND payload->>'workspaceId' = ANY($2)", [
+      OUTBOX_WORKSPACE_TIER_SYNC,
+      workspaceIds,
+    ])
     await pool.end()
   })
 

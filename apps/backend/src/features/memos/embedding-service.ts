@@ -1,4 +1,4 @@
-import type { AI, CostContext } from "@threahq/agent-runtime"
+import type { AI } from "@threahq/agent-runtime"
 import { EMBEDDING_MODEL_ID } from "./embedding-config"
 
 export interface EmbeddingServiceConfig {
@@ -28,13 +28,11 @@ export class EmbeddingService implements EmbeddingServiceLike {
   }
 
   async embed(text: string, context: EmbeddingContext): Promise<number[]> {
-    const costContext: CostContext = { workspaceId: context.workspaceId, userId: context.userId, origin: "system" }
-
     const { value } = await this.ai.embed({
       model: this.modelId,
       value: text,
       telemetry: { functionId: context.functionId ?? "embedding-single" },
-      context: costContext,
+      context: { workspaceId: context.workspaceId, userId: context.userId, origin: "system" },
     })
     return value
   }
@@ -44,13 +42,11 @@ export class EmbeddingService implements EmbeddingServiceLike {
       return []
     }
 
-    const costContext: CostContext = { workspaceId: context.workspaceId, userId: context.userId, origin: "system" }
-
     const { value } = await this.ai.embedMany({
       model: this.modelId,
       values: texts,
       telemetry: { functionId: context.functionId ?? "embedding-batch", metadata: { count: texts.length } },
-      context: costContext,
+      context: { workspaceId: context.workspaceId, userId: context.userId, origin: "system" },
     })
     return value
   }

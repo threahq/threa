@@ -914,7 +914,6 @@ export interface EnclaveSealedSubstep {
  */
 export interface EnclaveSessionAssignment {
   sessionId: string
-  /** The workspace every AI call in the turn is charged to. */
   workspaceId: string
   streamId: string
   /**

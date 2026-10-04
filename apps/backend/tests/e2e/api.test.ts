@@ -116,6 +116,23 @@ describe("API E2E Tests", () => {
       expect(data.workspaces.length).toBeGreaterThan(0)
     })
 
+    test("should carry a control-plane tier push into the bootstrap, internal callers only", async () => {
+      const client = new TestClient()
+      await loginAs(client, testEmail("wstier"), "WS Tier Test")
+      const workspace = await createWorkspace(client, `Tier Test WS ${testRunId}`)
+      const body = { workspaceId: workspace.id, tier: "connect" }
+
+      const unauthenticated = await client.post("/internal/workspace-tier", body)
+      const pushed = await client.internalRequest("POST", "/internal/workspace-tier", body)
+      const bootstrap = await getWorkspaceBootstrap(client, workspace.id)
+
+      expect({
+        unauthenticated: unauthenticated.status,
+        pushed: pushed.status,
+        tier: bootstrap.workspace.tier,
+      }).toEqual({ unauthenticated: 401, pushed: 204, tier: "connect" })
+    })
+
     test("should return users and personas in workspace bootstrap", async () => {
       const client = new TestClient()
       const user = await loginAs(client, testEmail("wsboot"), "WS Bootstrap Test")

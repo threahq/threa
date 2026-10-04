@@ -46,7 +46,7 @@ export interface FoldRollingSummaryParams {
   ai: AgentRuntimeAI
   model: LanguageModel
   /** Original provider:model string — required for usage recording on the backend; the enclave keys its transport off it. */
-  modelString?: string
+  modelString: string
   /** The summary so far (empty string when none). */
   existingSummary: string
   /** The dropped messages to fold in, oldest→newest. */

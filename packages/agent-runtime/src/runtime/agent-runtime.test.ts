@@ -7,6 +7,7 @@ import { defineAgentTool } from "./agent-tool"
 import { AISpendDeniedError } from "../ai/ai"
 
 const TEST_COST_CONTEXT = { workspaceId: "ws_test" }
+const TEST_MODEL_STRING = "openrouter:test/model"
 
 describe("AgentRuntime message counting", () => {
   it("bridges supersede reruns with a trailing user prompt when history ends with assistant", async () => {
@@ -38,6 +39,7 @@ describe("AgentRuntime message counting", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -68,6 +70,7 @@ describe("AgentRuntime message counting", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: {
         generateTextWithTools: async () => ({
           text: "",
@@ -117,6 +120,7 @@ describe("AgentRuntime message counting", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -168,6 +172,7 @@ describe("AgentRuntime message counting", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -212,6 +217,7 @@ describe("AgentRuntime message counting", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -328,6 +334,7 @@ describe("AgentRuntime message counting", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -369,6 +376,7 @@ describe("AgentRuntime message counting", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -418,6 +426,7 @@ describe("AgentRuntime final iteration", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -467,6 +476,7 @@ describe("AgentRuntime final iteration", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -514,6 +524,7 @@ describe("AgentRuntime initial context", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools: async () => replyOnce() } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -535,6 +546,7 @@ describe("AgentRuntime initial context", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools: async () => replyOnce() } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -589,6 +601,7 @@ describe("AgentRuntime source commitment", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -611,6 +624,7 @@ describe("AgentRuntime source commitment", () => {
     const committed: Array<{ sources: unknown }> = []
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: {
         generateTextWithTools: async () => ({
           text: "Hi.",
@@ -668,6 +682,7 @@ describe("AgentRuntime source commitment", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -747,6 +762,7 @@ describe("AgentRuntime reasoning replay", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -812,6 +828,7 @@ describe("AgentRuntime tool progress + signal plumbing", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -867,6 +884,7 @@ describe("AgentRuntime tool progress + signal plumbing", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -931,6 +949,7 @@ describe("AgentRuntime tool progress + signal plumbing", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -960,6 +979,7 @@ describe("AgentRuntime runAbortSignal (graceful session Stop)", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -994,6 +1014,7 @@ describe("AgentRuntime runAbortSignal (graceful session Stop)", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -1019,6 +1040,7 @@ describe("AgentRuntime runAbortSignal (graceful session Stop)", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -1089,6 +1111,7 @@ describe("AgentRuntime mid-turn reconsideration", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -1148,6 +1171,7 @@ describe("AgentRuntime mid-turn reconsideration", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -1193,6 +1217,7 @@ describe("AgentRuntime mid-turn reconsideration", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -1273,6 +1298,7 @@ describe("AgentRuntime prompt-cache wiring", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "STABLE HALF",
@@ -1297,6 +1323,7 @@ describe("AgentRuntime thinking steps", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: {
         generateTextWithTools: async () => {
           calls += 1
@@ -1350,6 +1377,7 @@ describe("AgentRuntime tool effects", () => {
 
     const runtime = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -1429,6 +1457,7 @@ describe("AgentRuntime untrusted tool output", () => {
 
     await new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -1480,6 +1509,7 @@ describe("AgentRuntime spend denial", () => {
 
     const run = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -1518,6 +1548,7 @@ describe("AgentRuntime opening calls", () => {
 
     await new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -1580,6 +1611,7 @@ describe("AgentRuntime tool concurrency", () => {
 
     await new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: { generateTextWithTools } as any,
       model: {} as any,
       systemPrompt: "You are helpful.",
@@ -1638,6 +1670,7 @@ describe("AgentRuntime tool concurrency", () => {
 
     const run = new AgentRuntime({
       costContext: TEST_COST_CONTEXT,
+      modelString: TEST_MODEL_STRING,
       ai: {
         generateTextWithTools: async () => ({
           text: "",

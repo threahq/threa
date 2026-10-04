@@ -52,6 +52,7 @@ describe("foldRollingSummary", () => {
       context: TEST_COST_CONTEXT,
       ai,
       model: MODEL,
+      modelString: "openrouter:anthropic/claude-haiku-4.5",
       existingSummary: "",
       newMessages: [msg(1n, "user:usr_1", "Hello.")],
     })
@@ -66,6 +67,7 @@ describe("foldRollingSummary", () => {
       context: TEST_COST_CONTEXT,
       ai,
       model: MODEL,
+      modelString: "openrouter:anthropic/claude-haiku-4.5",
       existingSummary: "",
       newMessages: [msg(1n, "user:usr_1", "long")],
     })

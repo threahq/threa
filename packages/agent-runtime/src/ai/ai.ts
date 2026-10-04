@@ -195,12 +195,11 @@ export interface GenerateTextOptions {
 export interface GenerateTextWithToolsOptions {
   model: LanguageModel
   /**
-   * The original provider:model string for the resolved `model`.
-   * Required alongside `context` so usage can be recorded with a parseable
-   * model identifier (the resolved LanguageModel does not expose the
-   * original provider prefix needed by the cost recorder).
+   * The original provider:model string for the resolved `model`, so usage can
+   * be recorded with a parseable model identifier (the resolved LanguageModel
+   * does not expose the original provider prefix needed by the cost recorder).
    */
-  modelString?: string
+  modelString: string
   system?: string
   /**
    * Per-turn system content kept out of the cached prefix. Only meaningful with
@@ -212,7 +211,7 @@ export interface GenerateTextWithToolsOptions {
   maxTokens?: number
   temperature?: number
   telemetry?: TelemetryConfig
-  /** Charged to this workspace: the spend gate admits the call; usage is recorded when `modelString` is also given */
+  /** Charged to this workspace: the spend gate admits the call and usage is recorded against it */
   context: CostContext
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
@@ -240,8 +239,7 @@ export interface GenerateTextWithToolsResult {
   toolCalls: Array<{ toolCallId: string; toolName: string; input: unknown }>
   response: { messages: ModelMessage[] }
   /**
-   * What the call cost, when the caller passed `modelString` (the cost recorder
-   * needs it to parse the provider). Production accounts for this through
+   * What the call cost. Production accounts for this through
    * `maybeRecordUsage` and never reads it here; it is returned so a caller that
    * is NOT writing `ai_usage_records` — the eval runner — can still attribute
    * tokens and cost to the model that ran. Absent on implementations that do
@@ -858,12 +856,9 @@ export function createAI(config: AIConfig): AI {
         options.model.modelId === "openai/gpt-6-luna" &&
         options.modelString !== LUNA
       ) {
-        throw new Error("GPT-6 Luna tool calls require modelString for stateless Responses and exact cost")
+        throw new Error("GPT-6 Luna tool calls require the matching modelString for stateless Responses and exact cost")
       }
       await admit(options.context, options.telemetry?.functionId ?? "generateTextWithTools")
-      // Disclose fires even without `modelString`: the egress happened, so a
-      // provider/model `unknown` row beats silence. Cost recording below stays
-      // gated on `modelString` (the recorder needs the parseable identifier).
       maybeDisclose({
         context: options.context,
         functionId: options.telemetry?.functionId ?? "generateTextWithTools",
@@ -897,27 +892,20 @@ export function createAI(config: AIConfig): AI {
         experimental_telemetry: buildTelemetry(options.telemetry),
       })
 
-      // Usage recording requires the original model string because the resolved
-      // LanguageModel instance does not carry the provider:model prefix the cost
-      // recorder expects. Callers that want tracked usage must pass `modelString`
-      // alongside `context` (agent loops do this via AgentRuntime).
-      let usage: UsageWithCost | undefined
-      if (options.modelString) {
-        usage = options.modelString === LUNA ? lunaUsage(response) : extractUsageWithCost(response)
-        logger.debug(
-          { usage, model: options.modelString, functionId: options.telemetry?.functionId },
-          "AI generateTextWithTools completed with usage"
-        )
+      const usage = options.modelString === LUNA ? lunaUsage(response) : extractUsageWithCost(response)
+      logger.debug(
+        { usage, model: options.modelString, functionId: options.telemetry?.functionId },
+        "AI generateTextWithTools completed with usage"
+      )
 
-        await maybeRecordUsage({
-          context: options.context,
-          functionId: options.telemetry?.functionId ?? "generateTextWithTools",
-          modelString: options.modelString,
-          usage,
-          latencyMs: Date.now() - startedAt,
-          metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
-        })
-      }
+      await maybeRecordUsage({
+        context: options.context,
+        functionId: options.telemetry?.functionId ?? "generateTextWithTools",
+        modelString: options.modelString,
+        usage,
+        latencyMs: Date.now() - startedAt,
+        metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
+      })
 
       return {
         text: response.text,

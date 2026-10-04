@@ -2,7 +2,7 @@ import { type ReactNode } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useParams } from "react-router-dom"
 import { ExternalLink } from "lucide-react"
-import { WORKSPACE_TIERS, type WorkspaceTier } from "@threahq/types"
+import { WORKSPACE_TIERS, WORKSPACE_TIER_VALUES, type WorkspaceTier } from "@threahq/types"
 import { Section } from "@/components/layout/section"
 import { InlineBanner } from "@/components/inline-banner"
 import {
@@ -137,7 +137,7 @@ function WorkspaceTierSelect({ workspaceId, tier }: { workspaceId: string; tier:
         onChange={(e) => mutation.mutate(e.target.value as WorkspaceTier)}
         className="h-10 w-full rounded-input border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-48"
       >
-        {Object.values(WORKSPACE_TIERS).map((value) => (
+        {WORKSPACE_TIER_VALUES.map((value) => (
           <option key={value} value={value}>
             {TIER_LABELS[value]}
           </option>

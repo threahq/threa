@@ -92,7 +92,7 @@ export interface GenerateTurnDigestParams {
   ai: AgentRuntimeAI
   model: LanguageModel
   /** Original provider:model string — required for usage recording on the backend; the enclave keys its transport off it. */
-  modelString?: string
+  modelString: string
   records: ToolWorkRecord[]
   /** The turn's final reply text, for grounding which findings mattered. */
   replyText?: string
