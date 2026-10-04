@@ -16,7 +16,7 @@ import {
   Wifi,
   WifiOff,
 } from "lucide-react"
-import { SidebarToggle } from "@/components/layout"
+import { SidebarToggle } from "@/components/layout/sidebar-toggle"
 import { useIsOnline } from "@/components/layout/connection-status"
 import { ThreaLogo } from "@/components/threa-logo"
 import { Button } from "@/components/ui/button"

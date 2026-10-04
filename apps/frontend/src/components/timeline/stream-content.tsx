@@ -35,6 +35,7 @@ import {
   workspaceKeys,
 } from "@/hooks"
 import { useSubagentRun } from "@/hooks/use-subagent-run"
+import { useStableCallback } from "@/hooks/use-stable-callback"
 import { useSocket, useCoordinatedLoading, usePreferencesOptional, usePanel } from "@/contexts"
 import { useMessageService } from "@/contexts"
 import { orderStreamEvents, useStreamEvents } from "@/stores/stream-store"
@@ -2693,12 +2694,11 @@ export function StreamContent({
   }, [useVirtualized, virtualContentRef, virtualScrollerEl, applyDetachedHold])
 
   // Every message row consumes this context; `scrollToMessage` changes identity
-  // with the window, so it goes through a ref to keep the value stable.
-  const scrollToMessageRef = useRef(scrollToMessage)
-  scrollToMessageRef.current = scrollToMessage
+  // with the window, so the context carries a stable wrapper.
+  const stableScrollToMessage = useStableCallback(scrollToMessage)
   const editLastMessageCtxWithScroll = useMemo(
-    () => ({ ...editLastMessageCtx, scrollToMessage: (messageId: string) => scrollToMessageRef.current(messageId) }),
-    [editLastMessageCtx]
+    () => ({ ...editLastMessageCtx, scrollToMessage: stableScrollToMessage }),
+    [editLastMessageCtx, stableScrollToMessage]
   )
 
   // Deep-link (?m=) mount hold. On a push-notification / Activities deep link

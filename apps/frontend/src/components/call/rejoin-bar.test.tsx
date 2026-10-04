@@ -12,9 +12,14 @@ import { RejoinBar } from "./rejoin-bar"
 const launch = vi.fn()
 
 function stubBootstrap(activeCall: StreamActiveCall | null) {
-  vi.spyOn(hooksModule, "useStreamBootstrap").mockReturnValue({
-    data: { activeCall },
-  } as unknown as ReturnType<typeof hooksModule.useStreamBootstrap>)
+  const bootstrap = { activeCall }
+  vi.spyOn(hooksModule, "useStreamBootstrap").mockImplementation(((
+    _workspaceId: string,
+    _streamId: string,
+    options?: { select?: (value: typeof bootstrap) => unknown }
+  ) => ({
+    data: options?.select ? options.select(bootstrap) : bootstrap,
+  })) as unknown as typeof hooksModule.useStreamBootstrap)
 }
 
 /** Mark call_1 live in the active-calls store — the liveness source the bar reads. */
