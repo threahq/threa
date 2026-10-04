@@ -387,7 +387,7 @@ export function ConversationPanel({ workspaceId, onClose, className }: Conversat
   usePanelStreamSubscriptions(panelStreamIds)
   // The panel's streams aren't in the URL (`?panel=conv:…`), so the SW's push
   // suppression can only know they're on screen if we register them here.
-  useVisibleStreams(panelStreamIds)
+  useVisibleStreams(workspaceId, panelStreamIds)
 
   // Escape closes the panel, matching StreamPanel — the two are peers in the same
   // slot, so the keyboard affordance should be consistent. Skip when the event was

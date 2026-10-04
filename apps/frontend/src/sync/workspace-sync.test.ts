@@ -47,6 +47,7 @@ import {
 import * as agentSubstep from "@/lib/crypto/agent-substep"
 import { getCachedWorkspaceTables, subscribeWorkspaceCache } from "@/stores/workspace-store"
 import type { Socket } from "socket.io-client"
+import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
 
 function makeBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBootstrap {
   return {
@@ -4700,6 +4701,35 @@ describe("unread counter events (absolute payloads, sync phase 2c)", () => {
     })
 
     cleanup()
+  })
+
+  it("should tell the service worker to clear this workspace's stream banner when activity:read names the stream", async () => {
+    const postMessage = vi.fn()
+    const originalServiceWorker = Object.getOwnPropertyDescriptor(navigator, "serviceWorker")
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { controller: { postMessage } },
+    })
+    try {
+      const queryClient = new QueryClient()
+      await seedCounterFixture(queryClient)
+      const { emit, cleanup } = register(queryClient)
+
+      emit("activity:read", {
+        workspaceId: "ws_1",
+        targetUserId: "member_1",
+        activityIds: ["act_s1"],
+        streamIds: ["stream_1"],
+      })
+
+      expect(postMessage.mock.calls).toEqual([
+        [{ type: SW_MSG_CLEAR_NOTIFICATIONS, workspaceId: "ws_1", streamId: "stream_1" }],
+      ])
+      cleanup()
+    } finally {
+      if (originalServiceWorker) Object.defineProperty(navigator, "serviceWorker", originalServiceWorker)
+      else Reflect.deleteProperty(navigator, "serviceWorker")
+    }
   })
 
   it("catch-up ordering: a creation replayed after a read settles held (snapshot semantics)", async () => {

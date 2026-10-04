@@ -715,7 +715,11 @@ describe("useUnreadCounts", () => {
       result.current.markAsRead("stream_1", "event_new")
     })
 
-    expect(mockPostMessage).toHaveBeenCalledWith({ type: SW_MSG_CLEAR_NOTIFICATIONS, streamId: "stream_1" })
+    expect(mockPostMessage).toHaveBeenCalledWith({
+      type: SW_MSG_CLEAR_NOTIFICATIONS,
+      workspaceId: "ws_1",
+      streamId: "stream_1",
+    })
   })
 
   it("clears activity without touching membership state when the read returns a null membership", async () => {

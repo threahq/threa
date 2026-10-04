@@ -139,7 +139,7 @@ const CALL_RING_TTL_SECONDS = 45
 interface PushDeliveryOptions {
   ttlSeconds: number
   urgency: "very-low" | "low" | "normal" | "high"
-  /** Must be ≤32 base64url characters (push-service constraint) — see pushTopic. */
+  /** Must be ≤32 base64url characters (push-service constraint) — see pushTopic and streamPushTopic. */
   topic?: string
 }
 
@@ -152,6 +152,14 @@ interface PushDeliveryOptions {
  */
 function pushTopic(prefixedId: string, kindSuffix = ""): string {
   return prefixedId.slice(prefixedId.indexOf("_") + 1) + kindSuffix
+}
+
+/**
+ * Activity-push collapse key. One endpoint serves every workspace and Connect
+ * reuses stream ids across them, so it carries the workspace, hashed to fit 32 characters.
+ */
+export function streamPushTopic(workspaceId: string, streamId: string, kindSuffix = ""): string {
+  return createHash("sha256").update(`${workspaceId}/${streamId}${kindSuffix}`).digest("base64url").slice(0, 32)
 }
 
 /** How recently a device must have sent a heartbeat to be considered "active" */
@@ -1083,7 +1091,7 @@ export class PushService {
         withButtons: true,
         // Topic keyed by stream + notification group: mentions display under their
         // own tag in the SW, so they collapse separately from plain messages.
-        topic: source.streamId ? pushTopic(source.streamId, isMention ? "m" : "") : undefined,
+        topic: source.streamId ? streamPushTopic(workspaceId, source.streamId, isMention ? "m" : "") : undefined,
         data: {
           ...(isMissedCall ? { kind: "missed_call" as const, mode: source.mode ?? undefined } : {}),
           workspaceId,
