@@ -8,7 +8,20 @@ import { useLinkPreviewDismissal } from "@/hooks/use-link-preview-dismissals"
 import { useLinkPreviewOpen } from "@/hooks/use-link-preview-collapse"
 import { LinkPreviewCard } from "./link-preview-card"
 import { InAppLinkPreviewCard } from "./in-app-link-preview-card"
-import { isInAppLinkContentType, LinkPreviewContentTypes, type LinkPreviewSummary } from "@threahq/types"
+import {
+  isInAppLinkContentType,
+  LinkPreviewContentTypes,
+  parseAppLinkHref,
+  type LinkPreviewSummary,
+} from "@threahq/types"
+import { resolveInternalAppPath } from "@/lib/internal-url"
+import { appLinkHrefFromGoPath } from "@/components/in-app-link/app-link"
+
+function isAppLinkChipUrl(url: string): boolean {
+  const path = resolveInternalAppPath(url)
+  const href = path ? appLinkHrefFromGoPath(path) : null
+  return href !== null && parseAppLinkHref(href) !== null
+}
 
 /** Previews a message opens as cards; web previews past it start as one-line chips. */
 const MAX_OPEN_CARDS = 3
@@ -88,9 +101,15 @@ export function LinkPreviewList({
   // A stream link is a bare "#channel" reference, fully said by its inline chip,
   // so its card is suppressed. A message link keeps its card: the inline chip is
   // a compact named reference in the body, and the card carries the rich preview
-  // (author face, snippet) below. Memo and web previews keep their card too.
+  // (author face, snippet) below. A `/go/<place>` link is a chip too, and its
+  // card would only show the app's own page title. Memo and web previews keep
+  // their card.
   const visiblePreviews = useMemo(
-    () => previews.filter((p) => !dismissedIds.has(p.id) && p.contentType !== LinkPreviewContentTypes.STREAM_LINK),
+    () =>
+      previews.filter(
+        (p) =>
+          !dismissedIds.has(p.id) && p.contentType !== LinkPreviewContentTypes.STREAM_LINK && !isAppLinkChipUrl(p.url)
+      ),
     [previews, dismissedIds]
   )
 

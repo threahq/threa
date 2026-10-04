@@ -110,6 +110,42 @@ describe("app: links in markdown", () => {
     expect(screen.getByRole("link", { name: "Memory" })).toBeInTheDocument()
   })
 
+  it("should open settings over the current view when a same-origin /go link is clicked", async () => {
+    renderMarkdown(`Change it in [Notifications](${window.location.origin}/go/settings/notifications).`)
+
+    await userEvent.click(screen.getByRole("link", { name: "Notifications" }))
+
+    expect(await screen.findByText("Notifications panel")).toBeVisible()
+    expect(screen.getByTestId("location")).toHaveTextContent("/w/ws_1/s/stream_here?m=msg_1&settings=notifications")
+  })
+
+  it("should open a page in the current workspace when a same-origin /go link is clicked", async () => {
+    renderMarkdown(`Browse it in [Memory](${window.location.origin}/go/memory).`)
+
+    await userEvent.click(screen.getByRole("link", { name: "Memory" }))
+
+    expect(screen.getByTestId("location")).toHaveTextContent(/^\/w\/ws_1\/memory$/)
+  })
+
+  it("should name a bare same-origin /go URL after its destination", () => {
+    const origin = window.location.origin
+    renderMarkdown(`${origin}/go/settings/ai and ${origin}/go/workspace-settings/bots and ${origin}/go/board`)
+
+    expect(screen.getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
+      ["Settings: AI", "/w/ws_1/s/stream_here?m=msg_1&settings=ai"],
+      ["Workspace settings: Bots", "/w/ws_1/s/stream_here?m=msg_1&ws-settings=bots"],
+      ["Board", "/w/ws_1/board"],
+    ])
+  })
+
+  it("should leave a same-origin /go link to the redirect route outside a workspace", async () => {
+    renderMarkdown(`Browse it in [Memory](${window.location.origin}/go/memory).`, "/outside")
+
+    await userEvent.click(screen.getByRole("link", { name: "Memory" }))
+
+    expect(screen.getByTestId("location")).toHaveTextContent(/^\/go\/memory$/)
+  })
+
   it("should point every page destination at a workspace route", () => {
     const unrouted = APP_LINK_PAGES.filter((page) => {
       const leaf = matchRoutes(router.routes, `/w/ws_1/${page}`)?.at(-1)?.route.path

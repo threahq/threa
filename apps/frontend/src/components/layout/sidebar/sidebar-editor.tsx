@@ -47,7 +47,7 @@ import {
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
 import { LabelChip } from "@/components/labels/label-chip"
-import { QUICK_LINK_META } from "./quick-links"
+import { QUICK_LINK_META } from "./quick-link-meta"
 import { BADGE_CONFIG } from "./config"
 import {
   isPristinePreset,
