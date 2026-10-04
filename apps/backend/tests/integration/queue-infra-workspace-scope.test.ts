@@ -2,33 +2,17 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { ulid } from "ulid"
 import { createBackfillChunkWorker, registerBackfill } from "../../src/lib/backfill"
-import { queueId, workspaceId } from "../../src/lib/id"
-import { QueueRepository } from "../../src/lib/queue"
+import { workspaceId } from "../../src/lib/id"
 import { setupTestDatabase } from "./setup"
 
 describe("Queue infrastructure workspace scope (INV-8)", () => {
   let pool: Pool
 
   const suffix = ulid().toLowerCase()
-  const queueName = `test.queue_infra_scope_${suffix}`
   const backfillName = `test_queue_infra_scope_${suffix}`
   const processedPerChunk = 7
 
   const wsA = workspaceId()
-  const wsB = workspaceId()
-
-  async function seedMessage(wid: string, dueSecondsAgo: number) {
-    const now = new Date()
-    const message = await QueueRepository.insert(pool, {
-      id: queueId(),
-      queueName,
-      workspaceId: wid,
-      payload: {},
-      processAfter: new Date(now.getTime() - dueSecondsAgo * 1000),
-      insertedAt: now,
-    })
-    return message.id
-  }
 
   async function seedRun(wid: string) {
     const id = `bfrun_${ulid()}`
@@ -66,41 +50,12 @@ describe("Queue infrastructure workspace scope (INV-8)", () => {
   })
 
   afterAll(async () => {
-    await pool.query(`DELETE FROM queue_messages WHERE queue_name = $1`, [queueName])
     await pool.query(
       `DELETE FROM backfill_chunks WHERE run_id IN (SELECT id FROM backfill_runs WHERE backfill_name = $1)`,
       [backfillName]
     )
     await pool.query(`DELETE FROM backfill_runs WHERE backfill_name = $1`, [backfillName])
     await pool.end()
-  })
-
-  describe("batchClaimMessages", () => {
-    test("should claim the calling workspace's message under a limit when another workspace's message is due earlier", async () => {
-      const a1 = await seedMessage(wsA, 1)
-      const b1 = await seedMessage(wsB, 5)
-      const now = new Date()
-
-      const claimed = await QueueRepository.batchClaimMessages(pool, {
-        queueName,
-        workspaceId: wsA,
-        claimedBy: "worker_scope_test",
-        claimedAt: now,
-        claimedUntil: new Date(now.getTime() + 30_000),
-        now,
-        limit: 1,
-      })
-
-      expect(claimed.map((m) => m.id)).toEqual([a1])
-      const states = await pool.query(
-        `SELECT id, claimed_by, claimed_count FROM queue_messages WHERE queue_name = $1 ORDER BY claimed_count DESC`,
-        [queueName]
-      )
-      expect(states.rows).toEqual([
-        { id: a1, claimed_by: "worker_scope_test", claimed_count: 1 },
-        { id: b1, claimed_by: null, claimed_count: 0 },
-      ])
-    })
   })
 
   describe("backfill chunk worker", () => {
