@@ -9,7 +9,7 @@ import {
 } from "@threahq/types"
 import { archiveStatusSql, type ArchiveStatus } from "../../lib/sql-filters"
 import { tsqueryAcrossConfigsSql } from "../../lib/text-search-config"
-import { OPEN_TO_BOTS_VISIBILITIES, streamAccessPredicateSql } from "../streams"
+import { OPEN_TO_BOTS_VISIBILITIES, roomReadableWithoutMembershipSql, streamAccessPredicateSql } from "../streams"
 import { REPLY_COUNT_SUBQUERY } from "../messaging"
 import type { AgentAccessSpec } from "../agents"
 import { LEGACY_SEMANTIC_DISTANCE_THRESHOLD, SEARCH_HYBRID_LEG_LIMIT, type SearchRanking } from "./config"
@@ -738,13 +738,13 @@ export const SearchRepository = {
 
   /**
    * Get public stream IDs in a workspace.
-   * Used by agent access control for public_only access spec.
+   * Used by bot access.
    *
    * Openness is the ROOT's visibility (INV-62): threads copy the root's
    * visibility at creation and are never re-synced, so a thread's own row can
    * say "public" long after its root went private — trusting it leaked those
    * threads into agent research and bot scopes. `public` and `guest_public`
-   * both count: agents and bots have no role to lack browse with.
+   * both count: a bot has no role to lack browse with.
    */
   async getPublicStreams(
     db: Querier,
@@ -759,6 +759,33 @@ export const SearchRepository = {
       JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id
       WHERE s.workspace_id = ${workspaceId}
         AND root.visibility = ANY(${[...OPEN_TO_BOTS_VISIBILITIES]})
+        AND (${!hasTypeFilter} OR s.type = ANY(${options?.streamTypes ?? []}))
+        AND ${archiveCondition}
+    `)
+
+    return result.rows.map((r) => r.id)
+  },
+
+  /**
+   * Get the stream IDs every reader of `roomStreamId`'s room can read: the room's own tree (none
+   * when the room has no root row) plus what `roomReadableWithoutMembershipSql` lets through.
+   * Used by agent access control: an agent answers to everyone in its room (INV-62: the root's
+   * visibility decides).
+   */
+  async getRoomReadableStreams(
+    db: Querier,
+    workspaceId: string,
+    roomStreamId: string,
+    options?: { streamTypes?: StreamType[]; archiveStatus?: ArchiveStatus[] }
+  ): Promise<string[]> {
+    const hasTypeFilter = options?.streamTypes && options.streamTypes.length > 0
+    const archiveCondition = sql`${sql.raw(archiveStatusSql("s", options?.archiveStatus, { archivedIncludesSealed: true }))}`
+
+    const result = await db.query<{ id: string }>(composeSql`
+      SELECT s.id FROM streams s
+      JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id
+      WHERE s.workspace_id = ${workspaceId}
+        AND (root.id = ${roomStreamId} OR ${roomReadableWithoutMembershipSql(workspaceId, roomStreamId, "root")})
         AND (${!hasTypeFilter} OR s.type = ANY(${options?.streamTypes ?? []}))
         AND ${archiveCondition}
     `)
@@ -793,8 +820,7 @@ export const SearchRepository = {
    *
    * Access specs:
    * - user_full_access: Everything the specified user can access
-   * - public_only: Only open streams (`public` and `guest_public`)
-   * - public_plus_stream: Open streams + a specific stream and its threads
+   * - room_readable: Streams every reader of the room can read
    * - user_intersection: Streams all specified users can access (for DMs)
    */
   async getAccessibleStreamsForAgent(
@@ -812,17 +838,8 @@ export const SearchRepository = {
           archiveStatus: options?.archiveStatus,
         })
 
-      case "public_only":
-        return this.getPublicStreams(db, workspaceId, options)
-
-      case "public_plus_stream": {
-        const [publicIds, streamTreeIds] = await Promise.all([
-          this.getPublicStreams(db, workspaceId, options),
-          this.expandStreamIdsWithThreads(db, workspaceId, [spec.streamId]),
-        ])
-
-        return [...new Set([...publicIds, ...streamTreeIds])]
-      }
+      case "room_readable":
+        return this.getRoomReadableStreams(db, workspaceId, spec.roomStreamId, options)
 
       case "user_intersection": {
         const [firstUserId, secondUserId] = getValidatedUserIntersectionUserIds(spec.userIds)

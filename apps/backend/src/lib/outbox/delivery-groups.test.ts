@@ -6,6 +6,7 @@ import {
   permissionGroup,
   streamGroup,
   userGroup,
+  BROWSE_GROUP,
   WORKSPACE_GROUP,
 } from "./delivery-groups"
 import type { OutboxEvent, OutboxEventType } from "./repository"
@@ -16,6 +17,14 @@ function event<T extends OutboxEventType>(eventType: T, payload: Record<string, 
 
 const MEMBERS_WRITE_GROUP = permissionGroup(WORKSPACE_PERMISSION_SCOPES.MEMBERS_WRITE)
 const WORKSPACE_ADMIN_GROUP = permissionGroup(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
+
+/** The workspace-wide groups an open stream's events reach, by the stream's visibility. */
+const OPEN_AUDIENCE = {
+  [Visibilities.PUBLIC]: [BROWSE_GROUP],
+  [Visibilities.GUEST_PUBLIC]: [WORKSPACE_GROUP],
+  [Visibilities.PRIVATE]: [],
+} as const
+const VISIBILITIES = [Visibilities.PUBLIC, Visibilities.GUEST_PUBLIC, Visibilities.PRIVATE] as const
 
 describe("permissionGroup", () => {
   it("names the members:write delivery group on the wire", () => {
@@ -65,6 +74,117 @@ describe("resolveDeliveryGroups — stream:created thread routing", () => {
       })
     )
     expect(groups).toEqual([streamGroup("stream_parent")])
+  })
+})
+
+describe("resolveDeliveryGroups — stream:created audience", () => {
+  for (const visibility of VISIBILITIES) {
+    it(`should reach the open audience and the creator when the channel is ${visibility}`, () => {
+      const groups = resolveDeliveryGroups(
+        event("stream:created", {
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          stream: { id: "stream_1", type: StreamTypes.CHANNEL, visibility, createdBy: "usr_creator" },
+        })
+      )
+      expect(groups).toEqual([...OPEN_AUDIENCE[visibility], userGroup("usr_creator")])
+    })
+  }
+})
+
+describe("resolveDeliveryGroups — stream:updated audience", () => {
+  const route = (visibility: string) =>
+    resolveDeliveryGroups(
+      event("stream:updated", { workspaceId: "ws_1", streamId: "stream_1", stream: { id: "stream_1", visibility } })
+    )
+
+  it("should reach browsers and the stream's room when the channel is public", () => {
+    expect(route(Visibilities.PUBLIC)).toEqual([BROWSE_GROUP, streamGroup("stream_1")])
+  })
+
+  it("should reach the whole workspace and the stream's room when the channel is guest_public", () => {
+    expect(route(Visibilities.GUEST_PUBLIC)).toEqual([WORKSPACE_GROUP, streamGroup("stream_1")])
+  })
+
+  it("should keep guests out of the workspace-wide delivery when the channel is private", () => {
+    expect(route(Visibilities.PRIVATE)).toEqual([BROWSE_GROUP, streamGroup("stream_1")])
+  })
+
+  it("should keep guests out of the workspace-wide delivery when a thread carries a guest_public copy", () => {
+    expect(
+      resolveDeliveryGroups(
+        event("stream:updated", {
+          workspaceId: "ws_1",
+          streamId: "stream_thread",
+          stream: { id: "stream_thread", visibility: Visibilities.GUEST_PUBLIC, rootStreamId: "stream_1" },
+        })
+      )
+    ).toEqual([BROWSE_GROUP, streamGroup("stream_thread")])
+  })
+})
+
+describe("resolveDeliveryGroups — stream:display_name_updated audience", () => {
+  for (const visibility of VISIBILITIES) {
+    it(`should reach the open audience and the stream's room when the stream is ${visibility}`, () => {
+      const groups = resolveDeliveryGroups(
+        event("stream:display_name_updated", {
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          displayName: "Launch",
+          visibility,
+          source: "user",
+          revision: 2,
+        })
+      )
+      expect(groups).toEqual([...OPEN_AUDIENCE[visibility], streamGroup("stream_1")])
+    })
+  }
+})
+
+describe("resolveDeliveryGroups — workspace people and guest-safe events", () => {
+  const user = { id: "usr_1" }
+
+  it("should reach browsers and the user themselves when a workspace user is added or updated", () => {
+    for (const eventType of ["workspace_user:added", "workspace_user:updated"] as const) {
+      expect(resolveDeliveryGroups(event(eventType, { workspaceId: "ws_1", user }))).toEqual([
+        BROWSE_GROUP,
+        userGroup("usr_1"),
+      ])
+    }
+  })
+
+  it("should reach browsers and the removed user when a workspace user is removed", () => {
+    expect(
+      resolveDeliveryGroups(event("workspace_user:removed", { workspaceId: "ws_1", removedUserId: "usr_1" }))
+    ).toEqual([BROWSE_GROUP, userGroup("usr_1")])
+  })
+
+  it("should reach the whole workspace when the event is listed as guest-safe", () => {
+    for (const eventType of ["workspace_settings:updated", "feature_flags:workspace_updated"] as const) {
+      expect(resolveDeliveryGroups(event(eventType, { workspaceId: "ws_1" }))).toEqual([WORKSPACE_GROUP])
+    }
+  })
+
+  it("should reach the whole workspace when the bot is shared", () => {
+    for (const eventType of ["bot:created", "bot:updated"] as const) {
+      expect(
+        resolveDeliveryGroups(event(eventType, { workspaceId: "ws_1", bot: { type: "shared", ownerUserId: null } }))
+      ).toEqual([WORKSPACE_GROUP])
+    }
+  })
+
+  it("should reach browsers and the owner only when the bot is personal", () => {
+    for (const eventType of ["bot:created", "bot:updated"] as const) {
+      expect(
+        resolveDeliveryGroups(
+          event(eventType, { workspaceId: "ws_1", bot: { type: "personal", ownerUserId: "usr_owner" } })
+        )
+      ).toEqual([BROWSE_GROUP, userGroup("usr_owner")])
+    }
+  })
+
+  it("should reach browsers only when an event has no explicit routing", () => {
+    expect(resolveDeliveryGroups(event("attachment:uploaded", { workspaceId: "ws_1" }))).toEqual([BROWSE_GROUP])
   })
 })
 
@@ -228,17 +348,19 @@ describe("resolveDeliveryGroups — label assignments", () => {
 })
 
 describe("resolveDeliveryGroups — conversation events (board liveness)", () => {
-  it("delivers a public-channel conversation:created to the whole workspace so the board sees it live", () => {
-    const groups = resolveDeliveryGroups(
-      event("conversation:created", {
-        workspaceId: "ws_1",
-        streamId: "stream_pub",
-        conversationId: "conv_1",
-        streamVisibility: Visibilities.PUBLIC,
-      })
-    )
-    expect(groups).toEqual([streamGroup("stream_pub"), WORKSPACE_GROUP])
-  })
+  for (const visibility of VISIBILITIES) {
+    it(`should reach the stream and the open audience when a conversation is created in a ${visibility} channel`, () => {
+      const groups = resolveDeliveryGroups(
+        event("conversation:created", {
+          workspaceId: "ws_1",
+          streamId: "stream_1",
+          conversationId: "conv_1",
+          streamVisibility: visibility,
+        })
+      )
+      expect(groups).toEqual([streamGroup("stream_1"), ...OPEN_AUDIENCE[visibility]])
+    })
+  }
 
   it("keeps a private-channel conversation:updated scoped to the stream's members (INV-62)", () => {
     const groups = resolveDeliveryGroups(
@@ -253,7 +375,7 @@ describe("resolveDeliveryGroups — conversation events (board liveness)", () =>
     expect(groups).not.toContain(WORKSPACE_GROUP)
   })
 
-  it("fans a public thread conversation to the thread, its parent channel, and the workspace", () => {
+  it("fans a public thread conversation to the thread, its parent channel, and browsers", () => {
     const groups = resolveDeliveryGroups(
       event("conversation:updated", {
         workspaceId: "ws_1",
@@ -263,7 +385,7 @@ describe("resolveDeliveryGroups — conversation events (board liveness)", () =>
         streamVisibility: Visibilities.PUBLIC,
       })
     )
-    expect(groups).toEqual([streamGroup("stream_thread"), streamGroup("stream_pub"), WORKSPACE_GROUP])
+    expect(groups).toEqual([streamGroup("stream_thread"), streamGroup("stream_pub"), BROWSE_GROUP])
   })
 
   it("never broadcasts conversation:message_assigned to the workspace — it carries no board aggregate", () => {
@@ -324,11 +446,13 @@ describe("resolveDeliveryGroups — stream:message_count", () => {
       )
     )
 
-  it("fans a public channel's count to its room and the whole workspace", () => {
-    expect(count({ streamId: "stream_pub", rootStreamId: null, streamVisibility: Visibilities.PUBLIC })).toEqual(
-      new Set([streamGroup("stream_pub"), WORKSPACE_GROUP])
-    )
-  })
+  for (const visibility of VISIBILITIES) {
+    it(`should reach the channel's room and the open audience when the channel is ${visibility}`, () => {
+      expect(count({ streamId: "stream_1", rootStreamId: null, streamVisibility: visibility })).toEqual(
+        new Set([streamGroup("stream_1"), ...OPEN_AUDIENCE[visibility]])
+      )
+    })
+  }
 
   it("keeps a private thread's count to its own room and its root's room", () => {
     expect(
@@ -336,16 +460,16 @@ describe("resolveDeliveryGroups — stream:message_count", () => {
     ).toEqual(new Set([streamGroup("stream_t"), streamGroup("stream_root")]))
   })
 
-  it("fans a public channel's thread count to its room, its root's room and the workspace", () => {
+  it("fans a public channel's thread count to its room, its root's room and browsers", () => {
     expect(count({ streamId: "stream_t", rootStreamId: "stream_root", streamVisibility: Visibilities.PUBLIC })).toEqual(
-      new Set([streamGroup("stream_t"), streamGroup("stream_root"), WORKSPACE_GROUP])
+      new Set([streamGroup("stream_t"), streamGroup("stream_root"), BROWSE_GROUP])
     )
   })
 })
 
 describe("resolveDeliveryGroups — call lifecycle (roadmap 1.4)", () => {
   for (const eventType of ["stream:call_started", "stream:call_ended"] as const) {
-    it(`fans ${eventType} on a PUBLIC channel to the stream room AND the workspace (sidebar dot)`, () => {
+    it(`should fan ${eventType} to the stream room, browsers and each member when the channel is public`, () => {
       const groups = resolveDeliveryGroups(
         event(eventType, {
           workspaceId: "ws_1",
@@ -356,9 +480,21 @@ describe("resolveDeliveryGroups — call lifecycle (roadmap 1.4)", () => {
           event: { id: "evt_1" },
         })
       )
-      expect(new Set(groups)).toEqual(new Set([streamGroup("stream_pub"), WORKSPACE_GROUP]))
-      // The private-only member rooms must NOT be added for a public channel.
-      expect(groups).not.toContain(userGroup("usr_a"))
+      expect(groups).toEqual([streamGroup("stream_pub"), BROWSE_GROUP, userGroup("usr_a"), userGroup("usr_b")])
+    })
+
+    it(`should fan ${eventType} to the stream room, the whole workspace and each member when the channel is guest_public`, () => {
+      const groups = resolveDeliveryGroups(
+        event(eventType, {
+          workspaceId: "ws_1",
+          streamId: "stream_open",
+          callId: "call_1",
+          streamVisibility: Visibilities.GUEST_PUBLIC,
+          memberUserIds: ["usr_a", "usr_b"],
+          event: { id: "evt_1" },
+        })
+      )
+      expect(groups).toEqual([streamGroup("stream_open"), WORKSPACE_GROUP, userGroup("usr_a"), userGroup("usr_b")])
     })
 
     it(`fans ${eventType} on a PRIVATE/DM stream to the stream room AND each member's user room, never workspace-wide`, () => {
@@ -394,13 +530,17 @@ describe("resolveDeliveryGroups — call lifecycle (roadmap 1.4)", () => {
 })
 
 describe("permissionGroupsForRole", () => {
-  it("grants the members:write and admin delivery groups to admins and owners", () => {
-    expect(permissionGroupsForRole("admin")).toEqual([MEMBERS_WRITE_GROUP, WORKSPACE_ADMIN_GROUP])
-    expect(permissionGroupsForRole("owner")).toEqual([MEMBERS_WRITE_GROUP, WORKSPACE_ADMIN_GROUP])
+  it("grants the members:write, admin and browse delivery groups to admins and owners", () => {
+    expect(permissionGroupsForRole("admin")).toEqual([MEMBERS_WRITE_GROUP, WORKSPACE_ADMIN_GROUP, BROWSE_GROUP])
+    expect(permissionGroupsForRole("owner")).toEqual([MEMBERS_WRITE_GROUP, WORKSPACE_ADMIN_GROUP, BROWSE_GROUP])
   })
 
-  it("grants no permission delivery groups to plain members", () => {
-    expect(permissionGroupsForRole("member")).toEqual([])
+  it("grants only the browse delivery group to plain members", () => {
+    expect(permissionGroupsForRole("member")).toEqual([BROWSE_GROUP])
+  })
+
+  it("grants no permission delivery groups to guests", () => {
+    expect(permissionGroupsForRole("guest")).toEqual([])
   })
 })
 
@@ -415,6 +555,13 @@ describe("resolveDeliveryGroups — stream connections", () => {
   it("should reach every admin when the channel is public", () => {
     const groups = resolveDeliveryGroups(
       event("stream_connection:updated", { ...payload, streamVisibility: Visibilities.PUBLIC })
+    )
+    expect(groups).toEqual([WORKSPACE_ADMIN_GROUP])
+  })
+
+  it("should reach every admin when the channel is guest_public", () => {
+    const groups = resolveDeliveryGroups(
+      event("stream_connection:updated", { ...payload, streamVisibility: Visibilities.GUEST_PUBLIC })
     )
     expect(groups).toEqual([WORKSPACE_ADMIN_GROUP])
   })

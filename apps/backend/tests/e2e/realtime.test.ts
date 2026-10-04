@@ -9,8 +9,13 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from "bun:test"
 import { io, Socket } from "socket.io-client"
+import type { Pool } from "pg"
+import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
+import { createTestPool } from "../integration/setup"
 import {
   TestClient,
+  type Stream,
+  type SyncCatchUpResult,
   loginAs,
   createWorkspace,
   createScratchpad,
@@ -24,6 +29,9 @@ import {
   getBootstrap,
   joinWorkspace,
   joinRoom,
+  addStreamMember,
+  updateStream,
+  getSyncCatchUp,
 } from "../client"
 
 function getBaseUrl(): string {
@@ -511,5 +519,112 @@ describe("Real-time Events", () => {
         socket2.disconnect()
       }
     })
+  })
+})
+
+describe("Guest delivery", () => {
+  const runId = Math.random().toString(36).substring(7)
+  let pool: Pool
+  let owner: TestClient
+  let guestClient: TestClient
+  let workspaceId: string
+  let publicChannel: Stream
+  let openChannel: Stream
+  let sharedChannel: Stream
+  let ownerSocket: Socket
+  let guestSocket: Socket
+
+  const collect = <T>(socket: Socket, eventName: string): T[] => {
+    const seen: T[] = []
+    socket.on(eventName, (event: T) => seen.push(event))
+    return seen
+  }
+
+  const sendCounted = async (listener: Socket, streamId: string) => {
+    const counted = waitForEvent<{ streamId: string }>(listener, "stream:message_count")
+    await sendMessage(owner, workspaceId, streamId, "count me")
+    return counted
+  }
+
+  beforeAll(async () => {
+    pool = createTestPool()
+    owner = new TestClient()
+    guestClient = new TestClient()
+    await loginAs(owner, `guest-delivery-owner-${runId}@example.com`, "Guest Delivery Owner")
+    await loginAs(guestClient, `guest-delivery-guest-${runId}@example.com`, "Guest Delivery Guest")
+    workspaceId = (await createWorkspace(owner, `Guest Delivery ${runId}`)).id
+    publicChannel = await createChannel(owner, workspaceId, `gd-public-${runId}`, "public")
+    openChannel = await createChannel(owner, workspaceId, `gd-open-${runId}`, "public")
+    sharedChannel = await createChannel(owner, workspaceId, `gd-shared-${runId}`, "private")
+    await pool.query(`UPDATE streams SET visibility = 'guest_public' WHERE workspace_id = $1 AND id = $2`, [
+      workspaceId,
+      openChannel.id,
+    ])
+
+    const guest = await joinWorkspace(guestClient, workspaceId)
+    expect((await addStreamMember(owner, workspaceId, sharedChannel.id, guest.id)).status).toBe(201)
+    await pool.query(`UPDATE users SET role = $3 WHERE workspace_id = $1 AND id = $2`, [
+      workspaceId,
+      guest.id,
+      WORKSPACE_ROLE_SLUGS.GUEST,
+    ])
+
+    ownerSocket = createSocket(owner)
+    guestSocket = createSocket(guestClient)
+    await Promise.all([connectSocket(ownerSocket), connectSocket(guestSocket)])
+    await Promise.all([joinRoom(ownerSocket, `ws:${workspaceId}`), joinRoom(guestSocket, `ws:${workspaceId}`)])
+  })
+
+  afterAll(async () => {
+    ownerSocket?.disconnect()
+    guestSocket?.disconnect()
+    await pool.end()
+  })
+
+  test("should deliver a guest_public channel's message count but not a public channel's when the viewer is a guest", async () => {
+    const guestCounts = collect<{ streamId: string }>(guestSocket, "stream:message_count")
+
+    const ownerControl = await sendCounted(ownerSocket, publicChannel.id)
+    await sendCounted(guestSocket, openChannel.id)
+
+    expect({ ownerControl: ownerControl.streamId, guestCounts: guestCounts.map((count) => count.streamId) }).toEqual({
+      ownerControl: publicChannel.id,
+      guestCounts: [openChannel.id],
+    })
+  })
+
+  test("should deliver stream:updated for a private channel to a guest member once the guest joins its room", async () => {
+    const guestUpdates = collect<{ stream: { description: string } }>(guestSocket, "stream:updated")
+    const describeAs = async (listener: Socket, description: string) => {
+      const updated = waitForEvent(listener, "stream:updated")
+      expect((await updateStream(owner, workspaceId, sharedChannel.id, { description })).status).toBe(200)
+      await updated
+    }
+
+    await describeAs(ownerSocket, "Before room")
+    await joinRoom(guestSocket, `ws:${workspaceId}:stream:${sharedChannel.id}`)
+    await describeAs(guestSocket, "After room")
+
+    expect(guestUpdates.map((update) => update.stream.description)).toEqual(["After room"])
+  })
+
+  test("should omit a public channel's entries from a guest's catch-up when the owner's catch-up has them", async () => {
+    await sendCounted(ownerSocket, publicChannel.id)
+    await sendCounted(ownerSocket, openChannel.id)
+
+    const [guestLog, ownerLog] = await Promise.all([
+      getSyncCatchUp(guestClient, workspaceId),
+      getSyncCatchUp(owner, workspaceId),
+    ])
+    const eventTypesFor = (log: SyncCatchUpResult, stream: Stream) =>
+      log.entries
+        .filter((entry) => (entry.payload as { streamId?: string }).streamId === stream.id)
+        .map((entry) => entry.eventType)
+
+    expect({
+      ownerHasPublicCount: eventTypesFor(ownerLog, publicChannel).includes("stream:message_count"),
+      guestPublicEntries: eventTypesFor(guestLog, publicChannel),
+      guestHasOpenCount: eventTypesFor(guestLog, openChannel).includes("stream:message_count"),
+    }).toEqual({ ownerHasPublicCount: true, guestPublicEntries: [], guestHasOpenCount: true })
   })
 })

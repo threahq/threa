@@ -17,6 +17,7 @@ import {
   type Visibility,
 } from "@threahq/types"
 import { composeSql, type Querier } from "../../src/db"
+import { computeAgentAccessSpec } from "../../src/features/agents"
 import { findUserIdsWithoutBrowse, viewerLacksBrowseSql } from "../../src/features/workspaces"
 import {
   StreamRepository,
@@ -24,6 +25,7 @@ import {
   assertStreamWritable,
   checkStreamAccess,
   listAccessibleStreamIds,
+  listRoomReadableStreamIds,
   projectStreamForPrincipal,
   projectStreamsForPrincipal,
   usersReadingWithoutMembership,
@@ -68,6 +70,21 @@ async function insertMirror(pool: Pool, workspace: string, id: string, roleSlugs
      VALUES ($1, $2, $3, $4, NOW())`,
     [workspace, `workos_${id}`, roleSlugs, status]
   )
+}
+
+/** A guest and a member, plus a decoy workspace holding the same ids with the browse fact flipped. */
+async function insertGuestAndMember(pool: Pool, label: string) {
+  const ws = await insertWorkspace(pool, `${label}-a`)
+  const decoyWs = await insertWorkspace(pool, `${label}-b`)
+  const guest = userId()
+  const member = userId()
+  await insertUser(pool, ws, guest, "guest")
+  await insertUser(pool, ws, member, "member")
+  await insertUser(pool, decoyWs, guest, "member")
+  await insertMirror(pool, decoyWs, guest, ["member"])
+  await insertUser(pool, decoyWs, member, "guest")
+  await insertMirror(pool, decoyWs, member, ["guest"])
+  return { ws, guest, member }
 }
 
 async function insertStream(
@@ -1072,16 +1089,10 @@ describe("joining a public channel", () => {
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
-    ws = await insertWorkspace(pool, "join-a")
-    const decoyWs = await insertWorkspace(pool, "join-b")
-    guest = userId()
-    member = userId()
-    await insertUser(pool, ws, guest, "guest")
-    await insertUser(pool, ws, member, "member")
-    await insertUser(pool, decoyWs, guest, "member")
-    await insertMirror(pool, decoyWs, guest, ["member"])
-    await insertUser(pool, decoyWs, member, "guest")
-    await insertMirror(pool, decoyWs, member, ["guest"])
+    const seeded = await insertGuestAndMember(pool, "join")
+    ws = seeded.ws
+    guest = seeded.guest
+    member = seeded.member
 
     for (const key of ["P", "G", "M", "TG"] as const) joinable[key] = streamId()
     await insertStream(pool, ws, { id: joinable.P, visibility: Visibilities.PUBLIC })
@@ -1140,6 +1151,222 @@ describe("joining a public channel", () => {
         missing: "STREAM_NOT_FOUND",
       },
       joined: ["G", "P"],
+    })
+  })
+})
+
+describe("room readability", () => {
+  let pool: Pool
+  let ws: string
+
+  const keys = [
+    "P",
+    "G",
+    "N",
+    "TP",
+    "staleThread",
+    "privateRootThread",
+    "memberRoom",
+    "guestRoom",
+    "guestThreadRoom",
+    "publicGuestRoom",
+    "guestPublicRoom",
+  ] as const
+  type RoomKey = (typeof keys)[number]
+  const ids = {} as Record<RoomKey, string>
+  const missingRoom = streamId()
+
+  beforeAll(async () => {
+    pool = await setupTestDatabase()
+    const seeded = await insertGuestAndMember(pool, "room")
+    ws = seeded.ws
+    const { guest, member } = seeded
+
+    for (const key of keys) ids[key] = streamId()
+    const channels = [
+      { key: "P", visibility: Visibilities.PUBLIC },
+      { key: "G", visibility: Visibilities.GUEST_PUBLIC },
+      { key: "N", visibility: Visibilities.PRIVATE },
+      { key: "memberRoom", visibility: Visibilities.PRIVATE, members: [member] },
+      { key: "guestRoom", visibility: Visibilities.PRIVATE, members: [member, guest] },
+      { key: "publicGuestRoom", visibility: Visibilities.PUBLIC, members: [guest] },
+      { key: "guestPublicRoom", visibility: Visibilities.GUEST_PUBLIC },
+    ] as const
+    for (const channel of channels) {
+      await insertStream(pool, ws, {
+        id: ids[channel.key],
+        visibility: channel.visibility,
+        members: "members" in channel ? [...channel.members] : [],
+      })
+    }
+    await insertStream(pool, ws, { id: ids.TP, visibility: Visibilities.PUBLIC, rootStreamId: ids.P })
+    // A thread copies its root's visibility at creation and is never re-synced, so the root decides.
+    await insertStream(pool, ws, { id: ids.staleThread, visibility: Visibilities.PUBLIC, rootStreamId: ids.N })
+    await insertStream(pool, ws, { id: ids.privateRootThread, visibility: Visibilities.PRIVATE, rootStreamId: ids.P })
+    await insertStream(pool, ws, {
+      id: ids.guestThreadRoom,
+      visibility: Visibilities.PRIVATE,
+      rootStreamId: ids.guestRoom,
+    })
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  async function readableFor(room: string) {
+    const keyById = new Map(Object.entries(ids).map(([key, id]) => [id, key]))
+    const candidates = [ids.P, ids.G, ids.N, ids.TP, ids.staleThread, ids.privateRootThread, room]
+    const readable = await listRoomReadableStreamIds(pool, ws, room, candidates)
+    return [...readable].map((id) => keyById.get(id)).sort()
+  }
+
+  test("should let public and guest_public content through when no reader of the room lacks browse", async () => {
+    expect(await readableFor(ids.memberRoom)).toEqual(["G", "P", "TP", "memberRoom", "privateRootThread"])
+  })
+
+  test("should let only guest_public content and the room itself through when a reader of the room lacks browse", async () => {
+    expect({
+      guestMemberRoom: await readableFor(ids.guestRoom),
+      threadOfGuestMemberRoom: await readableFor(ids.guestThreadRoom),
+      publicRoomWithGuestMember: await readableFor(ids.publicGuestRoom),
+    }).toEqual({
+      guestMemberRoom: ["G", "guestRoom"],
+      threadOfGuestMemberRoom: ["G", "guestThreadRoom"],
+      publicRoomWithGuestMember: ["G", "publicGuestRoom"],
+    })
+  })
+
+  test("should let only guest_public content through when the room is guest_public or does not exist", async () => {
+    expect({
+      guestPublicRoom: await readableFor(ids.guestPublicRoom),
+      missingRoom: await readableFor(missingRoom),
+    }).toEqual({
+      guestPublicRoom: ["G", "guestPublicRoom"],
+      missingRoom: ["G"],
+    })
+  })
+})
+
+describe("agent research scope", () => {
+  let pool: Pool
+  let ws: string
+  let member: string
+
+  const keys = [
+    "P",
+    "G",
+    "N",
+    "publicRoom",
+    "publicGuestRoom",
+    "guestPublicRoom",
+    "guestPrivateRoom",
+    "guestPrivateRoomThread",
+    "memberPrivateRoom",
+    "orphanThread",
+    "archivedChannel",
+    "publicThread",
+  ] as const
+  type ScopeKey = (typeof keys)[number]
+  type AgentScopeOptions = Parameters<typeof SearchRepository.getAccessibleStreamsForAgent>[3]
+  const ids = {} as Record<ScopeKey, string>
+
+  beforeAll(async () => {
+    pool = await setupTestDatabase()
+    const seeded = await insertGuestAndMember(pool, "scope")
+    ws = seeded.ws
+    member = seeded.member
+    const { guest } = seeded
+
+    for (const key of keys) ids[key] = streamId()
+    const channels = [
+      { key: "P", visibility: Visibilities.PUBLIC },
+      { key: "G", visibility: Visibilities.GUEST_PUBLIC },
+      { key: "N", visibility: Visibilities.PRIVATE },
+      { key: "publicRoom", visibility: Visibilities.PUBLIC, members: [member] },
+      { key: "publicGuestRoom", visibility: Visibilities.PUBLIC, members: [member, guest] },
+      { key: "guestPublicRoom", visibility: Visibilities.GUEST_PUBLIC, members: [member] },
+      { key: "guestPrivateRoom", visibility: Visibilities.PRIVATE, members: [member, guest] },
+      { key: "memberPrivateRoom", visibility: Visibilities.PRIVATE, members: [member] },
+    ] as const
+    for (const channel of channels) {
+      await insertStream(pool, ws, {
+        id: ids[channel.key],
+        visibility: channel.visibility,
+        members: "members" in channel ? [...channel.members] : [],
+      })
+    }
+    await insertStream(pool, ws, {
+      id: ids.guestPrivateRoomThread,
+      visibility: Visibilities.PRIVATE,
+      rootStreamId: ids.guestPrivateRoom,
+    })
+    await insertStream(pool, ws, { id: ids.orphanThread, visibility: Visibilities.PRIVATE, rootStreamId: streamId() })
+    await insertStream(pool, ws, { id: ids.archivedChannel, visibility: Visibilities.PUBLIC, archived: true })
+    await insertStream(pool, ws, { id: ids.publicThread, visibility: Visibilities.PUBLIC, rootStreamId: ids.P })
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  async function readableFor(
+    room: string,
+    {
+      among = [ids.P, ids.G, ids.N, ids.guestPrivateRoomThread],
+      options,
+    }: { among?: string[]; options?: AgentScopeOptions } = {}
+  ) {
+    const stream = await StreamRepository.findById(pool, ws, room)
+    if (!stream) throw new Error(`room ${room} was not seeded`)
+    const spec = await computeAgentAccessSpec(pool, { stream, invokingUserId: member })
+    const readable = new Set(await SearchRepository.getAccessibleStreamsForAgent(pool, spec, ws, options))
+    const keyById = new Map(Object.entries(ids).map(([key, id]) => [id, key]))
+    const probes = [...among, room]
+    return probes
+      .filter((id) => readable.has(id))
+      .map((id) => keyById.get(id))
+      .sort()
+  }
+
+  test("should let an agent read public and guest_public channels when its public channel has no guest members", async () => {
+    expect(await readableFor(ids.publicRoom)).toEqual(["G", "P", "publicRoom"])
+  })
+
+  test("should withhold public channels from an agent when its public channel has a guest member", async () => {
+    expect(await readableFor(ids.publicGuestRoom)).toEqual(["G", "publicGuestRoom"])
+  })
+
+  test("should withhold public channels from an agent when its channel is guest_public", async () => {
+    expect(await readableFor(ids.guestPublicRoom)).toEqual(["G", "guestPublicRoom"])
+  })
+
+  test("should withhold public channels but keep the room and its threads when its private channel has a guest member", async () => {
+    expect(await readableFor(ids.guestPrivateRoom)).toEqual(["G", "guestPrivateRoom", "guestPrivateRoomThread"])
+  })
+
+  test("should let an agent read public and guest_public channels when its private channel has no guest members", async () => {
+    expect(await readableFor(ids.memberPrivateRoom)).toEqual(["G", "P", "memberPrivateRoom"])
+  })
+
+  test("should limit an agent to guest_public channels when its thread has no root", async () => {
+    expect(await readableFor(ids.orphanThread)).toEqual(["G"])
+  })
+
+  test("should drop archived and non-channel streams from what an agent reads when it asks for active channels", async () => {
+    const among = [ids.P, ids.archivedChannel, ids.publicThread]
+    const activeChannels: AgentScopeOptions = { archiveStatus: ["active"], streamTypes: [StreamTypes.CHANNEL] }
+    expect({
+      everything: await readableFor(ids.publicRoom, { among, options: { archiveStatus: ["active", "archived"] } }),
+      activeChannels: await readableFor(ids.publicRoom, { among, options: activeChannels }),
+      privateRoomActiveChannels: await readableFor(ids.guestPrivateRoom, {
+        among: [ids.guestPrivateRoomThread],
+        options: activeChannels,
+      }),
+    }).toEqual({
+      everything: ["P", "archivedChannel", "publicRoom", "publicThread"],
+      activeChannels: ["P", "publicRoom"],
+      privateRoomActiveChannels: ["guestPrivateRoom"],
     })
   })
 })

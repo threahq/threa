@@ -250,9 +250,9 @@ export interface CreateMessageParams {
    *
    * Persona-authored messages MUST set this to the agent's
    * `accessibleStreamIds` from `AgentAccessSpec` — *not* the invoking
-   * user's full reach. The spec is scope-restricted: from a public channel
-   * the agent only sees public streams, from a private channel only that
-   * channel + public, from a DM only the participants' intersection, etc.
+   * user's full reach. The spec is scope-restricted: from a channel the
+   * agent sees what every reader of the room can read, from a DM only the
+   * participants' intersection, etc.
    * Using the user's full access would let agents resurface attachments
    * the user never could have surfaced from this scope.
    */

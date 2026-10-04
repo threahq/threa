@@ -12,14 +12,12 @@ import { StreamMemberRepository } from "../../streams"
  *
  * Examples:
  * - Private scratchpad: agent sees everything the user can see
- * - Public channel: agent sees only public content
+ * - Channel: agent sees what every reader of the room can read, the room's own tree included
  * - DM: agent sees only streams all participants can access
- * - Private channel: agent sees public content + current channel
  */
 export type AgentAccessSpec =
   | { type: "user_full_access"; userId: string }
-  | { type: "public_only" }
-  | { type: "public_plus_stream"; streamId: string }
+  | { type: "room_readable"; roomStreamId: string }
   | { type: "user_intersection"; userIds: [string, string] }
 
 export interface ComputeAccessSpecParams {
@@ -32,10 +30,8 @@ export interface ComputeAccessSpecParams {
  *
  * Rules:
  * - Private scratchpad: Full user access (user's scratchpads, channels, DMs, etc.);
- *   one with other members is treated like a private channel
- * - Public scratchpad: Only public streams
- * - Private channel: Public streams + this channel (and its threads)
- * - Public channel: Only public streams
+ *   one with other members is treated like a channel
+ * - Public scratchpad, channel: What every reader of the room can read
  * - DM: Intersection of all DM participants' access
  * - Thread: Inherits from root stream
  */
@@ -48,32 +44,27 @@ export async function computeAgentAccessSpec(db: Querier, params: ComputeAccessS
     : stream
 
   if (!effectiveStream) {
-    // Orphaned thread - fall back to public only
-    return { type: "public_only" }
+    // Orphaned thread: no root to vet the room's readers against, so only guest_public content passes
+    return { type: "room_readable", roomStreamId: stream.id }
   }
 
   switch (effectiveStream.type) {
     case StreamTypes.SCRATCHPAD: {
-      // Public scratchpad: anyone can see, so agent only sees public
-      if (effectiveStream.visibility !== Visibilities.PRIVATE) return { type: "public_only" }
+      // Public scratchpad: anyone can see, so agent only sees what every reader of the room can read
+      if (effectiveStream.visibility !== Visibilities.PRIVATE) {
+        return { type: "room_readable", roomStreamId: effectiveStream.id }
+      }
       // Adding someone to a scratchpad's thread adds them to the scratchpad, so
       // its audience is only the invoker when no one else is a member.
       const members = await StreamMemberRepository.list(db, stream.workspaceId, { streamId: effectiveStream.id })
       return members.every((m) => m.memberId === invokingUserId)
         ? { type: "user_full_access", userId: invokingUserId }
-        : { type: "public_plus_stream", streamId: effectiveStream.id }
+        : { type: "room_readable", roomStreamId: effectiveStream.id }
     }
 
     case StreamTypes.ASIDE:
       // An aside is always private to its creator: scratchpad semantics.
       return { type: "user_full_access", userId: invokingUserId }
-
-    case StreamTypes.CHANNEL:
-      // Private channel: public streams + this channel
-      // Public channel: only public streams
-      return effectiveStream.visibility === Visibilities.PRIVATE
-        ? { type: "public_plus_stream", streamId: effectiveStream.id }
-        : { type: "public_only" }
 
     case StreamTypes.DM: {
       // DM: only streams every participant can access
@@ -88,7 +79,7 @@ export async function computeAgentAccessSpec(db: Querier, params: ComputeAccessS
     }
 
     default:
-      return { type: "public_only" }
+      return { type: "room_readable", roomStreamId: effectiveStream.id }
   }
 }
 
@@ -99,29 +90,13 @@ export async function computeAgentAccessSpec(db: Querier, params: ComputeAccessS
  * sources) reaches every participant of the invocation stream. So a private memo
  * may only be surfaced when the audience IS exactly that owner: a private
  * scratchpad (`user_full_access`). Every other context — a public/private channel
- * (`public_only`/`public_plus_stream`) or a two-party DM (`user_intersection`) —
+ * (`room_readable`) or a two-party DM (`user_intersection`) —
  * has additional participants, so it returns `undefined` and user-scoped memos are
  * excluded from retrieval (fail closed). Keep this the single source of truth for
  * "may this invocation read the invoking user's private tier".
  */
 export function resolveMemoViewer(spec: AgentAccessSpec): string | undefined {
   return spec.type === "user_full_access" ? spec.userId : undefined
-}
-
-/**
- * Get a human-readable description of the access spec for debugging.
- */
-export function describeAccessSpec(spec: AgentAccessSpec): string {
-  switch (spec.type) {
-    case "user_full_access":
-      return `full access for user ${spec.userId}`
-    case "public_only":
-      return "public streams only"
-    case "public_plus_stream":
-      return `public streams + stream ${spec.streamId}`
-    case "user_intersection":
-      return `intersection of ${spec.userIds.length} users' access`
-  }
 }
 
 /**

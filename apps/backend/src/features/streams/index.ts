@@ -25,6 +25,7 @@ export {
   listAccessibleStreamIds,
   listRoomReadableStreamIds,
   resolveEffectiveAccessStream,
+  roomReadableWithoutMembershipSql,
   rootReadableConditionSql,
   rootReadableWithoutMembershipSql,
   streamAccessPredicateSql,

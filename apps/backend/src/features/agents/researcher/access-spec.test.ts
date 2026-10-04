@@ -7,12 +7,8 @@ describe("resolveMemoViewer — user-scoped memo retrieval gate (roadmap 6.4)", 
     expect(resolveMemoViewer(spec)).toBe("usr_owner")
   })
 
-  it("returns undefined for a public context (no private tier retrievable)", () => {
-    expect(resolveMemoViewer({ type: "public_only" })).toBeUndefined()
-  })
-
-  it("returns undefined for a private channel — other members would see a cited private memo", () => {
-    expect(resolveMemoViewer({ type: "public_plus_stream", streamId: "stream_x" })).toBeUndefined()
+  it("returns undefined for a channel — other members would see a cited private memo", () => {
+    expect(resolveMemoViewer({ type: "room_readable", roomStreamId: "stream_room" })).toBeUndefined()
   })
 
   it("returns undefined for a two-party DM — the other participant is an audience", () => {

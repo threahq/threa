@@ -605,9 +605,9 @@ export interface ConversationCreatedOutboxPayload extends StreamScopedPayload {
   /** For thread conversations, the parent channel's stream ID (for discoverability) */
   parentStreamId?: string
   /** Visibility of the conversation's access-root stream (the parent channel for
-   *  a thread). Drives workspace-wide board delivery: `public` → the whole
-   *  workspace receives it (the board can show it); otherwise only the stream's
-   *  own members do, via the stream room (INV-62). */
+   *  a thread). Drives board delivery beyond the stream room: `guest_public` →
+   *  the whole workspace, `public` → users with browse; otherwise only the
+   *  stream's own members, via the stream room (INV-62). */
   streamVisibility?: Visibility
   /** Members of this conversation whose assignment is still settling (provisional
    *  low-confidence placement). Omitted by emitters that don't read the state;
@@ -1157,16 +1157,15 @@ export interface StreamConnectionUpdatedOutboxPayload extends WorkspaceScopedPay
  * renders the live card; `call_ended` patches it with the end summary).
  *
  * These events ALSO drive the sidebar live-call dot, which must reach members not
- * currently in the stream room. `streamVisibility` + `memberUserIds` let
- * `resolveDeliveryGroups` fan them additionally to the whole workspace (public
- * channels) or to each member's user room (private/DM), mirroring the
- * public-channel-conversation precedent.
+ * currently in the stream room. `resolveDeliveryGroups` fans them additionally to
+ * each member's user room (`memberUserIds`) and to an open channel's audience
+ * (`streamVisibility`).
  */
 export interface StreamCallStartedOutboxPayload extends StreamScopedPayload {
   event: StreamEvent
   callId: string
   streamVisibility: Visibility
-  /** Host-stream member UserIds — the dot fan-out targets for a private/DM call. */
+  /** Host-stream member UserIds — the dot fan-out targets. */
   memberUserIds: string[]
 }
 
