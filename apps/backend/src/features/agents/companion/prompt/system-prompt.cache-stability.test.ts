@@ -70,7 +70,11 @@ const BASE_PREFERENCES: UserPreferences = {
   updatedAt: "2026-01-01T00:00:00.000Z",
 }
 
-const BASE: SystemPromptInputs = { persona, context }
+const BASE: SystemPromptInputs = {
+  persona,
+  context,
+  selfKnowledge: { sealed: false, access: "user_full_access", memoryCapture: "on", subagentModel: null },
+}
 
 /**
  * A value carrying the sentinel, shaped for each per-turn input. Keyed by input
@@ -135,6 +139,13 @@ describe("system prompt cache stability", () => {
 
     expect(built.stable).not.toContain("## Current Time")
     expect(built.volatile).toContain("## Current Time")
+  })
+
+  test("the How You Work card stays in the cached half", () => {
+    const built = buildSystemPrompt(BASE)
+
+    expect(built.stable).toContain("## How You Work")
+    expect(built.volatile).not.toContain("## How You Work")
   })
 
   test("stream metadata inside `context` stays in the cached half", () => {

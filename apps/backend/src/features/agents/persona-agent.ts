@@ -843,6 +843,7 @@ export class PersonaAgent {
             // invoking user — already re-checked against `assertStreamWritable`
             // above as this turn's principal.
             invokingUserOverride: subagentKickoffBrief ? activeSubagentRun?.createdBy : undefined,
+            subagentModel: activeSubagentRun?.model,
           }
         )
 

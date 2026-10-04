@@ -10,6 +10,7 @@ import { buildPromptSectionForStreamType } from "./stream-context-sections"
 import { buildPersonaKnowledgeSection } from "./persona-knowledge"
 import { buildEarlyPurposeSection, buildLatePurposeSection } from "./turn-purpose-prompt"
 import { buildCurrentSettingsSection } from "./current-settings"
+import { buildHowIWorkSection, type SelfKnowledge } from "./how-i-work"
 
 /**
  * Default guidance for each aspect of the `## Response Style` section, used
@@ -100,6 +101,8 @@ export interface SystemPromptInputs {
    * `update_user_settings` is in the toolset. Absent everywhere else.
    */
   currentSettings?: UserPreferences | null
+  /** Drives the `## How You Work` card. `null` only in prompt tests that exercise other sections. */
+  selfKnowledge: SelfKnowledge | null
 }
 
 /**
@@ -152,6 +155,10 @@ export const SYSTEM_PROMPT_INPUT_STABILITY = {
   // exactly when the feature is working. Classified by how the value is
   // produced, not by how standing it reads (see the note above).
   currentSettings: "turn",
+  // Changes only on an explicit edit (membership, memory setting, persona
+  // config), or when a turn nobody triggered flips `access` to null, which
+  // also changes the toolset the card lists.
+  selfKnowledge: "conversation",
 } as const satisfies Record<keyof SystemPromptInputs, "conversation" | "turn" | "mixed">
 
 export function buildSystemPrompt(inputs: SystemPromptInputs): SplitSystemPrompt {
@@ -172,6 +179,7 @@ export function buildSystemPrompt(inputs: SystemPromptInputs): SplitSystemPrompt
     styleSlots,
     personaKnowledge,
     currentSettings,
+    selfKnowledge,
   } = inputs
 
   if (!persona.systemPrompt) {
@@ -215,6 +223,14 @@ ${streamBrief.trim()}`
   }
 
   prompt += buildPromptSectionForStreamType(context, workspaceResearchEnabled)
+
+  if (selfKnowledge) {
+    prompt += buildHowIWorkSection(
+      persona,
+      selfKnowledge,
+      tools.map((tool) => tool.name)
+    )
+  }
 
   prompt += `
 

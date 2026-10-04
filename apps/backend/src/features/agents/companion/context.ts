@@ -14,6 +14,8 @@ import {
   StreamRepository,
   StreamBriefRepository,
   resolveBriefStreamId,
+  findMemoryModeStream,
+  isMemoryAutomationOn,
   type Stream,
   type StreamBrief,
 } from "../../streams"
@@ -23,6 +25,7 @@ import { buildStreamContext, type StreamContext } from "../context-builder"
 import type { ContextWindowPolicy } from "../context-window-policy"
 import type { ConversationSummaryService } from "../conversation-summary-service"
 import { buildSystemPrompt, type SplitSystemPrompt } from "./prompt/system-prompt"
+import type { SelfKnowledge } from "./prompt/how-i-work"
 import { resolvePersonaStyleSlots } from "./config"
 import { loadTurnDigestPromptBlock } from "./turn-digests"
 import { loadEpisodeSummaryPromptBlock } from "./episode-summaries"
@@ -31,7 +34,7 @@ import { formatRecalledMemosBlock, type PreparedRecall, type RecalledMemo } from
 import { loadCrossSurfaceStitch, formatSpawnedFromContext, type CrossSurfaceStitch } from "./cross-surface-stitch"
 import { formatMessagesWithTemporal } from "./prompt/message-format"
 import { resolveQuoteReplies, renderMessageWithQuoteContext, DEFAULT_MAX_QUOTE_DEPTH } from "../quote-resolver"
-import { computeAgentAccessSpec, resolveMemoViewer } from "../researcher/access-spec"
+import { computeAgentAccessSpec, resolveMemoViewer, type AgentAccessSpec } from "../researcher/access-spec"
 import type { TurnPurpose } from "../turn-purpose"
 import { SearchRepository } from "../../search"
 import { logger } from "../../../lib/logger"
@@ -82,6 +85,8 @@ export interface ContextParams {
    * `assertStreamWritable` before the turn does any work.
    */
   invokingUserOverride?: string
+  /** The delegated model of the live subagent run this stream is the thread of, when there is one. */
+  subagentModel?: string
 }
 
 export interface AgentContext {
@@ -167,6 +172,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     followUp,
     subagentBrief,
     invokingUserOverride,
+    subagentModel,
   } = params
 
   const triggerMessage = await MessageRepository.findById(db, messageId)
@@ -217,12 +223,24 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   // (no invoking user) get `null`; downstream consumers decide how to treat it.
   let accessibleStreamIds: Set<string> | null = null
   let memoViewerUserId: string | undefined
+  let accessType: AgentAccessSpec["type"] | null = null
   if (invokingUserId) {
     const accessSpec = await computeAgentAccessSpec(db, { stream, invokingUserId })
     const ids = await SearchRepository.getAccessibleStreamsForAgent(db, accessSpec, workspaceId)
     accessibleStreamIds = new Set(ids)
     memoViewerUserId = resolveMemoViewer(accessSpec)
+    accessType = accessSpec.type
   }
+  const memoryModeStream = stream.rootStreamId ? await findMemoryModeStream(db, workspaceId, stream.id) : stream
+  const selfKnowledge: SelfKnowledge =
+    stream.e2eEnabled === true
+      ? { sealed: true }
+      : {
+          sealed: false,
+          access: accessType,
+          memoryCapture: isMemoryAutomationOn(memoryModeStream) ? "on" : "off",
+          subagentModel: subagentModel ?? null,
+        }
 
   // Recall runs beside the window build: its embedding and scoring calls are
   // the slow part, and nothing in the window depends on them.
@@ -534,6 +552,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       streamBrief: streamBrief?.content ?? null,
       styleSlots: resolvePersonaStyleSlots(persona),
       personaKnowledge,
+      selfKnowledge,
     })
     // Prior-turn digests and recalled memos are re-derived each turn, so they
     // belong outside the cached span alongside temporal grounding.
