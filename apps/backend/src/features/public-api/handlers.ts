@@ -1183,16 +1183,19 @@ export function createPublicApiHandlers({
     await recordSandboxReads(pool, req.sandboxSession, ids)
   }
 
-  async function resolveAccessibleAttachment(req: Request, attachmentId: string): Promise<Attachment> {
+  async function resolveAccessibleAttachment(
+    req: Request,
+    attachmentId: string
+  ): Promise<{ attachment: Attachment; viaStreamIds: string[] }> {
     const accessibleStreamIds = await getAccessibleStreamIds(req, { archiveStatus: ["active", "archived"] })
-    const attachment = await attachmentService.getAccessible(attachmentId, {
+    const access = await attachmentService.getAccessibleVia(attachmentId, {
       workspaceId: req.workspaceId!,
       accessibleStreamIds,
     })
-    if (!attachment || (req.sandboxSession && attachment.e2eOnly)) {
+    if (!access || (req.sandboxSession && access.attachment.e2eOnly)) {
       throw new HttpError("Attachment not found", { status: 404, code: "NOT_FOUND" })
     }
-    return attachment
+    return access
   }
 
   return {
@@ -3004,16 +3007,16 @@ export function createPublicApiHandlers({
     },
 
     async getAttachment(req: Request, res: Response) {
-      const attachment = await resolveAccessibleAttachment(req, req.params.attachmentId)
+      const { attachment, viaStreamIds } = await resolveAccessibleAttachment(req, req.params.attachmentId)
       const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, attachment.id)
-      await noteSandboxReads(req, [attachment.streamId])
+      await noteSandboxReads(req, viaStreamIds)
 
       setAuditSubjects(res, [{ type: "attachment", id: attachment.id }])
       res.json({ data: serializeAttachmentDetail(attachment, extraction) })
     },
 
     async getAttachmentDownloadUrl(req: Request, res: Response) {
-      const attachment = await resolveAccessibleAttachment(req, req.params.attachmentId)
+      const { attachment } = await resolveAccessibleAttachment(req, req.params.attachmentId)
       const data: WireAttachmentUrl = {
         url: await attachmentService.getDownloadUrl(attachment),
         expiresIn: 900,
@@ -3024,8 +3027,8 @@ export function createPublicApiHandlers({
     },
 
     async downloadAttachment(req: Request, res: Response) {
-      const attachment = await resolveAccessibleAttachment(req, req.params.attachmentId)
-      await noteSandboxReads(req, [attachment.streamId])
+      const { attachment, viaStreamIds } = await resolveAccessibleAttachment(req, req.params.attachmentId)
+      await noteSandboxReads(req, viaStreamIds)
       setAuditSubjects(res, [{ type: "attachment", id: attachment.id }])
       const object = await attachmentService.getContent(attachment)
 

@@ -58,8 +58,9 @@ export class SandboxSessionTokenService {
     return SandboxSessionTokenRepository.findLiveByHash(this.pool, hashToken(value))
   }
 
-  async revoke(workspaceId: string, id: string): Promise<void> {
-    await SandboxSessionTokenRepository.revoke(this.pool, workspaceId, id)
+  /** The streams the token served. */
+  async revoke(workspaceId: string, id: string): Promise<string[]> {
+    return SandboxSessionTokenRepository.revoke(this.pool, workspaceId, id)
   }
 }
 

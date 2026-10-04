@@ -19,6 +19,7 @@ import {
   type SandboxSessionTokenService,
   type SandboxFile,
   type SandboxReplacedReason,
+  type SandboxRunResult,
 } from "../../sandboxes"
 import { StreamRepository, getEffectiveDisplayName } from "../../streams"
 import type { WorkspaceSettingsService } from "../../workspace-settings"
@@ -120,18 +121,21 @@ export function bindStreamSandbox(
         tokenId = session.id
         return { token: value, workspaceId }
       }
-      const revoke = async () => {
-        if (tokenId) await sandbox.sessionTokens.revoke(workspaceId, tokenId)
-      }
+      const revoke = async (): Promise<string[]> => (tokenId ? sandbox.sessionTokens.revoke(workspaceId, tokenId) : [])
+      let result: SandboxRunResult
       try {
-        return await sandbox.service.run({ workspaceId, streamId, ...params, api })
-      } finally {
-        // The sandbox row already holds what the token read, so a failed revoke
-        // loses no provenance; the token still dies with its TTL.
+        result = await sandbox.service.run({ workspaceId, streamId, ...params, api })
+      } catch (error) {
         await revoke().catch((err) =>
           logger.warn({ err, workspaceId, tokenId }, "Sandbox token not revoked; it expires with its TTL")
         )
+        throw error
       }
+      // A concurrent replace resets the box's content, so what this command read
+      // survives only on its token. Output without those sources would escape the
+      // digest access check, so a failed revoke fails the command.
+      const read = await revoke()
+      return { ...result, contentStreamIds: [...new Set([...result.contentStreamIds, ...read])] }
     },
   }
 }

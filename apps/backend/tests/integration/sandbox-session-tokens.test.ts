@@ -8,7 +8,8 @@
  * - losing access mid-run removes the stream on the next call
  * - E2EE-rooted streams and their threads are never readable
  * - revoked and expired tokens stop validating
- * - reads are recorded on the token's stream's sandbox, and a revoked token or one without a sandbox records none
+ * - reads are recorded on the token and on its stream's sandbox, and a revoked token or one without a sandbox records none
+ * - the token's record survives a replace that resets the box, and revoking returns it
  * - expired rows are kept a day, then deleted
  */
 
@@ -155,7 +156,7 @@ describe("sandbox session tokens", () => {
     await expect(recordSandboxReads(pool, session, [channel])).rejects.toMatchObject({ status: 401 })
   })
 
-  test("should record the streams the token served on its stream's sandbox, once each, until revoked", async () => {
+  test("should record the streams the token served on the token and its stream's sandbox, once each, until revoked", async () => {
     await StreamSandboxRepository.insertIfAbsent(pool, {
       workspaceId: ws,
       streamId: channel,
@@ -167,11 +168,31 @@ describe("sandbox session tokens", () => {
     await recordSandboxReads(pool, session, [channel])
     await recordSandboxReads(pool, session, [nonMemberThread, channel])
 
-    await service.revoke(ws, session.id)
+    const served = await service.revoke(ws, session.id)
 
     await expect(recordSandboxReads(pool, session, [uncaptured])).rejects.toMatchObject({ status: 401 })
     const box = await StreamSandboxRepository.find(pool, ws, channel)
-    expect(box?.contentStreamIds.sort()).toEqual([channel, nonMemberThread].sort())
+    expect({ served: served.sort(), box: box?.contentStreamIds.sort() }).toEqual({
+      served: [channel, nonMemberThread].sort(),
+      box: [channel, nonMemberThread].sort(),
+    })
+  })
+
+  test("should return a command's reads at revoke even after a concurrent replace reset its box", async () => {
+    const current = await StreamSandboxRepository.find(pool, ws, channel)
+    const { session } = await mint([channel, nonMemberThread])
+    await recordSandboxReads(pool, session, [nonMemberThread])
+
+    await StreamSandboxRepository.replace(pool, {
+      workspaceId: ws,
+      streamId: channel,
+      sandboxId: "box-channel-replaced",
+      runner: "fake",
+      internet: true,
+      expectedSandboxId: current!.sandboxId,
+    })
+
+    expect(await service.revoke(ws, session.id)).toEqual([nonMemberThread])
   })
 
   test("should delete rows a day past expiry at the next mint and keep recently expired ones", async () => {

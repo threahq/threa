@@ -155,6 +155,7 @@ describe("bindStreamSandbox", () => {
           revoke: async (_ws, id) => {
             calls.push(`revoke ${id}`)
             if (params.revokeError) throw params.revokeError
+            return ["stream_3"]
           },
         },
       },
@@ -217,33 +218,44 @@ describe("bindStreamSandbox", () => {
     })
   })
 
-  test("revokes the command's token once it ends, keeping its result", async () => {
-    const result = { ...ok, contentStreamIds: ["stream_2"] }
+  test("adds what the command's token read to the box's content once it is revoked", async () => {
     const { deps, calls } = bind({
       sealed: false,
       run: async (p) => {
         await p.api!()
-        return result
+        return { ...ok, contentStreamIds: ["stream_2", "stream_3"] }
       },
     })
 
     expect({ result: await deps!.run(params), calls }).toEqual({
-      result,
+      result: { ...ok, contentStreamIds: ["stream_2", "stream_3"] },
       calls: ["run", "mint ttl=90 captured=stream_1,stream_2", "revoke sbx_1"],
     })
   })
 
-  test("keeps the output when the revoke fails: the sandbox row already holds what the token read", async () => {
+  test("cites the token's reads even when a concurrent replace reset the box", async () => {
+    const { deps } = bind({
+      sealed: false,
+      run: async (p) => {
+        await p.api!()
+        return ok
+      },
+    })
+
+    expect((await deps!.run(params)).contentStreamIds).toEqual(["stream_3"])
+  })
+
+  test("withholds the output when the reads it was built from cannot be retrieved", async () => {
     const { deps } = bind({
       sealed: false,
       revokeError: new Error("db down"),
       run: async (p) => {
         await p.api!()
-        return { ...ok, stdout: "notes" }
+        return { ...ok, stdout: "private notes" }
       },
     })
 
-    expect((await deps!.run(params)).stdout).toBe("notes")
+    await expect(deps!.run(params)).rejects.toThrow("db down")
   })
 
   test("still reports the command's own failure when its revoke also fails", async () => {

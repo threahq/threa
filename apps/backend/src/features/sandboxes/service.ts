@@ -70,8 +70,8 @@ export class SandboxService {
       signal: params.signal,
       api: params.api,
     })
-    // Reads during the command were recorded on whichever box the stream holds
-    // now; if that is no longer ours, the union still covers everything ours had.
+    // Reads during the command land on whichever box the stream holds now. A
+    // replace that reset it loses them here; the token's own record covers that.
     const after = await StreamSandboxRepository.find(this.pool, workspaceId, streamId)
     return {
       ...result,

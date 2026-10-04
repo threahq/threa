@@ -57,16 +57,18 @@ export const SandboxSessionTokenRepository = {
   },
 
   /**
-   * Records the reads on the token's stream's sandbox, so a file the command
-   * writes from them is known before any byte is served. False once the token is
-   * revoked or expired, or its stream has no sandbox: the caller must not serve
-   * the read.
+   * Records the reads on the token, which outlives a concurrent replace of the
+   * box, and on the token's stream's sandbox, so a file the command writes from
+   * them is known before any byte is served. False once the token is revoked or
+   * expired, or its stream has no sandbox: the caller must not serve the read.
    */
   async recordReads(db: Querier, workspaceId: string, id: string, streamIds: string[]): Promise<boolean> {
     const result = await db.query(sql`
       WITH token AS (
-        SELECT stream_id FROM sandbox_session_tokens
+        UPDATE sandbox_session_tokens
+        SET read_stream_ids = ARRAY(SELECT DISTINCT unnest(read_stream_ids || ${streamIds}::text[]))
         WHERE workspace_id = ${workspaceId} AND id = ${id} AND revoked_at IS NULL AND expires_at > NOW()
+        RETURNING stream_id
       )
       UPDATE stream_sandboxes
       SET content_stream_ids = ARRAY(SELECT DISTINCT unnest(content_stream_ids || ${streamIds}::text[]))
@@ -77,12 +79,15 @@ export const SandboxSessionTokenRepository = {
     return result.rows.length > 0
   },
 
-  async revoke(db: Querier, workspaceId: string, id: string): Promise<void> {
-    await db.query(sql`
+  /** The streams the token served; empty when it was already revoked. */
+  async revoke(db: Querier, workspaceId: string, id: string): Promise<string[]> {
+    const result = await db.query<{ read_stream_ids: string[] }>(sql`
       UPDATE sandbox_session_tokens
       SET revoked_at = NOW()
       WHERE workspace_id = ${workspaceId} AND id = ${id} AND revoked_at IS NULL
+      RETURNING read_stream_ids
     `)
+    return result.rows[0]?.read_stream_ids ?? []
   },
 
   async deleteExpiredBefore(db: Querier, cutoffSec: number): Promise<void> {
