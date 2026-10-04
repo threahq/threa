@@ -4,6 +4,16 @@ import SvgDefs from "../components/SvgDefs.astro"
 import ThemeToggle from "../components/ThemeToggle.astro"
 import Message from "../components/Message.astro"
 import { apiBase, loginUrl } from "../lib/config"
+import type { InstallPlatform } from "../lib/install-platform"
+
+const appHost = new URL(apiBase).host
+const installTabs: { platform: InstallPlatform; label: string }[] = [
+  { platform: "ios", label: "iPhone & iPad" },
+  { platform: "android", label: "Android" },
+  { platform: "chromium", label: "Chrome, Edge" },
+  { platform: "mac-safari", label: "Safari on Mac" },
+  { platform: "firefox", label: "Firefox" },
+]
 
 // URLs derive from astro.config.mjs's site so the @id cross-reference always
 // matches the Organization entity BaseHead emits.
@@ -643,6 +653,124 @@ const schema = [
     <p class="missing-sign">Threa is one developer's project, built in the open. <a href="/about">More about why</a>.</p>
   </div>
 </div>
+
+<!-- ============================================================
+     INSTALL — per-device steps for adding the PWA
+     The app is on another origin, so beforeinstallprompt never fires
+     here. Radios keep the tabs working without JS; panels share one
+     grid cell so switching never changes the height (INV-21).
+     ============================================================ -->
+<div class="frame" id="install">
+  <div class="memo-shell install-shell">
+    <div class="install-copy">
+      <h2>Install Threa.</h2>
+      <p class="lede">
+        There's no App Store or Play Store version. Threa is a web app. Install
+        it from your browser and it gets its own icon and opens in its own
+        window, without tabs or an address bar. On iPhone and iPad, installing
+        it is also what lets Threa send you notifications.
+      </p>
+    </div>
+
+    {installTabs.map(({ platform }, i) => (
+      <input class="install-radio" type="radio" name="install-platform" id={`install-${platform}`} value={platform} checked={i === 0} />
+    ))}
+
+    <div class="install-tabs" data-decorative>
+      {installTabs.map(({ platform, label }) => (
+        <label for={`install-${platform}`}>{label}</label>
+      ))}
+    </div>
+
+    <div class="install-panels">
+      <section class="install-panel" data-platform="ios">
+        <h3>iPhone and iPad</h3>
+        <ol class="install-steps">
+          <li>Open <a href={apiBase}>{appHost}</a> in Safari.</li>
+          <li>Tap <span class="ui">Share</span> <span class="glyph" aria-hidden="true"><svg><use href="#icon-share"/></svg></span>. If you don't see it, tap <span class="glyph"><svg aria-hidden="true"><use href="#icon-morehoriz"/></svg><span class="sr">···</span></span> next to the address bar first.</li>
+          <li>Tap <span class="ui">Add to Home Screen</span>. You may need to scroll down or tap <span class="ui">View More</span> to find it.</li>
+          <li>If you see <span class="ui">Open as Web App</span>, leave it on. Tap <span class="ui">Add</span>.</li>
+          <li>Open Threa from your Home Screen and sign in. For notifications, go to <span class="ui">Settings → Notifications</span> and tap <span class="ui">Enable push notifications</span>.</li>
+        </ol>
+        <p class="install-note">
+          Notifications need iOS 16.4 or later and only work in the app on your
+          Home Screen, not in a Safari tab. Chrome and Edge on iPhone have
+          <span class="ui">Add to Home Screen</span> in their Share menu too.
+        </p>
+      </section>
+
+      <section class="install-panel" data-platform="android">
+        <h3>Android</h3>
+        <ol class="install-steps">
+          <li>Open <a href={apiBase}>{appHost}</a> in Chrome.</li>
+          <li>Tap the menu <span class="glyph"><svg aria-hidden="true"><use href="#icon-morevert"/></svg><span class="sr">⋮</span></span> next to the address bar.</li>
+          <li>Tap <span class="ui">Add to home screen</span> or <span class="ui">Install app</span>, whichever your menu shows, then tap <span class="ui">Install</span>.</li>
+          <li>Open Threa from your home screen or app list.</li>
+        </ol>
+        <p class="install-note">
+          Once it's installed, Threa shows up in Android's share sheet, so you
+          can send it a photo, link, or file from another app. Samsung Internet,
+          Edge, and Firefox have an install option in their menus too.
+        </p>
+      </section>
+
+      <section class="install-panel" data-platform="chromium">
+        <h3>Chrome or Edge on a computer</h3>
+        <ol class="install-steps">
+          <li>Open <a href={apiBase}>{appHost}</a>.</li>
+          <li>Click <span class="ui">Install</span> <span class="glyph" aria-hidden="true"><svg><use href="#icon-install"/></svg></span> at the right end of the address bar. In Edge it's labeled <span class="ui">App available</span>.</li>
+          <li>Click <span class="ui">Install</span>.</li>
+        </ol>
+        <p class="install-note">
+          No icon in the address bar? In Chrome, open the menu
+          <span class="glyph"><svg aria-hidden="true"><use href="#icon-morevert"/></svg><span class="sr">⋮</span></span> and choose
+          <span class="ui">Cast, save, and share → Install Threa</span>. In Edge,
+          open <span class="glyph"><svg aria-hidden="true"><use href="#icon-morehoriz"/></svg><span class="sr">···</span></span> and
+          choose <span class="ui">Apps → Install Threa</span>. Threa then opens in
+          its own window and sits with your other apps in the Dock, taskbar, or
+          Start menu.
+        </p>
+      </section>
+
+      <section class="install-panel" data-platform="mac-safari">
+        <h3>Safari on a Mac</h3>
+        <ol class="install-steps">
+          <li>Open <a href={apiBase}>{appHost}</a> in Safari.</li>
+          <li>Choose <span class="ui">File → Add to Dock</span>, or click <span class="ui">Share</span> <span class="glyph" aria-hidden="true"><svg><use href="#icon-share"/></svg></span> and choose <span class="ui">Add to Dock</span>.</li>
+          <li>Click <span class="ui">Add</span>.</li>
+        </ol>
+        <p class="install-note">
+          Needs macOS Sonoma (14) or later. On older versions, install it from
+          Chrome or Edge instead.
+        </p>
+      </section>
+
+      <section class="install-panel" data-platform="firefox">
+        <h3>Firefox</h3>
+        <p class="install-lead">
+          Firefox on a computer doesn't install web apps the way Chrome, Edge,
+          and Safari do. Threa works in a regular Firefox tab, and notifications
+          arrive while Firefox is running. For a separate window with its own
+          icon, open <a href={apiBase}>{appHost}</a> in one of those browsers.
+        </p>
+        <p class="install-note">
+          Recent versions of Firefox on Windows can pin a site to the taskbar.
+          If you see <span class="ui">Add to taskbar</span>
+          <span class="glyph" aria-hidden="true"><svg><use href="#icon-install"/></svg></span> in the
+          address bar, that works too.
+        </p>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+  import { detectInstallPlatform } from "../lib/install-platform"
+
+  const platform = detectInstallPlatform(navigator.userAgent, navigator.maxTouchPoints)
+  const input = platform && document.getElementById(`install-${platform}`)
+  if (input instanceof HTMLInputElement) input.checked = true
+</script>
 
 <!-- ============================================================
      WAITLIST CTA
