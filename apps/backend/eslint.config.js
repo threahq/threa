@@ -74,6 +74,7 @@ export default [
       "src/lib/ai/message-formatter.ts",
       "src/lib/ai/message-formatter.test.ts",
       "src/lib/outbox/audiences.ts",
+      "src/lib/outbox/audiences.test.ts",
       "src/lib/outbox/broadcast-handler.ts",
       "src/lib/outbox/broadcast-handler.test.ts",
       "src/lib/outbox/repository.ts",

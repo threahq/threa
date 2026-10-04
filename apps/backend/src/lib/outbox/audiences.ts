@@ -1,22 +1,12 @@
 import type { Querier } from "../../db"
 import { listGuestViewers } from "../../features/workspaces"
-import { resolveDeliveryGroups, userGroup } from "./delivery-groups"
-import { isOneOfOutboxEventType, isOutboxEventType, type OutboxEvent } from "./repository"
+import { resolveDeliveryGroups, userGroup, workspaceUserOf } from "./delivery-groups"
+import type { OutboxEvent } from "./repository"
 
 export interface EventAudience {
   event: OutboxEvent
   /** `null` for bot-scoped events, which ride the bot namespace instead of client groups. */
   groups: string[] | null
-}
-
-function personOf(event: OutboxEvent): { workspaceId: string; userId: string } | null {
-  if (isOneOfOutboxEventType(event, ["workspace_user:added", "workspace_user:updated"])) {
-    return { workspaceId: event.payload.workspaceId, userId: event.payload.user.id }
-  }
-  if (isOutboxEventType(event, "workspace_user:removed")) {
-    return { workspaceId: event.payload.workspaceId, userId: event.payload.removedUserId }
-  }
-  return null
 }
 
 /**
@@ -31,7 +21,7 @@ export async function resolveAudiences(db: Querier, events: readonly OutboxEvent
     const groups = resolveDeliveryGroups(event)
     const audience = { event, groups }
     audiences.push(audience)
-    const person = groups === null ? null : personOf(event)
+    const person = groups === null ? null : workspaceUserOf(event)
     if (groups === null || person === null) continue
     const people = peopleByWorkspace.get(person.workspaceId) ?? []
     people.push({ audience, groups, userId: person.userId })

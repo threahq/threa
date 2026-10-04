@@ -1140,23 +1140,34 @@ export function registerWorkspaceSocketHandlers(
     }
 
     const fetchedIds = new Set(users.map((u) => u.id))
+    const now = Date.now()
+    // IDB commits before any cache sees the roster, so a failed write leaves the
+    // requested ids eligible and the caches unchanged.
+    const merged = await db.transaction("rw", db.workspaceUsers, async () => {
+      const existing = await db.workspaceUsers.where("workspaceId").equals(workspaceId).toArray()
+      const diff = diffRows(
+        byId(existing),
+        users.map((user) => ({ ...user, _cachedAt: now }))
+      )
+      const staleKeys = existing
+        .filter((row) => !fetchedIds.has(row.id))
+        .map((row): [string, string] => [workspaceId, row.id])
+      await db.workspaceUsers.bulkDelete(staleKeys)
+      await db.workspaceUsers.bulkPut(diff.toWrite)
+      return diff.merged
+    })
+    if (abortController.signal.aborted) return
+    if (cachedRoster() !== before) {
+      rosterRerun = true
+      return
+    }
+
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => withWorkspaceUsers(old, users))
+    replaceWorkspaceUsersInCache(workspaceId, merged)
     for (const id of requested) {
       rosterWanted.delete(id)
       if (!fetchedIds.has(id)) rosterUnresolved.add(id)
     }
-    const now = Date.now()
-    const cachedUsers = users.map((user) => ({ ...user, _cachedAt: now }))
-    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => withWorkspaceUsers(old, users))
-    await db.transaction("rw", db.workspaceUsers, async () => {
-      const staleKeys = await db.workspaceUsers
-        .where("workspaceId")
-        .equals(workspaceId)
-        .filter((row) => !fetchedIds.has(row.id))
-        .primaryKeys()
-      await db.workspaceUsers.bulkDelete(staleKeys)
-      await db.workspaceUsers.bulkPut(cachedUsers)
-    })
-    replaceWorkspaceUsersInCache(workspaceId, cachedUsers)
   }
 
   const refreshRoster = async (): Promise<void> => {
@@ -1777,7 +1788,12 @@ export function registerWorkspaceSocketHandlers(
       const currentUser = refs.getCurrentUser()
       const currentMember = currentUser && guestRoster.find((u) => u.workosUserId === currentUser.id)
       if (currentMember && payload.memberId === currentMember.id) startRosterRefresh()
-      else if (payload.event.actorType !== "bot") refreshRosterForUnknown(guestRoster, payload.memberId)
+      else if (payload.event.actorType !== "bot") {
+        // Joining a room the guest reads is new evidence they share it, so an
+        // earlier miss no longer stands.
+        rosterUnresolved.delete(payload.memberId)
+        refreshRosterForUnknown(guestRoster, payload.memberId)
+      }
     }
 
     // A bot joining may be a personal bot the viewer's roster doesn't hold
@@ -1875,6 +1891,7 @@ export function registerWorkspaceSocketHandlers(
 
   const handleStreamMemberJoined = (payload: { workspaceId: string; streamId: string; event: StreamEvent }) => {
     if (payload.workspaceId !== workspaceId || !payload.event.actorId) return
+    rosterUnresolved.delete(payload.event.actorId)
     refreshGuestRosterForUnknown(payload.event.actorId)
   }
 

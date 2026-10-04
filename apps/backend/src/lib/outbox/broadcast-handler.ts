@@ -209,11 +209,12 @@ export class BroadcastHandler implements OutboxHandler {
     }
 
     for (const [workspaceId, entries] of byWorkspace) {
-      const syncIds = await SyncLogRepository.appendForWorkspace(this.db, workspaceId, entries)
-      for (const [outboxEventId, syncId] of syncIds) {
+      const logged = await SyncLogRepository.appendForWorkspace(this.db, workspaceId, entries)
+      for (const [outboxEventId, { syncId, groups }] of logged) {
         const entry = routed.get(outboxEventId)
         if (entry) {
           entry.syncId = syncId
+          entry.groups = groups
         }
       }
     }

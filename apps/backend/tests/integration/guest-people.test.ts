@@ -43,6 +43,7 @@ const GUEST_PUBLIC_READERS = ["m3", "m4"]
 
 interface PlanNode {
   "Parent Relationship"?: string
+  "Relation Name"?: string
   "Actual Loops": number
   Plans?: PlanNode[]
 }
@@ -275,7 +276,7 @@ describe("guest people", () => {
     })
   })
 
-  async function planOf(scope: PeopleScope) {
+  async function planOf(run: (db: Querier) => Promise<unknown>) {
     let statement: QueryConfig | undefined
     const capture = {
       query: async (config: QueryConfig) => {
@@ -283,7 +284,7 @@ describe("guest people", () => {
         return { rows: [] }
       },
     } as unknown as Querier
-    await UserRepository.listByWorkspace(capture, wsA, scope)
+    await run(capture)
 
     const explained = await pool.query<{ "QUERY PLAN": [{ Plan: PlanNode }] }>(
       `EXPLAIN (ANALYZE, FORMAT JSON) ${statement!.text}`,
@@ -306,8 +307,8 @@ describe("guest people", () => {
     }
 
     expect({
-      member: summarize(await planOf(userScope("m1"))),
-      guest: summarize(await planOf(userScope("guest"))),
+      member: summarize(await planOf((db) => UserRepository.listByWorkspace(db, wsA, userScope("m1")))),
+      guest: summarize(await planOf((db) => UserRepository.listByWorkspace(db, wsA, userScope("guest")))),
     }).toEqual({
       member: { hasSubplans: true, anyExecuted: false },
       guest: { hasSubplans: true, anyExecuted: true },
@@ -363,6 +364,47 @@ describe("guest people", () => {
       m8: ["guest"],
       guest: [],
     })
+  })
+
+  test("should not scan anyone's streams when the workspace has no guests", async () => {
+    const nodesOf = (node: PlanNode): PlanNode[] => [node, ...(node.Plans ?? []).flatMap(nodesOf)]
+    const messageScansRan = async (workspace: string) => {
+      const plan = await planOf((db) => listGuestViewers(db, workspace, [ids.m6]))
+      return nodesOf(plan).some((node) => node["Relation Name"] === "messages" && node["Actual Loops"] > 0)
+    }
+
+    expect({ withGuests: await messageScansRan(wsA), withoutGuests: await messageScansRan(wsB) }).toEqual({
+      withGuests: true,
+      withoutGuests: false,
+    })
+  })
+
+  test("should take browse from the role mirror over users.role when naming guests", async () => {
+    const [mirroredGuest, mirroredMember] = [userId(), userId()]
+    const room = streamId()
+    for (const [id, role, roleSlugs] of [
+      [mirroredGuest, "member", ["guest"]],
+      [mirroredMember, "guest", ["member"]],
+    ] as const) {
+      await pool.query(
+        `INSERT INTO users (id, workspace_id, workos_user_id, email, role, slug, name) VALUES ($1, $2, $3, $4, $5, $1, $1)`,
+        [id, wsA, `workos_${id}`, `${id}@example.com`, role]
+      )
+      await pool.query(
+        `INSERT INTO workspace_user_permissions (workspace_id, workos_user_id, role_slugs, status, last_event_at)
+         VALUES ($1, $2, $3, 'active', NOW())`,
+        [wsA, `workos_${id}`, roleSlugs]
+      )
+    }
+    await insertStream(wsA, { id: room, visibility: Visibilities.PRIVATE, members: ["m1"] })
+    await pool.query(
+      `INSERT INTO stream_members (workspace_id, stream_id, member_id) VALUES ($1, $2, $3), ($1, $2, $4)`,
+      [wsA, room, mirroredGuest, mirroredMember]
+    )
+
+    const guests = (await listGuestViewers(pool, wsA, [ids.m1])).get(ids.m1) ?? []
+
+    expect([...guests].sort()).toEqual([ids.guest2, mirroredGuest].sort())
   })
 
   test("should still name the guests of a user once the user row is removed", async () => {

@@ -142,14 +142,15 @@ describe("SyncLogReconciliationWorker", () => {
     }
   })
 
-  test("should deliver a rescued workspace user event to the guests who read with that user", async () => {
+  test("should deliver a rescued workspace user event only to the guests who read with that user", async () => {
     const workspaceId = uniqueId("ws")
     const streamId = uniqueId("stream")
-    const [alice, bob, guest] = [uniqueId("usr"), uniqueId("usr"), uniqueId("usr")]
+    const [alice, bob, guest, outsider] = [uniqueId("usr"), uniqueId("usr"), uniqueId("usr"), uniqueId("usr")]
     for (const [id, role] of [
       [alice, "member"],
       [bob, "member"],
       [guest, "guest"],
+      [outsider, "guest"],
     ]) {
       await pool.query(
         `INSERT INTO users (id, workspace_id, workos_user_id, email, role, slug, name) VALUES ($1, $2, NULL, NULL, $3, $1, $1)`,

@@ -153,13 +153,14 @@ export class SyncLogReconciliationWorker {
     }
 
     for (const [workspaceId, entries] of byWorkspace) {
-      const assigned = await SyncLogRepository.appendForWorkspace(
+      const logged = await SyncLogRepository.appendForWorkspace(
         this.pool,
         workspaceId,
         entries.map((e) => e.entry)
       )
       for (const { event, entry } of entries) {
-        emitToGroups(this.io, event, entry.groups, assigned.get(event.id))
+        const record = logged.get(event.id)
+        emitToGroups(this.io, event, record?.groups ?? entry.groups, record?.syncId)
       }
 
       logger.warn(

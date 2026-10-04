@@ -6032,7 +6032,7 @@ describe("a guest's people roster refresh (real IndexedDB)", () => {
     cleanup()
   })
 
-  it("should not request the roster again for an id the last refresh left out", async () => {
+  it("should not request the roster again when an id the last refresh left out posts again", async () => {
     const hidden = person("usr_hidden")
     const other = person("usr_other")
     const later = person("usr_later")
@@ -6042,13 +6042,53 @@ describe("a guest's people roster refresh (real IndexedDB)", () => {
     emit("stream:activity", activity(hidden.id))
     await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, other])))
     emit("stream:activity", activity(hidden.id))
-    emit("stream:member_joined", memberJoined(hidden.id))
-    emit("stream:member_added", memberAdded(hidden.id))
     expect(listUsers).toHaveBeenCalledTimes(1)
 
     emit("stream:activity", activity(later.id))
     await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, other, later])))
     expect(listUsers).toHaveBeenCalledTimes(2)
+    cleanup()
+  })
+
+  it.each([
+    ["joins", "stream:member_joined", () => memberJoined("usr_hidden")],
+    ["is added to", "stream:member_added", () => memberAdded("usr_hidden")],
+  ])(
+    "should request the roster again when an id the last refresh left out %s a stream the guest reads",
+    async (_name, event, payload) => {
+      const hidden = person("usr_hidden")
+      listUsers.mockResolvedValueOnce([self]).mockResolvedValueOnce([self, hidden])
+      const { emit, cleanup } = register(GUEST_PERMISSIONS)
+
+      emit("stream:activity", activity(hidden.id))
+      await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self])))
+      emit(event, payload())
+
+      await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, hidden])))
+      expect(listUsers).toHaveBeenCalledTimes(2)
+      cleanup()
+    }
+  )
+
+  it("should leave every cache unchanged and request again when writing the roster fails", async () => {
+    const newcomer = person("usr_new")
+    listUsers.mockResolvedValue([self, newcomer])
+    const bulkPut = vi.spyOn(db.workspaceUsers, "bulkPut").mockRejectedValueOnce(new Error("quota exceeded"))
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
+    const { emit, cleanup, bootstrapUsers } = register(GUEST_PERMISSIONS)
+
+    emit("stream:activity", activity(newcomer.id))
+    await vi.waitFor(() => expect(consoleError).toHaveBeenCalled())
+    expect({ users: bootstrapUsers(), stored: await storedUsers() }).toEqual({ users: [self], stored: [] })
+    emit("stream:activity", activity(newcomer.id))
+
+    await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, newcomer])))
+    expect({ requests: listUsers.mock.calls.length, users: bootstrapUsers() }).toEqual({
+      requests: 2,
+      users: [self, newcomer],
+    })
+    bulkPut.mockRestore()
+    consoleError.mockRestore()
     cleanup()
   })
 
