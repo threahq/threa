@@ -125,14 +125,24 @@ export async function upsertLoadedDraft(
   scope: string,
   fields: DraftFields,
   seal?: DraftSealContext,
-  opts?: { observedResolveSeq?: number; expectedDraftId?: undefined; createIfMissing?: boolean }
+  opts?: {
+    observedResolveSeq?: number
+    expectedDraftId?: undefined
+    createIfMissing?: boolean
+    onPointerClaimed?: (draftId: string) => void
+  }
 ): Promise<CachedDraft>
 export async function upsertLoadedDraft(
   workspaceId: string,
   scope: string,
   fields: DraftFields,
   seal?: DraftSealContext,
-  opts?: { observedResolveSeq?: number; expectedDraftId?: string | null; createIfMissing?: boolean }
+  opts?: {
+    observedResolveSeq?: number
+    expectedDraftId?: string | null
+    createIfMissing?: boolean
+    onPointerClaimed?: (draftId: string) => void
+  }
 ): Promise<CachedDraft | null>
 export async function upsertLoadedDraft(
   workspaceId: string,
@@ -166,6 +176,13 @@ export async function upsertLoadedDraft(
      * resurrect deleted content, so the save is dropped (null) instead.
      */
     createIfMissing?: boolean
+    /**
+     * Runs after this save claimed the scope's pointer for a row it created and
+     * BEFORE the store announces it. The announcement re-renders the composer
+     * synchronously, and a composer whose identity is still null there reads its
+     * own create as a foreign draft arriving.
+     */
+    onPointerClaimed?: (draftId: string) => void
   }
 ): Promise<CachedDraft | null> {
   // The save's target identity is re-validated INSIDE the write transaction:
@@ -335,6 +352,7 @@ export async function upsertLoadedDraft(
     if (outcome === "conflict") continue
     if (outcome === "dropped") return row
     if (wrotePointer) {
+      opts?.onPointerClaimed?.(row.id)
       upsertLoadedDraftInCache(workspaceId, row, scope)
     } else {
       upsertDraftInCache(workspaceId, row)
@@ -936,6 +954,11 @@ export function useDraftMessage(
         debounceRef.current = null
       }
       pendingSaveRef.current = null
+      // Read at CALL time, not when the chain reaches this save: a save still
+      // queued behind a slow predecessor when the send resolves the scope carries
+      // pre-send content, and reading the sequence only once it runs would see
+      // the bumped value and recreate the sent text as a draft.
+      const observedResolveSeq = getScopeResolveSeq(workspaceId, draftKey)
       return chainWrite(async () => {
         // The row this content belongs to. An explicit NON-NULL argument (the
         // debounced save's arm-time id, a repoint flush, a minted detach id) wins;
@@ -974,11 +997,6 @@ export function useDraftMessage(
         if (options?.keepEmpty && effectiveTarget === null && (await getLoadedDraftId(workspaceId, draftKey)) === null)
           return null
 
-        // The scope's resolve sequence as this save begins. If a resolve-on-send
-        // advances it before the create below runs, this save is a stale echo of
-        // the just-sent content and `upsertLoadedDraft` drops its create.
-        const observedResolveSeq = getScopeResolveSeq(workspaceId, draftKey)
-
         const gate = e2eGateRef.current
         if (gate.enabled) {
           // E2EE-4: seal before disk, and only while unlocked. Locked → keep the
@@ -1003,12 +1021,17 @@ export function useDraftMessage(
               draftKey,
               { contentJson, attachments: finalAttachments },
               { senderId: gate.senderId, streamId: gate.streamId },
-              { observedResolveSeq, expectedDraftId: effectiveTarget, createIfMissing: mintedDetachedId }
+              {
+                observedResolveSeq,
+                expectedDraftId: effectiveTarget,
+                createIfMissing: mintedDetachedId,
+                onPointerClaimed: advanceIdentity,
+              }
             )
-            if (!saved) return null
+            if (!saved || isStaleObservedResolve(workspaceId, draftKey, observedResolveSeq)) return null
             advanceIdentity(saved.id)
             syncEngine?.kickOperationQueue()
-            return isStaleObservedResolve(workspaceId, draftKey, observedResolveSeq) ? null : saved
+            return saved
           } catch (err) {
             // A failed seal (e.g. the session locked between the gate check and the
             // seal) must never interrupt the user — the content stands in the composer.
@@ -1044,12 +1067,17 @@ export function useDraftMessage(
           draftKey,
           { contentJson, attachments: finalAttachments, contextRefs: finalContextRefs },
           undefined,
-          { observedResolveSeq, expectedDraftId: effectiveTarget, createIfMissing: mintedDetachedId }
+          {
+            observedResolveSeq,
+            expectedDraftId: effectiveTarget,
+            createIfMissing: mintedDetachedId,
+            onPointerClaimed: advanceIdentity,
+          }
         )
-        if (!saved) return null
+        if (!saved || isStaleObservedResolve(workspaceId, draftKey, observedResolveSeq)) return null
         advanceIdentity(saved.id)
         syncEngine?.kickOperationQueue()
-        return isStaleObservedResolve(workspaceId, draftKey, observedResolveSeq) ? null : saved
+        return saved
       })
     },
     [draftKey, workspaceId, syncEngine, contentDraftId, chainWrite]
@@ -1145,7 +1173,7 @@ export function useDraftMessage(
               draftKey,
               { contentJson: body, attachments: [...currentSealed, attachment] },
               { senderId: gate.senderId, streamId: gate.streamId },
-              { expectedDraftId: effectiveTarget, createIfMissing: mintedDetachedId }
+              { expectedDraftId: effectiveTarget, createIfMissing: mintedDetachedId, onPointerClaimed: advanceIdentity }
             )
             if (!saved) return
             advanceIdentity(saved.id)
@@ -1174,7 +1202,7 @@ export function useDraftMessage(
             contextRefs: currentDraft?.contextRefs,
           },
           undefined,
-          { expectedDraftId: effectiveTarget, createIfMissing: mintedDetachedId }
+          { expectedDraftId: effectiveTarget, createIfMissing: mintedDetachedId, onPointerClaimed: advanceIdentity }
         )
         if (!saved) return
         advanceIdentity(saved.id)
