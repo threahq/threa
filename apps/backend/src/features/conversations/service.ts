@@ -237,9 +237,9 @@ class StaleMessagePlacementError extends Error {}
 export class ConversationService {
   constructor(private pool: Pool) {}
 
-  async getById(conversationId: string): Promise<ConversationWithStaleness | null> {
+  async getById(workspaceId: string, conversationId: string): Promise<ConversationWithStaleness | null> {
     // Single query, INV-30
-    const conversation = await ConversationRepository.findById(this.pool, conversationId)
+    const conversation = await ConversationRepository.findById(this.pool, workspaceId, conversationId)
     if (!conversation) return null
     return addStalenessFields(conversation)
   }
@@ -249,7 +249,12 @@ export class ConversationService {
     streamId: string,
     options?: ListConversationsOptions
   ): Promise<StreamConversation[]> {
-    const conversations = await ConversationRepository.findByStreamIncludingThreads(this.pool, streamId, options)
+    const conversations = await ConversationRepository.findByStreamIncludingThreads(
+      this.pool,
+      workspaceId,
+      streamId,
+      options
+    )
     const settlingByConversation = await MessageConversationStateRepository.listSettlingByConversationIds(
       this.pool,
       workspaceId,
@@ -299,8 +304,8 @@ export class ConversationService {
    * mirroring the board feed's `cardinality(message_ids) > 0` filter).
    */
   async getBoardPostById(workspaceId: string, conversationId: string, userId: string): Promise<BoardPost | null> {
-    const conversation = await ConversationRepository.findById(this.pool, conversationId)
-    if (!conversation || conversation.workspaceId !== workspaceId || conversation.messageIds.length === 0) return null
+    const conversation = await ConversationRepository.findById(this.pool, workspaceId, conversationId)
+    if (!conversation || conversation.messageIds.length === 0) return null
     const [post] = await this.buildBoardPosts(workspaceId, [addStalenessFields(conversation)], userId)
     return post ?? null
   }
@@ -511,8 +516,8 @@ export class ConversationService {
    * the revealed middle messages read exactly like the opening + recent run.
    */
   async getBoardMessages(workspaceId: string, conversationId: string): Promise<BoardPostMessage[]> {
-    const conversation = await ConversationRepository.findById(this.pool, conversationId)
-    if (!conversation || conversation.workspaceId !== workspaceId || conversation.messageIds.length === 0) return []
+    const conversation = await ConversationRepository.findById(this.pool, workspaceId, conversationId)
+    if (!conversation || conversation.messageIds.length === 0) return []
     const messagesMap = await MessageRepository.findByIds(this.pool, workspaceId, conversation.messageIds)
     const ordered = conversation.messageIds.map((id) => messagesMap.get(id)).filter((m): m is Message => Boolean(m))
     const hydratedById = await this.hydrateBoardMessages(workspaceId, ordered)
@@ -531,7 +536,7 @@ export class ConversationService {
 
   async getMessages(workspaceId: string, conversationId: string): Promise<Message[]> {
     return withClient(this.pool, async (client) => {
-      const conversation = await ConversationRepository.findById(client, conversationId)
+      const conversation = await ConversationRepository.findById(client, workspaceId, conversationId)
       if (!conversation || conversation.messageIds.length === 0) return []
 
       const messagesMap = await MessageRepository.findByIds(client, workspaceId, conversation.messageIds)
@@ -561,8 +566,8 @@ export class ConversationService {
       let attemptedStreamId: string | null = null
       try {
         return await withTransaction(this.pool, async (client) => {
-          const target = await ConversationRepository.findById(client, conversationId)
-          if (!target || target.workspaceId !== workspaceId) {
+          const target = await ConversationRepository.findById(client, workspaceId, conversationId)
+          if (!target) {
             throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
           }
 
@@ -739,8 +744,8 @@ export class ConversationService {
       let attemptedStreamId: string | null = null
       try {
         return await withTransaction(this.pool, async (client) => {
-          const conversation = await ConversationRepository.findById(client, conversationId)
-          if (!conversation || conversation.workspaceId !== workspaceId) {
+          const conversation = await ConversationRepository.findById(client, workspaceId, conversationId)
+          if (!conversation) {
             throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
           }
 
@@ -805,8 +810,8 @@ export class ConversationService {
   }): Promise<{ conversation: ConversationWithStaleness; deferred: false }> {
     const { workspaceId, conversationId } = params
     return withTransaction(this.pool, async (client) => {
-      const snapshot = await ConversationRepository.findById(client, conversationId)
-      if (!snapshot || snapshot.workspaceId !== workspaceId) {
+      const snapshot = await ConversationRepository.findById(client, workspaceId, conversationId)
+      if (!snapshot) {
         throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
       }
       await assertStreamWritable(client, {
@@ -899,8 +904,8 @@ export class ConversationService {
   }): Promise<{ conversation: ConversationWithStaleness }> {
     const { workspaceId, conversationId, topicSummary, status, actorUserId } = params
     return withTransaction(this.pool, async (client) => {
-      const snapshot = await ConversationRepository.findById(client, conversationId)
-      if (!snapshot || snapshot.workspaceId !== workspaceId) {
+      const snapshot = await ConversationRepository.findById(client, workspaceId, conversationId)
+      if (!snapshot) {
         throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
       }
       if (!actorUserId) throw new Error("actorUserId is required for conversation mutation")
@@ -974,8 +979,8 @@ export class ConversationService {
     const { workspaceId, conversationId, threadStreamId, actorUserId } = params
 
     return withTransaction(this.pool, async (client) => {
-      const snapshot = await ConversationRepository.findById(client, conversationId)
-      if (!snapshot || snapshot.workspaceId !== workspaceId) {
+      const snapshot = await ConversationRepository.findById(client, workspaceId, conversationId)
+      if (!snapshot) {
         throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
       }
       await assertStreamsWritable(client, {
@@ -1076,8 +1081,8 @@ export class ConversationService {
       )
 
       // Re-read both rows post-write so the aggregate events carry final membership.
-      const newConversation = await ConversationRepository.findById(client, newId)
-      const updatedSource = await ConversationRepository.findById(client, source.id)
+      const newConversation = await ConversationRepository.findById(client, workspaceId, newId)
+      const updatedSource = await ConversationRepository.findById(client, workspaceId, source.id)
       if (!newConversation || !updatedSource) {
         // A row we just wrote vanished under our own transaction — fail loud (INV-11).
         throw new Error(`Conversation vanished during split of ${source.id}`)
@@ -1252,7 +1257,7 @@ export class ConversationService {
       if (moveIds.length === 0) {
         if (destination) {
           // Existing target: a legitimate no-op (everything already lives there).
-          const fresh = await ConversationRepository.findById(client, destination.id)
+          const fresh = await ConversationRepository.findById(client, workspaceId, destination.id)
           if (!fresh) throw new Error(`Conversation ${destination.id} disappeared during reassignment`)
           return { conversation: addStalenessFields(fresh), sourceConversations: [] }
         }
@@ -1788,8 +1793,8 @@ export class ConversationService {
     targetMessageId: string,
     direction: "read" | "unread"
   ): Promise<Array<[string, string[]]>> {
-    const conversation = await ConversationRepository.findById(client, conversationId)
-    if (!conversation || conversation.workspaceId !== workspaceId) {
+    const conversation = await ConversationRepository.findById(client, workspaceId, conversationId)
+    if (!conversation) {
       throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
     }
 

@@ -1191,8 +1191,8 @@ export function createPublicApiHandlers({
    * cross-workspace id is a 404.
    */
   async function resolveAccessibleConversation(req: Request, conversationId: string): Promise<Conversation> {
-    const conversation = await ConversationRepository.findById(pool, conversationId)
-    if (!conversation || conversation.workspaceId !== req.workspaceId) {
+    const conversation = await ConversationRepository.findById(pool, req.workspaceId!, conversationId)
+    if (!conversation) {
       throw new HttpError("Conversation not found", { status: 404, code: "NOT_FOUND" })
     }
     await assertStreamAccessible(req, conversation.streamId)

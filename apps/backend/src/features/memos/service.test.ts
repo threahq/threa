@@ -399,7 +399,7 @@ describe("MemoService.processBatch — settle gate (active conversations defer u
 
   it("defers an active conversation touched moments ago instead of memorizing mid-debate", async () => {
     const { service } = setupService({ memoContents: [memoContent] })
-    spyOn(ConversationRepository, "findById").mockResolvedValue({
+    const findConversation = spyOn(ConversationRepository, "findById").mockResolvedValue({
       ...fakeConversation(),
       status: "active",
       lastActivityAt: new Date(),
@@ -410,6 +410,7 @@ describe("MemoService.processBatch — settle gate (active conversations defer u
     const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
     expect(result).toEqual({ processed: 0, memosCreated: 0 })
+    expect(findConversation).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, CONVERSATION_ID)
     expect(insert).not.toHaveBeenCalled()
     // The deferred item stays unprocessed so the next batch cycle retries it.
     expect(markProcessed).not.toHaveBeenCalled()

@@ -94,7 +94,8 @@ function setup(options?: {
 
   const source = options?.source ?? makeConversation()
   spyOn(ConversationRepository, "findByIdForUpdate").mockResolvedValue(source)
-  spyOn(ConversationRepository, "findById").mockImplementation(async (_c: unknown, id: string) => {
+  spyOn(ConversationRepository, "findById").mockImplementation(async (_c: unknown, workspaceId: string, id: string) => {
+    if (workspaceId !== WORKSPACE_ID) return null
     if (id === source.id) {
       return makeConversation({
         id: source.id,

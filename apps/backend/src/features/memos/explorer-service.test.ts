@@ -3,6 +3,7 @@ import type { Pool } from "pg"
 import { MemoExplorerService } from "./explorer-service"
 import { MemoRepository, type Memo } from "./repository"
 import { MessageRepository } from "../messaging"
+import { ConversationRepository } from "../conversations"
 import { AgentSessionRepository, PersonaRepository } from "../agents"
 import { StreamRepository, type Stream } from "../streams"
 import * as dbModule from "../../db"
@@ -223,6 +224,23 @@ describe("MemoExplorerService.getById (roadmap 6.1)", () => {
 
     expect(result).toBeNull()
     expect(findById.mock.calls.map((c) => c.slice(1))).toEqual([[WORKSPACE_ID, MEMO_ID]])
+  })
+
+  it("resolves a conversation-sourced memo's source stream through the memo's own workspace", async () => {
+    const { service } = buildService()
+    stubSourceStreamResolution()
+    spyOn(MemoRepository, "findById").mockResolvedValue(
+      fakeMemo({ memoType: "conversation", sourceMessageId: null, sourceConversationId: "conv_1" })
+    )
+    const findConversation = spyOn(ConversationRepository, "findById").mockResolvedValue({
+      id: "conv_1",
+      streamId: STREAM_ID,
+    } as never)
+
+    const result = await service.getById(WORKSPACE_ID, MEMO_ID, ACCESS)
+
+    expect(result?.memo.id).toBe(MEMO_ID)
+    expect(findConversation).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "conv_1")
   })
 
   it("returns archived memos (status is no longer gated) with a successor link when superseded", async () => {

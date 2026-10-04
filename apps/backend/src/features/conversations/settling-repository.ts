@@ -137,7 +137,8 @@ export const MessageConversationStateRepository = {
         AND mcs.created_at < ${createdBefore}
         AND NOT (mcs.message_id = ANY(${keepMessageIds}::text[]))
         AND m.id = mcs.message_id
-        AND m.sequence < (SELECT MIN(mw.sequence) FROM messages mw WHERE mw.id = ANY(${keepMessageIds}::text[]) AND mw.stream_id = ${streamId})
+        AND m.workspace_id = ${workspaceId}
+        AND m.sequence < (SELECT MIN(mw.sequence) FROM messages mw WHERE mw.workspace_id = ${workspaceId} AND mw.id = ANY(${keepMessageIds}::text[]) AND mw.stream_id = ${streamId})
       RETURNING mcs.message_id, mcs.workspace_id, mcs.stream_id, mcs.conversation_id, mcs.state, mcs.settled_by, mcs.settled_at
     `)
     return result.rows.map(mapRow)
@@ -181,13 +182,12 @@ export const MessageConversationStateRepository = {
   ): Promise<SettlingRow[]> {
     if (messageIds.length === 0) return []
     if (settledBy === "user") {
-      // `stream_id` comes from the message itself — `messages` carries no
-      // workspace_id, so the workspace scope (INV-8) rides the literal below.
       const upserted = await db.query<SettlingDbRow>(sql`
         INSERT INTO message_conversation_state (message_id, workspace_id, stream_id, conversation_id, state, settled_by, settled_at)
         SELECT m.id, ${workspaceId}, m.stream_id, ${conversationId}, 'settled', 'user', NOW()
         FROM messages m
         WHERE m.id = ANY(${messageIds}::text[])
+          AND m.workspace_id = ${workspaceId}
         ON CONFLICT (message_id) DO UPDATE
         SET conversation_id = EXCLUDED.conversation_id,
             state = 'settled',
@@ -257,11 +257,12 @@ export const MessageConversationStateRepository = {
 
   /** Sweep backstop: settle everything that has been settling longer than `olderThanSeconds`. */
   async settleOlderThan(db: Querier, olderThanSeconds: number, limit: number): Promise<SettlingRow[]> {
+    // eslint-disable-next-line threa/workspace-scoped-sql -- the settle backstop covers every workspace
     const result = await db.query<SettlingDbRow>(sql`
       UPDATE message_conversation_state
       SET state = 'settled', settled_by = 'llm-window', settled_at = NOW(), updated_at = NOW()
-      WHERE message_id IN (
-        SELECT message_id FROM message_conversation_state
+      WHERE (workspace_id, message_id) IN (
+        SELECT workspace_id, message_id FROM message_conversation_state
         WHERE state = 'settling'
           AND created_at < NOW() - (${olderThanSeconds}::int * INTERVAL '1 second')
         ORDER BY created_at ASC
