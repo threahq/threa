@@ -1,4 +1,5 @@
 export { createWorkspaceHandlers, createWorkspaceSchema } from "./handlers"
+export { createWorkspaceTierSyncHandlers } from "./tier-sync-handlers"
 export { WorkspaceService } from "./service"
 export type { CreateWorkspaceParams } from "./service"
 export { WorkspaceRepository } from "./repository"

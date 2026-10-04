@@ -8,6 +8,7 @@ import {
   type WebSearchEngine,
 } from "@threahq/agent-runtime/runtime"
 import type { AgentRuntimeAI } from "@threahq/agent-runtime/runtime"
+import type { CostContext } from "@threahq/agent-runtime"
 import type { ToolPrivacyCategory } from "@threahq/types"
 import type { LanguageModel } from "ai"
 import { createEnclaveReadAttachmentTool, type EnclaveAttachmentStore } from "./attachment-tool"
@@ -32,6 +33,7 @@ export interface EnclaveToolDeps {
   model: LanguageModel
   /** Bare model id (no `openrouter:` prefix) the loop forwards as `modelString`. */
   modelString: string
+  costContext: CostContext
   /** Engines for `web_search`; when empty, web search is unavailable. */
   webSearchEngines?: WebSearchEngine[]
   /** Invocation time, used to ground recency-sensitive web searches. */
@@ -88,7 +90,7 @@ export function buildEnclaveTools(deps: EnclaveToolDeps): AgentTool[] {
     runGeneralResearch: (query, { signal, onSubstep, deadlineAt }) =>
       runGeneralResearch(
         { ai: deps.ai, model: deps.model, modelString: deps.modelString },
-        { query, tools: webTools(), signal, deadlineAt, onSubstep }
+        { query, tools: webTools(), costContext: deps.costContext, signal, deadlineAt, onSubstep }
       ),
   })
 

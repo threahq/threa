@@ -123,7 +123,7 @@ export interface TurnRequest {
   maxIterations?: number
   initialContext?: AgentRuntimeConfig["initialContext"]
   telemetry?: AgentRuntimeConfig["telemetry"]
-  costContext?: CostContext
+  costContext: CostContext
   allowNoMessageOutput?: boolean
   validateFinalResponse?: AgentRuntimeConfig["validateFinalResponse"]
   /**

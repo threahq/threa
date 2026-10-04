@@ -29,6 +29,7 @@ const keyPair = {
 
 const ASSIGNMENT = {
   sessionId: "session_test",
+  workspaceId: "ws_test",
   streamId: "stream_x",
   callbackToken: "cbtok_1",
   wraps: [{ keyGeneration: 0, wrapEnc: "ZW5j", wrapCt: "Y3Q=" }],

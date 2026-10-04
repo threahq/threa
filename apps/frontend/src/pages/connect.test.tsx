@@ -18,6 +18,7 @@ function makeWorkspace(id: string, name: string): Workspace {
     id,
     name,
     slug: name.toLowerCase(),
+    tier: "full",
     createdBy: "user_1",
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",

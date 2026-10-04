@@ -32,8 +32,10 @@ import {
   ControlPlaneWorkspaceService,
   OUTBOX_KV_SYNC,
   OUTBOX_REGIONAL_CREATE,
+  OUTBOX_WORKSPACE_TIER_SYNC,
   type KvSyncPayload,
   type RegionalCreatePayload,
+  type WorkspaceTierSyncPayload,
 } from "./features/workspaces"
 import { InvitationShadowService } from "./features/invitation-shadows"
 import {
@@ -423,6 +425,9 @@ async function dispatchEvent(
       break
     case OUTBOX_KV_SYNC:
       await deps.workspaceService.syncToKv(payload as KvSyncPayload)
+      break
+    case OUTBOX_WORKSPACE_TIER_SYNC:
+      await deps.workspaceService.syncTierToRegion(payload as WorkspaceTierSyncPayload)
       break
     case OUTBOX_AUTHZ_MEMBERSHIP_CHANGED:
       await deps.authzFanOut.handleMembershipChanged(payload as AuthzMembershipChangedPayload)

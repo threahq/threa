@@ -86,8 +86,8 @@ export interface AgentRuntimeConfig {
   maxIterations?: number
   observers?: AgentObserver[]
   telemetry?: { functionId: string; metadata?: Record<string, TelemetryMetadataValue> }
-  /** Cost context forwarded to every AI call the runtime makes (enables usage recording). */
-  costContext?: CostContext
+  /** Cost context forwarded to every AI call the runtime makes. */
+  costContext: CostContext
 
   /**
    * Terminal action — sends a message to the conversation.

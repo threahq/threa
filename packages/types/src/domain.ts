@@ -56,6 +56,7 @@ import type {
   VideoPreviewType,
   VideoPreviewProvider,
   BotRuntimeKind,
+  WorkspaceTier,
   BotRuntimeSessionLinkStatus,
   BotRuntimeStatus,
   BotInvocationStatus,
@@ -75,6 +76,7 @@ export interface Workspace {
   name: string
   slug: string
   region?: string
+  tier: WorkspaceTier
   createdBy: string
   createdAt: string
   updatedAt: string

@@ -82,6 +82,7 @@ Evaluate the actual output against the expected output and criteria.`
 
       try {
         const { value } = await ctx.ai.generateObject({
+          context: { workspaceId: ctx.workspaceId, userId: ctx.userId },
           model: ctx.judgeModel ?? model,
           schema: judgeResponseSchema,
           messages: [

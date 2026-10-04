@@ -9,6 +9,8 @@ import {
   parseTurnDigestStepContent,
 } from "./turn-digest"
 
+const TEST_COST_CONTEXT = { workspaceId: "ws_test" }
+
 const MODEL = "stub" as unknown as LanguageModel
 
 function stubAI(findingsText: string): { ai: AgentRuntimeAI; seen: Array<{ system?: string; user: string }> } {
@@ -157,6 +159,7 @@ describe("generateTurnDigest", () => {
   it("assembles deterministic fields from records and the model's findings prose", async () => {
     const { ai, seen } = stubAI("The tides are caused by the moon's gravity.")
     const digest = await generateTurnDigest({
+      context: TEST_COST_CONTEXT,
       ai,
       model: MODEL,
       modelString: "stub/model",
@@ -220,7 +223,12 @@ describe("generateTurnDigest", () => {
     })
 
     const { ai } = stubAI("Found the thing.")
-    const digest = await generateTurnDigest({ ai, model: MODEL, records: collector.records })
+    const digest = await generateTurnDigest({
+      context: TEST_COST_CONTEXT,
+      ai,
+      model: MODEL,
+      records: collector.records,
+    })
 
     expect(digest).toEqual({
       findings: "Found the thing.",
@@ -232,7 +240,7 @@ describe("generateTurnDigest", () => {
 
   it("returns null with no records and never calls the model", async () => {
     const { ai, seen } = stubAI("unused")
-    const digest = await generateTurnDigest({ ai, model: MODEL, records: [] })
+    const digest = await generateTurnDigest({ context: TEST_COST_CONTEXT, ai, model: MODEL, records: [] })
     expect(digest).toBeNull()
     expect(seen).toHaveLength(0)
   })
@@ -240,6 +248,7 @@ describe("generateTurnDigest", () => {
   it("returns null when the model produces no usable text", async () => {
     const { ai } = stubAI("   \n  ")
     const digest = await generateTurnDigest({
+      context: TEST_COST_CONTEXT,
       ai,
       model: MODEL,
       records: [{ toolName: "web_search", content: "results", sources: [], provenanceStreamIds: [] }],
@@ -250,6 +259,7 @@ describe("generateTurnDigest", () => {
   it("clips overlong findings", async () => {
     const { ai } = stubAI("x".repeat(5000))
     const digest = await generateTurnDigest({
+      context: TEST_COST_CONTEXT,
       ai,
       model: MODEL,
       records: [{ toolName: "web_search", content: "results", sources: [], provenanceStreamIds: [] }],

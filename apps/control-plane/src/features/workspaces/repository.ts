@@ -1,10 +1,12 @@
 import type { Querier } from "@threahq/backend-common"
+import type { WorkspaceTier } from "@threahq/types"
 
 export interface WorkspaceRegistryRow {
   id: string
   name: string
   slug: string
   region: string
+  tier: WorkspaceTier
   created_by_workos_user_id: string
   workos_organization_id: string | null
   created_at: Date
@@ -20,7 +22,7 @@ export interface WorkspaceMembershipRow {
 export const WorkspaceRegistryRepository = {
   async findById(db: Querier, id: string): Promise<WorkspaceRegistryRow | null> {
     const result = await db.query<WorkspaceRegistryRow>(
-      `SELECT id, name, slug, region, created_by_workos_user_id, workos_organization_id, created_at, updated_at
+      `SELECT id, name, slug, region, tier, created_by_workos_user_id, workos_organization_id, created_at, updated_at
        FROM workspace_registry WHERE id = $1`,
       [id]
     )
@@ -34,7 +36,7 @@ export const WorkspaceRegistryRepository = {
   async findByIds(db: Querier, ids: string[]): Promise<WorkspaceRegistryRow[]> {
     if (ids.length === 0) return []
     const result = await db.query<WorkspaceRegistryRow>(
-      `SELECT id, name, slug, region, created_by_workos_user_id, workos_organization_id, created_at, updated_at
+      `SELECT id, name, slug, region, tier, created_by_workos_user_id, workos_organization_id, created_at, updated_at
        FROM workspace_registry WHERE id = ANY($1::text[])`,
       [ids]
     )
@@ -47,7 +49,7 @@ export const WorkspaceRegistryRepository = {
     id: string
   ): Promise<(WorkspaceRegistryRow & { member_count: number }) | null> {
     const result = await db.query<WorkspaceRegistryRow & { member_count: string }>(
-      `SELECT wr.id, wr.name, wr.slug, wr.region, wr.created_by_workos_user_id, wr.workos_organization_id,
+      `SELECT wr.id, wr.name, wr.slug, wr.region, wr.tier, wr.created_by_workos_user_id, wr.workos_organization_id,
               wr.created_at, wr.updated_at,
               COALESCE(COUNT(wm.workspace_id), 0)::text AS member_count
        FROM workspace_registry wr
@@ -105,7 +107,7 @@ export const WorkspaceRegistryRepository = {
    */
   async listAllWithMemberCounts(db: Querier): Promise<Array<WorkspaceRegistryRow & { member_count: number }>> {
     const result = await db.query<WorkspaceRegistryRow & { member_count: string }>(
-      `SELECT wr.id, wr.name, wr.slug, wr.region, wr.created_by_workos_user_id, wr.workos_organization_id,
+      `SELECT wr.id, wr.name, wr.slug, wr.region, wr.tier, wr.created_by_workos_user_id, wr.workos_organization_id,
               wr.created_at, wr.updated_at,
               COALESCE(COUNT(wm.workspace_id), 0)::text AS member_count
        FROM workspace_registry wr
@@ -160,7 +162,7 @@ export const WorkspaceRegistryRepository = {
 
   async listByUser(db: Querier, workosUserId: string): Promise<WorkspaceRegistryRow[]> {
     const result = await db.query<WorkspaceRegistryRow>(
-      `SELECT wr.id, wr.name, wr.slug, wr.region, wr.created_by_workos_user_id, wr.workos_organization_id, wr.created_at, wr.updated_at
+      `SELECT wr.id, wr.name, wr.slug, wr.region, wr.tier, wr.created_by_workos_user_id, wr.workos_organization_id, wr.created_at, wr.updated_at
        FROM workspace_registry wr
        JOIN workspace_memberships wm ON wm.workspace_id = wr.id
        WHERE wm.workos_user_id = $1
@@ -179,7 +181,7 @@ export const WorkspaceRegistryRepository = {
 
   async findBySlug(db: Querier, slug: string): Promise<WorkspaceRegistryRow | null> {
     const result = await db.query<WorkspaceRegistryRow>(
-      `SELECT id, name, slug, region, created_by_workos_user_id, workos_organization_id, created_at, updated_at
+      `SELECT id, name, slug, region, tier, created_by_workos_user_id, workos_organization_id, created_at, updated_at
        FROM workspace_registry WHERE slug = $1`,
       [slug]
     )
@@ -201,10 +203,16 @@ export const WorkspaceRegistryRepository = {
     const result = await db.query<WorkspaceRegistryRow>(
       `INSERT INTO workspace_registry (id, name, slug, region, created_by_workos_user_id)
        VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, name, slug, region, created_by_workos_user_id, workos_organization_id, created_at, updated_at`,
+       RETURNING id, name, slug, region, tier, created_by_workos_user_id, workos_organization_id, created_at, updated_at`,
       [workspace.id, workspace.name, workspace.slug, workspace.region, workspace.createdByWorkosUserId]
     )
     return result.rows[0]
+  },
+
+  /** False when no such workspace exists. */
+  async updateTier(db: Querier, id: string, tier: WorkspaceTier): Promise<boolean> {
+    const result = await db.query("UPDATE workspace_registry SET tier = $2 WHERE id = $1", [id, tier])
+    return (result.rowCount ?? 0) > 0
   },
 
   async deleteById(db: Querier, id: string): Promise<void> {

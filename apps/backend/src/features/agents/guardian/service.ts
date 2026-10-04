@@ -54,7 +54,7 @@ export interface ToolGuardianTurn {
    * tools, since every one of them requires an invoking user.
    */
   invokingUserId?: string
-  costContext?: CostContext
+  costContext: CostContext
 }
 
 function truncate(text: string, max: number): string {
@@ -255,7 +255,7 @@ export class ToolGuardianService implements ToolGuardian {
           sessionId: this.turn.sessionId,
         },
       },
-      context: this.turn.costContext ?? { workspaceId: this.turn.workspaceId, origin: "system" },
+      context: this.turn.costContext,
     })
 
     logger.info(
@@ -356,7 +356,7 @@ async function requestAuthorizationBelief(
         sessionId: turn.sessionId,
       },
     },
-    context: turn.costContext ?? { workspaceId: turn.workspaceId, origin: "system" },
+    context: turn.costContext,
   })
   return noulAnswer(result, "authorized")
 }

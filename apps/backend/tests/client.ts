@@ -155,6 +155,7 @@ export interface Workspace {
   id: string
   name: string
   slug: string
+  tier: string
 }
 
 export interface Stream {

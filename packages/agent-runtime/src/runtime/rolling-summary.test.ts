@@ -9,6 +9,8 @@ import {
 } from "./rolling-summary"
 import type { AgentRuntimeAI } from "./agent-runtime"
 
+const TEST_COST_CONTEXT = { workspaceId: "ws_test" }
+
 const MODEL = {} as unknown as LanguageModel
 
 function stubAI(text: string) {
@@ -26,6 +28,7 @@ describe("foldRollingSummary", () => {
   it("folds the dropped segment into the prior summary and returns the trimmed text", async () => {
     const { ai, generateTextWithTools } = stubAI("  Merged running memory.  ")
     const result = await foldRollingSummary({
+      context: TEST_COST_CONTEXT,
       ai,
       model: MODEL,
       modelString: "openrouter:anthropic/claude-haiku-4.5",
@@ -46,6 +49,7 @@ describe("foldRollingSummary", () => {
   it("treats an empty prior summary as a fresh start", async () => {
     const { ai, generateTextWithTools } = stubAI("First memory.")
     await foldRollingSummary({
+      context: TEST_COST_CONTEXT,
       ai,
       model: MODEL,
       existingSummary: "",
@@ -59,6 +63,7 @@ describe("foldRollingSummary", () => {
   it("clamps an over-long fold result to the shared bound", async () => {
     const { ai } = stubAI("x".repeat(ROLLING_SUMMARY_MAX_CHARS + 500))
     const result = await foldRollingSummary({
+      context: TEST_COST_CONTEXT,
       ai,
       model: MODEL,
       existingSummary: "",

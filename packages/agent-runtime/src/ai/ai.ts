@@ -67,7 +67,7 @@ export interface AccessLogSink {
     functionId: string
     provider: string
     modelId: string
-    context?: CostContext
+    context: CostContext
     metadata?: Record<string, unknown>
   }): void | Promise<void>
 }
@@ -77,9 +77,9 @@ export interface AIConfig {
   defaults?: {
     repair?: RepairFunction
   }
-  /** When provided, usage will be recorded after each AI call (requires context in options) */
+  /** When provided, usage will be recorded after each AI call */
   costRecorder?: CostRecorder
-  /** When provided, every call carrying a context is admitted or denied before it reaches the provider */
+  /** When provided, every call is admitted or denied before it reaches the provider */
   spendGate?: SpendGate
   /** When provided, a `disclose` access-log row is emitted for each AI call (design §7.3) */
   accessLogSink?: AccessLogSink
@@ -181,8 +181,8 @@ export interface GenerateTextOptions {
   temperature?: number
   reasoningEffort?: ReasoningEffort
   telemetry?: TelemetryConfig
-  /** When provided, usage will be recorded to the database */
-  context?: CostContext
+  /** Charged to this workspace: the spend gate admits the call and usage is recorded against it */
+  context: CostContext
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
 }
@@ -212,8 +212,8 @@ export interface GenerateTextWithToolsOptions {
   maxTokens?: number
   temperature?: number
   telemetry?: TelemetryConfig
-  /** When provided with `modelString`, usage will be recorded to the database */
-  context?: CostContext
+  /** Charged to this workspace: the spend gate admits the call; usage is recorded when `modelString` is also given */
+  context: CostContext
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
   /**
@@ -260,8 +260,8 @@ export interface GenerateObjectOptions<T extends z.ZodType> {
   /** Set to false to disable repair, or provide custom repair function */
   repair?: RepairFunction | false
   telemetry?: TelemetryConfig
-  /** When provided, usage will be recorded to the database */
-  context?: CostContext
+  /** Charged to this workspace: the spend gate admits the call and usage is recorded against it */
+  context: CostContext
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
 }
@@ -276,8 +276,8 @@ export interface GenerateDecisionsOptions {
   state: unknown
   questions: Record<string, DecisionQuestion>
   telemetry?: TelemetryConfig
-  /** When provided, usage will be recorded to the database */
-  context?: CostContext
+  /** Charged to this workspace: the spend gate admits the call and usage is recorded against it */
+  context: CostContext
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
 }
@@ -286,8 +286,8 @@ export interface EmbedOptions {
   model: string
   value: string
   telemetry?: TelemetryConfig
-  /** When provided, usage will be recorded to the database */
-  context?: CostContext
+  /** Charged to this workspace: the spend gate admits the call and usage is recorded against it */
+  context: CostContext
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
 }
@@ -296,8 +296,8 @@ export interface EmbedManyOptions {
   model: string
   values: string[]
   telemetry?: TelemetryConfig
-  /** When provided, usage will be recorded to the database */
-  context?: CostContext
+  /** Charged to this workspace: the spend gate admits the call and usage is recorded against it */
+  context: CostContext
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
 }
@@ -694,12 +694,9 @@ export function createAI(config: AIConfig): AI {
     }
   }
 
-  /**
-   * Denies before the provider sees the request. Calls without a context carry
-   * no workspace to charge, so there is nothing to admit them against.
-   */
-  async function admit(context: CostContext | undefined, functionId: string): Promise<void> {
-    if (!config.spendGate || !context) return
+  /** Denies before the provider sees the request. */
+  async function admit(context: CostContext, functionId: string): Promise<void> {
+    if (!config.spendGate) return
     const request = { workspaceId: context.workspaceId, userId: context.userId, functionId }
     const decision = await config.spendGate.admit(request)
     if (decision.allowed) return
@@ -729,7 +726,7 @@ export function createAI(config: AIConfig): AI {
    * happened, so it records with provider/model `unknown` rather than dropping.
    */
   function maybeDisclose(params: {
-    context?: CostContext
+    context: CostContext
     functionId: string
     modelString?: string
     metadata?: Record<string, unknown>
@@ -765,14 +762,14 @@ export function createAI(config: AIConfig): AI {
   }
 
   async function maybeRecordUsage(params: {
-    context?: CostContext
+    context: CostContext
     functionId: string
     modelString: string
     usage: UsageWithCost
     latencyMs?: number
     metadata?: Record<string, unknown>
   }): Promise<void> {
-    if (!config.costRecorder || !params.context) return
+    if (!config.costRecorder) return
 
     const parsed = parseModelId(params.modelString)
 

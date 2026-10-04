@@ -15,6 +15,7 @@ function stub(result: RawChatResult): { fn: RawChatFn; seen: RawChatRequest[] } 
 }
 
 const MODEL = "anthropic/claude-sonnet-4.6" as unknown as LanguageModel
+const CONTEXT = { workspaceId: "ws_test", sessionId: "session_test" }
 
 describe("createEnclaveAI", () => {
   it("forwards modelString + converted messages and maps a text reply", async () => {
@@ -28,6 +29,7 @@ describe("createEnclaveAI", () => {
 
     const result = await ai.generateTextWithTools({
       model: MODEL,
+      context: CONTEXT,
       modelString: "anthropic/claude-sonnet-4.6",
       system: "sys",
       messages: [{ role: "user", content: "capital of France?" }],
@@ -59,6 +61,7 @@ describe("createEnclaveAI", () => {
 
     const result = await ai.generateTextWithTools({
       model: MODEL,
+      context: CONTEXT,
       modelString: "m",
       messages: [{ role: "user", content: "say hi" }],
     })
@@ -81,6 +84,7 @@ describe("createEnclaveAI", () => {
 
     await ai.generateTextWithTools({
       model: MODEL,
+      context: CONTEXT,
       modelString: "m",
       messages: [{ role: "user", content: "hi" }],
       abortSignal: controller.signal,
@@ -97,7 +101,12 @@ describe("createEnclaveAI", () => {
     })
     const usage: UsageAccumulator = { promptTokens: 0, completionTokens: 0, cost: 0 }
     const ai = createEnclaveAI(chat.fn, usage)
-    const opts = { model: MODEL, modelString: "m", messages: [{ role: "user" as const, content: "hi" }] }
+    const opts = {
+      model: MODEL,
+      context: CONTEXT,
+      modelString: "m",
+      messages: [{ role: "user" as const, content: "hi" }],
+    }
     await ai.generateTextWithTools(opts)
     await ai.generateTextWithTools(opts)
     expect(usage).toEqual({ promptTokens: 8, completionTokens: 4, cost: 0.5 })
@@ -113,6 +122,7 @@ describe("createEnclaveAI cache breakpoints", () => {
 
     await ai.generateTextWithTools({
       model: MODEL,
+      context: CONTEXT,
       modelString: "anthropic/claude-sonnet-4.6",
       system: "stable",
       volatileSystem: "## Current Time\n\n10:00",
@@ -134,6 +144,7 @@ describe("createEnclaveAI cache breakpoints", () => {
 
     await ai.generateTextWithTools({
       model: MODEL,
+      context: CONTEXT,
       modelString: "openai/gpt-5-mini",
       system: "stable",
       messages: [{ role: "user", content: "hi" }],

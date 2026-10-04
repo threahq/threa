@@ -10,6 +10,8 @@ import {
   type DecisionsResult,
 } from "./decisions"
 
+const TEST_COST_CONTEXT = { workspaceId: "ws_test" }
+
 /** Captured from a real `/api/alpha/decisions` call (typesafe/jev-1.13, 2026-09-18). */
 const RESPONSE_BODY = {
   model: "typesafe/jev-1.13-20260917",
@@ -66,6 +68,7 @@ describe("generateDecisions", () => {
     try {
       const ai = createAI({ openrouter: { apiKey: "test-key" } })
       const result = await ai.generateDecisions({
+        context: TEST_COST_CONTEXT,
         model: "openrouter:typesafe/jev-1.13",
         state: STATE,
         questions: QUESTIONS,
@@ -155,6 +158,7 @@ describe("generateDecisions", () => {
     try {
       const ai = createAI({ openrouter: { apiKey: "test-key" } })
       const call = ai.generateDecisions({
+        context: TEST_COST_CONTEXT,
         model: "openrouter:typesafe/jev-1.13",
         state: STATE,
         questions: QUESTIONS,
@@ -191,6 +195,7 @@ describe("generateDecisions", () => {
     try {
       const ai = createAI({ openrouter: { apiKey: "test-key" } })
       const call = ai.generateDecisions({
+        context: TEST_COST_CONTEXT,
         model: "openrouter:typesafe/jev-1.13",
         state: STATE,
         questions: QUESTIONS,
@@ -236,6 +241,7 @@ describe("generateDecisions", () => {
     try {
       const ai = createAI({ openrouter: { apiKey: "test-key" } })
       const result = await ai.generateDecisions({
+        context: TEST_COST_CONTEXT,
         model: "openrouter:typesafe/jev-1.13",
         state: STATE,
         questions: QUESTIONS,

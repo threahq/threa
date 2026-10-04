@@ -90,6 +90,7 @@ async function runGuardianTask(input: ToolGuardianInput, ctx: EvalContext): Prom
       personaId: "persona_eval_guardian",
       sessionId: "session_eval_guardian",
       invokingUserId: GUARDIAN_EVAL_PRINCIPAL,
+      costContext: { workspaceId: ctx.workspaceId, userId: ctx.userId },
     }
   )
 

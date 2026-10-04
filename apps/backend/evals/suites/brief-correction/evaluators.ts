@@ -105,6 +105,7 @@ export const briefContentEvaluator: Evaluator<BriefCorrectionOutput, BriefCorrec
     let value: z.infer<typeof briefJudgeSchema>
     try {
       ;({ value } = await ctx.ai.generateObject({
+        context: { workspaceId: ctx.workspaceId, userId: ctx.userId },
         model: BRIEF_JUDGE_MODEL,
         schema: briefJudgeSchema,
         messages: [

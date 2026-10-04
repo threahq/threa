@@ -313,6 +313,7 @@ export async function runEnclaveTurn(
   // provider we deliberately don't use.
   const ai = createEnclaveAI(rawChat, usage)
   const model = request.model as unknown as LanguageModel
+  const costContext = { workspaceId: request.workspaceId, sessionId: request.sessionId }
 
   // Seal every trace step under the current (reply) generation and stream it
   // back. The backend stores ciphertext under the enclave-minted step id.
@@ -334,6 +335,7 @@ export async function runEnclaveTurn(
     ai,
     model,
     modelString: request.model,
+    costContext,
     webSearchEngines: tools?.webSearchEngines,
     currentTime: tools?.currentTime,
     timezone: tools?.timezone,
@@ -375,6 +377,7 @@ export async function runEnclaveTurn(
     delivery: TurnDeliveries.SEALED,
     model,
     modelString: request.model,
+    costContext,
     systemPrompt: stableSystem,
     volatileSystemPrompt: volatileSystem,
     messages,
@@ -472,6 +475,7 @@ export async function runEnclaveTurn(
         ai,
         model,
         modelString: request.model,
+        context: costContext,
         records: digestCollector.records,
         replyText: lastReplyText ?? undefined,
       })
@@ -601,6 +605,7 @@ export async function runEnclaveTurn(
           ai,
           model,
           modelString: request.model,
+          context: costContext,
           existingSummary: summary,
           newMessages: batch.map(toRollingSummaryMessage),
         })

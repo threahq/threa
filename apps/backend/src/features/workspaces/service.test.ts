@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import type { PoolClient } from "pg"
+import { WORKSPACE_TIERS } from "@threahq/types"
 import { WorkspaceService } from "./service"
 import { UserRepository } from "./user-repository"
 import { UserApiKeyRepository } from "../user-api-keys"
@@ -29,6 +30,7 @@ describe("WorkspaceService.createWorkspace invite gating", () => {
     id: "ws_1",
     name: "Test Workspace",
     slug: "test-workspace",
+    tier: WORKSPACE_TIERS.FULL,
     createdBy: "usr_1",
     createdAt: new Date(),
     updatedAt: new Date(),

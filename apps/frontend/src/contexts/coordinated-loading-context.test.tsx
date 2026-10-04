@@ -927,7 +927,15 @@ describe("CoordinatedLoadingProvider store publication", () => {
     const now = new Date().toISOString()
     bootstrapBase = {
       ...makeWorkspaceBootstrap(),
-      workspace: { id: WS, name: "CLP", slug: "clp", createdBy: "user_1", createdAt: now, updatedAt: now },
+      workspace: {
+        id: WS,
+        name: "CLP",
+        slug: "clp",
+        tier: "full",
+        createdBy: "user_1",
+        createdAt: now,
+        updatedAt: now,
+      },
       users: [
         {
           id: "user_1",

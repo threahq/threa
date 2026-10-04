@@ -1,3 +1,4 @@
+import type { WorkspaceTier } from "@threahq/types"
 import type { Querier } from "../../db"
 import { sql } from "../../db"
 
@@ -5,6 +6,7 @@ interface WorkspaceRow {
   id: string
   name: string
   slug: string
+  tier: WorkspaceTier
   created_by: string
   created_at: Date
   updated_at: Date
@@ -14,6 +16,7 @@ export interface Workspace {
   id: string
   name: string
   slug: string
+  tier: WorkspaceTier
   createdBy: string
   createdAt: Date
   updatedAt: Date
@@ -31,6 +34,7 @@ function mapRowToWorkspace(row: WorkspaceRow): Workspace {
     id: row.id,
     name: row.name,
     slug: row.slug,
+    tier: row.tier,
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -40,7 +44,7 @@ function mapRowToWorkspace(row: WorkspaceRow): Workspace {
 export const WorkspaceRepository = {
   async findById(db: Querier, id: string): Promise<Workspace | null> {
     const result = await db.query<WorkspaceRow>(sql`
-      SELECT id, name, slug, created_by, created_at, updated_at
+      SELECT id, name, slug, tier, created_by, created_at, updated_at
       FROM workspaces WHERE id = ${id}
     `)
     return result.rows[0] ? mapRowToWorkspace(result.rows[0]) : null
@@ -48,7 +52,7 @@ export const WorkspaceRepository = {
 
   async findBySlug(db: Querier, slug: string): Promise<Workspace | null> {
     const result = await db.query<WorkspaceRow>(sql`
-      SELECT id, name, slug, created_by, created_at, updated_at
+      SELECT id, name, slug, tier, created_by, created_at, updated_at
       FROM workspaces WHERE slug = ${slug}
     `)
     return result.rows[0] ? mapRowToWorkspace(result.rows[0]) : null
@@ -58,7 +62,7 @@ export const WorkspaceRepository = {
     const result = await db.query<WorkspaceRow>(
       // eslint-disable-next-line threa/workspace-scoped-sql -- the WorkOS identity discovers every workspace it belongs to
       sql`
-        SELECT w.id, w.name, w.slug, w.created_by, w.created_at, w.updated_at
+        SELECT w.id, w.name, w.slug, w.tier, w.created_by, w.created_at, w.updated_at
         FROM workspaces w
         JOIN users u ON u.workspace_id = w.id
         WHERE u.workos_user_id = ${filters.workosUserId}
@@ -72,7 +76,7 @@ export const WorkspaceRepository = {
     const result = await db.query<WorkspaceRow>(sql`
       INSERT INTO workspaces (id, name, slug, created_by)
       VALUES (${params.id}, ${params.name}, ${params.slug}, ${params.createdBy})
-      RETURNING id, name, slug, created_by, created_at, updated_at
+      RETURNING id, name, slug, tier, created_by, created_at, updated_at
     `)
     return mapRowToWorkspace(result.rows[0])
   },
@@ -95,5 +99,12 @@ export const WorkspaceRepository = {
     await db.query(sql`
       UPDATE workspaces SET workos_organization_id = ${orgId} WHERE id = ${workspaceId}
     `)
+  },
+  /** False when no such workspace exists. */
+  async updateTier(db: Querier, workspaceId: string, tier: WorkspaceTier): Promise<boolean> {
+    const result = await db.query(sql`
+      UPDATE workspaces SET tier = ${tier} WHERE id = ${workspaceId}
+    `)
+    return (result.rowCount ?? 0) > 0
   },
 }

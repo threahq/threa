@@ -13,6 +13,8 @@ import {
 // Import fixture data captured from real OpenRouter API calls (2026-01-06)
 import fixtures from "./fixtures/openrouter-responses.json"
 
+const TEST_COST_CONTEXT = { workspaceId: "ws_test" }
+
 describe("parseModelId", () => {
   it("should parse openrouter model with nested path", () => {
     const result = parseModelId("openrouter:anthropic/claude-haiku-4.5")
@@ -254,11 +256,13 @@ describe("generation reasoning and usage", () => {
     try {
       const ai = createAI({ openrouter: { apiKey: "test-key" } })
       await ai.generateText({
+        context: TEST_COST_CONTEXT,
         model: "openrouter:openai/gpt-5.6-luna",
         messages: [{ role: "user", content: "test" }],
         reasoningEffort: "medium",
       })
       await ai.generateText({
+        context: TEST_COST_CONTEXT,
         model: "openrouter:openai/gpt-5.6-luna",
         messages: [{ role: "user", content: "test" }],
       })
@@ -281,6 +285,7 @@ describe("generation reasoning and usage", () => {
     try {
       const ai = createAI({ openrouter: { apiKey: "test-key" } })
       await ai.generateObject({
+        context: TEST_COST_CONTEXT,
         model: "openrouter:openai/gpt-5.6-luna",
         schema: z.object({ answer: z.string() }),
         messages: [{ role: "user", content: "test" }],
@@ -442,7 +447,11 @@ describe("GPT-6 Luna Responses", () => {
         messages: [{ role: "user", content: "hi" }],
         context: { workspaceId: "ws_1" },
       })
-      await ai.generateText({ model: "openrouter:openai/gpt-5-mini", messages: [{ role: "user", content: "hi" }] })
+      await ai.generateText({
+        context: TEST_COST_CONTEXT,
+        model: "openrouter:openai/gpt-5-mini",
+        messages: [{ role: "user", content: "hi" }],
+      })
       expect({ value: result.value, usage: result.usage, events, paths: requests.map((r) => r.path) }).toEqual({
         value: "hello",
         usage: {
@@ -453,7 +462,7 @@ describe("GPT-6 Luna Responses", () => {
           reasoningTokens: 3,
           cost: 0.000042,
         },
-        events: ["admit", "disclose", "fetch", "record", "disclose", "fetch"],
+        events: ["admit", "disclose", "fetch", "record", "admit", "disclose", "fetch", "record"],
         paths: ["https://openrouter.ai/api/v1/chat/completions", "https://openrouter.ai/api/v1/chat/completions"],
       })
       expect(requests.map((r) => ({ model: r.body.model, store: r.body.store, reasoning: r.body.reasoning }))).toEqual([
@@ -515,16 +524,18 @@ describe("GPT-6 Luna Responses", () => {
       const ai = createAI({ openrouter: { apiKey: "test-key" } })
       const model = ai.getLanguageModel(modelString)
       await expect(
-        ai.generateTextWithTools({ model, messages: [{ role: "user", content: "find x" }] })
+        ai.generateTextWithTools({ context: TEST_COST_CONTEXT, model, messages: [{ role: "user", content: "find x" }] })
       ).rejects.toThrow("require modelString")
       const tools = { lookup: tool({ inputSchema: z.object({ query: z.string() }), execute: async () => "result x" }) }
       const first = await ai.generateTextWithTools({
+        context: TEST_COST_CONTEXT,
         model,
         modelString,
         messages: [{ role: "user", content: "find x" }],
         tools,
       })
       const second = await ai.generateTextWithTools({
+        context: TEST_COST_CONTEXT,
         model,
         modelString,
         messages: [{ role: "user", content: "find x" }, ...first.response.messages],

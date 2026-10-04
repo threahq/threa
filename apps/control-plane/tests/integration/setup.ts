@@ -10,16 +10,22 @@ import path from "path"
 import { Pool } from "pg"
 import { createDatabasePool, runMigrations } from "@threahq/backend-common"
 
-const ADMIN_DATABASE_URL = "postgresql://threa:threa@localhost:5454/postgres"
-const TEST_DATABASE_URL = "postgresql://threa:threa@localhost:5454/threa_control_plane_test"
+const DEFAULT_TEST_DATABASE_URL = "postgresql://threa:threa@localhost:5454/threa_control_plane_test"
 const MIGRATIONS_GLOB = path.resolve(import.meta.dirname, "../../src/db/migrations/*.sql")
 
+function effectiveTestDatabaseUrl(): string {
+  return process.env.TEST_DATABASE_URL ?? DEFAULT_TEST_DATABASE_URL
+}
+
 export async function ensureTestDatabaseExists(): Promise<void> {
-  const adminPool = new Pool({ connectionString: ADMIN_DATABASE_URL })
+  const url = new URL(effectiveTestDatabaseUrl())
+  const databaseName = decodeURIComponent(url.pathname.slice(1))
+  url.pathname = "/postgres"
+  const adminPool = new Pool({ connectionString: url.toString() })
   try {
-    const result = await adminPool.query("SELECT 1 FROM pg_database WHERE datname = 'threa_control_plane_test'")
+    const result = await adminPool.query("SELECT 1 FROM pg_database WHERE datname = $1", [databaseName])
     if (result.rows.length === 0) {
-      await adminPool.query("CREATE DATABASE threa_control_plane_test")
+      await adminPool.query(`CREATE DATABASE "${databaseName.replaceAll('"', '""')}"`)
     }
   } finally {
     await adminPool.end()
@@ -27,7 +33,7 @@ export async function ensureTestDatabaseExists(): Promise<void> {
 }
 
 export function createTestPool(): Pool {
-  return createDatabasePool(process.env.TEST_DATABASE_URL ?? TEST_DATABASE_URL)
+  return createDatabasePool(effectiveTestDatabaseUrl())
 }
 
 export async function setupTestDatabase(): Promise<Pool> {

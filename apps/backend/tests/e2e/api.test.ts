@@ -123,6 +123,8 @@ describe("API E2E Tests", () => {
 
       const bootstrap = await getWorkspaceBootstrap(client, workspace.id)
 
+      expect(bootstrap.workspace.tier).toBe("full")
+
       // Should include the logged-in user as a workspace user
       expect(bootstrap.users).toBeInstanceOf(Array)
       expect(bootstrap.users.length).toBeGreaterThan(0)

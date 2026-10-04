@@ -60,6 +60,7 @@ export const sessionAssignmentSchema = z
      * whose every callback 403s.
      */
     callbackToken: z.string().min(1),
+    workspaceId: z.string().min(1),
     streamId: z.string().min(1),
     /** One SSK wrap per generation referenced by `history`/`prompt`, addressed to this EIK. */
     wraps: z

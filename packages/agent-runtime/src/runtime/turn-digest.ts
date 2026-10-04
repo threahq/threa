@@ -98,7 +98,7 @@ export interface GenerateTurnDigestParams {
   replyText?: string
   telemetry?: { functionId: string; metadata?: Record<string, TelemetryMetadataValue> }
   /** Cost attribution for the backend's AI wrapper; the enclave ignores it (usage accumulates in its transport). */
-  context?: CostContext
+  context: CostContext
 }
 
 /**
