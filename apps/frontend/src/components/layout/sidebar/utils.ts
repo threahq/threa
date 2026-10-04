@@ -6,6 +6,8 @@ import {
   type AuthorType,
   type JSONContent,
   type StreamWithPreview,
+  isOpenVisibility,
+  type Visibility,
 } from "@threahq/types"
 import { createDmDraftId } from "@/hooks/use-stream-or-draft"
 import { stripMarkdownToInline, truncateInline } from "@/lib/markdown"
@@ -74,7 +76,7 @@ interface SidebarVisibilityStream {
   id: string
   archivedAt: string | null
   rootStreamId: string | null
-  visibility: string
+  visibility: Visibility
 }
 
 /**
@@ -94,7 +96,7 @@ export function isSidebarStreamVisible(
 ): boolean {
   if (hiddenStreamIds.has(stream.id)) return false
   if (stream.archivedAt || sealedStreamIds.has(stream.id)) return false
-  if (stream.visibility !== Visibilities.PUBLIC) return true
+  if (!isOpenVisibility(stream.visibility)) return true
   return memberStreamIds.has(stream.id)
 }
 

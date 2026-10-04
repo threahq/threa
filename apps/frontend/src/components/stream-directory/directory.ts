@@ -1,4 +1,4 @@
-import { StreamTypes, type StreamType, type Visibility } from "@threahq/types"
+import { StreamTypes, type StreamType, type Visibility, isOpenVisibility } from "@threahq/types"
 import { collectSealedStreamIds, hiddenStreamIds, isUtilityStream } from "@/lib/streams"
 import { getActivityTime } from "@/components/layout/sidebar/utils"
 
@@ -93,7 +93,7 @@ export function buildDirectoryRows<S extends DirectoryStream>({
     const member = memberStreamIds.has(stream.id)
     if (membership === "joined" && !member) continue
     if (membership === "not-joined" && member) continue
-    const joinable = !archived && stream.type === StreamTypes.CHANNEL && stream.visibility === "public" && !member
+    const joinable = !archived && stream.type === StreamTypes.CHANNEL && isOpenVisibility(stream.visibility) && !member
     rows.push({ stream, name, member, joinable })
   }
   const byActivity = (a: DirectoryRow<S>, b: DirectoryRow<S>) => getActivityTime(b.stream) - getActivityTime(a.stream)

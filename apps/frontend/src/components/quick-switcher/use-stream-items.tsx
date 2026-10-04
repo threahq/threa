@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Hash, Plus, X, Archive } from "lucide-react"
-import { StreamTypes, draftStreamScope, getAvatarUrl } from "@threahq/types"
+import { StreamTypes, draftStreamScope, getAvatarUrl, isOpenVisibility } from "@threahq/types"
 import type { Stream, StreamType } from "@threahq/types"
 import { getStreamName, streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { streamsApi } from "@/api"
@@ -222,7 +222,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
       const typeLabel = getStreamTypeLabel(stream.type)
       // Threads carry no member rows (INV-62), so "Not joined" would be true of all.
       const isThread = stream.type === StreamTypes.THREAD
-      const notJoined = !isThread && !memberStreamIds.has(stream.id) && stream.visibility === "public"
+      const notJoined = !isThread && !memberStreamIds.has(stream.id) && isOpenVisibility(stream.visibility)
       const parentLabel = isThread ? parentLabelFor(stream) : null
       let description = parentLabel ? `${typeLabel} · in ${parentLabel}` : typeLabel
       if (isArchived) description = `${description} · Archived`

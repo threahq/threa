@@ -42,6 +42,14 @@ describe("buildDirectoryRows", () => {
     ])
   })
 
+  it("should mark an unjoined guest_public channel joinable like a public one when the viewer is not a member", () => {
+    const rows = build([stream("stream_public"), stream("stream_guest_public", { visibility: "guest_public" })])
+    expect(rows).toEqual([
+      { id: "stream_public", joinable: true },
+      { id: "stream_guest_public", joinable: true },
+    ])
+  })
+
   it("should never list asides, threads inside asides, or utility streams", () => {
     const rows = build([
       stream("stream_joined"),

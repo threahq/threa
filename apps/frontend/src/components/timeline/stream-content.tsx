@@ -69,7 +69,6 @@ import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/
 import { ErrorView } from "@/components/error-view"
 import {
   StreamTypes,
-  Visibilities,
   type Stream,
   type StreamEvent,
   type StreamMember,
@@ -83,6 +82,7 @@ import {
   type DecisionResolvedEventPayload,
   type CallEndedEventPayload,
   type UnreadOpenPosition,
+  isOpenVisibility,
 } from "@threahq/types"
 import {
   EventList,
@@ -2371,7 +2371,7 @@ export function StreamContent({
   }, [lastReadEventId, readCommitQueue, streamId])
 
   const queryClient = useQueryClient()
-  const isPublicChannel = stream?.type === StreamTypes.CHANNEL && stream?.visibility === Visibilities.PUBLIC
+  const isOpenChannel = !!stream && stream.type === StreamTypes.CHANNEL && isOpenVisibility(stream.visibility)
   const isMember = !!membership
   const membershipResolved = currentWorkspaceUserId !== null || bootstrap !== undefined
   let disabledReason: string | undefined
@@ -3144,7 +3144,7 @@ export function StreamContent({
                       </div>
                     </AlertDialogContent>
                   </AlertDialog>
-                  {membershipResolved && !isMember && isPublicChannel && (
+                  {membershipResolved && !isMember && isOpenChannel && (
                     <div className="absolute inset-x-0 bottom-0 z-10">
                       <JoinChannelBar
                         workspaceId={workspaceId}
@@ -3155,7 +3155,7 @@ export function StreamContent({
                       />
                     </div>
                   )}
-                  {(isMember || !isPublicChannel || !membershipResolved) && (
+                  {(isMember || !isOpenChannel || !membershipResolved) && (
                     <MessageInput
                       workspaceId={workspaceId}
                       streamId={streamId}

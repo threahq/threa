@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest"
 import { renderHook } from "@testing-library/react"
-import { StreamTypes, type StreamType } from "@threahq/types"
+import { StreamTypes, Visibilities, type StreamType } from "@threahq/types"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import { createMockStream } from "@/test/fixtures"
 import { isPostableStream } from "@/lib/board-post-target"
@@ -63,5 +63,32 @@ describe("useStreamPickerGroups", () => {
     const { result } = renderHook(() => useStreamPickerGroups("workspace_1", { search: "gen", sortMode: "recency" }))
     expect(groupIds(result.current, StreamTypes.CHANNEL)).toEqual([general.id])
     expect(result.current.get(StreamTypes.DM)).toBeUndefined()
+  })
+
+  it("should offer a non-member guest_public channel like a non-member public one when the viewer has not joined", () => {
+    const open = [
+      createMockStream({
+        id: "stream_pub",
+        type: StreamTypes.CHANNEL,
+        displayName: "Pub",
+        visibility: Visibilities.PUBLIC,
+      }),
+      createMockStream({
+        id: "stream_guest",
+        type: StreamTypes.CHANNEL,
+        displayName: "Guest",
+        visibility: Visibilities.GUEST_PUBLIC,
+      }),
+      createMockStream({
+        id: "stream_priv",
+        type: StreamTypes.CHANNEL,
+        displayName: "Priv",
+        visibility: Visibilities.PRIVATE,
+      }),
+    ]
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue(open as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreamMemberships").mockReturnValue([] as never)
+    const { result } = renderHook(() => useStreamPickerGroups("workspace_1", { search: "", sortMode: "alphabetical" }))
+    expect(groupIds(result.current, StreamTypes.CHANNEL)).toEqual(["stream_pub", "stream_guest"])
   })
 })

@@ -1,4 +1,4 @@
-import { Globe, Lock } from "lucide-react"
+import { Globe, Lock, UsersRound } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { CreatableVisibility, Visibility } from "@threahq/types"
 
@@ -8,22 +8,38 @@ interface VisibilityPickerProps {
   disabled?: boolean
 }
 
+export const GuestPublicIcon = UsersRound
+
+export const VISIBILITY_LABELS: Record<Visibility, string> = {
+  public: "Public",
+  guest_public: "Open to guests",
+  private: "Private",
+}
+
 export function VisibilityPicker({ value, onChange, disabled }: VisibilityPickerProps) {
   return (
-    <div className="grid grid-cols-2 gap-2">
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
       <VisibilityOption
         selected={value === "public"}
         onSelect={() => onChange("public")}
         icon={Globe}
-        label="Public"
-        hint="Anyone in the workspace can find and join"
+        label={VISIBILITY_LABELS.public}
+        hint="Members can find and join"
+        disabled={disabled}
+      />
+      <VisibilityOption
+        selected={value === "guest_public"}
+        onSelect={() => onChange("guest_public")}
+        icon={GuestPublicIcon}
+        label={VISIBILITY_LABELS.guest_public}
+        hint="Members and guests can find and join"
         disabled={disabled}
       />
       <VisibilityOption
         selected={value === "private"}
         onSelect={() => onChange("private")}
         icon={Lock}
-        label="Private"
+        label={VISIBILITY_LABELS.private}
         hint="Only invited members can access"
         disabled={disabled}
       />

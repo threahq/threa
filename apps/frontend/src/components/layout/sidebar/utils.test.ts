@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import * as prosemirror from "@threahq/prosemirror"
-import { AuthorTypes, StreamTypes, Visibilities, type AuthorType, type StreamWithPreview } from "@threahq/types"
+import {
+  AuthorTypes,
+  StreamTypes,
+  Visibilities,
+  type AuthorType,
+  type StreamWithPreview,
+  type Visibility,
+} from "@threahq/types"
 import { hiddenStreamIds as collectHiddenStreamIds } from "@/lib/streams"
 import type { StreamItemData } from "./types"
 import {
@@ -262,6 +269,24 @@ describe("isSidebarStreamVisible", () => {
   it("hides a public stream the viewer is not a member of", () => {
     const stream = makeStream({ id: "stream_other", visibility: Visibilities.PUBLIC })
     expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds, hiddenStreamIds)).toBe(false)
+  })
+
+  it("should treat a guest_public stream like a public one when the viewer is or is not a member", () => {
+    const verdict = (visibility: Visibility) => ({
+      member: isSidebarStreamVisible(
+        makeStream({ id: "stream_member", visibility }),
+        memberStreamIds,
+        archivedStreamIds,
+        hiddenStreamIds
+      ),
+      nonMember: isSidebarStreamVisible(
+        makeStream({ id: "stream_other", visibility }),
+        memberStreamIds,
+        archivedStreamIds,
+        hiddenStreamIds
+      ),
+    })
+    expect(verdict(Visibilities.GUEST_PUBLIC)).toEqual(verdict(Visibilities.PUBLIC))
   })
 
   it("shows a non-public stream regardless of membership (access already gated by bootstrap)", () => {

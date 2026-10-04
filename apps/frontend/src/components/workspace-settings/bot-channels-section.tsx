@@ -6,6 +6,7 @@ import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { SearchableSelect } from "@/components/ui/searchable-select"
+import { VISIBILITY_LABELS } from "@/components/ui/visibility-picker"
 import { Hash, X } from "lucide-react"
 
 interface BotChannelsSectionProps {
@@ -118,7 +119,7 @@ export function BotChannelsSection({ workspaceId, botId, isArchived }: BotChanne
               <Hash className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
               <span className="text-sm truncate">{stream.slug ?? stream.displayName}</span>
               <Badge variant="outline" className="ml-auto text-[10px] shrink-0">
-                {stream.visibility}
+                {VISIBILITY_LABELS[stream.visibility]}
               </Badge>
             </>
           )}

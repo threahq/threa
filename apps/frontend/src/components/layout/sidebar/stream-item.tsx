@@ -17,6 +17,7 @@ import {
   Tag,
 } from "lucide-react"
 import { Link } from "react-router-dom"
+import { GuestPublicIcon, VISIBILITY_LABELS } from "@/components/ui/visibility-picker"
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
@@ -822,6 +823,12 @@ export function StreamItem({
                     </span>
                     {stream.type === StreamTypes.CHANNEL && stream.visibility === Visibilities.PRIVATE && (
                       <Lock className="h-3 w-3 shrink-0 text-muted-foreground/60" />
+                    )}
+                    {stream.type === StreamTypes.CHANNEL && stream.visibility === Visibilities.GUEST_PUBLIC && (
+                      <GuestPublicIcon
+                        className="h-3 w-3 shrink-0 text-muted-foreground/60"
+                        aria-label={VISIBILITY_LABELS.guest_public}
+                      />
                     )}
                     {boardMuted && (
                       <BellOff className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label="Muted on the board" />

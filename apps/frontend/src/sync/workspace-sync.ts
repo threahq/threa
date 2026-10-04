@@ -128,6 +128,7 @@ import {
   Visibilities,
   WORKSPACE_PERMISSION_SCOPES,
   normalizeSidebarConfig,
+  isOpenVisibility,
 } from "@threahq/types"
 import { workspacesApi } from "@/api/workspaces"
 import { hasPermission } from "@/lib/permissions"
@@ -990,7 +991,7 @@ export function registerWorkspaceSocketHandlers(
         }
       }
       // Stream not in list — add if now visible (e.g. became public)
-      if (payload.stream.visibility === "public") {
+      if (isOpenVisibility(payload.stream.visibility)) {
         return { ...old, streams: [...old.streams, { ...payload.stream, lastMessagePreview: null }] }
       }
       return old

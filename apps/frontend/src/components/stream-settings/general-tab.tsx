@@ -33,6 +33,7 @@ import {
   type Stream,
   type StreamType,
   type NotificationLevel,
+  type CreatableVisibility,
   type Visibility,
 } from "@threahq/types"
 import { toast } from "sonner"
@@ -220,14 +221,27 @@ function NotificationSection({
   )
 }
 
+function visibilityChangeCopy(from: Visibility, to: CreatableVisibility): string {
+  if (to === Visibilities.PRIVATE) {
+    return "Making this channel private will hide it from non-members. They won't be able to find or join it."
+  }
+  if (to === Visibilities.GUEST_PUBLIC) {
+    return "Members and guests will be able to find this channel, join it and read its history."
+  }
+  if (from === Visibilities.GUEST_PUBLIC) {
+    return "Guests who haven't joined will lose access to this channel. Members will still be able to find and join it."
+  }
+  return "Making this channel public will make it visible to all workspace members. Anyone will be able to join."
+}
+
 function VisibilitySection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [pendingVisibility, setPendingVisibility] = useState<"public" | "private" | null>(null)
+  const [pendingVisibility, setPendingVisibility] = useState<CreatableVisibility | null>(null)
   const updateMutation = useUpdateStream(workspaceId, stream.id)
 
-  const handleVisibilityChange = (value: string) => {
+  const handleVisibilityChange = (value: CreatableVisibility) => {
     if (value === stream.visibility) return
-    setPendingVisibility(value as "public" | "private")
+    setPendingVisibility(value)
     setConfirmOpen(true)
   }
 
@@ -258,9 +272,7 @@ function VisibilitySection({ workspaceId, stream }: { workspaceId: string; strea
           <ResponsiveAlertDialogHeader>
             <ResponsiveAlertDialogTitle>Change visibility?</ResponsiveAlertDialogTitle>
             <ResponsiveAlertDialogDescription>
-              {pendingVisibility === Visibilities.PRIVATE
-                ? "Making this channel private will hide it from non-members. They won't be able to find or join it."
-                : "Making this channel public will make it visible to all workspace users. Anyone will be able to join."}
+              {pendingVisibility && visibilityChangeCopy(stream.visibility, pendingVisibility)}
             </ResponsiveAlertDialogDescription>
           </ResponsiveAlertDialogHeader>
           <ResponsiveAlertDialogFooter>
