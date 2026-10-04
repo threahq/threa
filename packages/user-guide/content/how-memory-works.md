@@ -11,7 +11,7 @@ Threa reads conversations after they settle and saves the lasting parts as memos
 
 Memos are a summary on top of your messages, not the only record. Every message stays searchable whether or not it became a memo, and Ariadne can search for and find an earlier conversation even when nothing from it was saved.
 
-What a memo adds is focus. As a workspace grows, the few messages that settled something sit among thousands that didn't, and the more there are, the harder those few are to find. A decision is often spread across a long back-and-forth: the question, a few options, a correction, the final call. A memo puts the outcome and its reasons into one entry that makes sense on its own, so a search finds it more reliably than the scattered messages, and nobody has to piece the conversation back together each time.
+What a memo adds is focus. As a workspace grows, the few messages that settled something get buried in the past under thousands that came after, and the older they get, the harder they are to find. A decision is often spread across a long back-and-forth: the question, a few options, a correction, the final call. A memo puts the outcome and its reasons into one entry that makes sense on its own, so a search finds it more reliably than the scattered messages, and nobody has to piece the conversation back together each time.
 
 ## What gets saved
 
