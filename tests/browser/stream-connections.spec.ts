@@ -69,6 +69,24 @@ async function acceptInvite(
   await expect(page.getByRole("link", { name: `Open ${partnerName}` })).toBeVisible()
 }
 
+// 1x1 red PNG
+const TEST_PNG = Buffer.from([
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
+  0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xde, 0x00, 0x00, 0x00, 0x0c, 0x49,
+  0x44, 0x41, 0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xfe, 0xd4,
+  0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+])
+
+async function pasteImage(page: Page) {
+  await page.evaluate((bytes) => {
+    const editor = document.querySelector("[data-message-composer-root] [contenteditable='true']")
+    if (!editor) throw new Error("Editor not found")
+    const dataTransfer = new DataTransfer()
+    dataTransfer.items.add(new File([new Uint8Array(bytes)], "mockup.png", { type: "image/png" }))
+    editor.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: dataTransfer }))
+  }, Array.from(TEST_PNG))
+}
+
 async function expectSharedWith(page: Page, partnerNames: string[]) {
   const dialog = page.getByRole("dialog")
   await expect(dialog.getByText("Shared with")).toBeVisible({ timeout: 10000 })
@@ -115,6 +133,52 @@ test.describe("Stream connections", () => {
 
       await acceptInvite(partnerPage, invitePath, slug, host.workspaceName, partner.workspaceName)
       await expectSharedWith(page, [partner.workspaceName])
+    } finally {
+      await partnerContext.close()
+    }
+  })
+
+  test("should show a host message and its file in the partner's copy when the partner lives in another region", async ({
+    browser,
+    page,
+  }) => {
+    const partnerContext = await browser.newContext()
+    try {
+      const partnerPage = await partnerContext.newPage()
+      const { host, partner, slug, streamId } = await setUpHostAndPartner(page, partnerPage, "local-2")
+      await page.goto(settingsUrl(host.workspaceId, streamId, "connect"))
+      await acceptInvite(partnerPage, await createInviteLink(page), slug, host.workspaceName, partner.workspaceName)
+
+      const text = `Mockups for review ${host.testId}`
+      await page.goto(`/w/${host.workspaceId}/s/${streamId}`)
+      const editor = page.locator("[data-message-composer-root] [contenteditable='true']").first()
+      await editor.click()
+      await editor.pressSequentially(text)
+      await pasteImage(page)
+      await expect(editor.locator("span[data-type='attachment-reference']")).toBeVisible({ timeout: 10_000 })
+      await page.getByRole("main").getByRole("button", { name: "Send", exact: true }).click()
+      await expect(editor.locator("span[data-type='attachment-reference']")).toHaveCount(0, { timeout: 15_000 })
+
+      await partnerPage.goto(`/w/${partner.workspaceId}/s/${streamId}`)
+      await expect(partnerPage.getByRole("main").getByText(text)).toBeVisible({ timeout: 30_000 })
+      const image = partnerPage.getByRole("main").locator("img[src*='/content?variant=thumbnail']")
+      await expect(image).toBeAttached({ timeout: 30_000 })
+      const src = await image.getAttribute("src")
+      expect(src).toContain(`/api/workspaces/${partner.workspaceId}/attachments/`)
+
+      const rawUrl = src!.replace("?variant=thumbnail", "")
+      await expect
+        .poll(
+          async () => {
+            const response = await partnerPage.request.get(rawUrl)
+            return response.ok() && Buffer.compare(await response.body(), TEST_PNG) === 0
+          },
+          { timeout: 60_000 }
+        )
+        .toBe(true)
+      await expect
+        .poll(() => image.evaluate((node: HTMLImageElement) => node.naturalWidth), { timeout: 30_000 })
+        .toBe(1)
     } finally {
       await partnerContext.close()
     }
