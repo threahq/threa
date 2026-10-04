@@ -179,7 +179,7 @@ describe("bot invocation canonical source mutations", () => {
       second?.revision,
       deleted?.revision,
       repeatedDelete,
-      await MessageVersionRepository.getCurrentRevision(pool, created.id),
+      await MessageVersionRepository.getCurrentRevision(pool, workspace, created.id),
     ]).toEqual([1, 2, 3, 4, null, 4])
   })
 

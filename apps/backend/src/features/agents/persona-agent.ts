@@ -555,7 +555,7 @@ export class PersonaAgent {
         )?.id === stream.id
 
       const latestSequence = await StreamEventRepository.getLatestSequence(client, workspaceId, streamId)
-      const triggerMessageRevision = await MessageVersionRepository.getCurrentRevision(client, messageId)
+      const triggerMessageRevision = await MessageVersionRepository.getCurrentRevision(client, workspaceId, messageId)
 
       // Per-stream tool-privacy policy. Rows live on the non-thread root —
       // threads inherit their root's policy, mirroring stream access (INV-62).
