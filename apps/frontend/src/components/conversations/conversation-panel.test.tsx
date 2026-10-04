@@ -2090,7 +2090,10 @@ describe("ConversationPanel — archived is read-only (INV-62)", () => {
       workspaceId: string | undefined,
       id: string | undefined
     ) => (workspaceId === WORKSPACE_ID && id ? (rows[id] ?? undefined) : undefined)) as never)
-    vi.spyOn(workspaceStoreModule, "useWorkspaceStreamIndex").mockReturnValue(new Map(Object.entries(rows)) as never)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceStreamsSelect").mockImplementation(((
+      _workspaceId: string | undefined,
+      select: (streams: unknown[]) => unknown
+    ) => select(Object.entries(rows).map(([id, row]) => ({ id, ...row })))) as never)
   }
 
   /** Captures the docked composer's gating props without mounting the editor. */

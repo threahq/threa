@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useRef, type ReactNode } from "react"
+import { createContext, useContext, useEffect, useState, useRef, useMemo, type ReactNode } from "react"
 import { io, Socket } from "socket.io-client"
 import { ACCOUNT_ASSERTION_SOCKET_FIELD, AuthErrorCodes, HEARTBEAT_INTERACTION_THROTTLE_MS } from "@threahq/types"
 import { api } from "@/api/client"
@@ -371,7 +371,8 @@ export function SocketProvider({ workspaceId, children }: SocketProviderProps) {
     }
   }, [socket, status, pageActivity])
 
-  return <SocketContext.Provider value={{ socket, status, reconnectCount }}>{children}</SocketContext.Provider>
+  const value = useMemo(() => ({ socket, status, reconnectCount }), [socket, status, reconnectCount])
+  return <SocketContext.Provider value={value}>{children}</SocketContext.Provider>
 }
 
 export function useSocket(): Socket | null {

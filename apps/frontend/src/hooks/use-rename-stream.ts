@@ -5,21 +5,24 @@ import { useStreamService } from "@/contexts"
 import { sealStreamRename } from "@/lib/crypto/stream-rename"
 import { mergeStreamByRevision, persistStreamByRevision } from "@/lib/title-merge"
 import { useE2eSession } from "@/stores/e2e-session-store"
-import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { useStreamFromStore } from "@/stores/stream-store"
+import type { CachedStream } from "@/db"
 import { useWorkspaceUserId } from "./use-workspaces"
 import { streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
 
-export function useRenameStream(workspaceId: string, streamId: string, streamOverride?: Stream) {
+const pickE2eEnabled = (stream: CachedStream) => ({ e2eEnabled: stream.e2eEnabled })
+
+export function useRenameStream(workspaceId: string, streamId: string, streamOverride?: Pick<Stream, "e2eEnabled">) {
   const queryClient = useQueryClient()
   const service = useStreamService()
-  const streams = useWorkspaceStreams(workspaceId)
-  const stream = streamOverride ?? streams.find((item) => item.id === streamId)
+  const stored = useStreamFromStore(workspaceId, streamOverride ? undefined : streamId, pickE2eEnabled)
+  const e2eEnabled = (streamOverride ?? stored)?.e2eEnabled
   const userId = useWorkspaceUserId(workspaceId) ?? ""
   const session = useE2eSession(workspaceId, userId)
   const [isPending, setIsPending] = useState(false)
   const [error, setError] = useState<Error | null>(null)
-  const canRename = !stream?.e2eEnabled || session.status === "unlocked"
+  const canRename = !e2eEnabled || session.status === "unlocked"
 
   const rename = useCallback(
     async (name: string) => {
@@ -31,7 +34,7 @@ export function useRenameStream(workspaceId: string, streamId: string, streamOve
       setIsPending(true)
       setError(null)
       try {
-        const input = stream?.e2eEnabled
+        const input = e2eEnabled
           ? await sealStreamRename({ workspaceId, streamId, userId, name })
           : { displayName: name }
         const updated = await service.update(workspaceId, streamId, input)
@@ -61,7 +64,7 @@ export function useRenameStream(workspaceId: string, streamId: string, streamOve
         setIsPending(false)
       }
     },
-    [canRename, queryClient, service, stream, streamId, userId, workspaceId]
+    [canRename, queryClient, service, e2eEnabled, streamId, userId, workspaceId]
   )
 
   return { rename, canRename, isPending, error }

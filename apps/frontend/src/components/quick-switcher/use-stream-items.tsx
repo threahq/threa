@@ -6,7 +6,7 @@ import type { Stream, StreamType } from "@threahq/types"
 import { getStreamName, streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { streamsApi } from "@/api"
 import { createDmDraftId, useUnreadCounts, useActivityCounts } from "@/hooks"
-import { isPickableUser, useWorkspaceUnreadState } from "@/stores/workspace-store"
+import { isPickableUser, useWorkspaceUnreadState, type CachedUnreadState } from "@/stores/workspace-store"
 import { openAside } from "@/stores/aside-store"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -43,6 +43,8 @@ const ARCHIVE_STATUS_OPTIONS: { value: "active" | "archived"; label: string }[] 
 /** Stream with optional sidebar preview (CachedStream has it, API Stream doesn't) */
 type StreamLike = Stream & { lastMessagePreview?: WorkspaceStream["lastMessagePreview"] }
 
+const pickMutedStreamIds = (state: CachedUnreadState) => ({ mutedStreamIds: state.mutedStreamIds })
+
 function getStreamTypeLabel(type: StreamType): string {
   switch (type) {
     case StreamTypes.SCRATCHPAD:
@@ -78,7 +80,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
 
   const { getUnreadCount } = useUnreadCounts(workspaceId)
   const { getMentionCount, getActivityCount } = useActivityCounts(workspaceId)
-  const unreadState = useWorkspaceUnreadState(workspaceId)
+  const unreadState = useWorkspaceUnreadState(workspaceId, pickMutedStreamIds)
   const mutedStreamIds = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
 
   const memberStreamIds = useMemo(() => {

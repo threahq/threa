@@ -266,14 +266,10 @@ function installSpies() {
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockImplementation(
     () => (mockWorkspaceBootstrap.data.streams ?? []) as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>
   )
-  vi.spyOn(workspaceStoreModule, "useWorkspaceStreamIndex").mockImplementation(
-    () =>
-      new Map(
-        (mockWorkspaceBootstrap.data.streams as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>).map(
-          (stream) => [stream.id, stream]
-        )
-      )
-  )
+  vi.spyOn(workspaceStoreModule, "useWorkspaceStreamsSelect").mockImplementation(((
+    _workspaceId: string | undefined,
+    select: (streams: unknown[]) => unknown
+  ) => select(mockWorkspaceBootstrap.data.streams ?? [])) as never)
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockImplementation(
     () => (mockWorkspaceBootstrap.data.users ?? []) as ReturnType<typeof workspaceStoreModule.useWorkspaceUsers>
   )

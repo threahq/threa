@@ -13,6 +13,7 @@ import {
   isChromeStripCollapsed,
   isTypingChromeHidden,
   isThreadConfirmedEmpty,
+  holdsOnlyThreadHiddenEvents,
 } from "./stream-content"
 import { localStartOfDayMs } from "@/lib/dates"
 
@@ -594,6 +595,7 @@ describe("isThreadConfirmedEmpty", () => {
     ["a session-cached server window of membership rows before the first cache read", false, false, [joined], false],
     ["a session-cached empty server window before the first cache read", false, false, [], false],
   ])("%s", (_name, isConfirmedEmpty, isResolved, bootstrapEvents, expected) => {
-    expect(isThreadConfirmedEmpty({ isConfirmedEmpty, isResolved, bootstrapEvents })).toBe(expected)
+    const serverWindowHiddenOnly = bootstrapEvents && holdsOnlyThreadHiddenEvents(bootstrapEvents)
+    expect(isThreadConfirmedEmpty({ isConfirmedEmpty, isResolved, serverWindowHiddenOnly })).toBe(expected)
   })
 })

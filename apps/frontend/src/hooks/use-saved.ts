@@ -202,15 +202,20 @@ export function useSavedList(workspaceId: string, status: SavedStatus) {
  * fetches.
  */
 export function useSavedForMessage(workspaceId: string, messageId: string | null) {
-  return useLiveQuery(async () => {
-    if (!workspaceId || !messageId) return null
-    const row = await db.savedMessages
-      .where("messageId")
-      .equals(messageId)
-      .and((r) => r.workspaceId === workspaceId)
-      .first()
-    return row ? fromCached(row) : null
-  }, [workspaceId, messageId])
+  return useLiveQuery(
+    async () => {
+      if (!workspaceId || !messageId) return null
+      const row = await db.savedMessages
+        .where("messageId")
+        .equals(messageId)
+        .and((r) => r.workspaceId === workspaceId)
+        .first()
+      return row ? fromCached(row) : null
+    },
+    [workspaceId, messageId],
+    // Seeded with the unsaved answer, so a row's first emission re-renders nothing.
+    null
+  )
 }
 
 export function useSaveMessage(workspaceId: string) {

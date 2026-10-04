@@ -1,5 +1,5 @@
 import { useEffect } from "react"
-import { useWorkspaceStreams, useWorkspaceUnreadState } from "@/stores/workspace-store"
+import { useWorkspaceStreams, useWorkspaceUnreadState, type CachedUnreadState } from "@/stores/workspace-store"
 import { hiddenStreamIds } from "@/lib/streams"
 import { buildPageTitle, usePageStreamName } from "@/lib/page-title"
 
@@ -41,8 +41,13 @@ function setFavicon(href: string) {
  * Updates the document title and favicon to reflect unread message count.
  * Reads unread counts from IDB via useLiveQuery — reactive and offline-capable.
  */
+const pickBadgeInputs = (state: CachedUnreadState) => ({
+  unreadCounts: state.unreadCounts,
+  mutedStreamIds: state.mutedStreamIds,
+})
+
 export function useUnreadTabIndicator(workspaceId: string) {
-  const unreadState = useWorkspaceUnreadState(workspaceId)
+  const unreadState = useWorkspaceUnreadState(workspaceId, pickBadgeInputs)
   const streams = useWorkspaceStreams(workspaceId)
   const streamName = usePageStreamName()
 

@@ -85,26 +85,36 @@ export function useMentionStreamContext(
     [workspaceUsers, currentUser?.id]
   )
 
+  const streamType = stream?.type
+  const rootStreamType = useMemo(
+    () =>
+      streamType === StreamTypes.THREAD && rootStreamId
+        ? idbStreams.find((s) => s.id === rootStreamId)?.type
+        : undefined,
+    [idbStreams, streamType, rootStreamId]
+  )
+  const members = accessBootstrap?.members
+  const botMemberIds = accessBootstrap?.botMemberIds
+  const accessLoaded = !!accessBootstrap
+  const connectedWorkspaceIds = accessBootstrap?.connectedWorkspaceIds
+
   return useMemo<MentionStreamContext | undefined>(() => {
-    if (!stream) return undefined
-    const ctx: MentionStreamContext = { streamType: stream.type }
-    if (stream.type === StreamTypes.THREAD && stream.rootStreamId) {
-      const rootStream = idbStreams.find((s) => s.id === stream.rootStreamId)
-      if (rootStream) ctx.rootStreamType = rootStream.type
-    }
+    if (!streamType) return undefined
+    const ctx: MentionStreamContext = { streamType }
+    if (rootStreamType) ctx.rootStreamType = rootStreamType
     // Invite-mode exclusion uses channel-level access — threads inherit access
     // from their root, so inviting a root member to a thread is a no-op.
-    if (accessBootstrap?.members) {
-      const ids = new Set(accessBootstrap.members.map((m) => m.memberId))
-      for (const botId of accessBootstrap.botMemberIds ?? []) ids.add(botId)
+    if (members) {
+      const ids = new Set(members.map((m) => m.memberId))
+      for (const botId of botMemberIds ?? []) ids.add(botId)
       ctx.memberIds = ids
     }
-    if (accessBootstrap?.botMemberIds) ctx.botMemberIds = new Set(accessBootstrap.botMemberIds)
+    if (botMemberIds) ctx.botMemberIds = new Set(botMemberIds)
     // A backend still on the previous deploy omits the field.
-    if (accessBootstrap) ctx.connectedWorkspaceIds = new Set(accessBootstrap.connectedWorkspaceIds ?? [])
+    if (accessLoaded) ctx.connectedWorkspaceIds = new Set(connectedWorkspaceIds ?? [])
     ctx.canInviteBots = currentUserRole === "admin" || currentUserRole === "owner"
     return ctx
-  }, [stream, idbStreams, accessBootstrap, currentUserRole])
+  }, [streamType, rootStreamType, members, botMemberIds, accessLoaded, connectedWorkspaceIds, currentUserRole])
 }
 
 /**

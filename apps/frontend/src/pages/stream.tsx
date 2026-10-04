@@ -129,6 +129,10 @@ export function StreamPage() {
   const streamError = useStreamError(streamId, error)
 
   const isConversationViewOpen = searchParams.get("convView") === "open"
+  // The closed drawer stays in the DOM for its slide transition, but its list
+  // re-renders on every conversation update, so it mounts only while shown.
+  const [conversationListMounted, setConversationListMounted] = useState(isConversationViewOpen)
+  if (isConversationViewOpen && !conversationListMounted) setConversationListMounted(true)
 
   const setConversationViewOpen = (open: boolean) => {
     setSearchParams((prev) => {
@@ -856,6 +860,9 @@ export function StreamPage() {
           "transition-transform duration-300 ease-out",
           isConversationViewOpen ? "translate-x-0" : "translate-x-full"
         )}
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && !isConversationViewOpen) setConversationListMounted(false)
+        }}
       >
         <div className="flex items-center justify-between p-4 border-b">
           <h2 className="text-lg font-semibold">Conversations</h2>
@@ -864,11 +871,13 @@ export function StreamPage() {
           </Button>
         </div>
         <div className="flex-1 overflow-y-auto">
-          <ConversationList
-            workspaceId={workspaceId!}
-            streamId={streamId!}
-            onMessageClick={() => setConversationViewOpen(false)}
-          />
+          {conversationListMounted && (
+            <ConversationList
+              workspaceId={workspaceId!}
+              streamId={streamId!}
+              onMessageClick={() => setConversationViewOpen(false)}
+            />
+          )}
         </div>
       </div>
     </>

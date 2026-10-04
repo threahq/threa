@@ -95,7 +95,6 @@ function installDefaultSpies() {
   } as unknown as ReturnType<typeof syncEngineModule.useSyncEngine>)
 
   vi.spyOn(contextsModule, "usePendingMessages").mockReturnValue({
-    getStatus: (id: string) => mockGetStatus(id),
     markPending: vi.fn(),
     markFailed: vi.fn(),
     markSent: vi.fn(),
@@ -107,6 +106,9 @@ function installDefaultSpies() {
     notifyQueue: vi.fn(),
     registerQueueNotify: vi.fn(),
   } as unknown as ReturnType<typeof contextsModule.usePendingMessages>)
+  vi.spyOn(contextsModule, "usePendingMessageStatus").mockImplementation(
+    (id) => mockGetStatus(id) as ReturnType<typeof contextsModule.usePendingMessageStatus>
+  )
   vi.spyOn(contextsModule, "usePanel").mockReturnValue({
     panelId: null,
     getPanelUrl: (streamId: string) => `/panel/${streamId}`,

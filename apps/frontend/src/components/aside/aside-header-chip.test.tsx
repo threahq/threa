@@ -35,6 +35,14 @@ function renderChip(stream = HOST) {
 
 const chip = () => screen.getByTestId("aside-header-chip")
 
+function mockUnreadCounts(unreadCounts: Record<string, number>) {
+  const state = { unreadCounts }
+  vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockImplementation(((
+    _workspaceId: string | undefined,
+    pick?: (row: typeof state) => unknown
+  ) => (pick ? pick(state) : state)) as never)
+}
+
 let openSpy: ReturnType<typeof vi.fn>
 let resumeSpy: ReturnType<typeof vi.fn>
 
@@ -45,7 +53,7 @@ beforeEach(() => {
   resumeSpy = vi.fn()
   vi.spyOn(openAsideModule, "useOpenAside").mockReturnValue(openSpy as never)
   vi.spyOn(openAsideModule, "useResumeAside").mockReturnValue(resumeSpy as never)
-  vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockReturnValue({ unreadCounts: {} } as never)
+  mockUnreadCounts({})
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
 })
 
@@ -69,9 +77,7 @@ describe("AsideHeaderChip", () => {
     expect(resumeSpy).toHaveBeenCalledWith({ hostStreamId: "stream_host", asideId: "stream_aside_new" })
     expect(openSpy).not.toHaveBeenCalled()
 
-    vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockReturnValue({
-      unreadCounts: { stream_aside_new: 1 },
-    } as never)
+    mockUnreadCounts({ stream_aside_new: 1 })
     view.rerender(
       <MemoryRouter initialEntries={["/w/ws_1/s/stream_host"]}>
         <AsideHeaderChip workspaceId="ws_1" stream={HOST as never} />

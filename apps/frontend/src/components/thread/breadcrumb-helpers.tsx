@@ -13,29 +13,6 @@ interface StreamInfo {
   rootStreamId?: string | null
 }
 
-interface StreamForLookup {
-  id: string
-  type: StreamType
-  displayName: string | null
-  slug?: string | null
-}
-
-/**
- * Short context label for a thread's root stream (sidebar: "Thread Name · #general").
- * Null when the thread has no root or the root isn't in `allStreams`.
- */
-export function getThreadRootContext(
-  thread: { rootStreamId: string | null },
-  allStreams: StreamForLookup[]
-): string | null {
-  if (!thread.rootStreamId) return null
-
-  const rootStream = allStreams.find((s) => s.id === thread.rootStreamId)
-  if (!rootStream) return null
-
-  return streamLabel(rootStream, "sidebar")
-}
-
 interface AncestorBreadcrumbItemProps {
   stream: StreamInfo
   isMainViewStream: boolean

@@ -1,7 +1,7 @@
-import { useMemo } from "react"
+import { useCallback, useMemo } from "react"
 import { Loader2 } from "lucide-react"
 import { StreamTypes, type AsideAnchoredEventPayload, type StreamEvent } from "@threahq/types"
-import { useWorkspaceStreams, useWorkspaceUnreadState } from "@/stores/workspace-store"
+import { useWorkspaceStreams, useWorkspaceUnreadState, type CachedUnreadState } from "@/stores/workspace-store"
 import { useAgentActivityForStream } from "@/stores/agent-activity-store"
 import { useAsideState } from "@/stores/aside-store"
 import { useResumeAside } from "@/hooks/use-open-aside"
@@ -54,7 +54,8 @@ export function AsideAnchorEvent({ event, workspaceId }: AsideAnchorEventProps) 
   const aside = useMemo(() => streams.find((stream) => stream.id === asideId), [streams, asideId])
   const open = useAsideState()
   const resume = useResumeAside()
-  const unread = useWorkspaceUnreadState(workspaceId)?.unreadCounts[asideId ?? ""] ?? 0
+  const pickUnread = useCallback((state: CachedUnreadState) => state.unreadCounts[asideId ?? ""] ?? 0, [asideId])
+  const unread = useWorkspaceUnreadState(workspaceId, pickUnread) ?? 0
   const working = useAgentActivityForStream(workspaceId, asideId).length > 0
   if (!asideId || aside?.archivedAt) return null
 

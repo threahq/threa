@@ -53,7 +53,7 @@ function useUnstableConnectionVisible(state: ConnectionState): boolean {
  * content under the mobile keyboard.
  */
 export function ConnectionStatus() {
-  const { phase } = useCoordinatedLoading()
+  const phase = useCoordinatedLoading((loading) => loading.phase)
   const state = useConnectionState()
   const showPill = useUnstableConnectionVisible(state)
   const pageActivity = usePageActivity()

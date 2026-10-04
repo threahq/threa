@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef } from "react"
 import { toast } from "sonner"
 import { useConversationService } from "@/contexts"
-import { useWorkspaceStreamReadStates, useWorkspaceUnreadState } from "@/stores/workspace-store"
+import { useWorkspaceStreamReadStates, useWorkspaceUnreadState, type CachedUnreadState } from "@/stores/workspace-store"
 import { applyReadStateSnapshots } from "@/hooks/use-unread-counts"
 import type { RowReadState } from "@/components/timeline/read-frontier-context"
 import type { RenderableMessage } from "@/components/message/message-item"
@@ -25,6 +25,11 @@ export interface ConversationRowRead {
 const ConversationReadContext = createContext<ConversationRowRead | null>(null)
 
 const EMPTY_OVERLAY: readonly string[] = []
+
+const pickReadInputs = (state: CachedUnreadState) => ({
+  readMessageIds: state.readMessageIds,
+  unreadCounts: state.unreadCounts,
+})
 
 export function useConversationRowRead(): ConversationRowRead | null {
   return useContext(ConversationReadContext)
@@ -122,7 +127,7 @@ export function useConversationReadController(
   getReadTruth: (streamId: string) => { lastReadSequence: string | null; readMessageIds: readonly string[] }
 } {
   const conversationService = useConversationService()
-  const unreadState = useWorkspaceUnreadState(workspaceId)
+  const unreadState = useWorkspaceUnreadState(workspaceId, pickReadInputs)
   const overlay = unreadState?.readMessageIds
   const unreadCounts = unreadState?.unreadCounts
   const readStates = useWorkspaceStreamReadStates(workspaceId)

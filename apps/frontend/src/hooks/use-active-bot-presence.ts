@@ -31,6 +31,9 @@ export function useActiveBotPresence(
       queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap(workspaceId ?? "", streamId ?? "")) ?? null,
     enabled: false,
     staleTime: Infinity,
+    // The entry is rewritten on every message; presence is all this reads.
+    select: (cached) =>
+      cached ? { botMemberIds: cached.botMemberIds, botRuntimePresence: cached.botRuntimePresence } : null,
   })
 
   return useMemo(() => {

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, useRef, useEffect, type ReactNode } from "react"
+import { createContext, useContext, useState, useCallback, useMemo, useRef, useEffect, type ReactNode } from "react"
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { useAccountScopeOptional } from "@/auth/account-scope"
 
@@ -422,34 +422,54 @@ export function SidebarProvider({ children }: SidebarProviderProps) {
     }
   }, [])
 
-  return (
-    <SidebarContext.Provider
-      value={{
-        state,
-        width: persistedState.width,
-        sectionStates: persistedState.sectionStates,
-        getSectionState,
-        isMobile,
-        isHovering,
-        isResizing,
-        showPreview,
-        hidePreview,
-        togglePinned,
-        collapse,
-        collapseOnMobile,
-        setHovering,
-        startResizing,
-        stopResizing,
-        setWidth,
-        toggleSectionState,
-        setSectionState,
-        registerOpenMenu,
-        dismissMenus,
-      }}
-    >
-      {children}
-    </SidebarContext.Provider>
+  const value = useMemo(
+    () => ({
+      state,
+      width: persistedState.width,
+      sectionStates: persistedState.sectionStates,
+      getSectionState,
+      isMobile,
+      isHovering,
+      isResizing,
+      showPreview,
+      hidePreview,
+      togglePinned,
+      collapse,
+      collapseOnMobile,
+      setHovering,
+      startResizing,
+      stopResizing,
+      setWidth,
+      toggleSectionState,
+      setSectionState,
+      registerOpenMenu,
+      dismissMenus,
+    }),
+    [
+      state,
+      persistedState.width,
+      persistedState.sectionStates,
+      getSectionState,
+      isMobile,
+      isHovering,
+      isResizing,
+      showPreview,
+      hidePreview,
+      togglePinned,
+      collapse,
+      collapseOnMobile,
+      setHovering,
+      startResizing,
+      stopResizing,
+      setWidth,
+      toggleSectionState,
+      setSectionState,
+      registerOpenMenu,
+      dismissMenus,
+    ]
   )
+
+  return <SidebarContext.Provider value={value}>{children}</SidebarContext.Provider>
 }
 
 export function useSidebar() {

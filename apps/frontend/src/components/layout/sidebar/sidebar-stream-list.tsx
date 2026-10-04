@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react"
+import { Fragment, memo, useMemo, type ReactNode } from "react"
 import { useLocation } from "react-router-dom"
 import { CheckCheck, Inbox, ListX } from "lucide-react"
 import { MAX_BOARD_SCOPE_STREAMS } from "@threahq/types"
@@ -204,7 +204,7 @@ interface SidebarStreamListProps {
   clearInboxKeyHint?: string
 }
 
-export function SidebarStreamList({
+export const SidebarStreamList = memo(function SidebarStreamList({
   workspaceId,
   hasError,
   hasUserStreams,
@@ -256,6 +256,8 @@ export function SidebarStreamList({
     onAssignStreamLabel(streamId, labelId)
     if (sourceLabelId && sourceLabelId !== labelId) onStreamMovedFromLabel(streamId, sourceLabelId)
   }
+
+  const streamsById = useMemo(() => new Map(processedStreams.map((stream) => [stream.id, stream])), [processedStreams])
 
   if (hasError) {
     return <p className="px-2 py-4 text-xs text-destructive text-center">Failed to load</p>
@@ -455,7 +457,7 @@ export function SidebarStreamList({
         viewOptions={viewOptions}
         icon={presentation.icon}
         items={items}
-        allStreams={processedStreams}
+        streamsById={streamsById}
         workspaceId={workspaceId}
         activeStreamId={activeStreamId}
         getUnreadCount={getUnreadCount}
@@ -486,7 +488,7 @@ export function SidebarStreamList({
         viewOptions={viewOptions}
         icon={presentation.icon}
         items={items}
-        allStreams={processedStreams}
+        streamsById={streamsById}
         workspaceId={workspaceId}
         activeStreamId={activeStreamId}
         getUnreadCount={getUnreadCount}
@@ -502,7 +504,7 @@ export function SidebarStreamList({
         homeHintFor={isUnread ? homeHintFor : undefined}
         boardMode={boardMode}
         isInboxSection={isInboxSection}
-        onClearInboxRow={isInboxSection ? (streamId: string) => onClearInbox([streamId]) : undefined}
+        onClearInbox={isInboxSection ? onClearInbox : undefined}
         onInboxRowHoverChange={isInboxSection ? onInboxRowHoverChange : undefined}
         clearInboxKeyHint={isInboxSection ? clearInboxKeyHint : undefined}
       />
@@ -556,4 +558,4 @@ export function SidebarStreamList({
       </SidebarQuickJumpProvider>
     </SidebarLabelsProvider>
   )
-}
+})

@@ -43,16 +43,17 @@ function subscribeDraftCache(workspaceId: string | undefined, listener: () => vo
   }
 }
 
-function getDraftCacheSnapshot(workspaceId: string | undefined): number {
-  return workspaceId ? (cacheVersion.get(workspaceId) ?? 0) : 0
-}
+const EMPTY: never[] = []
 
-function useDraftCacheSignal(workspaceId: string | undefined): number {
-  return useSyncExternalStore(
-    (listener) => subscribeDraftCache(workspaceId, listener),
-    () => getDraftCacheSnapshot(workspaceId),
-    () => getDraftCacheSnapshot(workspaceId)
-  )
+/**
+ * Subscribes to one slice by array identity. Every write re-seeds all three
+ * slices, passing the untouched ones through by reference, so a reader wakes
+ * only when its own slice changed — a keystroke's draft write never reaches
+ * the scratchpad or pointer readers.
+ */
+function useCachedSlice<T>(slice: Map<string, T[]>, workspaceId: string | undefined): T[] {
+  const getSnapshot = () => (workspaceId ? slice.get(workspaceId) : undefined) ?? EMPTY
+  return useSyncExternalStore((listener) => subscribeDraftCache(workspaceId, listener), getSnapshot, getSnapshot)
 }
 
 function useArrayStoreHook<T>(workspaceId: string | undefined, queryFn: () => Promise<T[]> | T[], cached: T[]): T[] {
@@ -108,8 +109,7 @@ export async function seedDraftCacheFromIdb(workspaceId: string): Promise<void> 
 }
 
 export function useDraftScratchpadsFromStore(workspaceId: string | undefined): DraftScratchpad[] {
-  useDraftCacheSignal(workspaceId)
-  const cached = workspaceId ? (cache.scratchpads.get(workspaceId) ?? []) : []
+  const cached = useCachedSlice(cache.scratchpads, workspaceId)
   return useArrayStoreHook(
     workspaceId,
     () => (workspaceId ? db.draftScratchpads.where("workspaceId").equals(workspaceId).toArray() : []),
@@ -118,8 +118,7 @@ export function useDraftScratchpadsFromStore(workspaceId: string | undefined): D
 }
 
 export function useDraftsFromStore(workspaceId: string | undefined): CachedDraft[] {
-  useDraftCacheSignal(workspaceId)
-  const cached = workspaceId ? (cache.drafts.get(workspaceId) ?? []) : []
+  const cached = useCachedSlice(cache.drafts, workspaceId)
   return useArrayStoreHook(
     workspaceId,
     () => (workspaceId ? db.drafts.where("workspaceId").equals(workspaceId).toArray() : []),
@@ -128,8 +127,7 @@ export function useDraftsFromStore(workspaceId: string | undefined): CachedDraft
 }
 
 export function useComposerLoadedFromStore(workspaceId: string | undefined): ComposerLoaded[] {
-  useDraftCacheSignal(workspaceId)
-  const cached = workspaceId ? (cache.loaded.get(workspaceId) ?? []) : []
+  const cached = useCachedSlice(cache.loaded, workspaceId)
   return useArrayStoreHook(
     workspaceId,
     () => (workspaceId ? db.composerLoaded.where("workspaceId").equals(workspaceId).toArray() : []),
@@ -138,7 +136,7 @@ export function useComposerLoadedFromStore(workspaceId: string | undefined): Com
 }
 
 export function upsertDraftScratchpadInCache(workspaceId: string, draft: DraftScratchpad): void {
-  const drafts = cache.scratchpads.get(workspaceId) ?? []
+  const drafts = cache.scratchpads.get(workspaceId) ?? EMPTY
   const next = [...drafts]
   const index = next.findIndex((candidate) => candidate.id === draft.id)
   if (index === -1) {
@@ -148,16 +146,16 @@ export function upsertDraftScratchpadInCache(workspaceId: string, draft: DraftSc
   }
   seedDraftCache(workspaceId, {
     scratchpads: next,
-    drafts: cache.drafts.get(workspaceId) ?? [],
-    loaded: cache.loaded.get(workspaceId) ?? [],
+    drafts: cache.drafts.get(workspaceId) ?? EMPTY,
+    loaded: cache.loaded.get(workspaceId) ?? EMPTY,
   })
 }
 
 export function deleteDraftScratchpadFromCache(workspaceId: string, draftId: string): void {
   seedDraftCache(workspaceId, {
-    scratchpads: (cache.scratchpads.get(workspaceId) ?? []).filter((draft) => draft.id !== draftId),
-    drafts: cache.drafts.get(workspaceId) ?? [],
-    loaded: cache.loaded.get(workspaceId) ?? [],
+    scratchpads: (cache.scratchpads.get(workspaceId) ?? EMPTY).filter((draft) => draft.id !== draftId),
+    drafts: cache.drafts.get(workspaceId) ?? EMPTY,
+    loaded: cache.loaded.get(workspaceId) ?? EMPTY,
   })
 }
 
@@ -175,17 +173,17 @@ function withDraftUpserted(drafts: CachedDraft[], draft: CachedDraft): CachedDra
 
 export function upsertDraftInCache(workspaceId: string, draft: CachedDraft): void {
   seedDraftCache(workspaceId, {
-    scratchpads: cache.scratchpads.get(workspaceId) ?? [],
-    drafts: withDraftUpserted(cache.drafts.get(workspaceId) ?? [], draft),
-    loaded: cache.loaded.get(workspaceId) ?? [],
+    scratchpads: cache.scratchpads.get(workspaceId) ?? EMPTY,
+    drafts: withDraftUpserted(cache.drafts.get(workspaceId) ?? EMPTY, draft),
+    loaded: cache.loaded.get(workspaceId) ?? EMPTY,
   })
 }
 
 export function deleteDraftFromCache(workspaceId: string, draftId: string): void {
   seedDraftCache(workspaceId, {
-    scratchpads: cache.scratchpads.get(workspaceId) ?? [],
-    drafts: (cache.drafts.get(workspaceId) ?? []).filter((draft) => draft.id !== draftId),
-    loaded: cache.loaded.get(workspaceId) ?? [],
+    scratchpads: cache.scratchpads.get(workspaceId) ?? EMPTY,
+    drafts: (cache.drafts.get(workspaceId) ?? EMPTY).filter((draft) => draft.id !== draftId),
+    loaded: cache.loaded.get(workspaceId) ?? EMPTY,
   })
 }
 
@@ -198,11 +196,11 @@ export function deleteDraftFromCache(workspaceId: string, draftId: string): void
  * "loaded" until the pointer lands).
  */
 export function upsertLoadedDraftInCache(workspaceId: string, draft: CachedDraft, scope: string): void {
-  const loaded = (cache.loaded.get(workspaceId) ?? []).filter((row) => row.scope !== scope)
+  const loaded = (cache.loaded.get(workspaceId) ?? EMPTY).filter((row) => row.scope !== scope)
   loaded.push({ scope, workspaceId, draftId: draft.id })
   seedDraftCache(workspaceId, {
-    scratchpads: cache.scratchpads.get(workspaceId) ?? [],
-    drafts: withDraftUpserted(cache.drafts.get(workspaceId) ?? [], draft),
+    scratchpads: cache.scratchpads.get(workspaceId) ?? EMPTY,
+    drafts: withDraftUpserted(cache.drafts.get(workspaceId) ?? EMPTY, draft),
     loaded,
   })
 }
@@ -223,16 +221,16 @@ export function migrateLoadedDraftInCache(
   repointScope: string | null
 ): void {
   const drafts = withDraftUpserted(
-    (cache.drafts.get(workspaceId) ?? []).filter((draft) => draft.id !== fromId),
+    (cache.drafts.get(workspaceId) ?? EMPTY).filter((draft) => draft.id !== fromId),
     toRow
   )
-  let loaded = cache.loaded.get(workspaceId) ?? []
+  let loaded: ComposerLoaded[] = cache.loaded.get(workspaceId) ?? EMPTY
   if (repointScope) {
     loaded = loaded.filter((row) => row.scope !== repointScope)
     loaded.push({ scope: repointScope, workspaceId, draftId: toRow.id })
   }
   seedDraftCache(workspaceId, {
-    scratchpads: cache.scratchpads.get(workspaceId) ?? [],
+    scratchpads: cache.scratchpads.get(workspaceId) ?? EMPTY,
     drafts,
     loaded,
   })
@@ -254,14 +252,14 @@ export function migrateDraftScopeInCache(
   newRow: CachedDraft,
   movedToScope: string | null
 ): void {
-  const drafts = withDraftUpserted(cache.drafts.get(workspaceId) ?? [], newRow)
-  let loaded = cache.loaded.get(workspaceId) ?? []
+  const drafts = withDraftUpserted(cache.drafts.get(workspaceId) ?? EMPTY, newRow)
+  let loaded: ComposerLoaded[] = cache.loaded.get(workspaceId) ?? EMPTY
   if (movedToScope) {
     loaded = loaded.filter((row) => row.scope !== oldScope && row.scope !== movedToScope)
     loaded.push({ scope: movedToScope, workspaceId, draftId: newRow.id })
   }
   seedDraftCache(workspaceId, {
-    scratchpads: cache.scratchpads.get(workspaceId) ?? [],
+    scratchpads: cache.scratchpads.get(workspaceId) ?? EMPTY,
     drafts,
     loaded,
   })
@@ -273,12 +271,12 @@ export function migrateDraftScopeInCache(
  * resolves its checked-out draft synchronously on first paint.
  */
 export function setComposerLoadedInCache(workspaceId: string, scope: string, draftId: string | null): void {
-  const loaded = cache.loaded.get(workspaceId) ?? []
+  const loaded = cache.loaded.get(workspaceId) ?? EMPTY
   const next = loaded.filter((row) => row.scope !== scope)
   next.push({ scope, workspaceId, draftId })
   seedDraftCache(workspaceId, {
-    scratchpads: cache.scratchpads.get(workspaceId) ?? [],
-    drafts: cache.drafts.get(workspaceId) ?? [],
+    scratchpads: cache.scratchpads.get(workspaceId) ?? EMPTY,
+    drafts: cache.drafts.get(workspaceId) ?? EMPTY,
     loaded: next,
   })
 }

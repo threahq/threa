@@ -5,7 +5,7 @@ import { useWorkspaceService, useStreamService } from "@/contexts"
 import { workspaceKeys } from "./use-workspaces"
 import { streamKeys } from "./use-streams"
 import { useWorkspaceUnreadState } from "@/stores/workspace-store"
-import { db } from "@/db"
+import { db, type CachedUnreadState } from "@/db"
 import { applyInboxHeld, applyStreamReadOrdinal, deriveActivityCounts } from "@/sync/unread-counters"
 import { commitCounterMutation } from "@/sync/catch-up-batch"
 import {
@@ -70,8 +70,8 @@ function localCounterPatch(
  * consumers can use it as a stable dependency.
  */
 export function useReadMessageIds(workspaceId: string, streamId: string): ReadonlySet<string> {
-  const unreadState = useWorkspaceUnreadState(workspaceId)
-  const ids = unreadState?.readMessageIds?.[streamId]
+  const pickIds = useCallback((state: CachedUnreadState) => state.readMessageIds?.[streamId], [streamId])
+  const ids = useWorkspaceUnreadState(workspaceId, pickIds)
   // `useLiveQuery` structured-clones a fresh array on every IDB write, so key on
   // the overlay's CONTENT (not the array reference) to keep the returned set
   // referentially stable while the stream's overlay is unchanged.
@@ -205,6 +205,12 @@ async function applyReadAdvance(
   publishReadAllFrontiersToCache(queryClient, workspaceId, resolved)
 }
 
+const pickInboxState = (state: CachedUnreadState) => ({
+  unreadCounts: state.unreadCounts,
+  mutedStreamIds: state.mutedStreamIds,
+  inboxHeldStreamIds: state.inboxHeldStreamIds,
+})
+
 export function useUnreadCounts(workspaceId: string) {
   const queryClient = useQueryClient()
   const streamService = useStreamService()
@@ -213,7 +219,7 @@ export function useUnreadCounts(workspaceId: string) {
   // Read from IDB via useLiveQuery — reactive and offline-capable.
   // Use refs so callback identity stays stable; the sidebar memos that
   // depend on these callbacks won't recompute on every IDB write.
-  const unreadState = useWorkspaceUnreadState(workspaceId)
+  const unreadState = useWorkspaceUnreadState(workspaceId, pickInboxState)
   const unreadCounts = unreadState?.unreadCounts ?? {}
   const unreadCountsRef = useRef(unreadCounts)
   unreadCountsRef.current = unreadCounts
@@ -524,12 +530,13 @@ export function useUnreadCounts(workspaceId: string) {
     [markUnreadMutation, workspaceId]
   )
 
+  const { mutate: mutateClearInbox } = clearInboxMutation
   const clearInbox = useCallback(
     (streamIds: string[]) => {
       if (streamIds.length === 0) return
-      clearInboxMutation.mutate({ streamIds })
+      mutateClearInbox({ streamIds })
     },
-    [clearInboxMutation]
+    [mutateClearInbox]
   )
 
   return {

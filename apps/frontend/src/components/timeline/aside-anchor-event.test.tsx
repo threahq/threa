@@ -83,9 +83,11 @@ function cardEvent(id: string, sequence: string): StreamEvent {
 }
 
 function unreadOnAside(count: number) {
-  vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockReturnValue({
-    unreadCounts: { [ASIDE]: count },
-  } as never)
+  const state = { unreadCounts: { [ASIDE]: count } }
+  vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockImplementation(((
+    _workspaceId: string | undefined,
+    pick?: (row: typeof state) => unknown
+  ) => (pick ? pick(state) : state)) as never)
 }
 
 beforeEach(() => {

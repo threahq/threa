@@ -1,4 +1,5 @@
 import Dexie from "dexie"
+import { replaceEqualDeep } from "@tanstack/react-query"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { db, sequenceToNum, type CachedEvent, type CachedStream } from "@/db"
@@ -542,6 +543,11 @@ type StreamRowFallback = CachedStream | typeof REGISTRY_OWNED_ROW | undefined
  * `db.streams.get`. Both paths mount the same hooks unconditionally; only the
  * work inside them differs.
  *
+ * `pick` narrows the read to the fields a caller uses: the row is rewritten on
+ * every message in its stream, so a per-row reader holding the whole row
+ * re-renders the entire timeline window each time. A picked read re-renders
+ * only when a picked field changes, compared deeply.
+ *
  * `undefined` means "genuinely not resolved anywhere". `resolveDecryptContext`
  * reads that as "hold, never attempt", and a decrypt attempted against an
  * unhydrated row caches its failure forever — so a value already resolved on
@@ -551,8 +557,29 @@ type StreamRowFallback = CachedStream | typeof REGISTRY_OWNED_ROW | undefined
 export function useStreamFromStore(
   workspaceId: string | undefined,
   streamId: string | undefined
-): CachedStream | undefined {
+): CachedStream | undefined
+export function useStreamFromStore<T extends object>(
+  workspaceId: string | undefined,
+  streamId: string | undefined,
+  pick: (row: CachedStream) => T
+): T | undefined
+export function useStreamFromStore<T extends object>(
+  workspaceId: string | undefined,
+  streamId: string | undefined,
+  pick?: (row: CachedStream) => T
+): CachedStream | T | undefined {
   const registryHolds = Boolean(workspaceId && streamId && getWorkspaceTableRow(workspaceId, "streams", streamId))
+
+  const pickedRef = useRef<T | null>(null)
+  const view = useCallback(
+    (row: CachedStream): CachedStream | T => {
+      if (!pick) return row
+      // Deep, not per-field: nested values (`e2eActors`) are fresh objects on every row rewrite.
+      pickedRef.current = pickedRef.current ? replaceEqualDeep(pickedRef.current, pick(row)) : pick(row)
+      return pickedRef.current
+    },
+    [pick]
+  )
 
   const subscribe = useCallback(
     (onStoreChange: () => void) => {
@@ -561,22 +588,28 @@ export function useStreamFromStore(
     },
     [workspaceId, streamId, registryHolds]
   )
-  const readRegistryRow = useCallback(
-    () =>
-      workspaceId && streamId && registryHolds ? getWorkspaceTableRow(workspaceId, "streams", streamId) : undefined,
-    [workspaceId, streamId, registryHolds]
-  )
+  const readRegistryRow = useCallback(() => {
+    const row =
+      workspaceId && streamId && registryHolds ? getWorkspaceTableRow(workspaceId, "streams", streamId) : undefined
+    return row && view(row)
+  }, [workspaceId, streamId, registryHolds, view])
   const registryRow = useSyncExternalStore(subscribe, readRegistryRow, readRegistryRow)
 
-  const fallback = useLiveQuery<StreamRowFallback>(async () => {
-    if (!workspaceId || !streamId) return undefined
-    // Re-checked inside the query (not read off the render) so a registry that
-    // resolved between render and run still spares the read.
-    if (getWorkspaceTableRow(workspaceId, "streams", streamId)) return REGISTRY_OWNED_ROW
-    return await db.streams.get([workspaceId, streamId])
-  }, [workspaceId, streamId, registryHolds])
+  const fallback = useLiveQuery<StreamRowFallback, StreamRowFallback>(
+    async () => {
+      if (!workspaceId || !streamId) return undefined
+      // Re-checked inside the query (not read off the render) so a registry that
+      // resolved between render and run still spares the read.
+      if (getWorkspaceTableRow(workspaceId, "streams", streamId)) return REGISTRY_OWNED_ROW
+      return await db.streams.get([workspaceId, streamId])
+    },
+    [workspaceId, streamId, registryHolds],
+    // Seeded with the marker while the registry owns the id: the query's first
+    // emission is then a no-op instead of a second render of every reader.
+    registryHolds ? REGISTRY_OWNED_ROW : undefined
+  )
 
-  const lastResolvedRef = useRef<{ workspaceId: string; streamId: string; row: CachedStream } | null>(null)
+  const lastResolvedRef = useRef<{ workspaceId: string; streamId: string; row: CachedStream | T } | null>(null)
   const lastOwnerRef = useRef<{ workspaceId: string; streamId: string } | null>(null)
   if (!workspaceId || !streamId) return undefined
   const held = lastResolvedRef.current
@@ -606,6 +639,7 @@ export function useStreamFromStore(
   }
   // The same deps-change window can still carry the previous key's row.
   if (fallback && (fallback.workspaceId !== workspaceId || fallback.id !== streamId)) return undefined
-  lastResolvedRef.current = fallback ? { workspaceId, streamId, row: fallback } : null
-  return fallback
+  const resolved = fallback && view(fallback)
+  lastResolvedRef.current = resolved ? { workspaceId, streamId, row: resolved } : null
+  return resolved
 }

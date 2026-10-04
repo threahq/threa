@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react"
+import { createSelectorContext } from "@/lib/selector-context"
 
 const EMPTY_OVERLAY: ReadonlySet<string> = new Set()
 
@@ -18,11 +18,7 @@ export interface ReadFrontier {
   overlay: ReadonlySet<string>
 }
 
-export const ReadFrontierContext = createContext<ReadFrontier>({ sequence: null, overlay: EMPTY_OVERLAY })
-
-export function useReadFrontier(): ReadFrontier {
-  return useContext(ReadFrontierContext)
-}
+export const ReadFrontierContext = createSelectorContext<ReadFrontier>({ sequence: null, overlay: EMPTY_OVERLAY })
 
 export type RowReadState = "read" | "unread" | "ungated"
 
@@ -42,4 +38,11 @@ export function rowReadState(
   if (messageId != null && frontier.overlay.has(messageId)) return "read"
   if (frontier.sequence === null || eventSequence == null) return "ungated"
   return BigInt(eventSequence) > BigInt(frontier.sequence) ? "unread" : "read"
+}
+
+export function useRowReadState(
+  eventSequence: string | null | undefined,
+  messageId: string | null | undefined
+): RowReadState {
+  return ReadFrontierContext.useSelector((frontier) => rowReadState(eventSequence, messageId, frontier))
 }

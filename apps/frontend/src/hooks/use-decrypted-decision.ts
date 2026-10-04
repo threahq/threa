@@ -12,7 +12,7 @@ import {
   subscribeSealedDecisionNote,
 } from "@/lib/crypto/decision-cache"
 import { sealDecisionNote, type SealedDecisionWire } from "@/lib/crypto/decision-card"
-import { resolveDecryptContext } from "@/lib/crypto/decrypt-context"
+import { pickDecryptStreamFields, resolveDecryptContext } from "@/lib/crypto/decrypt-context"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
@@ -73,7 +73,7 @@ export function useDecryptedDecision(
   const sealed = useMemo(() => readSealedCard(decision), [decision])
   // The card's own stream; a thread's SSK resolves against its root, which is
   // why the row has to be in hand before any decrypt is attempted.
-  const stream = useStreamFromStore(workspaceId, sealed?.streamId)
+  const stream = useStreamFromStore(workspaceId, sealed?.streamId, pickDecryptStreamFields)
   const ctx = resolveDecryptContext(workspaceId, sealed?.streamId ?? "", session, stream)
   const opts = sealed && ctx.ready ? ctx.opts : null
 

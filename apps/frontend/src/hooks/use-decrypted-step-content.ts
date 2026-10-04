@@ -7,7 +7,7 @@ import {
   subscribeToDecryption,
   type DecryptCacheEntry,
 } from "@/lib/crypto/decrypt-cache"
-import { resolveDecryptContext } from "@/lib/crypto/decrypt-context"
+import { pickDecryptStreamFields, resolveDecryptContext } from "@/lib/crypto/decrypt-context"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { useStreamFromStore } from "@/stores/stream-store"
 
@@ -57,7 +57,7 @@ export function useDecryptedStepContent(
   // Session + root-SSK resolution and the "hold until the row hydrates" guard
   // (a doomed thread-id decrypt poisons the cache forever) live in
   // `resolveDecryptContext`, shared with the message and search read paths.
-  const stream = useStreamFromStore(workspaceId, streamId)
+  const stream = useStreamFromStore(workspaceId, streamId, pickDecryptStreamFields)
   const ctx = resolveDecryptContext(workspaceId, streamId, session, stream)
   const opts = ctx.ready ? ctx.opts : null
 

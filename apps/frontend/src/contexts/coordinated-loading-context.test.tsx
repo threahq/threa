@@ -134,7 +134,10 @@ function installSpies() {
 }
 
 function TestConsumer() {
-  const { phase, getStreamState, hasErrors, showLoadingIndicator } = useCoordinatedLoading()
+  const phase = useCoordinatedLoading((loading) => loading.phase)
+  const getStreamState = useCoordinatedLoading((loading) => loading.getStreamState)
+  const hasErrors = useCoordinatedLoading((loading) => loading.hasErrors)
+  const showLoadingIndicator = useCoordinatedLoading((loading) => loading.showLoadingIndicator)
   return (
     <div>
       <span data-testid="phase">{phase}</span>

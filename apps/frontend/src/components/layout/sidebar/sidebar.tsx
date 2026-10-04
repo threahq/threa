@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { FileText, Lock, RefreshCw, StickyNote } from "lucide-react"
 import { useLocation, useNavigate, useParams } from "react-router-dom"
+import { replaceEqualDeep } from "@tanstack/react-query"
 import { useAuth } from "@/auth"
 import { useCreateEncryptedScratchpad } from "@/hooks/use-create-encrypted-scratchpad"
 import { useE2eUnlockOptional } from "@/components/encryption/e2e-unlock-provider"
@@ -31,6 +32,7 @@ import {
   useWorkspaceLabels,
   useWorkspaceLabelAssignments,
   useWorkspaceMetadata,
+  type CachedUnreadState,
 } from "@/stores/workspace-store"
 import { useCoordinatedLoading, useSidebar, usePreferencesOptional, usePanel } from "@/contexts"
 import { useCreateChannel } from "@/components/create-channel"
@@ -47,6 +49,8 @@ import { SidebarFooter } from "./sidebar-footer"
 import { GettingStarted, hasWrittenFirstNote, useGettingStarted } from "./getting-started"
 import { SidebarEditorDialog } from "./sidebar-editor"
 import { resolveSections } from "./resolve-sections"
+import { shareSections } from "./stable-rows"
+import { shareById, useShared } from "@/lib/structural-sharing"
 import { setStreamCustomSection, setSectionFilter, setSectionOrder, setSectionReverse } from "./sidebar-config"
 import type { SectionViewChange } from "./section-view-options"
 import { RemoveLabelDialog } from "./remove-label-dialog"
@@ -86,6 +90,7 @@ import { isBoardPath, type SidebarBoardMode } from "./board-sidebar-mode"
 import { isClearInboxShortcutEvent, resolveClearInboxTargetStreamId } from "./inbox-clear-shortcut"
 import { useBoardSidebarStats, ZERO_BOARD_STREAM_STATS } from "@/hooks/use-board-sidebar-stats"
 import { useStreamWarmup } from "@/hooks/use-stream-warmup"
+import { useStableCallback } from "@/hooks/use-stable-callback"
 import { useAgentActiveStreamIds } from "@/stores/agent-activity-store"
 import { holdSidebarThreads, useHeldSidebarThreads } from "@/stores/sidebar-held-threads-store"
 import { StreamTypes, LabelableResourceTypes } from "@threahq/types"
@@ -94,13 +99,47 @@ import { CLEAR_INBOX_STREAM_ACTION_ID, formatKeyBinding, getEffectiveKeyBinding 
 /** Stable empty set for layouts with no Unread section (avoids a new ref each render). */
 const EMPTY_UNREAD_IDS: ReadonlySet<string> = new Set()
 const EMPTY_INBOX_ARRIVED_AT: Record<string, string> = {}
+const EMPTY_COUNTS: Record<string, number> = {}
+
+const pickSidebarUnreadState = (state: CachedUnreadState) => ({
+  unreadCounts: state.unreadCounts,
+  mentionCounts: state.mentionCounts,
+  activityCounts: state.activityCounts,
+  mutedStreamIds: state.mutedStreamIds,
+  inboxHeldStreamIds: state.inboxHeldStreamIds,
+  inboxArrivedAt: state.inboxArrivedAt,
+})
 
 interface SidebarProps {
   workspaceId: string
 }
 
+/**
+ * The draft rollup's inputs change on every keystroke's draft save while its
+ * outputs almost never do, so it is read here and handed down as primitives.
+ */
 export function Sidebar({ workspaceId }: SidebarProps) {
-  const { phase } = useCoordinatedLoading()
+  const { draftCount, isLoading, loadedDraftStreamIdSignature } = useDraftSummary(workspaceId)
+  return (
+    <SidebarBody
+      workspaceId={workspaceId}
+      draftCount={isLoading ? 0 : draftCount}
+      loadedDraftStreamIdSignature={loadedDraftStreamIdSignature}
+    />
+  )
+}
+
+interface SidebarBodyProps extends SidebarProps {
+  draftCount: number
+  loadedDraftStreamIdSignature: string
+}
+
+const SidebarBody = memo(function SidebarBody({
+  workspaceId,
+  draftCount,
+  loadedDraftStreamIdSignature,
+}: SidebarBodyProps) {
+  const phase = useCoordinatedLoading((loading) => loading.phase)
   const { getSectionState, toggleSectionState, collapseOnMobile, isMobile } = useSidebar()
   const { isOpen: isSearchOpen } = useSearchPanel()
   const { config: sidebarConfig, setConfig: setSidebarConfig } = useSidebarConfig(workspaceId)
@@ -121,7 +160,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const syncEngine = useSyncEngine()
   const error = syncStatus === "error"
   const workspace = useWorkspaceFromStore(workspaceId)
-  const unreadState = useWorkspaceUnreadState(workspaceId)
+  const unreadState = useWorkspaceUnreadState(workspaceId, pickSidebarUnreadState)
   const workspaceUsers = useWorkspaceUsers(workspaceId)
   const onboardingStreamId = useWorkspaceMetadata(workspaceId)?.onboardingStreamId ?? null
   const allIdbStreams = useWorkspaceStreams(workspaceId)
@@ -134,7 +173,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   const { createScratchpad } = useDraftScratchpads(workspaceId)
   const { getUnreadCount, isInInbox, clearInbox } = useUnreadCounts(workspaceId)
   const { getMentionCount, getActivityCount, unreadActivityCount } = useActivityCounts(workspaceId)
-  const { draftCount, isLoading: draftsLoading, loadedDraftStreamIdSignature } = useDraftSummary(workspaceId)
   const { openCreateChannel } = useCreateChannel()
   const { user } = useAuth()
   const assignLabel = useAssignLabel(workspaceId)
@@ -160,8 +198,8 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // Reactive pathname (useLocation), matched by the shared board predicate.
   const isBoardPage = isBoardPath(location.pathname)
   const boardMutedStreamIds = useBoardMutedStreamIds(workspaceId)
-  const muteStream = useMuteStream(workspaceId)
-  const unmuteStream = useUnmuteStream(workspaceId)
+  const { mutate: muteStream } = useMuteStream(workspaceId)
+  const { mutate: unmuteStream } = useUnmuteStream(workspaceId)
   const isMemoryPage = splat === "memory" || location.pathname.endsWith("/memory")
   const isFilesPage = splat === "files" || location.pathname.endsWith("/files")
   const isAgendaPage = splat === "agenda" || location.pathname.endsWith("/agenda")
@@ -380,9 +418,21 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     holdSidebarThreads(workspaceId, shown)
   }, [workspaceId, resolvedSections, getUnreadCount, agentActiveStreamIds])
 
+  // The unread-state row is rewritten several times per message and the stream
+  // list on every one, so everything above rebuilds with fresh objects. What the
+  // memoized list receives keeps its identity until its content changes — the
+  // count getters included, since their identity is the list's only signal that
+  // a badge moved.
+  const listStreams = useShared(processedStreams, shareById)
+  const listSections = useShared(resolvedSections, shareSections)
+  const unreadCounts = useShared(unreadState?.unreadCounts ?? EMPTY_COUNTS, replaceEqualDeep)
+  const mentionCounts = useShared(unreadState?.mentionCounts ?? EMPTY_COUNTS, replaceEqualDeep)
+  const listUnreadCount = useCallback((streamId: string) => unreadCounts[streamId] ?? 0, [unreadCounts])
+  const listMentionCount = useCallback((streamId: string) => mentionCounts[streamId] ?? 0, [mentionCounts])
+
   const hoverCardStreamIds = useMemo(
-    () => (isMobile ? [] : resolvedSections.flatMap(({ items }) => items.map((item) => item.id))),
-    [isMobile, resolvedSections]
+    () => (isMobile ? [] : listSections.flatMap(({ items }) => items.map((item) => item.id))),
+    [isMobile, listSections]
   )
   useStreamWarmup(hoverCardStreamIds)
 
@@ -417,7 +467,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       typeFocusHref: (type) => `${location.pathname}${typeFocusSearch(boardSearch, type)}`,
       unreadFocusHref: () => `${location.pathname}${unreadFocusSearch(boardSearch)}`,
       clearAxisHref: (param) => `${location.pathname}${clearAxisSearch(boardSearch, param)}`,
-      setMuted: (streamId, mute) => (mute ? muteStream.mutate(streamId) : unmuteStream.mutate(streamId)),
+      setMuted: (streamId, mute) => (mute ? muteStream(streamId) : unmuteStream(streamId)),
       statsForStream: (streamId) =>
         boardSidebarStats ? (boardSidebarStats.byStream.get(streamId) ?? ZERO_BOARD_STREAM_STATS) : null,
       lensTotals: boardSidebarStats?.lensTotals ?? null,
@@ -440,55 +490,75 @@ export function Sidebar({ workspaceId }: SidebarProps) {
   // removing the section from the editor takes it out of both the normal list
   // (resolved as a positioned section) and the empty-streams state.
   const hasQuickLinksSection = sidebarConfig.sections.some((s) => s.spec.kind === "quicklinks")
-  const quickLinks = hasQuickLinksSection ? (
-    <SidebarQuickLinks
-      workspaceId={workspaceId}
-      quickLinks={sidebarConfig.quickLinks}
-      isDraftsPage={isDraftsPage}
-      // No badge until the archived filter can decide — a count published early
-      // is unfiltered, and it contradicts a Drafts page that is still holding.
-      draftCount={draftsLoading ? 0 : draftCount}
-      isSavedPage={isSavedPage}
-      savedCount={savedCount}
-      isScheduledPage={isScheduledPage}
-      scheduledCount={scheduledCount}
-      isActivityPage={isActivityPage}
-      isMemoryPage={isMemoryPage}
-      isFilesPage={isFilesPage}
-      isAgendaPage={isAgendaPage}
-      isLabelsPage={isLabelsPage}
-      isStreamsPage={isStreamsPage}
-      unreadActivityCount={unreadActivityCount}
-    />
-  ) : null
+  const userId = user?.id ?? null
+  const lensTotals = boardMode?.lensTotals ?? null
   // The cross-mode entry row sits at the same spot in both modes — above the
   // quick links — so it doesn't move as the viewer crosses between them. Board
   // mode keeps the board block (its filters/views/lenses) available even when the
   // user drops the quick-links section; chats mode stays hidden without it, as it
   // always has.
-  let quickLinksSlot: ReactNode
-  if (isBoardPage) {
-    quickLinksSlot = (
+  const quickLinksSlot = useMemo<ReactNode>(() => {
+    const quickLinks = hasQuickLinksSection ? (
+      <SidebarQuickLinks
+        workspaceId={workspaceId}
+        quickLinks={sidebarConfig.quickLinks}
+        isDraftsPage={isDraftsPage}
+        // No badge until the archived filter can decide — a count published early
+        // is unfiltered, and it contradicts a Drafts page that is still holding.
+        draftCount={draftCount}
+        isSavedPage={isSavedPage}
+        savedCount={savedCount}
+        isScheduledPage={isScheduledPage}
+        scheduledCount={scheduledCount}
+        isActivityPage={isActivityPage}
+        isMemoryPage={isMemoryPage}
+        isFilesPage={isFilesPage}
+        isAgendaPage={isAgendaPage}
+        isLabelsPage={isLabelsPage}
+        isStreamsPage={isStreamsPage}
+        unreadActivityCount={unreadActivityCount}
+      />
+    ) : null
+    if (isBoardPage) {
+      return (
+        <>
+          <ChatsLinkRow workspaceId={workspaceId} userId={userId} />
+          {quickLinks}
+          <BoardModeBlock workspaceId={workspaceId} lensTotals={lensTotals} unreadStreamCount={unreadStreamCount} />
+        </>
+      )
+    }
+    if (!hasQuickLinksSection) return undefined
+    return (
       <>
-        <ChatsLinkRow workspaceId={workspaceId} userId={user?.id ?? null} />
+        <BoardLinkRow workspaceId={workspaceId} userId={userId} />
         {quickLinks}
-        <BoardModeBlock
-          workspaceId={workspaceId}
-          lensTotals={boardMode?.lensTotals ?? null}
-          unreadStreamCount={unreadStreamCount}
-        />
       </>
     )
-  } else if (hasQuickLinksSection) {
-    quickLinksSlot = (
-      <>
-        <BoardLinkRow workspaceId={workspaceId} userId={user?.id ?? null} />
-        {quickLinks}
-      </>
-    )
-  }
+  }, [
+    hasQuickLinksSection,
+    workspaceId,
+    sidebarConfig.quickLinks,
+    isDraftsPage,
+    draftCount,
+    isSavedPage,
+    savedCount,
+    isScheduledPage,
+    scheduledCount,
+    isActivityPage,
+    isMemoryPage,
+    isFilesPage,
+    isAgendaPage,
+    isLabelsPage,
+    isStreamsPage,
+    unreadActivityCount,
+    isBoardPage,
+    userId,
+    lensTotals,
+    unreadStreamCount,
+  ])
 
-  const handleCreateScratchpad = async () => {
+  const handleCreateScratchpad = useStableCallback(async () => {
     try {
       const draftId = await createScratchpad("on")
       collapseOnMobile()
@@ -496,7 +566,7 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     } catch {
       toast.error("Failed to create scratchpad")
     }
-  }
+  })
 
   // Shared checklist state: the card renders above the footer, and the footer's
   // account menu offers a "Getting started" re-entry row while it's dismissed
@@ -540,6 +610,158 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     return () => document.removeEventListener("keydown", handleKeyDown)
   }, [activeStreamId, isInInbox, clearInbox, preferencesContext])
 
+  const handleCreateQuickNote = useStableCallback(async () => {
+    const draftId = await createScratchpad("off")
+    collapseOnMobile()
+    navigate(`/w/${workspaceId}/s/${draftId}`)
+  })
+
+  const openCreatedEncryptedScratchpad = async (withAriadne: boolean) => {
+    // Called both directly and deferred (via the modal's onComplete, fired as
+    // `void`), so it must own its own error feedback — an unhandled rejection
+    // after setup/unlock would otherwise leave the user with no signal.
+    try {
+      const streamId = await createEncryptedScratchpad(withAriadne)
+      collapseOnMobile()
+      navigate(`/w/${workspaceId}/s/${streamId}`)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Couldn't create the encrypted scratchpad")
+    }
+  }
+
+  // Asking for an encrypted scratchpad IS the onboarding trigger: if the user
+  // has no key yet (or is locked), open setup/unlock inline and create the
+  // scratchpad the moment they finish — never dead-end on a "set up encryption
+  // first" message. Falls back to a direct create only outside the unlock
+  // provider (unit harnesses); the provider is always present in the app.
+  const handleCreateEncryptedScratchpad = useStableCallback(async (withAriadne: boolean) => {
+    // The create needs a resolved workspace user; without one the onboarding
+    // modals would run for an action that can't succeed. Bail early (briefly,
+    // until the workspace finishes hydrating) rather than route through setup.
+    if (!currentUser) return
+    const session = getE2eSessionState(workspaceId, currentUser.id)
+    if (!e2eUnlock || session.status === "unlocked") {
+      await openCreatedEncryptedScratchpad(withAriadne)
+      return
+    }
+    const finish = () => void openCreatedEncryptedScratchpad(withAriadne)
+    if (session.status === "no-key") {
+      e2eUnlock.openSetup({ onComplete: finish })
+    } else {
+      e2eUnlock.openUnlock({ onUnlocked: finish })
+    }
+  })
+
+  const scratchpadAddMenuActions = useMemo<SidebarActionItem[]>(
+    () => [
+      {
+        id: "new-scratchpad",
+        label: "New Scratchpad",
+        icon: FileText,
+        onSelect: handleCreateScratchpad,
+      },
+      {
+        id: "new-quick-note",
+        label: "New Quick Note",
+        icon: StickyNote,
+        onSelect: handleCreateQuickNote,
+      },
+      {
+        id: "new-encrypted-scratchpad",
+        label: "New Encrypted Scratchpad",
+        icon: Lock,
+        onSelect: () => handleCreateEncryptedScratchpad(true),
+        separatorBefore: true,
+      },
+      {
+        id: "new-encrypted-quick-note",
+        label: "New Encrypted Quick Note",
+        icon: Lock,
+        onSelect: () => handleCreateEncryptedScratchpad(false),
+      },
+    ],
+    [handleCreateScratchpad, handleCreateQuickNote, handleCreateEncryptedScratchpad]
+  )
+
+  const handleCreateChannel = useStableCallback(() => {
+    collapseOnMobile()
+    openCreateChannel()
+  })
+
+  // Drag-and-drop drop: file the stream into the target custom section.
+  // setStreamCustomSection keeps membership exclusive (removed from any other).
+  const handleFileStreamToSection = useStableCallback((streamId: string, customSectionId: string) => {
+    setSidebarConfig(setStreamCustomSection(sidebarConfig, streamId, customSectionId))
+  })
+
+  // Drag-and-drop drop onto a label section: tag the stream with that label.
+  // A labeled stream lives under its label lens (which trumps the smart/type
+  // buckets), so once the label lands we unfile it from any custom section — the
+  // custom-section trump would otherwise hide it from the very lens the drop
+  // targeted. The unfile runs in `onSuccess` (not before `mutate`) so a failed
+  // assignment doesn't strand the stream out of the section it was filed into;
+  // `setStreamCustomSection` is a no-op when the stream isn't filed anywhere.
+  const handleAssignStreamLabel = useStableCallback((streamId: string, labelId: string) => {
+    assignLabel.mutate(
+      { labelId, resourceType: LabelableResourceTypes.STREAM, resourceId: streamId },
+      {
+        onSuccess: () => {
+          const unfiled = setStreamCustomSection(sidebarConfig, streamId, null)
+          if (unfiled !== sidebarConfig) setSidebarConfig(unfiled)
+        },
+      }
+    )
+  })
+
+  const handleSectionViewChange = useStableCallback((sectionId: string, change: SectionViewChange) => {
+    let next = sidebarConfig
+    if (change.filter !== undefined) next = setSectionFilter(next, sectionId, change.filter)
+    if (change.order !== undefined) next = setSectionOrder(next, sectionId, change.order)
+    if (change.reverse !== undefined) next = setSectionReverse(next, sectionId, change.reverse)
+    if (next !== sidebarConfig) setSidebarConfig(next)
+  })
+
+  const removeStreamLabel = (streamId: string, labelId: string) => {
+    unassignLabel.mutate({ labelId, resourceType: LabelableResourceTypes.STREAM, resourceId: streamId })
+  }
+
+  // A stream was dragged out of the label lens it was under. Whether that strips
+  // the old label follows the user's `labelRemoveOnMove` preference: act silently
+  // for "always"/"never", otherwise prompt (and let the prompt persist a choice).
+  const handleStreamMovedFromLabel = useStableCallback((streamId: string, sourceLabelId: string) => {
+    const label = labelsById.get(sourceLabelId)
+    if (!label) return
+    const behavior = preferencesContext?.preferences?.labelRemoveOnMove ?? "ask"
+    if (behavior === "never") return
+    if (behavior === "always") {
+      removeStreamLabel(streamId, sourceLabelId)
+      return
+    }
+    setLabelRemovePrompt({ streamId, labelId: sourceLabelId })
+  })
+
+  const homeHintFor = useCallback((streamId: string) => homeHintById.get(streamId) ?? null, [homeHintById])
+  const handleInboxRowHoverChange = useCallback((streamId: string, hovering: boolean) => {
+    if (hovering) {
+      hoveredInboxStreamIdRef.current = streamId
+    } else if (hoveredInboxStreamIdRef.current === streamId) {
+      // Only clear when this row still owns the ref — a later row's
+      // enter must not be clobbered by a stale unmount/leave from a
+      // row that has since scrolled away or been removed.
+      hoveredInboxStreamIdRef.current = null
+    }
+  }, [])
+
+  const resolveLabelRemovePrompt = (remove: boolean, remember: boolean) => {
+    const prompt = labelRemovePrompt
+    setLabelRemovePrompt(null)
+    if (!prompt) return
+    if (remove) removeStreamLabel(prompt.streamId, prompt.labelId)
+    if (remember && preferencesContext) {
+      void preferencesContext.updatePreference("labelRemoveOnMove", remove ? "always" : "never")
+    }
+  }
+
   if (phase !== "ready") {
     return (
       <SidebarShell
@@ -577,143 +799,6 @@ export function Sidebar({ workspaceId }: SidebarProps) {
     )
   }
 
-  const handleCreateQuickNote = async () => {
-    const draftId = await createScratchpad("off")
-    collapseOnMobile()
-    navigate(`/w/${workspaceId}/s/${draftId}`)
-  }
-
-  const openCreatedEncryptedScratchpad = async (withAriadne: boolean) => {
-    // Called both directly and deferred (via the modal's onComplete, fired as
-    // `void`), so it must own its own error feedback — an unhandled rejection
-    // after setup/unlock would otherwise leave the user with no signal.
-    try {
-      const streamId = await createEncryptedScratchpad(withAriadne)
-      collapseOnMobile()
-      navigate(`/w/${workspaceId}/s/${streamId}`)
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't create the encrypted scratchpad")
-    }
-  }
-
-  // Asking for an encrypted scratchpad IS the onboarding trigger: if the user
-  // has no key yet (or is locked), open setup/unlock inline and create the
-  // scratchpad the moment they finish — never dead-end on a "set up encryption
-  // first" message. Falls back to a direct create only outside the unlock
-  // provider (unit harnesses); the provider is always present in the app.
-  const handleCreateEncryptedScratchpad = async (withAriadne: boolean) => {
-    // The create needs a resolved workspace user; without one the onboarding
-    // modals would run for an action that can't succeed. Bail early (briefly,
-    // until the workspace finishes hydrating) rather than route through setup.
-    if (!currentUser) return
-    const session = getE2eSessionState(workspaceId, currentUser.id)
-    if (!e2eUnlock || session.status === "unlocked") {
-      await openCreatedEncryptedScratchpad(withAriadne)
-      return
-    }
-    const finish = () => void openCreatedEncryptedScratchpad(withAriadne)
-    if (session.status === "no-key") {
-      e2eUnlock.openSetup({ onComplete: finish })
-    } else {
-      e2eUnlock.openUnlock({ onUnlocked: finish })
-    }
-  }
-
-  const scratchpadAddMenuActions: SidebarActionItem[] = [
-    {
-      id: "new-scratchpad",
-      label: "New Scratchpad",
-      icon: FileText,
-      onSelect: handleCreateScratchpad,
-    },
-    {
-      id: "new-quick-note",
-      label: "New Quick Note",
-      icon: StickyNote,
-      onSelect: handleCreateQuickNote,
-    },
-    {
-      id: "new-encrypted-scratchpad",
-      label: "New Encrypted Scratchpad",
-      icon: Lock,
-      onSelect: () => handleCreateEncryptedScratchpad(true),
-      separatorBefore: true,
-    },
-    {
-      id: "new-encrypted-quick-note",
-      label: "New Encrypted Quick Note",
-      icon: Lock,
-      onSelect: () => handleCreateEncryptedScratchpad(false),
-    },
-  ]
-
-  const handleCreateChannel = () => {
-    collapseOnMobile()
-    openCreateChannel()
-  }
-
-  // Drag-and-drop drop: file the stream into the target custom section.
-  // setStreamCustomSection keeps membership exclusive (removed from any other).
-  const handleFileStreamToSection = (streamId: string, customSectionId: string) => {
-    setSidebarConfig(setStreamCustomSection(sidebarConfig, streamId, customSectionId))
-  }
-
-  // Drag-and-drop drop onto a label section: tag the stream with that label.
-  // A labeled stream lives under its label lens (which trumps the smart/type
-  // buckets), so once the label lands we unfile it from any custom section — the
-  // custom-section trump would otherwise hide it from the very lens the drop
-  // targeted. The unfile runs in `onSuccess` (not before `mutate`) so a failed
-  // assignment doesn't strand the stream out of the section it was filed into;
-  // `setStreamCustomSection` is a no-op when the stream isn't filed anywhere.
-  const handleAssignStreamLabel = (streamId: string, labelId: string) => {
-    assignLabel.mutate(
-      { labelId, resourceType: LabelableResourceTypes.STREAM, resourceId: streamId },
-      {
-        onSuccess: () => {
-          const unfiled = setStreamCustomSection(sidebarConfig, streamId, null)
-          if (unfiled !== sidebarConfig) setSidebarConfig(unfiled)
-        },
-      }
-    )
-  }
-
-  const handleSectionViewChange = (sectionId: string, change: SectionViewChange) => {
-    let next = sidebarConfig
-    if (change.filter !== undefined) next = setSectionFilter(next, sectionId, change.filter)
-    if (change.order !== undefined) next = setSectionOrder(next, sectionId, change.order)
-    if (change.reverse !== undefined) next = setSectionReverse(next, sectionId, change.reverse)
-    if (next !== sidebarConfig) setSidebarConfig(next)
-  }
-
-  const removeStreamLabel = (streamId: string, labelId: string) => {
-    unassignLabel.mutate({ labelId, resourceType: LabelableResourceTypes.STREAM, resourceId: streamId })
-  }
-
-  // A stream was dragged out of the label lens it was under. Whether that strips
-  // the old label follows the user's `labelRemoveOnMove` preference: act silently
-  // for "always"/"never", otherwise prompt (and let the prompt persist a choice).
-  const handleStreamMovedFromLabel = (streamId: string, sourceLabelId: string) => {
-    const label = labelsById.get(sourceLabelId)
-    if (!label) return
-    const behavior = preferencesContext?.preferences?.labelRemoveOnMove ?? "ask"
-    if (behavior === "never") return
-    if (behavior === "always") {
-      removeStreamLabel(streamId, sourceLabelId)
-      return
-    }
-    setLabelRemovePrompt({ streamId, labelId: sourceLabelId })
-  }
-
-  const resolveLabelRemovePrompt = (remove: boolean, remember: boolean) => {
-    const prompt = labelRemovePrompt
-    setLabelRemovePrompt(null)
-    if (!prompt) return
-    if (remove) removeStreamLabel(prompt.streamId, prompt.labelId)
-    if (remember && preferencesContext) {
-      void preferencesContext.updatePreference("labelRemoveOnMove", remove ? "always" : "never")
-    }
-  }
-
   const promptStream = labelRemovePrompt
     ? (processedStreams.find((s) => s.id === labelRemovePrompt.streamId) ?? null)
     : null
@@ -729,11 +814,11 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             hasError={Boolean(error)}
             hasUserStreams={hasUserStreams}
             activeStreamId={activeStreamId}
-            processedStreams={processedStreams}
-            resolvedSections={resolvedSections}
+            processedStreams={listStreams}
+            resolvedSections={listSections}
             labelsById={labelsById}
-            getUnreadCount={getUnreadCount}
-            getMentionCount={getMentionCount}
+            getUnreadCount={listUnreadCount}
+            getMentionCount={listMentionCount}
             getSectionState={getSectionState}
             toggleSectionState={toggleSectionState}
             onCreateScratchpad={handleCreateScratchpad}
@@ -743,21 +828,12 @@ export function Sidebar({ workspaceId }: SidebarProps) {
             onAssignStreamLabel={handleAssignStreamLabel}
             onStreamMovedFromLabel={handleStreamMovedFromLabel}
             onSectionViewChange={handleSectionViewChange}
-            homeHintFor={(id) => homeHintById.get(id) ?? null}
+            homeHintFor={homeHintFor}
             quickLinksSlot={quickLinksSlot}
             boardMode={boardMode}
             onClearInbox={clearInbox}
             clearInboxKeyHint={clearInboxKeyHint}
-            onInboxRowHoverChange={(streamId, hovering) => {
-              if (hovering) {
-                hoveredInboxStreamIdRef.current = streamId
-              } else if (hoveredInboxStreamIdRef.current === streamId) {
-                // Only clear when this row still owns the ref — a later row's
-                // enter must not be clobbered by a stale unmount/leave from a
-                // row that has since scrolled away or been removed.
-                hoveredInboxStreamIdRef.current = null
-              }
-            }}
+            onInboxRowHoverChange={handleInboxRowHoverChange}
           />
         }
         footer={
@@ -789,4 +865,4 @@ export function Sidebar({ workspaceId }: SidebarProps) {
       )}
     </>
   )
-}
+})

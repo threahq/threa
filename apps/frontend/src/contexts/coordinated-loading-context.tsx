@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useMemo, useRef, type ReactNode } from "react"
+import { useState, useEffect, useMemo, useRef, type ReactNode } from "react"
 import { usePreloadImages } from "@/hooks/use-preload-images"
 import { useCoordinatedStreamQueries } from "@/hooks/use-coordinated-stream-queries"
 import { useSealedNamePendingResolver } from "@/hooks/use-decrypted-stream-name"
@@ -15,6 +15,7 @@ import {
   useWorkspaceStreams,
   useWorkspaceUnreadState,
   useWorkspaceUsers,
+  type CachedUnreadState,
 } from "@/stores/workspace-store"
 import { hasSeededDraftCache, seedDraftCacheFromIdb } from "@/stores/draft-store"
 import { reconcileStagedDrafts } from "@/sync/draft-sync"
@@ -29,6 +30,7 @@ import {
 import { StreamContentSkeleton } from "@/components/loading"
 import { ApiError } from "@/api/client"
 import { markInitialRevealComplete } from "@/sync/reveal-gate"
+import { createSelectorContext } from "@/lib/selector-context"
 import { getAvatarUrl } from "@threahq/types"
 
 /**
@@ -71,7 +73,9 @@ interface CoordinatedLoadingContextValue {
   showLoadingIndicator: boolean
 }
 
-const CoordinatedLoadingContext = createContext<CoordinatedLoadingContextValue | null>(null)
+const pickUnreadStateId = (state: CachedUnreadState) => state.id
+
+const CoordinatedLoadingContext = createSelectorContext<CoordinatedLoadingContextValue | null>(null)
 
 interface CoordinatedLoadingProviderProps {
   workspaceId: string
@@ -216,7 +220,7 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   const idbDmPeers = useWorkspaceDmPeers(workspaceId)
   const idbPersonas = useWorkspacePersonas(workspaceId)
   const idbBots = useWorkspaceBots(workspaceId)
-  const idbUnreadState = useWorkspaceUnreadState(workspaceId)
+  const hasUnreadState = useWorkspaceUnreadState(workspaceId, pickUnreadStateId) !== undefined
   const idbMetadata = useWorkspaceMetadata(workspaceId)
   // The sidebar config gates the reveal alongside the other workspace entities:
   // without it the gate could open before the persisted layout resolved, and the
@@ -244,7 +248,7 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   const workspaceDataReady =
     hasSeededWorkspaceCache(workspaceId) &&
     !!idbWorkspace &&
-    idbUnreadState !== undefined &&
+    hasUnreadState &&
     idbMetadata !== undefined &&
     idbSidebarConfig !== undefined
   const draftDataReady = primedDraftWorkspaceId === workspaceId && hasSeededDraftCache(workspaceId)
@@ -332,7 +336,7 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
       dmPeerCount: idbDmPeers.length,
       personaCount: idbPersonas.length,
       botCount: idbBots.length,
-      hasUnreadState: idbUnreadState !== undefined,
+      hasUnreadState,
       hasMetadata: idbMetadata !== undefined,
       hasSidebarConfig: idbSidebarConfig !== undefined,
       workspaceLoading,
@@ -417,8 +421,8 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
     }
   }, [isLoading])
 
-  const streamStateMap = useMemo(() => {
-    const map = new Map<string, { isLoading: boolean; error: Error | null }>()
+  const nextStreamStateMap = useMemo(() => {
+    const map: StreamLoadStates = new Map()
 
     streamQueryStates.forEach((state) => {
       const syncStatus = syncSnapshot.statuses.get(`stream:${state.streamId}`) ?? "idle"
@@ -440,8 +444,11 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
 
     return map
   }, [streamQueryStates, syncSnapshot])
+  // Recomputed on every stream-row write and sync tick; the getters below are
+  // context values, so they must keep their identity while the answers hold.
+  const streamStateMap = useStableWhile(nextStreamStateMap, sameStreamStates)
 
-  const streamErrors = useMemo<StreamError[]>(() => {
+  const nextStreamErrors = useMemo<StreamError[]>(() => {
     return streamQueryStates
       .map((state) => {
         const syncError = syncSnapshot.errors.get(`stream:${state.streamId}`)
@@ -458,6 +465,7 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
       })
       .filter((e): e is StreamError => e !== null)
   }, [streamQueryStates, syncSnapshot])
+  const streamErrors = useStableWhile(nextStreamErrors, sameStreamErrors)
 
   const getStreamState = useMemo(
     () =>
@@ -494,12 +502,41 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   return <CoordinatedLoadingContext.Provider value={value}>{children}</CoordinatedLoadingContext.Provider>
 }
 
-export function useCoordinatedLoading(): CoordinatedLoadingContextValue {
-  const context = useContext(CoordinatedLoadingContext)
-  if (!context) {
-    throw new Error("useCoordinatedLoading must be used within a CoordinatedLoadingProvider")
+function useStableWhile<T>(next: T, isSame: (previous: T, next: T) => boolean): T {
+  const ref = useRef(next)
+  if (ref.current !== next && !isSame(ref.current, next)) ref.current = next
+  return ref.current
+}
+
+type StreamLoadStates = Map<string, { isLoading: boolean; error: Error | null }>
+
+function sameStreamStates(previous: StreamLoadStates, next: StreamLoadStates): boolean {
+  if (previous.size !== next.size) return false
+  for (const [streamId, state] of next) {
+    const before = previous.get(streamId)
+    if (!before || before.isLoading !== state.isLoading || before.error !== state.error) return false
   }
-  return context
+  return true
+}
+
+function sameStreamErrors(previous: StreamError[], next: StreamError[]): boolean {
+  return (
+    previous.length === next.length &&
+    next.every((error, index) => {
+      const before = previous[index]
+      return before.streamId === error.streamId && before.status === error.status && before.error === error.error
+    })
+  )
+}
+
+/** Reads one field: the indicator and per-stream fields flip on every stream switch, and most readers want only `phase`. */
+export function useCoordinatedLoading<T>(select: (value: CoordinatedLoadingContextValue) => T): T {
+  return CoordinatedLoadingContext.useSelector((value) => {
+    if (!value) {
+      throw new Error("useCoordinatedLoading must be used within a CoordinatedLoadingProvider")
+    }
+    return select(value)
+  })
 }
 
 interface CoordinatedLoadingGateProps {
@@ -511,7 +548,7 @@ interface CoordinatedLoadingGateProps {
  * then renders children. Only applies during initial load.
  */
 export function CoordinatedLoadingGate({ children }: CoordinatedLoadingGateProps) {
-  const { phase } = useCoordinatedLoading()
+  const phase = useCoordinatedLoading((loading) => loading.phase)
 
   if (phase === "loading") {
     return null
@@ -526,7 +563,8 @@ export function CoordinatedLoadingGate({ children }: CoordinatedLoadingGateProps
  * Individual stream components handle their own loading states after that.
  */
 export function MainContentGate({ children }: CoordinatedLoadingGateProps) {
-  const { phase, hasErrors } = useCoordinatedLoading()
+  const phase = useCoordinatedLoading((loading) => loading.phase)
+  const hasErrors = useCoordinatedLoading((loading) => loading.hasErrors)
 
   // During initial load, show skeleton
   // Exception: if there are errors, render children so error pages can display

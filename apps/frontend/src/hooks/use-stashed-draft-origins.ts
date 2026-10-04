@@ -1,6 +1,7 @@
 import { useMemo } from "react"
 import { conversationOriginLabel, subtopicOriginLabel, threadOriginLabel } from "@/lib/drafts/origin-label"
 import { resolveStreamName, streamFallbackLabel } from "@/lib/streams"
+import { shareMap, useShared } from "@/lib/structural-sharing"
 import { useWorkspaceDmPeers, useWorkspaceStreams, useWorkspaceUsers } from "@/stores/workspace-store"
 import type { StashedDraftOrigin } from "./use-stashed-drafts"
 
@@ -36,7 +37,7 @@ export function useStashedDraftOrigins(
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
 
-  return useMemo(() => {
+  const origins = useMemo(() => {
     const caches = { streams, users, dmPeers }
     const streamName = (streamId: string) => resolveStreamName(streamId, caches, "sidebar")
     const label = (origin: StashedDraftOrigin): string => {
@@ -72,4 +73,6 @@ export function useStashedDraftOrigins(
     }
     return map
   }, [originByDraftId, streams, users, dmPeers])
+  // The stream list is rewritten on every message; the labels rarely change.
+  return useShared(origins, shareMap)
 }

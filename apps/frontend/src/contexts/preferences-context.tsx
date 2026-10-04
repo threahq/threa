@@ -165,48 +165,50 @@ export function PreferencesProvider({ workspaceId, children }: PreferencesProvid
     },
   })
 
+  const { mutateAsync } = mutation
+
   const updatePreference = useCallback(
     async <K extends keyof UpdateUserPreferencesInput>(key: K, value: UpdateUserPreferencesInput[K]) => {
-      await mutation.mutateAsync({ [key]: value } as UpdateUserPreferencesInput)
+      await mutateAsync({ [key]: value } as UpdateUserPreferencesInput)
     },
-    [mutation]
+    [mutateAsync]
   )
 
   const updatePreferences = useCallback(
     async (input: UpdateUserPreferencesInput) => {
-      await mutation.mutateAsync(input)
+      await mutateAsync(input)
     },
-    [mutation]
+    [mutateAsync]
   )
 
   const updateAccessibility = useCallback(
     async (updates: Partial<AccessibilityPreferences>) => {
-      await mutation.mutateAsync({ accessibility: updates })
+      await mutateAsync({ accessibility: updates })
     },
-    [mutation]
+    [mutateAsync]
   )
 
   const updateKeyboardShortcut = useCallback(
     async (actionId: string, keyBinding: string) => {
       const currentShortcuts = { ...(preferences?.keyboardShortcuts ?? {}) }
       currentShortcuts[actionId] = keyBinding
-      await mutation.mutateAsync({ keyboardShortcuts: currentShortcuts })
+      await mutateAsync({ keyboardShortcuts: currentShortcuts })
     },
-    [mutation, preferences?.keyboardShortcuts]
+    [mutateAsync, preferences?.keyboardShortcuts]
   )
 
   const resetKeyboardShortcut = useCallback(
     async (actionId: string) => {
       const currentShortcuts = { ...(preferences?.keyboardShortcuts ?? {}) }
       delete currentShortcuts[actionId]
-      await mutation.mutateAsync({ keyboardShortcuts: currentShortcuts })
+      await mutateAsync({ keyboardShortcuts: currentShortcuts })
     },
-    [mutation, preferences?.keyboardShortcuts]
+    [mutateAsync, preferences?.keyboardShortcuts]
   )
 
   const resetAllKeyboardShortcuts = useCallback(async () => {
-    await mutation.mutateAsync({ keyboardShortcuts: {} })
-  }, [mutation])
+    await mutateAsync({ keyboardShortcuts: {} })
+  }, [mutateAsync])
 
   const value = useMemo<PreferencesContextValue>(
     () => ({

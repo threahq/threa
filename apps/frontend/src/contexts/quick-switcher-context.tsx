@@ -1,4 +1,4 @@
-import { createContext, useContext } from "react"
+import { createContext, useContext, useMemo } from "react"
 import type { QuickSwitcherMode } from "@/components/quick-switcher"
 
 interface QuickSwitcherContextValue {
@@ -14,7 +14,8 @@ export function QuickSwitcherProvider({
   children: React.ReactNode
   openSwitcher: (mode: QuickSwitcherMode) => void
 }) {
-  return <QuickSwitcherContext.Provider value={{ openSwitcher }}>{children}</QuickSwitcherContext.Provider>
+  const value = useMemo(() => ({ openSwitcher }), [openSwitcher])
+  return <QuickSwitcherContext.Provider value={value}>{children}</QuickSwitcherContext.Provider>
 }
 
 export function useQuickSwitcher() {

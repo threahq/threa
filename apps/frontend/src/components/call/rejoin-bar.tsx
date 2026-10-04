@@ -36,8 +36,9 @@ import { useCallPhase, useCallStreamId } from "./call-store-hooks"
  * live — or a dead Rejoin/Leave lingers after the call is over.
  */
 export function RejoinBar({ workspaceId, streamId }: { workspaceId: string; streamId: string }) {
-  const { data } = useStreamBootstrap(workspaceId, streamId)
-  const activeCall = data?.activeCall
+  const { data: activeCall } = useStreamBootstrap(workspaceId, streamId, {
+    select: (bootstrap) => bootstrap.activeCall,
+  })
   const live = useActiveCall(workspaceId, activeCall?.callId)
   const { launch } = useCallLaunch()
   const callPhase = useCallPhase()

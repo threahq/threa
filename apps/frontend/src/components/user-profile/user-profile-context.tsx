@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useState, type ReactNode } from "react"
+import React, { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react"
 
 import { BotProfileModal } from "@/components/bot-profile/bot-profile-modal"
 import { UserProfileModal } from "./user-profile-modal"
@@ -31,8 +31,10 @@ export function UserProfileProvider({ children }: UserProfileProviderProps) {
     setTarget(null)
   }, [])
 
+  const value = useMemo(() => ({ openUserProfile, openBotProfile }), [openUserProfile, openBotProfile])
+
   return (
-    <UserProfileContext.Provider value={{ openUserProfile, openBotProfile }}>
+    <UserProfileContext.Provider value={value}>
       {children}
       {target?.kind === "user" && (
         <React.Suspense fallback={null}>
