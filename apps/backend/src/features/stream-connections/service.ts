@@ -164,7 +164,7 @@ export class StreamConnectionService {
     if (!(await WorkspaceRepository.findById(this.pool, params.workspaceId))) {
       throw new HttpError("This workspace does not live in this region", { status: 404, code: "WORKSPACE_NOT_FOUND" })
     }
-    const stream = await StreamRepository.findByIdForWorkspace(this.pool, params.streamId, params.workspaceId)
+    const stream = await StreamRepository.findById(this.pool, params.workspaceId, params.streamId)
     if (!stream) return { shareable: false, slug: null, displayName: null }
     return {
       shareable:
@@ -257,7 +257,7 @@ export class StreamConnectionService {
 
     const audiences = new Map<string, { visibility: Visibility; adminMemberUserIds: string[] }>()
     for (const [workspaceId, ids] of streamIdsByWorkspace) {
-      const streams = await StreamRepository.findByIdsInWorkspace(client, workspaceId, [...ids])
+      const streams = await StreamRepository.findByIds(client, workspaceId, [...ids])
       const privateIds = streams.filter((s) => s.visibility !== Visibilities.PUBLIC).map((s) => s.id)
       const members = privateIds.length > 0 ? await StreamMemberRepository.list(client, { streamIds: privateIds }) : []
       const users = await UserRepository.findByIds(client, workspaceId, [...new Set(members.map((m) => m.memberId))])

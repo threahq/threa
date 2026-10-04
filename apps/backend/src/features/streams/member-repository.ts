@@ -220,15 +220,6 @@ export const StreamMemberRepository = {
     return result.rows.length > 0
   },
 
-  async isMemberForUpdate(db: Querier, streamId: string, memberId: string): Promise<boolean> {
-    const result = await db.query(sql`
-      SELECT 1 FROM stream_members
-      WHERE stream_id = ${streamId} AND member_id = ${memberId}
-      FOR UPDATE
-    `)
-    return result.rows.length > 0
-  },
-
   async lockMemberships(db: Querier, rootStreamIds: readonly string[], memberId: string): Promise<Set<string>> {
     const stableIds = [...new Set(rootStreamIds)].sort()
     if (stableIds.length === 0) return new Set()

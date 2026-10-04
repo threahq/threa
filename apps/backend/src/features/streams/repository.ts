@@ -1,5 +1,5 @@
 import type { Querier } from "../../db"
-import { sql } from "../../db"
+import { composeSql, sql } from "../../db"
 import type {
   AuthorType,
   StreamType,
@@ -320,7 +320,7 @@ const SELECT_FIELDS_WITH_E2E = `
   ) AS e2e_actors
 `
 
-const FROM_STREAMS_WITH_E2E = `streams s LEFT JOIN e2e_streams e ON e.stream_id = s.id`
+const FROM_STREAMS_WITH_E2E = `streams s LEFT JOIN e2e_streams e ON e.stream_id = s.id AND e.workspace_id = s.workspace_id`
 
 interface MessageCountRow {
   id: string
@@ -365,6 +365,49 @@ const SELECT_FIELDS_ALIASED = SELECT_FIELDS.split(",")
   .join(", ")
 
 /**
+ * Streams with the last message per stream, ending at the workspace pin so each
+ * list variant appends its own `AND` terms. LEFT JOIN against `e2e_streams` so
+ * the workspace bootstrap surfaces the E2E flag inline — without it, cold-loaded
+ * sidebar rows have undefined `e2eEnabled` until the per-stream bootstrap fires,
+ * which would let the composer briefly treat an existing E2E scratchpad as
+ * plaintext (the backend INV-E1 gate would still reject, but the UX shows an
+ * unexplained 400).
+ */
+function selectStreamsWithPreviewSql(workspaceId: string) {
+  return sql`
+    WITH last_messages AS (
+      SELECT DISTINCT ON (stream_id)
+        stream_id,
+        author_id,
+        author_type,
+        content_json,
+        created_at
+      FROM messages
+      WHERE workspace_id = ${workspaceId} AND deleted_at IS NULL
+      ORDER BY stream_id, created_at DESC
+    )
+    SELECT
+      ${sql.raw(SELECT_FIELDS_ALIASED)},
+      lm.author_id as last_message_author_id,
+      lm.author_type as last_message_author_type,
+      lm.content_json as last_message_content,
+      lm.created_at as last_message_at,
+      e.owner_user_key_id AS e2e_owner_user_key_id,
+      e.name_ciphertext AS e2e_name_ciphertext,
+      e.name_envelope AS e2e_name_envelope,
+      (
+        SELECT COALESCE(json_agg(json_build_object('kind', a.kind, 'actorId', a.actor_id, 'keyId', a.key_id) ORDER BY a.added_at), '[]'::json)
+        FROM e2e_stream_actors a
+        WHERE a.workspace_id = s.workspace_id AND a.stream_id = s.id
+      ) AS e2e_actors
+    FROM streams s
+    LEFT JOIN last_messages lm ON lm.stream_id = s.id
+    LEFT JOIN e2e_streams e ON e.stream_id = s.id AND e.workspace_id = s.workspace_id
+    WHERE s.workspace_id = ${workspaceId}
+  `
+}
+
+/**
  * System-purpose streams (e.g. a persona-editor test scratchpad) are real,
  * fully-functional streams but not user-facing channels — every workspace
  * stream-list path must exclude them so the workbench never leaks into the
@@ -376,16 +419,9 @@ const SELECT_FIELDS_ALIASED = SELECT_FIELDS.split(",")
 const purposeIsNull = (alias?: string) => `${alias ? `${alias}.` : ""}purpose IS NULL`
 
 export const StreamRepository = {
-  async findById(db: Querier, id: string): Promise<Stream | null> {
+  async findById(db: Querier, workspaceId: string, id: string): Promise<Stream | null> {
     const result = await db.query<StreamRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)} WHERE s.id = ${id}`
-    )
-    return result.rows[0] ? mapRowToStream(result.rows[0]) : null
-  },
-
-  async findByIdForWorkspace(db: Querier, id: string, workspaceId: string): Promise<Stream | null> {
-    const result = await db.query<StreamRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)} WHERE s.id = ${id} AND s.workspace_id = ${workspaceId}`
+      sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)} WHERE s.workspace_id = ${workspaceId} AND s.id = ${id}`
     )
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
@@ -397,31 +433,18 @@ export const StreamRepository = {
    * can see committed, so an unlocked read lets an attach land an active link
    * on a scratchpad that is already archived, and nothing later corrects it.
    */
-  async findByIdForWorkspaceForShare(db: Querier, id: string, workspaceId: string): Promise<Stream | null> {
+  async findByIdForShare(db: Querier, workspaceId: string, id: string): Promise<Stream | null> {
     const result = await db.query<StreamRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)} WHERE s.id = ${id} AND s.workspace_id = ${workspaceId} FOR SHARE OF s`
+      sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)} WHERE s.workspace_id = ${workspaceId} AND s.id = ${id} FOR SHARE OF s`
     )
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
 
-  /**
-   * Locks the stream row for update, skipping if already locked.
-   * Returns null if not found or already locked by another transaction.
-   */
-  async findByIdForUpdate(db: Querier, id: string): Promise<Stream | null> {
+  async findByIdForUpdateBlocking(db: Querier, workspaceId: string, id: string): Promise<Stream | null> {
     const result = await db.query<StreamRow>(
       sql`SELECT ${sql.raw(SELECT_FIELDS)},
         (SELECT e.name_ciphertext FROM e2e_streams e WHERE e.stream_id = streams.id AND e.workspace_id = streams.workspace_id) AS e2e_name_ciphertext
-        FROM streams WHERE id = ${id} FOR UPDATE SKIP LOCKED`
-    )
-    return result.rows[0] ? mapRowToStream(result.rows[0]) : null
-  },
-
-  async findByIdForUpdateBlocking(db: Querier, id: string): Promise<Stream | null> {
-    const result = await db.query<StreamRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS)},
-        (SELECT e.name_ciphertext FROM e2e_streams e WHERE e.stream_id = streams.id AND e.workspace_id = streams.workspace_id) AS e2e_name_ciphertext
-        FROM streams WHERE id = ${id} FOR UPDATE`
+        FROM streams WHERE workspace_id = ${workspaceId} AND id = ${id} FOR UPDATE`
     )
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
@@ -439,15 +462,7 @@ export const StreamRepository = {
     return result.rows.map(mapRowToStream)
   },
 
-  async findByIds(db: Querier, ids: string[]): Promise<Stream[]> {
-    if (ids.length === 0) return []
-    const result = await db.query<StreamRow>(
-      sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)} WHERE s.id = ANY(${ids})`
-    )
-    return result.rows.map(mapRowToStream)
-  },
-
-  async findByIdsInWorkspace(db: Querier, workspaceId: string, ids: readonly string[]): Promise<Stream[]> {
+  async findByIds(db: Querier, workspaceId: string, ids: readonly string[]): Promise<Stream[]> {
     if (ids.length === 0) return []
     const result = await db.query<StreamRow>(
       sql`SELECT ${sql.raw(SELECT_FIELDS_WITH_E2E)} FROM ${sql.raw(FROM_STREAMS_WITH_E2E)} WHERE s.workspace_id = ${workspaceId} AND s.id = ANY(${ids})`
@@ -505,12 +520,12 @@ export const StreamRepository = {
       WITH RECURSIVE chain AS (
         SELECT p.id, p.parent_stream_id, p.archived_at, 0 AS depth
         FROM streams s
-        JOIN streams p ON p.id = s.parent_stream_id
+        JOIN streams p ON p.id = s.parent_stream_id AND p.workspace_id = ${workspaceId}
         WHERE s.id = ${streamId} AND s.workspace_id = ${workspaceId}
         UNION ALL
         SELECT p.id, p.parent_stream_id, p.archived_at, c.depth + 1
         FROM chain c
-        JOIN streams p ON p.id = c.parent_stream_id
+        JOIN streams p ON p.id = c.parent_stream_id AND p.workspace_id = ${workspaceId}
         WHERE c.depth < ${MAX_STREAM_CHAIN_DEPTH}
       )
       SELECT id, archived_at FROM chain
@@ -540,7 +555,7 @@ export const StreamRepository = {
         UNION ALL
         SELECT p.id, p.parent_stream_id, p.root_stream_id, c.depth + 1
         FROM chain c
-        JOIN streams p ON p.id = c.parent_stream_id
+        JOIN streams p ON p.id = c.parent_stream_id AND p.workspace_id = ${workspaceId}
         WHERE c.depth < ${MAX_STREAM_CHAIN_DEPTH}
       )
       SELECT DISTINCT x.id
@@ -557,19 +572,19 @@ export const StreamRepository = {
    * no arbitrary depth cap. The `root_stream_id` predicate gives a one-hop
    * short-circuit for the common thread→root share-to-parent case.
    */
-  async isAncestor(db: Querier, ancestorCandidateId: string, streamId: string): Promise<boolean> {
+  async isAncestor(db: Querier, workspaceId: string, ancestorCandidateId: string, streamId: string): Promise<boolean> {
     if (ancestorCandidateId === streamId) return true
     const result = await db.query<{ matched: boolean }>(sql`
       WITH RECURSIVE chain AS (
         SELECT id, parent_stream_id, root_stream_id
         FROM streams
-        WHERE id = ${streamId}
+        WHERE workspace_id = ${workspaceId} AND id = ${streamId}
 
         UNION ALL
 
         SELECT s.id, s.parent_stream_id, s.root_stream_id
         FROM chain c
-        JOIN streams s ON s.id = c.parent_stream_id
+        JOIN streams s ON s.id = c.parent_stream_id AND s.workspace_id = ${workspaceId}
       )
       SELECT TRUE AS matched
       FROM chain
@@ -586,12 +601,12 @@ export const StreamRepository = {
    * find the member messages that move with a thread: its own plus any deeper
    * sub-topic threads. Always includes `streamId` itself.
    */
-  async listSelfAndDescendantIds(db: Querier, streamId: string): Promise<string[]> {
+  async listSelfAndDescendantIds(db: Querier, workspaceId: string, streamId: string): Promise<string[]> {
     const result = await db.query<{ id: string }>(sql`
       WITH RECURSIVE subtree AS (
-        SELECT id FROM streams WHERE id = ${streamId}
+        SELECT id FROM streams WHERE workspace_id = ${workspaceId} AND id = ${streamId}
         UNION ALL
-        SELECT s.id FROM streams s JOIN subtree t ON s.parent_stream_id = t.id
+        SELECT s.id FROM streams s JOIN subtree t ON s.parent_stream_id = t.id WHERE s.workspace_id = ${workspaceId}
       )
       SELECT id FROM subtree
     `)
@@ -650,9 +665,9 @@ export const StreamRepository = {
     if (ids.length === 0) return []
 
     const limit = filters?.limit ?? 50
-    const conditions = [`s.id = ANY($1)`, `s.workspace_id = $2`, purposeIsNull("s")]
+    const conditions = [`s.id = ANY($2)`, purposeIsNull("s")]
     if (!filters?.includeArchived) conditions.push(`NOT ${effectivelyArchivedSql("s")}`)
-    const values: unknown[] = [ids, workspaceId]
+    const values: unknown[] = [workspaceId, ids]
     let paramIndex = 3
 
     if (filters?.types?.length) {
@@ -677,7 +692,7 @@ export const StreamRepository = {
     // every sealed stream as plaintext and send plaintext into it.
     const result = await db.query<StreamRow>(
       `SELECT ${SELECT_FIELDS_WITH_E2E} FROM ${FROM_STREAMS_WITH_E2E}
-        WHERE ${conditions.join(" AND ")}
+        WHERE s.workspace_id = $1 AND ${conditions.join(" AND ")}
         ORDER BY s.created_at DESC, s.id DESC
         LIMIT $${paramIndex}`,
       values
@@ -739,7 +754,7 @@ export const StreamRepository = {
           sm.stream_id,
           array_agg(DISTINCT sm.member_id ORDER BY sm.member_id) AS member_ids
         FROM stream_members sm
-        JOIN streams s ON s.id = sm.stream_id
+        JOIN streams s ON s.id = sm.stream_id AND sm.workspace_id = s.workspace_id
         WHERE s.workspace_id = ${workspaceId}
           AND s.type = 'dm'
           AND s.archived_at IS NULL
@@ -886,83 +901,15 @@ export const StreamRepository = {
     const userMembershipStreamIds = filters?.userMembershipStreamIds
     const archiveStatus = filters?.archiveStatus
 
-    const archiveCondition = sql.raw(archiveStatusSql("s", archiveStatus))
-
-    const EXCLUDE_PURPOSED_STREAMS = `AND ${purposeIsNull("s")}`
-
-    // CTE to get last message per stream. LEFT JOIN against
-    // `e2e_streams` so the workspace bootstrap surfaces the E2E flag
-    // inline — without it, cold-loaded sidebar rows have undefined
-    // `e2eEnabled` until the per-stream bootstrap fires, which would let
-    // the composer briefly treat an existing E2E scratchpad as plaintext
-    // (the backend INV-E1 gate would still reject, but the UX shows an
-    // unexplained 400).
-    const SELECT_WITH_PREVIEW = `
-      WITH last_messages AS (
-        SELECT DISTINCT ON (stream_id)
-          stream_id,
-          author_id,
-          author_type,
-          content_json,
-          created_at
-        FROM messages
-        WHERE deleted_at IS NULL
-        ORDER BY stream_id, created_at DESC
-      )
-      SELECT
-        s.${SELECT_FIELDS.split(",")
-          .map((f) => f.trim())
-          .join(", s.")},
-        lm.author_id as last_message_author_id,
-        lm.author_type as last_message_author_type,
-        lm.content_json as last_message_content,
-        lm.created_at as last_message_at,
-        e.owner_user_key_id AS e2e_owner_user_key_id,
-        e.name_ciphertext AS e2e_name_ciphertext,
-        e.name_envelope AS e2e_name_envelope,
-        (
-          SELECT COALESCE(json_agg(json_build_object('kind', a.kind, 'actorId', a.actor_id, 'keyId', a.key_id) ORDER BY a.added_at), '[]'::json)
-          FROM e2e_stream_actors a
-          WHERE a.workspace_id = s.workspace_id AND a.stream_id = s.id
-        ) AS e2e_actors
-      FROM streams s
-      LEFT JOIN last_messages lm ON lm.stream_id = s.id
-      LEFT JOIN e2e_streams e ON e.stream_id = s.id
-    `
+    const archiveCondition = sql`${sql.raw(archiveStatusSql("s", archiveStatus))}`
+    const excludePurposedStreams = sql`${sql.raw(`AND ${purposeIsNull("s")}`)}`
 
     // Build query with visibility filter if user's membership stream IDs provided
     if (userMembershipStreamIds !== undefined) {
       if (types && types.length > 0) {
         const result = await db.query<StreamWithPreviewRow>(
-          sql`${sql.raw(SELECT_WITH_PREVIEW)}
-              WHERE s.workspace_id = ${workspaceId}
-                AND s.type = ANY(${types})
-                AND ${archiveCondition}
-                AND (
-                  s.visibility = 'public'
-                  OR s.id = ANY(${userMembershipStreamIds})
-                  OR (
-                    s.type = 'thread'
-                    AND EXISTS (
-                      SELECT 1 FROM streams access_root
-                      WHERE access_root.id = s.root_stream_id
-                        AND access_root.workspace_id = ${workspaceId}
-                        AND (
-                          access_root.visibility = 'public'
-                          OR access_root.id = ANY(${userMembershipStreamIds})
-                        )
-                    )
-                  )
-                )
-              ${sql.raw(EXCLUDE_PURPOSED_STREAMS)}
-              ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
-        )
-        return result.rows.map(mapRowToStreamWithPreview)
-      }
-
-      const result = await db.query<StreamWithPreviewRow>(
-        sql`${sql.raw(SELECT_WITH_PREVIEW)}
-            WHERE s.workspace_id = ${workspaceId}
+          composeSql`${selectStreamsWithPreviewSql(workspaceId)}
+              AND s.type = ANY(${types})
               AND ${archiveCondition}
               AND (
                 s.visibility = 'public'
@@ -980,7 +927,32 @@ export const StreamRepository = {
                   )
                 )
               )
-              ${sql.raw(EXCLUDE_PURPOSED_STREAMS)}
+              ${excludePurposedStreams}
+              ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
+        )
+        return result.rows.map(mapRowToStreamWithPreview)
+      }
+
+      const result = await db.query<StreamWithPreviewRow>(
+        composeSql`${selectStreamsWithPreviewSql(workspaceId)}
+            AND ${archiveCondition}
+            AND (
+              s.visibility = 'public'
+              OR s.id = ANY(${userMembershipStreamIds})
+              OR (
+                s.type = 'thread'
+                AND EXISTS (
+                  SELECT 1 FROM streams access_root
+                  WHERE access_root.id = s.root_stream_id
+                    AND access_root.workspace_id = ${workspaceId}
+                    AND (
+                      access_root.visibility = 'public'
+                      OR access_root.id = ANY(${userMembershipStreamIds})
+                    )
+                )
+              )
+            )
+            ${excludePurposedStreams}
             ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
       )
       return result.rows.map(mapRowToStreamWithPreview)
@@ -988,21 +960,19 @@ export const StreamRepository = {
 
     if (types && types.length > 0) {
       const result = await db.query<StreamWithPreviewRow>(
-        sql`${sql.raw(SELECT_WITH_PREVIEW)}
-            WHERE s.workspace_id = ${workspaceId}
-              AND s.type = ANY(${types})
-              AND ${archiveCondition}
-              ${sql.raw(EXCLUDE_PURPOSED_STREAMS)}
+        composeSql`${selectStreamsWithPreviewSql(workspaceId)}
+            AND s.type = ANY(${types})
+            AND ${archiveCondition}
+            ${excludePurposedStreams}
             ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
       )
       return result.rows.map(mapRowToStreamWithPreview)
     }
 
     const result = await db.query<StreamWithPreviewRow>(
-      sql`${sql.raw(SELECT_WITH_PREVIEW)}
-          WHERE s.workspace_id = ${workspaceId}
-            AND ${archiveCondition}
-              ${sql.raw(EXCLUDE_PURPOSED_STREAMS)}
+      composeSql`${selectStreamsWithPreviewSql(workspaceId)}
+          AND ${archiveCondition}
+          ${excludePurposedStreams}
           ORDER BY COALESCE(lm.created_at, s.created_at) DESC`
     )
     return result.rows.map(mapRowToStreamWithPreview)
@@ -1026,11 +996,15 @@ export const StreamRepository = {
               s.visibility = 'public'
               OR EXISTS (
                 SELECT 1 FROM streams access_root
-                WHERE access_root.id = s.root_stream_id AND access_root.visibility = 'public'
+                WHERE access_root.workspace_id = ${workspaceId}
+                  AND access_root.id = s.root_stream_id
+                  AND access_root.visibility = 'public'
               )
               OR EXISTS (
                 SELECT 1 FROM stream_members m
-                WHERE m.stream_id = COALESCE(s.root_stream_id, s.id) AND m.member_id = ${userId}
+                WHERE m.workspace_id = ${workspaceId}
+                  AND m.stream_id = COALESCE(s.root_stream_id, s.id)
+                  AND m.member_id = ${userId}
               )
             )
             AND ${sql.raw(purposeIsNull("s"))}
@@ -1169,14 +1143,14 @@ export const StreamRepository = {
       return { stream: mapRowToStream(insertResult.rows[0]), created: true }
     }
 
-    const existing = await this.findByAnchor(db, params.parentStreamId, anchorId)
+    const existing = await this.findByAnchor(db, params.workspaceId, params.parentStreamId, anchorId)
     if (!existing) {
       throw new Error("Thread creation conflict but existing thread not found")
     }
     return { stream: existing, created: false }
   },
 
-  async update(db: Querier, id: string, params: UpdateStreamParams): Promise<Stream | null> {
+  async update(db: Querier, workspaceId: string, id: string, params: UpdateStreamParams): Promise<Stream | null> {
     const sets: string[] = []
     const values: unknown[] = []
     let paramIndex = 1
@@ -1214,14 +1188,14 @@ export const StreamRepository = {
       values.push(params.archivedAt)
     }
 
-    if (sets.length === 0) return this.findById(db, id)
+    if (sets.length === 0) return this.findById(db, workspaceId, id)
 
     sets.push(`updated_at = NOW()`)
-    values.push(id)
+    values.push(workspaceId, id)
 
     const query = `
       UPDATE streams SET ${sets.join(", ")}
-      WHERE id = $${paramIndex}
+      WHERE workspace_id = $${paramIndex} AND id = $${paramIndex + 1}
       RETURNING ${SELECT_FIELDS}
     `
     const result = await db.query<StreamRow>(query, values)
@@ -1321,32 +1295,20 @@ export const StreamRepository = {
    * Find a thread by its anchor (`msg_…` / `event_…`) within a parent stream.
    * The canonical find-or-create lookup that `insertThreadOrFind` falls back to.
    */
-  async findByAnchor(db: Querier, parentStreamId: string, parentAnchorId: string): Promise<Stream | null> {
+  async findByAnchor(
+    db: Querier,
+    workspaceId: string,
+    parentStreamId: string,
+    parentAnchorId: string
+  ): Promise<Stream | null> {
     const result = await db.query<StreamRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM streams
-      WHERE parent_stream_id = ${parentStreamId}
+      WHERE workspace_id = ${workspaceId}
+        AND parent_stream_id = ${parentStreamId}
         AND parent_anchor_id = ${parentAnchorId}
         AND type = 'thread'
     `)
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
-  },
-
-  /**
-   * Find all threads for messages in a given parent stream.
-   * Returns a map of anchorId -> threadStreamId
-   */
-  async findThreadsForMessages(db: Querier, parentStreamId: string): Promise<Map<string, string>> {
-    const result = await db.query<{ anchor_id: string; id: string }>(sql`
-      SELECT parent_anchor_id AS anchor_id, id FROM streams
-      WHERE parent_stream_id = ${parentStreamId}
-        AND parent_anchor_id IS NOT NULL
-        AND type = 'thread'
-    `)
-    const map = new Map<string, string>()
-    for (const row of result.rows) {
-      map.set(row.anchor_id, row.id)
-    }
-    return map
   },
 
   /**
@@ -1355,13 +1317,15 @@ export const StreamRepository = {
    */
   async findThreadsForMessageIds(
     db: Querier,
+    workspaceId: string,
     parentStreamId: string,
     messageIds: string[]
   ): Promise<Map<string, string>> {
     if (messageIds.length === 0) return new Map()
     const result = await db.query<{ anchor_id: string; id: string }>(sql`
       SELECT parent_anchor_id AS anchor_id, id FROM streams
-      WHERE parent_stream_id = ${parentStreamId}
+      WHERE workspace_id = ${workspaceId}
+        AND parent_stream_id = ${parentStreamId}
         AND parent_anchor_id = ANY(${messageIds})
         AND type = 'thread'
     `)
@@ -1409,6 +1373,7 @@ export const StreamRepository = {
    */
   async findThreadsWithReplyCounts(
     db: Querier,
+    workspaceId: string,
     parentStreamId: string | string[],
     anchorIds?: string[]
   ): Promise<Map<string, { threadId: string; replyCount: number }>> {
@@ -1425,7 +1390,8 @@ export const StreamRepository = {
         s.id,
         s.reply_count
       FROM streams s
-      WHERE s.parent_stream_id = ANY(${Array.isArray(parentStreamId) ? parentStreamId : [parentStreamId]})
+      WHERE s.workspace_id = ${workspaceId}
+        AND s.parent_stream_id = ANY(${Array.isArray(parentStreamId) ? parentStreamId : [parentStreamId]})
         AND s.type = 'thread'
         AND s.parent_anchor_id IS NOT NULL
         AND (${anchorIds === undefined} OR s.parent_anchor_id = ANY(${anchorIds ?? []}))
@@ -1447,16 +1413,21 @@ export const StreamRepository = {
    * UPDATE (INV-20); `GREATEST(0, …)` guards underflow. Returns the updated row
    * (with the post-mutation `replyCount`) for the caller's `thread:updated` emit.
    */
-  async bumpThreadReplyCount(db: Querier, threadId: string, delta: number): Promise<Stream | null> {
+  async bumpThreadReplyCount(
+    db: Querier,
+    workspaceId: string,
+    threadId: string,
+    delta: number
+  ): Promise<Stream | null> {
     const result = await db.query<StreamRow>(sql`
       UPDATE streams
       SET reply_count = GREATEST(0, reply_count + ${delta}),
           last_reply_at = (
             SELECT MAX(created_at) FROM messages
-            WHERE stream_id = ${threadId} AND deleted_at IS NULL
+            WHERE workspace_id = ${workspaceId} AND stream_id = ${threadId} AND deleted_at IS NULL
           ),
           updated_at = NOW()
-      WHERE id = ${threadId} AND type = 'thread'
+      WHERE workspace_id = ${workspaceId} AND id = ${threadId} AND type = 'thread'
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
@@ -1495,7 +1466,8 @@ export const StreamRepository = {
   async recountMessages(db: Querier, workspaceId: string, streamId: string): Promise<MessageCountChange | null> {
     const result = await db.query<MessageCountRow>(sql`
       WITH live AS (
-        SELECT count(*)::int AS n FROM messages WHERE stream_id = ${streamId} AND deleted_at IS NULL
+        SELECT count(*)::int AS n FROM messages
+        WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId} AND deleted_at IS NULL
       )
       UPDATE streams s
       SET message_count = live.n,
@@ -1512,12 +1484,18 @@ export const StreamRepository = {
    * has at least one live reply according to `streams.reply_count`. Used by
    * boundary extraction to decide which anchors to pull thread content for.
    */
-  async findAnchorsWithReplies(db: Querier, parentStreamId: string, anchorIds: string[]): Promise<Set<string>> {
+  async findAnchorsWithReplies(
+    db: Querier,
+    workspaceId: string,
+    parentStreamId: string,
+    anchorIds: string[]
+  ): Promise<Set<string>> {
     if (anchorIds.length === 0) return new Set<string>()
     const result = await db.query<{ anchor_id: string }>(sql`
       SELECT parent_anchor_id AS anchor_id
       FROM streams
-      WHERE parent_stream_id = ${parentStreamId}
+      WHERE workspace_id = ${workspaceId}
+        AND parent_stream_id = ${parentStreamId}
         AND type = 'thread'
         AND reply_count > 0
         AND parent_anchor_id = ANY(${anchorIds})
@@ -1544,6 +1522,7 @@ export const StreamRepository = {
    */
   async findThreadSummaries(
     db: Querier,
+    workspaceId: string,
     parentStreamId: string | string[],
     anchorIds?: string[]
   ): Promise<Map<string, ThreadSummary>> {
@@ -1566,8 +1545,9 @@ export const StreamRepository = {
           m.created_at,
           s.archived_at
         FROM streams s
-        JOIN messages m ON m.stream_id = s.id
-        WHERE s.parent_stream_id = ANY(${Array.isArray(parentStreamId) ? parentStreamId : [parentStreamId]})
+        JOIN messages m ON m.stream_id = s.id AND m.workspace_id = s.workspace_id
+        WHERE s.workspace_id = ${workspaceId}
+          AND s.parent_stream_id = ANY(${Array.isArray(parentStreamId) ? parentStreamId : [parentStreamId]})
           AND s.type = 'thread'
           AND s.parent_anchor_id IS NOT NULL
           AND m.deleted_at IS NULL
@@ -1642,6 +1622,7 @@ export const StreamRepository = {
    */
   async findThreadSummaryByParentMessage(
     db: Querier,
+    workspaceId: string,
     parentStreamId: string,
     anchorId: string
   ): Promise<ThreadSummary | null> {
@@ -1656,8 +1637,9 @@ export const StreamRepository = {
           m.created_at,
           s.archived_at
         FROM streams s
-        JOIN messages m ON m.stream_id = s.id
-        WHERE s.parent_stream_id = ${parentStreamId}
+        JOIN messages m ON m.stream_id = s.id AND m.workspace_id = s.workspace_id
+        WHERE s.workspace_id = ${workspaceId}
+          AND s.parent_stream_id = ${parentStreamId}
           AND s.parent_anchor_id = ${anchorId}
           AND s.type = 'thread'
           AND m.deleted_at IS NULL
@@ -1707,13 +1689,14 @@ export const StreamRepository = {
   async searchByName(
     db: Querier,
     params: {
+      workspaceId: string
       streamIds: string[]
       query: string
       types?: StreamType[]
       limit?: number
     }
   ): Promise<Stream[]> {
-    const { streamIds, query, types, limit = 10 } = params
+    const { workspaceId, streamIds, query, types, limit = 10 } = params
     if (streamIds.length === 0) return []
 
     const pattern = `%${query}%`
@@ -1727,7 +1710,8 @@ export const StreamRepository = {
             COALESCE(similarity(slug, ${query}), 0)
           ) AS sim_score
         FROM streams
-        WHERE id = ANY(${streamIds})
+        WHERE workspace_id = ${workspaceId}
+          AND id = ANY(${streamIds})
           AND type = ANY(${types})
           AND ${sql.raw(purposeIsNull())}
           AND (
@@ -1749,7 +1733,8 @@ export const StreamRepository = {
           COALESCE(similarity(slug, ${query}), 0)
         ) AS sim_score
       FROM streams
-      WHERE id = ANY(${streamIds})
+      WHERE workspace_id = ${workspaceId}
+        AND id = ANY(${streamIds})
         AND ${sql.raw(purposeIsNull())}
         AND (
           display_name % ${query}

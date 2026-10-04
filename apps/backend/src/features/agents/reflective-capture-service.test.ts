@@ -11,6 +11,7 @@ import { ReflectiveCaptureService } from "./reflective-capture-service"
 function makeSession(overrides?: Partial<AgentSession>): AgentSession {
   return {
     id: "session_1",
+    workspaceId: "ws_1",
     streamId: "stream_1",
     personaId: "persona_1",
     triggerMessageId: "msg_trigger_1",
@@ -110,7 +111,7 @@ describe("ReflectiveCaptureService", () => {
   // Every test resolves the memory-mode gate to an ordinary auto stream; the
   // gate's own tests re-spy this with an off one.
   beforeEach(() => {
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(makeStream())
+    spyOn(StreamRepository, "findById").mockResolvedValue(makeStream())
   })
 
   function service(memoService: MemoServiceLike) {
@@ -214,7 +215,7 @@ describe("ReflectiveCaptureService", () => {
       deduped: 0,
     })
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(makeSession())
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(
+    spyOn(StreamRepository, "findById").mockResolvedValue(
       makeStream({ type: StreamTypes.ASIDE, memoryMode: MemoryModes.OFF })
     )
     const digestSteps = spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([
@@ -239,7 +240,7 @@ describe("ReflectiveCaptureService", () => {
     })
     spyOn(AgentSessionRepository, "findById").mockResolvedValue(makeSession({ streamId: "stream_thread" }))
     // The thread's own row says auto; its root says off.
-    spyOn(StreamRepository, "findByIdForWorkspace").mockImplementation(async (_db, id) =>
+    spyOn(StreamRepository, "findById").mockImplementation(async (_db, _workspaceId, id) =>
       id === "stream_thread"
         ? makeStream({ id: "stream_thread", type: StreamTypes.THREAD, rootStreamId: "stream_root" })
         : makeStream({ id: "stream_root", memoryMode: MemoryModes.OFF })

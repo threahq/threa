@@ -34,7 +34,7 @@ export async function emitAssignmentEvents(
 ): Promise<Conversation> {
   const { workspaceId, message, conversationId, created, reason, initiatingUserId, settling = false } = params
 
-  const stream = await StreamRepository.findById(client, message.streamId)
+  const stream = await StreamRepository.findById(client, workspaceId, message.streamId)
   const { parentStreamId, streamVisibility } = await resolveConversationDelivery(client, stream)
 
   const [refreshed] = await ConversationRepository.findByIds(client, workspaceId, [conversationId])

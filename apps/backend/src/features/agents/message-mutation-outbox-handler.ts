@@ -404,7 +404,7 @@ export class AgentMessageMutationHandler extends DebouncedOutboxHandler {
         actorType: AuthorTypes.PERSONA,
       })
 
-      const stream = await StreamRepository.findById(db, updated.streamId)
+      const stream = await StreamRepository.findById(db, workspaceId, updated.streamId)
       await OutboxRepository.insert(db, "agent_session:deleted", {
         workspaceId,
         streamId: updated.streamId,

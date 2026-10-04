@@ -59,7 +59,7 @@ function loadActiveSubagentRun(threadStreamId: string) {
  * delegation gate additionally sees the stream's sealing and the invoking user.
  */
 async function turnToolNames(streamId: string, options: { invokingUserId?: string } = {}): Promise<string[]> {
-  const stream = await StreamRepository.findById(pool, streamId)
+  const stream = await StreamRepository.findById(pool, ctx.workspaceId, streamId)
   const run = await loadActiveSubagentRun(streamId)
   const invokingUserId = "invokingUserId" in options ? options.invokingUserId : ctx.owner
 

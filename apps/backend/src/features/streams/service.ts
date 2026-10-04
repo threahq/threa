@@ -345,8 +345,8 @@ async function lockActorAccess(
 export class StreamService {
   constructor(private pool: Pool) {}
 
-  async getStreamById(id: string): Promise<Stream | null> {
-    return StreamRepository.findById(this.pool, id)
+  async getStreamById(workspaceId: string, id: string): Promise<Stream | null> {
+    return StreamRepository.findById(this.pool, workspaceId, id)
   }
 
   async validateStreamAccess(streamId: string, workspaceId: string, userId: string): Promise<Stream> {
@@ -501,11 +501,11 @@ export class StreamService {
       return stream
     }
 
-    const stream = await this.getStreamById(params.target.streamId)
-    if (!stream || stream.workspaceId !== params.workspaceId) throw new StreamNotFoundError()
-    const root = stream.rootStreamId ? await this.getStreamById(stream.rootStreamId) : stream
-    if (!root || root.workspaceId !== params.workspaceId) throw new StreamNotFoundError()
-    const participates = await this.isMember(root.id, params.userId)
+    const stream = await this.getStreamById(params.workspaceId, params.target.streamId)
+    if (!stream) throw new StreamNotFoundError()
+    const root = stream.rootStreamId ? await this.getStreamById(params.workspaceId, stream.rootStreamId) : stream
+    if (!root) throw new StreamNotFoundError()
+    const participates = await this.isMember(params.workspaceId, root.id, params.userId)
     if (root.visibility !== Visibilities.PUBLIC && !participates) throw new StreamNotFoundError()
     const ancestorArchived =
       (await StreamRepository.findNearestArchivedAncestor(this.pool, params.workspaceId, stream.id)) !== null
@@ -1019,8 +1019,8 @@ export class StreamService {
    * completion posting its anchor + threaded result + status CAS as one unit).
    */
   async createThreadOn(client: Querier, params: CreateThreadParams): Promise<Stream> {
-    const parentStream = await StreamRepository.findById(client, params.parentStreamId)
-    if (!parentStream || parentStream.workspaceId !== params.workspaceId) {
+    const parentStream = await StreamRepository.findById(client, params.workspaceId, params.parentStreamId)
+    if (!parentStream) {
       throw new StreamNotFoundError()
     }
 
@@ -1090,7 +1090,9 @@ export class StreamService {
     // Inherit visibility from the root stream — threads in public channels
     // are public, threads in private DMs/scratchpads stay private.
     const rootStream =
-      rootStreamId === parentStream.id ? parentStream : await StreamRepository.findById(client, rootStreamId)
+      rootStreamId === parentStream.id
+        ? parentStream
+        : await StreamRepository.findById(client, params.workspaceId, rootStreamId)
     const inheritedVisibility = rootStream?.visibility ?? Visibilities.PRIVATE
     const companionRoot =
       rootStream?.type === StreamTypes.SCRATCHPAD || rootStream?.type === StreamTypes.ASIDE ? rootStream : null
@@ -1152,7 +1154,7 @@ export class StreamService {
       })
       // Re-read so the returned/broadcast stream carries e2eEnabled + actors
       // in the canonical shape (StreamRepository LEFT JOINs e2e_streams).
-      const sealed = await StreamRepository.findById(client, stream.id)
+      const sealed = await StreamRepository.findById(client, stream.workspaceId, stream.id)
       if (sealed) Object.assign(stream, sealed)
     }
 
@@ -1229,7 +1231,7 @@ export class StreamService {
         })
       }
       await assertAssignablePersona(client, companionPersonaId, workspaceId, { callerUserId: actingUserId })
-      const stream = await StreamRepository.update(client, streamId, {
+      const stream = await StreamRepository.update(client, workspaceId, streamId, {
         companionMode,
         companionPersonaId,
       })
@@ -1347,7 +1349,9 @@ export class StreamService {
     // Idempotent once authority is proven: a repeat flip would bump archived_at
     // and append a second lifecycle event, so retries would litter the timeline.
     if ((target.archivedAt !== null) === archived) return target
-    const stream = await StreamRepository.update(client, streamId, { archivedAt: archived ? new Date() : null })
+    const stream = await StreamRepository.update(client, workspaceId, streamId, {
+      archivedAt: archived ? new Date() : null,
+    })
     if (!stream) return stream
     const event = await StreamEventRepository.insert(client, {
       id: eventId(),
@@ -1477,11 +1481,12 @@ export class StreamService {
         // (a no-op re-save shouldn't spam the timeline).
         let previousDescription: string | null = null
         if (wantsDescriptionEvent) {
-          previousDescription = (await StreamRepository.findById(client, streamId))?.description ?? null
+          previousDescription =
+            (await StreamRepository.findById(client, authority.workspaceId, streamId))?.description ?? null
         }
 
         if (streamData.slug) {
-          const current = await StreamRepository.findById(client, streamId)
+          const current = await StreamRepository.findById(client, authority.workspaceId, streamId)
           if (current && streamData.slug !== current.slug) {
             const slugExists = await StreamRepository.slugExistsInWorkspace(
               client,
@@ -1494,7 +1499,7 @@ export class StreamService {
           }
         }
 
-        let stream = await StreamRepository.update(client, streamId, streamData)
+        let stream = await StreamRepository.update(client, authority.workspaceId, streamId, streamData)
         if (!stream) return null
         if (displayName !== undefined || sealedName) {
           stream = await StreamRepository.updateDisplayName(client, {
@@ -1530,7 +1535,7 @@ export class StreamService {
             })
           }
         }
-        const result = (await StreamRepository.findById(client, streamId)) ?? stream
+        const result = (await StreamRepository.findById(client, authority.workspaceId, streamId)) ?? stream
 
         await OutboxRepository.insert(client, "stream:updated", {
           workspaceId: result.workspaceId,
@@ -1595,7 +1600,7 @@ export class StreamService {
         })
       }
 
-      const stream = await StreamRepository.findByIdForWorkspace(client, streamId, workspaceId)
+      const stream = await StreamRepository.findById(client, workspaceId, streamId)
       if (!stream) throw new StreamNotFoundError()
 
       await OutboxRepository.insert(client, "stream:updated", {
@@ -1682,7 +1687,7 @@ export class StreamService {
         })
       }
 
-      const stream = await StreamRepository.findByIdForWorkspace(client, streamId, workspaceId)
+      const stream = await StreamRepository.findById(client, workspaceId, streamId)
       if (!stream) throw new StreamNotFoundError()
 
       await OutboxRepository.insert(client, "stream:updated", {
@@ -1754,7 +1759,7 @@ export class StreamService {
     // and the bot would be left out of the roll it is entitled to.
     let keyStreamId = e2e.streamId
     if (actors.some((actor) => actor.kind === "bot")) {
-      const stream = await StreamRepository.findByIdForWorkspace(db, e2e.streamId, e2e.workspaceId)
+      const stream = await StreamRepository.findById(db, e2e.workspaceId, e2e.streamId)
       keyStreamId = stream?.rootStreamId ?? e2e.streamId
     }
 
@@ -2081,7 +2086,7 @@ export class StreamService {
   async checkSlugAvailable(workspaceId: string, slug: string, excludeStreamId?: string): Promise<boolean> {
     return withClient(this.pool, async (client) => {
       if (excludeStreamId) {
-        const current = await StreamRepository.findById(client, excludeStreamId)
+        const current = await StreamRepository.findById(client, workspaceId, excludeStreamId)
         if (current && current.slug === slug) return true
       }
       const exists = await StreamRepository.slugExistsInWorkspace(client, workspaceId, slug)
@@ -2097,8 +2102,8 @@ export class StreamService {
   ): Promise<{ stream: Stream; deferred: boolean }> {
     return withTransaction(this.pool, async (client) => {
       await assertStreamWritable(client, { workspaceId, streamId, principal })
-      const locked = await StreamRepository.findByIdForUpdateBlocking(client, streamId)
-      if (!locked || locked.workspaceId !== workspaceId) {
+      const locked = await StreamRepository.findByIdForUpdateBlocking(client, workspaceId, streamId)
+      if (!locked) {
         throw new HttpError("Stream not found", { status: 404, code: "STREAM_NOT_FOUND" })
       }
       if (locked.type !== StreamTypes.SCRATCHPAD && locked.type !== StreamTypes.THREAD) {
@@ -2168,7 +2173,7 @@ export class StreamService {
         expectedVersion: state.version,
       })
       if (!reset) throw new Error("Regeneration state CAS failed")
-      const projected = await StreamRepository.findById(client, streamId)
+      const projected = await StreamRepository.findById(client, workspaceId, streamId)
       if (!projected) throw new Error("Regeneration stream disappeared")
       await OutboxRepository.insert(client, "stream:updated", {
         workspaceId,
@@ -2282,7 +2287,7 @@ export class StreamService {
       if (stream.rootStreamId) {
         const isRootMember = await StreamMemberRepository.isMember(client, stream.rootStreamId, memberId)
         if (!isRootMember) {
-          const rootStream = await StreamRepository.findById(client, stream.rootStreamId)
+          const rootStream = await StreamRepository.findById(client, stream.workspaceId, stream.rootStreamId)
           if (rootStream) await this.addToStream(client, rootStream, memberId, actorId)
         }
       }
@@ -2514,41 +2519,24 @@ export class StreamService {
   // misleading because for threads we actually check root stream membership, not direct
   // membership. Should be broken out into a proper authz module (e.g., canParticipate,
   // canRead, canWrite) that encapsulates the permission model cleanly.
-  async isMember(streamId: string, memberId: string): Promise<boolean> {
-    return withClient(this.pool, (client) => this.isMemberOn(client, streamId, memberId))
+  async isMember(workspaceId: string, streamId: string, memberId: string): Promise<boolean> {
+    return withClient(this.pool, (client) => this.isMemberOn(client, workspaceId, streamId, memberId))
   }
 
   /**
    * Variant of {@link isMember} that runs on a caller-provided querier so the
    * check can compose into an outer transaction.
    */
-  async isMemberOn(db: Querier, streamId: string, memberId: string): Promise<boolean> {
-    return this.isMemberOnWith(db, streamId, memberId, StreamMemberRepository.isMember)
-  }
-
-  /**
-   * Transaction-only membership check that locks the matching stream_members row.
-   * Use when a caller must keep membership stable until its surrounding write commits.
-   */
-  async isMemberOnForUpdate(db: Querier, streamId: string, memberId: string): Promise<boolean> {
-    return this.isMemberOnWith(db, streamId, memberId, StreamMemberRepository.isMemberForUpdate)
-  }
-
-  private async isMemberOnWith(
-    db: Querier,
-    streamId: string,
-    memberId: string,
-    checkMembership: (db: Querier, streamId: string, memberId: string) => Promise<boolean>
-  ): Promise<boolean> {
-    const directMember = await checkMembership(db, streamId, memberId)
+  async isMemberOn(db: Querier, workspaceId: string, streamId: string, memberId: string): Promise<boolean> {
+    const directMember = await StreamMemberRepository.isMember(db, streamId, memberId)
     if (directMember) {
       return true
     }
 
     // Threads inherit participation rights from root stream
-    const stream = await StreamRepository.findById(db, streamId)
+    const stream = await StreamRepository.findById(db, workspaceId, streamId)
     if (stream?.rootStreamId) {
-      return checkMembership(db, stream.rootStreamId, memberId)
+      return StreamMemberRepository.isMember(db, stream.rootStreamId, memberId)
     }
 
     return false
@@ -2562,7 +2550,7 @@ export class StreamService {
   ): Promise<StreamMember | null> {
     return withTransaction(this.pool, async (client) => {
       if (level !== null) {
-        const stream = await StreamRepository.findById(client, streamId)
+        const stream = await StreamRepository.findById(client, workspaceId, streamId)
         if (!stream) throw new StreamNotFoundError()
         if (!isAllowedLevel(stream.type, level)) {
           throw new HttpError(`Notification level '${level}' is not allowed for ${stream.type} streams`, {
@@ -2954,20 +2942,17 @@ export class StreamService {
     return StreamEventRepository.getSequencesByEventIds(this.pool, eventIds)
   }
 
-  async getThreadsForMessages(streamId: string): Promise<Map<string, string>> {
-    return StreamRepository.findThreadsForMessages(this.pool, streamId)
-  }
-
   /**
    * Fetches threads and reply counts in a single query, keyed by anchor id
    * (`msg_…` / `event_…`). Pass `anchorIds` to scope the scan to a bootstrap
    * window.
    */
   async getThreadsWithReplyCounts(
+    workspaceId: string,
     streamId: string,
     anchorIds?: string[]
   ): Promise<Map<string, { threadId: string; replyCount: number }>> {
-    return StreamRepository.findThreadsWithReplyCounts(this.pool, streamId, anchorIds)
+    return StreamRepository.findThreadsWithReplyCounts(this.pool, workspaceId, streamId, anchorIds)
   }
 
   /**
@@ -2983,7 +2968,11 @@ export class StreamService {
    *
    * Pass `anchorIds` to scope the scan to a specific bootstrap window.
    */
-  async getThreadSummaries(streamId: string, anchorIds?: string[]): Promise<Map<string, ThreadSummary>> {
-    return StreamRepository.findThreadSummaries(this.pool, streamId, anchorIds)
+  async getThreadSummaries(
+    workspaceId: string,
+    streamId: string,
+    anchorIds?: string[]
+  ): Promise<Map<string, ThreadSummary>> {
+    return StreamRepository.findThreadSummaries(this.pool, workspaceId, streamId, anchorIds)
   }
 }

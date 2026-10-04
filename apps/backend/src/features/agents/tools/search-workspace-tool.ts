@@ -164,7 +164,7 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
 
         const [enriched, conversationStreams] = await Promise.all([
           enrichMessageSearchResults(db, workspaceId, searchResults),
-          StreamRepository.findByIds(db, [...new Set(conversationHits.map((c) => c.streamId))]),
+          StreamRepository.findByIds(db, workspaceId, [...new Set(conversationHits.map((c) => c.streamId))]),
         ])
         const results: MessageSearchResult[] = enriched.map((r) => ({
           id: r.id,
@@ -287,6 +287,7 @@ export function createSearchStreamsTool(deps: WorkspaceToolDeps) {
 
         const [nameMatches, dmSearchResults] = await Promise.all([
           StreamRepository.searchByName(db, {
+            workspaceId,
             streamIds: accessibleStreamIds,
             query: normalizedQuery,
             types: input.types,
@@ -495,7 +496,7 @@ You can reference streams by their ID (stream_xxx), slug (general), or prefixed 
 
         const [messages, streams] = await Promise.all([
           MessageRepository.list(db, resolved.id, { limit }).then((m) => m.reverse()),
-          StreamRepository.findByIdsInWorkspace(db, workspaceId, [resolved.id]),
+          StreamRepository.findByIds(db, workspaceId, [resolved.id]),
         ])
         const stream = streams[0]
         const streamName = stream?.displayName ?? stream?.slug ?? stream?.type ?? null

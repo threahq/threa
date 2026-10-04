@@ -127,7 +127,7 @@ describe("memo batch: pending items", () => {
   }
 
   async function switchMemoryOff(ids: { streamId: string }) {
-    await StreamRepository.update(pool, ids.streamId, { memoryMode: MemoryModes.OFF })
+    await StreamRepository.update(pool, testWorkspaceId, ids.streamId, { memoryMode: MemoryModes.OFF })
   }
 
   async function pendingState(convId: string) {
@@ -433,7 +433,7 @@ describe("memo batch: pending items", () => {
       const client = await pool.connect()
       try {
         await client.query("SET lock_timeout = '200ms'")
-        await StreamRepository.update(client, seeded.streamId, { memoryMode: MemoryModes.OFF })
+        await StreamRepository.update(client, testWorkspaceId, seeded.streamId, { memoryMode: MemoryModes.OFF })
       } catch (error) {
         switchError = error as { code?: string }
       } finally {

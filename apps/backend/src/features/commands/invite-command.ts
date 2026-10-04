@@ -49,8 +49,8 @@ export class InviteCommand implements Command {
       return { success: false, error: "Usage: /invite @user1 @user2 ..." }
     }
 
-    const stream = await StreamRepository.findById(this.deps.pool, ctx.streamId)
-    if (!stream || stream.workspaceId !== ctx.workspaceId) {
+    const stream = await StreamRepository.findById(this.deps.pool, ctx.workspaceId, ctx.streamId)
+    if (!stream) {
       return { success: false, error: "Stream not found" }
     }
     if (!(await this.isInviteableStream(stream))) {
@@ -100,9 +100,7 @@ export class InviteCommand implements Command {
     const foundSlugs = new Set(entities.map((e) => e.slug.toLowerCase()))
     const unknown = [
       ...new Set(
-        mentions
-          .filter((m) => !entityById.has(m.id) && !foundSlugs.has(m.slug.toLowerCase()))
-          .map((m) => m.slug)
+        mentions.filter((m) => !entityById.has(m.id) && !foundSlugs.has(m.slug.toLowerCase())).map((m) => m.slug)
       ),
     ]
 
@@ -139,7 +137,7 @@ export class InviteCommand implements Command {
   private async isInviteableStream(stream: Stream): Promise<boolean> {
     if (stream.type === StreamTypes.CHANNEL) return true
     if (stream.type !== StreamTypes.THREAD || !stream.rootStreamId) return false
-    const root = await StreamRepository.findById(this.deps.pool, stream.rootStreamId)
+    const root = await StreamRepository.findById(this.deps.pool, stream.workspaceId, stream.rootStreamId)
     return root?.type === StreamTypes.CHANNEL
   }
 }

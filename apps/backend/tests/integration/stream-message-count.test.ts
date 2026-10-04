@@ -308,7 +308,7 @@ describe("Stream all-time message count", () => {
     })
     await send(wsId, channel.id, actorId)
 
-    const read = await StreamRepository.findById(pool, channel.id)
+    const read = await StreamRepository.findById(pool, wsId, channel.id)
     expect({ created: channel.messageCount, read: read?.messageCount, revision: read?.messageCountRevision }).toEqual({
       created: 0,
       read: 1,

@@ -507,7 +507,7 @@ export async function runCompanionTask(
       // turn's own write-authority check then reads the thread as
       // inaccessible: every @mention case failed with "Stream not found"
       // before the model was ever asked anything.
-      const parent = await StreamRepository.findByIdForWorkspace(ctx.pool, params.parentStreamId, params.workspaceId)
+      const parent = await StreamRepository.findById(ctx.pool, params.workspaceId, params.parentStreamId)
       await StreamRepository.insert(ctx.pool, {
         id: threadId,
         workspaceId: params.workspaceId,

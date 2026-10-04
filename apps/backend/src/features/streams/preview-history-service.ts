@@ -56,15 +56,15 @@ export class StreamPreviewHistoryService {
     const snapshotAt = new Date().toISOString()
     const { pool, eventService, linkPreviewService } = this.deps
     const accessible = await listAccessibleStreamIds(pool, workspaceId, userId, streamIds)
-    const streams = await StreamRepository.findByIdsInWorkspace(pool, workspaceId, streamIds)
+    const streams = await StreamRepository.findByIds(pool, workspaceId, streamIds)
     const streamsById = new Map(streams.map((stream) => [stream.id, stream]))
     const authorizedIds = streamIds.filter((id) => accessible.has(id))
     const windows = await StreamEventRepository.listPreviewWindows(pool, authorizedIds, userId)
     const events = [...windows.values()].flatMap((window) => window.events)
     const anchors = collectThreadAnchorIds(events)
     const [threadData, threadSummaries] = await Promise.all([
-      StreamRepository.findThreadsWithReplyCounts(pool, authorizedIds, anchors),
-      StreamRepository.findThreadSummaries(pool, authorizedIds, anchors),
+      StreamRepository.findThreadsWithReplyCounts(pool, workspaceId, authorizedIds, anchors),
+      StreamRepository.findThreadSummaries(pool, workspaceId, authorizedIds, anchors),
     ])
     const enriched = await eventService.enrichBootstrapEvents(events, threadData, threadSummaries, {
       workspaceId,

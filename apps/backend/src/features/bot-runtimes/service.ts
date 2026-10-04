@@ -498,7 +498,7 @@ export class BotRuntimeService {
     }
 
     return withTransaction(this.pool, async (client) => {
-      const root = await StreamRepository.findByIdForWorkspaceForShare(client, params.rootStreamId, params.workspaceId)
+      const root = await StreamRepository.findByIdForShare(client, params.workspaceId, params.rootStreamId)
       if (!root) throw new HttpError("Scratchpad not found", { status: 404, code: "NOT_FOUND" })
       if (root.type !== StreamTypes.SCRATCHPAD) {
         throw new HttpError("attachTo root must be a scratchpad", { status: 400, code: "ATTACH_ROOT_NOT_SCRATCHPAD" })
@@ -941,7 +941,7 @@ export class BotRuntimeService {
     db: Querier,
     params: { workspaceId: string; botId: string; streamId: string }
   ): Promise<string | null> {
-    const thread = await StreamRepository.findByIdForWorkspace(db, params.streamId, params.workspaceId)
+    const thread = await StreamRepository.findById(db, params.workspaceId, params.streamId)
     if (!thread || thread.type !== StreamTypes.THREAD || thread.createdBy !== params.botId || thread.archivedAt) {
       return null
     }
@@ -982,7 +982,7 @@ export class BotRuntimeService {
           code: "E2E_STREAM_PLAINTEXT_UNSUPPORTED",
         })
       }
-      const thread = await StreamRepository.findByIdForWorkspace(db, link.activeStreamId, params.workspaceId)
+      const thread = await StreamRepository.findById(db, params.workspaceId, link.activeStreamId)
       const anchorId = thread?.type === StreamTypes.THREAD ? thread.parentAnchorId : null
       const anchor = anchorId?.startsWith("msg_")
         ? await MessageRepository.findInvocationSourceStateForShare(db, {
@@ -1050,7 +1050,7 @@ export class BotRuntimeService {
         actorId: updated.personaId,
         actorType: AuthorTypes.BOT,
       })
-      const stream = await StreamRepository.findByIdForWorkspace(db, updated.streamId, workspaceId)
+      const stream = await StreamRepository.findById(db, workspaceId, updated.streamId)
       await OutboxRepository.insert(db, "agent_session:deleted", {
         workspaceId,
         streamId: updated.streamId,

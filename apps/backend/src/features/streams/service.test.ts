@@ -22,29 +22,25 @@ import * as db from "../../db"
 import { HttpError } from "../../lib/errors"
 
 const mockFindById = spyOn(StreamRepository, "findById")
-spyOn(StreamRepository, "findByIds").mockImplementation(async (client, ids) => {
-  const streams = await Promise.all(ids.map((id) => mockFindById(client, id)))
+spyOn(StreamRepository, "findByIds").mockImplementation(async (client, workspaceId, ids) => {
+  const streams = await Promise.all(ids.map((id) => mockFindById(client, workspaceId, id)))
   return streams.filter((stream): stream is NonNullable<typeof stream> => stream != null)
 })
-spyOn(StreamRepository, "findByIdsInWorkspace").mockImplementation(async (client, _workspaceId, ids) => {
-  const streams = await Promise.all(ids.map((id) => mockFindById(client, id)))
-  return streams.filter((stream): stream is NonNullable<typeof stream> => stream != null)
-})
-spyOn(StreamRepository, "listAncestorChainIds").mockImplementation(async (client, _workspaceId, ids) => {
+spyOn(StreamRepository, "listAncestorChainIds").mockImplementation(async (client, workspaceId, ids) => {
   const chain = new Set<string>()
   const pending = [...ids]
   for (let id = pending.shift(); id; id = pending.shift()) {
     if (chain.has(id)) continue
     chain.add(id)
-    const stream = await mockFindById(client, id)
+    const stream = await mockFindById(client, workspaceId, id)
     if (stream?.parentStreamId) pending.push(stream.parentStreamId)
     if (stream?.rootStreamId) pending.push(stream.rootStreamId)
   }
   return [...chain].sort()
 })
 const mockFindByIdsForUpdateBlocking = spyOn(StreamRepository, "findByIdsForUpdateBlocking").mockImplementation(
-  async (client, _workspaceId, ids) => {
-    const streams = await Promise.all(ids.map((id) => mockFindById(client, id)))
+  async (client, workspaceId, ids) => {
+    const streams = await Promise.all(ids.map((id) => mockFindById(client, workspaceId, id)))
     return streams.filter((stream): stream is NonNullable<typeof stream> => stream != null)
   }
 )
@@ -58,7 +54,6 @@ const mockLockGrants = spyOn(BotChannelAccessRepository, "lockGrants").mockResol
 const mockInsertOrFindByUniquenessKey = spyOn(StreamRepository, "insertOrFindByUniquenessKey")
 const mockInsertMember = spyOn(StreamMemberRepository, "insert")
 const mockInsertManyMembers = spyOn(StreamMemberRepository, "insertMany")
-const mockIsMemberForUpdate = spyOn(StreamMemberRepository, "isMemberForUpdate")
 const mockInsertEvent = spyOn(StreamEventRepository, "insert")
 const mockInsertOutbox = spyOn(OutboxRepository, "insert")
 const mockFindMembersByIds = spyOn(UserRepository, "findByIds")
@@ -99,39 +94,6 @@ spyOn(db, "withTransaction").mockImplementation((_pool, fn) => fn({} as PoolClie
 // returns the existing spy when a method is already patched, the next file
 // inherits the call history and breaks `expect(...).not.toHaveBeenCalled()`.
 afterAll(() => mock.restore())
-
-describe("StreamService.isMemberOnForUpdate", () => {
-  let service: StreamService
-
-  beforeEach(() => {
-    service = new StreamService({} as never)
-    mockFindById.mockReset()
-    mockIsMemberForUpdate.mockReset()
-  })
-
-  test("locks and returns true for direct stream membership", async () => {
-    const dbClient = {} as never
-    mockIsMemberForUpdate.mockResolvedValue(true)
-
-    await expect(service.isMemberOnForUpdate(dbClient, "stream_1", "usr_1")).resolves.toBe(true)
-
-    expect(mockIsMemberForUpdate).toHaveBeenCalledWith(dbClient, "stream_1", "usr_1")
-    expect(mockFindById).not.toHaveBeenCalled()
-  })
-
-  test("locks root membership when checking a thread", async () => {
-    const dbClient = {} as never
-    mockIsMemberForUpdate.mockResolvedValueOnce(false).mockResolvedValueOnce(true)
-    mockFindById.mockResolvedValue({ id: "stream_thread", rootStreamId: "stream_root" } as never)
-
-    await expect(service.isMemberOnForUpdate(dbClient, "stream_thread", "usr_1")).resolves.toBe(true)
-
-    expect(mockIsMemberForUpdate.mock.calls).toEqual([
-      [dbClient, "stream_thread", "usr_1"],
-      [dbClient, "stream_root", "usr_1"],
-    ])
-  })
-})
 
 describe("StreamService.setNotificationLevel", () => {
   let service: StreamService
@@ -417,7 +379,9 @@ describe("StreamService.resolveWritableMessageStream", () => {
         archivedAt: null,
       },
     }
-    spyOn(service, "getStreamById").mockImplementation((async (id: string) => rows[id] ?? null) as never)
+    spyOn(service, "getStreamById").mockImplementation(
+      (async (_workspaceId: string, id: string) => rows[id] ?? null) as never
+    )
     const sealedBy = spyOn(StreamRepository, "findNearestArchivedAncestor").mockResolvedValue({
       streamId: "stream_parent",
       archivedAt: new Date(),
@@ -436,7 +400,7 @@ describe("StreamService.resolveWritableMessageStream", () => {
     expect((error as HttpError).status).toBe(403)
     expect((error as HttpError).code).toBe("STREAM_READ_ONLY")
     expect((error as HttpError).details).toEqual({ reason: "archived" })
-    expect(isMemberSpy).toHaveBeenCalledWith("stream_root", "usr_1")
+    expect(isMemberSpy).toHaveBeenCalledWith("ws_1", "stream_root", "usr_1")
     expect(sealedBy).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_thread")
   })
 })
@@ -796,7 +760,7 @@ describe("StreamService.createThread (via create)", () => {
     // findById: parent/root → e2eRoot; the post-copy re-read of the thread → sealed.
     mockFindById
       .mockReset()
-      .mockImplementation(((_c: unknown, id: string) =>
+      .mockImplementation(((_c: unknown, _workspaceId: string, id: string) =>
         Promise.resolve(id === e2eThread.id ? sealedThread : e2eRoot)) as never)
     mockInsertThreadOrFind.mockResolvedValue({ stream: { ...e2eThread }, created: true } as never)
 
@@ -840,7 +804,7 @@ describe("StreamService.createThread (via create)", () => {
     )
     expect(StreamE2eKeyWrapsRepository).not.toHaveProperty("copyToStream")
     // The returned/broadcast thread reflects the sealed state.
-    expect(result.e2eEnabled).toBe(true)
+    expect(result).toMatchObject({ id: e2eThread.id, e2eEnabled: true, e2eOwnerKeyId: "uik_owner" })
   })
 })
 
@@ -1095,7 +1059,6 @@ describe("StreamService.inviteActor", () => {
 
   const mockGetByStreamId = spyOn(E2eStreamsRepository, "getByStreamId")
   const mockAddActor = spyOn(E2eStreamActorsRepository, "add")
-  const mockFindByIdForWorkspace = spyOn(StreamRepository, "findByIdForWorkspace")
   const mockListForStream = spyOn(E2eStreamActorsRepository, "listForStream")
   const mockListLiveEiks = spyOn(EnclaveRuntimesRepository, "listLive")
   const mockFindBot = spyOn(BotRepository, "findById")
@@ -1121,7 +1084,7 @@ describe("StreamService.inviteActor", () => {
     service = new StreamService({} as never)
     mockGetByStreamId.mockReset()
     mockAddActor.mockReset().mockResolvedValue(true)
-    mockFindByIdForWorkspace.mockReset().mockResolvedValue(updatedStream)
+    mockFindById.mockReset().mockResolvedValue(updatedStream)
     mockInsertOutbox.mockReset().mockResolvedValue({ id: 1n } as never)
     // Default: one enclave actor, no live key → keyRoll null. Tests opt in.
     mockListForStream.mockReset().mockResolvedValue([{ kind: "enclave", actorId: "enclave", keyId: null }])
@@ -1167,7 +1130,7 @@ describe("StreamService.inviteActor", () => {
 
   test("names the E2E root in bot:e2e_grant when the invite lands on a thread", async () => {
     mockGetByStreamId.mockResolvedValue({ ...(ownedE2eStream as object), streamId: "stream_thread" } as never)
-    mockFindByIdForWorkspace.mockResolvedValue({
+    mockFindById.mockResolvedValue({
       id: "stream_thread",
       workspaceId: "ws_1",
       rootStreamId: "stream_e2e",
@@ -1219,7 +1182,7 @@ describe("StreamService.inviteActor", () => {
 
   test("reads bot key eligibility under the E2E root when invited on a thread", async () => {
     mockGetByStreamId.mockResolvedValue({ ...(ownedE2eStream as object), streamId: "stream_thread" } as never)
-    mockFindByIdForWorkspace.mockResolvedValue({
+    mockFindById.mockResolvedValue({
       id: "stream_thread",
       workspaceId: "ws_1",
       rootStreamId: "stream_e2e",
@@ -1319,7 +1282,6 @@ describe("StreamService.revokeActor", () => {
   const mockGetByStreamId = spyOn(E2eStreamsRepository, "getByStreamId")
   const mockRemoveActor = spyOn(E2eStreamActorsRepository, "removeFromStreamTree")
   const mockDeleteWraps = spyOn(StreamE2eKeyWrapsRepository, "deleteWrapsExclusiveToBot")
-  const mockFindByIdForWorkspace = spyOn(StreamRepository, "findByIdForWorkspace")
   const mockListForStream = spyOn(E2eStreamActorsRepository, "listForStream")
   const mockListLiveEiks = spyOn(EnclaveRuntimesRepository, "listLive")
   const mockFindLiveBiks = spyOn(RuntimeE2eKeysRepository, "listLiveForBot")
@@ -1339,7 +1301,7 @@ describe("StreamService.revokeActor", () => {
     mockGetByStreamId.mockReset().mockResolvedValue(ownedE2eStream)
     mockRemoveActor.mockReset().mockResolvedValue(1)
     mockDeleteWraps.mockReset().mockResolvedValue(0)
-    mockFindByIdForWorkspace.mockReset().mockResolvedValue(updatedStream)
+    mockFindById.mockReset().mockResolvedValue(updatedStream)
     mockInsertOutbox.mockReset().mockResolvedValue({ id: 1n } as never)
     mockListForStream.mockReset().mockResolvedValue([])
     mockListLiveEiks.mockReset().mockResolvedValue([])
@@ -1368,7 +1330,7 @@ describe("StreamService.revokeActor", () => {
 
   test("names the E2E root in bot:e2e_revoke when the revoke lands on a thread", async () => {
     mockGetByStreamId.mockResolvedValue({ ...(ownedE2eStream as object), streamId: "stream_thread" } as never)
-    mockFindByIdForWorkspace.mockResolvedValue({
+    mockFindById.mockResolvedValue({
       id: "stream_thread",
       workspaceId: "ws_1",
       rootStreamId: "stream_e2e",
@@ -2435,6 +2397,7 @@ describe("StreamService.updateStream description", () => {
 
     expect(mockUpdate).toHaveBeenCalledWith(
       {},
+      "ws_1",
       "stream_1",
       expect.objectContaining({
         description: "About this channel",
@@ -2460,7 +2423,7 @@ describe("StreamService.updateStream description", () => {
       { workspaceId: "ws_1", principal: { kind: "user", userId: "usr_1" } }
     )
 
-    const params = mockUpdate.mock.calls[0]![2] as Record<string, unknown>
+    const params = mockUpdate.mock.calls[0]![3] as Record<string, unknown>
     expect(params).not.toHaveProperty("description")
     expect(params).not.toHaveProperty("descriptionJson")
   })
@@ -2716,7 +2679,9 @@ describe("StreamService.addBotToStream", () => {
       },
       stream_root: { id: "stream_root", workspaceId: "ws_1", type: "channel" },
     }
-    mockFindById.mockImplementation((async (_client: unknown, id: string) => rows[id] ?? null) as never)
+    mockFindById.mockImplementation(
+      (async (_client: unknown, _workspaceId: string, id: string) => rows[id] ?? null) as never
+    )
 
     await service.addBotToStream("stream_thread", "bot_1", "ws_1", "usr_1")
 

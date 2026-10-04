@@ -150,7 +150,7 @@ async function resolveScratchpadCustomPrompt(
     return null
   }
 
-  const rootStream = await StreamRepository.findById(db, stream.rootStreamId)
+  const rootStream = await StreamRepository.findById(db, stream.workspaceId, stream.rootStreamId)
   return rootStream?.type === StreamTypes.SCRATCHPAD ? customPrompt : null
 }
 

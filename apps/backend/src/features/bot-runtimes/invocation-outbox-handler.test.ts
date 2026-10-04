@@ -94,7 +94,7 @@ afterEach(() => mock.restore())
 
 describe("resolveCanonicalInvocationRoutes", () => {
   it("selects mentioned bots by resolved id and preserves display slugs", async () => {
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(channel as never)
+    spyOn(StreamRepository, "findById").mockResolvedValue(channel as never)
     const findInvocable = spyOn(BotRepository, "findInvocableByIds").mockResolvedValue([
       { id: "bot_1", slug: "аріадна", archivedAt: null, traits: ["mentionable"] },
     ] as never)
@@ -116,7 +116,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
   })
 
   it("routes nothing for the message a slash command was persisted as", async () => {
-    const findStream = spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(scratchpad as never)
+    const findStream = spyOn(StreamRepository, "findById").mockResolvedValue(scratchpad as never)
     spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
       actorType: "bot",
       actorId: "bot_1",
@@ -132,7 +132,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
   })
 
   it("drops a mentioned bot that can no longer write to the stream", async () => {
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(channel as never)
+    spyOn(StreamRepository, "findById").mockResolvedValue(channel as never)
     spyOn(BotRepository, "findInvocableByIds").mockResolvedValue([
       { id: "bot_1", slug: "scout", archivedAt: null, traits: ["mentionable"] },
     ] as never)
@@ -152,7 +152,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
   })
 
   it("drops the active bot and its missing-link notice when the stream is not writable for it", async () => {
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(scratchpad as never)
+    spyOn(StreamRepository, "findById").mockResolvedValue(scratchpad as never)
     spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
       actorType: "bot",
       actorId: "bot_1",
@@ -167,7 +167,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
   })
 
   it("ignores unresolved mention ids and @-shaped plain text", async () => {
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(channel as never)
+    spyOn(StreamRepository, "findById").mockResolvedValue(channel as never)
     const findInvocable = spyOn(BotRepository, "findInvocableByIds").mockResolvedValue([] as never)
 
     const unresolved = await resolveCanonicalInvocationRoutes(
@@ -187,7 +187,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
   })
 
   it("keeps E2E content server-blind and denies dispatch", async () => {
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(scratchpad as never)
+    spyOn(StreamRepository, "findById").mockResolvedValue(scratchpad as never)
     spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
       actorType: "bot",
       actorId: "bot_1",
@@ -209,7 +209,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
   })
 
   it("preserves required-link notices and link-free runtime routing", async () => {
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(scratchpad as never)
+    spyOn(StreamRepository, "findById").mockResolvedValue(scratchpad as never)
     spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
       actorType: "bot",
       actorId: "bot_1",
@@ -240,8 +240,8 @@ describe("resolveCanonicalInvocationRoutes", () => {
   it("targets a thread link and falls back to the root link", async () => {
     const thread = { ...scratchpad, id: "stream_thread", rootStreamId: "stream_root", type: "thread" }
     const root = { ...scratchpad, id: "stream_root" }
-    spyOn(StreamRepository, "findByIdForWorkspace").mockImplementation(
-      async (_db, id) => (id === "stream_thread" ? thread : root) as never
+    spyOn(StreamRepository, "findById").mockImplementation(
+      async (_db, _workspaceId, id) => (id === "stream_thread" ? thread : root) as never
     )
     spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
       actorType: "bot",
@@ -270,7 +270,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
   })
 
   it("suppresses active routing for another mentioned actor but allows the explicitly mentioned active bot", async () => {
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(scratchpad as never)
+    spyOn(StreamRepository, "findById").mockResolvedValue(scratchpad as never)
     spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
       actorType: "bot",
       actorId: "bot_1",
@@ -301,7 +301,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
   })
 
   it("preserves the non-user wrapper and never parses non-user mentions", async () => {
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(scratchpad as never)
+    spyOn(StreamRepository, "findById").mockResolvedValue(scratchpad as never)
     spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
       actorType: "bot",
       actorId: "bot_1",
@@ -334,7 +334,7 @@ describe("resolveCanonicalInvocationRoutes", () => {
   it("ignores system messages and allows the sealed verdict", async () => {
     expect(await resolveCanonicalInvocationRoutes(pool, source({ authorType: AuthorTypes.SYSTEM }))).toEqual([])
 
-    spyOn(StreamRepository, "findByIdForWorkspace").mockResolvedValue(scratchpad as never)
+    spyOn(StreamRepository, "findById").mockResolvedValue(scratchpad as never)
     spyOn(StreamActiveActorRepository, "findByRootStream").mockResolvedValue({
       actorType: "bot",
       actorId: "bot_1",

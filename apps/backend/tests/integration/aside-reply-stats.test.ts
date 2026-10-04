@@ -86,8 +86,8 @@ describe("Aside reply stats", () => {
     expect(eventTypes).not.toContain("thread:updated")
     expect(eventTypes).toEqual(expect.arrayContaining(["message:created", "message:edited"]))
 
-    const asideRow = await StreamRepository.findById(pool, aside.id)
+    const asideRow = await StreamRepository.findById(pool, wsId, aside.id)
     expect(asideRow?.replyCount ?? 0).toBe(0)
-    expect(await StreamRepository.findThreadSummaryByParentMessage(pool, channel.id, anchor.id)).toBeNull()
+    expect(await StreamRepository.findThreadSummaryByParentMessage(pool, wsId, channel.id, anchor.id)).toBeNull()
   })
 })

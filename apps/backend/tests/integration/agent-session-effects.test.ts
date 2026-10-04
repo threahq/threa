@@ -183,12 +183,13 @@ describe("an orphaned session's terminal event carries its effects", () => {
       `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'scratchpad', 'private', $3)`,
       [testStreamId, testWorkspaceId, userId()]
     )
+    const testTriggerMessageId = messageId()
     await AgentSessionRepository.insert(pool, {
       workspaceId: testWorkspaceId,
       id: testSessionId,
       streamId: testStreamId,
       personaId: testPersonaId,
-      triggerMessageId: messageId(),
+      triggerMessageId: testTriggerMessageId,
       status: SessionStatuses.RUNNING,
     })
 
@@ -209,7 +210,13 @@ describe("an orphaned session's terminal event carries its effects", () => {
     const won = await failSessionWithLifecycle(
       pool,
       io,
-      { id: testSessionId, streamId: testStreamId, personaId: testPersonaId },
+      {
+        id: testSessionId,
+        workspaceId: testWorkspaceId,
+        streamId: testStreamId,
+        personaId: testPersonaId,
+        triggerMessageId: testTriggerMessageId,
+      },
       "Session abandoned"
     )
     expect(won).toBe(true)

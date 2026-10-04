@@ -532,7 +532,7 @@ export class PersonaAgent {
         return { skip: true as const, reason: "persona not found or inactive" }
       }
 
-      const stream = await StreamRepository.findById(client, streamId)
+      const stream = await StreamRepository.findById(client, workspaceId, streamId)
       if (!stream) {
         return { skip: true as const, reason: "stream not found" }
       }
@@ -569,7 +569,8 @@ export class PersonaAgent {
       // ROOT's type, not the thread's — read here, in the transaction that is
       // already resolving the root for the policy, rather than as a second
       // query later.
-      const rootStream = policyStreamId === streamId ? stream : await StreamRepository.findById(client, policyStreamId)
+      const rootStream =
+        policyStreamId === streamId ? stream : await StreamRepository.findById(client, workspaceId, policyStreamId)
       const rootStreamType = rootStream?.type ?? null
       const rootStreamCreatedBy = rootStream?.createdBy ?? null
 

@@ -106,7 +106,7 @@ function makeChannelThread() {
     companionMode: CompanionModes.OFF,
     companionPersonaId: null,
   })
-  spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, id: string) => {
+  spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, _workspaceId: string, id: string) => {
     if (id === "stream_subagent_thread") return thread
     if (id === "stream_channel_root") return channel
     return null
@@ -146,7 +146,7 @@ describe("CompanionHandler", () => {
       companionPersonaId: "persona_scratchpad",
     })
 
-    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, id: string) => {
+    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, _workspaceId: string, id: string) => {
       if (id === "stream_thread_nested") return thread
       if (id === "stream_scratchpad_root") return rootScratchpad
       return null
@@ -210,7 +210,7 @@ describe("CompanionHandler", () => {
       companionPersonaId: "persona_scratchpad",
     })
 
-    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, id: string) => {
+    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, _workspaceId: string, id: string) => {
       if (id === "stream_thread_deep") return deepThread
       if (id === "stream_scratchpad_root") return rootScratchpad
       return null
@@ -249,7 +249,7 @@ describe("CompanionHandler", () => {
       companionPersonaId: "persona_channel",
     })
 
-    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, id: string) => {
+    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, _workspaceId: string, id: string) => {
       if (id === "stream_thread_channel") return thread
       if (id === "stream_channel_root") return rootChannel
       return null
@@ -368,7 +368,7 @@ describe("CompanionHandler", () => {
       companionPersonaId: null,
       createdBy: "usr_root_owner",
     })
-    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, id: string) => {
+    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, _workspaceId: string, id: string) => {
       if (id === "stream_thread_unpinned") return thread
       if (id === "stream_root_unpinned") return rootScratchpad
       return null
@@ -435,7 +435,7 @@ describe("CompanionHandler", () => {
       companionMode: CompanionModes.OFF,
     })
 
-    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, id: string) => {
+    spyOn(StreamRepository, "findById").mockImplementation(async (_db: any, _workspaceId: string, id: string) => {
       if (id === "stream_thread_off") return thread
       if (id === "stream_scratchpad_off") return rootScratchpad
       return null

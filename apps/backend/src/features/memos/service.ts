@@ -123,10 +123,11 @@ function resolveExtractedMemoScope(stream: Stream | null): { scope: MemoScope; s
  */
 export async function resolveMemoScopeForStreamId(
   db: Querier,
+  workspaceId: string,
   streamId: string
 ): Promise<{ scope: MemoScope; scopeUserId: string | null; rootStreamId: string }> {
-  const stream = await StreamRepository.findById(db, streamId)
-  const root = stream?.rootStreamId ? await StreamRepository.findById(db, stream.rootStreamId) : stream
+  const stream = await StreamRepository.findById(db, workspaceId, streamId)
+  const root = stream?.rootStreamId ? await StreamRepository.findById(db, workspaceId, stream.rootStreamId) : stream
   return { ...resolveExtractedMemoScope(root), rootStreamId: root?.id ?? streamId }
 }
 
@@ -373,7 +374,7 @@ export class MemoService implements MemoServiceLike {
       // The visibility tier for everything extracted this batch depends only on
       // the (top-level) stream — memos from a private scratchpad are the owner's
       // private tier (roadmap 6.4). The model sees only memos in that tier.
-      const memoScope = await resolveMemoScopeForStreamId(client, streamId)
+      const memoScope = await resolveMemoScopeForStreamId(client, workspaceId, streamId)
 
       const existingMemos = await MemoRepository.findByStream(client, streamId, {
         scopeUserId: memoScope.scopeUserId,
@@ -745,7 +746,7 @@ export class MemoService implements MemoServiceLike {
       // The stream row is locked before the save lock below, the order
       // save_memo takes them in, so the two can't deadlock.
       const memoryOn = isMemoryAutomationOn(
-        await StreamRepository.findByIdForWorkspaceForShare(client, streamId, workspaceId)
+        await StreamRepository.findByIdForShare(client, workspaceId, streamId)
       )
 
       // Serialize batches for this stream so a concurrent batch can't read the
@@ -1061,7 +1062,7 @@ export class MemoService implements MemoServiceLike {
     memos: Array<Pick<MemoToCreate, "id" | "title" | "knowledgeType" | "sourceMessageIds">>
   ): Promise<void> {
     if (memos.length === 0) return
-    const stream = await StreamRepository.findById(client, streamId)
+    const stream = await StreamRepository.findById(client, workspaceId, streamId)
     if (!stream) {
       logger.warn({ workspaceId, streamId }, "Memo capture: stream row missing, skipping context landmarks")
       return
@@ -1171,7 +1172,7 @@ export class MemoService implements MemoServiceLike {
       }
 
       // Resolves the root so a thread-backed save inherits the scratchpad tier.
-      const natural = await resolveMemoScopeForStreamId(client, streamId)
+      const natural = await resolveMemoScopeForStreamId(client, workspaceId, streamId)
 
       // Serialize against the passive batch, other saves and source deletions
       // in this root (same lock key) before the sources are read, so neither the
@@ -1218,7 +1219,7 @@ export class MemoService implements MemoServiceLike {
         // Aside content never lands workspace-scoped: the tool's LLM-supplied
         // override downgrades to the aside's natural user tier, and the result
         // reports the scope it actually landed in.
-        const root = await StreamRepository.findById(client, natural.rootStreamId)
+        const root = await StreamRepository.findById(client, workspaceId, natural.rootStreamId)
         if (root?.type !== StreamTypes.ASIDE) {
           resolvedScope = MemoScopes.WORKSPACE
           resolvedScopeUserId = null
@@ -1355,7 +1356,7 @@ export class MemoService implements MemoServiceLike {
       // consistent with the passive extractor. Resolves the root first so a
       // thread-backed session still inherits the scratchpad tier. The model sees
       // only memos in that tier.
-      const memoScope = await resolveMemoScopeForStreamId(client, streamId)
+      const memoScope = await resolveMemoScopeForStreamId(client, workspaceId, streamId)
       const existingMemos = await MemoRepository.findByStream(client, streamId, {
         scopeUserId: memoScope.scopeUserId,
         status: MemoStatuses.ACTIVE,
@@ -1372,7 +1373,7 @@ export class MemoService implements MemoServiceLike {
         typeof settingLanguage === "string" && settingLanguage.trim().length > 0 ? settingLanguage.trim() : undefined
       // Only research from the anchor's root becomes a source: a source's
       // deletion retires the memo, and the memo's readers can open it.
-      const citedStreams = await StreamRepository.findByIdsInWorkspace(client, workspaceId, citedStreamIds)
+      const citedStreams = await StreamRepository.findByIds(client, workspaceId, citedStreamIds)
       const inRootStreamIds = citedStreams
         .filter((s) => (s.rootStreamId ?? s.id) === memoScope.rootStreamId)
         .map((s) => s.id)
@@ -1457,10 +1458,10 @@ export class MemoService implements MemoServiceLike {
     return withTransaction(this.pool, async (client) => {
       // Memory switched off while the model calls ran: save nothing. Same
       // share-locked gate and lock order as the passive batch.
-      const root = await StreamRepository.findByIdForWorkspaceForShare(
+      const root = await StreamRepository.findByIdForShare(
         client,
-        context.memoScope.rootStreamId,
-        workspaceId
+        workspaceId,
+        context.memoScope.rootStreamId
       )
       if (!isMemoryAutomationOn(root)) {
         logger.info({ sessionId, streamId }, "reflective capture — memory switched off before save")

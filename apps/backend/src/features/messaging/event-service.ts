@@ -691,7 +691,7 @@ export class EventService {
     const msgId = params.id ?? messageId()
     const evtId = eventId()
 
-    const stream = await StreamRepository.findById(client, params.streamId)
+    const stream = await StreamRepository.findById(client, params.workspaceId, params.streamId)
 
     // INV-E1 backstop at the write sink: an E2E stream stores only ciphertext, a
     // plaintext stream never carries an E2E envelope. The create handler checks
@@ -1067,9 +1067,10 @@ export class EventService {
       sharerId: params.authorId,
       accessibleStreamIds: params.accessibleStreamIds,
       contentJson: params.contentJson,
-      findStream: (db, id) => StreamRepository.findById(db, id),
+      findStream: (db, id) => StreamRepository.findById(db, params.workspaceId, id),
       resolveEffectiveStream: resolveEffectiveStreamAdapter,
-      isAncestor: (db, ancestorId, streamId) => StreamRepository.isAncestor(db, ancestorId, streamId),
+      isAncestor: (db, ancestorId, streamId) =>
+        StreamRepository.isAncestor(db, params.workspaceId, ancestorId, streamId),
       countExposedMembers: (db, targetStreamId, sourceStreamId) =>
         StreamMemberRepository.countMembersNotIn(db, targetStreamId, sourceStreamId),
       canReadStream: async (db, workspaceId, streamId, userId) =>
@@ -1119,7 +1120,7 @@ export class EventService {
     })
 
     if (isThreadReplyStream(stream)) {
-      const updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, 1)
+      const updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.workspaceId, stream.id, 1)
       await this.emitThreadUpdate(client, updatedThread ?? stream)
     }
 
@@ -1360,7 +1361,7 @@ export class EventService {
           editedBy: params.actorId,
         })
 
-        const editStream = await StreamRepository.findById(client, params.streamId)
+        const editStream = await StreamRepository.findById(client, params.workspaceId, params.streamId)
         const memoEmbeds = await resolveMemoEmbedSummaries(
           client,
           params.workspaceId,
@@ -1405,9 +1406,10 @@ export class EventService {
             sharerId: params.actorId,
             accessibleStreamIds: params.accessibleStreamIds,
             contentJson: params.contentJson,
-            findStream: (db, id) => StreamRepository.findById(db, id),
+            findStream: (db, id) => StreamRepository.findById(db, params.workspaceId, id),
             resolveEffectiveStream: resolveEffectiveStreamAdapter,
-            isAncestor: (db, ancestorId, streamId) => StreamRepository.isAncestor(db, ancestorId, streamId),
+            isAncestor: (db, ancestorId, streamId) =>
+              StreamRepository.isAncestor(db, params.workspaceId, ancestorId, streamId),
             countExposedMembers: (db, targetStreamId, sourceStreamId) =>
               StreamMemberRepository.countMembersNotIn(db, targetStreamId, sourceStreamId),
             canReadStream: async (db, workspaceId, streamId, userId) =>
@@ -1460,7 +1462,7 @@ export class EventService {
             ...(slotMaps && { slots: slotMaps.slots, sharedMessages: slotMaps.sharedMessages }),
           })
 
-          const stream = await StreamRepository.findById(client, params.streamId)
+          const stream = await StreamRepository.findById(client, params.workspaceId, params.streamId)
 
           // Rebuild the "In this stream" projection from the edited body. The
           // landmark keeps the message's ORIGINAL created_at — an edit must not
@@ -1532,7 +1534,7 @@ export class EventService {
       const reach = new Set(accessibleStreamIds)
       return async (streamId) => {
         if (reach.has(streamId)) return true
-        const source = await StreamRepository.findById(client, streamId)
+        const source = await StreamRepository.findById(client, workspaceId, streamId)
         if (!source) return false
         const effective = await resolveEffectiveStreamAdapter(client, source)
         return reach.has(effective.id)
@@ -1700,9 +1702,9 @@ export class EventService {
             deletedAt: message.deletedAt!.toISOString(),
           })
 
-          const stream = await StreamRepository.findById(client, params.streamId)
+          const stream = await StreamRepository.findById(client, params.workspaceId, params.streamId)
           if (isThreadReplyStream(stream)) {
-            const updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.id, -1)
+            const updatedThread = await StreamRepository.bumpThreadReplyCount(client, stream.workspaceId, stream.id, -1)
             await this.emitThreadUpdate(client, updatedThread ?? stream)
           }
         }
@@ -1762,6 +1764,7 @@ export class EventService {
 
       const existingDestination = await StreamRepository.findByAnchor(
         client,
+        params.workspaceId,
         params.sourceStreamId,
         params.targetMessageId
       )
@@ -1776,8 +1779,8 @@ export class EventService {
         await lockMessageCountStreams(client, params.workspaceId, streamIds)
       }
 
-      const sourceStream = await StreamRepository.findById(client, params.sourceStreamId)
-      if (!sourceStream || sourceStream.workspaceId !== params.workspaceId) {
+      const sourceStream = await StreamRepository.findById(client, params.workspaceId, params.sourceStreamId)
+      if (!sourceStream) {
         throw new StreamNotFoundError()
       }
       if (sourceStream.archivedAt) {
@@ -1822,7 +1825,9 @@ export class EventService {
 
       const rootStreamId = sourceStream.rootStreamId ?? sourceStream.id
       const rootStream =
-        rootStreamId === sourceStream.id ? sourceStream : await StreamRepository.findById(client, rootStreamId)
+        rootStreamId === sourceStream.id
+          ? sourceStream
+          : await StreamRepository.findById(client, sourceStream.workspaceId, rootStreamId)
       if (!rootStream) {
         throw new StreamNotFoundError()
       }
@@ -2060,6 +2065,7 @@ export class EventService {
 
       const updatedDestThread = await StreamRepository.bumpThreadReplyCount(
         client,
+        destinationThread.workspaceId,
         destinationThread.id,
         uniqueMessageIds.length
       )
@@ -2075,6 +2081,7 @@ export class EventService {
       const parentReplyCount = updatedDestThread?.replyCount ?? uniqueMessageIds.length
       const parentThreadSummary = await StreamRepository.findThreadSummaryByParentMessage(
         client,
+        destinationThread.workspaceId,
         destinationThread.parentStreamId ?? params.sourceStreamId,
         params.targetMessageId
       )
@@ -2082,6 +2089,7 @@ export class EventService {
       if (isThreadReplyStream(sourceStream)) {
         const updatedSourceThread = await StreamRepository.bumpThreadReplyCount(
           client,
+          sourceStream.workspaceId,
           sourceStream.id,
           -uniqueMessageIds.length
         )
@@ -2272,8 +2280,8 @@ export class EventService {
     }
 
     return withTransaction(this.pool, async (client) => {
-      const sourceStream = await StreamRepository.findById(client, params.sourceStreamId)
-      if (!sourceStream || sourceStream.workspaceId !== params.workspaceId) {
+      const sourceStream = await StreamRepository.findById(client, params.workspaceId, params.sourceStreamId)
+      if (!sourceStream) {
         throw new StreamNotFoundError()
       }
       if (sourceStream.archivedAt) {
@@ -2319,7 +2327,12 @@ export class EventService {
         })
       }
 
-      const existingThread = await StreamRepository.findByAnchor(client, params.sourceStreamId, params.targetMessageId)
+      const existingThread = await StreamRepository.findByAnchor(
+        client,
+        params.workspaceId,
+        params.sourceStreamId,
+        params.targetMessageId
+      )
       // Mirror the message-move guard so validate doesn't hand out
       // leases the move endpoint will reject — keeps the two-step contract
       // honest about what's actually movable.

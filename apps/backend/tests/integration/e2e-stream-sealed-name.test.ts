@@ -61,14 +61,14 @@ describe("E2E sealed stream name", () => {
   }
 
   test("blocking title lock waits for a contending stream transaction", async () => {
-    const { sId } = await seedStream(true)
+    const { wsId, sId } = await seedStream(true)
     const holder = await pool.connect()
     const waiter = await pool.connect()
     try {
       await holder.query("BEGIN")
-      await StreamRepository.findByIdForUpdateBlocking(holder, sId)
+      await StreamRepository.findByIdForUpdateBlocking(holder, wsId, sId)
       let acquired = false
-      const waiting = StreamRepository.findByIdForUpdateBlocking(waiter, sId).then((stream) => {
+      const waiting = StreamRepository.findByIdForUpdateBlocking(waiter, wsId, sId).then((stream) => {
         acquired = true
         return stream
       })
@@ -91,15 +91,15 @@ describe("E2E sealed stream name", () => {
     expect(updated).toBe(true)
     expect(await E2eStreamsRepository.getSealedName(pool, wsId, sId)).toEqual({ ciphertext, envelope: ENVELOPE })
 
-    const stream = await StreamRepository.findById(pool, sId)
+    const stream = await StreamRepository.findById(pool, wsId, sId)
     expect(stream?.e2eEnabled).toBe(true)
     expect(stream?.sealedNameCiphertext).toBe(ciphertext)
     expect(stream?.sealedNameEnvelope).toEqual(ENVELOPE)
   })
 
   test("a freshly-marked E2E stream has a null sealed name until first rename", async () => {
-    const { sId } = await seedStream(true)
-    const stream = await StreamRepository.findById(pool, sId)
+    const { wsId, sId } = await seedStream(true)
+    const stream = await StreamRepository.findById(pool, wsId, sId)
     expect(stream?.e2eEnabled).toBe(true)
     expect(stream?.sealedNameCiphertext).toBeNull()
     expect(stream?.sealedNameEnvelope).toBeNull()
@@ -128,7 +128,7 @@ describe("E2E sealed stream name", () => {
     })
     expect(updated).toBe(false)
 
-    const stream = await StreamRepository.findById(pool, sId)
+    const stream = await StreamRepository.findById(pool, wsId, sId)
     // Plaintext streams omit the E2E join fields entirely.
     expect(stream?.e2eEnabled).toBeUndefined()
     expect(stream?.sealedNameCiphertext).toBeUndefined()
@@ -138,11 +138,11 @@ describe("E2E sealed stream name", () => {
     const { wsId, sId } = await seedStream(true)
     const ciphertext = Buffer.from("sealed-name").toString("base64")
     await E2eStreamsRepository.updateSealedName(pool, wsId, sId, { ciphertext, envelope: ENVELOPE })
-    expect((await StreamRepository.findById(pool, sId))?.sealedNameCiphertext).toBe(ciphertext)
+    expect((await StreamRepository.findById(pool, wsId, sId))?.sealedNameCiphertext).toBe(ciphertext)
 
     const cleared = await E2eStreamsRepository.updateSealedName(pool, wsId, sId, null)
     expect(cleared).toBe(true)
-    const stream = await StreamRepository.findById(pool, sId)
+    const stream = await StreamRepository.findById(pool, wsId, sId)
     expect(stream?.sealedNameCiphertext).toBeNull()
     expect(stream?.sealedNameEnvelope).toBeNull()
   })
@@ -152,7 +152,7 @@ describe("E2E sealed stream name", () => {
     const ciphertext = Buffer.from("generated-title").toString("base64")
 
     await withTransaction(pool, async (client) => {
-      const locked = await StreamRepository.findByIdForUpdate(client, sId)
+      const locked = await StreamRepository.findByIdForUpdateBlocking(client, wsId, sId)
       expect(locked?.displayNameSource).toBeNull()
       expect(
         await StreamRepository.updateDisplayName(client, {
@@ -169,7 +169,7 @@ describe("E2E sealed stream name", () => {
       )
     })
 
-    expect(await StreamRepository.findById(pool, sId)).toMatchObject({
+    expect(await StreamRepository.findById(pool, wsId, sId)).toMatchObject({
       sealedNameCiphertext: ciphertext,
       displayNameSource: "generated",
       displayNameRevision: 1,
@@ -183,9 +183,8 @@ describe("E2E sealed stream name", () => {
       ciphertext: Buffer.from("old-replica-title").toString("base64"),
       envelope: ENVELOPE,
     })
-    expect((await StreamRepository.findByIdForWorkspace(pool, sId, wsId))?.displayNameSource).toBe("legacy")
-    expect((await StreamRepository.findByIdForUpdate(pool, sId))?.displayNameSource).toBe("legacy")
-    expect((await StreamRepository.findByIdForUpdateBlocking(pool, sId))?.displayNameSource).toBe("legacy")
+    expect((await StreamRepository.findById(pool, wsId, sId))?.displayNameSource).toBe("legacy")
+    expect((await StreamRepository.findByIdForUpdateBlocking(pool, wsId, sId))?.displayNameSource).toBe("legacy")
     const updated = await StreamRepository.updateDisplayName(pool, {
       workspaceId: wsId,
       streamId: sId,

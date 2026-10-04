@@ -105,8 +105,8 @@ export class SubagentService {
       // The surface the one-live rule binds to. A channel mention runs in the
       // eagerly created reply thread, so the card lands there — scoping the rule
       // to that thread would allow one live subagent per mention.
-      const parentStream = await StreamRepository.findById(client, params.parentStreamId)
-      if (!parentStream || parentStream.workspaceId !== params.workspaceId) {
+      const parentStream = await StreamRepository.findById(client, params.workspaceId, params.parentStreamId)
+      if (!parentStream) {
         throw new Error(`Subagent parent stream not found: ${params.parentStreamId}`)
       }
       const scopeStreamId = parentStream.rootStreamId ?? parentStream.id

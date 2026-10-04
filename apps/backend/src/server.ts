@@ -830,11 +830,8 @@ export async function startServer(): Promise<ServerInstance> {
         )
       },
       getStreamType: async (workspaceId, streamId) => {
-        // StreamRepository.findById queries by ULID only; we verify workspace ownership
-        // at the application layer (INV-8) — consistent with checkAccess in StreamService.
-        const stream = await streamService.getStreamById(streamId)
-        if (!stream || stream.workspaceId !== workspaceId) return null
-        return stream.type
+        const stream = await streamService.getStreamById(workspaceId, streamId)
+        return stream?.type ?? null
       },
       getWorkosUserId: async (workspaceId, userId) => {
         // Single query (INV-30): pass the pool directly, no withClient.

@@ -92,8 +92,8 @@ export const conversationAssigner: ConversationAssigner = {
     // rejected.
     if (target.streamId !== message.streamId) {
       const [targetRoot, messageRoot] = await Promise.all([
-        effectiveRootId(client, target.streamId),
-        effectiveRootId(client, message.streamId),
+        effectiveRootId(client, workspaceId, target.streamId),
+        effectiveRootId(client, workspaceId, message.streamId),
       ])
       if (targetRoot !== messageRoot) {
         throw new HttpError("Conversation is in a different root stream", {
@@ -195,7 +195,8 @@ async function mintConversationForMessage(
   // A mint inside a card-anchored thread (a subagent's) records the conversation
   // it branches from — the graph cannot derive that one. The send already holds
   // the stream; only a caller that passed none pays for the PK read.
-  const stream = sendStream !== undefined ? sendStream : await StreamRepository.findById(client, message.streamId)
+  const stream =
+    sendStream !== undefined ? sendStream : await StreamRepository.findById(client, workspaceId, message.streamId)
   await ConversationRepository.insert(client, {
     id: newId,
     streamId: message.streamId,
@@ -272,7 +273,7 @@ async function attachThreadReplyToSource(
   sourceConversationId: string,
   initiatingUserId?: string
 ): Promise<string | null> {
-  const thread = await StreamRepository.findById(client, message.streamId)
+  const thread = await StreamRepository.findById(client, workspaceId, message.streamId)
   const source = await ConversationRepository.findByIdForUpdate(client, workspaceId, sourceConversationId)
   const anchorMessageId = thread?.parentAnchorId?.startsWith("msg_") ? thread.parentAnchorId : null
   if (
@@ -306,7 +307,7 @@ async function attachThreadReplyToSource(
  * Shared with the reassign path (`ConversationService.reassignMessage`), whose
  * one-root rule must match the assigner's `existing` directive exactly.
  */
-export async function effectiveRootId(client: PoolClient, streamId: string): Promise<string> {
-  const stream = await StreamRepository.findById(client, streamId)
+export async function effectiveRootId(client: PoolClient, workspaceId: string, streamId: string): Promise<string> {
+  const stream = await StreamRepository.findById(client, workspaceId, streamId)
   return stream?.rootStreamId ?? streamId
 }

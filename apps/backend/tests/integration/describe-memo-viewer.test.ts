@@ -26,7 +26,7 @@ describe("describe_memo viewer", () => {
 
   /** Tool deps as a turn in `invocationStreamId` gets them: scope and memo viewer both from the access spec. */
   async function describeFrom(invocationStreamId: string, memo: string): Promise<Record<string, unknown>> {
-    const stream = await StreamRepository.findById(pool, invocationStreamId)
+    const stream = await StreamRepository.findById(pool, testWorkspaceId, invocationStreamId)
     const accessSpec = await computeAgentAccessSpec(pool, { stream: stream!, invokingUserId: ownerId })
     const accessibleStreamIds = await SearchRepository.getAccessibleStreamsForAgent(pool, accessSpec, testWorkspaceId)
     const tool = createDescribeMemoTool({

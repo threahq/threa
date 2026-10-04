@@ -88,7 +88,7 @@ function setup(options?: {
 
   const streams = { ...STREAMS, ...(options?.streamOverrides ?? {}) }
   spyOn(StreamRepository, "findById").mockImplementation(
-    async (_c: unknown, id: string) => (streams[id] ?? null) as never
+    async (_c: unknown, _workspaceId: string, id: string) => (streams[id] ?? null) as never
   )
   spyOn(StreamRepository, "listSelfAndDescendantIds").mockResolvedValue(options?.subtree ?? ["thr_1", "thr_2"])
 

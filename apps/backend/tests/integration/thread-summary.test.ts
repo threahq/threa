@@ -126,13 +126,23 @@ describe("Thread Summary", () => {
   describe("findThreadSummaryByParentMessage (single-parent lookup)", () => {
     test("returns null when the parent message has no replies", async () => {
       const f = await seedThread(0, 0)
-      const summary = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
+      const summary = await StreamRepository.findThreadSummaryByParentMessage(
+        pool,
+        f.wsId,
+        f.channelId,
+        f.parentMessageId
+      )
       expect(summary).toBeNull()
     })
 
     test("returns the single reply as the latest when there is exactly one", async () => {
       const f = await seedThread(1, 1)
-      const summary = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
+      const summary = await StreamRepository.findThreadSummaryByParentMessage(
+        pool,
+        f.wsId,
+        f.channelId,
+        f.parentMessageId
+      )
       expect(summary).not.toBeNull()
       expect(summary!.participants).toHaveLength(1)
       expect(summary!.latestReply.messageId).toBe(f.replyIds[f.replyIds.length - 1])
@@ -140,15 +150,30 @@ describe("Thread Summary", () => {
 
     test("caps participants at 3 even with more distinct authors", async () => {
       const f = await seedThread(5, 1)
-      const summary = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
+      const summary = await StreamRepository.findThreadSummaryByParentMessage(
+        pool,
+        f.wsId,
+        f.channelId,
+        f.parentMessageId
+      )
       expect(summary).not.toBeNull()
       expect(summary!.participants).toHaveLength(3)
     })
 
     test("orders participants by first-reply sequence (deterministic)", async () => {
       const f = await seedThread(4, 1)
-      const first = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
-      const second = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
+      const first = await StreamRepository.findThreadSummaryByParentMessage(
+        pool,
+        f.wsId,
+        f.channelId,
+        f.parentMessageId
+      )
+      const second = await StreamRepository.findThreadSummaryByParentMessage(
+        pool,
+        f.wsId,
+        f.channelId,
+        f.parentMessageId
+      )
       // Same call twice → identical ordering.
       expect(first!.participants).toEqual(second!.participants)
     })
@@ -156,7 +181,12 @@ describe("Thread Summary", () => {
     test("sends contentMarkdown raw (caller strips via INV-60)", async () => {
       const raw = "**bold** and `code` and :emoji:"
       const f = await seedThread(1, 1, { markdown: raw })
-      const summary = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
+      const summary = await StreamRepository.findThreadSummaryByParentMessage(
+        pool,
+        f.wsId,
+        f.channelId,
+        f.parentMessageId
+      )
       expect(summary!.latestReply.contentMarkdown).toBe(raw)
     })
 
@@ -173,7 +203,12 @@ describe("Thread Summary", () => {
         authorType: "persona",
         ...testMessageContent("Persona-authored reply"),
       })
-      const summary = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
+      const summary = await StreamRepository.findThreadSummaryByParentMessage(
+        pool,
+        f.wsId,
+        f.channelId,
+        f.parentMessageId
+      )
       expect(summary!.participants.length).toBeGreaterThanOrEqual(2)
       expect(summary!.participants.some((p) => p.type === "persona" && p.id === "persona_system_ariadne")).toBe(true)
       expect(summary!.participants.some((p) => p.type === "user")).toBe(true)
@@ -186,13 +221,13 @@ describe("Thread Summary", () => {
   describe("findThreadSummaries (batch lookup)", () => {
     test("messages without replies are absent from the map", async () => {
       const f = await seedThread(0, 0)
-      const map = await StreamRepository.findThreadSummaries(pool, f.channelId)
+      const map = await StreamRepository.findThreadSummaries(pool, f.wsId, f.channelId)
       expect(map.has(f.parentMessageId)).toBe(false)
     })
 
     test("includes parent messages that have at least one reply", async () => {
       const f = await seedThread(1, 1)
-      const map = await StreamRepository.findThreadSummaries(pool, f.channelId)
+      const map = await StreamRepository.findThreadSummaries(pool, f.wsId, f.channelId)
       const summary = map.get(f.parentMessageId)
       expect(summary).toBeDefined()
       expect(summary!.participants).toHaveLength(1)
@@ -200,7 +235,7 @@ describe("Thread Summary", () => {
 
     test("caps participants at 3 in batch mode as well", async () => {
       const f = await seedThread(4, 2)
-      const map = await StreamRepository.findThreadSummaries(pool, f.channelId)
+      const map = await StreamRepository.findThreadSummaries(pool, f.wsId, f.channelId)
       const summary = map.get(f.parentMessageId)
       expect(summary!.participants).toHaveLength(3)
     })
@@ -216,13 +251,13 @@ describe("Thread Summary", () => {
         actorId: onlyReply.authorId,
       })
 
-      const threadDataMap = await StreamRepository.findThreadsWithReplyCounts(pool, f.channelId)
+      const threadDataMap = await StreamRepository.findThreadsWithReplyCounts(pool, f.wsId, f.channelId)
       expect(threadDataMap.get(f.parentMessageId)).toEqual({
         threadId: f.threadId,
         replyCount: 0,
       })
 
-      const summaryMap = await StreamRepository.findThreadSummaries(pool, f.channelId)
+      const summaryMap = await StreamRepository.findThreadSummaries(pool, f.wsId, f.channelId)
       expect(summaryMap.has(f.parentMessageId)).toBe(false)
     })
   })
@@ -278,13 +313,13 @@ describe("Thread Summary", () => {
 
       const parentA = await parentWithReply("Parent A")
       const parentB = await parentWithReply("Parent B")
-      return { channelId: channel.id, parentA, parentB }
+      return { wsId, channelId: channel.id, parentA, parentB }
     }
 
     test("undefined scope returns every thread in the stream", async () => {
-      const { channelId, parentA, parentB } = await seedTwoThreadsInOneChannel()
-      const summaries = await StreamRepository.findThreadSummaries(pool, channelId)
-      const counts = await StreamRepository.findThreadsWithReplyCounts(pool, channelId)
+      const { wsId, channelId, parentA, parentB } = await seedTwoThreadsInOneChannel()
+      const summaries = await StreamRepository.findThreadSummaries(pool, wsId, channelId)
+      const counts = await StreamRepository.findThreadsWithReplyCounts(pool, wsId, channelId)
       expect({
         summaries: [...summaries.keys()].sort(),
         counts: [...counts.keys()].sort(),
@@ -295,9 +330,9 @@ describe("Thread Summary", () => {
     })
 
     test("a scoped list returns only the requested parents", async () => {
-      const { channelId, parentA } = await seedTwoThreadsInOneChannel()
-      const summaries = await StreamRepository.findThreadSummaries(pool, channelId, [parentA])
-      const counts = await StreamRepository.findThreadsWithReplyCounts(pool, channelId, [parentA])
+      const { wsId, channelId, parentA } = await seedTwoThreadsInOneChannel()
+      const summaries = await StreamRepository.findThreadSummaries(pool, wsId, channelId, [parentA])
+      const counts = await StreamRepository.findThreadsWithReplyCounts(pool, wsId, channelId, [parentA])
       expect({
         summaries: [...summaries.keys()],
         counts: [...counts.keys()],
@@ -305,9 +340,9 @@ describe("Thread Summary", () => {
     })
 
     test("an empty scope returns an empty map without scanning the stream", async () => {
-      const { channelId } = await seedTwoThreadsInOneChannel()
-      const summaries = await StreamRepository.findThreadSummaries(pool, channelId, [])
-      const counts = await StreamRepository.findThreadsWithReplyCounts(pool, channelId, [])
+      const { wsId, channelId } = await seedTwoThreadsInOneChannel()
+      const summaries = await StreamRepository.findThreadSummaries(pool, wsId, channelId, [])
+      const counts = await StreamRepository.findThreadsWithReplyCounts(pool, wsId, channelId, [])
       expect({ summaries: [...summaries.keys()], counts: [...counts.keys()] }).toEqual({
         summaries: [],
         counts: [],
@@ -414,8 +449,13 @@ describe("Thread Summary", () => {
 
     test("a live thread's summary carries archivedAt null from both queries", async () => {
       const f = await seedThread(1, 1)
-      const batch = (await StreamRepository.findThreadSummaries(pool, f.channelId)).get(f.parentMessageId)
-      const single = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
+      const batch = (await StreamRepository.findThreadSummaries(pool, f.wsId, f.channelId)).get(f.parentMessageId)
+      const single = await StreamRepository.findThreadSummaryByParentMessage(
+        pool,
+        f.wsId,
+        f.channelId,
+        f.parentMessageId
+      )
       expect(batch?.archivedAt).toBeNull()
       expect(batch).toEqual(single)
     })
@@ -439,8 +479,13 @@ describe("Thread Summary", () => {
       })
       expect(payload.threadSummary!.participants).toHaveLength(2)
 
-      const batch = (await StreamRepository.findThreadSummaries(pool, f.channelId)).get(f.parentMessageId)
-      const single = await StreamRepository.findThreadSummaryByParentMessage(pool, f.channelId, f.parentMessageId)
+      const batch = (await StreamRepository.findThreadSummaries(pool, f.wsId, f.channelId)).get(f.parentMessageId)
+      const single = await StreamRepository.findThreadSummaryByParentMessage(
+        pool,
+        f.wsId,
+        f.channelId,
+        f.parentMessageId
+      )
       expect(batch).toEqual(single)
       expect(single?.archivedAt).toBe(archived!.archivedAt!.toISOString())
     })
@@ -476,9 +521,10 @@ describe("Thread Summary", () => {
     // future change (new column, different predicate, different ORDER BY)
     // silently diverges, the parity check fails.
     async function pairCompare(fixture: ThreadFixture) {
-      const batchMap = await StreamRepository.findThreadSummaries(pool, fixture.channelId)
+      const batchMap = await StreamRepository.findThreadSummaries(pool, fixture.wsId, fixture.channelId)
       const single = await StreamRepository.findThreadSummaryByParentMessage(
         pool,
+        fixture.wsId,
         fixture.channelId,
         fixture.parentMessageId
       )

@@ -146,7 +146,9 @@ export function createDelegationPublicApiHandlers({
     if (!delegation.resultMessageId) return undefined
     const resultMessage = await MessageRepository.findById(pool, delegation.resultMessageId)
     if (resultMessage && resultMessage.streamId !== delegation.streamId) return resultMessage.streamId
-    return (await StreamRepository.findByAnchor(pool, delegation.streamId, delegation.resultMessageId))?.id
+    return (
+      await StreamRepository.findByAnchor(pool, delegation.workspaceId, delegation.streamId, delegation.resultMessageId)
+    )?.id
   }
 
   return {
