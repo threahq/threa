@@ -680,8 +680,7 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
     },
   ]
 
-  // Workspace B writes ids workspace A already holds. An arbiter without workspace_id would take the
-  // conflict path: update A's row or drop B's write without an error.
+  // Workspace B writes ids workspace A already holds: B's row lands beside A's, and A's row is unchanged.
   for (const { name, write, read, landsAs } of sharedKeyCases) {
     test(`should land workspace B's own row and leave workspace A's untouched when B writes ${name} for the same ids`, async () => {
       const wsA = workspaceId()
@@ -705,7 +704,11 @@ describe("workspace-leading ON CONFLICT arbiters", () => {
       const seededA = await read(wsA, ids)
       await write(wsB, ids, 1)
 
-      expect({ a: await read(wsA, ids), b: await read(wsB, ids) }).toEqual({ a: seededA, b: landsAs(wsB, ids) })
+      expect({ seededA: seededA !== null, a: await read(wsA, ids), b: await read(wsB, ids) }).toEqual({
+        seededA: true,
+        a: seededA,
+        b: landsAs(wsB, ids),
+      })
     })
   }
 })

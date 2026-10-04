@@ -450,6 +450,14 @@ describe("Read state and sparse overlay workspace scope (INV-8)", () => {
     })
   })
 
+  test("should return no read state when only another workspace holds the row for that stream and user", async () => {
+    const stream = await seedChannel(wsB, bAuthor)
+    const user = userId()
+    await addReadState(wsB, stream, user)
+
+    expect(await ReadStateRepository.ensureForUpdate(pool, wsA, stream, user)).toBeNull()
+  })
+
   test("should land its own read state beside another workspace's row when both hold the same stream and user ids", async () => {
     const stream = await seedChannel(wsA)
     const user = userId()

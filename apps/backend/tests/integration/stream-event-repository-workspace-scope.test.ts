@@ -337,6 +337,8 @@ describe("StreamEventRepository workspace scope (INV-8)", () => {
     await sendMessage(wsA, channel.id, userA, "Two")
     const [first] = await StreamEventRepository.list(pool, wsA, channel.id)
     const decoyMessageId = messageId()
+    // Above both of A's messages, so a watermark lookup without workspace_id reads every A event as read.
+    await StreamEventRepository.allocateSequences(pool, wsB, channel.id, { total: 2, broadcast: 0 })
     const decoy = await StreamEventRepository.insert(pool, {
       id: eventId(),
       workspaceId: wsB,
