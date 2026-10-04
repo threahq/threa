@@ -7,8 +7,9 @@ import type { AgentToolName } from "./constants"
  * "workspace reads but no web egress", and so on.
  *
  * The owner picks categories, not a 30-tool checkbox. `messaging` (the agent's
- * own reply tool) is never gated — an agent must always be able to answer — so
- * it is a category for completeness but is always allowed regardless of policy.
+ * reply and its other in-product, egress-free tools) is never gated — an agent
+ * must always be able to answer — so it is a category for completeness but is
+ * always allowed regardless of policy.
  */
 export const TOOL_PRIVACY_CATEGORIES = ["messaging", "web", "workspace", "github", "linear"] as const
 export type ToolPrivacyCategory = (typeof TOOL_PRIVACY_CATEGORIES)[number]
@@ -27,7 +28,7 @@ export const TOOL_PRIVACY_CATEGORY_LABELS: Record<ToolPrivacyCategory, string> =
 }
 
 export const ToolPrivacyCategories = {
-  /** The agent's own reply tool (`send_message`). Always allowed. */
+  /** Replies and other in-product tools that read no workspace data and send nothing out. Always allowed. */
   MESSAGING: "messaging",
   /** External web egress: web_search, read_url (fetch), general_research, and run_command's sandbox internet. */
   WEB: "web",
@@ -94,6 +95,10 @@ export const TOOL_CATEGORIES_BY_NAME = {
   // the thread it is running in: a reply, by another name.
   start_subagent: ["messaging"],
   report_back: ["messaging"],
+  // Bundled public product docs: reads no workspace or user data and sends
+  // nothing out, so it rides the always-allowed class and a locked-down
+  // scratchpad still lets the agent explain the app.
+  threa_guide: ["messaging"],
 
   web_search: ["web"],
   read_url: ["web"],

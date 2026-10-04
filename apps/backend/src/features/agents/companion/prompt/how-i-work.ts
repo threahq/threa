@@ -77,6 +77,7 @@ const CAPABILITIES: Array<{
   },
   { parts: [[AgentToolNames.DESCRIBE_MEMO, "open memos to see their sources"]], line: (p) => `${p}.` },
   { parts: [[AgentToolNames.SAVE_MEMO, "save something to memory when someone asks"]], line: (p) => `${p}.` },
+  { parts: [[AgentToolNames.THREA_GUIDE, "look up how Threa works in its user guide"]], line: (p) => `${p}.` },
   { parts: [[AgentToolNames.REACT_TO_MESSAGE, "react to messages with an emoji"]], line: (p) => `${p}.` },
   {
     parts: [

@@ -1,4 +1,5 @@
 import { AgentToolNames } from "@threahq/types"
+import type { GuideArticle } from "@threahq/user-guide"
 import {
   createWebSearchTool,
   createReadUrlTool,
@@ -36,6 +37,7 @@ import {
   createReadAttachmentTool,
   createRunCommandTool,
   createDescribeMemoTool,
+  createThreaGuideTool,
   createReactToMessageTool,
   createScheduleFollowUpTool,
   createListFollowUpsTool,
@@ -65,6 +67,7 @@ import {
 export interface ToolSetConfig {
   enabledTools: string[] | null
   webSearchEngines?: WebSearchEngine[]
+  guideArticles?: readonly GuideArticle[]
   pageBrowser?: PageBrowser
   /** Judges web tool output for text aimed at the agent. Absent on stub AI, where every output goes unjudged. */
   screenOutput?: ToolOutputScreen
@@ -153,6 +156,7 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
   const {
     enabledTools,
     webSearchEngines,
+    guideArticles,
     pageBrowser,
     screenOutput,
     judgeSearch,
@@ -223,6 +227,10 @@ export function buildToolSet(config: ToolSetConfig): AgentTool[] {
         })
       : null,
     readUrl,
+
+    guideArticles && isToolEnabled(enabledTools, AgentToolNames.THREA_GUIDE)
+      ? createThreaGuideTool({ articles: guideArticles })
+      : null,
 
     workspace && isToolEnabled(enabledTools, AgentToolNames.SEARCH_MESSAGES)
       ? createSearchMessagesTool(workspace)

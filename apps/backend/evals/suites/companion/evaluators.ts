@@ -7,6 +7,8 @@
 import type { Evaluator, EvalContext, EvaluatorResult, RunEvaluator, CaseResult } from "../../framework/types"
 import { llmJudgeEvaluator } from "../../framework/evaluators/llm-judge"
 import type { CompanionOutput, CompanionExpected } from "./types"
+import { AgentToolNames } from "@threahq/types"
+import { loadGuideArticles } from "@threahq/user-guide"
 
 // The judge receives the case's expected-behavior descriptor as "Expected Output" and the
 // runner's raw record as "Actual Output"; without this it docks points for the two JSON
@@ -346,6 +348,39 @@ export const webSearchUsageEvaluator: Evaluator<CompanionOutput, CompanionExpect
       details: reachedWeb
         ? `via ${route.join(", ") || "web_search"}`
         : "Expected the web to be consulted, but no web-reaching tool ran",
+    }
+  },
+}
+
+const GUIDE_SLUGS = new Set(loadGuideArticles().map((article) => article.slug))
+
+/**
+ * Evaluates whether the agent read a real user-guide article, from the turn's
+ * completed `tool_call` steps (their content carries the tool and the slug). A
+ * made-up slug completes too, with an error payload, so the slug is checked.
+ */
+export const guideUsageEvaluator: Evaluator<CompanionOutput, CompanionExpected> = {
+  name: "guide-usage",
+  evaluate: (output: CompanionOutput, expected: CompanionExpected): EvaluatorResult => {
+    if (!expected.responseCharacteristics?.shouldReadGuide) {
+      return { name: "guide-usage", score: 1, passed: true, details: "No guide requirement" }
+    }
+
+    const read = (output.trajectory ?? []).some((step) => {
+      if (step.stepType !== "tool_call" || !step.completed || !step.content) return false
+      try {
+        const call = JSON.parse(step.content) as { tool?: unknown; article?: unknown }
+        return call.tool === AgentToolNames.THREA_GUIDE && GUIDE_SLUGS.has(String(call.article))
+      } catch {
+        return false
+      }
+    })
+
+    return {
+      name: "guide-usage",
+      score: read ? 1 : 0,
+      passed: read,
+      details: read ? undefined : "Expected a completed threa_guide call for an existing article",
     }
   },
 }

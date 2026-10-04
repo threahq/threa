@@ -85,6 +85,8 @@ export interface CompanionExpected {
     shouldAskQuestion?: boolean
     /** Should use web search */
     shouldUseWebSearch?: boolean
+    /** The agent should read an existing user-guide article with threa_guide. */
+    shouldReadGuide?: boolean
     /** Web search query should include these terms */
     webSearchQueryShouldContain?: string[]
     /**
@@ -996,6 +998,50 @@ const multilingualCases: EvalCase<CompanionInput, CompanionExpected>[] = [
 ]
 
 // =============================================================================
+// User Guide Cases (how-to questions about Threa itself)
+// =============================================================================
+
+const guideCases: EvalCase<CompanionInput, CompanionExpected>[] = [
+  createCase(
+    "guide-quiet-companion-001",
+    "Guide: reads the user guide to explain stopping Ariadne replying to everything",
+    {
+      message: "How do I stop Ariadne from replying to everything I write in my scratchpad?",
+      streamType: "scratchpad",
+      trigger: "companion",
+    },
+    {
+      shouldRespond: true,
+      responseCharacteristics: {
+        shouldReadGuide: true,
+        responseLanguage: "English",
+      },
+      reason:
+        "A how-to question about Threa itself is answered from the user guide, not from memory; the tool call is the grounding.",
+    }
+  ),
+
+  createCase(
+    "guide-quiet-companion-swedish-001",
+    "Guide: Swedish how-to question reads the guide and answers in Swedish",
+    {
+      message: "Hur får jag Ariadne att sluta svara på allt jag skriver i min scratchpad?",
+      streamType: "scratchpad",
+      trigger: "companion",
+    },
+    {
+      shouldRespond: true,
+      responseCharacteristics: {
+        shouldReadGuide: true,
+        responseLanguage: "Swedish",
+      },
+      reason:
+        "The guide is written in English; the lookup must not be language-gated and the answer has to follow the user's language.",
+    }
+  ),
+]
+
+// =============================================================================
 // Source Fidelity Cases (what the agent cites, and whether it cites at all)
 // =============================================================================
 
@@ -1130,6 +1176,7 @@ export const companionCases: EvalCase<CompanionInput, CompanionExpected>[] = [
   ...edgeCases,
   ...consistencyCases,
   ...multilingualCases,
+  ...guideCases,
   ...sourceFidelityCases,
   ...restraintCases,
   ...asideCases,
@@ -1147,6 +1194,7 @@ export {
   edgeCases,
   consistencyCases,
   multilingualCases,
+  guideCases,
   sourceFidelityCases,
   restraintCases,
 }

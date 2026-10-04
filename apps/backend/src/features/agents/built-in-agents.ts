@@ -62,6 +62,7 @@ Keep responses short and direct. Default to a few sentences unless the user asks
       AgentToolNames.START_SUBAGENT,
       AgentToolNames.SAVE_MEMO,
       AgentToolNames.UPDATE_USER_SETTINGS,
+      AgentToolNames.THREA_GUIDE,
       AgentToolNames.SEARCH_ATTACHMENTS,
       AgentToolNames.READ_ATTACHMENT,
       AgentToolNames.RUN_COMMAND,

@@ -3,6 +3,7 @@ import { z } from "zod"
 import { MUTATING_TOOL_NAMES } from "@threahq/types"
 import { buildToolSet } from "../companion/tool-set"
 import { createExaEngine } from "@threahq/agent-runtime"
+import { loadGuideArticles } from "@threahq/user-guide"
 
 /**
  * Tool definitions must be byte-identical across requests.
@@ -40,6 +41,7 @@ function definitions(over: { currentTime: string; timezone: string; briefVersion
   const tools = buildToolSet({
     enabledTools: null,
     webSearchEngines: [createExaEngine("test-key")],
+    guideArticles: loadGuideArticles(),
     currentTime: over.currentTime,
     timezone: over.timezone,
     briefVersion: over.briefVersion,

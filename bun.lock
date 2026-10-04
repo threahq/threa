@@ -39,6 +39,7 @@
         "@threahq/backend-common": "workspace:*",
         "@threahq/prosemirror": "workspace:*",
         "@threahq/types": "workspace:*",
+        "@threahq/user-guide": "workspace:*",
         "@types/multer-s3": "^3.0.3",
         "@workos-inc/node": "^7",
         "ai": "^7",

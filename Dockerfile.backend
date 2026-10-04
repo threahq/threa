@@ -25,6 +25,7 @@ RUN sed -i '/"prepare"/d' package.json && bun install --frozen-lockfile --produc
 
 # Copy source
 COPY packages/types/ packages/types/
+COPY packages/user-guide/ packages/user-guide/
 COPY packages/prosemirror/ packages/prosemirror/
 COPY packages/crypto/ packages/crypto/
 COPY packages/agent-runtime/ packages/agent-runtime/

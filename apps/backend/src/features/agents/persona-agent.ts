@@ -44,6 +44,7 @@ import { WorkspaceAgent, type WorkspaceAgentResult } from "./researcher"
 import { GeneralResearcher, GENERAL_RESEARCH_TOOL_POLICY, type GeneralResearchResult } from "./general-researcher"
 import { logger } from "../../lib/logger"
 import { repairMessageReferences } from "@threahq/prosemirror"
+import type { GuideArticle } from "@threahq/user-guide"
 import {
   buildAgentContext,
   buildToolSet,
@@ -138,6 +139,7 @@ export interface PersonaAgentDeps {
   sandbox?: StreamSandboxDeps
   assertInitiatorWritable?: typeof assertStreamWritable
   webSearchEngines?: WebSearchEngine[]
+  guideArticles?: readonly GuideArticle[]
   pageBrowser?: PageBrowser
   injectionScreen?: InjectionScreen
   webSearchJudge?: WebSearchJudge
@@ -473,6 +475,7 @@ export class PersonaAgent {
       workspaceIntegrationService,
       sandbox,
       webSearchEngines,
+      guideArticles,
       pageBrowser,
       injectionScreen,
       webSearchJudge,
@@ -1447,6 +1450,7 @@ export class PersonaAgent {
           tools: buildToolSet({
             enabledTools: persona.enabledTools,
             webSearchEngines,
+            guideArticles,
             pageBrowser,
             screenOutput,
             judgeSearch,
