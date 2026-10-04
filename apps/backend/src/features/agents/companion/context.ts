@@ -270,6 +270,14 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
           query: triggerMessage.contentMarkdown,
           accessibleStreamIds,
           memoViewerUserId,
+          asker:
+            invokingUser && preferences
+              ? {
+                  name: invokingUser.name,
+                  askedAt: currentTime ?? new Date(),
+                  timezone: invokingUser.timezone ?? preferences.timezone,
+                }
+              : undefined,
         })
       : Promise.resolve({ memos: [] }),
   ])
