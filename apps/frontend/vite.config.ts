@@ -45,6 +45,8 @@ const MARKDOWN_HTML_PACKAGES = [
   "rehype-sanitize",
 ]
 
+const REACT_PACKAGES = ["react", "react-dom", "scheduler"]
+
 let buildOutputDir: string
 
 /**
@@ -217,9 +219,12 @@ export default defineConfig({
         // fails outright. The chunk is still a static import of the entry, so it
         // loads before first paint and math never renders twice.
         // The HTML parser behind GitHub previews (parse5 via rehype-raw) sits
-        // in its own chunk for the same reason.
+        // in its own chunk for the same reason, and so does React: the deploy
+        // build's PostHog chunk-id injection adds bytes CI's build never has, so
+        // the entry needs real headroom under the limit, not CI's last kilobyte.
         manualChunks: (id: string) => {
           if (id.includes("/node_modules/katex/")) return "katex"
+          if (REACT_PACKAGES.some((name) => id.includes(`/node_modules/${name}/`))) return "react"
           if (MARKDOWN_HTML_PACKAGES.some((name) => id.includes(`/node_modules/${name}/`))) return "markdown-html"
           return undefined
         },
