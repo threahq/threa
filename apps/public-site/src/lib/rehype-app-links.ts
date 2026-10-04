@@ -23,7 +23,7 @@ export function rehypeAppLinks({ appUrl }: { appUrl: string }) {
         ...node.properties,
         href: appUrl,
         className: ["app-link"],
-        title: "Opens in the Threa app",
+        title: "Opens your Threa workspace",
       }
     }
     node.children?.forEach(visit)

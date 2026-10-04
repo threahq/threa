@@ -112,6 +112,9 @@ export function guideArticlesFromFiles(files: Record<string, string>): GuideArti
 
 export function loadGuideArticles(): GuideArticle[] {
   const dir = fileURLToPath(new URL("../content", import.meta.url))
-  const files = readdirSync(dir).filter((file) => file.endsWith(".md"))
+  const files = readdirSync(dir)
+  const stray = files.find((file) => !file.endsWith(".md"))
+  // The site's glob only picks up `.md`, so any other file would ship to Ariadne but never to the guide.
+  if (stray) throw new Error(`Guide content holds "${stray}", which is not a .md article`)
   return guideArticlesFromFiles(Object.fromEntries(files.map((file) => [file, readFileSync(`${dir}/${file}`, "utf8")])))
 }

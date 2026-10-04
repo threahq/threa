@@ -31,6 +31,15 @@ describe("guide articles", () => {
     )
     expect(dangling).toEqual([])
   })
+
+  test("should keep angle-bracket placeholders in code when a body uses one", () => {
+    // The site renders markdown with raw HTML on, so a bare `<name>` becomes an unknown tag and disappears.
+    const prose = (body: string) => body.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "")
+    const tags = articles.flatMap((a) =>
+      [...prose(a.body).matchAll(/<[a-zA-Z][^>\n]*>/g)].map((m) => `${a.slug}: ${m[0]}`)
+    )
+    expect(tags).toEqual([])
+  })
 })
 
 describe("parseGuideArticle", () => {
