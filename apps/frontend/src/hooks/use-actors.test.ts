@@ -106,6 +106,7 @@ describe("useActors", () => {
     vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockImplementation(() => mockUsers)
     vi.spyOn(workspaceStoreModule, "useWorkspacePersonas").mockImplementation(() => mockPersonas)
     vi.spyOn(workspaceStoreModule, "useWorkspaceBots").mockImplementation(() => mockBots)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceActorCopies").mockReturnValue([])
     vi.spyOn(useWorkspaceEmojiModule, "useWorkspaceEmoji").mockReturnValue({
       toEmoji: (shortcode: string) => {
         if (shortcode === ":thread:") return "🧵"

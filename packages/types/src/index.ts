@@ -457,6 +457,7 @@ export type {
   StreamEvent,
   Persona,
   Bot,
+  ActorCopy,
   Attachment,
   AttachmentSummary,
   SourceItem,
@@ -1472,6 +1473,7 @@ export {
   type BridgeMessage,
   type BridgeChange,
   type BridgeUser,
+  type BridgeActor,
   type BridgeEvents,
 } from "./stream-connections"
 

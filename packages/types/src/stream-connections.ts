@@ -230,6 +230,14 @@ export const bridgeUserSchema = z.object({
 })
 export type BridgeUser = z.infer<typeof bridgeUserSchema>
 
+/** A host custom persona or bot that wrote or reacted in the shared tree, as the partner shows it. */
+export const bridgeActorSchema = z.object({
+  id: z.string().regex(/^(persona|bot)_/),
+  name: z.string(),
+  avatarEmoji: z.string().nullable(),
+})
+export type BridgeActor = z.infer<typeof bridgeActorSchema>
+
 /** What a partner applies: a message to upsert, or one to drop because it was deleted or left the shared tree. */
 export const bridgeChangeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("message"), message: bridgeMessageSchema }),
@@ -246,6 +254,8 @@ export const bridgeEventsSchema = z.object({
   changes: z.array(bridgeChangeSchema),
   /** Every user the changes name as an author or reactor. */
   users: z.array(bridgeUserSchema),
+  /** Every custom persona and bot the changes name as an author or reactor. Absent from a host that predates it. */
+  actors: z.array(bridgeActorSchema).default([]),
   cursor: bridgeSequenceSchema,
   hasMore: z.boolean(),
 })

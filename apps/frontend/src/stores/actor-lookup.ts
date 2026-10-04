@@ -94,10 +94,17 @@ interface ActorRow {
   id: string
 }
 
+/** The display fields of a host persona/bot copy; it carries no avatar image, only an emoji. */
+interface ActorCopyRow extends ActorRow {
+  name: string
+  avatarEmoji: string | null
+}
+
 interface ActorLookupEntry {
   workspaceId: string
   personas: readonly ActorRow[]
   bots: readonly ActorRow[]
+  actorCopies: readonly ActorCopyRow[]
   lookup: ActorLookup
 }
 
@@ -155,7 +162,7 @@ export function getWorkspaceEmojiIndexes(
 
 /**
  * The actor maps and resolvers for one workspace. The returned object's identity
- * changes only when the users/personas/bots rows or the emoji resolver changed —
+ * changes only when the users/personas/bots/actor-copy rows or the emoji resolver changed —
  * that stability is what keeps the memoised row tree from re-rendering when
  * unrelated workspace data ticks.
  */
@@ -164,6 +171,7 @@ export function getActorLookup(
   users: readonly ActorRow[],
   personas: readonly ActorRow[],
   bots: readonly ActorRow[],
+  actorCopies: readonly ActorCopyRow[],
   toEmoji: (shortcode: string) => string | null
 ): ActorLookup {
   const byResolver = actorLookups.get(users)
@@ -171,13 +179,20 @@ export function getActorLookup(
   // workspaceId must participate: pre-hydration every workspace passes the same
   // EMPTY_ROWS singletons, and a rows-only hit would serve workspace A's lookup
   // (A's id baked into getActorAvatar) to workspace B's first render.
-  if (cached && cached.workspaceId === workspaceId && cached.personas === personas && cached.bots === bots) {
+  if (
+    cached &&
+    cached.workspaceId === workspaceId &&
+    cached.personas === personas &&
+    cached.bots === bots &&
+    cached.actorCopies === actorCopies
+  ) {
     return cached.lookup
   }
 
   const userMap = new Map(users.map((u) => [u.id, u as User]))
   const personaMap = new Map(personas.map((p) => [p.id, p as Persona]))
   const botMap = new Map(bots.map((b) => [b.id, b as Bot]))
+  const copyMap = new Map(actorCopies.map((c) => [c.id, c]))
 
   const getUser = (userId: string): User | undefined => userMap.get(userId)
   const getPersona = (personaId: string): Persona | undefined => personaMap.get(personaId)
@@ -186,8 +201,8 @@ export function getActorLookup(
   const getActorName = (actorId: string | null, actorType: AuthorType | null): string => {
     if (!actorId) return "Unknown"
     if (actorType === "system") return "Threa"
-    if (actorType === "persona") return personaMap.get(actorId)?.name ?? "AI Companion"
-    if (actorType === "bot") return botMap.get(actorId)?.name ?? "Bot"
+    if (actorType === "persona") return personaMap.get(actorId)?.name ?? copyMap.get(actorId)?.name ?? "AI Companion"
+    if (actorType === "bot") return botMap.get(actorId)?.name ?? copyMap.get(actorId)?.name ?? "Bot"
     return userMap.get(actorId)?.name || actorId.substring(0, 8)
   }
 
@@ -196,7 +211,7 @@ export function getActorLookup(
     if (actorType === "system") return "T"
 
     if (actorType === "persona") {
-      const persona = personaMap.get(actorId)
+      const persona = personaMap.get(actorId) ?? copyMap.get(actorId)
       if (persona?.avatarEmoji) {
         const emoji = toEmoji(persona.avatarEmoji)
         if (emoji) return emoji
@@ -205,7 +220,7 @@ export function getActorLookup(
     }
 
     if (actorType === "bot") {
-      const bot = botMap.get(actorId)
+      const bot = botMap.get(actorId) ?? copyMap.get(actorId)
       if (bot?.avatarEmoji) {
         const emoji = toEmoji(bot.avatarEmoji)
         if (emoji) return emoji
@@ -252,7 +267,7 @@ export function getActorLookup(
 
   const lookup: ActorLookup = { getActorName, getActorInitials, getActorAvatar, getUser, getPersona, getBot }
   const resolvers = byResolver ?? new WeakMap<(shortcode: string) => string | null, ActorLookupEntry>()
-  resolvers.set(toEmoji, { workspaceId, personas, bots, lookup })
+  resolvers.set(toEmoji, { workspaceId, personas, bots, actorCopies, lookup })
   actorLookups.set(users, resolvers)
   return lookup
 }

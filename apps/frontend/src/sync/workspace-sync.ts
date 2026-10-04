@@ -3,6 +3,7 @@ import {
   getActiveDb,
   type ThreaDatabase,
   type AccountWriteContext,
+  type CachedActorCopy,
   type CachedBot,
   type CachedDmPeer,
   type CachedLabel,
@@ -49,6 +50,7 @@ import { postClearNotifications } from "@/lib/sw-messages"
 import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import type {
+  ActorCopy,
   Stream,
   StreamWithPreview,
   StreamBootstrap,
@@ -1923,6 +1925,23 @@ export function registerWorkspaceSocketHandlers(
     await db.bots.put({ ...payload.bot, _cachedAt: Date.now() })
   }
 
+  const handleActorCopyUpserted = async (payload: { workspaceId: string; actorCopy: ActorCopy }) => {
+    if (payload.workspaceId !== workspaceId) return
+
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => {
+      const copies = old.actorCopies ?? []
+      const exists = copies.some((c) => c.id === payload.actorCopy.id)
+      return {
+        ...old,
+        actorCopies: exists
+          ? copies.map((c) => (c.id === payload.actorCopy.id ? payload.actorCopy : c))
+          : [...copies, payload.actorCopy],
+      }
+    })
+
+    await db.actorCopies.put({ ...payload.actorCopy, _cachedAt: Date.now() })
+  }
+
   // An admin committed a persona (built-in agent) config override. Workspace-
   // scoped — every member inherits the built-in — carrying the resolved light
   // persona so display-name/avatar caches update without a refetch. The light
@@ -2509,6 +2528,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("feature_flags:workspace_updated", handleFeatureFlagsWorkspaceUpdated)
   socket.on("bot:created", handleBotCreated)
   socket.on("bot:updated", handleBotUpdated)
+  socket.on("actor_copy:upserted", handleActorCopyUpserted)
   socket.on("agent_config:updated", handleAgentConfigUpdated)
   socket.on("activity:created", handleActivityCreated)
   socket.on("activity:read", handleActivityRead)
@@ -2583,6 +2603,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("feature_flags:workspace_updated", handleFeatureFlagsWorkspaceUpdated)
     socket.off("bot:created", handleBotCreated)
     socket.off("bot:updated", handleBotUpdated)
+    socket.off("actor_copy:upserted", handleActorCopyUpserted)
     socket.off("agent_config:updated", handleAgentConfigUpdated)
     socket.off("activity:created", handleActivityCreated)
     socket.off("activity:read", handleActivityRead)
@@ -2699,6 +2720,7 @@ type BootstrapRowCoveredField =
   | "dmPeers"
   | "personas"
   | "bots"
+  | "actorCopies"
   | "labels"
   | "labelAssignments"
   | "emojis"
@@ -2779,6 +2801,7 @@ interface TableDeletions {
   dmPeers: number
   personas: number
   bots: number
+  actorCopies: number
   labels: number
   labelAssignments: number
   total: number
@@ -2792,6 +2815,7 @@ const NO_TABLE_DELETIONS: TableDeletions = {
   dmPeers: 0,
   personas: 0,
   bots: 0,
+  actorCopies: 0,
   labels: 0,
   labelAssignments: 0,
   total: 0,
@@ -2860,6 +2884,7 @@ export async function applyWorkspaceBootstrap(
   }))
   const personaRows = bootstrap.personas.map((p) => ({ ...p, workspaceId, _cachedAt: now }))
   const botRows = bootstrap.bots.map((b) => ({ ...b, workspaceId, _cachedAt: now }))
+  const actorCopyRows = (bootstrap.actorCopies ?? []).map((c) => ({ ...c, workspaceId, _cachedAt: now }))
   const labelRows = bootstrap.labels.map((l) => ({ ...l, _cachedAt: now }))
   const labelAssignmentRows = bootstrap.labelAssignments.map(assignmentToCached)
   const metadataRow = {
@@ -2881,6 +2906,7 @@ export async function applyWorkspaceBootstrap(
   let mergedDmPeers: CachedDmPeer[] = dmPeerRows
   let mergedPersonas: CachedPersona[] = personaRows
   let mergedBots: CachedBot[] = botRows
+  let mergedActorCopies: CachedActorCopy[] = actorCopyRows
   let mergedLabels: CachedLabel[] = labelRows
   let mergedLabelAssignments: CachedLabelAssignment[] = labelAssignmentRows
 
@@ -2894,6 +2920,7 @@ export async function applyWorkspaceBootstrap(
     dmPeers: 0,
     personas: 0,
     bots: 0,
+    actorCopies: 0,
     labels: 0,
     labelAssignments: 0,
   }
@@ -2921,6 +2948,7 @@ export async function applyWorkspaceBootstrap(
       db.dmPeers,
       db.personas,
       db.bots,
+      db.actorCopies,
       db.labels,
       db.labelAssignments,
       db.unreadState,
@@ -2940,6 +2968,7 @@ export async function applyWorkspaceBootstrap(
         existingDmPeers,
         existingPersonas,
         existingBots,
+        existingActorCopies,
         existingLabels,
         existingLabelAssignments,
         existingMetadata,
@@ -2950,6 +2979,7 @@ export async function applyWorkspaceBootstrap(
         db.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
         db.personas.where("workspaceId").equals(workspaceId).toArray(),
         db.bots.where("workspaceId").equals(workspaceId).toArray(),
+        db.actorCopies.where("workspaceId").equals(workspaceId).toArray(),
         db.labels.where("workspaceId").equals(workspaceId).toArray(),
         db.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
         db.workspaceMetadata.get(workspaceId),
@@ -2984,6 +3014,7 @@ export async function applyWorkspaceBootstrap(
       const dmPeersDiff = diffRows(byId(existingDmPeers), dmPeerRows)
       const personasDiff = diffRows(byId(existingPersonas), personaRows)
       const botsDiff = diffRows(byId(existingBots), botRows)
+      const actorCopiesDiff = diffRows(byId(existingActorCopies), actorCopyRows)
       const labelsDiff = diffRows(byId(existingLabels), labelRows)
       const labelAssignmentsDiff = diffRows(byId(existingLabelAssignments), labelAssignmentRows)
       // Meet Ariadne never un-happens: a snapshot fetched before the click must not clear it.
@@ -2998,6 +3029,7 @@ export async function applyWorkspaceBootstrap(
       mergedDmPeers = dmPeersDiff.merged
       mergedPersonas = personasDiff.merged
       mergedBots = botsDiff.merged
+      mergedActorCopies = bootstrap.actorCopies ? actorCopiesDiff.merged : existingActorCopies
       mergedLabels = labelsDiff.merged
       mergedLabelAssignments = labelAssignmentsDiff.merged
       recordSkippedRowConfirmations(workspaceId, "streams", streamsDiff, now)
@@ -3008,6 +3040,7 @@ export async function applyWorkspaceBootstrap(
       writeCounts.dmPeers = dmPeersDiff.toWrite.length
       writeCounts.personas = personasDiff.toWrite.length
       writeCounts.bots = botsDiff.toWrite.length
+      writeCounts.actorCopies = actorCopiesDiff.toWrite.length
       writeCounts.labels = labelsDiff.toWrite.length
       writeCounts.labelAssignments = labelAssignmentsDiff.toWrite.length
       rowsSkipped +=
@@ -3017,6 +3050,7 @@ export async function applyWorkspaceBootstrap(
         dmPeersDiff.skipped +
         personasDiff.skipped +
         botsDiff.skipped +
+        actorCopiesDiff.skipped +
         labelsDiff.skipped +
         labelAssignmentsDiff.skipped +
         (workspaceDiff.write ? 0 : 1) +
@@ -3028,6 +3062,7 @@ export async function applyWorkspaceBootstrap(
         dmPeersDiff.toWrite.length +
         personasDiff.toWrite.length +
         botsDiff.toWrite.length +
+        actorCopiesDiff.toWrite.length +
         labelsDiff.toWrite.length +
         labelAssignmentsDiff.toWrite.length +
         (workspaceDiff.write ? 1 : 0) +
@@ -3041,6 +3076,7 @@ export async function applyWorkspaceBootstrap(
         dmPeersDiff.toWrite.length > 0 ? db.dmPeers.bulkPut(dmPeersDiff.toWrite) : Promise.resolve(),
         personasDiff.toWrite.length > 0 ? db.personas.bulkPut(personasDiff.toWrite) : Promise.resolve(),
         botsDiff.toWrite.length > 0 ? db.bots.bulkPut(botsDiff.toWrite) : Promise.resolve(),
+        actorCopiesDiff.toWrite.length > 0 ? db.actorCopies.bulkPut(actorCopiesDiff.toWrite) : Promise.resolve(),
         labelsDiff.toWrite.length > 0 ? db.labels.bulkPut(labelsDiff.toWrite) : Promise.resolve(),
         labelAssignmentsDiff.toWrite.length > 0
           ? db.labelAssignments.bulkPut(labelAssignmentsDiff.toWrite)
@@ -3196,6 +3232,12 @@ export async function applyWorkspaceBootstrap(
       dmPeers: reuseIfUnchanged(previousTables.dmPeers, mergedDmPeers, writeCounts.dmPeers, deletions.dmPeers),
       personas: reuseIfUnchanged(previousTables.personas, mergedPersonas, writeCounts.personas, deletions.personas),
       bots: reuseIfUnchanged(previousTables.bots, mergedBots, writeCounts.bots, deletions.bots),
+      actorCopies: reuseIfUnchanged(
+        previousTables.actorCopies,
+        mergedActorCopies,
+        writeCounts.actorCopies,
+        deletions.actorCopies
+      ),
       labels: reuseIfUnchanged(previousTables.labels, mergedLabels, writeCounts.labels, deletions.labels),
       labelAssignments: reuseIfUnchanged(
         previousTables.labelAssignments,
@@ -3352,6 +3394,7 @@ export async function applyReconnectBootstrapBatch(
   }))
   const personaRows = finalBootstrap.personas.map((persona) => ({ ...persona, workspaceId, _cachedAt: now }))
   const botRows = finalBootstrap.bots.map((bot) => ({ ...bot, workspaceId, _cachedAt: now }))
+  const actorCopyRows = (finalBootstrap.actorCopies ?? []).map((copy) => ({ ...copy, workspaceId, _cachedAt: now }))
   const labelRows = finalBootstrap.labels.map((label) => ({ ...label, _cachedAt: now }))
   const labelAssignmentRows = finalBootstrap.labelAssignments.map(assignmentToCached)
   const unreadRow = {
@@ -3387,6 +3430,7 @@ export async function applyReconnectBootstrapBatch(
   let mergedDmPeers: CachedDmPeer[] = dmPeerRows
   let mergedPersonas: CachedPersona[] = personaRows
   let mergedBots: CachedBot[] = botRows
+  let mergedActorCopies: CachedActorCopy[] = actorCopyRows
   let mergedLabels: CachedLabel[] = labelRows
   let mergedLabelAssignments: CachedLabelAssignment[] = labelAssignmentRows
 
@@ -3398,6 +3442,7 @@ export async function applyReconnectBootstrapBatch(
     dmPeers: 0,
     personas: 0,
     bots: 0,
+    actorCopies: 0,
     labels: 0,
     labelAssignments: 0,
   }
@@ -3415,6 +3460,7 @@ export async function applyReconnectBootstrapBatch(
       db.dmPeers,
       db.personas,
       db.bots,
+      db.actorCopies,
       db.labels,
       db.labelAssignments,
       db.unreadState,
@@ -3436,6 +3482,7 @@ export async function applyReconnectBootstrapBatch(
         existingDmPeers,
         existingPersonas,
         existingBots,
+        existingActorCopies,
         existingLabels,
         existingLabelAssignments,
         existingUnread,
@@ -3449,6 +3496,7 @@ export async function applyReconnectBootstrapBatch(
         db.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
         db.personas.where("workspaceId").equals(workspaceId).toArray(),
         db.bots.where("workspaceId").equals(workspaceId).toArray(),
+        db.actorCopies.where("workspaceId").equals(workspaceId).toArray(),
         db.labels.where("workspaceId").equals(workspaceId).toArray(),
         db.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
         db.unreadState.get(workspaceId),
@@ -3469,6 +3517,7 @@ export async function applyReconnectBootstrapBatch(
       const dmPeersDiff = diffRows(byId(existingDmPeers), dmPeerRows)
       const personasDiff = diffRows(byId(existingPersonas), personaRows)
       const botsDiff = diffRows(byId(existingBots), botRows)
+      const actorCopiesDiff = diffRows(byId(existingActorCopies), actorCopyRows)
       const labelsDiff = diffRows(byId(existingLabels), labelRows)
       const labelAssignmentsDiff = diffRows(byId(existingLabelAssignments), labelAssignmentRows)
       const unreadDiff = diffSingleton(existingUnread, unreadRow)
@@ -3484,6 +3533,7 @@ export async function applyReconnectBootstrapBatch(
       mergedDmPeers = dmPeersDiff.merged
       mergedPersonas = personasDiff.merged
       mergedBots = botsDiff.merged
+      mergedActorCopies = finalBootstrap.actorCopies ? actorCopiesDiff.merged : existingActorCopies
       mergedLabels = labelsDiff.merged
       mergedLabelAssignments = labelAssignmentsDiff.merged
       recordSkippedRowConfirmations(workspaceId, "streams", streamsDiff, now)
@@ -3496,6 +3546,7 @@ export async function applyReconnectBootstrapBatch(
       writeCounts.dmPeers = dmPeersDiff.toWrite.length
       writeCounts.personas = personasDiff.toWrite.length
       writeCounts.bots = botsDiff.toWrite.length
+      writeCounts.actorCopies = actorCopiesDiff.toWrite.length
       writeCounts.labels = labelsDiff.toWrite.length
       writeCounts.labelAssignments = labelAssignmentsDiff.toWrite.length
       rowsSkipped +=
@@ -3506,6 +3557,7 @@ export async function applyReconnectBootstrapBatch(
         dmPeersDiff.skipped +
         personasDiff.skipped +
         botsDiff.skipped +
+        actorCopiesDiff.skipped +
         labelsDiff.skipped +
         labelAssignmentsDiff.skipped +
         (workspaceDiff.write ? 0 : 1) +
@@ -3519,6 +3571,7 @@ export async function applyReconnectBootstrapBatch(
         dmPeersDiff.toWrite.length +
         personasDiff.toWrite.length +
         botsDiff.toWrite.length +
+        actorCopiesDiff.toWrite.length +
         labelsDiff.toWrite.length +
         labelAssignmentsDiff.toWrite.length +
         (workspaceDiff.write ? 1 : 0) +
@@ -3534,6 +3587,7 @@ export async function applyReconnectBootstrapBatch(
         dmPeersDiff.toWrite.length > 0 ? db.dmPeers.bulkPut(dmPeersDiff.toWrite) : Promise.resolve(),
         personasDiff.toWrite.length > 0 ? db.personas.bulkPut(personasDiff.toWrite) : Promise.resolve(),
         botsDiff.toWrite.length > 0 ? db.bots.bulkPut(botsDiff.toWrite) : Promise.resolve(),
+        actorCopiesDiff.toWrite.length > 0 ? db.actorCopies.bulkPut(actorCopiesDiff.toWrite) : Promise.resolve(),
         labelsDiff.toWrite.length > 0 ? db.labels.bulkPut(labelsDiff.toWrite) : Promise.resolve(),
         labelAssignmentsDiff.toWrite.length > 0
           ? db.labelAssignments.bulkPut(labelAssignmentsDiff.toWrite)
@@ -3659,6 +3713,12 @@ export async function applyReconnectBootstrapBatch(
       dmPeers: reuseIfUnchanged(previousTables.dmPeers, mergedDmPeers, writeCounts.dmPeers, deletions.dmPeers),
       personas: reuseIfUnchanged(previousTables.personas, mergedPersonas, writeCounts.personas, deletions.personas),
       bots: reuseIfUnchanged(previousTables.bots, mergedBots, writeCounts.bots, deletions.bots),
+      actorCopies: reuseIfUnchanged(
+        previousTables.actorCopies,
+        mergedActorCopies,
+        writeCounts.actorCopies,
+        deletions.actorCopies
+      ),
       labels: reuseIfUnchanged(previousTables.labels, mergedLabels, writeCounts.labels, deletions.labels),
       labelAssignments: reuseIfUnchanged(
         previousTables.labelAssignments,
@@ -3772,8 +3832,19 @@ async function cleanupStaleEntities(
   const staleStreamIds = await staleEntityIds(db.streams, "workspaceId", workspaceId, bootstrapStreamIds, now)
   const staleUserIds = await staleEntityIds(db.workspaceUsers, "workspaceId", workspaceId, bootstrapUserIds, now)
   const stalePersonaIds = await staleEntityIds(db.personas, "workspaceId", workspaceId, bootstrapPersonaIds, now)
+  // A bootstrap from a server older than actor copies omits them; that is no
+  // authority to delete the copies a newer server already sent.
+  const staleActorCopyIds = bootstrap.actorCopies
+    ? await staleEntityIds(
+        db.actorCopies,
+        "workspaceId",
+        workspaceId,
+        new Set(bootstrap.actorCopies.map((c) => c.id)),
+        now
+      )
+    : []
 
-  const [, , , staleMembershipIds, staleDmPeerIds, , staleBotIds, staleLabelIds, staleLabelAssignmentIds] =
+  const [, , , staleMembershipIds, staleDmPeerIds, , staleBotIds, , staleLabelIds, staleLabelAssignmentIds] =
     await Promise.all([
       staleStreamIds.length > 0
         ? db.streams.bulkDelete(staleStreamIds.map((streamId) => [workspaceId, streamId]))
@@ -3795,6 +3866,9 @@ async function cleanupStaleEntities(
         ? db.personas.bulkDelete(stalePersonaIds.map((personaId) => [workspaceId, personaId]))
         : Promise.resolve(),
       deleteStale(db.bots, "workspaceId", workspaceId, bootstrapBotIds, now),
+      staleActorCopyIds.length > 0
+        ? db.actorCopies.bulkDelete(staleActorCopyIds.map((copyId) => [workspaceId, copyId]))
+        : Promise.resolve(),
       deleteStale(db.labels, "workspaceId", workspaceId, bootstrapLabelIds, now),
       deleteStale(db.labelAssignments, "workspaceId", workspaceId, bootstrapLabelAssignmentIds, now),
     ])
@@ -3808,6 +3882,7 @@ async function cleanupStaleEntities(
   const dmPeers = staleDmPeerIds.length
   const personas = stalePersonaIds.length
   const bots = staleBotIds.length
+  const actorCopies = staleActorCopyIds.length
   const labels = staleLabelIds.length
   const labelAssignments = staleLabelAssignmentIds.length
   return {
@@ -3818,9 +3893,10 @@ async function cleanupStaleEntities(
     dmPeers,
     personas,
     bots,
+    actorCopies,
     labels,
     labelAssignments,
-    total: streams + users + memberships + dmPeers + personas + bots + labels + labelAssignments,
+    total: streams + users + memberships + dmPeers + personas + bots + actorCopies + labels + labelAssignments,
   }
 }
 

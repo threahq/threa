@@ -14,6 +14,7 @@ import type {
   SidebarConfig,
   WorkspaceSettings,
   LastMessagePreview,
+  ActorCopy,
   Bot as WireBot,
   BotInvocationCapability,
   Label,
@@ -124,6 +125,7 @@ export type OutboxEventType =
   | "draft:deleted"
   | "bot:created"
   | "bot:updated"
+  | "actor_copy:upserted"
   | "link_preview:ready"
   | "link_preview:dismissed"
   | "attachment:transcoded"
@@ -218,6 +220,7 @@ export type WorkspaceScopedEventType =
   | "workspace_user:updated"
   | "bot:created"
   | "bot:updated"
+  | "actor_copy:upserted"
   | "attachment:transcoded"
   | "attachment:thumbnailed"
   | "attachment:upload_status_changed"
@@ -1205,6 +1208,10 @@ export interface BotUpdatedOutboxPayload extends WorkspaceScopedPayload {
   bot: WireBot
 }
 
+export interface ActorCopyUpsertedOutboxPayload extends WorkspaceScopedPayload {
+  actorCopy: ActorCopy
+}
+
 // Bot-runtime WebSocket pushes. All routed on the dedicated `/bot` namespace,
 // keyed by botId rather than streamId/userId. Carry metadata only — never
 // message content or anything the worker shouldn't see; the bot fetches the
@@ -1494,6 +1501,7 @@ export interface OutboxEventPayloadMap {
   "draft:deleted": DraftDeletedOutboxPayload
   "bot:created": BotCreatedOutboxPayload
   "bot:updated": BotUpdatedOutboxPayload
+  "actor_copy:upserted": ActorCopyUpsertedOutboxPayload
   "link_preview:ready": LinkPreviewReadyOutboxPayload
   "link_preview:dismissed": LinkPreviewDismissedOutboxPayload
   "attachment:transcoded": AttachmentTranscodedOutboxPayload

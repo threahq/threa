@@ -19,6 +19,7 @@ export type {
   CachedEvent,
   CachedPersona,
   CachedBot,
+  CachedActorCopy,
   CachedUnreadState,
   CachedUserPreferences,
   CachedSidebarConfig,

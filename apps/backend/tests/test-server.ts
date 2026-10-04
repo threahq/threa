@@ -110,6 +110,7 @@ const MUTABLE_TABLES = [
   "cron_ticks",
   "stream_connections",
   "stream_connection_cursors",
+  "actor_copies",
 ]
 
 async function cleanupStaleData(): Promise<void> {

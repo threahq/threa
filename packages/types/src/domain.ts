@@ -717,6 +717,19 @@ export type Bot =
   | (BotBase & { type: "shared"; ownerUserId: null; readsAsOwner: false })
   | (BotBase & { type: "personal"; ownerUserId: string; readsAsOwner: boolean })
 
+/**
+ * A host workspace's persona or bot that wrote or reacted in a shared channel,
+ * kept in a partner workspace under the host's id so the partner renders its
+ * name. Display only: never a persona or bot of the partner's.
+ */
+export interface ActorCopy {
+  id: string
+  workspaceId: string
+  originWorkspaceId: string
+  name: string
+  avatarEmoji: string | null
+}
+
 export interface Attachment {
   id: string
   workspaceId: string

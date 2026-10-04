@@ -6,6 +6,7 @@ import {
   StreamConnectionStates,
   StreamTypes,
   TitleSources,
+  type BridgeActor,
   type BridgeEvents,
   type BridgeStream,
   type StreamConnection,
@@ -14,8 +15,10 @@ import { withTransaction } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { eventId, streamContextItemId } from "../../lib/id"
 import { logger } from "../../lib/logger"
+import { PersonaRepository } from "../agents"
 import type { FeatureFlagService } from "../feature-flags"
 import { MessageRepository, applyCopyChanges } from "../messaging"
+import { BotRepository } from "../public-api"
 import { StreamContextRepository, contextSnippet } from "../stream-context"
 import {
   StreamEventRepository,
@@ -27,9 +30,10 @@ import {
   type NormalizedStreamDescription,
   type Stream,
 } from "../streams"
-import { UserRepository, syncUserCopies } from "../workspaces"
+import { ActorCopyRepository, UserRepository, syncActorCopies, syncUserCopies } from "../workspaces"
 import type { BridgeClient } from "./bridge-client"
 import { StreamConnectionCursorRepository } from "./cursor-repository"
+import { namedAuthors } from "./named-authors"
 import { StreamConnectionRepository, type ConnectionRef } from "./repository"
 
 const PAGE_LIMIT = 200
@@ -369,7 +373,14 @@ async function applyPage(
     originWorkspaceName: connection.hostWorkspaceName,
     users: page.users,
   })
-  await assertUsersAreCopies(client, connection, page)
+  await syncActorCopies(client, {
+    workspaceId,
+    originWorkspaceId: connection.hostWorkspaceId,
+    actors: page.actors,
+  })
+  const named = namedAuthors(page.changes.flatMap((change) => (change.kind === "message" ? [change.message] : [])))
+  await assertUsersAreCopies(client, connection, named.userIds)
+  await assertActorsAreCopies(client, connection, named, page.actors)
   await applyCopyChanges(client, workspaceId, stream, page.changes)
   await StreamConnectionCursorRepository.upsert(client, {
     workspaceId,
@@ -388,20 +399,45 @@ async function applyPage(
 async function assertUsersAreCopies(
   client: PoolClient,
   connection: ActivePartnerConnection,
-  page: BridgeEvents
+  ids: Set<string>
 ): Promise<void> {
-  const ids = new Set<string>()
-  for (const change of page.changes) {
-    if (change.kind !== "message") continue
-    if (change.message.authorType === AuthorTypes.USER) ids.add(change.message.authorId)
-    for (const userIds of Object.values(change.message.reactions)) {
-      for (const id of userIds) if (id.startsWith("usr_")) ids.add(id)
-    }
-  }
   const origins = await UserRepository.findOrigins(client, connection.workspaceId, [...ids])
   for (const id of ids) {
     if (origins.has(id) && origins.get(id) !== connection.hostWorkspaceId) {
       throw new Error(`User ${id} in a page of connection ${connection.connectionId} is not a copy from its host`)
     }
+  }
+}
+
+/**
+ * A persona or bot a page names as author, reactor or listed actor must be
+ * unknown here or a copy from this host, never one of this workspace's own or
+ * another host's copy. A built-in persona has a global id both sides resolve,
+ * so it may author or react but is never listed as an actor to copy. Runs
+ * after the copy upsert, so a listed actor another host's pull copied at the
+ * same time is seen here rather than skipped by the upsert.
+ */
+async function assertActorsAreCopies(
+  client: PoolClient,
+  connection: ActivePartnerConnection,
+  named: { personaIds: Set<string>; botIds: Set<string> },
+  listed: BridgeActor[]
+): Promise<void> {
+  const personaIds = new Set(named.personaIds)
+  const botIds = new Set(named.botIds)
+  const listedIds = new Set(listed.map((actor) => actor.id))
+  for (const id of listedIds) (id.startsWith("persona_") ? personaIds : botIds).add(id)
+
+  const where = `in a page of connection ${connection.connectionId}`
+  const personas = await PersonaRepository.findByIds(client, connection.workspaceId, [...personaIds])
+  for (const persona of personas) {
+    if (persona.workspaceId !== null) throw new Error(`Persona ${persona.id} ${where} is not a copy from its host`)
+    if (listedIds.has(persona.id)) throw new Error(`Persona ${persona.id} ${where} is built in and cannot be copied`)
+  }
+  const [bot] = await BotRepository.findByIds(client, connection.workspaceId, [...botIds])
+  if (bot) throw new Error(`Bot ${bot.id} ${where} is not a copy from its host`)
+  const origins = await ActorCopyRepository.findOrigins(client, connection.workspaceId, [...personaIds, ...botIds])
+  for (const [id, origin] of origins) {
+    if (origin !== connection.hostWorkspaceId) throw new Error(`Actor ${id} ${where} is not a copy from its host`)
   }
 }

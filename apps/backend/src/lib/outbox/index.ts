@@ -66,6 +66,7 @@ export {
   type UserPreferencesUpdatedOutboxPayload,
   type BotCreatedOutboxPayload,
   type BotUpdatedOutboxPayload,
+  type ActorCopyUpsertedOutboxPayload,
   type BudgetAlertOutboxPayload,
   type InvitationAcceptedOutboxPayload,
   type ActivityCreatedOutboxPayload,

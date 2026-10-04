@@ -7,6 +7,7 @@ import type { Socket } from "socket.io-client"
 import { INTERNAL_API_KEY_HEADER } from "@threahq/backend-common"
 import {
   WORKSPACE_ROLE_SLUGS,
+  type ActorCopy,
   type CommandInfo,
   type MoveMessagesToThreadResponse,
   type ValidateMoveMessagesToThreadResponse,
@@ -728,6 +729,7 @@ export interface WorkspaceBootstrapData {
   streams: Stream[]
   streamMemberships: StreamMember[]
   personas: Persona[]
+  actorCopies: ActorCopy[]
   emojis: EmojiEntry[]
   emojiWeights: Record<string, number>
   unreadCounts: Record<string, number>

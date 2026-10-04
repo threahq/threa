@@ -4,6 +4,7 @@ import { semanticEqual } from "@/sync/bootstrap-diff"
 import * as perfCapture from "@/lib/perf/capture"
 import { createDbScopedRegistry } from "@/lib/db-scoped-registry"
 import {
+  type CachedActorCopy,
   type CachedBot,
   type CachedDmPeer,
   type CachedLabel,
@@ -30,6 +31,7 @@ export interface WorkspaceTableRowTypes {
   dmPeers: CachedDmPeer
   personas: CachedPersona
   bots: CachedBot
+  actorCopies: CachedActorCopy
   labels: CachedLabel
   labelAssignments: CachedLabelAssignment
   workspace: CachedWorkspace
@@ -63,6 +65,7 @@ const WORKSPACE_TABLE_QUERIES: Record<WorkspaceTableKey, TableQuery> = {
   dmPeers: (database, workspaceId) => database.dmPeers.where("workspaceId").equals(workspaceId).toArray(),
   personas: (database, workspaceId) => database.personas.where("workspaceId").equals(workspaceId).toArray(),
   bots: (database, workspaceId) => database.bots.where("workspaceId").equals(workspaceId).toArray(),
+  actorCopies: (database, workspaceId) => database.actorCopies.where("workspaceId").equals(workspaceId).toArray(),
   labels: (database, workspaceId) => database.labels.where("workspaceId").equals(workspaceId).toArray(),
   labelAssignments: (database, workspaceId) =>
     database.labelAssignments.where("workspaceId").equals(workspaceId).toArray(),
