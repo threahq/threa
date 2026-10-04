@@ -142,6 +142,7 @@ describe("A partner's writes to a shared channel", () => {
       users: [],
       clientMessageId: `client-${crypto.randomUUID()}`,
       contentJson: typeof content === "string" ? testContentJson(content) : content,
+      attachments: [],
       ...overrides,
     })
   }
@@ -566,6 +567,137 @@ describe("A partner's writes to a shared channel", () => {
         { id: hostMessage.id, clientMessageId: null },
         { id: patsId, clientMessageId: "client-echo" },
       ],
+    })
+  })
+
+  describe("when the write carries files", () => {
+    const sentFile = () => ({
+      id: attachmentId(),
+      filename: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 12,
+      width: null,
+      height: null,
+    })
+
+    const withFile = (file: { id: string; filename: string }, text: string): JSONContent => ({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [
+            { type: "attachmentReference", attrs: { id: file.id, filename: file.filename, status: "uploaded" } },
+            { type: "text", text },
+          ],
+        },
+      ],
+    })
+
+    async function hostFiles(world: World, ids: string[]) {
+      const { rows } = await pool.query(
+        `SELECT a.id, a.message_id, a.stream_id, a.uploaded_by, a.safety_status, a.processing_status, a.storage_path,
+                u.status AS upload_status, q.id AS job_id,
+                ARRAY(SELECT r.message_id FROM attachment_references r
+                      WHERE r.workspace_id = a.workspace_id AND r.attachment_id = a.id ORDER BY r.message_id) AS referenced_by
+         FROM attachments a
+         LEFT JOIN attachment_uploads u ON u.workspace_id = a.workspace_id AND u.attachment_id = a.id
+         LEFT JOIN queue_messages q ON q.workspace_id = a.workspace_id AND q.id = 'scfile_' || a.workspace_id || '_' || a.id
+         WHERE a.workspace_id = $1 AND a.id = ANY($2) ORDER BY a.id`,
+        [world.host.id, ids]
+      )
+      return rows
+    }
+
+    test("should hold one copy of the file, bound to the message and queued for its bytes, when a send with a file is retried", async () => {
+      const world = await seedWorld()
+      const file = sentFile()
+      const content = withFile(file, " attached")
+
+      const first = await send(world, content, { clientMessageId: "client-file", attachments: [file] })
+      const retried = await send(world, content, { clientMessageId: "client-file", attachments: [file] })
+
+      expect({
+        retried,
+        files: await hostFiles(world, [file.id]),
+        contentJson: (await stored(world, first.messageId))?.contentJson,
+      }).toEqual({
+        retried: first,
+        files: [
+          {
+            id: file.id,
+            message_id: first.messageId,
+            stream_id: world.channel.id,
+            uploaded_by: world.pat.id,
+            safety_status: "pending_upload",
+            processing_status: "skipped",
+            storage_path: `${world.host.id}/${file.id}/notes.txt`,
+            upload_status: "reserved",
+            job_id: `scfile_${world.host.id}_${file.id}`,
+            referenced_by: [first.messageId],
+          },
+        ],
+        contentJson: content,
+      })
+    })
+
+    test("should refuse the send and leave the host's file as it was when the send names a file the host holds for someone else", async () => {
+      const world = await seedWorld()
+      const file = sentFile()
+      await AttachmentRepository.insert(pool, {
+        id: file.id,
+        workspaceId: world.host.id,
+        uploadedBy: world.host.adminId,
+        filename: file.filename,
+        mimeType: file.mimeType,
+        sizeBytes: file.sizeBytes,
+        storagePath: `${world.host.id}/${file.id}/notes.txt`,
+        safetyStatus: "clean",
+      })
+
+      const refused = await outcome(
+        send(world, withFile(file, " mine now"), { clientMessageId: "client-foreign", attachments: [file] })
+      )
+
+      const { rows } = await pool.query(
+        "SELECT id FROM messages WHERE workspace_id = $1 AND client_message_id = 'client-foreign'",
+        [world.host.id]
+      )
+      expect({ refused, rows, files: await hostFiles(world, [file.id]) }).toMatchObject({
+        refused: REFUSED,
+        rows: [],
+        files: [{ id: file.id, message_id: null, uploaded_by: world.host.adminId, safety_status: "clean" }],
+      })
+    })
+
+    test("should keep the message's own file and drop any other file reference when the author edits", async () => {
+      const world = await seedWorld()
+      const file = sentFile()
+      const { messageId: id } = await send(world, withFile(file, " first"), { attachments: [file] })
+      const other = sentFile()
+      await send(world, withFile(other, " elsewhere"), { attachments: [other] })
+
+      await writer.editMessage({
+        ...world.caller,
+        streamId: world.channel.id,
+        messageId: id,
+        author: world.pat,
+        users: [],
+        contentJson: {
+          type: "doc",
+          content: [...withFile(file, " second").content!, ...withFile(other, " borrowed").content!],
+        },
+      })
+
+      expect({
+        contentJson: (await stored(world, id))?.contentJson,
+        referencedBy: (await hostFiles(world, [file.id]))[0]?.referenced_by,
+      }).toEqual({
+        contentJson: {
+          type: "doc",
+          content: [...withFile(file, " second").content!, { type: "paragraph", content: [{ type: "text", text: " borrowed" }] }],
+        },
+        referencedBy: [id],
+      })
     })
   })
 })

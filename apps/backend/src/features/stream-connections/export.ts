@@ -468,14 +468,16 @@ export interface ImportedContent {
  * Cleans a partner's document before the host stores it, with the markdown it
  * reads as. A mention stays only when it names a host user or one of the
  * caller's own users, so the partner can't point at a user, persona or bot it
- * has no standing to name. Quotes, shares and file references drop: the
- * partner's users hold no membership here to read what they point at. An agent
- * block becomes a blockquote, so it credits no agent. The caller's users must
- * already be copied here.
+ * has no standing to name. A file reference stays only for `attachmentIds`: the
+ * files the write sends, or the edited message's own. Quotes, shares and other
+ * file references drop: the partner's users hold no membership here to read
+ * what they point at.
+ * An agent block becomes a blockquote, so it credits no agent. The caller's
+ * users must already be copied here.
  */
 export async function importDoc(
   client: PoolClient,
-  params: { workspaceId: string; callerWorkspaceId: string; tree: Stream[]; doc: JSONContent }
+  params: { workspaceId: string; callerWorkspaceId: string; tree: Stream[]; attachmentIds: string[]; doc: JSONContent }
 ): Promise<ImportedContent> {
   const { workspaceId, callerWorkspaceId, doc } = params
   const userIds = [...new Set(collectMentionIds(doc).filter((id) => id.startsWith("usr_")))]
@@ -490,7 +492,7 @@ export async function importDoc(
     const contentJson = exportDoc(doc, {
       tree: new Set(params.tree.map((stream) => stream.id)),
       messages: new Map(),
-      attachmentIds: new Set(),
+      attachmentIds: new Set(params.attachmentIds),
       inboundMentions: mentions,
     })
     return { contentJson, contentMarkdown: deriveContentMarkdown(contentJson) }

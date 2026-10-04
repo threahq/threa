@@ -1,4 +1,5 @@
 export { BridgeClient } from "./bridge-client"
+export { copyWriteUnsupported } from "./errors"
 export { StreamConnectionExportService } from "./export"
 export { StreamConnectionForwardService } from "./forward"
 export { createStreamConnectionBridgeHandlers, createStreamConnectionHandlers } from "./handlers"

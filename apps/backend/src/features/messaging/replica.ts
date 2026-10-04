@@ -3,14 +3,16 @@ import type { PoolClient } from "pg"
 import { serializeBigInt } from "@threahq/backend-common"
 import {
   AttachmentSafetyStatuses,
-  AttachmentUploadStatuses,
   AuthorTypes,
   ProcessingStatuses,
+  type AttachmentSafetyStatus,
   type AttachmentSummary,
   type AuthorType,
   type BridgeChange,
   type BridgeMessage,
+  type BridgeWriteAttachment,
 } from "@threahq/types"
+import { logger } from "../../lib/logger"
 import { OutboxRepository } from "../../lib/outbox"
 import { eventId, messageVersionId, attachmentReferenceId, attachmentUploadId } from "../../lib/id"
 import { JobQueues, QueueRepository, type StreamConnectionCopyAttachmentJobData } from "../../lib/queue"
@@ -18,7 +20,9 @@ import {
   AttachmentReferenceRepository,
   AttachmentRepository,
   AttachmentUploadRepository,
+  fetchUploadStatuses,
   toAttachmentSummary,
+  type Attachment,
 } from "../attachments"
 import {
   StreamEventRepository,
@@ -158,10 +162,12 @@ async function removeMessageCopy(
 }
 
 /**
- * Rows for the host message's files, bound to the copy. Bytes stay on the host
- * until a queued job copies each one; until then a file reads as uploading.
- * Plain inserts: an id this workspace already holds means the host named a
- * file that is not its own, and the page is refused.
+ * Rows for the host message's files, bound to the copy. A file this workspace
+ * already holds as the author's unsent upload is one the author sent through
+ * the bridge, so the original binds to the copy, as a local send would have
+ * bound it. Every other file is copied: its bytes stay on the host until a
+ * queued job copies them, and until then it reads as uploading. An id held for
+ * anything else fails the insert, and the page is refused.
  */
 async function insertCopyAttachments(
   client: PoolClient,
@@ -171,22 +177,86 @@ async function insertCopyAttachments(
   copy: BridgeMessage
 ): Promise<AttachmentSummary[]> {
   if (copy.attachments.length === 0) return []
+  const held = await AttachmentRepository.findByIds(
+    client,
+    workspaceId,
+    copy.attachments.map((attachment) => attachment.id)
+  )
+  const sent = new Set(
+    held
+      .filter((row) => row.uploadedBy === copy.authorId && row.messageId === null && !row.e2eOnly)
+      .map((row) => row.id)
+  )
+  await AttachmentRepository.attachToMessage(client, workspaceId, [...sent], copy.id, stream.id)
+  const originals = sent.size > 0 ? await AttachmentRepository.findByMessageId(client, workspaceId, copy.id) : []
+  if (originals.length < sent.size) {
+    logger.warn(
+      { workspaceId, messageId: copy.id, unbound: [...sent].filter((id) => !originals.some((row) => row.id === id)) },
+      "A sent file was no longer bindable when its message came back, so the copy shows without it"
+    )
+  }
+  const copies = await insertFileCopies(client, {
+    workspaceId,
+    connectionId,
+    streamId: stream.id,
+    messageId: copy.id,
+    uploadedBy: copy.authorId,
+    files: copy.attachments.filter((attachment) => !sent.has(attachment.id)),
+  })
+  const rows = [...originals, ...copies]
+  await AttachmentReferenceRepository.insertMany(
+    client,
+    rows.map((row) => ({
+      id: attachmentReferenceId(),
+      workspaceId,
+      attachmentId: row.id,
+      messageId: copy.id,
+      streamId: stream.id,
+    }))
+  )
+  const uploadStatuses = await fetchUploadStatuses(client, workspaceId, rows)
+  const byId = new Map(rows.map((row) => [row.id, row]))
+  return copy.attachments.flatMap((attachment) => {
+    const row = byId.get(attachment.id)
+    return row ? [toAttachmentSummary(row, uploadStatuses.get(row.id))] : []
+  })
+}
+
+/**
+ * Rows for files whose bytes are in the connected workspace, under the same
+ * ids. Until a queued job copies a file's bytes it reads as uploading. A
+ * `messageId` of null leaves the files for a send to bind. Plain inserts: an id
+ * this workspace already holds fails the transaction.
+ */
+export async function insertFileCopies(
+  client: PoolClient,
+  params: {
+    workspaceId: string
+    connectionId: string
+    streamId: string
+    messageId: string | null
+    uploadedBy: string
+    files: Array<BridgeWriteAttachment & { safetyStatus?: AttachmentSafetyStatus }>
+  }
+): Promise<Attachment[]> {
+  const { workspaceId, connectionId, messageId, uploadedBy } = params
+  if (params.files.length === 0) return []
   const rows = await AttachmentRepository.insertCopies(
     client,
     workspaceId,
-    copy.attachments.map((attachment) => ({
-      id: attachment.id,
-      streamId: stream.id,
-      messageId: copy.id,
-      uploadedBy: copy.authorId,
-      filename: attachment.filename,
-      mimeType: attachment.mimeType,
-      sizeBytes: attachment.sizeBytes,
-      storagePath: `${workspaceId}/${attachment.id}/${attachment.filename}`,
-      width: attachment.width,
-      height: attachment.height,
+    params.files.map((file) => ({
+      id: file.id,
+      streamId: messageId === null ? null : params.streamId,
+      messageId,
+      uploadedBy,
+      filename: file.filename,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes,
+      storagePath: `${workspaceId}/${file.id}/${file.filename}`,
+      width: file.width,
+      height: file.height,
       safetyStatus:
-        attachment.safetyStatus === AttachmentSafetyStatuses.QUARANTINED
+        file.safetyStatus === AttachmentSafetyStatuses.QUARANTINED
           ? AttachmentSafetyStatuses.QUARANTINED
           : AttachmentSafetyStatuses.PENDING_UPLOAD,
       processingStatus: ProcessingStatuses.SKIPPED,
@@ -199,18 +269,8 @@ async function insertCopyAttachments(
       id: attachmentUploadId(),
       workspaceId,
       attachmentId: row.id,
-      uploadedBy: copy.authorId,
+      uploadedBy,
       expectedSizeBytes: row.sizeBytes,
-    }))
-  )
-  await AttachmentReferenceRepository.insertMany(
-    client,
-    rows.map((row) => ({
-      id: attachmentReferenceId(),
-      workspaceId,
-      attachmentId: row.id,
-      messageId: copy.id,
-      streamId: stream.id,
     }))
   )
   const now = new Date()
@@ -228,10 +288,7 @@ async function insertCopyAttachments(
       }
     })
   )
-  const awaiting = new Set(awaitingBytes.map((row) => row.id))
-  return rows.map((row) =>
-    toAttachmentSummary(row, awaiting.has(row.id) ? AttachmentUploadStatuses.RESERVED : undefined)
-  )
+  return rows
 }
 
 async function insertCopy(

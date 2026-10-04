@@ -8,7 +8,7 @@ import type { Message } from "./repository"
 import { StreamEventRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
 import type { CommandRegistry } from "../commands"
-import type { StreamConnectionForwardService } from "../stream-connections"
+import { copyWriteUnsupported, type StreamConnectionForwardService } from "../stream-connections"
 import {
   type CommandDispatchedPayload,
   type ComposeTrace,
@@ -266,10 +266,6 @@ function detectCommand(contentJson: JSONContent): DetectedCommand | null {
   }
 }
 
-function copyWriteUnsupported(reason: string): HttpError {
-  return new HttpError(reason, { status: 400, code: StreamConnectionErrorCodes.COPY_WRITE_UNSUPPORTED })
-}
-
 interface Dependencies {
   pool: Pool
   eventService: EventService
@@ -394,15 +390,13 @@ export function createMessageHandlers({
           throw copyWriteUnsupported("Commands aren't available in a shared channel")
         }
         const { contentJson } = normalizeContent(data)
-        if ((data.attachmentIds?.length ?? 0) > 0 || collectAttachmentReferenceIds(contentJson).length > 0) {
-          throw copyWriteUnsupported("Files can't be sent to a shared channel yet")
-        }
         const message = await requireForwardService().sendMessage({
           workspaceId,
           userId,
           stream,
           clientMessageId: data.clientMessageId,
           contentJson,
+          attachmentIds: [...new Set([...(data.attachmentIds ?? []), ...collectAttachmentReferenceIds(contentJson)])],
         })
         return res.status(201).json({ message: serializeMessage(message) })
       }
@@ -524,13 +518,13 @@ export function createMessageHandlers({
 
       const copy = await resolveCopyWrite(workspaceId, userId, accessibleStream)
       if (copy) {
-        if (attachmentIds.length > 0) throw copyWriteUnsupported("Files can't be sent to a shared channel yet")
         const edited = await copy.forward.editMessage({
           workspaceId,
           userId,
           stream: copy.stream,
           messageId,
           contentJson,
+          attachmentIds,
         })
         return res.json({ message: serializeMessage(edited) })
       }

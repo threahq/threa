@@ -38,7 +38,7 @@ export { registerMessageSearchConfigBackfill, MESSAGE_SEARCH_CONFIG_BACKFILL_NAM
 
 export { EventService } from "./event-service"
 export type { ConversationAssigner, GetComposeTraceMode } from "./event-service"
-export { applyCopyChanges } from "./replica"
+export { applyCopyChanges, insertFileCopies } from "./replica"
 export { MessageComposeTraceRepository } from "./compose-trace-repository"
 export type { MessageComposeTrace } from "./compose-trace-repository"
 export type {
