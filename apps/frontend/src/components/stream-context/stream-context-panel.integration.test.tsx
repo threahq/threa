@@ -497,6 +497,23 @@ describe("StreamContextPanel", () => {
     expect(screen.queryByText("Simon")).not.toBeInTheDocument()
   })
 
+  it("should offer from: the copy's host authors when the stream is a shared copy", async () => {
+    await db.streams.put({ id: STREAM, workspaceId: WS, rootStreamId: null, originWorkspaceId: "ws_host" } as never)
+    await db.workspaceUsers.bulkPut([
+      { id: "usr_me", workspaceId: WS, workosUserId: WORKOS_ME, slug: "me", name: "Me" },
+      { id: "usr_host", workspaceId: WS, slug: "hazel-host", name: "Hazel", originWorkspaceId: "ws_host" },
+      { id: "usr_other", workspaceId: WS, slug: "otto-other", name: "Otto", originWorkspaceId: "ws_other" },
+    ] as never[])
+    vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse())
+
+    renderPanel({ memberIds: ["usr_me"] })
+    await userEvent.click(await screen.findByLabelText("Add search filter"))
+    await userEvent.click(await screen.findByText("From user"))
+
+    expect(await screen.findByText("Hazel")).toBeInTheDocument()
+    expect(screen.queryByText("Otto")).not.toBeInTheDocument()
+  })
+
   it("expands a multi-occurrence row into its occurrences, each with its own jump", async () => {
     const collapsed = serverItem({
       category: "link",

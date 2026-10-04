@@ -151,12 +151,17 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   // is honest about not knowing, where a roster of one would not be.
   const currentUserId = useCurrentWorkspaceUserId(workspaceId)
   const members = useCachedStreamMembers(workspaceId, rootStreamId, streamId)
+  // A shared copy's host authors are never members here, so its host's people join them.
+  const originWorkspaceId = rootStream?.originWorkspaceId
   const authorIds = useMemo(() => {
     if (!members) return undefined
     const ids = new Set(members.map((member) => member.memberId))
     if (currentUserId) ids.add(currentUserId)
+    if (originWorkspaceId) {
+      for (const user of users) if (user.originWorkspaceId === originWorkspaceId) ids.add(user.id)
+    }
     return ids
-  }, [members, currentUserId])
+  }, [members, currentUserId, originWorkspaceId, users])
 
   // Phase 1 — narrow the cached window locally and render before the endpoint
   // answers. The server phase widens the same set through IDB, so there is no

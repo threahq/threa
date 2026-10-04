@@ -85,6 +85,12 @@ describe("getVisibleActions", () => {
     expect(ids).not.toContain("reply-in-thread")
   })
 
+  it("should not include reply-in-thread when the row is in a shared copy", () => {
+    const ids = getVisibleActions(createContext({ sharedCopy: true })).map((action) => action.id)
+
+    expect(ids).toEqual(["copy-as-markdown", "copy-as-plain-text"])
+  })
+
   it("should include reply-in-conversation only when the surface supplies its handler", () => {
     const without = getVisibleActions(createContext()).map((a) => a.id)
     expect(without).not.toContain("reply-in-conversation")
