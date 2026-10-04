@@ -301,7 +301,7 @@ describe("Copying a shared channel's files", () => {
       })
     })
 
-    test("should answer blocked when the host's own upload of the file failed", async () => {
+    test("should answer failed when the host's own upload of the file failed", async () => {
       const world = await seedWorld()
       const file = await hostFile(world, { safetyStatus: AttachmentSafetyStatuses.PENDING_UPLOAD })
       await AttachmentUploadRepository.insert(pool, {
@@ -315,7 +315,7 @@ describe("Copying a shared channel's files", () => {
       await AttachmentUploadRepository.markFailed(pool, world.host.id, file.id, { code: "client_aborted" })
 
       expect(await exporter.getAttachment({ ...world.hostAddress, attachmentId: file.id })).toEqual({
-        status: "blocked",
+        status: "failed",
       })
     })
 
@@ -457,6 +457,74 @@ describe("Copying a shared channel's files", () => {
         state: await partnerState(world, file.id),
         events: (await statusEvents(world, file.id)).map((event) => event.safetyStatus),
       }).toEqual({ copied: null, state: { safetyStatus: "quarantined", upload: null }, events: ["quarantined"] })
+    })
+
+    test("should mark the copy failed and emit the status when the host's own upload of the file failed", async () => {
+      const world = await seedWorld()
+      const file = await hostFile(world, { safetyStatus: AttachmentSafetyStatuses.PENDING_UPLOAD, sizeBytes: 10 })
+      await AttachmentUploadRepository.insert(pool, {
+        id: attachmentUploadId(),
+        workspaceId: world.host.id,
+        attachmentId: file.id,
+        uploadedBy: world.host.adminId,
+        expectedSizeBytes: 10,
+      })
+      await sendWithFiles(world, world.channel.id, [file.id])
+      await world.pull()
+      await AttachmentUploadRepository.markFailed(pool, world.host.id, file.id, { code: "client_aborted" })
+
+      await world.runJob(file.id)
+
+      expect({
+        state: await partnerState(world, file.id),
+        events: (await statusEvents(world, file.id)).map((event) => event.uploadStatus),
+      }).toEqual({
+        state: { safetyStatus: "pending_upload", upload: { status: "failed", errorCode: "copy_failed" } },
+        events: ["failed"],
+      })
+    })
+
+    test("should mark the copy failed without asking the host when the connection is no longer active", async () => {
+      const world = await seedWorld()
+      const file = await sentCleanFile(world)
+      await pool.query("UPDATE stream_connections SET state = 'revoked' WHERE workspace_id = $1 AND id = $2", [
+        world.partner.id,
+        world.connectionId,
+      ])
+      const callsBefore = world.bridgeClient.attachmentCalls.length
+
+      await world.runJob(file.id)
+
+      expect({
+        calls: world.bridgeClient.attachmentCalls.length - callsBefore,
+        state: await partnerState(world, file.id),
+        events: (await statusEvents(world, file.id)).map((event) => event.uploadStatus),
+      }).toEqual({
+        calls: 0,
+        state: { safetyStatus: "pending_upload", upload: { status: "failed", errorCode: "copy_failed" } },
+        events: ["failed"],
+      })
+    })
+
+    test("should refuse the bytes and leave the row waiting when the host object is shorter than the size its message declares", async () => {
+      const world = await seedWorld()
+      const file = await hostFile(world, {
+        safetyStatus: AttachmentSafetyStatuses.CLEAN,
+        bytes: Buffer.from("half"),
+        sizeBytes: 8,
+      })
+      await sendWithFiles(world, world.channel.id, [file.id])
+      await world.pull()
+
+      await expect(world.runJob(file.id)).rejects.toThrow("Host file is 4 bytes, not the 8 its message declares")
+
+      expect({
+        copied: await objectAt(`${world.partner.id}/${file.id}/notes.txt`),
+        state: await partnerState(world, file.id),
+      }).toEqual({
+        copied: null,
+        state: { safetyStatus: "pending_upload", upload: { status: "reserved", errorCode: null } },
+      })
     })
 
     test("should refuse the bytes and leave the row waiting when the host object is larger than the size its message declares", async () => {

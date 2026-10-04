@@ -213,6 +213,7 @@ export const bridgeAttachmentResponseSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("ready"), url: z.string().min(1) }),
   z.object({ status: z.literal("pending") }),
   z.object({ status: z.literal("blocked") }),
+  z.object({ status: z.literal("failed") }),
 ])
 export type BridgeAttachmentResponse = z.infer<typeof bridgeAttachmentResponseSchema>
 

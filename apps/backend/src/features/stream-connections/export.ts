@@ -240,11 +240,12 @@ export class StreamConnectionExportService {
       case AttachmentSafetyStatuses.PENDING_SCAN:
         return upload?.status === AttachmentUploadStatuses.FAILED ||
           upload?.status === AttachmentUploadStatuses.ABANDONED
-          ? { status: "blocked" }
+          ? { status: "failed" }
           : { status: "pending" }
       case AttachmentSafetyStatuses.QUARANTINED:
-      case AttachmentSafetyStatuses.E2E_UNSCANNED:
         return { status: "blocked" }
+      case AttachmentSafetyStatuses.E2E_UNSCANNED:
+        return { status: "failed" }
     }
   }
 

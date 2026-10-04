@@ -308,6 +308,33 @@ describe("Attachments in a shared channel's copy", () => {
     expect(before.attachments).toHaveLength(1)
   })
 
+  test("should keep the copy's media and file context when the host edits a message with files", async () => {
+    const world = await seedWorld()
+    const image = await hostFile(world, "a-photo.png", AttachmentSafetyStatuses.CLEAN, { width: 4, height: 3 })
+    const pdf = await hostFile(world, "b-spec.pdf", AttachmentSafetyStatuses.CLEAN)
+    const message = await sendWithFiles(world, "before the edit", [image, pdf])
+    await world.pull()
+    const before = (await partnerRows(world)).context
+
+    await eventService.editMessageInternal({
+      workspaceId: world.host.id,
+      messageId: message.id,
+      streamId: world.channel.id,
+      actorId: world.host.adminId,
+      ...testMessageContent("after the edit"),
+    })
+    await world.pull()
+
+    expect({
+      body: (await MessageRepository.findById(pool, world.partner.id, message.id))?.contentMarkdown,
+      context: (await partnerRows(world)).context,
+    }).toEqual({ body: "after the edit", context: before })
+    expect(before).toEqual([
+      { category: "media", ref_id: image.id, source_message_id: message.id },
+      { category: "file", ref_id: pdf.id, source_message_id: message.id },
+    ])
+  })
+
   test("should refuse the page and leave no copy message when it names an attachment the partner already owns", async () => {
     const world = await seedWorld()
     const file = await hostFile(world, "host-name.pdf", AttachmentSafetyStatuses.CLEAN)
@@ -323,7 +350,7 @@ describe("Attachments in a shared channel's copy", () => {
       safetyStatus: AttachmentSafetyStatuses.CLEAN,
     })
 
-    await expect(world.pull()).rejects.toThrow()
+    await expect(world.pull()).rejects.toMatchObject({ code: "23505", constraint: "attachments_pkey" })
 
     const rows = await partnerRows(world)
     expect({

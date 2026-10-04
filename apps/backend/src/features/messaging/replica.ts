@@ -365,6 +365,7 @@ async function replaceContextRows(
   existing: Message,
   copy: BridgeMessage
 ): Promise<void> {
+  const attachments = await AttachmentRepository.findByMessageId(client, workspaceId, copy.id)
   await StreamContextRepository.replaceForMessage(
     client,
     workspaceId,
@@ -379,7 +380,7 @@ async function replaceContextRows(
       sequence: existing.sequence,
       contentJson: copy.contentJson,
       contentMarkdown: copy.contentMarkdown,
-      attachments: [],
+      attachments: attachments.map((attachment) => toAttachmentSummary(attachment)),
     })
   )
 }

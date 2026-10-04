@@ -1512,7 +1512,7 @@ export async function startServer(): Promise<ServerInstance> {
       JobQueues.STREAM_CONNECTION_COPY_ATTACHMENT,
       createStreamConnectionCopyAttachmentWorker({ pool, bridgeClient, attachmentService, storage }),
       {
-        tier: QueueTiers.LIGHT,
+        tier: QueueTiers.HEAVY,
         fairness: QueueFairness.WORKSPACE,
         maxRetries: 20,
         hooks: { onDLQ: createStreamConnectionCopyAttachmentOnDLQ({ attachmentService }) },

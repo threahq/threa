@@ -8,7 +8,9 @@ import { AttachmentRepository, type AttachmentService } from "../attachments"
 import type { BridgeClient } from "./bridge-client"
 import { StreamConnectionRepository } from "./repository"
 
-const DOWNLOAD_TIMEOUT_MS = 60_000
+const DOWNLOAD_TIMEOUT_FLOOR_MS = 60_000
+/** ~256 KB/s. A host transfer slower than this counts as stalled, so a large file gets a proportionally longer budget. */
+const MIN_DOWNLOAD_BYTES_PER_MS = 256
 
 interface Dependencies {
   pool: Pool
@@ -39,7 +41,8 @@ export function createStreamConnectionCopyAttachmentWorker(
       connection.state !== StreamConnectionStates.ACTIVE ||
       !connection.remoteWorkspaceId
     ) {
-      logger.info({ ...job.data }, "Skipped a shared channel file copy: the connection is not an active partner")
+      logger.info({ ...job.data }, "Gave up a shared channel file copy: the connection is not an active partner")
+      await deps.attachmentService.settleCopy(workspaceId, attachmentId, "failed")
       return
     }
 
@@ -53,8 +56,11 @@ export function createStreamConnectionCopyAttachmentWorker(
       case "blocked":
         await deps.attachmentService.settleCopy(workspaceId, attachmentId, "quarantined")
         return
+      case "failed":
+        await deps.attachmentService.settleCopy(workspaceId, attachmentId, "failed")
+        return
       case "ready": {
-        const bytes = await download(answer.url, Math.min(attachment.sizeBytes, MAX_FILE_SIZE))
+        const bytes = await download(answer.url, attachment.sizeBytes)
         await deps.storage.putObject(attachment.storagePath, bytes, attachment.mimeType)
         await deps.attachmentService.settleCopy(workspaceId, attachmentId, "clean")
         return
@@ -72,9 +78,11 @@ export function createStreamConnectionCopyAttachmentOnDLQ(deps: {
   }
 }
 
-/** Reads the body, refusing to hold more than `limit` bytes however the host declares its size. */
-async function download(url: string, limit: number): Promise<Buffer> {
-  const res = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) })
+/** Reads the body, holding no more than the size the host's message declares and refusing any other length. */
+async function download(url: string, sizeBytes: number): Promise<Buffer> {
+  const limit = Math.min(sizeBytes, MAX_FILE_SIZE)
+  const timeoutMs = DOWNLOAD_TIMEOUT_FLOOR_MS + Math.ceil(limit / MIN_DOWNLOAD_BYTES_PER_MS)
+  const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) })
   if (!res.ok) throw new Error(`Host storage answered ${res.status}`)
   const tooLarge = new Error(`Host file is larger than the ${limit} bytes its message declares`)
   if (Number(res.headers.get("content-length") ?? 0) > limit) throw tooLarge
@@ -86,5 +94,7 @@ async function download(url: string, limit: number): Promise<Buffer> {
     if (received > limit) throw tooLarge
     chunks.push(chunk)
   }
+  if (received !== sizeBytes)
+    throw new Error(`Host file is ${received} bytes, not the ${sizeBytes} its message declares`)
   return Buffer.concat(chunks)
 }
