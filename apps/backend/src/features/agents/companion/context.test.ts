@@ -354,7 +354,7 @@ describe("buildAgentContext How You Work card", () => {
 
   it("should follow the root's memory mode and the delegated model when a thread turn has no trigger", async () => {
     spyOn(StreamBriefRepository, "findByStreamId").mockResolvedValue(null)
-    spyOn(StreamRepository, "findByIdForWorkspace").mockImplementation(async (_db, streamId) =>
+    spyOn(StreamRepository, "findById").mockImplementation(async (_db, _workspaceId, streamId) =>
       streamId === "stream_root"
         ? ({ id: "stream_root", rootStreamId: null, memoryMode: MemoryModes.OFF } as never)
         : (thread as never)

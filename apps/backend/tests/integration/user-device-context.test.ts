@@ -121,7 +121,9 @@ describe("UserDeviceContextRepository", () => {
     try {
       await optOut.query("BEGIN")
       await UserDeviceContextRepository.lockUser(optOut, wsId, usrId)
-      await UserPreferencesRepository.bulkSetOverrides(optOut, usrId, [{ key: "shareDeviceWithAgents", value: false }])
+      await UserPreferencesRepository.bulkSetOverrides(optOut, wsId, usrId, [
+        { key: "shareDeviceWithAgents", value: false },
+      ])
       await UserDeviceContextRepository.delete(optOut, wsId, usrId)
 
       const report = storeDevice(pool, [{ workspaceId: wsId, userId: usrId }], phone)

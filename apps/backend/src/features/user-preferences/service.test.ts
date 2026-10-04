@@ -373,7 +373,7 @@ describe("UserPreferencesService.updatePreferences shareDeviceWithAgents", () =>
     await service.updatePreferences(WORKSPACE_ID, USER_ID, { shareDeviceWithAgents: false })
 
     expect(lockUser).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID)
-    expect(bulkSet).toHaveBeenCalledWith({}, USER_ID, [{ key: "shareDeviceWithAgents", value: false }])
+    expect(bulkSet).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, [{ key: "shareDeviceWithAgents", value: false }])
     expect(deleteDevice).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID)
     const order = [lockUser, bulkSet, deleteDevice].map((spy) => spy.mock.invocationCallOrder[0])
     expect(order).toEqual([...order].sort((a, b) => a! - b!))
@@ -385,7 +385,7 @@ describe("UserPreferencesService.updatePreferences shareDeviceWithAgents", () =>
     await service.updatePreferences(WORKSPACE_ID, USER_ID, { shareDeviceWithAgents: true })
 
     // On is the default, so it clears the override rather than storing one.
-    expect(bulkDelete).toHaveBeenCalledWith({}, USER_ID, ["shareDeviceWithAgents"])
+    expect(bulkDelete).toHaveBeenCalledWith({}, WORKSPACE_ID, USER_ID, ["shareDeviceWithAgents"])
     expect(lockUser).not.toHaveBeenCalled()
     expect(deleteDevice).not.toHaveBeenCalled()
   })
