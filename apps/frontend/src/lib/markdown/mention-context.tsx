@@ -12,6 +12,8 @@ interface MentionContextValue {
    * id when the pointer path has one, else by slug.
    */
   isMentionOnlyBot: (slugOrId: string) => boolean
+  /** By id: a shared channel's copied message can mention a host user whose slug a local viewer also holds. */
+  isCurrentUser: (id: string) => boolean
   /**
    * `id` is the resolved actor id from a pointer-link mention (INV-64) — when
    * present, navigate by it directly rather than re-resolving the slug (slugs
@@ -32,8 +34,10 @@ export function MentionProvider({ mentionables, onMentionClick, children }: Ment
   const value = useMemo<MentionContextValue>(() => {
     const slugToType = new Map<string, MentionType>()
     const mentionOnly = new Set<string>()
+    let currentUserId: string | null = null
     for (const m of mentionables) {
       slugToType.set(m.slug, m.isCurrentUser ? "me" : m.type)
+      if (m.isCurrentUser) currentUserId = m.id
       if (m.mentionOnly) {
         mentionOnly.add(m.slug)
         mentionOnly.add(m.id)
@@ -45,6 +49,7 @@ export function MentionProvider({ mentionables, onMentionClick, children }: Ment
     return {
       getMentionType: (slug: string) => slugToType.get(slug) ?? null,
       isMentionOnlyBot: (slugOrId: string) => mentionOnly.has(slugOrId),
+      isCurrentUser: (id: string) => id === currentUserId,
       onMentionClick,
     }
   }, [mentionables, onMentionClick])
@@ -73,4 +78,10 @@ export function useMentionClick(): ((slug: string, type: MentionType, id?: strin
 export function useIsMentionOnlyBot(): (slugOrId: string) => boolean {
   const context = useContext(MentionContext)
   return context?.isMentionOnlyBot ?? (() => false)
+}
+
+/** Falls back to "never" outside a MentionProvider (no viewer to compare against). */
+export function useIsCurrentUser(): (id: string) => boolean {
+  const context = useContext(MentionContext)
+  return context?.isCurrentUser ?? (() => false)
 }

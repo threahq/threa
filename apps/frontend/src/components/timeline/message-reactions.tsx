@@ -16,6 +16,8 @@ interface MessageReactionsProps {
   workspaceId: string
   messageId: string
   currentUserId: string | null
+  /** Show who reacted without offering to add or toggle a reaction. */
+  readOnly?: boolean
 }
 
 type Reaction = [shortcode: string, userIds: string[]]
@@ -155,6 +157,7 @@ function ReactionRow({
   workspaceId,
   messageId,
   currentUserId,
+  readOnly,
   shown,
   overflowCount,
 }: MessageReactionsProps & { shown: ShownReaction[]; overflowCount: number }) {
@@ -188,7 +191,7 @@ function ReactionRow({
               emoji={toEmoji(shortcode) ?? shortcode}
               userIds={userIds}
               currentUserId={currentUserId}
-              onToggle={() => handleToggleReaction(shortcode)}
+              onToggle={readOnly ? undefined : () => handleToggleReaction(shortcode)}
             />
           </ReactionPillDetails>
         </PopIn>
@@ -205,21 +208,23 @@ function ReactionRow({
         </AllReactionsPopover>
       )}
 
-      <ReactionEmojiPicker
-        workspaceId={workspaceId}
-        onSelect={(emoji) => toggleByEmoji(emoji, reactions, currentUserId)}
-        activeShortcodes={activeShortcodes}
-        allReactionShortcodes={allReactionShortcodes}
-        trigger={
-          <button
-            type="button"
-            className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:bg-primary/[0.08] hover:text-primary"
-            aria-label="Add reaction"
-          >
-            <SmilePlus className="h-3.5 w-3.5" />
-          </button>
-        }
-      />
+      {!readOnly && (
+        <ReactionEmojiPicker
+          workspaceId={workspaceId}
+          onSelect={(emoji) => toggleByEmoji(emoji, reactions, currentUserId)}
+          activeShortcodes={activeShortcodes}
+          allReactionShortcodes={allReactionShortcodes}
+          trigger={
+            <button
+              type="button"
+              className="inline-flex h-[26px] w-[26px] items-center justify-center rounded-full text-muted-foreground/60 transition-colors hover:bg-primary/[0.08] hover:text-primary"
+              aria-label="Add reaction"
+            >
+              <SmilePlus className="h-3.5 w-3.5" />
+            </button>
+          }
+        />
+      )}
     </div>
   )
 }
@@ -228,7 +233,7 @@ interface ReactionPillProps {
   emoji: string
   userIds: string[]
   currentUserId: string | null
-  onToggle: () => void
+  onToggle?: () => void
 }
 
 // Forwards ref and spreads extra props so Radix HoverCardTrigger `asChild` can inject handlers.
@@ -244,6 +249,7 @@ export const ReactionPill = forwardRef<
       type="button"
       className={cn(
         "reveal-host relative inline-flex min-h-[26px] items-center gap-1 rounded-full border pl-2 pr-2.5 text-xs transition-colors",
+        !onToggle && "cursor-default",
         hasReacted
           ? "border-primary/50 bg-primary/[0.14] text-primary hover:bg-primary/[0.2]"
           : "border-transparent bg-primary/[0.05] text-muted-foreground hover:bg-primary/[0.1] hover:text-foreground"

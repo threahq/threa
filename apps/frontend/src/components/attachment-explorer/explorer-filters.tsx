@@ -15,7 +15,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { useWorkspaceStreams, useWorkspaceUnreadState, useWorkspaceUsers } from "@/stores/workspace-store"
+import {
+  isPickableUser,
+  useWorkspaceStreams,
+  useWorkspaceUnreadState,
+  useWorkspaceUsers,
+} from "@/stores/workspace-store"
 import { useActivityCounts, useUnreadCounts } from "@/hooks"
 import { calculateUrgency } from "@/components/layout/sidebar/utils"
 import { compareStreamEntries, scoreStreamMatch } from "@/lib/stream-sort"
@@ -276,15 +281,18 @@ export function ExplorerFilters({ workspaceId, filters, parentStreamId, onUpdate
           ))}
           <DropdownMenuSeparator />
           <DropdownMenuLabel>Uploader</DropdownMenuLabel>
-          {users.slice(0, 8).map((u) => (
-            <DropdownMenuItem
-              key={u.id}
-              onSelect={() => onUpdate({ uploadedBy: u.id })}
-              disabled={filters.uploadedBy === u.id}
-            >
-              {u.name || u.slug}
-            </DropdownMenuItem>
-          ))}
+          {users
+            .filter(isPickableUser)
+            .slice(0, 8)
+            .map((u) => (
+              <DropdownMenuItem
+                key={u.id}
+                onSelect={() => onUpdate({ uploadedBy: u.id })}
+                disabled={filters.uploadedBy === u.id}
+              >
+                {u.name || u.slug}
+              </DropdownMenuItem>
+            ))}
         </DropdownMenuContent>
       </DropdownMenu>
 

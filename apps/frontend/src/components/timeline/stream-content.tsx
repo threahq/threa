@@ -2776,7 +2776,7 @@ export function StreamContent({
   const timeline = (
     <ReadFrontierContext.Provider value={readFrontier}>
       <EditLastMessageContext.Provider value={editLastMessageCtxWithScroll}>
-        <QuoteReplyProvider>
+        <QuoteReplyProvider disabled={isSharedCopy}>
           <ConversationReplyProvider>
             <SlotsProvider map={mergedSlots}>
               <MessageConversationProvider conversationIdByMessageId={conversationIdByMessageId}>

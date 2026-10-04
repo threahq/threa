@@ -10,12 +10,14 @@ import {
 import { createDmDraftId } from "@/hooks/use-stream-or-draft"
 import { stripMarkdownToInline, truncateInline } from "@/lib/markdown"
 import { getStreamName } from "@/lib/streams"
+import { isPickableUser } from "@/stores/workspace-store"
 import type { SectionKey, SortType, StreamItemData, UrgencyLevel } from "./types"
 
 /** Minimal workspace-user shape needed to synthesize a DM draft row. */
 interface VirtualDmUser {
   id: string
   name: string
+  originWorkspaceId?: string | null
 }
 
 /**
@@ -38,6 +40,7 @@ export function buildVirtualDmDrafts(args: {
   const now = new Date().toISOString()
 
   return workspaceUsers
+    .filter(isPickableUser)
     .filter((workspaceUser) => workspaceUser.id !== currentUserId)
     .filter((workspaceUser) => !dmPeerIds.has(workspaceUser.id))
     .map(

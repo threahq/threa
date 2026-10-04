@@ -227,6 +227,11 @@ describe("MarkdownContent", () => {
       expect(screen.getByText("@self")).toHaveClass("font-semibold")
     })
 
+    it("should not style a pointer as 'me' when only its slug matches the viewer's", () => {
+      renderPointer("[@self](user:usr_host_copy)")
+      expect(screen.getByText("@self")).not.toHaveClass("font-semibold")
+    })
+
     it("marks another user's personal bot mention as mention-only (won't invoke)", () => {
       renderPointer("[@kris-bot](bot:bot_theirs)")
       const chip = screen.getByText("@kris-bot")

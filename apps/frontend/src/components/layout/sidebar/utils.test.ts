@@ -305,6 +305,15 @@ describe("buildVirtualDmDrafts", () => {
   it("returns [] when there is no current user", () => {
     expect(buildVirtualDmDrafts({ ...baseArgs, isBoardMode: false, currentUserId: null })).toEqual([])
   })
+
+  it("should skip a copy of a host user when synthesizing drafts", () => {
+    const drafts = buildVirtualDmDrafts({
+      ...baseArgs,
+      isBoardMode: false,
+      workspaceUsers: [...workspaceUsers, { id: "user_hazel", name: "Hazel", originWorkspaceId: "workspace_host" }],
+    })
+    expect(drafts.map((d) => d.dmPeerUserId)).toEqual(["user_anna", "user_pierre"])
+  })
 })
 
 describe("sortStreamsStatic", () => {

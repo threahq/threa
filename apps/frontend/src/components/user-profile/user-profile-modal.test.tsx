@@ -48,7 +48,7 @@ function cachedUser(overrides: Partial<CachedWorkspaceUser>): CachedWorkspaceUse
   } as CachedWorkspaceUser
 }
 
-function seed(dmPeers: CachedDmPeer[]) {
+function seed(dmPeers: CachedDmPeer[], peer: Partial<CachedWorkspaceUser> = {}) {
   seedWorkspaceCache(WORKSPACE_ID, {
     workspace: {
       id: WORKSPACE_ID,
@@ -60,7 +60,7 @@ function seed(dmPeers: CachedDmPeer[]) {
     },
     users: [
       cachedUser({ id: "usr_self", workosUserId: "workos_self", slug: "self", name: "Ada" }),
-      cachedUser({ id: PEER_ID, workosUserId: "workos_peer", slug: "grace", name: "Grace" }),
+      cachedUser({ id: PEER_ID, workosUserId: "workos_peer", slug: "grace", name: "Grace", ...peer }),
     ],
     streams: [],
     memberships: [],
@@ -176,5 +176,15 @@ describe("UserProfileModal — Call entry point", () => {
     expect(wrapper).toHaveAttribute("tabindex", "0")
     expect(wrapper).toHaveAttribute("data-state")
     expect(wrapper).not.toHaveAttribute("title")
+  })
+})
+
+describe("UserProfileModal — host user copy", () => {
+  it("should show the profile without Message or Call when the user is a copy of a host user", () => {
+    seed(withDm, { originWorkspaceId: "workspace_host" })
+    renderModal(makeManager(), true)
+    expect(screen.getByRole("heading", { name: "Grace" })).toBeInTheDocument()
+    expect(screen.queryByRole("link", { name: /Message/i })).toBeNull()
+    expect(screen.queryByRole("button", { name: /^Call$/i })).toBeNull()
   })
 })

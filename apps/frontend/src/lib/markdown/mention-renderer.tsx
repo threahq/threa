@@ -4,7 +4,7 @@ import type { ActorHrefPointer } from "@threahq/prosemirror"
 import { cn } from "@/lib/utils"
 import { InAppLinkChip } from "@/components/in-app-link/in-app-link-chip"
 import { chipBase, commandValueStyle, triggerStyles } from "./chip-styles"
-import { useMentionType, useMentionClick, useIsMentionOnlyBot } from "./mention-context"
+import { useMentionType, useMentionClick, useIsMentionOnlyBot, useIsCurrentUser } from "./mention-context"
 import { useChannelUrl, useChannelUrlById } from "./channel-link-context"
 import { useEmojiLookup } from "./emoji-context"
 import { useIsKnownCommand, useCommandArgs, NO_ARGS, type CommandArgNames } from "./command-list-context"
@@ -123,9 +123,9 @@ function TriggerChip({ type, text, value }: TriggerChipProps) {
  */
 export function PointerMentionChip({ pointer, slug }: { pointer: ActorHrefPointer; slug: string }) {
   const getChannelUrlById = useChannelUrlById()
-  const getMentionType = useMentionType()
   const onMentionClick = useMentionClick()
   const isMentionOnlyBot = useIsMentionOnlyBot()
+  const isCurrentUser = useIsCurrentUser()
 
   if (pointer.kind === "channel") {
     const chip = <StreamChip id={pointer.id} slug={slug} />
@@ -134,8 +134,8 @@ export function PointerMentionChip({ pointer, slug }: { pointer: ActorHrefPointe
   }
 
   // "me" is viewer-relative; the scheme only knows "user", so upgrade to the
-  // "me" styling when the slug resolves to the current viewer.
-  const displayType = pointer.mentionType === "user" && getMentionType(slug) === "me" ? "me" : pointer.mentionType
+  // "me" styling when the pointer names the current viewer.
+  const displayType = pointer.mentionType === "user" && isCurrentUser(pointer.id) ? "me" : pointer.mentionType
   const style = triggerStyles[displayType]
   const isClickable = onMentionClick && pointer.mentionType === "user"
 

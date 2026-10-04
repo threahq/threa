@@ -951,6 +951,31 @@ describe("MessageEvent stream-row reads", () => {
     expect(get).not.toHaveBeenCalled()
   })
 
+  it("should offer no reaction or thread controls when the row sits in a shared channel's copy", async () => {
+    await seedStream(workspaceId, streamId, { displayName: "Shared Channel", originWorkspaceId: "ws_host" })
+    release = await primeStreamRegistry()
+    const event: StreamEvent = {
+      ...createMessageEvent("msg_copy", "Copied message"),
+      payload: { messageId: "msg_copy", contentMarkdown: "Copied message", reactions: { heart: ["member_456"] } },
+    }
+
+    render(
+      <>
+        <StreamRowProbe />
+        <MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />
+      </>,
+      { wrapper: Wrapper }
+    )
+    expect(await screen.findByTestId("stream-row-probe")).toHaveTextContent("Shared Channel")
+
+    expect({
+      reactionPill: screen.getByText("1").closest("button") !== null,
+      addReaction: screen.queryAllByRole("button", { name: "Add reaction" }),
+      replyLink: screen.queryByRole("link", { name: "Reply in thread" }),
+      replyButton: screen.queryByRole("button", { name: "Reply in thread" }),
+    }).toEqual({ reactionPill: true, addReaction: [], replyLink: null, replyButton: null })
+  })
+
   it("an E2E row still holds at pending until its stream row hydrates", async () => {
     release = await primeStreamRegistry()
     vi.spyOn(e2eSessionModule, "useE2eSession").mockReturnValue({

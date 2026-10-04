@@ -1,6 +1,7 @@
 import { useMemo } from "react"
 import type { Mentionable } from "@/components/editor/triggers/types"
 import {
+  isPickableUser,
   useWorkspaceUsers,
   useWorkspacePersonas,
   useWorkspaceBots,
@@ -165,7 +166,7 @@ export function useMentionables(streamContext?: MentionStreamContext) {
     const broadcasts = filterBroadcastMentions(streamContext)
 
     const currentUserId = currentUser?.id
-    const users: Mentionable[] = workspaceUsers.map((u) => ({
+    const users: Mentionable[] = workspaceUsers.filter(isPickableUser).map((u) => ({
       id: u.id,
       slug: u.slug,
       name: u.name,

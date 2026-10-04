@@ -418,6 +418,11 @@ export function useWorkspaceUsers(workspaceId: string | undefined): CachedWorksp
   return useArrayStoreHook(workspaceId, "users", cached)
 }
 
+/** A copy of a host user stays in the users list to render authors and reactors but is never a pick target. */
+export function isPickableUser(user: Pick<CachedWorkspaceUser, "originWorkspaceId">): boolean {
+  return !user.originWorkspaceId
+}
+
 /**
  * The raw cached streams — no decrypted-name overlay. The decryptor
  * (`useDecryptStreamNames`) reads this so it isn't woken by its own output: it

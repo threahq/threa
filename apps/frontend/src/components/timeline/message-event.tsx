@@ -953,6 +953,8 @@ function SentMessageEvent({
   const navigate = useNavigate()
   const location = useLocation()
   const currentStream = useStreamFromStore(workspaceId, streamId)
+  // A shared channel's copy takes no writes from here; per-viewer actions (save, label, remind, read state) stay.
+  const sharedCopy = !!currentStream?.originWorkspaceId
   const parentStream = useStreamFromStore(workspaceId, currentStream?.parentStreamId ?? undefined)
   const rootStream = useStreamFromStore(workspaceId, currentStream?.rootStreamId ?? undefined)
   // Gate the read-state actions by where this row sits relative to the read
@@ -1205,7 +1207,7 @@ function SentMessageEvent({
   const openAside = useOpenAside(workspaceId)
   // Archived hosts (directly or through any ancestor) cannot open one — the
   // aside would inherit the archive and the create path refuses it.
-  const canOpenAside = isAsideHostType(currentStream?.type ?? "") && !e2eEnabled && !hostArchived
+  const canOpenAside = isAsideHostType(currentStream?.type ?? "") && !e2eEnabled && !hostArchived && !sharedCopy
   const handleOpenAside = useCallback(() => {
     void openAside({ kind: "stream", hostStreamId: streamId, anchorId: payload.messageId }).catch(() => {
       /* toast already surfaced inside the hook */
@@ -1251,6 +1253,7 @@ function SentMessageEvent({
       sessionId: payload.sessionId,
       isThreadParent: panelId === threadId || isThreadParentProp,
       awaitingServerId,
+      sharedCopy,
       replyUrl,
       traceUrl:
         isAgentTraceActor(event.actorType) && payload.sessionId
@@ -1269,8 +1272,8 @@ function SentMessageEvent({
       // before the Dialog opens — Radix emits synthetic pointer events on menu
       // close that trigger the Dialog's "click outside" handler otherwise.
       onShowHistory: () => setTimeout(() => setHistoryOpen(true), 0),
-      onReact: handleAddReaction,
-      onOpenFullPicker: () => setMobilePickerOpen(true),
+      onReact: sharedCopy ? undefined : handleAddReaction,
+      onOpenFullPicker: sharedCopy ? undefined : () => setMobilePickerOpen(true),
       reactions: payload.reactions,
       isSaved,
       onToggleSave: handleToggleSave,
@@ -1309,23 +1312,24 @@ function SentMessageEvent({
               ),
             })
         : undefined,
-      onShareToRoot: rootStream
-        ? () => {
-            queueShareHandoff(workspaceId, rootStream.id, {
-              messageId: payload.messageId,
-              streamId,
-              authorName: actorName,
-              authorId: event.actorId ?? "",
-              actorType: event.actorType ?? "user",
-              version: payload.revision ?? null,
-              range: null,
-            })
-            navigateAfterShareHandoff({ workspaceId, targetStreamId: rootStream.id, location, navigate, isMobile })
-          }
-        : undefined,
+      onShareToRoot:
+        rootStream && !sharedCopy
+          ? () => {
+              queueShareHandoff(workspaceId, rootStream.id, {
+                messageId: payload.messageId,
+                streamId,
+                authorName: actorName,
+                authorId: event.actorId ?? "",
+                actorType: event.actorType ?? "user",
+                version: payload.revision ?? null,
+                range: null,
+              })
+              navigateAfterShareHandoff({ workspaceId, targetStreamId: rootStream.id, location, navigate, isMobile })
+            }
+          : undefined,
       shareToRootLabel: rootStream ? buildShareToStreamLabel(rootStream) : undefined,
       onShareToParent:
-        showParentEntry && parentStream
+        showParentEntry && parentStream && !sharedCopy
           ? () => {
               queueShareHandoff(workspaceId, parentStream.id, {
                 messageId: payload.messageId,
@@ -1377,7 +1381,7 @@ function SentMessageEvent({
       // parent (moving the parent into its own thread is nonsensical),
       // and on archived streams to match the stream-header menu's gating.
       onMoveToThread:
-        !batch?.enabled && !isThreadParentProp && !currentStream?.archivedAt
+        !batch?.enabled && !isThreadParentProp && !currentStream?.archivedAt && !sharedCopy
           ? () => dispatchStartBatchSelect(streamId, "moveToThread", payload.messageId)
           : undefined,
       // Multi-select entry into the conversation-split flow: reassign several
@@ -1385,7 +1389,7 @@ function SentMessageEvent({
       // overlay on (it needs the conversation list to pick a target) and hidden
       // during batch mode itself.
       onSplitConversation:
-        conversationOverlayRow && !batch?.enabled && !currentStream?.archivedAt
+        conversationOverlayRow && !batch?.enabled && !currentStream?.archivedAt && !sharedCopy
           ? () => dispatchStartBatchSelect(streamId, "splitConversation", payload.messageId)
           : undefined,
       // Destination-side discovery for moved messages. The drawer only
@@ -1394,7 +1398,8 @@ function SentMessageEvent({
       // user from clicking into a no-op while bootstrap is still in
       // flight.
       onShowMoveDetails: movedTombstoneEvent ? () => setTimeout(() => setMoveDetailsOpen(true), 0) : undefined,
-      onReassignConversation: conversationOverlayRow && !batch?.enabled ? handleRequestConversationPicker : undefined,
+      onReassignConversation:
+        conversationOverlayRow && !batch?.enabled && !sharedCopy ? handleRequestConversationPicker : undefined,
       onShowInConversation: messageConversationId ? handleShowInConversation : undefined,
       // Gated off E2E streams like Edit: the E2E create wire format carries no
       // conversation directive, so the send would silently drop the filing.
@@ -1422,6 +1427,7 @@ function SentMessageEvent({
       threadId,
       isThreadParentProp,
       awaitingServerId,
+      sharedCopy,
       replyUrl,
       getTraceUrl,
       currentUserId,
@@ -1471,6 +1477,7 @@ function SentMessageEvent({
           workspaceId={workspaceId}
           messageId={payload.messageId}
           currentUserId={currentUserId}
+          readOnly={sharedCopy}
         />
         {/* Grouped continuations have no header row, so their labels trail the
             footer; standalone rows render them in the header beside the time
@@ -1529,12 +1536,14 @@ function SentMessageEvent({
             // Desktop-only hover toolbar floated above the row. Mobile users reach
             // these actions via the long-press drawer (MessageActionDrawer).
             <>
-              <ReactionEmojiPicker
-                workspaceId={workspaceId}
-                onSelect={handleAddReaction}
-                activeShortcodes={activeReactionShortcodes}
-                allReactionShortcodes={allReactionShortcodes}
-              />
+              {!sharedCopy && (
+                <ReactionEmojiPicker
+                  workspaceId={workspaceId}
+                  onSelect={handleAddReaction}
+                  activeShortcodes={activeReactionShortcodes}
+                  allReactionShortcodes={allReactionShortcodes}
+                />
+              )}
               <SaveMessageButton workspaceId={workspaceId} messageId={payload.messageId} />
               {actionContext.onQuoteReply && (
                 <Tooltip>
@@ -1558,33 +1567,35 @@ function SentMessageEvent({
                 the thread panel is already open (clicking is a harmless re-nav
                 to the same panel) so the toolbar never shuffles buttons in and
                 out as the user opens/closes the thread. */}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  {awaitingServerId ? (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-muted-foreground shrink-0"
-                      aria-label="Reply in thread"
-                      disabled
-                    >
-                      <MessageSquareReply className="h-3.5 w-3.5" />
-                    </Button>
-                  ) : (
-                    <Button
-                      asChild
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-muted-foreground shrink-0 hover:text-foreground"
-                    >
-                      <Link to={actionContext.replyUrl} aria-label="Reply in thread">
+              {!sharedCopy && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    {awaitingServerId ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-muted-foreground shrink-0"
+                        aria-label="Reply in thread"
+                        disabled
+                      >
                         <MessageSquareReply className="h-3.5 w-3.5" />
-                      </Link>
-                    </Button>
-                  )}
-                </TooltipTrigger>
-                <TooltipContent>Reply in thread</TooltipContent>
-              </Tooltip>
+                      </Button>
+                    ) : (
+                      <Button
+                        asChild
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-muted-foreground shrink-0 hover:text-foreground"
+                      >
+                        <Link to={actionContext.replyUrl} aria-label="Reply in thread">
+                          <MessageSquareReply className="h-3.5 w-3.5" />
+                        </Link>
+                      </Button>
+                    )}
+                  </TooltipTrigger>
+                  <TooltipContent>Reply in thread</TooltipContent>
+                </Tooltip>
+              )}
               <MessageContextMenu context={actionContext} saved={savedForMessage ?? null} />
             </>
           )

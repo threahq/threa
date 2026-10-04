@@ -59,6 +59,8 @@ export interface MessageActionContext {
   /** The row is still the client's optimistic copy: its ids are not yet
    *  server-known, so a thread drafted against it could never be created. */
   awaitingServerId?: boolean
+  /** The row sits in a read-only copy of another workspace's shared channel, so no thread can start under it. */
+  sharedCopy?: boolean
   /** URL for "reply in thread" */
   replyUrl: string
   /** URL for "show trace" (persona or bot messages sent during a session) */
@@ -316,7 +318,7 @@ export const messageActions: MessageAction[] = [
     label: "Reply in thread",
     icon: MessageSquareReply,
     groupId: "reply",
-    when: (ctx) => !ctx.isThreadParent && !ctx.awaitingServerId,
+    when: (ctx) => !ctx.isThreadParent && !ctx.awaitingServerId && !ctx.sharedCopy,
     getHref: (ctx) => ctx.replyUrl,
   },
   {

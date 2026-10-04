@@ -23,7 +23,7 @@ import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { useInviteActor, useRevokeActor } from "@/hooks/use-e2e-actors"
 import { useStreamService } from "@/contexts"
 import { botsApi } from "@/api/bots"
-import { useWorkspaceUsers, useWorkspaceBots } from "@/stores/workspace-store"
+import { isPickableUser, useWorkspaceUsers, useWorkspaceBots } from "@/stores/workspace-store"
 import { rankMatches } from "@/lib/match-score"
 import { hasPermission } from "@/lib/permissions"
 import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type Stream, type StreamMember } from "@threahq/types"
@@ -87,7 +87,7 @@ export function MembersTab({ workspaceId, streamId, currentUserId }: MembersTabP
 
   const availableToAdd = useMemo(() => {
     return workspaceUsers
-      .filter((m) => !streamMemberIds.has(m.id))
+      .filter((m) => isPickableUser(m) && !streamMemberIds.has(m.id))
       .sort((a, b) => (a.name || a.slug).localeCompare(b.name || b.slug))
   }, [workspaceUsers, streamMemberIds])
 
