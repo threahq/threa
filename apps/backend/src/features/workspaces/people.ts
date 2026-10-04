@@ -1,13 +1,13 @@
 import type { QueryConfig } from "pg"
 import { AuthorTypes } from "@threahq/types"
-import { composeSql, sql } from "../../db"
+import { composeSql, sql, type Querier } from "../../db"
 import {
   roomReadableWithoutMembershipSql,
   roomReadersAllBrowseSql,
   roomSharedSql,
   streamAccessPredicateSql,
 } from "../streams"
-import { viewerLacksBrowseSql } from "./viewer-browse"
+import { userIdsLackingBrowseSql, viewerLacksBrowseSql } from "./viewer-browse"
 
 export const PeoplePurposes = {
   VISIBLE: "visible",
@@ -35,9 +35,14 @@ export function peopleViewerForActor(actorType: string, actorId: string): People
   return actorType === AuthorTypes.USER ? { kind: "user", userId: actorId } : { kind: "workspace" }
 }
 
-/** Members and non-deleted authors of the streams `streamIdsSql` selects; bot and persona ids match no user row. */
-function peopleOfStreamsSql(workspaceId: string, streamIdsSql: QueryConfig): QueryConfig {
-  return composeSql`u.id IN (
+const USER_ID_COLUMN = sql`${sql.raw("u.id")}`
+
+/**
+ * True when `person` (a user id, or a column reference) is a member or non-deleted author of the
+ * streams `streamIdsSql` selects; bot and persona ids match no user row.
+ */
+function peopleOfStreamsSql(workspaceId: string, person: string | QueryConfig, streamIdsSql: QueryConfig): QueryConfig {
+  return composeSql`${person} IN (
     SELECT sm.member_id FROM stream_members sm
     WHERE sm.workspace_id = ${workspaceId} AND sm.stream_id IN (${streamIdsSql})
     UNION ALL
@@ -77,6 +82,7 @@ function visibleToViewerSql(workspaceId: string, viewer: PeopleViewer): QueryCon
         OR u.id = ${viewer.userId}
         OR ${peopleOfStreamsSql(
           workspaceId,
+          USER_ID_COLUMN,
           composeSql`SELECT s.id FROM streams s
             WHERE s.workspace_id = ${workspaceId} AND ${streamAccessPredicateSql(workspaceId, viewer.userId, "s.id")}`
         )}
@@ -87,6 +93,7 @@ function visibleToViewerSql(workspaceId: string, viewer: PeopleViewer): QueryCon
         (${unshared} AND ${roomReadersAllBrowseSql(workspaceId, viewer.roomStreamId)})
         OR ${peopleOfStreamsSql(
           workspaceId,
+          USER_ID_COLUMN,
           composeSql`SELECT s.id FROM streams s
             JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id
             WHERE s.workspace_id = ${workspaceId}
@@ -97,4 +104,25 @@ function visibleToViewerSql(workspaceId: string, viewer: PeopleViewer): QueryCon
       )`
     }
   }
+}
+
+/**
+ * The users lacking browse, other than `userId`, who see `userId` by `peopleScopeSql`'s user arm.
+ * The correlated alias `g` must stay unbound by the inner fragments: `u`, `wup`, `eff_s`, `eff_root`,
+ * `s`, `sm`, `m`.
+ */
+export async function listGuestViewerIds(db: Querier, workspaceId: string, userId: string): Promise<string[]> {
+  const guestId = sql`${sql.raw("g.id")}`
+  const result = await db.query<{ id: string }>(composeSql`
+    WITH guests AS (${userIdsLackingBrowseSql(workspaceId)})
+    SELECT g.id FROM guests g
+    WHERE g.id <> ${userId}
+      AND ${peopleOfStreamsSql(
+        workspaceId,
+        userId,
+        composeSql`SELECT s.id FROM streams s
+          WHERE s.workspace_id = ${workspaceId} AND ${streamAccessPredicateSql(workspaceId, guestId, "s.id")}`
+      )}
+  `)
+  return result.rows.map((row) => row.id)
 }

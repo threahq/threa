@@ -4,7 +4,8 @@
  * of what every reader of the room reads; a viewer with browse sees everyone.
  *
  * m8 authored in a thread under `priv` without being a member, m5 authored only a deleted message in
- * `gp`, and loner is a guest with no membership. A room another workspace reads (`sharedPub`, shared
+ * `gp`, and loner is a guest with no membership. guest2 reads only `priv3`, where m6 writes without
+ * being a member, plus the `guest_public` streams. A room another workspace reads (`sharedPub`, shared
  * out actively, and `copy`, a copy of another workspace's channel) sees only its own tree's people;
  * `revokedPub`'s share ended, so it reads like any public room. A second workspace holds rows under the same stream
  * ids that would leak m1 and m6 if a read dropped its workspace pin.
@@ -14,15 +15,27 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool, QueryConfig } from "pg"
 import { Visibilities, type Visibility } from "@threahq/types"
 import type { Querier } from "../../src/db"
-import { PeoplePurposes, UserRepository, type PeopleScope, type PeopleViewer } from "../../src/features/workspaces"
+import {
+  PeoplePurposes,
+  UserRepository,
+  listGuestViewerIds,
+  type PeopleScope,
+  type PeopleViewer,
+} from "../../src/features/workspaces"
 import { messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { streamConnectionId } from "@threahq/backend-common"
 import { setupTestDatabase } from "./setup"
 
-const LABELS = ["owner", "m1", "guest", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "loner"] as const
+const LABELS = ["owner", "m1", "guest", "guest2", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "loner"] as const
 type Label = (typeof LABELS)[number]
 
-const NON_MEMBER_ROLES: Partial<Record<Label, string>> = { owner: "owner", guest: "guest", loner: "guest" }
+const NON_MEMBER_ROLES: Partial<Record<Label, string>> = {
+  owner: "owner",
+  guest: "guest",
+  guest2: "guest",
+  loner: "guest",
+}
+const GUESTS = LABELS.filter((label) => NON_MEMBER_ROLES[label] === "guest")
 const EVERYONE = [...LABELS].sort()
 const GUEST_READS = ["guest", "m2", "m3", "m4", "m7", "m8", "owner"]
 const PRIVATE_ROOM_READS = ["guest", "m2", "m3", "m4", "m8", "owner"]
@@ -48,6 +61,7 @@ describe("guest people", () => {
     pubWithGuest: streamId(),
     gp: streamId(),
     gpThread: streamId(),
+    priv3: streamId(),
     sharedPub: streamId(),
     sharedPubThread: streamId(),
     copy: streamId(),
@@ -150,7 +164,9 @@ describe("guest people", () => {
       visibility: Visibilities.GUEST_PUBLIC,
       rootStreamId: streams.gp,
     })
+    await insertStream(wsA, { id: streams.priv3, visibility: Visibilities.PRIVATE, members: ["guest2", "m1"] })
     await insertMessage(wsA, streams.pub, "m6")
+    await insertMessage(wsA, streams.priv3, "m6")
     await insertMessage(wsA, streams.priv, "guest")
     await insertMessage(wsA, streams.privThread, "m8")
     await insertMessage(wsA, streams.pubWithGuest, "m2")
@@ -296,5 +312,73 @@ describe("guest people", () => {
       member: { hasSubplans: true, anyExecuted: false },
       guest: { hasSubplans: true, anyExecuted: true },
     })
+  })
+
+  const labelsOf = (userIds: string[]) => userIds.map((id) => LABELS.find((label) => ids[label] === id) ?? id).sort()
+  const guestsOf = async (label: Label) => labelsOf(await listGuestViewerIds(pool, wsA, ids[label]))
+
+  test("should list the guests whose visible people include the person when asked for any user", async () => {
+    const visibleToGuests = new Map<Label, Set<string>>()
+    for (const guest of GUESTS) {
+      const visible = await UserRepository.listByWorkspace(pool, wsA, userScope(guest))
+      visibleToGuests.set(guest, new Set(visible.map((user) => user.id)))
+    }
+    const expected: Record<string, string[]> = {}
+    const actual: Record<string, string[]> = {}
+    for (const label of LABELS) {
+      expected[label] = GUESTS.filter((guest) => guest !== label && visibleToGuests.get(guest)!.has(ids[label])).sort()
+      actual[label] = await guestsOf(label)
+    }
+
+    expect(actual).toEqual(expected)
+  })
+
+  test("should name each guest that reads a stream the person belongs to or wrote in", async () => {
+    expect({
+      owner: await guestsOf("owner"),
+      m1: await guestsOf("m1"),
+      m2: await guestsOf("m2"),
+      m3: await guestsOf("m3"),
+      m4: await guestsOf("m4"),
+      m5: await guestsOf("m5"),
+      m6: await guestsOf("m6"),
+      m7: await guestsOf("m7"),
+      m8: await guestsOf("m8"),
+      guest: await guestsOf("guest"),
+    }).toEqual({
+      owner: ["guest"],
+      m1: ["guest2"],
+      m2: ["guest"],
+      m3: ["guest", "guest2", "loner"],
+      m4: ["guest", "guest2", "loner"],
+      m5: [],
+      m6: ["guest2"],
+      m7: ["guest"],
+      m8: ["guest"],
+      guest: [],
+    })
+  })
+
+  test("should still name the guests of a user once the user row is removed", async () => {
+    const leaver = userId()
+    const leaverStream = streamId()
+    await pool.query(
+      `INSERT INTO users (id, workspace_id, workos_user_id, email, role, slug, name) VALUES ($1, $2, NULL, NULL, 'member', 'leaver', 'Person leaver')`,
+      [leaver, wsA]
+    )
+    await pool.query(
+      `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', $3, $4)`,
+      [leaverStream, wsA, Visibilities.PRIVATE, userId()]
+    )
+    await pool.query(
+      `INSERT INTO stream_members (workspace_id, stream_id, member_id) VALUES ($1, $2, $3), ($1, $2, $4)`,
+      [wsA, leaverStream, leaver, ids.guest]
+    )
+
+    const before = await listGuestViewerIds(pool, wsA, leaver)
+    await UserRepository.remove(pool, wsA, leaver)
+    const after = await listGuestViewerIds(pool, wsA, leaver)
+
+    expect({ before, after }).toEqual({ before: [ids.guest], after: [ids.guest] })
   })
 })
