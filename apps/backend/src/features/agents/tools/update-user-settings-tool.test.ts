@@ -160,6 +160,31 @@ describe("update_user_settings tool", () => {
 
     expect(tool.config.trace.formatContent(input, result)).toBe('Changed theme → "dark"')
   })
+
+  // Prod, Oct 2026: a call that also passed eight already-set keys echoed all
+  // nine back, and the model kept sending all nine on later turns.
+  test("echoes and traces only the keys whose value changed", async () => {
+    const tool = toolWithBefore(
+      { ...preferences, theme: "system", timezone: "Europe/Stockholm" },
+      { ...preferences, theme: "light", timezone: "Europe/Stockholm" }
+    )
+    const input = { theme: "light" as const, timezone: "Europe/Stockholm" }
+
+    const result = await tool.config.execute(input, { toolCallId: "call_1" })
+
+    expect(JSON.parse(result.output)).toEqual({ ok: true, applied: { theme: "light" }, previous: { theme: "system" } })
+    expect(tool.config.trace.formatContent(input, result)).toBe('Changed theme → "light"')
+  })
+
+  test("says nothing changed when every key was already as asked", async () => {
+    const tool = toolWithBefore({ ...preferences, theme: "dark" }, { ...preferences, theme: "dark" })
+    const input = { theme: "dark" as const }
+
+    const result = await tool.config.execute(input, { toolCallId: "call_1" })
+
+    expect(JSON.parse(result.output)).toEqual({ ok: true, applied: {}, previous: {} })
+    expect(tool.config.trace.formatContent(input, result)).toBe("No settings changed — already as asked")
+  })
 })
 
 describe("canOfferUserSettings", () => {

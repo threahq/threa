@@ -21,7 +21,7 @@ export function buildCurrentSettingsSection(preferences: UserPreferences): strin
 
 ## Their Current Settings
 
-These are the settings you can change for this user, as they stand right now. Use them to answer questions about their setup, and to avoid "changing" something to the value it already has.
+These are the settings you can change for this user, as they stand right now. Use them to answer questions about their setup, and to avoid "changing" something to the value it already has. This list is not a patch: a call passes only the keys the user asked to change.
 
 ${lines.join("\n")}`
 }

@@ -16,6 +16,8 @@ import { logger } from "../../../lib/logger"
 import {
   TOOL_GUARDIAN_ARGUMENT_CHARS,
   TOOL_GUARDIAN_DECISIONS_ALLOW_FLOOR,
+  TOOL_GUARDIAN_DECISIONS_DENY_CEILING,
+  TOOL_GUARDIAN_DECISIONS_DENY_REASON,
   TOOL_GUARDIAN_DECISIONS_MODEL_ID,
   TOOL_GUARDIAN_DECISIONS_QUESTION,
   TOOL_GUARDIAN_DECISIONS_TIMEOUT_MS,
@@ -185,7 +187,7 @@ export function renderGuardianConversation(messages: ModelMessage[]): string {
  * Errors are NOT swallowed here — the runtime converts a throw into a denial,
  * so failing closed is one behaviour in one place rather than a `catch` per
  * failure mode that can quietly grow an allow-path. The one catch, in the
- * decision-model fast path, only ever hands the call on to the inference review.
+ * decision-model path, only ever hands the call on to the inference review.
  */
 export class ToolGuardianService implements ToolGuardian {
   constructor(
@@ -212,9 +214,8 @@ export class ToolGuardianService implements ToolGuardian {
       }
     }
 
-    if (await this.decisionsAllow(request, principal)) {
-      return { allowed: true, reason: "The decision model found the user's request for this action." }
-    }
+    const decided = await this.decisionsVerdict(request, principal)
+    if (decided) return decided
 
     const config = await this.deps.configResolver.resolve(COMPONENT_PATHS.TOOL_GUARDIAN)
 
@@ -272,14 +273,14 @@ export class ToolGuardianService implements ToolGuardian {
   }
 
   /**
-   * True only on a confident yes from the decision model. A pinned workspace, a
-   * decision-model outage, a timeout and any failure all return false, which
-   * hands the call to the inference review: this path can skip a review, never
-   * decide a denial or allow on its own failure.
+   * The decision model's verdict when it is confident either way. An uncertain
+   * belief, a pinned workspace, a decision-model outage, a timeout and any
+   * failure all return null, which hands the call to the inference review: this
+   * path never decides on its own failure.
    */
-  private async decisionsAllow(request: ToolGuardianRequest, principal: string): Promise<boolean> {
+  private async decisionsVerdict(request: ToolGuardianRequest, principal: string): Promise<ToolGuardianVerdict | null> {
     const { workspaceId, sessionId } = this.turn
-    if ((await this.deps.residency.isPinned(workspaceId)) || !this.deps.availability.isAvailable) return false
+    if ((await this.deps.residency.isPinned(workspaceId)) || !this.deps.availability.isAvailable) return null
 
     const budget = AbortSignal.timeout(TOOL_GUARDIAN_DECISIONS_TIMEOUT_MS)
     try {
@@ -290,12 +291,12 @@ export class ToolGuardianService implements ToolGuardian {
         turn: this.turn,
         abortSignal: budget,
       })
-      const allowed = belief >= TOOL_GUARDIAN_DECISIONS_ALLOW_FLOOR
+      const verdict = verdictFromBelief(belief)
       logger.info(
-        { toolName: request.toolName, sessionId, allowed, belief, path: "decisions" },
+        { toolName: request.toolName, sessionId, allowed: verdict?.allowed ?? null, belief, path: "decisions" },
         "Tool guardian verdict"
       )
-      return allowed
+      return verdict
     } catch (error) {
       if (error instanceof AISpendDeniedError) throw error
       // The availability breaker is shared with callers on the endpoint's 20 s
@@ -305,9 +306,20 @@ export class ToolGuardianService implements ToolGuardian {
         { error, toolName: request.toolName, sessionId },
         "Decision-model guardian review failed, falling back to the inference review"
       )
-      return false
+      return null
     }
   }
+}
+
+/** Null in the uncertain band, which the inference review decides. */
+function verdictFromBelief(belief: number): ToolGuardianVerdict | null {
+  if (belief >= TOOL_GUARDIAN_DECISIONS_ALLOW_FLOOR) {
+    return { allowed: true, reason: "The decision model found the user's request for this action." }
+  }
+  if (belief <= TOOL_GUARDIAN_DECISIONS_DENY_CEILING) {
+    return { allowed: false, reason: TOOL_GUARDIAN_DECISIONS_DENY_REASON }
+  }
+  return null
 }
 
 /** The decision model's belief, in [0, 1], that the bound user asked for this call. */

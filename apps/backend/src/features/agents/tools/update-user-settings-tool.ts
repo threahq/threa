@@ -155,19 +155,20 @@ export function createUpdateUserSettingsTool(deps: UpdateUserSettingsToolDeps) {
       }
 
       const patch = parsed.data as AgentSettablePreferences
-      const changedKeys = Object.keys(patch).filter((key) => (patch as Record<string, unknown>)[key] !== undefined)
+      const patchedKeys = Object.keys(patch).filter((key) => (patch as Record<string, unknown>)[key] !== undefined)
 
       try {
         const { before, after } = await deps.updateSettings(patch)
-        const applied = Object.fromEntries(
-          changedKeys.map((key) => [key, (after as unknown as Record<string, unknown>)[key]])
-        )
-        const previous = Object.fromEntries(
-          changedKeys.map((key) => [key, (before as unknown as Record<string, unknown>)[key]])
-        )
+        const stored = after as unknown as Record<string, unknown>
+        const prior = before as unknown as Record<string, unknown>
+        // Only what moved. Echoing keys that were already set reads back to the
+        // model as settings it changed, and it copies them into its next call.
+        const changedKeys = patchedKeys.filter((key) => !sameValue(prior[key], stored[key]))
+        const applied = Object.fromEntries(changedKeys.map((key) => [key, stored[key]]))
+        const previous = Object.fromEntries(changedKeys.map((key) => [key, prior[key]]))
         return { output: JSON.stringify({ ok: true, applied, previous }) }
       } catch (error) {
-        logger.error({ err: error, changedKeys }, "update_user_settings failed")
+        logger.error({ err: error, patchedKeys }, "update_user_settings failed")
         return {
           output: JSON.stringify({
             ok: false,
@@ -179,12 +180,11 @@ export function createUpdateUserSettingsTool(deps: UpdateUserSettingsToolDeps) {
 
     trace: {
       stepType: AgentStepTypes.TOOL_CALL,
-      formatContent: (input, result) => {
+      formatContent: (_input, result) => {
         const parsed = JSON.parse(result.output) as { ok: boolean; applied?: Record<string, unknown>; error?: string }
         if (!parsed.ok) return `Couldn't change settings: ${parsed.error ?? "unknown error"}`
-        const applied = parsed.applied ?? (input as Record<string, unknown>)
-        const pairs = Object.entries(applied).map(([key, value]) => `${key} → ${JSON.stringify(value)}`)
-        return `Changed ${pairs.join(", ")}`
+        const pairs = Object.entries(parsed.applied ?? {}).map(([key, value]) => `${key} → ${JSON.stringify(value)}`)
+        return pairs.length > 0 ? `Changed ${pairs.join(", ")}` : "No settings changed — already as asked"
       },
       effects: (_input, result) => {
         const parsed = JSON.parse(result.output) as {
@@ -194,19 +194,17 @@ export function createUpdateUserSettingsTool(deps: UpdateUserSettingsToolDeps) {
         }
         if (!parsed.ok || !parsed.applied) return []
         const previous = parsed.previous ?? {}
-        return Object.entries(parsed.applied)
-          .filter(([key, value]) => !sameValue(previous[key], value))
-          .map(([key, value]) => {
-            const before = displayValue(previous[key])
-            const after = displayValue(value)
-            return {
-              kind: "settings" as const,
-              target: key,
-              // Both or neither: a one-sided diff reads as "was empty, now X",
-              // which is a different claim from "changed, shown elsewhere".
-              ...(before !== null && after !== null ? { before, after } : {}),
-            }
-          })
+        return Object.entries(parsed.applied).map(([key, value]) => {
+          const before = displayValue(previous[key])
+          const after = displayValue(value)
+          return {
+            kind: "settings" as const,
+            target: key,
+            // Both or neither: a one-sided diff reads as "was empty, now X",
+            // which is a different claim from "changed, shown elsewhere".
+            ...(before !== null && after !== null ? { before, after } : {}),
+          }
+        })
       },
     },
   })

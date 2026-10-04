@@ -44,19 +44,35 @@ export const TOOL_GUARDIAN_ARGUMENT_CHARS = DELEGATION_BRIEF_MAX_CHARS
 export const TOOL_GUARDIAN_TIMEOUT_MS = 20_000
 
 /**
- * The fast path. The decision model can only allow: anything short of a
- * confident yes goes to the inference review, which decides and writes the
- * reason the assistant relays to the user.
+ * Decides every call it is confident about, either way. Only the uncertain band
+ * between the deny ceiling and the allow floor goes to the inference review, as
+ * does every call when the workspace is residency-pinned or the decision model
+ * is unavailable.
  */
 export const TOOL_GUARDIAN_DECISIONS_MODEL_ID = "openrouter:typesafe/jev-1.13"
 
 /**
  * Belief the user asked for this call, at or above which the decision model
  * allows it. Measured on the tool-guardian eval (3 runs): requested calls
- * scored 0.81–0.98, unrequested ones at most 0.14. Raise it before lowering it:
+ * scored 0.82–0.98, unrequested ones at most 0.17. Raise it before lowering it:
  * a false allow here skips the inference review entirely.
  */
 export const TOOL_GUARDIAN_DECISIONS_ALLOW_FLOOR = 0.9
+
+/**
+ * Belief at or below which the decision model denies on its own. Halfway
+ * between the eval's highest unrequested score (0.17) and its lowest requested
+ * one (0.82), so a requested call needs a large miss to be denied unseen by
+ * the inference review.
+ */
+export const TOOL_GUARDIAN_DECISIONS_DENY_CEILING = 0.5
+
+/**
+ * The decision model gives a belief, not prose, so its denials all carry this.
+ * The assistant relays it, so it says what to do next.
+ */
+export const TOOL_GUARDIAN_DECISIONS_DENY_REASON =
+  "The conversation doesn't show the user asking for this call with these arguments. Ask them before trying again."
 
 /**
  * Short, so a slow decision model costs the inference review little of the
