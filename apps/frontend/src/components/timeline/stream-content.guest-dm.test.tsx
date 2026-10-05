@@ -9,7 +9,7 @@ import { createMockUser } from "@/test/fixtures/users"
 import { GUEST_DM_READ_ONLY_REASON } from "@/lib/guest-dm-policy"
 import * as authModule from "@/auth"
 import * as contextsModule from "@/contexts"
-import { CoordinatedLoadingProvider, PanelProvider, ServicesProvider } from "@/contexts"
+import { CoordinatedLoadingProvider, PanelProvider, PendingMessagesProvider, ServicesProvider } from "@/contexts"
 import { SyncStatusContext, SyncStatusStore } from "@/sync/sync-status"
 import * as workspacesModule from "@/hooks/use-workspaces"
 import * as workspaceStoreModule from "@/stores/workspace-store"
@@ -35,17 +35,19 @@ function renderDm(policy: GuestDmPolicy, stream = DM_STREAM) {
   return render(
     <QueryClientProvider client={queryClient}>
       <ServicesProvider>
-        <ReadCommitQueueContext.Provider value={readCommitQueue}>
-          <MemoryRouter>
-            <SyncStatusContext.Provider value={new SyncStatusStore()}>
-              <PanelProvider>
-                <CoordinatedLoadingProvider workspaceId={WORKSPACE_ID} streamIds={[]}>
-                  <StreamContent workspaceId={WORKSPACE_ID} streamId={stream.id} stream={stream} />
-                </CoordinatedLoadingProvider>
-              </PanelProvider>
-            </SyncStatusContext.Provider>
-          </MemoryRouter>
-        </ReadCommitQueueContext.Provider>
+        <PendingMessagesProvider>
+          <ReadCommitQueueContext.Provider value={readCommitQueue}>
+            <MemoryRouter>
+              <SyncStatusContext.Provider value={new SyncStatusStore()}>
+                <PanelProvider>
+                  <CoordinatedLoadingProvider workspaceId={WORKSPACE_ID} streamIds={[]}>
+                    <StreamContent workspaceId={WORKSPACE_ID} streamId={stream.id} stream={stream} />
+                  </CoordinatedLoadingProvider>
+                </PanelProvider>
+              </SyncStatusContext.Provider>
+            </MemoryRouter>
+          </ReadCommitQueueContext.Provider>
+        </PendingMessagesProvider>
       </ServicesProvider>
     </QueryClientProvider>
   )
