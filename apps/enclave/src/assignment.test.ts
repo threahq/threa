@@ -5,6 +5,7 @@ import { sessionAssignmentSchema } from "./assignment"
 const BASE: EnclaveSessionAssignment = {
   sessionId: "session_test",
   callbackToken: "cbtok_1",
+  workspaceId: "ws_test",
   streamId: "stream_x",
   wraps: [{ keyGeneration: 0, wrapEnc: "ZW5j", wrapCt: "Y3Q=" }],
   history: [],
@@ -35,6 +36,15 @@ describe("sessionAssignmentSchema", () => {
 
   it("rejects an assignment without a callbackToken — a tokenless turn could never report a result", () => {
     const { callbackToken: _token, ...rest } = BASE
+    expect(sessionAssignmentSchema.safeParse(rest).success).toBe(false)
+  })
+
+  it("should keep workspaceId through parsing when present", () => {
+    expect(sessionAssignmentSchema.parse(BASE).workspaceId).toBe("ws_test")
+  })
+
+  it("should reject an assignment when workspaceId is missing", () => {
+    const { workspaceId: _workspaceId, ...rest } = BASE
     expect(sessionAssignmentSchema.safeParse(rest).success).toBe(false)
   })
 

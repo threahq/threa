@@ -46,7 +46,7 @@ export interface FoldRollingSummaryParams {
   ai: AgentRuntimeAI
   model: LanguageModel
   /** Original provider:model string — required for usage recording on the backend; the enclave keys its transport off it. */
-  modelString?: string
+  modelString: string
   /** The summary so far (empty string when none). */
   existingSummary: string
   /** The dropped messages to fold in, oldest→newest. */
@@ -55,7 +55,7 @@ export interface FoldRollingSummaryParams {
   temperature?: number
   telemetry?: { functionId: string; metadata?: Record<string, string | number | boolean> }
   /** Cost attribution for the backend's AI wrapper; the enclave ignores it (usage accumulates in its transport). */
-  context?: CostContext
+  context: CostContext
 }
 
 /**

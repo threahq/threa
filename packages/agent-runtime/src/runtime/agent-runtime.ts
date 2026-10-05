@@ -64,11 +64,10 @@ export interface AgentRuntimeConfig {
   ai: AgentRuntimeAI
   model: LanguageModel
   /**
-   * Original provider:model string for `model`. Required alongside `costContext`
-   * for AI usage tracking — the resolved LanguageModel does not expose the
-   * prefix the cost recorder needs.
+   * Original provider:model string for `model`, for AI usage tracking — the
+   * resolved LanguageModel does not expose the prefix the cost recorder needs.
    */
-  modelString?: string
+  modelString: string
   systemPrompt: string
   /**
    * The part of the system prompt that is re-derived every turn (temporal
@@ -86,8 +85,8 @@ export interface AgentRuntimeConfig {
   maxIterations?: number
   observers?: AgentObserver[]
   telemetry?: { functionId: string; metadata?: Record<string, TelemetryMetadataValue> }
-  /** Cost context forwarded to every AI call the runtime makes (enables usage recording). */
-  costContext?: CostContext
+  /** Cost context forwarded to every AI call the runtime makes. */
+  costContext: CostContext
 
   /**
    * Terminal action — sends a message to the conversation.

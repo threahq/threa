@@ -1,3 +1,8 @@
+/** What a workspace is: the full product, or a Connect workspace. The control plane's `workspace_registry` owns it. */
+export const WORKSPACE_TIERS = { FULL: "full", CONNECT: "connect" } as const
+export type WorkspaceTier = (typeof WORKSPACE_TIERS)[keyof typeof WORKSPACE_TIERS]
+export const WORKSPACE_TIER_VALUES = Object.values(WORKSPACE_TIERS) as [WorkspaceTier, ...WorkspaceTier[]]
+
 export const TITLE_SOURCES = ["generated", "explicit", "legacy"] as const
 export type TitleSource = (typeof TITLE_SOURCES)[number]
 

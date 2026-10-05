@@ -70,6 +70,7 @@ describe("buildEnclaveSessionAssignment", () => {
     expect(assignment).toMatchObject({
       sessionId: "session_test",
       callbackToken: "cbtok_test",
+      workspaceId: "ws_1",
       model: "anthropic/claude-sonnet-4.6", // openrouter: prefix stripped
       // The full system prompt is assembled upstream (buildEnclaveSystemPrompt)
       // and passed through here verbatim as persona.systemPrompt.

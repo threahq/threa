@@ -1,6 +1,7 @@
 import type { Request, Response } from "express"
 import { z } from "zod/v4"
 import { HttpError, isValidIanaTimezone } from "@threahq/backend-common"
+import { WORKSPACE_TIER_VALUES } from "@threahq/types"
 import type { ControlPlaneWorkspaceService } from "./service"
 import type { InvitationShadowService } from "../invitation-shadows"
 
@@ -18,6 +19,8 @@ const createWorkspaceSchema = z.object({
   // in the control plane but never created in its region.
   timezone: z.string().refine(isValidIanaTimezone, { message: "must be a valid IANA timezone identifier" }).optional(),
 })
+
+const setTierSchema = z.object({ tier: z.enum(WORKSPACE_TIER_VALUES) }).strict()
 
 export { createWorkspaceSchema }
 
@@ -54,6 +57,18 @@ export function createWorkspaceHandlers({ workspaceService, shadowService }: Dep
       })
 
       res.status(201).json({ workspace })
+    },
+
+    async setTier(req: Request, res: Response) {
+      const id = req.params.id
+      if (!id) {
+        throw new HttpError("Missing workspace id", { status: 400, code: "VALIDATION_ERROR" })
+      }
+      const parsed = setTierSchema.safeParse(req.body)
+      if (!parsed.success) {
+        throw new HttpError("Invalid request body", { status: 400, code: "VALIDATION_ERROR" })
+      }
+      res.json({ tier: await workspaceService.setTier(id, parsed.data.tier) })
     },
 
     async listRegions(_req: Request, res: Response) {

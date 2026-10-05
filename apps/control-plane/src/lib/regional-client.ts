@@ -4,6 +4,7 @@ import {
   type FeatureFlagScope,
   type StreamConnectionChannel,
   type StreamConnectionSnapshot,
+  type WorkspaceTier,
 } from "@threahq/types"
 import type { RegionConfig } from "../config"
 
@@ -211,6 +212,11 @@ export class RegionalClient {
     data: { workspaceId: string; operatorCeilingUsd: number; operatorAiDisabled: boolean }
   ): Promise<void> {
     await this.postInternal(region, "/internal/ai-spend-controls", data, "Regional AI spend controls sync")
+  }
+
+  /** Push a workspace's tier. Full snapshot, so replays are idempotent. */
+  async syncWorkspaceTier(region: string, data: { workspaceId: string; tier: WorkspaceTier }): Promise<void> {
+    await this.postInternal(region, "/internal/workspace-tier", data, "Regional workspace tier sync")
   }
 
   /** Push a stream connection's current state. The region projects whichever sides it holds. */

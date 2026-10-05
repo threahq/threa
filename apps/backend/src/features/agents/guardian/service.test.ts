@@ -17,6 +17,7 @@ const turn = {
   personaId: "persona_1",
   sessionId: "session_1",
   invokingUserId: "usr_1",
+  costContext: { workspaceId: "ws_1", origin: "user" as const, userId: "usr_1" },
 }
 
 const configResolver: ConfigResolver = {

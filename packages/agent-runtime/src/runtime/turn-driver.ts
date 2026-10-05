@@ -111,8 +111,8 @@ export interface TurnSink {
 export interface TurnRequest {
   delivery: TurnDelivery
   model: LanguageModel
-  /** Original provider:model string for `model` — required alongside `costContext` for usage recording. */
-  modelString?: string
+  /** Original provider:model string for `model`, for usage recording. */
+  modelString: string
   systemPrompt: string
   /** Per-turn system content held outside the prompt-cache prefix. See `AgentRuntimeConfig`. */
   volatileSystemPrompt?: string
@@ -123,7 +123,7 @@ export interface TurnRequest {
   maxIterations?: number
   initialContext?: AgentRuntimeConfig["initialContext"]
   telemetry?: AgentRuntimeConfig["telemetry"]
-  costContext?: CostContext
+  costContext: CostContext
   allowNoMessageOutput?: boolean
   validateFinalResponse?: AgentRuntimeConfig["validateFinalResponse"]
   /**

@@ -6,6 +6,9 @@ import { AgentRuntime } from "./agent-runtime"
 import { defineAgentTool, tierOfBuiltTool, type AgentTool } from "./agent-tool"
 import type { ToolGuardian, ToolGuardianVerdict } from "./tool-guardian"
 
+const TEST_COST_CONTEXT = { workspaceId: "ws_test" }
+const TEST_MODEL_STRING = "openrouter:test/model"
+
 /**
  * `delegate_task` is the tier-2 tool that exists today, so the guardian is
  * exercised through a real registered name rather than a fixture that could
@@ -67,6 +70,8 @@ function runtimeWith(params: {
   input?: unknown
 }) {
   return new AgentRuntime({
+    costContext: TEST_COST_CONTEXT,
+    modelString: TEST_MODEL_STRING,
     ai: { generateTextWithTools: aiCalling(params.toolName, params.input ?? { title: "Ship it" }) } as any,
     model: {} as any,
     systemPrompt: "You are helpful.",
@@ -83,6 +88,8 @@ describe("guardian gating", () => {
     expect(
       () =>
         new AgentRuntime({
+          costContext: TEST_COST_CONTEXT,
+          modelString: TEST_MODEL_STRING,
           ai: { generateTextWithTools: async () => ({ text: "", toolCalls: [], response: { messages: [] } }) } as any,
           model: {} as any,
           systemPrompt: "s",
@@ -98,6 +105,8 @@ describe("guardian gating", () => {
     expect(
       () =>
         new AgentRuntime({
+          costContext: TEST_COST_CONTEXT,
+          modelString: TEST_MODEL_STRING,
           ai: { generateTextWithTools: async () => ({ text: "", toolCalls: [], response: { messages: [] } }) } as any,
           model: {} as any,
           systemPrompt: "s",

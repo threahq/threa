@@ -21,6 +21,8 @@ function plaintextRequest(overrides?: Partial<TurnRequest>): TurnRequest {
     systemPrompt: "You are helpful.",
     messages: [{ role: "user", content: "Hi" }],
     tools: [],
+    costContext: { workspaceId: "ws_test" },
+    modelString: "openrouter:test/model",
     ...overrides,
   }
 }

@@ -8,12 +8,14 @@ const ai = {
   generateTextWithTools: async () => ({ text: "", toolCalls: [], response: { messages: [] } }),
 } as AgentRuntimeAI
 const model = {} as LanguageModel
+const costContext = { workspaceId: "ws_test", sessionId: "session_test" }
 
 function toolNames(exaApiKey?: string, allowedCategories?: ToolPrivacyCategory[]): string[] {
   return buildEnclaveTools({
     ai,
     model,
     modelString: "anthropic/claude-sonnet-4.6",
+    costContext,
     webSearchEngines: createWebSearchEngines({ exa: exaApiKey }),
     allowedCategories,
   }).map((t) => t.name)
@@ -44,6 +46,7 @@ describe("buildEnclaveTools", () => {
       ai,
       model,
       modelString: "anthropic/claude-sonnet-4.6",
+      costContext,
       webSearchEngines: createWebSearchEngines({ exa: "exa-test" }),
       allowedCategories: [],
       attachments: { refsById: new Map(), ciphertextById: new Map() },
@@ -52,7 +55,7 @@ describe("buildEnclaveTools", () => {
   })
 
   it("advertises web-only research reach — never workspace or integrations", () => {
-    const research = buildEnclaveTools({ ai, model, modelString: "anthropic/claude-sonnet-4.6" }).find(
+    const research = buildEnclaveTools({ ai, model, modelString: "anthropic/claude-sonnet-4.6", costContext }).find(
       (t) => t.name === "general_research"
     )
     expect(research).toBeDefined()

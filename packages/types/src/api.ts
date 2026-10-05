@@ -914,6 +914,7 @@ export interface EnclaveSealedSubstep {
  */
 export interface EnclaveSessionAssignment {
   sessionId: string
+  workspaceId: string
   streamId: string
   /**
    * Claim-minted secret binding this session's callbacks to the runner that

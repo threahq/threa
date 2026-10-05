@@ -256,6 +256,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.get("/api/backoffice/outbox-events/status", auth, requirePlatformAdmin, backoffice.getOutboxEventsStatus)
   app.get("/api/backoffice/workspaces/:id/feature-flags", auth, requirePlatformAdmin, featureFlags.listWorkspaceFlags)
   app.put("/api/backoffice/workspaces/:id/feature-flags", auth, requirePlatformAdmin, featureFlags.setWorkspaceFlag)
+  app.put("/api/backoffice/workspaces/:id/tier", auth, requirePlatformAdmin, workspace.setTier)
   app.get("/api/backoffice/workspaces/:id/ai-spend-controls", auth, requirePlatformAdmin, aiSpendControls.get)
   app.put("/api/backoffice/workspaces/:id/ai-spend-controls", auth, requirePlatformAdmin, aiSpendControls.set)
   app.get("/api/backoffice/waitlist", auth, requirePlatformAdmin, backoffice.listWaitlist)

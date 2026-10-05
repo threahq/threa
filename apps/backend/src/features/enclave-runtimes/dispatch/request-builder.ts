@@ -136,6 +136,7 @@ export function buildEnclaveSessionAssignment(inputs: BuildInvokeInputs): Enclav
   return {
     sessionId: inputs.sessionId,
     callbackToken: inputs.callbackToken,
+    workspaceId: e2e.workspaceId,
     streamId: e2e.streamId,
     wraps: chosenWraps,
     history,

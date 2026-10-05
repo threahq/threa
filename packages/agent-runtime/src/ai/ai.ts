@@ -67,7 +67,7 @@ export interface AccessLogSink {
     functionId: string
     provider: string
     modelId: string
-    context?: CostContext
+    context: CostContext
     metadata?: Record<string, unknown>
   }): void | Promise<void>
 }
@@ -77,9 +77,9 @@ export interface AIConfig {
   defaults?: {
     repair?: RepairFunction
   }
-  /** When provided, usage will be recorded after each AI call (requires context in options) */
+  /** When provided, usage will be recorded after each AI call */
   costRecorder?: CostRecorder
-  /** When provided, every call carrying a context is admitted or denied before it reaches the provider */
+  /** When provided, every call is admitted or denied before it reaches the provider */
   spendGate?: SpendGate
   /** When provided, a `disclose` access-log row is emitted for each AI call (design §7.3) */
   accessLogSink?: AccessLogSink
@@ -181,8 +181,8 @@ export interface GenerateTextOptions {
   temperature?: number
   reasoningEffort?: ReasoningEffort
   telemetry?: TelemetryConfig
-  /** When provided, usage will be recorded to the database */
-  context?: CostContext
+  /** Charged to this workspace: the spend gate admits the call and usage is recorded against it */
+  context: CostContext
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
 }
@@ -195,12 +195,11 @@ export interface GenerateTextOptions {
 export interface GenerateTextWithToolsOptions {
   model: LanguageModel
   /**
-   * The original provider:model string for the resolved `model`.
-   * Required alongside `context` so usage can be recorded with a parseable
-   * model identifier (the resolved LanguageModel does not expose the
-   * original provider prefix needed by the cost recorder).
+   * The original provider:model string for the resolved `model`, so usage can
+   * be recorded with a parseable model identifier (the resolved LanguageModel
+   * does not expose the original provider prefix needed by the cost recorder).
    */
-  modelString?: string
+  modelString: string
   system?: string
   /**
    * Per-turn system content kept out of the cached prefix. Only meaningful with
@@ -212,8 +211,8 @@ export interface GenerateTextWithToolsOptions {
   maxTokens?: number
   temperature?: number
   telemetry?: TelemetryConfig
-  /** When provided with `modelString`, usage will be recorded to the database */
-  context?: CostContext
+  /** Charged to this workspace: the spend gate admits the call and usage is recorded against it */
+  context: CostContext
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
   /**
@@ -240,8 +239,7 @@ export interface GenerateTextWithToolsResult {
   toolCalls: Array<{ toolCallId: string; toolName: string; input: unknown }>
   response: { messages: ModelMessage[] }
   /**
-   * What the call cost, when the caller passed `modelString` (the cost recorder
-   * needs it to parse the provider). Production accounts for this through
+   * What the call cost. Production accounts for this through
    * `maybeRecordUsage` and never reads it here; it is returned so a caller that
    * is NOT writing `ai_usage_records` — the eval runner — can still attribute
    * tokens and cost to the model that ran. Absent on implementations that do
@@ -260,8 +258,8 @@ export interface GenerateObjectOptions<T extends z.ZodType> {
   /** Set to false to disable repair, or provide custom repair function */
   repair?: RepairFunction | false
   telemetry?: TelemetryConfig
-  /** When provided, usage will be recorded to the database */
-  context?: CostContext
+  /** Charged to this workspace: the spend gate admits the call and usage is recorded against it */
+  context: CostContext
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
 }
@@ -276,8 +274,8 @@ export interface GenerateDecisionsOptions {
   state: unknown
   questions: Record<string, DecisionQuestion>
   telemetry?: TelemetryConfig
-  /** When provided, usage will be recorded to the database */
-  context?: CostContext
+  /** Charged to this workspace: the spend gate admits the call and usage is recorded against it */
+  context: CostContext
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
 }
@@ -286,8 +284,8 @@ export interface EmbedOptions {
   model: string
   value: string
   telemetry?: TelemetryConfig
-  /** When provided, usage will be recorded to the database */
-  context?: CostContext
+  /** Charged to this workspace: the spend gate admits the call and usage is recorded against it */
+  context: CostContext
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
 }
@@ -296,8 +294,8 @@ export interface EmbedManyOptions {
   model: string
   values: string[]
   telemetry?: TelemetryConfig
-  /** When provided, usage will be recorded to the database */
-  context?: CostContext
+  /** Charged to this workspace: the spend gate admits the call and usage is recorded against it */
+  context: CostContext
   /** Abort signal for graceful cancellation / per-call timeouts */
   abortSignal?: AbortSignal
 }
@@ -694,12 +692,9 @@ export function createAI(config: AIConfig): AI {
     }
   }
 
-  /**
-   * Denies before the provider sees the request. Calls without a context carry
-   * no workspace to charge, so there is nothing to admit them against.
-   */
-  async function admit(context: CostContext | undefined, functionId: string): Promise<void> {
-    if (!config.spendGate || !context) return
+  /** Denies before the provider sees the request. */
+  async function admit(context: CostContext, functionId: string): Promise<void> {
+    if (!config.spendGate) return
     const request = { workspaceId: context.workspaceId, userId: context.userId, functionId }
     const decision = await config.spendGate.admit(request)
     if (decision.allowed) return
@@ -729,7 +724,7 @@ export function createAI(config: AIConfig): AI {
    * happened, so it records with provider/model `unknown` rather than dropping.
    */
   function maybeDisclose(params: {
-    context?: CostContext
+    context: CostContext
     functionId: string
     modelString?: string
     metadata?: Record<string, unknown>
@@ -765,14 +760,14 @@ export function createAI(config: AIConfig): AI {
   }
 
   async function maybeRecordUsage(params: {
-    context?: CostContext
+    context: CostContext
     functionId: string
     modelString: string
     usage: UsageWithCost
     latencyMs?: number
     metadata?: Record<string, unknown>
   }): Promise<void> {
-    if (!config.costRecorder || !params.context) return
+    if (!config.costRecorder) return
 
     const parsed = parseModelId(params.modelString)
 
@@ -861,12 +856,9 @@ export function createAI(config: AIConfig): AI {
         options.model.modelId === "openai/gpt-6-luna" &&
         options.modelString !== LUNA
       ) {
-        throw new Error("GPT-6 Luna tool calls require modelString for stateless Responses and exact cost")
+        throw new Error("GPT-6 Luna tool calls require the matching modelString for stateless Responses and exact cost")
       }
       await admit(options.context, options.telemetry?.functionId ?? "generateTextWithTools")
-      // Disclose fires even without `modelString`: the egress happened, so a
-      // provider/model `unknown` row beats silence. Cost recording below stays
-      // gated on `modelString` (the recorder needs the parseable identifier).
       maybeDisclose({
         context: options.context,
         functionId: options.telemetry?.functionId ?? "generateTextWithTools",
@@ -900,27 +892,20 @@ export function createAI(config: AIConfig): AI {
         experimental_telemetry: buildTelemetry(options.telemetry),
       })
 
-      // Usage recording requires the original model string because the resolved
-      // LanguageModel instance does not carry the provider:model prefix the cost
-      // recorder expects. Callers that want tracked usage must pass `modelString`
-      // alongside `context` (agent loops do this via AgentRuntime).
-      let usage: UsageWithCost | undefined
-      if (options.modelString) {
-        usage = options.modelString === LUNA ? lunaUsage(response) : extractUsageWithCost(response)
-        logger.debug(
-          { usage, model: options.modelString, functionId: options.telemetry?.functionId },
-          "AI generateTextWithTools completed with usage"
-        )
+      const usage = options.modelString === LUNA ? lunaUsage(response) : extractUsageWithCost(response)
+      logger.debug(
+        { usage, model: options.modelString, functionId: options.telemetry?.functionId },
+        "AI generateTextWithTools completed with usage"
+      )
 
-        await maybeRecordUsage({
-          context: options.context,
-          functionId: options.telemetry?.functionId ?? "generateTextWithTools",
-          modelString: options.modelString,
-          usage,
-          latencyMs: Date.now() - startedAt,
-          metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
-        })
-      }
+      await maybeRecordUsage({
+        context: options.context,
+        functionId: options.telemetry?.functionId ?? "generateTextWithTools",
+        modelString: options.modelString,
+        usage,
+        latencyMs: Date.now() - startedAt,
+        metadata: options.telemetry?.metadata as Record<string, unknown> | undefined,
+      })
 
       return {
         text: response.text,

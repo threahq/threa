@@ -46,6 +46,7 @@ function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       id: "ws_1",
       name: "Workspace",
       slug: "workspace",
+      tier: "full",
       createdBy: "member_1",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),

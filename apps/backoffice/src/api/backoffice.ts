@@ -1,4 +1,4 @@
-import type { FeatureFlagScope, WorkspaceInvitableRole, WorkspaceRoleSlug } from "@threahq/types"
+import type { FeatureFlagScope, WorkspaceInvitableRole, WorkspaceRoleSlug, WorkspaceTier } from "@threahq/types"
 import { api } from "./client"
 
 /**
@@ -12,6 +12,7 @@ export interface WorkspaceSummary {
   name: string
   slug: string
   region: string
+  tier: WorkspaceTier
   createdByWorkosUserId: string
   workosOrganizationId: string | null
   memberCount: number
@@ -299,4 +300,10 @@ export function removeWorkspaceMember(workspaceId: string, workosUserId: string)
   return api.delete<void>(
     `/api/backoffice/workspaces/${encodeURIComponent(workspaceId)}/members/${encodeURIComponent(workosUserId)}`
   )
+}
+
+export function setWorkspaceTier(workspaceId: string, tier: WorkspaceTier): Promise<WorkspaceTier> {
+  return api
+    .put<{ tier: WorkspaceTier }>(`/api/backoffice/workspaces/${encodeURIComponent(workspaceId)}/tier`, { tier })
+    .then((r) => r.tier)
 }

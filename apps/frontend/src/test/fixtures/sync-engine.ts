@@ -122,6 +122,7 @@ export function makeWorkspaceBootstrap(): WorkspaceBootstrap {
       id: "ws_1",
       name: "Test",
       slug: "test",
+      tier: "full",
       createdBy: "user_1",
       createdAt: now,
       updatedAt: now,

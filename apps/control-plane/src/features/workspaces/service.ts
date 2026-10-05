@@ -10,7 +10,7 @@ import {
   OutboxRepository,
   type WorkosOrgService,
 } from "@threahq/backend-common"
-import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
+import { WORKSPACE_ROLE_SLUGS, type WorkspaceTier } from "@threahq/types"
 import { WorkspaceRegistryRepository } from "./repository"
 import type { RegionalClient } from "../../lib/regional-client"
 import type { KvClient } from "../../lib/cloudflare-kv-client"
@@ -21,6 +21,7 @@ import type { PlatformAdminSyncService } from "../platform-admin"
 
 export const OUTBOX_KV_SYNC = "kv_sync"
 export const OUTBOX_REGIONAL_CREATE = "regional_create"
+export const OUTBOX_WORKSPACE_TIER_SYNC = "workspace_tier_sync"
 
 interface Dependencies {
   pool: Pool
@@ -84,6 +85,7 @@ export class ControlPlaneWorkspaceService {
       name: row.name,
       slug: row.slug,
       region: row.region,
+      tier: row.tier,
       createdBy: row.created_by_workos_user_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -170,6 +172,7 @@ export class ControlPlaneWorkspaceService {
       name: workspace.name,
       slug: workspace.slug,
       region: workspace.region,
+      tier: workspace.tier,
       createdBy: workspace.created_by_workos_user_id,
       createdAt: workspace.created_at,
       updatedAt: workspace.updated_at,
@@ -234,6 +237,29 @@ export class ControlPlaneWorkspaceService {
     logger.info({ workspaceId: payload.workspaceId, region: payload.region }, "Workspace provisioned in region")
   }
 
+  /** The tier write and the fan-out outbox event commit atomically (INV-7). */
+  async setTier(workspaceId: string, tier: WorkspaceTier): Promise<WorkspaceTier> {
+    await withTransaction(this.pool, async (client) => {
+      if (!(await WorkspaceRegistryRepository.updateTier(client, workspaceId, tier))) {
+        throw new HttpError("Workspace not found", { status: 404, code: "NOT_FOUND" })
+      }
+      await OutboxRepository.insert(client, OUTBOX_WORKSPACE_TIER_SYNC, {
+        workspaceId,
+      } satisfies WorkspaceTierSyncPayload)
+    })
+    return tier
+  }
+
+  /** Outbox handler: push the current tier, not event-time state, to the workspace's region. */
+  async syncTierToRegion(payload: WorkspaceTierSyncPayload): Promise<void> {
+    const workspace = await WorkspaceRegistryRepository.findById(this.pool, payload.workspaceId)
+    if (!workspace) {
+      logger.warn({ workspaceId: payload.workspaceId }, "Workspace tier sync skipped: workspace not in registry")
+      return
+    }
+    await this.regionalClient.syncWorkspaceTier(workspace.region, { workspaceId: workspace.id, tier: workspace.tier })
+  }
+
   /** Outbox handler: sync workspace-to-region mapping to Cloudflare KV */
   async syncToKv(payload: KvSyncPayload): Promise<void> {
     await this.kvClient.putWorkspaceRegion(payload.workspaceId, payload.region)
@@ -244,6 +270,11 @@ export class ControlPlaneWorkspaceService {
 export interface KvSyncPayload {
   workspaceId: string
   region: string
+}
+
+/** Carries only the workspace; the handler re-reads the current tier, so replays are idempotent. */
+export interface WorkspaceTierSyncPayload extends Record<string, unknown> {
+  workspaceId: string
 }
 
 export interface RegionalCreatePayload {

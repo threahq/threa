@@ -139,6 +139,7 @@ function baseRequest(over: Partial<EnclaveSessionAssignment>): EnclaveSessionAss
   return {
     sessionId: "session_test",
     callbackToken: "cbtok_test",
+    workspaceId: "ws_test",
     streamId: STREAM_ID,
     wraps: [],
     history: [],

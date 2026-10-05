@@ -29,6 +29,7 @@ function makeWorkspace(overrides: Partial<WorkspaceDetail> = {}): WorkspaceDetai
     name: "Acme",
     slug: "acme",
     region: "local",
+    tier: "full",
     createdByWorkosUserId: "user_01",
     workosOrganizationId: "org_01",
     memberCount: 0,

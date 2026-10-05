@@ -12,7 +12,7 @@ import { createWorkspaceAuthzHandlers, WorkspaceAuthzService } from "./features/
 import { createFeatureFlagHandlers, type FeatureFlagService } from "./features/feature-flags"
 import { createPlatformAdminHandlers, type PlatformAdminService } from "./features/platform-admin"
 import { createAuthHandlers } from "./auth/handlers"
-import { createWorkspaceHandlers, WorkspaceRepository } from "./features/workspaces"
+import { createWorkspaceHandlers, createWorkspaceTierSyncHandlers, WorkspaceRepository } from "./features/workspaces"
 import { createWorkspaceMemberManagementHandlers } from "./features/workspace-members"
 import type { ControlPlaneClient } from "./lib/control-plane-client"
 import {
@@ -420,6 +420,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const boardView = createBoardViewHandlers({ boardViewService })
   const userE2eKeys = createUserE2eKeysHandlers({ userE2eKeysService })
   const aiUsage = createAIUsageHandlers({ pool })
+  const workspaceTierSync = createWorkspaceTierSyncHandlers({ pool })
   const debug = createDebugHandlers({ pool, poolMonitor })
   const invitation = createInvitationHandlers({ invitationService })
   const activity = createActivityHandlers({ activityService })
@@ -475,6 +476,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     app.post("/internal/authz/memberships", internalAuth, workspaceAuthz.syncMembership)
     app.post("/internal/feature-flags", internalAuth, featureFlags.sync)
     app.post("/internal/ai-spend-controls", internalAuth, aiUsage.syncOperatorControls)
+    app.post("/internal/workspace-tier", internalAuth, workspaceTierSync.sync)
     app.post("/internal/platform-admin", internalAuth, platformAdmin.sync)
     app.post("/internal/github/webhook-events", internalAuth, githubWebhook.ingest)
     app.post("/internal/stream-connections", internalAuth, streamConnections.sync)

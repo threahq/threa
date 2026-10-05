@@ -14,6 +14,7 @@ import {
   type ValidateMoveMessagesToThreadResponse,
   type WorkspaceInvitableRole,
   type WorkspacePermissionSlug,
+  type WorkspaceTier,
 } from "@threahq/types"
 
 export function getBaseUrl(): string {
@@ -155,6 +156,7 @@ export interface Workspace {
   id: string
   name: string
   slug: string
+  tier: WorkspaceTier
 }
 
 export interface Stream {

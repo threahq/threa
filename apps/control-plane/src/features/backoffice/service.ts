@@ -9,7 +9,7 @@ import {
   type WorkosOrgService,
   type WorkosUserSummary,
 } from "@threahq/backend-common"
-import type { WorkspaceInvitableRole } from "@threahq/types"
+import type { WorkspaceInvitableRole, WorkspaceTier } from "@threahq/types"
 import { PlatformRoleRepository } from "./repository"
 import { WorkspaceRegistryRepository } from "../workspaces"
 import { WorkosAuthzBackfill, WorkosAuthzRepository } from "../workos-authz"
@@ -83,6 +83,7 @@ export interface WorkspaceSummary {
   name: string
   slug: string
   region: string
+  tier: WorkspaceTier
   createdByWorkosUserId: string
   workosOrganizationId: string | null
   memberCount: number
@@ -551,6 +552,7 @@ export class BackofficeService {
     name: string
     slug: string
     region: string
+    tier: WorkspaceTier
     created_by_workos_user_id: string
     workos_organization_id: string | null
     member_count: number
@@ -562,6 +564,7 @@ export class BackofficeService {
       name: row.name,
       slug: row.slug,
       region: row.region,
+      tier: row.tier,
       createdByWorkosUserId: row.created_by_workos_user_id,
       workosOrganizationId: row.workos_organization_id,
       memberCount: row.member_count,

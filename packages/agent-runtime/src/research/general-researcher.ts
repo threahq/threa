@@ -79,7 +79,7 @@ export interface GeneralResearchRunInput {
    */
   tools: AgentTool[]
   /** Cost context forwarded to every inner AI call for usage attribution. */
-  costContext?: CostContext
+  costContext: CostContext
   /** Cooperative cancellation from the caller (user stop). */
   signal: AbortSignal
   /** Absolute wall-clock deadline (ms epoch) after which we return partial. */

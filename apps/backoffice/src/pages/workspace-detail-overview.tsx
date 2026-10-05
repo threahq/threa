@@ -1,11 +1,25 @@
 import { type ReactNode } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useParams } from "react-router-dom"
 import { ExternalLink } from "lucide-react"
+import { WORKSPACE_TIERS, WORKSPACE_TIER_VALUES, type WorkspaceTier } from "@threahq/types"
 import { Section } from "@/components/layout/section"
-import { backofficeKeys, getBackofficeConfig, type BackofficeConfig, type WorkspaceDetail } from "@/api/backoffice"
+import { InlineBanner } from "@/components/inline-banner"
+import {
+  backofficeKeys,
+  getBackofficeConfig,
+  setWorkspaceTier,
+  type BackofficeConfig,
+  type WorkspaceDetail,
+} from "@/api/backoffice"
+import { readApiError } from "@/api/client"
 import { formatDateTime } from "@/lib/format"
 import { cn } from "@/lib/utils"
+
+const TIER_LABELS: Record<WorkspaceTier, string> = {
+  [WORKSPACE_TIERS.FULL]: "Full",
+  [WORKSPACE_TIERS.CONNECT]: "Connect",
+}
 
 function buildWorkspaceUrl(appBaseUrl: string, workspaceId: string): string {
   // The user-facing app routes workspaces under `/w/<id>`, not `/ws/<id>`.
@@ -87,6 +101,7 @@ function WorkspaceDetailBody({
             span={2}
           />
           <Field label="Region" value={workspace.region} />
+          <Field label="Tier" value={<WorkspaceTierSelect workspaceId={workspace.id} tier={workspace.tier} />} />
           <Field label="Members" value={workspace.memberCount.toString()} to={`/workspaces/${workspace.id}/members`} />
           <Field
             label="WorkOS organization"
@@ -97,6 +112,38 @@ function WorkspaceDetailBody({
           <Field label="Updated" value={formatDateTime(workspace.updatedAt)} />
         </FieldGrid>
       </Section>
+    </div>
+  )
+}
+
+function WorkspaceTierSelect({ workspaceId, tier }: { workspaceId: string; tier: WorkspaceTier }) {
+  const queryClient = useQueryClient()
+  const mutation = useMutation({
+    mutationFn: (next: WorkspaceTier) => setWorkspaceTier(workspaceId, next),
+    onSuccess: (saved) => {
+      queryClient.setQueryData<WorkspaceDetail>(backofficeKeys.workspace(workspaceId), (current) =>
+        current ? { ...current, tier: saved } : current
+      )
+    },
+  })
+  const error = readApiError(mutation.error)
+
+  return (
+    <div className="flex flex-col gap-2">
+      <select
+        aria-label="Tier"
+        value={mutation.isPending ? mutation.variables : tier}
+        disabled={mutation.isPending}
+        onChange={(e) => mutation.mutate(e.target.value as WorkspaceTier)}
+        className="h-10 w-full rounded-input border border-input bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 sm:max-w-48"
+      >
+        {WORKSPACE_TIER_VALUES.map((value) => (
+          <option key={value} value={value}>
+            {TIER_LABELS[value]}
+          </option>
+        ))}
+      </select>
+      {error ? <InlineBanner tone="error">{error}</InlineBanner> : null}
     </div>
   )
 }
