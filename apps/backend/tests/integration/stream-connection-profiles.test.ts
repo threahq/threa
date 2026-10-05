@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import {
   AuthorTypes,
+  StreamTypes,
   bridgeEventsSchema,
   bridgeManifestSchema,
   bridgeProfilesSchema,
@@ -26,6 +27,7 @@ import {
   BridgeClient,
   StreamConnectionExportService,
   StreamConnectionForwardService,
+  StreamConnectionImportService,
   StreamConnectionPokeHandler,
   StreamConnectionProfileService,
   StreamConnectionPullService,
@@ -404,7 +406,7 @@ describe("Profiles of copied users kept current across a shared channel", () => 
     })
   })
 
-  test("should relay a partner member's new name to another partner through the host without poking it back home", async () => {
+  test("should relay a partner member's new name to a second partner through the host when both refresh, without poking the first partner back", async () => {
     const world = await seedWorld()
     const other = await seedWorkspace("Profiles second partner")
     const otherRef = { workspaceId: other.id, connectionId: (await connect(world.host, world.channel.id, other)).id }
@@ -427,16 +429,55 @@ describe("Profiles of copied users kept current across a shared channel", () => 
     })
   })
 
-  test("should answer only for members who wrote or reacted in the shared channel, never for the caller's own", async () => {
+  test("should answer only for members who wrote or reacted in the shared channel or its threads when another end asks, never for the asker's own", async () => {
     const world = await seedWorld()
-    const reactor = await addTestMember(pool, world.host.id, `reactor-${world.host.id}`)
-    const bystander = await addTestMember(pool, world.host.id, `bystander-${world.host.id}`)
+    const member = (name: string) => addTestMember(pool, world.host.id, `${name}-${world.host.id}`)
+    const reactor = await member("reactor")
+    const bystander = await member("bystander")
+    const threader = await member("threader")
+    const elsewhere = await member("elsewhere")
+    const retracted = await member("retracted")
     await eventService.addReactionInternal({
       workspaceId: world.host.id,
       messageId: world.message.id,
       streamId: world.channel.id,
       emoji: "👍",
       userId: reactor.id,
+    })
+    const thread = await StreamRepository.insert(pool, {
+      id: streamId(),
+      workspaceId: world.host.id,
+      type: StreamTypes.THREAD,
+      parentStreamId: world.channel.id,
+      parentAnchorId: world.message.id,
+      rootStreamId: world.channel.id,
+      createdBy: world.host.adminId,
+    })
+    const unshared = await StreamRepository.insert(pool, {
+      id: streamId(),
+      workspaceId: world.host.id,
+      type: "channel",
+      slug: `unshared-${crypto.randomUUID().slice(0, 8)}`,
+      displayName: "Unshared",
+      visibility: "public",
+      createdBy: world.host.adminId,
+    })
+    const says = (streamId: string, authorId: string, text: string) =>
+      eventService.createMessage({
+        workspaceId: world.host.id,
+        streamId,
+        authorId,
+        authorType: AuthorTypes.USER,
+        ...testMessageContent(text),
+      })
+    await says(thread.id, threader.id, "in the thread")
+    await says(unshared.id, elsewhere.id, "not shared")
+    const removed = await says(world.channel.id, retracted.id, "taken back")
+    await eventService.deleteMessageInternal({
+      workspaceId: world.host.id,
+      messageId: removed.id,
+      streamId: world.channel.id,
+      actorId: retracted.id,
     })
     const pat = await addTestMember(pool, world.partner.id, `pat-${world.partner.id}`)
     await partnerSays(world.partner.id, world.channel.id, pat.id, "mine")
@@ -445,14 +486,25 @@ describe("Profiles of copied users kept current across a shared channel", () => 
       workspaceId: world.host.id,
       connectionId: world.snapshot.id,
       callerWorkspaceId: world.partner.id,
-      userIds: [world.host.adminId, reactor.id, bystander.id, pat.id, "usr_missing"],
+      userIds: [
+        world.host.adminId,
+        reactor.id,
+        bystander.id,
+        threader.id,
+        elsewhere.id,
+        retracted.id,
+        pat.id,
+        "usr_missing",
+      ],
     })
 
-    expect([...answer.users].sort((a, b) => a.id.localeCompare(b.id))).toEqual(
-      [
+    const byId = (users: { id: string }[]) => users.toSorted((a, b) => a.id.localeCompare(b.id))
+    expect(byId(answer.users)).toEqual(
+      byId([
         { id: world.host.adminId, name: world.host.adminName, avatar: null },
         { id: reactor.id, name: reactor.name, avatar: null },
-      ].sort((a, b) => a.id.localeCompare(b.id))
+        { id: threader.id, name: threader.name, avatar: null },
+      ])
     )
   })
 
@@ -476,6 +528,104 @@ describe("Profiles of copied users kept current across a shared channel", () => 
     }).toEqual({
       copy: { name: world.host.adminName, avatarUrl: null, originWorkspaceId: world.host.id },
       updates: [],
+    })
+  })
+  test("should leave a copy to the next refresh when another refresh changes its name or picture while this one reads", async () => {
+    const world = await seedWorld()
+    const bea = await addTestMember(pool, world.host.id, `bea-${world.host.id}`)
+    await eventService.createMessage({
+      workspaceId: world.host.id,
+      streamId: world.channel.id,
+      authorId: bea.id,
+      authorType: AuthorTypes.USER,
+      ...testMessageContent("bea here"),
+    })
+    expect(await pullService.pull(world.partnerRef)).toBe(true)
+    await UserRepository.update(pool, world.host.id, world.host.adminId, { name: "Ada First" })
+    await setAvatar(world.host.id, bea.id)
+    let newer = ""
+    const racing = new InterruptedBridgeClient(ends, async () => {
+      await UserRepository.update(pool, world.host.id, world.host.adminId, { name: "Ada Second" })
+      newer = await setAvatar(world.host.id, bea.id)
+      await profileService.refresh(world.partnerRef)
+    })
+
+    await new StreamConnectionProfileService({
+      pool,
+      bridgeClient: racing,
+      featureFlagService,
+      avatarService,
+    }).refresh(world.partnerRef)
+
+    const newerAvatar = `avatars/${world.partner.id}/${bea.id}/${newer}`
+    expect({
+      ada: await copyOf(world.partner.id, world.host.adminId),
+      bea: await copyOf(world.partner.id, bea.id),
+      beaFiles: await avatarFiles(world.partner.id, bea.id, newer),
+      updates: [
+        ...(await userUpdates(world.partner.id, world.host.adminId)),
+        ...(await userUpdates(world.partner.id, bea.id)),
+      ].map((event) => event.payload.user),
+    }).toEqual({
+      ada: { name: "Ada Second", avatarUrl: null, originWorkspaceId: world.host.id },
+      bea: { name: bea.name, avatarUrl: newerAvatar, originWorkspaceId: world.host.id },
+      beaFiles: presentFiles(newer),
+      updates: [
+        expect.objectContaining({ id: world.host.adminId, name: "Ada Second" }),
+        expect.objectContaining({ id: bea.id, avatarUrl: newerAvatar }),
+      ],
+    })
+  })
+
+  test("should queue a profile refresh at both ends of each active shared channel when the sweep runs, skipping peers and revoked ones", async () => {
+    const host = await seedWorkspace("Sweep host")
+    const partner = await seedWorkspace("Sweep partner")
+    const peer = await seedWorkspace("Sweep peer")
+    const gone = await seedWorkspace("Sweep revoked partner")
+    const channel = await StreamRepository.insert(pool, {
+      id: streamId(),
+      workspaceId: host.id,
+      type: "channel",
+      slug: `sweep-${crypto.randomUUID().slice(0, 8)}`,
+      displayName: "Sweep",
+      visibility: "public",
+      createdBy: host.adminId,
+    })
+    const active = await connect(host, channel.id, partner)
+    await StreamConnectionRepository.applySnapshots(pool, [{ ...active, revision: 3, peerWorkspaceIds: [peer.id] }])
+    const revoked = await connect(host, channel.id, gone)
+    await StreamConnectionRepository.applySnapshots(pool, [{ ...revoked, revision: 3, state: "revoked" }])
+
+    await new StreamConnectionImportService({ pool, featureFlagService }).enqueueAllProfileRefreshes()
+
+    expect({
+      host: await profileJobs(host.id),
+      partner: await profileJobs(partner.id),
+      peer: await profileJobs(peer.id),
+      gone: await profileJobs(gone.id),
+    }).toEqual({
+      host: [{ workspaceId: host.id, connectionId: active.id }],
+      partner: [{ workspaceId: partner.id, connectionId: active.id }],
+      peer: [],
+      gone: [],
+    })
+  })
+
+  test("should queue a refresh when the connection's other end pokes, and refuse a poke from any other workspace", async () => {
+    const world = await seedWorld()
+    const stranger = await seedWorkspace("Profiles stranger")
+    const importService = new StreamConnectionImportService({ pool, featureFlagService })
+    const before = await profileJobs(world.hostRef.workspaceId)
+
+    await importService.requestProfileRefresh({ ...world.hostRef, callerWorkspaceId: world.partner.id })
+    const refused = await importService
+      .requestProfileRefresh({ ...world.hostRef, callerWorkspaceId: stranger.id })
+      .catch((error: unknown) => error)
+
+    expect({ before, after: await profileJobs(world.host.id), refused }).toEqual({
+      before: [],
+      after: [world.hostRef],
+      refused: expect.objectContaining({ status: 404, code: "STREAM_CONNECTION_NOT_FOUND" }),
     })
   })
 })

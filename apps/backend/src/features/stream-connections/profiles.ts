@@ -1,20 +1,22 @@
 import type { Pool } from "pg"
 import { serializeBigInt } from "@threahq/backend-common"
-import { StreamConnectionStates, type BridgeProfile, type StreamConnection } from "@threahq/types"
+import {
+  BRIDGE_PROFILES_MAX_IDS,
+  StreamConnectionStates,
+  type BridgeProfile,
+  type StreamConnection,
+} from "@threahq/types"
 import { withTransaction, type Querier } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { JobQueues, QueueRepository, type StreamConnectionProfilesJobData } from "../../lib/queue"
 import { logger } from "../../lib/logger"
 import type { FeatureFlagService } from "../feature-flags"
-import { AVATAR_SIZES, UserRepository, type AvatarService, type User } from "../workspaces"
+import { AVATAR_SIZES, UserRepository, type AvatarService, type CopyProfileUpdate, type User } from "../workspaces"
 import type { BridgeClient } from "./bridge-client"
 import { StreamConnectionRepository, type ConnectionRef } from "./repository"
 
 /** Pokes that land in one window share a refresh, the same way pulls coalesce. */
 const REFRESH_COALESCE_MS = 1_000
-
-/** Matches the most ids a profiles request takes. */
-const PROFILES_PAGE_SIZE = 500
 
 const AVATAR_KEY_PATTERN = /^avatars\/[^/]+\/[^/]+\/(\d+)$/
 
@@ -33,8 +35,8 @@ type LinkedConnection = StreamConnection & { remoteWorkspaceId: string }
  * they are at home, between the messages that would otherwise carry a rename.
  * A copy's avatar files are copied into this workspace's own avatar keys, the
  * only ones its avatar URLs serve. Bridge and file calls run outside any
- * transaction (INV-41). The write keeps a copy only while its avatar is the one
- * this refresh read, so a refresh that lost a race leaves the copy to the next.
+ * transaction (INV-41). The write keeps a copy only while its name and avatar
+ * are the ones this refresh read, so a refresh that lost a race leaves the copy to the next.
  */
 export class StreamConnectionProfileService {
   private readonly pool: Pool
@@ -63,19 +65,25 @@ export class StreamConnectionProfileService {
       callerWorkspaceId: ref.workspaceId,
     }
     const profiles = new Map<string, BridgeProfile>()
-    for (let i = 0; i < copies.length; i += PROFILES_PAGE_SIZE) {
-      const ids = copies.slice(i, i + PROFILES_PAGE_SIZE).map((copy) => copy.id)
+    for (let i = 0; i < copies.length; i += BRIDGE_PROFILES_MAX_IDS) {
+      const ids = copies.slice(i, i + BRIDGE_PROFILES_MAX_IDS).map((copy) => copy.id)
       const page = await this.bridgeClient.getProfiles(address, ids)
       for (const profile of page.users) profiles.set(profile.id, profile)
     }
 
-    const updates: { id: string; name: string; avatarUrl: string | null; observedAvatarUrl: string | null }[] = []
+    const updates: CopyProfileUpdate[] = []
     for (const copy of copies) {
       const profile = profiles.get(copy.id)
       if (!profile) continue
       const avatarUrl = await this.copyAvatar(ref.workspaceId, remoteWorkspaceId, copy, profile.avatar)
       if (profile.name === copy.name && avatarUrl === copy.avatarUrl) continue
-      updates.push({ id: copy.id, name: profile.name, avatarUrl, observedAvatarUrl: copy.avatarUrl })
+      updates.push({
+        id: copy.id,
+        name: profile.name,
+        avatarUrl,
+        observedName: copy.name,
+        observedAvatarUrl: copy.avatarUrl,
+      })
     }
     if (updates.length === 0) return
 

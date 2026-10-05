@@ -310,9 +310,11 @@ export type BridgeAddReaction = z.infer<typeof bridgeAddReactionSchema>
 export const bridgeDeleteMessageQuerySchema = z.object({ authorId: z.string().regex(/^usr_/) })
 export const bridgeRemoveReactionQuerySchema = z.object({ authorId: z.string().regex(/^usr_/) })
 
+export const BRIDGE_PROFILES_MAX_IDS = 500
+
 /** The users whose current profiles one side asks the other for: its copies of the other side's users. */
 export const bridgeProfilesRequestSchema = z.object({
-  userIds: z.array(z.string().regex(/^usr_/)).min(1).max(500),
+  userIds: z.array(z.string().regex(/^usr_/)).min(1).max(BRIDGE_PROFILES_MAX_IDS),
 })
 export type BridgeProfilesRequest = z.infer<typeof bridgeProfilesRequestSchema>
 

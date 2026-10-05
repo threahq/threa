@@ -1476,6 +1476,7 @@ export {
   bridgeAddReactionSchema,
   bridgeDeleteMessageQuerySchema,
   bridgeRemoveReactionQuerySchema,
+  BRIDGE_PROFILES_MAX_IDS,
   bridgeProfilesRequestSchema,
   bridgeProfilesSchema,
   type BridgeWriteUser,
