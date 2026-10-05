@@ -77,7 +77,8 @@ export interface Workspace {
   slug: string
   region?: string
   tier: WorkspaceTier
-  createdBy: string
+  /** Null for an org workspace nobody has claimed yet. */
+  createdBy: string | null
   createdAt: string
   updatedAt: string
 }

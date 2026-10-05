@@ -42,9 +42,9 @@ function installFetch(onPut: (body: unknown) => Response): void {
   )
 }
 
-function renderOverview() {
+function renderOverview(detail: WorkspaceDetail = workspace) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  queryClient.setQueryData(backofficeKeys.workspace(WORKSPACE_ID), workspace)
+  queryClient.setQueryData(backofficeKeys.workspace(WORKSPACE_ID), detail)
   render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[`/workspaces/${WORKSPACE_ID}`]}>
@@ -94,5 +94,20 @@ describe("WorkspaceDetailOverviewPage tier", () => {
       alert: alert.textContent,
       tier: screen.getByRole<HTMLSelectElement>("combobox", { name: "Tier" }).value,
     }).toEqual({ alert: "Invalid request body", tier: "full" })
+  })
+})
+
+describe("WorkspaceDetailOverviewPage owner", () => {
+  afterEach(() => {
+    cleanup()
+    vi.unstubAllGlobals()
+  })
+
+  it("should show the owner section as unclaimed when the workspace has no owner", async () => {
+    installFetch(() => json({}))
+    renderOverview({ ...workspace, createdByWorkosUserId: null, owner: null })
+
+    await screen.findByRole("combobox", { name: "Tier" })
+    expect(screen.getByText("Owner").closest("section")?.textContent).toBe("OwnerUnclaimed")
   })
 })

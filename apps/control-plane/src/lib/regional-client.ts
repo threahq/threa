@@ -2,6 +2,7 @@ import { logger, INTERNAL_API_KEY_HEADER, type WorkosMembershipStatus } from "@t
 import {
   streamConnectionChannelSchema,
   type FeatureFlagScope,
+  type OrgWorkspaceEnsureRequest,
   type StreamConnectionChannel,
   type StreamConnectionSnapshot,
   type WorkspaceTier,
@@ -217,6 +218,11 @@ export class RegionalClient {
   /** Push a workspace's tier. Full snapshot, so replays are idempotent. */
   async syncWorkspaceTier(region: string, data: { workspaceId: string; tier: WorkspaceTier }): Promise<void> {
     await this.postInternal(region, "/internal/workspace-tier", data, "Regional workspace tier sync")
+  }
+
+  /** Create an org's unclaimed workspace if absent and add the people it lacks. Idempotent, so replays are safe. */
+  async ensureOrgWorkspace(region: string, data: OrgWorkspaceEnsureRequest): Promise<void> {
+    await this.postInternal(region, "/internal/org-workspaces", data, "Regional org workspace ensure")
   }
 
   /** Push a stream connection's current state. The region projects whichever sides it holds. */

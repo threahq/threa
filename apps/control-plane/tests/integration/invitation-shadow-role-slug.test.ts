@@ -4,6 +4,7 @@ import { StubWorkosOrgService } from "@threahq/backend-common"
 import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import { InvitationShadowRepository, InvitationShadowService } from "../../src/features/invitation-shadows"
 import { PlatformAdminSyncService } from "../../src/features/platform-admin"
+import { WorkosOrganizationProvisioner } from "../../src/features/workspaces"
 import type { RegionalClient } from "../../src/lib/regional-client"
 import { setupTestDatabase } from "./setup"
 
@@ -45,6 +46,7 @@ describe("InvitationShadowService role_slug propagation", () => {
       pool,
       regionalClient: regional,
       workosOrgService: workos,
+      workosOrganizationProvisioner: new WorkosOrganizationProvisioner({ pool, workosOrgService: workos }),
       // Real service: acceptShadow calls enqueueIfAdmin, which only reads
       // platform_roles and writes the outbox — the invitee holds no grant in
       // this suite, so it never reaches the regional client.

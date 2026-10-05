@@ -2,6 +2,11 @@ import { Pool } from "pg"
 import { withTransaction, withClient, type Querier } from "../../db"
 import { WorkspaceRepository, Workspace } from "./repository"
 import { UserRepository, type User } from "./user-repository"
+import {
+  UserExternalIdentityRepository,
+  type ExternalIdentity,
+  type UserExternalIdentity,
+} from "./user-external-identity-repository"
 import { PeoplePurposes, type PeopleViewer } from "./people"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamRepository, StreamMemberRepository, ReadStateRepository } from "../streams"
@@ -10,11 +15,15 @@ import { EmojiUsageRepository } from "../emoji"
 import { PersonaRepository, type Persona } from "../agents"
 import { workspaceId, userId as generateUserId, streamId, avatarUploadId } from "../../lib/id"
 import { generateSlug, generateUniqueSlug, serializeBigInt } from "@threahq/backend-common"
-import { WORKSPACE_ROLE_SLUGS, type WorkspaceSettings } from "@threahq/types"
+import {
+  WORKSPACE_ROLE_SLUGS,
+  type OrgWorkspaceEnsureRequest,
+  type WorkspaceSettings,
+  type WorkspaceTier,
+} from "@threahq/types"
 import { WorkspaceSettingsRepository } from "../workspace-settings"
 import { isValidIanaTimezone } from "../../lib/temporal"
 import { HttpError, isUniqueViolation } from "../../lib/errors"
-import { logger } from "../../lib/logger"
 import { JobQueues } from "../../lib/queue"
 import type { QueueManager } from "../../lib/queue"
 import type { WorkosOrgService } from "@threahq/backend-common"
@@ -28,6 +37,10 @@ const BILLING_TIMEZONE_KEY = "billingTimezone" satisfies keyof WorkspaceSettings
 function deriveSlugFromEmail(email: string): string {
   const prefix = email.split("@")[0]
   return generateSlug(prefix)
+}
+
+function externalIdentityKey(identity: ExternalIdentity): string {
+  return JSON.stringify([identity.provider, identity.externalTeamId, identity.externalUserId])
 }
 
 export interface CreateWorkspaceParams {
@@ -135,6 +148,56 @@ export class WorkspaceService {
       }
       throw error
     }
+  }
+
+  /**
+   * Ensure an unclaimed org workspace exists with an unclaimed user for each person. A person
+   * resolves to the user their external identity already maps to, else to the user with their
+   * email, else to a new user; their identity then maps to that user. Repeat calls are no-ops for
+   * people already present.
+   */
+  async ensureOrgWorkspaceFromControlPlane(params: OrgWorkspaceEnsureRequest): Promise<void> {
+    const { workspaceId: wsId, people } = params
+    await withTransaction(this.pool, async (client) => {
+      await WorkspaceRepository.insertUnclaimedIfAbsent(client, {
+        id: wsId,
+        name: params.name,
+        slug: params.slug,
+        tier: params.tier,
+      })
+      // Serializes concurrent ensures for this workspace, so the find-or-insert per person below
+      // never creates the same person twice.
+      await WorkspaceRepository.findByIdForUpdate(client, wsId)
+
+      const identities = people.flatMap((person) => (person.externalIdentity ? [person.externalIdentity] : []))
+      const emails = people.flatMap((person) => (person.email ? [person.email] : []))
+      const mapped = await UserExternalIdentityRepository.findByIdentities(client, wsId, identities)
+      const userIdByIdentity = new Map(mapped.map((link) => [externalIdentityKey(link), link.userId]))
+      const userIdByEmail = await UserRepository.findIdsByEmails(client, wsId, emails)
+
+      const newLinks: UserExternalIdentity[] = []
+      for (const { name, email, externalIdentity } of people) {
+        const identityKey = externalIdentity ? externalIdentityKey(externalIdentity) : null
+        let userId = (identityKey && userIdByIdentity.get(identityKey)) || (email && userIdByEmail.get(email))
+        if (!userId) {
+          const user = await this.createUserInTransaction(client, {
+            workspaceId: wsId,
+            workosUserId: null,
+            email,
+            name,
+            role: WORKSPACE_ROLE_SLUGS.MEMBER,
+            setupCompleted: false,
+          })
+          userId = user.id
+        }
+        if (email && !userIdByEmail.has(email)) userIdByEmail.set(email, userId)
+        if (externalIdentity && identityKey && !userIdByIdentity.has(identityKey)) {
+          userIdByIdentity.set(identityKey, userId)
+          newLinks.push({ ...externalIdentity, userId })
+        }
+      }
+      await UserExternalIdentityRepository.insertManyIfAbsent(client, wsId, newLinks)
+    })
   }
 
   async createWorkspace(params: CreateWorkspaceParams): Promise<Workspace> {
@@ -274,14 +337,14 @@ export class WorkspaceService {
     params: {
       id?: string
       workspaceId: string
-      workosUserId: string
-      email: string
+      workosUserId: string | null
+      email: string | null
       name: string
       role: User["role"]
       setupCompleted?: boolean
     }
   ): Promise<User> {
-    const normalizedEmail = params.email.trim().toLowerCase()
+    const normalizedEmail = params.email === null ? null : params.email.trim().toLowerCase()
     const userSlug = await generateUniqueSlug(params.name, (s) =>
       UserRepository.slugExistsInWorkspace(client, params.workspaceId, s)
     )
@@ -320,8 +383,12 @@ export class WorkspaceService {
 
   async removeUser(workspaceId: string, userId: string): Promise<void> {
     return withTransaction(this.pool, async (client) => {
+      // An org-workspace ensure holds this lock while it links identities, so it can never link one
+      // to a user this removal deletes.
+      await WorkspaceRepository.findByIdForUpdate(client, workspaceId)
       await UserApiKeyRepository.revokeAllByUser(client, workspaceId, userId)
       await UserRepository.remove(client, workspaceId, userId)
+      await UserExternalIdentityRepository.deleteForUser(client, workspaceId, userId)
       // Read state is user-private truth; drop it on account removal (same tx).
       // stream_members is orphaned here rather than deleted, so this is the
       // user-lifecycle cleanup site, not a mirror of a membership delete.
@@ -627,41 +694,6 @@ export class WorkspaceService {
     }
 
     return updated
-  }
-
-  /**
-   * Ensure a WorkOS organization exists for the given workspace.
-   * 3-tier lookup: local cache → WorkOS by external ID → create new.
-   * No DB connection held during WorkOS API calls (INV-41).
-   */
-  async ensureWorkosOrganization(workspaceId: string): Promise<string | null> {
-    if (!this.workosOrgService) return null
-
-    const cached = await WorkspaceRepository.getWorkosOrganizationId(this.pool, workspaceId)
-    if (cached) return cached
-
-    const existing = await this.workosOrgService.getOrganizationByExternalId(workspaceId)
-    if (existing) {
-      await WorkspaceRepository.setWorkosOrganizationId(this.pool, workspaceId, existing.id)
-      return existing.id
-    }
-
-    // Tier 3: Create new (with concurrent-creation race guard)
-    const workspace = await WorkspaceRepository.findById(this.pool, workspaceId)
-    if (!workspace) return null
-
-    try {
-      const org = await this.workosOrgService.createOrganization({
-        name: workspace.name,
-        externalId: workspaceId,
-      })
-      await WorkspaceRepository.setWorkosOrganizationId(this.pool, workspaceId, org.id)
-    } catch (error) {
-      logger.error({ err: error, workspaceId }, "Failed to create WorkOS organization")
-    }
-
-    // Re-read to get the winning org ID (handles concurrent creation race)
-    return WorkspaceRepository.getWorkosOrganizationId(this.pool, workspaceId)
   }
 
   private async shouldPreferEmailSlug(orgId: string | null, email: string | null): Promise<boolean> {

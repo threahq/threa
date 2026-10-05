@@ -12,7 +12,12 @@ import { createWorkspaceAuthzHandlers, WorkspaceAuthzService } from "./features/
 import { createFeatureFlagHandlers, type FeatureFlagService } from "./features/feature-flags"
 import { createPlatformAdminHandlers, type PlatformAdminService } from "./features/platform-admin"
 import { createAuthHandlers } from "./auth/handlers"
-import { createWorkspaceHandlers, createWorkspaceTierSyncHandlers, WorkspaceRepository } from "./features/workspaces"
+import {
+  createOrgWorkspaceHandlers,
+  createWorkspaceHandlers,
+  createWorkspaceTierSyncHandlers,
+  WorkspaceRepository,
+} from "./features/workspaces"
 import { createWorkspaceMemberManagementHandlers } from "./features/workspace-members"
 import type { ControlPlaneClient } from "./lib/control-plane-client"
 import {
@@ -468,9 +473,11 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   if (internalApiKey) {
     const internalAuth = createInternalAuthMiddleware(internalApiKey)
     const internal = createInternalHandlers({ workspaceService, invitationService })
+    const orgWorkspaces = createOrgWorkspaceHandlers({ workspaceService })
     const githubWebhook = createGithubWebhookHandlers({ jobQueue })
 
     app.post("/internal/workspaces", internalAuth, internal.createWorkspace)
+    app.post("/internal/org-workspaces", internalAuth, orgWorkspaces.ensure)
     app.post("/internal/invitations/:id/accept", internalAuth, internal.acceptInvitation)
     app.post("/internal/invitations/claim-link", internalAuth, invitation.claimLink)
     app.post("/internal/authz/memberships", internalAuth, workspaceAuthz.syncMembership)

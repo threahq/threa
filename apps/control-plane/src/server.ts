@@ -33,9 +33,12 @@ import {
   OUTBOX_KV_SYNC,
   OUTBOX_REGIONAL_CREATE,
   OUTBOX_WORKSPACE_TIER_SYNC,
+  OUTBOX_ORG_WORKSPACE_ENSURE,
+  WorkosOrganizationProvisioner,
   type KvSyncPayload,
   type RegionalCreatePayload,
   type WorkspaceTierSyncPayload,
+  type OrgWorkspaceEnsurePayload,
 } from "./features/workspaces"
 import { InvitationShadowService } from "./features/invitation-shadows"
 import {
@@ -130,16 +133,24 @@ export async function startServer(): Promise<ControlPlaneInstance> {
 
   const availableRegions = Object.keys(config.regions)
   const platformAdminSync = new PlatformAdminSyncService({ pool, regionalClient })
+  const workosOrganizationProvisioner = new WorkosOrganizationProvisioner({ pool, workosOrgService })
   const workspaceService = new ControlPlaneWorkspaceService({
     pool,
     regionalClient,
     workosOrgService,
+    workosOrganizationProvisioner,
     kvClient,
     platformAdminSync,
     availableRegions,
     requireWorkspaceCreationInvite: config.workspaceCreationRequiresInvite,
   })
-  const shadowService = new InvitationShadowService({ pool, regionalClient, workosOrgService, platformAdminSync })
+  const shadowService = new InvitationShadowService({
+    pool,
+    regionalClient,
+    workosOrgService,
+    workosOrganizationProvisioner,
+    platformAdminSync,
+  })
   const waitlistEmailSender = config.waitlist.resendApiKey
     ? new ResendWaitlistEmailSender({ apiKey: config.waitlist.resendApiKey, from: config.waitlist.fromEmail })
     : new StubWaitlistEmailSender()
@@ -428,6 +439,9 @@ async function dispatchEvent(
       break
     case OUTBOX_WORKSPACE_TIER_SYNC:
       await deps.workspaceService.syncTierToRegion(payload as WorkspaceTierSyncPayload)
+      break
+    case OUTBOX_ORG_WORKSPACE_ENSURE:
+      await deps.workspaceService.ensureOrgWorkspaceInRegion(payload as OrgWorkspaceEnsurePayload)
       break
     case OUTBOX_AUTHZ_MEMBERSHIP_CHANGED:
       await deps.authzFanOut.handleMembershipChanged(payload as AuthzMembershipChangedPayload)

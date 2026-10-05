@@ -13,7 +13,7 @@ export interface WorkspaceSummary {
   slug: string
   region: string
   tier: WorkspaceTier
-  createdByWorkosUserId: string
+  createdByWorkosUserId: string | null
   workosOrganizationId: string | null
   memberCount: number
   createdAt: string
@@ -27,7 +27,8 @@ export interface WorkspaceOwnerSummary {
 }
 
 export interface WorkspaceDetail extends WorkspaceSummary {
-  owner: WorkspaceOwnerSummary
+  /** Null for an org workspace nobody has claimed yet. */
+  owner: WorkspaceOwnerSummary | null
 }
 
 export interface WorkspaceRef {

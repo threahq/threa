@@ -207,7 +207,8 @@ export const WorkosAuthzRepository = {
 
   /**
    * One-shot owner backfill: workspaces whose creator is not yet recorded as
-   * an `owner` in the mirror. LEFT JOIN keeps workspaces where the creator
+   * an `owner` in the mirror. An unclaimed workspace has no creator to assign,
+   * so it is never a candidate. LEFT JOIN keeps workspaces where the creator
    * has no membership row at all (mirror gap); `COALESCE(... ANY(...), false)`
    * is needed because `ANY(NULL)` evaluates to NULL, not false.
    */
@@ -237,6 +238,7 @@ export const WorkosAuthzRepository = {
          ON wom.workos_organization_id = wr.workos_organization_id
          AND wom.workos_user_id = wr.created_by_workos_user_id
        WHERE wr.workos_organization_id IS NOT NULL
+         AND wr.created_by_workos_user_id IS NOT NULL
          AND NOT COALESCE('owner' = ANY(wom.role_slugs), false)
        ORDER BY wr.created_at ASC`
     )

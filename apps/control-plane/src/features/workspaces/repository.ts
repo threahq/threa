@@ -7,7 +7,8 @@ export interface WorkspaceRegistryRow {
   slug: string
   region: string
   tier: WorkspaceTier
-  created_by_workos_user_id: string
+  /** Null for an org workspace nobody has claimed yet. */
+  created_by_workos_user_id: string | null
   workos_organization_id: string | null
   created_at: Date
   updated_at: Date
@@ -135,13 +136,14 @@ export const WorkspaceRegistryRepository = {
   },
 
   /**
-   * Count workspaces that have a non-null `workos_organization_id`. Used by the
-   * owner backfill to compute "already-owner" workspaces by subtraction without
-   * a second pass over all rows.
+   * Count claimed workspaces that have a non-null `workos_organization_id`. Used
+   * by the owner backfill to compute "already-owner" workspaces by subtraction
+   * without a second pass over all rows.
    */
-  async countWithWorkosOrganizationId(db: Querier): Promise<number> {
+  async countClaimedWithWorkosOrganizationId(db: Querier): Promise<number> {
     const result = await db.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM workspace_registry WHERE workos_organization_id IS NOT NULL`
+      `SELECT COUNT(*)::text AS count FROM workspace_registry
+       WHERE workos_organization_id IS NOT NULL AND created_by_workos_user_id IS NOT NULL`
     )
     return Number(result.rows[0]?.count ?? 0)
   },
@@ -207,6 +209,30 @@ export const WorkspaceRegistryRepository = {
       [workspace.id, workspace.name, workspace.slug, workspace.region, workspace.createdByWorkosUserId]
     )
     return result.rows[0]
+  },
+
+  /** True when this call inserted the row; false when the org key already had one. */
+  async insertForOrgIfAbsent(
+    db: Querier,
+    workspace: { id: string; name: string; slug: string; region: string; tier: WorkspaceTier; orgKey: string }
+  ): Promise<boolean> {
+    const result = await db.query(
+      `INSERT INTO workspace_registry (id, name, slug, region, tier, org_key, created_by_workos_user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, NULL)
+       ON CONFLICT (org_key) DO NOTHING
+       RETURNING id`,
+      [workspace.id, workspace.name, workspace.slug, workspace.region, workspace.tier, workspace.orgKey]
+    )
+    return (result.rowCount ?? 0) > 0
+  },
+
+  async findByOrgKey(db: Querier, orgKey: string): Promise<WorkspaceRegistryRow | null> {
+    const result = await db.query<WorkspaceRegistryRow>(
+      `SELECT id, name, slug, region, tier, created_by_workos_user_id, workos_organization_id, created_at, updated_at
+       FROM workspace_registry WHERE org_key = $1`,
+      [orgKey]
+    )
+    return result.rows[0] ?? null
   },
 
   async updateTier(db: Querier, id: string, tier: WorkspaceTier): Promise<boolean> {

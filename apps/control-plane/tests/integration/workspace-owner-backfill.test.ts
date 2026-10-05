@@ -23,6 +23,8 @@ describe("WorkspaceOwnerBackfill", () => {
   const wsB = "ws_backfill_b"
   const wsOrphan = "ws_backfill_orphan"
   const wsNoOrg = "ws_backfill_no_org"
+  const wsUnclaimed = "ws_backfill_unclaimed"
+  const orgUnclaimed = "org_backfill_unclaimed"
   const creatorA = "user_backfill_creator_a"
   const creatorB = "user_backfill_creator_b"
   const creatorOrphan = "user_backfill_creator_orphan"
@@ -112,6 +114,18 @@ describe("WorkspaceOwnerBackfill", () => {
     expect(result.newlyAssigned).toBe(0)
   })
 
+  test("should leave an unclaimed workspace alone when it has no creator to assign", async () => {
+    await seedWorkspace(pool, wsUnclaimed, null, orgUnclaimed)
+    await seedWorkspace(pool, wsOrphan, creatorOrphan, orgOrphan)
+
+    const result = await backfill.run()
+
+    expect({ result, unclaimedMembers: await workos.listOrganizationMemberships(orgUnclaimed) }).toEqual({
+      result: { workspacesScanned: 1, alreadyOwners: 0, upgraded: 0, newlyAssigned: 1, errors: [] },
+      unclaimedMembers: [],
+    })
+  })
+
   test("dry-run classifies candidates without calling WorkOS", async () => {
     await seedWorkspace(pool, wsA, creatorA, orgA)
     await seedMembership(pool, orgA, creatorA, "om_a_creator", [WORKSPACE_ROLE_SLUGS.ADMIN])
@@ -197,7 +211,7 @@ describe("WorkspaceOwnerBackfill", () => {
 async function seedWorkspace(
   pool: Pool,
   workspaceId: string,
-  createdByWorkosUserId: string,
+  createdByWorkosUserId: string | null,
   workosOrganizationId: string | null
 ): Promise<void> {
   await pool.query(

@@ -49,20 +49,21 @@ try {
   await runMigrations(cpPool, migrationsGlob)
   console.log("Control-plane migrations applied")
 
-  // Fetch workspaces + creator's workos_user_id from backend
+  // Fetch workspaces + creator's workos_user_id from backend; an unclaimed
+  // workspace has no creator and reaches the registry with a null one.
   const workspaces = await backendPool.query<{
     id: string
     name: string
     slug: string
-    created_by: string
+    created_by: string | null
     created_at: Date
     updated_at: Date
-    workos_user_id: string
+    workos_user_id: string | null
   }>(`
     SELECT w.id, w.name, w.slug, w.created_by, w.created_at, w.updated_at, u.workos_user_id
     FROM workspaces w
-    JOIN users u ON u.id = w.created_by
-    WHERE u.workos_user_id IS NOT NULL
+    LEFT JOIN users u ON u.id = w.created_by
+    WHERE w.created_by IS NULL OR u.workos_user_id IS NOT NULL
   `)
 
   console.log(`Found ${workspaces.rows.length} workspace(s) to backfill`)
