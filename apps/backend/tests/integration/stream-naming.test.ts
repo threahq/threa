@@ -8,9 +8,10 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
+import { streamConnectionId } from "@threahq/backend-common"
 import { Pool } from "pg"
 import { withTransaction } from "../../src/db"
-import { withTestTransaction, addTestMember, testMessageContent } from "./setup"
+import { withTestTransaction, addTestMember, seedCompletedLinkPreview, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService, StreamRepository, StreamMemberRepository, type Stream } from "../../src/features/streams"
 import { getEffectiveDisplayName, formatParticipantNames } from "../../src/features/streams/display-name"
@@ -483,6 +484,151 @@ describe("Dynamic plaintext stream naming", () => {
         "job_thread"
       )
     ).toMatchObject({ status: "evaluated", action: "rename" })
+  })
+
+  test("should title a thread from what the partner reads when its channel is shared", async () => {
+    const ownerId = userId()
+    const wsId = workspaceId()
+    const rootId = streamId()
+    const outsideId = streamId()
+    const threadId = streamId()
+    const anchorId = messageId()
+    const replyId = messageId()
+    const prUrl = "https://github.com/acme/private/pull/7"
+    await withTransaction(pool, async (client) => {
+      await WorkspaceRepository.insert(client, {
+        id: wsId,
+        name: "Shared Thread Naming Workspace",
+        slug: `shared-thread-naming-${wsId}`,
+        createdBy: ownerId,
+      })
+      await addTestMember(client, wsId, ownerId)
+      for (const [id, slug] of [
+        [rootId, "gardening"],
+        [outsideId, "secret-plans"],
+      ]) {
+        await StreamRepository.insert(client, {
+          id,
+          workspaceId: wsId,
+          type: "channel",
+          slug,
+          visibility: "private",
+          companionMode: "off",
+          createdBy: ownerId,
+        })
+      }
+      await client.query(
+        `INSERT INTO stream_connections (workspace_id, id, role, state, stream_id, remote_workspace_id, remote_workspace_name, expires_at, revision)
+         VALUES ($1, $2, 'host', 'active', $3, $4, 'Partner', NOW() + INTERVAL '1 day', 1)`,
+        [wsId, streamConnectionId(), rootId, workspaceId()]
+      )
+      await StreamMemberRepository.insert(client, wsId, rootId, ownerId)
+      for (const [streamOf, sequence] of [
+        [rootId, 1n],
+        [outsideId, 2n],
+      ] as const) {
+        const anchor = streamOf === rootId ? anchorId : messageId()
+        await MessageRepository.insert(client, {
+          workspaceId: wsId,
+          id: anchor,
+          streamId: streamOf,
+          sequence,
+          authorId: ownerId,
+          authorType: "user",
+          ...testMessageContent("Anchor about moon soil"),
+        })
+        if (streamOf === rootId) continue
+        await StreamRepository.insert(client, {
+          id: streamId(),
+          workspaceId: wsId,
+          type: "thread",
+          parentStreamId: outsideId,
+          rootStreamId: outsideId,
+          parentAnchorId: anchor,
+          visibility: "private",
+          companionMode: "off",
+          createdBy: ownerId,
+          displayName: "Elsewhere",
+        })
+      }
+      const siblingAnchor = messageId()
+      await MessageRepository.insert(client, {
+        workspaceId: wsId,
+        id: siblingAnchor,
+        streamId: rootId,
+        sequence: 3n,
+        authorId: ownerId,
+        authorType: "user",
+        ...testMessageContent("Another root message"),
+      })
+      for (const [id, anchor, displayName] of [
+        [threadId, anchorId, undefined],
+        [streamId(), siblingAnchor, "Tree sibling"],
+      ]) {
+        await StreamRepository.insert(client, {
+          id: id!,
+          workspaceId: wsId,
+          type: "thread",
+          parentStreamId: rootId,
+          rootStreamId: rootId,
+          parentAnchorId: anchor!,
+          visibility: "private",
+          companionMode: "off",
+          createdBy: ownerId,
+          displayName,
+        })
+      }
+      await MessageRepository.insert(client, {
+        workspaceId: wsId,
+        id: replyId,
+        streamId: threadId,
+        sequence: 4n,
+        authorId: ownerId,
+        authorType: "user",
+        contentJson: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "text", text: "watering is in " },
+                { type: "channelLink", attrs: { id: outsideId, slug: "secret-plans" } },
+                { type: "text", text: ` per ${prUrl}` },
+              ],
+            },
+          ],
+        },
+        contentMarkdown: `watering is in [#secret-plans](channel:${outsideId}) per ${prUrl}`,
+      })
+      await seedCompletedLinkPreview(client, {
+        workspaceId: wsId,
+        messageId: replyId,
+        url: prUrl,
+        title: "Rotate the prod password",
+      })
+    })
+    let seen: { linksOutside: boolean; mentionsSlug: boolean; preview: boolean; existingTitles: string[] } | null = null
+    const service = buildService(async (input) => {
+      seen = {
+        linksOutside: input.context.includes(outsideId),
+        mentionsSlug: input.context.includes("#secret-plans"),
+        preview: input.context.includes("Rotate the prod password"),
+        existingTitles: input.existingTitles,
+      }
+      return { action: "rename", title: "Moon soil watering" }
+    })
+
+    await service.evaluate(
+      { workspaceId: wsId, targetKind: "stream", targetId: threadId, initiatingUserId: ownerId },
+      "job_shared_thread"
+    )
+
+    expect(seen).toEqual({
+      linksOutside: false,
+      mentionsSlug: true,
+      preview: false,
+      existingTitles: ["Tree sibling"],
+    })
   })
 
   test("an archive during provider evaluation prevents the generated title CAS", async () => {

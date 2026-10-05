@@ -8,6 +8,7 @@ import { AttachmentRepository, awaitAttachmentProcessing, type AttachmentWithExt
 import { E2eStreamsRepository } from "../e2e-streams"
 import { awaitLinkPreviewProcessing, enrichMessagesWithLinkPreviewMap } from "../link-previews"
 import { MessageRepository } from "../messaging"
+import { findSharedTree, viewAsPartner } from "../stream-connections"
 import { prependThreadNamingAnchor, resolveEffectiveAccessStream, StreamRepository, type Stream } from "../streams"
 import { DYNAMIC_NAMING_MAX_EXISTING_TITLES, DYNAMIC_NAMING_MAX_MESSAGES } from "./config"
 import type {
@@ -80,12 +81,18 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
       const replies = await MessageRepository.list(client, target.workspaceId, stream.id, {
         limit: DYNAMIC_NAMING_MAX_MESSAGES,
       })
-      const messages = await prependThreadNamingAnchor(client, stream, replies)
+      const anchored = await prependThreadNamingAnchor(client, stream, replies)
+      // A shared thread's title crosses to the partner, so it comes from what the partner can read.
+      const sharedTree = await findSharedTree(client, target.workspaceId, stream.id)
+      const messages = await viewAsPartner(client, target.workspaceId, sharedTree, anchored)
       const sameType = await StreamRepository.list(client, stream.workspaceId, { types: [stream.type] })
       // Aside titles are private to their creator; only the creator's own asides
       // may inform a title, never another member's.
-      const siblings =
-        stream.type === StreamTypes.ASIDE ? sameType.filter((s) => s.createdBy === stream.createdBy) : sameType
+      const siblings = sameType.filter(
+        (s) =>
+          (stream.type !== StreamTypes.ASIDE || s.createdBy === stream.createdBy) &&
+          (!sharedTree || sharedTree.streamIds.has(s.id))
+      )
       const attachmentsByMessage = await AttachmentRepository.findByMessageIds(
         client,
         target.workspaceId,
@@ -94,11 +101,14 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
       const attachmentIds = [...attachmentsByMessage.values()].flatMap((attachments) =>
         attachments.map((attachment) => attachment.id)
       )
-      return { stream, messages, siblings, attachmentIds }
+      return { stream, messages, siblings, attachmentIds, shared: sharedTree !== null }
     })
     if (!fetched || fetched.messages.length === 0) return null
 
-    const linkPreviewProcessing = awaitLinkPreviewProcessing(this.pool, target.workspaceId, fetched.messages)
+    // A shared channel's partner sees no previews; the host fetched them, some with its own integrations.
+    const linkPreviewProcessing = fetched.shared
+      ? null
+      : awaitLinkPreviewProcessing(this.pool, target.workspaceId, fetched.messages)
     if (fetched.attachmentIds.length > 0) {
       const result = await awaitAttachmentProcessing(this.pool, target.workspaceId, fetched.attachmentIds)
       logger.debug(
@@ -121,7 +131,9 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
           )
         : Promise.resolve(new Map<string, AttachmentWithExtraction[]>()),
     ])
-    const messages = enrichMessagesWithLinkPreviewMap(fetched.messages, linkPreviews.previewsByMessage)
+    const messages = linkPreviews
+      ? enrichMessagesWithLinkPreviewMap(fetched.messages, linkPreviews.previewsByMessage)
+      : fetched.messages
     const context = await this.messageFormatter.formatMessagesWithAttachments(
       this.pool,
       target.workspaceId,

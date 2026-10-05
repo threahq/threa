@@ -20,7 +20,7 @@ import {
   type ThreaMark,
   isBroadcastSlug,
 } from "@threahq/types"
-import { withClient } from "../../db"
+import { withClient, type Querier } from "../../db"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { PersonaRepository } from "../agents"
 import { AttachmentRepository, AttachmentUploadRepository, type Attachment } from "../attachments"
@@ -324,14 +324,62 @@ export async function loadSharedTree(
   const root = await StreamRepository.findById(client, caller.workspaceId, connection.streamId)
   if (!root) throw new Error(`Shared channel ${connection.streamId} is missing from ${caller.workspaceId}`)
 
+  return { connection, tree: await listTree(client, caller.workspaceId, root) }
+}
+
+async function listTree(db: Querier, workspaceId: string, root: Stream): Promise<Stream[]> {
   const threadsByParent = new Map<string, Stream[]>()
-  for (const thread of await StreamRepository.listThreadsByRoot(client, caller.workspaceId, root.id)) {
+  for (const thread of await StreamRepository.listThreadsByRoot(db, workspaceId, root.id)) {
     if (!thread.parentStreamId || !thread.parentAnchorId?.startsWith("msg_")) continue
     threadsByParent.set(thread.parentStreamId, [...(threadsByParent.get(thread.parentStreamId) ?? []), thread])
   }
   const tree = [root]
   for (let i = 0; i < tree.length; i++) tree.push(...(threadsByParent.get(tree[i].id) ?? []))
-  return { connection, tree }
+  return tree
+}
+
+/** The streams of a channel this workspace shares as host, while it is shared. */
+export interface SharedTree {
+  rootStreamId: string
+  streamIds: ReadonlySet<string>
+}
+
+/** The shared tree holding this stream, or null when no active share serves it. */
+export async function findSharedTree(db: Querier, workspaceId: string, streamId: string): Promise<SharedTree | null> {
+  const [hosted] = await StreamConnectionRepository.listActiveHostConnectionsForStreams(db, [{ workspaceId, streamId }])
+  if (!hosted) return null
+  const stream = await StreamRepository.findById(db, workspaceId, streamId)
+  const root = stream?.rootStreamId ? await StreamRepository.findById(db, workspaceId, stream.rootStreamId) : stream
+  if (!root) throw new Error(`Shared stream ${streamId} has no root in ${workspaceId}`)
+  const streamIds = new Set((await listTree(db, workspaceId, root)).map((s) => s.id))
+  return streamIds.has(streamId) ? { rootStreamId: root.id, streamIds } : null
+}
+
+/**
+ * The messages as the partner reads them: deleted messages and those outside
+ * the tree drop, and the rest lose what points outside it, the same cut the
+ * bridge serves. Without a tree (nothing shared) they come back as they are.
+ */
+export async function viewAsPartner(
+  db: Querier,
+  workspaceId: string,
+  tree: SharedTree | null,
+  messages: Message[]
+): Promise<Message[]> {
+  if (!tree) return messages
+  const inTree = messages.filter(
+    (message) => tree.streamIds.has(message.streamId) && isShared(message, message.streamId)
+  )
+  const scope = await loadContentScope(
+    db,
+    workspaceId,
+    tree.streamIds,
+    inTree.map((message) => message.contentJson)
+  )
+  return inTree.map((message) => {
+    const contentJson = exportDoc(message.contentJson, scope)
+    return { ...message, contentJson, contentMarkdown: deriveContentMarkdown(contentJson) }
+  })
 }
 
 /** The streams whose files a connection serves: the host's shared tree, or the partner's copy root and the threads under it. */
@@ -460,7 +508,7 @@ function toBridgeMessage(
 
 /** Resolves every pointer the given documents hold, in one query per kind. */
 async function loadContentScope(
-  client: PoolClient,
+  client: Querier,
   workspaceId: string,
   tree: ReadonlySet<string>,
   docs: JSONContent[]

@@ -3,9 +3,10 @@ import { sql, withTransaction, withClient } from "../../db"
 import { ConversationRepository, distinctAuthors, type Conversation } from "./repository"
 import { MessageRepository, type Message } from "../messaging"
 import { StreamRepository, StreamEventRepository, type Stream } from "../streams"
+import { findSharedTree, viewAsPartner, type SharedTree } from "../stream-connections"
 import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository, awaitAttachmentProcessing, type AttachmentWithExtraction } from "../attachments"
-import { awaitLinkPreviewProcessing, LinkPreviewRepository } from "../link-previews"
+import { awaitLinkPreviewProcessing, LinkPreviewRepository, type LinkPreview } from "../link-previews"
 import type {
   AttachmentExtractContext,
   BoundaryExtractor,
@@ -76,7 +77,12 @@ export class BoundaryExtractionService {
       const messages = conversation.messageIds
         .map((id) => messagesMap.get(id))
         .filter((m): m is Message => m !== undefined)
-      return { conversation, stream, messages }
+      const sharedTree = await findSharedTree(client, workspaceId, conversation.streamId)
+      return {
+        conversation,
+        stream,
+        messages: await viewAsPartner(client, workspaceId, sharedTree, messages),
+      }
     })
 
     if (!conversation || !stream) {
@@ -172,6 +178,21 @@ export class BoundaryExtractionService {
         }
       }
 
+      // While the channel is shared, extraction reads it as the partner does, so
+      // the conversations it shapes can cross with it.
+      const sharedTree = await findSharedTree(client, workspaceId, stream.id)
+      const [newMessage] = await viewAsPartner(client, workspaceId, sharedTree, [message])
+      // Deleted, or moved out of the shared tree, since this job was queued.
+      if (!newMessage) {
+        return {
+          message,
+          stream,
+          extractionContextBase: null,
+          unreadByPartner: true,
+          validUpdateTargets: new Set<string>(),
+        }
+      }
+
       const surroundingMessages = await MessageRepository.findSurrounding(
         client,
         workspaceId,
@@ -213,7 +234,10 @@ export class BoundaryExtractionService {
       const threadMessagesByParent = await MessageRepository.findThreadMessages(client, workspaceId, threadRootIds)
       const allThreadMessages = Array.from(threadMessagesByParent.values()).flat()
 
-      const allContextMessages = [...surroundingMessages, ...allThreadMessages]
+      const allContextMessages = await viewAsPartner(client, workspaceId, sharedTree, [
+        ...surroundingMessages,
+        ...allThreadMessages,
+      ])
       const allContextMessageIds = allContextMessages.map((m) => m.id)
 
       const relevantConversations = await ConversationRepository.findByMessageIds(
@@ -233,7 +257,8 @@ export class BoundaryExtractionService {
         client,
         workspaceId,
         stream.id,
-        message
+        newMessage,
+        sharedTree
       )
       const candidateConversations = mergeConversationsById(relevantConversations, quotedConversations)
 
@@ -264,7 +289,7 @@ export class BoundaryExtractionService {
       const newMessageAttachmentIds = newMessageAttachments.map((a) => a.id)
 
       const extractionContextBase: Omit<ExtractionContext, "attachmentsByMessageId"> = {
-        newMessage: message,
+        newMessage,
         recentMessages: allContextMessages,
         activeConversations,
         streamType: stream.type,
@@ -286,6 +311,7 @@ export class BoundaryExtractionService {
         attachmentTargetIds: [message.id, ...allContextMessageIds],
         validUpdateTargets,
         validReassignmentMessageIds: new Set(allContextMessageIds),
+        shared: sharedTree !== null,
       }
     })
 
@@ -297,6 +323,14 @@ export class BoundaryExtractionService {
     if (fetchedData.declaredSkip) {
       logger.debug({ messageId, streamId }, "Skipping boundary extraction for a message with a declared conversation")
       return fetchedData.declaredPrimary ?? null
+    }
+
+    if (fetchedData.unreadByPartner) {
+      logger.debug(
+        { messageId, streamId },
+        "Skipping boundary extraction for a message its shared channel's partner cannot read"
+      )
+      return null
     }
 
     if (fetchedData.agentReply) {
@@ -312,13 +346,15 @@ export class BoundaryExtractionService {
       scratchpadConversations,
       validUpdateTargets,
       validReassignmentMessageIds,
+      shared,
     } = fetchedData
 
     // Phase 1.5 (channels/threads only): await attachment processing with no DB
     // connection held (INV-41), then fetch extractions on the pool (INV-30).
     let extractionContext: ExtractionContext | null = null
     if (extractionContextBase && attachmentTargetIds) {
-      const linkPreviewProcessing = awaitLinkPreviewProcessing(this.pool, workspaceId, [message])
+      // A shared channel's partner sees no previews; the host fetched them, some with its own integrations.
+      const linkPreviewProcessing = shared ? null : awaitLinkPreviewProcessing(this.pool, workspaceId, [message])
       if (newMessageAttachmentIds && newMessageAttachmentIds.length > 0) {
         logger.debug(
           { messageId, attachmentCount: newMessageAttachmentIds.length },
@@ -342,7 +378,9 @@ export class BoundaryExtractionService {
 
       const [attachmentsByMessage, previewRowsByMessage] = await Promise.all([
         AttachmentRepository.findByMessageIdsWithExtractions(this.pool, workspaceId, attachmentTargetIds),
-        LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, attachmentTargetIds),
+        shared
+          ? new Map<string, LinkPreview[]>()
+          : LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, attachmentTargetIds),
       ])
       const attachmentsByMessageId = buildAttachmentContextMap(attachmentsByMessage, message.id)
       const linkPreviewsByMessageId = new Map(
@@ -931,12 +969,16 @@ export class BoundaryExtractionService {
     client: PoolClient,
     workspaceId: string,
     streamId: string,
-    message: Message
+    message: Message,
+    sharedTree: SharedTree | null
   ): Promise<{ replyTargets: ReplyTarget[]; quotedConversations: Conversation[] }> {
     const quotedMessageIds = collectQuoteReplyMessageIds(message.contentJson)
     if (quotedMessageIds.length === 0) return { replyTargets: [], quotedConversations: [] }
 
-    const quotedMessages = await MessageRepository.findByIdsInStreams(client, workspaceId, quotedMessageIds, [streamId])
+    const found = await MessageRepository.findByIdsInStreams(client, workspaceId, quotedMessageIds, [streamId])
+    const quotedMessages = new Map(
+      (await viewAsPartner(client, workspaceId, sharedTree, [...found.values()])).map((m) => [m.id, m])
+    )
     if (quotedMessages.size === 0) return { replyTargets: [], quotedConversations: [] }
 
     const primariesByMessageId = await ConversationRepository.findPrimariesByMessageIds(client, workspaceId, [

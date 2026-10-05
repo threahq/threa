@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { streamConnectionId } from "@threahq/backend-common"
 import { Pool } from "pg"
 import { withTransaction } from "../../src/db"
 import { ConversationRepository } from "../../src/features/conversations"
@@ -12,8 +13,8 @@ import { MessageRepository } from "../../src/features/messaging"
 import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { MessageFormatter } from "../../src/lib/ai/message-formatter"
-import { conversationId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
-import { addTestMember, setupTestDatabase, testMessageContent } from "./setup"
+import { conversationId, eventId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { addTestMember, seedCompletedLinkPreview, setupTestDatabase, testMessageContent } from "./setup"
 
 interface Fixture {
   workspaceId: string
@@ -146,6 +147,154 @@ describe("dynamic conversation naming", () => {
       "job_siblings"
     )
     expect(existingTitles).toEqual(["Database migration plan"])
+  })
+
+  test("should name a conversation from what the partner reads when its channel is shared", async () => {
+    const item = await fixture({ count: 3, title: "Deployment issue" })
+    const outside = streamId()
+    const linkId = messageId()
+    const prUrl = "https://github.com/acme/private/pull/7"
+    await withTransaction(pool, async (client) => {
+      await StreamRepository.insert(client, {
+        id: outside,
+        workspaceId: item.workspaceId,
+        type: "channel",
+        slug: "secret-plans",
+        visibility: "private",
+        companionMode: "off",
+        createdBy: item.userId,
+      })
+      await MessageRepository.insert(client, {
+        workspaceId: item.workspaceId,
+        id: linkId,
+        streamId: item.streamId,
+        sequence: 4n,
+        authorId: item.userId,
+        authorType: "user",
+        contentJson: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "text", text: "rollback notes are in " },
+                { type: "channelLink", attrs: { id: outside, slug: "secret-plans" } },
+                { type: "text", text: ` per ${prUrl}` },
+              ],
+            },
+          ],
+        },
+        contentMarkdown: `rollback notes are in [#secret-plans](channel:${outside}) per ${prUrl}`,
+      })
+      await seedCompletedLinkPreview(client, {
+        workspaceId: item.workspaceId,
+        messageId: linkId,
+        url: prUrl,
+        title: "Rotate the prod password",
+      })
+      await ConversationRepository.addPrimaryMessage(client, item.workspaceId, item.conversationId, linkId, item.userId)
+      for (const [anchor, title] of [
+        [linkId, "Rollback thread"],
+        [eventId(), "Card work"],
+      ]) {
+        const thread = streamId()
+        await StreamRepository.insert(client, {
+          id: thread,
+          workspaceId: item.workspaceId,
+          type: "thread",
+          parentStreamId: item.streamId,
+          rootStreamId: item.streamId,
+          parentAnchorId: anchor,
+          visibility: "private",
+          companionMode: "off",
+          createdBy: item.userId,
+        })
+        await ConversationRepository.insert(client, {
+          id: conversationId(),
+          streamId: thread,
+          workspaceId: item.workspaceId,
+          topicSummary: title,
+          topicSummarySource: "generated",
+        })
+      }
+      await client.query(
+        `INSERT INTO stream_connections (workspace_id, id, role, state, stream_id, remote_workspace_id, remote_workspace_name, expires_at, revision)
+         VALUES ($1, $2, 'host', 'active', $3, $4, 'Partner', NOW() + INTERVAL '1 day', 1)`,
+        [item.workspaceId, streamConnectionId(), item.streamId, workspaceId()]
+      )
+    })
+    let seen: { linksOutside: boolean; mentionsSlug: boolean; preview: boolean; existingTitles: string[] } | null = null
+    const naming = service(async (input) => {
+      seen = {
+        linksOutside: input.context.includes(outside),
+        mentionsSlug: input.context.includes("#secret-plans"),
+        preview: input.context.includes("Rotate the prod password"),
+        existingTitles: input.existingTitles,
+      }
+      return { action: "keep" }
+    })
+
+    await naming.evaluate(
+      {
+        workspaceId: item.workspaceId,
+        targetKind: "conversation",
+        targetId: item.conversationId,
+        initiatingUserId: item.userId,
+      },
+      "job_shared"
+    )
+
+    expect(seen).toEqual({
+      linksOutside: false,
+      mentionsSlug: true,
+      preview: false,
+      existingTitles: ["Rollback thread"],
+    })
+  })
+
+  test("should name from what the partner reads when the newest messages of a shared conversation are deleted", async () => {
+    const item = await fixture({ count: 3, title: "Deployment issue" })
+    await withTransaction(pool, async (client) => {
+      for (let sequence = 4; sequence <= 13; sequence += 1) {
+        const id = messageId()
+        await MessageRepository.insert(client, {
+          workspaceId: item.workspaceId,
+          id,
+          streamId: item.streamId,
+          sequence: BigInt(sequence),
+          authorId: item.userId,
+          authorType: "user",
+          ...testMessageContent(`Acquire Initech quietly, step ${sequence}`),
+        })
+        await ConversationRepository.addPrimaryMessage(client, item.workspaceId, item.conversationId, id, item.userId)
+        await MessageRepository.softDelete(client, item.workspaceId, id)
+      }
+      await client.query(
+        `INSERT INTO stream_connections (workspace_id, id, role, state, stream_id, remote_workspace_id, remote_workspace_name, expires_at, revision)
+         VALUES ($1, $2, 'host', 'active', $3, $4, 'Partner', NOW() + INTERVAL '1 day', 1)`,
+        [item.workspaceId, streamConnectionId(), item.streamId, workspaceId()]
+      )
+    })
+    let seen: { deleted: boolean; kept: boolean[] } | null = null
+    const naming = service(async (input) => {
+      seen = {
+        deleted: input.context.includes("Acquire Initech"),
+        kept: [1, 2, 3].map((sequence) => input.context.includes(`Message ${sequence} about deployment rollback`)),
+      }
+      return { action: "keep" }
+    })
+
+    await naming.evaluate(
+      {
+        workspaceId: item.workspaceId,
+        targetKind: "conversation",
+        targetId: item.conversationId,
+        initiatingUserId: item.userId,
+      },
+      "job_shared_deleted"
+    )
+
+    expect(seen).toEqual({ deleted: false, kept: [true, true, true] })
   })
 
   test("an untitled deterministic conversation evaluates checkpoint 1", async () => {

@@ -1,6 +1,6 @@
 export { BridgeClient } from "./bridge-client"
 export { copyWriteUnsupported } from "./errors"
-export { StreamConnectionExportService } from "./export"
+export { StreamConnectionExportService, findSharedTree, viewAsPartner, type SharedTree } from "./export"
 export { StreamConnectionForwardService } from "./forward"
 export { createStreamConnectionBridgeHandlers, createStreamConnectionHandlers } from "./handlers"
 export { StreamConnectionImportService } from "./import"

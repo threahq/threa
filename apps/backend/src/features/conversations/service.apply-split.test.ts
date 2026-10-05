@@ -14,12 +14,13 @@ const WORKSPACE_ID = "ws_1"
 const ACTOR_ID = "usr_1"
 
 // The conversation under split lives in chan_1; `m_foreign` is the cross-stream case.
-const MESSAGES: Record<string, { streamId: string; authorId: string; sequence: number }> = {
+const MESSAGES: Record<string, { streamId: string; authorId: string; sequence: number; deletedAt?: Date }> = {
   m1: { streamId: "chan_1", authorId: "usr_1", sequence: 1 },
   m2: { streamId: "chan_1", authorId: "usr_2", sequence: 2 },
   m3: { streamId: "chan_1", authorId: "usr_1", sequence: 3 },
   m4: { streamId: "chan_1", authorId: "usr_2", sequence: 4 },
   m_foreign: { streamId: "chan_2", authorId: "usr_1", sequence: 5 },
+  m_deleted: { streamId: "chan_1", authorId: "usr_2", sequence: 6, deletedAt: new Date() },
 }
 
 function makeConversation(overrides: Partial<Conversation> = {}): Conversation {
@@ -45,7 +46,13 @@ function makeConversation(overrides: Partial<Conversation> = {}): Conversation {
 
 function message(id: string): Message {
   const base = MESSAGES[id]
-  return { id, streamId: base.streamId, authorId: base.authorId, sequence: base.sequence } as unknown as Message
+  return {
+    id,
+    streamId: base.streamId,
+    authorId: base.authorId,
+    sequence: base.sequence,
+    deletedAt: base.deletedAt ?? null,
+  } as unknown as Message
 }
 
 interface Spies {
@@ -275,6 +282,27 @@ describe("ConversationService.applySplit", () => {
     )
     // …but the source is NOT re-titled (m4 was never analyzed).
     expect(spies.update).not.toHaveBeenCalled()
+  })
+
+  test("should re-title the source when the only un-analyzed member is deleted", async () => {
+    // A shared channel's proposal never sees deleted messages, so they can't hold the title back.
+    const spies = setup({
+      source: makeConversation({ messageIds: ["m1", "m2", "m3", "m_deleted"] }),
+      primaries: { m1: "conv_a", m2: "conv_a", m3: "conv_a", m_deleted: "conv_a" },
+    })
+
+    await applySplit("conv_a", [
+      { title: "Kept", messageIds: ["m1", "m2"] },
+      { title: "Moved", messageIds: ["m3"] },
+    ])
+
+    expect(spies.updateTopicSummary).toHaveBeenCalledWith(expect.anything(), {
+      workspaceId: WORKSPACE_ID,
+      conversationId: "conv_a",
+      topicSummary: "Kept",
+      source: "explicit",
+      updatedByUserId: ACTOR_ID,
+    })
   })
 
   test("skips a message that raced out of the source between propose and apply", async () => {
