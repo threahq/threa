@@ -9,6 +9,7 @@ interface AuthenticatedUser {
   email: string
   firstName: string | null
   lastName: string | null
+  emailVerified: boolean
   /**
    * Permission slugs from the WorkOS session JWT, or `null` when the token
    * carried no `permissions` claim (older tokens / OAuth-callback path).

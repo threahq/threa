@@ -45,9 +45,10 @@ const WORKOS_ERROR_CODES = {
 } as const
 
 /** User info for shadow acceptance — accepts either pre-derived name (stub) or WorkOS fields */
-type ShadowUser =
-  | { id: string; email: string; name: string }
-  | { id: string; email: string; firstName?: string | null; lastName?: string | null }
+type ShadowUser = { id: string; email: string; emailVerified: boolean } & (
+  | { name: string }
+  | { firstName?: string | null; lastName?: string | null }
+)
 
 interface Dependencies {
   pool: Pool
@@ -109,6 +110,7 @@ export class InvitationShadowService {
         await this.regionalClient.acceptInvitation(shadow.region, shadow.id, {
           workosUserId: user.id,
           email: user.email,
+          emailVerified: user.emailVerified,
           name,
         })
       } catch (error) {

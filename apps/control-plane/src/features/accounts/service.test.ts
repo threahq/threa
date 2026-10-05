@@ -80,7 +80,7 @@ const NEVER_MEMBER = {
 }
 
 function makeUser(id: string): NonNullable<AuthResult["user"]> {
-  return { id, email: `${id}@example.com`, firstName: id, lastName: null, permissions: null }
+  return { id, email: `${id}@example.com`, firstName: id, lastName: null, emailVerified: true, permissions: null }
 }
 
 describe("AccountsService — refreshed sealed propagation", () => {

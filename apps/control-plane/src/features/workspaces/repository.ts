@@ -235,6 +235,17 @@ export const WorkspaceRegistryRepository = {
     return result.rows[0] ?? null
   },
 
+  /** True when this call made `workosUserId` the creator; false when someone already was. */
+  async claimCreatorIfUnset(db: Querier, id: string, workosUserId: string): Promise<boolean> {
+    const result = await db.query(
+      `UPDATE workspace_registry SET created_by_workos_user_id = $1, updated_at = NOW()
+       WHERE id = $2 AND created_by_workos_user_id IS NULL
+       RETURNING id`,
+      [workosUserId, id]
+    )
+    return (result.rowCount ?? 0) > 0
+  },
+
   async updateTier(db: Querier, id: string, tier: WorkspaceTier): Promise<boolean> {
     const result = await db.query("UPDATE workspace_registry SET tier = $2, updated_at = NOW() WHERE id = $1", [
       id,

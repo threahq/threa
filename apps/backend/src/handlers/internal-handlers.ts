@@ -20,6 +20,9 @@ const createWorkspaceSchema = z.object({
 const acceptInvitationSchema = z.object({
   workosUserId: z.string().min(1),
   email: z.string().email(),
+  // Absent from a control plane that predates the field: treated as unverified,
+  // which only skips binding an unclaimed user and creates a fresh one instead.
+  emailVerified: z.boolean().default(false),
   name: z.string().min(1),
 })
 

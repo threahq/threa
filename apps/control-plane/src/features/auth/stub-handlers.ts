@@ -2,6 +2,8 @@ import type { Request, Response } from "express"
 import { z } from "zod/v4"
 import { HttpError, renderLoginPage, type SessionCookies, type StubAuthService } from "@threahq/backend-common"
 import type { AccountsService } from "../accounts"
+import type { ControlPlaneWorkspaceService } from "../workspaces"
+import { claimOrgWorkspacesOnSignIn } from "./claim-org-workspaces"
 import { parseCallbackState, splitInnerState } from "./callback-state"
 
 const stubLoginSchema = z.object({
@@ -23,6 +25,13 @@ const devLoginSchema = z.object({
   intent: z.literal("add").optional(),
 })
 
+const devOrgWorkspaceSchema = z.object({
+  domain: z.string().min(1),
+  name: z.string().min(1),
+  /** Validated by `ensureOrgWorkspace`. */
+  people: z.array(z.any()).default([]),
+})
+
 interface Dependencies {
   authStubService: StubAuthService
   sessionCookies: SessionCookies
@@ -34,9 +43,16 @@ interface Dependencies {
    * and the user can never hold two accounts.
    */
   accountsService: AccountsService
+  /** Joins a signed-in user to their email domain's org workspace, as the real callback does. */
+  workspaceService: ControlPlaneWorkspaceService
 }
 
-export function createAuthStubHandlers({ authStubService, sessionCookies, accountsService }: Dependencies) {
+export function createAuthStubHandlers({
+  authStubService,
+  sessionCookies,
+  accountsService,
+  workspaceService,
+}: Dependencies) {
   return {
     async getLoginPage(req: Request, res: Response) {
       const state = (req.query.state as string) || ""
@@ -78,6 +94,7 @@ export function createAuthStubHandlers({ authStubService, sessionCookies, accoun
         }
       } else {
         sessionCookies.set(res, result.session)
+        await claimOrgWorkspacesOnSignIn(workspaceService, result.user)
       }
       res.redirect(redirectPath)
     },
@@ -106,7 +123,25 @@ export function createAuthStubHandlers({ authStubService, sessionCookies, accoun
       }
 
       sessionCookies.set(res, result.session)
+      await claimOrgWorkspacesOnSignIn(workspaceService, result.user)
       res.json({ user: result.user })
+    },
+
+    /** No product path creates an org workspace yet; browser tests seed one here. */
+    async handleDevEnsureOrgWorkspace(req: Request, res: Response) {
+      const parsed = devOrgWorkspaceSchema.safeParse(req.body)
+      if (!parsed.success) {
+        throw new HttpError("Invalid org workspace parameters", { status: 400, code: "INVALID_ORG_WORKSPACE" })
+      }
+      const [region] = workspaceService.listRegions()
+      if (!region) throw new HttpError("No regions available", { status: 500, code: "NO_REGIONS" })
+      const result = await workspaceService.ensureOrgWorkspace({
+        orgKey: { kind: "email_domain", domain: parsed.data.domain },
+        name: parsed.data.name,
+        region,
+        people: parsed.data.people,
+      })
+      res.json(result)
     },
   }
 }

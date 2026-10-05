@@ -478,6 +478,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
 
     app.post("/internal/workspaces", internalAuth, internal.createWorkspace)
     app.post("/internal/org-workspaces", internalAuth, orgWorkspaces.ensure)
+    app.post("/internal/org-workspaces/claim", internalAuth, orgWorkspaces.claim)
     app.post("/internal/invitations/:id/accept", internalAuth, internal.acceptInvitation)
     app.post("/internal/invitations/claim-link", internalAuth, invitation.claimLink)
     app.post("/internal/authz/memberships", internalAuth, workspaceAuthz.syncMembership)

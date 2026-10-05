@@ -131,6 +131,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     frontendUrl: deps.frontendUrl,
     dedicatedRedirectHosts: deps.workosDedicatedRedirectHosts,
     authLogService,
+    workspaceService,
   })
   const workspace = createWorkspaceHandlers({ workspaceService, shadowService })
   const shadow = createInvitationShadowHandlers({ shadowService })
@@ -188,10 +189,12 @@ export function registerRoutes(app: Express, deps: Dependencies) {
       authStubService: authService,
       sessionCookies,
       accountsService,
+      workspaceService,
     })
     app.get("/test-auth-login", authStub.getLoginPage)
     app.post("/test-auth-login", authLimit, authStub.handleLogin)
     app.post("/api/dev/login", authStub.handleDevLogin)
+    app.post("/api/dev/org-workspaces", authStub.handleDevEnsureOrgWorkspace)
   }
 
   app.get("/api/auth/me", auth, authHandlers.me)

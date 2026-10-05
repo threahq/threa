@@ -17,8 +17,10 @@ import { workspaceId, userId as generateUserId, streamId, avatarUploadId } from 
 import { generateSlug, generateUniqueSlug, serializeBigInt } from "@threahq/backend-common"
 import {
   WORKSPACE_ROLE_SLUGS,
+  type OrgWorkspaceClaimRequest,
   type OrgWorkspaceEnsureRequest,
   type WorkspaceSettings,
+  type WorkspaceRoleSlug,
   type WorkspaceTier,
 } from "@threahq/types"
 import { WorkspaceSettingsRepository } from "../workspace-settings"
@@ -200,6 +202,76 @@ export class WorkspaceService {
     })
   }
 
+  /**
+   * Bind a claimer to their regional user and, for the first claimer, make them the owner. The
+   * workspace lock serializes this against ensures and removals; every step converges, so a replay,
+   * or a self-heal that bound the user first, ends in the same state.
+   */
+  async claimOrgWorkspaceFromControlPlane(params: OrgWorkspaceClaimRequest): Promise<void> {
+    const { workspaceId: wsId, workosUserId, email, name, role } = params
+    await withTransaction(this.pool, async (client) => {
+      if (!(await WorkspaceRepository.findByIdForUpdate(client, wsId))) {
+        throw new HttpError("Workspace not found", { status: 404, code: "WORKSPACE_NOT_FOUND" })
+      }
+
+      let user =
+        (await UserRepository.findByWorkosUserIdInWorkspace(client, wsId, workosUserId)) ??
+        (await this.bindUnclaimedUser(client, {
+          workspaceId: wsId,
+          workosUserId,
+          email,
+          role: role === WORKSPACE_ROLE_SLUGS.OWNER ? role : undefined,
+        })) ??
+        (await this.createUserInTransaction(client, {
+          workspaceId: wsId,
+          workosUserId,
+          email,
+          name,
+          role,
+          setupCompleted: false,
+        }))
+
+      if (role !== WORKSPACE_ROLE_SLUGS.OWNER) return
+      if (user.role !== WORKSPACE_ROLE_SLUGS.OWNER) {
+        const promoted = await UserRepository.updateRole(client, wsId, user.id, WORKSPACE_ROLE_SLUGS.OWNER)
+        if (!promoted) throw new Error(`users row ${user.id} vanished while claiming workspace ${wsId}`)
+        user = promoted
+        await OutboxRepository.insert(client, "workspace_user:updated", {
+          workspaceId: wsId,
+          user: serializeBigInt(user),
+        })
+      }
+      await WorkspaceRepository.claimCreatorIfUnset(client, wsId, user.id)
+    })
+  }
+
+  /**
+   * Hand the workspace's unclaimed user with this email to `workosUserId`, so a person the workspace
+   * already knows signs in as that user instead of a duplicate. `role`, when given, replaces the
+   * user's role in the same write. Null when there is none to bind; the caller then creates the user
+   * as it would have anyway.
+   */
+  async bindUnclaimedUser(
+    client: Querier,
+    params: { workspaceId: string; workosUserId: string; email: string; role?: WorkspaceRoleSlug }
+  ): Promise<User | null> {
+    const candidate = await UserRepository.findUnclaimedByEmail(client, params.workspaceId, params.email)
+    if (!candidate) return null
+    const bound = await UserRepository.bindWorkosUserIdIfUnclaimed(
+      client,
+      params.workspaceId,
+      candidate.id,
+      params.workosUserId,
+      params.role
+    )
+    if (!bound) return null
+    await OutboxRepository.insert(client, "workspace_user:updated", {
+      workspaceId: params.workspaceId,
+      user: serializeBigInt(bound),
+    })
+    return bound
+  }
+
   async createWorkspace(params: CreateWorkspaceParams): Promise<Workspace> {
     if (this.requireWorkspaceCreationInvite) {
       await this.assertWorkspaceCreationAllowed(params.email)
@@ -294,6 +366,7 @@ export class WorkspaceService {
     workspaceId: string
     workosUserId: string
     email: string
+    emailVerified: boolean
     name: string
     role: User["role"]
   }): Promise<User> {
@@ -305,15 +378,24 @@ export class WorkspaceService {
     if (existing) return existing
 
     try {
-      return await withTransaction(this.pool, async (client) =>
-        this.createUserInTransaction(client, {
-          workspaceId: params.workspaceId,
-          workosUserId: params.workosUserId,
-          email: params.email,
-          name: params.name,
-          role: params.role,
-          setupCompleted: false,
-        })
+      return await withTransaction(
+        this.pool,
+        async (client) =>
+          (params.emailVerified
+            ? await this.bindUnclaimedUser(client, {
+                workspaceId: params.workspaceId,
+                workosUserId: params.workosUserId,
+                email: params.email,
+              })
+            : null) ??
+          (await this.createUserInTransaction(client, {
+            workspaceId: params.workspaceId,
+            workosUserId: params.workosUserId,
+            email: params.email,
+            name: params.name,
+            role: params.role,
+            setupCompleted: false,
+          }))
       )
     } catch (error) {
       if (isUniqueViolation(error, "users_workspace_workos_user_key")) {

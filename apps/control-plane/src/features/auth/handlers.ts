@@ -4,6 +4,8 @@ import { HttpError, displayNameFromWorkos, type AuthService, type SessionCookies
 import { MAGIC_CODE_LENGTH, ORIGINAL_HOST_HEADER, SOCIAL_PROVIDERS } from "@threahq/types"
 import type { AccountsService } from "../accounts"
 import type { AuthLogRequestContext, AuthLogService } from "../auth-log"
+import type { ControlPlaneWorkspaceService } from "../workspaces"
+import { claimOrgWorkspacesOnSignIn } from "./claim-org-workspaces"
 import { parseCallbackState, splitInnerState } from "./callback-state"
 
 /** Client ip + user-agent for own-handler auth_log rows. CP sets `trust proxy`. */
@@ -53,6 +55,8 @@ interface Dependencies {
   dedicatedRedirectHosts: string[]
   /** Records the auth failures WorkOS structurally cannot see (best-effort). */
   authLogService: AuthLogService
+  /** Joins a signed-in user to their email domain's org workspace. */
+  workspaceService: ControlPlaneWorkspaceService
 }
 
 /**
@@ -84,6 +88,7 @@ export function createControlPlaneAuthHandlers({
   frontendUrl,
   dedicatedRedirectHosts,
   authLogService,
+  workspaceService,
 }: Dependencies) {
   return {
     async login(req: Request, res: Response) {
@@ -188,6 +193,10 @@ export function createControlPlaneAuthHandlers({
         }
       } else {
         sessionCookies.set(res, result.sealedSession)
+        await claimOrgWorkspacesOnSignIn(workspaceService, {
+          ...result.user,
+          name: displayNameFromWorkos(result.user),
+        })
       }
       res.redirect(`${appOrigin}${redirectPath}`)
     },

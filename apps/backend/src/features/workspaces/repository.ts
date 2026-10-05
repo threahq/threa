@@ -102,6 +102,15 @@ export const WorkspaceRepository = {
     return result.rows[0] ? mapRowToWorkspace(result.rows[0]) : null
   },
 
+  /** True when this call made `userId` the creator; false when the workspace already had one. */
+  async claimCreatorIfUnset(db: Querier, id: string, userId: string): Promise<boolean> {
+    const result = await db.query(sql`
+      UPDATE workspaces SET created_by = ${userId}, updated_at = NOW()
+      WHERE id = ${id} AND created_by IS NULL
+    `)
+    return (result.rowCount ?? 0) > 0
+  },
+
   async slugExists(db: Querier, slug: string): Promise<boolean> {
     const result = await db.query(sql`
       SELECT 1 FROM workspaces WHERE slug = ${slug}

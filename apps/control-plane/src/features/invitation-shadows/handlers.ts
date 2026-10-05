@@ -196,6 +196,7 @@ export function createInvitationShadowHandlers({ shadowService }: Dependencies) 
       const { workspaceId } = await shadowService.acceptShadow(req.params.id, {
         id: req.authUser.id,
         email: req.authUser.email,
+        emailVerified: req.authUser.emailVerified,
         firstName: req.authUser.firstName,
         lastName: req.authUser.lastName,
       })

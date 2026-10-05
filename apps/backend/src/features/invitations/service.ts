@@ -66,6 +66,7 @@ export interface AcceptPendingResult {
 export interface WorkosIdentity {
   workosUserId: string
   email: string
+  emailVerified: boolean
   name: string
 }
 
@@ -106,7 +107,7 @@ export class InvitationService {
     const emails = params.emails.map((email) => email.toLowerCase().trim())
     const skipped: SendResult["skipped"] = []
     const inviterWorkosUserId = (await this.getInviterWorkosUserId(workspaceId, invitedBy)) ?? undefined
-    const existingUserEmails = await UserRepository.findEmails(this.pool, workspaceId, emails)
+    const existingUserEmails = await UserRepository.findClaimedEmails(this.pool, workspaceId, emails)
     const pendingInvitations = await InvitationRepository.findPendingByEmailsAndWorkspace(
       this.pool,
       emails,
@@ -208,14 +209,24 @@ export class InvitationService {
 
     let consumedByWorkosUserId: string | null = null
     if (!isMember) {
-      await this.workspaceService.createUserInTransaction(client, {
-        workspaceId,
-        workosUserId: identity.workosUserId,
-        email,
-        name: identity.name,
-        role: invitation.role,
-        setupCompleted: false,
-      })
+      const bound = identity.emailVerified
+        ? await this.workspaceService.bindUnclaimedUser(client, {
+            workspaceId,
+            workosUserId: identity.workosUserId,
+            email,
+            role: invitation.role,
+          })
+        : null
+      if (!bound) {
+        await this.workspaceService.createUserInTransaction(client, {
+          workspaceId,
+          workosUserId: identity.workosUserId,
+          email,
+          name: identity.name,
+          role: invitation.role,
+          setupCompleted: false,
+        })
+      }
       consumedByWorkosUserId = identity.workosUserId
     }
 
@@ -419,7 +430,7 @@ export class InvitationService {
         useCount,
         revision,
       })
-      const memberMatches = await UserRepository.findEmails(client, parent.workspaceId, [email])
+      const memberMatches = await UserRepository.findClaimedEmails(client, parent.workspaceId, [email])
       if (memberMatches.has(email)) return { alreadyMember: { workspaceId: parent.workspaceId } }
       return { invitationId: child.id }
     })

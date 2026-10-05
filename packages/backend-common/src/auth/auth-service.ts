@@ -14,6 +14,7 @@ export interface AuthResult {
     email: string
     firstName: string | null
     lastName: string | null
+    emailVerified: boolean
     /**
      * Workspace permission slugs from the WorkOS session JWT.
      *
@@ -167,6 +168,7 @@ export class WorkosAuthService implements AuthService {
           email: authRes.user.email,
           firstName: authRes.user.firstName,
           lastName: authRes.user.lastName,
+          emailVerified: authRes.user.emailVerified,
           permissions: authRes.permissions ?? null,
         },
         refreshed: false,
@@ -191,6 +193,7 @@ export class WorkosAuthService implements AuthService {
               email: refreshResult.user.email,
               firstName: refreshResult.user.firstName,
               lastName: refreshResult.user.lastName,
+              emailVerified: refreshResult.user.emailVerified,
               permissions: refreshResult.permissions ?? null,
             },
             sealedSession: refreshResult.sealedSession,
@@ -243,6 +246,7 @@ export class WorkosAuthService implements AuthService {
           email: user.email,
           firstName: user.firstName,
           lastName: user.lastName,
+          emailVerified: user.emailVerified,
           // OAuth callback response has no permissions claim; downstream
           // callers fall back to role-derived permissions until the next
           // authenticated request through authenticateSession populates them.
@@ -311,6 +315,7 @@ export class WorkosAuthService implements AuthService {
           email: user.email,
           firstName: user.firstName,
           lastName: user.lastName,
+          emailVerified: user.emailVerified,
           // Same as the OAuth callback path: no JWT permission claim is in the
           // initial authenticate response. The next authenticated request
           // through authenticateSession will populate it.
