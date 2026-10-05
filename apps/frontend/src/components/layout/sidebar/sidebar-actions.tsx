@@ -307,7 +307,18 @@ export function SidebarActionMenu({
   return (
     <SidebarDropdownMenu open={open} onOpenChange={onOpenChange}>
       <DropdownMenuTrigger asChild>{trigger ?? defaultTrigger}</DropdownMenuTrigger>
-      <DropdownMenuContent side={side} align={align} className={cn("w-40", contentClassName)}>
+      <DropdownMenuContent
+        side={side}
+        align={align}
+        className={cn("w-40", contentClassName)}
+        // Runs once the exit animation ends. An action that already moved focus
+        // (a new draft's composer) keeps it; the trigger only catches focus the
+        // closing menu would otherwise drop.
+        onCloseAutoFocus={(event) => {
+          const active = document.activeElement
+          if (active && active !== document.body) event.preventDefault()
+        }}
+      >
         {header}
         {groupVisibleActions(actions).map((item) =>
           item.kind === "single" ? (

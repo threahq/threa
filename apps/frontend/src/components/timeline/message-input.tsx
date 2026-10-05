@@ -1,6 +1,7 @@
-import { memo, useState, useCallback, useEffect, useMemo, useRef } from "react"
+import { memo, useState, useCallback, useEffect, useMemo, useRef, type ComponentProps } from "react"
 import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
+import { useStableCallback } from "@/hooks/use-stable-callback"
 import {
   hasDocContent,
   useDraftComposer,
@@ -248,6 +249,12 @@ export function materializePendingAttachmentReferences(
     content: [...(materializedContent.content ?? []), fallbackParagraph],
   }
 }
+
+// Every draft save echoes back through the draft store and re-renders
+// `MessageInputComponent`; this boundary keeps those echoes out of the composer.
+const MemoizedMessageComposer = memo(function MemoizedMessageComposer(props: ComponentProps<typeof MessageComposer>) {
+  return <MessageComposer {...props} />
+})
 
 // Memoized so trace/presence-driven re-renders of `StreamContent` (which fire
 // on every Pi step + heartbeat while a bot is active) don't tear through the
@@ -795,119 +802,103 @@ function MessageInputComponent({
   // Stream label for the fullscreen overlay header (the post's destination).
   const overlayStreamName = useStreamName(workspaceId, streamId)
 
-  const handleSubmit = useCallback(
-    async (editorContent?: JSONContent) => {
-      if (!composer.canSend) return
+  const handleSubmit = useStableCallback(async (editorContent?: JSONContent) => {
+    if (!composer.canSend) return
 
-      composer.setIsSending(true)
-      setError(null)
+    composer.setIsSending(true)
+    setError(null)
 
-      // Ends the compose session for EVERY submit, not just the flat send below:
-      // a command dispatch or a hand-off to the panel finishes what the author
-      // was writing here, so the next send must start from a fresh horizon
-      // rather than inherit this one's `openedAt`. Not awaited here: nothing may
-      // stand between pressing send and the composer clearing.
-      const composeTrace = takeComposeTrace()
+    // Ends the compose session for EVERY submit, not just the flat send below:
+    // a command dispatch or a hand-off to the panel finishes what the author
+    // was writing here, so the next send must start from a fresh horizon
+    // rather than inherit this one's `openedAt`. Not awaited here: nothing may
+    // stand between pressing send and the composer clearing.
+    const composeTrace = takeComposeTrace()
 
-      const pendingAttachments = composer.getPendingAttachmentsSnapshot()
-      const liveContent = editorContent ?? composer.content
-      const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
+    const pendingAttachments = composer.getPendingAttachmentsSnapshot()
+    const liveContent = editorContent ?? composer.content
+    const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
 
-      // A bare `/steer`, a slashCommand node, or raw text matching an available
-      // command dispatches instead of sending. Embedded steer (message content
-      // around the directive) stays a normal message carrying `steer: true`;
-      // the backend writes the message and follow-up command in one transaction.
-      const sendPlan = planSend(normalizedContent)
-      if (sendPlan?.kind === "command") {
-        // Clear input immediately for responsiveness — same reset the server
-        // path does. The dispatch consumes the command, so the user shouldn't
-        // see their chip linger after pressing send.
-        composer.setContent(EMPTY_DOC)
-        composer.resolveDraft()
-        setExpanded(false)
-        try {
-          await dispatchCommand(sendPlan, normalizedContent)
-        } catch {
-          setError("Failed to queue command. Please try again.")
-        } finally {
-          composer.setIsSending(false)
-        }
-        return
-      }
-      const steerDirective = sendPlan?.kind === "steer-message" ? sendPlan : null
-
-      // Armed for "Reply in conversation" but not confirmed live in THIS stream
-      // (thread-live, or the board-post projection hasn't resolved yet): filing
-      // flat here would re-interleave the channel. Hand off to the conversation
-      // panel: the draft already lives at the conversation's own scope, which is
-      // exactly the scope the panel's composer opens, so the text follows. The inline flat send below only runs once the
-      // conversation is confirmed same-stream. A toast because the send didn't do
-      // the obvious thing (post here): the panel can cover this view on mobile, so
-      // the kept draft needs a word or the message reads as vanished (INV-63:
-      // deferred action, no other on-screen signal).
-      if (armedConversationId && conversationReplyLastActiveStreamId !== streamId) {
-        redirectReplyToPanel(armedConversationId)
-        toast.info("Opening the conversation to reply — your draft came with it.")
-        composer.setIsSending(false)
-        return
-      }
-
-      const messageContent = steerDirective?.content ?? normalizedContent
-      const attachments = extractUploadedAttachments(messageContent)
-      const attachmentIds = attachments.map((attachment) => attachment.id)
-
-      // Clear at once; the sent row lands in the timeline on its own. The durable
-      // draft is kept until the send resolves, so a failed draft promotion can
-      // restore the content.
+    // A bare `/steer`, a slashCommand node, or raw text matching an available
+    // command dispatches instead of sending. Embedded steer (message content
+    // around the directive) stays a normal message carrying `steer: true`;
+    // the backend writes the message and follow-up command in one transaction.
+    const sendPlan = planSend(normalizedContent)
+    if (sendPlan?.kind === "command") {
+      // Clear input immediately for responsiveness — same reset the server
+      // path does. The dispatch consumes the command, so the user shouldn't
+      // see their chip linger after pressing send.
       composer.setContent(EMPTY_DOC)
+      composer.resolveDraft()
       setExpanded(false)
       try {
-        const result = await sendMessage({
-          contentJson: messageContent,
-          attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-          attachments: attachments.length > 0 ? attachments : undefined,
-          ...(steerDirective && { steer: true as const }),
-          composeTrace: await composeTrace,
-          // Armed by "Reply in conversation": file this send into the
-          // conversation synchronously (Mechanism C). Cleared only on success —
-          // a failed send keeps the filing armed alongside the restored content.
-          conversation: armedConversationId ? { intent: "existing", conversationId: armedConversationId } : undefined,
-        })
-
-        disarm()
-        composer.clearAttachments()
-        composer.resolveDraft()
-        if (result.navigateTo) {
-          navigate(result.navigateTo, { replace: result.replace ?? false })
-        }
-      } catch (error) {
-        // Route changes abort a stale promotion wait. The old scope still owns
-        // its durable draft; restoring here would inject it into the next stream.
-        // Real stream message failures are handled in the timeline with retry,
-        // so this is a failed draft promotion.
-        if (!(error instanceof Error && error.name === "AbortError")) {
-          composer.setContent(liveContent)
-          setError("Failed to create stream. Please try again.")
-        }
+        await dispatchCommand(sendPlan, normalizedContent)
+      } catch {
+        setError("Failed to queue command. Please try again.")
       } finally {
         composer.setIsSending(false)
       }
-    },
-    [
-      composer,
-      sendMessage,
-      navigate,
-      workspaceId,
-      streamId,
-      planSend,
-      dispatchCommand,
-      armedConversationId,
-      conversationReplyLastActiveStreamId,
-      disarm,
-      redirectReplyToPanel,
-      takeComposeTrace,
-    ]
-  )
+      return
+    }
+    const steerDirective = sendPlan?.kind === "steer-message" ? sendPlan : null
+
+    // Armed for "Reply in conversation" but not confirmed live in THIS stream
+    // (thread-live, or the board-post projection hasn't resolved yet): filing
+    // flat here would re-interleave the channel. Hand off to the conversation
+    // panel: the draft already lives at the conversation's own scope, which is
+    // exactly the scope the panel's composer opens, so the text follows. The inline flat send below only runs once the
+    // conversation is confirmed same-stream. A toast because the send didn't do
+    // the obvious thing (post here): the panel can cover this view on mobile, so
+    // the kept draft needs a word or the message reads as vanished (INV-63:
+    // deferred action, no other on-screen signal).
+    if (armedConversationId && conversationReplyLastActiveStreamId !== streamId) {
+      redirectReplyToPanel(armedConversationId)
+      toast.info("Opening the conversation to reply — your draft came with it.")
+      composer.setIsSending(false)
+      return
+    }
+
+    const messageContent = steerDirective?.content ?? normalizedContent
+    const attachments = extractUploadedAttachments(messageContent)
+    const attachmentIds = attachments.map((attachment) => attachment.id)
+
+    // Clear at once; the sent row lands in the timeline on its own. The durable
+    // draft is kept until the send resolves, so a failed draft promotion can
+    // restore the content.
+    composer.setContent(EMPTY_DOC)
+    setExpanded(false)
+    try {
+      const result = await sendMessage({
+        contentJson: messageContent,
+        attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+        attachments: attachments.length > 0 ? attachments : undefined,
+        ...(steerDirective && { steer: true as const }),
+        composeTrace: await composeTrace,
+        // Armed by "Reply in conversation": file this send into the
+        // conversation synchronously (Mechanism C). Cleared only on success —
+        // a failed send keeps the filing armed alongside the restored content.
+        conversation: armedConversationId ? { intent: "existing", conversationId: armedConversationId } : undefined,
+      })
+
+      disarm()
+      composer.clearAttachments()
+      composer.resolveDraft()
+      if (result.navigateTo) {
+        navigate(result.navigateTo, { replace: result.replace ?? false })
+      }
+    } catch (error) {
+      // Route changes abort a stale promotion wait. The old scope still owns
+      // its durable draft; restoring here would inject it into the next stream.
+      // Real stream message failures are handled in the timeline with retry,
+      // so this is a failed draft promotion.
+      if (!(error instanceof Error && error.name === "AbortError")) {
+        composer.setContent(liveContent)
+        setError("Failed to create stream. Please try again.")
+      }
+    } finally {
+      composer.setIsSending(false)
+    }
+  })
 
   /**
    * Schedule the current composer content for a future send. Mirrors the
@@ -916,59 +907,143 @@ function MessageInputComponent({
    * of the live send pipeline. The schedule row appears immediately in the
    * Scheduled page via the upserted socket event.
    */
-  const handleSchedule = useCallback(
-    async (when: Date) => {
-      if (!composer.canSend) return
+  const handleSchedule = useStableCallback(async (when: Date) => {
+    if (!composer.canSend) return
 
-      composer.setIsSending(true)
-      setError(null)
+    composer.setIsSending(true)
+    setError(null)
 
-      const pendingAttachments = composer.getPendingAttachmentsSnapshot()
-      const liveContent = composer.content
-      const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
-      const attachments = extractUploadedAttachments(normalizedContent)
-      const attachmentIds = attachments.map((a) => a.id)
+    const pendingAttachments = composer.getPendingAttachmentsSnapshot()
+    const liveContent = composer.content
+    const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
+    const attachments = extractUploadedAttachments(normalizedContent)
+    const attachmentIds = attachments.map((a) => a.id)
 
-      // A live send whose conversation has drifted into a thread hands off to the
-      // panel (handleSubmit above). A scheduled send can't — there's no live thread
-      // at fire time and the picker has no panel affordance — so it always files by
-      // id. Surface that divergence when armed-and-drifted so the deferred reply
-      // doesn't read as a flat channel send (INV-63: deferred action, no other
-      // on-screen signal). Same-stream stays silent (the strip already shows it).
-      const filesIntoDriftedConversation =
-        armedConversationId !== null && conversationReplyLastActiveStreamId !== streamId
+    // A live send whose conversation has drifted into a thread hands off to the
+    // panel (handleSubmit above). A scheduled send can't — there's no live thread
+    // at fire time and the picker has no panel affordance — so it always files by
+    // id. Surface that divergence when armed-and-drifted so the deferred reply
+    // doesn't read as a flat channel send (INV-63: deferred action, no other
+    // on-screen signal). Same-stream stays silent (the strip already shows it).
+    const filesIntoDriftedConversation =
+      armedConversationId !== null && conversationReplyLastActiveStreamId !== streamId
 
-      try {
-        composer.setContent(EMPTY_DOC)
-        setExpanded(false)
-        await scheduleMessageMutation.mutateAsync({
-          streamId,
-          contentJson: normalizedContent,
-          attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-          scheduledFor: when.toISOString(),
-          // Armed by "Reply in conversation": the directive rides the scheduled
-          // row and is forwarded to the send at fire time, so a scheduled reply
-          // files into its conversation exactly as an immediate send would.
-          // Unlike the live send there's no thread-follow routing — the fired
-          // message posts into this stream and the assigner attaches it to the
-          // conversation by id (cross-stream within one root is allowed).
-          conversation: armedConversationId ? { intent: "existing", conversationId: armedConversationId } : undefined,
-        })
-        disarm()
-        composer.resolveDraft()
-        composer.clearAttachments()
-        if (filesIntoDriftedConversation) {
-          toast.info("Scheduled — this reply will file into the conversation when it sends.")
-        }
-      } catch (err) {
-        composer.setContent(liveContent)
-        const message = err instanceof Error ? err.message : "Could not schedule message"
-        setError(message)
-      } finally {
-        composer.setIsSending(false)
+    try {
+      composer.setContent(EMPTY_DOC)
+      setExpanded(false)
+      await scheduleMessageMutation.mutateAsync({
+        streamId,
+        contentJson: normalizedContent,
+        attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+        scheduledFor: when.toISOString(),
+        // Armed by "Reply in conversation": the directive rides the scheduled
+        // row and is forwarded to the send at fire time, so a scheduled reply
+        // files into its conversation exactly as an immediate send would.
+        // Unlike the live send there's no thread-follow routing — the fired
+        // message posts into this stream and the assigner attaches it to the
+        // conversation by id (cross-stream within one root is allowed).
+        conversation: armedConversationId ? { intent: "existing", conversationId: armedConversationId } : undefined,
+      })
+      disarm()
+      composer.resolveDraft()
+      composer.clearAttachments()
+      if (filesIntoDriftedConversation) {
+        toast.info("Scheduled — this reply will file into the conversation when it sends.")
       }
-    },
-    [composer, scheduleMessageMutation, streamId, armedConversationId, conversationReplyLastActiveStreamId, disarm]
+    } catch (err) {
+      composer.setContent(liveContent)
+      const message = err instanceof Error ? err.message : "Could not schedule message"
+      setError(message)
+    } finally {
+      composer.setIsSending(false)
+    }
+  })
+
+  const handleEditLastMessage = useStableCallback(() => {
+    const unmountedId = triggerEditLast?.()
+    if (!unmountedId) return
+    // Message is in the loaded events but not mounted (virtualized out).
+    // Ask the stream to scroll it into view — scrollToMessage walks
+    // Virtuoso up to the right index and retries until the element lands
+    // in the DOM. Poll triggerEditLast until the registry picks up the
+    // newly-mounted message (or give up after ~1.2s).
+    const scrolled = scrollToMessage?.(unmountedId) ?? false
+    if (!scrolled) {
+      // No virtualized scroller (non-virtualized path); fall back to
+      // a best-effort DOM scroll so keyboard-edit still works.
+      const el = document.querySelector(`[data-message-id="${CSS.escape(unmountedId)}"]`)
+      el?.scrollIntoView({ block: "center" })
+    }
+    const deadline = performance.now() + 1200
+    const retry = () => {
+      if (triggerEditLast?.() === null) return
+      if (performance.now() >= deadline) return
+      setTimeout(retry, 60)
+    }
+    setTimeout(retry, 80)
+  })
+  const canSend = composer.canSend
+  const isSending = composer.isSending
+  const handleStashDraft = useStableCallback(stash.handleStashDraft)
+  const handleRestoreStashed = useStableCallback(stash.handleRestoreStashed)
+  const handleDeleteStashed = useStableCallback(stash.handleDeleteStashed)
+  const handleOpenAside = useStableCallback(openAsideHere)
+  const stashedDrafts = useMemo(
+    () =>
+      isAsideComposer
+        ? undefined
+        : {
+            workspaceId,
+            drafts: stash.drafts,
+            previewById: stashPreviews,
+            originById: stashOrigins,
+            canStashCurrent: canSend,
+            onStashCurrent: handleStashDraft,
+            onRestore: handleRestoreStashed,
+            onDelete: handleDeleteStashed,
+            onOpenChange: stash.setPileOpen,
+            controlsDisabled: isSending,
+          },
+    [
+      isAsideComposer,
+      workspaceId,
+      stash.drafts,
+      stashPreviews,
+      stashOrigins,
+      canSend,
+      handleStashDraft,
+      handleRestoreStashed,
+      handleDeleteStashed,
+      stash.setPileOpen,
+      isSending,
+    ]
+  )
+  const scheduledMessagesTrigger = useMemo(
+    () =>
+      schedulingHidden ? undefined : (
+        <ScheduledMessagesPicker
+          workspaceId={workspaceId}
+          streamId={streamId}
+          canSchedule={canSend}
+          onSchedule={handleSchedule}
+          controlsDisabled={isSending}
+        />
+      ),
+    [schedulingHidden, workspaceId, streamId, canSend, handleSchedule, isSending]
+  )
+  const scheduledMessagesTriggerFab = useMemo(
+    () =>
+      schedulingHidden ? undefined : (
+        <ScheduledMessagesPicker
+          workspaceId={workspaceId}
+          streamId={streamId}
+          canSchedule={canSend}
+          onSchedule={handleSchedule}
+          controlsDisabled={isSending}
+          size="fab"
+        />
+      ),
+    [schedulingHidden, workspaceId, streamId, canSend, handleSchedule, isSending]
   )
 
   if (disabled && disabledReason) {
@@ -1024,68 +1099,14 @@ function MessageInputComponent({
     onMobileChromeOpenChange: handleMobileChromeOpenChange,
     onMobileTypingChange,
     scopeId: streamId,
-    onEditLastMessage: triggerEditLast
-      ? () => {
-          const unmountedId = triggerEditLast()
-          if (!unmountedId) return
-          // Message is in the loaded events but not mounted (virtualized out).
-          // Ask the stream to scroll it into view — scrollToMessage walks
-          // Virtuoso up to the right index and retries until the element lands
-          // in the DOM. Poll triggerEditLast until the registry picks up the
-          // newly-mounted message (or give up after ~1.2s).
-          const scrolled = scrollToMessage?.(unmountedId) ?? false
-          if (!scrolled) {
-            // No virtualized scroller (non-virtualized path); fall back to
-            // a best-effort DOM scroll so keyboard-edit still works.
-            const el = document.querySelector(`[data-message-id="${CSS.escape(unmountedId)}"]`)
-            el?.scrollIntoView({ block: "center" })
-          }
-          const deadline = performance.now() + 1200
-          const retry = () => {
-            if (triggerEditLast() === null) return
-            if (performance.now() >= deadline) return
-            setTimeout(retry, 60)
-          }
-          setTimeout(retry, 80)
-        }
-      : undefined,
+    onEditLastMessage: triggerEditLast ? handleEditLastMessage : undefined,
     streamContext,
     composerRef: composerFocusRef,
-    onStashDraft: isAsideComposer ? undefined : stash.handleStashDraft,
-    stashedDrafts: isAsideComposer
-      ? undefined
-      : {
-          workspaceId,
-          drafts: stash.drafts,
-          previewById: stashPreviews,
-          originById: stashOrigins,
-          canStashCurrent: composer.canSend,
-          onStashCurrent: stash.handleStashDraft,
-          onRestore: stash.handleRestoreStashed,
-          onDelete: stash.handleDeleteStashed,
-          onOpenChange: stash.setPileOpen,
-          controlsDisabled: composer.isSending,
-        },
-    scheduledMessagesTrigger: schedulingHidden ? undefined : (
-      <ScheduledMessagesPicker
-        workspaceId={workspaceId}
-        streamId={streamId}
-        canSchedule={composer.canSend}
-        onSchedule={handleSchedule}
-        controlsDisabled={composer.isSending}
-      />
-    ),
-    onOpenAside: !isAsideComposer && canOpenAside ? openAsideHere : undefined,
-    scheduledMessagesTriggerFab: schedulingHidden ? undefined : (
-      <ScheduledMessagesPicker
-        workspaceId={workspaceId}
-        streamId={streamId}
-        canSchedule={composer.canSend}
-        onSchedule={handleSchedule}
-        controlsDisabled={composer.isSending}
-        size="fab"
-      />
-    ),
+    onStashDraft: isAsideComposer ? undefined : handleStashDraft,
+    stashedDrafts,
+    scheduledMessagesTrigger,
+    onOpenAside: !isAsideComposer && canOpenAside ? handleOpenAside : undefined,
+    scheduledMessagesTriggerFab,
   } as const
 
   // Removing the filing changes metadata on the same draft. On mobile, retain
@@ -1122,7 +1143,7 @@ function MessageInputComponent({
       >
         {conversationReplyStrip}
         <div className="min-h-0 flex-1">
-          <MessageComposer {...composerProps} expanded onCollapse={handleCollapse} autoFocus />
+          <MemoizedMessageComposer {...composerProps} expanded onCollapse={handleCollapse} autoFocus />
         </div>
       </OverlayComposerShell>
 
@@ -1132,7 +1153,7 @@ function MessageInputComponent({
         <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={e2eEnabled} streamId={e2eRootStreamId} />
         {!expanded && conversationReplyStrip}
         {!expanded && (
-          <MessageComposer
+          <MemoizedMessageComposer
             {...composerProps}
             autoFocus={autoFocus}
             onExpandClick={isAsideComposer ? undefined : handleExpandClick}

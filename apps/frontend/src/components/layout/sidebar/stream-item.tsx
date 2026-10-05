@@ -26,7 +26,6 @@ import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import { MentionIndicator } from "@/components/mention-indicator"
 import { DraftIndicator } from "@/components/draft-indicator"
 import { RelativeTime } from "@/components/relative-time"
-import { getThreadRootContext } from "@/components/thread/breadcrumb-helpers"
 import { isDraftId, useActors } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -424,7 +423,8 @@ interface StreamItemProps {
   isActive: boolean
   unreadCount: number
   mentionCount: number
-  allStreams: StreamItemData[]
+  /** A thread's root stream, when the sidebar holds it. */
+  threadRoot?: StreamItemData | null
   /** Show compact view (title only, no preview) */
   compact?: boolean
   /** Show preview on hover when compact (only works with compact=true) */
@@ -455,7 +455,7 @@ export function StreamItem({
   isActive,
   unreadCount,
   mentionCount,
-  allStreams,
+  threadRoot,
   compact = false,
   showPreviewOnHover = false,
   homeHint,
@@ -500,22 +500,16 @@ export function StreamItem({
   const { Icon: TypeIcon, tileClassName } = streamTypeVisual(stream.type)
   const avatar = { icon: <TypeIcon className="h-3.5 w-3.5" />, className: tileClassName }
   const name = streamLabel(stream, "sidebar")
-  const threadRootStream =
-    stream.type === StreamTypes.THREAD && stream.rootStreamId
-      ? (allStreams.find((s) => s.id === stream.rootStreamId) ?? null)
-      : null
-
   const dmPeerAvatar = stream.dmPeerUserId ? getActorAvatar(stream.dmPeerUserId, "user") : null
 
   // A nested thread sits right under its root's row, so neither the "· #root"
   // hint nor the root-type badge adds anything there.
   const isTreeChild = !!stream.treeParentId
-  const threadRootContext =
-    stream.type === StreamTypes.THREAD && !isTreeChild ? getThreadRootContext(stream, allStreams) : null
+  const threadRootContext = threadRoot && !isTreeChild ? streamLabel(threadRoot, "sidebar") : null
 
   const threadBadge = (() => {
-    if (isTreeChild || !threadRootStream?.type) return null
-    const config = BADGE_CONFIG[threadRootStream.type]
+    if (isTreeChild || !threadRoot?.type) return null
+    const config = BADGE_CONFIG[threadRoot.type]
     return config ?? null
   })()
 

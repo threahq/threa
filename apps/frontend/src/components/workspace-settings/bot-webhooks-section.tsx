@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { StreamTypes, type IncomingWebhook } from "@threahq/types"
+import { StreamTypes, type IncomingWebhook, type WorkspaceBootstrap } from "@threahq/types"
 import { botsApi } from "@/api/bots"
 import { API_BASE } from "@/api/client"
 import { Button } from "@/components/ui/button"
@@ -73,7 +73,7 @@ function WebhookUrlRow({ name, label, value }: WebhookUrlRowProps) {
   )
 }
 
-type TargetStream = NonNullable<ReturnType<typeof useCachedWorkspaceBootstrap>>["streams"][number]
+type TargetStream = WorkspaceBootstrap["streams"][number]
 
 interface WebhookFormProps {
   streams: TargetStream[]

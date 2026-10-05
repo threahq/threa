@@ -85,7 +85,6 @@ interface StreamPanelProps {
 
 export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProps) {
   const { isMobile } = useSidebar()
-  const { getStreamState } = useCoordinatedLoading()
   const [searchParams] = useSearchParams()
   const highlightMessageId = searchParams.get("m")
   const { panelId, openPanel, getPanelUrl, closePanel, setFocusedPane } = usePanel()
@@ -111,10 +110,11 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   )
 
   // For real streams, fetch bootstrap
-  const { data: bootstrap, error } = useStreamBootstrap(workspaceId, isDraft ? "" : (panelId ?? ""), {
+  const { data: bootstrapStream, error } = useStreamBootstrap(workspaceId, isDraft ? "" : (panelId ?? ""), {
     enabled: !!panelId && !isDraft && !idbPanelStream,
+    select: (bootstrap) => bootstrap.stream,
   })
-  const stream = idbPanelStream ?? bootstrap?.stream
+  const stream = idbPanelStream ?? bootstrapStream
   const isThread = stream?.type === StreamTypes.THREAD
   const currentWorkspaceUserId = useWorkspaceUserId(workspaceId)
   // The bootstrap fallback above isn't overlaid by the workspace store, so an
@@ -124,7 +124,10 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   const decryptedPanelName = useDecryptedStreamName(workspaceId, stream)
 
   // Show loading indicator only for real streams (not drafts) and only when actively loading after initial data
-  const showLoadingIndicator = !isDraft && !!panelId && getStreamState(panelId) === "loading"
+  const isPanelStreamLoading = useCoordinatedLoading(
+    (loading) => !!panelId && loading.getStreamState(panelId) === "loading"
+  )
+  const showLoadingIndicator = !isDraft && isPanelStreamLoading
 
   // For draft threads, fetch parent stream to get the parent message
   const idbParentStream = useMemo(

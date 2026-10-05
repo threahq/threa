@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useSyncExternalStore } from "react"
+import { useCallback, useMemo, useRef, useSyncExternalStore } from "react"
+import { replaceEqualDeep } from "@tanstack/react-query"
 import { useBatchedValue } from "./apply-window"
 import {
   getWorkspaceTableSnapshot,
@@ -9,6 +10,7 @@ import {
 // Namespace import so the shared overlay memo below is spy-able against the
 // module (INV-48) — the "once per workspace, not once per consumer" property is
 // only assertable through the real call.
+import { useStreamFromStore } from "./stream-store"
 import * as streamNameCache from "@/lib/crypto/stream-name-cache"
 import {
   getActiveDb,
@@ -32,7 +34,7 @@ import {
 // Re-exported so components/pages can type the values these store hooks return
 // (e.g. `useWorkspaceStreams(): CachedStream[]`) without importing `@/db`
 // directly, which the component layer is barred from (INV-15).
-export type { CachedBot, CachedPersona, CachedStream } from "@/db"
+export type { CachedBot, CachedPersona, CachedStream, CachedUnreadState } from "@/db"
 
 // In-memory cache — populated by applyWorkspaceBootstrap, used as the default
 // value for useLiveQuery so the first synchronous render returns real data
@@ -394,14 +396,81 @@ function useArrayStoreHook<K extends WorkspaceTableKey>(
   return useBatchedValue(live ?? cached, workspaceId)
 }
 
-function useSingletonStoreHook<K extends WorkspaceTableKey>(
+type ArrayTableKey = "streams" | "memberships" | "readStates"
+
+/**
+ * A value derived from a whole table, compared deeply: the reader re-renders
+ * when the value changes, not on every rewrite of the table. The streams table
+ * is rewritten on every message in the workspace. `select` must be stable.
+ */
+function useTableSelect<K extends ArrayTableKey, T>(
   workspaceId: string | undefined,
   tableKey: K,
-  cached: WorkspaceTableRowTypes[K] | undefined
-): WorkspaceTableRowTypes[K] | undefined {
-  const rows = useWorkspaceTable(workspaceId, tableKey)
-  const live = rows ? rows[0] : cached
-  const resolved = live === undefined && cached !== undefined ? cached : live
+  select: (rows: WorkspaceTableRowTypes[K][]) => T
+): T {
+  const held = useRef<{ rows: unknown; select: unknown; value: T } | null>(null)
+  const subscribe = useCallback(
+    (listener: () => void) => (workspaceId ? subscribeWorkspaceTable(workspaceId, tableKey, listener) : () => {}),
+    [workspaceId, tableKey]
+  )
+  const getResolved = useCallback(
+    () => !!workspaceId && getWorkspaceTableSnapshot(workspaceId, tableKey) !== undefined,
+    [workspaceId, tableKey]
+  )
+  const getSnapshot = useCallback(() => {
+    const live = workspaceId ? getWorkspaceTableSnapshot(workspaceId, tableKey) : undefined
+    const cached = workspaceId
+      ? (cache[tableKey].get(workspaceId) as WorkspaceTableRowTypes[K][] | undefined)
+      : undefined
+    const rows = live ?? cached ?? (EMPTY_ROWS as WorkspaceTableRowTypes[K][])
+    const last = held.current
+    if (last && last.rows === rows && last.select === select) return last.value
+    const value = replaceEqualDeep(last?.value, select(rows)) as T
+    held.current = { rows, select, value }
+    return value
+  }, [workspaceId, tableKey, select])
+  const resolved = useSyncExternalStore(subscribe, getResolved, getResolved)
+  useWorkspaceCacheSignal(workspaceId, !resolved)
+  return useBatchedValue(useSyncExternalStore(subscribe, getSnapshot, getSnapshot), workspaceId)
+}
+
+const UNRESOLVED = Symbol("unresolved")
+const NO_ROW = Symbol("no-row")
+
+/**
+ * With `pick`, the reader holds only its slice of the row, deep-compared, so a
+ * write that leaves the slice alone (a touch stamp, another reader's field)
+ * does not re-render it.
+ */
+function useSingletonStoreHook<K extends WorkspaceTableKey, T = WorkspaceTableRowTypes[K]>(
+  workspaceId: string | undefined,
+  tableKey: K,
+  cached: WorkspaceTableRowTypes[K] | undefined,
+  pick?: (row: WorkspaceTableRowTypes[K]) => T
+): T | undefined {
+  const pickedRef = useRef<T | undefined>(undefined)
+  const view = useCallback(
+    (row: WorkspaceTableRowTypes[K]): T => {
+      if (!pick) return row as T
+      pickedRef.current = replaceEqualDeep(pickedRef.current, pick(row))
+      return pickedRef.current as T
+    },
+    [pick]
+  )
+  const subscribe = useCallback(
+    (listener: () => void) => (workspaceId ? subscribeWorkspaceTable(workspaceId, tableKey, listener) : () => {}),
+    [workspaceId, tableKey]
+  )
+  const getSnapshot = useCallback(() => {
+    const rows = workspaceId ? getWorkspaceTableSnapshot(workspaceId, tableKey) : undefined
+    if (!rows) return UNRESOLVED
+    return rows[0] ? view(rows[0]) : NO_ROW
+  }, [workspaceId, tableKey, view])
+  const live = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  useWorkspaceCacheSignal(workspaceId, live === UNRESOLVED)
+  let resolved: T | undefined
+  if (live === UNRESOLVED || live === NO_ROW) resolved = cached ? view(cached) : undefined
+  else resolved = live as T
   return useBatchedValue(resolved, workspaceId)
 }
 
@@ -477,21 +546,63 @@ export function useWorkspaceStreams(workspaceId: string | undefined): CachedStre
 }
 
 /**
+ * One stream, narrowed to `pick`, with the decrypted name overlaid the way
+ * `useWorkspaceStreams` does. For a surface that needs its own stream only: the
+ * whole list is rewritten on every message in the workspace.
+ */
+export function useWorkspaceStream<
+  T extends { id: string; displayName: string | null; e2eEnabled?: boolean; sealedNameCiphertext?: string | null },
+>(workspaceId: string | undefined, streamId: string | undefined, pick: (row: CachedStream) => T): T | undefined {
+  const row = useStreamFromStore(workspaceId, streamId, pick)
+  const version = useSyncExternalStore(
+    streamNameCache.subscribeStreamNameCache,
+    streamNameCache.getStreamNameCacheVersion,
+    streamNameCache.getStreamNameCacheVersion
+  )
+  return useMemo(
+    () => (workspaceId && row ? streamNameCache.applyDecryptedNameOverlay(workspaceId, [row])[0] : row),
+    [workspaceId, row, version]
+  )
+}
+
+/**
+ * A value derived from the stream list (names overlaid as in `useWorkspaceStreams`),
+ * for a surface that needs one row or one verdict out of it. `select` must be stable.
+ */
+export function useWorkspaceStreamsSelect<T>(
+  workspaceId: string | undefined,
+  select: (streams: CachedStream[]) => T
+): T {
+  const version = useSyncExternalStore(
+    streamNameCache.subscribeStreamNameCache,
+    streamNameCache.getStreamNameCacheVersion,
+    streamNameCache.getStreamNameCacheVersion
+  )
+  const selectOverlaid = useCallback(
+    (rows: CachedStream[]) => select(workspaceId ? sharedNameOverlay(workspaceId, rows, version) : rows),
+    [select, workspaceId, version]
+  )
+  return useTableSelect(workspaceId, "streams", selectOverlaid)
+}
+
+/**
  * One id index per rows reference: the archival chain walk (`findArchivedAncestor`)
  * runs per rendered surface, and every timeline, card and settings panel would
  * otherwise rebuild the same map from the same rows.
  */
 const streamIndexMemo = new WeakMap<CachedStream[], ReadonlyMap<string, CachedStream>>()
 
+export function indexStreams(streams: CachedStream[]): ReadonlyMap<string, CachedStream> {
+  const memo = streamIndexMemo.get(streams)
+  if (memo) return memo
+  const index = new Map(streams.map((stream) => [stream.id, stream]))
+  streamIndexMemo.set(streams, index)
+  return index
+}
+
 export function useWorkspaceStreamIndex(workspaceId: string | undefined): ReadonlyMap<string, CachedStream> {
   const streams = useWorkspaceStreamsRaw(workspaceId)
-  return useMemo(() => {
-    const memo = streamIndexMemo.get(streams)
-    if (memo) return memo
-    const index = new Map(streams.map((stream) => [stream.id, stream]))
-    streamIndexMemo.set(streams, index)
-    return index
-  }, [streams])
+  return useMemo(() => indexStreams(streams), [streams])
 }
 
 export function useWorkspaceStreamMemberships(workspaceId: string | undefined): CachedStreamMembership[] {
@@ -499,9 +610,33 @@ export function useWorkspaceStreamMemberships(workspaceId: string | undefined): 
   return useArrayStoreHook(workspaceId, "memberships", cached)
 }
 
+export function useWorkspaceStreamMembership(
+  workspaceId: string | undefined,
+  streamId: string,
+  memberId: string | null
+): CachedStreamMembership | undefined {
+  const select = useCallback(
+    (rows: CachedStreamMembership[]) =>
+      memberId ? rows.find((row) => row.streamId === streamId && row.memberId === memberId) : undefined,
+    [streamId, memberId]
+  )
+  return useTableSelect(workspaceId, "memberships", select)
+}
+
 export function useWorkspaceStreamReadStates(workspaceId: string | undefined): CachedStreamReadState[] {
   const cached = workspaceId ? (cache.readStates.get(workspaceId) ?? EMPTY_ROWS) : EMPTY_ROWS
   return useArrayStoreHook(workspaceId, "readStates", cached)
+}
+
+export function useWorkspaceStreamReadState(
+  workspaceId: string | undefined,
+  streamId: string
+): CachedStreamReadState | undefined {
+  const select = useCallback(
+    (rows: CachedStreamReadState[]) => rows.find((row) => row.streamId === streamId),
+    [streamId]
+  )
+  return useTableSelect(workspaceId, "readStates", select)
 }
 
 export function useWorkspaceDmPeers(workspaceId: string | undefined): CachedDmPeer[] {
@@ -551,9 +686,18 @@ export function useWorkspaceLabelAssignments(workspaceId: string | undefined): C
   return useArrayStoreHook(workspaceId, "labelAssignments", cached)
 }
 
-export function useWorkspaceUnreadState(workspaceId: string | undefined): CachedUnreadState | undefined {
+export function useWorkspaceUnreadState(workspaceId: string | undefined): CachedUnreadState | undefined
+/** The row is written several times per message; a hot reader passes a stable `pick` for the fields it renders from. */
+export function useWorkspaceUnreadState<T>(
+  workspaceId: string | undefined,
+  pick: (state: CachedUnreadState) => T
+): T | undefined
+export function useWorkspaceUnreadState<T>(
+  workspaceId: string | undefined,
+  pick?: (state: CachedUnreadState) => T
+): CachedUnreadState | T | undefined {
   const cached = workspaceId ? cache.unreadState.get(workspaceId) : undefined
-  return useSingletonStoreHook(workspaceId, "unreadState", cached)
+  return useSingletonStoreHook<"unreadState", CachedUnreadState | T>(workspaceId, "unreadState", cached, pick)
 }
 
 export function useWorkspaceUserPreferences(workspaceId: string | undefined): CachedUserPreferences | undefined {

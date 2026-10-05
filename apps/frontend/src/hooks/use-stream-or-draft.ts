@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react"
-import { useQueryClient } from "@tanstack/react-query"
+import { replaceEqualDeep, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
 import { db, sequenceToNum, type CachedStream, type DraftScratchpad } from "@/db"
 import { useStreamService, useMessageService, usePendingMessages } from "@/contexts"
@@ -11,13 +11,14 @@ import { useStreamBootstrap, streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
 import { useQueueDraftMessage, conversationTag } from "./use-queue-draft-message"
-import { useWorkspaceUsers, useWorkspaceStreams, useWorkspaceDmPeers } from "@/stores/workspace-store"
+import { useWorkspaceUsers, useWorkspaceStream, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useSyncEngine } from "@/sync/sync-engine"
-import { getLatestPersistedSequence } from "@/sync/stream-sync"
+import { getLatestPersistedSequence, type CachedStreamBootstrap } from "@/sync/stream-sync"
 import { hasSeededDraftCache } from "@/stores/draft-store"
 import { getDraftMessageKey, purgeScopeDrafts, upsertLoadedDraft } from "./use-draft-message"
 import { type AttachmentSummary } from "./create-optimistic-bootstrap"
 import { resolveDmDisplayName } from "@/lib/streams"
+import { useShared } from "@/lib/structural-sharing"
 import { serializeToMarkdown } from "@threahq/prosemirror"
 import {
   getDraftPromotionStream,
@@ -72,7 +73,7 @@ export function getDmDraftUserId(id: string): string | null {
 function resolveRealDmDisplayName(
   streamId: string,
   streamDisplayName: string | null,
-  idbStreams: Array<{ id: string; displayName: string | null }>,
+  workspaceDisplayName: string | null | undefined,
   idbUsers: Array<{ id: string; name: string }>,
   idbDmPeers: Array<{ streamId: string; userId: string }>
 ): string | null {
@@ -81,11 +82,28 @@ function resolveRealDmDisplayName(
   if (peerName) return peerName
 
   // Fall back to workspace-level cached displayName.
-  const workspaceName = idbStreams.find((stream) => stream.id === streamId)?.displayName
-  if (workspaceName) return workspaceName
+  if (workspaceDisplayName) return workspaceDisplayName
 
   return streamDisplayName
 }
+
+const pickStreamIdentity = (row: CachedStream) => ({
+  id: row.id,
+  workspaceId: row.workspaceId,
+  type: row.type,
+  slug: row.slug,
+  displayName: row.displayName,
+  companionMode: row.companionMode,
+  parentStreamId: row.parentStreamId,
+  parentAnchorId: row.parentAnchorId,
+  parentMessageId: row.parentMessageId,
+  rootStreamId: row.rootStreamId,
+  archivedAt: row.archivedAt,
+  e2eEnabled: row.e2eEnabled,
+  e2eActors: row.e2eActors,
+  sealedNameCiphertext: row.sealedNameCiphertext,
+  sealedNameEnvelope: row.sealedNameEnvelope,
+})
 
 function toCachedStream(stream: Stream, previous: CachedStream | undefined): CachedStream {
   return {
@@ -519,48 +537,53 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
   const { markPending, notifyQueue } = usePendingMessages()
   const user = useUser()
   const idbUsers = useWorkspaceUsers(workspaceId)
-  const idbStreams = useWorkspaceStreams(workspaceId)
   const idbDmPeers = useWorkspaceDmPeers(workspaceId)
   const currentUserId = idbUsers.find((u) => u.workosUserId === user?.id)?.id ?? null
-  const idbStream = useMemo(() => idbStreams.find((stream) => stream.id === streamId), [idbStreams, streamId])
+  const idbStream = useWorkspaceStream(workspaceId, streamId, pickStreamIdentity)
 
+  // Only the fallback until the row lands: the bootstrap's stream object is
+  // replaced on every message (`messageCount`).
   const {
-    data: bootstrap,
+    data: bootstrapStream,
     isLoading: isBootstrapLoading,
     error,
-  } = useStreamBootstrap(workspaceId, streamId, {
+  } = useStreamBootstrap(workspaceId, idbStream ? "" : streamId, {
     enabled: enabled && !idbStream,
+    select: (bootstrap) => bootstrap.stream,
   })
   // A just-promoted stream is in IDB but not yet in the workspace store's
   // resolved live query; the promotion's own copy covers that tick so the
   // header keeps the name the draft was showing.
-  const baseStream = idbStream ?? bootstrap?.stream ?? getDraftPromotionStream(workspaceId, streamId) ?? undefined
+  const baseStream = idbStream ?? bootstrapStream ?? getDraftPromotionStream(workspaceId, streamId) ?? undefined
   const renameStream = useRenameStream(workspaceId, streamId, baseStream)
   const { rename } = renameStream
   const displayName =
     baseStream?.type === StreamTypes.DM
-      ? resolveRealDmDisplayName(baseStream.id, baseStream.displayName, idbStreams, idbUsers, idbDmPeers)
+      ? resolveRealDmDisplayName(baseStream.id, baseStream.displayName, idbStream?.displayName, idbUsers, idbDmPeers)
       : (baseStream?.displayName ?? null)
 
-  const stream: VirtualStream | undefined = baseStream
-    ? {
-        id: baseStream.id,
-        workspaceId: baseStream.workspaceId,
-        type: baseStream.type,
-        slug: baseStream.slug,
-        displayName,
-        companionMode: baseStream.companionMode,
-        isDraft: false,
-        parentStreamId: baseStream.parentStreamId,
-        parentAnchorId: baseStream.parentAnchorId ?? idbStream?.parentMessageId ?? null,
-        rootStreamId: baseStream.rootStreamId,
-        archivedAt: baseStream.archivedAt,
-        e2eEnabled: baseStream.e2eEnabled,
-        e2eActors: baseStream.e2eActors,
-        sealedNameCiphertext: baseStream.sealedNameCiphertext ?? null,
-        sealedNameEnvelope: baseStream.sealedNameEnvelope ?? null,
-      }
-    : undefined
+  const stream = useShared<VirtualStream | undefined>(
+    baseStream
+      ? {
+          id: baseStream.id,
+          workspaceId: baseStream.workspaceId,
+          type: baseStream.type,
+          slug: baseStream.slug,
+          displayName,
+          companionMode: baseStream.companionMode,
+          isDraft: false,
+          parentStreamId: baseStream.parentStreamId,
+          parentAnchorId: baseStream.parentAnchorId ?? idbStream?.parentMessageId ?? null,
+          rootStreamId: baseStream.rootStreamId,
+          archivedAt: baseStream.archivedAt,
+          e2eEnabled: baseStream.e2eEnabled,
+          e2eActors: baseStream.e2eActors,
+          sealedNameCiphertext: baseStream.sealedNameCiphertext ?? null,
+          sealedNameEnvelope: baseStream.sealedNameEnvelope ?? null,
+        }
+      : undefined,
+    replaceEqualDeep
+  )
 
   const archive = useCallback(async () => {
     await streamService.archive(workspaceId, streamId)
@@ -584,9 +607,11 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
   const unarchive = useCallback(async () => {
     await streamService.unarchive(workspaceId, streamId)
-    const restoredStream = bootstrap?.stream ?? idbStream
+    const cached = await db.streams.get([workspaceId, streamId])
+    const restoredStream =
+      queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap(workspaceId, streamId))?.stream ?? cached
     if (restoredStream) {
-      await db.streams.put(toCachedStream({ ...restoredStream, archivedAt: null }, idbStream))
+      await db.streams.put(toCachedStream({ ...restoredStream, archivedAt: null }, cached))
     }
 
     queryClient.setQueryData(streamKeys.bootstrap(workspaceId, streamId), (old: unknown) => {
@@ -601,7 +626,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
     })
 
     queryClient.invalidateQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
-  }, [streamId, workspaceId, streamService, queryClient, bootstrap?.stream, idbStream])
+  }, [streamId, workspaceId, streamService, queryClient])
 
   const sendMessage = useCallback(
     async (input: SendMessageInput): Promise<{ navigateTo?: string }> => {

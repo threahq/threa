@@ -33,6 +33,13 @@ export function isSessionUnlocked(session: E2eSessionState): session is Unlocked
   return session.status === "unlocked" && session.privateKey !== null && session.keyId !== null
 }
 
+type DecryptStreamFields = Pick<CachedStream, "rootStreamId">
+
+/** The `useStreamFromStore` pick for a per-row decrypt read. */
+export function pickDecryptStreamFields(row: CachedStream): DecryptStreamFields {
+  return { rootStreamId: row.rootStreamId }
+}
+
 export type DecryptContext =
   | { ready: false; reason: "locked" | "unhydrated" }
   | { ready: true; opts: DecryptMessageOpts }
@@ -51,7 +58,7 @@ export function resolveDecryptContext(
   workspaceId: string,
   streamId: string,
   session: E2eSessionState,
-  streamRow: CachedStream | undefined
+  streamRow: DecryptStreamFields | undefined
 ): DecryptContext {
   if (!isSessionUnlocked(session)) return { ready: false, reason: "locked" }
   if (streamRow === undefined) return { ready: false, reason: "unhydrated" }

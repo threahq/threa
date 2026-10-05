@@ -1,7 +1,9 @@
 import { useCallback, useMemo, useRef, useState } from "react"
 import type { ConversationRowRead } from "@/components/message/conversation-read-context"
 import type { RenderableMessage } from "@/components/message/message-item"
-import { useWorkspaceStreamReadStates, useWorkspaceUnreadState } from "@/stores/workspace-store"
+import { useWorkspaceStreamReadStates, useWorkspaceUnreadState, type CachedUnreadState } from "@/stores/workspace-store"
+
+const pickUnreadCounts = (state: CachedUnreadState) => ({ unreadCounts: state.unreadCounts })
 
 /**
  * Whether every stream the given rows span can already be decided as read or
@@ -16,7 +18,7 @@ export function useConversationReadStateDecidable(
   rows: RenderableMessage[],
   rootStreamId: string
 ): boolean {
-  const unreadState = useWorkspaceUnreadState(workspaceId)
+  const unreadState = useWorkspaceUnreadState(workspaceId, pickUnreadCounts)
   const streamReadStates = useWorkspaceStreamReadStates(workspaceId)
   return useMemo(() => {
     if (unreadState === undefined) return false

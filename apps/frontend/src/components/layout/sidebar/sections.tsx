@@ -1,7 +1,7 @@
 import { ArrowUpRight, ChevronDown, ChevronRight, ChevronUp, ListFilter, Plus } from "lucide-react"
-import { Fragment, useState, type ReactNode } from "react"
+import { memo, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
-import type { SidebarSectionFilter } from "@threahq/types"
+import { StreamTypes, type SidebarSectionFilter } from "@threahq/types"
 import type { CollapseState } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
@@ -357,7 +357,7 @@ export function SectionHeader({
 interface RenderRowOptions {
   workspaceId: string
   activeStreamId?: string
-  allStreams: StreamItemData[]
+  streamsById: ReadonlyMap<string, StreamItemData>
   getUnreadCount: (streamId: string) => number
   getMentionCount: (streamId: string) => number
   compact: boolean
@@ -368,7 +368,7 @@ interface RenderRowOptions {
   /** True in the Inbox section (chats mode only — board mode never sets this). */
   isInboxSection?: boolean
   /** Clear a row from the Inbox. Set only alongside `isInboxSection`. */
-  onClearInboxRow?: (streamId: string) => void
+  onClearInbox?: (streamIds: string[]) => void
   /** Pointer hover/leave on an Inbox row, for the clear shortcut's hovered-row tracking. */
   onInboxRowHoverChange?: (streamId: string, hovering: boolean) => void
   /** Formatted effective binding for the clear-inbox shortcut, shown as the row
@@ -376,42 +376,101 @@ interface RenderRowOptions {
   clearInboxKeyHint?: string
 }
 
+interface SectionRowProps {
+  workspaceId: string
+  stream: StreamItemData
+  isActive: boolean
+  unreadCount: number
+  mentionCount: number
+  threadRoot?: StreamItemData
+  compact: boolean
+  showPreviewOnHover: boolean
+  streamDragEnabled: boolean
+  homeHint?: string
+  boardMode?: SidebarBoardMode | null
+  isInboxSection?: boolean
+  onClearInbox?: (streamIds: string[]) => void
+  onInboxRowHoverChange?: (streamId: string, hovering: boolean) => void
+  clearInboxKeyHint?: string
+}
+
 /**
- * One stream row, shared by the binary and tiered sections. Wraps as a drag
+ * One stream row, shared by the binary and tiered sections. Memoized on flat
+ * props so a workspace write re-renders only the rows it changed. Wraps as a drag
  * source only when dragging is on (desktop) and the row is a persisted stream —
  * drafts (incl. virtual DMs) carry transient ids that must never be filed into
  * config, and a draft has no permalink to hand a drop target.
  */
-function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): ReactNode {
+const SectionRow = memo(function SectionRow({
+  workspaceId,
+  stream,
+  isActive,
+  unreadCount,
+  mentionCount,
+  threadRoot,
+  compact,
+  showPreviewOnHover,
+  streamDragEnabled,
+  homeHint,
+  boardMode,
+  isInboxSection,
+  onClearInbox,
+  onInboxRowHoverChange,
+  clearInboxKeyHint,
+}: SectionRowProps) {
   const item = (
     <StreamItem
+      workspaceId={workspaceId}
+      stream={stream}
+      isActive={isActive}
+      unreadCount={unreadCount}
+      mentionCount={mentionCount}
+      threadRoot={threadRoot}
+      compact={compact}
+      showPreviewOnHover={showPreviewOnHover}
+      homeHint={homeHint}
+      boardMode={boardMode}
+      isInboxRow={isInboxSection}
+      onClearFromInbox={onClearInbox ? () => onClearInbox([stream.id]) : undefined}
+      onInboxHoverChange={
+        onInboxRowHoverChange ? (hovering: boolean) => onInboxRowHoverChange(stream.id, hovering) : undefined
+      }
+      clearInboxKeyHint={clearInboxKeyHint}
+    />
+  )
+  if (!streamDragEnabled || isDraftId(stream.id)) return item
+  return (
+    <DraggableStreamRow workspaceId={workspaceId} streamId={stream.id} label={streamLabel(stream, "sidebar")}>
+      {item}
+    </DraggableStreamRow>
+  )
+})
+
+function renderSectionRow(stream: StreamItemData, opts: RenderRowOptions): ReactNode {
+  return (
+    <SectionRow
+      key={stream.id}
       workspaceId={opts.workspaceId}
       stream={stream}
       isActive={stream.id === opts.activeStreamId}
       unreadCount={opts.getUnreadCount(stream.id)}
       mentionCount={opts.getMentionCount(stream.id)}
-      allStreams={opts.allStreams}
+      threadRoot={
+        stream.type === StreamTypes.THREAD && stream.rootStreamId
+          ? opts.streamsById.get(stream.rootStreamId)
+          : undefined
+      }
       compact={opts.compact}
       showPreviewOnHover={opts.showPreviewOnHover}
+      streamDragEnabled={opts.streamDragEnabled}
       homeHint={opts.homeHintFor?.(stream.id) ?? undefined}
       boardMode={opts.boardMode}
-      isInboxRow={opts.isInboxSection}
-      onClearFromInbox={opts.onClearInboxRow ? () => opts.onClearInboxRow!(stream.id) : undefined}
-      onInboxHoverChange={
-        opts.onInboxRowHoverChange ? (hovering: boolean) => opts.onInboxRowHoverChange!(stream.id, hovering) : undefined
-      }
+      isInboxSection={opts.isInboxSection}
+      onClearInbox={opts.onClearInbox}
+      onInboxRowHoverChange={opts.onInboxRowHoverChange}
       clearInboxKeyHint={opts.clearInboxKeyHint}
     />
   )
-  const dragEnabled = opts.streamDragEnabled && !isDraftId(stream.id)
-  const row = dragEnabled ? (
-    <DraggableStreamRow workspaceId={opts.workspaceId} streamId={stream.id} label={streamLabel(stream, "sidebar")}>
-      {item}
-    </DraggableStreamRow>
-  ) : (
-    item
-  )
-  return <Fragment key={stream.id}>{row}</Fragment>
 }
 
 /** Sum unread counts across a list of streams. */
@@ -452,7 +511,7 @@ interface StreamSectionProps {
   /** Chats-mode view options. Forwarded to SectionHeader; its filter drives which rows render. */
   viewOptions?: SectionViewOptions
   items: StreamItemData[]
-  allStreams: StreamItemData[]
+  streamsById: ReadonlyMap<string, StreamItemData>
   workspaceId: string
   activeStreamId?: string
   getUnreadCount: (streamId: string) => number
@@ -490,7 +549,7 @@ interface StreamSectionProps {
   /** True when this is the Inbox section (chats mode only — never set in board mode). */
   isInboxSection?: boolean
   /** Clear a row from the Inbox. Set only alongside `isInboxSection`. */
-  onClearInboxRow?: (streamId: string) => void
+  onClearInbox?: (streamIds: string[]) => void
   /** Pointer hover/leave on an Inbox row, for the clear shortcut's hovered-row tracking. */
   onInboxRowHoverChange?: (streamId: string, hovering: boolean) => void
   /** Formatted effective binding for the clear-inbox shortcut, shown as the row
@@ -512,7 +571,7 @@ export function StreamSection({
   filterActive,
   viewOptions,
   items,
-  allStreams,
+  streamsById,
   workspaceId,
   activeStreamId,
   getUnreadCount,
@@ -531,7 +590,7 @@ export function StreamSection({
   homeHintFor,
   boardMode,
   isInboxSection,
-  onClearInboxRow,
+  onClearInbox,
   onInboxRowHoverChange,
   clearInboxKeyHint,
 }: StreamSectionProps) {
@@ -556,7 +615,7 @@ export function StreamSection({
     renderSectionRow(stream, {
       workspaceId,
       activeStreamId,
-      allStreams,
+      streamsById,
       getUnreadCount,
       getMentionCount,
       compact,
@@ -565,7 +624,7 @@ export function StreamSection({
       homeHintFor,
       boardMode,
       isInboxSection,
-      onClearInboxRow,
+      onClearInbox,
       onInboxRowHoverChange,
       clearInboxKeyHint,
     })
@@ -788,7 +847,7 @@ export function TieredStreamSection({
   filterActive,
   viewOptions,
   items,
-  allStreams,
+  streamsById,
   workspaceId,
   activeStreamId,
   getUnreadCount,
@@ -827,7 +886,7 @@ export function TieredStreamSection({
     renderSectionRow(stream, {
       workspaceId,
       activeStreamId,
-      allStreams,
+      streamsById,
       getUnreadCount,
       getMentionCount,
       compact,

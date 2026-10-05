@@ -12,6 +12,8 @@ import { computeTimelineHoles, holesSignature, type TimelineHole } from "@/sync/
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { writeSlotCarrier } from "@/stores/slot-store"
 import type { SlotCarrier } from "@/lib/slots"
+import { createStableSelect } from "@/lib/structural-sharing"
+import type { CachedStreamBootstrap } from "@/sync/stream-sync"
 import type { StreamEvent, EventsAroundResponse } from "@threahq/types"
 
 export const eventKeys = {
@@ -313,17 +315,29 @@ export async function cacheToIndexedDB(
   })
 }
 
+/** The entry is also rewritten for read state, message counts and presence. */
+function pickEventWindow(bootstrap: CachedStreamBootstrap) {
+  return {
+    events: bootstrap.events,
+    windowVersion: bootstrap.windowVersion,
+    hasOlderEvents: bootstrap.hasOlderEvents,
+    latestSequence: bootstrap.latestSequence,
+  }
+}
+
 export function useEvents(workspaceId: string, streamId: string, options?: { enabled?: boolean; loadAll?: boolean }) {
   const shouldFetch = options?.enabled ?? true
 
   // Bootstrap query still drives the fetch lifecycle (loading/error states)
   // and triggers IDB writes via applyStreamBootstrap in its queryFn.
+  const selectWindow = useMemo(() => createStableSelect(pickEventWindow), [workspaceId, streamId])
   const {
     status: bootstrapStatus,
     error,
     data: bootstrap,
   } = useStreamBootstrap(workspaceId, streamId, {
     enabled: shouldFetch,
+    select: selectWindow,
   })
 
   // The bootstrap has a *definitive* answer only when it succeeded, hit a

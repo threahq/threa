@@ -1,7 +1,7 @@
 import { useMemo } from "react"
 import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { isDraftId, useFeatureFlag } from "@/hooks"
-import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
+import { useViewerPermissions } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"
 import { isToleranceMatch, rankMatchesScored } from "@/lib/match-score"
 import { commands, type Command, type CommandContext } from "./commands"
@@ -45,8 +45,8 @@ export function rankGroups(query: string, groups: readonly Command[][]): Command
 export function useCommandItems({ query, commandContext }: UseCommandItemsParams): ModeResult {
   // AI Agents settings is admin-only (the tab itself is admin-gated), so the
   // command hides for non-admins rather than opening settings to a fallback tab.
-  const bootstrap = useCachedWorkspaceBootstrap(commandContext.workspaceId)
-  const isAdmin = hasPermission(bootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
+  const viewerPermissions = useViewerPermissions(commandContext.workspaceId)
+  const isAdmin = hasPermission(viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
   // The Diagnostics settings tab is rollout-gated; without the same gate here
   // the command opens Settings to a tab that isn't there.
   const perfDiagnostics = useFeatureFlag(commandContext.workspaceId, "perfDiagnostics")

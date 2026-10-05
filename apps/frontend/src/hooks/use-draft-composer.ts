@@ -1,5 +1,7 @@
 import { useState, useCallback, useEffect, useRef, useSyncExternalStore, type ChangeEvent, type RefObject } from "react"
+import { replaceEqualDeep } from "@tanstack/react-query"
 import { useDraftMessage } from "./use-draft-message"
+import { useShared } from "@/lib/structural-sharing"
 import { useAttachments, type PendingAttachment, type UploadResult } from "./use-attachments"
 import type { JSONContent } from "@threahq/types"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
@@ -241,7 +243,7 @@ export function useDraftComposer({
     contentDraftScope,
     contentJson: savedDraft,
     attachments: savedAttachments,
-    contextRefs: savedContextRefs = [] as DraftContextRef[],
+    contextRefs: loadedContextRefs,
     saveDraft,
     saveDraftDebounced,
     cancelPendingSave,
@@ -250,6 +252,8 @@ export function useDraftComposer({
     clearDraft,
     resolveDraft,
   } = useDraftMessage(workspaceId, draftKey, e2eStreamId, contentDraftIdRef)
+
+  const savedContextRefs = useShared(loadedContextRefs, replaceEqualDeep)
 
   // Attachment handling
   const {

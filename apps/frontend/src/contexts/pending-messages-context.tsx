@@ -1,17 +1,17 @@
-import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from "react"
+import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react"
 import { db } from "@/db"
 import { serializeToMarkdown } from "@threahq/prosemirror"
 import { ConversationIntents, type JSONContent } from "@threahq/types"
 import { deleteOptimisticBoardPost } from "@/stores/board-store"
 import { revokeOptimisticRailEvent } from "@/hooks/use-board-card-messages"
 import { extractSteerDirective } from "@/lib/commands"
+import { createSelectorContext } from "@/lib/selector-context"
 
 type MessageStatus = "pending" | "failed" | "editing"
 /** Status the message had before the user entered editing mode */
 type PreEditStatus = "pending" | "failed"
 
 interface PendingMessagesContextValue {
-  getStatus: (id: string) => MessageStatus | null
   markPending: (id: string) => void
   markFailed: (id: string) => void
   markSent: (id: string) => void
@@ -37,6 +37,7 @@ interface PendingMessagesContextValue {
 }
 
 const PendingMessagesContext = createContext<PendingMessagesContextValue | null>(null)
+const PendingStatusContext = createSelectorContext<(id: string) => MessageStatus | null>(() => null)
 
 interface PendingMessagesProviderProps {
   children: ReactNode
@@ -340,23 +341,36 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
     })
   }, [])
 
+  const value = useMemo(
+    () => ({
+      markPending,
+      markFailed,
+      markSent,
+      markEditing,
+      saveEditedMessage,
+      cancelEditing,
+      retryMessage,
+      deleteMessage,
+      notifyQueue,
+      registerQueueNotify,
+    }),
+    [
+      markPending,
+      markFailed,
+      markSent,
+      markEditing,
+      saveEditedMessage,
+      cancelEditing,
+      retryMessage,
+      deleteMessage,
+      notifyQueue,
+      registerQueueNotify,
+    ]
+  )
+
   return (
-    <PendingMessagesContext.Provider
-      value={{
-        getStatus,
-        markPending,
-        markFailed,
-        markSent,
-        markEditing,
-        saveEditedMessage,
-        cancelEditing,
-        retryMessage,
-        deleteMessage,
-        notifyQueue,
-        registerQueueNotify,
-      }}
-    >
-      {children}
+    <PendingMessagesContext.Provider value={value}>
+      <PendingStatusContext.Provider value={getStatus}>{children}</PendingStatusContext.Provider>
     </PendingMessagesContext.Provider>
   )
 }
@@ -367,4 +381,9 @@ export function usePendingMessages(): PendingMessagesContextValue {
     throw new Error("usePendingMessages must be used within a PendingMessagesProvider")
   }
   return context
+}
+
+/** One message's unsent status; re-renders only when that message's status changes. */
+export function usePendingMessageStatus(id: string): MessageStatus | null {
+  return PendingStatusContext.useSelector((getStatus) => getStatus(id))
 }

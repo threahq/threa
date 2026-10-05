@@ -193,9 +193,9 @@ describe("StreamSettingsDialog", () => {
         makeStream({ id: "stream_design", type, displayName: null, slug: "design" }),
       ])
       vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue(flag as never)
-      vi.spyOn(useWorkspacesModule, "useCachedWorkspaceBootstrap").mockReturnValue({
-        viewerPermissions: admin ? [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN] : [],
-      } as unknown as ReturnType<typeof useWorkspacesModule.useCachedWorkspaceBootstrap>)
+      vi.spyOn(useWorkspacesModule, "useViewerPermissions").mockReturnValue(
+        admin ? [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN] : []
+      )
       vi.spyOn(connectTabModule, "ConnectTab").mockImplementation((() => (
         <div>Connect panel</div>
       )) as unknown as typeof connectTabModule.ConnectTab)
@@ -262,9 +262,7 @@ describe("StreamSettingsDialog", () => {
       makeStream({ id: "stream_design", type: StreamTypes.CHANNEL, displayName: null, slug: "design" }),
     ])
     vi.spyOn(hooksModule, "useFeatureFlag").mockReturnValue("on" as never)
-    vi.spyOn(useWorkspacesModule, "useCachedWorkspaceBootstrap").mockReturnValue({
-      viewerPermissions: [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN],
-    } as unknown as ReturnType<typeof useWorkspacesModule.useCachedWorkspaceBootstrap>)
+    vi.spyOn(useWorkspacesModule, "useViewerPermissions").mockReturnValue([WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN])
     let createLink!: () => void
     vi.spyOn(connectTabModule, "ConnectTab").mockImplementation((({
       inviteLinks,

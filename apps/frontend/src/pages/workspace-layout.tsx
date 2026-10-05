@@ -13,7 +13,7 @@ import { Outlet, useParams, useSearchParams, useMatch, useNavigate, Navigate } f
 import { AppShell } from "@/components/layout/app-shell"
 import { Sidebar } from "@/components/layout/sidebar"
 import { AppToastHost } from "@/components/app-update-toast"
-import { MentionableMarkdownWrapper, type MentionableMarkdownWrapperProps } from "@/components/ui/markdown-content"
+import { MentionableMarkdownWrapper } from "@/components/ui/markdown-content"
 import type { MentionType } from "@/lib/markdown/mention-context"
 import { UserProfileProvider, useUserProfile } from "@/components/user-profile"
 import { WorkspaceEmojiProvider } from "@/components/workspace-emoji"
@@ -68,7 +68,8 @@ import { setLastWorkspaceId } from "@/lib/last-workspace"
 import { useCapturePageviews } from "@/lib/analytics/use-capture-pageviews"
 import { isServerStreamId } from "@/lib/stream-ids"
 import { useAccountScope, useAuth } from "@/auth"
-import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { useWorkspaceStreamsSelect, type CachedStream } from "@/stores/workspace-store"
+import { isLinkableStreamType } from "@/lib/streams"
 import { SyncEngine, SyncEngineContext } from "@/sync/sync-engine"
 import { ReadCommitQueue, ReadCommitQueueContext } from "@/sync/read-commit-queue"
 import { useUnreadCounts } from "@/hooks/use-unread-counts"
@@ -457,6 +458,14 @@ function FreshnessWatchers() {
   return null
 }
 
+/** Each of these reads the stream list, so they live in a leaf, never on the layout that renders every provider. */
+function LocationRecorders({ workspaceId }: { workspaceId: string }) {
+  usePersistLastLocation(workspaceId)
+  useRecordNavigationJournal(workspaceId)
+  useRebuildLaunchAncestors(workspaceId)
+  return null
+}
+
 function TraceDialogContainer() {
   const { isOpen } = useTrace()
 
@@ -467,8 +476,13 @@ function TraceDialogContainer() {
   return <TraceDialog />
 }
 
-/** Bridges UserProfileProvider with MentionableMarkdownWrapper (INV-18: standalone component). */
-function MentionableWrapper({ children, mentionables }: Omit<MentionableMarkdownWrapperProps, "onMentionClick">) {
+/**
+ * Bridges UserProfileProvider with MentionableMarkdownWrapper (INV-18: standalone component).
+ * Reads the mentionables itself: the layout renders every provider inline, so a
+ * data subscription there re-renders the whole provider tree on each write.
+ */
+function MentionableWrapper({ children }: { children: ReactNode }) {
+  const { mentionables } = useMentionables()
   const { openUserProfile } = useUserProfile()
 
   const handleMentionClick = useCallback(
@@ -490,6 +504,22 @@ function MentionableWrapper({ children, mentionables }: Omit<MentionableMarkdown
     <MentionableMarkdownWrapper mentionables={mentionables} onMentionClick={handleMentionClick}>
       {children}
     </MentionableMarkdownWrapper>
+  )
+}
+
+function pickLinkTargets(streams: CachedStream[]) {
+  return streams
+    .filter((stream) => isLinkableStreamType(stream.type))
+    .map(({ id, type, slug, displayName }) => ({ id, type, slug, displayName }))
+}
+
+/** Owns the stream-list subscription for channel links, for the same reason. */
+function WorkspaceChannelLinkProvider({ workspaceId, children }: { workspaceId: string; children: ReactNode }) {
+  const streams = useWorkspaceStreamsSelect(workspaceId, pickLinkTargets)
+  return (
+    <ChannelLinkProvider workspaceId={workspaceId} streams={streams}>
+      {children}
+    </ChannelLinkProvider>
   )
 }
 
@@ -535,12 +565,6 @@ function WorkspaceLayoutContent() {
   // presence registration above already apply (INV-35).
   const coordinatedStreamIds = useMemo(() => streamIds.filter(isServerStreamId), [streamIds])
 
-  const { mentionables } = useMentionables()
-  const streams = useWorkspaceStreams(workspaceId ?? "")
-
-  usePersistLastLocation(workspaceId)
-  useRecordNavigationJournal(workspaceId)
-  useRebuildLaunchAncestors(user ? workspaceId : undefined)
   useCapturePageviews()
 
   // Remember the workspace the user is in so the `/` entry route can redirect
@@ -586,11 +610,11 @@ function WorkspaceLayoutContent() {
             <MessageQueueHandler workspaceId={workspaceId} />
             <StreamNameDecryptor workspaceId={workspaceId} />
             <CoordinatedLoadingProvider workspaceId={workspaceId} streamIds={coordinatedStreamIds}>
-              <ChannelLinkProvider workspaceId={workspaceId} streams={streams}>
+              <WorkspaceChannelLinkProvider workspaceId={workspaceId}>
                 <CallLaunchProvider>
                   <PreferencesProvider workspaceId={workspaceId}>
                     <UserProfileProvider>
-                      <MentionableWrapper mentionables={mentionables}>
+                      <MentionableWrapper>
                         <WorkspaceCommandListProvider workspaceId={workspaceId}>
                           <WorkspaceEmojiProvider workspaceId={workspaceId}>
                             <SettingsProvider>
@@ -657,10 +681,11 @@ function WorkspaceLayoutContent() {
                   <CallDock />
                   <IncomingCallOverlay workspaceId={workspaceId} />
                 </CallLaunchProvider>
-              </ChannelLinkProvider>
+              </WorkspaceChannelLinkProvider>
             </CoordinatedLoadingProvider>
           </WorkspaceSyncHandler>
         </SocketProvider>
+        <LocationRecorders workspaceId={workspaceId} />
       </PerfCaptureProvider>
     </SyncStatusContext.Provider>
   )

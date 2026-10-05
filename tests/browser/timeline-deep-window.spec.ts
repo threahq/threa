@@ -129,6 +129,7 @@ test.describe("Bounded timeline read", () => {
     expect(before).not.toBeNull()
     const scrollTopBefore = await page.locator(SCROLLER).evaluate((el) => el.scrollTop)
     const renderedBefore = await page.getByRole("main").locator(".message-item").count()
+    const scrollHeightBefore = await page.locator(SCROLLER).evaluate((el) => el.scrollHeight)
 
     // A second client posts into the stream the reader is scrolled back in.
     await page.request
@@ -138,23 +139,15 @@ test.describe("Bounded timeline read", () => {
       .then((r) => expectApiOk(r, "post the arriving message"))
 
     // The arrival must land in the TIMELINE, or the assertions below pass
-    // vacuously: a page-wide text poll is satisfied by the sidebar's last-message
-    // preview, which updates without the timeline read running at all.
+    // vacuously. Its tail row is not mounted while the reader is scrolled back,
+    // so page text naming it comes from elsewhere (sidebar preview, conversations
+    // drawer); the scroller growing by its row is the timeline's own signal.
     await expect
-      .poll(
-        async () =>
-          // evaluateAll over every `main`: the page can mount two (timeline +
-          // panel), and a direct evaluate() on the role locator strict-fails.
-          // Any main containing the text still excludes the sidebar preview.
-          await page
-            .getByRole("main")
-            .evaluateAll(
-              (els, text) => els.some((el) => (el as HTMLElement).innerText.includes(text)),
-              `${prefix} msg-9999 arrival`
-            ),
-        { timeout: 30_000, message: "the arriving message should reach this client's timeline" }
-      )
-      .toBe(true)
+      .poll(async () => await page.locator(SCROLLER).evaluate((el) => el.scrollHeight), {
+        timeout: 30_000,
+        message: "the arriving message should reach this client's timeline",
+      })
+      .toBeGreaterThan(scrollHeightBefore)
     await page.waitForTimeout(500)
 
     // The flag actually armed: only the bounded tail read emits this mark.
@@ -170,5 +163,9 @@ test.describe("Bounded timeline read", () => {
     const scrollTopAfter = await page.locator(SCROLLER).evaluate((el) => el.scrollTop)
     expect(Math.abs(scrollTopAfter - scrollTopBefore)).toBeLessThanOrEqual(2)
     expect(await page.getByRole("main").locator(".message-item").count()).toBeGreaterThanOrEqual(renderedBefore)
+
+    // The row the scroller grew by is the arrival.
+    await page.getByRole("button", { name: "Jump to latest" }).click()
+    await expect(messageLocator(page, prefix, 9999)).toBeVisible({ timeout: 10_000 })
   })
 })

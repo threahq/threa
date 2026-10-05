@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useMemo, useState, type ComponentPropsWithoutRef } from "react"
+import { forwardRef, memo, useCallback, useEffect, useMemo, useState, type ComponentPropsWithoutRef } from "react"
 import {
   ArrowLeftRight,
   Bell,
@@ -34,7 +34,14 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { getInitials } from "@/lib/initials"
 import { cn } from "@/lib/utils"
-import { getAvatarUrl, resolveActiveStatus, resolveNotificationPause, type Theme, type User } from "@threahq/types"
+import {
+  getAvatarUrl,
+  resolveActiveStatus,
+  resolveNotificationPause,
+  type Theme,
+  type User,
+  type WorkspaceBootstrap,
+} from "@threahq/types"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useStatusAutoExpiry } from "@/hooks/use-status-auto-expiry"
 import { useNotificationPauseAutoExpiry } from "@/hooks/use-notification-pause-auto-expiry"
@@ -46,6 +53,7 @@ import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { SidebarActionDrawer, SidebarActionMenu, type SidebarActionItem } from "./sidebar-actions"
 
 const USER_GUIDE_URL = "https://threa.io/guide"
+const selectIsPlatformAdmin = (bootstrap: WorkspaceBootstrap) => bootstrap.viewerIsPlatformAdmin
 
 const THEME_MODES = [
   { value: "system", label: "System", icon: Monitor },
@@ -221,7 +229,7 @@ function SidebarStatusHeader({
   )
 }
 
-export function SidebarFooter({
+export const SidebarFooter = memo(function SidebarFooter({
   workspaceId,
   currentUser,
   onCreateScratchpad,
@@ -259,7 +267,7 @@ export function SidebarFooter({
   // Synced from the control plane's platform_roles via the regional mirror;
   // only platform admins get a link into the backoffice. The URL is
   // hostname-derived and null on unknown hosts, which also hides the entry.
-  const isPlatformAdmin = useCachedWorkspaceBootstrap(workspaceId)?.viewerIsPlatformAdmin ?? false
+  const isPlatformAdmin = useCachedWorkspaceBootstrap(workspaceId, selectIsPlatformAdmin) ?? false
   const adminPortalUrl = getAdminPortalUrl()
 
   const status = useMemo<FooterStatus | null>(() => {
@@ -609,7 +617,7 @@ export function SidebarFooter({
       {statusOpen && <StatusPicker workspaceId={workspaceId} open onOpenChange={setStatusOpen} />}
     </div>
   )
-}
+})
 
 // The tinted square reacts to the trigger's `data-state`, which both the Radix
 // desktop trigger and the manual mobile button expose.

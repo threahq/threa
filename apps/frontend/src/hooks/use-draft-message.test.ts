@@ -19,6 +19,7 @@ import { ContextRefKinds, type JSONContent } from "@threahq/types"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { db, type CachedDraft } from "@/db"
 import { resetDraftStoreCache, seedDraftCacheFromIdb } from "@/stores/draft-store"
+import * as draftStore from "@/stores/draft-store"
 import * as currentUserHook from "./use-current-workspace-user-id"
 import * as e2eSessionStore from "@/stores/e2e-session-store"
 import * as sealDraft from "@/lib/crypto/seal-draft"
@@ -621,6 +622,28 @@ describe("useDraftMessage", () => {
       )
 
       expect(await db.composerLoaded.get([workspaceId, draftKey])).toBeDefined()
+    })
+
+    it("a save queued behind another before the send does NOT resurrect the draft when it finally runs", async () => {
+      // Under a slow write chain a keystroke's save can still be waiting when the
+      // send resolves the scope. It was issued for pre-send content, so it is
+      // stale however late it starts.
+      const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey))
+      await act(async () => {
+        const inFlight = result.current.saveDraft(makeDoc("Fi"))
+        const queued = result.current.saveDraft(makeDoc("First m"))
+        await result.current.resolveDraft()
+        await Promise.all([inFlight, queued])
+      })
+
+      expect(await db.composerLoaded.get([workspaceId, draftKey])).toBeUndefined()
+      expect((await db.drafts.toArray()).filter((d) => d.scope === draftKey)).toEqual([])
+
+      // The dropped saves left no identity behind: the next message saves normally.
+      await act(async () => {
+        await result.current.saveDraft(makeDoc("next message"))
+      })
+      expect((await loadedDraft(draftKey))?.contentJson).toEqual(makeDoc("next message"))
     })
 
     it("a create from a non-debounce path (no observed seq) is never blocked post-send", async () => {
@@ -1772,6 +1795,28 @@ describe("write serialization — concurrent typing saves never fork", () => {
     const rows = await db.drafts.toArray()
     expect(rows.map((row) => row.contentJson)).toEqual([makeDoc("Should we ship")])
     expect((await db.composerLoaded.get([workspaceId, draftKey]))?.draftId).toBe(rows[0].id)
+  })
+
+  it("records the composer's identity before the store announces the pointer it just claimed", async () => {
+    // The store emit re-renders the composer synchronously. An identity still
+    // null at that point makes its own first create look like a foreign draft
+    // arriving — an editor the send just cleared then rehydrates the saved prefix.
+    await seedDraftCacheFromIdb(workspaceId)
+    const contentDraftIdRef = { current: null as string | null }
+    const announce = draftStore.upsertLoadedDraftInCache
+    const identityAtAnnounce: Array<{ announced: string; identity: string | null }> = []
+    vi.spyOn(draftStore, "upsertLoadedDraftInCache").mockImplementation((ws, row, scope) => {
+      identityAtAnnounce.push({ announced: row.id, identity: contentDraftIdRef.current })
+      announce(ws, row, scope)
+    })
+    const { result } = renderHook(() => useDraftMessage(workspaceId, draftKey, undefined, contentDraftIdRef))
+
+    await act(async () => {
+      await result.current.saveDraft(makeDoc("Fi"))
+    })
+
+    const id = (await db.composerLoaded.get([workspaceId, draftKey]))?.draftId
+    expect(identityAtAnnounce).toEqual([{ announced: id, identity: id }])
   })
 })
 

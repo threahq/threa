@@ -35,15 +35,20 @@ import {
   workspaceKeys,
 } from "@/hooks"
 import { useSubagentRun } from "@/hooks/use-subagent-run"
+import { useStableCallback } from "@/hooks/use-stable-callback"
 import { useSocket, useCoordinatedLoading, usePreferencesOptional, usePanel } from "@/contexts"
 import { useMessageService } from "@/contexts"
 import { orderStreamEvents, useStreamEvents } from "@/stores/stream-store"
 import { getAsideState } from "@/stores/aside-store"
 import {
   useWorkspaceStreams,
-  useWorkspaceStreamMemberships,
-  useWorkspaceStreamReadStates,
+  useWorkspaceStreamsSelect,
+  useWorkspaceStreamMembership,
+  useWorkspaceStreamReadState,
+  type CachedStream,
 } from "@/stores/workspace-store"
+import type { CachedStreamBootstrap } from "@/sync/stream-sync"
+import { createStableSelect } from "@/lib/structural-sharing"
 import { resolveFrontierEventId, resolveFrontierSequence } from "@/lib/read-frontier"
 import { useReadCommitQueue } from "@/sync/read-commit-queue"
 import { effectiveConversationTitle } from "@/lib/conversations/title"
@@ -164,11 +169,46 @@ const THREAD_HIDDEN_EVENT_TYPES = new Set<StreamEvent["eventType"]>(["member_joi
 export function isThreadConfirmedEmpty(args: {
   isConfirmedEmpty: boolean
   isResolved: boolean
-  bootstrapEvents: ReadonlyArray<Pick<StreamEvent, "eventType">> | undefined
+  serverWindowHiddenOnly: boolean | undefined
 }): boolean {
   if (args.isConfirmedEmpty) return true
   if (!args.isResolved) return false
-  return args.bootstrapEvents?.every((event) => THREAD_HIDDEN_EVENT_TYPES.has(event.eventType)) === true
+  return args.serverWindowHiddenOnly === true
+}
+
+export function holdsOnlyThreadHiddenEvents(events: ReadonlyArray<Pick<StreamEvent, "eventType">>): boolean {
+  return events.every((event) => THREAD_HIDDEN_EVENT_TYPES.has(event.eventType))
+}
+
+function pickTimelineStream(stream: Stream & { parentMessageId?: string | null }) {
+  return {
+    id: stream.id,
+    type: stream.type,
+    slug: stream.slug,
+    displayName: stream.displayName,
+    visibility: stream.visibility,
+    originWorkspaceId: stream.originWorkspaceId,
+    parentStreamId: stream.parentStreamId,
+    rootStreamId: stream.rootStreamId,
+    parentAnchorId: stream.parentAnchorId,
+    parentMessageId: stream.parentMessageId,
+    archivedAt: stream.archivedAt,
+    e2eEnabled: stream.e2eEnabled,
+  }
+}
+
+/**
+ * The bootstrap entry is replaced on every message (its events and the
+ * stream's message count); the shell renders from the few fields below.
+ */
+function pickTimelineBootstrap(bootstrap: CachedStreamBootstrap) {
+  return {
+    membership: bootstrap.membership,
+    readState: bootstrap.readState,
+    archivedAncestor: bootstrap.archivedAncestor,
+    stream: pickTimelineStream(bootstrap.stream),
+    serverWindowHiddenOnly: holdsOnlyThreadHiddenEvents(bootstrap.events),
+  }
 }
 
 /**
@@ -627,32 +667,27 @@ export function StreamContent({
     wasSelected: boolean
   } | null>(null)
 
-  const idbStreams = useWorkspaceStreams(workspaceId)
-  const idbMemberships = useWorkspaceStreamMemberships(workspaceId)
-  const idbReadStates = useWorkspaceStreamReadStates(workspaceId)
-  const idbStream = useMemo(() => idbStreams.find((candidate) => candidate.id === streamId), [idbStreams, streamId])
+  const selectStream = useCallback(
+    (streams: CachedStream[]) => {
+      const row = streams.find((candidate) => candidate.id === streamId)
+      return row ? pickTimelineStream(row) : undefined
+    },
+    [streamId]
+  )
+  const idbStream = useWorkspaceStreamsSelect(workspaceId, selectStream)
 
   // Resolve current workspace-scoped user ID. The hook deduplicates with SentMessageEvent instances.
   const currentWorkspaceUserId = useWorkspaceUserId(workspaceId)
-  const idbMembership = useMemo(
-    () =>
-      currentWorkspaceUserId
-        ? idbMemberships.find(
-            (membership) => membership.streamId === streamId && membership.memberId === currentWorkspaceUserId
-          )
-        : undefined,
-    [currentWorkspaceUserId, idbMemberships, streamId]
-  )
+  const idbMembership = useWorkspaceStreamMembership(workspaceId, streamId, currentWorkspaceUserId)
+  const selectBootstrap = useMemo(() => createStableSelect(pickTimelineBootstrap), [workspaceId, streamId])
   const { data: bootstrap } = useStreamBootstrap(workspaceId, streamId, {
     enabled: !isDraft && (!idbStream || !idbMembership),
+    select: selectBootstrap,
   })
   const membership = idbMembership ?? bootstrap?.membership
   // Read frontier: stream_read_state is the sole source. A present row wins —
   // a null watermark is an explicit unread-to-zero.
-  const idbReadState = useMemo(
-    () => idbReadStates.find((candidate) => candidate.streamId === streamId),
-    [idbReadStates, streamId]
-  )
+  const idbReadState = useWorkspaceStreamReadState(workspaceId, streamId)
   // The per-stream bootstrap carries the viewer's frontier; IDB catches up a
   // tick after the query resolves, so consult the in-memory payload for first
   // paint. A confirmed-absent row (null) resolves as never-read (frontier
@@ -741,15 +776,16 @@ export function StreamContent({
 
   // Fetch parent stream bootstrap (for threads to get the anchor item)
   // Only fetch when we have a valid parentStreamId
-  const { data: parentBootstrap } = useStreamBootstrap(workspaceId, parentStreamId!, {
+  const { data: parentEvents } = useStreamBootstrap(workspaceId, parentStreamId!, {
     enabled: !isDraft && isThread && !!parentStreamId && !!anchorId && !cachedAnchorEvent,
+    select: (bootstrap) => bootstrap.events,
   })
 
   const localAnchorEvent = useMemo(() => {
     if (!isThread || !parentStreamId || !anchorId) return null
     if (cachedAnchorEvent) return cachedAnchorEvent as unknown as StreamEvent
-    return parentBootstrap?.events.find((event) => matchesDeepLinkTarget(event, anchorId)) ?? null
-  }, [cachedAnchorEvent, isThread, parentStreamId, anchorId, parentBootstrap?.events])
+    return parentEvents?.find((event) => matchesDeepLinkTarget(event, anchorId)) ?? null
+  }, [cachedAnchorEvent, isThread, parentStreamId, anchorId, parentEvents])
   const { event: anchorEvent } = useThreadAnchorEvent(
     workspaceId,
     isThread ? parentStreamId : null,
@@ -2657,9 +2693,12 @@ export function StreamContent({
     // re-observe the fresh element after a stream switch.
   }, [useVirtualized, virtualContentRef, virtualScrollerEl, applyDetachedHold])
 
+  // Every message row consumes this context; `scrollToMessage` changes identity
+  // with the window, so the context carries a stable wrapper.
+  const stableScrollToMessage = useStableCallback(scrollToMessage)
   const editLastMessageCtxWithScroll = useMemo(
-    () => ({ ...editLastMessageCtx, scrollToMessage }),
-    [editLastMessageCtx, scrollToMessage]
+    () => ({ ...editLastMessageCtx, scrollToMessage: stableScrollToMessage }),
+    [editLastMessageCtx, stableScrollToMessage]
   )
 
   // Deep-link (?m=) mount hold. On a push-notification / Activities deep link
@@ -2961,7 +3000,7 @@ export function StreamContent({
                             isConfirmedEmpty={isThreadConfirmedEmpty({
                               isConfirmedEmpty,
                               isResolved,
-                              bootstrapEvents: bootstrap?.events,
+                              serverWindowHiddenOnly: bootstrap?.serverWindowHiddenOnly,
                             })}
                             workspaceId={workspaceId}
                             streamId={streamId}
@@ -3250,7 +3289,7 @@ function TimelineMessageList({
   /** True while floating date/jump chrome must yield to the composer. */
   floatingChromeHidden: boolean
 }) {
-  const { phase } = useCoordinatedLoading()
+  const phase = useCoordinatedLoading((loading) => loading.phase)
   const socket = useSocket()
   const stopAgentSession = useStopAgentSession(socket, workspaceId, streamId)
   const steerAgentSession = useSteerAgentSession(workspaceId, streamId)

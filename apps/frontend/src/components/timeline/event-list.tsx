@@ -1346,7 +1346,7 @@ export function EventList({
   batch,
   conversationOverlay,
 }: EventListProps) {
-  const { phase } = useCoordinatedLoading()
+  const phase = useCoordinatedLoading((loading) => loading.phase)
   const socket = useSocket()
   const stopAgentSession = useStopAgentSession(socket, workspaceId, streamId)
   const steerAgentSession = useSteerAgentSession(workspaceId, streamId)

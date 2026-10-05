@@ -27,7 +27,7 @@ function getErrorType(status: number): StreamErrorType {
  * Returns appropriate error type for 404/403, or generic "error" for other failures.
  */
 export function useStreamError(streamId: string | undefined, queryError?: Error | null): StreamError | null {
-  const { getStreamError } = useCoordinatedLoading()
+  const coordinatedError = useCoordinatedLoading((loading) => (streamId ? loading.getStreamError(streamId) : undefined))
   const syncError = useSyncError(streamId ? `stream:${streamId}` : "__no_stream__")
 
   return useMemo(() => {
@@ -39,13 +39,10 @@ export function useStreamError(streamId: string | undefined, queryError?: Error 
     }
 
     // Check coordinated loading errors first (faster path, already fetched)
-    if (streamId) {
-      const coordinatedError = getStreamError(streamId)
-      if (coordinatedError) {
-        return {
-          type: getErrorType(coordinatedError.status),
-          status: coordinatedError.status,
-        }
+    if (coordinatedError) {
+      return {
+        type: getErrorType(coordinatedError.status),
+        status: coordinatedError.status,
       }
     }
 
@@ -62,5 +59,5 @@ export function useStreamError(streamId: string | undefined, queryError?: Error 
     }
 
     return null
-  }, [streamId, syncError, getStreamError, queryError])
+  }, [syncError, coordinatedError, queryError])
 }

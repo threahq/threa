@@ -1,5 +1,6 @@
+import { useCallback } from "react"
 import { findArchivedAncestor, type ArchivalChainStream } from "@/lib/streams"
-import { useWorkspaceStreamIndex } from "@/stores/workspace-store"
+import { indexStreams, useWorkspaceStreamsSelect, type CachedStream } from "@/stores/workspace-store"
 
 export interface EffectiveArchivedInput {
   workspaceId: string
@@ -37,13 +38,24 @@ export function useEffectiveArchived({
   stream,
   fallbackArchived,
 }: EffectiveArchivedInput): EffectiveArchived {
-  const index = useWorkspaceStreamIndex(workspaceId)
-  const ancestor = stream ? findArchivedAncestor(stream, (id) => index.get(id)) : null
+  const streamId = stream?.id
+  const parentStreamId = stream?.parentStreamId
+  const rootStreamId = stream?.rootStreamId
+  const selectAncestor = useCallback(
+    (streams: CachedStream[]) => {
+      if (!streamId) return null
+      const index = indexStreams(streams)
+      const found = findArchivedAncestor({ id: streamId, parentStreamId, rootStreamId }, (id) => index.get(id))
+      return { resolved: found.resolved, sealedById: found.sealedBy?.id ?? null }
+    },
+    [streamId, parentStreamId, rootStreamId]
+  )
+  const ancestor = useWorkspaceStreamsSelect(workspaceId, selectAncestor)
   let ancestorArchived: boolean
   let sealedById: string | null
   if (ancestor?.resolved) {
-    ancestorArchived = ancestor.sealedBy !== null
-    sealedById = ancestor.sealedBy?.id ?? null
+    ancestorArchived = ancestor.sealedById !== null
+    sealedById = ancestor.sealedById
   } else {
     ancestorArchived = fallbackArchived != null && fallbackArchived !== false
     sealedById = typeof fallbackArchived === "object" && fallbackArchived !== null ? fallbackArchived.streamId : null

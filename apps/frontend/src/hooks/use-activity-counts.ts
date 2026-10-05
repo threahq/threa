@@ -1,8 +1,15 @@
 import { useCallback, useRef } from "react"
+import type { CachedUnreadState } from "@/db"
 import { useWorkspaceUnreadState } from "@/stores/workspace-store"
 
+const pickActivityCounts = (state: CachedUnreadState) => ({
+  mentionCounts: state.mentionCounts,
+  activityCounts: state.activityCounts,
+  unreadActivityCount: state.unreadActivityCount,
+})
+
 export function useActivityCounts(workspaceId: string) {
-  const unreadState = useWorkspaceUnreadState(workspaceId)
+  const unreadState = useWorkspaceUnreadState(workspaceId, pickActivityCounts)
   const mentionCounts = unreadState?.mentionCounts ?? {}
   const activityCounts = unreadState?.activityCounts ?? {}
   const unreadActivityCount = unreadState?.unreadActivityCount ?? 0

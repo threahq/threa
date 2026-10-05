@@ -36,10 +36,13 @@ export function UnsentMessageEditForm({
 }: UnsentMessageEditFormProps) {
   const { saveEditedMessage, cancelEditing, deleteMessage } = usePendingMessages()
   const metadata = useWorkspaceMetadata(workspaceId)
-  const { data: streamBootstrap } = useStreamBootstrap(workspaceId, streamId, { enabled: false })
+  const { data: streamCommands } = useStreamBootstrap(workspaceId, streamId, {
+    enabled: false,
+    select: (bootstrap) => bootstrap.commands,
+  })
   const steerAvailable = useMemo(
-    () => (streamBootstrap?.commands ?? metadata?.commands ?? []).some((command) => command.name === "steer"),
-    [streamBootstrap?.commands, metadata?.commands]
+    () => (streamCommands ?? metadata?.commands ?? []).some((command) => command.name === "steer"),
+    [streamCommands, metadata?.commands]
   )
   // Latch the surface at mount: input mode is live, so reading it directly would
   // flip drawer<->inline mid-edit and remount the editor, dropping unsaved text.

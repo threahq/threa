@@ -15,7 +15,7 @@ import { CompanionTab } from "./companion-tab"
 import { MembersTab } from "./members-tab"
 import { ConnectTab } from "./connect-tab"
 import { streamKeys, useFeatureFlag } from "@/hooks"
-import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
+import { useViewerPermissions } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"
 import {
   useWorkspaceStreams,
@@ -88,10 +88,10 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
   const currentUserId = useCurrentWorkspaceUserId(workspaceId)
   const currentNotificationLevel: NotificationLevel | null = currentMembership?.notificationLevel ?? null
 
-  const workspaceBootstrap = useCachedWorkspaceBootstrap(workspaceId)
+  const viewerPermissions = useViewerPermissions(workspaceId)
   const canConnect =
     useFeatureFlag(workspaceId, "streamConnections") === "on" &&
-    hasPermission(workspaceBootstrap?.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
+    hasPermission(viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
 
   const workspaceUsers = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)

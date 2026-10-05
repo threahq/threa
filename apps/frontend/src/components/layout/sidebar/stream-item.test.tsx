@@ -160,14 +160,7 @@ describe("StreamItem", () => {
     const stream = createStream()
 
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={1}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={1} mentionCount={0} />
     )
 
     const link = screen.getByRole("link", { name: /general/i })
@@ -192,14 +185,7 @@ describe("StreamItem", () => {
     const stream = createStream()
 
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={0}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={0} mentionCount={0} />
     )
 
     fireEvent.touchStart(screen.getByRole("link", { name: /general/i }), {
@@ -221,14 +207,7 @@ describe("StreamItem", () => {
     const stream = createStream()
 
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={0}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={0} mentionCount={0} />
     )
 
     fireEvent.touchStart(screen.getByRole("link", { name: /general/i }), {
@@ -252,14 +231,7 @@ describe("StreamItem", () => {
     const stream = createStream()
 
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={0}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={0} mentionCount={0} />
     )
 
     fireEvent.touchStart(screen.getByRole("link", { name: /general/i }), {
@@ -279,14 +251,7 @@ describe("StreamItem", () => {
     const stream = createStream()
 
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={0}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={0} mentionCount={0} />
     )
 
     fireEvent.touchStart(screen.getByRole("link", { name: /general/i }), {
@@ -313,7 +278,6 @@ describe("StreamItem", () => {
         isActive={false}
         unreadCount={1}
         mentionCount={0}
-        allStreams={[stream]}
         compact
         showPreviewOnHover
       />
@@ -334,14 +298,7 @@ describe("StreamItem", () => {
     })
 
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={1}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={1} mentionCount={0} />
     )
 
     const link = screen.getByRole("link", { name: /taylor/i })
@@ -373,14 +330,7 @@ describe("StreamItem", () => {
     })
 
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={0}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={0} mentionCount={0} />
     )
 
     const link = screen.getByRole("link", { name: /jordan/i })
@@ -406,15 +356,7 @@ describe("StreamItem", () => {
     const stream = createStream()
 
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={0}
-        mentionCount={0}
-        allStreams={[stream]}
-        compact
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={0} mentionCount={0} compact />
     )
 
     expect(screen.queryByText("Ada is working…")).not.toBeInTheDocument()
@@ -429,14 +371,7 @@ describe("StreamItem", () => {
     const stream = createStream()
 
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={0}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={0} mentionCount={0} />
     )
 
     expect(screen.getByText("Ada is working…")).toBeInTheDocument()
@@ -447,14 +382,7 @@ describe("StreamItem", () => {
     const stream = createStream({ hasLoadedDraft: true })
 
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={0}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={0} mentionCount={0} />
     )
 
     expect(screen.getByRole("img", { name: "Unsent draft" })).toBeInTheDocument()
@@ -463,16 +391,7 @@ describe("StreamItem", () => {
   it("hides the unsent-draft hint on the active stream (its composer already shows the draft)", () => {
     const stream = createStream({ hasLoadedDraft: true })
 
-    renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive
-        unreadCount={0}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
-    )
+    renderWithRouter(<StreamItem workspaceId="workspace_1" stream={stream} isActive unreadCount={0} mentionCount={0} />)
 
     expect(screen.queryByRole("img", { name: "Unsent draft" })).not.toBeInTheDocument()
   })
@@ -481,14 +400,7 @@ describe("StreamItem", () => {
     const stream = createStream()
 
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={0}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={0} mentionCount={0} />
     )
 
     expect(screen.queryByRole("img", { name: "Unsent draft" })).not.toBeInTheDocument()
@@ -499,14 +411,7 @@ describe("StreamItem", () => {
     const row = () => screen.getByText(/general/).parentElement
     const renderRow = () =>
       renderWithRouter(
-        <StreamItem
-          workspaceId="workspace_1"
-          stream={stream}
-          isActive={false}
-          unreadCount={0}
-          mentionCount={0}
-          allStreams={[stream]}
-        />
+        <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={0} mentionCount={0} />
       )
 
     touchState.inputMode = "mouse"
@@ -532,14 +437,7 @@ describe("StreamItem", () => {
     })
 
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={1}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={1} mentionCount={0} />
     )
 
     expect(screen.getByRole("button", { name: "Stream actions" })).toBeInTheDocument()
@@ -557,7 +455,6 @@ describe("StreamItem", () => {
         isActive={false}
         unreadCount={0}
         mentionCount={0}
-        allStreams={[stream]}
         isInboxRow
         onClearFromInbox={vi.fn()}
       />
@@ -578,7 +475,6 @@ describe("StreamItem", () => {
         isActive={false}
         unreadCount={2}
         mentionCount={0}
-        allStreams={[stream]}
         isInboxRow
         onClearFromInbox={vi.fn()}
       />
@@ -599,7 +495,6 @@ describe("StreamItem", () => {
         isActive={false}
         unreadCount={1}
         mentionCount={0}
-        allStreams={[stream]}
         isInboxRow
         onClearFromInbox={vi.fn()}
       />
@@ -620,7 +515,6 @@ describe("StreamItem", () => {
         isActive={false}
         unreadCount={1}
         mentionCount={0}
-        allStreams={[stream]}
         isInboxRow
         onClearFromInbox={vi.fn()}
       />
@@ -640,7 +534,6 @@ describe("StreamItem", () => {
         isActive={false}
         unreadCount={1}
         mentionCount={0}
-        allStreams={[stream]}
         isInboxRow
         onClearFromInbox={vi.fn()}
       />
@@ -654,14 +547,7 @@ describe("StreamItem", () => {
     const stream = createStream()
 
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={1}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={1} mentionCount={0} />
     )
 
     expect(screen.queryByRole("button", { name: "Settle" })).not.toBeInTheDocument()
@@ -679,7 +565,6 @@ describe("StreamItem", () => {
         isActive={false}
         unreadCount={1}
         mentionCount={0}
-        allStreams={[stream]}
         isInboxRow
         onClearFromInbox={onClearFromInbox}
       />
@@ -701,14 +586,7 @@ describe("StreamItem", () => {
     act(() => holdSidebarThreads("workspace_1", [stream.id]))
 
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={0}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={0} mentionCount={0} />
     )
     expect(avatarRow()).toHaveClass("opacity-60")
 
@@ -731,7 +609,6 @@ describe("StreamItem", () => {
         isActive={false}
         unreadCount={0}
         mentionCount={0}
-        allStreams={[stream]}
         isInboxRow
         onClearFromInbox={onClearFromInbox}
       />
@@ -759,7 +636,6 @@ describe("StreamItem", () => {
         isActive={false}
         unreadCount={0}
         mentionCount={0}
-        allStreams={[stream]}
         isInboxRow
         onClearFromInbox={onClearFromInbox}
       />
@@ -788,7 +664,6 @@ describe("StreamItem", () => {
         isActive={false}
         unreadCount={0}
         mentionCount={0}
-        allStreams={[stream]}
         isInboxRow
         onClearFromInbox={onClearFromInbox}
       />
@@ -838,7 +713,6 @@ function renderBoardRow(stream: StreamItemData, boardMode: SidebarBoardMode) {
       isActive={false}
       unreadCount={0}
       mentionCount={0}
-      allStreams={[stream]}
       boardMode={boardMode}
     />
   )
@@ -961,14 +835,7 @@ describe("StreamItem — board mode", () => {
   it("keeps the board verbs out of the drawer in chats mode", async () => {
     const stream = createStream()
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={0}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={0} mentionCount={0} />
     )
     fireEvent.touchStart(screen.getByRole("link", { name: /general/i }), { touches: [{ clientX: 16, clientY: 16 }] })
     await act(async () => vi.advanceTimersByTime(500))

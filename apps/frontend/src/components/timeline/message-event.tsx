@@ -23,7 +23,7 @@ import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { ModelBadge } from "@/components/message/model-badge"
 import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
-import { usePendingMessages, usePanel, createConversationPanelId, useTrace } from "@/contexts"
+import { usePendingMessages, usePendingMessageStatus, usePanel, createConversationPanelId, useTrace } from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
 import { useDeleteMessage } from "@/hooks/use-delete-message"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
@@ -94,6 +94,7 @@ import { useConversationReply } from "./conversation-reply-context"
 import { useSwipeAction, type SwipeArm } from "@/hooks/use-swipe-action"
 import { SwipeReveal } from "@/components/message/swipe-reveal"
 import { useStreamFromStore } from "@/stores/stream-store"
+import type { CachedStream } from "@/stores/workspace-store"
 import { queueShareHandoff } from "@/stores/composer-handoff-store"
 import { navigateAfterShareHandoff } from "@/lib/share-navigation"
 import { ShareMessageModal } from "@/components/share/share-message-modal"
@@ -101,7 +102,7 @@ import { useIsOnline } from "@/components/layout/connection-status"
 import type { BatchTimelineState } from "./event-list"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
 import { dispatchMarkReadUpToHere, dispatchMarkUnread } from "@/lib/mark-read-events"
-import { useReadFrontier, rowReadState } from "./read-frontier-context"
+import { useRowReadState } from "./read-frontier-context"
 import { ConversationPickerDrawer } from "./conversation-overlay/conversation-overlay"
 import { useConversationOverlayRow } from "./conversation-overlay/row-context"
 import { useMessageConversationId } from "./conversation-overlay/message-conversation-context"
@@ -901,6 +902,20 @@ interface MessageEventInnerProps {
   batch?: BatchTimelineState
 }
 
+function pickRowStreamFields(row: CachedStream) {
+  return {
+    type: row.type,
+    parentStreamId: row.parentStreamId,
+    rootStreamId: row.rootStreamId,
+    archivedAt: row.archivedAt,
+    originWorkspaceId: row.originWorkspaceId,
+  }
+}
+
+function pickShareTarget(row: CachedStream) {
+  return { id: row.id, type: row.type, displayName: row.displayName, slug: row.slug }
+}
+
 /**
  * Produce a user-facing label for the share-to-parent / share-to-root menu
  * entry based on the target stream's type. Channels read naturally as
@@ -952,15 +967,15 @@ function SentMessageEvent({
   const quoteReplyCtx = useQuoteReply()
   const navigate = useNavigate()
   const location = useLocation()
-  const currentStream = useStreamFromStore(workspaceId, streamId)
+  const currentStream = useStreamFromStore(workspaceId, streamId, pickRowStreamFields)
   // A shared channel's copy takes reactions, edits and deletes through the host, but no threads, moves or conversations.
   const sharedCopy = !!currentStream?.originWorkspaceId
-  const parentStream = useStreamFromStore(workspaceId, currentStream?.parentStreamId ?? undefined)
-  const rootStream = useStreamFromStore(workspaceId, currentStream?.rootStreamId ?? undefined)
+  const parentStream = useStreamFromStore(workspaceId, currentStream?.parentStreamId ?? undefined, pickShareTarget)
+  const rootStream = useStreamFromStore(workspaceId, currentStream?.rootStreamId ?? undefined, pickShareTarget)
   // Gate the read-state actions by where this row sits relative to the read
   // pointer: "Mark as read" only on unread rows, "Mark as unread" only on read
   // rows. Ungated (no resolved frontier) shows both.
-  const rowRead = rowReadState(event.sequence, payload.messageId, useReadFrontier())
+  const rowRead = useRowReadState(event.sequence, payload.messageId)
   // For one-level threads, parent === root, so we only show the root entry to
   // avoid two identical menu items. For nested threads (parent is itself a
   // thread), we show both: root for the most useful target (the channel/dm/
@@ -2057,9 +2072,8 @@ export function MessageEvent({
   const currentUserId = useWorkspaceUserId(workspaceId)
   const decrypted = useDecryptedMessageContent(event, workspaceId, currentUserId)
   const payload = useMemo(() => applyDecryptedContent(rawPayload, decrypted), [rawPayload, decrypted])
-  const { getStatus } = usePendingMessages()
+  const status = usePendingMessageStatus(event.id)
   const { getActorName } = useActors(workspaceId)
-  const status = getStatus(event.id)
 
   const actorName = getActorName(event.actorId, event.actorType)
 

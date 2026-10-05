@@ -1,4 +1,5 @@
-import { createContext, useContext, type ReactNode } from "react"
+import type { ReactNode } from "react"
+import { createSelectorContext } from "@/lib/selector-context"
 
 /**
  * Primary message→conversation membership for the current stream, provided
@@ -8,7 +9,7 @@ import { createContext, useContext, type ReactNode } from "react"
  * the same `buildConversationOverlayModel` membership the overlay uses, so the
  * two never disagree about which conversation owns a message.
  */
-const MessageConversationContext = createContext<ReadonlyMap<string, string> | null>(null)
+const MessageConversationContext = createSelectorContext<ReadonlyMap<string, string> | null>(null)
 
 export function MessageConversationProvider({
   conversationIdByMessageId,
@@ -31,6 +32,5 @@ export function MessageConversationProvider({
  * through the root and isn't surfaced here).
  */
 export function useMessageConversationId(messageId: string): string | null {
-  const map = useContext(MessageConversationContext)
-  return map?.get(messageId) ?? null
+  return MessageConversationContext.useSelector((map) => map?.get(messageId) ?? null)
 }

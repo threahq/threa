@@ -23,8 +23,8 @@ describe("ConnectionStatus", () => {
       configurable: true,
       value: true,
     })
-    vi.spyOn(contextsModule, "useCoordinatedLoading").mockImplementation(
-      () => ({ phase: mockState.phase }) as unknown as ReturnType<typeof contextsModule.useCoordinatedLoading>
+    vi.spyOn(contextsModule, "useCoordinatedLoading").mockImplementation((select) =>
+      select({ phase: mockState.phase } as Parameters<typeof select>[0])
     )
     vi.spyOn(contextsModule, "useSocketStatus").mockImplementation(
       () => mockState.socketStatus as unknown as ReturnType<typeof contextsModule.useSocketStatus>

@@ -63,7 +63,16 @@ export function useStream(workspaceId: string, streamId: string) {
   })
 }
 
-export function useStreamBootstrap(workspaceId: string, streamId: string, options?: { enabled?: boolean }) {
+/**
+ * Returns only the fields readers use: the cache entry is rewritten on every
+ * message, and handing back the whole query result would subscribe each reader
+ * to all of it. `select` narrows `data` further.
+ */
+export function useStreamBootstrap<T = CachedStreamBootstrap>(
+  workspaceId: string,
+  streamId: string,
+  options?: { enabled?: boolean; select?: (bootstrap: CachedStreamBootstrap) => T }
+) {
   const socket = useSocket()
   const streamService = useStreamService()
   const queryClient = useQueryClient()
@@ -74,8 +83,9 @@ export function useStreamBootstrap(workspaceId: string, streamId: string, option
   const existingQueryState = queryClient.getQueryState(streamKeys.bootstrap(workspaceId, streamId))
   const hasTerminalError = existingQueryState?.status === "error" && isTerminalBootstrapError(existingQueryState.error)
 
-  const query = useQuery({
+  const query = useQuery<CachedStreamBootstrap, Error, T>({
     queryKey: streamKeys.bootstrap(workspaceId, streamId),
+    select: options?.select,
     queryFn: async () => {
       debugBootstrap("Stream bootstrap queryFn start", { workspaceId, streamId, hasSocket: !!socket })
       if (!socket) {
@@ -131,7 +141,7 @@ export function useStreamBootstrap(workspaceId: string, streamId: string, option
     isError: query.isError,
   })
 
-  return { ...query, loadState }
+  return { data: query.data, error: query.error, status: query.status, isLoading: query.isLoading, loadState }
 }
 
 export function useCreateStream(workspaceId: string) {

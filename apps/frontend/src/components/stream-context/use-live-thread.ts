@@ -5,7 +5,9 @@ import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { truncateContent } from "@/components/layout/sidebar/utils"
 import { getStreamName } from "@/lib/streams"
 import { useAgentActivityForStream } from "@/stores/agent-activity-store"
-import { useWorkspaceStreams, useWorkspaceUnreadState } from "@/stores/workspace-store"
+import { useWorkspaceStreams, useWorkspaceUnreadState, type CachedUnreadState } from "@/stores/workspace-store"
+
+const pickUnreadCounts = (state: CachedUnreadState) => ({ unreadCounts: state.unreadCounts })
 
 export interface LiveThread {
   name: string | null
@@ -23,7 +25,7 @@ export interface LiveThread {
  */
 export function useLiveThread(workspaceId: string, threadId: string | null): LiveThread | null {
   const streams = useWorkspaceStreams(workspaceId)
-  const unreadCounts = useWorkspaceUnreadState(workspaceId)?.unreadCounts
+  const unreadCounts = useWorkspaceUnreadState(workspaceId, pickUnreadCounts)?.unreadCounts
   const agentSessions = useAgentActivityForStream(workspaceId, threadId ?? undefined)
   const { getActorName } = useActors(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)

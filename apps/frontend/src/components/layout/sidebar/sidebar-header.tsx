@@ -1,12 +1,5 @@
-import {
-  ArrowLeft,
-  ArrowRight,
-  Command,
-  FileText,
-  History,
-  Search as SearchIcon,
-  Terminal,
-} from "lucide-react"
+import { memo } from "react"
+import { ArrowLeft, ArrowRight, Command, FileText, History, Search as SearchIcon, Terminal } from "lucide-react"
 import { Link } from "react-router-dom"
 import { useQuickSwitcher, usePreferences, useSidebar } from "@/contexts"
 import { useSearchPanel } from "@/components/search/search-panel-context"
@@ -28,7 +21,7 @@ interface SidebarHeaderProps {
   workspaceId: string
 }
 
-export function SidebarHeader({ workspaceName, workspaceId }: SidebarHeaderProps) {
+export const SidebarHeader = memo(function SidebarHeader({ workspaceName, workspaceId }: SidebarHeaderProps) {
   const { openSwitcher } = useQuickSwitcher()
   const { openSearch } = useSearchPanel()
   const { collapseOnMobile } = useSidebar()
@@ -166,7 +159,7 @@ export function SidebarHeader({ workspaceName, workspaceId }: SidebarHeaderProps
       </div>
     </div>
   )
-}
+})
 
 function HistoryStep({
   direction,

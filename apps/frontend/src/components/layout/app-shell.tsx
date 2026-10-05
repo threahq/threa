@@ -98,7 +98,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     stopResizing,
     setWidth,
   } = useSidebar()
-  const { showLoadingIndicator } = useCoordinatedLoading()
+  const showLoadingIndicator = useCoordinatedLoading((loading) => loading.showLoadingIndicator)
   // Pull-to-refresh is a touch gesture — enable it additively wherever a finger
   // could be used (harmless with a mouse). Hover-preview is a mouse affordance,
   // so it keys off the active input mode (a finger never triggers it) — a mouse

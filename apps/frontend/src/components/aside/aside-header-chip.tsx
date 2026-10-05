@@ -1,10 +1,10 @@
-import { useMemo } from "react"
+import { useCallback, useMemo } from "react"
 import { Loader2, MessageSquareDashed } from "lucide-react"
 import { isAsideHostType, StreamTypes } from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
-import { useWorkspaceStreams, useWorkspaceUnreadState } from "@/stores/workspace-store"
+import { useWorkspaceStreams, useWorkspaceUnreadState, type CachedUnreadState } from "@/stores/workspace-store"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { useAgentActivityForStream } from "@/stores/agent-activity-store"
 import { useAsideState } from "@/stores/aside-store"
@@ -45,7 +45,9 @@ export function AsideHeaderChip({ workspaceId, stream, compact = false }: AsideH
   const open = useAsideState()
   const openAside = useOpenAside(workspaceId)
   const resume = useResumeAside()
-  const unread = useWorkspaceUnreadState(workspaceId)?.unreadCounts[newest?.id ?? ""] ?? 0
+  const newestId = newest?.id ?? ""
+  const pickUnread = useCallback((state: CachedUnreadState) => state.unreadCounts[newestId] ?? 0, [newestId])
+  const unread = useWorkspaceUnreadState(workspaceId, pickUnread) ?? 0
   const working = useAgentActivityForStream(workspaceId, newest?.id).length > 0
 
   const canOpen = isAsideHostType(stream.type) && !stream.e2eEnabled && !stream.archivedAt && !root?.archivedAt

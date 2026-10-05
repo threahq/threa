@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react"
 import { collectSealedStreamIds } from "@/lib/streams"
+import { shareById, useShared } from "@/lib/structural-sharing"
 import { type CachedDraft, type CachedStream } from "@/db"
 import { parseBoardDraftKey } from "@/lib/board/draft-keys"
 import { isDraftInHostPile, resolveDraftHomeStream, type DraftPileContext } from "@/lib/drafts/home-stream"
@@ -325,7 +326,7 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
     return map
   }, [allDrafts])
 
-  const drafts = useMemo(() => {
+  const pile = useMemo(() => {
     if (!pileOpen) {
       latchedIdsRef.current = null
       return livePile
@@ -347,6 +348,7 @@ export function useStashedDrafts(workspaceId: string, scope: string | undefined)
     for (const row of livePile) rows.set(row.id, row)
     return [...rows.values()].sort(comparePile)
   }, [pileOpen, livePile, draftsById, loadedId, comparePile, scope])
+  const drafts = useShared(pile, shareById)
 
   const originByDraftId = useMemo(() => {
     const topicSummary = (source: StashedDraftSource): string | null => {
