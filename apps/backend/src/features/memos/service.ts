@@ -470,7 +470,7 @@ export class MemoService implements MemoServiceLike {
           // A saved or reflective memo citing a message edited since is shown
           // beside the conversation's own memos, so the classifier keeps it
           // through a typo fix and a revision can supersede it. Same tier only:
-          // a private memo must never feed a shared revision.
+          // a private memo must never feed a shared revision, nor a pre-share one a crossing revision.
           const existingMemos = [
             ...(await MemoRepository.findActiveBySourceConversation(
               client,
@@ -479,15 +479,14 @@ export class MemoService implements MemoServiceLike {
               [readerAudience],
               sharedRootStreamId
             )),
-            ...(sharedTree
-              ? []
-              : await MemoRepository.findActiveMessageMemosCitingEdited(
-                  client,
-                  workspaceId,
-                  conv.messageIds,
-                  memoScope.scopeUserId,
-                  [readerAudience]
-                )),
+            ...(await MemoRepository.findActiveMessageMemosCitingEdited(
+              client,
+              workspaceId,
+              conv.messageIds,
+              memoScope.scopeUserId,
+              [readerAudience],
+              sharedRootStreamId
+            )),
           ]
           existingConversationMemos.set(convId, existingMemos)
         }

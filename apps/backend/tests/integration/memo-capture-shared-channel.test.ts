@@ -159,18 +159,23 @@ describe("memo capture in a channel its workspace shares as host", () => {
     return id
   }
 
-  /** An active message memo sourced in `stream`, made inside a share of `sharedRootStreamId` when given. */
+  /**
+   * An active memo sourced in `stream`. Given `sharedRootStreamId`, it is a conversation memo captured inside that
+   * share, the only kind capture stamps; otherwise a message memo.
+   */
   async function seedMemo(
     ws: Workspace,
     stream: string,
     memo: { abstract: string; tags: string[]; sharedRootStreamId?: string }
   ): Promise<void> {
     const id = memoId()
+    const source = memo.sharedRootStreamId
+      ? { memoType: "conversation" as const, sourceConversationId: await seedConversation(ws, stream) }
+      : { memoType: "message" as const, sourceMessageId: await seedMessage(ws, stream) }
     await MemoRepository.insert(pool, {
       id,
       workspaceId: ws.id,
-      memoType: "message",
-      sourceMessageId: await seedMessage(ws, stream),
+      ...source,
       title: memo.abstract,
       abstract: memo.abstract,
       sourceMessageIds: [],
@@ -182,8 +187,8 @@ describe("memo capture in a channel its workspace shares as host", () => {
     await MemoRepository.updateEmbedding(pool, ws.id, id, SAME_EMBEDDING)
   }
 
-  /** A settled conversation of these messages in `stream`, queued for capture. */
-  async function queueConversation(ws: Workspace, stream: string, messageIds: string[]): Promise<string> {
+  /** A settled conversation of these messages in `stream`. */
+  async function seedConversation(ws: Workspace, stream: string, messageIds: string[] = []): Promise<string> {
     const id = conversationId()
     await withTransaction(pool, async (client) => {
       await ConversationRepository.insert(client, {
@@ -195,10 +200,18 @@ describe("memo capture in a channel its workspace shares as host", () => {
       for (const message of messageIds) {
         await ConversationRepository.addPrimaryMessage(client, ws.id, id, message, ws.ownerId)
       }
-      await PendingItemRepository.queue(client, [
+    })
+    return id
+  }
+
+  /** A settled conversation of these messages in `stream`, queued for capture. */
+  async function queueConversation(ws: Workspace, stream: string, messageIds: string[]): Promise<string> {
+    const id = await seedConversation(ws, stream, messageIds)
+    await withTransaction(pool, (client) =>
+      PendingItemRepository.queue(client, [
         { id: pendingItemId(), workspaceId: ws.id, streamId: stream, itemType: "conversation", itemId: id },
       ])
-    })
+    )
     return id
   }
 

@@ -619,7 +619,8 @@ export const MemoRepository = {
     workspaceId: string,
     messageIds: string[],
     scopeUserId: string | null,
-    audiences: readonly MemoAudience[]
+    audiences: readonly MemoAudience[],
+    sharedRootStreamId?: string
   ): Promise<Memo[]> {
     if (messageIds.length === 0) return []
     const result = await db.query<MemoRow>(composeSql`
@@ -637,6 +638,7 @@ export const MemoRepository = {
             AND messages.edited_at > memos.created_at
         )
         AND ${memoAudienceVisibleSql(workspaceId, audiences, "memos")}
+        ${capturedWhileSharedSql(sharedRootStreamId, "memos")}
       ORDER BY created_at ASC
     `)
     return result.rows.map(mapRowToMemo)

@@ -350,7 +350,7 @@ export async function findSharedTree(db: Querier, workspaceId: string, streamId:
   if (!hosted) return null
   const stream = await StreamRepository.findById(db, workspaceId, streamId)
   const root = stream?.rootStreamId ? await StreamRepository.findById(db, workspaceId, stream.rootStreamId) : stream
-  if (!root) return null
+  if (!root) throw new Error(`Shared stream ${streamId} has no root in ${workspaceId}`)
   const streamIds = new Set((await listTree(db, workspaceId, root)).map((s) => s.id))
   return streamIds.has(streamId) ? { rootStreamId: root.id, streamIds } : null
 }
@@ -367,7 +367,9 @@ export async function viewAsPartner(
   messages: Message[]
 ): Promise<Message[]> {
   if (!tree) return messages
-  const inTree = messages.filter((message) => message.deletedAt === null && tree.streamIds.has(message.streamId))
+  const inTree = messages.filter(
+    (message) => tree.streamIds.has(message.streamId) && isShared(message, message.streamId)
+  )
   const scope = await loadContentScope(
     db,
     workspaceId,

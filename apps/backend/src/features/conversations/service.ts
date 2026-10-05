@@ -1542,13 +1542,15 @@ export class ConversationService {
       // after the proposal — leaving un-analyzed messages in the source; the kept
       // group's title describes only the analyzed slice, so it would misdescribe the
       // remainder. In that case keep the source's existing title.
-      const analyzedIds = new Set(groups.flatMap((g) => g.messageIds))
-      const sourceFullyAnalyzed = source.messageIds.every((id) => analyzedIds.has(id))
-
       // Authors for the participant recompute: everything staying in the source
       // plus every moved message (each mint SETs its own participant list).
       const authorLookupIds = new Set<string>([...source.messageIds, ...movingIds])
       const memberMessages = await MessageRepository.findByIds(client, workspaceId, [...authorLookupIds])
+      // A deleted member has nothing left to describe, and a shared channel's proposal never sees one.
+      const analyzedIds = new Set(groups.flatMap((g) => g.messageIds))
+      const sourceFullyAnalyzed = source.messageIds.every(
+        (id) => analyzedIds.has(id) || memberMessages.get(id)?.deletedAt != null
+      )
 
       // Strip movers from the source, recompute its remaining participants, and
       // (when the whole source was analyzed) re-title it to the kept group; resolve
