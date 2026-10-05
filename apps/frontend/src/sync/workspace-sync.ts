@@ -411,6 +411,7 @@ function toWorkspaceBootstrapStream(stream: CachedStream): WorkspaceBootstrap["s
     updatedAt: stream.updatedAt,
     archivedAt: stream.archivedAt,
     originWorkspaceId: stream.originWorkspaceId,
+    disconnectedAt: stream.disconnectedAt,
     lastMessagePreview: stream.lastMessagePreview ?? null,
   }
 }
@@ -2207,6 +2208,8 @@ export function registerWorkspaceSocketHandlers(
   const handleStreamConnectionUpdated = async (payload: StreamConnectionUpdatedPayload) => {
     if (payload.workspaceId !== workspaceId) return
     await putStreamConnection(workspaceId, payload.connection)
+    // The bootstrap's connectedWorkspaces names the channel's partners in its header and mention picker.
+    void queryClient.invalidateQueries({ queryKey: streamKeys.bootstrap(workspaceId, payload.connection.streamId) })
   }
 
   const handleSavedReminderFired = async (payload: SavedReminderFiredPayload) => {

@@ -37,8 +37,9 @@ function isAdmin(role: WorkspaceRoleSlug): boolean {
   return permissionsForRole(role).includes(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
 }
 
+/** Only a workspace's own channel: a copy is the host's to share. */
 function isShareable(stream: Stream): boolean {
-  return stream.type === StreamTypes.CHANNEL && !stream.archivedAt && !stream.e2eEnabled
+  return stream.type === StreamTypes.CHANNEL && !stream.archivedAt && !stream.e2eEnabled && !stream.originWorkspaceId
 }
 
 /**
@@ -92,6 +93,25 @@ export class StreamConnectionService {
     const snapshot = await cp.revokeStreamConnectionInvite({
       connectionId: params.connectionId,
       hostWorkspaceId: params.workspaceId,
+    })
+    await this.applySnapshot(snapshot)
+    return this.readBack(params.workspaceId, snapshot.id)
+  }
+
+  /** Ends an accepted share from either side. Nothing either side holds is deleted. */
+  async disconnect(params: { workspaceId: string; connectionId: string; userId: string }): Promise<StreamConnection> {
+    await this.assertEnabled(params.workspaceId)
+    await this.requireAdmin(params)
+    const cp = this.requireControlPlane()
+    const connection = await StreamConnectionRepository.findById(this.pool, params.workspaceId, params.connectionId)
+    if (!connection || connection.role === "peer" || connection.state !== StreamConnectionStates.ACTIVE) {
+      throw connectionNotFound()
+    }
+    await this.requireStream({ ...params, streamId: connection.streamId })
+
+    const snapshot = await cp.disconnectStreamConnection({
+      connectionId: params.connectionId,
+      workspaceId: params.workspaceId,
     })
     await this.applySnapshot(snapshot)
     return this.readBack(params.workspaceId, snapshot.id)
@@ -231,15 +251,16 @@ export class StreamConnectionService {
   }
 
   /**
-   * Writes the snapshots, an event for each row they changed, and a pull of
-   * each active partner row they changed, in one transaction: a partner that
-   * just accepted reads the channel's history without waiting for the host to
-   * post. Returns the local row count.
+   * Writes the snapshots, an event for each row they changed, the copies they
+   * froze or thawed, and a pull of each active partner row they changed, in one
+   * transaction: a partner that just accepted reads the channel's history
+   * without waiting for the host to post. Returns the local row count.
    */
   private async project(snapshots: StreamConnectionSnapshot[]): Promise<number> {
     return withTransaction(this.pool, async (client) => {
       const { localRows, changed } = await StreamConnectionRepository.applySnapshots(client, snapshots)
       await this.publishChanges(client, changed)
+      await this.syncCopies(client, changed)
       await enqueuePulls(
         client,
         changed
@@ -252,14 +273,26 @@ export class StreamConnectionService {
     })
   }
 
-  /**
-   * Only the host's rows have a Connect tab to update: partner and peer rows
-   * carry the host's stream id, which names no stream in their workspace.
-   */
+  /** A copy that ended reads but takes no writes, so its viewers learn it at once. */
+  private async syncCopies(client: PoolClient, changed: AppliedStreamConnection[]): Promise<void> {
+    const roots = changed
+      .filter(({ connection }) => connection.role === "partner")
+      .map(({ workspaceId, connection }) => ({ workspaceId, streamId: connection.streamId }))
+    const flipped = await StreamRepository.syncCopiesDisconnected(client, roots)
+    if (flipped.length === 0) return
+    await OutboxRepository.insertMany(
+      client,
+      flipped.map((stream) => ({
+        eventType: "stream:updated" as const,
+        payload: { workspaceId: stream.workspaceId, streamId: stream.id, stream },
+      }))
+    )
+  }
+
+  /** Each side's Connect tab, on the host's channel or on a partner's copy, which keeps the host's stream id. */
   private async publishChanges(client: PoolClient, changed: AppliedStreamConnection[]): Promise<void> {
-    const hostRows = changed.filter(({ connection }) => connection.role === "host")
     const streamIdsByWorkspace = new Map<string, Set<string>>()
-    for (const { workspaceId, connection } of hostRows) {
+    for (const { workspaceId, connection } of changed) {
       const ids = streamIdsByWorkspace.get(workspaceId) ?? new Set<string>()
       streamIdsByWorkspace.set(workspaceId, ids.add(connection.streamId))
     }
@@ -282,7 +315,7 @@ export class StreamConnectionService {
       }
     }
 
-    const entries = hostRows.flatMap(({ workspaceId, connection }) => {
+    const entries = changed.flatMap(({ workspaceId, connection }) => {
       const audience = audiences.get(`${workspaceId}/${connection.streamId}`)
       if (!audience) return []
       // A private channel with no admin among its members has no Connect tab open to update.

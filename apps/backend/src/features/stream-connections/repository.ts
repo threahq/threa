@@ -165,13 +165,22 @@ export const StreamConnectionRepository = {
     return result.rows[0] ? mapRow(result.rows[0]) : null
   },
 
-  /** The channel's connections and invite links that still work, newest first. */
+  /**
+   * The channel's connections and invite links that still work, newest first.
+   * A peer counts only while this workspace is itself connected: once it leaves,
+   * nothing tells it about the partners that stayed.
+   */
   async listLiveForStream(db: Querier, workspaceId: string, streamId: string): Promise<StreamConnection[]> {
     const result = await db.query<StreamConnectionRow>(sql`
       SELECT ${sql.raw(COLUMNS)}
-      FROM stream_connections
-      WHERE workspace_id = ${workspaceId} AND stream_id = ${streamId}
-        AND (state = 'active' OR (state = 'invited' AND expires_at > NOW()))
+      FROM stream_connections sc
+      WHERE sc.workspace_id = ${workspaceId} AND sc.stream_id = ${streamId}
+        AND (sc.state = 'active' OR (sc.state = 'invited' AND sc.expires_at > NOW()))
+        AND (sc.role <> 'peer' OR EXISTS (
+          SELECT 1 FROM stream_connections own
+          WHERE own.workspace_id = ${workspaceId} AND own.stream_id = ${streamId}
+            AND own.role = 'partner' AND own.state = 'active'
+        ))
       ORDER BY id DESC
     `)
     return result.rows.map(mapRow)

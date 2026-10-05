@@ -307,6 +307,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   app.post("/internal/stream-connections/accept", internalAuth, streamConnections.accept)
   app.post("/internal/stream-connections/list", internalAuth, streamConnections.list)
   app.post("/internal/stream-connections/:id/revoke", internalAuth, streamConnections.revokeInvite)
+  app.post("/internal/stream-connections/:id/disconnect", internalAuth, streamConnections.disconnect)
   app.put("/internal/integration-routes", internalAuth, integrationRoutes.register)
   app.delete("/internal/integration-routes", internalAuth, integrationRoutes.unregister)
 

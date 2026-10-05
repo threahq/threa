@@ -196,6 +196,7 @@ describe("attachment handlers safety gating", () => {
   it("blocks download URL while malware scan is pending", async () => {
     const attachmentService = {
       getById: mock(() => Promise.resolve(buildAttachment(AttachmentSafetyStatuses.PENDING_SCAN))),
+      isFromEndedShare: mock(() => Promise.resolve(false)),
       getDownloadUrl: mock(() => Promise.resolve("https://download")),
       getSharingBlockReason: mock(() => "Attachment is pending malware scan"),
     } as any
@@ -225,6 +226,7 @@ describe("attachment handlers safety gating", () => {
   it("blocks download URL for quarantined attachments", async () => {
     const attachmentService = {
       getById: mock(() => Promise.resolve(buildAttachment(AttachmentSafetyStatuses.QUARANTINED))),
+      isFromEndedShare: mock(() => Promise.resolve(false)),
       getDownloadUrl: mock(() => Promise.resolve("https://download")),
       getSharingBlockReason: mock(() => "Attachment is quarantined due to malware scan"),
     } as any
@@ -254,6 +256,7 @@ describe("attachment handlers safety gating", () => {
   it("returns download URL for clean attachments", async () => {
     const attachmentService = {
       getById: mock(() => Promise.resolve(buildAttachment(AttachmentSafetyStatuses.CLEAN))),
+      isFromEndedShare: mock(() => Promise.resolve(false)),
       getDownloadUrl: mock(() => Promise.resolve("https://download")),
       getSharingBlockReason: mock(() => null),
     } as any
@@ -286,6 +289,7 @@ describe("attachment handlers safety gating", () => {
     }
     const attachmentService = {
       getById: mock(() => Promise.resolve(attachment)),
+      isFromEndedShare: mock(() => Promise.resolve(false)),
       getDownloadUrl: mock(() => Promise.resolve("https://download")),
       getSharingBlockReason: mock(() => null),
     } as any
@@ -322,6 +326,7 @@ describe("attachment handlers safety gating", () => {
     }
     const attachmentService = {
       getById: mock(() => Promise.resolve(attachment)),
+      isFromEndedShare: mock(() => Promise.resolve(false)),
       getDownloadUrl: mock(() => Promise.resolve("https://download")),
       getSharingBlockReason: mock(() => null),
     } as any
@@ -359,6 +364,7 @@ describe("attachment handlers safety gating", () => {
     }
     const attachmentService = {
       getById: mock(() => Promise.resolve(attachment)),
+      isFromEndedShare: mock(() => Promise.resolve(false)),
       getDownloadUrl: mock(() => Promise.resolve("https://download")),
       getSharingBlockReason: mock(() => null),
     } as any
@@ -394,6 +400,7 @@ describe("attachment handlers safety gating", () => {
     }
     const attachmentService = {
       getById: mock(() => Promise.resolve(attachment)),
+      isFromEndedShare: mock(() => Promise.resolve(false)),
       getDownloadUrl: mock(() => Promise.resolve("https://download")),
       getSharingBlockReason: mock(() => null),
     } as any
@@ -430,6 +437,7 @@ describe("attachment handlers safety gating", () => {
   it("getDownloadUrl 403s a non-uploader on an unbound (null-stream) attachment", async () => {
     const attachmentService = {
       getById: mock(() => Promise.resolve(buildAttachment(AttachmentSafetyStatuses.CLEAN))),
+      isFromEndedShare: mock(() => Promise.resolve(false)),
       getDownloadUrl: mock(() => Promise.resolve("https://download")),
       getSharingBlockReason: mock(() => null),
     } as any
@@ -455,6 +463,7 @@ describe("attachment handlers safety gating", () => {
     const storage = { getObjectContent: mock(() => Promise.reject(new Error("should not be reached"))) } as any
     const attachmentService = {
       getById: mock(() => Promise.resolve(buildAttachment(AttachmentSafetyStatuses.CLEAN))),
+      isFromEndedShare: mock(() => Promise.resolve(false)),
       getSharingBlockReason: mock(() => null),
     } as any
     const handlers = createAttachmentHandlers({ attachmentService, streamService: {} as any, storage, pool: {} as any })
@@ -478,6 +487,7 @@ describe("attachment handlers safety gating", () => {
   it("getExtraction 403s a non-uploader on an unbound (null-stream) attachment", async () => {
     const attachmentService = {
       getById: mock(() => Promise.resolve(buildAttachment(AttachmentSafetyStatuses.CLEAN))),
+      isFromEndedShare: mock(() => Promise.resolve(false)),
     } as any
     const handlers = createAttachmentHandlers({
       attachmentService,
@@ -499,6 +509,7 @@ describe("attachment handlers safety gating", () => {
   it("getDownloadUrl still serves the uploader their own unbound attachment (composer preview unaffected)", async () => {
     const attachmentService = {
       getById: mock(() => Promise.resolve(buildAttachment(AttachmentSafetyStatuses.CLEAN))),
+      isFromEndedShare: mock(() => Promise.resolve(false)),
       getDownloadUrl: mock(() => Promise.resolve("https://download")),
       getSharingBlockReason: mock(() => null),
     } as any
@@ -822,6 +833,7 @@ describe("attachment content handler", () => {
   }: { attachment?: any; storage?: any; streamService?: any } = {}) {
     const attachmentService = {
       getById: mock(() => Promise.resolve(attachment)),
+      isFromEndedShare: mock(() => Promise.resolve(false)),
       getSharingBlockReason: mock(() => null),
     } as any
     return {
@@ -970,6 +982,7 @@ describe("attachment content handler", () => {
   it("blocks content while the malware scan is pending", async () => {
     const attachmentService = {
       getById: mock(() => Promise.resolve(buildAttachment(AttachmentSafetyStatuses.PENDING_SCAN))),
+      isFromEndedShare: mock(() => Promise.resolve(false)),
       getSharingBlockReason: mock(() => "Attachment is pending malware scan"),
     } as any
     const storage = buildContentStorage()

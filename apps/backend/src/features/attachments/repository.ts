@@ -155,6 +155,34 @@ export const AttachmentRepository = {
     return result.rows[0] ? mapRowToAttachment(result.rows[0]) : null
   },
 
+  /**
+   * Whether the file came from the other side of a shared channel whose share
+   * has ended: its uploader is a copy from another workspace, and the channel no
+   * longer holds an active connection to that workspace.
+   */
+  async isFromEndedShare(client: Querier, workspaceId: string, id: string): Promise<boolean> {
+    const result = await client.query<{ ended: boolean }>(sql`
+      SELECT EXISTS (
+        SELECT 1
+        FROM attachments a
+        JOIN streams s ON s.workspace_id = a.workspace_id AND s.id = a.stream_id
+        LEFT JOIN users u ON u.workspace_id = a.workspace_id AND u.id = a.uploaded_by
+        LEFT JOIN actor_copies ac ON ac.workspace_id = a.workspace_id AND ac.id = a.uploaded_by
+        WHERE a.workspace_id = ${workspaceId} AND a.id = ${id}
+          AND COALESCE(u.origin_workspace_id, ac.origin_workspace_id) IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM stream_connections sc
+            WHERE sc.workspace_id = a.workspace_id
+              AND sc.stream_id = COALESCE(s.root_stream_id, s.id)
+              AND sc.remote_workspace_id = COALESCE(u.origin_workspace_id, ac.origin_workspace_id)
+              AND sc.role <> 'peer'
+              AND sc.state = 'active'
+          )
+      ) AS ended
+    `)
+    return result.rows[0].ended
+  },
+
   async findByIds(client: Querier, workspaceId: string, ids: string[]): Promise<Attachment[]> {
     if (ids.length === 0) return []
     const result = await client.query<AttachmentRow>(

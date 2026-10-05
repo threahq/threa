@@ -35,6 +35,8 @@ interface Dependencies {
   pool: Pool
 }
 
+const SHARE_ENDED_ERROR = "This file came from a shared channel that has since been disconnected"
+
 const reserveAttachmentSchema = z.object({
   filename: z.string().min(1).max(255),
   mimeType: z.string().min(1).max(255).default("application/octet-stream"),
@@ -235,6 +237,9 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       if (sharingBlockReason) {
         return res.status(403).json({ error: sharingBlockReason })
       }
+      if (await attachmentService.isFromEndedShare(attachment)) {
+        return res.status(403).json({ error: SHARE_ENDED_ERROR })
+      }
 
       // Direct stream access first; if that fails, fall back to the
       // share-grant + inline-reference chain. Splitting the fast path from
@@ -304,6 +309,9 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       const sharingBlockReason = attachmentService.getSharingBlockReason(attachment)
       if (sharingBlockReason) {
         return res.status(403).json({ error: sharingBlockReason })
+      }
+      if (await attachmentService.isFromEndedShare(attachment)) {
+        return res.status(403).json({ error: SHARE_ENDED_ERROR })
       }
 
       if (attachment.streamId) {
@@ -412,6 +420,9 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       const attachment = await attachmentService.getById(workspaceId, attachmentId)
       if (!attachment) {
         return res.status(404).json({ error: "Attachment not found" })
+      }
+      if (await attachmentService.isFromEndedShare(attachment)) {
+        return res.status(403).json({ error: SHARE_ENDED_ERROR })
       }
 
       if (attachment.streamId) {

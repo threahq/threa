@@ -30,6 +30,13 @@ export const streamConnectionsApi = {
     return res.connection
   },
 
+  async disconnect(workspaceId: string, connectionId: string): Promise<StreamConnection> {
+    const res = await api.post<StreamConnectionResponse>(
+      `/api/workspaces/${workspaceId}/stream-connections/${connectionId}/disconnect`
+    )
+    return res.connection
+  },
+
   /** False when the viewer isn't an admin there or the workspace has sharing switched off. */
   async canAccept(workspaceId: string): Promise<boolean> {
     try {

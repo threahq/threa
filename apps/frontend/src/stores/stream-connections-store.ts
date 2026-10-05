@@ -91,6 +91,16 @@ export async function revokeStreamConnection(workspaceId: string, streamId: stri
   }
 }
 
+/** Ends an active share, from either side. A refusal because it already ended refetches the rows, as a revoke's does. */
+export async function disconnectStreamConnection(workspaceId: string, streamId: string, connectionId: string) {
+  try {
+    await putStreamConnection(workspaceId, await streamConnectionsApi.disconnect(workspaceId, connectionId))
+  } catch (error) {
+    if (isStaleRow(error)) await refreshStreamConnections(workspaceId, streamId).catch(() => undefined)
+    throw error
+  }
+}
+
 function isStaleRow(error: unknown): boolean {
   return (
     ApiError.isApiError(error) &&

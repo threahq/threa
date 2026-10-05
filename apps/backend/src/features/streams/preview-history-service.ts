@@ -113,6 +113,7 @@ export class StreamPreviewHistoryService {
               updatedAt: stream.updatedAt.toISOString(),
               archivedAt: stream.archivedAt?.toISOString() ?? null,
               lastReplyAt: stream.lastReplyAt?.toISOString() ?? null,
+              disconnectedAt: stream.disconnectedAt?.toISOString() ?? null,
             },
             events: streamEvents.map((event) => ({
               ...event,

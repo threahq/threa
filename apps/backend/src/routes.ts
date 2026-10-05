@@ -958,6 +958,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     requireWorkspaceAdmin,
     streamConnections.revokeInvite
   )
+  app.post(
+    "/api/workspaces/:workspaceId/stream-connections/:connectionId/disconnect",
+    ...authed,
+    audit("stream_connections.disconnect", "write"),
+    requireWorkspaceAdmin,
+    streamConnections.disconnect
+  )
   app.patch(
     "/api/workspaces/:workspaceId/streams/:streamId/companion",
     ...authed,

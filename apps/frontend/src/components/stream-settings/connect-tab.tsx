@@ -1,16 +1,27 @@
 import { useEffect, useId, useState } from "react"
 import { Building2, Link as LinkIcon } from "lucide-react"
-import { StreamConnectionErrorCodes, StreamConnectionStates, type Stream } from "@threahq/types"
+import { StreamConnectionErrorCodes, StreamConnectionStates, type Stream, type StreamConnection } from "@threahq/types"
 import { ApiError } from "@/api/client"
 import { CopyableLink } from "@/components/copyable-link"
 import { Button } from "@/components/ui/button"
 import { Label } from "@/components/ui/label"
+import {
+  ResponsiveAlertDialog,
+  ResponsiveAlertDialogAction,
+  ResponsiveAlertDialogCancel,
+  ResponsiveAlertDialogContent,
+  ResponsiveAlertDialogDescription,
+  ResponsiveAlertDialogFooter,
+  ResponsiveAlertDialogHeader,
+  ResponsiveAlertDialogTitle,
+} from "@/components/ui/responsive-alert-dialog"
 import { Skeleton } from "@/components/ui/skeleton"
 import { usePreferences } from "@/contexts"
 import { formatFutureTime, formatTime, type TimePrefs } from "@/lib/dates"
 import { buildStreamConnectionInviteLink } from "@/lib/stream-links"
 import {
   createStreamConnectionInvite,
+  disconnectStreamConnection,
   revokeStreamConnection,
   useLoadStreamConnections,
   useStreamConnections,
@@ -44,6 +55,15 @@ function revokeErrorMessage(error: unknown): string {
   return (ApiError.isApiError(error) && REVOKE_ERROR_COPY[error.code]) || "Couldn't revoke the link. Try again."
 }
 
+const DISCONNECT_ERROR_COPY: Partial<Record<string, string>> = {
+  ...REFUSAL_COPY,
+  [StreamConnectionErrorCodes.NOT_FOUND]: "This workspace is no longer connected.",
+}
+
+function disconnectErrorMessage(error: unknown): string {
+  return (ApiError.isApiError(error) && DISCONNECT_ERROR_COPY[error.code]) || "Couldn't disconnect. Try again."
+}
+
 /** formatFutureTime counts down minutes inside the last hour, which an open tab would leave stale. */
 function expiryTime(expiresAt: number, prefs: TimePrefs): string {
   const date = new Date(expiresAt)
@@ -52,6 +72,7 @@ function expiryTime(expiresAt: number, prefs: TimePrefs): string {
 }
 
 function unshareableReason(stream: Stream): string | null {
+  if (stream.originWorkspaceId) return "Only the workspace this channel comes from can share it."
   if (stream.archivedAt) return "Archived channels can't be shared."
   if (stream.e2eEnabled) return "Encrypted channels can't be shared."
   return null
@@ -72,8 +93,11 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
   const rows = useStreamConnections(workspaceId, stream.id)
   const [creating, setCreating] = useState(false)
   const [revokingId, setRevokingId] = useState<string | null>(null)
-  // A revoke's error sits above the lists, a create's beside its button: each where the admin is looking.
-  const [actionError, setActionError] = useState<{ action: "create" | "revoke"; message: string } | null>(null)
+  const [disconnectingId, setDisconnectingId] = useState<string | null>(null)
+  const [confirming, setConfirming] = useState<StreamConnection | null>(null)
+  const [confirmOpen, setConfirmOpen] = useState(false)
+  // A create's error sits beside its button, the others' above the lists: each where the admin is looking.
+  const [actionError, setActionError] = useState<{ action: "create" | "change"; message: string } | null>(null)
 
   const [now, setNow] = useState(Date.now)
   const connected = (rows ?? []).filter((row) => row.state === StreamConnectionStates.ACTIVE)
@@ -132,20 +156,32 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
     try {
       await revokeStreamConnection(workspaceId, stream.id, connectionId)
     } catch (error) {
-      setActionError({ action: "revoke", message: revokeErrorMessage(error) })
+      setActionError({ action: "change", message: revokeErrorMessage(error) })
     } finally {
       setRevokingId(null)
     }
   }
 
+  const disconnect = async (connectionId: string) => {
+    setActionError(null)
+    setDisconnectingId(connectionId)
+    try {
+      await disconnectStreamConnection(workspaceId, stream.id, connectionId)
+    } catch (error) {
+      setActionError({ action: "change", message: disconnectErrorMessage(error) })
+    } finally {
+      setDisconnectingId(null)
+    }
+  }
+
   const blocked = unshareableReason(stream)
-  const busy = creating || revokingId !== null
+  const busy = creating || revokingId !== null || disconnectingId !== null
   const timePrefs = { timeFormat: preferences?.timeFormat }
 
   return (
     <div className="space-y-5 p-1">
       {loadFailed}
-      {actionError?.action === "revoke" && <ActionError message={actionError.message} />}
+      {actionError?.action === "change" && <ActionError message={actionError.message} />}
       {connected.length > 0 && (
         <section className="space-y-2">
           <Label className="text-sm font-medium">Shared with</Label>
@@ -153,7 +189,20 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
             {connected.map((connection) => (
               <li key={connection.id} className="flex items-center gap-3 rounded-md border px-3 py-3">
                 <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 truncate text-sm font-medium">{connection.remoteWorkspaceName}</span>
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{connection.remoteWorkspaceName}</span>
+                {connection.role !== "peer" && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setConfirming(connection)
+                      setConfirmOpen(true)
+                    }}
+                    disabled={busy}
+                  >
+                    {disconnectingId === connection.id ? "Disconnecting…" : "Disconnect"}
+                  </Button>
+                )}
               </li>
             ))}
           </ul>
@@ -193,6 +242,24 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
         )}
         {actionError?.action === "create" && <ActionError message={actionError.message} />}
       </section>
+      <ResponsiveAlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <ResponsiveAlertDialogContent>
+          <ResponsiveAlertDialogHeader>
+            <ResponsiveAlertDialogTitle>Disconnect {confirming?.remoteWorkspaceName}?</ResponsiveAlertDialogTitle>
+            <ResponsiveAlertDialogDescription>
+              {confirming?.role === "partner"
+                ? `The messages so far stay here, read-only, and files stop loading between the two workspaces. Sharing again takes a new invite link from ${confirming.remoteWorkspaceName}.`
+                : `${confirming?.remoteWorkspaceName} keeps the messages so far, read-only, and files stop loading between the two workspaces. Sharing again takes a new invite link.`}
+            </ResponsiveAlertDialogDescription>
+          </ResponsiveAlertDialogHeader>
+          <ResponsiveAlertDialogFooter>
+            <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
+            <ResponsiveAlertDialogAction onClick={() => confirming && void disconnect(confirming.id)}>
+              Disconnect
+            </ResponsiveAlertDialogAction>
+          </ResponsiveAlertDialogFooter>
+        </ResponsiveAlertDialogContent>
+      </ResponsiveAlertDialog>
     </div>
   )
 }

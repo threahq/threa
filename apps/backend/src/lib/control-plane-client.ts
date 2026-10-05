@@ -391,6 +391,18 @@ export class ControlPlaneClient {
     return snapshotResponseSchema.parse(body).snapshot
   }
 
+  async disconnectStreamConnection(params: {
+    connectionId: string
+    workspaceId: string
+  }): Promise<StreamConnectionSnapshot> {
+    const body = await this.postStreamConnection(
+      `/internal/stream-connections/${encodeURIComponent(params.connectionId)}/disconnect`,
+      { workspaceId: params.workspaceId },
+      "disconnect shared channel"
+    )
+    return snapshotResponseSchema.parse(body).snapshot
+  }
+
   async acceptStreamConnection(params: {
     token: string
     partnerWorkspaceId: string

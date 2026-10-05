@@ -116,6 +116,7 @@ export const ACCESS_LOG_OPERATIONS = [
   "stream_connections.can_accept",
   "stream_connections.accept",
   "stream_connections.revoke",
+  "stream_connections.disconnect",
   "stream_connections.bridge_manifest",
   "stream_connections.bridge_events",
   "stream_connections.bridge_attachment",

@@ -831,6 +831,12 @@ export class AttachmentService {
     return safetyStatusBlockReason(attachment.safetyStatus)
   }
 
+  /** A file the other side of a shared channel sent stops loading once the share ends; its bytes stay for a reconnect. */
+  async isFromEndedShare(attachment: Pick<Attachment, "id" | "workspaceId" | "streamId">): Promise<boolean> {
+    if (!attachment.streamId) return false
+    return AttachmentRepository.isFromEndedShare(this.pool, attachment.workspaceId, attachment.id)
+  }
+
   async getById(workspaceId: string, id: string): Promise<Attachment | null> {
     return AttachmentRepository.findById(this.pool, workspaceId, id)
   }
@@ -871,7 +877,7 @@ export class AttachmentService {
     if (viaStreamIds.length === 0) {
       return null
     }
-    if (this.getSharingBlockReason(attachment)) {
+    if (this.getSharingBlockReason(attachment) || (await this.isFromEndedShare(attachment))) {
       return null
     }
     return { attachment, viaStreamIds }

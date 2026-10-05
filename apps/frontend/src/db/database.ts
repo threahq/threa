@@ -139,6 +139,8 @@ export interface CachedStream {
   purpose?: StreamPurpose | null
   /** Set on a partner's read-only copy of a shared channel; optional so older cached rows still parse. */
   originWorkspaceId?: string | null
+  /** Set on such a copy once its share ended: it still reads, but takes no writes. */
+  disconnectedAt?: string | null
   createdBy: string
   createdAt: string
   updatedAt: string

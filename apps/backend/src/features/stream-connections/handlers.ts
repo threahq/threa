@@ -76,6 +76,16 @@ export function createStreamConnectionHandlers({ streamConnectionService }: Depe
       res.json({ connection })
     },
 
+    async disconnect(req: Request, res: Response) {
+      const { connectionId } = validateRequest(connectionParamsSchema, req.params)
+      const connection = await streamConnectionService.disconnect({
+        workspaceId: req.workspaceId!,
+        connectionId,
+        userId: req.user!.id,
+      })
+      res.json({ connection })
+    },
+
     /** The invite page's workspace picker: answers with the same refusals accept would. */
     async canAccept(req: Request, res: Response) {
       await streamConnectionService.assertCanAccept({ workspaceId: req.workspaceId!, userId: req.user!.id })

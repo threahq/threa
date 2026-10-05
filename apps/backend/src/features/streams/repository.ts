@@ -52,6 +52,7 @@ interface StreamRow {
   created_at: Date
   updated_at: Date
   archived_at: Date | null
+  disconnected_at: Date | null
   /**
    * Optional columns from a LEFT JOIN against `e2e_streams`. Only the
    * `findById` family pulls them; bare `streams`-only queries leave the
@@ -162,6 +163,8 @@ export interface Stream {
   createdAt: Date
   updatedAt: Date
   archivedAt: Date | null
+  /** When the share behind a partner's copy ended; the copy is read-only until it comes back. */
+  disconnectedAt?: Date | null
   /**
    * End-to-end encryption metadata, populated by callers that LEFT JOIN
    * `e2e_streams`. Optional so existing read paths and test fixtures
@@ -264,6 +267,7 @@ function mapRowToStream(row: StreamRow): Stream {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archivedAt: row.archived_at,
+    disconnectedAt: row.disconnected_at,
     // Only expose the E2E fields when the query opted into the JOIN —
     // a bare `streams` SELECT leaves them as `undefined` so plaintext
     // callers don't have to special-case the placeholder.
@@ -308,7 +312,7 @@ const SELECT_FIELDS = `
   id, workspace_id, type, display_name, display_name_source, display_name_revision, display_name_updated_by_user_id, slug, description, description_json, visibility,
   parent_stream_id, parent_anchor_id, root_stream_id, reply_count, last_reply_at, message_count, message_count_revision,
   companion_mode, companion_persona_id, memory_mode, purpose, origin_workspace_id,
-  created_by, created_at, updated_at, archived_at
+  created_by, created_at, updated_at, archived_at, disconnected_at
 `
 
 // SELECT list for queries that need the E2E flag inline. The LEFT JOIN keeps
@@ -318,7 +322,7 @@ const SELECT_FIELDS_WITH_E2E = `
   s.id, s.workspace_id, s.type, s.display_name, s.display_name_source, s.display_name_revision, s.display_name_updated_by_user_id, s.slug, s.description, s.description_json, s.visibility,
   s.parent_stream_id, s.parent_anchor_id, s.root_stream_id, s.reply_count, s.last_reply_at, s.message_count, s.message_count_revision,
   s.companion_mode, s.companion_persona_id, s.memory_mode, s.purpose, s.origin_workspace_id,
-  s.created_by, s.created_at, s.updated_at, s.archived_at,
+  s.created_by, s.created_at, s.updated_at, s.archived_at, s.disconnected_at,
   e.owner_user_key_id AS e2e_owner_user_key_id,
   e.name_ciphertext AS e2e_name_ciphertext,
   e.name_envelope AS e2e_name_envelope,
@@ -505,6 +509,35 @@ export const StreamRepository = {
       ) AS exists
     `)
     return result.rows[0]?.exists ?? false
+  },
+
+  /**
+   * Freezes each partner's copy of a shared channel, threads included, once its
+   * workspace holds no active connection to it, and thaws it when one returns.
+   * Returns the streams that flipped.
+   */
+  async syncCopiesDisconnected(db: Querier, roots: { workspaceId: string; streamId: string }[]): Promise<Stream[]> {
+    if (roots.length === 0) return []
+    const result = await db.query<StreamRow>(sql`
+      WITH root AS (
+        SELECT r.workspace_id, r.stream_id, EXISTS (
+          SELECT 1 FROM stream_connections sc
+          WHERE sc.workspace_id = r.workspace_id AND sc.stream_id = r.stream_id
+            AND sc.role = 'partner' AND sc.state = 'active'
+        ) AS connected
+        FROM unnest(${roots.map((r) => r.workspaceId)}::text[], ${roots.map((r) => r.streamId)}::text[])
+          AS r(workspace_id, stream_id)
+      )
+      UPDATE streams s
+      SET disconnected_at = CASE WHEN root.connected THEN NULL ELSE NOW() END, updated_at = NOW()
+      FROM root
+      WHERE s.workspace_id = root.workspace_id
+        AND (s.id = root.stream_id OR s.root_stream_id = root.stream_id)
+        AND s.origin_workspace_id IS NOT NULL
+        AND (s.disconnected_at IS NULL) <> root.connected
+      RETURNING ${sql.raw(SELECT_FIELDS_ALIASED)}
+    `)
+    return result.rows.map(mapRowToStream)
   },
 
   /** The refs that name a shared copy, for callers spanning several workspaces. */
