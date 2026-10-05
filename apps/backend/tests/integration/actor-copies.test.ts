@@ -4,11 +4,13 @@ import {
   AuthorTypes,
   bridgeEventsSchema,
   bridgeManifestSchema,
+  bridgeMemoIndexSchema,
   type AuthorType,
   type BridgeActor,
   type BridgeChange,
   type BridgeEvents,
   type BridgeManifest,
+  type BridgeMemoIndex,
 } from "@threahq/types"
 import { streamConnectionId } from "@threahq/backend-common"
 import { addTestMember, createTestStorage, setupIsolatedTestDatabase, testMessageContent } from "./setup"
@@ -48,6 +50,10 @@ class DirectBridgeClient extends BridgeClient {
   ): Promise<BridgeEvents> {
     const page = await this.exporter.listEvents({ ...address, ...params })
     return bridgeEventsSchema.parse(this.tamper(page))
+  }
+
+  override async getMemoIndex(address: Parameters<BridgeClient["getManifest"]>[0]): Promise<BridgeMemoIndex> {
+    return bridgeMemoIndexSchema.parse(await this.exporter.getMemoIndex(address))
   }
 }
 
