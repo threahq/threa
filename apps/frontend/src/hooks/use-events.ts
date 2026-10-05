@@ -343,6 +343,7 @@ function pickEventWindow(bootstrap: CachedStreamBootstrap) {
     events: bootstrap.events,
     windowVersion: bootstrap.windowVersion,
     hasOlderEvents: bootstrap.hasOlderEvents,
+    windowFloor: bootstrap.windowFloor,
     latestSequence: bootstrap.latestSequence,
   }
 }
@@ -471,12 +472,12 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     const next = getNextBootstrapFloorState(
       bootstrapFloorRef.current,
       streamId,
-      getMinimumSequence(bootstrap?.events),
+      bootstrap?.windowFloor != null ? BigInt(bootstrap.windowFloor) : null,
       bootstrap?.windowVersion ?? 0
     )
     bootstrapFloorRef.current = next.state
     return next.floor
-  }, [bootstrap?.events, bootstrap?.windowVersion, streamId])
+  }, [bootstrap?.windowFloor, bootstrap?.windowVersion, streamId])
 
   const olderFloor = useMemo(() => {
     const olderEvents = olderData?.pages.flatMap((page) => page.events).filter(Boolean) ?? []

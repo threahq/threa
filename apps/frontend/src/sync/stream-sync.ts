@@ -58,6 +58,13 @@ import {
 
 export interface CachedStreamBootstrap extends StreamBootstrap {
   windowVersion: number
+  /**
+   * Oldest sequence the window covers: "0" when it opened on an empty stream,
+   * null when unknown. An append may lower it but never raises it — `events`
+   * cannot say this once a catch-up page lands on a window that opened empty,
+   * and a floor taken from that page hides everything that arrived live below it.
+   */
+  windowFloor: string | null
 }
 
 /** True when a runtime in this state contributes session-control commands to the stream's command set (mirrors the backend's available/busy gate). */
@@ -91,6 +98,17 @@ function maxSequence(a: string, b: string): string {
   return BigInt(a) >= BigInt(b) ? a : b
 }
 
+function openingWindowFloor(bootstrap: StreamBootstrap): string | null {
+  const oldest = getBootstrapWindowFloor(bootstrap.events)
+  if (oldest !== null) return oldest.toString()
+  return bootstrap.syncMode === "replace" && !bootstrap.hasOlderEvents ? "0" : null
+}
+
+function lowerWindowFloor(a: string | null, b: string | null): string | null {
+  if (a === null || b === null) return a ?? b
+  return BigInt(a) <= BigInt(b) ? a : b
+}
+
 export function toCachedStreamBootstrap(
   bootstrap: StreamBootstrap,
   previous?: CachedStreamBootstrap,
@@ -111,6 +129,9 @@ export function toCachedStreamBootstrap(
       ? maxSequence(previous.latestSequence, bootstrap.latestSequence)
       : bootstrap.latestSequence,
     hasOlderEvents: shouldAppend ? previous.hasOlderEvents : bootstrap.hasOlderEvents,
+    windowFloor: shouldAppend
+      ? lowerWindowFloor(previous.windowFloor, openingWindowFloor(bootstrap))
+      : openingWindowFloor(bootstrap),
     windowVersion: shouldIncrementWindowVersion ? (previous?.windowVersion ?? 0) + 1 : (previous?.windowVersion ?? 0),
   }
 }
