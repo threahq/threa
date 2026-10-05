@@ -142,6 +142,41 @@ describe("sidebar-actions", () => {
 
       expect(onSelect).toHaveBeenCalled()
     })
+
+    it("leaves focus where the selected action put it", async () => {
+      const user = userEvent.setup()
+      // Deferred like the real thing: the composer focuses once the action's navigation has rendered it.
+      const actions: SidebarActionItem[] = [
+        { id: "new", label: "New", icon: Settings, onSelect: () => void setTimeout(() => composer().focus(), 0) },
+      ]
+      const composer = () => screen.getByRole("textbox")
+
+      renderWithRouter(
+        <>
+          <SidebarActionMenu actions={actions} ariaLabel="Create" />
+          <input aria-label="Composer" />
+        </>
+      )
+
+      await user.click(screen.getByRole("button", { name: "Create" }))
+      await user.click(screen.getByText("New"))
+      await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument())
+      await act(() => new Promise((resolve) => setTimeout(resolve, 10)))
+
+      expect(composer()).toHaveFocus()
+    })
+
+    it("returns focus to the trigger when the selected action took none", async () => {
+      const user = userEvent.setup()
+      const actions: SidebarActionItem[] = [{ id: "settings", label: "Settings", icon: Settings, onSelect: vi.fn() }]
+
+      renderWithRouter(<SidebarActionMenu actions={actions} ariaLabel="Stream actions" />)
+
+      await user.click(screen.getByRole("button", { name: "Stream actions" }))
+      await user.click(screen.getByText("Settings"))
+
+      await waitFor(() => expect(screen.getByRole("button", { name: "Stream actions" })).toHaveFocus())
+    })
   })
 
   describe("SidebarActionContextMenu", () => {
