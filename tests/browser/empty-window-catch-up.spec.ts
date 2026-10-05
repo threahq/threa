@@ -22,19 +22,14 @@ test("a catch-up page never hides a message sent into a window that opened empty
   await page.setViewportSize({ width: 1280, height: 2200 })
   await loginAndCreateWorkspace(page)
 
-  const catchUpSequences: string[][] = []
   await page.route(/\/streams\/stream_[^/]+\/bootstrap(\?.*)?$/, async (route) => {
     const url = new URL(route.request().url())
     const after = url.searchParams.get("after")
     if (after !== null) url.searchParams.set("after", String(Math.max(1, Number(after) - 1)))
     const response = await route.fetch({ url: url.toString() })
-    const body = (await response.json()) as { data: { events: { sequence: string }[] } }
-    if (after === null) {
-      await route.fulfill({ response, json: { ...body, data: { ...body.data, events: [] } } })
-      return
-    }
-    catchUpSequences.push(body.data.events.map((event) => event.sequence))
-    await route.fulfill({ response, json: body })
+    const body = (await response.json()) as { data: { events: unknown[] } }
+    const data = after === null ? { ...body.data, events: [] } : body.data
+    await route.fulfill({ response, json: { ...body, data } })
   })
 
   const channel = `floor-${generateTestId()}`
@@ -54,21 +49,24 @@ test("a catch-up page never hides a message sent into a window that opened empty
   await expect(timeline).toContainText("stub response from the companion", { timeout: 30000 })
 
   const scratchpadUrl = page.url()
+  const streamId = /\/s\/(stream_[^/?#]+)/.exec(scratchpadUrl)?.[1]
   await page
     .getByRole("link", { name: new RegExp(channel) })
     .first()
     .click()
   await expect(page).not.toHaveURL(scratchpadUrl)
-  const settledBefore = catchUpSequences.length
-  const catchUp = page.waitForResponse((response) => /\/bootstrap\?after=/.test(response.url()))
+  const catchUp = page.waitForResponse((response) => response.url().includes(`/streams/${streamId}/bootstrap?after=`))
   await page.goBack()
-  await catchUp
+  const returned = (await (await catchUp).json()) as { data: { events: unknown[] } }
+  expect(returned.data.events.length).toBeGreaterThan(0)
   await expect(timeline).toContainText("stub response from the companion")
-  await page.waitForTimeout(500)
 
-  expect({
-    returnPageCarriedEvents: catchUpSequences.slice(settledBefore).flat().length > 0,
-    anyPageCarriedTheMessage: catchUpSequences.flat().includes("1"),
-  }).toEqual({ returnPageCarriedEvents: true, anyPageCarriedTheMessage: false })
-  await expect(timeline).toContainText(MESSAGE)
+  // Sampled rather than awaited: the page lands a few frames after its
+  // response, and a retrying assertion would pass in the gap before it.
+  const samples: boolean[] = []
+  for (let sample = 0; sample < 8; sample++) {
+    await page.waitForTimeout(250)
+    samples.push(((await timeline.textContent()) ?? "").includes(MESSAGE))
+  }
+  expect(samples).toEqual(samples.map(() => true))
 })

@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { PendingMessagesProvider, ServicesProvider, usePendingMessages, type StreamService } from "@/contexts"
 import type { StreamEvent } from "@threahq/types"
 import { db, type CachedEvent } from "@/db"
+import { streamKeys } from "@/hooks/use-streams"
+import type { CachedStreamBootstrap } from "@/sync/stream-sync"
 import { loadStreamPrefix, loadStreamTail, unionStreamRanges } from "@/stores/stream-store"
 import {
   computeTimelineLoadState,
@@ -557,6 +559,7 @@ describe("bounded timeline read from the events hook's window", () => {
   }
 
   beforeEach(async () => {
+    vi.restoreAllMocks()
     await db.events.clear()
   })
 
@@ -575,6 +578,44 @@ describe("bounded timeline read from the events hook's window", () => {
     expect(unionStreamRanges(prefixAfter, tailAfter).map((e) => e._sequenceNum)).toEqual(
       Array.from({ length: 251 }, (_, i) => i + 150)
     )
+  })
+
+  it("reads its lower bound from the window's floor, not from the oldest event the window carries", async () => {
+    await seed(3)
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const windowWithFloor = (streamId: string, windowFloor: string) =>
+      queryClient.setQueryData(streamKeys.bootstrap("ws_1", streamId), {
+        events: [cachedEvent(3, streamId)],
+        windowVersion: 0,
+        hasOlderEvents: false,
+        latestSequence: "3",
+        windowFloor,
+      } as unknown as CachedStreamBootstrap)
+    const OPENED_POPULATED = "stream_bounded_populated"
+    await seed(3, OPENED_POPULATED)
+    windowWithFloor(STREAM, "0")
+    windowWithFloor(OPENED_POPULATED, "3")
+
+    function Wrapper({ children }: { children: ReactNode }) {
+      return createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(ServicesProvider, {
+          services: { streams: {} as unknown as StreamService },
+          children: createElement(PendingMessagesProvider, undefined, children),
+        })
+      )
+    }
+    const sequences = (events: StreamEvent[]) => events.map((event) => event.sequence)
+    const { result } = renderHook(
+      () => ({
+        openedEmpty: sequences(useEvents("ws_1", STREAM).events),
+        openedPopulated: sequences(useEvents("ws_1", OPENED_POPULATED).events),
+      }),
+      { wrapper: Wrapper }
+    )
+
+    await waitFor(() => expect(result.current).toEqual({ openedEmpty: ["1", "2", "3"], openedPopulated: ["3"] }))
   })
 
   it("a thread with two thousand replies renders every reply", async () => {
