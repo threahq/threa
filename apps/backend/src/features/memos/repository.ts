@@ -145,6 +145,8 @@ export interface InsertMemoParams {
   scope?: MemoScope
   /** Owner for `'user'` scope; must be set iff `scope === 'user'` (DB CHECK). */
   scopeUserId?: string | null
+  /** The shared channel this memo was captured from while shared, read as its partner reads it. */
+  sharedRootStreamId?: string
 }
 
 export interface UpdateMemoParams {
@@ -518,7 +520,8 @@ export const MemoRepository = {
   /**
    * `scopeUserId` is the tier the reader writes into: private memos come back
    * only for their owner, null returns shared memos only. Only memos every
-   * audience may read come back.
+   * audience may read come back. `sharedRootStreamId` keeps only memos captured
+   * while that channel was shared.
    */
   async findByStream(
     db: Querier,
@@ -530,11 +533,13 @@ export const MemoRepository = {
       status?: MemoStatus
       limit?: number
       orderBy?: "createdAt" | "updatedAt"
+      sharedRootStreamId?: string
     }
   ): Promise<Memo[]> {
     const orderBy = rawSql(options.orderBy === "updatedAt" ? "updated_at" : "created_at")
     const filters = composeSql`(m.scope <> 'user' OR m.scope_user_id = ${options.scopeUserId})
         ${options.status ? composeSql`AND m.status = ${options.status}` : rawSql("")}
+        ${options.sharedRootStreamId ? composeSql`AND m.shared_root_stream_id = ${options.sharedRootStreamId}` : rawSql("")}
         AND ${memoAudienceVisibleSql(workspaceId, options.audiences, "m")}`
 
     // UNION over the two source paths: conversation memos (via source_conversation_id)
@@ -582,11 +587,13 @@ export const MemoRepository = {
     db: Querier,
     workspaceId: string,
     conversationId: string,
-    audiences: readonly MemoAudience[]
+    audiences: readonly MemoAudience[],
+    sharedRootStreamId: string | null = null
   ): Promise<Memo[]> {
     const result = await db.query<MemoRow>(composeSql`
       SELECT ${SELECT_FIELDS_SQL} FROM memos
       WHERE workspace_id = ${workspaceId} AND source_conversation_id = ${conversationId} AND status = 'active'
+        AND (${sharedRootStreamId}::text IS NULL OR shared_root_stream_id = ${sharedRootStreamId})
         AND ${memoAudienceVisibleSql(workspaceId, audiences, "memos")}
       ORDER BY created_at ASC
     `)
@@ -687,9 +694,12 @@ export const MemoRepository = {
       scopeUserId?: string | null
       /** Only memos every audience may read count as duplicates, so a save never resolves to a memo its writer's readers cannot open. */
       audiences: readonly MemoAudience[]
+      /** Only memos captured while this channel was shared block the candidate. */
+      sharedRootStreamId?: string
     }
   ): Promise<{ memo: Memo; distance: number } | null> {
     const { workspaceId, streamId, embedding, maxDistance, scope = "workspace", scopeUserId = null, audiences } = params
+    const sharedRootStreamId = params.sharedRootStreamId ?? null
     const embeddingLiteral = `[${embedding.join(",")}]`
     const audienceVisible = memoAudienceVisibleSql(workspaceId, audiences, "m")
 
@@ -704,6 +714,7 @@ export const MemoRepository = {
           AND m.status = 'active'
           AND m.scope = ${scope}
           AND m.scope_user_id IS NOT DISTINCT FROM ${scopeUserId}
+          AND (${sharedRootStreamId}::text IS NULL OR m.shared_root_stream_id = ${sharedRootStreamId})
           AND m.embedding IS NOT NULL
           AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
           AND ${audienceVisible}
@@ -717,6 +728,7 @@ export const MemoRepository = {
           AND m.status = 'active'
           AND m.scope = ${scope}
           AND m.scope_user_id IS NOT DISTINCT FROM ${scopeUserId}
+          AND (${sharedRootStreamId}::text IS NULL OR m.shared_root_stream_id = ${sharedRootStreamId})
           AND m.embedding IS NOT NULL
           AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
           AND ${audienceVisible}
@@ -844,7 +856,8 @@ export const MemoRepository = {
         id, workspace_id, memo_type, source_message_id, source_conversation_id,
         title, abstract, key_points, search_config, source_message_ids, participant_ids,
         knowledge_type, tags, parent_memo_id, status, version,
-        authored_by_kind, source_session_id, source_stream_ids, requires_browse, scope, scope_user_id
+        authored_by_kind, source_session_id, source_stream_ids, requires_browse, scope, scope_user_id,
+        shared_root_stream_id
       )
       VALUES (
         ${params.id},
@@ -868,7 +881,8 @@ export const MemoRepository = {
         ${params.sourceStreamIds ? [...new Set(params.sourceStreamIds)].sort() : null},
         ${params.requiresBrowse ?? false},
         ${params.scope ?? "workspace"},
-        ${params.scopeUserId ?? null}
+        ${params.scopeUserId ?? null},
+        ${params.sharedRootStreamId ?? null}
       )
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
@@ -1050,12 +1064,21 @@ export const MemoRepository = {
    * Tags a capture into `rootStreamId` may show its model: shared memos whose
    * source root is that root or readable by its whole room (resolved through the
    * root, as `findEmbedSummaries` does), plus `scopeUserId`'s own private memos.
+   * With `sharedRootStreamId`, only memos captured while that channel was shared.
    */
   async getAllTags(
     db: Querier,
     workspaceId: string,
-    scope: { scopeUserId: string | null; rootStreamId: string }
+    scope: { scopeUserId: string | null; rootStreamId: string; sharedRootStreamId?: string }
   ): Promise<string[]> {
+    if (scope.sharedRootStreamId) {
+      const result = await db.query<{ tag: string }>(sql`
+        SELECT DISTINCT unnest(tags) AS tag FROM memos
+        WHERE workspace_id = ${workspaceId} AND status = 'active' AND shared_root_stream_id = ${scope.sharedRootStreamId}
+        ORDER BY tag
+      `)
+      return result.rows.map((r) => r.tag)
+    }
     const result = await db.query<{ tag: string }>(composeSql`
       SELECT DISTINCT unnest(m.tags) as tag
       FROM memos m

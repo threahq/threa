@@ -14,6 +14,7 @@ import {
 import { E2eStreamsRepository } from "../e2e-streams"
 import { awaitLinkPreviewProcessing, enrichMessagesWithLinkPreviewMap } from "../link-previews"
 import { MessageRepository, type Message } from "../messaging"
+import { findSharedTree, viewAsPartner } from "../stream-connections"
 import { StreamRepository } from "../streams"
 import { DYNAMIC_NAMING_MAX_EXISTING_TITLES, DYNAMIC_NAMING_MAX_MESSAGES } from "./config"
 import type {
@@ -91,13 +92,18 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
       if (!stream || stream.type === StreamTypes.SCRATCHPAD || stream.type === StreamTypes.ASIDE) return null
       if (await E2eStreamsRepository.isE2eStream(client, target.workspaceId, conversation.streamId)) return null
       const byId = await MessageRepository.findByIds(client, target.workspaceId, conversation.messageIds)
-      const messages = orderedPrimaryMessages(conversation, byId).slice(-DYNAMIC_NAMING_MAX_MESSAGES)
-      const siblings = await ConversationRepository.findByStreamIncludingThreads(
-        client,
-        target.workspaceId,
-        stream.rootStreamId ?? stream.id,
-        { limit: DYNAMIC_NAMING_MAX_EXISTING_TITLES + 1 }
-      )
+      const ordered = orderedPrimaryMessages(conversation, byId).slice(-DYNAMIC_NAMING_MAX_MESSAGES)
+      // A shared channel's titles cross to its partner, so they come from what the partner can read.
+      const sharedTree = await findSharedTree(client, target.workspaceId, stream.id)
+      const messages = sharedTree ? await viewAsPartner(client, target.workspaceId, sharedTree, ordered) : ordered
+      const siblings = (
+        await ConversationRepository.findByStreamIncludingThreads(
+          client,
+          target.workspaceId,
+          stream.rootStreamId ?? stream.id,
+          { limit: DYNAMIC_NAMING_MAX_EXISTING_TITLES + 1 }
+        )
+      ).filter((sibling) => !sharedTree || sharedTree.streamIds.has(sibling.streamId))
       const attachments = await AttachmentRepository.findByMessageIds(
         client,
         target.workspaceId,

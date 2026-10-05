@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { streamConnectionId } from "@threahq/backend-common"
 import { Pool } from "pg"
 import { withTransaction } from "../../src/db"
 import { ConversationRepository } from "../../src/features/conversations"
@@ -12,7 +13,7 @@ import { MessageRepository } from "../../src/features/messaging"
 import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { MessageFormatter } from "../../src/lib/ai/message-formatter"
-import { conversationId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { conversationId, eventId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { addTestMember, setupTestDatabase, testMessageContent } from "./setup"
 
 interface Fixture {
@@ -146,6 +147,95 @@ describe("dynamic conversation naming", () => {
       "job_siblings"
     )
     expect(existingTitles).toEqual(["Database migration plan"])
+  })
+
+  test("should name a conversation from what the partner reads when its channel is shared", async () => {
+    const item = await fixture({ count: 3, title: "Deployment issue" })
+    const outside = streamId()
+    const linkId = messageId()
+    await withTransaction(pool, async (client) => {
+      await StreamRepository.insert(client, {
+        id: outside,
+        workspaceId: item.workspaceId,
+        type: "channel",
+        slug: "secret-plans",
+        visibility: "private",
+        companionMode: "off",
+        createdBy: item.userId,
+      })
+      await MessageRepository.insert(client, {
+        workspaceId: item.workspaceId,
+        id: linkId,
+        streamId: item.streamId,
+        sequence: 4n,
+        authorId: item.userId,
+        authorType: "user",
+        contentJson: {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "text", text: "rollback notes are in " },
+                { type: "channelLink", attrs: { id: outside, slug: "secret-plans" } },
+              ],
+            },
+          ],
+        },
+        contentMarkdown: `rollback notes are in [#secret-plans](channel:${outside})`,
+      })
+      await ConversationRepository.addPrimaryMessage(client, item.workspaceId, item.conversationId, linkId, item.userId)
+      for (const [anchor, title] of [
+        [linkId, "Rollback thread"],
+        [eventId(), "Card work"],
+      ]) {
+        const thread = streamId()
+        await StreamRepository.insert(client, {
+          id: thread,
+          workspaceId: item.workspaceId,
+          type: "thread",
+          parentStreamId: item.streamId,
+          rootStreamId: item.streamId,
+          parentAnchorId: anchor,
+          visibility: "private",
+          companionMode: "off",
+          createdBy: item.userId,
+        })
+        await ConversationRepository.insert(client, {
+          id: conversationId(),
+          streamId: thread,
+          workspaceId: item.workspaceId,
+          topicSummary: title,
+          topicSummarySource: "generated",
+        })
+      }
+      await client.query(
+        `INSERT INTO stream_connections (workspace_id, id, role, state, stream_id, remote_workspace_id, remote_workspace_name, expires_at, revision)
+         VALUES ($1, $2, 'host', 'active', $3, $4, 'Partner', NOW() + INTERVAL '1 day', 1)`,
+        [item.workspaceId, streamConnectionId(), item.streamId, workspaceId()]
+      )
+    })
+    let seen: { linksOutside: boolean; mentionsSlug: boolean; existingTitles: string[] } | null = null
+    const naming = service(async (input) => {
+      seen = {
+        linksOutside: input.context.includes(outside),
+        mentionsSlug: input.context.includes("#secret-plans"),
+        existingTitles: input.existingTitles,
+      }
+      return { action: "keep" }
+    })
+
+    await naming.evaluate(
+      {
+        workspaceId: item.workspaceId,
+        targetKind: "conversation",
+        targetId: item.conversationId,
+        initiatingUserId: item.userId,
+      },
+      "job_shared"
+    )
+
+    expect(seen).toEqual({ linksOutside: false, mentionsSlug: true, existingTitles: ["Rollback thread"] })
   })
 
   test("an untitled deterministic conversation evaluates checkpoint 1", async () => {

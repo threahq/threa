@@ -8,6 +8,7 @@ import { AttachmentRepository, awaitAttachmentProcessing, type AttachmentWithExt
 import { E2eStreamsRepository } from "../e2e-streams"
 import { awaitLinkPreviewProcessing, enrichMessagesWithLinkPreviewMap } from "../link-previews"
 import { MessageRepository } from "../messaging"
+import { findSharedTree, viewAsPartner } from "../stream-connections"
 import { prependThreadNamingAnchor, resolveEffectiveAccessStream, StreamRepository, type Stream } from "../streams"
 import { DYNAMIC_NAMING_MAX_EXISTING_TITLES, DYNAMIC_NAMING_MAX_MESSAGES } from "./config"
 import type {
@@ -80,12 +81,18 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
       const replies = await MessageRepository.list(client, target.workspaceId, stream.id, {
         limit: DYNAMIC_NAMING_MAX_MESSAGES,
       })
-      const messages = await prependThreadNamingAnchor(client, stream, replies)
+      const anchored = await prependThreadNamingAnchor(client, stream, replies)
+      // A shared thread's title crosses to the partner, so it comes from what the partner can read.
+      const sharedTree = await findSharedTree(client, target.workspaceId, stream.id)
+      const messages = sharedTree ? await viewAsPartner(client, target.workspaceId, sharedTree, anchored) : anchored
       const sameType = await StreamRepository.list(client, stream.workspaceId, { types: [stream.type] })
       // Aside titles are private to their creator; only the creator's own asides
       // may inform a title, never another member's.
-      const siblings =
-        stream.type === StreamTypes.ASIDE ? sameType.filter((s) => s.createdBy === stream.createdBy) : sameType
+      const siblings = sameType.filter(
+        (s) =>
+          (stream.type !== StreamTypes.ASIDE || s.createdBy === stream.createdBy) &&
+          (!sharedTree || sharedTree.streamIds.has(s.id))
+      )
       const attachmentsByMessage = await AttachmentRepository.findByMessageIds(
         client,
         target.workspaceId,

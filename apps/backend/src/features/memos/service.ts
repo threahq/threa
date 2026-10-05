@@ -14,6 +14,7 @@ import {
   type StreamWritePrincipal,
 } from "../streams"
 import { ConversationRepository } from "../conversations"
+import { findSharedTree, viewAsPartner } from "../stream-connections"
 import { MessageRepository, type Message } from "../messaging"
 import { enrichMessagesWithLinkPreviews } from "../link-previews"
 import { OutboxRepository } from "../../lib/outbox"
@@ -171,6 +172,7 @@ interface MemoToCreate {
   scope: import("@threahq/types").MemoScope
   /** Owner for `user` scope; null otherwise (DB CHECK enforces the pairing). */
   scopeUserId: string | null
+  sharedRootStreamId?: string
   /** Set at save time when this memo supersedes a prior capture from its conversation. */
   parentMemoId?: string
   /** Memos the memorizer explicitly retired (reversed/replaced conclusion), pre-validated. */
@@ -427,15 +429,21 @@ export class MemoService implements MemoServiceLike {
       // The model is shown, and dedupes against, only memos its readers read.
       const readerAudience = memorizerAudience(memoScope)
 
+      // While the channel is shared, the batch reads it as the partner does and
+      // sees only memos made that way, so what it captures can cross with it.
+      const sharedTree = await findSharedTree(client, workspaceId, streamId)
+      const sharedRootStreamId = sharedTree?.rootStreamId
+
       const existingMemos = await MemoRepository.findByStream(client, workspaceId, streamId, {
         scopeUserId: memoScope.scopeUserId,
         audiences: [readerAudience],
         status: MemoStatuses.ACTIVE,
         limit: MEMORY_CONTEXT_LIMIT,
         orderBy: "createdAt",
+        sharedRootStreamId,
       })
 
-      const existingTags = await MemoRepository.getAllTags(client, workspaceId, memoScope)
+      const existingTags = await MemoRepository.getAllTags(client, workspaceId, { ...memoScope, sharedRootStreamId })
 
       const conversationItemIds = pending.filter((p) => p.itemType === "conversation").map((p) => p.itemId)
       const conversations = new Map<string, NonNullable<Awaited<ReturnType<typeof ConversationRepository.findById>>>>()
@@ -447,20 +455,30 @@ export class MemoService implements MemoServiceLike {
         if (conv) {
           conversations.set(convId, conv)
           const msgs = await MessageRepository.findByIds(client, workspaceId, conv.messageIds)
-          conversationMessages.set(convId, new Map([...msgs].filter(([, message]) => !message.deletedAt)))
+          const live = [...msgs.values()].filter((message) => !message.deletedAt)
+          const read = sharedTree ? await viewAsPartner(client, workspaceId, sharedTree, live) : live
+          conversationMessages.set(convId, new Map(read.map((message) => [message.id, message])))
           // A saved or reflective memo citing a message edited since is shown
           // beside the conversation's own memos, so the classifier keeps it
           // through a typo fix and a revision can supersede it. Same tier only:
           // a private memo must never feed a shared revision.
           const existingMemos = [
-            ...(await MemoRepository.findActiveBySourceConversation(client, workspaceId, convId, [readerAudience])),
-            ...(await MemoRepository.findActiveMessageMemosCitingEdited(
+            ...(await MemoRepository.findActiveBySourceConversation(
               client,
               workspaceId,
-              conv.messageIds,
-              memoScope.scopeUserId,
-              [readerAudience]
+              convId,
+              [readerAudience],
+              sharedRootStreamId
             )),
+            ...(sharedTree
+              ? []
+              : await MemoRepository.findActiveMessageMemosCitingEdited(
+                  client,
+                  workspaceId,
+                  conv.messageIds,
+                  memoScope.scopeUserId,
+                  [readerAudience]
+                )),
           ]
           existingConversationMemos.set(convId, existingMemos)
         }
@@ -508,6 +526,7 @@ export class MemoService implements MemoServiceLike {
         memoLanguage,
         memoScope,
         readerAudience,
+        sharedRootStreamId,
       }
     })
 
@@ -758,6 +777,7 @@ export class MemoService implements MemoServiceLike {
             embedding: embeddings[i],
             scope: fetchedData.memoScope.scope,
             scopeUserId: fetchedData.memoScope.scopeUserId,
+            sharedRootStreamId: fetchedData.sharedRootStreamId,
             supersedesMemoIds: content.supersedesMemoIds,
           })
         }
@@ -925,6 +945,7 @@ export class MemoService implements MemoServiceLike {
           scope: memoData.scope,
           scopeUserId: memoData.scopeUserId,
           audiences: [fetchedData.readerAudience],
+          sharedRootStreamId: memoData.sharedRootStreamId,
         })
         if (duplicate && !explicitSupersedeIds.includes(duplicate.memo.id)) {
           // The reversed memos still retire even though the correction itself

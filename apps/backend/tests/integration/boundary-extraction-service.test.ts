@@ -21,6 +21,7 @@ import { setupTestDatabase, testMessageContent } from "./setup"
 import { sql } from "../../src/db"
 import { userId, workspaceId, streamId, messageId, conversationId, eventId } from "../../src/lib/id"
 import { ConversationStatuses } from "@threahq/types"
+import { streamConnectionId } from "@threahq/backend-common"
 import type { BoundaryExtractor, ExtractionContext, ExtractionResult } from "../../src/features/conversations"
 
 /**
@@ -763,6 +764,109 @@ describe("BoundaryExtractionService", () => {
       // absent if the candidate anchors were message-only).
       const contextMessageIds = stubExtractor.lastContext?.recentMessages.map((m) => m.id) ?? []
       expect(contextMessageIds).toContain(cardThreadReplyId)
+    })
+
+    test("should read the channel as its partner does when the channel is shared", async () => {
+      const sharedStreamId = streamId()
+      const replyThreadStreamId = streamId()
+      const cardThreadStreamId = streamId()
+      const priorMsgId = messageId()
+      const triggerMsgId = messageId()
+      const threadReplyId = messageId()
+      const cardThreadReplyId = messageId()
+
+      const cardEvent = await withTransaction(pool, async (client) => {
+        await StreamRepository.insert(client, {
+          id: sharedStreamId,
+          workspaceId: testWorkspaceId,
+          type: "channel",
+          visibility: "public",
+          companionMode: "off",
+          createdBy: testUserId,
+        })
+        await client.query(
+          sql`INSERT INTO stream_connections (workspace_id, id, role, state, stream_id, remote_workspace_id, remote_workspace_name, expires_at, revision)
+              VALUES (${testWorkspaceId}, ${streamConnectionId()}, 'host', 'active', ${sharedStreamId}, ${workspaceId()}, 'Partner', NOW() + INTERVAL '1 day', 1)`
+        )
+        return StreamEventRepository.insert(client, {
+          id: eventId(),
+          workspaceId: testWorkspaceId,
+          streamId: sharedStreamId,
+          eventType: "delegation:created",
+          payload: { delegationId: "dlg_x", title: "Do a thing", brief: "b", contextRefs: [] },
+          actorId: testUserId,
+          actorType: "user",
+        })
+      })
+
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: priorMsgId,
+          streamId: sharedStreamId,
+          sequence: cardEvent.sequence - 1n,
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Before the card"),
+        })
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: triggerMsgId,
+          streamId: sharedStreamId,
+          sequence: cardEvent.sequence + 1n,
+          authorId: testUserId,
+          authorType: "user",
+          contentJson: {
+            type: "doc",
+            content: [
+              {
+                type: "paragraph",
+                content: [
+                  { type: "text", text: "see " },
+                  { type: "channelLink", attrs: { id: testStreamId, slug: "outside" } },
+                ],
+              },
+            ],
+          },
+          contentMarkdown: `see [#outside](channel:${testStreamId})`,
+        })
+        for (const [threadId, anchorId, replyId] of [
+          [replyThreadStreamId, priorMsgId, threadReplyId],
+          [cardThreadStreamId, cardEvent.id, cardThreadReplyId],
+        ]) {
+          await StreamRepository.insert(client, {
+            id: threadId,
+            workspaceId: testWorkspaceId,
+            type: "thread",
+            visibility: "private",
+            companionMode: "off",
+            createdBy: testUserId,
+            parentStreamId: sharedStreamId,
+            rootStreamId: sharedStreamId,
+            parentAnchorId: anchorId,
+          })
+          await StreamRepository.bumpThreadReplyCount(client, testWorkspaceId, threadId, 1)
+          await MessageRepository.insert(client, {
+            workspaceId: testWorkspaceId,
+            id: replyId,
+            streamId: threadId,
+            sequence: BigInt(1),
+            authorId: testUserId,
+            authorType: "user",
+            ...testMessageContent("A reply"),
+          })
+        }
+      })
+
+      await service.processMessage(triggerMsgId, sharedStreamId, testWorkspaceId)
+
+      expect({
+        newMessage: stubExtractor.lastContext?.newMessage.contentMarkdown,
+        recentMessageIds: stubExtractor.lastContext?.recentMessages.map((m) => m.id).toSorted(),
+      }).toEqual({
+        newMessage: "see #outside",
+        recentMessageIds: [priorMsgId, triggerMsgId, threadReplyId].toSorted(),
+      })
     })
   })
 
