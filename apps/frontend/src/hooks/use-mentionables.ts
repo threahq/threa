@@ -55,7 +55,7 @@ function pickMentionAccess(bootstrap: CachedStreamBootstrap) {
   return {
     members: bootstrap.members,
     botMemberIds: bootstrap.botMemberIds,
-    connectedWorkspaceIds: bootstrap.connectedWorkspaceIds,
+    connectedWorkspaces: bootstrap.connectedWorkspaces,
   }
 }
 
@@ -106,7 +106,7 @@ export function useMentionStreamContext(
   const members = accessBootstrap?.members
   const botMemberIds = accessBootstrap?.botMemberIds
   const accessLoaded = !!accessBootstrap
-  const connectedWorkspaceIds = accessBootstrap?.connectedWorkspaceIds
+  const connectedWorkspaces = accessBootstrap?.connectedWorkspaces
 
   return useMemo<MentionStreamContext | undefined>(() => {
     if (!streamType) return undefined
@@ -121,10 +121,10 @@ export function useMentionStreamContext(
     }
     if (botMemberIds) ctx.botMemberIds = new Set(botMemberIds)
     // A backend still on the previous deploy omits the field.
-    if (accessLoaded) ctx.connectedWorkspaceIds = new Set(connectedWorkspaceIds ?? [])
+    if (accessLoaded) ctx.connectedWorkspaceIds = new Set(connectedWorkspaces?.map((workspace) => workspace.id))
     ctx.canInviteBots = currentUserRole === "admin" || currentUserRole === "owner"
     return ctx
-  }, [streamType, rootStreamType, members, botMemberIds, accessLoaded, connectedWorkspaceIds, currentUserRole])
+  }, [streamType, rootStreamType, members, botMemberIds, accessLoaded, connectedWorkspaces, currentUserRole])
 }
 
 /**

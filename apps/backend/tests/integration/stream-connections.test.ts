@@ -408,7 +408,7 @@ describe("StreamConnectionService", () => {
     })
   })
 
-  test("should list the workspaces a channel is actively shared with, leaving out peer partners, when asked for the host's channel, a thread in it, or the partner's copy", async () => {
+  test("should list the workspaces a channel is actively shared with by name, leaving out peer partners, when asked for the host's channel, a thread in it, or the partner's copy", async () => {
     const host = await seedWorkspace("Acme")
     const second = await seedWorkspace("Globex")
     const third = await seedWorkspace("Initech")
@@ -436,14 +436,18 @@ describe("StreamConnectionService", () => {
       { ...activated(snapshot(host, channel.id), third), peerWorkspaceIds: [second.id] },
     ])
 
+    const partners = [
+      { id: second.id, name: "Globex" },
+      { id: third.id, name: "Initech" },
+    ].toSorted((a, b) => a.id.localeCompare(b.id))
     expect({
-      channel: await service.listConnectedWorkspaceIds({ workspaceId: host.id, stream: channel }),
-      thread: await service.listConnectedWorkspaceIds({ workspaceId: host.id, stream: thread }),
-      copy: await service.listConnectedWorkspaceIds({ workspaceId: second.id, stream: copy }),
+      channel: await service.listConnectedWorkspaces({ workspaceId: host.id, stream: channel }),
+      thread: await service.listConnectedWorkspaces({ workspaceId: host.id, stream: thread }),
+      copy: await service.listConnectedWorkspaces({ workspaceId: second.id, stream: copy }),
     }).toEqual({
-      channel: [second.id, third.id].toSorted(),
-      thread: [second.id, third.id].toSorted(),
-      copy: [host.id],
+      channel: partners,
+      thread: partners,
+      copy: [{ id: host.id, name: "Acme" }],
     })
   })
 
@@ -460,9 +464,9 @@ describe("StreamConnectionService", () => {
     ])
 
     expect({
-      invitedOnly: await service.listConnectedWorkspaceIds({ workspaceId: host.id, stream: invitedOnly }),
-      revoked: await service.listConnectedWorkspaceIds({ workspaceId: host.id, stream: revoked }),
-      unshared: await service.listConnectedWorkspaceIds({ workspaceId: host.id, stream: unshared }),
+      invitedOnly: await service.listConnectedWorkspaces({ workspaceId: host.id, stream: invitedOnly }),
+      revoked: await service.listConnectedWorkspaces({ workspaceId: host.id, stream: revoked }),
+      unshared: await service.listConnectedWorkspaces({ workspaceId: host.id, stream: unshared }),
     }).toEqual({ invitedOnly: [], revoked: [], unshared: [] })
   })
 

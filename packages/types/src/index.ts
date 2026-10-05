@@ -1491,6 +1491,7 @@ export {
   type BridgeUser,
   type BridgeActor,
   type BridgeEvents,
+  type ConnectedWorkspace,
 } from "./stream-connections"
 
 // In-app links (`app:` hrefs) for agents and the user guide

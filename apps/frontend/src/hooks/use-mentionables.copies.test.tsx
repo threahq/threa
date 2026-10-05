@@ -149,7 +149,7 @@ describe("useMentionStreamContext connected workspaces", () => {
   afterEach(() => vi.restoreAllMocks())
 
   it("should list a connected workspace's copy when the stream's bootstrap names that workspace", async () => {
-    seedBootstrap("stream_shared", { connectedWorkspaceIds: ["ws_partner"] })
+    seedBootstrap("stream_shared", { connectedWorkspaces: [{ id: "ws_partner", name: "Globex" }] })
 
     const { result } = renderHook(
       () => useMentionables(useMentionStreamContext(WORKSPACE_ID, { id: "stream_shared", type: "channel" })),
@@ -167,7 +167,7 @@ describe("useMentionStreamContext connected workspaces", () => {
   })
 
   it("should take the connected workspaces from the root stream's bootstrap when the stream is a thread", async () => {
-    seedBootstrap("stream_shared", { connectedWorkspaceIds: ["ws_partner"] })
+    seedBootstrap("stream_shared", { connectedWorkspaces: [{ id: "ws_partner", name: "Globex" }] })
 
     const { result } = renderHook(
       () =>

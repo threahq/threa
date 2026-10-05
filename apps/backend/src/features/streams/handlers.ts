@@ -975,7 +975,7 @@ export function createStreamHandlers({
         latestSequence,
         activityCounts,
         archivedAncestor,
-        connectedWorkspaceIds,
+        connectedWorkspaces,
       ] = await Promise.all([
         streamService.getMembers(workspaceId, streamId),
         streamService.getBotMemberIds(workspaceId, streamId),
@@ -986,7 +986,7 @@ export function createStreamHandlers({
         // Archiving writes only the target row, so a stream's own
         // `archivedAt` cannot tell the client it is sealed by an ancestor.
         stream.parentStreamId ? streamService.findArchivedAncestor(workspaceId, streamId) : Promise.resolve(null),
-        streamConnectionService.listConnectedWorkspaceIds({ workspaceId, stream }),
+        streamConnectionService.listConnectedWorkspaces({ workspaceId, stream }),
       ])
       const botRuntimePresences = await botRuntimeService.findLatestPresences({ workspaceId, botIds: botMemberIds })
       const commands = await commandAvailabilityService.listStreamCommands({ workspaceId, userId, streamId })
@@ -1121,7 +1121,7 @@ export function createStreamHandlers({
         sharedMessages,
         members,
         botMemberIds,
-        connectedWorkspaceIds,
+        connectedWorkspaces,
         botRuntimePresence,
         commands,
         membership,

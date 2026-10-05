@@ -88,6 +88,12 @@ export const streamConnectionChannelSchema = z.object({
 })
 export type StreamConnectionChannel = z.infer<typeof streamConnectionChannelSchema>
 
+/** A workspace a channel is actively shared with: the host's partners on the host, the host on a partner. */
+export interface ConnectedWorkspace {
+  id: string
+  name: string
+}
+
 /** One side's view of a connection, as the regional API returns it. */
 export interface StreamConnection {
   id: string

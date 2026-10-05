@@ -28,6 +28,7 @@ import type { ContextBag, ContextIntent, ContextRefKind } from "./context-bag"
 import type { SharedMessageSlot, SlotMap } from "./slots"
 import type { UserId } from "./ids"
 import type { JSONContent } from "./prosemirror"
+import type { ConnectedWorkspace } from "./stream-connections"
 import type {
   Stream,
   StreamWithPreview,
@@ -260,9 +261,9 @@ export interface StreamBootstrap {
   /**
    * Workspaces this stream's channel is actively shared with: the host's
    * partners on the host, the host on a partner. A shared channel's pickers list
-   * the users whose origin is one of these.
+   * the users whose origin is one of these, and its header names them.
    */
-  connectedWorkspaceIds: string[]
+  connectedWorkspaces: ConnectedWorkspace[]
   /**
    * The nearest archived ancestor up `parentStreamId`, or null when none is.
    * Archiving writes only the target row, so a stream sealed by an ancestor
