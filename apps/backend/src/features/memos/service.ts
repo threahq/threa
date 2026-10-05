@@ -456,7 +456,7 @@ export class MemoService implements MemoServiceLike {
           conversations.set(convId, conv)
           const msgs = await MessageRepository.findByIds(client, workspaceId, conv.messageIds)
           const live = [...msgs.values()].filter((message) => !message.deletedAt)
-          const read = sharedTree ? await viewAsPartner(client, workspaceId, sharedTree, live) : live
+          const read = await viewAsPartner(client, workspaceId, sharedTree, live)
           conversationMessages.set(convId, new Map(read.map((message) => [message.id, message])))
           // A saved or reflective memo citing a message edited since is shown
           // beside the conversation's own memos, so the classifier keeps it

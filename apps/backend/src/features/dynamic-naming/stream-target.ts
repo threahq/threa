@@ -84,7 +84,7 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
       const anchored = await prependThreadNamingAnchor(client, stream, replies)
       // A shared thread's title crosses to the partner, so it comes from what the partner can read.
       const sharedTree = await findSharedTree(client, target.workspaceId, stream.id)
-      const messages = sharedTree ? await viewAsPartner(client, target.workspaceId, sharedTree, anchored) : anchored
+      const messages = await viewAsPartner(client, target.workspaceId, sharedTree, anchored)
       const sameType = await StreamRepository.list(client, stream.workspaceId, { types: [stream.type] })
       // Aside titles are private to their creator; only the creator's own asides
       // may inform a title, never another member's.

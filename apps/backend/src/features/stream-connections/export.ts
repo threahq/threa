@@ -356,15 +356,17 @@ export async function findSharedTree(db: Querier, workspaceId: string, streamId:
 }
 
 /**
- * The tree's messages as the partner reads them: messages outside it drop, and
+ * The messages as the partner reads them: messages outside the tree drop, and
  * their content loses what points outside it, the same cut the bridge serves.
+ * Without a tree (nothing shared) they come back as they are.
  */
 export async function viewAsPartner(
   db: Querier,
   workspaceId: string,
-  tree: SharedTree,
+  tree: SharedTree | null,
   messages: Message[]
 ): Promise<Message[]> {
+  if (!tree) return messages
   const inTree = messages.filter((message) => tree.streamIds.has(message.streamId))
   const scope = await loadContentScope(
     db,

@@ -95,7 +95,7 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
       const ordered = orderedPrimaryMessages(conversation, byId).slice(-DYNAMIC_NAMING_MAX_MESSAGES)
       // A shared channel's titles cross to its partner, so they come from what the partner can read.
       const sharedTree = await findSharedTree(client, target.workspaceId, stream.id)
-      const messages = sharedTree ? await viewAsPartner(client, target.workspaceId, sharedTree, ordered) : ordered
+      const messages = await viewAsPartner(client, target.workspaceId, sharedTree, ordered)
       const siblings = (
         await ConversationRepository.findByStreamIncludingThreads(
           client,

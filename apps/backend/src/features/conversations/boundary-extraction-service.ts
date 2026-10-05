@@ -81,7 +81,7 @@ export class BoundaryExtractionService {
       return {
         conversation,
         stream,
-        messages: await readAsShared(client, workspaceId, sharedTree, messages),
+        messages: await viewAsPartner(client, workspaceId, sharedTree, messages),
       }
     })
 
@@ -181,7 +181,7 @@ export class BoundaryExtractionService {
       // While the channel is shared, extraction reads it as the partner does, so
       // the conversations it shapes can cross with it.
       const sharedTree = await findSharedTree(client, workspaceId, stream.id)
-      const [newMessage] = await readAsShared(client, workspaceId, sharedTree, [message])
+      const [newMessage] = await viewAsPartner(client, workspaceId, sharedTree, [message])
 
       const surroundingMessages = await MessageRepository.findSurrounding(
         client,
@@ -224,7 +224,7 @@ export class BoundaryExtractionService {
       const threadMessagesByParent = await MessageRepository.findThreadMessages(client, workspaceId, threadRootIds)
       const allThreadMessages = Array.from(threadMessagesByParent.values()).flat()
 
-      const allContextMessages = await readAsShared(client, workspaceId, sharedTree, [
+      const allContextMessages = await viewAsPartner(client, workspaceId, sharedTree, [
         ...surroundingMessages,
         ...allThreadMessages,
       ])
@@ -954,7 +954,7 @@ export class BoundaryExtractionService {
 
     const found = await MessageRepository.findByIdsInStreams(client, workspaceId, quotedMessageIds, [streamId])
     const quotedMessages = new Map(
-      (await readAsShared(client, workspaceId, sharedTree, [...found.values()])).map((m) => [m.id, m])
+      (await viewAsPartner(client, workspaceId, sharedTree, [...found.values()])).map((m) => [m.id, m])
     )
     if (quotedMessages.size === 0) return { replyTargets: [], quotedConversations: [] }
 
@@ -988,16 +988,6 @@ export class BoundaryExtractionService {
  */
 function isPlacementFrozenByHuman(row: { state: string; settledBy: string | null } | null): boolean {
   return row?.state === "settled" && (row.settledBy === "user" || row.settledBy === "engagement")
-}
-
-/** The messages as the partner reads them while the stream is shared, else as they are. */
-async function readAsShared(
-  client: PoolClient,
-  workspaceId: string,
-  sharedTree: SharedTree | null,
-  messages: Message[]
-): Promise<Message[]> {
-  return sharedTree ? viewAsPartner(client, workspaceId, sharedTree, messages) : messages
 }
 
 /** Append `extra` conversations not already present in `primary`, deduped by id. */
