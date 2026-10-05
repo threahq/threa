@@ -183,6 +183,30 @@ test.describe("Stream connections", () => {
     }
   })
 
+  test("should name the other workspace in the channel header for a host member and a partner member when the channel is shared", async ({
+    browser,
+    page,
+  }) => {
+    const partnerContext = await browser.newContext()
+    try {
+      const partnerPage = await partnerContext.newPage()
+      const { host, partner, slug, streamId } = await setUpHostAndPartner(page, partnerPage)
+      await page.goto(settingsUrl(host.workspaceId, streamId, "connect"))
+      await acceptInvite(partnerPage, await createInviteLink(page), slug, host.workspaceName, partner.workspaceName)
+
+      await page.goto(`/w/${host.workspaceId}/s/${streamId}`)
+      await expect(page.getByText(`Shared with ${partner.workspaceName}`, { exact: true })).toBeVisible({
+        timeout: 15_000,
+      })
+      await partnerPage.goto(`/w/${partner.workspaceId}/s/${streamId}`)
+      await expect(partnerPage.getByText(`Shared with ${host.workspaceName}`, { exact: true })).toBeVisible({
+        timeout: 30_000,
+      })
+    } finally {
+      await partnerContext.close()
+    }
+  })
+
   test("should share a channel with a workspace in another region when its admin accepts", async ({
     browser,
     page,
@@ -531,6 +555,27 @@ test.describe("Stream connections", () => {
 
         await acceptInvite(partnerPage, invitePath, slug, host.workspaceName, partner.workspaceName)
         await expectSharedWith(page, [partner.workspaceName])
+      } finally {
+        await partnerContext.close()
+      }
+    })
+
+    test("should name the other workspace in the stream sheet when the channel is shared", async ({
+      browser,
+      page,
+    }) => {
+      const partnerContext = await browser.newContext({ viewport: PHONE, hasTouch: true })
+      try {
+        const partnerPage = await partnerContext.newPage()
+        const { host, partner, slug, streamId } = await setUpHostAndPartner(page, partnerPage)
+        await page.goto(settingsUrl(host.workspaceId, streamId, "connect"))
+        await acceptInvite(partnerPage, await createInviteLink(page), slug, host.workspaceName, partner.workspaceName)
+
+        await page.goto(`/w/${host.workspaceId}/s/${streamId}`)
+        await page.locator("header").getByRole("button", { name: "Stream actions" }).click()
+        await expect(
+          page.getByRole("dialog").getByText(`Shared with ${partner.workspaceName}`, { exact: true })
+        ).toBeVisible({ timeout: 15_000 })
       } finally {
         await partnerContext.close()
       }

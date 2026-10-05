@@ -1,5 +1,6 @@
 import { sql, type Querier } from "../../db"
 import type {
+  ConnectedWorkspace,
   StreamConnection,
   StreamConnectionRole,
   StreamConnectionSnapshot,
@@ -172,15 +173,20 @@ export const StreamConnectionRepository = {
   },
 
   /** The workspaces this channel is actively shared with, seen from either side: the host's partners, or a partner's host. */
-  async listConnectedWorkspaceIds(db: Querier, workspaceId: string, rootStreamId: string): Promise<string[]> {
-    const result = await db.query<{ remote_workspace_id: string }>(sql`
-      SELECT DISTINCT remote_workspace_id
+  async listConnectedWorkspaces(db: Querier, workspaceId: string, rootStreamId: string): Promise<ConnectedWorkspace[]> {
+    const result = await db.query<{ remote_workspace_id: string; remote_workspace_name: string | null }>(sql`
+      SELECT DISTINCT ON (remote_workspace_id) remote_workspace_id, remote_workspace_name
       FROM stream_connections
       WHERE workspace_id = ${workspaceId} AND stream_id = ${rootStreamId}
         AND state = 'active' AND role <> 'peer' AND remote_workspace_id IS NOT NULL
       ORDER BY remote_workspace_id
     `)
-    return result.rows.map((row) => row.remote_workspace_id)
+    return result.rows.map((row) => {
+      if (!row.remote_workspace_name) {
+        throw new Error(`Stream ${rootStreamId} is shared with workspace ${row.remote_workspace_id}, which has no name`)
+      }
+      return { id: row.remote_workspace_id, name: row.remote_workspace_name }
+    })
   },
 
   /** The active connections whose shared tree holds any of these streams, seen from each host workspace. */

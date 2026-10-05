@@ -70,6 +70,7 @@ import { InviteActorButton, InviteBotButton } from "@/components/encryption"
 import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes } from "@threahq/types"
 import { getStreamName, getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
+import { SharedWithBadge } from "@/components/shared-with-badge"
 import {
   StreamContextDockProvider,
   StreamContextDockSlot,
@@ -691,6 +692,9 @@ export function StreamPage() {
                 <Badge variant="secondary" className="shrink-0">
                   {getStreamTypeLabel(stream.type)}
                 </Badge>
+              )}
+              {stream && (isChannel || isThread) && !isDraft && (
+                <SharedWithBadge workspaceId={workspaceId} stream={stream} className="shrink-0" />
               )}
               {isArchived && (
                 <Badge variant="secondary" className="gap-1 shrink-0">

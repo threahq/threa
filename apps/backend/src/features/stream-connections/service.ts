@@ -6,6 +6,7 @@ import {
   Visibilities,
   WORKSPACE_PERMISSION_SCOPES,
   permissionsForRole,
+  type ConnectedWorkspace,
   type CreateStreamConnectionInviteResponse,
   type StreamConnection,
   type StreamConnectionChannel,
@@ -152,8 +153,8 @@ export class StreamConnectionService {
     return StreamConnectionRepository.listLiveForStream(this.pool, params.workspaceId, params.streamId)
   }
 
-  async listConnectedWorkspaceIds(params: { workspaceId: string; stream: Stream }): Promise<string[]> {
-    return StreamConnectionRepository.listConnectedWorkspaceIds(
+  async listConnectedWorkspaces(params: { workspaceId: string; stream: Stream }): Promise<ConnectedWorkspace[]> {
+    return StreamConnectionRepository.listConnectedWorkspaces(
       this.pool,
       params.workspaceId,
       params.stream.rootStreamId ?? params.stream.id

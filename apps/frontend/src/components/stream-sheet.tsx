@@ -6,6 +6,7 @@ import { LiveAgentSettings } from "@/components/stream-settings/live-agent-setti
 import { InviteActorButton, InviteBotButton } from "@/components/encryption"
 import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-encryption-affordance"
 import { LabelStack } from "@/components/labels/label-stack"
+import { SharedWithBadge } from "@/components/shared-with-badge"
 import { getStreamTypeLabel } from "@/lib/streams"
 import type { VirtualStream } from "@/hooks/use-stream-or-draft"
 
@@ -23,7 +24,7 @@ interface StreamSheetProps {
 /**
  * Mobile bottom sheet for the stream topbar: the single home for everything a
  * phone-width header can't afford to keep inline — the full name (wraps, never
- * truncates), type/archived/labels, the agent settings the header pill's
+ * truncates), type/shared/archived/labels, the agent settings the header pill's
  * popover holds on desktop (companion mode, tool access, external-agent
  * status), invite + encryption affordances, and the action list.
  */
@@ -46,6 +47,9 @@ export function StreamSheet({
         <p className="break-words text-base font-semibold text-foreground">{streamName}</p>
         <div className="mt-1.5 flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">{getStreamTypeLabel(stream.type)}</span>
+          {(stream.type === StreamTypes.CHANNEL || stream.type === StreamTypes.THREAD) && (
+            <SharedWithBadge workspaceId={workspaceId} stream={stream} />
+          )}
           {isArchived && (
             <Badge variant="secondary" className="gap-1">
               <ArchiveX className="h-3 w-3" />

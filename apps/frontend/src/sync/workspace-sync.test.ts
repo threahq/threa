@@ -120,7 +120,7 @@ function makeStreamBootstrap(streamId: string, overrides: Partial<StreamBootstra
     events: [],
     members: [],
     botMemberIds: [],
-    connectedWorkspaceIds: [],
+    connectedWorkspaces: [],
     membership: null,
     latestSequence: "0",
     hasOlderEvents: false,

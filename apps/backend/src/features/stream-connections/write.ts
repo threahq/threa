@@ -210,11 +210,9 @@ export class StreamConnectionWriteService {
         : await admitFiles(client, caller, connection.id, admission.authorId, admission.send)
       return importDoc(client, {
         workspaceId: caller.workspaceId,
-        partnerWorkspaceIds: await StreamConnectionRepository.listConnectedWorkspaceIds(
-          client,
-          caller.workspaceId,
-          connection.streamId
-        ),
+        partnerWorkspaceIds: (
+          await StreamConnectionRepository.listConnectedWorkspaces(client, caller.workspaceId, connection.streamId)
+        ).map((workspace) => workspace.id),
         tree,
         attachmentIds,
         doc: admission.doc,
