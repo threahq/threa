@@ -2,7 +2,9 @@ import { z } from "zod"
 import {
   ATTACHMENT_SAFETY_STATUSES,
   AUTHOR_TYPES,
+  CONVERSATION_STATUSES,
   KNOWLEDGE_TYPES,
+  TITLE_SOURCES,
   VISIBILITY_OPTIONS,
   type Visibility,
 } from "./constants"
@@ -384,6 +386,55 @@ export type BridgeMemo = z.infer<typeof bridgeMemoSchema>
 /** The asked-for memos the index still lists. The rest are left out. */
 export const bridgeMemosSchema = z.object({ memos: z.array(bridgeMemoSchema) })
 export type BridgeMemos = z.infer<typeof bridgeMemosSchema>
+
+export const BRIDGE_CONVERSATIONS_MAX_IDS = 25
+
+/**
+ * The conversations in the shared tree. A conversation's version moves on
+ * every change the partner copies, so a partner fetches only the ids whose
+ * version it does not hold.
+ */
+export const bridgeConversationIndexSchema = z.object({
+  conversations: z.array(z.object({ id: z.string().regex(/^conv_/), version: z.number().int() })),
+})
+export type BridgeConversationIndex = z.infer<typeof bridgeConversationIndexSchema>
+
+export const bridgeConversationsRequestSchema = z.object({
+  conversationIds: z
+    .array(z.string().regex(/^conv_/))
+    .min(1)
+    .max(BRIDGE_CONVERSATIONS_MAX_IDS),
+})
+export type BridgeConversationsRequest = z.infer<typeof bridgeConversationsRequestSchema>
+
+/**
+ * A conversation as the partner keeps it. `topicSummary` and `summary` are
+ * null unless the host wrote them while sharing the channel, read the way the
+ * partner reads it. The message ids are the ones in the shared tree.
+ */
+export const bridgeConversationSchema = z.object({
+  id: z.string().regex(/^conv_/),
+  /** The stream of the shared tree the conversation is in. */
+  streamId: z.string().min(1),
+  topicSummary: z.string().nullable(),
+  topicSummarySource: z.enum(TITLE_SOURCES).nullable(),
+  topicSummaryRevision: z.number().int(),
+  summary: z.string().nullable(),
+  status: z.enum(CONVERSATION_STATUSES),
+  messageIds: z.array(z.string()),
+  secondaryMessageIds: z.array(z.string()),
+  participantIds: z.array(z.string()),
+  completenessScore: z.number().int(),
+  confidence: z.number(),
+  version: z.number().int(),
+  lastActivityAt: z.string().datetime(),
+  createdAt: z.string().datetime(),
+})
+export type BridgeConversation = z.infer<typeof bridgeConversationSchema>
+
+/** The asked-for conversations the index still lists. The rest are left out. */
+export const bridgeConversationsSchema = z.object({ conversations: z.array(bridgeConversationSchema) })
+export type BridgeConversations = z.infer<typeof bridgeConversationsSchema>
 
 /** A host custom persona or bot that wrote or reacted in the shared tree, as the partner shows it. */
 export const bridgeActorSchema = z.object({

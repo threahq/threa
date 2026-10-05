@@ -10,6 +10,7 @@ import {
   type BoardLens,
   type TitleSource,
   TitleSources,
+  type BridgeConversation,
 } from "@threahq/types"
 
 /**
@@ -257,6 +258,14 @@ export interface Conversation {
   updatedAt: Date
 }
 
+/** A conversation in a shared tree, with what its partner's copy needs beyond it. */
+export interface SharedConversation {
+  conversation: Conversation
+  version: number
+  topicSummarySharedRootStreamId: string | null
+  summarySharedRootStreamId: string | null
+}
+
 export interface InsertConversationParams {
   id: string
   streamId: string
@@ -269,10 +278,14 @@ export interface InsertConversationParams {
   confidence?: number
   status?: ConversationStatus
   parentConversationId?: string
+  /** The shared channel this title and summary were written for, read as its partner reads it. */
+  sharedRootStreamId?: string | null
 }
 
 export interface UpdateConversationParams {
   summary?: string
+  /** The shared channel `summary` was written for, read as its partner reads it. */
+  sharedRootStreamId?: string | null
   completenessScore?: number
   confidence?: number
   status?: ConversationStatus
@@ -703,7 +716,9 @@ export const ConversationRepository = {
     const result = await db.query<ConversationRow>(sql`
       INSERT INTO conversations (
         id, stream_id, workspace_id,
-        topic_summary, topic_summary_source, topic_summary_revision, topic_summary_updated_by_user_id, summary, completeness_score, confidence, status, parent_conversation_id
+        topic_summary, topic_summary_source, topic_summary_revision, topic_summary_updated_by_user_id,
+        topic_summary_shared_root_stream_id, summary, summary_shared_root_stream_id,
+        completeness_score, confidence, status, parent_conversation_id
       )
       VALUES (
         ${params.id},
@@ -713,7 +728,9 @@ export const ConversationRepository = {
         ${params.topicSummary === undefined ? null : (params.topicSummarySource ?? TitleSources.EXPLICIT)},
         ${params.topicSummary === undefined ? 0 : 1},
         ${params.topicSummaryUpdatedByUserId ?? null},
+        ${params.topicSummary === undefined ? null : (params.sharedRootStreamId ?? null)},
         ${params.summary ?? null},
+        ${params.summary === undefined ? null : (params.sharedRootStreamId ?? null)},
         ${params.completenessScore ?? 1},
         ${params.confidence ?? 0.5},
         ${params.status ?? "active"},
@@ -742,6 +759,8 @@ export const ConversationRepository = {
     if (params.summary !== undefined) {
       updates.push(`summary = $${paramIndex++}`)
       values.push(params.summary)
+      updates.push(`summary_shared_root_stream_id = $${paramIndex++}`)
+      values.push(params.sharedRootStreamId ?? null)
     }
     if (params.completenessScore !== undefined) {
       updates.push(`completeness_score = $${paramIndex++}`)
@@ -841,6 +860,11 @@ export const ConversationRepository = {
       conversationId: string
       topicSummary: string
       source: TitleSource
+      /**
+       * The shared channel this title was written for, read as its partner reads
+       * it. Undefined keeps the stamp, for a write that leaves the text as it was.
+       */
+      sharedRootStreamId: string | null | undefined
       updatedByUserId?: string | null
       expectedRevision?: number
       expectedSource?: TitleSource | null
@@ -852,6 +876,10 @@ export const ConversationRepository = {
         topic_summary_source = ${params.source},
         topic_summary_revision = topic_summary_revision + 1,
         topic_summary_updated_by_user_id = ${params.updatedByUserId ?? null},
+        topic_summary_shared_root_stream_id = CASE
+          WHEN ${params.sharedRootStreamId === undefined} THEN topic_summary_shared_root_stream_id
+          ELSE ${params.sharedRootStreamId ?? null}::text
+        END,
         updated_at = NOW()
       WHERE workspace_id = ${params.workspaceId} AND id = ${params.conversationId}
         AND (${params.expectedRevision === undefined} OR topic_summary_revision = ${params.expectedRevision ?? 0})
@@ -874,13 +902,23 @@ export const ConversationRepository = {
     db: Querier,
     workspaceId: string,
     id: string,
-    params: { completenessScore?: number; status?: ConversationStatus; summary?: string }
+    params: {
+      completenessScore?: number
+      status?: ConversationStatus
+      summary?: string
+      /** The shared channel `summary` was written for, read as its partner reads it. */
+      sharedRootStreamId: string | null
+    }
   ): Promise<void> {
     await db.query(sql`
       UPDATE conversations SET
         completeness_score = COALESCE(${params.completenessScore ?? null}, completeness_score),
         status = CASE WHEN status_locked_by_user THEN status ELSE COALESCE(${params.status ?? null}, status) END,
         summary = COALESCE(${params.summary ?? null}, summary),
+        summary_shared_root_stream_id = CASE
+          WHEN ${params.summary ?? null}::text IS NULL THEN summary_shared_root_stream_id
+          ELSE ${params.sharedRootStreamId}::text
+        END,
         updated_at = NOW()
       WHERE id = ${id} AND workspace_id = ${workspaceId}
     `)
@@ -1103,13 +1141,13 @@ export const ConversationRepository = {
             ELSE ${ConversationStatuses.STALLED}
           END AS next_status
         FROM conversations
-        WHERE (
+        WHERE origin_workspace_id IS NULL AND ((
           status = ${ConversationStatuses.ACTIVE}
             AND last_activity_at < NOW() - make_interval(secs => ${params.stalledAfterSeconds})
         ) OR (
           status = ${ConversationStatuses.STALLED}
             AND last_activity_at < NOW() - make_interval(secs => ${params.resolvedAfterSeconds})
-        )
+        ))
         ORDER BY last_activity_at
         LIMIT ${params.limit}
         FOR UPDATE SKIP LOCKED
@@ -1135,6 +1173,142 @@ export const ConversationRepository = {
       SET last_activity_at = NOW(), updated_at = NOW()
       WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}::text[])
     `)
+  },
+
+  /** This workspace's own conversations in `streamIds`, each with its version. */
+  async listSharedVersions(
+    db: Querier,
+    workspaceId: string,
+    streamIds: string[]
+  ): Promise<Array<{ id: string; version: number }>> {
+    const result = await db.query<{ id: string; version: number }>(sql`
+      SELECT id, version FROM conversations
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ANY(${streamIds})
+        AND origin_workspace_id IS NULL
+      ORDER BY id
+    `)
+    return result.rows
+  },
+
+  /**
+   * `listSharedVersions`'s conversations among `ids`, each with its version and
+   * the shared channel its title and its summary were written for.
+   */
+  async findShared(db: Querier, workspaceId: string, streamIds: string[], ids: string[]): Promise<SharedConversation[]> {
+    const result = await db.query<
+      ConversationRow & {
+        version: number
+        topic_summary_shared_root_stream_id: string | null
+        summary_shared_root_stream_id: string | null
+      }
+    >(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)}, version, topic_summary_shared_root_stream_id, summary_shared_root_stream_id
+      FROM conversations
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ANY(${streamIds})
+        AND origin_workspace_id IS NULL
+        AND id = ANY(${ids})
+      ORDER BY id
+    `)
+    return result.rows.map((row) => ({
+      conversation: mapRowToConversation(row),
+      version: row.version,
+      topicSummarySharedRootStreamId: row.topic_summary_shared_root_stream_id,
+      summarySharedRootStreamId: row.summary_shared_root_stream_id,
+    }))
+  },
+
+  /** The copies a partner holds of the conversations in `originWorkspaceId`'s shared channel. */
+  async listCopyVersions(
+    db: Querier,
+    workspaceId: string,
+    originWorkspaceId: string,
+    sharedRootStreamId: string
+  ): Promise<Array<{ id: string; version: number }>> {
+    const result = await db.query<{ id: string; version: number }>(sql`
+      SELECT c.id, c.version FROM conversations c
+      JOIN streams s ON s.workspace_id = c.workspace_id AND s.id = c.stream_id
+      WHERE c.workspace_id = ${workspaceId}
+        AND c.origin_workspace_id = ${originWorkspaceId}
+        AND COALESCE(s.root_stream_id, s.id) = ${sharedRootStreamId}
+      ORDER BY c.id
+    `)
+    return result.rows
+  },
+
+  /**
+   * Writes a partner's copies of its host's conversations, under the host's
+   * ids. A copy only moves forward: a row already at the host's version, or one
+   * that is not a copy from this host, is left as it is. Returns the copies it
+   * inserted and the ones it updated.
+   */
+  async upsertCopies(
+    db: Querier,
+    workspaceId: string,
+    originWorkspaceId: string,
+    copies: BridgeConversation[]
+  ): Promise<{ inserted: Conversation[]; updated: Conversation[] }> {
+    if (copies.length === 0) return { inserted: [], updated: [] }
+    const rows = copies.map((copy) => ({
+      id: copy.id,
+      stream_id: copy.streamId,
+      message_ids: copy.messageIds,
+      participant_ids: copy.participantIds,
+      secondary_message_ids: copy.secondaryMessageIds,
+      topic_summary: copy.topicSummary,
+      topic_summary_source: copy.topicSummarySource,
+      topic_summary_revision: copy.topicSummaryRevision,
+      summary: copy.summary,
+      completeness_score: copy.completenessScore,
+      confidence: copy.confidence,
+      status: copy.status,
+      version: copy.version,
+      last_activity_at: copy.lastActivityAt,
+      created_at: copy.createdAt,
+    }))
+    const result = await db.query<ConversationRow & { inserted: boolean }>(sql`
+      INSERT INTO conversations (
+        id, workspace_id, stream_id, message_ids, participant_ids, secondary_message_ids,
+        topic_summary, topic_summary_source, topic_summary_revision, summary,
+        completeness_score, confidence, status, version, origin_workspace_id, last_activity_at, created_at
+      )
+      SELECT
+        x.id, ${workspaceId}, x.stream_id,
+        ARRAY(SELECT jsonb_array_elements_text(x.message_ids)),
+        ARRAY(SELECT jsonb_array_elements_text(x.participant_ids)),
+        ARRAY(SELECT jsonb_array_elements_text(x.secondary_message_ids)),
+        x.topic_summary, x.topic_summary_source, x.topic_summary_revision, x.summary,
+        x.completeness_score, x.confidence, x.status, x.version, ${originWorkspaceId}, x.last_activity_at, x.created_at
+      FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS x(
+        id text, stream_id text, message_ids jsonb, participant_ids jsonb, secondary_message_ids jsonb,
+        topic_summary text, topic_summary_source text, topic_summary_revision int, summary text,
+        completeness_score int, confidence real, status text, version int,
+        last_activity_at timestamptz, created_at timestamptz
+      )
+      ON CONFLICT (workspace_id, id) DO UPDATE SET
+        stream_id = EXCLUDED.stream_id,
+        message_ids = EXCLUDED.message_ids,
+        participant_ids = EXCLUDED.participant_ids,
+        secondary_message_ids = EXCLUDED.secondary_message_ids,
+        topic_summary = EXCLUDED.topic_summary,
+        topic_summary_source = EXCLUDED.topic_summary_source,
+        topic_summary_revision = EXCLUDED.topic_summary_revision,
+        summary = EXCLUDED.summary,
+        completeness_score = EXCLUDED.completeness_score,
+        confidence = EXCLUDED.confidence,
+        status = EXCLUDED.status,
+        version = EXCLUDED.version,
+        last_activity_at = EXCLUDED.last_activity_at,
+        updated_at = NOW()
+      WHERE conversations.origin_workspace_id = EXCLUDED.origin_workspace_id
+        AND conversations.version < EXCLUDED.version
+      RETURNING ${sql.raw(SELECT_FIELDS)}, (xmax = 0) AS inserted
+    `)
+    return {
+      inserted: result.rows.filter((row) => row.inserted).map(mapRowToConversation),
+      updated: result.rows.filter((row) => !row.inserted).map(mapRowToConversation),
+    }
   },
 }
 

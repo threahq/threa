@@ -432,6 +432,7 @@ describe("dynamic conversation naming", () => {
         conversationId: item.conversationId,
         topicSummary: "My rollback plan",
         source: "explicit",
+        sharedRootStreamId: null,
         updatedByUserId: item.userId,
       })
       return { action: "rename", title: "Stale model title" }

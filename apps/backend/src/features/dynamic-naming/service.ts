@@ -273,7 +273,7 @@ export class DynamicNamingService {
 
       let revision: number | null = null
       if (decision.action === "rename") {
-        revision = await adapter.applyRename(client, target, decision.title)
+        revision = await adapter.applyRename(client, target, decision.title, context.sharedRootStreamId ?? null)
         if (revision === null) throw new Error("Dynamic naming title CAS failed after state claim was consumed")
       }
       return { state: result.state, target, revision }

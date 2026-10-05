@@ -5,6 +5,7 @@ import { ConversationRepository, type Conversation } from "./repository"
 import { MessageConversationStateRepository } from "./settling-repository"
 import { StreamRepository } from "../streams"
 import * as streamsModule from "../streams"
+import * as streamConnectionsModule from "../stream-connections"
 import { MessageRepository, type Message } from "../messaging"
 import * as delivery from "./conversation-delivery"
 import { OutboxRepository } from "../../lib/outbox"
@@ -42,6 +43,7 @@ describe("ConversationService.updateConversation — user status lock", () => {
       cb({})) as never)
     findByIdSpy = spyOn(ConversationRepository, "findById").mockResolvedValue(fakeConversation())
     spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
+    spyOn(streamConnectionsModule, "findSharedTree").mockResolvedValue(null)
     updateSpy = spyOn(ConversationRepository, "update").mockResolvedValue(fakeConversation())
     updateTopicSpy = spyOn(ConversationRepository, "updateTopicSummary").mockResolvedValue(
       fakeConversation({ topicSummary: "New title", topicSummarySource: "explicit", topicSummaryRevision: 1 })

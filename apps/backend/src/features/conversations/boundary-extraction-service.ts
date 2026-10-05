@@ -311,7 +311,7 @@ export class BoundaryExtractionService {
         attachmentTargetIds: [message.id, ...allContextMessageIds],
         validUpdateTargets,
         validReassignmentMessageIds: new Set(allContextMessageIds),
-        shared: sharedTree !== null,
+        sharedRootStreamId: sharedTree?.rootStreamId ?? null,
       }
     })
 
@@ -346,7 +346,7 @@ export class BoundaryExtractionService {
       scratchpadConversations,
       validUpdateTargets,
       validReassignmentMessageIds,
-      shared,
+      sharedRootStreamId,
     } = fetchedData
 
     // Phase 1.5 (channels/threads only): await attachment processing with no DB
@@ -354,7 +354,7 @@ export class BoundaryExtractionService {
     let extractionContext: ExtractionContext | null = null
     if (extractionContextBase && attachmentTargetIds) {
       // A shared channel's partner sees no previews; the host fetched them, some with its own integrations.
-      const linkPreviewProcessing = shared ? null : awaitLinkPreviewProcessing(this.pool, workspaceId, [message])
+      const linkPreviewProcessing = sharedRootStreamId ? null : awaitLinkPreviewProcessing(this.pool, workspaceId, [message])
       if (newMessageAttachmentIds && newMessageAttachmentIds.length > 0) {
         logger.debug(
           { messageId, attachmentCount: newMessageAttachmentIds.length },
@@ -378,7 +378,7 @@ export class BoundaryExtractionService {
 
       const [attachmentsByMessage, previewRowsByMessage] = await Promise.all([
         AttachmentRepository.findByMessageIdsWithExtractions(this.pool, workspaceId, attachmentTargetIds),
-        shared
+        sharedRootStreamId
           ? new Map<string, LinkPreview[]>()
           : LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, attachmentTargetIds),
       ])
@@ -481,6 +481,7 @@ export class BoundaryExtractionService {
               topicSummary: decision.newTopic,
               topicSummarySource: decision.newTopic === undefined ? undefined : TitleSources.GENERATED,
               summary: decision.newSummary,
+              sharedRootStreamId,
               confidence: decision.confidence,
               status: ConversationStatuses.ACTIVE,
             })
@@ -766,6 +767,7 @@ export class BoundaryExtractionService {
             completenessScore: update.score,
             status,
             summary: update.summary,
+            sharedRootStreamId: sharedRootStreamId ?? null,
           })
           touchedConversationIds.add(update.conversationId)
         }

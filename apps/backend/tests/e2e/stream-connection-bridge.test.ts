@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
 import { INTERNAL_API_KEY_HEADER, streamConnectionId } from "@threahq/backend-common"
 import {
+  BRIDGE_CONVERSATIONS_MAX_IDS,
   BRIDGE_MEMOS_MAX_IDS,
   BRIDGE_PROFILES_MAX_IDS,
   BRIDGE_WORKSPACE_HEADER,
@@ -749,6 +750,125 @@ describe("Stream connection bridge", () => {
           subjects: [{ type: "memo", id: memo }],
         },
         { operation: "stream_connections.bridge_memos", ...disclosure, subjects: [{ type: "memo", id: memo }] },
+      ],
+    })
+  })
+
+  test("should list and return the shared channel's conversations to the partner as the partner reads them, refuse a stranger or an oversized page, and record each disclosure", async () => {
+    const { client, workspace, channel, connection, partnerWorkspaceId } = await setup()
+    const message = await sendMessage(client, workspace.id, channel.id, "we ship friday")
+    const other = await createChannel(client, workspace.id, `side-${testRunId}`, "private")
+    const outside = await sendMessage(client, workspace.id, other.id, "secret")
+    const seed = async (overrides: { sharedRootStreamId: string | null }) => {
+      const id = conversationId()
+      await ConversationRepository.insert(pool, {
+        id,
+        streamId: channel.id,
+        workspaceId: workspace.id,
+        topicSummary: "Ship friday",
+        topicSummarySource: "generated",
+        summary: "The team ships on friday.",
+        completenessScore: 4,
+        confidence: 0.8,
+        status: ConversationStatuses.RESOLVED,
+        ...overrides,
+      })
+      await ConversationRepository.addPrimaryMessages(
+        pool,
+        workspace.id,
+        id,
+        [message.id, outside.id],
+        [message.authorId, userId()]
+      )
+      return id
+    }
+    const shared = await seed({ sharedRootStreamId: channel.id })
+    const preShare = await seed({ sharedRootStreamId: null })
+    const elsewhere = conversationId()
+    await ConversationRepository.insert(pool, { id: elsewhere, streamId: other.id, workspaceId: workspace.id })
+    const ask = (method: "GET" | "POST", body: unknown, callerWorkspaceId: string) =>
+      new TestClient().request<{ conversations?: Array<Record<string, unknown>>; code?: string }>(
+        method,
+        `/api/workspaces/${workspace.id}/stream-connections/${connection.id}/bridge/conversations`,
+        body,
+        partnerHeaders(callerWorkspaceId)
+      )
+
+    const index = await ask("GET", undefined, partnerWorkspaceId)
+    const bodies = await ask("POST", { conversationIds: [shared, preShare, elsewhere] }, partnerWorkspaceId)
+    const strangerIndex = await ask("GET", undefined, workspaceId())
+    const strangerBodies = await ask("POST", { conversationIds: [shared] }, workspaceId())
+    const oversized = await ask(
+      "POST",
+      { conversationIds: Array.from({ length: BRIDGE_CONVERSATIONS_MAX_IDS + 1 }, () => conversationId()) },
+      partnerWorkspaceId
+    )
+
+    let rows: Array<Record<string, unknown>> = []
+    for (let attempt = 0; attempt < 40 && rows.length < 2; attempt++) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 50))
+      ;({ rows } = await pool.query(
+        `SELECT operation, actor_id, auth_ref, access_kind, subjects FROM access_log
+         WHERE workspace_id = $1 AND operation LIKE 'stream_connections.bridge_conversation%' AND outcome = 'success'
+         ORDER BY operation`,
+        [workspace.id]
+      ))
+    }
+    // Boundary extraction may open its own conversation for the sent message, so only the seeded ones are compared.
+    const seeded = new Set([shared, preShare, elsewhere])
+    const ours = (items: Array<Record<string, unknown>> = []) =>
+      items.filter((item) => seeded.has(String(item.id))).sort((a, b) => String(a.id).localeCompare(String(b.id)))
+    const byId = (a: { id: unknown }, b: { id: unknown }) => String(a.id).localeCompare(String(b.id))
+    const asPartnerReads = {
+      streamId: channel.id,
+      topicSummaryRevision: 1,
+      summary: "The team ships on friday.",
+      status: ConversationStatuses.RESOLVED,
+      messageIds: [message.id],
+      secondaryMessageIds: [],
+      participantIds: [message.authorId],
+      completenessScore: 4,
+      confidence: 0.8,
+      version: 1,
+      lastActivityAt: expect.any(String),
+      createdAt: expect.any(String),
+    }
+    const disclosure = { actor_id: partnerWorkspaceId, auth_ref: connection.id, access_kind: "disclose" }
+    const subjects = [shared, preShare].map((id) => ({ type: "conversation", id })).sort(byId)
+    expect({
+      index: { status: index.status, conversations: ours(index.data.conversations) },
+      bodies: { status: bodies.status, conversations: ours(bodies.data.conversations) },
+      stranger: [strangerIndex, strangerBodies].map(({ status, data }) => ({ status, code: data.code })),
+      oversized: oversized.status,
+      log: rows.map(
+        (row): Record<string, unknown> => ({
+          ...row,
+          subjects: ours(row.subjects as Array<Record<string, unknown>>),
+        })
+      ),
+    }).toEqual({
+      index: {
+        status: 200,
+        conversations: [
+          { id: shared, version: 1 },
+          { id: preShare, version: 1 },
+        ].sort(byId),
+      },
+      bodies: {
+        status: 200,
+        conversations: [
+          { id: shared, ...asPartnerReads, topicSummary: "Ship friday", topicSummarySource: "generated" },
+          { id: preShare, ...asPartnerReads, topicSummary: null, topicSummarySource: null, summary: null },
+        ].sort(byId),
+      },
+      stranger: [
+        { status: 404, code: "STREAM_CONNECTION_NOT_FOUND" },
+        { status: 404, code: "STREAM_CONNECTION_NOT_FOUND" },
+      ],
+      oversized: 400,
+      log: [
+        { operation: "stream_connections.bridge_conversation_index", ...disclosure, subjects },
+        { operation: "stream_connections.bridge_conversations", ...disclosure, subjects },
       ],
     })
   })

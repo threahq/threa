@@ -174,9 +174,13 @@ describe("ConversationService.applySplit", () => {
       conversationId: "conv_a",
       topicSummary: "Fable pricing",
       source: "explicit",
+      sharedRootStreamId: null,
       updatedByUserId: ACTOR_ID,
     })
-    expect(spies.update).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "conv_a", { summary: undefined })
+    expect(spies.update).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "conv_a", {
+      summary: undefined,
+      sharedRootStreamId: null,
+    })
     expect(spies.removePrimaryMessages).toHaveBeenCalledWith(
       expect.anything(),
       WORKSPACE_ID,
@@ -252,9 +256,13 @@ describe("ConversationService.applySplit", () => {
       conversationId: "conv_a",
       topicSummary: "Kept",
       source: "explicit",
+      sharedRootStreamId: null,
       updatedByUserId: ACTOR_ID,
     })
-    expect(spies.update).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "conv_a", { summary: undefined })
+    expect(spies.update).toHaveBeenCalledWith(expect.anything(), WORKSPACE_ID, "conv_a", {
+      summary: undefined,
+      sharedRootStreamId: null,
+    })
   })
 
   test("leaves the source title untouched when un-analyzed messages remain", async () => {
@@ -301,6 +309,7 @@ describe("ConversationService.applySplit", () => {
       conversationId: "conv_a",
       topicSummary: "Kept",
       source: "explicit",
+      sharedRootStreamId: null,
       updatedByUserId: ACTOR_ID,
     })
   })

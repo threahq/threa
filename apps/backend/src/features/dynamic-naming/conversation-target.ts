@@ -119,13 +119,13 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
         messages,
         siblings,
         attachmentIds: [...attachments.values()].flatMap((items) => items.map((item) => item.id)),
-        shared: sharedTree !== null,
+        sharedRootStreamId: sharedTree?.rootStreamId ?? null,
       }
     })
     if (!fetched || fetched.messages.length === 0) return null
 
     // A shared channel's partner sees no previews; the host fetched them, some with its own integrations.
-    const linkPreviewProcessing = fetched.shared
+    const linkPreviewProcessing = fetched.sharedRootStreamId
       ? null
       : awaitLinkPreviewProcessing(this.pool, target.workspaceId, fetched.messages)
     if (fetched.attachmentIds.length > 0)
@@ -158,16 +158,23 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
         .filter((conversation) => conversation.id !== target.targetId && conversation.topicSummary)
         .map((conversation) => conversation.topicSummary!)
         .slice(0, DYNAMIC_NAMING_MAX_EXISTING_TITLES),
+      sharedRootStreamId: fetched.sharedRootStreamId,
     }
   }
 
-  async applyRename(client: PoolClient, target: DynamicNamingTargetSnapshot, title: string): Promise<number | null> {
+  async applyRename(
+    client: PoolClient,
+    target: DynamicNamingTargetSnapshot,
+    title: string,
+    sharedRootStreamId: string | null
+  ): Promise<number | null> {
     if (!isConversationSnapshot(target)) return null
     const updated = await ConversationRepository.updateTopicSummary(client, {
       workspaceId: target.workspaceId,
       conversationId: target.targetId,
       topicSummary: title,
       source: TitleSources.GENERATED,
+      sharedRootStreamId,
       expectedRevision: target.titleRevision,
       expectedSource: target.titleSource,
     })

@@ -7,11 +7,15 @@ import {
   bridgeEventsSchema,
   bridgeManifestSchema,
   bridgeMemoIndexSchema,
+  bridgeConversationIndexSchema,
+  bridgeConversationsSchema,
   type AttachmentSafetyStatus,
   type BridgeEvents,
   type BridgeManifest,
   type BridgeMemoIndex,
   type JSONContent,
+  type BridgeConversationIndex,
+  type BridgeConversations,
 } from "@threahq/types"
 import { streamConnectionId } from "@threahq/backend-common"
 import {
@@ -70,6 +74,14 @@ class DirectBridgeClient extends BridgeClient {
     params: Parameters<BridgeClient["listEvents"]>[1]
   ): Promise<BridgeEvents> {
     return bridgeEventsSchema.parse(await this.host.exporter.listEvents({ ...address, ...params }))
+  }
+
+  override async getConversationIndex(address: Address): Promise<BridgeConversationIndex> {
+    return bridgeConversationIndexSchema.parse(await this.host.exporter.getConversationIndex(address))
+  }
+
+  override async getConversations(address: Address, conversationIds: string[]): Promise<BridgeConversations> {
+    return bridgeConversationsSchema.parse(await this.host.exporter.getConversations({ ...address, conversationIds }))
   }
 
   override async getMemoIndex(address: Address): Promise<BridgeMemoIndex> {

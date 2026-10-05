@@ -8,6 +8,7 @@ import {
   bridgeEditMessageSchema,
   bridgeProfilesRequestSchema,
   bridgeMemosRequestSchema,
+  bridgeConversationsRequestSchema,
   bridgeRemoveReactionQuerySchema,
   bridgeSendMessageSchema,
   streamConnectionIdSchema,
@@ -232,6 +233,36 @@ export function createStreamConnectionBridgeHandlers({
       )
       res.setHeader("Cache-Control", "no-store")
       res.json(memos)
+    },
+
+    async conversationIndex(req: Request, res: Response) {
+      const params = validateRequest(bridgeParamsSchema, req.params)
+      const index = await streamConnectionExportService.getConversationIndex({
+        ...params,
+        callerWorkspaceId: identifyCaller(req, params.connectionId),
+      })
+      setAuditSubjects(
+        res,
+        index.conversations.map((conversation) => ({ type: "conversation", id: conversation.id }))
+      )
+      res.setHeader("Cache-Control", "no-store")
+      res.json(index)
+    },
+
+    async conversations(req: Request, res: Response) {
+      const params = validateRequest(bridgeParamsSchema, req.params)
+      const { conversationIds } = validateRequest(bridgeConversationsRequestSchema, req.body)
+      const conversations = await streamConnectionExportService.getConversations({
+        ...params,
+        conversationIds,
+        callerWorkspaceId: identifyCaller(req, params.connectionId),
+      })
+      setAuditSubjects(
+        res,
+        conversations.conversations.map((conversation) => ({ type: "conversation", id: conversation.id }))
+      )
+      res.setHeader("Cache-Control", "no-store")
+      res.json(conversations)
     },
 
     async sendMessage(req: Request, res: Response) {
