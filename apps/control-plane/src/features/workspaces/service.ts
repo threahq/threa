@@ -1,4 +1,4 @@
-import type { Pool } from "pg"
+import type { Pool, PoolClient } from "pg"
 import {
   HttpError,
   isUniqueViolation,
@@ -10,8 +10,18 @@ import {
   OutboxRepository,
   type WorkosOrgService,
 } from "@threahq/backend-common"
-import { WORKSPACE_ROLE_SLUGS, type WorkspaceTier } from "@threahq/types"
+import {
+  WORKSPACE_ROLE_SLUGS,
+  WORKSPACE_TIERS,
+  orgWorkspaceEnsureSchema,
+  type OrgWorkspaceEnsureRequest,
+  type OrgWorkspacePerson,
+  type WorkspaceTier,
+} from "@threahq/types"
+import { z } from "zod"
 import { WorkspaceRegistryRepository } from "./repository"
+import { parseRequest } from "../../lib/validation"
+import type { WorkosOrganizationProvisioner } from "./workos-organization"
 import type { RegionalClient } from "../../lib/regional-client"
 import type { KvClient } from "../../lib/cloudflare-kv-client"
 // Type-only: the platform-admin feature imports this feature's repository, so
@@ -22,11 +32,40 @@ import type { PlatformAdminSyncService } from "../platform-admin"
 export const OUTBOX_KV_SYNC = "kv_sync"
 export const OUTBOX_REGIONAL_CREATE = "regional_create"
 export const OUTBOX_WORKSPACE_TIER_SYNC = "workspace_tier_sync"
+export const OUTBOX_ORG_WORKSPACE_ENSURE = "org_workspace_ensure"
+
+const orgWorkspaceInputSchema = orgWorkspaceEnsureSchema.pick({ name: true, people: true })
+
+/**
+ * Names a counterpart org: one workspace exists per key, so two orgs must never serialize alike.
+ * Domains compare case-insensitively; external ids do not. A provider holds no `:`, which keeps
+ * the serialized form unambiguous.
+ */
+const orgKeySchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("email_domain"), domain: z.string().trim().toLowerCase().min(1) }),
+  z.object({
+    kind: z.literal("external_team"),
+    provider: z.string().regex(/^[^:]+$/),
+    externalTeamId: z.string().min(1),
+  }),
+])
+export type OrgKey = z.input<typeof orgKeySchema>
+
+/** The `workspace_registry.org_key` value. */
+function serializeOrgKey(key: z.output<typeof orgKeySchema>): string {
+  switch (key.kind) {
+    case "email_domain":
+      return `email_domain:${key.domain}`
+    case "external_team":
+      return `external_team:${key.provider}:${key.externalTeamId}`
+  }
+}
 
 interface Dependencies {
   pool: Pool
   regionalClient: RegionalClient
   workosOrgService: WorkosOrgService
+  workosOrganizationProvisioner: WorkosOrganizationProvisioner
   kvClient: KvClient
   platformAdminSync: PlatformAdminSyncService
   availableRegions: string[]
@@ -37,6 +76,7 @@ export class ControlPlaneWorkspaceService {
   private pool: Pool
   private regionalClient: RegionalClient
   private workosOrgService: WorkosOrgService
+  private workosOrganizationProvisioner: WorkosOrganizationProvisioner
   private kvClient: KvClient
   private platformAdminSync: PlatformAdminSyncService
   private availableRegions: Set<string>
@@ -46,6 +86,7 @@ export class ControlPlaneWorkspaceService {
     this.pool = deps.pool
     this.regionalClient = deps.regionalClient
     this.workosOrgService = deps.workosOrgService
+    this.workosOrganizationProvisioner = deps.workosOrganizationProvisioner
     this.kvClient = deps.kvClient
     this.platformAdminSync = deps.platformAdminSync
     this.availableRegions = new Set(deps.availableRegions)
@@ -58,6 +99,33 @@ export class ControlPlaneWorkspaceService {
       throw new HttpError("No regions available", { status: 500, code: "NO_REGIONS" })
     }
     return first
+  }
+
+  private assertRegion(region: string): void {
+    if (!this.availableRegions.has(region)) {
+      throw new HttpError(`Invalid region: ${region}`, { status: 400, code: "INVALID_REGION" })
+    }
+  }
+
+  /**
+   * Run `work` in a transaction with a slug for `name` that is free when the transaction starts.
+   * A concurrent transaction can claim the same slug before COMMIT; the UNIQUE constraint catches
+   * that, and the retry sees the committed slug (INV-20).
+   */
+  private async withFreshSlug<T>(name: string, work: (client: PoolClient, slug: string) => Promise<T>): Promise<T> {
+    const MAX_SLUG_ATTEMPTS = 3
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await withTransaction(this.pool, async (client) => {
+          const slug = await generateUniqueSlug(name, (s) => WorkspaceRegistryRepository.slugExists(client, s))
+          return work(client, slug)
+        })
+      } catch (error) {
+        if (attempt >= MAX_SLUG_ATTEMPTS || !isUniqueViolation(error, "workspace_registry_slug_key")) {
+          throw error
+        }
+      }
+    }
   }
 
   listRegions(): string[] {
@@ -105,9 +173,7 @@ export class ControlPlaneWorkspaceService {
     const displayName = displayNameFromWorkos(authUser)
 
     const region = params.region ?? this.defaultRegion()
-    if (!this.availableRegions.has(region)) {
-      throw new HttpError(`Invalid region: ${region}`, { status: 400, code: "INVALID_REGION" })
-    }
+    this.assertRegion(region)
 
     if (this.requireInvite) {
       const hasInvite = await this.workosOrgService.hasAcceptedWorkspaceCreationInvitation(email)
@@ -121,51 +187,35 @@ export class ControlPlaneWorkspaceService {
 
     const id = generateWorkspaceId()
 
-    // Insert into control-plane DB with slug collision retry (INV-20).
-    // generateUniqueSlug checks availability inside the transaction, but a concurrent
-    // transaction can claim the same slug before COMMIT. The UNIQUE constraint catches
-    // this — retry with a fresh slug check so the next attempt sees the committed slug.
-    const MAX_SLUG_ATTEMPTS = 3
-    let workspace: Awaited<ReturnType<typeof WorkspaceRegistryRepository.insert>>
-    for (let attempt = 1; ; attempt++) {
-      try {
-        workspace = await withTransaction(this.pool, async (client) => {
-          const slug = await generateUniqueSlug(name, (s) => WorkspaceRegistryRepository.slugExists(client, s))
-          const ws = await WorkspaceRegistryRepository.insert(client, {
-            id,
-            name,
-            slug,
-            region,
-            createdByWorkosUserId: workosUserId,
-          })
-          await WorkspaceRegistryRepository.insertMembership(client, id, workosUserId)
+    const workspace = await this.withFreshSlug(name, async (client, slug) => {
+      const ws = await WorkspaceRegistryRepository.insert(client, {
+        id,
+        name,
+        slug,
+        region,
+        createdByWorkosUserId: workosUserId,
+      })
+      await WorkspaceRegistryRepository.insertMembership(client, id, workosUserId)
 
-          // Durable outbox events — regional creation + KV sync both committed atomically
-          await OutboxRepository.insert(client, OUTBOX_REGIONAL_CREATE, {
-            workspaceId: id,
-            name,
-            slug,
-            region,
-            ownerWorkosUserId: workosUserId,
-            ownerEmail: email,
-            ownerName: displayName,
-            timezone: params.timezone,
-          })
-          await OutboxRepository.insert(client, OUTBOX_KV_SYNC, { workspaceId: id, region })
+      // Durable outbox events — regional creation + KV sync both committed atomically
+      await OutboxRepository.insert(client, OUTBOX_REGIONAL_CREATE, {
+        workspaceId: id,
+        name,
+        slug,
+        region,
+        ownerWorkosUserId: workosUserId,
+        ownerEmail: email,
+        ownerName: displayName,
+        timezone: params.timezone,
+      })
+      await OutboxRepository.insert(client, OUTBOX_KV_SYNC, { workspaceId: id, region })
 
-          // A platform admin's new workspace should show backoffice links
-          // without waiting for the next control-plane restart to re-seed.
-          await this.platformAdminSync.enqueueIfAdmin(client, workosUserId)
+      // A platform admin's new workspace should show backoffice links
+      // without waiting for the next control-plane restart to re-seed.
+      await this.platformAdminSync.enqueueIfAdmin(client, workosUserId)
 
-          return ws
-        })
-        break
-      } catch (error) {
-        if (attempt >= MAX_SLUG_ATTEMPTS || !isUniqueViolation(error, "workspace_registry_slug_key")) {
-          throw error
-        }
-      }
-    }
+      return ws
+    })
 
     const result = {
       id: workspace.id,
@@ -180,7 +230,7 @@ export class ControlPlaneWorkspaceService {
 
     // Best-effort: create WorkOS org and owner membership eagerly (no DB connection held — INV-41)
     try {
-      const orgId = await this.ensureWorkosOrganization(id, name)
+      const orgId = await this.workosOrganizationProvisioner.ensureWorkosOrganization(id)
       if (orgId) {
         await this.workosOrgService.ensureOrganizationMembership({
           organizationId: orgId,
@@ -196,31 +246,57 @@ export class ControlPlaneWorkspaceService {
   }
 
   /**
-   * Ensure a WorkOS organization exists for the given workspace.
-   * 3-tier lookup: local cache → WorkOS by external ID → create new.
+   * The workspace for a counterpart org, created unclaimed on first call and reused after, so
+   * racing callers for one org get one workspace. Every call sends its people to the region, which
+   * adds the ones it does not hold yet. No WorkOS objects until someone claims it.
    */
-  private async ensureWorkosOrganization(workspaceId: string, workspaceName: string): Promise<string | null> {
-    const cachedOrgId = await WorkspaceRegistryRepository.getWorkosOrganizationId(this.pool, workspaceId)
-    if (cachedOrgId) return cachedOrgId
+  async ensureOrgWorkspace(params: {
+    orgKey: OrgKey
+    name: string
+    region: string
+    people: OrgWorkspacePerson[]
+  }): Promise<{ workspaceId: string; created: boolean }> {
+    // A payload the region rejects would retry in the outbox forever, so reject it here.
+    const { name, people } = parseRequest(orgWorkspaceInputSchema, { name: params.name, people: params.people })
+    this.assertRegion(params.region)
+    const orgKey = serializeOrgKey(parseRequest(orgKeySchema, params.orgKey))
+    const id = generateWorkspaceId()
 
-    const existingOrg = await this.workosOrgService.getOrganizationByExternalId(workspaceId)
-    if (existingOrg) {
-      await WorkspaceRegistryRepository.setWorkosOrganizationId(this.pool, workspaceId, existingOrg.id)
-      return existingOrg.id
-    }
-
-    try {
-      const org = await this.workosOrgService.createOrganization({
-        name: workspaceName,
-        externalId: workspaceId,
+    return this.withFreshSlug(name, async (client, slug) => {
+      const created = await WorkspaceRegistryRepository.insertForOrgIfAbsent(client, {
+        id,
+        name,
+        slug,
+        region: params.region,
+        tier: WORKSPACE_TIERS.CONNECT,
+        orgKey,
       })
-      await WorkspaceRegistryRepository.setWorkosOrganizationId(this.pool, workspaceId, org.id)
-    } catch (error) {
-      logger.error({ err: error, workspaceId }, "Failed to create WorkOS organization")
-    }
+      const workspace = await WorkspaceRegistryRepository.findByOrgKey(client, orgKey)
+      if (!workspace) throw new Error(`Org workspace row missing after insert for ${orgKey}`)
 
-    // Re-read to get the winning org ID (handles concurrent creation race)
-    return WorkspaceRegistryRepository.getWorkosOrganizationId(this.pool, workspaceId)
+      await OutboxRepository.insert(client, OUTBOX_ORG_WORKSPACE_ENSURE, {
+        workspaceId: workspace.id,
+        name: workspace.name,
+        slug: workspace.slug,
+        tier: workspace.tier,
+        region: workspace.region,
+        people,
+      } satisfies OrgWorkspaceEnsurePayload)
+      if (created) {
+        await OutboxRepository.insert(client, OUTBOX_KV_SYNC, {
+          workspaceId: workspace.id,
+          region: workspace.region,
+        } satisfies KvSyncPayload)
+      }
+
+      return { workspaceId: workspace.id, created }
+    })
+  }
+
+  /** Outbox handler: create the org workspace in its region and add the people it lacks. */
+  async ensureOrgWorkspaceInRegion(payload: OrgWorkspaceEnsurePayload): Promise<void> {
+    const { region, ...request } = payload
+    await this.regionalClient.ensureOrgWorkspace(region, request)
   }
 
   /** Outbox handler: provision workspace in the regional backend */
@@ -287,4 +363,8 @@ export interface RegionalCreatePayload {
   ownerName: string
   /** Absent on events enqueued before workspaces carried a timezone. */
   timezone?: string
+}
+
+export interface OrgWorkspaceEnsurePayload extends OrgWorkspaceEnsureRequest {
+  region: string
 }

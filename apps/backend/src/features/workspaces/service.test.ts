@@ -3,6 +3,8 @@ import type { PoolClient } from "pg"
 import { WORKSPACE_TIERS } from "@threahq/types"
 import { WorkspaceService } from "./service"
 import { UserRepository } from "./user-repository"
+import { WorkspaceRepository } from "./repository"
+import { UserExternalIdentityRepository } from "./user-external-identity-repository"
 import { UserApiKeyRepository } from "../user-api-keys"
 import { ReadStateRepository } from "../streams"
 import { UserDeviceContextRepository } from "../device-context"
@@ -253,6 +255,7 @@ describe("WorkspaceService.removeUser per-user cleanup", () => {
       .mockReset()
       .mockImplementation(((_pool: unknown, fn: (client: PoolClient) => Promise<unknown>) =>
         fn(transactionClient)) as never)
+    spyOn(WorkspaceRepository, "findByIdForUpdate").mockResolvedValue(null)
     spyOn(UserApiKeyRepository, "revokeAllByUser").mockResolvedValue(undefined as never)
     spyOn(UserRepository, "remove").mockResolvedValue(undefined as never)
     spyOn(OutboxRepository, "insert").mockResolvedValue(undefined as never)
@@ -260,10 +263,11 @@ describe("WorkspaceService.removeUser per-user cleanup", () => {
 
   afterEach(() => mock.restore())
 
-  test("deletes the user's read state and device context in the same transaction as account removal", async () => {
+  test("deletes the user's read state, device context and external identities in the same transaction as account removal", async () => {
     const deleteDevice = spyOn(UserDeviceContextRepository, "delete").mockResolvedValue(undefined)
     const deleteForUser = spyOn(ReadStateRepository, "deleteForUser").mockResolvedValue(undefined as never)
     const removeUser = spyOn(UserRepository, "remove").mockResolvedValue(undefined as never)
+    const deleteIdentities = spyOn(UserExternalIdentityRepository, "deleteForUser").mockResolvedValue(undefined)
     const service = createWorkspaceService(false)
 
     await service.removeUser("ws_1", "usr_1")
@@ -271,6 +275,7 @@ describe("WorkspaceService.removeUser per-user cleanup", () => {
     expect(removeUser).toHaveBeenCalledWith(transactionClient, "ws_1", "usr_1")
     expect(deleteForUser).toHaveBeenCalledWith(transactionClient, "ws_1", "usr_1")
     expect(deleteDevice).toHaveBeenCalledWith(transactionClient, "ws_1", "usr_1")
+    expect(deleteIdentities).toHaveBeenCalledWith(transactionClient, "ws_1", "usr_1")
     expect(removeUser.mock.calls[0]?.[0]).toBe(transactionClient)
     expect(deleteForUser.mock.calls[0]?.[0]).toBe(transactionClient)
   })

@@ -19,6 +19,7 @@ describe("AISpendGate", () => {
     await pool.query("DELETE FROM ai_usage_records WHERE workspace_id LIKE $1", [`ws_spend_${run}_%`])
     await pool.query("DELETE FROM ai_budgets WHERE workspace_id LIKE $1", [`ws_spend_${run}_%`])
     await pool.query("DELETE FROM ai_user_quotas WHERE workspace_id LIKE $1", [`ws_spend_${run}_%`])
+    await pool.query("DELETE FROM workspaces WHERE id LIKE $1", [`ws_spend_${run}_%`])
     await pool.end()
   })
 
@@ -82,6 +83,24 @@ describe("AISpendGate", () => {
     expect(await gate.admit({ workspaceId: ws, functionId: "message-embedding" })).toEqual({
       allowed: false,
       reason: "operator_disabled",
+    })
+  })
+
+  test("should deny a workspace nobody has claimed and admit a claimed one", async () => {
+    const unclaimed = workspace()
+    const claimed = workspace()
+    await pool.query(
+      `INSERT INTO workspaces (id, name, slug, created_by)
+       VALUES ($1, 'Unclaimed', $1, NULL), ($2, 'Claimed', $2, 'usr_owner')`,
+      [unclaimed, claimed]
+    )
+
+    expect({
+      unclaimed: await gate.admit({ workspaceId: unclaimed, functionId: "message-embedding" }),
+      claimed: await gate.admit({ workspaceId: claimed, functionId: "message-embedding" }),
+    }).toEqual({
+      unclaimed: { allowed: false, reason: "workspace_unclaimed" },
+      claimed: { allowed: true },
     })
   })
 

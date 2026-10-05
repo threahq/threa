@@ -427,6 +427,20 @@ export const UserRepository = {
     return new Set(result.rows.map((r) => r.email))
   },
 
+  /** Keyed by lowercased email; when several users share one, the earliest to join wins. */
+  async findIdsByEmails(db: Querier, workspaceId: string, emails: string[]): Promise<Map<string, string>> {
+    if (emails.length === 0) return new Map()
+
+    const lowered = emails.map((email) => email.toLowerCase())
+    const result = await db.query<{ email: string; id: string }>(sql`
+      SELECT DISTINCT ON (lower(email)) lower(email) AS email, id
+      FROM users
+      WHERE workspace_id = ${workspaceId} AND lower(email) = ANY(${lowered})
+      ORDER BY lower(email), joined_at, id
+    `)
+    return new Map(result.rows.map((row) => [row.email, row.id]))
+  },
+
   async update(db: Querier, workspaceId: string, userId: string, params: UpdateUserParams): Promise<User | null> {
     const sets: string[] = []
     const values: unknown[] = []

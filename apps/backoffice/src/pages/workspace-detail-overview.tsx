@@ -11,6 +11,7 @@ import {
   setWorkspaceTier,
   type BackofficeConfig,
   type WorkspaceDetail,
+  type WorkspaceOwnerSummary,
 } from "@/api/backoffice"
 import { readApiError } from "@/api/client"
 import { formatDateTime } from "@/lib/format"
@@ -67,24 +68,11 @@ function WorkspaceDetailBody({
   return (
     <div className="flex flex-col gap-10">
       <Section label="Owner">
-        <FieldGrid>
-          <Field label="Name" value={workspace.owner.name ?? "Unknown"} />
-          <Field
-            label="Email"
-            value={
-              workspace.owner.email ? (
-                <span className="break-words">{workspace.owner.email}</span>
-              ) : (
-                <span className="text-muted-foreground">—</span>
-              )
-            }
-          />
-          <Field
-            label="WorkOS user"
-            value={<span className="break-all font-mono text-xs">{workspace.owner.workosUserId}</span>}
-            span={2}
-          />
-        </FieldGrid>
+        {workspace.owner ? (
+          <OwnerFields owner={workspace.owner} />
+        ) : (
+          <p className="border-t pt-5 text-sm text-muted-foreground">Unclaimed</p>
+        )}
       </Section>
 
       <Section label="Details">
@@ -113,6 +101,29 @@ function WorkspaceDetailBody({
         </FieldGrid>
       </Section>
     </div>
+  )
+}
+
+function OwnerFields({ owner }: { owner: WorkspaceOwnerSummary }) {
+  return (
+    <FieldGrid>
+      <Field label="Name" value={owner.name ?? "Unknown"} />
+      <Field
+        label="Email"
+        value={
+          owner.email ? (
+            <span className="break-words">{owner.email}</span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          )
+        }
+      />
+      <Field
+        label="WorkOS user"
+        value={<span className="break-all font-mono text-xs">{owner.workosUserId}</span>}
+        span={2}
+      />
+    </FieldGrid>
   )
 }
 

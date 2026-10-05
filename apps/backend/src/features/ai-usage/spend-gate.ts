@@ -18,6 +18,7 @@ export function workspaceSpendLimitUsd(limits: Pick<SpendPosition, "monthlyBudge
 
 function decideSpend(position: SpendPosition, stage: AISpendStage): SpendDecision {
   if (position.operatorAiDisabled) return { allowed: false, reason: "operator_disabled" }
+  if (position.workspaceUnclaimed) return { allowed: false, reason: "workspace_unclaimed" }
   if (position.workspaceAiDisabled) return { allowed: false, reason: "workspace_disabled" }
 
   const workspaceLimitUsd = workspaceSpendLimitUsd(position)

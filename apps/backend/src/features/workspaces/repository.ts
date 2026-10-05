@@ -7,7 +7,7 @@ interface WorkspaceRow {
   name: string
   slug: string
   tier: WorkspaceTier
-  created_by: string
+  created_by: string | null
   created_at: Date
   updated_at: Date
 }
@@ -17,7 +17,8 @@ export interface Workspace {
   name: string
   slug: string
   tier: WorkspaceTier
-  createdBy: string
+  /** Null for an org workspace nobody has claimed yet. */
+  createdBy: string | null
   createdAt: Date
   updatedAt: Date
 }
@@ -81,6 +82,26 @@ export const WorkspaceRepository = {
     return mapRowToWorkspace(result.rows[0])
   },
 
+  async insertUnclaimedIfAbsent(
+    db: Querier,
+    params: { id: string; name: string; slug: string; tier: WorkspaceTier }
+  ): Promise<void> {
+    await db.query(sql`
+      INSERT INTO workspaces (id, name, slug, tier, created_by)
+      VALUES (${params.id}, ${params.name}, ${params.slug}, ${params.tier}, NULL)
+      ON CONFLICT (id) DO NOTHING
+    `)
+  },
+
+  async findByIdForUpdate(db: Querier, id: string): Promise<Workspace | null> {
+    const result = await db.query<WorkspaceRow>(sql`
+      SELECT id, name, slug, tier, created_by, created_at, updated_at
+      FROM workspaces WHERE id = ${id}
+      FOR UPDATE
+    `)
+    return result.rows[0] ? mapRowToWorkspace(result.rows[0]) : null
+  },
+
   async slugExists(db: Querier, slug: string): Promise<boolean> {
     const result = await db.query(sql`
       SELECT 1 FROM workspaces WHERE slug = ${slug}
@@ -95,11 +116,6 @@ export const WorkspaceRepository = {
     return result.rows[0]?.workos_organization_id ?? null
   },
 
-  async setWorkosOrganizationId(db: Querier, workspaceId: string, orgId: string): Promise<void> {
-    await db.query(sql`
-      UPDATE workspaces SET workos_organization_id = ${orgId} WHERE id = ${workspaceId}
-    `)
-  },
   async updateTier(db: Querier, workspaceId: string, tier: WorkspaceTier): Promise<boolean> {
     const result = await db.query(sql`
       UPDATE workspaces SET tier = ${tier}, updated_at = NOW() WHERE id = ${workspaceId}

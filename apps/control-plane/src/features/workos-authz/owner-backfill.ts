@@ -37,7 +37,7 @@ export class WorkspaceOwnerBackfill {
   ) {}
 
   async run(options: WorkspaceOwnerBackfillOptions = {}): Promise<WorkspaceOwnerBackfillResult> {
-    const scanned = await WorkspaceRegistryRepository.countWithWorkosOrganizationId(this.pool)
+    const scanned = await WorkspaceRegistryRepository.countClaimedWithWorkosOrganizationId(this.pool)
     const candidates = await WorkosAuthzRepository.findWorkspaceCreatorsMissingOwnerRole(this.pool)
 
     const result: WorkspaceOwnerBackfillResult = {

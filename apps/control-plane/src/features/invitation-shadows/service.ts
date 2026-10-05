@@ -9,7 +9,7 @@ import {
   type WorkosOrgService,
 } from "@threahq/backend-common"
 import { InvitationShadowRepository, type InvitationShadowRow } from "./repository"
-import { WorkspaceRegistryRepository } from "../workspaces"
+import { WorkspaceRegistryRepository, type WorkosOrganizationProvisioner } from "../workspaces"
 import { RegionalInvitationError, type RegionalClient } from "../../lib/regional-client"
 import type { InvitationLinkLookupResponse, PendingInvitation, WorkspaceInvitableRole } from "@threahq/types"
 // Type-only to avoid a runtime module cycle; injected by the composition root.
@@ -53,6 +53,7 @@ interface Dependencies {
   pool: Pool
   regionalClient: RegionalClient
   workosOrgService: WorkosOrgService
+  workosOrganizationProvisioner: WorkosOrganizationProvisioner
   platformAdminSync: PlatformAdminSyncService
 }
 
@@ -60,12 +61,20 @@ export class InvitationShadowService {
   private pool: Pool
   private regionalClient: RegionalClient
   private workosOrgService: WorkosOrgService
+  private workosOrganizationProvisioner: WorkosOrganizationProvisioner
   private platformAdminSync: PlatformAdminSyncService
 
-  constructor({ pool, regionalClient, workosOrgService, platformAdminSync }: Dependencies) {
+  constructor({
+    pool,
+    regionalClient,
+    workosOrgService,
+    workosOrganizationProvisioner,
+    platformAdminSync,
+  }: Dependencies) {
     this.pool = pool
     this.regionalClient = regionalClient
     this.workosOrgService = workosOrgService
+    this.workosOrganizationProvisioner = workosOrganizationProvisioner
     this.platformAdminSync = platformAdminSync
   }
 
@@ -290,7 +299,7 @@ export class InvitationShadowService {
       return shadow
     }
 
-    const orgId = await this.ensureWorkosOrganization(params.workspaceId)
+    const orgId = await this.workosOrganizationProvisioner.ensureWorkosOrganization(params.workspaceId)
 
     // No DB connection held during the WorkOS send (INV-41).
     if (orgId && params.inviterWorkosUserId) {
@@ -432,7 +441,7 @@ export class InvitationShadowService {
     }
     if (updated.status !== "pending") return
 
-    const orgId = await this.ensureWorkosOrganization(updated.workspace_id)
+    const orgId = await this.workosOrganizationProvisioner.ensureWorkosOrganization(updated.workspace_id)
     if (!orgId || !params.inviterWorkosUserId) {
       logger.warn(
         { id: params.id, hasOrg: !!orgId, hasInviter: !!params.inviterWorkosUserId },
@@ -556,7 +565,7 @@ export class InvitationShadowService {
     workosUserId: string,
     roleSlug: WorkspaceInvitableRole
   ): Promise<void> {
-    const orgId = await this.ensureWorkosOrganization(workspaceId)
+    const orgId = await this.workosOrganizationProvisioner.ensureWorkosOrganization(workspaceId)
     if (!orgId) return
     try {
       await this.workosOrgService.ensureOrganizationMembership({
@@ -607,42 +616,5 @@ export class InvitationShadowService {
       if (child.workos_invitation_id) await this.revokeWorkosInvitation(child.id, child.workos_invitation_id)
     }
     return true
-  }
-
-  /**
-   * Ensure a WorkOS organization exists for the given workspace.
-   * Uses 3-tier lookup: local cache → WorkOS by external ID → create new.
-   * No DB connection is held during WorkOS API calls (INV-41).
-   */
-  private async ensureWorkosOrganization(workspaceId: string): Promise<string | null> {
-    // Tier 1: Check local DB cache
-    const cachedOrgId = await WorkspaceRegistryRepository.getWorkosOrganizationId(this.pool, workspaceId)
-    if (cachedOrgId) return cachedOrgId
-
-    // Tier 2: Check WorkOS by external ID — survives local DB wipes
-    const existingOrg = await this.workosOrgService.getOrganizationByExternalId(workspaceId)
-    if (existingOrg) {
-      await WorkspaceRegistryRepository.setWorkosOrganizationId(this.pool, workspaceId, existingOrg.id)
-      return existingOrg.id
-    }
-
-    // Tier 3: Create new org in WorkOS
-    const workspace = await WorkspaceRegistryRepository.findById(this.pool, workspaceId)
-    if (!workspace) return null
-
-    try {
-      const org = await this.workosOrgService.createOrganization({
-        name: workspace.name,
-        externalId: workspaceId,
-      })
-      // Optimistic guard: WHERE workos_organization_id IS NULL
-      // Concurrent losers no-op (INV-20)
-      await WorkspaceRegistryRepository.setWorkosOrganizationId(this.pool, workspaceId, org.id)
-    } catch (error) {
-      logger.error({ err: error, workspaceId }, "Failed to create WorkOS organization")
-    }
-
-    // Re-read to get the winning org ID (handles concurrent creation race)
-    return WorkspaceRegistryRepository.getWorkosOrganizationId(this.pool, workspaceId)
   }
 }

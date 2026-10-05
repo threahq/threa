@@ -84,7 +84,7 @@ export interface WorkspaceSummary {
   slug: string
   region: string
   tier: WorkspaceTier
-  createdByWorkosUserId: string
+  createdByWorkosUserId: string | null
   workosOrganizationId: string | null
   memberCount: number
   createdAt: string
@@ -98,7 +98,8 @@ export interface WorkspaceOwnerSummary {
 }
 
 export interface WorkspaceDetail extends WorkspaceSummary {
-  owner: WorkspaceOwnerSummary
+  /** Null for an org workspace nobody has claimed yet. */
+  owner: WorkspaceOwnerSummary | null
 }
 
 /**
@@ -341,10 +342,10 @@ export class BackofficeService {
     if (!row) {
       throw new HttpError("Workspace not found", { status: 404, code: "NOT_FOUND" })
     }
-    const ownerUser = await this.workosOrgService.getUser(row.created_by_workos_user_id)
+    const ownerId = row.created_by_workos_user_id
     return {
       ...this.toWorkspaceSummary(row),
-      owner: summarizeOwner(row.created_by_workos_user_id, ownerUser),
+      owner: ownerId ? summarizeOwner(ownerId, await this.workosOrgService.getUser(ownerId)) : null,
     }
   }
 
@@ -553,7 +554,7 @@ export class BackofficeService {
     slug: string
     region: string
     tier: WorkspaceTier
-    created_by_workos_user_id: string
+    created_by_workos_user_id: string | null
     workos_organization_id: string | null
     member_count: number
     created_at: Date

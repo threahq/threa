@@ -10,6 +10,7 @@ import {
   createWorkspaceHandlers,
   OUTBOX_WORKSPACE_TIER_SYNC,
   WorkspaceRegistryRepository,
+  type WorkosOrganizationProvisioner,
 } from "../../src/features/workspaces"
 import type { KvClient } from "../../src/lib/cloudflare-kv-client"
 import type { RegionalClient } from "../../src/lib/regional-client"
@@ -34,6 +35,7 @@ describe("workspace tier", () => {
       pool,
       regionalClient,
       workosOrgService: {} as WorkosOrgService,
+      workosOrganizationProvisioner: {} as WorkosOrganizationProvisioner,
       kvClient: {} as KvClient,
       platformAdminSync: {} as PlatformAdminSyncService,
       availableRegions: ["eu"],

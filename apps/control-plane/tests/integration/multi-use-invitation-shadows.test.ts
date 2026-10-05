@@ -5,7 +5,7 @@ import { HttpError, StubWorkosOrgService } from "@threahq/backend-common"
 import { WORKSPACE_ROLE_SLUGS } from "@threahq/types"
 import { InvitationShadowRepository, InvitationShadowService } from "../../src/features/invitation-shadows"
 import { PlatformAdminSyncService } from "../../src/features/platform-admin"
-import { WorkspaceRegistryRepository } from "../../src/features/workspaces"
+import { WorkosOrganizationProvisioner, WorkspaceRegistryRepository } from "../../src/features/workspaces"
 import { RegionalInvitationError, RegionalClient } from "../../src/lib/regional-client"
 import { setupTestDatabase } from "./setup"
 
@@ -73,6 +73,7 @@ describe("multi-use invitation shadows", () => {
       pool,
       regionalClient: regional,
       workosOrgService: workos,
+      workosOrganizationProvisioner: new WorkosOrganizationProvisioner({ pool, workosOrgService: workos }),
       platformAdminSync: new PlatformAdminSyncService({ pool, regionalClient: regional }),
     })
   })
@@ -414,6 +415,7 @@ describe("multi-use invitation shadows", () => {
         },
       }),
       workosOrgService: workos,
+      workosOrganizationProvisioner: new WorkosOrganizationProvisioner({ pool, workosOrgService: workos }),
       platformAdminSync: new PlatformAdminSyncService({ pool, regionalClient: regional }),
     })
 
@@ -490,6 +492,7 @@ describe("multi-use invitation shadows", () => {
         },
       }),
       workosOrgService: workos,
+      workosOrganizationProvisioner: new WorkosOrganizationProvisioner({ pool, workosOrgService: workos }),
       platformAdminSync: new PlatformAdminSyncService({ pool, regionalClient: regional }),
     })
 
@@ -517,6 +520,7 @@ describe("multi-use invitation shadows", () => {
         claimInvitationLink: async () => ({ ok: true, invitationId: "inv_claim_strip_child" }) as never,
       }),
       workosOrgService: workos,
+      workosOrganizationProvisioner: new WorkosOrganizationProvisioner({ pool, workosOrgService: workos }),
       platformAdminSync: new PlatformAdminSyncService({ pool, regionalClient: regional }),
     })
 
@@ -587,6 +591,7 @@ describe("multi-use invitation shadows", () => {
       pool,
       regionalClient: regional,
       workosOrgService: workos,
+      workosOrganizationProvisioner: new WorkosOrganizationProvisioner({ pool, workosOrgService: workos }),
       platformAdminSync: {
         enqueueIfAdmin: async () => {
           throw new Error("forced CP transaction rollback")
@@ -1013,6 +1018,7 @@ describe("multi-use invitation shadows", () => {
         },
       }),
       workosOrgService: workos,
+      workosOrganizationProvisioner: new WorkosOrganizationProvisioner({ pool, workosOrgService: workos }),
       platformAdminSync: new PlatformAdminSyncService({ pool, regionalClient: regional }),
     })
 

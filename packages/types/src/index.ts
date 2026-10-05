@@ -1450,6 +1450,9 @@ export {
   type PushTestProgress,
 } from "./push"
 
+// Org workspaces (Threa Connect: the unclaimed workspace for a counterpart org)
+export { orgWorkspaceEnsureSchema, type OrgWorkspaceEnsureRequest, type OrgWorkspacePerson } from "./org-workspaces"
+
 // Stream connections (Threa Connect: a channel shared with other workspaces)
 export {
   StreamConnectionStates,

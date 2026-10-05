@@ -106,6 +106,8 @@ export interface SpendPosition {
   operatorCeilingUsd: number
   workspaceAiDisabled: boolean
   operatorAiDisabled: boolean
+  /** The workspace row exists with no creator; false when there is no row. */
+  workspaceUnclaimed: boolean
   workspaceSpendUsd: number
   /** Null when the request carries no user. */
   user: {
@@ -304,6 +306,7 @@ export const AIBudgetRepository = {
       operator_ceiling_usd: string
       workspace_ai_disabled: boolean
       operator_ai_disabled: boolean
+      workspace_unclaimed: boolean
       default_user_agent_allowance_usd: string | null
       user_ai_disabled: boolean
       monthly_quota_usd: string | null
@@ -317,6 +320,7 @@ export const AIBudgetRepository = {
         COALESCE(b.operator_ceiling_usd, ${DEFAULT_AI_BUDGET_CONFIG.operatorCeilingUsd}) AS operator_ceiling_usd,
         COALESCE(b.ai_disabled, false) AS workspace_ai_disabled,
         COALESCE(b.operator_ai_disabled, false) AS operator_ai_disabled,
+        (w.id IS NOT NULL AND w.created_by IS NULL) AS workspace_unclaimed,
         b.default_user_agent_allowance_usd,
         COALESCE(q.ai_disabled, false) AS user_ai_disabled,
         q.monthly_quota_usd,
@@ -336,6 +340,7 @@ export const AIBudgetRepository = {
           AND created_at >= ${params.periodStart}
           AND created_at < ${params.periodEnd}
       ) spend
+      LEFT JOIN workspaces w ON w.id = ${params.workspaceId}
       LEFT JOIN ai_budgets b ON b.workspace_id = ${params.workspaceId}
       LEFT JOIN ai_user_quotas q ON q.workspace_id = ${params.workspaceId} AND q.user_id = ${userId}
     `)
@@ -345,6 +350,7 @@ export const AIBudgetRepository = {
       operatorCeilingUsd: parseFloat(row.operator_ceiling_usd),
       workspaceAiDisabled: row.workspace_ai_disabled,
       operatorAiDisabled: row.operator_ai_disabled,
+      workspaceUnclaimed: row.workspace_unclaimed,
       workspaceSpendUsd: parseFloat(row.workspace_spend_usd),
       user:
         userId === null

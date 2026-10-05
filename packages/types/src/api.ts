@@ -2483,6 +2483,7 @@ export const AI_SPEND_STAGE_CUTOFFS: Record<AISpendStage, number> = {
 
 export const AI_SPEND_DENIAL_REASONS = [
   "operator_disabled",
+  "workspace_unclaimed",
   "workspace_disabled",
   "workspace_limit",
   "user_disabled",

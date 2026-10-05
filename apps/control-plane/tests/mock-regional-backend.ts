@@ -4,7 +4,7 @@
  */
 
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from "http"
-import { streamConnectionSnapshotSchema, type StreamConnectionChannel } from "@threahq/types"
+import { orgWorkspaceEnsureSchema, streamConnectionSnapshotSchema, type StreamConnectionChannel } from "@threahq/types"
 
 export interface MockRegionalBackend {
   url: string
@@ -77,6 +77,14 @@ export async function startMockRegionalBackend(): Promise<MockRegionalBackend> {
       const status = streamConnectionSnapshotSchema.safeParse(body).success ? streamConnectionStatus : 400
       res.writeHead(status)
       res.end()
+      return
+    }
+
+    // POST /internal/org-workspaces — org workspace fan-out, validated against the schema the region applies.
+    if (req.method === "POST" && url === "/internal/org-workspaces") {
+      const parsed = orgWorkspaceEnsureSchema.safeParse(body)
+      res.writeHead(parsed.success ? 200 : 400, { "Content-Type": "application/json" })
+      res.end(JSON.stringify(parsed.success ? { workspaceId: parsed.data.workspaceId } : { code: "VALIDATION_ERROR" }))
       return
     }
 
