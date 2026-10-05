@@ -153,12 +153,12 @@ export const StreamConnectionRepository = {
     return result.rows[0] ? mapRecord(result.rows[0]) : null
   },
 
-  /** invited → revoked. Callers hold the row lock. */
-  async revokeInvite(db: Querier, id: string): Promise<void> {
+  /** A pending invite or an accepted share → revoked. Callers hold the row lock. */
+  async revoke(db: Querier, id: string): Promise<void> {
     await db.query(
       `UPDATE stream_connections
        SET state = 'revoked', revision = revision + 1, updated_at = NOW()
-       WHERE id = $1 AND state = 'invited'`,
+       WHERE id = $1 AND state <> 'revoked'`,
       [id]
     )
   },

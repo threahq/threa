@@ -48,6 +48,7 @@ function fakeStream(overrides: Partial<Stream> = {}): Stream {
     createdAt: NOW,
     updatedAt: NOW,
     archivedAt: null,
+    disconnectedAt: null,
     ...overrides,
   }
 }

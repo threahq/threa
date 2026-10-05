@@ -690,4 +690,46 @@ describe("StreamConnectionService", () => {
       service.revokeInvite({ connectionId: pending.snapshot.id, hostWorkspaceId: partner })
     ).rejects.toMatchObject({ status: 404, code: StreamConnectionErrorCodes.NOT_FOUND })
   })
+
+  test("should end a share from either side but never a peer's, push it to both regions, and drop it from the other partners' peers", async () => {
+    const host = await seedWorkspace("eu", "Acme")
+    const second = await seedWorkspace("us", "Globex")
+    const third = await seedWorkspace("eu", "Initech")
+    const stranger = await seedWorkspace("eu", "Umbrella")
+    const stream = `stream_leave_${crypto.randomUUID()}`
+    const secondConnection = await accept((await invite(host, stream)).token, second)
+    const thirdConnection = await accept((await invite(host, stream)).token, third)
+    const pending = await invite(host, stream)
+    eu.reset()
+    us.reset()
+    const refused = { status: 404, code: StreamConnectionErrorCodes.NOT_FOUND }
+    await expect(service.disconnect({ connectionId: secondConnection.id, workspaceId: third })).rejects.toMatchObject(
+      refused
+    )
+
+    const left = await service.disconnect({ connectionId: secondConnection.id, workspaceId: second })
+    const again = await service.disconnect({ connectionId: secondConnection.id, workspaceId: host })
+    await service.syncToRegions({ connectionId: secondConnection.id })
+    await service.syncToRegions({ connectionId: thirdConnection.id })
+    const ended = await service.disconnect({ connectionId: thirdConnection.id, workspaceId: host })
+
+    const secondLeft = { ...secondConnection, state: "revoked", revision: 4, peerWorkspaceIds: [third] }
+    const thirdAlone = { ...thirdConnection, revision: 3, peerWorkspaceIds: [] }
+    expect({ left, again, ended, eu: received(eu), us: received(us) }).toEqual({
+      left: secondLeft,
+      again: secondLeft,
+      ended: { ...thirdAlone, state: "revoked", revision: 4 },
+      eu: [
+        { url: "/internal/stream-connections", body: secondLeft },
+        { url: "/internal/stream-connections", body: thirdAlone },
+      ],
+      us: [{ url: "/internal/stream-connections", body: secondLeft }],
+    })
+    await expect(
+      service.disconnect({ connectionId: secondConnection.id, workspaceId: stranger })
+    ).rejects.toMatchObject(refused)
+    await expect(service.disconnect({ connectionId: pending.snapshot.id, workspaceId: host })).rejects.toMatchObject(
+      refused
+    )
+  })
 })

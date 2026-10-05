@@ -2176,6 +2176,35 @@ describe("registerWorkspaceSocketHandlers", () => {
     cleanup()
   })
 
+  it("should refetch a cached stream bootstrap when stream:updated changes its disconnectedAt, and only then", async () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const host = { id: "ws_host", name: "Acme" }
+    const shared = makeStreamBootstrap("stream_copy", { connectedWorkspaces: [host] })
+    const disconnectedAt = "2026-10-05T07:00:00.000Z"
+    const queryFn = vi.fn(async () => ({
+      ...shared,
+      stream: { ...shared.stream, disconnectedAt },
+      connectedWorkspaces: [],
+    }))
+    queryClient.setQueryDefaults(streamKeys.bootstrap("ws_1", "stream_copy"), { queryFn })
+    queryClient.setQueryData(streamKeys.bootstrap("ws_1", "stream_copy"), shared)
+    const { socket, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+
+    const update = (stream: Stream) => emitAsync("stream:updated", { workspaceId: "ws_1", streamId: stream.id, stream })
+    await update({ ...shared.stream, description: "renamed elsewhere", disconnectedAt: null })
+    const callsWhileShared = queryFn.mock.calls.length
+    await update({ ...shared.stream, disconnectedAt })
+
+    await vi.waitFor(() =>
+      expect(
+        queryClient.getQueryData<StreamBootstrap>(streamKeys.bootstrap("ws_1", "stream_copy"))?.connectedWorkspaces
+      ).toEqual([])
+    )
+    expect({ callsWhileShared, calls: queryFn.mock.calls.length }).toEqual({ callsWhileShared: 0, calls: 1 })
+    cleanup()
+  })
+
   it("returns the revision-merged count from a reconnect whose snapshot is older than IndexedDB", async () => {
     const current = makeStream("stream_reconnect_count", { messageCount: 12, messageCountRevision: 12 })
     const fetchStartedAt = Date.now()

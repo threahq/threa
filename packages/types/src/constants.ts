@@ -52,7 +52,13 @@ export function isAsideHostType(type: string): type is AsideHostStreamType {
   return (ASIDE_HOST_STREAM_TYPES as readonly string[]).includes(type)
 }
 
-export const STREAM_READ_ONLY_REASONS = ["archived", "system_stream", "shared_copy", "not_a_member"] as const
+export const STREAM_READ_ONLY_REASONS = [
+  "archived",
+  "system_stream",
+  "shared_copy",
+  "disconnected",
+  "not_a_member",
+] as const
 export type StreamReadOnlyReason = (typeof STREAM_READ_ONLY_REASONS)[number]
 
 export const StreamReadOnlyReasons = {
@@ -60,6 +66,8 @@ export const StreamReadOnlyReasons = {
   SYSTEM_STREAM: "system_stream",
   /** A partner member's view of the copy of a channel another workspace shares with it: writable only through the host. */
   SHARED_COPY: "shared_copy",
+  /** A copy whose share has ended: it still reads, but nothing writes to it. */
+  DISCONNECTED: "disconnected",
   NOT_A_MEMBER: "not_a_member",
 } as const satisfies Record<string, StreamReadOnlyReason>
 

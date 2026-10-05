@@ -14,7 +14,9 @@ import {
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
 type Assert<T extends true> = T
 
-type _Reason = Assert<Equal<StreamReadOnlyReason, "archived" | "system_stream" | "shared_copy" | "not_a_member">>
+type _Reason = Assert<
+  Equal<StreamReadOnlyReason, "archived" | "system_stream" | "shared_copy" | "disconnected" | "not_a_member">
+>
 type _State = Assert<Equal<StreamViewerState, { readOnly: boolean; readOnlyReason: StreamReadOnlyReason | null }>>
 type _ViewerStream = Assert<Equal<ViewerStream, Stream & StreamViewerState>>
 type _ViewerStreamWithPreview = Assert<Equal<ViewerStreamWithPreview, StreamWithPreview & StreamViewerState>>
@@ -29,11 +31,12 @@ describe("stream read-only contract", () => {
       errorCode: StreamErrorCodes.READ_ONLY,
       compileTimeContract,
     }).toEqual({
-      reasons: ["archived", "system_stream", "shared_copy", "not_a_member"],
+      reasons: ["archived", "system_stream", "shared_copy", "disconnected", "not_a_member"],
       reasonObject: {
         ARCHIVED: "archived",
         SYSTEM_STREAM: "system_stream",
         SHARED_COPY: "shared_copy",
+        DISCONNECTED: "disconnected",
         NOT_A_MEMBER: "not_a_member",
       },
       errorCode: "STREAM_READ_ONLY",

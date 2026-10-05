@@ -471,6 +471,65 @@ test.describe("Stream connections", () => {
     }
   })
 
+  test("should leave the partner's copy readable but closed to replies, and drop the partner from the host's settings, when the partner admin disconnects", async ({
+    browser,
+    page,
+  }) => {
+    const partnerContext = await browser.newContext()
+    try {
+      const partnerPage = await partnerContext.newPage()
+      const { host, partner, slug, streamId } = await setUpHostAndPartner(page, partnerPage, "local-2")
+      await page.goto(settingsUrl(host.workspaceId, streamId, "connect"))
+      await acceptInvite(partnerPage, await createInviteLink(page), slug, host.workspaceName, partner.workspaceName)
+
+      const opener = `Mockups for review ${host.testId}`
+      const opened = await page.request.post(`/api/workspaces/${host.workspaceId}/messages`, {
+        data: { streamId, content: opener },
+      })
+      await expectApiOk(opened, "Send host message")
+      await partnerPage.goto(`/w/${partner.workspaceId}/s/${streamId}`)
+      await expect(timelineMessage(partnerPage, opener)).toBeVisible({ timeout: 30_000 })
+      await expect(partnerPage.getByText(`Shared with ${host.workspaceName}`)).toBeVisible({ timeout: 15_000 })
+
+      await page.goto(`/w/${host.workspaceId}/s/${streamId}`)
+      await expect(page.getByText(`Shared with ${partner.workspaceName}`)).toBeVisible({ timeout: 15_000 })
+
+      await partnerPage.goto(settingsUrl(partner.workspaceId, streamId, "connect"))
+      const settings = partnerPage.getByRole("dialog")
+      await expect(settings.getByText("Only the workspace this channel comes from can share it.")).toBeVisible()
+      await expect(settings.getByRole("button", { name: "Create invite link" })).toHaveCount(0)
+      await settings.getByRole("button", { name: "Disconnect" }).click()
+      const confirm = partnerPage.getByRole("alertdialog", { name: `Disconnect ${host.workspaceName}?` })
+      await confirm.getByRole("button", { name: "Disconnect" }).click()
+      // The alert hides the settings dialog from role queries while open, which would pass the checks below vacuously.
+      await expect(confirm).toBeHidden()
+      await expect(settings).toBeVisible()
+      await expect(settings.getByRole("button", { name: "Disconnect" })).toHaveCount(0, { timeout: 15_000 })
+      await expect(settings.getByText(host.workspaceName)).toHaveCount(0)
+      await partnerPage.keyboard.press("Escape")
+
+      await expect(
+        partnerPage.getByText("This conversation is no longer shared with your workspace.", { exact: false })
+      ).toBeVisible({ timeout: 30_000 })
+      await expect(partnerPage.locator("[data-message-composer-root] [contenteditable='true']")).toHaveCount(0)
+      await expect(partnerPage.getByText(`Shared with ${host.workspaceName}`)).toHaveCount(0)
+      await expect(timelineMessage(partnerPage, opener)).toBeVisible()
+
+      await expect(page.getByText(`Shared with ${partner.workspaceName}`)).toHaveCount(0, { timeout: 30_000 })
+      const stillHere = `Still here ${host.testId}`
+      await sendText(page, stillHere)
+      // An optimistic row carries its client id until the server accepts the send.
+      await expect(
+        page.getByRole("main").locator('div[data-event-id][data-message-id^="msg_"]').filter({ hasText: stillHere })
+      ).toBeVisible({ timeout: 15_000 })
+      await page.goto(settingsUrl(host.workspaceId, streamId, "connect"))
+      await expect(page.getByRole("dialog").getByRole("button", { name: "Create invite link" })).toBeVisible()
+      await expect(page.getByRole("dialog").getByText(partner.workspaceName)).toHaveCount(0)
+    } finally {
+      await partnerContext.close()
+    }
+  })
+
   test("should bring a third workspace into a channel already shared with another, and list both after a reload", async ({
     browser,
     page,

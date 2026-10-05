@@ -42,6 +42,7 @@ function stream(overrides: Partial<Stream> = {}): Stream {
     createdAt: new Date(0),
     updatedAt: new Date(0),
     archivedAt: null,
+    disconnectedAt: null,
     ...overrides,
   }
 }
@@ -75,6 +76,21 @@ describe("deriveStreamViewerState", () => {
         ancestorArchived: true,
         participates: true,
       }),
+      deriveStreamViewerState({
+        target: stream({ originWorkspaceId: "ws_host", disconnectedAt: new Date(0) }),
+        ancestorArchived: false,
+        participates: true,
+      }),
+      deriveStreamViewerState({
+        target: stream({ originWorkspaceId: "ws_host", disconnectedAt: new Date(0) }),
+        ancestorArchived: false,
+        participates: false,
+      }),
+      deriveStreamViewerState({
+        target: stream({ originWorkspaceId: "ws_host", disconnectedAt: new Date(0) }),
+        ancestorArchived: true,
+        participates: true,
+      }),
       deriveStreamViewerState({ target: writable, ancestorArchived: false, participates: false }),
     ]).toEqual([
       { readOnly: false, readOnlyReason: null },
@@ -82,6 +98,9 @@ describe("deriveStreamViewerState", () => {
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.SYSTEM_STREAM },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.SHARED_COPY },
+      { readOnly: true, readOnlyReason: StreamReadOnlyReasons.NOT_A_MEMBER },
+      { readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED },
+      { readOnly: true, readOnlyReason: StreamReadOnlyReasons.DISCONNECTED },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.NOT_A_MEMBER },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.NOT_A_MEMBER },

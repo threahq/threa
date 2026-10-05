@@ -24,6 +24,7 @@ function stream(id: string, workspaceId = "ws_1", rootStreamId: string | null = 
     createdAt: new Date(0),
     updatedAt: new Date(0),
     archivedAt: null,
+    disconnectedAt: null,
   }
 }
 

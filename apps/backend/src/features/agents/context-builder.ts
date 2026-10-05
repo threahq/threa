@@ -588,6 +588,9 @@ export async function enrichMessagesWithAttachments(
     workspaceId,
     allAttachmentIds
   )
+  for (const id of await AttachmentRepository.listFromEndedShare(db, workspaceId, allAttachmentIds)) {
+    extractionsByAttachment.delete(id)
+  }
 
   const triggerIdx = triggerMessageId ? messages.findIndex((m) => m.id === triggerMessageId) : -1
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import { AttachmentSafetyStatuses } from "@threahq/types"
 import * as db from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
@@ -408,6 +408,20 @@ describe("AttachmentService", () => {
   })
 
   describe("getAccessible", () => {
+    beforeEach(() => {
+      spyOn(AttachmentRepository, "listFromEndedShare").mockResolvedValue(new Set())
+    })
+
+    it("should return null when the file came from a share that has ended", async () => {
+      spyOn(AttachmentRepository, "findById").mockResolvedValue(makeAttachment({ streamId: "stream_a" }))
+      spyOn(AttachmentRepository, "listFromEndedShare").mockResolvedValue(new Set(["attach_1"]))
+
+      const { service } = createService()
+      const result = await service.getAccessible("attach_1", { workspaceId: "ws_1", accessibleStreamIds: ["stream_a"] })
+
+      expect(result).toBeNull()
+    })
+
     it("returns the attachment when its owning stream is in the accessible set", async () => {
       spyOn(AttachmentRepository, "findById").mockResolvedValue(makeAttachment({ streamId: "stream_a" }))
       const refSpy = spyOn(AttachmentReferenceRepository, "findReferencingStreamIds").mockResolvedValue([])

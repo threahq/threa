@@ -19,7 +19,8 @@ import { isImageAttachment } from "./image-caption"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { attachmentId as generateAttachmentId } from "../../lib/id"
 import { MAX_FILE_SIZE } from "../../middleware/upload"
-import { ATTACHMENT_CATEGORIES, type AttachmentCategory } from "@threahq/types"
+import { HttpError } from "../../lib/errors"
+import { ATTACHMENT_CATEGORIES, StreamConnectionErrorCodes, type AttachmentCategory } from "@threahq/types"
 
 declare module "express" {
   interface Request {
@@ -34,6 +35,12 @@ interface Dependencies {
   storage: StorageProvider
   pool: Pool
 }
+
+const shareEndedError = () =>
+  new HttpError("This file came from a shared channel that has since been disconnected", {
+    status: 403,
+    code: StreamConnectionErrorCodes.SHARE_ENDED,
+  })
 
 const reserveAttachmentSchema = z.object({
   filename: z.string().min(1).max(255),
@@ -251,6 +258,9 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       } else if (unboundAttachmentBlockedForCaller(attachment, userId)) {
         return res.status(403).json({ error: "Access denied" })
       }
+      if (await attachmentService.isFromEndedShare(attachment)) {
+        throw shareEndedError()
+      }
 
       const parsed = z
         .object({
@@ -316,6 +326,9 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
         }
       } else if (unboundAttachmentBlockedForCaller(attachment, userId)) {
         return res.status(403).json({ error: "Access denied" })
+      }
+      if (await attachmentService.isFromEndedShare(attachment)) {
+        throw shareEndedError()
       }
 
       const parsed = z
@@ -424,6 +437,9 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
         }
       } else if (unboundAttachmentBlockedForCaller(attachment, userId)) {
         return res.status(403).json({ error: "Access denied" })
+      }
+      if (await attachmentService.isFromEndedShare(attachment)) {
+        throw shareEndedError()
       }
 
       const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, workspaceId, attachmentId)

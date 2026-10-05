@@ -294,6 +294,8 @@ export interface Stream {
    * copied from; null/absent on an ordinary stream. Absent on legacy cached rows.
    */
   originWorkspaceId?: string | null
+  /** When the share behind a partner's copy ended; the copy reads but takes no writes until it comes back. */
+  disconnectedAt?: string | null
   createdBy: string
   createdAt: string
   updatedAt: string

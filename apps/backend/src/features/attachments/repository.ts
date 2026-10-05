@@ -147,12 +147,44 @@ const SELECT_FIELDS = `
   created_at
 `
 
+/**
+ * Attachment `a` came from the other side of a shared channel whose share has
+ * ended: its uploader is a copy from another workspace, and the channel no
+ * longer holds an active connection to that workspace.
+ */
+const fromEndedShareSql = composeSql`EXISTS (
+  SELECT 1
+  FROM streams es_s
+  LEFT JOIN users es_u ON es_u.workspace_id = es_s.workspace_id AND es_u.id = a.uploaded_by
+  LEFT JOIN actor_copies es_ac ON es_ac.workspace_id = es_s.workspace_id AND es_ac.id = a.uploaded_by
+  WHERE es_s.workspace_id = a.workspace_id AND es_s.id = a.stream_id
+    AND COALESCE(es_u.origin_workspace_id, es_ac.origin_workspace_id) IS NOT NULL
+    AND NOT EXISTS (
+      SELECT 1 FROM stream_connections es_sc
+      WHERE es_sc.workspace_id = es_s.workspace_id
+        AND es_sc.stream_id = COALESCE(es_s.root_stream_id, es_s.id)
+        AND es_sc.remote_workspace_id = COALESCE(es_u.origin_workspace_id, es_ac.origin_workspace_id)
+        AND es_sc.role <> 'peer'
+        AND es_sc.state = 'active'
+    )
+)`
+
 export const AttachmentRepository = {
   async findById(client: Querier, workspaceId: string, id: string): Promise<Attachment | null> {
     const result = await client.query<AttachmentRow>(
       sql`SELECT ${sql.raw(SELECT_FIELDS)} FROM attachments WHERE workspace_id = ${workspaceId} AND id = ${id}`
     )
     return result.rows[0] ? mapRowToAttachment(result.rows[0]) : null
+  },
+
+  /** The ids among `ids` that came from the other side of a share that has ended. */
+  async listFromEndedShare(client: Querier, workspaceId: string, ids: string[]): Promise<Set<string>> {
+    if (ids.length === 0) return new Set()
+    const result = await client.query<{ id: string }>(composeSql`
+      SELECT a.id FROM attachments a
+      WHERE a.workspace_id = ${workspaceId} AND a.id = ANY(${ids}) AND ${fromEndedShareSql}
+    `)
+    return new Set(result.rows.map((row) => row.id))
   },
 
   async findByIds(client: Querier, workspaceId: string, ids: string[]): Promise<Attachment[]> {
@@ -230,7 +262,7 @@ export const AttachmentRepository = {
   ): Promise<Map<string, AttachmentWithExtraction[]>> {
     if (messageIds.length === 0) return new Map()
 
-    const result = await client.query<AttachmentWithExtractionRow>(sql`
+    const result = await client.query<AttachmentWithExtractionRow>(composeSql`
       SELECT
         a.id, a.workspace_id, a.stream_id, a.message_id, a.uploaded_by,
         a.filename, a.mime_type, a.size_bytes,
@@ -242,6 +274,7 @@ export const AttachmentRepository = {
         e.full_text AS extraction_full_text
       FROM attachments a
       LEFT JOIN attachment_extractions e ON e.attachment_id = a.id AND e.workspace_id = ${workspaceId}
+        AND NOT ${fromEndedShareSql}
       WHERE a.workspace_id = ${workspaceId} AND a.message_id = ANY(${messageIds})
     `)
 
@@ -565,7 +598,7 @@ export const AttachmentRepository = {
 
     // Use separate queries to avoid nested sql template issues
     if (contentTypes?.length) {
-      const result = await client.query<AttachmentWithExtractionRow>(sql`
+      const result = await client.query<AttachmentWithExtractionRow>(composeSql`
         SELECT
           a.id, a.workspace_id, a.stream_id, a.message_id, a.uploaded_by,
           a.filename, a.mime_type, a.size_bytes,
@@ -587,13 +620,14 @@ export const AttachmentRepository = {
             OR e.full_text ILIKE ${searchPattern}
           )
           AND e.content_type = ANY(${contentTypes})
+          AND NOT ${fromEndedShareSql}
         ORDER BY a.created_at DESC
         LIMIT ${limit}
       `)
       return result.rows.map(mapRowToAttachmentWithExtraction)
     }
 
-    const result = await client.query<AttachmentWithExtractionRow>(sql`
+    const result = await client.query<AttachmentWithExtractionRow>(composeSql`
       SELECT
         a.id, a.workspace_id, a.stream_id, a.message_id, a.uploaded_by,
         a.filename, a.mime_type, a.size_bytes,
@@ -614,6 +648,7 @@ export const AttachmentRepository = {
           OR e.summary ILIKE ${searchPattern}
           OR e.full_text ILIKE ${searchPattern}
         )
+        AND NOT ${fromEndedShareSql}
       ORDER BY a.created_at DESC
       LIMIT ${limit}
     `)
@@ -718,6 +753,7 @@ export const AttachmentRepository = {
       WHERE a.workspace_id = ${workspaceId}
         AND a.message_id IS NOT NULL
         AND a.safety_status = ${AttachmentSafetyStatuses.CLEAN}
+        AND NOT ${fromEndedShareSql}
         AND (${!hasCategories} OR a.mime_type ILIKE ANY(${mimePatterns}))
         AND (${uploadedBy === undefined} OR a.uploaded_by = ${uploadedBy ?? ""})
         AND (${before === undefined} OR a.created_at < ${before ?? new Date(0)})

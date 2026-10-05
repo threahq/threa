@@ -2,16 +2,18 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import type { Pool } from "pg"
 import {
   StreamConnectionErrorCodes,
+  StreamErrorCodes,
+  StreamReadOnlyReasons,
   StreamTypes,
   type StreamConnectionSnapshot,
   type StreamType,
   type Visibility,
 } from "@threahq/types"
 import { streamConnectionId } from "@threahq/backend-common"
-import { setupTestDatabase, addTestMember } from "./setup"
-import { UserRepository, WorkspaceRepository } from "../../src/features/workspaces"
+import { setupTestDatabase, addTestMember, withTransaction } from "./setup"
+import { ActorCopyRepository, UserRepository, WorkspaceRepository } from "../../src/features/workspaces"
 import { WorkspaceUserPermissionsRepository } from "../../src/features/workspace-authz"
-import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
+import { assertStreamWritable, StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
 import { FeatureFlagOverrideRepository, FeatureFlagService } from "../../src/features/feature-flags"
 import { StreamConnectionImportService, StreamConnectionService } from "../../src/features/stream-connections"
@@ -19,7 +21,8 @@ import { StreamConnectionRepository } from "../../src/features/stream-connection
 import { ControlPlaneClient } from "../../src/lib/control-plane-client"
 import { JobQueues } from "../../src/lib/queue"
 import type { StreamConnectionUpdatedOutboxPayload } from "../../src/lib/outbox"
-import { streamId, userId, workspaceId } from "../../src/lib/id"
+import { attachmentId, extractionId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { AttachmentExtractionRepository, AttachmentRepository } from "../../src/features/attachments"
 
 interface CpRequest {
   path: string
@@ -481,9 +484,15 @@ describe("StreamConnectionService", () => {
       partnerRegion: "us",
     }
 
-    await service.applySnapshot(active)
+    const own = { ...activated(snapshot(remoteHost, hostStreamId), peer, [remotePartner.id]), hostRegion: "us" }
 
-    expect(await StreamConnectionRepository.listLiveForStream(pool, peer.id, hostStreamId)).toEqual([
+    await service.applySnapshot(active)
+    await service.applySnapshot(own)
+
+    // Both ids are minted in the same millisecond, so the list's id order is random between them.
+    const listed = await StreamConnectionRepository.listLiveForStream(pool, peer.id, hostStreamId)
+    expect(listed.sort((a, b) => a.role.localeCompare(b.role))).toEqual([
+      seenBy(own, "partner", remoteHost),
       seenBy(active, "peer", remotePartner),
     ])
   })
@@ -500,10 +509,16 @@ describe("StreamConnectionService", () => {
     }
     const renamed = { ...active, revision: active.revision + 1, partnerWorkspaceName: "Globex Corp" }
 
+    const own = { ...activated(snapshot(remoteHost, hostStreamId), peer, [remotePartner.id]), hostRegion: "us" }
+
+    await service.applySnapshot(own)
     await service.applySnapshot(renamed)
     await service.applySnapshot(active)
 
-    expect(await StreamConnectionRepository.listLiveForStream(pool, peer.id, hostStreamId)).toEqual([
+    // Both ids are minted in the same millisecond, so the list's id order is random between them.
+    const listed = await StreamConnectionRepository.listLiveForStream(pool, peer.id, hostStreamId)
+    expect(listed.sort((a, b) => a.role.localeCompare(b.role))).toEqual([
+      seenBy(own, "partner", remoteHost),
       seenBy(renamed, "peer", { id: remotePartner.id, name: "Globex Corp" }),
     ])
   })
@@ -619,7 +634,7 @@ describe("StreamConnectionService", () => {
     })
   })
 
-  test("should refuse to share a DM, a thread, an archived channel, or an encrypted channel", async () => {
+  test("should refuse to share a DM, a thread, an archived channel, an encrypted channel, or another workspace's copy", async () => {
     const host = await seedWorkspace("Acme")
     const dm = await seedStream(host.id, host.adminId, StreamTypes.DM)
     const channel = await seedStream(host.id, host.adminId)
@@ -641,9 +656,19 @@ describe("StreamConnectionService", () => {
       ownerUserKeyId: "e2ek_owner",
     })
     await StreamMemberRepository.insert(pool, host.id, dm.id, host.adminId)
+    const copy = await StreamRepository.insert(pool, {
+      id: streamId(),
+      workspaceId: host.id,
+      type: StreamTypes.CHANNEL,
+      slug: "copied",
+      displayName: "Copied",
+      visibility: "public",
+      createdBy: host.adminId,
+      originWorkspaceId: workspaceId(),
+    })
 
     const outcomes = await Promise.allSettled(
-      [dm, thread, archived, sealed].map((s) =>
+      [dm, thread, archived, sealed, copy].map((s) =>
         service.createInvite({ workspaceId: host.id, streamId: s.id, userId: host.adminId })
       )
     )
@@ -651,7 +676,7 @@ describe("StreamConnectionService", () => {
     expect({
       codes: outcomes.map((o) => (o.status === "rejected" ? (o.reason as { code: string }).code : "shared")),
       sent: cp.requests,
-    }).toEqual({ codes: Array(4).fill(StreamConnectionErrorCodes.NOT_SHAREABLE), sent: [] })
+    }).toEqual({ codes: Array(5).fill(StreamConnectionErrorCodes.NOT_SHAREABLE), sent: [] })
   })
 
   test("should name the channel and call it shareable only while it is an active, unencrypted channel with sharing on", async () => {
@@ -1021,5 +1046,364 @@ describe("StreamConnectionService", () => {
     expect(queued.rows).toEqual([
       { workspace_id: second.id, payload: { workspaceId: second.id, connectionId: toSecond.id }, deferred: true },
     ])
+  })
+
+  describe("when a share is disconnected", () => {
+    /** A host channel shared with a partner in this region, whose copy holds one thread. */
+    async function seedShare() {
+      const host = await seedWorkspace("Acme")
+      const partner = await seedWorkspace("Globex")
+      const channel = await seedStream(host.id, host.adminId)
+      const copy = await StreamRepository.insert(pool, {
+        id: channel.id,
+        workspaceId: partner.id,
+        type: StreamTypes.CHANNEL,
+        slug: channel.slug!,
+        displayName: "Launch",
+        visibility: "private",
+        createdBy: partner.adminId,
+        originWorkspaceId: host.id,
+      })
+      const thread = await StreamRepository.insert(pool, {
+        id: streamId(),
+        workspaceId: partner.id,
+        type: StreamTypes.THREAD,
+        parentStreamId: channel.id,
+        parentAnchorId: "msg_anchor",
+        rootStreamId: channel.id,
+        createdBy: partner.adminId,
+        originWorkspaceId: host.id,
+      })
+      await StreamMemberRepository.insert(pool, partner.id, copy.id, partner.adminId)
+      const active = activated(snapshot(host, channel.id), partner)
+      await service.applySnapshot(active)
+      return { host, partner, channel, copy, thread, active }
+    }
+
+    const ended = (connection: StreamConnectionSnapshot): StreamConnectionSnapshot => ({
+      ...connection,
+      revision: connection.revision + 1,
+      state: "revoked",
+    })
+
+    /** The latest change the partner's admins were told about. */
+    async function partnerTold(partner: { id: string; adminId: string }) {
+      return (await connectionEvents([partner.id])).at(-1)
+    }
+    const partnerEvent = (
+      partner: { id: string; adminId: string },
+      channelId: string,
+      connection: ReturnType<typeof seenBy>
+    ) => ({
+      workspaceId: partner.id,
+      streamId: channelId,
+      streamVisibility: "private",
+      adminMemberUserIds: [partner.adminId],
+      connection,
+    })
+
+    async function disconnectedAt(wsId: string, ids: string[]) {
+      const streams = await StreamRepository.findByIds(pool, wsId, ids)
+      return Object.fromEntries(streams.map((stream) => [stream.id, stream.disconnectedAt !== null]))
+    }
+
+    async function streamUpdates(wsId: string) {
+      const result = await pool.query<{ stream_id: string; disconnected: boolean }>(
+        `SELECT payload->>'streamId' AS stream_id, payload->'stream'->>'disconnectedAt' IS NOT NULL AS disconnected
+         FROM outbox WHERE event_type = 'stream:updated' AND payload->>'workspaceId' = $1 ORDER BY id`,
+        [wsId]
+      )
+      return result.rows.map((row) => `${row.stream_id}:${row.disconnected ? "frozen" : "thawed"}`)
+    }
+
+    test("should freeze the partner's copy and its threads for their viewers when the partner disconnects, and thaw them when the channel is shared again", async () => {
+      const { host, partner, channel, thread, active } = await seedShare()
+      cp.respond(200, { snapshot: ended(active) })
+
+      const disconnected = await service.disconnect({
+        workspaceId: partner.id,
+        connectionId: active.id,
+        userId: partner.adminId,
+      })
+      const frozen = await disconnectedAt(partner.id, [channel.id, thread.id])
+      const hostChannel = await disconnectedAt(host.id, [channel.id])
+      const frozenEvents = await streamUpdates(partner.id)
+      const told = await partnerTold(partner)
+      await service.applySnapshot(activated(snapshot(host, channel.id), partner))
+
+      expect({
+        disconnected,
+        sent: cp.requests,
+        told,
+        frozen,
+        hostChannel,
+        frozenEvents: frozenEvents.toSorted(),
+        thawed: await disconnectedAt(partner.id, [channel.id, thread.id]),
+        thawEvents: (await streamUpdates(partner.id)).slice(frozenEvents.length).toSorted(),
+      }).toEqual({
+        disconnected: seenBy(ended(active), "partner", host),
+        sent: [{ path: `/internal/stream-connections/${active.id}/disconnect`, body: { workspaceId: partner.id } }],
+        told: partnerEvent(partner, channel.id, seenBy(ended(active), "partner", host)),
+        frozen: { [channel.id]: true, [thread.id]: true },
+        hostChannel: { [channel.id]: false },
+        frozenEvents: [`${channel.id}:frozen`, `${thread.id}:frozen`].toSorted(),
+        thawed: { [channel.id]: false, [thread.id]: false },
+        thawEvents: [`${channel.id}:thawed`, `${thread.id}:thawed`].toSorted(),
+      })
+    })
+
+    test("should freeze the partner's copy when the host disconnects", async () => {
+      const { host, partner, channel, active } = await seedShare()
+      cp.respond(200, { snapshot: ended(active) })
+
+      const disconnected = await service.disconnect({
+        workspaceId: host.id,
+        connectionId: active.id,
+        userId: host.adminId,
+      })
+
+      expect({
+        disconnected,
+        sent: cp.requests,
+        told: await partnerTold(partner),
+        copy: await disconnectedAt(partner.id, [channel.id]),
+      }).toEqual({
+        disconnected: seenBy(ended(active), "host", partner),
+        sent: [{ path: `/internal/stream-connections/${active.id}/disconnect`, body: { workspaceId: host.id } }],
+        told: partnerEvent(partner, channel.id, seenBy(ended(active), "partner", host)),
+        copy: { [channel.id]: true },
+      })
+    })
+
+    test("should refuse a partner member's write to the copy and its thread when the share is disconnected", async () => {
+      const { partner, channel, thread, active } = await seedShare()
+      const writeReason = (id: string) =>
+        withTransaction(pool, (client) =>
+          assertStreamWritable(client, {
+            workspaceId: partner.id,
+            streamId: id,
+            principal: { kind: "user", userId: partner.adminId },
+          })
+        ).then(
+          () => null,
+          (error) => ({ status: error.status, code: error.code, reason: error.details?.reason })
+        )
+      const connected = { channel: await writeReason(channel.id), thread: await writeReason(thread.id) }
+      cp.respond(200, { snapshot: ended(active) })
+
+      await service.disconnect({ workspaceId: partner.id, connectionId: active.id, userId: partner.adminId })
+
+      const refusal = (reason: string) => ({ status: 403, code: StreamErrorCodes.READ_ONLY, reason })
+      expect({
+        connected,
+        disconnected: { channel: await writeReason(channel.id), thread: await writeReason(thread.id) },
+      }).toEqual({
+        connected: {
+          channel: refusal(StreamReadOnlyReasons.SHARED_COPY),
+          thread: refusal(StreamReadOnlyReasons.SHARED_COPY),
+        },
+        disconnected: {
+          channel: refusal(StreamReadOnlyReasons.DISCONNECTED),
+          thread: refusal(StreamReadOnlyReasons.DISCONNECTED),
+        },
+      })
+    })
+
+    test("should refuse to disconnect an invite, a peer's row, or a share already ended, before asking the control plane", async () => {
+      const host = await seedWorkspace("Acme")
+      const second = await seedWorkspace("Globex")
+      const third = await seedWorkspace("Initech")
+      const stream = await seedStream(host.id, host.adminId)
+      const invite = snapshot(host, stream.id)
+      const toSecond = activated(snapshot(host, stream.id), second, [third.id])
+      const toThird = activated(snapshot(host, stream.id), third, [second.id])
+      const gone = activated(snapshot(host, stream.id), second)
+      for (const s of [invite, toSecond, toThird, ended(gone)]) await service.applySnapshot(s)
+
+      const outcomes = await Promise.allSettled([
+        service.disconnect({ workspaceId: host.id, connectionId: invite.id, userId: host.adminId }),
+        service.disconnect({ workspaceId: second.id, connectionId: toThird.id, userId: second.adminId }),
+        service.disconnect({ workspaceId: host.id, connectionId: gone.id, userId: host.adminId }),
+      ])
+
+      expect({
+        refusals: outcomes.map((o) => (o.status === "rejected" ? (o.reason as { status: number; code: string }) : o)),
+        sent: cp.requests,
+      }).toEqual({
+        refusals: Array(3).fill(expect.objectContaining({ status: 404, code: StreamConnectionErrorCodes.NOT_FOUND })),
+        sent: [],
+      })
+    })
+
+    test("should stop listing the other partners once this workspace's own share has ended", async () => {
+      const host = await seedWorkspace("Acme")
+      const second = await seedWorkspace("Globex")
+      const third = await seedWorkspace("Initech")
+      const stream = await seedStream(host.id, host.adminId)
+      const toSecond = activated(snapshot(host, stream.id), second, [third.id])
+      const toThird = activated(snapshot(host, stream.id), third, [second.id])
+      await StreamConnectionRepository.applySnapshots(pool, [toSecond, toThird])
+      // Only the rows of the connection that ended change: nothing tells the one that left about the partner that stayed.
+      await StreamConnectionRepository.applySnapshots(pool, [ended(toThird)])
+
+      expect({
+        second: await StreamConnectionRepository.listLiveForStream(pool, second.id, stream.id),
+        third: await StreamConnectionRepository.listLiveForStream(pool, third.id, stream.id),
+      }).toEqual({
+        second: [seenBy(toSecond, "partner", host)],
+        third: [],
+      })
+    })
+
+    test("should not list a partner that left while this workspace was away when it reconnects", async () => {
+      const host = await seedWorkspace("Acme")
+      const second = await seedWorkspace("Globex")
+      const third = await seedWorkspace("Initech")
+      const stream = await seedStream(host.id, host.adminId)
+      const toSecond = activated(snapshot(host, stream.id), second, [third.id])
+      const toThird = activated(snapshot(host, stream.id), third, [second.id])
+      await service.applySnapshot(toSecond)
+      await service.applySnapshot(toThird)
+
+      await service.applySnapshot(ended(toSecond))
+      // The third partner leaves while the second is away, so nothing tells the second.
+      await service.applySnapshot({ ...ended(toThird), peerWorkspaceIds: [] })
+      const reconnected = activated(snapshot(host, stream.id), second)
+      await service.applySnapshot(reconnected)
+
+      expect(await StreamConnectionRepository.listLiveForStream(pool, second.id, stream.id)).toEqual([
+        seenBy(reconnected, "partner", host),
+      ])
+    })
+
+    test("should refuse the other side's files and their extractions on both sides while the share is ended, keep each side's own, and serve them again on a reconnect", async () => {
+      const { host, partner, channel, thread, active } = await seedShare()
+      const pat = await UserRepository.insertCopy(pool, {
+        id: userId(),
+        workspaceId: host.id,
+        originWorkspaceId: partner.id,
+        name: "Pat",
+        slug: `pat-${partner.id.slice(-6).toLowerCase()}`,
+      })
+      await UserRepository.insertCopy(pool, {
+        id: host.adminId,
+        workspaceId: partner.id,
+        originWorkspaceId: host.id,
+        name: "Ada",
+        slug: `ada-${host.id.slice(-6).toLowerCase()}`,
+      })
+      const persona = "persona_ariadne_copy"
+      await ActorCopyRepository.upsert(pool, {
+        workspaceId: partner.id,
+        originWorkspaceId: host.id,
+        actors: [{ id: persona, name: "Ariadne", avatarEmoji: null }],
+      })
+      const file = async (wsId: string, inStream: string, uploadedBy: string) => {
+        const id = attachmentId()
+        await AttachmentRepository.insert(pool, {
+          id,
+          workspaceId: wsId,
+          streamId: inStream,
+          uploadedBy,
+          filename: "notes.txt",
+          mimeType: "text/plain",
+          sizeBytes: 12,
+          storagePath: `${wsId}/${id}/notes.txt`,
+          safetyStatus: "clean",
+        })
+        const msgId = messageId()
+        await AttachmentRepository.attachToMessage(pool, wsId, [id], msgId, inStream)
+        await AttachmentExtractionRepository.insert(pool, {
+          id: extractionId(),
+          attachmentId: id,
+          workspaceId: wsId,
+          contentType: "document",
+          summary: "notes",
+        })
+        return { wsId, id, msgId }
+      }
+      const files = {
+        hostFromPartner: await file(host.id, channel.id, pat!.id),
+        hostOwn: await file(host.id, channel.id, host.adminId),
+        partnerFromHost: await file(partner.id, thread.id, host.adminId),
+        partnerFromHostAgent: await file(partner.id, channel.id, persona),
+        partnerOwn: await file(partner.id, channel.id, partner.adminId),
+      }
+      const refused = async () => {
+        const endedIds = new Set([
+          ...(await AttachmentRepository.listFromEndedShare(pool, host.id, [
+            files.hostFromPartner.id,
+            files.hostOwn.id,
+          ])),
+          ...(await AttachmentRepository.listFromEndedShare(pool, partner.id, [
+            files.partnerFromHost.id,
+            files.partnerFromHostAgent.id,
+            files.partnerOwn.id,
+          ])),
+        ])
+        const searchable = new Set(
+          [
+            ...(await AttachmentRepository.searchWithExtractions(pool, {
+              workspaceId: host.id,
+              streamIds: [channel.id],
+            })),
+            ...(await AttachmentRepository.searchWithExtractions(pool, {
+              workspaceId: partner.id,
+              streamIds: [channel.id, thread.id],
+            })),
+          ].map((a) => a.id)
+        )
+        const withExtraction = new Map(
+          (
+            await Promise.all(
+              [host.id, partner.id].map((wsId) =>
+                AttachmentRepository.findByMessageIdsWithExtractions(
+                  pool,
+                  wsId,
+                  Object.values(files)
+                    .filter((f) => f.wsId === wsId)
+                    .map((f) => f.msgId)
+                )
+              )
+            )
+          ).flatMap((byMessage) => [...byMessage.values()].flat().map((a) => [a.id, a.extraction !== null] as const))
+        )
+        return Object.fromEntries(
+          Object.entries(files).map(([name, f]) => [
+            name,
+            { refused: endedIds.has(f.id), searchable: searchable.has(f.id), extracted: withExtraction.get(f.id) },
+          ])
+        )
+      }
+
+      const whileShared = await refused()
+      await service.applySnapshot(ended(active))
+      const whileEnded = await refused()
+      await service.applySnapshot(activated(snapshot(host, channel.id), partner))
+
+      expect({ whileShared, whileEnded, reconnected: await refused() }).toEqual({
+        whileShared: {
+          hostFromPartner: { refused: false, searchable: true, extracted: true },
+          hostOwn: { refused: false, searchable: true, extracted: true },
+          partnerFromHost: { refused: false, searchable: true, extracted: true },
+          partnerFromHostAgent: { refused: false, searchable: true, extracted: true },
+          partnerOwn: { refused: false, searchable: true, extracted: true },
+        },
+        whileEnded: {
+          hostFromPartner: { refused: true, searchable: false, extracted: false },
+          hostOwn: { refused: false, searchable: true, extracted: true },
+          partnerFromHost: { refused: true, searchable: false, extracted: false },
+          partnerFromHostAgent: { refused: true, searchable: false, extracted: false },
+          partnerOwn: { refused: false, searchable: true, extracted: true },
+        },
+        reconnected: {
+          hostFromPartner: { refused: false, searchable: true, extracted: true },
+          hostOwn: { refused: false, searchable: true, extracted: true },
+          partnerFromHost: { refused: false, searchable: true, extracted: true },
+          partnerFromHostAgent: { refused: false, searchable: true, extracted: true },
+          partnerOwn: { refused: false, searchable: true, extracted: true },
+        },
+      })
+    })
   })
 })

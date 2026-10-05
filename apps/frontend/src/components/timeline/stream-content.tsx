@@ -188,6 +188,7 @@ function pickTimelineStream(stream: Stream & { parentMessageId?: string | null }
     displayName: stream.displayName,
     visibility: stream.visibility,
     originWorkspaceId: stream.originWorkspaceId,
+    disconnectedAt: stream.disconnectedAt,
     parentStreamId: stream.parentStreamId,
     rootStreamId: stream.rootStreamId,
     parentAnchorId: stream.parentAnchorId,
@@ -2380,6 +2381,8 @@ export function StreamContent({
     disabledReason = "This thread has been sealed in the labyrinth. It can be read but not extended."
   } else if (ancestorArchived) {
     disabledReason = "The stream this thread belongs to has been archived. It can be read but not extended."
+  } else if (stream?.disconnectedAt) {
+    disabledReason = "This conversation is no longer shared with your workspace. It can be read but not extended."
   }
 
   const handleJoined = useCallback(
@@ -3156,7 +3159,7 @@ export function StreamContent({
                     <MessageInput
                       workspaceId={workspaceId}
                       streamId={streamId}
-                      disabled={isArchived || isSystem}
+                      disabled={disabledReason !== undefined}
                       disabledReason={disabledReason}
                       sharedCopy={isSharedCopy}
                       autoFocus={autoFocus}

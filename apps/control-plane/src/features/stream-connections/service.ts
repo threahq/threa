@@ -165,16 +165,46 @@ export class StreamConnectionService {
     return { snapshot: await this.requireSnapshot(id), token }
   }
 
-  /** Revokes a pending invite. Disconnecting an accepted share is a separate operation. */
+  /** Revokes a pending invite. Ending an accepted share is `disconnect`. */
   async revokeInvite(params: { connectionId: string; hostWorkspaceId: string }): Promise<StreamConnectionSnapshot> {
     await withTransaction(this.pool, async (client) => {
       const record = await StreamConnectionRepository.lockById(client, params.connectionId)
       if (!record || record.hostWorkspaceId !== params.hostWorkspaceId) throw notFound()
       if (record.state === StreamConnectionStates.ACTIVE) throw alreadyAccepted()
       if (record.state === StreamConnectionStates.INVITED) {
-        await StreamConnectionRepository.revokeInvite(client, record.id)
+        await StreamConnectionRepository.revoke(client, record.id)
         await this.enqueueSync(client, [record.id])
       }
+    })
+    return this.requireSnapshot(params.connectionId)
+  }
+
+  /**
+   * Ends an accepted share, asked by either side's region. The row keeps both
+   * workspaces, so each side's projection learns it ended, and every other
+   * partner loses a peer, so theirs fan out again too. A repeat returns the
+   * current state.
+   */
+  async disconnect(params: { connectionId: string; workspaceId: string }): Promise<StreamConnectionSnapshot> {
+    const found = await StreamConnectionRepository.findSnapshot(this.pool, params.connectionId)
+    const side =
+      found && (found.hostWorkspaceId === params.workspaceId || found.partnerWorkspaceId === params.workspaceId)
+    if (!found || !side || found.state === StreamConnectionStates.INVITED) throw notFound()
+
+    await withTransaction(this.pool, async (client) => {
+      // Same turn-taking as accept, so a partner joining now sees this one leave.
+      await StreamConnectionRepository.lockChannel(client, found.hostWorkspaceId, found.hostStreamId)
+      const record = await StreamConnectionRepository.lockById(client, found.id)
+      if (record?.state !== StreamConnectionStates.ACTIVE) return
+      await StreamConnectionRepository.revoke(client, record.id)
+      const partners = await StreamConnectionRepository.listPartners(
+        client,
+        record.hostWorkspaceId,
+        record.hostStreamId
+      )
+      const partnerConnectionIds = partners.map((p) => p.connectionId)
+      await StreamConnectionRepository.bumpRevisions(client, partnerConnectionIds)
+      await this.enqueueSync(client, [record.id, ...partnerConnectionIds])
     })
     return this.requireSnapshot(params.connectionId)
   }

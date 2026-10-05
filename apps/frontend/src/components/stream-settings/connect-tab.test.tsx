@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { useState } from "react"
 import { StreamConnectionErrorCodes, StreamTypes, type Stream, type StreamConnection } from "@threahq/types"
-import { act, render, screen, userEvent, waitFor } from "@/test"
+import { act, render, screen, userEvent, waitFor, within } from "@/test"
 import { clearStreamConnections, clearWorkspaceActorTables, seedWorkspaceUser } from "@/test/workspace-rows"
 import { ApiError } from "@/api/client"
 import { streamConnectionsApi } from "@/api/stream-connections"
@@ -183,7 +183,7 @@ describe("ConnectTab", () => {
       rows: screen.getAllByRole("listitem").map((item) => item.textContent),
       createLink: screen.getByRole("button", { name: "Create invite link" }).hasAttribute("disabled"),
     }).toEqual({
-      rows: ["Gamma", "Beta", `${WAITING}Expires 10:45.Revoke`, `${WAITING}Expires 10:30.Revoke`],
+      rows: ["GammaDisconnect", "BetaDisconnect", `${WAITING}Expires 10:45.Revoke`, `${WAITING}Expires 10:30.Revoke`],
       createLink: false,
     })
   })
@@ -529,6 +529,93 @@ describe("ConnectTab", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("This link no longer exists.")
     await waitFor(() => expect(screen.queryByRole("button", { name: "Revoke" })).not.toBeInTheDocument())
+  })
+
+  it("should drop the partner from the list when the admin confirms disconnecting them", async () => {
+    vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([makePartner("strconn_1", "Beta")])
+    const disconnect = vi
+      .spyOn(streamConnectionsApi, "disconnect")
+      .mockResolvedValue({ ...makePartner("strconn_1", "Beta"), state: "revoked", revision: 3 })
+
+    renderTab()
+    await userEvent.click(await screen.findByRole("button", { name: "Disconnect" }))
+    const dialog = await screen.findByRole("alertdialog")
+    await userEvent.click(within(dialog).getByRole("button", { name: "Disconnect" }))
+
+    await waitFor(() => expect(screen.queryByText("Beta")).not.toBeInTheDocument())
+    expect(disconnect).toHaveBeenCalledWith("ws_host", "strconn_1")
+  })
+
+  it("should keep the partner when the admin cancels disconnecting them", async () => {
+    vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([makePartner("strconn_1", "Beta")])
+    const disconnect = vi.spyOn(streamConnectionsApi, "disconnect")
+
+    renderTab()
+    await userEvent.click(await screen.findByRole("button", { name: "Disconnect" }))
+    await userEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Cancel" }))
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument())
+    expect({ partner: screen.getByText("Beta"), called: disconnect.mock.calls.length }).toEqual({
+      partner: expect.anything(),
+      called: 0,
+    })
+  })
+
+  it("should say the workspace is gone and refresh the list when it was already disconnected elsewhere", async () => {
+    vi.spyOn(streamConnectionsApi, "list")
+      .mockResolvedValueOnce([makePartner("strconn_1", "Beta")])
+      .mockResolvedValue([])
+    vi.spyOn(streamConnectionsApi, "disconnect").mockRejectedValue(
+      new ApiError(404, StreamConnectionErrorCodes.NOT_FOUND, "not found")
+    )
+
+    renderTab()
+    await userEvent.click(await screen.findByRole("button", { name: "Disconnect" }))
+    await userEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Disconnect" }))
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("This workspace is no longer connected.")
+    await waitFor(() => expect(screen.queryByText("Beta")).not.toBeInTheDocument())
+  })
+
+  it("should let a partner admin disconnect from the host but not from the other partners, and offer no invite, when the channel came from another workspace", async () => {
+    vi.spyOn(streamConnectionsApi, "list").mockResolvedValue([
+      makeConnection({
+        id: "strconn_2",
+        role: "peer",
+        state: "active",
+        revision: 2,
+        remoteWorkspaceId: "ws_gamma",
+        remoteWorkspaceName: "Gamma",
+      }),
+      makeConnection({
+        id: "strconn_1",
+        role: "partner",
+        state: "active",
+        revision: 2,
+        remoteWorkspaceId: "ws_acme",
+        remoteWorkspaceName: "Acme",
+        partnerVisibility: "private",
+      }),
+    ])
+
+    renderTab(makeStream({ originWorkspaceId: "ws_acme" }))
+
+    const rows = await screen.findAllByRole("listitem")
+    expect({
+      rows: rows.map((row) => ({
+        name: row.textContent?.replace(/Disconnect$/, ""),
+        disconnect: within(row).queryByRole("button", { name: "Disconnect" }) !== null,
+      })),
+      reason: screen.getByText("Only the workspace this channel comes from can share it.").tagName,
+      invite: screen.queryByRole("button", { name: "Create invite link" }),
+    }).toEqual({
+      rows: [
+        { name: "Gamma", disconnect: false },
+        { name: "Acme", disconnect: true },
+      ],
+      reason: "P",
+      invite: null,
+    })
   })
 
   it("should show the partner as soon as their accept reaches this device", async () => {

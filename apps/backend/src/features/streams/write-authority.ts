@@ -30,10 +30,11 @@ interface AuthorityStream {
   visibility: Visibility
   archivedAt: Date | string | null
   originWorkspaceId?: string | null
+  disconnectedAt: Date | string | null
 }
 
 export function deriveStreamViewerState(params: {
-  target: Pick<AuthorityStream, "type" | "archivedAt" | "originWorkspaceId">
+  target: Pick<AuthorityStream, "type" | "archivedAt" | "originWorkspaceId" | "disconnectedAt">
   /** Whether any stream up the target's `parent_stream_id` chain is archived. */
   ancestorArchived: boolean
   participates: boolean
@@ -46,6 +47,9 @@ export function deriveStreamViewerState(params: {
   }
   if (!params.participates) {
     return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.NOT_A_MEMBER }
+  }
+  if (params.target.disconnectedAt) {
+    return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.DISCONNECTED }
   }
   if (params.target.originWorkspaceId) {
     return { readOnly: true, readOnlyReason: StreamReadOnlyReasons.SHARED_COPY }
@@ -67,11 +71,15 @@ export function assertViewerStreamWritable(state: StreamViewerState): void {
 
 /**
  * An aside inherits its host's archive state through the parent chain, so a
- * read-only host can't take one. A shared channel's copy can: the aside lives in
- * this workspace and nothing in it reaches the host.
+ * read-only host can't take one. A shared channel's copy can, connected or not:
+ * the aside lives in this workspace and nothing in it reaches the host.
  */
 export function canHostAside(state: StreamViewerState): boolean {
-  return !state.readOnlyReason || state.readOnlyReason === StreamReadOnlyReasons.SHARED_COPY
+  return (
+    !state.readOnlyReason ||
+    state.readOnlyReason === StreamReadOnlyReasons.SHARED_COPY ||
+    state.readOnlyReason === StreamReadOnlyReasons.DISCONNECTED
+  )
 }
 
 async function principalParticipates(

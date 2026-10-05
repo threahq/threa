@@ -13,6 +13,7 @@ const createInviteSchema = z.object({
   invitedBy: idSchema,
 })
 const revokeSchema = z.object({ hostWorkspaceId: idSchema })
+const disconnectSchema = z.object({ workspaceId: idSchema })
 const acceptSchema = z.object({
   token: streamConnectionTokenSchema,
   partnerWorkspaceId: idSchema,
@@ -41,6 +42,12 @@ export function createStreamConnectionHandlers({ streamConnectionService }: Depe
       const body = parseRequest(revokeSchema, req.body)
       const connectionId = parseRequest(streamConnectionIdSchema, req.params.id)
       res.json({ snapshot: await streamConnectionService.revokeInvite({ connectionId, ...body }) })
+    },
+
+    async disconnect(req: Request, res: Response) {
+      const body = parseRequest(disconnectSchema, req.body)
+      const connectionId = parseRequest(streamConnectionIdSchema, req.params.id)
+      res.json({ snapshot: await streamConnectionService.disconnect({ connectionId, ...body }) })
     },
 
     async accept(req: Request, res: Response) {
