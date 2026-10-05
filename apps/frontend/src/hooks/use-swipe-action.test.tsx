@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from "react"
 import { describe, it, expect, vi } from "vitest"
 import { renderHook, act, render, screen, fireEvent } from "@testing-library/react"
 import { useSwipeAction } from "./use-swipe-action"
@@ -18,11 +19,16 @@ function follower(tag = "div"): HTMLElement {
   return el
 }
 
-function InboxRow() {
+function InboxRow({ onRevealLayout }: { onRevealLayout: (swipeX: string) => void }) {
   const swipe = useSwipeAction({ onSwipe: () => {}, threshold: 80, direction: "right" })
+  const revealRef = useRef<HTMLSpanElement>(null)
+  // Layout effects run before the browser paints, so this is what the reveal's first frame shows.
+  useLayoutEffect(() => {
+    if (revealRef.current) onRevealLayout(revealRef.current.style.getPropertyValue("--swipe-x"))
+  })
   return (
     <div data-swipe-host>
-      {swipe.isSwiping && <span data-testid="reveal" data-swipe-follow />}
+      {swipe.isSwiping && <span ref={revealRef} data-swipe-follow />}
       <a data-testid="row" data-swipe-follow {...swipe.handlers} />
     </div>
   )
@@ -105,7 +111,7 @@ describe("useSwipeAction", () => {
     target.remove()
   })
 
-  it("follows the finger without rendering: only starting, locking and releasing reach React", () => {
+  it("follows the finger without rendering: a move that flips no flag never reaches React", () => {
     let renders = 0
     const { result } = renderHook(() => {
       renders++
@@ -156,14 +162,15 @@ describe("useSwipeAction", () => {
     host.remove()
   })
 
-  it("a follower the swipe itself mounts has the offset by its first commit", () => {
-    render(<InboxRow />)
+  it("a follower the swipe itself mounts has the offset before its first paint", () => {
+    const atLayout: string[] = []
+    render(<InboxRow onRevealLayout={(swipeX) => atLayout.push(swipeX)} />)
     const row = screen.getByTestId("row")
 
     fireEvent.touchStart(row, { touches: [{ clientX: 100, clientY: 100 }] })
     fireEvent.touchMove(row, { touches: [{ clientX: 140, clientY: 100 }] })
 
-    expect(screen.getByTestId("reveal").style.getPropertyValue("--swipe-x")).toBe("40px")
+    expect(atLayout).toEqual(["40px"])
   })
 
   it("with direction right, ignores a leftward swipe", () => {
