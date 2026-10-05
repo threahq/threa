@@ -541,3 +541,56 @@ describe("SidebarStreamList — section view options", () => {
     expect(screen.getByRole("button", { name: "sec_1 view options" }).className).toContain("bg-primary/10")
   })
 })
+
+describe("SidebarStreamList — channel creators", () => {
+  beforeEach(() => stubSidebarContexts())
+  afterEach(() => vi.restoreAllMocks())
+
+  function renderCreators(over: { hasUserStreams: boolean; onCreateChannel?: () => void }) {
+    const streams = over.hasUserStreams ? [makeStream("stream_a")] : []
+    const channels = {
+      section: { id: "type:channel", spec: { kind: "type", streamType: "channel" } },
+      items: streams,
+    } as unknown as ResolvedSection
+    render(
+      <MemoryRouter initialEntries={["/w/workspace_1"]}>
+        <SidebarStreamList
+          workspaceId="workspace_1"
+          hasError={false}
+          hasUserStreams={over.hasUserStreams}
+          processedStreams={streams}
+          resolvedSections={[channels]}
+          labelsById={new Map()}
+          getUnreadCount={() => 0}
+          getMentionCount={() => 0}
+          getSectionState={() => "open"}
+          toggleSectionState={vi.fn()}
+          onCreateScratchpad={vi.fn()}
+          onCreateChannel={over.onCreateChannel}
+          onFileStreamToSection={vi.fn()}
+          onAssignStreamLabel={vi.fn()}
+          onStreamMovedFromLabel={vi.fn()}
+          onSectionViewChange={vi.fn()}
+          homeHintFor={() => null}
+          boardMode={null}
+          onClearInbox={vi.fn()}
+        />
+      </MemoryRouter>
+    )
+    return screen.queryAllByRole("button", { name: /New Channel/ }).length
+  }
+
+  it.each([
+    ["an empty workspace", false],
+    ["a Channels section", true],
+  ])("should offer a channel creator in %s when the viewer can create channels", (_label, hasUserStreams) => {
+    expect(renderCreators({ hasUserStreams, onCreateChannel: vi.fn() })).toBe(1)
+  })
+
+  it.each([
+    ["an empty workspace", false],
+    ["a Channels section", true],
+  ])("should offer no channel creator in %s when the viewer cannot create channels", (_label, hasUserStreams) => {
+    expect(renderCreators({ hasUserStreams })).toBe(0)
+  })
+})

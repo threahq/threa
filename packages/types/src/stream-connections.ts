@@ -1,11 +1,5 @@
 import { z } from "zod"
-import {
-  ATTACHMENT_SAFETY_STATUSES,
-  AUTHOR_TYPES,
-  CREATABLE_VISIBILITIES,
-  VISIBILITY_OPTIONS,
-  type Visibility,
-} from "./constants"
+import { ATTACHMENT_SAFETY_STATUSES, AUTHOR_TYPES, VISIBILITY_OPTIONS, type Visibility } from "./constants"
 import type { JSONContent } from "./prosemirror"
 
 // A stream connection is one invite link to a host channel: pending until a
@@ -143,7 +137,7 @@ export const streamConnectionTokenSchema = z.string().min(1).max(200)
 export const acceptStreamConnectionSchema = z
   .object({
     token: streamConnectionTokenSchema,
-    visibility: z.enum(CREATABLE_VISIBILITIES),
+    visibility: z.enum(VISIBILITY_OPTIONS),
   })
   .strict()
 export type AcceptStreamConnectionInput = z.infer<typeof acceptStreamConnectionSchema>

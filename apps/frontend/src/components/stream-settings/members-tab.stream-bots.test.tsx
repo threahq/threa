@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { StreamTypes, type Bot, type Stream } from "@threahq/types"
-import { StreamBotsSection } from "./members-tab"
+import { MembersTab, StreamBotsSection } from "./members-tab"
+import * as servicesModule from "@/contexts/services-context"
+import * as workspacesModule from "@/hooks/use-workspaces"
+import { streamKeys } from "@/hooks/use-streams"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as inviteActorModule from "@/hooks/use-e2e-actors"
 import * as useMobileModule from "@/hooks/use-mobile"
@@ -199,5 +202,45 @@ describe("StreamBotsSection bot removal", () => {
 
     await waitFor(() => expect(botsApi.revokeStreamAccess).toHaveBeenCalledWith("ws_1", "bot_1", "stream_1"))
     expect(revoke).not.toHaveBeenCalled()
+  })
+})
+
+describe("MembersTab roles", () => {
+  beforeEach(() => vi.restoreAllMocks())
+
+  it("should show Guest on a guest member's row when the stream has a guest member", () => {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    queryClient.setQueryData(streamKeys.bootstrap("ws_1", "stream_1"), {
+      stream: makeStream({ type: StreamTypes.CHANNEL }),
+      members: [{ memberId: "usr_guest", streamId: "stream_1" }],
+    })
+    vi.spyOn(servicesModule, "useStreamService").mockReturnValue(
+      {} as ReturnType<typeof servicesModule.useStreamService>
+    )
+    vi.spyOn(workspacesModule, "useCachedWorkspaceBootstrap").mockReturnValue(null)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([
+      { id: "usr_guest", name: "Gus", slug: "gus", role: "guest" },
+    ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceUsers>)
+    vi.spyOn(workspaceStoreModule, "useWorkspaceBots").mockReturnValue([])
+    vi.spyOn(inviteActorModule, "useInviteActor").mockReturnValue({
+      invite: vi.fn(),
+      isInviting: false,
+      isUnlocked: true,
+    })
+    vi.spyOn(inviteActorModule, "useRevokeActor").mockReturnValue({
+      revoke: vi.fn(),
+      isRevoking: false,
+      isUnlocked: true,
+    })
+    vi.spyOn(botsApi, "listStreamBots").mockResolvedValue([])
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MembersTab workspaceId="ws_1" streamId="stream_1" currentUserId="usr_admin" />
+      </QueryClientProvider>
+    )
+
+    const gusRow = screen.getAllByRole("listitem").find((row) => within(row).queryByText("Gus"))
+    expect(gusRow).toHaveTextContent("Gus@gusGuest")
   })
 })

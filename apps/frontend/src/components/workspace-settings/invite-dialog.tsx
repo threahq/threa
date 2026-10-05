@@ -12,7 +12,13 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { invitationsApi } from "@/api/invitations"
-import { WORKSPACE_ROLE_SLUGS, type SendInvitationsResponse, type WorkspaceInvitableRole } from "@threahq/types"
+import {
+  roleDisplayName,
+  WORKSPACE_INVITABLE_ROLES,
+  WORKSPACE_ROLE_SLUGS,
+  type SendInvitationsResponse,
+  type WorkspaceInvitableRole,
+} from "@threahq/types"
 
 interface InviteDialogProps {
   workspaceId: string
@@ -107,8 +113,11 @@ export function InviteDialog({ workspaceId, open, onOpenChange, onSuccess }: Inv
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value={WORKSPACE_ROLE_SLUGS.MEMBER}>Member</SelectItem>
-                  <SelectItem value={WORKSPACE_ROLE_SLUGS.ADMIN}>Admin</SelectItem>
+                  {WORKSPACE_INVITABLE_ROLES.map((slug) => (
+                    <SelectItem key={slug} value={slug}>
+                      {roleDisplayName(slug)}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

@@ -22,6 +22,7 @@ import { relocateLoadedDraft, stashLoadedDraft } from "@/hooks/use-draft-message
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useComposeTrace } from "@/lib/compose-trace"
 import { getDraftPromotionSource } from "@/lib/draft-promotions"
+import { GUEST_DM_CLOSED_REASON, isGuestDmPolicyError } from "@/lib/guest-dm-policy"
 import { usePreferences } from "@/contexts"
 import { useConnectionState } from "@/components/layout/connection-status"
 import {
@@ -893,7 +894,7 @@ function MessageInputComponent({
       // so this is a failed draft promotion.
       if (!(error instanceof Error && error.name === "AbortError")) {
         composer.setContent(liveContent)
-        setError("Failed to create stream. Please try again.")
+        setError(isGuestDmPolicyError(error) ? GUEST_DM_CLOSED_REASON : "Failed to create stream. Please try again.")
       }
     } finally {
       composer.setIsSending(false)

@@ -4,7 +4,8 @@ import userEvent from "@testing-library/user-event"
 import { createElement, type ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import type { PersonaListItem, Stream } from "@threahq/types"
+import { WORKSPACE_PERMISSION_SCOPES, type PersonaListItem, type Stream, type WorkspaceBootstrap } from "@threahq/types"
+import * as workspacesHooks from "@/hooks/use-workspaces"
 import * as streamsHooks from "@/hooks/use-streams"
 import * as rosterHooks from "@/hooks/use-companion-roster"
 import * as defaultCompanionHooks from "@/hooks/use-default-companion-persona"
@@ -34,6 +35,7 @@ const COACH = persona({ id: "persona_coach", slug: "coach", name: "Coach", avata
 
 beforeEach(() => {
   companionMutate.mockClear()
+  vi.spyOn(workspacesHooks, "useCurrentWorkspaceUser").mockReturnValue(null)
   vi.spyOn(streamsHooks, "useUpdateCompanionMode").mockReturnValue({
     mutateAsync: companionMutate,
     isPending: false,
@@ -69,7 +71,7 @@ function streamFixture(overrides: Partial<Stream> = {}): Stream {
   } as unknown as Stream
 }
 
-function renderTab(overrides: Partial<Stream> = {}) {
+function renderTab(overrides: Partial<Stream> = {}, rootStream?: Stream) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   function Wrapper({ children }: { children: ReactNode }) {
     return createElement(QueryClientProvider, { client: queryClient }, createElement(TooltipProvider, null, children))
@@ -80,6 +82,7 @@ function renderTab(overrides: Partial<Stream> = {}) {
       stream={streamFixture(overrides)}
       allowedToolCategories={null}
       canManageToolPolicy={false}
+      rootStream={rootStream}
     />,
     { wrapper: Wrapper }
   )
@@ -143,5 +146,59 @@ describe("CompanionTab persona picker", () => {
     const trigger = screen.getByRole("combobox", { name: /companion agent/i })
     expect(trigger).toBeDisabled()
     expect(trigger).toHaveTextContent("Loading agents…")
+  })
+})
+
+describe("CompanionTab channel settings for a guest", () => {
+  const BROWSE = [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE]
+
+  function viewerWith(viewerPermissions: WorkspaceBootstrap["viewerPermissions"]) {
+    vi.spyOn(workspacesHooks, "useViewerPermissions").mockReturnValue(viewerPermissions)
+  }
+
+  function disabledControls() {
+    return {
+      modeOptions: screen.getAllByRole("radio").map((option) => (option as HTMLButtonElement).disabled),
+      agentPicker: (screen.getByRole("combobox", { name: /companion agent/i }) as HTMLButtonElement).disabled,
+      addBrief: (screen.getByRole("button", { name: "Add a brief" }) as HTMLButtonElement).disabled,
+    }
+  }
+
+  it("should disable the companion mode, agent and brief controls on a channel when the viewer lacks browse", () => {
+    viewerWith([])
+    renderTab({ type: "channel" })
+
+    expect(disabledControls()).toEqual({ modeOptions: [true, true], agentPicker: true, addBrief: true })
+  })
+
+  it("should enable the companion mode, agent and brief controls on a channel when the viewer can browse", () => {
+    viewerWith(BROWSE)
+    renderTab({ type: "channel" })
+
+    expect(disabledControls()).toEqual({ modeOptions: [false, false], agentPicker: false, addBrief: false })
+  })
+
+  it("should lock only the shared brief on a thread in a channel when the viewer lacks browse", () => {
+    viewerWith([])
+    renderTab({ id: "stream_thread", type: "thread", rootStreamId: "stream_chan" }, {
+      id: "stream_chan",
+      type: "channel",
+    } as Stream)
+
+    expect(disabledControls()).toEqual({ modeOptions: [false, false], agentPicker: false, addBrief: true })
+  })
+
+  it("should lock the shared brief on a thread whose root is not cached yet when the viewer lacks browse", () => {
+    viewerWith([])
+    renderTab({ id: "stream_thread", type: "thread", rootStreamId: "stream_chan" })
+
+    expect(disabledControls()).toEqual({ modeOptions: [false, false], agentPicker: false, addBrief: true })
+  })
+
+  it("should leave a guest's own scratchpad controls enabled", () => {
+    viewerWith([])
+    renderTab({ type: "scratchpad" })
+
+    expect(disabledControls()).toEqual({ modeOptions: [false, false], agentPicker: false, addBrief: false })
   })
 })

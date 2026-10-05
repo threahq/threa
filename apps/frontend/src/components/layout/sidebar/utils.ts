@@ -6,6 +6,8 @@ import {
   type AuthorType,
   type JSONContent,
   type StreamWithPreview,
+  isOpenVisibility,
+  type Visibility,
 } from "@threahq/types"
 import { createDmDraftId } from "@/hooks/use-stream-or-draft"
 import { stripMarkdownToInline, truncateInline } from "@/lib/markdown"
@@ -31,8 +33,9 @@ export function buildVirtualDmDrafts(args: {
   currentUserId: string | null
   workspaceUsers: readonly VirtualDmUser[]
   dmPeerUserIds: readonly string[]
+  isDmOpen: (peerUserId: string) => boolean
 }): StreamItemData[] {
-  const { isBoardMode, workspaceId, currentUserId, workspaceUsers, dmPeerUserIds } = args
+  const { isBoardMode, workspaceId, currentUserId, workspaceUsers, dmPeerUserIds, isDmOpen } = args
   if (isBoardMode) return []
   if (workspaceUsers.length === 0 || !currentUserId) return []
 
@@ -43,6 +46,7 @@ export function buildVirtualDmDrafts(args: {
     .filter(isPickableUser)
     .filter((workspaceUser) => workspaceUser.id !== currentUserId)
     .filter((workspaceUser) => !dmPeerIds.has(workspaceUser.id))
+    .filter((workspaceUser) => isDmOpen(workspaceUser.id))
     .map(
       (workspaceUser): StreamItemData => ({
         id: createDmDraftId(workspaceUser.id),
@@ -74,7 +78,7 @@ interface SidebarVisibilityStream {
   id: string
   archivedAt: string | null
   rootStreamId: string | null
-  visibility: string
+  visibility: Visibility
 }
 
 /**
@@ -94,7 +98,7 @@ export function isSidebarStreamVisible(
 ): boolean {
   if (hiddenStreamIds.has(stream.id)) return false
   if (stream.archivedAt || sealedStreamIds.has(stream.id)) return false
-  if (stream.visibility !== Visibilities.PUBLIC) return true
+  if (!isOpenVisibility(stream.visibility)) return true
   return memberStreamIds.has(stream.id)
 }
 

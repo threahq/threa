@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { MemoryRouter, Routes, Route } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import type { WorkspaceBootstrap } from "@threahq/types"
+import type { GuestDmPolicy, User, WorkspaceBootstrap } from "@threahq/types"
 import { render, screen, userEvent, waitFor } from "@/test"
 import * as authModule from "@/auth"
+import * as workspacesModule from "@/hooks/use-workspaces"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { seedWorkspaceCache, resetWorkspaceStoreCache } from "@/stores/workspace-store"
 import { clearCallState, setCallPhase } from "@/stores/call-store"
@@ -85,12 +86,13 @@ function makeManager(): CallController {
   }
 }
 
-function renderModal(manager: CallController, callsEnabled: boolean) {
+function renderModal(manager: CallController, callsEnabled: boolean, guestDmPolicy?: GuestDmPolicy) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   // `calls` is a workspace-scope flag defaulting on; an off workspace override
   // turns the affordance dark. Seed the bootstrap's raw flag layers the hook reads.
   queryClient.setQueryData(workspaceKeys.bootstrap(WORKSPACE_ID), {
     featureFlags: { workspace: callsEnabled ? {} : { calls: "off" }, user: {} },
+    workspaceSettings: guestDmPolicy ? { guestDmPolicy } : undefined,
   } as unknown as WorkspaceBootstrap)
   return render(
     <QueryClientProvider client={queryClient}>
@@ -126,6 +128,7 @@ beforeEach(() => {
   vi.spyOn(authModule, "useAuth").mockReturnValue({ user: { id: "workos_self" } } as ReturnType<
     typeof authModule.useAuth
   >)
+  vi.spyOn(workspacesModule, "useCurrentWorkspaceUser").mockReturnValue({ id: "usr_self", role: "member" } as User)
 })
 
 afterEach(() => vi.restoreAllMocks())
@@ -186,5 +189,37 @@ describe("UserProfileModal — host user copy", () => {
     expect(screen.getByRole("heading", { name: "Grace" })).toBeInTheDocument()
     expect(screen.queryByRole("link", { name: /Message/i })).toBeNull()
     expect(screen.queryByRole("button", { name: /^Call$/i })).toBeNull()
+  })
+})
+
+describe("UserProfileModal — guest DM policy", () => {
+  it("should offer Message to a guest only when the guest DM policy is open", () => {
+    seed(withDm, { role: "guest" })
+    const offered = (policy: GuestDmPolicy) => {
+      const { unmount } = renderModal(makeManager(), true, policy)
+      const message = screen.queryByRole("link", { name: /Message/i }) !== null
+      unmount()
+      return message
+    }
+
+    expect({ off: offered("off"), admins: offered("admins"), open: offered("open") }).toEqual({
+      off: false,
+      admins: false,
+      open: true,
+    })
+  })
+
+  it("should offer Message to a member whatever the guest DM policy is", () => {
+    seed(withDm)
+    renderModal(makeManager(), true, "off")
+    expect(screen.getByRole("link", { name: /Message/i })).toBeInTheDocument()
+  })
+})
+
+describe("UserProfileModal — role badge", () => {
+  it("should show a Guest badge when the user is a guest", () => {
+    seed(withDm, { role: "guest" })
+    renderModal(makeManager(), true)
+    expect(screen.getByText("Guest")).toBeInTheDocument()
   })
 })

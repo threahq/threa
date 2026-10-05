@@ -1,6 +1,13 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import * as prosemirror from "@threahq/prosemirror"
-import { AuthorTypes, StreamTypes, Visibilities, type AuthorType, type StreamWithPreview } from "@threahq/types"
+import {
+  AuthorTypes,
+  StreamTypes,
+  Visibilities,
+  type AuthorType,
+  type StreamWithPreview,
+  type Visibility,
+} from "@threahq/types"
 import { hiddenStreamIds as collectHiddenStreamIds } from "@/lib/streams"
 import type { StreamItemData } from "./types"
 import {
@@ -264,6 +271,24 @@ describe("isSidebarStreamVisible", () => {
     expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds, hiddenStreamIds)).toBe(false)
   })
 
+  it("should treat a guest_public stream like a public one when the viewer is or is not a member", () => {
+    const verdict = (visibility: Visibility) => ({
+      member: isSidebarStreamVisible(
+        makeStream({ id: "stream_member", visibility }),
+        memberStreamIds,
+        archivedStreamIds,
+        hiddenStreamIds
+      ),
+      nonMember: isSidebarStreamVisible(
+        makeStream({ id: "stream_other", visibility }),
+        memberStreamIds,
+        archivedStreamIds,
+        hiddenStreamIds
+      ),
+    })
+    expect(verdict(Visibilities.GUEST_PUBLIC)).toEqual(verdict(Visibilities.PUBLIC))
+  })
+
   it("shows a non-public stream regardless of membership (access already gated by bootstrap)", () => {
     const stream = makeStream({ id: "stream_private", visibility: Visibilities.PRIVATE })
     expect(isSidebarStreamVisible(stream, memberStreamIds, archivedStreamIds, hiddenStreamIds)).toBe(true)
@@ -281,6 +306,7 @@ describe("buildVirtualDmDrafts", () => {
     currentUserId: "user_self",
     workspaceUsers,
     dmPeerUserIds: [] as string[],
+    isDmOpen: () => true,
   }
 
   it("returns [] in board mode (DM drafts hidden on the board)", () => {
@@ -304,6 +330,15 @@ describe("buildVirtualDmDrafts", () => {
 
   it("returns [] when there is no current user", () => {
     expect(buildVirtualDmDrafts({ ...baseArgs, isBoardMode: false, currentUserId: null })).toEqual([])
+  })
+
+  it("should keep a draft for an open peer and drop one for a peer whose DM the guest DM policy closes", () => {
+    const drafts = buildVirtualDmDrafts({
+      ...baseArgs,
+      isBoardMode: false,
+      isDmOpen: (peerUserId) => peerUserId !== "user_pierre",
+    })
+    expect(drafts.map((d) => d.dmPeerUserId)).toEqual(["user_anna"])
   })
 
   it("should skip a copy of a host user when synthesizing drafts", () => {

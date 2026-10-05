@@ -345,18 +345,18 @@ describe("Stream Settings E2E", () => {
       expect(updated.visibility).toBe("public")
     })
 
-    test("should reject updating channel visibility to guest_public", async () => {
+    test("should update a public channel to guest_public and read it back as guest_public", async () => {
       const client = new TestClient()
       await loginAs(client, testEmail("vis-guest-owner"), "Visibility Guest Owner")
       const workspace = await createWorkspace(client, `Visibility Guest WS ${testRunId}`)
-      const channel = await createChannel(client, workspace.id, `vis-guest-ch-${testRunId}`, "private")
+      const channel = await createChannel(client, workspace.id, `vis-guest-ch-${testRunId}`, "public")
 
       const response = await updateStream(client, workspace.id, channel.id, { visibility: "guest_public" })
       const after = await getStream(client, workspace.id, channel.id)
 
-      expect({ response, visibility: after.visibility }).toMatchObject({
-        response: { status: 400, data: { code: "VALIDATION_ERROR" } },
-        visibility: "private",
+      expect({ status: response.status, visibility: after.visibility }).toEqual({
+        status: 200,
+        visibility: "guest_public",
       })
     })
   })

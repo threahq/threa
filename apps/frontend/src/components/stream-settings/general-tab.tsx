@@ -22,6 +22,7 @@ import { DescriptionSection } from "./description-section"
 import { getStreamName } from "@/lib/streams"
 import { useUpdateStream, useArchiveStream, useUnarchiveStream, useSetNotificationLevel } from "@/hooks"
 import { useRenameStream } from "@/hooks/use-rename-stream"
+import { useCanManageChannels } from "@/lib/use-can-manage-channels"
 import { useEffectiveArchived } from "@/hooks/use-effective-archived"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { isProtectedRegenerableTitle, useRegenerateTitle } from "@/hooks/use-regenerate-title"
@@ -59,6 +60,8 @@ export function GeneralTab({
   const isDm = stream.type === StreamTypes.DM
   const isThread = stream.type === StreamTypes.THREAD
   const isSystem = stream.type === StreamTypes.SYSTEM
+  const canManageChannels = useCanManageChannels(workspaceId)
+  const channelLocked = isChannel && !canManageChannels
 
   // Build sections dynamically so we never render orphan or stacked dividers
   const sections: React.ReactNode[] = []
@@ -74,7 +77,9 @@ export function GeneralTab({
   )
 
   if (isChannel) {
-    sections.push(<VisibilitySection key="visibility" workspaceId={workspaceId} stream={stream} />)
+    sections.push(
+      <VisibilitySection key="visibility" workspaceId={workspaceId} stream={stream} locked={channelLocked} />
+    )
   } else if (isScratchpad) {
     sections.push(<VisibilityDisplay key="visibility" label="Visibility" hint="Scratchpads are always private" />)
   } else if (isDm) {
@@ -100,7 +105,7 @@ export function GeneralTab({
   }
 
   if (isChannel) {
-    sections.push(<SlugSection key="name" workspaceId={workspaceId} stream={stream} />)
+    sections.push(<SlugSection key="name" workspaceId={workspaceId} stream={stream} locked={channelLocked} />)
   } else if (isScratchpad) {
     sections.push(<DisplayNameSection key="name" workspaceId={workspaceId} stream={stream} />)
   } else if (isDm) {
@@ -112,14 +117,16 @@ export function GeneralTab({
   }
 
   if (isChannel || isScratchpad || isDm) {
-    sections.push(<DescriptionSection key="description" workspaceId={workspaceId} stream={stream} />)
+    sections.push(
+      <DescriptionSection key="description" workspaceId={workspaceId} stream={stream} locked={channelLocked} />
+    )
   }
 
   // Memory automation is a per-stream gate on GAM extraction. Threads inherit
   // from their root and system streams are read-only; every other type that
   // produces memos (channels, scratchpads, DMs) gets the toggle.
   if (isChannel || isScratchpad || isDm) {
-    sections.push(<MemorySection key="memory" workspaceId={workspaceId} stream={stream} />)
+    sections.push(<MemorySection key="memory" workspaceId={workspaceId} stream={stream} locked={channelLocked} />)
   }
 
   if (isSystem) {
@@ -143,6 +150,7 @@ export function GeneralTab({
         rootStream={rootStream ?? null}
         currentUserId={currentUserId}
         streamTypeLabel={archiveLabel}
+        locked={channelLocked}
       />
     )
   }
@@ -220,14 +228,27 @@ function NotificationSection({
   )
 }
 
-function VisibilitySection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
+function visibilityChangeCopy(from: Visibility, to: Visibility): string {
+  if (to === Visibilities.PRIVATE) {
+    return "Making this channel private will hide it from non-members. They won't be able to find or join it."
+  }
+  if (to === Visibilities.GUEST_PUBLIC) {
+    return "Members and guests will be able to find this channel, join it and read its history."
+  }
+  if (from === Visibilities.GUEST_PUBLIC) {
+    return "Guests who haven't joined will lose access to this channel. Members will still be able to find and join it."
+  }
+  return "Making this channel public will make it visible to all workspace members. Anyone will be able to join."
+}
+
+function VisibilitySection({ workspaceId, stream, locked }: { workspaceId: string; stream: Stream; locked: boolean }) {
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [pendingVisibility, setPendingVisibility] = useState<"public" | "private" | null>(null)
+  const [pendingVisibility, setPendingVisibility] = useState<Visibility | null>(null)
   const updateMutation = useUpdateStream(workspaceId, stream.id)
 
-  const handleVisibilityChange = (value: string) => {
+  const handleVisibilityChange = (value: Visibility) => {
     if (value === stream.visibility) return
-    setPendingVisibility(value as "public" | "private")
+    setPendingVisibility(value)
     setConfirmOpen(true)
   }
 
@@ -251,16 +272,14 @@ function VisibilitySection({ workspaceId, stream }: { workspaceId: string; strea
   return (
     <div className="space-y-3">
       <Label className="text-sm font-medium">Visibility</Label>
-      <VisibilityPicker value={stream.visibility} onChange={handleVisibilityChange} />
+      <VisibilityPicker value={stream.visibility} onChange={handleVisibilityChange} disabled={locked} />
 
       <ResponsiveAlertDialog open={confirmOpen} onOpenChange={handleCancel}>
         <ResponsiveAlertDialogContent>
           <ResponsiveAlertDialogHeader>
             <ResponsiveAlertDialogTitle>Change visibility?</ResponsiveAlertDialogTitle>
             <ResponsiveAlertDialogDescription>
-              {pendingVisibility === Visibilities.PRIVATE
-                ? "Making this channel private will hide it from non-members. They won't be able to find or join it."
-                : "Making this channel public will make it visible to all workspace users. Anyone will be able to join."}
+              {pendingVisibility && visibilityChangeCopy(stream.visibility, pendingVisibility)}
             </ResponsiveAlertDialogDescription>
           </ResponsiveAlertDialogHeader>
           <ResponsiveAlertDialogFooter>
@@ -299,7 +318,7 @@ function ThreadVisibilityDisplay({
   )
 }
 
-function SlugSection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
+function SlugSection({ workspaceId, stream, locked }: { workspaceId: string; stream: Stream; locked: boolean }) {
   const [slug, setSlug] = useState(stream.slug ?? "")
   const [isValid, setIsValid] = useState(true)
   const updateMutation = useUpdateStream(workspaceId, stream.id)
@@ -325,6 +344,7 @@ function SlugSection({ workspaceId, stream }: { workspaceId: string; stream: Str
         value={slug}
         onChange={setSlug}
         onValidityChange={setIsValid}
+        disabled={locked}
       />
       {hasChanged && (
         <Button size="sm" onClick={handleSave} disabled={!isValid || updateMutation.isPending}>
@@ -428,7 +448,7 @@ function ThreadDisplayNameSection({ workspaceId, stream }: { workspaceId: string
   )
 }
 
-function MemorySection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
+function MemorySection({ workspaceId, stream, locked }: { workspaceId: string; stream: Stream; locked: boolean }) {
   const updateMutation = useUpdateStream(workspaceId, stream.id)
   // Absent on legacy cached rows synced before this shipped; treat as auto.
   const memoryOn = (stream.memoryMode ?? MemoryModes.AUTO) === MemoryModes.AUTO
@@ -456,7 +476,7 @@ function MemorySection({ workspaceId, stream }: { workspaceId: string; stream: S
           id="memory-automation"
           checked={memoryOn}
           onCheckedChange={handleChange}
-          disabled={updateMutation.isPending}
+          disabled={locked || updateMutation.isPending}
         />
       </div>
     </div>
@@ -481,12 +501,14 @@ function ArchiveSection({
   rootStream,
   currentUserId,
   streamTypeLabel,
+  locked,
 }: {
   workspaceId: string
   stream: Stream
   rootStream: Stream | null
   currentUserId: string
   streamTypeLabel: string
+  locked: boolean
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const archiveMutation = useArchiveStream(workspaceId)
@@ -545,6 +567,7 @@ function ArchiveSection({
             size="sm"
             className="shrink-0 text-destructive hover:text-destructive hover:bg-destructive/10 border-destructive/30"
             onClick={() => setConfirmOpen(true)}
+            disabled={locked}
           >
             {isArchived ? "Unarchive" : "Archive"}
           </Button>

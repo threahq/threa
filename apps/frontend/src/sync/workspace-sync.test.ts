@@ -4081,6 +4081,27 @@ describe("registerWorkspaceSocketHandlers", () => {
     }
   )
 
+  it.each(["stream:created", "stream:updated"])(
+    "should list an unjoined guest_public channel exactly like a public one when %s arrives",
+    async (event) => {
+      const listedAfter = async (visibility: Stream["visibility"]) => {
+        const queryClient = new QueryClient()
+        queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap())
+        const { socket, emit } = createTestSocket()
+        const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, handlerRefs)
+        emit(event, { workspaceId: "ws_1", streamId: "stream_open", stream: makeStream("stream_open", { visibility }) })
+        await new Promise((r) => setTimeout(r, 20))
+        cleanup()
+        return queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.streams.map((s) => s.id)
+      }
+
+      expect({ public: await listedAfter("public"), guestPublic: await listedAfter("guest_public") }).toEqual({
+        public: ["stream_open"],
+        guestPublic: ["stream_open"],
+      })
+    }
+  )
+
   it("carries stream:archived / stream:unarchived onto the board rows the stream covers", async () => {
     await db.conversations.clear()
     await seedBoardRow("conv_arch", "ws_1", "thread_1", "stream_arch_board")

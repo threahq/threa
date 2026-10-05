@@ -115,9 +115,7 @@ export function PendingEmailInvitationDetails({
         {email}
       </span>
       <div className="flex items-center gap-2">
-        <Badge variant="outline" className="capitalize">
-          {role}
-        </Badge>
+        <Badge variant="outline">{roleDisplayName(role)}</Badge>
         <span className="text-xs text-muted-foreground">
           {expiresAt ? `Expires ${formatDate(new Date(expiresAt))}` : "Never expires"}
         </span>
@@ -233,16 +231,24 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
         </p>
       )}
 
-      <div className="space-y-2">
+      <div role="list" className="space-y-2">
         {users.map((user) => {
           const isSelf = user.workosUserId === authUser?.id
           // Owners aren't demotable here — ownership transfer is its own flow.
-          const canEditRole = canManageMembers && !isSelf && user.role !== "owner"
+          const canEditRole =
+            canManageMembers &&
+            !isSelf &&
+            user.role !== "owner" &&
+            (WORKSPACE_ASSIGNABLE_ROLES as readonly string[]).includes(user.role)
           const canRemove = canManageMembers && !isSelf && user.role !== "owner"
           const isRoleChanging = changeRoleMutation.isPending && changeRoleMutation.variables?.userId === user.id
 
           return (
-            <div key={user.id} className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
+            <div
+              key={user.id}
+              role="listitem"
+              className="flex items-center justify-between gap-2 rounded-md border px-3 py-2"
+            >
               <div className="flex items-center gap-2.5 min-w-0">
                 <ActorAvatar
                   actorId={user.id}
@@ -335,9 +341,7 @@ export function UsersTab({ workspaceId }: UsersTabProps) {
                         Invite link
                       </span>
                       <Badge variant="outline">{state}</Badge>
-                      <Badge variant="outline" className="capitalize">
-                        {invitation.role}
-                      </Badge>
+                      <Badge variant="outline">{roleDisplayName(invitation.role)}</Badge>
                     </div>
                     <p className="text-xs text-muted-foreground">
                       {invitation.useCount} of {invitation.maxUses ?? "unlimited"} joined ·{" "}

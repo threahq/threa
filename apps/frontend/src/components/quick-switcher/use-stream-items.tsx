@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback } from "react"
 import { useQuery } from "@tanstack/react-query"
 import { Hash, Plus, X, Archive } from "lucide-react"
-import { StreamTypes, draftStreamScope, getAvatarUrl } from "@threahq/types"
+import { StreamTypes, draftStreamScope, getAvatarUrl, isOpenVisibility } from "@threahq/types"
 import type { Stream, StreamType } from "@threahq/types"
 import { getStreamName, streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { streamsApi } from "@/api"
@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { calculateUrgency } from "@/components/layout/sidebar/utils"
 import { isToleranceMatch, scoreMatch } from "@/lib/match-score"
+import { useGuestDmOpen } from "@/lib/use-guest-dm-open"
 import { compareStreamEntries, scoreStreamMatch } from "@/lib/stream-sort"
 import { FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
 import { FilterSelect } from "./filter-select"
@@ -81,6 +82,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
   const { getUnreadCount } = useUnreadCounts(workspaceId)
   const { getMentionCount, getActivityCount } = useActivityCounts(workspaceId)
   const unreadState = useWorkspaceUnreadState(workspaceId, pickMutedStreamIds)
+  const guestDmOpen = useGuestDmOpen(workspaceId)
   const mutedStreamIds = useMemo(() => new Set(unreadState?.mutedStreamIds ?? []), [unreadState?.mutedStreamIds])
 
   const memberStreamIds = useMemo(() => {
@@ -222,7 +224,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
       const typeLabel = getStreamTypeLabel(stream.type)
       // Threads carry no member rows (INV-62), so "Not joined" would be true of all.
       const isThread = stream.type === StreamTypes.THREAD
-      const notJoined = !isThread && !memberStreamIds.has(stream.id) && stream.visibility === "public"
+      const notJoined = !isThread && !memberStreamIds.has(stream.id) && isOpenVisibility(stream.visibility)
       const parentLabel = isThread ? parentLabelFor(stream) : null
       let description = parentLabel ? `${typeLabel} · in ${parentLabel}` : typeLabel
       if (isArchived) description = `${description} · Archived`
@@ -275,6 +277,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
       .filter(isPickableUser)
       .filter((workspaceUser) => workspaceUser.id !== currentUserId)
       .filter((workspaceUser) => !existingDmPeerIds.has(workspaceUser.id))
+      .filter((workspaceUser) => guestDmOpen([workspaceUser.id]))
       .map((workspaceUser) => ({
         workspaceUser,
         score: searchText ? scoreMatch(lowerQuery, [workspaceUser.name]) : 0,
@@ -330,6 +333,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
     getMentionCount,
     getActivityCount,
     mutedStreamIds,
+    guestDmOpen,
   ])
 
   const header = (

@@ -8,11 +8,11 @@ import { Router } from "react-router-dom"
 import { QuickSwitcher } from "./quick-switcher"
 import { SidebarProvider } from "@/contexts/sidebar-context"
 import { SearchPanelProvider, useSearchPanel } from "@/components/search/search-panel-context"
-import { StreamTypes } from "@threahq/types"
+import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type GuestDmPolicy, type WorkspaceBootstrap } from "@threahq/types"
 import { createMockStream, mockStreamsList } from "@/test/fixtures"
 import { FILTER_TYPE_OPTIONS } from "@/components/editor/triggers/filter-type-extension"
 import { getAsideState, resetAsideStoreCache } from "@/stores/aside-store"
-import { mockUsers, mockUsersList } from "@/test/fixtures/users"
+import { createMockUser, mockUsers, mockUsersList } from "@/test/fixtures/users"
 import { mockSearchResultsList } from "@/test/fixtures/messages"
 import * as hooksModule from "@/hooks"
 import * as mentionablesModule from "@/hooks/use-mentionables"
@@ -23,6 +23,7 @@ import * as authModule from "@/auth"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as streamsApiModule from "@/api/streams"
 import { streamKeys } from "@/hooks/use-streams"
+import { workspaceKeys } from "@/hooks/use-workspaces"
 import * as contextsModule from "@/contexts"
 import * as streamSettingsModule from "@/components/stream-settings/use-stream-settings"
 
@@ -63,13 +64,18 @@ const mockWorkspaceBootstrap = {
   },
 }
 
-function createTestQueryClient() {
-  return new QueryClient({
+function createTestQueryClient(guestDmPolicy?: GuestDmPolicy) {
+  const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
       mutations: { retry: false },
     },
   })
+  queryClient.setQueryData(workspaceKeys.bootstrap("workspace_1"), {
+    viewerPermissions: [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE],
+    workspaceSettings: guestDmPolicy ? { guestDmPolicy } : undefined,
+  } as WorkspaceBootstrap)
+  return queryClient
 }
 
 function toPathString(to: { pathname: string; search?: string; hash?: string }): string {
@@ -1137,6 +1143,65 @@ describe("QuickSwitcher Integration Tests", () => {
     })
   })
 
+  describe("guest DM policy", () => {
+    const guest = createMockUser({
+      id: "member_guest",
+      workosUserId: "workos_guest",
+      role: "guest",
+      slug: "alan",
+      name: "Alan",
+    })
+    const draftLink = (userId: string) => `a[href="/w/workspace_1/s/draft_dm_${userId}"]`
+
+    async function openUsersFor(policy: GuestDmPolicy | undefined) {
+      vi.spyOn(authModule, "useUser").mockReturnValue({
+        id: "workos_user_2",
+        name: "Kate",
+        slug: "kate",
+      } as unknown as ReturnType<typeof authModule.useUser>)
+      mockWorkspaceBootstrap.data.users = [...mockUsersList, guest]
+      renderWithProviders(<QuickSwitcher {...defaultProps} />, createTestQueryClient(policy))
+      await userEvent.setup().type(screen.getByLabelText("Quick switcher input"), "al")
+      await waitFor(() => {
+        expect(document.querySelector(draftLink("member_3"))).toBeInTheDocument()
+      })
+    }
+
+    it("should omit a guest from the Users group of a member when guest DMs are off", async () => {
+      await openUsersFor(undefined)
+
+      expect(document.querySelector(draftLink("member_guest"))).not.toBeInTheDocument()
+    })
+
+    it("should list a guest in the Users group of a member when guest DMs are open", async () => {
+      await openUsersFor("open")
+
+      expect(document.querySelector(draftLink("member_guest"))).toBeInTheDocument()
+    })
+  })
+
+  describe("guest DM policy for a guest viewer", () => {
+    const guestViewer = createMockUser({ id: "member_guest", workosUserId: "workos_guest", role: "guest" })
+    const draftLink = (userId: string) => `a[href="/w/workspace_1/s/draft_dm_${userId}"]`
+
+    it("should list only admins in the Users group of a guest when only admins may DM guests", async () => {
+      vi.spyOn(authModule, "useUser").mockReturnValue({ id: "workos_guest" } as unknown as ReturnType<
+        typeof authModule.useUser
+      >)
+      mockWorkspaceBootstrap.data.users = [...mockUsersList, guestViewer]
+      renderWithProviders(<QuickSwitcher {...defaultProps} />, createTestQueryClient("admins"))
+      await userEvent.setup().type(screen.getByLabelText("Quick switcher input"), "a")
+      await waitFor(() => {
+        expect(document.querySelector(draftLink("member_1"))).toBeInTheDocument()
+      })
+
+      expect({
+        member2: document.querySelector(draftLink("member_2")),
+        member3: document.querySelector(draftLink("member_3")),
+      }).toEqual({ member2: null, member3: null })
+    })
+  })
+
   describe("contextual stream commands", () => {
     it("should surface current-stream commands under a stream-named section in command mode", async () => {
       renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" currentStreamId="stream_channel1" />)
@@ -1161,6 +1226,19 @@ describe("QuickSwitcher Integration Tests", () => {
       })
       expect(screen.queryByText("Archive this stream")).not.toBeInTheDocument()
       expect(screen.queryByText(/This stream/)).not.toBeInTheDocument()
+    })
+
+    it("should not list New Channel when the viewer lacks browse", async () => {
+      const queryClient = createTestQueryClient()
+      queryClient.setQueryData(workspaceKeys.bootstrap("workspace_1"), {
+        viewerPermissions: [],
+      } as unknown as WorkspaceBootstrap)
+      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" />, queryClient)
+
+      await waitFor(() => {
+        expect(screen.getByText("New Scratchpad")).toBeInTheDocument()
+      })
+      expect(screen.queryByText("New Channel")).not.toBeInTheDocument()
     })
 
     it("should keep contextual commands visible (with their section) while filtering", async () => {

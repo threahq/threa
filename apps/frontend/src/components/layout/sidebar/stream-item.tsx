@@ -36,7 +36,7 @@ import { useActiveCallsForStream } from "@/stores/active-calls-store"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
-import { streamTypeVisual } from "@/lib/stream-visuals"
+import { GuestPublicIcon, streamTypeVisual, VISIBILITY_LABELS } from "@/lib/stream-visuals"
 import { copyStreamLink } from "@/lib/stream-links"
 import { BADGE_CONFIG } from "./config"
 import {
@@ -822,6 +822,12 @@ export function StreamItem({
                     </span>
                     {stream.type === StreamTypes.CHANNEL && stream.visibility === Visibilities.PRIVATE && (
                       <Lock className="h-3 w-3 shrink-0 text-muted-foreground/60" />
+                    )}
+                    {stream.type === StreamTypes.CHANNEL && stream.visibility === Visibilities.GUEST_PUBLIC && (
+                      <GuestPublicIcon
+                        className="h-3 w-3 shrink-0 text-muted-foreground/60"
+                        aria-label={VISIBILITY_LABELS.guest_public}
+                      />
                     )}
                     {boardMuted && (
                       <BellOff className="h-3 w-3 shrink-0 text-muted-foreground/60" aria-label="Muted on the board" />

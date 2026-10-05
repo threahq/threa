@@ -202,6 +202,30 @@ describe("SidebarFooter", () => {
     expect(onCreateChannel).toHaveBeenCalled()
   })
 
+  it("should leave New Channel out of the create drawer when the viewer cannot create channels", async () => {
+    const user = userEvent.setup()
+
+    renderWithRouter(
+      <SidebarFooter
+        workspaceId="workspace_1"
+        onCreateScratchpad={vi.fn()}
+        scratchpadAddMenuActions={[
+          { id: "new-scratchpad", label: "New Scratchpad", icon: UserIcon, onSelect: vi.fn() },
+          { id: "new-quick-note", label: "New Quick Note", icon: UserIcon, onSelect: vi.fn() },
+        ]}
+        currentUser={currentUserFixture}
+      />
+    )
+
+    await user.click(screen.getByRole("button", { name: "New" }))
+
+    expect({
+      scratchpad: screen.queryByText("New Scratchpad") !== null,
+      quickNote: screen.queryByText("New Quick Note") !== null,
+      channel: screen.queryByText("New Channel") !== null,
+    }).toEqual({ scratchpad: true, quickNote: true, channel: false })
+  })
+
   it("opens the desktop dropdown from the account row trigger", async () => {
     isTouch.value = false
     const user = userEvent.setup()

@@ -4,9 +4,9 @@ Generated from the version-change modules. Do not edit by hand.
 
 ## 2026-10-04
 
-Streams gain the `guest_public` visibility: readable by guests, who cannot browse `public` channels. A `private` shared-message slot's `sourceVisibility` can now be `guest_public`. Pins before this version see `public` there instead.
+Streams gain the `guest_public` visibility: readable by guests, who cannot browse `public` channels. A stream's `visibility`, and a `private` shared-message slot's `sourceVisibility`, can now be `guest_public`. Pins before this version see `public` there instead.
 
-Affected operations: completeBotInvocation, findMessagesByMetadata, listConversationMessages, listMessages, searchMessages, sendMessage, updateMessage
+Affected operations: archiveStream, completeBotInvocation, findMessagesByMetadata, getStream, listConversationMessages, listMessages, listStreams, searchMessages, sendMessage, unarchiveStream, updateMessage, updateStream
 
 ## 2026-10-01
 

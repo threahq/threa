@@ -3,11 +3,13 @@ import { toast } from "sonner"
 import { Label } from "@/components/ui/label"
 import { cn } from "@/lib/utils"
 import { useUpdateCompanionMode } from "@/hooks/use-streams"
+import { useCanManageChannels } from "@/lib/use-can-manage-channels"
 import { useDefaultCompanionPersona } from "@/hooks/use-default-companion-persona"
 import { useCompanionRoster } from "@/hooks/use-companion-roster"
 import { useActiveBotPresence } from "@/hooks/use-active-bot-presence"
 import {
   CompanionModes,
+  StreamTypes,
   type CompanionMode,
   type Stream,
   type ToolPrivacyCategory,
@@ -27,6 +29,8 @@ interface CompanionTabProps {
   configuredToolCategories?: ToolPrivacyCategory[]
   /** True only when the viewer can manage this stream's tool policy (scratchpad owner). */
   canManageToolPolicy: boolean
+  /** A thread's root, whose brief the thread edits. */
+  rootStream?: Stream | null
 }
 
 export function CompanionTab({
@@ -35,6 +39,7 @@ export function CompanionTab({
   allowedToolCategories,
   configuredToolCategories,
   canManageToolPolicy,
+  rootStream,
 }: CompanionTabProps) {
   const { mutateAsync: updateCompanionMode, isPending } = useUpdateCompanionMode(workspaceId, stream.id)
   const externalAgent = useActiveBotPresence(workspaceId, stream.id)
@@ -43,7 +48,12 @@ export function CompanionTab({
   // companion path), so the toggle is a real control here too: Companion =
   // she replies via the enclave, Quiet = silent encrypted storage.
   const isE2e = stream.e2eEnabled === true
-  const disabled = isPending
+  const canManageChannels = useCanManageChannels(workspaceId)
+  const channelLocked = stream.type === StreamTypes.CHANNEL && !canManageChannels
+  // A thread whose root is not cached yet locks too: the backend gates the brief on the root's type.
+  const briefRootType = stream.type === StreamTypes.THREAD ? (rootStream?.type ?? StreamTypes.CHANNEL) : stream.type
+  const briefLocked = briefRootType === StreamTypes.CHANNEL && !canManageChannels
+  const disabled = isPending || channelLocked
 
   // Bootstrap-backed store read (no fetch) — instant on open, offline-capable.
   // The picker itself stays hidden on encrypted scratchpads (enclave is
@@ -168,7 +178,7 @@ export function CompanionTab({
 
       {/* Briefs are server-stored plaintext the enclave prompt never injects, so
           they are unsupported on encrypted streams (roadmap §4.1 deviation). */}
-      {!isE2e && <BriefSection workspaceId={workspaceId} stream={stream} />}
+      {!isE2e && <BriefSection workspaceId={workspaceId} stream={stream} locked={briefLocked} />}
     </div>
   )
 }

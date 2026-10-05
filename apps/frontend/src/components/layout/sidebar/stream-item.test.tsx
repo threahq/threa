@@ -378,6 +378,16 @@ describe("StreamItem", () => {
     expect(screen.queryByText(/Latest update from the stream/)).not.toBeInTheDocument()
   })
 
+  it("should mark the row open to guests when the channel is guest_public", () => {
+    const stream = createStream({ visibility: Visibilities.GUEST_PUBLIC })
+
+    renderWithRouter(
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={0} mentionCount={0} />
+    )
+
+    expect(screen.getByLabelText("Open to guests")).toBeInTheDocument()
+  })
+
   it("shows an unsent-draft hint on a stream with a loaded draft", () => {
     const stream = createStream({ hasLoadedDraft: true })
 

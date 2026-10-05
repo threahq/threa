@@ -31,7 +31,16 @@ describe("SharedMessageCardBody — Slice 2 placeholders", () => {
     // The stub must NOT surface the cached fallback author (privacy leak).
     expect(screen.queryByText("Should not appear")).not.toBeInTheDocument()
     expect(screen.getByText("Private message")).toBeInTheDocument()
-    expect(screen.getByText(/references content in a private channel you don't have access to/i)).toBeInTheDocument()
+    expect(screen.getByText(/references content you don't have access to in a private channel/i)).toBeInTheDocument()
+  })
+
+  it.each([
+    ["public", "This message references content you don't have access to in a public channel."],
+    ["guest_public", "This message references content you don't have access to in a channel open to guests."],
+  ] as const)("should name the source by its visibility label when it is %s", (sourceVisibility, copy) => {
+    const source: SharedMessageSource = { status: "private", sourceStreamKind: "channel", sourceVisibility }
+    renderUnderRoute(<SharedMessageCardBody source={source} fallbackAuthor="" />)
+    expect(screen.getByText(copy)).toBeInTheDocument()
   })
 
   it("uses 'DM' wording for dm sources", () => {
@@ -41,7 +50,7 @@ describe("SharedMessageCardBody — Slice 2 placeholders", () => {
       sourceVisibility: "private",
     }
     renderUnderRoute(<SharedMessageCardBody source={source} fallbackAuthor="" />)
-    expect(screen.getByText(/private DM you don't have access to/i)).toBeInTheDocument()
+    expect(screen.getByText(/you don't have access to in a private DM/i)).toBeInTheDocument()
   })
 
   it("renders a navigable link for the truncated state", () => {

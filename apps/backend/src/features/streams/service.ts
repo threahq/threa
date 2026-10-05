@@ -29,12 +29,14 @@ import {
   isUniqueViolation,
 } from "../../lib/errors"
 import { formatParticipantNames } from "./display-name"
-import { checkStreamAccess, isOpenToBots, listAccessibleStreamIds, usersReadingWithoutMembership } from "./access"
+import { checkStreamAccess, listAccessibleStreamIds, usersReadingWithoutMembership } from "./access"
 import { findGuestPolicyClosedDmIds, isGuestDmOpenForUsers } from "./guest-dm-policy"
 import { resolveInboxClearMode } from "./inbox-clear-mode"
 import { releaseInboxHold } from "./inbox-release"
 import {
+  assertPrincipalMayManageChannel,
   assertStreamWritable,
+  assertUserMayManageChannels,
   assertViewerStreamWritable,
   canHostAside,
   createStreamReadOnlyError,
@@ -56,7 +58,7 @@ import {
   E2eKeyWrapRecipientKinds,
   type E2eActorKind,
   type StreamType,
-  type CreatableVisibility,
+  type Visibility,
   type CompanionMode,
   type MemoryMode,
   type NotificationLevel,
@@ -77,6 +79,7 @@ import {
   type StreamReadFrontierSnapshot,
   TitleSources,
   StreamReadOnlyReasons,
+  isOpenVisibility,
   type StreamDirectoryStats,
 } from "@threahq/types"
 import { ContextBagRepository, PersonaRepository, assertAssignablePersona } from "../agents"
@@ -332,7 +335,7 @@ async function lockPrincipalAccess(
 ): Promise<void> {
   if (principal.kind === "user") return lockActorAccess(client, workspaceId, root, principal.userId)
   const grants = await BotChannelAccessRepository.lockGrants(client, workspaceId, principal.botId, [root.id])
-  if (!grants.has(root.id) && !isOpenToBots(root.visibility)) throw new StreamNotFoundError()
+  if (!grants.has(root.id) && !isOpenVisibility(root.visibility)) throw new StreamNotFoundError()
 }
 
 async function lockActorAccess(
@@ -621,6 +624,7 @@ export class StreamService {
         if (!params.slug) {
           throw new Error("Slug is required for channels")
         }
+        await assertUserMayManageChannels(this.pool, params.workspaceId, params.createdBy)
         return this.createChannel({
           workspaceId: params.workspaceId,
           slug: params.slug,
@@ -1267,6 +1271,7 @@ export class StreamService {
           code: "INVALID_STREAM_TYPE",
         })
       }
+      await assertPrincipalMayManageChannel(client, workspaceId, target, { kind: "user", userId: actingUserId })
       await assertAssignablePersona(client, companionPersonaId, workspaceId, { callerUserId: actingUserId })
       const stream = await StreamRepository.update(client, workspaceId, streamId, {
         companionMode,
@@ -1384,6 +1389,7 @@ export class StreamService {
     await lockPrincipalAccess(client, workspaceId, root, principal)
     // A copy archives when its host does, through the pull.
     if (target.originWorkspaceId) throw createStreamReadOnlyError(StreamReadOnlyReasons.SHARED_COPY)
+    await assertPrincipalMayManageChannel(client, workspaceId, target, principal)
     assertCanArchive(target, root, principal)
     // Idempotent once authority is proven: a repeat flip would bump archived_at
     // and append a second lifecycle event, so retries would litter the timeline.
@@ -1467,7 +1473,7 @@ export class StreamService {
        */
       actorId?: string
       actorType?: AuthorType
-      visibility?: CreatableVisibility
+      visibility?: Visibility
       memoryMode?: MemoryMode
       /**
        * Sealed (encrypted) display name for an E2E stream — stored on
@@ -1511,11 +1517,12 @@ export class StreamService {
     }
     try {
       return await withTransaction(this.pool, async (client) => {
-        await assertStreamWritable(client, {
+        const { target } = await assertStreamWritable(client, {
           workspaceId: authority.workspaceId,
           streamId,
           principal: authority.principal,
         })
+        await assertPrincipalMayManageChannel(client, authority.workspaceId, target, authority.principal)
         // Snapshot the pre-update markdown so we only emit when it really changes
         // (a no-op re-save shouldn't spam the timeline).
         let previousDescription: string | null = null

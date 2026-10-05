@@ -179,6 +179,7 @@ export function StreamSettingsDialog({ workspaceId }: StreamSettingsDialogProps)
                     canManageToolPolicy={
                       resolvedStream.type === StreamTypes.SCRATCHPAD && resolvedStream.createdBy === currentUserId
                     }
+                    rootStream={rootStream}
                   />
                 </TabsContent>
                 <TabsContent value="members" className="mt-0">

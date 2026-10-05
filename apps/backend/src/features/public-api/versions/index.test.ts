@@ -567,7 +567,7 @@ describe("VERSION_CHANGES: the 2026-10-01 unclaimed-user change", () => {
 describe("VERSION_CHANGES: the 2026-10-04 guest_public change", () => {
   const guestPublicChange = VERSION_CHANGES.find((c) => c.version === "2026-10-04")!
 
-  test("should be the current version and scope the slot-map operations", () => {
+  test("should be the current version and scope the slot-map and stream operations", () => {
     expect({ current: CURRENT_API_VERSION, operations: [...guestPublicChange.operations] }).toEqual({
       current: "2026-10-04",
       operations: [
@@ -578,6 +578,11 @@ describe("VERSION_CHANGES: the 2026-10-04 guest_public change", () => {
         "updateMessage",
         "completeBotInvocation",
         "searchMessages",
+        "listStreams",
+        "getStream",
+        "updateStream",
+        "archiveStream",
+        "unarchiveStream",
       ],
     })
   })
@@ -601,9 +606,34 @@ describe("VERSION_CHANGES: the 2026-10-04 guest_public change", () => {
     })
   })
 
-  test("should leave operations without a slot map alone", () => {
-    const payload = { data: [{ id: "stream_1", visibility: "guest_public" }] }
-    expect(guestPublicChange.downgradeResponse!(payload, { operationId: "listStreams" })).toBe(payload)
+  test("should report a guest_public stream as public and leave every other stream alone", () => {
+    const stream = (id: string, visibility: string) => ({ id, visibility, type: "channel" })
+    const page = { data: [stream("stream_gp", "guest_public"), stream("stream_pub", "public")], hasMore: false }
+    const single = { data: stream("stream_gp", "guest_public") }
+
+    expect({
+      page: guestPublicChange.downgradeResponse!(page, { operationId: "listStreams" }),
+      single: guestPublicChange.downgradeResponse!(single, { operationId: "getStream" }),
+      updated: guestPublicChange.downgradeResponse!(single, { operationId: "updateStream" }),
+      archived: guestPublicChange.downgradeResponse!(single, { operationId: "archiveStream" }),
+      unarchived: guestPublicChange.downgradeResponse!(single, { operationId: "unarchiveStream" }),
+      private: guestPublicChange.downgradeResponse!(
+        { data: stream("stream_pr", "private") },
+        { operationId: "updateStream" }
+      ),
+    }).toEqual({
+      page: { data: [stream("stream_gp", "public"), stream("stream_pub", "public")], hasMore: false },
+      single: { data: stream("stream_gp", "public") },
+      updated: { data: stream("stream_gp", "public") },
+      archived: { data: stream("stream_gp", "public") },
+      unarchived: { data: stream("stream_gp", "public") },
+      private: { data: stream("stream_pr", "private") },
+    })
+  })
+
+  test("should leave operations without a slot map or a stream alone", () => {
+    const payload = { data: [{ id: "usr_1", visibility: "guest_public" }] }
+    expect(guestPublicChange.downgradeResponse!(payload, { operationId: "listUsers" })).toBe(payload)
   })
 
   test("should drop guest_public from sourceVisibility enums and nowhere else", () => {

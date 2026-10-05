@@ -1,4 +1,6 @@
 import { describe, expect, it, mock } from "bun:test"
+import { StreamErrorCodes } from "@threahq/types"
+import { HttpError } from "../../../lib/errors"
 import { createUpdateStreamBriefTool } from "./update-stream-brief-tool"
 import type { UpdateStreamBriefToolResult } from "./tool-deps"
 
@@ -78,6 +80,22 @@ describe("update_stream_brief tool", () => {
 
     const result = await tool.config.execute({ content: "x", reason: "r" }, EXEC_OPTS)
     expect(parse(result.output).ok).toBe(false)
+  })
+
+  it("should tell the model a guest can't change the brief when the write is refused for channel management", async () => {
+    const updateBrief = mock(async (): Promise<UpdateStreamBriefToolResult> => {
+      throw new HttpError("Guests cannot create or change channels", {
+        status: 403,
+        code: StreamErrorCodes.CHANNEL_MANAGEMENT_FORBIDDEN,
+      })
+    })
+    const tool = createUpdateStreamBriefTool({ updateBrief }, { currentVersion: 0 })
+
+    const result = await tool.config.execute({ content: "x", reason: "r" }, EXEC_OPTS)
+    expect(parse(result.output)).toEqual({
+      ok: false,
+      error: "The person who asked is a guest, and guests can't change a channel's brief.",
+    })
   })
 })
 

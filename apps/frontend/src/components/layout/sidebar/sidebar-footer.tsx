@@ -72,7 +72,8 @@ interface SidebarFooterProps {
   workspaceId: string
   currentUser: User | null
   onCreateScratchpad: () => void | Promise<void>
-  onCreateChannel: () => void | Promise<void>
+  /** Omitted for viewers who cannot create channels: the "New Channel" action is left out. */
+  onCreateChannel?: () => void | Promise<void>
   scratchpadAddMenuActions?: SidebarActionItem[]
   /**
    * Opens the sidebar layout editor. Undefined on the surfaces that have nothing
@@ -321,6 +322,7 @@ export const SidebarFooter = memo(function SidebarFooter({
     const scratchpadActions: SidebarActionItem[] = scratchpadAddMenuActions ?? [
       { id: "new-scratchpad", label: "New Scratchpad", icon: FileText, onSelect: onCreateScratchpad },
     ]
+    if (!onCreateChannel) return scratchpadActions
     return [
       ...scratchpadActions,
       { id: "new-channel", label: "New Channel", icon: Hash, onSelect: onCreateChannel, separatorBefore: true },

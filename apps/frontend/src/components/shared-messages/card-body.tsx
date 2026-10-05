@@ -6,7 +6,8 @@ import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-co
 import { AttachmentList } from "@/components/timeline/attachment-list"
 import { type SharedMessageSource } from "@/hooks/use-shared-message-source"
 import { streamFallbackLabel } from "@/lib/streams"
-import type { StreamType, Visibility } from "@threahq/types"
+import { VISIBILITY_LABELS } from "@/lib/stream-visuals"
+import { Visibilities, type StreamType, type Visibility } from "@threahq/types"
 
 /**
  * Body renderer shared between the two pointer-card surfaces:
@@ -160,11 +161,16 @@ function EditedSinceMarker({ href }: { href?: string }) {
  * otherwise expose).
  */
 function PrivatePlaceholder({ kind, visibility }: { kind: StreamType; visibility: Visibility }) {
+  const noun = streamFallbackLabel(kind, "noun")
+  const source =
+    visibility === Visibilities.GUEST_PUBLIC
+      ? `${noun} ${VISIBILITY_LABELS.guest_public.toLowerCase()}`
+      : `${VISIBILITY_LABELS[visibility].toLowerCase()} ${noun}`
   return (
     <>
       <AuthorLabel name="Private message" />
       <p className="mt-0.5 italic text-muted-foreground">
-        This message references content in a {visibility} {streamFallbackLabel(kind, "noun")} you don't have access to.
+        This message references content you don't have access to in a {source}.
       </p>
     </>
   )

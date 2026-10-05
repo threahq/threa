@@ -19,7 +19,15 @@ import { formatRelativeTime } from "@/lib/dates"
  * editor. A concurrent edit surfaces inline (no toast, INV-63); saving again
  * overwrites, or the editor can load the other version first.
  */
-export function BriefSection({ workspaceId, stream }: { workspaceId: string; stream: Stream }) {
+export function BriefSection({
+  workspaceId,
+  stream,
+  locked = false,
+}: {
+  workspaceId: string
+  stream: Stream
+  locked?: boolean
+}) {
   const queryClient = useQueryClient()
   const { data: brief, isLoading } = useStreamBrief(workspaceId, stream.id)
   const updateMutation = useUpdateStreamBrief(workspaceId, stream.id)
@@ -131,7 +139,7 @@ export function BriefSection({ workspaceId, stream }: { workspaceId: string; str
           <span className="text-[11px] text-muted-foreground">
             Updated {formatRelativeTime(new Date(brief.updatedAt), undefined, undefined, { terse: true })}
           </span>
-          <Button type="button" variant="outline" size="sm" onClick={startEditing}>
+          <Button type="button" variant="outline" size="sm" onClick={startEditing} disabled={locked}>
             Edit
           </Button>
         </div>
@@ -141,7 +149,7 @@ export function BriefSection({ workspaceId, stream }: { workspaceId: string; str
     body = (
       <div className="rounded-lg border border-dashed border-input p-4 text-center">
         <p className="text-xs text-muted-foreground">No brief yet.</p>
-        <Button type="button" variant="outline" size="sm" className="mt-2" onClick={startEditing}>
+        <Button type="button" variant="outline" size="sm" className="mt-2" onClick={startEditing} disabled={locked}>
           Add a brief
         </Button>
       </div>

@@ -55,8 +55,8 @@ export {
   StreamPurposes,
   // Visibility
   VISIBILITY_OPTIONS,
-  CREATABLE_VISIBILITIES,
-  type CreatableVisibility,
+  OPEN_VISIBILITIES,
+  isOpenVisibility,
   type Visibility,
   Visibilities,
   // Labelable resources
@@ -1098,6 +1098,8 @@ export {
   DEFAULT_WORKSPACE_SETTINGS,
   GUEST_DM_POLICIES,
   type GuestDmPolicy,
+  type DmParty,
+  isGuestDmOpen,
   DEFAULT_MAX_PENDING_FOLLOW_UPS,
   MAX_PENDING_FOLLOW_UPS_MIN,
   MAX_PENDING_FOLLOW_UPS_MAX,

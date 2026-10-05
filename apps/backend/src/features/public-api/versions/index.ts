@@ -11,6 +11,7 @@ import { API_VERSIONS, CURRENT_API_VERSION, type ApiVersion, type OpenApiSpec, t
  */
 const STREAM_ANCHOR_OPERATIONS = new Set<OperationId>(["listStreams", "getStream", "updateStream"])
 const THREAD_ANCHOR_CHANGE_OPERATIONS = new Set<OperationId>([...STREAM_ANCHOR_OPERATIONS, "completeDelegation"])
+const STREAM_OBJECT_OPERATIONS = new Set<OperationId>([...STREAM_ANCHOR_OPERATIONS, "archiveStream", "unarchiveStream"])
 
 /** Lower one serialized stream object from the anchorId shape to the legacy parentMessageId shape. */
 function downgradeStreamAnchor(stream: Record<string, unknown>): Record<string, unknown> {
@@ -21,6 +22,15 @@ function downgradeStreamAnchor(stream: Record<string, unknown>): Record<string, 
     return { ...rest, parentMessageId: anchorId }
   }
   return rest
+}
+
+function lowerStreams(payload: unknown, lower: (stream: Record<string, unknown>) => Record<string, unknown>): unknown {
+  if (payload === null || typeof payload !== "object") return payload
+  const envelope = payload as Record<string, unknown>
+  const { data } = envelope
+  if (Array.isArray(data)) return { ...envelope, data: data.map((stream) => lower(stream as Record<string, unknown>)) }
+  if (data && typeof data === "object") return { ...envelope, data: lower(data as Record<string, unknown>) }
+  return payload
 }
 
 /** Recursively rewrite the OpenAPI stream schema: drop `anchorId`, restore optional `parentMessageId`. */
@@ -220,6 +230,11 @@ function downgradeSourceVisibility(slot: unknown): unknown {
   return sourceVisibility === Visibilities.GUEST_PUBLIC ? { ...slot, sourceVisibility: Visibilities.PUBLIC } : slot
 }
 
+/** Pins before 2026-10-04 know a stream as `public` or `private`; `guest_public` reads as the `public` it extends. */
+function downgradeStreamVisibility(stream: Record<string, unknown>): Record<string, unknown> {
+  return stream.visibility === Visibilities.GUEST_PUBLIC ? { ...stream, visibility: Visibilities.PUBLIC } : stream
+}
+
 function dropGuestPublicFromSpec(node: unknown): unknown {
   if (Array.isArray(node)) return node.map(dropGuestPublicFromSpec)
   if (node && typeof node === "object") {
@@ -247,16 +262,7 @@ export const VERSION_CHANGES: VersionChange[] = [
       // Completion side effects branch on req.apiVersion before this response
       // transform; resultThreadId is additive and safe for pinned clients.
       if (context.operationId === "completeDelegation") return payload
-      if (payload === null || typeof payload !== "object") return payload
-      const envelope = payload as Record<string, unknown>
-      const data = envelope.data
-      if (Array.isArray(data)) {
-        return { ...envelope, data: data.map((s) => downgradeStreamAnchor(s as Record<string, unknown>)) }
-      }
-      if (data && typeof data === "object") {
-        return { ...envelope, data: downgradeStreamAnchor(data as Record<string, unknown>) }
-      }
-      return payload
+      return lowerStreams(payload, downgradeStreamAnchor)
     },
     downgradeSpec: (spec) => restoreParentMessageIdInSpec(spec) as OpenApiSpec,
   },
@@ -309,9 +315,10 @@ export const VERSION_CHANGES: VersionChange[] = [
   {
     version: "2026-10-04",
     description:
-      "Streams gain the `guest_public` visibility: readable by guests, who cannot browse `public` channels. A `private` shared-message slot's `sourceVisibility` can now be `guest_public`. Pins before this version see `public` there instead.",
-    operations: SLOT_MAP_OPERATIONS,
+      "Streams gain the `guest_public` visibility: readable by guests, who cannot browse `public` channels. A stream's `visibility`, and a `private` shared-message slot's `sourceVisibility`, can now be `guest_public`. Pins before this version see `public` there instead.",
+    operations: new Set<OperationId>([...SLOT_MAP_OPERATIONS, ...STREAM_OBJECT_OPERATIONS]),
     downgradeResponse: (payload, context) => {
+      if (STREAM_OBJECT_OPERATIONS.has(context.operationId)) return lowerStreams(payload, downgradeStreamVisibility)
       if (!SLOT_MAP_OPERATIONS.has(context.operationId)) return payload
       if (payload === null || typeof payload !== "object") return payload
       const envelope = payload as Record<string, unknown>

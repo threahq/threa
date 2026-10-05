@@ -1,8 +1,7 @@
 /**
  * The guest DM policy against the real server and schema: a DM with a guest is created only when the
  * workspace policy allows that pair, and tightening the policy closes DMs that already exist for every
- * writer, not only the HTTP send path. Guests are seeded by flipping `users.role`, since guests are
- * not invitable yet.
+ * writer, not only the HTTP send path. Guests are seeded by flipping `users.role`.
  *
  * Run: bun test --preload ./tests/setup.ts tests/integration/guest-dm-policy.test.ts
  */

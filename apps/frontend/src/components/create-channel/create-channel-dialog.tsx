@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react"
+import { useState, useCallback, useEffect, useMemo } from "react"
 import { useNavigate } from "react-router-dom"
 import {
   ResponsiveDialog,
@@ -18,8 +18,10 @@ import { useCreateChannel } from "./use-create-channel"
 import { useCreateStream } from "@/hooks"
 import { useWorkspaceUsers } from "@/stores/workspace-store"
 import { useAuth } from "@/auth"
+import { useCanManageChannels } from "@/lib/use-can-manage-channels"
+import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { toast } from "sonner"
-import type { CreatableVisibility } from "@threahq/types"
+import type { Visibility } from "@threahq/types"
 
 function ChannelDialogHeader() {
   return (
@@ -65,13 +67,7 @@ function SlugField({
   )
 }
 
-function VisibilityField({
-  value,
-  onChange,
-}: {
-  value: CreatableVisibility
-  onChange: (v: CreatableVisibility) => void
-}) {
+function VisibilityField({ value, onChange }: { value: Visibility; onChange: (v: Visibility) => void }) {
   return (
     <div className="space-y-2">
       <Label className="text-sm font-medium">Visibility</Label>
@@ -134,6 +130,8 @@ interface CreateChannelDialogProps {
 
 export function CreateChannelDialog({ workspaceId }: CreateChannelDialogProps) {
   const { isOpen, closeCreateChannel } = useCreateChannel()
+  const canManageChannels = useCanManageChannels(workspaceId)
+  const bootstrapLoaded = useCachedWorkspaceBootstrap(workspaceId) !== null
   const { user } = useAuth()
   const navigate = useNavigate()
   const createStream = useCreateStream(workspaceId)
@@ -141,7 +139,7 @@ export function CreateChannelDialog({ workspaceId }: CreateChannelDialogProps) {
 
   const [slug, setSlug] = useState("")
   const [slugValid, setSlugValid] = useState(false)
-  const [visibility, setVisibility] = useState<CreatableVisibility>("public")
+  const [visibility, setVisibility] = useState<Visibility>("public")
   const [description, setDescription] = useState("")
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
 
@@ -167,6 +165,10 @@ export function CreateChannelDialog({ workspaceId }: CreateChannelDialogProps) {
     },
     [closeCreateChannel, resetForm]
   )
+
+  useEffect(() => {
+    if (isOpen && bootstrapLoaded && !canManageChannels) closeCreateChannel()
+  }, [isOpen, bootstrapLoaded, canManageChannels, closeCreateChannel])
 
   const handleSubmit = useCallback(async () => {
     if (!slug || !slugValid) return
@@ -202,7 +204,7 @@ export function CreateChannelDialog({ workspaceId }: CreateChannelDialogProps) {
   const canSubmit = slug.length > 0 && slugValid && !createStream.isPending
 
   return (
-    <ResponsiveDialog open={isOpen} onOpenChange={handleOpenChange}>
+    <ResponsiveDialog open={isOpen && canManageChannels} onOpenChange={handleOpenChange}>
       <ResponsiveDialogContent
         desktopClassName="max-w-[480px] gap-0 p-0 overflow-hidden"
         drawerClassName="gap-0 p-0 overflow-hidden"

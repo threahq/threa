@@ -136,7 +136,7 @@ describe("WORKSPACE_ROLE_DEFINITIONS", () => {
 })
 
 describe("role lists", () => {
-  test("every role is known but guest is neither invitable nor assignable", () => {
+  test("every role is known, guest is invitable but not assignable", () => {
     expect({
       known: [...WORKSPACE_USER_ROLES],
       invitable: [...WORKSPACE_INVITABLE_ROLES],
@@ -148,7 +148,7 @@ describe("role lists", () => {
         WORKSPACE_ROLE_SLUGS.OWNER,
         WORKSPACE_ROLE_SLUGS.GUEST,
       ],
-      invitable: [WORKSPACE_ROLE_SLUGS.MEMBER, WORKSPACE_ROLE_SLUGS.ADMIN],
+      invitable: [WORKSPACE_ROLE_SLUGS.MEMBER, WORKSPACE_ROLE_SLUGS.ADMIN, WORKSPACE_ROLE_SLUGS.GUEST],
       assignable: [WORKSPACE_ROLE_SLUGS.MEMBER, WORKSPACE_ROLE_SLUGS.ADMIN, WORKSPACE_ROLE_SLUGS.OWNER],
     })
   })
