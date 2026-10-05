@@ -1,7 +1,12 @@
 import type { QueryConfig } from "pg"
 import { AuthorTypes } from "@threahq/types"
 import { composeSql, sql } from "../../db"
-import { roomReadableWithoutMembershipSql, roomReadersAllBrowseSql, streamAccessPredicateSql } from "../streams"
+import {
+  roomReadableWithoutMembershipSql,
+  roomReadersAllBrowseSql,
+  roomSharedSql,
+  streamAccessPredicateSql,
+} from "../streams"
 import { viewerLacksBrowseSql } from "./viewer-browse"
 
 export const PeoplePurposes = {
@@ -76,9 +81,10 @@ function visibleToViewerSql(workspaceId: string, viewer: PeopleViewer): QueryCon
             WHERE s.workspace_id = ${workspaceId} AND ${streamAccessPredicateSql(workspaceId, viewer.userId, "s.id")}`
         )}
       )`
-    case "room":
+    case "room": {
+      const unshared = composeSql`NOT ${roomSharedSql(workspaceId, viewer.roomStreamId)}`
       return composeSql`(
-        ${roomReadersAllBrowseSql(workspaceId, viewer.roomStreamId)}
+        (${unshared} AND ${roomReadersAllBrowseSql(workspaceId, viewer.roomStreamId)})
         OR ${peopleOfStreamsSql(
           workspaceId,
           composeSql`SELECT s.id FROM streams s
@@ -86,8 +92,9 @@ function visibleToViewerSql(workspaceId: string, viewer: PeopleViewer): QueryCon
             WHERE s.workspace_id = ${workspaceId}
               AND (root.id = (SELECT COALESCE(room.root_stream_id, room.id) FROM streams room
                   WHERE room.workspace_id = ${workspaceId} AND room.id = ${viewer.roomStreamId})
-                OR ${roomReadableWithoutMembershipSql(workspaceId, viewer.roomStreamId, "root")})`
+                OR (${unshared} AND ${roomReadableWithoutMembershipSql(workspaceId, viewer.roomStreamId, "root")}))`
         )}
       )`
+    }
   }
 }

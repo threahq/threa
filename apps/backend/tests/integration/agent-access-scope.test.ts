@@ -4,9 +4,11 @@ import { DM_PARTICIPANT_COUNT, StreamTypes, Visibilities } from "@threahq/types"
 import { computeAgentAccessSpec, type AgentAccessSpec } from "../../src/features/agents"
 import { AttachmentExtractionRepository, AttachmentRepository } from "../../src/features/attachments"
 import { SearchRepository } from "../../src/features/search"
-import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
+import { isRoomShared, StreamMemberRepository, StreamRepository } from "../../src/features/streams"
+import { StreamConnectionRepository } from "../../src/features/stream-connections"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { attachmentId, extractionId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { streamConnectionId } from "@threahq/backend-common"
 import { addTestMember, setupTestDatabase, withTestTransaction } from "./setup"
 
 function makeMalformedUserIntersectionSpec(userIds: string[]): AgentAccessSpec {
@@ -229,6 +231,99 @@ describe("Agent Access Scope", () => {
       expect(new Set(accessibleStreamIds)).toEqual(
         new Set([sharedDmId, sharedPrivateChannelId, publicChannelId, sharedChannelThreadId, publicChannelThreadId])
       )
+    })
+  })
+
+  test("should read only the shared channel's tree when another workspace reads the room", async () => {
+    await withTestTransaction(pool, async (client) => {
+      const ownerWorkosUserId = userId()
+      const hostId = workspaceId()
+      const partnerId = workspaceId()
+      for (const id of [hostId, partnerId]) {
+        await WorkspaceRepository.insert(client, {
+          id,
+          name: `Agent shared room ${id}`,
+          slug: `agent-shared-room-${id}`,
+          createdBy: ownerWorkosUserId,
+        })
+      }
+      const owner = await addTestMember(client, hostId, ownerWorkosUserId)
+
+      const publicChannel = (id: string, workspace = hostId, originWorkspaceId?: string) =>
+        StreamRepository.insert(client, {
+          id,
+          workspaceId: workspace,
+          type: StreamTypes.CHANNEL,
+          visibility: Visibilities.PUBLIC,
+          originWorkspaceId,
+          createdBy: owner.id,
+        })
+      const sharedChannelId = streamId()
+      const sharedThreadId = streamId()
+      const revokedChannelId = streamId()
+      const otherChannelId = streamId()
+      const copyId = streamId()
+      const partnerOtherChannelId = streamId()
+      await publicChannel(sharedChannelId)
+      await StreamRepository.insert(client, {
+        id: sharedThreadId,
+        workspaceId: hostId,
+        type: StreamTypes.THREAD,
+        visibility: Visibilities.PUBLIC,
+        parentStreamId: sharedChannelId,
+        rootStreamId: sharedChannelId,
+        createdBy: owner.id,
+      })
+      await publicChannel(revokedChannelId)
+      await publicChannel(otherChannelId)
+      await publicChannel(copyId, partnerId, hostId)
+      await publicChannel(partnerOtherChannelId, partnerId)
+
+      const snapshot = (hostStreamId: string, state: "active" | "revoked") => ({
+        id: streamConnectionId(),
+        revision: 1,
+        state,
+        hostWorkspaceId: hostId,
+        hostWorkspaceName: "Host",
+        hostRegion: "local",
+        hostStreamId,
+        invitedBy: owner.id,
+        partnerWorkspaceId: partnerId,
+        partnerWorkspaceName: "Partner",
+        partnerRegion: "local",
+        partnerVisibility: Visibilities.PUBLIC,
+        acceptedBy: null,
+        peerWorkspaceIds: [],
+        expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
+      })
+      await StreamConnectionRepository.applySnapshots(client, [
+        snapshot(sharedChannelId, "active"),
+        snapshot(revokedChannelId, "revoked"),
+      ])
+
+      const readable = async (workspace: string, roomStreamId: string) => {
+        const stream = await StreamRepository.findById(client, workspace, roomStreamId)
+        const spec = await computeAgentAccessSpec(client, { stream: stream!, invokingUserId: owner.id })
+        return {
+          shared: await isRoomShared(client, workspace, roomStreamId),
+          streams: new Set(await SearchRepository.getAccessibleStreamsForAgent(client, spec, workspace)),
+        }
+      }
+
+      expect({
+        sharedHost: await readable(hostId, sharedChannelId),
+        threadInSharedHost: await readable(hostId, sharedThreadId),
+        partnerCopy: await readable(partnerId, copyId),
+        revokedShare: await readable(hostId, revokedChannelId),
+      }).toEqual({
+        sharedHost: { shared: true, streams: new Set([sharedChannelId, sharedThreadId]) },
+        threadInSharedHost: { shared: true, streams: new Set([sharedChannelId, sharedThreadId]) },
+        partnerCopy: { shared: true, streams: new Set([copyId]) },
+        revokedShare: {
+          shared: false,
+          streams: new Set([sharedChannelId, sharedThreadId, revokedChannelId, otherChannelId]),
+        },
+      })
     })
   })
 

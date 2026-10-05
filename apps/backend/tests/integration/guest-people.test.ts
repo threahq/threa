@@ -4,7 +4,9 @@
  * of what every reader of the room reads; a viewer with browse sees everyone.
  *
  * m8 authored in a thread under `priv` without being a member, m5 authored only a deleted message in
- * `gp`, and loner is a guest with no membership. A second workspace holds rows under the same stream
+ * `gp`, and loner is a guest with no membership. A room another workspace reads (`sharedPub`, shared
+ * out actively, and `copy`, a copy of another workspace's channel) sees only its own tree's people;
+ * `revokedPub`'s share ended, so it reads like any public room. A second workspace holds rows under the same stream
  * ids that would leak m1 and m6 if a read dropped its workspace pin.
  */
 
@@ -14,6 +16,7 @@ import { Visibilities, type Visibility } from "@threahq/types"
 import type { Querier } from "../../src/db"
 import { PeoplePurposes, UserRepository, type PeopleScope, type PeopleViewer } from "../../src/features/workspaces"
 import { messageId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { streamConnectionId } from "@threahq/backend-common"
 import { setupTestDatabase } from "./setup"
 
 const LABELS = ["owner", "m1", "guest", "m2", "m3", "m4", "m5", "m6", "m7", "m8", "loner"] as const
@@ -45,6 +48,10 @@ describe("guest people", () => {
     pubWithGuest: streamId(),
     gp: streamId(),
     gpThread: streamId(),
+    sharedPub: streamId(),
+    sharedPubThread: streamId(),
+    copy: streamId(),
+    revokedPub: streamId(),
   }
   let sequence = 0
 
@@ -66,17 +73,24 @@ describe("guest people", () => {
 
   async function insertStream(
     workspace: string,
-    stream: { id: string; visibility: Visibility; rootStreamId?: string; members?: Label[] }
+    stream: {
+      id: string
+      visibility: Visibility
+      rootStreamId?: string
+      originWorkspaceId?: string
+      members?: Label[]
+    }
   ) {
     await pool.query(
-      `INSERT INTO streams (id, workspace_id, type, visibility, parent_stream_id, root_stream_id, created_by)
-       VALUES ($1, $2, $3, $4, $5, $5, $6)`,
+      `INSERT INTO streams (id, workspace_id, type, visibility, parent_stream_id, root_stream_id, origin_workspace_id, created_by)
+       VALUES ($1, $2, $3, $4, $5, $5, $6, $7)`,
       [
         stream.id,
         workspace,
         stream.rootStreamId ? "thread" : "channel",
         stream.visibility,
         stream.rootStreamId ?? null,
+        stream.originWorkspaceId ?? null,
         userId(),
       ]
     )
@@ -87,6 +101,14 @@ describe("guest people", () => {
         ids[member],
       ])
     }
+  }
+
+  async function insertHostConnection(workspace: string, stream: string, state: "active" | "revoked") {
+    await pool.query(
+      `INSERT INTO stream_connections (workspace_id, id, role, state, stream_id, remote_workspace_id, expires_at, revision)
+       VALUES ($1, $2, 'host', $3, $4, $5, NOW() + INTERVAL '1 day', 1)`,
+      [workspace, streamConnectionId(), state, stream, workspaceId()]
+    )
   }
 
   async function insertMessage(workspace: string, stream: string, author: Label, deleted = false) {
@@ -134,6 +156,22 @@ describe("guest people", () => {
     await insertMessage(wsA, streams.pubWithGuest, "m2")
     await insertMessage(wsA, streams.gpThread, "m4")
     await insertMessage(wsA, streams.gp, "m5", true)
+    await insertStream(wsA, { id: streams.sharedPub, visibility: Visibilities.PUBLIC, members: ["m2"] })
+    await insertStream(wsA, {
+      id: streams.sharedPubThread,
+      visibility: Visibilities.PUBLIC,
+      rootStreamId: streams.sharedPub,
+    })
+    await insertMessage(wsA, streams.sharedPubThread, "m7")
+    await insertHostConnection(wsA, streams.sharedPub, "active")
+    await insertStream(wsA, {
+      id: streams.copy,
+      visibility: Visibilities.PUBLIC,
+      originWorkspaceId: wsB,
+      members: ["m3"],
+    })
+    await insertStream(wsA, { id: streams.revokedPub, visibility: Visibilities.PUBLIC, members: ["m1"] })
+    await insertHostConnection(wsA, streams.revokedPub, "revoked")
 
     await insertStream(wsB, { id: streams.priv, visibility: Visibilities.PRIVATE, members: ["m1"] })
     await insertStream(wsB, { id: streams.gp, visibility: Visibilities.GUEST_PUBLIC })
@@ -202,6 +240,10 @@ describe("guest people", () => {
       publicRoomWithGuest: slugsOf(await UserRepository.listByWorkspace(pool, wsA, roomScope(streams.pubWithGuest))),
       guestPublicRoom: slugsOf(await UserRepository.listByWorkspace(pool, wsA, roomScope(streams.gp))),
       missingRoom: slugsOf(await UserRepository.listByWorkspace(pool, wsA, roomScope(streamId()))),
+      sharedRoom: slugsOf(await UserRepository.listByWorkspace(pool, wsA, roomScope(streams.sharedPub))),
+      threadInSharedRoom: slugsOf(await UserRepository.listByWorkspace(pool, wsA, roomScope(streams.sharedPubThread))),
+      copyRoom: slugsOf(await UserRepository.listByWorkspace(pool, wsA, roomScope(streams.copy))),
+      revokedShareRoom: slugsOf(await UserRepository.listByWorkspace(pool, wsA, roomScope(streams.revokedPub))),
     }).toEqual({
       privateRoomWithGuest: PRIVATE_ROOM_READS,
       threadInPrivateRoomWithGuest: PRIVATE_ROOM_READS,
@@ -210,6 +252,10 @@ describe("guest people", () => {
       publicRoomWithGuest: ["guest", "m2", ...GUEST_PUBLIC_READERS].sort(),
       guestPublicRoom: GUEST_PUBLIC_READERS,
       missingRoom: GUEST_PUBLIC_READERS,
+      sharedRoom: ["m2", "m7"],
+      threadInSharedRoom: ["m2", "m7"],
+      copyRoom: ["m3"],
+      revokedShareRoom: EVERYONE,
     })
   })
 

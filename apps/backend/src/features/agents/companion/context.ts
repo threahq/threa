@@ -17,6 +17,7 @@ import {
   resolveBriefStreamId,
   findMemoryModeStream,
   isMemoryAutomationOn,
+  isRoomShared,
   type Stream,
   type StreamBrief,
 } from "../../streams"
@@ -127,6 +128,8 @@ export interface AgentContext {
   accessibleStreamIds: Set<string> | null
   memoViewerUserId: string | undefined
   peopleViewer: PeopleViewer | undefined
+  /** Another workspace reads this room, so nothing private to this workspace may reach the answer. */
+  roomShared: boolean
   /**
    * The stream's durable brief as read for this turn (roadmap 4.2), off the
    * effective root (threads inherit — INV-62). `null` when none exists yet. The
@@ -328,9 +331,11 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   // personas own attachment rows; a built-in (`managed_by: system`) has no owned
   // row to bind to, so it skips the query entirely (zero attachment reads). A
   // draft-test turn resolves the SAVED persona's `id` here (drafts share it), so
-  // the block reflects the saved attachments without any special-casing.
+  // the block reflects the saved attachments without any special-casing. The
+  // files stay home when another workspace reads the room.
+  const roomShared = await isRoomShared(db, workspaceId, stream.id)
   const personaKnowledge: PersonaAttachmentContentItem[] =
-    persona.managedBy === "system"
+    persona.managedBy === "system" || roomShared
       ? []
       : await PersonaAttachmentRepository.listForPersonaWithContent(db, workspaceId, persona.id)
 
@@ -600,6 +605,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     accessibleStreamIds,
     memoViewerUserId,
     peopleViewer,
+    roomShared,
     streamBrief,
     recalledMemos,
   }
