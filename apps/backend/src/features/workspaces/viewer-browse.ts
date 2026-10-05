@@ -1,29 +1,37 @@
 import type { QueryConfig } from "pg"
-import { WORKSPACE_PERMISSION_SCOPES, WORKSPACE_ROLE_DEFINITIONS } from "@threahq/types"
+import { WORKSPACE_PERMISSION_SCOPES, WORKSPACE_ROLE_DEFINITIONS, type WorkspacePermissionSlug } from "@threahq/types"
 import type { Querier } from "../../db"
 import { composeSql, sql } from "../../db"
 import { KNOWN_ROLE_SLUGS, USERS_FROM_FRAGMENT } from "./user-repository"
 
-const BROWSE_ROLE_SLUGS: string[] = WORKSPACE_ROLE_DEFINITIONS.filter((role) =>
-  role.permissions.includes(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE)
-).map((role) => role.slug)
+function roleSlugsHolding(scope: WorkspacePermissionSlug): string[] {
+  return WORKSPACE_ROLE_DEFINITIONS.filter((role) => role.permissions.includes(scope)).map((role) => role.slug)
+}
+
+const BROWSE_ROLE_SLUGS = roleSlugsHolding(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE)
+const ADMIN_ROLE_SLUGS = roleSlugsHolding(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
 
 /**
- * Browse is read from the user row, never the JWT claim: sessions minted before the scope existed
- * lack it until refresh. Roles resolve like `expandRoleSlugs`: an active mirror row holding any
- * known slug decides, otherwise `users.role` does. Ids that are not user rows (bots, personas,
- * system) match no row, so they never lack browse.
+ * A permission is read from the user row, never the JWT claim: sessions minted before the scope
+ * existed lack it until refresh. Roles resolve like `expandRoleSlugs`: an active mirror row holding
+ * any known slug decides, otherwise `users.role` does. Ids that are not user rows (bots, personas,
+ * system, removed users) match no row, so they never lack browse and never hold admin.
  */
-function viewersLackingBrowseSql(workspaceId: string, viewerFilter: QueryConfig): QueryConfig {
+function holdsRoleSlugsSql(holdingRoleSlugs: readonly string[]): QueryConfig {
+  return composeSql`CASE WHEN wup.role_slugs && ${[...KNOWN_ROLE_SLUGS]}::text[]
+    THEN wup.role_slugs && ${holdingRoleSlugs as string[]}::text[]
+    ELSE u.role = ANY(${holdingRoleSlugs as string[]}::text[])
+  END`
+}
+
+function workspaceUsersSql(workspaceId: string, filter: QueryConfig): QueryConfig {
   return composeSql`FROM ${USERS_FROM_FRAGMENT}
     WHERE u.workspace_id = ${workspaceId}
-      AND ${viewerFilter}
-      AND NOT (
-        CASE WHEN wup.role_slugs && ${[...KNOWN_ROLE_SLUGS]}::text[]
-          THEN wup.role_slugs && ${BROWSE_ROLE_SLUGS}::text[]
-          ELSE u.role = ANY(${BROWSE_ROLE_SLUGS}::text[])
-        END
-      )`
+      AND ${filter}`
+}
+
+function viewersLackingBrowseSql(workspaceId: string, viewerFilter: QueryConfig): QueryConfig {
+  return workspaceUsersSql(workspaceId, composeSql`${viewerFilter} AND NOT (${holdsRoleSlugsSql(BROWSE_ROLE_SLUGS)})`)
 }
 
 /**
@@ -53,6 +61,22 @@ export async function findUserIdsWithoutBrowse(
   if (userIds.length === 0) return new Set()
   const result = await db.query<{ id: string }>(
     composeSql`SELECT u.id ${viewersLackingBrowseSql(workspaceId, sql`u.id = ANY(${userIds as string[]})`)}`
+  )
+  return new Set(result.rows.map((row) => row.id))
+}
+
+/** The ids among `userIds` that are users of the workspace holding the admin permission; any other id is not an admin. */
+export async function findUserIdsWithAdmin(
+  db: Querier,
+  workspaceId: string,
+  userIds: readonly string[]
+): Promise<Set<string>> {
+  if (userIds.length === 0) return new Set()
+  const result = await db.query<{ id: string }>(
+    composeSql`SELECT u.id ${workspaceUsersSql(
+      workspaceId,
+      composeSql`u.id = ANY(${userIds as string[]}) AND (${holdsRoleSlugsSql(ADMIN_ROLE_SLUGS)})`
+    )}`
   )
   return new Set(result.rows.map((row) => row.id))
 }

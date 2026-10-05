@@ -52,46 +52,44 @@ afterEach(() => mock.restore())
 describe("deriveStreamViewerState", () => {
   test("derives writable participation and every reason with fixed precedence", () => {
     const writable = stream()
+    const open = { ancestorArchived: false, participates: true, guestDmClosed: false }
     expect([
-      deriveStreamViewerState({ target: writable, ancestorArchived: false, participates: true }),
+      deriveStreamViewerState({ target: writable, ...open }),
       deriveStreamViewerState({
         target: stream({ archivedAt: new Date(0), type: "system" }),
-        ancestorArchived: false,
+        ...open,
         participates: false,
+        guestDmClosed: true,
       }),
-      deriveStreamViewerState({ target: writable, ancestorArchived: true, participates: true }),
-      deriveStreamViewerState({ target: stream({ type: "system" }), ancestorArchived: false, participates: false }),
+      deriveStreamViewerState({ target: writable, ...open, ancestorArchived: true }),
       deriveStreamViewerState({
-        target: stream({ originWorkspaceId: "ws_host" }),
-        ancestorArchived: false,
-        participates: true,
-      }),
-      deriveStreamViewerState({
-        target: stream({ originWorkspaceId: "ws_host" }),
-        ancestorArchived: false,
+        target: stream({ type: "system" }),
+        ...open,
         participates: false,
+        guestDmClosed: true,
       }),
+      deriveStreamViewerState({ target: stream({ originWorkspaceId: "ws_host" }), ...open }),
       deriveStreamViewerState({
         target: stream({ originWorkspaceId: "ws_host" }),
+        ...open,
+        participates: false,
+        guestDmClosed: true,
+      }),
+      deriveStreamViewerState({ target: stream({ originWorkspaceId: "ws_host" }), ...open, ancestorArchived: true }),
+      deriveStreamViewerState({ target: stream({ originWorkspaceId: "ws_host", disconnectedAt: new Date(0) }), ...open }),
+      deriveStreamViewerState({
+        target: stream({ originWorkspaceId: "ws_host", disconnectedAt: new Date(0) }),
+        ...open,
+        participates: false,
+        guestDmClosed: true,
+      }),
+      deriveStreamViewerState({
+        target: stream({ originWorkspaceId: "ws_host", disconnectedAt: new Date(0) }),
+        ...open,
         ancestorArchived: true,
-        participates: true,
       }),
-      deriveStreamViewerState({
-        target: stream({ originWorkspaceId: "ws_host", disconnectedAt: new Date(0) }),
-        ancestorArchived: false,
-        participates: true,
-      }),
-      deriveStreamViewerState({
-        target: stream({ originWorkspaceId: "ws_host", disconnectedAt: new Date(0) }),
-        ancestorArchived: false,
-        participates: false,
-      }),
-      deriveStreamViewerState({
-        target: stream({ originWorkspaceId: "ws_host", disconnectedAt: new Date(0) }),
-        ancestorArchived: true,
-        participates: true,
-      }),
-      deriveStreamViewerState({ target: writable, ancestorArchived: false, participates: false }),
+      deriveStreamViewerState({ target: writable, ...open, participates: false, guestDmClosed: true }),
+      deriveStreamViewerState({ target: stream({ type: "dm" }), ...open, guestDmClosed: true }),
     ]).toEqual([
       { readOnly: false, readOnlyReason: null },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED },
@@ -104,6 +102,7 @@ describe("deriveStreamViewerState", () => {
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.NOT_A_MEMBER },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.ARCHIVED },
       { readOnly: true, readOnlyReason: StreamReadOnlyReasons.NOT_A_MEMBER },
+      { readOnly: true, readOnlyReason: StreamReadOnlyReasons.GUEST_DM_POLICY },
     ])
   })
 })

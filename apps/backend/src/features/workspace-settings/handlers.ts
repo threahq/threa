@@ -1,10 +1,12 @@
 import { z } from "zod"
 import type { Request, Response } from "express"
 import {
+  GUEST_DM_POLICIES,
   VOICE_STEERING_WORDS_MAX,
   VOICE_STEERING_WORD_MAX_LENGTH,
   MAX_PENDING_FOLLOW_UPS_MIN,
   MAX_PENDING_FOLLOW_UPS_MAX,
+  type GuestDmPolicy,
 } from "@threahq/types"
 import type { WorkspaceSettingsService } from "./service"
 import { workScheduleSchema, statusPresetsSchema } from "../../lib/schemas"
@@ -38,6 +40,7 @@ const updateWorkspaceSettingsSchema = z
     // checked in the service — the shape check here only bounds the list.
     subagentModels: z.array(z.string().trim().min(1).max(128)).max(20).optional(),
     sandboxInternet: z.boolean().optional(),
+    guestDmPolicy: z.enum(Object.values(GUEST_DM_POLICIES) as [GuestDmPolicy, ...GuestDmPolicy[]]).optional(),
   })
   // Reject unknown keys instead of silently stripping them: a stale client
   // PATCHing the retired `callsEnabled` (now the `calls` feature flag) must fail

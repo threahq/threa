@@ -41,6 +41,7 @@ function flattenUpdates(updates: UpdateWorkspaceSettingsInput): Array<{ key: str
     "billingTimezone",
     "subagentModels",
     "sandboxInternet",
+    "guestDmPolicy",
   ] as const
   for (const key of simpleKeys) {
     if (updates[key] !== undefined) {
