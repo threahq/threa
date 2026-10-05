@@ -29,8 +29,9 @@ export interface ContextRowsForMessageParams {
 
 export function contextSnippet(contentMarkdown: string): string {
   const firstLine = stripMarkdownToInline(contentMarkdown.split("\n").find((line) => line.trim().length > 0) ?? "")
-  const trimmed = firstLine.trim()
-  return trimmed.length > SNIPPET_MAX_LENGTH ? `${trimmed.slice(0, SNIPPET_MAX_LENGTH)}…` : trimmed
+  // Cut by code point: a lone surrogate from a split emoji makes Postgres reject the snippet array.
+  const chars = Array.from(firstLine.trim())
+  return chars.length > SNIPPET_MAX_LENGTH ? `${chars.slice(0, SNIPPET_MAX_LENGTH).join("")}…` : chars.join("")
 }
 
 /**

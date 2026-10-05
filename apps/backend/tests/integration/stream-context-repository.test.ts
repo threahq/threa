@@ -15,6 +15,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { Pool } from "pg"
 import { setupTestDatabase } from "./setup"
 import { StreamContextRepository } from "../../src/features/stream-context/repository"
+import { contextRowsForMessage } from "../../src/features/stream-context/extract"
 import type { NewStreamContextItem } from "../../src/features/stream-context/types"
 import { messageId, streamContextItemId, streamId, userId, workspaceId } from "../../src/lib/id"
 import { sql } from "../../src/db"
@@ -94,6 +95,29 @@ describe("stream-context repository against the real schema", () => {
       const reinserted = await StreamContextRepository.insertMany(pool, [{ ...landmark, id: streamContextItemId() }])
 
       expect({ inserted, reinserted }).toEqual({ inserted: 1, reinserted: 0 })
+    })
+
+    test("stores a snippet cut at an emoji boundary", async () => {
+      const msgId = messageId()
+      const [projected] = contextRowsForMessage({
+        workspaceId: wsId,
+        streamId: channelId,
+        rootStreamId: channelId,
+        messageId: msgId,
+        authorId,
+        occurredAt: new Date("2026-07-20T10:00:00.000Z"),
+        sequence: 8n,
+        contentJson: null,
+        contentMarkdown: `${"x".repeat(119)}🎉 shipped`,
+        attachments: [{ id: "attach_emoji", mimeType: "application/pdf" }],
+      })
+
+      await StreamContextRepository.insertMany(pool, [projected!])
+      const stored = await pool.query<{ snippet: string }>(sql`
+        SELECT snippet FROM stream_context_items WHERE workspace_id = ${wsId} AND source_message_id = ${msgId}
+      `)
+
+      expect(stored.rows).toEqual([{ snippet: `${"x".repeat(119)}🎉…` }])
     })
 
     test("an empty batch writes nothing", async () => {
