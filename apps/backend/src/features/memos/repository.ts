@@ -21,6 +21,13 @@ function rawSql(text: string): QueryConfig {
   return sql`${sql.raw(text)}`
 }
 
+/** Keeps only memos captured while `sharedRootStreamId` was shared; without one, filters nothing. */
+function capturedWhileSharedSql(sharedRootStreamId: string | undefined, alias: string): QueryConfig {
+  return sharedRootStreamId
+    ? composeSql`AND ${rawSql(alias)}.shared_root_stream_id = ${sharedRootStreamId}`
+    : rawSql("")
+}
+
 /**
  * Memo full-text search computes its tsvector per row — no stored column, no
  * index — so both the vector and the query are stemmed with the config the row
@@ -539,7 +546,7 @@ export const MemoRepository = {
     const orderBy = rawSql(options.orderBy === "updatedAt" ? "updated_at" : "created_at")
     const filters = composeSql`(m.scope <> 'user' OR m.scope_user_id = ${options.scopeUserId})
         ${options.status ? composeSql`AND m.status = ${options.status}` : rawSql("")}
-        ${options.sharedRootStreamId ? composeSql`AND m.shared_root_stream_id = ${options.sharedRootStreamId}` : rawSql("")}
+        ${capturedWhileSharedSql(options.sharedRootStreamId, "m")}
         AND ${memoAudienceVisibleSql(workspaceId, options.audiences, "m")}`
 
     // UNION over the two source paths: conversation memos (via source_conversation_id)
@@ -588,12 +595,12 @@ export const MemoRepository = {
     workspaceId: string,
     conversationId: string,
     audiences: readonly MemoAudience[],
-    sharedRootStreamId: string | null = null
+    sharedRootStreamId?: string
   ): Promise<Memo[]> {
     const result = await db.query<MemoRow>(composeSql`
       SELECT ${SELECT_FIELDS_SQL} FROM memos
       WHERE workspace_id = ${workspaceId} AND source_conversation_id = ${conversationId} AND status = 'active'
-        AND (${sharedRootStreamId}::text IS NULL OR shared_root_stream_id = ${sharedRootStreamId})
+        ${capturedWhileSharedSql(sharedRootStreamId, "memos")}
         AND ${memoAudienceVisibleSql(workspaceId, audiences, "memos")}
       ORDER BY created_at ASC
     `)
@@ -699,9 +706,9 @@ export const MemoRepository = {
     }
   ): Promise<{ memo: Memo; distance: number } | null> {
     const { workspaceId, streamId, embedding, maxDistance, scope = "workspace", scopeUserId = null, audiences } = params
-    const sharedRootStreamId = params.sharedRootStreamId ?? null
     const embeddingLiteral = `[${embedding.join(",")}]`
     const audienceVisible = memoAudienceVisibleSql(workspaceId, audiences, "m")
+    const sharedOnly = capturedWhileSharedSql(params.sharedRootStreamId, "m")
 
     const result = await db.query<MemoRow & { distance: number }>(composeSql`
       WITH stream_memos AS (
@@ -714,7 +721,7 @@ export const MemoRepository = {
           AND m.status = 'active'
           AND m.scope = ${scope}
           AND m.scope_user_id IS NOT DISTINCT FROM ${scopeUserId}
-          AND (${sharedRootStreamId}::text IS NULL OR m.shared_root_stream_id = ${sharedRootStreamId})
+          ${sharedOnly}
           AND m.embedding IS NOT NULL
           AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
           AND ${audienceVisible}
@@ -728,7 +735,7 @@ export const MemoRepository = {
           AND m.status = 'active'
           AND m.scope = ${scope}
           AND m.scope_user_id IS NOT DISTINCT FROM ${scopeUserId}
-          AND (${sharedRootStreamId}::text IS NULL OR m.shared_root_stream_id = ${sharedRootStreamId})
+          ${sharedOnly}
           AND m.embedding IS NOT NULL
           AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
           AND ${audienceVisible}
@@ -1082,7 +1089,7 @@ export const MemoRepository = {
         AND s.workspace_id = m.workspace_id
       LEFT JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id
       WHERE m.workspace_id = ${workspaceId} AND m.status = 'active'
-        ${scope.sharedRootStreamId ? composeSql`AND m.shared_root_stream_id = ${scope.sharedRootStreamId}` : rawSql("")}
+        ${capturedWhileSharedSql(scope.sharedRootStreamId, "m")}
         AND (
           (m.scope = 'user' AND m.scope_user_id = ${scope.scopeUserId})
           OR (m.scope <> 'user' AND (

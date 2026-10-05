@@ -928,14 +928,25 @@ describe("BoundaryExtractionService", () => {
     test("should propose a split from what the partner reads when the channel is shared", async () => {
       const { sharedStreamId, priorMsgId, triggerMsgId, threadReplyId, cardThreadReplyId } = await seedSharedChannel()
       const convId = conversationId()
+      const deletedMsgId = messageId()
       await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: deletedMsgId,
+          streamId: sharedStreamId,
+          sequence: BigInt(9000),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Acquire Initech quietly"),
+        })
+        await MessageRepository.softDelete(client, testWorkspaceId, deletedMsgId)
         await ConversationRepository.insert(client, {
           id: convId,
           streamId: sharedStreamId,
           workspaceId: testWorkspaceId,
           topicSummary: "Outside work",
         })
-        for (const id of [priorMsgId, triggerMsgId, threadReplyId, cardThreadReplyId]) {
+        for (const id of [priorMsgId, triggerMsgId, threadReplyId, cardThreadReplyId, deletedMsgId]) {
           await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, id, testUserId)
         }
       })
@@ -949,6 +960,75 @@ describe("BoundaryExtractionService", () => {
           [threadReplyId, "A reply"],
         ].toSorted()
       )
+    })
+
+    test("should quote what the partner reads when the channel is shared", async () => {
+      const { sharedStreamId, triggerMsgId } = await seedSharedChannel()
+      const convId = conversationId()
+      const deletedMsgId = messageId()
+      const quotingMsgId = messageId()
+      const quote = (quotedId: string, snippet: string) => ({
+        type: "quoteReply",
+        attrs: {
+          messageId: quotedId,
+          streamId: sharedStreamId,
+          authorName: "Host",
+          authorId: testUserId,
+          actorType: "user",
+          snippet,
+          version: 1,
+          range: null,
+        },
+      })
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: deletedMsgId,
+          streamId: sharedStreamId,
+          sequence: BigInt(9000),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Acquire Initech quietly"),
+        })
+        await MessageRepository.softDelete(client, testWorkspaceId, deletedMsgId)
+        await ConversationRepository.insert(client, {
+          id: convId,
+          streamId: sharedStreamId,
+          workspaceId: testWorkspaceId,
+          topicSummary: "Rollout",
+        })
+        for (const id of [triggerMsgId, deletedMsgId]) {
+          await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, id, testUserId)
+        }
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: quotingMsgId,
+          streamId: sharedStreamId,
+          sequence: BigInt(9001),
+          authorId: testUserId,
+          authorType: "user",
+          contentJson: {
+            type: "doc",
+            content: [
+              quote(triggerMsgId, "see"),
+              quote(deletedMsgId, "Acquire"),
+              { type: "paragraph", content: [{ type: "text", text: "agreed" }] },
+            ],
+          },
+          contentMarkdown: "agreed",
+        })
+      })
+
+      await service.processMessage(quotingMsgId, sharedStreamId, testWorkspaceId)
+
+      expect(stubExtractor.lastContext?.replyTargets).toEqual([
+        {
+          quotedMessageId: triggerMsgId,
+          conversationId: convId,
+          topicSummary: "Rollout",
+          snippet: "see #outside per https://github.com/acme/private/pull/7",
+        },
+      ])
     })
   })
 

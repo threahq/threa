@@ -92,10 +92,15 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
       if (!stream || stream.type === StreamTypes.SCRATCHPAD || stream.type === StreamTypes.ASIDE) return null
       if (await E2eStreamsRepository.isE2eStream(client, target.workspaceId, conversation.streamId)) return null
       const byId = await MessageRepository.findByIds(client, target.workspaceId, conversation.messageIds)
-      const ordered = orderedPrimaryMessages(conversation, byId).slice(-DYNAMIC_NAMING_MAX_MESSAGES)
       // A shared channel's titles cross to its partner, so they come from what the partner can read.
       const sharedTree = await findSharedTree(client, target.workspaceId, stream.id)
-      const messages = await viewAsPartner(client, target.workspaceId, sharedTree, ordered)
+      const readable = await viewAsPartner(
+        client,
+        target.workspaceId,
+        sharedTree,
+        orderedPrimaryMessages(conversation, byId)
+      )
+      const messages = readable.slice(-DYNAMIC_NAMING_MAX_MESSAGES)
       const siblings = (
         await ConversationRepository.findByStreamIncludingThreads(
           client,

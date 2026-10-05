@@ -306,7 +306,47 @@ describe("memo capture in a channel its workspace shares as host", () => {
 
     await service().processBatch(ws.id, channel)
 
-    expect(await capturedMemos(ws)).toEqual([])
+    const pending = await pool.query(
+      `SELECT processed_at IS NOT NULL AS processed, failed_attempts FROM memo_pending_items WHERE workspace_id = $1`,
+      [ws.id]
+    )
+    expect({ captured: await capturedMemos(ws), pending: pending.rows }).toEqual({
+      captured: [],
+      pending: [{ processed: true, failed_attempts: 0 }],
+    })
+  })
+
+  test("should keep a memo made before the share from the classifier when it cites a since-edited message in the shared channel", async () => {
+    const ws = await seedWorkspace()
+    const channel = await seedChannel(ws)
+    const cited = await seedMessage(ws, channel)
+    const saved = memoId()
+    await MemoRepository.insert(pool, {
+      id: saved,
+      workspaceId: ws.id,
+      memoType: "message",
+      sourceMessageId: cited,
+      title: "saved before the share",
+      abstract: "saved before the share",
+      sourceMessageIds: [cited],
+      participantIds: [],
+      knowledgeType: "decision",
+    })
+    await pool.query(`UPDATE memos SET created_at = NOW() - INTERVAL '1 hour' WHERE workspace_id = $1 AND id = $2`, [
+      ws.id,
+      saved,
+    ])
+    await pool.query(`UPDATE messages SET edited_at = NOW() WHERE workspace_id = $1 AND id = $2`, [ws.id, cited])
+    await queueConversation(ws, channel, [cited, await seedMessage(ws, channel)])
+    await share(ws, channel)
+
+    await service().processBatch(ws.id, channel)
+
+    const status = await pool.query(`SELECT status FROM memos WHERE workspace_id = $1 AND id = $2`, [ws.id, saved])
+    expect({ classifierMemos, status: status.rows }).toEqual({
+      classifierMemos: [[]],
+      status: [{ status: "active" }],
+    })
   })
 
   test("should fail only the conversation the partner's view cannot carry when the channel is shared", async () => {

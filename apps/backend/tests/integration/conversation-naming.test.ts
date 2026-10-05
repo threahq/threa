@@ -252,6 +252,51 @@ describe("dynamic conversation naming", () => {
     })
   })
 
+  test("should name from what the partner reads when the newest messages of a shared conversation are deleted", async () => {
+    const item = await fixture({ count: 3, title: "Deployment issue" })
+    await withTransaction(pool, async (client) => {
+      for (let sequence = 4; sequence <= 13; sequence += 1) {
+        const id = messageId()
+        await MessageRepository.insert(client, {
+          workspaceId: item.workspaceId,
+          id,
+          streamId: item.streamId,
+          sequence: BigInt(sequence),
+          authorId: item.userId,
+          authorType: "user",
+          ...testMessageContent(`Acquire Initech quietly, step ${sequence}`),
+        })
+        await ConversationRepository.addPrimaryMessage(client, item.workspaceId, item.conversationId, id, item.userId)
+        await MessageRepository.softDelete(client, item.workspaceId, id)
+      }
+      await client.query(
+        `INSERT INTO stream_connections (workspace_id, id, role, state, stream_id, remote_workspace_id, remote_workspace_name, expires_at, revision)
+         VALUES ($1, $2, 'host', 'active', $3, $4, 'Partner', NOW() + INTERVAL '1 day', 1)`,
+        [item.workspaceId, streamConnectionId(), item.streamId, workspaceId()]
+      )
+    })
+    let seen: { deleted: boolean; kept: boolean[] } | null = null
+    const naming = service(async (input) => {
+      seen = {
+        deleted: input.context.includes("Acquire Initech"),
+        kept: [1, 2, 3].map((sequence) => input.context.includes(`Message ${sequence} about deployment rollback`)),
+      }
+      return { action: "keep" }
+    })
+
+    await naming.evaluate(
+      {
+        workspaceId: item.workspaceId,
+        targetKind: "conversation",
+        targetId: item.conversationId,
+        initiatingUserId: item.userId,
+      },
+      "job_shared_deleted"
+    )
+
+    expect(seen).toEqual({ deleted: false, kept: [true, true, true] })
+  })
+
   test("an untitled deterministic conversation evaluates checkpoint 1", async () => {
     const item = await fixture({ count: 1 })
     let checkpoint: number | null = null

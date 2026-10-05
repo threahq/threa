@@ -182,8 +182,16 @@ export class BoundaryExtractionService {
       // the conversations it shapes can cross with it.
       const sharedTree = await findSharedTree(client, workspaceId, stream.id)
       const [newMessage] = await viewAsPartner(client, workspaceId, sharedTree, [message])
-      // Moved out of the shared tree before the share: the partner never reads it.
-      if (!newMessage) return { message: null, stream: null, extractionContextBase: null }
+      // Deleted, or moved out of the shared tree, since this job was queued.
+      if (!newMessage) {
+        return {
+          message,
+          stream,
+          extractionContextBase: null,
+          unreadByPartner: true,
+          validUpdateTargets: new Set<string>(),
+        }
+      }
 
       const surroundingMessages = await MessageRepository.findSurrounding(
         client,
@@ -315,6 +323,14 @@ export class BoundaryExtractionService {
     if (fetchedData.declaredSkip) {
       logger.debug({ messageId, streamId }, "Skipping boundary extraction for a message with a declared conversation")
       return fetchedData.declaredPrimary ?? null
+    }
+
+    if (fetchedData.unreadByPartner) {
+      logger.debug(
+        { messageId, streamId },
+        "Skipping boundary extraction for a message its shared channel's partner cannot read"
+      )
+      return null
     }
 
     if (fetchedData.agentReply) {
