@@ -9,7 +9,12 @@ import {
 } from "@threahq/types"
 import { archiveStatusSql, type ArchiveStatus } from "../../lib/sql-filters"
 import { tsqueryAcrossConfigsSql } from "../../lib/text-search-config"
-import { OPEN_TO_BOTS_VISIBILITIES, roomReadableWithoutMembershipSql, streamAccessPredicateSql } from "../streams"
+import {
+  OPEN_TO_BOTS_VISIBILITIES,
+  roomReadableWithoutMembershipSql,
+  roomSharedSql,
+  streamAccessPredicateSql,
+} from "../streams"
 import { REPLY_COUNT_SUBQUERY } from "../messaging"
 import type { AgentAccessSpec } from "../agents"
 import { LEGACY_SEMANTIC_DISTANCE_THRESHOLD, SEARCH_HYBRID_LEG_LIMIT, type SearchRanking } from "./config"
@@ -768,8 +773,8 @@ export const SearchRepository = {
 
   /**
    * Get the stream IDs every reader of `roomStreamId`'s room can read: the room's own tree (none
-   * when the room has no root row) plus what `roomReadableWithoutMembershipSql` lets through.
-   * Used by agent access control: an agent answers to everyone in its room (INV-62: the root's
+   * when the room has no root row) plus what `roomReadableWithoutMembershipSql` lets through, unless
+   * another workspace reads the room (`roomSharedSql`). Used by agent access control: an agent answers to everyone in its room (INV-62: the root's
    * visibility decides).
    */
   async getRoomReadableStreams(
@@ -785,7 +790,11 @@ export const SearchRepository = {
       SELECT s.id FROM streams s
       JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id
       WHERE s.workspace_id = ${workspaceId}
-        AND (root.id = ${roomStreamId} OR ${roomReadableWithoutMembershipSql(workspaceId, roomStreamId, "root")})
+        AND (
+          root.id = ${roomStreamId}
+          OR (NOT ${roomSharedSql(workspaceId, roomStreamId)}
+            AND ${roomReadableWithoutMembershipSql(workspaceId, roomStreamId, "root")})
+        )
         AND (${!hasTypeFilter} OR s.type = ANY(${options?.streamTypes ?? []}))
         AND ${archiveCondition}
     `)

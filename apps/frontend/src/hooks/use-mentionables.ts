@@ -33,6 +33,9 @@ import type { MentionTypeLookup } from "@threahq/prosemirror"
  *
  * `connectedWorkspaceIds` are the workspaces this stream's channel is shared
  * with; their users' local copies are mentionable here and nowhere else.
+ *
+ * `sharedCopy` marks a copy of another workspace's channel or thread, where
+ * personas are hidden: no agent answers in a copy.
  */
 export interface MentionStreamContext {
   streamType: StreamType
@@ -41,6 +44,7 @@ export interface MentionStreamContext {
   memberIds?: Set<string>
   botMemberIds?: Set<string>
   connectedWorkspaceIds?: ReadonlySet<string>
+  sharedCopy?: boolean
   /** Whether the current user can invite bots (admin/owner only). */
   canInviteBots?: boolean
 }
@@ -49,6 +53,7 @@ interface MentionStreamSource {
   id: string
   type: StreamType
   rootStreamId?: string | null
+  originWorkspaceId?: string | null
 }
 
 function pickMentionAccess(bootstrap: CachedStreamBootstrap) {
@@ -97,6 +102,7 @@ export function useMentionStreamContext(
   )
 
   const streamType = stream?.type
+  const sharedCopy = !!stream?.originWorkspaceId
   const selectRootType = useCallback(
     (streams: CachedStream[]) =>
       streamType === StreamTypes.THREAD && rootStreamId ? streams.find((s) => s.id === rootStreamId)?.type : undefined,
@@ -112,6 +118,7 @@ export function useMentionStreamContext(
     if (!streamType) return undefined
     const ctx: MentionStreamContext = { streamType }
     if (rootStreamType) ctx.rootStreamType = rootStreamType
+    if (sharedCopy) ctx.sharedCopy = true
     // Invite-mode exclusion uses channel-level access — threads inherit access
     // from their root, so inviting a root member to a thread is a no-op.
     if (members) {
@@ -124,7 +131,16 @@ export function useMentionStreamContext(
     if (accessLoaded) ctx.connectedWorkspaceIds = new Set(connectedWorkspaces?.map((workspace) => workspace.id))
     ctx.canInviteBots = currentUserRole === "admin" || currentUserRole === "owner"
     return ctx
-  }, [streamType, rootStreamType, members, botMemberIds, accessLoaded, connectedWorkspaces, currentUserRole])
+  }, [
+    streamType,
+    rootStreamType,
+    sharedCopy,
+    members,
+    botMemberIds,
+    accessLoaded,
+    connectedWorkspaces,
+    currentUserRole,
+  ])
 }
 
 /**
@@ -215,7 +231,7 @@ export function useMentionables(streamContext?: MentionStreamContext, { includeH
       return 0
     })
 
-    const personas: Mentionable[] = workspacePersonas.map((persona) => {
+    const personas: Mentionable[] = (streamContext?.sharedCopy ? [] : workspacePersonas).map((persona) => {
       // Convert shortcode to emoji (e.g., ":thread:" -> "🧵")
       const emoji = persona.avatarEmoji ? toEmoji(persona.avatarEmoji) : undefined
       return {

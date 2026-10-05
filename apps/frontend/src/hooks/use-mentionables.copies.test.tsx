@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import * as authModule from "@/auth"
 import { ServicesProvider, type StreamService } from "@/contexts"
-import { clearAllCachedData, db } from "@/db"
+import { clearAllCachedData, db, type CachedPersona } from "@/db"
 import { seedWorkspaceUser } from "@/test/workspace-rows"
 import { useMentionables, useMentionStreamContext, type MentionStreamContext } from "./use-mentionables"
 import { streamKeys } from "./use-streams"
@@ -116,6 +116,27 @@ describe("useMentionables connected workspace copies", () => {
   })
 })
 
+const ariadne: CachedPersona = {
+  id: "persona_ariadne",
+  workspaceId: WORKSPACE_ID,
+  slug: "ariadne",
+  name: "Ariadne",
+  description: null,
+  avatarEmoji: null,
+  avatarUrl: null,
+  systemPrompt: null,
+  model: "claude-sonnet-4-20250514",
+  temperature: null,
+  maxTokens: null,
+  enabledTools: null,
+  managedBy: "system",
+  ownerUserId: null,
+  status: "active",
+  createdAt: "2026-03-01T10:00:00Z",
+  updatedAt: "2026-03-01T10:00:00Z",
+  _cachedAt: 1,
+}
+
 describe("useMentionStreamContext connected workspaces", () => {
   let queryClient: QueryClient
 
@@ -176,6 +197,31 @@ describe("useMentionStreamContext connected workspaces", () => {
     )
 
     await waitFor(() => expect(result.current?.connectedWorkspaceIds).toEqual(new Set(["ws_partner"])))
+  })
+
+  it("should hide personas when the stream is a copy of another workspace's channel", async () => {
+    seedBootstrap("stream_copy", {})
+    seedBootstrap("stream_local", {})
+    await db.personas.put(ariadne)
+
+    const { result } = renderHook(
+      () => ({
+        copy: useMentionables(
+          useMentionStreamContext(WORKSPACE_ID, { id: "stream_copy", type: "channel", originWorkspaceId: "ws_host" })
+        ),
+        local: useMentionables(useMentionStreamContext(WORKSPACE_ID, { id: "stream_local", type: "channel" })),
+      }),
+      { wrapper: contextWrapper }
+    )
+
+    const personaIds = (mentionables: { type: string; id: string }[]) =>
+      mentionables.filter((m) => m.type === "persona").map((m) => m.id)
+    await waitFor(() =>
+      expect({
+        copy: personaIds(result.current.copy.mentionables),
+        local: personaIds(result.current.local.mentionables),
+      }).toEqual({ copy: [], local: ["persona_ariadne"] })
+    )
   })
 
   it("should connect no workspaces when the bootstrap omits the field", async () => {

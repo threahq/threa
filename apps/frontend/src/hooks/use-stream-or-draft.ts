@@ -99,6 +99,7 @@ const pickStreamIdentity = (row: CachedStream) => ({
   parentMessageId: row.parentMessageId,
   rootStreamId: row.rootStreamId,
   archivedAt: row.archivedAt,
+  originWorkspaceId: row.originWorkspaceId,
   e2eEnabled: row.e2eEnabled,
   e2eActors: row.e2eActors,
   sealedNameCiphertext: row.sealedNameCiphertext,
@@ -127,6 +128,8 @@ export interface VirtualStream {
   parentAnchorId: string | null
   rootStreamId: string | null
   archivedAt: string | null
+  /** The host workspace when this stream is a copy of another workspace's channel or thread. */
+  originWorkspaceId?: string | null
   /**
    * Server-persisted streams may be end-to-end encrypted. Drafts can't be
    * encrypted (encrypted scratchpads bypass the draft system and are
@@ -577,6 +580,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           parentAnchorId: baseStream.parentAnchorId ?? idbStream?.parentMessageId ?? null,
           rootStreamId: baseStream.rootStreamId,
           archivedAt: baseStream.archivedAt,
+          originWorkspaceId: baseStream.originWorkspaceId ?? null,
           e2eEnabled: baseStream.e2eEnabled,
           e2eActors: baseStream.e2eActors,
           sealedNameCiphertext: baseStream.sealedNameCiphertext ?? null,

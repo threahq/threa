@@ -17,6 +17,7 @@ import {
   resolveBriefStreamId,
   findMemoryModeStream,
   isMemoryAutomationOn,
+  isRoomShared,
   type Stream,
   type StreamBrief,
 } from "../../streams"
@@ -328,9 +329,10 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   // personas own attachment rows; a built-in (`managed_by: system`) has no owned
   // row to bind to, so it skips the query entirely (zero attachment reads). A
   // draft-test turn resolves the SAVED persona's `id` here (drafts share it), so
-  // the block reflects the saved attachments without any special-casing.
+  // the block reflects the saved attachments without any special-casing. The
+  // files stay home when another workspace reads the room.
   const personaKnowledge: PersonaAttachmentContentItem[] =
-    persona.managedBy === "system"
+    persona.managedBy === "system" || (await isRoomShared(db, workspaceId, stream.id))
       ? []
       : await PersonaAttachmentRepository.listForPersonaWithContent(db, workspaceId, persona.id)
 

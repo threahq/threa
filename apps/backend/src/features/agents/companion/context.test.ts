@@ -374,6 +374,40 @@ describe("buildAgentContext persona knowledge (context attachments, decision 7)"
     expect(prompt).toContain("### spec.txt\n\nSPEC SUMMARY")
     expect(prompt.indexOf("### guide.md")).toBeLessThan(prompt.indexOf("### spec.txt"))
   })
+
+  it("should leave the persona's attachments home when another workspace reads the room", async () => {
+    const listWithContent = spyOn(PersonaAttachmentRepository, "listForPersonaWithContent")
+    const sharedRoomDb = {
+      query: async (config: { text: string }) =>
+        config.text.includes("AS shared") ? { rows: [{ shared: true }], rowCount: 1 } : { rows: [], rowCount: 0 },
+    } as never
+    const sharedChannel = {
+      id: "stream_shared",
+      workspaceId: "ws_1",
+      type: StreamTypes.CHANNEL,
+      visibility: Visibilities.PUBLIC,
+      rootStreamId: null,
+      parentStreamId: null,
+      displayName: "Launch",
+      createdBy: "usr_1",
+    } as never
+
+    const context = await buildAgentContext(
+      { ...deps, db: sharedRoomDb },
+      {
+        workspaceId: "ws_1",
+        streamId: "stream_shared",
+        stream: sharedChannel,
+        messageId: "msg_1",
+        persona: { ...persona, id: "persona_custom", managedBy: "workspace", workspaceId: "ws_1" },
+        purpose: { kind: "catch_up" },
+        policy: { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests: false },
+      }
+    )
+
+    expect(listWithContent).not.toHaveBeenCalled()
+    expect(joinSystemPrompt(context.composeSystemPrompt([], { kind: "catch_up" }))).not.toContain("## Knowledge")
+  })
 })
 
 describe("buildAgentContext How You Work card", () => {

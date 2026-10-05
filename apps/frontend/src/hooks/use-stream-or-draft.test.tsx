@@ -97,7 +97,10 @@ describe("useStreamOrDraft real stream send", () => {
   })
 
   /** Seed the workspace cache + bootstrap for a plain channel and mount the hook on it. */
-  async function mountRealStreamSend(streamOverrides: { e2eEnabled?: boolean } = {}) {
+  async function mountRealStreamSend(
+    streamOverrides: { e2eEnabled?: boolean } = {},
+    idbRowOverrides?: { originWorkspaceId?: string }
+  ) {
     const createdAt = "2026-03-31T10:00:00Z"
     const stream = {
       id: "stream_socket_seen",
@@ -200,6 +203,8 @@ describe("useStreamOrDraft real stream send", () => {
       },
     })
 
+    if (idbRowOverrides) await db.streams.put({ ...stream, ...idbRowOverrides, _cachedAt: Date.now() })
+
     const queryClient = new QueryClient()
     queryClient.setQueryData(streamKeys.bootstrap("ws_1", "stream_socket_seen"), {
       stream,
@@ -226,6 +231,12 @@ describe("useStreamOrDraft real stream send", () => {
 
     return { result, queryClient }
   }
+
+  it("should carry the host workspace when the cached row marks the stream as another workspace's copy", async () => {
+    const { result } = await mountRealStreamSend({}, { originWorkspaceId: "ws_host" })
+
+    await waitFor(() => expect(result.current.stream?.originWorkspaceId).toBe("ws_host"))
+  })
 
   it("queues the optimistic event in IndexedDB without mutating an empty bootstrap window", async () => {
     const { result, queryClient } = await mountRealStreamSend()

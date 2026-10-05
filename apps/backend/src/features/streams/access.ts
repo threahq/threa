@@ -229,6 +229,37 @@ export function roomReadableWithoutMembershipSql(
 }
 
 /**
+ * True when another workspace reads `roomStreamId`'s room: its root is a copy of another workspace's
+ * channel, or this workspace actively shares it. Those readers see only the shared tree, so an agent
+ * answering there may read no further. A missing room is false.
+ */
+export function roomSharedSql(workspaceId: string, roomStreamId: string): QueryConfig {
+  return sql`EXISTS (
+    SELECT 1
+    FROM streams room
+    JOIN streams room_root ON room_root.id = COALESCE(room.root_stream_id, room.id)
+      AND room_root.workspace_id = room.workspace_id
+    WHERE room.workspace_id = ${workspaceId}
+      AND room.id = ${roomStreamId}
+      AND (
+        room_root.origin_workspace_id IS NOT NULL
+        OR EXISTS (
+          SELECT 1 FROM stream_connections sc
+          WHERE sc.workspace_id = room_root.workspace_id AND sc.stream_id = room_root.id
+            AND sc.role = 'host' AND sc.state = 'active'
+        )
+      )
+  )`
+}
+
+export async function isRoomShared(db: Querier, workspaceId: string, roomStreamId: string): Promise<boolean> {
+  const result = await db.query<{ shared: boolean }>(
+    composeSql`SELECT ${roomSharedSql(workspaceId, roomStreamId)} AS shared`
+  )
+  return result.rows[0]?.shared ?? false
+}
+
+/**
  * Room-uniform readability: the subset of candidate stream ids in the workspace that every reader
  * of the room can read — the room stream itself, plus candidates whose effective root (thread →
  * root via `COALESCE(root_stream_id, id)`) passes {@link roomReadableWithoutMembershipSql}. No
