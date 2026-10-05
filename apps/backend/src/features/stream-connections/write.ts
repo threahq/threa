@@ -21,6 +21,9 @@ import { importDoc, loadSharedTree, type BridgeCaller, type ImportedContent } fr
 import { enqueueProfileRefreshes } from "./profiles"
 import { StreamConnectionRepository } from "./repository"
 
+/** Past a caller's settle after a write: its pulls retry three times on 5 s requests. */
+const SETTLED_REFRESH_DELAY_MS = 30_000
+
 type WriteCaller = BridgeCaller & { streamId: string }
 type MessageCaller = WriteCaller & { messageId: string }
 
@@ -190,7 +193,11 @@ export class StreamConnectionWriteService {
           users: profiles,
         })
         if (insertedCopies.length > 0) {
-          await enqueueProfileRefreshes(client, [{ workspaceId: caller.workspaceId, connectionId: connection.id }])
+          // The caller answers for its users only once its copy holds something they wrote, which this write
+          // reaches when the caller's settle pull commits, so a second refresh lands past that settle.
+          const refs = [{ workspaceId: caller.workspaceId, connectionId: connection.id }]
+          await enqueueProfileRefreshes(client, refs)
+          await enqueueProfileRefreshes(client, refs, SETTLED_REFRESH_DELAY_MS)
         }
       }
 

@@ -4,7 +4,7 @@ import { StreamConnectionStates } from "@threahq/types"
 import { JobQueues, QueueRepository, type StreamConnectionPullJobData } from "../../lib/queue"
 import type { FeatureFlagService } from "../feature-flags"
 import { connectionNotFound } from "./errors"
-import { enqueueProfileRefreshes, toLinked } from "./profiles"
+import { enqueueProfileRefreshes, linkedRemoteWorkspaceId } from "./profiles"
 import { StreamConnectionRepository, type ConnectionRef } from "./repository"
 
 /**
@@ -55,10 +55,8 @@ export class StreamConnectionImportService {
   }): Promise<void> {
     const flag = await this.featureFlagService.getWorkspaceFlag(params.workspaceId, "streamConnections")
     if (flag !== "on") throw connectionNotFound()
-    const connection = toLinked(
-      await StreamConnectionRepository.findById(this.pool, params.workspaceId, params.connectionId)
-    )
-    if (connection?.remoteWorkspaceId !== params.callerWorkspaceId) throw connectionNotFound()
+    const connection = await StreamConnectionRepository.findById(this.pool, params.workspaceId, params.connectionId)
+    if (linkedRemoteWorkspaceId(connection) !== params.callerWorkspaceId) throw connectionNotFound()
     await enqueueProfileRefreshes(this.pool, [{ workspaceId: params.workspaceId, connectionId: params.connectionId }])
   }
 
@@ -69,7 +67,7 @@ export class StreamConnectionImportService {
 
   /** The sweep's counterpart for user changes: queues a profile refresh at both ends of every active connection. */
   async enqueueAllProfileRefreshes(): Promise<void> {
-    await enqueueProfileRefreshes(this.pool, await StreamConnectionRepository.listAllActiveLinkedConnections(this.pool))
+    await enqueueProfileRefreshes(this.pool, await StreamConnectionRepository.listActiveLinkedConnections(this.pool))
   }
 }
 

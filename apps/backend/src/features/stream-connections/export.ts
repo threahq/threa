@@ -28,10 +28,9 @@ import type { FeatureFlagService } from "../feature-flags"
 import { MessageRepository, deriveContentMarkdown, type Message } from "../messaging"
 import { BotRepository } from "../public-api"
 import { StreamEventRepository, StreamRepository, normalizeStreamDescription, type Stream } from "../streams"
-import { UserRepository } from "../workspaces"
+import { UserRepository, userAvatarToken } from "../workspaces"
 import { connectionNotFound, writeRefused } from "./errors"
 import { namedAuthors } from "./named-authors"
-import { avatarToken } from "./profiles"
 import { StreamConnectionRepository } from "./repository"
 
 type EventRule = "message" | "moved" | "withheld"
@@ -290,7 +289,7 @@ export class StreamConnectionExportService {
           .map((user) => ({
             id: user.id,
             name: user.name,
-            avatar: user.avatarUrl ? avatarToken(user.avatarUrl) : null,
+            avatar: user.avatarUrl ? userAvatarToken(user.avatarUrl) : null,
           })),
       }
     })

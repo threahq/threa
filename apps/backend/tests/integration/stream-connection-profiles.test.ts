@@ -22,7 +22,8 @@ import {
 import { EventService } from "../../src/features/messaging"
 import { StreamRepository } from "../../src/features/streams"
 import { FeatureFlagOverrideRepository, FeatureFlagService } from "../../src/features/feature-flags"
-import { AVATAR_SIZES, AvatarService, UserRepository, WorkspaceRepository } from "../../src/features/workspaces"
+import { AvatarService, UserRepository, WorkspaceRepository, WorkspaceService } from "../../src/features/workspaces"
+import { AVATAR_SIZES } from "../../src/features/workspaces/avatar-service"
 import {
   BridgeClient,
   StreamConnectionExportService,
@@ -397,9 +398,50 @@ describe("Profiles of copied users kept current across a shared channel", () => 
     await profileService.refresh(world.hostRef)
 
     expect({ queued, copy: await copyOf(world.host.id, pat.id) }).toEqual({
-      queued: [world.hostRef],
+      queued: [world.hostRef, world.hostRef],
       copy: {
         name: "Pat Partner",
+        avatarUrl: `avatars/${world.host.id}/${pat.id}/${token}`,
+        originWorkspaceId: world.partner.id,
+      },
+    })
+  })
+
+  test("should picture the host's copy of a new partner author on the later refresh when the first runs before the partner's copy holds the message", async () => {
+    const world = await seedWorld()
+    const pat = await addTestMember(pool, world.partner.id, `pat-${world.partner.id}`)
+    const token = await setAvatar(world.partner.id, pat.id)
+    const sentAt = Date.now()
+    await bridge.sendMessage(
+      { workspaceId: world.host.id, connectionId: world.snapshot.id, callerWorkspaceId: world.partner.id },
+      {
+        streamId: world.channel.id,
+        author: { id: pat.id, name: pat.name, slug: pat.slug },
+        users: [],
+        clientMessageId: crypto.randomUUID(),
+        contentJson: testContentJson("first word"),
+        attachments: [],
+      }
+    )
+    const { rows } = await pool.query<{ process_after: Date }>(
+      `SELECT process_after FROM queue_messages WHERE queue_name = $1 AND workspace_id = $2 ORDER BY process_after`,
+      [JobQueues.STREAM_CONNECTION_PROFILES, world.host.id]
+    )
+
+    await profileService.refresh(world.hostRef)
+    const ahead = await copyOf(world.host.id, pat.id)
+    expect(await pullService.pull(world.partnerRef)).toBe(true)
+    await profileService.refresh(world.hostRef)
+
+    expect({
+      settledRefreshes: rows.map((row) => row.process_after.getTime() - sentAt >= 20_000),
+      ahead,
+      settled: await copyOf(world.host.id, pat.id),
+    }).toEqual({
+      settledRefreshes: [false, true],
+      ahead: { name: pat.name, avatarUrl: null, originWorkspaceId: world.partner.id },
+      settled: {
+        name: pat.name,
         avatarUrl: `avatars/${world.host.id}/${pat.id}/${token}`,
         originWorkspaceId: world.partner.id,
       },
@@ -427,6 +469,17 @@ describe("Profiles of copied users kept current across a shared channel", () => 
       otherPokes: [],
       copy: { name: "Pat Relayed", avatarUrl: null, originWorkspaceId: world.host.id },
     })
+  })
+
+  test("should poke the other end of each shared channel when a member renames themselves", async () => {
+    const world = await seedWorld()
+    const workspaceService = new WorkspaceService(pool, avatarService, {} as never)
+
+    await workspaceService.updateUserProfile(world.host.adminId, world.host.id, { name: "Ada Renamed" })
+
+    expect(await profilePokes(world.host.id, world.host.adminId)).toEqual([
+      { workspaceId: world.partner.id, connectionId: world.snapshot.id, callerWorkspaceId: world.host.id },
+    ])
   })
 
   test("should answer only for members who wrote or reacted in the shared channel or its threads when another end asks, never for the asker's own", async () => {

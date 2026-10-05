@@ -222,12 +222,13 @@ export const StreamConnectionRepository = {
     return result.rows.map((row) => ({ workspaceId: row.workspace_id, connectionId: row.id }))
   },
 
-  /** The active host and partner connections of the given workspaces. */
-  async listActiveLinkedConnections(db: Querier, workspaceIds: string[]): Promise<LinkedConnectionRef[]> {
-    if (workspaceIds.length === 0) return []
+  /** The active host and partner connections of the given workspaces, or of every workspace in the region without them. */
+  async listActiveLinkedConnections(db: Querier, workspaceIds?: string[]): Promise<LinkedConnectionRef[]> {
+    if (workspaceIds?.length === 0) return []
+    // eslint-disable-next-line threa/workspace-scoped-sql -- without workspaceIds, every connection in the region by design
     const result = await db.query<{ workspace_id: string; id: string; remote_workspace_id: string }>(sql`
       SELECT workspace_id, id, remote_workspace_id FROM stream_connections
-      WHERE workspace_id = ANY(${workspaceIds})
+      WHERE (${workspaceIds ?? null}::text[] IS NULL OR workspace_id = ANY(${workspaceIds ?? null}::text[]))
         AND role IN ('host', 'partner') AND state = 'active' AND remote_workspace_id IS NOT NULL
     `)
     return result.rows.map((row) => ({
@@ -235,15 +236,5 @@ export const StreamConnectionRepository = {
       connectionId: row.id,
       remoteWorkspaceId: row.remote_workspace_id,
     }))
-  },
-
-  /** Every active host and partner connection in the region. */
-  async listAllActiveLinkedConnections(db: Querier): Promise<ConnectionRef[]> {
-    // eslint-disable-next-line threa/workspace-scoped-sql -- every connection in the region, across workspaces by design
-    const result = await db.query<{ workspace_id: string; id: string }>(sql`
-      SELECT workspace_id, id FROM stream_connections
-      WHERE role IN ('host', 'partner') AND state = 'active' AND remote_workspace_id IS NOT NULL
-    `)
-    return result.rows.map((row) => ({ workspaceId: row.workspace_id, connectionId: row.id }))
   },
 }

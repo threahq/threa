@@ -12,6 +12,7 @@ import {
   type BridgeEvents,
   type BridgeManifest,
   type BridgeProfiles,
+  type BridgeProfilesRequest,
   type BridgeSendMessage,
   type BridgeSendMessageResponse,
 } from "@threahq/types"
@@ -80,7 +81,7 @@ export class BridgeClient {
 
   /** The other end's current name and avatar of the given users, for those it shares. */
   async getProfiles(address: ConnectionAddress, userIds: string[]): Promise<BridgeProfiles> {
-    const res = await this.request(address, "/profiles", "POST", { userIds })
+    const res = await this.request(address, "/profiles", "POST", { userIds } satisfies BridgeProfilesRequest)
     return bridgeProfilesSchema.parse(await res.json())
   }
 

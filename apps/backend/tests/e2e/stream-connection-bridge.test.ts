@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
 import { INTERNAL_API_KEY_HEADER, streamConnectionId } from "@threahq/backend-common"
 import {
+  BRIDGE_PROFILES_MAX_IDS,
   BRIDGE_WORKSPACE_HEADER,
   StreamTypes,
   type BridgeChange,
@@ -12,6 +13,7 @@ import {
   type StreamConnectionSnapshot,
 } from "@threahq/types"
 import { StreamRepository } from "../../src/features/streams"
+import { JobQueues } from "../../src/lib/queue"
 import { UserRepository } from "../../src/features/workspaces"
 import { streamId, userId, workspaceId } from "../../src/lib/id"
 import {
@@ -568,6 +570,76 @@ describe("Stream connection bridge", () => {
       },
       { ...disclosure, outcome: "success", subjects: [{ type: "attachment", id: shared.id }] },
     ])
+  })
+
+  test("should name only the asked members who wrote in the shared channel, refuse a stranger or an oversized page, and record the disclosure", async () => {
+    const { client, workspace, channel, connection, partnerWorkspaceId } = await setup()
+    const message = await sendMessage(client, workspace.id, channel.id, "hello")
+    const ask = (userIds: string[], callerWorkspaceId: string) =>
+      new TestClient().request<{ users?: unknown; code?: string }>(
+        "POST",
+        `/api/workspaces/${workspace.id}/stream-connections/${connection.id}/bridge/profiles`,
+        { userIds },
+        partnerHeaders(callerWorkspaceId)
+      )
+
+    const answered = await ask([message.authorId, userId()], partnerWorkspaceId)
+    const stranger = await ask([message.authorId], workspaceId())
+    const oversized = await ask(
+      Array.from({ length: BRIDGE_PROFILES_MAX_IDS + 1 }, () => userId()),
+      partnerWorkspaceId
+    )
+
+    let rows: unknown[] = []
+    for (let attempt = 0; attempt < 40 && rows.length === 0; attempt++) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 50))
+      ;({ rows } = await pool.query(
+        `SELECT actor_id, auth_ref, access_kind, subjects FROM access_log
+         WHERE workspace_id = $1 AND operation = 'stream_connections.bridge_profiles' AND outcome = 'success'`,
+        [workspace.id]
+      ))
+    }
+    expect({
+      answered: { status: answered.status, users: answered.data.users },
+      stranger: { status: stranger.status, code: stranger.data.code },
+      oversized: oversized.status,
+      log: rows,
+    }).toEqual({
+      answered: { status: 200, users: [{ id: message.authorId, name: "Host Admin", avatar: null }] },
+      stranger: { status: 404, code: "STREAM_CONNECTION_NOT_FOUND" },
+      oversized: 400,
+      log: [
+        {
+          actor_id: partnerWorkspaceId,
+          auth_ref: connection.id,
+          access_kind: "disclose",
+          subjects: [{ type: "user", id: message.authorId }],
+        },
+      ],
+    })
+  })
+
+  test("should queue a refresh of the partner's members when the partner pokes, and refuse a stranger's poke", async () => {
+    const { workspace, connection, partnerWorkspaceId } = await setup()
+    const poke = (callerWorkspaceId: string) =>
+      new TestClient().request(
+        "POST",
+        `/api/workspaces/${workspace.id}/stream-connections/${connection.id}/bridge/profiles/poke`,
+        undefined,
+        partnerHeaders(callerWorkspaceId)
+      )
+
+    const stranger = await poke(workspaceId())
+    const poked = await poke(partnerWorkspaceId)
+
+    const { rows } = await pool.query(
+      `SELECT payload FROM queue_messages WHERE queue_name = $1 AND workspace_id = $2`,
+      [JobQueues.STREAM_CONNECTION_PROFILES, workspace.id]
+    )
+    expect({ statuses: [stranger.status, poked.status], jobs: rows }).toEqual({
+      statuses: [404, 204],
+      jobs: [{ payload: { workspaceId: workspace.id, connectionId: connection.id } }],
+    })
   })
 
   test("should keep pointers that resolve inside the shared tree and flatten or drop the rest", async () => {

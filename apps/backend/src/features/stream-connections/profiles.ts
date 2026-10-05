@@ -11,14 +11,12 @@ import { OutboxRepository } from "../../lib/outbox"
 import { JobQueues, QueueRepository, type StreamConnectionProfilesJobData } from "../../lib/queue"
 import { logger } from "../../lib/logger"
 import type { FeatureFlagService } from "../feature-flags"
-import { AVATAR_SIZES, UserRepository, type AvatarService, type CopyProfileUpdate, type User } from "../workspaces"
+import { UserRepository, userAvatarToken, type AvatarService, type CopyProfileUpdate, type User } from "../workspaces"
 import type { BridgeClient } from "./bridge-client"
 import { StreamConnectionRepository, type ConnectionRef } from "./repository"
 
 /** Pokes that land in one window share a refresh, the same way pulls coalesce. */
 const REFRESH_COALESCE_MS = 1_000
-
-const AVATAR_KEY_PATTERN = /^avatars\/[^/]+\/[^/]+\/(\d+)$/
 
 interface Dependencies {
   pool: Pool
@@ -26,9 +24,6 @@ interface Dependencies {
   featureFlagService: FeatureFlagService
   avatarService: AvatarService
 }
-
-/** An active host or partner connection, with the workspace at its other end. */
-type LinkedConnection = StreamConnection & { remoteWorkspaceId: string }
 
 /**
  * Keeps a workspace's copies of the other end's users named and pictured as
@@ -54,9 +49,10 @@ export class StreamConnectionProfileService {
   async refresh(ref: ConnectionRef): Promise<void> {
     const flag = await this.featureFlagService.getWorkspaceFlag(ref.workspaceId, "streamConnections")
     if (flag !== "on") return
-    const connection = toLinked(await StreamConnectionRepository.findById(this.pool, ref.workspaceId, ref.connectionId))
-    if (!connection) return
-    const remoteWorkspaceId = connection.remoteWorkspaceId
+    const remoteWorkspaceId = linkedRemoteWorkspaceId(
+      await StreamConnectionRepository.findById(this.pool, ref.workspaceId, ref.connectionId)
+    )
+    if (!remoteWorkspaceId) return
 
     const copies = await UserRepository.listCopiesFrom(this.pool, ref.workspaceId, remoteWorkspaceId)
     const address = {
@@ -75,7 +71,12 @@ export class StreamConnectionProfileService {
     for (const copy of copies) {
       const profile = profiles.get(copy.id)
       if (!profile) continue
-      const avatarUrl = await this.copyAvatar(ref.workspaceId, remoteWorkspaceId, copy, profile.avatar)
+      const avatarUrl = await this.copyAvatar(ref.workspaceId, remoteWorkspaceId, copy, profile.avatar).catch(
+        (err: unknown) => {
+          logger.warn({ err, ...ref, userId: copy.id }, "Kept a copy's avatar: copying the remote avatar failed")
+          return copy.avatarUrl
+        }
+      )
       if (profile.name === copy.name && avatarUrl === copy.avatarUrl) continue
       updates.push({
         id: copy.id,
@@ -88,10 +89,8 @@ export class StreamConnectionProfileService {
     if (updates.length === 0) return
 
     const changed = await withTransaction(this.pool, async (client) => {
-      const locked = toLinked(
-        await StreamConnectionRepository.findByIdForUpdate(client, ref.workspaceId, ref.connectionId)
-      )
-      if (locked?.remoteWorkspaceId !== remoteWorkspaceId) {
+      const locked = await StreamConnectionRepository.findByIdForUpdate(client, ref.workspaceId, ref.connectionId)
+      if (linkedRemoteWorkspaceId(locked) !== remoteWorkspaceId) {
         logger.info({ ...ref }, "Stopped a profile refresh: the connection is no longer active")
         return []
       }
@@ -126,46 +125,34 @@ export class StreamConnectionProfileService {
     remoteAvatar: string | null
   ): Promise<string | null> {
     if (remoteAvatar === null) return null
-    if (copy.avatarUrl && avatarToken(copy.avatarUrl) === remoteAvatar) return copy.avatarUrl
-    const files = await Promise.all(
-      AVATAR_SIZES.map((size) =>
-        this.bridgeClient.getAvatarFile({
-          workspaceId: remoteWorkspaceId,
-          userId: copy.id,
-          file: `${remoteAvatar}.${size}.webp`,
-        })
-      )
-    )
-    const images = new Map<number, Buffer>()
-    for (const [i, size] of AVATAR_SIZES.entries()) {
-      const file = files[i]
-      if (!file) return copy.avatarUrl
-      images.set(size, file)
-    }
-    const basePath = `avatars/${workspaceId}/${copy.id}/${remoteAvatar}`
-    await this.avatarService.uploadImages(basePath, images)
-    return basePath
+    if (copy.avatarUrl && userAvatarToken(copy.avatarUrl) === remoteAvatar) return copy.avatarUrl
+    const copied = await this.avatarService.copyUserAvatar({
+      workspaceId,
+      userId: copy.id,
+      token: remoteAvatar,
+      fetchFile: (file) => this.bridgeClient.getAvatarFile({ workspaceId: remoteWorkspaceId, userId: copy.id, file }),
+    })
+    return copied ?? copy.avatarUrl
   }
 }
 
-/** The upload timestamp an avatar key ends in, which names its files. */
-export function avatarToken(avatarUrl: string): string {
-  const match = AVATAR_KEY_PATTERN.exec(avatarUrl)
-  if (!match) throw new Error(`Avatar key ${avatarUrl} is not a user avatar key`)
-  return match[1]
-}
-
-/** The connection when it is an active host or partner end. */
-export function toLinked(connection: StreamConnection | null): LinkedConnection | null {
+/**
+ * The workspace at the other end of an active host or partner connection, else
+ * null. The same predicate as `StreamConnectionRepository.listActiveLinkedConnections`.
+ */
+export function linkedRemoteWorkspaceId(connection: StreamConnection | null): string | null {
   if (!connection || (connection.role !== "host" && connection.role !== "partner")) return null
-  if (connection.state !== StreamConnectionStates.ACTIVE || !connection.remoteWorkspaceId) return null
-  return { ...connection, remoteWorkspaceId: connection.remoteWorkspaceId }
+  if (connection.state !== StreamConnectionStates.ACTIVE) return null
+  return connection.remoteWorkspaceId
 }
 
-/** Queues a profile refresh of each connection, folded into the current window's refresh when one is already queued. */
-export async function enqueueProfileRefreshes(db: Querier, connections: ConnectionRef[]): Promise<void> {
+/**
+ * Queues a profile refresh of each connection, `delayMs` from now, folded into
+ * that window's refresh when one is already queued.
+ */
+export async function enqueueProfileRefreshes(db: Querier, connections: ConnectionRef[], delayMs = 0): Promise<void> {
   const now = Date.now()
-  const window = Math.floor(now / REFRESH_COALESCE_MS)
+  const window = Math.floor((now + delayMs) / REFRESH_COALESCE_MS)
   const processAfter = new Date((window + 1) * REFRESH_COALESCE_MS)
   await QueueRepository.batchInsert(
     db,
