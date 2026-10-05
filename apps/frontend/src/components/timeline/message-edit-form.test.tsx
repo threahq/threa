@@ -9,20 +9,25 @@ import * as drawerModule from "@/components/ui/drawer"
 import * as editorModule from "@/components/editor"
 import * as prosemirrorModule from "@threahq/prosemirror"
 import * as contextsModule from "@/contexts"
+import * as authModule from "@/auth"
 import { toast } from "sonner"
 import { ApiError } from "@/api"
 // eslint-disable-next-line no-restricted-imports -- test reads the real outbox the form writes to
 import { db } from "@/db"
+import type { MentionStreamContext } from "@/hooks/use-mentionables"
+import { clearStreams, seedStream } from "@/test/workspace-rows"
 import { MessageEditForm } from "./message-edit-form"
 import { StreamConnectionErrorCodes, type JSONContent } from "@threahq/types"
 
 let inputModeMockValue: inputModeModule.InputMode = "mouse"
+let editorStreamContext: MentionStreamContext | undefined
 
 beforeEach(() => {
   vi.restoreAllMocks()
   inputModeMockValue = "mouse"
 
   vi.spyOn(inputModeModule, "useInputMode").mockImplementation(() => inputModeMockValue)
+  vi.spyOn(authModule, "useUser").mockReturnValue({ id: "workos_usr_1" } as ReturnType<typeof authModule.useUser>)
 
   spyOnExport(drawerModule, "Drawer").mockReturnValue((({ children }: { children: React.ReactNode }) => (
     <div data-testid="drawer-root">{children}</div>
@@ -53,6 +58,7 @@ beforeEach(() => {
     placeholder,
     ariaLabel,
     ariaDescribedBy,
+    streamContext,
   }: {
     value: JSONContent
     onChange: (v: JSONContent) => void
@@ -60,28 +66,32 @@ beforeEach(() => {
     placeholder?: string
     ariaLabel: string
     ariaDescribedBy?: string
-  }) => (
-    <textarea
-      data-testid="rich-editor"
-      defaultValue={JSON.stringify(value)}
-      placeholder={placeholder}
-      aria-label={ariaLabel}
-      aria-describedby={ariaDescribedBy}
-      onChange={(e) => {
-        try {
-          onChange(JSON.parse(e.target.value))
-        } catch {
-          // ignore parse errors in test
-        }
-      }}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" && !e.shiftKey) {
-          e.preventDefault()
-          onSubmit()
-        }
-      }}
-    />
-  )) as unknown as typeof editorModule.RichEditor)
+    streamContext?: MentionStreamContext
+  }) => {
+    editorStreamContext = streamContext
+    return (
+      <textarea
+        data-testid="rich-editor"
+        defaultValue={JSON.stringify(value)}
+        placeholder={placeholder}
+        aria-label={ariaLabel}
+        aria-describedby={ariaDescribedBy}
+        onChange={(e) => {
+          try {
+            onChange(JSON.parse(e.target.value))
+          } catch {
+            // ignore parse errors in test
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault()
+            onSubmit()
+          }
+        }}
+      />
+    )
+  }) as unknown as typeof editorModule.RichEditor)
   vi.spyOn(editorModule, "EditorToolbar").mockImplementation(
     (() => null) as unknown as typeof editorModule.EditorToolbar
   )
@@ -120,17 +130,20 @@ function renderForm(props: Partial<React.ComponentProps<typeof MessageEditForm>>
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <MessageEditForm
-          messageId="msg_1"
-          workspaceId="ws_1"
-          streamId="stream_1"
-          initialContentJson={initialContentJson}
-          onSave={vi.fn()}
-          onCancel={vi.fn()}
-          {...props}
-        />
-      </TooltipProvider>
+      {/* No socket is provided, so the stream bootstrap is read from the cache and never fetched. */}
+      <contextsModule.ServicesProvider services={{ streams: {} as contextsModule.StreamService }}>
+        <TooltipProvider>
+          <MessageEditForm
+            messageId="msg_1"
+            workspaceId="ws_1"
+            streamId="stream_1"
+            initialContentJson={initialContentJson}
+            onSave={vi.fn()}
+            onCancel={vi.fn()}
+            {...props}
+          />
+        </TooltipProvider>
+      </contextsModule.ServicesProvider>
     </QueryClientProvider>
   )
 }
@@ -317,5 +330,20 @@ describe("MessageEditForm saving", () => {
       infos: [["Edit queued — will be saved when back online"]],
       queued: [{ type: "edit_message", payload: { messageId: "msg_1", contentJson: editedContent } }],
     })
+  })
+})
+
+describe("MessageEditForm mention rules", () => {
+  beforeEach(async () => {
+    editorStreamContext = undefined
+    await clearStreams()
+  })
+
+  it("should give the editor the stream's mention rules when editing in a copy of another workspace's channel", async () => {
+    await seedStream("ws_1", "stream_1", { originWorkspaceId: "ws_host" })
+
+    renderForm()
+
+    await waitFor(() => expect(editorStreamContext).toMatchObject({ streamType: "channel", sharedCopy: true }))
   })
 })

@@ -6,6 +6,7 @@ import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { RichEditor, EditorToolbar, EditorActionBar, DocumentEditorModal } from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { useMentionStreamContext } from "@/hooks/use-mentionables"
 import { usePendingMessages } from "@/contexts"
 import { serializeToMarkdown, parseMarkdown } from "@threahq/prosemirror"
 import type { JSONContent } from "@threahq/types"
@@ -13,6 +14,7 @@ import type { Editor } from "@tiptap/react"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { useStreamBootstrap } from "@/hooks/use-streams"
 import { useWorkspaceMetadata } from "@/stores/workspace-store"
+import { useStreamFromStore } from "@/stores/stream-store"
 
 const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Command" : "Control"
 
@@ -36,6 +38,7 @@ export function UnsentMessageEditForm({
 }: UnsentMessageEditFormProps) {
   const { saveEditedMessage, cancelEditing, deleteMessage } = usePendingMessages()
   const metadata = useWorkspaceMetadata(workspaceId)
+  const streamContext = useMentionStreamContext(workspaceId, useStreamFromStore(workspaceId, streamId))
   const { data: streamCommands } = useStreamBootstrap(workspaceId, streamId, {
     enabled: false,
     select: (bootstrap) => bootstrap.commands,
@@ -221,6 +224,7 @@ export function UnsentMessageEditForm({
                 blurOnEscape
                 onEscapeBlur={focusMobileActionBar}
                 memoAnchorStreamId={streamId}
+                streamContext={streamContext}
               />
             </div>
           </div>
@@ -273,6 +277,7 @@ export function UnsentMessageEditForm({
           ariaDescribedBy={instructionsId}
           autoFocus
           memoAnchorStreamId={streamId}
+          streamContext={streamContext}
         />
       </div>
       <div className="flex items-center gap-1.5 mt-1">
@@ -318,6 +323,7 @@ export function UnsentMessageEditForm({
         onSend={handleDocEditorSend}
         onDismiss={handleDocEditorDismiss}
         streamName="edit"
+        streamContext={streamContext}
       />
     </>
   )

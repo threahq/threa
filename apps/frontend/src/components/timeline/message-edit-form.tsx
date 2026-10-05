@@ -11,12 +11,14 @@ import { RichEditor, EditorToolbar, EditorActionBar, DocumentEditorModal } from 
 import type { RichEditorHandle } from "@/components/editor"
 import { inAppLinkMarksToNodes } from "@/components/editor/in-app-link-marks"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { useMentionStreamContext } from "@/hooks/use-mentionables"
 import { useMessageService } from "@/contexts"
 import { messageKeys } from "@/api/messages"
 import { serializeToMarkdown, parseMarkdown } from "@threahq/prosemirror"
 import type { JSONContent } from "@threahq/types"
 import type { Editor } from "@tiptap/react"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
+import { useStreamFromStore } from "@/stores/stream-store"
 
 const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Command" : "Control"
 
@@ -46,6 +48,7 @@ export function MessageEditForm({
 }: MessageEditFormProps) {
   const queryClient = useQueryClient()
   const messageService = useMessageService()
+  const streamContext = useMentionStreamContext(workspaceId, useStreamFromStore(workspaceId, streamId))
   // Latch the surface at mount: input mode is live, so reading it directly would
   // flip drawer<->inline mid-edit and remount the editor, dropping unsaved text.
   const [isTouch] = useState(useInputMode() === "touch")
@@ -239,6 +242,7 @@ export function MessageEditForm({
                 blurOnEscape
                 onEscapeBlur={focusMobileActionBar}
                 memoAnchorStreamId={streamId}
+                streamContext={streamContext}
               />
             </div>
           </div>
@@ -291,6 +295,7 @@ export function MessageEditForm({
           ariaDescribedBy={instructionsId}
           autoFocus
           memoAnchorStreamId={streamId}
+          streamContext={streamContext}
         />
       </div>
       <div className="flex items-center gap-1.5 mt-1">
@@ -327,6 +332,7 @@ export function MessageEditForm({
         onSend={handleDocEditorSend}
         onDismiss={handleDocEditorDismiss}
         streamName="edit"
+        streamContext={streamContext}
       />
     </>
   )
