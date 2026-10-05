@@ -10,6 +10,7 @@ import type { BoardPost, BoardPostMessage, ConversationWithStaleness, EventType 
 import { ConversationPanel } from "./conversation-panel"
 import { hasUnknownMembers } from "@/hooks/use-conversation-backfill"
 import { ServicesProvider, SidebarProvider, PanelProvider, TraceProvider, SKELETON_DELAY_MS } from "@/contexts"
+import * as authModule from "@/auth"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { spyOnExport } from "@/test/spy"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
@@ -454,6 +455,7 @@ beforeEach(async () => {
   // The panel resolves its host stream type from the synced IDB row.
   vi.spyOn(streamStoreModule, "useStreamFromStore").mockReturnValue({ id: "stream_1", type: "channel" } as never)
   vi.spyOn(useWorkspacesModule, "useWorkspaceUserId").mockReturnValue("usr_me")
+  vi.spyOn(authModule, "useUser").mockReturnValue({ id: "workos_usr_me" } as ReturnType<typeof authModule.useUser>)
   // BoardCard hosts the inline branch composer, whose queue hook needs the
   // pending-messages provider — stub the hook so the harness stays lean.
   vi.spyOn(queueDraftModule, "useQueueDraftMessage").mockReturnValue({

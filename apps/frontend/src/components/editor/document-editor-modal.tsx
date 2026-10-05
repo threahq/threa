@@ -32,7 +32,7 @@ import { serializeToMarkdown, parseMarkdown, isProseMirrorClipboardEvent } from 
 import { serializeClipboardSlice } from "./clipboard-copy"
 import { insertPlainText, isPlainTextPaste } from "./plain-text-paste"
 import { useMentionSuggestion, useChannelSuggestion, useEmojiSuggestion } from "./triggers"
-import { useMentionables, useMarkdownTriggerLookups } from "@/hooks/use-mentionables"
+import { useMentionables, useMarkdownTriggerLookups, type MentionStreamContext } from "@/hooks/use-mentionables"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { LinkEditor } from "./link-editor"
 import {
@@ -55,6 +55,7 @@ interface DocumentEditorModalProps {
   /** Called when modal is dismissed (Cancel, Escape, click outside) - returns current content for sync */
   onDismiss?: (content: string) => void
   streamName: string
+  streamContext?: MentionStreamContext
 }
 
 export function DocumentEditorModal({
@@ -64,6 +65,7 @@ export function DocumentEditorModal({
   onSend,
   onDismiss,
   streamName,
+  streamContext,
 }: DocumentEditorModalProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const isInternalUpdate = useRef(false)
@@ -72,7 +74,7 @@ export function DocumentEditorModal({
 
   const { mentionables } = useMentionables()
   const { getMentionType, isKnownChannel } = useMarkdownTriggerLookups(mentionables)
-  const { suggestionConfig: mentionConfig, renderMentionList } = useMentionSuggestion()
+  const { suggestionConfig: mentionConfig, renderMentionList } = useMentionSuggestion(streamContext)
   const { suggestionConfig: channelConfig, renderChannelList } = useChannelSuggestion()
 
   const { workspaceId } = useParams<{ workspaceId: string }>()
