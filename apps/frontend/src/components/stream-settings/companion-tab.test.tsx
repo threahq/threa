@@ -153,9 +153,7 @@ describe("CompanionTab channel settings for a guest", () => {
   const BROWSE = [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE]
 
   function viewerWith(viewerPermissions: WorkspaceBootstrap["viewerPermissions"]) {
-    vi.spyOn(workspacesHooks, "useCachedWorkspaceBootstrap").mockReturnValue({
-      viewerPermissions,
-    } as WorkspaceBootstrap)
+    vi.spyOn(workspacesHooks, "useViewerPermissions").mockReturnValue(viewerPermissions)
   }
 
   function disabledControls() {

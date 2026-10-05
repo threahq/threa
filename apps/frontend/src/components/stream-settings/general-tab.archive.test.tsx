@@ -79,9 +79,7 @@ const threadA = stream("thread_a", { parentStreamId: "chan", rootStreamId: "chan
 const threadB = stream("thread_b", { parentStreamId: "thread_a", rootStreamId: "chan" })
 
 function viewerWith(viewerPermissions: WorkspaceBootstrap["viewerPermissions"]) {
-  vi.spyOn(useWorkspacesModule, "useCachedWorkspaceBootstrap").mockReturnValue({
-    viewerPermissions,
-  } as WorkspaceBootstrap)
+  vi.spyOn(useWorkspacesModule, "useViewerPermissions").mockReturnValue(viewerPermissions)
 }
 
 beforeEach(() => {

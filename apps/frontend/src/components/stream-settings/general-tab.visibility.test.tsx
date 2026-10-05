@@ -42,7 +42,7 @@ function renderTab(stream: Stream, update: ReturnType<typeof vi.fn>) {
 }
 
 function viewerWith(viewerPermissions: WorkspaceBootstrap["viewerPermissions"]) {
-  vi.spyOn(workspacesModule, "useCachedWorkspaceBootstrap").mockReturnValue({ viewerPermissions } as WorkspaceBootstrap)
+  vi.spyOn(workspacesModule, "useViewerPermissions").mockReturnValue(viewerPermissions)
 }
 
 beforeEach(() => {

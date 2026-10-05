@@ -21,6 +21,7 @@ afterEach(() => {
 
 function viewerWith(viewerPermissions: WorkspaceBootstrap["viewerPermissions"]) {
   vi.spyOn(workspacesModule, "useCachedWorkspaceBootstrap").mockReturnValue({ viewerPermissions } as WorkspaceBootstrap)
+  vi.spyOn(workspacesModule, "useViewerPermissions").mockReturnValue(viewerPermissions)
 }
 
 describe("CreateChannelDialog", () => {
@@ -46,6 +47,7 @@ describe("CreateChannelDialog", () => {
 
   it("should open the dialog once bootstrap lands and keep the create-channel URL until then", async () => {
     const bootstrap = vi.spyOn(workspacesModule, "useCachedWorkspaceBootstrap").mockReturnValue(null)
+    const permissions = vi.spyOn(workspacesModule, "useViewerPermissions").mockReturnValue(undefined)
     vi.spyOn(hooksModule, "useCreateStream").mockReturnValue({ mutateAsync: vi.fn(), isPending: false } as never)
     vi.spyOn(authModule, "useAuth").mockReturnValue({ user: null } as never)
     vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([] as never)
@@ -64,9 +66,9 @@ describe("CreateChannelDialog", () => {
       dialog: screen.queryByRole("dialog") !== null,
       search: screen.getByTestId("search").textContent,
     }
-    bootstrap.mockReturnValue({
-      viewerPermissions: [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE],
-    } as WorkspaceBootstrap)
+    const browse = [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE]
+    bootstrap.mockReturnValue({ viewerPermissions: browse } as WorkspaceBootstrap)
+    permissions.mockReturnValue(browse)
     view.rerender(tree())
 
     const dialogAfter = (await screen.findByRole("dialog")) !== null
