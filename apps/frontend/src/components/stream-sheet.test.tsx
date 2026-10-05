@@ -99,6 +99,9 @@ describe("StreamSheet", () => {
       mutateAsync: vi.fn(),
       isPending: false,
     } as unknown as ReturnType<typeof useStreamsModule.useUpdateToolPolicy>)
+    vi.spyOn(useStreamsModule, "useStreamBootstrap").mockReturnValue({ data: undefined } as unknown as ReturnType<
+      typeof useStreamsModule.useStreamBootstrap
+    >)
     vi.spyOn(useWorkspacesModule, "useCurrentWorkspaceUser").mockReturnValue({ id: "usr_1" } as unknown as ReturnType<
       typeof useWorkspacesModule.useCurrentWorkspaceUser
     >)

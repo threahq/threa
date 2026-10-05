@@ -8,6 +8,7 @@ interface SharedWithBadgeProps {
   workspaceId: string
   stream: { id: string; rootStreamId?: string | null }
   className?: string
+  wrap?: boolean
 }
 
 function pickConnectedWorkspaces(bootstrap: CachedStreamBootstrap) {
@@ -15,7 +16,7 @@ function pickConnectedWorkspaces(bootstrap: CachedStreamBootstrap) {
 }
 
 /** Names the other workspaces a shared channel, or a thread in one, is connected to. */
-export function SharedWithBadge({ workspaceId, stream, className }: SharedWithBadgeProps) {
+export function SharedWithBadge({ workspaceId, stream, className, wrap = false }: SharedWithBadgeProps) {
   const { data: connectedWorkspaces } = useStreamBootstrap(workspaceId, stream.rootStreamId ?? stream.id, {
     select: pickConnectedWorkspaces,
   })
@@ -23,9 +24,9 @@ export function SharedWithBadge({ workspaceId, stream, className }: SharedWithBa
 
   const label = `Shared with ${connectedWorkspaces.map((workspace) => workspace.name).join(", ")}`
   return (
-    <Badge variant="secondary" className={cn("max-w-64 gap-1", className)} title={label}>
+    <Badge variant="secondary" className={cn("gap-1", !wrap && "max-w-64", className)} title={label}>
       <Building2 className="h-3 w-3 shrink-0" aria-hidden="true" />
-      <span className="truncate">{label}</span>
+      <span className={cn(!wrap && "truncate")}>{label}</span>
     </Badge>
   )
 }

@@ -48,7 +48,7 @@ export function StreamSheet({
         <div className="mt-1.5 flex flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">{getStreamTypeLabel(stream.type)}</span>
           {(stream.type === StreamTypes.CHANNEL || stream.type === StreamTypes.THREAD) && (
-            <SharedWithBadge workspaceId={workspaceId} stream={stream} />
+            <SharedWithBadge workspaceId={workspaceId} stream={stream} wrap />
           )}
           {isArchived && (
             <Badge variant="secondary" className="gap-1">
