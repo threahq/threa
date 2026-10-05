@@ -417,14 +417,60 @@ export const UserRepository = {
     return result.rows.length > 0
   },
 
-  async findEmails(db: Querier, workspaceId: string, emails: string[]): Promise<Set<string>> {
+  /** Emails of users someone has signed in as; an unclaimed user's email is free to invite. */
+  async findClaimedEmails(db: Querier, workspaceId: string, emails: string[]): Promise<Set<string>> {
     if (emails.length === 0) return new Set()
 
     const result = await db.query<{ email: string }>(sql`
       SELECT email FROM users
-      WHERE workspace_id = ${workspaceId} AND email = ANY(${emails})
+      WHERE workspace_id = ${workspaceId} AND email = ANY(${emails}) AND workos_user_id IS NOT NULL
     `)
     return new Set(result.rows.map((r) => r.email))
+  },
+
+  /** The earliest-joined unclaimed user with this email, compared case-insensitively. */
+  async findUnclaimedByEmail(db: Querier, workspaceId: string, email: string): Promise<User | null> {
+    const result = await db.query<UserRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS_WITH_ALIAS)}
+      FROM ${sql.raw(USERS_WITH_PERMISSIONS_FROM)}
+      WHERE u.workspace_id = ${workspaceId} AND lower(u.email) = lower(${email}) AND u.workos_user_id IS NULL
+      ORDER BY u.joined_at, u.id
+      LIMIT 1
+    `)
+    return result.rows[0] ? mapRowToUser(result.rows[0]) : null
+  },
+
+  /** Null when someone else bound the user first. Keeps the user's role unless `role` is given. */
+  async bindWorkosUserIdIfUnclaimed(
+    db: Querier,
+    workspaceId: string,
+    userId: string,
+    workosUserId: string,
+    role?: WorkspaceRoleSlug
+  ): Promise<User | null> {
+    const result = await db.query<UserRow>(sql`
+      WITH updated AS (
+        UPDATE users SET workos_user_id = ${workosUserId}, role = COALESCE(${role ?? null}, role)
+        WHERE workspace_id = ${workspaceId} AND id = ${userId} AND workos_user_id IS NULL
+        RETURNING ${sql.raw(SELECT_FIELDS)}
+      )
+      SELECT ${sql.raw(SELECT_FIELDS_WITH_ALIAS)}
+      FROM updated u ${sql.raw(JOIN_AUTHZ_MIRROR)}
+    `)
+    return result.rows[0] ? mapRowToUser(result.rows[0]) : null
+  },
+
+  async updateRole(db: Querier, workspaceId: string, userId: string, role: WorkspaceRoleSlug): Promise<User | null> {
+    const result = await db.query<UserRow>(sql`
+      WITH updated AS (
+        UPDATE users SET role = ${role}
+        WHERE workspace_id = ${workspaceId} AND id = ${userId}
+        RETURNING ${sql.raw(SELECT_FIELDS)}
+      )
+      SELECT ${sql.raw(SELECT_FIELDS_WITH_ALIAS)}
+      FROM updated u ${sql.raw(JOIN_AUTHZ_MIRROR)}
+    `)
+    return result.rows[0] ? mapRowToUser(result.rows[0]) : null
   },
 
   /** Keyed by lowercased email; when several users share one, the earliest to join wins. */

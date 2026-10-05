@@ -14,6 +14,7 @@ import {
   WORKSPACE_ROLE_SLUGS,
   WORKSPACE_TIERS,
   orgWorkspaceEnsureSchema,
+  type OrgWorkspaceClaimRequest,
   type OrgWorkspaceEnsureRequest,
   type OrgWorkspacePerson,
   type WorkspaceTier,
@@ -33,6 +34,7 @@ export const OUTBOX_KV_SYNC = "kv_sync"
 export const OUTBOX_REGIONAL_CREATE = "regional_create"
 export const OUTBOX_WORKSPACE_TIER_SYNC = "workspace_tier_sync"
 export const OUTBOX_ORG_WORKSPACE_ENSURE = "org_workspace_ensure"
+export const OUTBOX_ORG_WORKSPACE_CLAIM = "org_workspace_claim"
 
 const orgWorkspaceInputSchema = orgWorkspaceEnsureSchema.pick({ name: true, people: true })
 
@@ -293,6 +295,76 @@ export class ControlPlaneWorkspaceService {
     })
   }
 
+  /**
+   * Join the org workspace for a verified email's domain, if one exists. The first claimer becomes
+   * its owner and creates its WorkOS org; later claimers are members. The membership insert is the
+   * idempotency key: a repeat sign-in emits no regional event but re-runs the idempotent WorkOS sync,
+   * so a sync that failed after an earlier claim is repaired on a later sign-in.
+   */
+  async claimOrgWorkspaces(params: {
+    workosUserId: string
+    email: string
+    emailVerified: boolean
+    name: string
+  }): Promise<void> {
+    const { workosUserId, email, emailVerified, name } = params
+    const domain = email
+      .slice(email.lastIndexOf("@") + 1)
+      .trim()
+      .toLowerCase()
+    if (!emailVerified || !email.includes("@") || !domain) return
+    const orgKey = serializeOrgKey({ kind: "email_domain", domain })
+
+    const claim = await withTransaction(this.pool, async (client) => {
+      const workspace = await WorkspaceRegistryRepository.findByOrgKey(client, orgKey)
+      if (!workspace) return null
+      if (!(await WorkspaceRegistryRepository.insertMembership(client, workspace.id, workosUserId))) {
+        const role =
+          workspace.created_by_workos_user_id === workosUserId
+            ? WORKSPACE_ROLE_SLUGS.OWNER
+            : WORKSPACE_ROLE_SLUGS.MEMBER
+        return { workspaceId: workspace.id, role }
+      }
+
+      const role = (await WorkspaceRegistryRepository.claimCreatorIfUnset(client, workspace.id, workosUserId))
+        ? WORKSPACE_ROLE_SLUGS.OWNER
+        : WORKSPACE_ROLE_SLUGS.MEMBER
+      await OutboxRepository.insert(client, OUTBOX_ORG_WORKSPACE_CLAIM, {
+        workspaceId: workspace.id,
+        region: workspace.region,
+        workosUserId,
+        email: email.toLowerCase(),
+        name,
+        role,
+      } satisfies OrgWorkspaceClaimPayload)
+      return { workspaceId: workspace.id, role }
+    })
+    if (!claim) return
+
+    // Best-effort, as in `create`: no DB connection held across WorkOS calls (INV-41).
+    try {
+      const orgId = await this.workosOrganizationProvisioner.ensureWorkosOrganization(claim.workspaceId)
+      if (orgId) {
+        await this.workosOrgService.ensureOrganizationMembership({
+          organizationId: orgId,
+          userId: workosUserId,
+          roleSlug: claim.role,
+        })
+      }
+    } catch (error) {
+      logger.warn(
+        { err: error, workspaceId: claim.workspaceId },
+        "Failed to sync WorkOS org membership on org workspace claim"
+      )
+    }
+  }
+
+  /** Outbox handler: bind the claimer to their regional user, making the first claimer its owner. */
+  async claimOrgWorkspaceInRegion(payload: OrgWorkspaceClaimPayload): Promise<void> {
+    const { region, ...request } = payload
+    await this.regionalClient.claimOrgWorkspace(region, request)
+  }
+
   /** Outbox handler: create the org workspace in its region and add the people it lacks. */
   async ensureOrgWorkspaceInRegion(payload: OrgWorkspaceEnsurePayload): Promise<void> {
     const { region, ...request } = payload
@@ -366,5 +438,9 @@ export interface RegionalCreatePayload {
 }
 
 export interface OrgWorkspaceEnsurePayload extends OrgWorkspaceEnsureRequest {
+  region: string
+}
+
+export interface OrgWorkspaceClaimPayload extends OrgWorkspaceClaimRequest {
   region: string
 }

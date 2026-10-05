@@ -1,5 +1,6 @@
 import { z } from "zod"
 import { WORKSPACE_TIER_VALUES } from "./constants"
+import { WORKSPACE_ROLE_SLUGS } from "./workspace-permissions"
 
 const orgWorkspacePersonSchema = z
   .object({
@@ -38,3 +39,19 @@ export const orgWorkspaceEnsureSchema = z
 export type OrgWorkspaceEnsureRequest = z.infer<typeof orgWorkspaceEnsureSchema>
 /** Someone from a counterpart org, known by an email, an external identity, or both. */
 export type OrgWorkspacePerson = OrgWorkspaceEnsureRequest["people"][number]
+
+/**
+ * Control plane → region: someone with a verified email on the org's domain signed in. The first
+ * claimer is the owner, later ones are members. Strict, so a change that adds a field deploys the
+ * regions first.
+ */
+export const orgWorkspaceClaimSchema = z
+  .object({
+    workspaceId: z.string().min(1),
+    workosUserId: z.string().min(1),
+    email: z.email(),
+    name: z.string().min(1),
+    role: z.enum([WORKSPACE_ROLE_SLUGS.OWNER, WORKSPACE_ROLE_SLUGS.MEMBER]),
+  })
+  .strict()
+export type OrgWorkspaceClaimRequest = z.infer<typeof orgWorkspaceClaimSchema>

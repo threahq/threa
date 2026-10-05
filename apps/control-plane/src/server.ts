@@ -34,11 +34,13 @@ import {
   OUTBOX_REGIONAL_CREATE,
   OUTBOX_WORKSPACE_TIER_SYNC,
   OUTBOX_ORG_WORKSPACE_ENSURE,
+  OUTBOX_ORG_WORKSPACE_CLAIM,
   WorkosOrganizationProvisioner,
   type KvSyncPayload,
   type RegionalCreatePayload,
   type WorkspaceTierSyncPayload,
   type OrgWorkspaceEnsurePayload,
+  type OrgWorkspaceClaimPayload,
 } from "./features/workspaces"
 import { InvitationShadowService } from "./features/invitation-shadows"
 import {
@@ -442,6 +444,9 @@ async function dispatchEvent(
       break
     case OUTBOX_ORG_WORKSPACE_ENSURE:
       await deps.workspaceService.ensureOrgWorkspaceInRegion(payload as OrgWorkspaceEnsurePayload)
+      break
+    case OUTBOX_ORG_WORKSPACE_CLAIM:
+      await deps.workspaceService.claimOrgWorkspaceInRegion(payload as OrgWorkspaceClaimPayload)
       break
     case OUTBOX_AUTHZ_MEMBERSHIP_CHANGED:
       await deps.authzFanOut.handleMembershipChanged(payload as AuthzMembershipChangedPayload)

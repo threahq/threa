@@ -108,6 +108,7 @@ async function selfHealMissingUser(params: {
     workspaceId,
     workosUserId,
     email: authUser.email,
+    emailVerified: authUser.emailVerified,
     name: displayNameFromWorkos(authUser),
     role: WORKSPACE_ROLE_SLUGS.MEMBER,
   })

@@ -2,6 +2,7 @@ import { logger, INTERNAL_API_KEY_HEADER, type WorkosMembershipStatus } from "@t
 import {
   streamConnectionChannelSchema,
   type FeatureFlagScope,
+  type OrgWorkspaceClaimRequest,
   type OrgWorkspaceEnsureRequest,
   type StreamConnectionChannel,
   type StreamConnectionSnapshot,
@@ -68,7 +69,7 @@ export class RegionalClient {
   async acceptInvitation(
     region: string,
     invitationId: string,
-    data: { workosUserId: string; email: string; name: string }
+    data: { workosUserId: string; email: string; emailVerified: boolean; name: string }
   ): Promise<{ workspaceId: string }> {
     const url = `${this.getRegionUrl(region)}/internal/invitations/${invitationId}/accept`
     let res: Response
@@ -223,6 +224,11 @@ export class RegionalClient {
   /** Create an org's unclaimed workspace if absent and add the people it lacks. Idempotent, so replays are safe. */
   async ensureOrgWorkspace(region: string, data: OrgWorkspaceEnsureRequest): Promise<void> {
     await this.postInternal(region, "/internal/org-workspaces", data, "Regional org workspace ensure")
+  }
+
+  /** Bind a claimer to their regional user; replays converge on the same state. */
+  async claimOrgWorkspace(region: string, data: OrgWorkspaceClaimRequest): Promise<void> {
+    await this.postInternal(region, "/internal/org-workspaces/claim", data, "Regional org workspace claim")
   }
 
   /** Push a stream connection's current state. The region projects whichever sides it holds. */

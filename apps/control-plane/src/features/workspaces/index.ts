@@ -4,12 +4,14 @@ export {
   OUTBOX_REGIONAL_CREATE,
   OUTBOX_WORKSPACE_TIER_SYNC,
   OUTBOX_ORG_WORKSPACE_ENSURE,
+  OUTBOX_ORG_WORKSPACE_CLAIM,
 } from "./service"
 export type {
   KvSyncPayload,
   RegionalCreatePayload,
   WorkspaceTierSyncPayload,
   OrgWorkspaceEnsurePayload,
+  OrgWorkspaceClaimPayload,
   OrgKey,
 } from "./service"
 export { createWorkspaceHandlers } from "./handlers"

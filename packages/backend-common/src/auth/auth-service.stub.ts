@@ -12,7 +12,7 @@ import type { AuthResult, AuthService } from "./auth-service"
 // The JWT-claim-present branch is exercised by
 // `apps/backend/tests/integration/workspace-permission-middleware.test.ts`.
 export interface DevLoginResult {
-  user: { id: string; email: string; name: string }
+  user: { id: string; email: string; name: string; emailVerified: boolean }
   session: string
 }
 
@@ -47,7 +47,7 @@ export class StubAuthService implements AuthService {
     })
 
     return {
-      user: { id: fakeWorkosUserId, email, name },
+      user: { id: fakeWorkosUserId, email, name, emailVerified: true },
       session,
     }
   }
@@ -112,7 +112,7 @@ export class StubAuthService implements AuthService {
 
     return {
       success: true,
-      user: { ...user, permissions: null },
+      user: { ...user, emailVerified: true, permissions: null },
       refreshed: false,
     }
   }
@@ -132,7 +132,7 @@ export class StubAuthService implements AuthService {
 
     return {
       success: true,
-      user: { ...user, permissions: null },
+      user: { ...user, emailVerified: true, permissions: null },
       sealedSession: `test_session_${userId}`,
       refreshed: false,
     }
@@ -183,7 +183,7 @@ export class StubAuthService implements AuthService {
 
     return {
       success: true,
-      user: { ...user, permissions: null },
+      user: { ...user, emailVerified: true, permissions: null },
       sealedSession: `test_session_${fakeWorkosUserId}`,
       refreshed: false,
     }

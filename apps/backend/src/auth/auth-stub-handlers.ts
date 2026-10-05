@@ -51,6 +51,7 @@ export function createAuthStubHandlers(deps: Dependencies): AuthStubHandlers {
     const { accepted: acceptedWorkspaceIds } = await invitationService.acceptPendingForEmail(user.email, {
       workosUserId: user.id,
       email: user.email,
+      emailVerified: user.emailVerified,
       name: user.name,
     })
 

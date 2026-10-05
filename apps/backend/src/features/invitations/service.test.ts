@@ -43,7 +43,7 @@ spyOn(db, "withTransaction").mockImplementation((_pool, callback) => callback(cl
 
 const insertOutbox = spyOn(OutboxRepository, "insert")
 const findUserById = spyOn(UserRepository, "findById")
-const findEmails = spyOn(UserRepository, "findEmails")
+const findClaimedEmails = spyOn(UserRepository, "findClaimedEmails")
 
 afterAll(() => {
   mock.restore()
@@ -53,7 +53,7 @@ beforeEach(() => {
   client.query = mock(() => Promise.resolve({ rows: [], rowCount: 0 })) as never
   insertOutbox.mockReset().mockResolvedValue({ id: 1n, eventType: "test", payload: {}, createdAt: new Date() } as never)
   findUserById.mockReset().mockResolvedValue(null)
-  findEmails.mockReset().mockResolvedValue(new Set())
+  findClaimedEmails.mockReset().mockResolvedValue(new Set())
 })
 
 describe("InvitationService.createLink", () => {
@@ -137,7 +137,7 @@ describe("InvitationService.claimLinkByToken", () => {
   })
 
   test("should publish a claim before returning the existing-member hint", async () => {
-    findEmails.mockResolvedValue(new Set(["new@example.com"]))
+    findClaimedEmails.mockResolvedValue(new Set(["new@example.com"]))
     const service = new InvitationService({} as never, {} as never)
 
     await expect(service.claimLinkByToken("token", "new@example.com")).resolves.toEqual({
@@ -268,7 +268,7 @@ describe("InvitationService.updateLink", () => {
 const argsAfterDb = (spy: { mock: { calls: unknown[][] } }) => spy.mock.calls.map((call) => call.slice(1))
 
 describe("InvitationService invitation acceptance", () => {
-  const identity = { workosUserId: "workos_1", email: "new@example.com", name: "New User" }
+  const identity = { workosUserId: "workos_1", email: "new@example.com", emailVerified: true, name: "New User" }
   const findWorkspaceId = spyOn(InvitationRepository, "findWorkspaceIdByInvitationId")
   const findPendingByEmail = spyOn(InvitationRepository, "findPendingByEmail")
   const findById = spyOn(InvitationRepository, "findById")
@@ -279,7 +279,10 @@ describe("InvitationService invitation acceptance", () => {
   const isMember = spyOn(UserRepository, "isMember")
   const service = new InvitationService(
     {} as never,
-    { createUserInTransaction: mock(() => Promise.resolve()) } as never
+    {
+      bindUnclaimedUser: mock(() => Promise.resolve(null)),
+      createUserInTransaction: mock(() => Promise.resolve()),
+    } as never
   )
 
   beforeEach(() => {

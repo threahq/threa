@@ -174,6 +174,7 @@ describe("WorkspaceService.ensureUserProvisioned", () => {
     workspaceId: "ws_1",
     workosUserId: "workos_user_1",
     email: "user@example.com",
+    emailVerified: true,
     name: "User",
     role: "member" as const,
   }
