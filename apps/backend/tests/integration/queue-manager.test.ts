@@ -228,8 +228,12 @@ describe("QueueManager", () => {
           new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout waiting for hook")), 5000)),
         ])
 
-        // Wait briefly for the transaction to complete
-        await new Promise((resolve) => setTimeout(resolve, 200))
+        // The hook fires inside the DLQ transaction, so the move is visible only after it commits.
+        await waitForCondition(
+          async () => (await QueueRepository.getById(pool, messageId))?.dlqAt != null,
+          5000,
+          "Timeout waiting for the DLQ move to commit"
+        )
 
         const message = await QueueRepository.getById(pool, messageId)
         expect(message).not.toBeNull()
