@@ -101,11 +101,14 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
       const attachmentIds = [...attachmentsByMessage.values()].flatMap((attachments) =>
         attachments.map((attachment) => attachment.id)
       )
-      return { stream, messages, siblings, attachmentIds }
+      return { stream, messages, siblings, attachmentIds, shared: sharedTree !== null }
     })
     if (!fetched || fetched.messages.length === 0) return null
 
-    const linkPreviewProcessing = awaitLinkPreviewProcessing(this.pool, target.workspaceId, fetched.messages)
+    // A shared channel's partner sees no previews; the host fetched them, some with its own integrations.
+    const linkPreviewProcessing = fetched.shared
+      ? null
+      : awaitLinkPreviewProcessing(this.pool, target.workspaceId, fetched.messages)
     if (fetched.attachmentIds.length > 0) {
       const result = await awaitAttachmentProcessing(this.pool, target.workspaceId, fetched.attachmentIds)
       logger.debug(
@@ -128,7 +131,9 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
           )
         : Promise.resolve(new Map<string, AttachmentWithExtraction[]>()),
     ])
-    const messages = enrichMessagesWithLinkPreviewMap(fetched.messages, linkPreviews.previewsByMessage)
+    const messages = linkPreviews
+      ? enrichMessagesWithLinkPreviewMap(fetched.messages, linkPreviews.previewsByMessage)
+      : fetched.messages
     const context = await this.messageFormatter.formatMessagesWithAttachments(
       this.pool,
       target.workspaceId,

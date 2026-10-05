@@ -19,7 +19,13 @@ import {
   userId,
   workspaceId,
 } from "../../src/lib/id"
-import { addTestMember, setupTestDatabase, testMessageContent, withTransaction } from "./setup"
+import {
+  addTestMember,
+  seedCompletedLinkPreview,
+  setupTestDatabase,
+  testMessageContent,
+  withTransaction,
+} from "./setup"
 
 const worthy: ConversationClassification = {
   isKnowledgeWorthy: true,
@@ -196,6 +202,15 @@ describe("memo capture in a channel its workspace shares as host", () => {
     return id
   }
 
+  async function seedPreview(ws: Workspace, message: string): Promise<void> {
+    await seedCompletedLinkPreview(pool, {
+      workspaceId: ws.id,
+      messageId: message,
+      url: "https://github.com/acme/private/pull/7",
+      title: "Rotate the prod password",
+    })
+  }
+
   async function capturedMemos(ws: Workspace): Promise<{ title: string; shared_root_stream_id: string | null }[]> {
     const result = await pool.query(
       `SELECT title, shared_root_stream_id FROM memos WHERE workspace_id = $1 AND title = 'Start with auth'`,
@@ -239,10 +254,10 @@ describe("memo capture in a channel its workspace shares as host", () => {
     const ws = await seedWorkspace()
     const channel = await seedChannel(ws)
     const outside = await seedChannel(ws, "private")
-    const conversation = await queueConversation(ws, channel, [
-      await seedMessage(ws, channel, linkTo(outside, "secret-plans")),
-      await seedMessage(ws, channel, linkTo(channel, "shared")),
-    ])
+    const linked = await seedMessage(ws, channel, linkTo(outside, "secret-plans"))
+    const previewed = await seedMessage(ws, channel, linkTo(channel, "shared"))
+    await seedPreview(ws, previewed)
+    const conversation = await queueConversation(ws, channel, [linked, previewed])
     await seedMemo(ws, channel, { abstract: "pre-share", tags: ["pre-share-tag"] })
     await seedMemo(ws, channel, { abstract: "while shared", tags: ["shared-tag"], sharedRootStreamId: channel })
     await MemoRepository.insert(pool, {
@@ -281,6 +296,47 @@ describe("memo capture in a channel its workspace shares as host", () => {
     expect(await capturedMemos(ws)).toEqual([{ title: "Start with auth", shared_root_stream_id: channel }])
   })
 
+  test("should let a memo made while shared block a near-identical one when the channel is shared", async () => {
+    const ws = await seedWorkspace()
+    const channel = await seedChannel(ws)
+    await seedMemo(ws, channel, { abstract: "while shared", tags: [], sharedRootStreamId: channel })
+    await queueConversation(ws, channel, [await seedMessage(ws, channel), await seedMessage(ws, channel)])
+    await share(ws, channel)
+    embedAlike = true
+
+    await service().processBatch(ws.id, channel)
+
+    expect(await capturedMemos(ws)).toEqual([])
+  })
+
+  test("should fail only the conversation the partner's view cannot carry when the channel is shared", async () => {
+    const ws = await seedWorkspace()
+    const channel = await seedChannel(ws)
+    const unreadable = await queueConversation(ws, channel, [
+      await seedMessage(ws, channel, {
+        contentJson: {
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "u", marks: [{ type: "underline" }] }] }],
+        },
+        contentMarkdown: "u",
+      }),
+      await seedMessage(ws, channel),
+    ])
+    await queueConversation(ws, channel, [await seedMessage(ws, channel), await seedMessage(ws, channel)])
+    await share(ws, channel)
+
+    await service().processBatch(ws.id, channel)
+
+    const pending = await pool.query(
+      `SELECT item_id, failed_attempts FROM memo_pending_items WHERE workspace_id = $1 AND processed_at IS NULL`,
+      [ws.id]
+    )
+    expect({ captured: await capturedMemos(ws), pending: pending.rows }).toEqual({
+      captured: [{ title: "Start with auth", shared_root_stream_id: channel }],
+      pending: [{ item_id: unreadable, failed_attempts: 1 }],
+    })
+  })
+
   test("should stamp a memo from a reply thread nested under the shared channel when the channel is shared", async () => {
     const ws = await seedWorkspace()
     const channel = await seedChannel(ws)
@@ -300,16 +356,21 @@ describe("memo capture in a channel its workspace shares as host", () => {
     const outside = await seedChannel(ws, "private")
     const thread = await seedThread(ws, channel, channel, sessionId())
     await seedMemo(ws, thread, { abstract: "pre-share", tags: ["pre-share-tag"] })
-    await queueConversation(ws, thread, [
-      await seedMessage(ws, thread, linkTo(outside, "secret-plans")),
-      await seedMessage(ws, thread),
-    ])
+    const linked = await seedMessage(ws, thread, linkTo(outside, "secret-plans"))
+    const previewed = await seedMessage(ws, thread)
+    await seedPreview(ws, previewed)
+    await queueConversation(ws, thread, [linked, previewed])
     await share(ws, channel)
 
     await service().processBatch(ws.id, thread)
 
     expect({ transcripts, memorizerContexts, captured: await capturedMemos(ws) }).toEqual({
-      transcripts: [[`the plan is in [#secret-plans](channel:${outside})`, "we start the migration with auth"]],
+      transcripts: [
+        [
+          `the plan is in [#secret-plans](channel:${outside})`,
+          expect.stringMatching(/^we start the migration with auth\n\n.*Rotate the prod password/s),
+        ],
+      ],
       memorizerContexts: [{ memoryContext: ["pre-share"], existingTags: ["pre-share-tag"] }],
       captured: [{ title: "Start with auth", shared_root_stream_id: null }],
     })

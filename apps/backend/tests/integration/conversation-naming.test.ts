@@ -14,7 +14,7 @@ import { StreamMemberRepository, StreamRepository } from "../../src/features/str
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { MessageFormatter } from "../../src/lib/ai/message-formatter"
 import { conversationId, eventId, messageId, streamId, userId, workspaceId } from "../../src/lib/id"
-import { addTestMember, setupTestDatabase, testMessageContent } from "./setup"
+import { addTestMember, seedCompletedLinkPreview, setupTestDatabase, testMessageContent } from "./setup"
 
 interface Fixture {
   workspaceId: string
@@ -153,6 +153,7 @@ describe("dynamic conversation naming", () => {
     const item = await fixture({ count: 3, title: "Deployment issue" })
     const outside = streamId()
     const linkId = messageId()
+    const prUrl = "https://github.com/acme/private/pull/7"
     await withTransaction(pool, async (client) => {
       await StreamRepository.insert(client, {
         id: outside,
@@ -178,11 +179,18 @@ describe("dynamic conversation naming", () => {
               content: [
                 { type: "text", text: "rollback notes are in " },
                 { type: "channelLink", attrs: { id: outside, slug: "secret-plans" } },
+                { type: "text", text: ` per ${prUrl}` },
               ],
             },
           ],
         },
-        contentMarkdown: `rollback notes are in [#secret-plans](channel:${outside})`,
+        contentMarkdown: `rollback notes are in [#secret-plans](channel:${outside}) per ${prUrl}`,
+      })
+      await seedCompletedLinkPreview(client, {
+        workspaceId: item.workspaceId,
+        messageId: linkId,
+        url: prUrl,
+        title: "Rotate the prod password",
       })
       await ConversationRepository.addPrimaryMessage(client, item.workspaceId, item.conversationId, linkId, item.userId)
       for (const [anchor, title] of [
@@ -215,11 +223,12 @@ describe("dynamic conversation naming", () => {
         [item.workspaceId, streamConnectionId(), item.streamId, workspaceId()]
       )
     })
-    let seen: { linksOutside: boolean; mentionsSlug: boolean; existingTitles: string[] } | null = null
+    let seen: { linksOutside: boolean; mentionsSlug: boolean; preview: boolean; existingTitles: string[] } | null = null
     const naming = service(async (input) => {
       seen = {
         linksOutside: input.context.includes(outside),
         mentionsSlug: input.context.includes("#secret-plans"),
+        preview: input.context.includes("Rotate the prod password"),
         existingTitles: input.existingTitles,
       }
       return { action: "keep" }
@@ -235,7 +244,12 @@ describe("dynamic conversation naming", () => {
       "job_shared"
     )
 
-    expect(seen).toEqual({ linksOutside: false, mentionsSlug: true, existingTitles: ["Rollback thread"] })
+    expect(seen).toEqual({
+      linksOutside: false,
+      mentionsSlug: true,
+      preview: false,
+      existingTitles: ["Rollback thread"],
+    })
   })
 
   test("an untitled deterministic conversation evaluates checkpoint 1", async () => {

@@ -11,7 +11,7 @@
 
 import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, mock, spyOn } from "bun:test"
 import { Pool } from "pg"
-import { withTransaction, addTestMember } from "./setup"
+import { withTransaction, addTestMember, seedCompletedLinkPreview } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository, StreamEventRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
@@ -22,7 +22,13 @@ import { sql } from "../../src/db"
 import { userId, workspaceId, streamId, messageId, conversationId, eventId } from "../../src/lib/id"
 import { ConversationStatuses } from "@threahq/types"
 import { streamConnectionId } from "@threahq/backend-common"
-import type { BoundaryExtractor, ExtractionContext, ExtractionResult } from "../../src/features/conversations"
+import type {
+  BoundaryExtractor,
+  ExtractionContext,
+  ExtractionResult,
+  SplitContext,
+  SplitProposal,
+} from "../../src/features/conversations"
 
 /**
  * Stub extractor that returns configurable results and tracks calls.
@@ -49,6 +55,17 @@ class StubBoundaryExtractor implements BoundaryExtractor {
     this.extractCallCount++
     this.lastContext = context
     return this.nextResult
+  }
+
+  lastSplitContext: SplitContext | null = null
+
+  async splitConversation(context: SplitContext): Promise<SplitProposal> {
+    this.lastSplitContext = context
+    return {
+      groups: [{ title: "Whole", messageIds: context.messages.map((m) => m.id) }],
+      confidence: 1,
+      reasoning: null,
+    }
   }
 }
 
@@ -766,7 +783,8 @@ describe("BoundaryExtractionService", () => {
       expect(contextMessageIds).toContain(cardThreadReplyId)
     })
 
-    test("should read the channel as its partner does when the channel is shared", async () => {
+    /** A shared channel: a linked message, a thread under it, and a card-anchored thread outside the tree. */
+    async function seedSharedChannel() {
       const sharedStreamId = streamId()
       const replyThreadStreamId = streamId()
       const cardThreadStreamId = streamId()
@@ -774,6 +792,7 @@ describe("BoundaryExtractionService", () => {
       const triggerMsgId = messageId()
       const threadReplyId = messageId()
       const cardThreadReplyId = messageId()
+      const prUrl = "https://github.com/acme/private/pull/7"
 
       const cardEvent = await withTransaction(pool, async (client) => {
         await StreamRepository.insert(client, {
@@ -824,11 +843,18 @@ describe("BoundaryExtractionService", () => {
                 content: [
                   { type: "text", text: "see " },
                   { type: "channelLink", attrs: { id: testStreamId, slug: "outside" } },
+                  { type: "text", text: ` per ${prUrl}` },
                 ],
               },
             ],
           },
-          contentMarkdown: `see [#outside](channel:${testStreamId})`,
+          contentMarkdown: `see [#outside](channel:${testStreamId}) per ${prUrl}`,
+        })
+        await seedCompletedLinkPreview(client, {
+          workspaceId: testWorkspaceId,
+          messageId: triggerMsgId,
+          url: prUrl,
+          title: "Rotate the prod password",
         })
         for (const [threadId, anchorId, replyId] of [
           [replyThreadStreamId, priorMsgId, threadReplyId],
@@ -858,15 +884,71 @@ describe("BoundaryExtractionService", () => {
         }
       })
 
+      return { sharedStreamId, priorMsgId, triggerMsgId, threadReplyId, cardThreadReplyId }
+    }
+
+    test("should read the channel as its partner does when the channel is shared", async () => {
+      const { sharedStreamId, priorMsgId, triggerMsgId, threadReplyId } = await seedSharedChannel()
+
       await service.processMessage(triggerMsgId, sharedStreamId, testWorkspaceId)
 
       expect({
         newMessage: stubExtractor.lastContext?.newMessage.contentMarkdown,
         recentMessageIds: stubExtractor.lastContext?.recentMessages.map((m) => m.id).toSorted(),
+        linkPreviews: [...(stubExtractor.lastContext?.linkPreviewsByMessageId?.values() ?? [])].flat(),
       }).toEqual({
-        newMessage: "see #outside",
+        newMessage: "see #outside per https://github.com/acme/private/pull/7",
         recentMessageIds: [priorMsgId, triggerMsgId, threadReplyId].toSorted(),
+        linkPreviews: [],
       })
+    })
+
+    test("should skip a message moved out of the channel when the channel is shared", async () => {
+      const { sharedStreamId } = await seedSharedChannel()
+      const movedMsgId = messageId()
+      await MessageRepository.insert(pool, {
+        workspaceId: testWorkspaceId,
+        id: movedMsgId,
+        streamId: testStreamId,
+        sequence: BigInt(900),
+        authorId: testUserId,
+        authorType: "user",
+        ...testMessageContent("Moved elsewhere"),
+      })
+      stubExtractor.resetCallCount()
+
+      const conversation = await service.processMessage(movedMsgId, sharedStreamId, testWorkspaceId)
+
+      expect({ conversation, extractCalls: stubExtractor.extractCallCount }).toEqual({
+        conversation: null,
+        extractCalls: 0,
+      })
+    })
+
+    test("should propose a split from what the partner reads when the channel is shared", async () => {
+      const { sharedStreamId, priorMsgId, triggerMsgId, threadReplyId, cardThreadReplyId } = await seedSharedChannel()
+      const convId = conversationId()
+      await withTransaction(pool, async (client) => {
+        await ConversationRepository.insert(client, {
+          id: convId,
+          streamId: sharedStreamId,
+          workspaceId: testWorkspaceId,
+          topicSummary: "Outside work",
+        })
+        for (const id of [priorMsgId, triggerMsgId, threadReplyId, cardThreadReplyId]) {
+          await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, id, testUserId)
+        }
+      })
+
+      await service.proposeSplit(convId, testWorkspaceId)
+
+      expect(stubExtractor.lastSplitContext?.messages.map((m) => [m.id, m.contentMarkdown]).toSorted()).toEqual(
+        [
+          [priorMsgId, "Before the card"],
+          [triggerMsgId, "see #outside per https://github.com/acme/private/pull/7"],
+          [threadReplyId, "A reply"],
+        ].toSorted()
+      )
     })
   })
 

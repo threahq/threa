@@ -1071,14 +1071,6 @@ export const MemoRepository = {
     workspaceId: string,
     scope: { scopeUserId: string | null; rootStreamId: string; sharedRootStreamId?: string }
   ): Promise<string[]> {
-    if (scope.sharedRootStreamId) {
-      const result = await db.query<{ tag: string }>(sql`
-        SELECT DISTINCT unnest(tags) AS tag FROM memos
-        WHERE workspace_id = ${workspaceId} AND status = 'active' AND shared_root_stream_id = ${scope.sharedRootStreamId}
-        ORDER BY tag
-      `)
-      return result.rows.map((r) => r.tag)
-    }
     const result = await db.query<{ tag: string }>(composeSql`
       SELECT DISTINCT unnest(m.tags) as tag
       FROM memos m
@@ -1090,6 +1082,7 @@ export const MemoRepository = {
         AND s.workspace_id = m.workspace_id
       LEFT JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id
       WHERE m.workspace_id = ${workspaceId} AND m.status = 'active'
+        ${scope.sharedRootStreamId ? composeSql`AND m.shared_root_stream_id = ${scope.sharedRootStreamId}` : rawSql("")}
         AND (
           (m.scope = 'user' AND m.scope_user_id = ${scope.scopeUserId})
           OR (m.scope <> 'user' AND (

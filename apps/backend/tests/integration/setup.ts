@@ -6,7 +6,7 @@
 import { Pool, type PoolClient } from "pg"
 import { createDatabasePool } from "../../src/db"
 import { createMigrator } from "../../src/db/migrations"
-import { botChannelAccessId, streamId, userId, workspaceId } from "../../src/lib/id"
+import { botChannelAccessId, linkPreviewId, streamId, userId, workspaceId } from "../../src/lib/id"
 import type { Querier } from "../../src/db"
 import { UserRepository, type InsertUserParams } from "../../src/features/workspaces"
 import { getTestDatabaseTarget, quoteDatabaseIdentifier } from "../test-database"
@@ -17,6 +17,7 @@ import { LabelAssignmentService, LabelService } from "../../src/features/labels"
 import { BotChannelService } from "../../src/features/api-keys"
 import { BotRepository } from "../../src/features/public-api/bot-repository"
 import { BotChannelAccessRepository } from "../../src/features/api-keys"
+import { LinkPreviewRepository, normalizeUrl } from "../../src/features/link-previews"
 
 // Re-export production helpers for tests that need to persist data
 export { withClient, withTransaction } from "../../src/db"
@@ -275,4 +276,23 @@ export async function addTestMember(
     role,
     slug: `test-${id}`,
   })
+}
+
+/** A preview of `url` on `messageId`, completed as the worker leaves it after fetching. */
+export async function seedCompletedLinkPreview(
+  db: Querier,
+  params: { workspaceId: string; messageId: string; url: string; title: string }
+): Promise<void> {
+  const preview = await LinkPreviewRepository.insert(db, {
+    id: linkPreviewId(),
+    workspaceId: params.workspaceId,
+    url: params.url,
+    normalizedUrl: normalizeUrl(params.url),
+    contentType: "website",
+  })
+  await LinkPreviewRepository.updateMetadata(db, params.workspaceId, preview.id, {
+    title: params.title,
+    status: "completed",
+  })
+  await LinkPreviewRepository.linkToMessage(db, params.workspaceId, params.messageId, preview.id, 0)
 }

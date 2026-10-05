@@ -6,7 +6,7 @@ import { StreamRepository, StreamEventRepository, type Stream } from "../streams
 import { findSharedTree, viewAsPartner, type SharedTree } from "../stream-connections"
 import { OutboxRepository } from "../../lib/outbox"
 import { AttachmentRepository, awaitAttachmentProcessing, type AttachmentWithExtraction } from "../attachments"
-import { awaitLinkPreviewProcessing, LinkPreviewRepository } from "../link-previews"
+import { awaitLinkPreviewProcessing, LinkPreviewRepository, type LinkPreview } from "../link-previews"
 import type {
   AttachmentExtractContext,
   BoundaryExtractor,
@@ -182,6 +182,8 @@ export class BoundaryExtractionService {
       // the conversations it shapes can cross with it.
       const sharedTree = await findSharedTree(client, workspaceId, stream.id)
       const [newMessage] = await viewAsPartner(client, workspaceId, sharedTree, [message])
+      // Moved out of the shared tree before the share: the partner never reads it.
+      if (!newMessage) return { message: null, stream: null, extractionContextBase: null }
 
       const surroundingMessages = await MessageRepository.findSurrounding(
         client,
@@ -301,6 +303,7 @@ export class BoundaryExtractionService {
         attachmentTargetIds: [message.id, ...allContextMessageIds],
         validUpdateTargets,
         validReassignmentMessageIds: new Set(allContextMessageIds),
+        shared: sharedTree !== null,
       }
     })
 
@@ -327,13 +330,15 @@ export class BoundaryExtractionService {
       scratchpadConversations,
       validUpdateTargets,
       validReassignmentMessageIds,
+      shared,
     } = fetchedData
 
     // Phase 1.5 (channels/threads only): await attachment processing with no DB
     // connection held (INV-41), then fetch extractions on the pool (INV-30).
     let extractionContext: ExtractionContext | null = null
     if (extractionContextBase && attachmentTargetIds) {
-      const linkPreviewProcessing = awaitLinkPreviewProcessing(this.pool, workspaceId, [message])
+      // A shared channel's partner sees no previews; the host fetched them, some with its own integrations.
+      const linkPreviewProcessing = shared ? null : awaitLinkPreviewProcessing(this.pool, workspaceId, [message])
       if (newMessageAttachmentIds && newMessageAttachmentIds.length > 0) {
         logger.debug(
           { messageId, attachmentCount: newMessageAttachmentIds.length },
@@ -357,7 +362,9 @@ export class BoundaryExtractionService {
 
       const [attachmentsByMessage, previewRowsByMessage] = await Promise.all([
         AttachmentRepository.findByMessageIdsWithExtractions(this.pool, workspaceId, attachmentTargetIds),
-        LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, attachmentTargetIds),
+        shared
+          ? new Map<string, LinkPreview[]>()
+          : LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, attachmentTargetIds),
       ])
       const attachmentsByMessageId = buildAttachmentContextMap(attachmentsByMessage, message.id)
       const linkPreviewsByMessageId = new Map(

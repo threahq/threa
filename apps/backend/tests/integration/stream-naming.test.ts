@@ -11,7 +11,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test"
 import { streamConnectionId } from "@threahq/backend-common"
 import { Pool } from "pg"
 import { withTransaction } from "../../src/db"
-import { withTestTransaction, addTestMember, testMessageContent } from "./setup"
+import { withTestTransaction, addTestMember, seedCompletedLinkPreview, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamService, StreamRepository, StreamMemberRepository, type Stream } from "../../src/features/streams"
 import { getEffectiveDisplayName, formatParticipantNames } from "../../src/features/streams/display-name"
@@ -493,6 +493,8 @@ describe("Dynamic plaintext stream naming", () => {
     const outsideId = streamId()
     const threadId = streamId()
     const anchorId = messageId()
+    const replyId = messageId()
+    const prUrl = "https://github.com/acme/private/pull/7"
     await withTransaction(pool, async (client) => {
       await WorkspaceRepository.insert(client, {
         id: wsId,
@@ -578,7 +580,7 @@ describe("Dynamic plaintext stream naming", () => {
       }
       await MessageRepository.insert(client, {
         workspaceId: wsId,
-        id: messageId(),
+        id: replyId,
         streamId: threadId,
         sequence: 4n,
         authorId: ownerId,
@@ -591,18 +593,26 @@ describe("Dynamic plaintext stream naming", () => {
               content: [
                 { type: "text", text: "watering is in " },
                 { type: "channelLink", attrs: { id: outsideId, slug: "secret-plans" } },
+                { type: "text", text: ` per ${prUrl}` },
               ],
             },
           ],
         },
-        contentMarkdown: `watering is in [#secret-plans](channel:${outsideId})`,
+        contentMarkdown: `watering is in [#secret-plans](channel:${outsideId}) per ${prUrl}`,
+      })
+      await seedCompletedLinkPreview(client, {
+        workspaceId: wsId,
+        messageId: replyId,
+        url: prUrl,
+        title: "Rotate the prod password",
       })
     })
-    let seen: { linksOutside: boolean; mentionsSlug: boolean; existingTitles: string[] } | null = null
+    let seen: { linksOutside: boolean; mentionsSlug: boolean; preview: boolean; existingTitles: string[] } | null = null
     const service = buildService(async (input) => {
       seen = {
         linksOutside: input.context.includes(outsideId),
         mentionsSlug: input.context.includes("#secret-plans"),
+        preview: input.context.includes("Rotate the prod password"),
         existingTitles: input.existingTitles,
       }
       return { action: "rename", title: "Moon soil watering" }
@@ -613,7 +623,12 @@ describe("Dynamic plaintext stream naming", () => {
       "job_shared_thread"
     )
 
-    expect(seen).toEqual({ linksOutside: false, mentionsSlug: true, existingTitles: ["Tree sibling"] })
+    expect(seen).toEqual({
+      linksOutside: false,
+      mentionsSlug: true,
+      preview: false,
+      existingTitles: ["Tree sibling"],
+    })
   })
 
   test("an archive during provider evaluation prevents the generated title CAS", async () => {

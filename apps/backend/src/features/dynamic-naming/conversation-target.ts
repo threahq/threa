@@ -114,11 +114,15 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
         messages,
         siblings,
         attachmentIds: [...attachments.values()].flatMap((items) => items.map((item) => item.id)),
+        shared: sharedTree !== null,
       }
     })
     if (!fetched || fetched.messages.length === 0) return null
 
-    const linkPreviewProcessing = awaitLinkPreviewProcessing(this.pool, target.workspaceId, fetched.messages)
+    // A shared channel's partner sees no previews; the host fetched them, some with its own integrations.
+    const linkPreviewProcessing = fetched.shared
+      ? null
+      : awaitLinkPreviewProcessing(this.pool, target.workspaceId, fetched.messages)
     if (fetched.attachmentIds.length > 0)
       await awaitAttachmentProcessing(this.pool, target.workspaceId, fetched.attachmentIds)
     const [linkPreviews, attachments] = await Promise.all([
@@ -131,7 +135,9 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
           )
         : Promise.resolve(new Map<string, AttachmentWithExtraction[]>()),
     ])
-    const enriched = enrichMessagesWithLinkPreviewMap(fetched.messages, linkPreviews.previewsByMessage)
+    const enriched = linkPreviews
+      ? enrichMessagesWithLinkPreviewMap(fetched.messages, linkPreviews.previewsByMessage)
+      : fetched.messages
     const messages = await this.messageFormatter.formatMessagesWithAttachments(
       this.pool,
       target.workspaceId,

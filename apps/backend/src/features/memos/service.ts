@@ -449,6 +449,7 @@ export class MemoService implements MemoServiceLike {
       const conversations = new Map<string, NonNullable<Awaited<ReturnType<typeof ConversationRepository.findById>>>>()
       const conversationMessages = new Map<string, Map<string, Message | null>>()
       const existingConversationMemos = new Map<string, Memo[]>()
+      const unreadable = new Map<string, unknown>()
 
       for (const convId of conversationItemIds) {
         const conv = await ConversationRepository.findById(client, workspaceId, convId)
@@ -456,7 +457,15 @@ export class MemoService implements MemoServiceLike {
           conversations.set(convId, conv)
           const msgs = await MessageRepository.findByIds(client, workspaceId, conv.messageIds)
           const live = [...msgs.values()].filter((message) => !message.deletedAt)
-          const read = await viewAsPartner(client, workspaceId, sharedTree, live)
+          let read: Message[]
+          try {
+            read = await viewAsPartner(client, workspaceId, sharedTree, live)
+          } catch (error) {
+            // Fails this conversation alone, through Phase 2's capped retries,
+            // rather than stalling every conversation queued for the stream.
+            unreadable.set(convId, error)
+            continue
+          }
           conversationMessages.set(convId, new Map(read.map((message) => [message.id, message])))
           // A saved or reflective memo citing a message edited since is shown
           // beside the conversation's own memos, so the classifier keeps it
@@ -527,6 +536,7 @@ export class MemoService implements MemoServiceLike {
         memoScope,
         readerAudience,
         sharedRootStreamId,
+        unreadable,
       }
     })
 
@@ -541,7 +551,10 @@ export class MemoService implements MemoServiceLike {
     const allMessageRows = [...fetchedData.conversationMessages.values()].flatMap((messages) =>
       [...messages.values()].filter((message): message is Message => message !== null)
     )
-    const enrichedMessages = await enrichMessagesWithLinkPreviews(this.pool, workspaceId, allMessageRows)
+    // A shared channel's partner sees no previews; the host fetched them, some with its own integrations.
+    const enrichedMessages = fetchedData.sharedRootStreamId
+      ? allMessageRows
+      : await enrichMessagesWithLinkPreviews(this.pool, workspaceId, allMessageRows)
     const enrichedById = new Map(enrichedMessages.map((message) => [message.id, message]))
 
     for (const [conversationId, messages] of fetchedData.conversationMessages) {
@@ -579,6 +592,7 @@ export class MemoService implements MemoServiceLike {
         return { processed: 0, memosCreated: 0 }
       }
       try {
+        if (fetchedData.unreadable.has(item.itemId)) throw fetchedData.unreadable.get(item.itemId)
         const conversation = fetchedData.conversations.get(item.itemId)
         if (!conversation) {
           logger.warn({ conversationId: item.itemId }, "Conversation not found for memo processing")
