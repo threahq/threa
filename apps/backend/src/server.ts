@@ -224,10 +224,12 @@ import {
   StreamConnectionForwardService,
   StreamConnectionImportService,
   StreamConnectionPokeHandler,
+  StreamConnectionProfileService,
   StreamConnectionService,
   StreamConnectionWriteService,
   createStreamConnectionSweepWorker,
   createStreamConnectionPullWorker,
+  createStreamConnectionProfilesWorker,
   createStreamConnectionCopyAttachmentOnDLQ,
   createStreamConnectionCopyAttachmentWorker,
   StreamConnectionPullService,
@@ -534,6 +536,9 @@ export async function startServer(): Promise<ServerInstance> {
   const bridgeClient = config.bridge ? new BridgeClient(config.bridge) : null
   const streamConnectionPullService = bridgeClient
     ? new StreamConnectionPullService({ pool, bridgeClient, featureFlagService })
+    : null
+  const streamConnectionProfileService = bridgeClient
+    ? new StreamConnectionProfileService({ pool, bridgeClient, featureFlagService, avatarService })
     : null
   const streamConnectionForwardService =
     bridgeClient && streamConnectionPullService
@@ -1513,7 +1518,7 @@ export async function startServer(): Promise<ServerInstance> {
     fairness: QueueFairness.NONE,
   })
 
-  if (bridgeClient && streamConnectionPullService) {
+  if (bridgeClient && streamConnectionPullService && streamConnectionProfileService) {
     jobQueue.registerHandler(
       JobQueues.STREAM_CONNECTION_SWEEP,
       createStreamConnectionSweepWorker({ streamConnectionImportService }),
@@ -1522,6 +1527,11 @@ export async function startServer(): Promise<ServerInstance> {
     jobQueue.registerHandler(
       JobQueues.STREAM_CONNECTION_PULL,
       createStreamConnectionPullWorker({ streamConnectionPullService }),
+      { tier: QueueTiers.LIGHT, fairness: QueueFairness.WORKSPACE }
+    )
+    jobQueue.registerHandler(
+      JobQueues.STREAM_CONNECTION_PROFILES,
+      createStreamConnectionProfilesWorker({ streamConnectionProfileService }),
       { tier: QueueTiers.LIGHT, fairness: QueueFairness.WORKSPACE }
     )
     jobQueue.registerHandler(

@@ -4,6 +4,7 @@ import { StreamConnectionStates } from "@threahq/types"
 import { JobQueues, QueueRepository, type StreamConnectionPullJobData } from "../../lib/queue"
 import type { FeatureFlagService } from "../feature-flags"
 import { connectionNotFound } from "./errors"
+import { enqueueProfileRefreshes, toLinked } from "./profiles"
 import { StreamConnectionRepository, type ConnectionRef } from "./repository"
 
 /**
@@ -20,7 +21,10 @@ interface Dependencies {
   featureFlagService: FeatureFlagService
 }
 
-/** Brings a shared channel's changes from the host's region into a partner workspace of this region. */
+/**
+ * Brings a shared channel's changes from the host's region into a partner
+ * workspace of this region, and either end's user changes into the other's copies.
+ */
 export class StreamConnectionImportService {
   private readonly pool: Pool
   private readonly featureFlagService: FeatureFlagService
@@ -43,9 +47,29 @@ export class StreamConnectionImportService {
     await enqueuePulls(this.pool, [{ workspaceId: params.workspaceId, connectionId: params.connectionId }])
   }
 
+  /** The other end's poke about its users: queues a refresh of this end's copies of them. */
+  async requestProfileRefresh(params: {
+    workspaceId: string
+    connectionId: string
+    callerWorkspaceId: string
+  }): Promise<void> {
+    const flag = await this.featureFlagService.getWorkspaceFlag(params.workspaceId, "streamConnections")
+    if (flag !== "on") throw connectionNotFound()
+    const connection = toLinked(
+      await StreamConnectionRepository.findById(this.pool, params.workspaceId, params.connectionId)
+    )
+    if (connection?.remoteWorkspaceId !== params.callerWorkspaceId) throw connectionNotFound()
+    await enqueueProfileRefreshes(this.pool, [{ workspaceId: params.workspaceId, connectionId: params.connectionId }])
+  }
+
   /** The sweep: queues a pull of every active connection, so a lost poke delays a change rather than dropping it. */
   async enqueueAllPulls(): Promise<void> {
     await enqueuePulls(this.pool, await StreamConnectionRepository.listActivePartnerConnections(this.pool))
+  }
+
+  /** The sweep's counterpart for user changes: queues a profile refresh at both ends of every active connection. */
+  async enqueueAllProfileRefreshes(): Promise<void> {
+    await enqueueProfileRefreshes(this.pool, await StreamConnectionRepository.listAllActiveLinkedConnections(this.pool))
   }
 }
 

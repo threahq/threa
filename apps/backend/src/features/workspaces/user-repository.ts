@@ -623,6 +623,49 @@ export const UserRepository = {
     return result.rows.map(mapRowToUser)
   },
 
+  async listCopiesFrom(db: Querier, workspaceId: string, originWorkspaceId: string): Promise<User[]> {
+    const result = await db.query<UserRow>(composeSql`
+      SELECT ${SELECT_FIELDS_FRAGMENT}
+      FROM ${USERS_FROM_FRAGMENT}
+      WHERE u.workspace_id = ${workspaceId} AND u.origin_workspace_id = ${originWorkspaceId}
+    `)
+    return result.rows.map(mapRowToUser)
+  },
+
+  /**
+   * Sets the name and avatar of copies from one workspace, each only while its
+   * avatar is still `observedAvatarUrl`: a copy another write moved since is
+   * left for the next refresh. Returns only the copies that changed.
+   */
+  async updateCopyProfiles(
+    db: Querier,
+    workspaceId: string,
+    originWorkspaceId: string,
+    profiles: { id: string; name: string; avatarUrl: string | null; observedAvatarUrl: string | null }[]
+  ): Promise<User[]> {
+    if (profiles.length === 0) return []
+    const result = await db.query<UserRow>(sql`
+      WITH updated AS (
+        UPDATE users SET name = profile.copy_name, avatar_url = profile.copy_avatar_url
+        FROM unnest(
+          ${profiles.map((profile) => profile.id)}::text[],
+          ${profiles.map((profile) => profile.name)}::text[],
+          ${profiles.map((profile) => profile.avatarUrl)}::text[],
+          ${profiles.map((profile) => profile.observedAvatarUrl)}::text[]
+        ) AS profile(copy_id, copy_name, copy_avatar_url, observed_avatar_url)
+        WHERE users.workspace_id = ${workspaceId}
+          AND users.id = profile.copy_id
+          AND users.origin_workspace_id = ${originWorkspaceId}
+          AND users.avatar_url IS NOT DISTINCT FROM profile.observed_avatar_url
+          AND (users.name IS DISTINCT FROM profile.copy_name OR users.avatar_url IS DISTINCT FROM profile.copy_avatar_url)
+        RETURNING ${sql.raw(SELECT_FIELDS)}
+      )
+      SELECT ${sql.raw(SELECT_FIELDS_WITH_ALIAS)}
+      FROM updated u ${sql.raw(JOIN_AUTHZ_MIRROR)}
+    `)
+    return result.rows.map(mapRowToUser)
+  },
+
   /**
    * Search for users in a workspace by name, email, or slug.
    * Uses pg_trgm trigram similarity for fuzzy matching (handles typos),

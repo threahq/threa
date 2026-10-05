@@ -4,12 +4,14 @@ import {
   bridgeAttachmentResponseSchema,
   bridgeEventsSchema,
   bridgeManifestSchema,
+  bridgeProfilesSchema,
   bridgeSendMessageResponseSchema,
   type BridgeAddReaction,
   type BridgeAttachmentResponse,
   type BridgeEditMessage,
   type BridgeEvents,
   type BridgeManifest,
+  type BridgeProfiles,
   type BridgeSendMessage,
   type BridgeSendMessageResponse,
 } from "@threahq/types"
@@ -76,6 +78,26 @@ export class BridgeClient {
     return bridgeAttachmentResponseSchema.parse(await res.json())
   }
 
+  /** The other end's current name and avatar of the given users, for those it shares. */
+  async getProfiles(address: ConnectionAddress, userIds: string[]): Promise<BridgeProfiles> {
+    const res = await this.request(address, "/profiles", "POST", { userIds })
+    return bridgeProfilesSchema.parse(await res.json())
+  }
+
+  /** Tells the other end some of this end's users changed, so it refreshes its copies of them. */
+  async pokeProfiles(address: ConnectionAddress): Promise<void> {
+    await this.request(address, "/profiles/poke", "POST")
+  }
+
+  /** One processed avatar file of a user in another workspace, or null when that workspace has no such file. */
+  async getAvatarFile(params: { workspaceId: string; userId: string; file: string }): Promise<Buffer | null> {
+    const path = `/api/workspaces/${encodeURIComponent(params.workspaceId)}/users/${encodeURIComponent(params.userId)}/avatar/${encodeURIComponent(params.file)}`
+    const res = await fetch(`${this.routerUrl}${path}`, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
+    if (res.status === 404) return null
+    if (!res.ok) throw new Error(`Avatar GET ${path} answered ${res.status}`)
+    return Buffer.from(await res.arrayBuffer())
+  }
+
   /** Sends a partner's message into the host's channel as one of its users. The host dedupes it by client message id. */
   async sendMessage(
     address: ConnectionAddress,
@@ -118,8 +140,13 @@ export class BridgeClient {
     await this.write(address, `${reactionPath(params.streamId, params.messageId, params.emoji)}?${query}`, "DELETE")
   }
 
-  private async request(address: ConnectionAddress, path: string, method: "GET" | "POST"): Promise<Response> {
-    const res = await this.send(address, path, method)
+  private async request(
+    address: ConnectionAddress,
+    path: string,
+    method: "GET" | "POST",
+    body?: unknown
+  ): Promise<Response> {
+    const res = await this.send(address, path, method, body)
     if (!res.ok) throw new Error(`Bridge ${method} ${path.split("?")[0]} answered ${res.status}`)
     return res
   }

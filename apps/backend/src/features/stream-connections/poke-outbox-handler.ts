@@ -29,8 +29,11 @@ const SHARED_CHANGE_EVENTS = [
 
 /**
  * Pokes the partner of every active connection whose shared tree a batch of
- * events touched. A lost poke only delays the partner until its sweep, so a
- * failed one is logged and the batch still completes.
+ * events touched, and the other end of every active connection of a workspace
+ * whose users changed. A copy's change never pokes the workspace it is a copy
+ * of, so a host relays one partner's change to the others without echoing it
+ * back. A lost poke only delays the other end until its sweep, so a failed one
+ * is logged and the batch still completes.
  */
 export class StreamConnectionPokeHandler extends DebouncedOutboxHandler {
   private readonly bridgeClient: BridgeClient
@@ -49,12 +52,38 @@ export class StreamConnectionPokeHandler extends DebouncedOutboxHandler {
       this.db,
       events.flatMap(changedStreams)
     )
-    const pokes = await Promise.allSettled(connections.map((connection) => this.bridgeClient.poke(connection)))
+    const userChanges = events.flatMap(changedUsers)
+    const linked = await StreamConnectionRepository.listActiveLinkedConnections(this.db, [
+      ...new Set(userChanges.map((change) => change.workspaceId)),
+    ])
+    const profileAddresses = linked
+      .filter((connection) =>
+        userChanges.some(
+          (change) =>
+            change.workspaceId === connection.workspaceId && change.originWorkspaceId !== connection.remoteWorkspaceId
+        )
+      )
+      .map((connection) => ({
+        workspaceId: connection.remoteWorkspaceId,
+        connectionId: connection.connectionId,
+        callerWorkspaceId: connection.workspaceId,
+      }))
+
+    const pokes = await Promise.allSettled([
+      ...connections.map((connection) => this.bridgeClient.poke(connection)),
+      ...profileAddresses.map((address) => this.bridgeClient.pokeProfiles(address)),
+    ])
+    const targets = [...connections, ...profileAddresses]
     pokes.forEach((poke, i) => {
-      if (poke.status === "rejected") log.warn({ err: poke.reason, ...connections[i] }, "Bridge poke failed")
+      if (poke.status === "rejected") log.warn({ err: poke.reason, ...targets[i] }, "Bridge poke failed")
     })
     return events.map((event) => event.id)
   }
+}
+
+function changedUsers(event: OutboxEvent): { workspaceId: string; originWorkspaceId: string | null }[] {
+  if (!isOutboxEventType(event, "workspace_user:updated")) return []
+  return [{ workspaceId: event.payload.workspaceId, originWorkspaceId: event.payload.user.originWorkspaceId }]
 }
 
 function changedStreams(event: OutboxEvent): { workspaceId: string; streamId: string }[] {

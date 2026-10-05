@@ -3,7 +3,7 @@ import sharp from "sharp"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { logger } from "../../lib/logger"
 
-const AVATAR_SIZES = [256, 64] as const
+export const AVATAR_SIZES = [256, 64] as const
 const WEBP_QUALITY = 80
 
 export class AvatarService {

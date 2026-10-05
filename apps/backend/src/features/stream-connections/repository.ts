@@ -48,6 +48,11 @@ export interface ConnectionRef {
   connectionId: string
 }
 
+/** A host or partner connection with the workspace at its other end. */
+export interface LinkedConnectionRef extends ConnectionRef {
+  remoteWorkspaceId: string
+}
+
 export interface HostConnectionRef {
   hostWorkspaceId: string
   connectionId: string
@@ -213,6 +218,31 @@ export const StreamConnectionRepository = {
     // eslint-disable-next-line threa/workspace-scoped-sql -- every partner connection in the region, across workspaces by design
     const result = await db.query<{ workspace_id: string; id: string }>(sql`
       SELECT workspace_id, id FROM stream_connections WHERE role = 'partner' AND state = 'active'
+    `)
+    return result.rows.map((row) => ({ workspaceId: row.workspace_id, connectionId: row.id }))
+  },
+
+  /** The active host and partner connections of the given workspaces. */
+  async listActiveLinkedConnections(db: Querier, workspaceIds: string[]): Promise<LinkedConnectionRef[]> {
+    if (workspaceIds.length === 0) return []
+    const result = await db.query<{ workspace_id: string; id: string; remote_workspace_id: string }>(sql`
+      SELECT workspace_id, id, remote_workspace_id FROM stream_connections
+      WHERE workspace_id = ANY(${workspaceIds})
+        AND role IN ('host', 'partner') AND state = 'active' AND remote_workspace_id IS NOT NULL
+    `)
+    return result.rows.map((row) => ({
+      workspaceId: row.workspace_id,
+      connectionId: row.id,
+      remoteWorkspaceId: row.remote_workspace_id,
+    }))
+  },
+
+  /** Every active host and partner connection in the region. */
+  async listAllActiveLinkedConnections(db: Querier): Promise<ConnectionRef[]> {
+    // eslint-disable-next-line threa/workspace-scoped-sql -- every connection in the region, across workspaces by design
+    const result = await db.query<{ workspace_id: string; id: string }>(sql`
+      SELECT workspace_id, id FROM stream_connections
+      WHERE role IN ('host', 'partner') AND state = 'active' AND remote_workspace_id IS NOT NULL
     `)
     return result.rows.map((row) => ({ workspaceId: row.workspace_id, connectionId: row.id }))
   },

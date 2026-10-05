@@ -18,6 +18,7 @@ import { StreamRepository } from "../streams"
 import { UserRepository, syncUserCopies } from "../workspaces"
 import { connectionNotFound, writeRefused } from "./errors"
 import { importDoc, loadSharedTree, type BridgeCaller, type ImportedContent } from "./export"
+import { enqueueProfileRefreshes } from "./profiles"
 import { StreamConnectionRepository } from "./repository"
 
 type WriteCaller = BridgeCaller & { streamId: string }
@@ -182,12 +183,15 @@ export class StreamConnectionWriteService {
         if (!connection.remoteWorkspaceName) {
           throw new Error(`Connection ${connection.id} is active but names no partner workspace`)
         }
-        await syncUserCopies(client, {
+        const insertedCopies = await syncUserCopies(client, {
           workspaceId: caller.workspaceId,
           originWorkspaceId: caller.callerWorkspaceId,
           originWorkspaceName: connection.remoteWorkspaceName,
           users: profiles,
         })
+        if (insertedCopies.length > 0) {
+          await enqueueProfileRefreshes(client, [{ workspaceId: caller.workspaceId, connectionId: connection.id }])
+        }
       }
 
       if (admission.message) {

@@ -542,6 +542,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
       bridgeAuth,
       bridge.attachment
     )
+    // A read sent as a POST, so a page of user ids rides in the body rather than the URL.
+    app.post(
+      "/api/workspaces/:workspaceId/stream-connections/:connectionId/bridge/profiles",
+      audit("stream_connections.bridge_profiles", "disclose"),
+      bridgeAuth,
+      bridge.profiles
+    )
     const streamPath = "/api/workspaces/:workspaceId/stream-connections/:connectionId/bridge/streams/:streamId"
     app.post(
       `${streamPath}/messages`,
@@ -579,6 +586,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
       audit("stream_connections.bridge_poke", "write"),
       bridgeAuth,
       bridge.poke
+    )
+    // Under either end's path: each end pokes the other about its own users.
+    app.post(
+      "/api/workspaces/:workspaceId/stream-connections/:connectionId/bridge/profiles/poke",
+      audit("stream_connections.bridge_profiles_poke", "write"),
+      bridgeAuth,
+      bridge.profilesPoke
     )
   }
 

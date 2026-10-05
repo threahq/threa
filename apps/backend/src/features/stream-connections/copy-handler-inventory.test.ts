@@ -76,7 +76,7 @@ const COPY_TREATMENT: Record<string, { treatment: Treatment; why: string }> = {
   },
   "features/stream-connections/poke-outbox-handler.ts": {
     treatment: "serves",
-    why: "pokes partners about host channels; a copy has no host connection here",
+    why: "pokes partners about host channels, a copy having no host connection here; a copy's profile change never pokes its origin",
   },
   "features/system-messages/outbox-handler.ts": {
     treatment: "inert",
