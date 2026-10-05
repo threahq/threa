@@ -60,7 +60,7 @@ describe("SyncLogRepository catch-up reads", () => {
   async function appendEntry(workspaceId: string, entry: Omit<SyncLogEntryInput, "outboxEventId">): Promise<bigint> {
     const [outboxEventId] = await reserveOutboxIds(1)
     const assigned = await SyncLogRepository.appendForWorkspace(pool, workspaceId, [{ ...entry, outboxEventId }])
-    return assigned.get(outboxEventId)!
+    return assigned.get(outboxEventId)!.syncId
   }
 
   function listFor(workspaceId: string, userId: string, after = 0n, limit = 100, permissionGroups: string[] = []) {

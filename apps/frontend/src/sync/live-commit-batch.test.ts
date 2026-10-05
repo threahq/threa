@@ -7,6 +7,7 @@ import {
   type Activity,
   type StreamMember,
   type WorkspaceBootstrap,
+  WORKSPACE_PERMISSION_SCOPES,
 } from "@threahq/types"
 import type { Socket } from "socket.io-client"
 import Dexie from "dexie"
@@ -37,6 +38,7 @@ function makeBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBo
       updatedAt: new Date().toISOString(),
     },
     users: [],
+    viewerPermissions: [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE],
     streams: [],
     streamMemberships: [],
     dmPeers: [],

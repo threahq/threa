@@ -47,7 +47,7 @@ describe("prune_legacy_counter_entries migration", () => {
     const outboxIds = await reserveOutboxIds(entries.length)
     const withIds = entries.map((e, i) => ({ ...e, outboxEventId: outboxIds[i] }))
     const assigned = await SyncLogRepository.appendForWorkspace(pool, workspaceId, withIds)
-    return outboxIds.map((id) => assigned.get(id)!)
+    return outboxIds.map((id) => assigned.get(id)!.syncId)
   }
 
   async function survivingSyncIds(workspaceId: string): Promise<Set<string>> {

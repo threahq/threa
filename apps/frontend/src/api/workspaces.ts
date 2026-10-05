@@ -40,6 +40,11 @@ export const workspacesApi = {
     return res.workspace
   },
 
+  async listUsers(workspaceId: string): Promise<User[]> {
+    const res = await api.get<{ users: User[] }>(`/api/workspaces/${workspaceId}/users`)
+    return res.users
+  },
+
   /**
    * `fresh` forbids the service worker's lock-time bootstrap snapshot from
    * answering this request — it drops the entry and goes to the network. Set it

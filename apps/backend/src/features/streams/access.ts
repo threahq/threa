@@ -107,9 +107,14 @@ export async function checkStreamAccess(
 /**
  * The legs of root readability that need no `stream_members` row: `guest_public` is open to every
  * workspace user, `public` to users with browse. Exported on its own because the catch-up history
- * bound asks the same question. `rootAlias` is a trusted SQL alias, never user input.
+ * bound asks the same question. `rootAlias` is a trusted SQL alias, never user input. A `QueryConfig`
+ * `userId` correlates to an outer row's user and must not name `u` or `wup`, which the fragment binds.
  */
-export function rootReadableWithoutMembershipSql(workspaceId: string, userId: string, rootAlias: string): QueryConfig {
+export function rootReadableWithoutMembershipSql(
+  workspaceId: string,
+  userId: string | QueryConfig,
+  rootAlias: string
+): QueryConfig {
   const root = sql`${sql.raw(rootAlias)}`
   return composeSql`(
     ${root}.visibility = ${Visibilities.GUEST_PUBLIC}
@@ -134,9 +139,14 @@ export function rootReadableWithoutMembershipSql(workspaceId: string, userId: st
  * not a value — it MUST be a trusted constant supplied by call-site code (e.g.
  * `"eff_root"`), NEVER derived from user input. Built with {@link composeSql} so it
  * carries `$1..$k` placeholders that composeSql renumbers when splicing
- * it into a larger query.
+ * it into a larger query. A `QueryConfig` `userId` must not name `u`, `wup` or
+ * `stream_members`, which the fragment binds.
  */
-export function rootReadableConditionSql(workspaceId: string, userId: string, rootAlias: string): QueryConfig {
+export function rootReadableConditionSql(
+  workspaceId: string,
+  userId: string | QueryConfig,
+  rootAlias: string
+): QueryConfig {
   const root = sql`${sql.raw(rootAlias)}`
   return composeSql`(
     ${rootReadableWithoutMembershipSql(workspaceId, userId, rootAlias)}
@@ -173,8 +183,17 @@ export function rootReadableConditionSql(workspaceId: string, userId: string, ro
  * from user input. The fragment is fully self-contained: it re-checks the
  * workspace boundary inside the EXISTS, so it is correct even when the outer
  * query does not otherwise constrain the stream's workspace.
+ *
+ * `userId` is an id, or a `QueryConfig` column reference correlating the
+ * predicate to an outer row's user. It must not name an alias the fragment
+ * binds (`u`, `wup`, `stream_members`, `eff_s`, `eff_root`), or it matches the
+ * fragment's own row.
  */
-export function streamAccessPredicateSql(workspaceId: string, userId: string, streamIdColumn: string): QueryConfig {
+export function streamAccessPredicateSql(
+  workspaceId: string,
+  userId: string | QueryConfig,
+  streamIdColumn: string
+): QueryConfig {
   return composeSql`EXISTS (
     SELECT 1
     FROM streams eff_s

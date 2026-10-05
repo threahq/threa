@@ -66,9 +66,9 @@ describe("SyncLogRepository", () => {
     const assigned = await SyncLogRepository.appendForWorkspace(pool, workspaceId, entries)
 
     expect([...assigned.entries()]).toEqual([
-      [ids[0], 1n],
-      [ids[1], 2n],
-      [ids[2], 3n],
+      [ids[0], { syncId: 1n, groups: ["stream:stream_test"] }],
+      [ids[1], { syncId: 2n, groups: ["stream:stream_a", "stream:stream_b"] }],
+      [ids[2], { syncId: 3n, groups: ["stream:stream_test"] }],
     ])
 
     const rows = await fetchLog(workspaceId)
@@ -114,9 +114,21 @@ describe("SyncLogRepository", () => {
       makeEntry(ids[2]),
     ])
 
-    expect(retry.get(ids[0])).toBe(first.get(ids[0])!)
-    expect(retry.get(ids[1])).toBe(first.get(ids[1])!)
-    expect(retry.get(ids[2])).toBe(3n)
+    expect(retry.get(ids[0])).toEqual(first.get(ids[0])!)
+    expect(retry.get(ids[1])).toEqual(first.get(ids[1])!)
+    expect(retry.get(ids[2])?.syncId).toBe(3n)
+  })
+
+  test("should return the groups an entry was first logged with when a retry resolves different ones", async () => {
+    const workspaceId = uniqueWorkspaceId()
+    const [id] = await reserveOutboxIds(1)
+
+    await SyncLogRepository.appendForWorkspace(pool, workspaceId, [makeEntry(id, { groups: ["user:usr_a"] })])
+    const retry = await SyncLogRepository.appendForWorkspace(pool, workspaceId, [
+      makeEntry(id, { groups: ["user:usr_a", "user:usr_b"] }),
+    ])
+
+    expect(retry.get(id)).toEqual({ syncId: 1n, groups: ["user:usr_a"] })
   })
 
   test("sequences are independent per workspace", async () => {
@@ -127,8 +139,8 @@ describe("SyncLogRepository", () => {
     const a = await SyncLogRepository.appendForWorkspace(pool, workspaceA, [makeEntry(ids[0])])
     const b = await SyncLogRepository.appendForWorkspace(pool, workspaceB, [makeEntry(ids[1])])
 
-    expect(a.get(ids[0])).toBe(1n)
-    expect(b.get(ids[1])).toBe(1n)
+    expect(a.get(ids[0])?.syncId).toBe(1n)
+    expect(b.get(ids[1])?.syncId).toBe(1n)
   })
 
   test("concurrent appends to one workspace stay dense and gapless", async () => {
@@ -147,7 +159,9 @@ describe("SyncLogRepository", () => {
       )
     )
 
-    const allAssigned = results.flatMap((m) => [...m.values()]).sort((a, b) => (a < b ? -1 : 1))
+    const allAssigned = results
+      .flatMap((m) => [...m.values()].map((entry) => entry.syncId))
+      .sort((a, b) => (a < b ? -1 : 1))
     expect(allAssigned).toEqual(Array.from({ length: batches * perBatch }, (_, i) => BigInt(i + 1)))
 
     const rows = await fetchLog(workspaceId)

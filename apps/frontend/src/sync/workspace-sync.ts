@@ -29,7 +29,12 @@ import {
   semanticEqual,
   SERVER_STAMP_IGNORED_KEYS,
 } from "./bootstrap-diff"
-import { getCachedWorkspaceTables, seedWorkspaceCache, upsertWorkspaceUserInCache } from "@/stores/workspace-store"
+import {
+  getCachedWorkspaceTables,
+  replaceWorkspaceUsersInCache,
+  seedWorkspaceCache,
+  upsertWorkspaceUserInCache,
+} from "@/stores/workspace-store"
 import {
   seedAgentActivity,
   upsertAgentSession,
@@ -121,8 +126,11 @@ import {
   StreamTypes,
   StreamPurposes,
   Visibilities,
+  WORKSPACE_PERMISSION_SCOPES,
   normalizeSidebarConfig,
 } from "@threahq/types"
+import { workspacesApi } from "@/api/workspaces"
+import { hasPermission } from "@/lib/permissions"
 import { applyStreamBootstrapInCurrentTransaction } from "./stream-sync"
 import { deleteStreamSlots, deleteSlotsForStreams } from "@/stores/slot-store"
 import { applyDraftDeleted, applyDraftUpserted } from "./draft-sync"
@@ -1102,6 +1110,106 @@ export function registerWorkspaceSocketHandlers(
     await setBoardRootArchived(workspaceId, [payload.stream.id, ...descendantIds], false)
   }
 
+  // A guest's roster holds only the people of what they read, so someone who
+  // appears later stays unknown until the roster is fetched again.
+  let rosterInFlight = false
+  let rosterRerun = false
+  const rosterWanted = new Set<string>()
+  const rosterUnresolved = new Set<string>()
+
+  const cachedRoster = (): User[] | undefined =>
+    queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))?.users
+
+  const refreshRosterOnce = async (): Promise<void> => {
+    const before = cachedRoster()
+    const requested = [...rosterWanted]
+    let users: User[]
+    try {
+      users = await workspacesApi.listUsers(workspaceId)
+    } catch (error) {
+      // Requested ids stay eligible, so the next trigger retries.
+      console.warn("Failed to fetch the people roster", error)
+      return
+    }
+    if (abortController.signal.aborted) return
+    // A workspace_user event or bootstrap refetch landing in flight is newer than
+    // this response, which could resurrect a removed user or undo a newer profile.
+    if (cachedRoster() !== before) {
+      rosterRerun = true
+      return
+    }
+
+    const fetchedIds = new Set(users.map((u) => u.id))
+    const now = Date.now()
+    // IDB commits before any cache sees the roster, so a failed write leaves the
+    // requested ids eligible and the caches unchanged.
+    const merged = await db.transaction("rw", db.workspaceUsers, async () => {
+      const existing = await db.workspaceUsers.where("workspaceId").equals(workspaceId).toArray()
+      const diff = diffRows(
+        byId(existing),
+        users.map((user) => ({ ...user, _cachedAt: now }))
+      )
+      const staleKeys = existing
+        .filter((row) => !fetchedIds.has(row.id))
+        .map((row): [string, string] => [workspaceId, row.id])
+      await db.workspaceUsers.bulkDelete(staleKeys)
+      await db.workspaceUsers.bulkPut(diff.toWrite)
+      return diff.merged
+    })
+    if (abortController.signal.aborted) return
+    if (cachedRoster() !== before) {
+      rosterRerun = true
+      return
+    }
+
+    updateBootstrapOrInvalidate(queryClient, workspaceId, (old) => withWorkspaceUsers(old, users))
+    replaceWorkspaceUsersInCache(workspaceId, merged)
+    for (const id of requested) {
+      rosterWanted.delete(id)
+      if (!fetchedIds.has(id)) rosterUnresolved.add(id)
+    }
+  }
+
+  const refreshRoster = async (): Promise<void> => {
+    if (abortController.signal.aborted) return
+    if (rosterInFlight) {
+      rosterRerun = true
+      return
+    }
+    rosterInFlight = true
+    try {
+      do {
+        rosterRerun = false
+        await refreshRosterOnce()
+      } while (rosterRerun && !abortController.signal.aborted)
+    } finally {
+      rosterInFlight = false
+    }
+  }
+
+  const startRosterRefresh = (): void => {
+    refreshRoster().catch((error) => console.error("Failed to refresh the people roster", error))
+  }
+
+  const getGuestRoster = (): User[] | null => {
+    const bootstrap = queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId))
+    if (!bootstrap) return null
+    if (hasPermission(bootstrap.viewerPermissions, WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE)) return null
+    return getWorkspaceUsers(bootstrap)
+  }
+
+  const refreshRosterForUnknown = (roster: User[], userId: string): void => {
+    if (rosterUnresolved.has(userId) || roster.some((u) => u.id === userId)) return
+    if (rosterInFlight && rosterWanted.has(userId)) return
+    rosterWanted.add(userId)
+    startRosterRefresh()
+  }
+
+  const refreshGuestRosterForUnknown = (userId: string): void => {
+    const roster = getGuestRoster()
+    if (roster) refreshRosterForUnknown(roster, userId)
+  }
+
   const handleWorkspaceUserAdded = async (payload: WorkspaceUserAddedPayload) => {
     const now = Date.now()
     const { user } = payload
@@ -1418,6 +1526,7 @@ export function registerWorkspaceSocketHandlers(
 
     const stopActivityApply = getPerfCapture().time("stream.activityApply")
     try {
+      if (payload.lastMessagePreview.authorType === "user") refreshGuestRosterForUnknown(payload.authorId)
       const isViewingStream = refs.getCurrentStreamId() === payload.streamId
 
       // If not viewing this stream and it has an active bootstrap observer,
@@ -1674,6 +1783,19 @@ export function registerWorkspaceSocketHandlers(
     if (payload.stream.purpose === StreamPurposes.PERSONA_TEST) return
     let shouldSubscribeStream = false
 
+    const guestRoster = getGuestRoster()
+    if (guestRoster) {
+      const currentUser = refs.getCurrentUser()
+      const currentMember = currentUser && guestRoster.find((u) => u.workosUserId === currentUser.id)
+      if (currentMember && payload.memberId === currentMember.id) startRosterRefresh()
+      else if (payload.event.actorType !== "bot") {
+        // Joining a room the guest reads is new evidence they share it, so an
+        // earlier miss no longer stands.
+        rosterUnresolved.delete(payload.memberId)
+        refreshRosterForUnknown(guestRoster, payload.memberId)
+      }
+    }
+
     // A bot joining may be a personal bot the viewer's roster doesn't hold
     // (visibility-scoped) — upsert the carried metadata so the new participant
     // renders with its name/avatar instead of the generic bot fallback.
@@ -1765,6 +1887,12 @@ export function registerWorkspaceSocketHandlers(
       refs.subscribeStream(payload.streamId)
     }
     await Promise.all(writes)
+  }
+
+  const handleStreamMemberJoined = (payload: { workspaceId: string; streamId: string; event: StreamEvent }) => {
+    if (payload.workspaceId !== workspaceId || !payload.event.actorId) return
+    rosterUnresolved.delete(payload.event.actorId)
+    refreshGuestRosterForUnknown(payload.event.actorId)
   }
 
   const handleStreamMemberRemoved = async (payload: { workspaceId: string; streamId: string; memberId: string }) => {
@@ -2534,6 +2662,7 @@ export function registerWorkspaceSocketHandlers(
   socket.on("stream:display_name_updated", handleStreamDisplayNameUpdated)
   socket.on("stream:message_count", handleStreamMessageCount)
   socket.on("stream:member_added", handleStreamMemberAdded)
+  socket.on("stream:member_joined", handleStreamMemberJoined)
   socket.on("stream:member_removed", handleStreamMemberRemoved)
   socket.on("user_preferences:updated", handleUserPreferencesUpdated)
   socket.on("sidebar_config:updated", handleSidebarConfigUpdated)
@@ -2609,6 +2738,7 @@ export function registerWorkspaceSocketHandlers(
     socket.off("stream:display_name_updated", handleStreamDisplayNameUpdated)
     socket.off("stream:message_count", handleStreamMessageCount)
     socket.off("stream:member_added", handleStreamMemberAdded)
+    socket.off("stream:member_joined", handleStreamMemberJoined)
     socket.off("stream:member_removed", handleStreamMemberRemoved)
     socket.off("user_preferences:updated", handleUserPreferencesUpdated)
     socket.off("sidebar_config:updated", handleSidebarConfigUpdated)

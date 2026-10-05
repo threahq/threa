@@ -2,7 +2,7 @@ import type { Pool } from "pg"
 import type { Server } from "socket.io"
 import { Ticker } from "@threahq/backend-common"
 import { logger } from "../../lib/logger"
-import { resolveDeliveryGroups, emitToGroups, type OutboxEvent } from "../../lib/outbox"
+import { resolveAudiences, emitToGroups, type OutboxEvent } from "../../lib/outbox"
 import { SyncLogRepository, type SyncLogEntryInput } from "./repository"
 
 export interface SyncLogReconciliationWorkerConfig {
@@ -122,14 +122,16 @@ export class SyncLogReconciliationWorker {
     }
 
     const byWorkspace = new Map<string, Array<{ event: OutboxEvent; entry: SyncLogEntryInput }>>()
-    for (const straggler of stragglers) {
-      const event = {
-        id: straggler.id,
-        eventType: straggler.eventType,
-        payload: straggler.payload,
-        createdAt: straggler.createdAt,
-      } as OutboxEvent
-      const groups = resolveDeliveryGroups(event)
+    const events = stragglers.map(
+      (straggler) =>
+        ({
+          id: straggler.id,
+          eventType: straggler.eventType,
+          payload: straggler.payload,
+          createdAt: straggler.createdAt,
+        }) as OutboxEvent
+    )
+    for (const { event, groups } of await resolveAudiences(this.pool, events)) {
       // Bot-scoped (null) and unroutable (empty) events live outside the log contract.
       if (groups === null || groups.length === 0) {
         continue
@@ -151,13 +153,14 @@ export class SyncLogReconciliationWorker {
     }
 
     for (const [workspaceId, entries] of byWorkspace) {
-      const assigned = await SyncLogRepository.appendForWorkspace(
+      const logged = await SyncLogRepository.appendForWorkspace(
         this.pool,
         workspaceId,
         entries.map((e) => e.entry)
       )
       for (const { event, entry } of entries) {
-        emitToGroups(this.io, event, entry.groups, assigned.get(event.id))
+        const record = logged.get(event.id)
+        emitToGroups(this.io, event, record?.groups ?? entry.groups, record?.syncId)
       }
 
       logger.warn(

@@ -10,6 +10,11 @@ export interface SyncLogEntryInput {
   payload: unknown
 }
 
+export interface LoggedEntry {
+  syncId: bigint
+  groups: string[]
+}
+
 /** A sync-log entry as returned by catch-up reads. */
 export interface SyncLogEntry {
   syncId: bigint
@@ -41,7 +46,9 @@ export const SyncLogRepository = {
    * have a log entry (sequencer crash-retry, reconciliation-sweep overlap)
    * keep their existing sync id and are not re-inserted.
    *
-   * Returns outboxEventId → syncId for every input entry.
+   * Returns outboxEventId → the entry as logged, for every input entry. An
+   * existing entry keeps the groups it was first logged with, which callers
+   * emit so live delivery reaches exactly who catch-up will replay it to.
    *
    * Concurrency protocol (INV-20): writers lock the workspace's allocator row
    * FIRST (no-op upsert), then read existing entries on a fresh snapshot, then
@@ -55,7 +62,7 @@ export const SyncLogRepository = {
     pool: Pool,
     workspaceId: string,
     entries: SyncLogEntryInput[]
-  ): Promise<Map<bigint, bigint>> {
+  ): Promise<Map<bigint, LoggedEntry>> {
     if (entries.length === 0) {
       return new Map()
     }
@@ -71,16 +78,16 @@ export const SyncLogRepository = {
       const start = BigInt(lockResult.rows[0].next_sequence)
 
       const outboxEventIds = entries.map((e) => e.outboxEventId.toString())
-      const existingResult = await client.query<{ outbox_event_id: string; sync_id: string }>(sql`
-        SELECT outbox_event_id, sync_id
+      const existingResult = await client.query<{ outbox_event_id: string; sync_id: string; groups: string[] }>(sql`
+        SELECT outbox_event_id, sync_id, groups
         FROM sync_log
         WHERE workspace_id = ${workspaceId}
           AND outbox_event_id = ANY(${outboxEventIds}::bigint[])
       `)
 
-      const assigned = new Map<bigint, bigint>()
+      const assigned = new Map<bigint, LoggedEntry>()
       for (const row of existingResult.rows) {
-        assigned.set(BigInt(row.outbox_event_id), BigInt(row.sync_id))
+        assigned.set(BigInt(row.outbox_event_id), { syncId: BigInt(row.sync_id), groups: row.groups })
       }
 
       const missing = entries.filter((e) => !assigned.has(e.outboxEventId))
@@ -88,7 +95,7 @@ export const SyncLogRepository = {
       if (missing.length > 0) {
         const rows = missing.map((e, i) => {
           const syncId = start + BigInt(i)
-          assigned.set(e.outboxEventId, syncId)
+          assigned.set(e.outboxEventId, { syncId, groups: e.groups })
           return {
             sync_id: syncId.toString(),
             outbox_event_id: e.outboxEventId.toString(),

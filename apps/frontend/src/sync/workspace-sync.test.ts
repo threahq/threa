@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
+import { describe, it, expect, beforeEach, afterEach, vi, type MockInstance } from "vitest"
 import { db, getActiveDb, ThreaDatabase } from "@/db"
 import { setActiveDb } from "@/db/database"
 import { bumpAccountGeneration } from "@/db/event-writes"
@@ -22,10 +22,12 @@ import { scheduledKeys } from "@/hooks/use-scheduled"
 import { memoKeys } from "@/hooks/use-memos"
 import { conversationKeys } from "@/hooks/use-conversations"
 import { invitationKeys } from "@/api/invitations"
+import { workspacesApi } from "@/api/workspaces"
 import {
   DEFAULT_SIDEBAR_CONFIG,
   DEFAULT_QUICK_LINKS,
   SIDEBAR_CONFIG_VERSION,
+  WORKSPACE_PERMISSION_SCOPES,
   type ActorCopy,
   type LabelAssignment,
   type SavedMessageView,
@@ -35,7 +37,9 @@ import {
   type StreamConnection,
   type StreamMember,
   type StreamWithPreview,
+  type User,
   type WorkspaceBootstrap,
+  type WorkspacePermissionSlug,
   type Activity,
 } from "@threahq/types"
 import { assignmentId } from "@/hooks/use-labels"
@@ -46,7 +50,12 @@ import {
   resetAgentActivityStore,
 } from "@/stores/agent-activity-store"
 import * as agentSubstep from "@/lib/crypto/agent-substep"
-import { getCachedWorkspaceTables, resetWorkspaceStoreCache, subscribeWorkspaceCache } from "@/stores/workspace-store"
+import {
+  getCachedWorkspaceTables,
+  resetWorkspaceStoreCache,
+  seedWorkspaceCache,
+  subscribeWorkspaceCache,
+} from "@/stores/workspace-store"
 import type { Socket } from "socket.io-client"
 import { SW_MSG_CLEAR_NOTIFICATIONS } from "@/lib/sw-messages"
 
@@ -77,6 +86,7 @@ function makeBootstrap(overrides: Partial<WorkspaceBootstrap> = {}): WorkspaceBo
     unreadActivityCount: 0,
     mutedStreamIds: [],
     featureFlags: { workspace: {}, user: {} },
+    viewerPermissions: [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE],
     sidebarConfig: DEFAULT_SIDEBAR_CONFIG,
     userPreferences: {
       workspaceId: "ws_1",
@@ -5879,5 +5889,349 @@ describe("workspace users and personas that share an id across workspaces (real 
       users: [userB],
       personas: [personaB],
     })
+  })
+})
+
+describe("a guest's people roster refresh (real IndexedDB)", () => {
+  const OLD = 1_000
+  const GUEST_PERMISSIONS: WorkspacePermissionSlug[] = []
+  const MEMBER_PERMISSIONS = [WORKSPACE_PERMISSION_SCOPES.WORKSPACE_BROWSE]
+
+  const person = (id: string): User => ({ ...makeWorkspaceUser(), id, workosUserId: null, slug: id, name: id })
+  const self = makeWorkspaceUser() as User
+
+  const memberAdded = (memberId: string, actorType: "user" | "bot" = "user") => ({
+    workspaceId: "ws_1",
+    streamId: "stream_guest",
+    memberId,
+    stream: makeStream("stream_guest"),
+    event: { id: "evt_added", streamId: "stream_guest", eventType: "member_added", actorId: memberId, actorType },
+  })
+
+  const memberJoined = (actorId: string) => ({
+    workspaceId: "ws_1",
+    streamId: "stream_guest",
+    event: { id: "evt_joined", streamId: "stream_guest", eventType: "member_joined", actorId, actorType: "user" },
+  })
+
+  const activity = (authorId: string, authorType: "user" | "persona" | "bot" = "user") => ({
+    workspaceId: "ws_1",
+    streamId: "stream_guest",
+    authorId,
+    sequence: "9",
+    messageOrdinal: 1,
+    lastMessagePreview: { authorId, authorType, content: "hello", createdAt: "2026-08-04T10:00:00.000Z" },
+  })
+
+  const deferred = <T>() => {
+    let resolve!: (value: T) => void
+    const promise = new Promise<T>((r) => (resolve = r))
+    return { promise, resolve }
+  }
+
+  const settleTick = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  const sortedById = <T extends { id: string }>(rows: T[]) => [...rows].sort((a, b) => a.id.localeCompare(b.id))
+  const storedUsers = async () => sortedById(await db.workspaceUsers.toArray())
+  const stored = (users: User[]) => sortedById(users).map((user) => ({ ...user, _cachedAt: expect.any(Number) }))
+
+  let listUsers: MockInstance<typeof workspacesApi.listUsers>
+
+  function register(viewerPermissions: WorkspacePermissionSlug[], users: User[] = [self]) {
+    const queryClient = new QueryClient()
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), makeBootstrap({ users, viewerPermissions }))
+    const { socket, emit, emitAsync } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", queryClient, {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream: vi.fn(),
+    })
+    const bootstrapUsers = () => queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap("ws_1"))?.users
+    return { emit, emitAsync, cleanup, bootstrapUsers, queryClient }
+  }
+
+  beforeEach(async () => {
+    listUsers = vi.spyOn(workspacesApi, "listUsers")
+    await Promise.all([db.workspaceUsers.clear(), db.streams.clear(), db.streamMemberships.clear()])
+  })
+
+  afterEach(() => {
+    listUsers.mockRestore()
+    resetWorkspaceStoreCache()
+  })
+
+  it("should replace the roster with the fetched people when a guest sees a member_added for someone unknown", async () => {
+    const known = person("usr_known")
+    const gone = person("usr_gone")
+    const newcomer = person("usr_new")
+    const fetched = [self, known, newcomer]
+    const cachedBefore = [self, known, gone].map((user) => ({ ...user, _cachedAt: OLD }))
+    await db.workspaceUsers.bulkPut(cachedBefore)
+    seedWorkspaceCache("ws_1", {
+      workspace: { ...makeBootstrap().workspace, _cachedAt: OLD },
+      users: cachedBefore,
+      streams: [],
+      memberships: [],
+      dmPeers: [],
+      personas: [],
+      bots: [],
+    })
+    listUsers.mockResolvedValue(fetched)
+    const { emit, cleanup, bootstrapUsers } = register(GUEST_PERMISSIONS, [self, known, gone])
+
+    emit("stream:member_added", memberAdded(newcomer.id))
+
+    await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored(fetched)))
+    expect({
+      requests: listUsers.mock.calls,
+      users: bootstrapUsers(),
+      cached: getCachedWorkspaceTables("ws_1").users,
+    }).toEqual({
+      requests: [["ws_1"]],
+      users: fetched,
+      cached: fetched.map((user) => ({ ...user, _cachedAt: expect.any(Number) })),
+    })
+    cleanup()
+  })
+
+  it.each([
+    ["is added to a stream themselves", "stream:member_added", () => memberAdded(self.id)],
+    ["sees a member_joined for someone unknown", "stream:member_joined", () => memberJoined("usr_new")],
+    ["sees a stream:activity from an unknown user", "stream:activity", () => activity("usr_new")],
+  ])("should request the roster when a guest %s", async (_name, event, payload) => {
+    const newcomer = person("usr_new")
+    listUsers.mockResolvedValue([self, newcomer])
+    const { emit, cleanup } = register(GUEST_PERMISSIONS)
+
+    emit(event, payload())
+
+    await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, newcomer])))
+    expect(listUsers).toHaveBeenCalledTimes(1)
+    cleanup()
+  })
+
+  it.each([
+    ["a user the roster holds", () => activity(self.id)],
+    ["a persona author", () => activity("persona_helper", "persona")],
+    ["a bot author", () => activity("bot_helper", "bot")],
+  ])("should not request the roster when a guest sees a stream:activity from %s", (_name, payload) => {
+    const { emit, cleanup } = register(GUEST_PERMISSIONS)
+
+    emit("stream:activity", payload())
+
+    expect(listUsers).not.toHaveBeenCalled()
+    cleanup()
+  })
+
+  it("should not request the roster when a bot is added to a stream a guest reads", () => {
+    const { emit, cleanup } = register(GUEST_PERMISSIONS)
+
+    emit("stream:member_added", memberAdded("bot_helper", "bot"))
+
+    expect(listUsers).not.toHaveBeenCalled()
+    cleanup()
+  })
+
+  it("should not request the roster again when an id the last refresh left out posts again", async () => {
+    const hidden = person("usr_hidden")
+    const other = person("usr_other")
+    const later = person("usr_later")
+    listUsers.mockResolvedValueOnce([self, other]).mockResolvedValueOnce([self, other, later])
+    const { emit, cleanup } = register(GUEST_PERMISSIONS)
+
+    emit("stream:activity", activity(hidden.id))
+    await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, other])))
+    emit("stream:activity", activity(hidden.id))
+    expect(listUsers).toHaveBeenCalledTimes(1)
+
+    emit("stream:activity", activity(later.id))
+    await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, other, later])))
+    expect(listUsers).toHaveBeenCalledTimes(2)
+    cleanup()
+  })
+
+  it.each([
+    ["joins", "stream:member_joined", () => memberJoined("usr_hidden")],
+    ["is added to", "stream:member_added", () => memberAdded("usr_hidden")],
+  ])(
+    "should request the roster again when an id the last refresh left out %s a stream the guest reads",
+    async (_name, event, payload) => {
+      const hidden = person("usr_hidden")
+      listUsers.mockResolvedValueOnce([self]).mockResolvedValueOnce([self, hidden])
+      const { emit, cleanup } = register(GUEST_PERMISSIONS)
+
+      emit("stream:activity", activity(hidden.id))
+      await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self])))
+      emit(event, payload())
+
+      await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, hidden])))
+      expect(listUsers).toHaveBeenCalledTimes(2)
+      cleanup()
+    }
+  )
+
+  it("should leave every cache unchanged and request again when writing the roster fails", async () => {
+    const newcomer = person("usr_new")
+    listUsers.mockResolvedValue([self, newcomer])
+    const bulkPut = vi.spyOn(db.workspaceUsers, "bulkPut").mockRejectedValueOnce(new Error("quota exceeded"))
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {})
+    const { emit, cleanup, bootstrapUsers } = register(GUEST_PERMISSIONS)
+
+    emit("stream:activity", activity(newcomer.id))
+    await vi.waitFor(() => expect(consoleError).toHaveBeenCalled())
+    expect({ users: bootstrapUsers(), stored: await storedUsers() }).toEqual({ users: [self], stored: [] })
+    emit("stream:activity", activity(newcomer.id))
+
+    await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, newcomer])))
+    expect({ requests: listUsers.mock.calls.length, users: bootstrapUsers() }).toEqual({
+      requests: 2,
+      users: [self, newcomer],
+    })
+    bulkPut.mockRestore()
+    consoleError.mockRestore()
+    cleanup()
+  })
+
+  it("should request the roster again when the author posts after a failed request", async () => {
+    const newcomer = person("usr_new")
+    listUsers.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce([self, newcomer])
+    const { emit, cleanup } = register(GUEST_PERMISSIONS)
+
+    emit("stream:activity", activity(newcomer.id))
+    await settleTick()
+    expect(await storedUsers()).toEqual([])
+    emit("stream:activity", activity(newcomer.id))
+
+    await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, newcomer])))
+    expect(listUsers).toHaveBeenCalledTimes(2)
+    cleanup()
+  })
+
+  it("should rerun exactly once when two triggers arrive while a request is in flight", async () => {
+    const [a, b, c] = [person("usr_a"), person("usr_b"), person("usr_c")]
+    const first = deferred<User[]>()
+    const second = deferred<User[]>()
+    listUsers.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const { emit, cleanup } = register(GUEST_PERMISSIONS)
+
+    emit("stream:member_added", memberAdded(a.id))
+    emit("stream:activity", activity(b.id))
+    emit("stream:member_joined", memberJoined(c.id))
+    expect(listUsers).toHaveBeenCalledTimes(1)
+
+    first.resolve([self, a])
+    await vi.waitFor(() => expect(listUsers).toHaveBeenCalledTimes(2))
+    second.resolve([self, a, b, c])
+
+    await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, a, b, c])))
+    await settleTick()
+    expect(listUsers).toHaveBeenCalledTimes(2)
+    cleanup()
+  })
+
+  it("should not rerun when the same unknown author posts again while the request is in flight", async () => {
+    const newcomer = person("usr_new")
+    const pending = deferred<User[]>()
+    listUsers.mockReturnValueOnce(pending.promise)
+    const { emit, cleanup } = register(GUEST_PERMISSIONS)
+
+    emit("stream:activity", activity(newcomer.id))
+    emit("stream:activity", activity(newcomer.id))
+    pending.resolve([self, newcomer])
+
+    await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, newcomer])))
+    await settleTick()
+    expect(listUsers).toHaveBeenCalledTimes(1)
+    cleanup()
+  })
+
+  it("should refetch when a bootstrap refetch replaces the roster while the request is in flight", async () => {
+    const leaver = person("usr_leaver")
+    const newcomer = person("usr_new")
+    const first = deferred<User[]>()
+    listUsers.mockReturnValueOnce(first.promise).mockResolvedValueOnce([self, newcomer])
+    const { emit, cleanup, bootstrapUsers, queryClient } = register(GUEST_PERMISSIONS, [self, leaver])
+
+    emit("stream:activity", activity(newcomer.id))
+    queryClient.setQueryData(
+      workspaceKeys.bootstrap("ws_1"),
+      makeBootstrap({ users: [self], viewerPermissions: GUEST_PERMISSIONS })
+    )
+    first.resolve([self, leaver, newcomer])
+
+    await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, newcomer])))
+    expect({ requests: listUsers.mock.calls.length, users: bootstrapUsers() }).toEqual({
+      requests: 2,
+      users: [self, newcomer],
+    })
+    cleanup()
+  })
+
+  it("should not resurrect a removed user when a workspace_user:removed arrives while the request is in flight", async () => {
+    const leaver = person("usr_leaver")
+    const newcomer = person("usr_new")
+    await db.workspaceUsers.bulkPut([self, leaver].map((user) => ({ ...user, _cachedAt: OLD })))
+    const first = deferred<User[]>()
+    const second = deferred<User[]>()
+    listUsers.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const { emit, emitAsync, cleanup, bootstrapUsers } = register(GUEST_PERMISSIONS, [self, leaver])
+
+    emit("stream:activity", activity(newcomer.id))
+    await emitAsync("workspace_user:removed", { workspaceId: "ws_1", removedUserId: leaver.id })
+    first.resolve([self, leaver, newcomer])
+
+    await vi.waitFor(() => expect(listUsers).toHaveBeenCalledTimes(2))
+    expect({ users: bootstrapUsers(), stored: await storedUsers() }).toEqual({
+      users: [self],
+      stored: stored([self]),
+    })
+    second.resolve([self, newcomer])
+
+    await vi.waitFor(async () => expect(await storedUsers()).toEqual(stored([self, newcomer])))
+    expect(bootstrapUsers()).toEqual([self, newcomer])
+    cleanup()
+  })
+
+  it("should write nothing when the response lands after the handlers are cleaned up", async () => {
+    const newcomer = person("usr_new")
+    const pending = deferred<User[]>()
+    listUsers.mockReturnValueOnce(pending.promise)
+    const { emit, cleanup, bootstrapUsers } = register(GUEST_PERMISSIONS)
+
+    emit("stream:activity", activity(newcomer.id))
+    cleanup()
+    pending.resolve([self, newcomer])
+    await settleTick()
+
+    expect({ users: bootstrapUsers(), stored: await storedUsers() }).toEqual({ users: [self], stored: [] })
+    expect(listUsers).toHaveBeenCalledTimes(1)
+  })
+
+  it("should not request the roster for any trigger when the viewer holds workspace:browse", () => {
+    const { emit, cleanup } = register(MEMBER_PERMISSIONS)
+
+    emit("stream:member_added", memberAdded("usr_new"))
+    emit("stream:member_added", memberAdded(self.id))
+    emit("stream:member_joined", memberJoined("usr_new"))
+    emit("stream:activity", activity("usr_new"))
+
+    expect(listUsers).not.toHaveBeenCalled()
+    cleanup()
+  })
+
+  it("should not request the roster when the workspace bootstrap is not cached yet", () => {
+    const { socket, emit } = createTestSocket()
+    const cleanup = registerWorkspaceSocketHandlers(socket, "ws_1", new QueryClient(), {
+      getCurrentStreamId: () => undefined,
+      getCurrentUser: () => ({ id: "workos_1" }),
+      subscribeStream: vi.fn(),
+    })
+
+    emit("stream:member_added", memberAdded("usr_new"))
+    emit("stream:member_joined", memberJoined("usr_new"))
+    emit("stream:activity", activity("usr_new"))
+
+    expect(listUsers).not.toHaveBeenCalled()
+    cleanup()
   })
 })

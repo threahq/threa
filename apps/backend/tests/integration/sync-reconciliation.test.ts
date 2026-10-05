@@ -141,4 +141,42 @@ describe("SyncLogReconciliationWorker", () => {
       txnClient.release()
     }
   })
+
+  test("should deliver a rescued workspace user event only to the guests who read with that user", async () => {
+    const workspaceId = uniqueId("ws")
+    const streamId = uniqueId("stream")
+    const [alice, bob, guest, outsider] = [uniqueId("usr"), uniqueId("usr"), uniqueId("usr"), uniqueId("usr")]
+    for (const [id, role] of [
+      [alice, "member"],
+      [bob, "member"],
+      [guest, "guest"],
+      [outsider, "guest"],
+    ]) {
+      await pool.query(
+        `INSERT INTO users (id, workspace_id, workos_user_id, email, role, slug, name) VALUES ($1, $2, NULL, NULL, $3, $1, $1)`,
+        [id, workspaceId, role]
+      )
+    }
+    await pool.query(
+      `INSERT INTO streams (id, workspace_id, type, visibility, created_by) VALUES ($1, $2, 'channel', 'private', $3)`,
+      [streamId, workspaceId, alice]
+    )
+    await pool.query(
+      `INSERT INTO stream_members (workspace_id, stream_id, member_id) VALUES ($1, $2, $3), ($1, $2, $4), ($1, $2, $5)`,
+      [workspaceId, streamId, alice, bob, guest]
+    )
+    const { worker } = makeWorker()
+
+    const outboxEventId = await insertOutboxEvent(pool, "workspace_user:updated", {
+      workspaceId,
+      user: { id: alice, role: "member" },
+    })
+    await sweepUntil(worker, async () => (await getLogRow(outboxEventId)) !== null)
+
+    expect((await getLogRow(outboxEventId))?.groups).toEqual([
+      "permission:workspace:browse",
+      `user:${alice}`,
+      `user:${guest}`,
+    ])
+  })
 })

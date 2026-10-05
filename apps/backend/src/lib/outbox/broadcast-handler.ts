@@ -26,6 +26,7 @@ import { resolveDeliveryGroups, emitToGroups, syncPermissionRooms } from "./deli
 import { logger } from "../logger"
 import { SyncLogRepository, type SyncLogEntryInput } from "../../features/sync"
 import { UserRepository } from "../../features/workspaces"
+import { resolveAudiences } from "./audiences"
 import { CursorLock, ensureListenerFromLatest, DebounceWithMaxWait, type ProcessResult } from "@threahq/backend-common"
 import type { OutboxHandler } from "@threahq/backend-common"
 import type { DelegationStatusChangedEventPayload } from "@threahq/types"
@@ -188,8 +189,7 @@ export class BroadcastHandler implements OutboxHandler {
     const routed = new Map<bigint, RoutedEvent>()
     const byWorkspace = new Map<string, SyncLogEntryInput[]>()
 
-    for (const event of events) {
-      const groups = resolveDeliveryGroups(event)
+    for (const { event, groups } of await resolveAudiences(this.db, events)) {
       routed.set(event.id, { groups })
       if (groups === null || groups.length === 0) {
         continue
@@ -209,11 +209,12 @@ export class BroadcastHandler implements OutboxHandler {
     }
 
     for (const [workspaceId, entries] of byWorkspace) {
-      const syncIds = await SyncLogRepository.appendForWorkspace(this.db, workspaceId, entries)
-      for (const [outboxEventId, syncId] of syncIds) {
+      const logged = await SyncLogRepository.appendForWorkspace(this.db, workspaceId, entries)
+      for (const [outboxEventId, { syncId, groups }] of logged) {
         const entry = routed.get(outboxEventId)
         if (entry) {
           entry.syncId = syncId
+          entry.groups = groups
         }
       }
     }

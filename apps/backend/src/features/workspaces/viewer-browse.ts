@@ -27,11 +27,17 @@ function viewersLackingBrowseSql(workspaceId: string, viewerFilter: QueryConfig)
 }
 
 /**
- * True when `userId` is a user of the workspace without the browse permission. Uncorrelated, so
- * the planner evaluates it once per statement however many rows the outer query scans.
+ * True when `userId` is a user of the workspace without the browse permission. A string id is
+ * uncorrelated, so the planner evaluates it once per statement however many rows the outer query
+ * scans; a `QueryConfig` column reference correlates to the outer row and must not name `u` or `wup`.
  */
-export function viewerLacksBrowseSql(workspaceId: string, userId: string): QueryConfig {
-  return composeSql`EXISTS (SELECT 1 ${viewersLackingBrowseSql(workspaceId, sql`u.id = ${userId}`)})`
+export function viewerLacksBrowseSql(workspaceId: string, userId: string | QueryConfig): QueryConfig {
+  return composeSql`EXISTS (SELECT 1 ${viewersLackingBrowseSql(workspaceId, composeSql`u.id = ${userId}`)})`
+}
+
+/** One column of ids: every user of the workspace without browse. */
+export function userIdsLackingBrowseSql(workspaceId: string): QueryConfig {
+  return composeSql`SELECT u.id ${viewersLackingBrowseSql(workspaceId, sql`TRUE`)}`
 }
 
 /** True when any user `userIdsSql` selects (one column of ids) lacks browse; false for an empty selection. */

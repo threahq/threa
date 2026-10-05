@@ -3,6 +3,7 @@ import { OutboxRepository } from "./repository"
 import * as cursorLockModule from "@threahq/backend-common"
 import { BroadcastHandler } from "./broadcast-handler"
 import { SyncLogRepository } from "../../features/sync"
+import * as workspacesModule from "../../features/workspaces"
 import { UserRepository } from "../../features/workspaces"
 import type { ProcessResult } from "@threahq/backend-common"
 import type { OutboxEvent } from "./repository"
@@ -100,6 +101,7 @@ describe("BroadcastHandler", () => {
     // routing tests don't exercise the DB, so resolve with no assigned sync
     // ids (payloads pass through unchanged).
     spyOn(SyncLogRepository, "appendForWorkspace").mockResolvedValue(new Map())
+    spyOn(workspacesModule, "listGuestViewers").mockResolvedValue(new Map())
   })
 
   afterEach(() => {
@@ -173,6 +175,78 @@ describe("BroadcastHandler", () => {
         ],
       },
     ])
+  })
+
+  it("should deliver a workspace user event to the guests who read with the user, in the rooms and the sync log but not the payload", async () => {
+    const event = makeEvent(1n, "workspace_user:updated", {
+      workspaceId: "ws_1",
+      user: { id: "usr_alice", role: "member" },
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+    spyOn(UserRepository, "findById").mockResolvedValue({ id: "usr_alice", role: "member" } as never)
+    const audienceSpy = spyOn(workspacesModule, "listGuestViewers").mockResolvedValue(
+      new Map([["usr_alice", ["usr_guest"]]])
+    )
+    const appendSpy = spyOn(SyncLogRepository, "appendForWorkspace").mockResolvedValue(new Map())
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect({
+      audienceQuery: audienceSpy.mock.calls.map((call) => call.slice(1)),
+      loggedGroups: appendSpy.mock.calls[0]?.[2].map((entry) => entry.groups),
+      rooms: emitChains.map((emitted) => emitted.room).sort(),
+      payloads: emitChains.map((emitted) => emitted.payload),
+    }).toEqual({
+      audienceQuery: [["ws_1", ["usr_alice"]]],
+      loggedGroups: [["permission:workspace:browse", "user:usr_alice", "user:usr_guest"]],
+      rooms: ["ws:ws_1:permission:workspace:browse", "ws:ws_1:user:usr_alice", "ws:ws_1:user:usr_guest"],
+      payloads: [event.payload, event.payload, event.payload],
+    })
+  })
+
+  it("should emit an already logged event to the groups it was logged with, not those resolved on retry", async () => {
+    const event = makeEvent(1n, "workspace_user:updated", {
+      workspaceId: "ws_1",
+      user: { id: "usr_alice", role: "member" },
+    })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+    spyOn(UserRepository, "findById").mockResolvedValue({ id: "usr_alice", role: "member" } as never)
+    spyOn(workspacesModule, "listGuestViewers").mockResolvedValue(new Map([["usr_alice", ["usr_new_guest"]]]))
+    spyOn(SyncLogRepository, "appendForWorkspace").mockResolvedValue(
+      new Map([[1n, { syncId: 7n, groups: ["permission:workspace:browse", "user:usr_alice", "user:usr_old_guest"] }]])
+    )
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(emitChains.map((emitted) => emitted.room).sort()).toEqual([
+      "ws:ws_1:permission:workspace:browse",
+      "ws:ws_1:user:usr_alice",
+      "ws:ws_1:user:usr_old_guest",
+    ])
+  })
+
+  it("should name the guests of the removed user when a workspace user is removed", async () => {
+    const event = makeEvent(1n, "workspace_user:removed", { workspaceId: "ws_1", removedUserId: "usr_gone" })
+    spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event])
+    const audienceSpy = spyOn(workspacesModule, "listGuestViewers").mockResolvedValue(
+      new Map([["usr_gone", ["usr_guest"]]])
+    )
+
+    const { handler, emitChains } = createHandler()
+    handler.handle()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect({
+      audienceQuery: audienceSpy.mock.calls.map((call) => call.slice(1)),
+      rooms: emitChains.map((emitted) => emitted.room).sort(),
+    }).toEqual({
+      audienceQuery: [["ws_1", ["usr_gone"]]],
+      rooms: ["ws:ws_1:permission:workspace:browse", "ws:ws_1:user:usr_gone", "ws:ws_1:user:usr_guest"],
+    })
   })
 
   it("should emit user-scoped event to user room", async () => {
@@ -1031,7 +1105,8 @@ describe("BroadcastHandler", () => {
 
     spyOn(OutboxRepository, "fetchAfterId").mockResolvedValue([event1, event2, event3])
     const appendSpy = spyOn(SyncLogRepository, "appendForWorkspace").mockImplementation(
-      async (_pool, _workspaceId, entries) => new Map(entries.map((e, i) => [e.outboxEventId, BigInt(100 + i)]))
+      async (_pool, _workspaceId, entries) =>
+        new Map(entries.map((e, i) => [e.outboxEventId, { syncId: BigInt(100 + i), groups: e.groups }]))
     )
 
     const { handler, emitChains } = createHandler()

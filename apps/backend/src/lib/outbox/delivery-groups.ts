@@ -39,9 +39,6 @@ import {
   type StreamMessageCountOutboxPayload,
   type StreamConnectionUpdatedOutboxPayload,
   type StreamUpdatedOutboxPayload,
-  type WorkspaceUserAddedOutboxPayload,
-  type WorkspaceUserRemovedOutboxPayload,
-  type WorkspaceUserUpdatedOutboxPayload,
   type BotCreatedOutboxPayload,
   type BotUpdatedOutboxPayload,
 } from "./repository"
@@ -204,6 +201,17 @@ export function emitToGroups(
   const rooms = groups.map((group) => groupToRoom(workspaceId, group))
   const payload = syncId ? { ...event.payload, syncId: syncId.toString() } : event.payload
   io.to(rooms).emit(event.eventType, payload)
+}
+
+/** The workspace user a people-directory event is about; null for every other event. */
+export function workspaceUserOf(event: OutboxEvent): { workspaceId: string; userId: string } | null {
+  if (isOneOfOutboxEventType(event, ["workspace_user:added", "workspace_user:updated"])) {
+    return { workspaceId: event.payload.workspaceId, userId: event.payload.user.id }
+  }
+  if (isOutboxEventType(event, "workspace_user:removed")) {
+    return { workspaceId: event.payload.workspaceId, userId: event.payload.removedUserId }
+  }
+  return null
 }
 
 /**
@@ -452,15 +460,8 @@ export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
 
   // The people directory is for browsers; the user themselves still hears of
   // their own change, which is how a guest sees their own profile.
-  if (isOneOfOutboxEventType(event, ["workspace_user:added", "workspace_user:updated"])) {
-    const { user } = event.payload as WorkspaceUserAddedOutboxPayload | WorkspaceUserUpdatedOutboxPayload
-    return [BROWSE_GROUP, userGroup(user.id)]
-  }
-
-  if (isOutboxEventType(event, "workspace_user:removed")) {
-    const { removedUserId } = event.payload as WorkspaceUserRemovedOutboxPayload
-    return [BROWSE_GROUP, userGroup(removedUserId)]
-  }
+  const person = workspaceUserOf(event)
+  if (person) return [BROWSE_GROUP, userGroup(person.userId)]
 
   // A shared bot is workspace-wide; a personal one stays with members and its owner.
   if (isOneOfOutboxEventType(event, ["bot:created", "bot:updated"])) {

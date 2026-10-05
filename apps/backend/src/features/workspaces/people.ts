@@ -1,13 +1,13 @@
 import type { QueryConfig } from "pg"
 import { AuthorTypes } from "@threahq/types"
-import { composeSql, sql } from "../../db"
+import { composeSql, sql, type Querier } from "../../db"
 import {
   roomReadableWithoutMembershipSql,
   roomReadersAllBrowseSql,
   roomSharedSql,
   streamAccessPredicateSql,
 } from "../streams"
-import { viewerLacksBrowseSql } from "./viewer-browse"
+import { userIdsLackingBrowseSql, viewerLacksBrowseSql } from "./viewer-browse"
 
 export const PeoplePurposes = {
   VISIBLE: "visible",
@@ -35,14 +35,21 @@ export function peopleViewerForActor(actorType: string, actorId: string): People
   return actorType === AuthorTypes.USER ? { kind: "user", userId: actorId } : { kind: "workspace" }
 }
 
-/** Members and non-deleted authors of the streams `streamIdsSql` selects; bot and persona ids match no user row. */
-function peopleOfStreamsSql(workspaceId: string, streamIdsSql: QueryConfig): QueryConfig {
-  return composeSql`u.id IN (
-    SELECT sm.member_id FROM stream_members sm
-    WHERE sm.workspace_id = ${workspaceId} AND sm.stream_id IN (${streamIdsSql})
+/**
+ * `(stream_id, person_id)` rows, one per membership and per non-deleted message, so callers dedupe;
+ * bot and persona ids match no user row.
+ */
+function streamPeopleSql(workspaceId: string): QueryConfig {
+  return composeSql`
+    SELECT sm.stream_id, sm.member_id AS person_id FROM stream_members sm WHERE sm.workspace_id = ${workspaceId}
     UNION ALL
-    SELECT DISTINCT m.author_id FROM messages m
-    WHERE m.workspace_id = ${workspaceId} AND m.stream_id IN (${streamIdsSql}) AND m.deleted_at IS NULL
+    SELECT m.stream_id, m.author_id FROM messages m WHERE m.workspace_id = ${workspaceId} AND m.deleted_at IS NULL`
+}
+
+function peopleOfStreamsSql(workspaceId: string, streamIdsSql: QueryConfig): QueryConfig {
+  // eslint-disable-next-line threa/workspace-scoped-sql -- streamPeopleSql pins workspace_id in both arms, checked where it is written
+  return composeSql`u.id IN (
+    SELECT sp.person_id FROM (${streamPeopleSql(workspaceId)}) sp WHERE sp.stream_id IN (${streamIdsSql})
   )`
 }
 
@@ -97,4 +104,38 @@ function visibleToViewerSql(workspaceId: string, viewer: PeopleViewer): QueryCon
       )`
     }
   }
+}
+
+/** For each of `userIds`, the users lacking browse, other than that user, who see it by `peopleScopeSql`'s user arm. */
+export async function listGuestViewers(
+  db: Querier,
+  workspaceId: string,
+  userIds: readonly string[]
+): Promise<Map<string, string[]>> {
+  const viewers = new Map<string, string[]>()
+  if (userIds.length === 0) return viewers
+  // A thread is read through its root (INV-62), so each person's streams collapse to roots; a
+  // workspace without guests skips the people scan through the one-time EXISTS filter.
+  // eslint-disable-next-line threa/workspace-scoped-sql -- streamPeopleSql pins workspace_id in both arms, checked where it is written
+  const result = await db.query<{ subject_id: string; id: string }>(composeSql`
+    WITH guests AS (${userIdsLackingBrowseSql(workspaceId)}),
+    subject_roots AS MATERIALIZED (
+      SELECT DISTINCT sp.person_id AS subject_id, COALESCE(s.root_stream_id, s.id) AS root_id
+      FROM (${streamPeopleSql(workspaceId)}) sp
+      JOIN streams s ON s.id = sp.stream_id AND s.workspace_id = ${workspaceId}
+      WHERE sp.person_id = ANY(${userIds as string[]}) AND EXISTS (SELECT 1 FROM guests)
+    )
+    SELECT s.subject_id, g.id FROM (SELECT DISTINCT subject_id FROM subject_roots) s
+    JOIN guests g ON g.id <> s.subject_id
+    WHERE EXISTS (
+      SELECT 1 FROM subject_roots sr
+      WHERE sr.subject_id = s.subject_id AND ${streamAccessPredicateSql(workspaceId, sql`g.id`, "sr.root_id")}
+    )
+  `)
+  for (const row of result.rows) {
+    const ids = viewers.get(row.subject_id)
+    if (ids) ids.push(row.id)
+    else viewers.set(row.subject_id, [row.id])
+  }
+  return viewers
 }
