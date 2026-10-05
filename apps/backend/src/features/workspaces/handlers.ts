@@ -554,7 +554,8 @@ export function createWorkspaceHandlers({
           if (!res.headersSent) {
             res.status(500).end()
           } else {
-            res.end()
+            // Aborting keeps a truncated body from reading as a complete, immutably cached file.
+            res.destroy()
           }
         })
         stream.pipe(res)

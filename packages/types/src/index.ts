@@ -1476,6 +1476,9 @@ export {
   bridgeAddReactionSchema,
   bridgeDeleteMessageQuerySchema,
   bridgeRemoveReactionQuerySchema,
+  BRIDGE_PROFILES_MAX_IDS,
+  bridgeProfilesRequestSchema,
+  bridgeProfilesSchema,
   type BridgeWriteUser,
   type BridgeWriteAttachment,
   type BridgeSendMessage,
@@ -1491,6 +1494,9 @@ export {
   type BridgeUser,
   type BridgeActor,
   type BridgeEvents,
+  type BridgeProfilesRequest,
+  type BridgeProfile,
+  type BridgeProfiles,
   type ConnectedWorkspace,
 } from "./stream-connections"
 

@@ -6,6 +6,7 @@ import {
   bridgeAddReactionSchema,
   bridgeDeleteMessageQuerySchema,
   bridgeEditMessageSchema,
+  bridgeProfilesRequestSchema,
   bridgeRemoveReactionQuerySchema,
   bridgeSendMessageSchema,
   streamConnectionIdSchema,
@@ -124,7 +125,7 @@ interface BridgeDependencies {
   streamConnectionWriteService: StreamConnectionWriteService
 }
 
-/** Another region's calls about a shared channel: the partner's reads and writes on a channel this workspace hosts, and the host's pokes. */
+/** Another region's calls about a shared channel: the partner's reads and writes on a channel this workspace hosts, the host's pokes, and either end's profile reads and pokes. */
 export function createStreamConnectionBridgeHandlers({
   streamConnectionExportService,
   streamConnectionImportService,
@@ -174,6 +175,22 @@ export function createStreamConnectionBridgeHandlers({
       setAuditSubjects(res, [{ type: "attachment", id: params.attachmentId }])
       res.setHeader("Cache-Control", "no-store")
       res.json(answer)
+    },
+
+    async profiles(req: Request, res: Response) {
+      const params = validateRequest(bridgeParamsSchema, req.params)
+      const { userIds } = validateRequest(bridgeProfilesRequestSchema, req.body)
+      const profiles = await streamConnectionExportService.getProfiles({
+        ...params,
+        userIds,
+        callerWorkspaceId: identifyCaller(req, params.connectionId),
+      })
+      setAuditSubjects(
+        res,
+        profiles.users.map((user) => ({ type: "user", id: user.id }))
+      )
+      res.setHeader("Cache-Control", "no-store")
+      res.json(profiles)
     },
 
     async sendMessage(req: Request, res: Response) {
@@ -248,6 +265,17 @@ export function createStreamConnectionBridgeHandlers({
         callerWorkspaceId: identifyCaller(req, params.connectionId),
       })
       // Every shared-channel change sends one and it carries no data, so only a refusal earns a row.
+      res.locals.auditSkip = true
+      res.status(204).end()
+    },
+
+    async profilesPoke(req: Request, res: Response) {
+      const params = validateRequest(bridgeParamsSchema, req.params)
+      await streamConnectionImportService.requestProfileRefresh({
+        ...params,
+        callerWorkspaceId: identifyCaller(req, params.connectionId),
+      })
+      // Like a pull poke, it carries no data, so only a refusal earns a row.
       res.locals.auditSkip = true
       res.status(204).end()
     },

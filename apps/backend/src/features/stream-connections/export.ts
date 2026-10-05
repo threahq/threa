@@ -12,6 +12,7 @@ import {
   type BridgeEvents,
   type BridgeManifest,
   type BridgeMessage,
+  type BridgeProfiles,
   type BridgeStream,
   type BridgeUser,
   type EventType,
@@ -27,7 +28,7 @@ import type { FeatureFlagService } from "../feature-flags"
 import { MessageRepository, deriveContentMarkdown, type Message } from "../messaging"
 import { BotRepository } from "../public-api"
 import { StreamEventRepository, StreamRepository, normalizeStreamDescription, type Stream } from "../streams"
-import { UserRepository } from "../workspaces"
+import { UserRepository, userAvatarToken } from "../workspaces"
 import { connectionNotFound, writeRefused } from "./errors"
 import { namedAuthors } from "./named-authors"
 import { StreamConnectionRepository } from "./repository"
@@ -262,6 +263,36 @@ export class StreamConnectionExportService {
       case AttachmentSafetyStatuses.E2E_UNSCANNED:
         return { status: "failed" }
     }
+  }
+
+  /**
+   * The current name and avatar of the asked users who wrote or reacted in the
+   * streams this end serves, leaving out the caller's own users. Any other id
+   * is left out of the answer, not refused.
+   */
+  async getProfiles(caller: BridgeCaller & { userIds: string[] }): Promise<BridgeProfiles> {
+    await this.assertEnabled(caller.workspaceId)
+    return withClient(this.pool, async (client) => {
+      const servedStreamIds = await loadServedStreamIds(client, caller)
+      const users = (await UserRepository.findByIds(client, caller.workspaceId, caller.userIds)).filter(
+        (user) => user.originWorkspaceId !== caller.callerWorkspaceId
+      )
+      const participants = await MessageRepository.filterParticipants(
+        client,
+        caller.workspaceId,
+        [...servedStreamIds],
+        users.map((user) => user.id)
+      )
+      return {
+        users: users
+          .filter((user) => participants.has(user.id))
+          .map((user) => ({
+            id: user.id,
+            name: user.name,
+            avatar: user.avatarUrl ? userAvatarToken(user.avatarUrl) : null,
+          })),
+      }
+    })
   }
 
   private async assertEnabled(workspaceId: string): Promise<void> {

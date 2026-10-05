@@ -5,6 +5,8 @@ export { StreamConnectionForwardService } from "./forward"
 export { createStreamConnectionBridgeHandlers, createStreamConnectionHandlers } from "./handlers"
 export { StreamConnectionImportService } from "./import"
 export { StreamConnectionPokeHandler } from "./poke-outbox-handler"
+export { StreamConnectionProfileService } from "./profiles"
+export { createStreamConnectionProfilesWorker } from "./profiles-worker"
 export { StreamConnectionPullService } from "./pull"
 export { StreamConnectionRepository } from "./repository"
 export {

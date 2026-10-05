@@ -48,6 +48,11 @@ export interface ConnectionRef {
   connectionId: string
 }
 
+/** A host or partner connection with the workspace at its other end. */
+export interface LinkedConnectionRef extends ConnectionRef {
+  remoteWorkspaceId: string
+}
+
 export interface HostConnectionRef {
   hostWorkspaceId: string
   connectionId: string
@@ -215,5 +220,21 @@ export const StreamConnectionRepository = {
       SELECT workspace_id, id FROM stream_connections WHERE role = 'partner' AND state = 'active'
     `)
     return result.rows.map((row) => ({ workspaceId: row.workspace_id, connectionId: row.id }))
+  },
+
+  /** The active host and partner connections of the given workspaces, or of every workspace in the region without them. */
+  async listActiveLinkedConnections(db: Querier, workspaceIds?: string[]): Promise<LinkedConnectionRef[]> {
+    if (workspaceIds?.length === 0) return []
+    // eslint-disable-next-line threa/workspace-scoped-sql -- without workspaceIds, every connection in the region by design
+    const result = await db.query<{ workspace_id: string; id: string; remote_workspace_id: string }>(sql`
+      SELECT workspace_id, id, remote_workspace_id FROM stream_connections
+      WHERE (${workspaceIds ?? null}::text[] IS NULL OR workspace_id = ANY(${workspaceIds ?? null}::text[]))
+        AND role IN ('host', 'partner') AND state = 'active' AND remote_workspace_id IS NOT NULL
+    `)
+    return result.rows.map((row) => ({
+      workspaceId: row.workspace_id,
+      connectionId: row.id,
+      remoteWorkspaceId: row.remote_workspace_id,
+    }))
   },
 }

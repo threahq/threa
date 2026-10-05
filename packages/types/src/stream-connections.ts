@@ -310,6 +310,30 @@ export type BridgeAddReaction = z.infer<typeof bridgeAddReactionSchema>
 export const bridgeDeleteMessageQuerySchema = z.object({ authorId: z.string().regex(/^usr_/) })
 export const bridgeRemoveReactionQuerySchema = z.object({ authorId: z.string().regex(/^usr_/) })
 
+export const BRIDGE_PROFILES_MAX_IDS = 500
+
+/** The users whose current profiles one side asks the other for: its copies of the other side's users. */
+export const bridgeProfilesRequestSchema = z.object({
+  userIds: z.array(z.string().regex(/^usr_/)).min(1).max(BRIDGE_PROFILES_MAX_IDS),
+})
+export type BridgeProfilesRequest = z.infer<typeof bridgeProfilesRequestSchema>
+
+/**
+ * A user's current name and avatar. `avatar` is the upload's timestamp, the
+ * last segment of its avatar key, from which the asker fetches the image
+ * files; null when the user has none.
+ */
+export const bridgeProfileSchema = z.object({
+  id: z.string().regex(/^usr_/),
+  name: z.string(),
+  avatar: z.string().regex(/^\d+$/).nullable(),
+})
+export type BridgeProfile = z.infer<typeof bridgeProfileSchema>
+
+/** The asked-for users who still wrote or reacted in what the connection shares. The rest are left out. */
+export const bridgeProfilesSchema = z.object({ users: z.array(bridgeProfileSchema) })
+export type BridgeProfiles = z.infer<typeof bridgeProfilesSchema>
+
 /** A host custom persona or bot that wrote or reacted in the shared tree, as the partner shows it. */
 export const bridgeActorSchema = z.object({
   id: z.string().regex(/^(persona|bot)_/),

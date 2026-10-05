@@ -35,6 +35,7 @@ import { ActorCopyRepository, UserRepository, syncActorCopies, syncUserCopies } 
 import type { BridgeClient, ConnectionAddress } from "./bridge-client"
 import { StreamConnectionCursorRepository } from "./cursor-repository"
 import { namedAuthors } from "./named-authors"
+import { enqueueProfileRefreshes } from "./profiles"
 import { StreamConnectionRepository, type ConnectionRef } from "./repository"
 
 const PAGE_LIMIT = 200
@@ -386,12 +387,13 @@ async function applyPage(
   const stream = await StreamRepository.findById(client, workspaceId, streamId)
   if (!stream) throw new Error(`Copy ${streamId} is missing from ${workspaceId}`)
 
-  await syncUserCopies(client, {
+  const insertedCopies = await syncUserCopies(client, {
     workspaceId,
     originWorkspaceId: connection.hostWorkspaceId,
     originWorkspaceName: connection.hostWorkspaceName,
     users: page.users,
   })
+  if (insertedCopies.length > 0) await enqueueProfileRefreshes(client, [{ workspaceId, connectionId }])
   await syncActorCopies(client, {
     workspaceId,
     originWorkspaceId: connection.hostWorkspaceId,

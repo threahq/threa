@@ -3,8 +3,16 @@ import sharp from "sharp"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { logger } from "../../lib/logger"
 
-const AVATAR_SIZES = [256, 64] as const
+export const AVATAR_SIZES = [256, 64] as const
 const WEBP_QUALITY = 80
+const USER_AVATAR_KEY_PATTERN = /^avatars\/[^/]+\/[^/]+\/(\d+)$/
+
+/** The upload token a user avatar key (avatars/{workspaceId}/{userId}/{token}) ends in, which names its files. */
+export function userAvatarToken(avatarKey: string): string {
+  const match = USER_AVATAR_KEY_PATTERN.exec(avatarKey)
+  if (!match) throw new Error(`Avatar key ${avatarKey} is not a user avatar key`)
+  return match[1]
+}
 
 export class AvatarService {
   private storage: StorageProvider
@@ -110,6 +118,30 @@ export class AvatarService {
    */
   rawKeyToBasePath(rawS3Key: string): string {
     return rawS3Key.replace(/\.original$/, "")
+  }
+
+  /**
+   * Stores another workspace's user avatar, uploaded there at `token`, as this
+   * user's avatar, reading each processed file through `fetchFile`. Returns the
+   * new avatar key, or null when any file is missing (nothing is stored then).
+   */
+  async copyUserAvatar(params: {
+    workspaceId: string
+    userId: string
+    token: string
+    fetchFile: (file: string) => Promise<Buffer | null>
+  }): Promise<string | null> {
+    const { workspaceId, userId, token, fetchFile } = params
+    const files = await Promise.all(AVATAR_SIZES.map((size) => fetchFile(`${token}.${size}.webp`)))
+    const images = new Map<number, Buffer>()
+    for (const [i, size] of AVATAR_SIZES.entries()) {
+      const file = files[i]
+      if (!file) return null
+      images.set(size, file)
+    }
+    const basePath = `avatars/${workspaceId}/${userId}/${token}`
+    await this.uploadImages(basePath, images)
+    return basePath
   }
 
   private static readonly AVATAR_FILE_PATTERN = /^\d+\.(256|64)\.webp$/

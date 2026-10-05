@@ -2,18 +2,19 @@ import type { Querier } from "../../db"
 import { generateUniqueSlug, serializeBigInt } from "@threahq/backend-common"
 import type { BridgeUser } from "@threahq/types"
 import { OutboxRepository } from "../../lib/outbox"
-import { UserRepository } from "./user-repository"
+import { UserRepository, type User } from "./user-repository"
 
 /**
  * Keeps a copy here of each host user a shared channel's changes name, under
  * the host's id and current name, so the partner renders who wrote and
  * reacted. A copy's slug is qualified by the host workspace's name when it is
- * first written and never moves after, so mentions of it stay put.
+ * first written and never moves after, so mentions of it stay put. Returns
+ * the copies it inserted, which have no avatar yet.
  */
 export async function syncUserCopies(
   client: Querier,
   params: { workspaceId: string; originWorkspaceId: string; originWorkspaceName: string; users: BridgeUser[] }
-): Promise<void> {
+): Promise<User[]> {
   const { workspaceId, originWorkspaceId } = params
   const origins = await UserRepository.findOrigins(
     client,
@@ -21,6 +22,7 @@ export async function syncUserCopies(
     params.users.map((user) => user.id)
   )
   const existing: BridgeUser[] = []
+  const insertedCopies: User[] = []
   for (const user of params.users) {
     let origin = origins.get(user.id)
     if (origin === undefined) {
@@ -36,6 +38,7 @@ export async function syncUserCopies(
       })
       if (inserted) {
         await OutboxRepository.insert(client, "workspace_user:added", { workspaceId, user: serializeBigInt(inserted) })
+        insertedCopies.push(inserted)
         continue
       }
       origin = (await UserRepository.findOrigins(client, workspaceId, [user.id])).get(user.id)
@@ -53,4 +56,5 @@ export async function syncUserCopies(
       payload: { workspaceId, user: serializeBigInt(user) },
     }))
   )
+  return insertedCopies
 }

@@ -312,6 +312,31 @@ export const MessageRepository = {
     return new Map(result.rows.map((row) => [row.id, row.stream_id]))
   },
 
+  /** The given users who wrote, or reacted on, a live message in the given streams. */
+  async filterParticipants(
+    db: Querier,
+    workspaceId: string,
+    streamIds: string[],
+    userIds: string[]
+  ): Promise<Set<string>> {
+    if (streamIds.length === 0 || userIds.length === 0) return new Set()
+    const result = await db.query<{ user_id: string }>(sql`
+      SELECT author_id AS user_id FROM messages
+      WHERE workspace_id = ${workspaceId}
+        AND stream_id = ANY(${streamIds})
+        AND author_id = ANY(${userIds})
+        AND deleted_at IS NULL
+      UNION
+      SELECT r.user_id FROM reactions r
+      JOIN messages m ON m.workspace_id = r.workspace_id AND m.id = r.message_id
+      WHERE r.workspace_id = ${workspaceId}
+        AND r.user_id = ANY(${userIds})
+        AND m.stream_id = ANY(${streamIds})
+        AND m.deleted_at IS NULL
+    `)
+    return new Set(result.rows.map((row) => row.user_id))
+  },
+
   async findByIdsForUpdate(db: Querier, workspaceId: string, ids: string[]): Promise<Message[]> {
     if (ids.length === 0) return []
 

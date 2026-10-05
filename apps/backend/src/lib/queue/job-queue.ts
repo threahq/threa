@@ -62,6 +62,7 @@ export const JobQueues = {
   STREAM_CONNECTION_PULL: "stream_connection.pull",
   STREAM_CONNECTION_SWEEP: "stream_connection.sweep",
   STREAM_CONNECTION_COPY_ATTACHMENT: "stream_connection.copy_attachment",
+  STREAM_CONNECTION_PROFILES: "stream_connection.profiles",
 } as const
 
 export type JobQueueName = (typeof JobQueues)[keyof typeof JobQueues]
@@ -166,6 +167,12 @@ export interface StreamConnectionPullJobData {
 
 export interface StreamConnectionSweepJobData {
   workspaceId: string // Use "system" for system-wide cron job
+}
+
+/** One end of a connection brings its copies of the other end's users up to date. */
+export interface StreamConnectionProfilesJobData {
+  workspaceId: string
+  connectionId: string
 }
 
 /** A partner workspace copies one host attachment's bytes into its own storage. */
@@ -503,6 +510,7 @@ export interface JobDataMap {
   [JobQueues.STREAM_CONNECTION_PULL]: StreamConnectionPullJobData
   [JobQueues.STREAM_CONNECTION_SWEEP]: StreamConnectionSweepJobData
   [JobQueues.STREAM_CONNECTION_COPY_ATTACHMENT]: StreamConnectionCopyAttachmentJobData
+  [JobQueues.STREAM_CONNECTION_PROFILES]: StreamConnectionProfilesJobData
 }
 
 /** Returns void on success, throws on error. */

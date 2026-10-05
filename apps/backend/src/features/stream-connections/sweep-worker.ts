@@ -1,7 +1,7 @@
 import type { JobHandler, StreamConnectionSweepJobData } from "../../lib/queue"
 import type { StreamConnectionImportService } from "./import"
 
-/** The longest a change waits when its poke is lost. */
+/** The longest a change, or a user's new name or avatar, waits when its poke is lost. */
 export const STREAM_CONNECTION_SWEEP_INTERVAL_SECONDS = 300
 
 export function createStreamConnectionSweepWorker(deps: {
@@ -9,5 +9,6 @@ export function createStreamConnectionSweepWorker(deps: {
 }): JobHandler<StreamConnectionSweepJobData> {
   return async () => {
     await deps.streamConnectionImportService.enqueueAllPulls()
+    await deps.streamConnectionImportService.enqueueAllProfileRefreshes()
   }
 }

@@ -18,7 +18,11 @@ import { StreamRepository } from "../streams"
 import { UserRepository, syncUserCopies } from "../workspaces"
 import { connectionNotFound, writeRefused } from "./errors"
 import { importDoc, loadSharedTree, type BridgeCaller, type ImportedContent } from "./export"
+import { enqueueProfileRefreshes } from "./profiles"
 import { StreamConnectionRepository } from "./repository"
+
+/** Past a caller's settle after a write: its pulls retry three times on 5 s requests. */
+const SETTLED_REFRESH_DELAY_MS = 30_000
 
 type WriteCaller = BridgeCaller & { streamId: string }
 type MessageCaller = WriteCaller & { messageId: string }
@@ -182,12 +186,19 @@ export class StreamConnectionWriteService {
         if (!connection.remoteWorkspaceName) {
           throw new Error(`Connection ${connection.id} is active but names no partner workspace`)
         }
-        await syncUserCopies(client, {
+        const insertedCopies = await syncUserCopies(client, {
           workspaceId: caller.workspaceId,
           originWorkspaceId: caller.callerWorkspaceId,
           originWorkspaceName: connection.remoteWorkspaceName,
           users: profiles,
         })
+        if (insertedCopies.length > 0) {
+          // The caller answers for its users only once its copy holds something they wrote, which this write
+          // reaches when the caller's settle pull commits, so a second refresh lands past that settle.
+          const refs = [{ workspaceId: caller.workspaceId, connectionId: connection.id }]
+          await enqueueProfileRefreshes(client, refs)
+          await enqueueProfileRefreshes(client, refs, SETTLED_REFRESH_DELAY_MS)
+        }
       }
 
       if (admission.message) {
