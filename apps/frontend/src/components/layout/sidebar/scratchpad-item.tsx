@@ -358,7 +358,8 @@ export function ScratchpadItem({
     <>
       <SidebarActionContextMenu actions={actions} disabled={isTouchInput} focusRef={itemRef}>
         <div
-          className={cn("group reveal-host relative", swipe.offset !== 0 && "overflow-hidden")}
+          data-swipe-host
+          className={cn("group reveal-host relative", swipe.isSwiping && "overflow-hidden")}
           onPointerEnter={(event) => {
             hover.onPointerEnter(event)
             if (isInboxRow) handleInboxHoverEnter()
@@ -368,7 +369,7 @@ export function ScratchpadItem({
             if (isInboxRow) handleInboxHoverLeave()
           }}
         >
-          <InboxRowSwipeReveal offset={swipe.offset} locked={swipe.isLocked} />
+          <InboxRowSwipeReveal active={swipe.isSwiping} locked={swipe.isLocked} />
           <StreamHoverCard
             hover={hover}
             workspaceId={workspaceId}
@@ -382,7 +383,8 @@ export function ScratchpadItem({
               aria-keyshortcuts={quickJump?.keyshortcut}
               onClick={handleRowClick}
               {...touchHandlers}
-              style={swipe.offset ? { transform: `translateX(${swipe.offset}px)` } : undefined}
+              data-swipe-follow
+              style={swipe.isSwiping ? { transform: "translateX(var(--swipe-x))" } : undefined}
               className={cn(
                 "flex items-stretch rounded-lg text-sm transition-colors",
                 // The tinted background means exactly one thing: "you are here" — or,

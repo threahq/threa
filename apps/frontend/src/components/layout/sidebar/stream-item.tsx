@@ -149,13 +149,14 @@ export function InboxRowClearButton({ onClear, keyHint }: { onClear: () => void;
  * What a row swiped right uncovers: the Settle check, filling only the strip the
  * row has slid off so it never shows through the row itself.
  */
-export function InboxRowSwipeReveal({ offset, locked }: { offset: number; locked: boolean }) {
-  if (offset <= 0) return null
+export function InboxRowSwipeReveal({ active, locked }: { active: boolean; locked: boolean }) {
+  if (!active) return null
   return (
     <div
       aria-hidden
       className="pointer-events-none absolute inset-y-0 left-0 flex items-center justify-center overflow-hidden"
-      style={{ width: offset }}
+      data-swipe-follow
+      style={{ width: "var(--swipe-x)" }}
     >
       <Check className={cn("h-5 w-5 shrink-0 transition-colors", locked ? "text-primary" : "text-muted-foreground")} />
     </div>
@@ -742,7 +743,8 @@ export function StreamItem({
     <>
       <SidebarActionContextMenu actions={actions} disabled={isTouchInput} focusRef={itemRef}>
         <div
-          className={cn("group reveal-host relative", swipe.offset !== 0 && "overflow-hidden")}
+          data-swipe-host
+          className={cn("group reveal-host relative", swipe.isSwiping && "overflow-hidden")}
           onPointerEnter={(event) => {
             hover.onPointerEnter(event)
             if (isInboxRow) handleInboxHoverEnter()
@@ -752,7 +754,7 @@ export function StreamItem({
             if (isInboxRow) handleInboxHoverLeave()
           }}
         >
-          <InboxRowSwipeReveal offset={swipe.offset} locked={swipe.isLocked} />
+          <InboxRowSwipeReveal active={swipe.isSwiping} locked={swipe.isLocked} />
           <StreamHoverCard
             hover={hover}
             workspaceId={workspaceId}
@@ -766,7 +768,8 @@ export function StreamItem({
               aria-keyshortcuts={quickJump?.keyshortcut}
               onClick={handleRowClick}
               {...touchHandlers}
-              style={swipe.offset ? { transform: `translateX(${swipe.offset}px)` } : undefined}
+              data-swipe-follow
+              style={swipe.isSwiping ? { transform: "translateX(var(--swipe-x))" } : undefined}
               className={cn(
                 "flex items-stretch rounded-lg text-sm transition-colors",
                 // The tinted background means exactly one thing: "you are here" — or,

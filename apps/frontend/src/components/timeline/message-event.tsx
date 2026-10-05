@@ -247,14 +247,14 @@ interface MessageLayoutProps {
     onTouchCancel: () => void
     onContextMenu: (e: React.MouseEvent) => void
   }
-  /** Horizontal swipe offset for mobile swipe-to-quote (px, negative = left) */
-  swipeOffset?: number
+  /** Whether the row is off its resting position, following `--swipe-x` (mobile swipe-to-quote). */
+  swipeActive?: boolean
   /** Whether swipe has passed the threshold */
   swipeLocked?: boolean
   /** Which action the locked swipe releases into: quote, or (after the L's downward leg) an aside. */
   swipeArm?: SwipeArm
-  /** How far the row follows the finger down the L's leg (px). */
-  swipeOffsetY?: number
+  /** Whether the row is pulled down the L's leg, following `--swipe-y`. */
+  swipePulled?: boolean
   /** Whether the L can pay off on this row (the reveal shows the pull hint). */
   swipeCanPullDown?: boolean
   batch?: BatchTimelineState
@@ -561,10 +561,10 @@ function MessageLayout({
   containerRef,
   deferSecondaryHydration,
   touchHandlers,
-  swipeOffset,
+  swipeActive,
   swipeLocked,
   swipeArm,
-  swipeOffsetY,
+  swipePulled,
   swipeCanPullDown,
   batch,
 }: MessageLayoutProps) {
@@ -578,8 +578,6 @@ function MessageLayout({
   // when the grouping pass marked this row as a continuation.
   const renderAsContinuation = isGroupContinuation && !isEditing
 
-  const hasSwipe = swipeOffset !== undefined && swipeOffset !== 0
-  const swipePulled = hasSwipe && !!swipeOffsetY && swipeOffsetY > 0
   // Make a whole-message native copy lossless: scope the listener to the
   // rendered markdown body only. A `select-all + Ctrl+C` over the markdown
   // text writes `contentMarkdown` instead of the rendered text (which has
@@ -759,7 +757,8 @@ function MessageLayout({
       className={cn("relative overflow-hidden sm:overflow-visible", swipePulled && "z-10", containerClassName)}
       // The L's downward leg moves the whole row (clip box included) so the
       // pulled message rides over the next one rather than out of its own clip.
-      style={swipePulled ? { transform: `translateY(${swipeOffsetY}px)` } : undefined}
+      data-swipe-follow
+      style={swipePulled ? { transform: "translateY(var(--swipe-y))" } : undefined}
       aria-label={rowAriaLabel}
       // Batch mode turns the whole row into a toggle. Keyboard users get
       // role="button" + tabIndex so they can Tab to messages, and Enter/Space
@@ -774,7 +773,9 @@ function MessageLayout({
     >
       {/* Swipe reveal (behind the message): quote, or the aside once the L's
           downward leg arms it. */}
-      {hasSwipe && <SwipeReveal locked={!!swipeLocked} arm={swipeArm ?? "primary"} canPullDown={!!swipeCanPullDown} />}
+      {swipeActive && (
+        <SwipeReveal locked={!!swipeLocked} arm={swipeArm ?? "primary"} canPullDown={!!swipeCanPullDown} />
+      )}
       <div
         className={cn(
           // Opaque background so swipe-to-quote icon shows behind the message.
@@ -806,7 +807,8 @@ function MessageLayout({
           batchEnabled && isInvalidTarget && "opacity-40 grayscale",
           batchEnabled && isHoveredTarget && "ring-2 ring-primary/60 ring-inset"
         )}
-        style={hasSwipe ? { transform: `translateX(${swipeOffset}px)` } : undefined}
+        data-swipe-follow
+        style={swipeActive ? { transform: "translateX(var(--swipe-x))" } : undefined}
       >
         {renderBatchLeading(batchEnabled, !!renderAsContinuation, {
           selected: isSelected,
@@ -1622,10 +1624,10 @@ function SentMessageEvent({
           isTouchInput && !isEditing && "select-none",
           longPress.isPressed && "opacity-70 transition-opacity duration-100"
         )}
-        swipeOffset={touchCapable ? swipe.offset : undefined}
+        swipeActive={touchCapable && swipe.isSwiping}
         swipeLocked={touchCapable ? swipe.isLocked : undefined}
         swipeArm={touchCapable ? swipe.arm : undefined}
-        swipeOffsetY={touchCapable ? swipe.offsetY : undefined}
+        swipePulled={touchCapable && swipe.isPulled}
         swipeCanPullDown={touchCapable && canOpenAside}
         touchHandlers={
           touchCapable && !batch?.enabled
