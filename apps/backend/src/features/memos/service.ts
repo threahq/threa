@@ -20,16 +20,16 @@ import { enrichMessagesWithLinkPreviews } from "../link-previews"
 import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
 import { WorkspaceSettingsRepository } from "../workspace-settings"
-import { StreamContextRepository, contextSnippet, type NewStreamContextItem } from "../stream-context"
 import type { MemoAudience } from "./audience"
 import { MemoRepository, type Memo } from "./repository"
+import { indexCapturedMemos, recordConversationCaptures } from "./captures"
 import { PendingItemRepository, type PendingMemoItem } from "./pending-item-repository"
 import { classificationFingerprint } from "./classification-fingerprint"
 import type { ConversationClassifier } from "./classifier"
 import { Memorizer } from "./memorizer"
 import { MessageFormatter } from "../../lib/ai/message-formatter"
 import type { EmbeddingServiceLike } from "./embedding-service"
-import { memoId, eventId, streamContextItemId } from "../../lib/id"
+import { memoId, eventId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import {
   MemoTypes,
@@ -1066,14 +1066,10 @@ export class MemoService implements MemoServiceLike {
       }
       memosCreated = createdMemos.length
 
-      await this.indexCapturedMemos(client, workspaceId, streamId, createdMemos)
-
-      // Memory capture is visible in situ (INV-69): append one broadcast
-      // timeline event per conversation that yielded memos, in the same
-      // transaction as the memo rows, so memory creation is never silent.
-      // Per-stream debouncing means these land just after the conversations
-      // they were extracted from. Batched (INV-56): one sequence allocation
-      // covers every capture event in the batch.
+      // Memory capture is visible in situ (INV-69): one broadcast timeline
+      // event per conversation that yielded memos, in the same transaction as
+      // the memo rows. Per-stream debouncing means these land just after the
+      // conversations they were extracted from.
       const memosByConversation = new Map<string, MemoToCreate[]>()
       for (const memo of createdMemos) {
         if (!memo.sourceConversationId) {
@@ -1089,33 +1085,8 @@ export class MemoService implements MemoServiceLike {
         group.push(memo)
         memosByConversation.set(memo.sourceConversationId, group)
       }
-      if (memosByConversation.size > 0) {
-        const captureEvents = await StreamEventRepository.insertMany(
-          client,
-          Array.from(memosByConversation, ([conversationId, memos]) => ({
-            id: eventId(),
-            workspaceId,
-            streamId,
-            eventType: "memos:captured" as const,
-            payload: {
-              conversationId,
-              memos: memos.map((memo) => ({
-                memoId: memo.id,
-                title: memo.title,
-                knowledgeType: memo.knowledgeType,
-                sourceMessageIds: memo.sourceMessageIds,
-              })),
-            } satisfies MemosCapturedEventPayload,
-            actorType: AuthorTypes.SYSTEM,
-          }))
-        )
-        await OutboxRepository.insertMany(
-          client,
-          captureEvents.map((event) => ({
-            eventType: "stream:memos_captured" as const,
-            payload: { workspaceId, streamId, event },
-          }))
-        )
+      const captureEvents = await recordConversationCaptures(client, workspaceId, streamId, memosByConversation)
+      if (captureEvents.length > 0) {
         logger.info(
           { workspaceId, streamId, conversations: memosByConversation.size, captureEvents: captureEvents.length },
           "memos:captured timeline events inserted"
@@ -1167,68 +1138,6 @@ export class MemoService implements MemoServiceLike {
     )
 
     return { processed, memosCreated }
-  }
-
-  /**
-   * "In this stream" projection rows for freshly captured memos. The landmark
-   * sits at the LATEST source message's `created_at`, not the capture time —
-   * extraction is debounced, so capture time lands minutes late. Sealed streams
-   * are never indexed.
-   */
-  private async indexCapturedMemos(
-    client: PoolClient,
-    workspaceId: string,
-    streamId: string,
-    memos: Array<Pick<MemoToCreate, "id" | "title" | "knowledgeType" | "sourceMessageIds">>
-  ): Promise<void> {
-    if (memos.length === 0) return
-    const stream = await StreamRepository.findById(client, workspaceId, streamId)
-    if (!stream) {
-      logger.warn({ workspaceId, streamId }, "Memo capture: stream row missing, skipping context landmarks")
-      return
-    }
-    if (stream.e2eEnabled === true) return
-
-    // Landmarks are filed on the top-level stream, never on a thread: save_memo
-    // and reflective capture bind to the session's stream, which can be a
-    // thread, and the identity index includes stream_id — filing the same memo
-    // on both a thread and its root would surface it twice.
-    const targetStreamId = stream.rootStreamId ?? stream.id
-
-    const allSourceIds = [...new Set(memos.flatMap((memo) => memo.sourceMessageIds))]
-    const sourceMessages = await MessageRepository.findByIds(client, workspaceId, allSourceIds)
-
-    const rows: NewStreamContextItem[] = []
-    for (const memo of memos) {
-      const resolved = memo.sourceMessageIds
-        .map((id) => sourceMessages.get(id))
-        .filter((message): message is Message => message !== undefined)
-      if (resolved.length === 0) {
-        logger.warn({ memoId: memo.id, workspaceId, streamId }, "Memo has no resolvable source message — not indexed")
-        continue
-      }
-      const latest = resolved.reduce((a, b) => (b.createdAt > a.createdAt ? b : a))
-      rows.push({
-        id: streamContextItemId(),
-        workspaceId,
-        streamId: targetStreamId,
-        rootStreamId: targetStreamId,
-        category: "memo",
-        refKind: "memo",
-        refId: memo.id,
-        groupKey: memo.id,
-        // First SURVIVING source, not first cited: a landmark anchored on a
-        // deleted message would be unreachable, and the backfill anchors the
-        // same way — the two must agree or they write different identity keys.
-        sourceMessageId: resolved[0]!.id,
-        authorId: latest.authorId,
-        occurredAt: latest.createdAt,
-        sequence: latest.sequence,
-        snippet: contextSnippet(memo.title),
-        detail: { title: memo.title, knowledgeType: memo.knowledgeType },
-      })
-    }
-    await StreamContextRepository.insertMany(client, rows)
   }
 
   /**
@@ -1442,7 +1351,7 @@ export class MemoService implements MemoServiceLike {
         // a stream-scoped row every member of that stream can read, so indexing
         // a private memo into a wider stream leaks exactly what the skipped
         // broadcast would have.
-        await this.indexCapturedMemos(client, workspaceId, streamId, [
+        await indexCapturedMemos(client, workspaceId, streamId, [
           { id: newMemoId, title, knowledgeType, sourceMessageIds: resolvedSourceIds },
         ])
       }
@@ -1698,7 +1607,7 @@ export class MemoService implements MemoServiceLike {
         // Same transaction as the event (INV-7): the client derives a memo row
         // from every memos:captured broadcast, so a capture without its
         // projection row leaves a pending row no server page reconciles.
-        await this.indexCapturedMemos(
+        await indexCapturedMemos(
           client,
           workspaceId,
           streamId,

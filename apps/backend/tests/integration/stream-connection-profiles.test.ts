@@ -5,9 +5,11 @@ import {
   StreamTypes,
   bridgeEventsSchema,
   bridgeManifestSchema,
+  bridgeMemoIndexSchema,
   bridgeProfilesSchema,
   type BridgeEvents,
   type BridgeManifest,
+  type BridgeMemoIndex,
   type BridgeProfiles,
   type StreamConnectionSnapshot,
 } from "@threahq/types"
@@ -78,6 +80,10 @@ class DirectBridgeClient extends BridgeClient {
     params: Parameters<BridgeClient["listEvents"]>[1]
   ): Promise<BridgeEvents> {
     return bridgeEventsSchema.parse(await this.ends.exporter.listEvents({ ...address, ...params }))
+  }
+
+  override async getMemoIndex(address: Address): Promise<BridgeMemoIndex> {
+    return bridgeMemoIndexSchema.parse(await this.ends.exporter.getMemoIndex(address))
   }
 
   override sendMessage(address: Address, params: Parameters<BridgeClient["sendMessage"]>[1]) {
@@ -281,7 +287,7 @@ describe("Profiles of copied users kept current across a shared channel", () => 
     return user && { name: user.name, avatarUrl: user.avatarUrl, originWorkspaceId: user.originWorkspaceId }
   }
 
-  async function userUpdates(wsId: string, id: string): Promise<OutboxEvent[]> {
+  async function userUpdates(wsId: string, id: string): Promise<OutboxEvent<"workspace_user:updated">[]> {
     const { rows } = await pool.query(
       `SELECT id, event_type, payload, created_at FROM outbox
        WHERE event_type = 'workspace_user:updated' AND payload->>'workspaceId' = $1 AND payload->'user'->>'id' = $2
@@ -551,7 +557,7 @@ describe("Profiles of copied users kept current across a shared channel", () => 
       ],
     })
 
-    const byId = (users: { id: string }[]) => users.toSorted((a, b) => a.id.localeCompare(b.id))
+    const byId = <T extends { id: string }>(users: T[]) => users.toSorted((a, b) => a.id.localeCompare(b.id))
     expect(byId(answer.users)).toEqual(
       byId([
         { id: world.host.adminId, name: world.host.adminName, avatar: null },

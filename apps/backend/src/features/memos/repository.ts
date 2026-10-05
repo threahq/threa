@@ -29,6 +29,23 @@ function capturedWhileSharedSql(sharedRootStreamId: string | undefined, alias: s
 }
 
 /**
+ * FROM/WHERE of the memos a host's partner reads from its shared channel:
+ * captured while shared, active, workspace-wide, from a conversation in
+ * `streamIds`. Binds `m` to the memo and `c` to its conversation.
+ */
+function sharedFromChannelSql(workspaceId: string, sharedRootStreamId: string, streamIds: string[]): QueryConfig {
+  return composeSql`
+    FROM memos m
+    JOIN conversations c ON c.id = m.source_conversation_id AND c.workspace_id = m.workspace_id
+    WHERE m.workspace_id = ${workspaceId}
+      AND m.shared_root_stream_id = ${sharedRootStreamId}
+      AND m.status = 'active'
+      AND m.scope = 'workspace'
+      AND c.stream_id = ANY(${streamIds})
+  `
+}
+
+/**
  * Memo full-text search computes its tsvector per row — no stored column, no
  * index — so both the vector and the query are stemmed with the config the row
  * itself was written in, rather than the OR-across-configs tsquery an
@@ -87,6 +104,7 @@ interface MemoRow {
   requires_browse: boolean
   scope: string
   scope_user_id: string | null
+  origin_workspace_id: string | null
   created_at: Date
   updated_at: Date
   archived_at: Date | null
@@ -108,7 +126,10 @@ export interface Memo {
   parentMemoId: string | null
   status: MemoStatus
   version: number
-  /** Bumped by every field update; the generation a reader pins before acting on the memo (INV-66). */
+  /**
+   * Bumped by every field update; the generation a reader pins before acting on
+   * the memo (INV-66), and the version a shared channel's partner copies sync by.
+   */
   cardVersion: number
   revisionReason: string | null
   authoredByKind: AuthoredByKind
@@ -119,6 +140,8 @@ export interface Memo {
   requiresBrowse: boolean
   scope: MemoScope
   scopeUserId: string | null
+  /** Set on a partner's read-only copy of a memo captured in a channel another workspace shares with it. */
+  originWorkspaceId: string | null
   createdAt: Date
   updatedAt: Date
   archivedAt: Date | null
@@ -154,6 +177,23 @@ export interface InsertMemoParams {
   scopeUserId?: string | null
   /** The shared channel this memo was captured from while shared, read as its partner reads it. */
   sharedRootStreamId?: string
+}
+
+/** A host memo as its partner copies it. */
+export interface MemoCopy {
+  id: string
+  conversationId: string
+  title: string
+  abstract: string
+  keyPoints: string[]
+  sourceMessageIds: string[]
+  participantIds: string[]
+  knowledgeType: KnowledgeType
+  tags: string[]
+  version: number
+  cardVersion: number
+  embedding: number[]
+  createdAt: string
 }
 
 export interface UpdateMemoParams {
@@ -299,6 +339,7 @@ function mapRowToMemo(row: MemoRow): Memo {
     requiresBrowse: row.requires_browse,
     scope: row.scope as MemoScope,
     scopeUserId: row.scope_user_id,
+    originWorkspaceId: row.origin_workspace_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archivedAt: row.archived_at,
@@ -310,7 +351,7 @@ const SELECT_FIELDS = `
   title, abstract, key_points, source_message_ids, participant_ids,
   knowledge_type, tags, parent_memo_id, status, version, card_version, revision_reason,
   authored_by_kind, source_session_id, source_stream_ids, requires_browse, scope, scope_user_id,
-  created_at, updated_at, archived_at
+  origin_workspace_id, created_at, updated_at, archived_at
 `
 
 const SELECT_FIELDS_PREFIXED = `
@@ -318,7 +359,7 @@ const SELECT_FIELDS_PREFIXED = `
   m.title, m.abstract, m.key_points, m.source_message_ids, m.participant_ids,
   m.knowledge_type, m.tags, m.parent_memo_id, m.status, m.version, m.card_version, m.revision_reason,
   m.authored_by_kind, m.source_session_id, m.source_stream_ids, m.requires_browse, m.scope, m.scope_user_id,
-  m.created_at, m.updated_at, m.archived_at
+  m.origin_workspace_id, m.created_at, m.updated_at, m.archived_at
 `
 const SELECT_FIELDS_SQL = rawSql(SELECT_FIELDS)
 const SELECT_FIELDS_PREFIXED_SQL = rawSql(SELECT_FIELDS_PREFIXED)
@@ -505,23 +546,29 @@ export const MemoRepository = {
   },
 
   /**
-   * Streams whose live messages cite `memoId`, so an update to the memo can be
-   * pushed to exactly those rooms.
+   * Streams whose live messages cite each of `memoIds`, so an update to a memo
+   * can be pushed to exactly those rooms.
    *
    * Matches on the markdown pointer (`(memo:<id>)`), which every authored form
    * serializes to — the picker's node, a pasted link, an API-written body. The
    * id is a prefixed ULID, so the pattern cannot collide with a longer id, and
    * it is passed as a parameter rather than interpolated.
    */
-  async findCitingStreamIds(db: Querier, workspaceId: string, memoId: string): Promise<string[]> {
-    const result = await db.query<{ stream_id: string }>(sql`
-      SELECT DISTINCT m.stream_id
-      FROM messages m
-      WHERE m.workspace_id = ${workspaceId}
-        AND m.deleted_at IS NULL
-        AND m.content_markdown LIKE ${"%(memo:" + memoId + ")%"}
+  async findCitingStreamIds(
+    db: Querier,
+    workspaceId: string,
+    memoIds: string[]
+  ): Promise<Array<{ memoId: string; streamId: string }>> {
+    if (memoIds.length === 0) return []
+    const result = await db.query<{ memo_id: string; stream_id: string }>(sql`
+      SELECT DISTINCT ids.memo_id, m.stream_id
+      FROM unnest(${memoIds}::text[]) AS ids(memo_id)
+      JOIN messages m
+        ON m.workspace_id = ${workspaceId}
+       AND m.deleted_at IS NULL
+       AND m.content_markdown LIKE ('%(memo:' || ids.memo_id || ')%')
     `)
-    return result.rows.map((row) => row.stream_id)
+    return result.rows.map((row) => ({ memoId: row.memo_id, streamId: row.stream_id }))
   },
 
   /**
@@ -1001,6 +1048,157 @@ export const MemoRepository = {
           updated_at = NOW()
       WHERE id = ${id} AND workspace_id = ${workspaceId}
     `)
+  },
+
+  /** The memos a host's partner reads from its shared channel (`sharedFromChannelSql`). */
+  async listSharedVersions(
+    db: Querier,
+    workspaceId: string,
+    sharedRootStreamId: string,
+    streamIds: string[]
+  ): Promise<Array<{ id: string; cardVersion: number }>> {
+    const result = await db.query<{ id: string; card_version: number }>(composeSql`
+      SELECT m.id, m.card_version
+      ${sharedFromChannelSql(workspaceId, sharedRootStreamId, streamIds)}
+      ORDER BY m.id
+    `)
+    return result.rows.map((row) => ({ id: row.id, cardVersion: row.card_version }))
+  },
+
+  /** `listSharedVersions`'s memos among `ids`, each with its conversation's stream and its embedding. */
+  async findSharedWithEmbeddings(
+    db: Querier,
+    workspaceId: string,
+    sharedRootStreamId: string,
+    streamIds: string[],
+    ids: string[]
+  ): Promise<Array<{ memo: Memo; conversationId: string; streamId: string; embedding: number[] | null }>> {
+    const result = await db.query<MemoRow & { conversation_id: string; stream_id: string; embedding: string | null }>(
+      composeSql`
+      SELECT ${SELECT_FIELDS_PREFIXED_SQL}, c.id AS conversation_id, c.stream_id, m.embedding::text AS embedding
+      ${sharedFromChannelSql(workspaceId, sharedRootStreamId, streamIds)}
+        AND m.id = ANY(${ids})
+      ORDER BY m.id
+    `
+    )
+    return result.rows.map((row) => ({
+      memo: mapRowToMemo(row),
+      conversationId: row.conversation_id,
+      streamId: row.stream_id,
+      embedding: row.embedding === null ? null : (JSON.parse(row.embedding) as number[]),
+    }))
+  },
+
+  /** The copies a partner holds of the memos `originWorkspaceId` captured from its shared channel. */
+  async listCopyVersions(
+    db: Querier,
+    workspaceId: string,
+    originWorkspaceId: string,
+    sharedRootStreamId: string
+  ): Promise<Array<{ id: string; cardVersion: number }>> {
+    const result = await db.query<{ id: string; card_version: number }>(sql`
+      SELECT id, card_version FROM memos
+      WHERE workspace_id = ${workspaceId}
+        AND origin_workspace_id = ${originWorkspaceId}
+        AND shared_root_stream_id = ${sharedRootStreamId}
+      ORDER BY id
+    `)
+    return result.rows.map((row) => ({ id: row.id, cardVersion: row.card_version }))
+  },
+
+  /**
+   * Writes a partner's copies of memos its host captured from a shared channel,
+   * under the host's ids. A copy only moves forward: a row already at the
+   * host's `cardVersion`, or one that is not this channel's copy, is left as it
+   * is. Returns the ids it inserted and the ids it updated.
+   */
+  async upsertCopies(
+    db: Querier,
+    workspaceId: string,
+    originWorkspaceId: string,
+    sharedRootStreamId: string,
+    copies: MemoCopy[]
+  ): Promise<{ inserted: string[]; updated: string[] }> {
+    if (copies.length === 0) return { inserted: [], updated: [] }
+    const rows = copies.map((copy) => ({
+      id: copy.id,
+      conversation_id: copy.conversationId,
+      title: copy.title,
+      abstract: copy.abstract,
+      key_points: copy.keyPoints,
+      search_config: detectSearchConfig(memoSearchText(copy)),
+      source_message_ids: copy.sourceMessageIds,
+      participant_ids: copy.participantIds,
+      knowledge_type: copy.knowledgeType,
+      tags: copy.tags,
+      version: copy.version,
+      card_version: copy.cardVersion,
+      embedding: JSON.stringify(copy.embedding),
+      created_at: copy.createdAt,
+    }))
+    const result = await db.query<{ id: string; inserted: boolean }>(sql`
+      INSERT INTO memos (
+        id, workspace_id, memo_type, source_conversation_id,
+        title, abstract, key_points, search_config, source_message_ids, participant_ids,
+        knowledge_type, tags, status, version, card_version, authored_by_kind, scope,
+        shared_root_stream_id, origin_workspace_id, embedding, created_at
+      )
+      SELECT
+        x.id, ${workspaceId}, 'conversation', x.conversation_id,
+        x.title, x.abstract, ARRAY(SELECT jsonb_array_elements_text(x.key_points)), x.search_config,
+        ARRAY(SELECT jsonb_array_elements_text(x.source_message_ids)),
+        ARRAY(SELECT jsonb_array_elements_text(x.participant_ids)),
+        x.knowledge_type, ARRAY(SELECT jsonb_array_elements_text(x.tags)), 'active', x.version, x.card_version,
+        'pipeline', 'workspace', ${sharedRootStreamId}, ${originWorkspaceId}, x.embedding::vector, x.created_at
+      FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS x(
+        id text, conversation_id text, title text, abstract text, key_points jsonb, search_config text,
+        source_message_ids jsonb, participant_ids jsonb, knowledge_type text, tags jsonb,
+        version int, card_version int, embedding text, created_at timestamptz
+      )
+      ON CONFLICT (workspace_id, id) DO UPDATE SET
+        source_conversation_id = EXCLUDED.source_conversation_id,
+        title = EXCLUDED.title,
+        abstract = EXCLUDED.abstract,
+        key_points = EXCLUDED.key_points,
+        search_config = EXCLUDED.search_config,
+        source_message_ids = EXCLUDED.source_message_ids,
+        participant_ids = EXCLUDED.participant_ids,
+        knowledge_type = EXCLUDED.knowledge_type,
+        tags = EXCLUDED.tags,
+        version = EXCLUDED.version,
+        card_version = EXCLUDED.card_version,
+        embedding = EXCLUDED.embedding,
+        updated_at = NOW()
+      WHERE memos.origin_workspace_id = EXCLUDED.origin_workspace_id
+        AND memos.shared_root_stream_id = EXCLUDED.shared_root_stream_id
+        AND memos.card_version < EXCLUDED.card_version
+      RETURNING id, (xmax = 0) AS inserted
+    `)
+    return {
+      inserted: result.rows.filter((row) => row.inserted).map((row) => row.id),
+      updated: result.rows.filter((row) => !row.inserted).map((row) => row.id),
+    }
+  },
+
+  /** Deletes a partner's copies, each only while it is still at the `cardVersion` the caller saw. */
+  async deleteCopies(
+    db: Querier,
+    workspaceId: string,
+    originWorkspaceId: string,
+    copies: Array<{ id: string; cardVersion: number }>
+  ): Promise<string[]> {
+    if (copies.length === 0) return []
+    const result = await db.query<{ id: string }>(sql`
+      DELETE FROM memos m
+      USING UNNEST(${copies.map((copy) => copy.id)}::text[], ${copies.map((copy) => copy.cardVersion)}::int[])
+        AS v(id, card_version)
+      WHERE m.workspace_id = ${workspaceId}
+        AND m.origin_workspace_id = ${originWorkspaceId}
+        AND m.id = v.id
+        AND m.card_version = v.card_version
+      RETURNING m.id
+    `)
+    return result.rows.map((row) => row.id)
   },
 
   /**

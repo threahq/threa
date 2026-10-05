@@ -653,6 +653,7 @@ function fakeMemoRow(id: string, overrides: Partial<import("./repository").Memo>
     sourceSessionId: null,
     scope: "workspace",
     scopeUserId: null,
+    originWorkspaceId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     sourceStreamIds: null,

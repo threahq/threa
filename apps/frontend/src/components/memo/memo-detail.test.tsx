@@ -28,6 +28,7 @@ function buildDetail(overrides: Partial<MemoExplorerDetail["memo"]> = {}): MemoE
       sourceSessionId: null,
       scope: "workspace",
       scopeUserId: null,
+      originWorkspaceId: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       archivedAt: null,

@@ -4,6 +4,8 @@ import {
   bridgeAttachmentResponseSchema,
   bridgeEventsSchema,
   bridgeManifestSchema,
+  bridgeMemoIndexSchema,
+  bridgeMemosSchema,
   bridgeProfilesSchema,
   bridgeSendMessageResponseSchema,
   type BridgeAddReaction,
@@ -11,6 +13,9 @@ import {
   type BridgeEditMessage,
   type BridgeEvents,
   type BridgeManifest,
+  type BridgeMemoIndex,
+  type BridgeMemos,
+  type BridgeMemosRequest,
   type BridgeProfiles,
   type BridgeProfilesRequest,
   type BridgeSendMessage,
@@ -77,6 +82,18 @@ export class BridgeClient {
   async getAttachment(address: ConnectionAddress, attachmentId: string): Promise<BridgeAttachmentResponse> {
     const res = await this.request(address, `/attachments/${encodeURIComponent(attachmentId)}`, "GET")
     return bridgeAttachmentResponseSchema.parse(await res.json())
+  }
+
+  /** The id and card version of every memo the host shares from the channel. */
+  async getMemoIndex(address: ConnectionAddress): Promise<BridgeMemoIndex> {
+    const res = await this.request(address, "/memos", "GET")
+    return bridgeMemoIndexSchema.parse(await res.json())
+  }
+
+  /** The given memos, for those the host still shares. */
+  async getMemos(address: ConnectionAddress, memoIds: string[]): Promise<BridgeMemos> {
+    const res = await this.request(address, "/memos", "POST", { memoIds } satisfies BridgeMemosRequest)
+    return bridgeMemosSchema.parse(await res.json())
   }
 
   /** The other end's current name and avatar of the given users, for those it shares. */

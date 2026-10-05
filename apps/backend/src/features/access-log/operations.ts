@@ -123,6 +123,8 @@ export const ACCESS_LOG_OPERATIONS = [
   "stream_connections.bridge_poke",
   "stream_connections.bridge_profiles",
   "stream_connections.bridge_profiles_poke",
+  "stream_connections.bridge_memo_index",
+  "stream_connections.bridge_memos",
   "stream_connections.bridge_send_message",
   "stream_connections.bridge_edit_message",
   "stream_connections.bridge_delete_message",

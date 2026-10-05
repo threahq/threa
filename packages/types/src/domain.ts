@@ -1043,6 +1043,8 @@ export interface Memo {
   scope: MemoScope
   /** Owner of a `user`-scoped memo; null for `stream`/`workspace` scopes. */
   scopeUserId: string | null
+  /** Set on a read-only copy of a memo another workspace captured in a channel it shares. */
+  originWorkspaceId: string | null
   createdAt: string
   updatedAt: string
   archivedAt: string | null

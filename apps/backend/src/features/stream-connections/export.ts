@@ -11,6 +11,9 @@ import {
   type BridgeChange,
   type BridgeEvents,
   type BridgeManifest,
+  type BridgeMemo,
+  type BridgeMemoIndex,
+  type BridgeMemos,
   type BridgeMessage,
   type BridgeProfiles,
   type BridgeStream,
@@ -25,6 +28,7 @@ import type { StorageProvider } from "../../lib/storage/s3-client"
 import { PersonaRepository } from "../agents"
 import { AttachmentRepository, AttachmentUploadRepository, type Attachment } from "../attachments"
 import type { FeatureFlagService } from "../feature-flags"
+import { MemoRepository, type Memo } from "../memos"
 import { MessageRepository, deriveContentMarkdown, type Message } from "../messaging"
 import { BotRepository } from "../public-api"
 import { StreamEventRepository, StreamRepository, normalizeStreamDescription, type Stream } from "../streams"
@@ -295,6 +299,44 @@ export class StreamConnectionExportService {
     })
   }
 
+  /** The memos the host captured from the shared tree while it was shared, each with its card version. */
+  async getMemoIndex(caller: BridgeCaller): Promise<BridgeMemoIndex> {
+    await this.assertEnabled(caller.workspaceId)
+    return withClient(this.pool, async (client) => {
+      const { connection, tree } = await loadSharedTree(client, caller)
+      const memos = await MemoRepository.listSharedVersions(
+        client,
+        caller.workspaceId,
+        connection.streamId,
+        tree.map((stream) => stream.id)
+      )
+      return { memos }
+    })
+  }
+
+  /**
+   * The asked memos the index lists, as the partner keeps them. Participants
+   * who never wrote or reacted in the tree are left out of each.
+   */
+  async getMemos(caller: BridgeCaller & { memoIds: string[] }): Promise<BridgeMemos> {
+    await this.assertEnabled(caller.workspaceId)
+    return withClient(this.pool, async (client) => {
+      const { connection, tree } = await loadSharedTree(client, caller)
+      const treeIds = tree.map((stream) => stream.id)
+      const rows = await MemoRepository.findSharedWithEmbeddings(
+        client,
+        caller.workspaceId,
+        connection.streamId,
+        treeIds,
+        caller.memoIds
+      )
+      const participants = await MessageRepository.filterParticipants(client, caller.workspaceId, treeIds, [
+        ...new Set(rows.flatMap(({ memo }) => memo.participantIds)),
+      ])
+      return { memos: rows.map((row) => toBridgeMemo(row, participants)) }
+    })
+  }
+
   private async assertEnabled(workspaceId: string): Promise<void> {
     const flag = await this.featureFlagService.getWorkspaceFlag(workspaceId, "streamConnections")
     if (flag !== "on") throw connectionNotFound()
@@ -472,6 +514,35 @@ async function loadNamedActors(
  */
 function isShared(message: Message, streamId: string): boolean {
   return message.streamId === streamId && message.deletedAt === null
+}
+
+function toBridgeMemo(
+  {
+    memo,
+    conversationId,
+    streamId,
+    embedding,
+  }: { memo: Memo; conversationId: string; streamId: string; embedding: number[] | null },
+  participants: ReadonlySet<string>
+): BridgeMemo {
+  // The capture writes a memo's embedding in the transaction that inserts it.
+  if (!embedding) throw new Error(`Shared memo ${memo.id} has no embedding`)
+  return {
+    id: memo.id,
+    conversationId,
+    streamId,
+    title: memo.title,
+    abstract: memo.abstract,
+    keyPoints: memo.keyPoints,
+    sourceMessageIds: memo.sourceMessageIds,
+    participantIds: memo.participantIds.filter((id) => participants.has(id)),
+    knowledgeType: memo.knowledgeType,
+    tags: memo.tags,
+    version: memo.version,
+    cardVersion: memo.cardVersion,
+    embedding,
+    createdAt: memo.createdAt.toISOString(),
+  }
 }
 
 function toBridgeMessage(

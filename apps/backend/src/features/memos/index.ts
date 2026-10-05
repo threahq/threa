@@ -1,4 +1,5 @@
 export { MemoRepository } from "./repository"
+export { recordConversationCaptures } from "./captures"
 export { audienceBrowses, memoAudienceVisibleSql } from "./audience"
 export type { MemoAudience } from "./audience"
 export { registerMemoSearchConfigBackfill, MEMO_SEARCH_CONFIG_BACKFILL_NAME } from "./search-config-backfill"
@@ -6,6 +7,7 @@ export {
   resolveMemoEmbedSummaries,
   resolveMemoEmbedSummariesForMessages,
   resolveMemoSummariesByStream,
+  publishMemoCardUpdates,
 } from "./embed-summaries"
 export type {
   Memo,

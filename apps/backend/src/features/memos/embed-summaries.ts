@@ -1,6 +1,8 @@
 import { collectMemoEmbedIds } from "@threahq/prosemirror"
 import type { JSONContent, MemoEmbedSummary } from "@threahq/types"
+import type { PoolClient } from "pg"
 import type { Querier } from "../../db"
+import { OutboxRepository } from "../../lib/outbox"
 import { StreamRepository } from "../streams"
 import { MemoRepository } from "./repository"
 
@@ -117,4 +119,30 @@ export async function resolveMemoEmbedSummariesForMessages(
     if (resolved.length > 0) result.set(message.id, resolved)
   }
   return result
+}
+
+/**
+ * Pushes the memos' new card content to the streams that cite them, in the
+ * caller's transaction (INV-4/7). Each citing stream is gated by the
+ * room-uniform predicate the write path uses, so a room that could never be
+ * shown a memo is not told about it and keeps the card it had.
+ */
+export async function publishMemoCardUpdates(
+  client: PoolClient,
+  workspaceId: string,
+  memoIds: string[]
+): Promise<void> {
+  const citations = await MemoRepository.findCitingStreamIds(client, workspaceId, memoIds)
+  if (citations.length === 0) return
+
+  const memoIdsByStreamId = new Map<string, string[]>()
+  for (const { memoId, streamId } of citations) {
+    memoIdsByStreamId.set(streamId, [...(memoIdsByStreamId.get(streamId) ?? []), memoId])
+  }
+  const summariesByStream = await resolveMemoSummariesByStream(client, workspaceId, memoIdsByStreamId)
+  const entries = citations.flatMap(({ memoId, streamId }) => {
+    const summary = summariesByStream.get(streamId)?.get(memoId)
+    return summary ? [{ eventType: "memo:updated" as const, payload: { workspaceId, streamId, memoId, summary } }] : []
+  })
+  if (entries.length > 0) await OutboxRepository.insertMany(client, entries)
 }

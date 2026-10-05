@@ -1,5 +1,11 @@
 import { z } from "zod"
-import { ATTACHMENT_SAFETY_STATUSES, AUTHOR_TYPES, VISIBILITY_OPTIONS, type Visibility } from "./constants"
+import {
+  ATTACHMENT_SAFETY_STATUSES,
+  AUTHOR_TYPES,
+  KNOWLEDGE_TYPES,
+  VISIBILITY_OPTIONS,
+  type Visibility,
+} from "./constants"
 import type { JSONContent } from "./prosemirror"
 
 // A stream connection is one invite link to a host channel: pending until a
@@ -329,6 +335,55 @@ export type BridgeProfile = z.infer<typeof bridgeProfileSchema>
 /** The asked-for users who still wrote or reacted in what the connection shares. The rest are left out. */
 export const bridgeProfilesSchema = z.object({ users: z.array(bridgeProfileSchema) })
 export type BridgeProfiles = z.infer<typeof bridgeProfilesSchema>
+
+export const BRIDGE_MEMOS_MAX_IDS = 25
+
+/**
+ * The memos the host captured from the shared tree while it was shared. A
+ * memo's card version moves on every edit, so a partner fetches only the ids
+ * whose version it does not hold and drops the copies no longer listed.
+ */
+export const bridgeMemoIndexSchema = z.object({
+  memos: z.array(z.object({ id: z.string().regex(/^memo_/), cardVersion: z.number().int() })),
+})
+export type BridgeMemoIndex = z.infer<typeof bridgeMemoIndexSchema>
+
+export const bridgeMemosRequestSchema = z.object({
+  memoIds: z
+    .array(z.string().regex(/^memo_/))
+    .min(1)
+    .max(BRIDGE_MEMOS_MAX_IDS),
+})
+export type BridgeMemosRequest = z.infer<typeof bridgeMemosRequestSchema>
+
+/**
+ * A memo as the partner keeps it, with the host's embedding so the partner
+ * spends no AI on it. `streamId` and `participantIds` are read when the memo is
+ * fetched: `cardVersion` moves only on the memo's own edits, so a copy keeps
+ * them as they were at its last fetch.
+ */
+export const bridgeMemoSchema = z.object({
+  id: z.string().regex(/^memo_/),
+  conversationId: z.string().min(1),
+  /** The stream of the shared tree the memo's conversation is in. */
+  streamId: z.string().min(1),
+  title: z.string(),
+  abstract: z.string(),
+  keyPoints: z.array(z.string()),
+  sourceMessageIds: z.array(z.string()),
+  participantIds: z.array(z.string()),
+  knowledgeType: z.enum(KNOWLEDGE_TYPES),
+  tags: z.array(z.string()),
+  version: z.number().int(),
+  cardVersion: z.number().int(),
+  embedding: z.array(z.number()).min(1),
+  createdAt: z.string().datetime(),
+})
+export type BridgeMemo = z.infer<typeof bridgeMemoSchema>
+
+/** The asked-for memos the index still lists. The rest are left out. */
+export const bridgeMemosSchema = z.object({ memos: z.array(bridgeMemoSchema) })
+export type BridgeMemos = z.infer<typeof bridgeMemosSchema>
 
 /** A host custom persona or bot that wrote or reacted in the shared tree, as the partner shows it. */
 export const bridgeActorSchema = z.object({

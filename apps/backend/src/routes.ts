@@ -559,6 +559,18 @@ export function registerRoutes(app: Express, deps: Dependencies) {
       bridgeAuth,
       bridge.profiles
     )
+    app.get(
+      "/api/workspaces/:workspaceId/stream-connections/:connectionId/bridge/memos",
+      audit("stream_connections.bridge_memo_index", "disclose"),
+      bridgeAuth,
+      bridge.memoIndex
+    )
+    app.post(
+      "/api/workspaces/:workspaceId/stream-connections/:connectionId/bridge/memos",
+      audit("stream_connections.bridge_memos", "disclose"),
+      bridgeAuth,
+      bridge.memos
+    )
     const streamPath = "/api/workspaces/:workspaceId/stream-connections/:connectionId/bridge/streams/:streamId"
     app.post(
       `${streamPath}/messages`,
