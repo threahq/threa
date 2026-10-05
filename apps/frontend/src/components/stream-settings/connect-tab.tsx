@@ -41,18 +41,10 @@ const CREATE_ERROR_COPY: Partial<Record<string, string>> = {
   [StreamConnectionErrorCodes.TOO_MANY_INVITES]: "This channel has too many open links. Revoke one to create another.",
 }
 
-function createErrorMessage(error: unknown): string {
-  return (ApiError.isApiError(error) && CREATE_ERROR_COPY[error.code]) || "Couldn't create the link. Try again."
-}
-
 const REVOKE_ERROR_COPY: Partial<Record<string, string>> = {
   ...REFUSAL_COPY,
   [StreamConnectionErrorCodes.ALREADY_ACCEPTED]: "Another workspace already accepted this invite.",
   [StreamConnectionErrorCodes.NOT_FOUND]: "This link no longer exists.",
-}
-
-function revokeErrorMessage(error: unknown): string {
-  return (ApiError.isApiError(error) && REVOKE_ERROR_COPY[error.code]) || "Couldn't revoke the link. Try again."
 }
 
 const DISCONNECT_ERROR_COPY: Partial<Record<string, string>> = {
@@ -60,8 +52,8 @@ const DISCONNECT_ERROR_COPY: Partial<Record<string, string>> = {
   [StreamConnectionErrorCodes.NOT_FOUND]: "This workspace is no longer connected.",
 }
 
-function disconnectErrorMessage(error: unknown): string {
-  return (ApiError.isApiError(error) && DISCONNECT_ERROR_COPY[error.code]) || "Couldn't disconnect. Try again."
+function errorMessage(error: unknown, copy: Partial<Record<string, string>>, fallback: string): string {
+  return (ApiError.isApiError(error) && copy[error.code]) || fallback
 }
 
 /** formatFutureTime counts down minutes inside the last hour, which an open tab would leave stale. */
@@ -92,10 +84,10 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
   const load = useLoadStreamConnections(workspaceId, stream.id)
   const rows = useStreamConnections(workspaceId, stream.id)
   const [creating, setCreating] = useState(false)
-  const [revokingId, setRevokingId] = useState<string | null>(null)
-  const [disconnectingId, setDisconnectingId] = useState<string | null>(null)
+  const [changingId, setChangingId] = useState<string | null>(null)
   const [confirming, setConfirming] = useState<StreamConnection | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const nameIdPrefix = useId()
   // A create's error sits beside its button, the others' above the lists: each where the admin is looking.
   const [actionError, setActionError] = useState<{ action: "create" | "change"; message: string } | null>(null)
 
@@ -144,38 +136,38 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
         onInviteLinkCreated(connectionId, buildStreamConnectionInviteLink(token))
       )
     } catch (error) {
-      setActionError({ action: "create", message: createErrorMessage(error) })
+      setActionError({
+        action: "create",
+        message: errorMessage(error, CREATE_ERROR_COPY, "Couldn't create the link. Try again."),
+      })
     } finally {
       setCreating(false)
     }
   }
 
-  const revoke = async (connectionId: string) => {
+  const change = async (
+    connectionId: string,
+    run: typeof revokeStreamConnection,
+    copy: Partial<Record<string, string>>,
+    fallback: string
+  ) => {
     setActionError(null)
-    setRevokingId(connectionId)
+    setChangingId(connectionId)
     try {
-      await revokeStreamConnection(workspaceId, stream.id, connectionId)
+      await run(workspaceId, stream.id, connectionId)
     } catch (error) {
-      setActionError({ action: "change", message: revokeErrorMessage(error) })
+      setActionError({ action: "change", message: errorMessage(error, copy, fallback) })
     } finally {
-      setRevokingId(null)
+      setChangingId(null)
     }
   }
-
-  const disconnect = async (connectionId: string) => {
-    setActionError(null)
-    setDisconnectingId(connectionId)
-    try {
-      await disconnectStreamConnection(workspaceId, stream.id, connectionId)
-    } catch (error) {
-      setActionError({ action: "change", message: disconnectErrorMessage(error) })
-    } finally {
-      setDisconnectingId(null)
-    }
-  }
+  const revoke = (connectionId: string) =>
+    change(connectionId, revokeStreamConnection, REVOKE_ERROR_COPY, "Couldn't revoke the link. Try again.")
+  const disconnect = (connectionId: string) =>
+    change(connectionId, disconnectStreamConnection, DISCONNECT_ERROR_COPY, "Couldn't disconnect. Try again.")
 
   const blocked = unshareableReason(stream)
-  const busy = creating || revokingId !== null || disconnectingId !== null
+  const busy = creating || changingId !== null
   const timePrefs = { timeFormat: preferences?.timeFormat }
 
   return (
@@ -189,18 +181,21 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
             {connected.map((connection) => (
               <li key={connection.id} className="flex items-center gap-3 rounded-md border px-3 py-3">
                 <Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="min-w-0 flex-1 truncate text-sm font-medium">{connection.remoteWorkspaceName}</span>
+                <span id={`${nameIdPrefix}-${connection.id}`} className="min-w-0 flex-1 truncate text-sm font-medium">
+                  {connection.remoteWorkspaceName}
+                </span>
                 {connection.role !== "peer" && (
                   <Button
                     variant="outline"
                     size="sm"
+                    aria-describedby={`${nameIdPrefix}-${connection.id}`}
                     onClick={() => {
                       setConfirming(connection)
                       setConfirmOpen(true)
                     }}
                     disabled={busy}
                   >
-                    {disconnectingId === connection.id ? "Disconnecting…" : "Disconnect"}
+                    {changingId === connection.id ? "Disconnecting…" : "Disconnect"}
                   </Button>
                 )}
               </li>
@@ -219,7 +214,7 @@ export function ConnectTab({ workspaceId, stream, inviteLinks, onInviteLinkCreat
                 link={inviteLinks.get(connection.id) ?? null}
                 inviterName={users.find((user) => user.id === connection.invitedBy)?.name ?? null}
                 timePrefs={timePrefs}
-                revoking={revokingId === connection.id}
+                revoking={changingId === connection.id}
                 disabled={busy}
                 onRevoke={() => void revoke(connection.id)}
               />

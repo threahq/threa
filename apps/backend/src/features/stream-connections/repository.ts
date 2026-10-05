@@ -186,6 +186,27 @@ export const StreamConnectionRepository = {
     return result.rows.map(mapRow)
   },
 
+  /**
+   * Drops the peer rows of each channel a workspace no longer holds an active
+   * share of. Nothing tells it about a partner that leaves while it is away, so
+   * a kept row would list that partner again on a reconnect, which resends the
+   * partners still there.
+   */
+  async deletePeersOfEndedShares(db: Querier, roots: { workspaceId: string; streamId: string }[]): Promise<void> {
+    if (roots.length === 0) return
+    await db.query(sql`
+      DELETE FROM stream_connections p
+      USING unnest(${roots.map((r) => r.workspaceId)}::text[], ${roots.map((r) => r.streamId)}::text[])
+        AS r(workspace_id, stream_id)
+      WHERE p.workspace_id = r.workspace_id AND p.stream_id = r.stream_id AND p.role = 'peer'
+        AND NOT EXISTS (
+          SELECT 1 FROM stream_connections own
+          WHERE own.workspace_id = r.workspace_id AND own.stream_id = r.stream_id
+            AND own.role = 'partner' AND own.state = 'active'
+        )
+    `)
+  },
+
   /** The workspaces this channel is actively shared with, seen from either side: the host's partners, or a partner's host. */
   async listConnectedWorkspaces(db: Querier, workspaceId: string, rootStreamId: string): Promise<ConnectedWorkspace[]> {
     const result = await db.query<{ remote_workspace_id: string; remote_workspace_name: string | null }>(sql`

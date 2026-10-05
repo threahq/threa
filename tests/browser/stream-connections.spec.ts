@@ -489,6 +489,7 @@ test.describe("Stream connections", () => {
       await expectApiOk(opened, "Send host message")
       await partnerPage.goto(`/w/${partner.workspaceId}/s/${streamId}`)
       await expect(timelineMessage(partnerPage, opener)).toBeVisible({ timeout: 30_000 })
+      await expect(partnerPage.getByText(`Shared with ${host.workspaceName}`)).toBeVisible({ timeout: 15_000 })
 
       await page.goto(`/w/${host.workspaceId}/s/${streamId}`)
       await expect(page.getByText(`Shared with ${partner.workspaceName}`)).toBeVisible({ timeout: 15_000 })
@@ -500,7 +501,11 @@ test.describe("Stream connections", () => {
       await settings.getByRole("button", { name: "Disconnect" }).click()
       const confirm = partnerPage.getByRole("alertdialog", { name: `Disconnect ${host.workspaceName}?` })
       await confirm.getByRole("button", { name: "Disconnect" }).click()
-      await expect(settings.getByText(host.workspaceName)).toHaveCount(0, { timeout: 15_000 })
+      // The alert hides the settings dialog from role queries while open, which would pass the checks below vacuously.
+      await expect(confirm).toBeHidden()
+      await expect(settings).toBeVisible()
+      await expect(settings.getByRole("button", { name: "Disconnect" })).toHaveCount(0, { timeout: 15_000 })
+      await expect(settings.getByText(host.workspaceName)).toHaveCount(0)
       await partnerPage.keyboard.press("Escape")
 
       await expect(
@@ -511,7 +516,12 @@ test.describe("Stream connections", () => {
       await expect(timelineMessage(partnerPage, opener)).toBeVisible()
 
       await expect(page.getByText(`Shared with ${partner.workspaceName}`)).toHaveCount(0, { timeout: 30_000 })
-      await sendText(page, `Still here ${host.testId}`)
+      const stillHere = `Still here ${host.testId}`
+      await sendText(page, stillHere)
+      // An optimistic row carries its client id until the server accepts the send.
+      await expect(
+        page.getByRole("main").locator('div[data-event-id][data-message-id^="msg_"]').filter({ hasText: stillHere })
+      ).toBeVisible({ timeout: 15_000 })
       await page.goto(settingsUrl(host.workspaceId, streamId, "connect"))
       await expect(page.getByRole("dialog").getByRole("button", { name: "Create invite link" })).toBeVisible()
       await expect(page.getByRole("dialog").getByText(partner.workspaceName)).toHaveCount(0)

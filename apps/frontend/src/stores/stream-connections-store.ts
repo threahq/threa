@@ -20,13 +20,22 @@ export function useStreamConnections(workspaceId: string, streamId: string): Cac
 
 /**
  * Writes one row unless IDB already holds its revision or a newer one: the
- * create response, the socket event and a fetch can land in any order.
+ * create response, the socket event and a fetch can land in any order. When
+ * this workspace's own share ends, the other partners' rows go with it: no
+ * event about them reaches a workspace that has left.
  */
 export async function putStreamConnection(workspaceId: string, connection: StreamConnection): Promise<void> {
   await db.transaction("rw", db.streamConnections, async () => {
     const current = await db.streamConnections.get([workspaceId, connection.id])
     if (current && current.revision >= connection.revision) return
     await db.streamConnections.put({ ...connection, workspaceId, _cachedAt: Date.now() })
+    if (connection.role === "partner" && connection.state !== "active") {
+      await db.streamConnections
+        .where("[workspaceId+streamId]")
+        .equals([workspaceId, connection.streamId])
+        .filter((row) => row.role === "peer")
+        .delete()
+    }
   })
 }
 
@@ -77,24 +86,24 @@ export async function createStreamConnectionInvite(
   await putStreamConnection(workspaceId, connection)
 }
 
-/**
- * Revokes a pending link. A refusal because it was accepted or is gone means
- * this device missed that change, so the rows are refetched before the refusal
- * reaches the caller.
- */
-export async function revokeStreamConnection(workspaceId: string, streamId: string, connectionId: string) {
-  try {
-    await putStreamConnection(workspaceId, await streamConnectionsApi.revoke(workspaceId, connectionId))
-  } catch (error) {
-    if (isStaleRow(error)) await refreshStreamConnections(workspaceId, streamId).catch(() => undefined)
-    throw error
-  }
+/** Revokes a pending link. */
+export function revokeStreamConnection(workspaceId: string, streamId: string, connectionId: string) {
+  return changeStreamConnection(workspaceId, streamId, () => streamConnectionsApi.revoke(workspaceId, connectionId))
 }
 
-/** Ends an active share, from either side. A refusal because it already ended refetches the rows, as a revoke's does. */
-export async function disconnectStreamConnection(workspaceId: string, streamId: string, connectionId: string) {
+/** Ends an active share, from either side. */
+export function disconnectStreamConnection(workspaceId: string, streamId: string, connectionId: string) {
+  return changeStreamConnection(workspaceId, streamId, () => streamConnectionsApi.disconnect(workspaceId, connectionId))
+}
+
+/**
+ * A refusal because the row was accepted, ended or is gone means this device
+ * missed that change, so the rows are refetched before the refusal reaches the
+ * caller.
+ */
+async function changeStreamConnection(workspaceId: string, streamId: string, change: () => Promise<StreamConnection>) {
   try {
-    await putStreamConnection(workspaceId, await streamConnectionsApi.disconnect(workspaceId, connectionId))
+    await putStreamConnection(workspaceId, await change())
   } catch (error) {
     if (isStaleRow(error)) await refreshStreamConnections(workspaceId, streamId).catch(() => undefined)
     throw error

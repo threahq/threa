@@ -30,7 +30,7 @@ interface AuthorityStream {
   visibility: Visibility
   archivedAt: Date | string | null
   originWorkspaceId?: string | null
-  disconnectedAt?: Date | string | null
+  disconnectedAt: Date | string | null
 }
 
 export function deriveStreamViewerState(params: {

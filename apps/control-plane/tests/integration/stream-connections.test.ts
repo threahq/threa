@@ -691,7 +691,7 @@ describe("StreamConnectionService", () => {
     ).rejects.toMatchObject({ status: 404, code: StreamConnectionErrorCodes.NOT_FOUND })
   })
 
-  test("should end a share from either side, push it to both regions, and drop it from the other partners' peers", async () => {
+  test("should end a share from either side but never a peer's, push it to both regions, and drop it from the other partners' peers", async () => {
     const host = await seedWorkspace("eu", "Acme")
     const second = await seedWorkspace("us", "Globex")
     const third = await seedWorkspace("eu", "Initech")
@@ -702,6 +702,10 @@ describe("StreamConnectionService", () => {
     const pending = await invite(host, stream)
     eu.reset()
     us.reset()
+    const refused = { status: 404, code: StreamConnectionErrorCodes.NOT_FOUND }
+    await expect(service.disconnect({ connectionId: secondConnection.id, workspaceId: third })).rejects.toMatchObject(
+      refused
+    )
 
     const left = await service.disconnect({ connectionId: secondConnection.id, workspaceId: second })
     const again = await service.disconnect({ connectionId: secondConnection.id, workspaceId: host })
@@ -721,7 +725,6 @@ describe("StreamConnectionService", () => {
       ],
       us: [{ url: "/internal/stream-connections", body: secondLeft }],
     })
-    const refused = { status: 404, code: StreamConnectionErrorCodes.NOT_FOUND }
     await expect(
       service.disconnect({ connectionId: secondConnection.id, workspaceId: stranger })
     ).rejects.toMatchObject(refused)

@@ -943,13 +943,21 @@ export function registerWorkspaceSocketHandlers(
     })
 
     // Update stream bootstrap cache (preserves events, members, etc.)
-    queryClient.setQueryData<StreamBootstrap>(streamKeys.bootstrap(workspaceId, payload.stream.id), (old) => {
+    const bootstrapKey = streamKeys.bootstrap(workspaceId, payload.stream.id)
+    const disconnectedBefore = queryClient.getQueryData<StreamBootstrap>(bootstrapKey)?.stream.disconnectedAt ?? null
+    queryClient.setQueryData<StreamBootstrap>(bootstrapKey, (old) => {
       if (!old) return old
       const merged = mergeStreamByRevision(old.stream, payload.stream)
       const stream =
         isDmWithNullName && old.stream.displayName ? { ...merged, displayName: old.stream.displayName } : merged
       return { ...old, stream }
     })
+    // A copy's connectedWorkspaces ends and restarts with its share, and only admins hear stream_connection:updated.
+    // Stream bootstraps never refetch on mount, so a cached one that is not on screen refetches now too.
+    const bootstrap = queryClient.getQueryData<StreamBootstrap>(bootstrapKey)
+    if (bootstrap && (bootstrap.stream.disconnectedAt ?? null) !== disconnectedBefore) {
+      void queryClient.invalidateQueries({ queryKey: bootstrapKey, refetchType: "all" })
+    }
 
     // Update workspace bootstrap cache (sidebar) - handle visibility changes
     queryClient.setQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId), (old) => {
@@ -2209,7 +2217,10 @@ export function registerWorkspaceSocketHandlers(
     if (payload.workspaceId !== workspaceId) return
     await putStreamConnection(workspaceId, payload.connection)
     // The bootstrap's connectedWorkspaces names the channel's partners in its header and mention picker.
-    void queryClient.invalidateQueries({ queryKey: streamKeys.bootstrap(workspaceId, payload.connection.streamId) })
+    void queryClient.invalidateQueries({
+      queryKey: streamKeys.bootstrap(workspaceId, payload.connection.streamId),
+      refetchType: "all",
+    })
   }
 
   const handleSavedReminderFired = async (payload: SavedReminderFiredPayload) => {

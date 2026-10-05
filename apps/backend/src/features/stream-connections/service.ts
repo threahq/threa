@@ -33,6 +33,12 @@ interface Dependencies {
   featureFlagService: FeatureFlagService
 }
 
+interface ConnectionChangeParams {
+  workspaceId: string
+  connectionId: string
+  userId: string
+}
+
 function isAdmin(role: WorkspaceRoleSlug): boolean {
   return permissionsForRole(role).includes(WORKSPACE_PERMISSION_SCOPES.WORKSPACE_ADMIN)
 }
@@ -82,37 +88,38 @@ export class StreamConnectionService {
     return { connection: await this.readBack(params.workspaceId, result.snapshot.id), token: result.token }
   }
 
-  async revokeInvite(params: { workspaceId: string; connectionId: string; userId: string }): Promise<StreamConnection> {
-    await this.assertEnabled(params.workspaceId)
-    await this.requireAdmin(params)
-    const cp = this.requireControlPlane()
-    const connection = await StreamConnectionRepository.findById(this.pool, params.workspaceId, params.connectionId)
-    if (!connection || connection.role !== "host") throw connectionNotFound()
-    await this.requireStream({ ...params, streamId: connection.streamId })
-
-    const snapshot = await cp.revokeStreamConnectionInvite({
-      connectionId: params.connectionId,
-      hostWorkspaceId: params.workspaceId,
-    })
-    await this.applySnapshot(snapshot)
-    return this.readBack(params.workspaceId, snapshot.id)
+  async revokeInvite(params: ConnectionChangeParams): Promise<StreamConnection> {
+    return this.changeConnection(
+      params,
+      (connection) => connection.role === "host",
+      (cp) =>
+        cp.revokeStreamConnectionInvite({ connectionId: params.connectionId, hostWorkspaceId: params.workspaceId })
+    )
   }
 
   /** Ends an accepted share from either side. Nothing either side holds is deleted. */
-  async disconnect(params: { workspaceId: string; connectionId: string; userId: string }): Promise<StreamConnection> {
+  async disconnect(params: ConnectionChangeParams): Promise<StreamConnection> {
+    return this.changeConnection(
+      params,
+      (connection) => connection.role !== "peer" && connection.state === StreamConnectionStates.ACTIVE,
+      (cp) => cp.disconnectStreamConnection({ connectionId: params.connectionId, workspaceId: params.workspaceId })
+    )
+  }
+
+  /** An admin's change to one of this workspace's own rows, made on the control plane and projected back here. */
+  private async changeConnection(
+    params: ConnectionChangeParams,
+    changeable: (connection: StreamConnection) => boolean,
+    change: (cp: ControlPlaneClient) => Promise<StreamConnectionSnapshot>
+  ): Promise<StreamConnection> {
     await this.assertEnabled(params.workspaceId)
     await this.requireAdmin(params)
     const cp = this.requireControlPlane()
     const connection = await StreamConnectionRepository.findById(this.pool, params.workspaceId, params.connectionId)
-    if (!connection || connection.role === "peer" || connection.state !== StreamConnectionStates.ACTIVE) {
-      throw connectionNotFound()
-    }
+    if (!connection || !changeable(connection)) throw connectionNotFound()
     await this.requireStream({ ...params, streamId: connection.streamId })
 
-    const snapshot = await cp.disconnectStreamConnection({
-      connectionId: params.connectionId,
-      workspaceId: params.workspaceId,
-    })
+    const snapshot = await change(cp)
     await this.applySnapshot(snapshot)
     return this.readBack(params.workspaceId, snapshot.id)
   }
@@ -278,6 +285,7 @@ export class StreamConnectionService {
     const roots = changed
       .filter(({ connection }) => connection.role === "partner")
       .map(({ workspaceId, connection }) => ({ workspaceId, streamId: connection.streamId }))
+    await StreamConnectionRepository.deletePeersOfEndedShares(client, roots)
     const flipped = await StreamRepository.syncCopiesDisconnected(client, roots)
     if (flipped.length === 0) return
     await OutboxRepository.insertMany(

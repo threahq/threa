@@ -19,7 +19,8 @@ import { isImageAttachment } from "./image-caption"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { attachmentId as generateAttachmentId } from "../../lib/id"
 import { MAX_FILE_SIZE } from "../../middleware/upload"
-import { ATTACHMENT_CATEGORIES, type AttachmentCategory } from "@threahq/types"
+import { HttpError } from "../../lib/errors"
+import { ATTACHMENT_CATEGORIES, StreamConnectionErrorCodes, type AttachmentCategory } from "@threahq/types"
 
 declare module "express" {
   interface Request {
@@ -35,7 +36,11 @@ interface Dependencies {
   pool: Pool
 }
 
-const SHARE_ENDED_ERROR = "This file came from a shared channel that has since been disconnected"
+const shareEndedError = () =>
+  new HttpError("This file came from a shared channel that has since been disconnected", {
+    status: 403,
+    code: StreamConnectionErrorCodes.SHARE_ENDED,
+  })
 
 const reserveAttachmentSchema = z.object({
   filename: z.string().min(1).max(255),
@@ -237,9 +242,6 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       if (sharingBlockReason) {
         return res.status(403).json({ error: sharingBlockReason })
       }
-      if (await attachmentService.isFromEndedShare(attachment)) {
-        return res.status(403).json({ error: SHARE_ENDED_ERROR })
-      }
 
       // Direct stream access first; if that fails, fall back to the
       // share-grant + inline-reference chain. Splitting the fast path from
@@ -255,6 +257,9 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
         }
       } else if (unboundAttachmentBlockedForCaller(attachment, userId)) {
         return res.status(403).json({ error: "Access denied" })
+      }
+      if (await attachmentService.isFromEndedShare(attachment)) {
+        throw shareEndedError()
       }
 
       const parsed = z
@@ -310,9 +315,6 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       if (sharingBlockReason) {
         return res.status(403).json({ error: sharingBlockReason })
       }
-      if (await attachmentService.isFromEndedShare(attachment)) {
-        return res.status(403).json({ error: SHARE_ENDED_ERROR })
-      }
 
       if (attachment.streamId) {
         const accessible = await streamService.tryAccess(attachment.streamId, workspaceId, userId)
@@ -324,6 +326,9 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
         }
       } else if (unboundAttachmentBlockedForCaller(attachment, userId)) {
         return res.status(403).json({ error: "Access denied" })
+      }
+      if (await attachmentService.isFromEndedShare(attachment)) {
+        throw shareEndedError()
       }
 
       const parsed = z
@@ -421,9 +426,6 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
       if (!attachment) {
         return res.status(404).json({ error: "Attachment not found" })
       }
-      if (await attachmentService.isFromEndedShare(attachment)) {
-        return res.status(403).json({ error: SHARE_ENDED_ERROR })
-      }
 
       if (attachment.streamId) {
         const accessible = await streamService.tryAccess(attachment.streamId, workspaceId, userId)
@@ -435,6 +437,9 @@ export function createAttachmentHandlers({ attachmentService, streamService, sto
         }
       } else if (unboundAttachmentBlockedForCaller(attachment, userId)) {
         return res.status(403).json({ error: "Access denied" })
+      }
+      if (await attachmentService.isFromEndedShare(attachment)) {
+        throw shareEndedError()
       }
 
       const extraction = await AttachmentExtractionRepository.findByAttachmentId(pool, workspaceId, attachmentId)

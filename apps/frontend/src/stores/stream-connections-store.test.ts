@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest"
 import type { StreamConnection } from "@threahq/types"
 import { db, type CachedStreamConnection } from "@/db"
-import { seedStreamConnections } from "./stream-connections-store"
+import { putStreamConnection, seedStreamConnections } from "./stream-connections-store"
 
 function connection(id: string, overrides: Partial<StreamConnection> = {}): StreamConnection {
   return {
@@ -57,6 +57,49 @@ describe("seedStreamConnections", () => {
       { workspaceId: "ws_1", id: "strconn_other_stream", state: "invited", revision: 1 },
       { workspaceId: "ws_2", id: "strconn_other_workspace", state: "invited", revision: 1 },
       { workspaceId: "ws_1", id: "strconn_unseen", state: "active", revision: 2 },
+    ])
+  })
+})
+
+describe("putStreamConnection", () => {
+  beforeEach(async () => {
+    await db.streamConnections.clear()
+  })
+
+  it("should drop the other partners' rows when this workspace's own share ends", async () => {
+    const own = connection("strconn_own", { role: "partner", state: "active", revision: 2 })
+    await db.streamConnections.bulkPut([
+      cached("strconn_own", 1, own),
+      cached("strconn_peer", 1, { role: "peer", state: "active", revision: 2 }),
+      cached("strconn_peer_other_stream", 1, { role: "peer", state: "active", revision: 2, streamId: "stream_2" }),
+    ])
+
+    await putStreamConnection("ws_1", { ...own, state: "revoked", revision: 3 })
+
+    const rows = await db.streamConnections.toArray()
+    expect(rows.map((row) => ({ id: row.id, state: row.state })).sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: "strconn_own", state: "revoked" },
+      { id: "strconn_peer_other_stream", state: "active" },
+    ])
+  })
+
+  it("should keep the other partners' rows when this workspace's own share updates and stays active", async () => {
+    const own = connection("strconn_own", { role: "partner", state: "active", revision: 2 })
+    await db.streamConnections.bulkPut([
+      cached("strconn_own", 1, own),
+      cached("strconn_peer", 1, { role: "peer", state: "active", revision: 2 }),
+    ])
+
+    await putStreamConnection("ws_1", { ...own, remoteWorkspaceName: "Acme Inc", revision: 3 })
+
+    const rows = await db.streamConnections.toArray()
+    expect(
+      rows
+        .map((row) => ({ id: row.id, state: row.state, revision: row.revision }))
+        .sort((a, b) => a.id.localeCompare(b.id))
+    ).toEqual([
+      { id: "strconn_own", state: "active", revision: 3 },
+      { id: "strconn_peer", state: "active", revision: 2 },
     ])
   })
 })

@@ -44,6 +44,8 @@ export const StreamConnectionErrorCodes = {
   HOST_UNREACHABLE: "STREAM_CONNECTION_HOST_UNREACHABLE",
   /** A write into a shared channel's copy that can't cross to the host as sent: files, steering, or a send with no client message id. */
   COPY_WRITE_UNSUPPORTED: "STREAM_CONNECTION_COPY_WRITE_UNSUPPORTED",
+  /** A file the other side of a shared channel sent, refused while that share is disconnected. */
+  SHARE_ENDED: "STREAM_CONNECTION_SHARE_ENDED",
 } as const
 export type StreamConnectionErrorCode = (typeof StreamConnectionErrorCodes)[keyof typeof StreamConnectionErrorCodes]
 

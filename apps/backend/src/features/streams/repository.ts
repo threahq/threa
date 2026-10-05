@@ -164,7 +164,7 @@ export interface Stream {
   updatedAt: Date
   archivedAt: Date | null
   /** When the share behind a partner's copy ended; the copy is read-only until it comes back. */
-  disconnectedAt?: Date | null
+  disconnectedAt: Date | null
   /**
    * End-to-end encryption metadata, populated by callers that LEFT JOIN
    * `e2e_streams`. Optional so existing read paths and test fixtures
@@ -514,10 +514,24 @@ export const StreamRepository = {
   /**
    * Freezes each partner's copy of a shared channel, threads included, once its
    * workspace holds no active connection to it, and thaws it when one returns.
-   * Returns the streams that flipped.
+   * Returns the streams that flipped. Runs inside the transaction that wrote the
+   * connection rows.
    */
   async syncCopiesDisconnected(db: Querier, roots: { workspaceId: string; streamId: string }[]): Promise<Stream[]> {
     if (roots.length === 0) return []
+    const workspaceIds = roots.map((r) => r.workspaceId)
+    const streamIds = roots.map((r) => r.streamId)
+    // Locked in id order, as writers lock streams, before reading whether the copy is
+    // connected: a concurrent projection of the same copy commits first, so the check
+    // below sees its connection rows.
+    await db.query(sql`
+      SELECT s.id FROM streams s
+      JOIN unnest(${workspaceIds}::text[], ${streamIds}::text[]) AS r(workspace_id, stream_id)
+        ON s.workspace_id = r.workspace_id AND (s.id = r.stream_id OR s.root_stream_id = r.stream_id)
+      WHERE s.origin_workspace_id IS NOT NULL
+      ORDER BY s.id
+      FOR UPDATE OF s
+    `)
     const result = await db.query<StreamRow>(sql`
       WITH root AS (
         SELECT r.workspace_id, r.stream_id, EXISTS (
@@ -525,8 +539,7 @@ export const StreamRepository = {
           WHERE sc.workspace_id = r.workspace_id AND sc.stream_id = r.stream_id
             AND sc.role = 'partner' AND sc.state = 'active'
         ) AS connected
-        FROM unnest(${roots.map((r) => r.workspaceId)}::text[], ${roots.map((r) => r.streamId)}::text[])
-          AS r(workspace_id, stream_id)
+        FROM unnest(${workspaceIds}::text[], ${streamIds}::text[]) AS r(workspace_id, stream_id)
       )
       UPDATE streams s
       SET disconnected_at = CASE WHEN root.connected THEN NULL ELSE NOW() END, updated_at = NOW()

@@ -26,6 +26,7 @@ function makeStream(overrides: Partial<Stream> = {}): Stream {
     createdAt: new Date(),
     updatedAt: new Date(),
     archivedAt: null,
+    disconnectedAt: null,
     ...overrides,
   }
 }

@@ -834,7 +834,7 @@ export class AttachmentService {
   /** A file the other side of a shared channel sent stops loading once the share ends; its bytes stay for a reconnect. */
   async isFromEndedShare(attachment: Pick<Attachment, "id" | "workspaceId" | "streamId">): Promise<boolean> {
     if (!attachment.streamId) return false
-    return AttachmentRepository.isFromEndedShare(this.pool, attachment.workspaceId, attachment.id)
+    return (await AttachmentRepository.listFromEndedShare(this.pool, attachment.workspaceId, [attachment.id])).size > 0
   }
 
   async getById(workspaceId: string, id: string): Promise<Attachment | null> {

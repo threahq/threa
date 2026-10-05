@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { once } from "node:events"
 import { Readable, Writable } from "node:stream"
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
-import { AttachmentSafetyStatuses } from "@threahq/types"
+import { AttachmentSafetyStatuses, StreamConnectionErrorCodes } from "@threahq/types"
 import { createAttachmentHandlers } from "./handlers"
 import { SharedMessageRepository } from "../messaging"
 import { AttachmentReferenceRepository } from "./reference-repository"
@@ -252,6 +252,34 @@ describe("attachment handlers safety gating", () => {
     expect(res.body).toEqual({ error: "Attachment is quarantined due to malware scan" })
     expect(attachmentService.getDownloadUrl).not.toHaveBeenCalled()
   })
+
+  it.each(["getDownloadUrl", "getContent", "getExtraction"] as const)(
+    "should refuse %s with SHARE_ENDED after the access check when the file came from a share that has ended",
+    async (route) => {
+      const attachmentService = {
+        getById: mock(() =>
+          Promise.resolve({ ...buildAttachment(AttachmentSafetyStatuses.CLEAN), streamId: "stream_1" })
+        ),
+        isFromEndedShare: mock(() => Promise.resolve(true)),
+        getSharingBlockReason: mock(() => null),
+      } as any
+      const streamService = { tryAccess: mock(() => Promise.resolve(true)) } as any
+      const handlers = createAttachmentHandlers({
+        attachmentService,
+        streamService,
+        storage: {} as any,
+        pool: {} as any,
+      })
+
+      const refusal = handlers[route](
+        { user: { id: "usr_1" }, workspaceId: "ws_1", params: { attachmentId: "attach_1" }, query: {} } as any,
+        createResponse()
+      )
+
+      await expect(refusal).rejects.toMatchObject({ status: 403, code: StreamConnectionErrorCodes.SHARE_ENDED })
+      expect(streamService.tryAccess).toHaveBeenCalledWith("stream_1", "ws_1", "usr_1")
+    }
+  )
 
   it("returns download URL for clean attachments", async () => {
     const attachmentService = {

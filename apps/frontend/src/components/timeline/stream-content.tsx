@@ -3159,7 +3159,7 @@ export function StreamContent({
                     <MessageInput
                       workspaceId={workspaceId}
                       streamId={streamId}
-                      disabled={isArchived || isSystem || !!stream?.disconnectedAt}
+                      disabled={disabledReason !== undefined}
                       disabledReason={disabledReason}
                       sharedCopy={isSharedCopy}
                       autoFocus={autoFocus}
