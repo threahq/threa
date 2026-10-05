@@ -330,6 +330,10 @@ export function useMessageQueue(workspaceId: string): void {
             next.streamCreation = undefined
           }
 
+          // Retired since the claim above: a send from here on would go out as
+          // whichever account replaced this one.
+          if (fence.isRetired()) return
+
           if (next.ciphertext && next.envelope && next.e2eVersion) {
             // E2E branch — encryption already happened at queue time so the
             // drain stays identity-agnostic. The backend's INV-E1 gate

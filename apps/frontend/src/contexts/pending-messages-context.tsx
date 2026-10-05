@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react"
-import { db } from "@/db"
+import { db, type CachedEvent } from "@/db"
 import { serializeToMarkdown } from "@threahq/prosemirror"
 import { ConversationIntents, type JSONContent } from "@threahq/types"
 import { deleteOptimisticBoardPost } from "@/stores/board-store"
@@ -13,6 +13,23 @@ type PreEditStatus = "pending" | "failed"
 
 interface PendingMessagesContextValue {
   markPending: (id: string) => void
+  /**
+   * Show a just-sent row on its stream's timeline in the sending tick. The
+   * durable write reaches the timeline a write commit plus a live-query re-read
+   * later, after the composer has already cleared. The timeline revokes the row
+   * once its own events carry the id: the send settling does not prove the
+   * timeline has re-read, so settling never drops it.
+   */
+  publishOptimisticEvent: (event: CachedEvent) => void
+  /**
+   * Swap a published row's content where it sits. A row no longer published
+   * stays gone: its timeline may have unmounted while the caller was sealing.
+   */
+  replaceOptimisticEvent: (event: CachedEvent) => void
+  /** Take a published row back: its write failed, or the timeline carries it. */
+  revokeOptimisticEvent: (id: string) => void
+  /** Drop a stream's published rows when its timeline goes away. */
+  clearOptimisticEvents: (streamId: string) => void
   markFailed: (id: string) => void
   markSent: (id: string) => void
   /** Put a pending/failed message into editing mode so the queue skips it */
@@ -39,6 +56,22 @@ interface PendingMessagesContextValue {
 const PendingMessagesContext = createContext<PendingMessagesContextValue | null>(null)
 const PendingStatusContext = createSelectorContext<(id: string) => MessageStatus | null>(() => null)
 
+type OptimisticEventsByStream = ReadonlyMap<string, readonly CachedEvent[]>
+const NO_OPTIMISTIC_EVENTS: readonly CachedEvent[] = []
+const OptimisticEventsContext = createSelectorContext<OptimisticEventsByStream>(new Map())
+
+function withoutOptimisticEvent(byStream: OptimisticEventsByStream, id: string): OptimisticEventsByStream {
+  for (const [streamId, events] of byStream) {
+    if (!events.some((event) => event.id === id)) continue
+    const next = new Map(byStream)
+    const rest = events.filter((event) => event.id !== id)
+    if (rest.length > 0) next.set(streamId, rest)
+    else next.delete(streamId)
+    return next
+  }
+  return byStream
+}
+
 interface PendingMessagesProviderProps {
   children: ReactNode
 }
@@ -48,6 +81,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set())
   // Maps editing message ID → status it had before entering edit mode
   const [editingIds, setEditingIds] = useState<Map<string, PreEditStatus>>(new Map())
+  const [optimisticEvents, setOptimisticEvents] = useState<OptimisticEventsByStream>(new Map())
   const queueNotifyRef = useRef<(() => void) | null>(null)
 
   // Hydrate pending/failed state from IDB on mount so it survives page reload.
@@ -112,6 +146,34 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
     },
     [pendingIds, failedIds, editingIds]
   )
+
+  const publishOptimisticEvent = useCallback((event: CachedEvent) => {
+    setOptimisticEvents((prev) => new Map(prev).set(event.streamId, [...(prev.get(event.streamId) ?? []), event]))
+  }, [])
+
+  const replaceOptimisticEvent = useCallback((event: CachedEvent) => {
+    setOptimisticEvents((prev) => {
+      const published = prev.get(event.streamId)
+      if (!published?.some((row) => row.id === event.id)) return prev
+      return new Map(prev).set(
+        event.streamId,
+        published.map((row) => (row.id === event.id ? event : row))
+      )
+    })
+  }, [])
+
+  const revokeOptimisticEvent = useCallback((id: string) => {
+    setOptimisticEvents((prev) => withoutOptimisticEvent(prev, id))
+  }, [])
+
+  const clearOptimisticEvents = useCallback((streamId: string) => {
+    setOptimisticEvents((prev) => {
+      if (!prev.has(streamId)) return prev
+      const next = new Map(prev)
+      next.delete(streamId)
+      return next
+    })
+  }, [])
 
   const markPending = useCallback((id: string) => {
     setPendingIds((prev) => new Set(prev).add(id))
@@ -320,6 +382,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
       await db.events.delete([workspaceId, id])
     })
     revokeOptimisticRailEvent(id)
+    setOptimisticEvents((prev) => withoutOptimisticEvent(prev, id))
     if (pending?.conversation?.intent === ConversationIntents.NEW && pending.conversation.conversationId) {
       await deleteOptimisticBoardPost(pending.workspaceId, pending.conversation.conversationId)
     }
@@ -344,6 +407,10 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
   const value = useMemo(
     () => ({
       markPending,
+      publishOptimisticEvent,
+      replaceOptimisticEvent,
+      revokeOptimisticEvent,
+      clearOptimisticEvents,
       markFailed,
       markSent,
       markEditing,
@@ -356,6 +423,10 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
     }),
     [
       markPending,
+      publishOptimisticEvent,
+      replaceOptimisticEvent,
+      revokeOptimisticEvent,
+      clearOptimisticEvents,
       markFailed,
       markSent,
       markEditing,
@@ -370,7 +441,9 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
 
   return (
     <PendingMessagesContext.Provider value={value}>
-      <PendingStatusContext.Provider value={getStatus}>{children}</PendingStatusContext.Provider>
+      <PendingStatusContext.Provider value={getStatus}>
+        <OptimisticEventsContext.Provider value={optimisticEvents}>{children}</OptimisticEventsContext.Provider>
+      </PendingStatusContext.Provider>
     </PendingMessagesContext.Provider>
   )
 }
@@ -386,4 +459,9 @@ export function usePendingMessages(): PendingMessagesContextValue {
 /** One message's unsent status; re-renders only when that message's status changes. */
 export function usePendingMessageStatus(id: string): MessageStatus | null {
   return PendingStatusContext.useSelector((getStatus) => getStatus(id))
+}
+
+/** Rows published at send time for one stream; see `publishOptimisticEvent`. */
+export function useOptimisticEvents(streamId: string): readonly CachedEvent[] {
+  return OptimisticEventsContext.useSelector((byStream) => byStream.get(streamId) ?? NO_OPTIMISTIC_EVENTS)
 }

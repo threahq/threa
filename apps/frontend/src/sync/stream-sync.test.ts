@@ -1045,6 +1045,35 @@ describe("applyStreamBootstrap (real IndexedDB)", () => {
     expect(replace.windowVersion).toBe(1)
   })
 
+  it("keeps a window's floor where it opened: a catch-up page can lower it, never raise it", () => {
+    const streamId = "stream_floor"
+    const catchUp = (sequence: string) => ({
+      ...makeBootstrap([makeEvent({ id: `evt_${sequence}`, streamId, sequence })], streamId),
+      syncMode: "append" as const,
+      latestSequence: sequence,
+    })
+    const openedEmpty = toCachedStreamBootstrap(makeBootstrap([], streamId))
+    const openedPopulated = toCachedStreamBootstrap(
+      makeBootstrap([makeEvent({ id: "evt_10", streamId, sequence: "10" })], streamId)
+    )
+
+    expect({
+      openedEmpty: openedEmpty.windowFloor,
+      caughtUpFromEmpty: toCachedStreamBootstrap(catchUp("3"), openedEmpty).windowFloor,
+      openedPopulated: openedPopulated.windowFloor,
+      caughtUpFromPopulated: toCachedStreamBootstrap(catchUp("20"), openedPopulated).windowFloor,
+      backfilledBelow: toCachedStreamBootstrap(catchUp("5"), openedPopulated).windowFloor,
+      emptyCatchUpAlone: toCachedStreamBootstrap({ ...catchUp("3"), events: [] }).windowFloor,
+    }).toEqual({
+      openedEmpty: "0",
+      caughtUpFromEmpty: "0",
+      openedPopulated: "10",
+      caughtUpFromPopulated: "10",
+      backfilledBelow: "5",
+      emptyCatchUpAlone: null,
+    })
+  })
+
   it("keeps the newer cached latestSequence when appending an older catch-up response", () => {
     const streamId = "stream_latest"
     const current = toCachedStreamBootstrap(
@@ -2122,6 +2151,7 @@ describe("registerStreamSocketHandlers — bot_runtime:presence cache patching",
       ...base,
       botRuntimePresence: presence,
       windowVersion: 0,
+      windowFloor: "0",
     }
     queryClient.setQueryData(streamKeys.bootstrap("ws_1", streamId), cached)
     return cached

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef } from "react"
 import { replaceEqualDeep, useQueryClient } from "@tanstack/react-query"
 import { useNavigate } from "react-router-dom"
-import { db, sequenceToNum, type CachedStream, type DraftScratchpad } from "@/db"
+import { db, sequenceToNum, type CachedEvent, type CachedStream, type DraftScratchpad } from "@/db"
 import { useStreamService, useMessageService, usePendingMessages } from "@/contexts"
 import { useUser } from "@/auth"
 import { type SealStreamMessageResult } from "@/lib/crypto/message-envelope"
@@ -534,7 +534,8 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
 function useRealStream(workspaceId: string, streamId: string, enabled: boolean): UseStreamOrDraftReturn {
   const queryClient = useQueryClient()
   const streamService = useStreamService()
-  const { markPending, notifyQueue } = usePendingMessages()
+  const { markPending, publishOptimisticEvent, replaceOptimisticEvent, revokeOptimisticEvent, notifyQueue } =
+    usePendingMessages()
   const user = useUser()
   const idbUsers = useWorkspaceUsers(workspaceId)
   const idbDmPeers = useWorkspaceDmPeers(workspaceId)
@@ -639,7 +640,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
 
       const contentMarkdown = serializeToMarkdown(input.contentJson)
 
-      const optimisticEvent: StreamEvent = {
+      let optimisticEvent: StreamEvent = {
         id: clientId,
         streamId,
         sequence: "0",
@@ -658,6 +659,21 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         actorType: "user",
         createdAt: now,
       }
+
+      // Published before anything is awaited: the composer has already cleared,
+      // and sealing or the durable write can each outlast a frame.
+      markPending(clientId)
+      const publishedSequence = Date.now().toString()
+      const toPublished = (event: StreamEvent): CachedEvent => ({
+        ...event,
+        workspaceId,
+        sequence: publishedSequence,
+        _sequenceNum: sequenceToNum(publishedSequence),
+        _clientId: clientId,
+        _status: "pending",
+        _cachedAt: Date.now(),
+      })
+      publishOptimisticEvent(toPublished(optimisticEvent))
 
       // If the destination is an E2E scratchpad, encrypt the markdown body
       // to the owner's UIK and stash the ciphertext on the pending row. The
@@ -680,6 +696,9 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           messageId: clientId,
           contentMarkdown,
           attachmentIds: input.attachmentIds,
+        }).catch((err) => {
+          revokeOptimisticEvent(clientId)
+          throw err
         })
         e2eFields = sealed.e2eFields
         // Heal-on-send: if an invited actor's key went stale (an enclave
@@ -703,16 +722,17 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         // surface the refs, and the row falls through to the opaque server
         // placeholder.
         if (sealed.attachmentRefs && sealed.attachmentRefs.length > 0) {
-          ;(optimisticEvent.payload as Record<string, unknown>).attachmentRefs = sealed.attachmentRefs
+          optimisticEvent = {
+            ...optimisticEvent,
+            payload: { ...(optimisticEvent.payload as object), attachmentRefs: sealed.attachmentRefs },
+          }
+          replaceOptimisticEvent(toPublished(optimisticEvent))
         }
       }
 
-      markPending(clientId)
-
-      // The durable send and its optimistic row appear together. A steered
-      // message stays one queue item so replay cannot dispatch the command
-      // before the message reaches the server.
-      await db.transaction("rw", [db.pendingMessages, db.events], async () => {
+      // A steered message stays one queue item so replay cannot dispatch the
+      // command before the message reaches the server.
+      const durableWrite = db.transaction("rw", [db.pendingMessages, db.events], async () => {
         const [anchorSequence, allocatedSequence] = await Promise.all([
           getLatestPersistedSequence(workspaceId, streamId),
           nextOptimisticSequence(workspaceId, streamId),
@@ -744,12 +764,28 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
           _cachedAt: Date.now(),
         })
       })
+      try {
+        await durableWrite
+      } catch (err) {
+        revokeOptimisticEvent(clientId)
+        throw err
+      }
 
       notifyQueue()
 
       return {}
     },
-    [streamId, workspaceId, markPending, notifyQueue, currentUserId, baseStream]
+    [
+      streamId,
+      workspaceId,
+      markPending,
+      publishOptimisticEvent,
+      replaceOptimisticEvent,
+      revokeOptimisticEvent,
+      notifyQueue,
+      currentUserId,
+      baseStream,
+    ]
   )
 
   return {

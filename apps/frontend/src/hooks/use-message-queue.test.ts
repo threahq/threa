@@ -1168,6 +1168,32 @@ describe("useMessageQueue", () => {
     expect(reconcile).not.toHaveBeenCalled()
   })
 
+  it("should not send a claimed message once its account switched away", async () => {
+    let releaseClaim!: () => void
+    mockEventsUpdate.mockReturnValue(new Promise<number>((resolve) => (releaseClaim = () => resolve(1))))
+    mockPendingMessages = [
+      {
+        clientId: "temp_claimed",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        content: "Composed by A",
+        contentFormat: "markdown",
+        createdAt: 1000,
+        retryCount: 0,
+      },
+    ]
+
+    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
+    await waitFor(() => expect(mockEventsUpdate).toHaveBeenCalledWith(["ws_1", "temp_claimed"], { _status: "pending" }))
+    await act(async () => {
+      const retired = retireAccountWork(1000)
+      releaseClaim()
+      await retired
+    })
+
+    expect({ sends: mockCreate.mock.calls, deletes: mockDelete.mock.calls }).toEqual({ sends: [], deletes: [] })
+  })
+
   it("should leave a send that lands after its account switched away queued for that account", async () => {
     let settleSend: (value: { id: string }) => void = () => {}
     mockCreate.mockImplementation(

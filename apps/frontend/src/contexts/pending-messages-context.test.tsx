@@ -2,7 +2,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { spyOnExport } from "@/test/spy"
 import { renderHook, act, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { PendingMessagesProvider, usePendingMessages, usePendingMessageStatus } from "./pending-messages-context"
+import {
+  PendingMessagesProvider,
+  useOptimisticEvents,
+  usePendingMessages,
+  usePendingMessageStatus,
+} from "./pending-messages-context"
 import * as dbModule from "@/db"
 import * as boardStoreModule from "@/stores/board-store"
 
@@ -384,6 +389,90 @@ describe("PendingMessagesContext", () => {
         "temp_steer_edit",
         expect.objectContaining({ steer: expectedSteer, terminalFailure: undefined })
       )
+    })
+  })
+
+  describe("published send rows", () => {
+    const sent = { id: "temp_sent", streamId: "stream_a" } as dbModule.CachedEvent
+
+    function renderPublished() {
+      return renderHook(
+        () => ({
+          ...usePendingMessages(),
+          published: useOptimisticEvents("stream_a"),
+          elsewhere: useOptimisticEvents("stream_b"),
+        }),
+        { wrapper }
+      )
+    }
+
+    it("shows a published row on its own stream only", () => {
+      const { result } = renderPublished()
+
+      act(() => result.current.publishOptimisticEvent(sent))
+
+      expect({ published: result.current.published, elsewhere: result.current.elsewhere }).toEqual({
+        published: [sent],
+        elsewhere: [],
+      })
+    })
+
+    it("replaces a published row where it sits, keeping later sends below it", () => {
+      const { result } = renderPublished()
+      const later = { id: "temp_later", streamId: "stream_a" } as dbModule.CachedEvent
+      const resealed = { ...sent, payload: { attachmentRefs: ["ref"] } } as dbModule.CachedEvent
+      act(() => result.current.publishOptimisticEvent(sent))
+      act(() => result.current.publishOptimisticEvent(later))
+
+      act(() => result.current.replaceOptimisticEvent(resealed))
+
+      expect(result.current.published).toEqual([resealed, later])
+    })
+
+    it("does not bring a row back by replacing it after its stream was cleared", () => {
+      const { result } = renderPublished()
+      act(() => result.current.publishOptimisticEvent(sent))
+      act(() => result.current.clearOptimisticEvents("stream_a"))
+
+      act(() => result.current.replaceOptimisticEvent({ ...sent, payload: {} } as dbModule.CachedEvent))
+
+      expect(result.current.published).toEqual([])
+    })
+
+    it.each(["markSent", "markFailed"] as const)(
+      "keeps the row on %s, which does not prove the timeline has re-read it",
+      (settle) => {
+        const { result } = renderPublished()
+        act(() => result.current.publishOptimisticEvent(sent))
+
+        act(() => result.current[settle]("temp_sent"))
+
+        expect(result.current.published).toEqual([sent])
+      }
+    )
+
+    it.each([
+      ["revokeOptimisticEvent", "temp_sent"],
+      ["clearOptimisticEvents", "stream_a"],
+    ] as const)("drops the row on %s", (drop, key) => {
+      const { result } = renderPublished()
+      act(() => result.current.publishOptimisticEvent(sent))
+
+      act(() => result.current[drop](key))
+
+      expect(result.current.published).toEqual([])
+    })
+
+    it("drops the row when the unsent message is deleted", async () => {
+      mockGet.mockResolvedValue({ clientId: "temp_sent", workspaceId: "ws_1", retryCount: 0, status: undefined })
+      const { result } = renderPublished()
+      act(() => result.current.publishOptimisticEvent(sent))
+
+      await act(async () => {
+        await result.current.deleteMessage("ws_1", "temp_sent")
+      })
+
+      expect(result.current.published).toEqual([])
     })
   })
 

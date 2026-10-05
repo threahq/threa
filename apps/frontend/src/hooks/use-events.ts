@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useStreamBootstrap } from "./use-streams"
-import { useStreamService } from "@/contexts"
+import { useOptimisticEvents, usePendingMessages, useStreamService } from "@/contexts"
 import { useQueryClient, useInfiniteQuery } from "@tanstack/react-query"
-import { db, sequenceToNum } from "@/db"
+import { db, sequenceToNum, type CachedEvent } from "@/db"
 import { putEventsBounded, skipNoOpEventRewrites } from "@/db/event-writes"
 import { EVENT_PAGE_SIZE } from "@/lib/constants"
 import { useStreamEvents } from "@/stores/stream-store"
@@ -210,6 +210,28 @@ export function getEffectiveEvents<T extends DisplayableEvent>(
   return bootstrapEvents
 }
 
+const NO_UNPERSISTED_EVENTS: readonly CachedEvent[] = []
+
+/**
+ * The published send rows the persisted read does not carry yet. A row is
+ * carried under its own id while it is unsent and under `clientMessageId` once
+ * the echo has replaced it.
+ */
+export function getUnpersistedOptimisticEvents(
+  optimisticEvents: readonly CachedEvent[],
+  persistedEvents: readonly { id?: string; payload?: unknown }[]
+): readonly CachedEvent[] {
+  if (optimisticEvents.length === 0) return NO_UNPERSISTED_EVENTS
+  const carried = new Set<string>()
+  for (const event of persistedEvents) {
+    if (event.id) carried.add(event.id)
+    const clientMessageId = (event.payload as { clientMessageId?: string } | undefined)?.clientMessageId
+    if (clientMessageId) carried.add(clientMessageId)
+  }
+  const unpersisted = optimisticEvents.filter((event) => !carried.has(event.id))
+  return unpersisted.length > 0 ? unpersisted : NO_UNPERSISTED_EVENTS
+}
+
 export function getOldestSequence(events: SequencedEvent[] | null | undefined): string | null {
   if (!events || events.length === 0) return null
 
@@ -321,6 +343,7 @@ function pickEventWindow(bootstrap: CachedStreamBootstrap) {
     events: bootstrap.events,
     windowVersion: bootstrap.windowVersion,
     hasOlderEvents: bootstrap.hasOlderEvents,
+    windowFloor: bootstrap.windowFloor,
     latestSequence: bootstrap.latestSequence,
   }
 }
@@ -449,12 +472,12 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     const next = getNextBootstrapFloorState(
       bootstrapFloorRef.current,
       streamId,
-      getMinimumSequence(bootstrap?.events),
+      bootstrap?.windowFloor != null ? BigInt(bootstrap.windowFloor) : null,
       bootstrap?.windowVersion ?? 0
     )
     bootstrapFloorRef.current = next.state
     return next.floor
-  }, [bootstrap?.events, bootstrap?.windowVersion, streamId])
+  }, [bootstrap?.windowFloor, bootstrap?.windowVersion, streamId])
 
   const olderFloor = useMemo(() => {
     const olderEvents = olderData?.pages.flatMap((page) => page.events).filter(Boolean) ?? []
@@ -482,8 +505,27 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
   // race where bootstrap has finished but Dexie change events haven't yet
   // propagated to useLiveQuery (see getEffectiveEvents docstring).
   const effectiveEvents: DisplayableEvent[] = getEffectiveEvents(idbResolved, idbEvents ?? [], bootstrap?.events ?? [])
+  const optimisticEvents = useOptimisticEvents(streamId)
+  const { revokeOptimisticEvent, clearOptimisticEvents } = usePendingMessages()
+  const unpersistedEvents = useMemo(() => {
+    const bridged = liveTailBridge?.streamId === streamId ? liveTailBridge.events : []
+    return getUnpersistedOptimisticEvents(
+      optimisticEvents,
+      bridged.length > 0 ? [...effectiveEvents, ...bridged] : effectiveEvents
+    )
+  }, [optimisticEvents, effectiveEvents, liveTailBridge, streamId])
+  // A carried row is revoked for good: left published, it would come back as a
+  // second copy once the persisted one scrolls out of the read window.
+  useEffect(() => {
+    for (const event of optimisticEvents) {
+      if (!unpersistedEvents.includes(event)) revokeOptimisticEvent(event.id)
+    }
+  }, [optimisticEvents, unpersistedEvents, revokeOptimisticEvent])
+  useEffect(() => () => clearOptimisticEvents(streamId), [streamId, clearOptimisticEvents])
   const hasAnyEvents =
-    effectiveEvents.length > 0 || (liveTailBridge?.streamId === streamId && liveTailBridge.events.length > 0)
+    effectiveEvents.length > 0 ||
+    unpersistedEvents.length > 0 ||
+    (liveTailBridge?.streamId === streamId && liveTailBridge.events.length > 0)
 
   useEffect(() => {
     if (!liveTailBridge) return
@@ -522,9 +564,15 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     // never hide the entire cached set — a non-empty IDB always renders
     // something (see getRenderableEvents).
     const liveEvents = getRenderableEvents(effectiveEvents, displayFloor) as unknown as StreamEvent[]
-    if (!liveTailBridge || liveTailBridge.streamId !== streamId) return liveEvents
-    return dedupeAndSort([liveTailBridge.events, liveEvents])
-  }, [effectiveEvents, olderData, newerData, jumpState, displayFloor, liveTailBridge, streamId])
+    const persisted =
+      !liveTailBridge || liveTailBridge.streamId !== streamId
+        ? liveEvents
+        : dedupeAndSort([liveTailBridge.events, liveEvents])
+    // In-flight sends sit at the tail (orderStreamEvents), so a row published
+    // ahead of its write is appended where the persisted copy will read.
+    if (unpersistedEvents.length === 0) return persisted
+    return [...persisted, ...(unpersistedEvents as unknown as StreamEvent[])]
+  }, [effectiveEvents, olderData, newerData, jumpState, displayFloor, liveTailBridge, streamId, unpersistedEvents])
 
   // Contiguity gate (INV-61): detect holes in the broadcast chain of the
   // rendered window. Each hole renders as an in-place loading placeholder

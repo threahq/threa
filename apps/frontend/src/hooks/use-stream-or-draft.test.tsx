@@ -4,10 +4,11 @@ import { createElement, type ReactNode } from "react"
 import { MemoryRouter } from "react-router-dom"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { ServicesProvider, type MessageService, type StreamService } from "@/contexts"
-import { PendingMessagesProvider } from "@/contexts/pending-messages-context"
+import { PendingMessagesProvider, useOptimisticEvents } from "@/contexts/pending-messages-context"
 import { clearAllCachedData, db, type CachedDraft } from "@/db"
 import { AuthContext } from "@/auth/context"
 import { streamKeys } from "./use-streams"
+import * as sealSendModule from "@/lib/crypto/seal-send"
 import { seedWorkspaceCache } from "@/stores/workspace-store"
 import { SyncEngineContext } from "@/sync/sync-engine"
 import { workspaceKeys } from "./use-workspaces"
@@ -91,8 +92,12 @@ describe("useStreamOrDraft real stream send", () => {
     await clearAllCachedData()
   })
 
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   /** Seed the workspace cache + bootstrap for a plain channel and mount the hook on it. */
-  async function mountRealStreamSend() {
+  async function mountRealStreamSend(streamOverrides: { e2eEnabled?: boolean } = {}) {
     const createdAt = "2026-03-31T10:00:00Z"
     const stream = {
       id: "stream_socket_seen",
@@ -112,6 +117,7 @@ describe("useStreamOrDraft real stream send", () => {
       updatedAt: createdAt,
       archivedAt: null,
       lastMessagePreview: null,
+      ...streamOverrides,
     }
 
     await seedWorkspaceCacheAndIdb("ws_1", {
@@ -204,9 +210,13 @@ describe("useStreamOrDraft real stream send", () => {
       latestSequence: "0",
     })
 
-    const { result } = renderHook(() => useStreamOrDraft("ws_1", "stream_socket_seen"), {
-      wrapper: createWrapper(queryClient),
-    })
+    const { result } = renderHook(
+      () => ({
+        ...useStreamOrDraft("ws_1", "stream_socket_seen"),
+        published: useOptimisticEvents("stream_socket_seen"),
+      }),
+      { wrapper: createWrapper(queryClient) }
+    )
 
     await waitFor(() => {
       expect(result.current.stream?.id).toBe("stream_socket_seen")
@@ -250,6 +260,65 @@ describe("useStreamOrDraft real stream send", () => {
       eventType: "message_created",
       _status: "pending",
     })
+  })
+
+  it("shows the sent row while its durable write is still in flight, and takes it back if the write fails", async () => {
+    const { result } = await mountRealStreamSend()
+
+    vi.spyOn(db.pendingMessages, "add").mockRejectedValue(new Error("quota"))
+
+    let sending: Promise<unknown> = Promise.resolve()
+    act(() => {
+      sending = result.current.sendMessage({
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "eager" }] }] },
+      })
+    })
+
+    expect(result.current.published).toMatchObject([
+      { streamId: "stream_socket_seen", actorId: "member_1", eventType: "message_created", _status: "pending" },
+    ])
+
+    await act(async () => {
+      await expect(sending).rejects.toThrow("quota")
+    })
+    expect(result.current.published).toEqual([])
+  })
+
+  it("shows an encrypted send while it is being sealed and carries the sealed attachment refs once it is", async () => {
+    let finishSeal: (sealed: sealSendModule.SealOutgoingMessageResult) => void = () => {}
+    vi.spyOn(sealSendModule, "sealOutgoingMessage").mockReturnValue(
+      new Promise((resolve) => {
+        finishSeal = resolve
+      })
+    )
+    const { result } = await mountRealStreamSend({ e2eEnabled: true })
+
+    let sending: Promise<unknown> = Promise.resolve()
+    act(() => {
+      sending = result.current.sendMessage({ contentJson: { type: "doc", content: [{ type: "paragraph" }] } })
+    })
+    expect(result.current.published).toMatchObject([{ streamId: "stream_socket_seen", _status: "pending" }])
+
+    const attachmentRefs = [{ id: "attach_1" }]
+    await act(async () => {
+      finishSeal({ attachmentRefs, e2eFields: {} } as unknown as sealSendModule.SealOutgoingMessageResult)
+      await sending
+    })
+
+    expect(result.current.published).toMatchObject([{ payload: { attachmentRefs } }])
+  })
+
+  it("takes an encrypted send back when sealing fails", async () => {
+    vi.spyOn(sealSendModule, "sealOutgoingMessage").mockRejectedValue(new Error("locked"))
+    const { result } = await mountRealStreamSend({ e2eEnabled: true })
+
+    await act(async () => {
+      await expect(
+        result.current.sendMessage({ contentJson: { type: "doc", content: [{ type: "paragraph" }] } })
+      ).rejects.toThrow("locked")
+    })
+
+    expect(result.current.published).toEqual([])
   })
 
   it("keeps steer on the same durable message queue item", async () => {

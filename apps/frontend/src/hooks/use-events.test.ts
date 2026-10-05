@@ -2,9 +2,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act, renderHook, waitFor } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { ServicesProvider, type StreamService } from "@/contexts"
+import { PendingMessagesProvider, ServicesProvider, usePendingMessages, type StreamService } from "@/contexts"
 import type { StreamEvent } from "@threahq/types"
 import { db, type CachedEvent } from "@/db"
+import { streamKeys } from "@/hooks/use-streams"
+import type { CachedStreamBootstrap } from "@/sync/stream-sync"
 import { loadStreamPrefix, loadStreamTail, unionStreamRanges } from "@/stores/stream-store"
 import {
   computeTimelineLoadState,
@@ -16,6 +18,7 @@ import {
   getNextBootstrapFloorState,
   getOldestSequence,
   getRenderableEvents,
+  getUnpersistedOptimisticEvents,
   cacheToIndexedDB,
   useEvents,
 } from "./use-events"
@@ -235,6 +238,30 @@ describe("getEffectiveEvents", () => {
   })
 })
 
+describe("getUnpersistedOptimisticEvents", () => {
+  const published = (id: string) => ({ id }) as CachedEvent
+
+  it("keeps only the published rows the persisted read carries neither by id nor by clientMessageId", () => {
+    const unsent = published("temp_unsent")
+    const written = published("temp_written")
+    const echoed = published("temp_echoed")
+
+    expect(
+      getUnpersistedOptimisticEvents(
+        [unsent, written, echoed],
+        [{ id: "temp_written" }, { id: "event_real", payload: { clientMessageId: "temp_echoed" } }]
+      )
+    ).toEqual([unsent])
+  })
+
+  it("returns the same empty list while every published row is carried, so the timeline is not rebuilt", () => {
+    const first = getUnpersistedOptimisticEvents([published("temp_a")], [{ id: "temp_a" }])
+    const second = getUnpersistedOptimisticEvents([], [{ id: "temp_a" }])
+
+    expect(first).toBe(second)
+  })
+})
+
 describe("cacheToIndexedDB with eventWriteChunking on", () => {
   beforeEach(async () => {
     await db.events.clear()
@@ -323,7 +350,7 @@ describe("useEvents live-tail jump bridge", () => {
         { client: queryClient },
         createElement(ServicesProvider, {
           services: { streams: { getEventsAround } as unknown as StreamService },
-          children,
+          children: createElement(PendingMessagesProvider, undefined, children),
         })
       )
     }
@@ -380,6 +407,132 @@ describe("useEvents live-tail jump bridge", () => {
     rerender({ currentStreamId: "stream_other" })
     await waitFor(() => expect(result.current.events.map((candidate) => candidate.id)).toEqual([other.id]))
   })
+
+  it("does not show a published row beside its echo when only the bridge carries the echo", async () => {
+    const stale = event("stale", 1)
+    const echo = { ...event("echo", 2), payload: { messageId: "msg_echo", clientMessageId: "temp_sent" } }
+    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation(cachedRowsFor({ [streamId]: [stale] }))
+    getEventsAround.mockResolvedValue({ events: [stale, echo], hasOlder: false, hasNewer: false })
+
+    const { result } = renderHook(
+      () => ({ timeline: useEvents(workspaceId, streamId), pending: usePendingMessages() }),
+      { wrapper: wrapper() }
+    )
+    act(() => result.current.pending.publishOptimisticEvent({ ...event("sent", 5), id: "temp_sent" }))
+    expect(result.current.timeline.events.map((candidate) => candidate.id)).toEqual([stale.id, "temp_sent"])
+
+    await act(async () => {
+      await result.current.timeline.jumpToEvent("msg_echo")
+    })
+
+    expect(result.current.timeline.events.map((candidate) => candidate.id)).toEqual([stale.id, echo.id])
+  })
+})
+
+describe("useEvents published send rows", () => {
+  const workspaceId = "ws_publish"
+  const streamId = "stream_publish"
+
+  function row(id: string, sequence: number, extra: Partial<CachedEvent> = {}): CachedEvent {
+    return {
+      id,
+      workspaceId,
+      streamId,
+      sequence: String(sequence),
+      _sequenceNum: sequence,
+      _cachedAt: 1,
+      eventType: "message_created",
+      payload: { messageId: id, contentMarkdown: id },
+      actorId: "usr_1",
+      actorType: "user",
+      createdAt: new Date(2026, 0, 1, 0, 0, sequence).toISOString(),
+      ...extra,
+    }
+  }
+
+  function wrapper() {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    return function Wrapper({ children }: { children: ReactNode }) {
+      return createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(ServicesProvider, {
+          services: { streams: {} as unknown as StreamService },
+          children: createElement(PendingMessagesProvider, undefined, children),
+        })
+      )
+    }
+  }
+
+  beforeEach(async () => {
+    vi.restoreAllMocks()
+    await db.events.clear()
+  })
+
+  it("shows a published row at the tail before the cache carries it, and once after the echo replaces it", async () => {
+    const earlier = row("event_earlier", 1)
+    const sent = row("temp_sent", 5, { _clientId: "temp_sent", _status: "pending" })
+    let cached: CachedEvent[] = [earlier]
+    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation(() => cached)
+
+    const { result, rerender } = renderHook(
+      () => ({ timeline: useEvents(workspaceId, streamId), pending: usePendingMessages() }),
+      { wrapper: wrapper() }
+    )
+    await waitFor(() => expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id]))
+
+    act(() => result.current.pending.publishOptimisticEvent(sent))
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id, sent.id])
+
+    cached = [earlier, row("event_real", 2, { payload: { messageId: "msg_real", clientMessageId: "temp_sent" } })]
+    rerender()
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id, "event_real"])
+  })
+
+  it("keeps a published row through the send settling until the cache carries it, then lets go of it for good", async () => {
+    const earlier = row("event_earlier", 1)
+    const sent = row("temp_sent", 5, { _clientId: "temp_sent", _status: "pending" })
+    let cached: CachedEvent[] = [earlier]
+    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation(() => cached)
+
+    const { result, rerender } = renderHook(
+      () => ({ timeline: useEvents(workspaceId, streamId), pending: usePendingMessages() }),
+      { wrapper: wrapper() }
+    )
+    await waitFor(() => expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id]))
+
+    act(() => result.current.pending.publishOptimisticEvent(sent))
+    act(() => result.current.pending.markSent(sent.id))
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id, sent.id])
+
+    cached = [earlier, sent]
+    rerender()
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id, sent.id])
+
+    cached = [earlier]
+    rerender()
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id])
+  })
+
+  it("drops a stream's published rows when its timeline moves to another stream", async () => {
+    const sent = row("temp_sent", 5, { _clientId: "temp_sent", _status: "pending" })
+    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation(() => [])
+
+    const { result, rerender } = renderHook(
+      ({ currentStreamId }) => ({
+        timeline: useEvents(workspaceId, currentStreamId),
+        pending: usePendingMessages(),
+      }),
+      { initialProps: { currentStreamId: streamId }, wrapper: wrapper() }
+    )
+    act(() => result.current.pending.publishOptimisticEvent(sent))
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([sent.id])
+
+    rerender({ currentStreamId: "stream_elsewhere" })
+    rerender({ currentStreamId: streamId })
+
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([])
+  })
 })
 
 describe("bounded timeline read from the events hook's window", () => {
@@ -406,6 +559,7 @@ describe("bounded timeline read from the events hook's window", () => {
   }
 
   beforeEach(async () => {
+    vi.restoreAllMocks()
     await db.events.clear()
   })
 
@@ -424,6 +578,44 @@ describe("bounded timeline read from the events hook's window", () => {
     expect(unionStreamRanges(prefixAfter, tailAfter).map((e) => e._sequenceNum)).toEqual(
       Array.from({ length: 251 }, (_, i) => i + 150)
     )
+  })
+
+  it("reads its lower bound from the window's floor, not from the oldest event the window carries", async () => {
+    await seed(3)
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const windowWithFloor = (streamId: string, windowFloor: string) =>
+      queryClient.setQueryData(streamKeys.bootstrap("ws_1", streamId), {
+        events: [cachedEvent(3, streamId)],
+        windowVersion: 0,
+        hasOlderEvents: false,
+        latestSequence: "3",
+        windowFloor,
+      } as unknown as CachedStreamBootstrap)
+    const OPENED_POPULATED = "stream_bounded_populated"
+    await seed(3, OPENED_POPULATED)
+    windowWithFloor(STREAM, "0")
+    windowWithFloor(OPENED_POPULATED, "3")
+
+    function Wrapper({ children }: { children: ReactNode }) {
+      return createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(ServicesProvider, {
+          services: { streams: {} as unknown as StreamService },
+          children: createElement(PendingMessagesProvider, undefined, children),
+        })
+      )
+    }
+    const sequences = (events: StreamEvent[]) => events.map((event) => event.sequence)
+    const { result } = renderHook(
+      () => ({
+        openedEmpty: sequences(useEvents("ws_1", STREAM).events),
+        openedPopulated: sequences(useEvents("ws_1", OPENED_POPULATED).events),
+      }),
+      { wrapper: Wrapper }
+    )
+
+    await waitFor(() => expect(result.current).toEqual({ openedEmpty: ["1", "2", "3"], openedPopulated: ["3"] }))
   })
 
   it("a thread with two thousand replies renders every reply", async () => {
