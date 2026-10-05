@@ -14,7 +14,7 @@ import { setupTestDatabase, withTransaction, addTestMember, testMessageContent }
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository } from "../../src/features/streams"
 import { EventService } from "../../src/features/messaging"
-import { MemoExplorerService, MemoRepository } from "../../src/features/memos"
+import { MemoExplorerService, MemoRepository, StubReranker } from "../../src/features/memos"
 import type { EmbeddingServiceLike } from "../../src/features/memos"
 import { userId, workspaceId, streamId, messageId, memoId } from "../../src/lib/id"
 import type { JSONContent } from "@threahq/types"
@@ -64,7 +64,7 @@ describe("memo:updated", () => {
     explorer = new MemoExplorerService({
       pool,
       embeddingService: { embed: async () => [0.1] } as unknown as EmbeddingServiceLike,
-      reranker: undefined,
+      reranker: new StubReranker(),
     })
     testWorkspaceId = workspaceId()
     testUserId = userId()
@@ -453,6 +453,8 @@ describe("memo:updated", () => {
       contentMarkdown: serializeToMarkdown(contentJson),
     })
 
-    expect(await MemoRepository.findCitingStreamIds(pool, testWorkspaceId, canary)).toEqual([publicChannel])
+    expect(await MemoRepository.findCitingStreamIds(pool, testWorkspaceId, [canary])).toEqual([
+      { memoId: canary, streamId: publicChannel },
+    ])
   })
 })

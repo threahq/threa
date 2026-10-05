@@ -196,6 +196,35 @@ describe("MemoryPage", () => {
     expect(refetchDetail).toHaveBeenCalledTimes(1)
   })
 
+  it.each([
+    { originWorkspaceId: null, editable: true },
+    { originWorkspaceId: "ws_host", editable: false },
+  ])(
+    "should offer edit and archive only when the memo is not a shared copy (origin $originWorkspaceId)",
+    ({ originWorkspaceId, editable }) => {
+      const memo = buildMemo({ originWorkspaceId })
+      mockUseMemoSearch.mockReturnValue({
+        data: { results: [{ memo, distance: 0, sourceStream: null, rootStream: null }] },
+        isLoading: false,
+        isFetching: false,
+        refetch: vi.fn(),
+      })
+      mockUseMemoDetail.mockReturnValue({
+        data: { memo: { memo, distance: 0, sourceStream: null, rootStream: null, sourceMessages: [] } },
+        isLoading: false,
+        isFetching: false,
+        refetch: vi.fn(),
+      })
+
+      renderPage()
+
+      expect({
+        edit: screen.queryByRole("button", { name: "Edit" }) !== null,
+        archive: screen.queryByRole("button", { name: "Archive" }) !== null,
+      }).toEqual({ edit: editable, archive: editable })
+    }
+  )
+
   describe("memo_opened analytics", () => {
     function memoResult(id: string, title: string) {
       return { memo: buildMemo({ id, title }), distance: 0, sourceStream: null, rootStream: null }

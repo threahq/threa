@@ -7,6 +7,7 @@ import {
   bridgeDeleteMessageQuerySchema,
   bridgeEditMessageSchema,
   bridgeProfilesRequestSchema,
+  bridgeMemosRequestSchema,
   bridgeRemoveReactionQuerySchema,
   bridgeSendMessageSchema,
   streamConnectionIdSchema,
@@ -201,6 +202,36 @@ export function createStreamConnectionBridgeHandlers({
       )
       res.setHeader("Cache-Control", "no-store")
       res.json(profiles)
+    },
+
+    async memoIndex(req: Request, res: Response) {
+      const params = validateRequest(bridgeParamsSchema, req.params)
+      const index = await streamConnectionExportService.getMemoIndex({
+        ...params,
+        callerWorkspaceId: identifyCaller(req, params.connectionId),
+      })
+      setAuditSubjects(
+        res,
+        index.memos.map((memo) => ({ type: "memo", id: memo.id }))
+      )
+      res.setHeader("Cache-Control", "no-store")
+      res.json(index)
+    },
+
+    async memos(req: Request, res: Response) {
+      const params = validateRequest(bridgeParamsSchema, req.params)
+      const { memoIds } = validateRequest(bridgeMemosRequestSchema, req.body)
+      const memos = await streamConnectionExportService.getMemos({
+        ...params,
+        memoIds,
+        callerWorkspaceId: identifyCaller(req, params.connectionId),
+      })
+      setAuditSubjects(
+        res,
+        memos.memos.map((memo) => ({ type: "memo", id: memo.id }))
+      )
+      res.setHeader("Cache-Control", "no-store")
+      res.json(memos)
     },
 
     async sendMessage(req: Request, res: Response) {

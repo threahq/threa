@@ -288,54 +288,55 @@ export function MemoryPage() {
   const deleteMemo = useDeleteMemo(workspaceId ?? "")
   const isMutating = updateMemo.isPending || archiveMemo.isPending || unarchiveMemo.isPending || deleteMemo.isPending
 
-  const editControls: MemoEditControls | undefined = selectedMemoId
-    ? {
-        isMutating,
-        onSave: async (fields: MemoUpdateRequest) => {
-          // Pin the acted memo in the URL first (same as archive/unarchive): a
-          // re-embed changes the search ranking, and without an explicit ?memo=
-          // the invalidation-triggered refetch could re-rank the edited memo off
-          // results[0] and swap the detail pane away from what the user just saved.
-          syncToUrl({ memo: selectedMemoId })
-          try {
-            await updateMemo.mutateAsync({ memoId: selectedMemoId, update: fields })
-          } catch (error) {
-            toast.error("Couldn't save the memo — try again")
-            throw error
-          }
-        },
-        onArchive: async () => {
-          // Pin the acted memo in the URL first: archiving drops it from the
-          // active list, and without an explicit ?memo= the detail pane would
-          // fall back to results[0] — silently swapping to an unrelated memo
-          // instead of showing the just-archived one flip to its Restore state.
-          syncToUrl({ memo: selectedMemoId })
-          try {
-            await archiveMemo.mutateAsync(selectedMemoId)
-          } catch {
-            toast.error("Couldn't archive the memo — try again")
-          }
-        },
-        onUnarchive: async () => {
-          syncToUrl({ memo: selectedMemoId })
-          try {
-            await unarchiveMemo.mutateAsync(selectedMemoId)
-          } catch {
-            toast.error("Couldn't restore the memo — try again")
-          }
-        },
-        onDelete: async () => {
-          try {
-            await deleteMemo.mutateAsync(selectedMemoId)
-            // The memo is gone; clear the pinned selection so the pane falls back
-            // to the list instead of 404-fetching the deleted id.
-            syncToUrl({ memo: null })
-          } catch {
-            toast.error("Couldn't delete the memo — try again")
-          }
-        },
-      }
-    : undefined
+  const editControls: MemoEditControls | undefined =
+    selectedMemoId && !selectedMemoData?.memo.originWorkspaceId
+      ? {
+          isMutating,
+          onSave: async (fields: MemoUpdateRequest) => {
+            // Pin the acted memo in the URL first (same as archive/unarchive): a
+            // re-embed changes the search ranking, and without an explicit ?memo=
+            // the invalidation-triggered refetch could re-rank the edited memo off
+            // results[0] and swap the detail pane away from what the user just saved.
+            syncToUrl({ memo: selectedMemoId })
+            try {
+              await updateMemo.mutateAsync({ memoId: selectedMemoId, update: fields })
+            } catch (error) {
+              toast.error("Couldn't save the memo — try again")
+              throw error
+            }
+          },
+          onArchive: async () => {
+            // Pin the acted memo in the URL first: archiving drops it from the
+            // active list, and without an explicit ?memo= the detail pane would
+            // fall back to results[0] — silently swapping to an unrelated memo
+            // instead of showing the just-archived one flip to its Restore state.
+            syncToUrl({ memo: selectedMemoId })
+            try {
+              await archiveMemo.mutateAsync(selectedMemoId)
+            } catch {
+              toast.error("Couldn't archive the memo — try again")
+            }
+          },
+          onUnarchive: async () => {
+            syncToUrl({ memo: selectedMemoId })
+            try {
+              await unarchiveMemo.mutateAsync(selectedMemoId)
+            } catch {
+              toast.error("Couldn't restore the memo — try again")
+            }
+          },
+          onDelete: async () => {
+            try {
+              await deleteMemo.mutateAsync(selectedMemoId)
+              // The memo is gone; clear the pinned selection so the pane falls back
+              // to the list instead of 404-fetching the deleted id.
+              syncToUrl({ memo: null })
+            } catch {
+              toast.error("Couldn't delete the memo — try again")
+            }
+          },
+        }
+      : undefined
 
   // Brief confirmation flash when a manual refresh completes
   const [refreshConfirmed, setRefreshConfirmed] = useState(false)

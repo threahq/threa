@@ -37,6 +37,7 @@ function fakeMemo(overrides: Partial<Memo> = {}): Memo {
     sourceSessionId: null,
     scope: "workspace",
     scopeUserId: null,
+    originWorkspaceId: null,
     createdAt: new Date("2026-05-01T00:00:00Z"),
     updatedAt: new Date("2026-05-01T00:00:00Z"),
     sourceStreamIds: null,

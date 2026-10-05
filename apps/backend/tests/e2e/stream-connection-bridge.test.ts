@@ -2,8 +2,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { Pool } from "pg"
 import { INTERNAL_API_KEY_HEADER, streamConnectionId } from "@threahq/backend-common"
 import {
+  BRIDGE_MEMOS_MAX_IDS,
   BRIDGE_PROFILES_MAX_IDS,
   BRIDGE_WORKSPACE_HEADER,
+  ConversationStatuses,
   StreamTypes,
   type BridgeChange,
   type BridgeEvents,
@@ -13,9 +15,11 @@ import {
   type StreamConnectionSnapshot,
 } from "@threahq/types"
 import { StreamRepository } from "../../src/features/streams"
+import { ConversationRepository } from "../../src/features/conversations"
+import { MemoRepository } from "../../src/features/memos"
 import { JobQueues } from "../../src/lib/queue"
 import { UserRepository } from "../../src/features/workspaces"
-import { streamId, userId, workspaceId } from "../../src/lib/id"
+import { conversationId, memoId, streamId, userId, workspaceId } from "../../src/lib/id"
 import {
   TestClient,
   addReaction,
@@ -37,6 +41,7 @@ import { getTestDatabaseTarget } from "../test-database"
 
 const testRunId = Math.random().toString(36).substring(7)
 const BRIDGE_KEY = "test-bridge-key"
+const MEMO_EMBEDDING = Array.from({ length: 1536 }, (_, i) => (i === 0 ? 1 : 0))
 
 const doc = (...content: JSONContent[]): JSONContent => ({ type: "doc", content })
 const paragraph = (...content: JSONContent[]): JSONContent => ({ type: "paragraph", content })
@@ -639,6 +644,112 @@ describe("Stream connection bridge", () => {
     expect({ statuses: [stranger.status, poked.status], jobs: rows }).toEqual({
       statuses: [404, 204],
       jobs: [{ payload: { workspaceId: workspace.id, connectionId: connection.id } }],
+    })
+  })
+
+  test("should list and return the shared channel's memos to the partner, refuse a stranger or an oversized page, and record each disclosure", async () => {
+    const { client, workspace, channel, connection, partnerWorkspaceId } = await setup()
+    const message = await sendMessage(client, workspace.id, channel.id, "we ship friday")
+    const conversation = conversationId()
+    await ConversationRepository.insert(pool, {
+      id: conversation,
+      streamId: channel.id,
+      workspaceId: workspace.id,
+      status: ConversationStatuses.RESOLVED,
+    })
+    const memo = memoId()
+    await MemoRepository.insert(pool, {
+      id: memo,
+      workspaceId: workspace.id,
+      memoType: "conversation",
+      sourceConversationId: conversation,
+      title: "Ship friday",
+      abstract: "The team ships on friday.",
+      sourceMessageIds: [message.id],
+      participantIds: [message.authorId, userId()],
+      knowledgeType: "decision",
+      sharedRootStreamId: channel.id,
+    })
+    await MemoRepository.updateEmbedding(pool, workspace.id, memo, MEMO_EMBEDDING)
+    const ask = (method: "GET" | "POST", body: unknown, callerWorkspaceId: string) =>
+      new TestClient().request<{ memos?: Array<Record<string, unknown>>; code?: string }>(
+        method,
+        `/api/workspaces/${workspace.id}/stream-connections/${connection.id}/bridge/memos`,
+        body,
+        partnerHeaders(callerWorkspaceId)
+      )
+
+    const index = await ask("GET", undefined, partnerWorkspaceId)
+    const bodies = await ask("POST", { memoIds: [memo, memoId()] }, partnerWorkspaceId)
+    const strangerIndex = await ask("GET", undefined, workspaceId())
+    const strangerBodies = await ask("POST", { memoIds: [memo] }, workspaceId())
+    const oversized = await ask(
+      "POST",
+      { memoIds: Array.from({ length: BRIDGE_MEMOS_MAX_IDS + 1 }, () => memoId()) },
+      partnerWorkspaceId
+    )
+
+    let rows: unknown[] = []
+    for (let attempt = 0; attempt < 40 && rows.length < 2; attempt++) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 50))
+      ;({ rows } = await pool.query(
+        `SELECT operation, actor_id, auth_ref, access_kind, subjects FROM access_log
+         WHERE workspace_id = $1 AND operation LIKE 'stream_connections.bridge_memo%' AND outcome = 'success'
+         ORDER BY operation`,
+        [workspace.id]
+      ))
+    }
+    const disclosure = { actor_id: partnerWorkspaceId, auth_ref: connection.id, access_kind: "disclose" }
+    expect({
+      index: { status: index.status, memos: index.data.memos },
+      bodies: {
+        status: bodies.status,
+        memos: bodies.data.memos?.map(
+          ({ embedding, ...rest }): Record<string, unknown> => ({
+            ...rest,
+            embedding: (embedding as number[]).length,
+          })
+        ),
+      },
+      stranger: [strangerIndex, strangerBodies].map(({ status, data }) => ({ status, code: data.code })),
+      oversized: oversized.status,
+      log: rows,
+    }).toEqual({
+      index: { status: 200, memos: [{ id: memo, cardVersion: 1 }] },
+      bodies: {
+        status: 200,
+        memos: [
+          {
+            id: memo,
+            conversationId: conversation,
+            streamId: channel.id,
+            title: "Ship friday",
+            abstract: "The team ships on friday.",
+            keyPoints: [],
+            sourceMessageIds: [message.id],
+            participantIds: [message.authorId],
+            knowledgeType: "decision",
+            tags: [],
+            version: 1,
+            cardVersion: 1,
+            embedding: MEMO_EMBEDDING.length,
+            createdAt: expect.any(String),
+          },
+        ],
+      },
+      stranger: [
+        { status: 404, code: "STREAM_CONNECTION_NOT_FOUND" },
+        { status: 404, code: "STREAM_CONNECTION_NOT_FOUND" },
+      ],
+      oversized: 400,
+      log: [
+        {
+          operation: "stream_connections.bridge_memo_index",
+          ...disclosure,
+          subjects: [{ type: "memo", id: memo }],
+        },
+        { operation: "stream_connections.bridge_memos", ...disclosure, subjects: [{ type: "memo", id: memo }] },
+      ],
     })
   })
 

@@ -77,6 +77,7 @@ export function toMemo(m: { title: string; abstract: string; createdDaysAgo?: nu
     sourceSessionId: null,
     scope: "workspace",
     scopeUserId: null,
+    originWorkspaceId: null,
     createdAt,
     updatedAt: createdAt,
     sourceStreamIds: null,

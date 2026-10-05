@@ -3,11 +3,13 @@ import type { Pool, PoolClient } from "pg"
 import { generateUniqueSlug } from "@threahq/backend-common"
 import {
   AuthorTypes,
+  BRIDGE_MEMOS_MAX_IDS,
   StreamConnectionStates,
   StreamTypes,
   TitleSources,
   type BridgeActor,
   type BridgeEvents,
+  type BridgeMemo,
   type BridgeMessage,
   type BridgeStream,
   type StreamConnection,
@@ -18,6 +20,7 @@ import { eventId, streamContextItemId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import { PersonaRepository } from "../agents"
 import type { FeatureFlagService } from "../feature-flags"
+import { MemoRepository, publishMemoCardUpdates, recordConversationCaptures } from "../memos"
 import { MessageRepository, applyCopyChanges } from "../messaging"
 import { BotRepository } from "../public-api"
 import { StreamContextRepository, contextSnippet } from "../stream-context"
@@ -132,6 +135,38 @@ export class StreamConnectionPullService {
         cursor = next
         if (!page.hasMore) break
       }
+    }
+    return options.streamId ? true : this.syncMemos(connection, address)
+  }
+
+  /**
+   * Brings this workspace's copies of the memos the host shares from the
+   * channel to the host's index: deletes the ones the host no longer shares,
+   * then copies the new and edited ones. A memo from a thread this pull has no
+   * copy of yet waits for the next pull.
+   */
+  private async syncMemos(connection: ActivePartnerConnection, address: ConnectionAddress): Promise<boolean> {
+    const { workspaceId, hostWorkspaceId, rootStreamId } = connection
+    const held = await MemoRepository.listCopyVersions(this.pool, workspaceId, hostWorkspaceId, rootStreamId)
+    const heldVersions = new Map(held.map((copy) => [copy.id, copy.cardVersion]))
+    const index = await this.bridgeClient.getMemoIndex(address)
+    const shared = new Set(index.memos.map((memo) => memo.id))
+    const changed = index.memos
+      .filter((memo) => (heldVersions.get(memo.id) ?? 0) < memo.cardVersion)
+      .map((memo) => memo.id)
+
+    const withdrawn = held.filter((copy) => !shared.has(copy.id))
+    if (withdrawn.length > 0) {
+      const deleted = await this.locked(connection, (client) =>
+        MemoRepository.deleteCopies(client, workspaceId, hostWorkspaceId, withdrawn)
+      )
+      if (deleted === null) return false
+    }
+
+    for (let start = 0; start < changed.length; start += BRIDGE_MEMOS_MAX_IDS) {
+      const { memos } = await this.bridgeClient.getMemos(address, changed.slice(start, start + BRIDGE_MEMOS_MAX_IDS))
+      const applied = await this.locked(connection, (client) => applyMemos(client, connection, memos))
+      if (applied === null) return false
     }
     return true
   }
@@ -411,6 +446,66 @@ async function applyPage(
     hostSequence: BigInt(page.cursor),
   })
   return true
+}
+
+/**
+ * Writes the host's memos into the copies of the streams they were captured
+ * in, and shows each first copy in its stream the way a capture shows there
+ * (INV-69). A memo naming a stream that exists here but is not a copy in this
+ * tree, or whose id this workspace holds as anything but this channel's copy,
+ * is refused.
+ */
+async function applyMemos(client: PoolClient, connection: ActivePartnerConnection, memos: BridgeMemo[]): Promise<void> {
+  const { workspaceId, hostWorkspaceId, rootStreamId } = connection
+  const streams = await StreamRepository.findByIds(client, workspaceId, [
+    ...new Set(memos.map((memo) => memo.streamId)),
+  ])
+  for (const stream of streams) {
+    if (stream.originWorkspaceId !== hostWorkspaceId || (stream.rootStreamId ?? stream.id) !== rootStreamId) {
+      throw new Error(`Stream ${stream.id} in ${workspaceId} is not a copy in connection ${connection.connectionId}`)
+    }
+  }
+  const copied = new Set(streams.map((stream) => stream.id))
+  const placed = memos.filter((memo) => copied.has(memo.streamId))
+  const { inserted, updated } = await MemoRepository.upsertCopies(
+    client,
+    workspaceId,
+    hostWorkspaceId,
+    rootStreamId,
+    placed
+  )
+  const written = new Set([...inserted, ...updated])
+  const skipped = placed.filter((memo) => !written.has(memo.id))
+  if (skipped.length > 0) {
+    const held = new Set(
+      (await MemoRepository.listCopyVersions(client, workspaceId, hostWorkspaceId, rootStreamId)).map((copy) => copy.id)
+    )
+    const foreign = skipped.find((memo) => !held.has(memo.id))
+    if (foreign) {
+      throw new Error(`Memo ${foreign.id} in ${workspaceId} is not a copy in connection ${connection.connectionId}`)
+    }
+  }
+  await publishMemoCardUpdates(client, workspaceId, updated)
+  if (inserted.length === 0) return
+
+  const insertedIds = new Set(inserted)
+  const captures = new Map<string, Map<string, BridgeMemo[]>>()
+  for (const memo of placed) {
+    if (!insertedIds.has(memo.id)) continue
+    const byConversation = captures.get(memo.streamId) ?? new Map<string, BridgeMemo[]>()
+    byConversation.set(memo.conversationId, [...(byConversation.get(memo.conversationId) ?? []), memo])
+    captures.set(memo.streamId, byConversation)
+  }
+  for (const [streamId, byConversation] of captures) {
+    await recordConversationCaptures(client, workspaceId, streamId, byConversation)
+  }
+  await OutboxRepository.insertMany(
+    client,
+    inserted.map((memoId) => ({
+      eventType: "memo:created" as const,
+      payload: { workspaceId, streamId: rootStreamId, memoId },
+    }))
+  )
 }
 
 /**
