@@ -105,8 +105,15 @@ When you do call it, incorporate retrieved context naturally into your response.
         substeps: result.substeps,
       })
 
+      const provenanceStreamIds = [
+        ...result.memos.flatMap((m) => m.memo.sourceStreamIds ?? (m.sourceStream ? [m.sourceStream.id] : [])),
+        ...result.messages.flatMap((m) => [m.streamId, ...(m.quoteStreamIds ?? [])]),
+        ...(result.attachments ?? []).flatMap((a) => (a.streamId ? [a.streamId] : [])),
+      ]
+
       return {
         output,
+        provenanceStreamIds,
         sources: sourceItems,
         systemContext: result.retrievedContext?.trim() || undefined,
       }

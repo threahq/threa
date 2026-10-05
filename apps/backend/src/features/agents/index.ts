@@ -247,7 +247,7 @@ export type {
 
 export { WorkspaceAgent } from "./researcher"
 export type { WorkspaceAgentResult, WorkspaceAgentInput, WorkspaceAgentDeps, WorkspaceSourceItem } from "./researcher"
-export { computeAgentAccessSpec } from "./researcher"
+export { computeAgentAccessSpec, memoAudienceForSpec } from "./researcher"
 export type { AgentAccessSpec, ComputeAccessSpecParams } from "./researcher"
 
 export { GeneralResearcher } from "./general-researcher"

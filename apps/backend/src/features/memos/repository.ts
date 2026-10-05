@@ -1,5 +1,7 @@
+import type { QueryConfig } from "pg"
 import { composeSql, sql, type Querier } from "../../db"
 import { roomReadableWithoutMembershipSql } from "../streams"
+import { memoAudienceVisibleSql, type MemoAudience } from "./audience"
 import { detectSearchConfig } from "../../lib/text-search-config"
 import type { MemoType, KnowledgeType, MemoStatus, AuthoredByKind, MemoScope, MemoEmbedSummary } from "@threahq/types"
 import {
@@ -14,16 +16,21 @@ export function memoSearchText(memo: { title: string; abstract: string; keyPoint
   return `${memo.title} ${memo.abstract} ${(memo.keyPoints ?? []).join(" ")}`
 }
 
+/** A trusted SQL text as a fragment `composeSql` splices (a bare `sql.raw` would be bound as a parameter). */
+function rawSql(text: string): QueryConfig {
+  return sql`${sql.raw(text)}`
+}
+
 /**
  * Memo full-text search computes its tsvector per row — no stored column, no
  * index — so both the vector and the query are stemmed with the config the row
  * itself was written in, rather than the OR-across-configs tsquery an
  * index-backed `search_vector` needs (`tsqueryAcrossConfigsSql`).
  */
-const MEMO_TSVECTOR = sql.raw(
+const MEMO_TSVECTOR = rawSql(
   "to_tsvector(text_search_config(m.search_config), m.title || ' ' || m.abstract || ' ' || array_to_string(m.key_points, ' '))"
 )
-const MEMO_ROW_CONFIG = sql.raw("text_search_config(m.search_config)")
+const MEMO_ROW_CONFIG = rawSql("text_search_config(m.search_config)")
 
 /**
  * B2 structural boost expression, generated from the config maps (single
@@ -33,8 +40,8 @@ const MEMO_ROW_CONFIG = sql.raw("text_search_config(m.search_config)")
  * the resolved stream type are plain columns/expressions here; the values
  * are numeric literals from a typed constant, so raw interpolation is safe.
  */
-function buildBoostExpression(apply: boolean): ReturnType<typeof sql.raw> {
-  if (!apply) return sql.raw("1.0")
+function buildBoostExpression(apply: boolean): QueryConfig {
+  if (!apply) return rawSql("1.0")
 
   const caseFor = (column: string, map: Record<string, number>): string => {
     const arms = Object.entries(map)
@@ -46,7 +53,7 @@ function buildBoostExpression(apply: boolean): ReturnType<typeof sql.raw> {
   const knowledge = caseFor("m.knowledge_type", MEMO_KNOWLEDGE_TYPE_BOOST)
   const stream = caseFor("COALESCE(msg_stream.type, conv_stream.type)", MEMO_STREAM_TYPE_BOOST)
   const authorship = caseFor("m.authored_by_kind", MEMO_AUTHORED_BY_KIND_BOOST)
-  return sql.raw(`(${knowledge}) * (${stream}) * (${authorship})`)
+  return rawSql(`(${knowledge}) * (${stream}) * (${authorship})`)
 }
 
 interface MemoRow {
@@ -69,6 +76,8 @@ interface MemoRow {
   revision_reason: string | null
   authored_by_kind: string
   source_session_id: string | null
+  source_stream_ids: string[] | null
+  requires_browse: boolean
   scope: string
   scope_user_id: string | null
   created_at: Date
@@ -97,6 +106,10 @@ export interface Memo {
   revisionReason: string | null
   authoredByKind: AuthoredByKind
   sourceSessionId: string | null
+  /** Streams an agent-authored memo's content came from, as cited (threads stay threads); null when not recorded. */
+  sourceStreamIds: string[] | null
+  /** The agent wrote this memo for readers who browse the workspace, so only those readers see it. */
+  requiresBrowse: boolean
   scope: MemoScope
   scopeUserId: string | null
   createdAt: Date
@@ -124,6 +137,10 @@ export interface InsertMemoParams {
   authoredByKind?: AuthoredByKind
   /** The agent session that wrote this memo (agent authorship only). */
   sourceSessionId?: string
+  /** Streams an agent-authored memo's content came from; stored deduped and sorted. */
+  sourceStreamIds?: string[]
+  /** Hides the memo from readers who cannot browse the workspace; defaults to false. */
+  requiresBrowse?: boolean
   /** Visibility tier (roadmap 6.4); defaults to `'workspace'`. */
   scope?: MemoScope
   /** Owner for `'user'` scope; must be set iff `scope === 'user'` (DB CHECK). */
@@ -166,6 +183,7 @@ export interface MemoSearchResult {
 }
 
 export interface MemoSearchFilters {
+  /** Memos located in one of these streams or their threads; an empty list matches nothing. */
   streamIds?: string[]
   memoTypes?: MemoType[]
   knowledgeTypes?: KnowledgeType[]
@@ -195,6 +213,12 @@ export interface MemoSearchFilters {
    * without a matching `viewerUserId` returns nothing.
    */
   scope?: MemoScope
+  /**
+   * Who will read the results. Every audience must be able to read every stream an agent-authored
+   * memo came from; omit it for a system caller that applies no such gate. Separate from `streamIds`,
+   * which narrows by where a memo is located and may be narrowed further by the user.
+   */
+  audiences?: readonly MemoAudience[]
 }
 
 /**
@@ -262,6 +286,8 @@ function mapRowToMemo(row: MemoRow): Memo {
     revisionReason: row.revision_reason,
     authoredByKind: row.authored_by_kind as AuthoredByKind,
     sourceSessionId: row.source_session_id,
+    sourceStreamIds: row.source_stream_ids,
+    requiresBrowse: row.requires_browse,
     scope: row.scope as MemoScope,
     scopeUserId: row.scope_user_id,
     createdAt: row.created_at,
@@ -274,7 +300,7 @@ const SELECT_FIELDS = `
   id, workspace_id, memo_type, source_message_id, source_conversation_id,
   title, abstract, key_points, source_message_ids, participant_ids,
   knowledge_type, tags, parent_memo_id, status, version, card_version, revision_reason,
-  authored_by_kind, source_session_id, scope, scope_user_id,
+  authored_by_kind, source_session_id, source_stream_ids, requires_browse, scope, scope_user_id,
   created_at, updated_at, archived_at
 `
 
@@ -282,9 +308,11 @@ const SELECT_FIELDS_PREFIXED = `
   m.id, m.workspace_id, m.memo_type, m.source_message_id, m.source_conversation_id,
   m.title, m.abstract, m.key_points, m.source_message_ids, m.participant_ids,
   m.knowledge_type, m.tags, m.parent_memo_id, m.status, m.version, m.card_version, m.revision_reason,
-  m.authored_by_kind, m.source_session_id, m.scope, m.scope_user_id,
+  m.authored_by_kind, m.source_session_id, m.source_stream_ids, m.requires_browse, m.scope, m.scope_user_id,
   m.created_at, m.updated_at, m.archived_at
 `
+const SELECT_FIELDS_SQL = rawSql(SELECT_FIELDS)
+const SELECT_FIELDS_PREFIXED_SQL = rawSql(SELECT_FIELDS_PREFIXED)
 
 interface MemoSearchRow extends MemoRow {
   stream_id: string | null
@@ -355,6 +383,23 @@ export const MemoRepository = {
     return new Map(result.rows.map((row) => [row.id, mapRowToMemo(row)]))
   },
 
+  /** The `ids` every audience may read (see {@link MemoAudience}); unknown and cross-workspace ids are dropped. */
+  async filterVisibleIds(
+    db: Querier,
+    workspaceId: string,
+    ids: readonly string[],
+    audiences: readonly MemoAudience[]
+  ): Promise<Set<string>> {
+    if (ids.length === 0) return new Set()
+    const result = await db.query<{ id: string }>(composeSql`
+      SELECT m.id FROM memos m
+      WHERE m.workspace_id = ${workspaceId}
+        AND m.id = ANY(${ids as string[]}::text[])
+        AND ${memoAudienceVisibleSql(workspaceId, audiences, "m")}
+    `)
+    return new Set(result.rows.map((row) => row.id))
+  },
+
   /**
    * Card content for memos referenced by a message in `citingRootStreamId`,
    * for the payload that message ships on (INV-56: one batch, never per card).
@@ -400,6 +445,7 @@ export const MemoRepository = {
     pairs: readonly { memoId: string; citingRootStreamId: string }[]
   ): Promise<Map<string, Map<string, MemoEmbedSummary>>> {
     if (pairs.length === 0) return new Map()
+    const citingRoot = rawSql("requested.citing_root_stream_id")
     const result = await db.query<{
       citing_root_stream_id: string
       id: string
@@ -429,7 +475,8 @@ export const MemoRepository = {
         AND m.scope <> 'user'
         AND root.id IS NOT NULL
         AND (root.id = requested.citing_root_stream_id
-          OR ${roomReadableWithoutMembershipSql(workspaceId, sql`${sql.raw("requested.citing_root_stream_id")}`, "root")})
+          OR ${roomReadableWithoutMembershipSql(workspaceId, citingRoot, "root")})
+        AND ${memoAudienceVisibleSql(workspaceId, [{ kind: "room", roomStreamId: citingRoot }], "m")}
     `)
     const summariesByRoot = new Map<string, Map<string, MemoEmbedSummary>>()
     for (const row of result.rows) {
@@ -470,45 +517,39 @@ export const MemoRepository = {
 
   /**
    * `scopeUserId` is the tier the reader writes into: private memos come back
-   * only for their owner, null returns shared memos only.
+   * only for their owner, null returns shared memos only. Only memos every
+   * audience may read come back.
    */
   async findByStream(
     db: Querier,
     workspaceId: string,
     streamId: string,
-    options: { scopeUserId: string | null; status?: MemoStatus; limit?: number; orderBy?: "createdAt" | "updatedAt" }
+    options: {
+      scopeUserId: string | null
+      audiences: readonly MemoAudience[]
+      status?: MemoStatus
+      limit?: number
+      orderBy?: "createdAt" | "updatedAt"
+    }
   ): Promise<Memo[]> {
-    const limit = options.limit ?? 50
-    const orderBy = options.orderBy === "updatedAt" ? "updated_at" : "created_at"
+    const orderBy = rawSql(options.orderBy === "updatedAt" ? "updated_at" : "created_at")
+    const filters = composeSql`(m.scope <> 'user' OR m.scope_user_id = ${options.scopeUserId})
+        ${options.status ? composeSql`AND m.status = ${options.status}` : rawSql("")}
+        AND ${memoAudienceVisibleSql(workspaceId, options.audiences, "m")}`
 
     // UNION over the two source paths: conversation memos (via source_conversation_id)
     // and message memos (via source_message_id), each resolving to a stream_id.
-    const values: unknown[] = [workspaceId, streamId, options.scopeUserId]
-    let paramIndex = 4
-    let statusClause = ""
-
-    if (options.status) {
-      statusClause = `AND m.status = $${paramIndex}`
-      values.push(options.status)
-      paramIndex++
-    }
-
-    values.push(limit)
-
-    const scopeClause = `AND (m.scope <> 'user' OR m.scope_user_id = $3)`
-    const query = `
-      SELECT ${SELECT_FIELDS_PREFIXED} FROM memos m
+    const result = await db.query<MemoRow>(composeSql`
+      SELECT ${SELECT_FIELDS_PREFIXED_SQL} FROM memos m
       JOIN conversations c ON m.source_conversation_id = c.id AND c.workspace_id = m.workspace_id
-      WHERE m.workspace_id = $1 AND c.stream_id = $2 ${scopeClause} ${statusClause}
+      WHERE m.workspace_id = ${workspaceId} AND c.stream_id = ${streamId} AND ${filters}
       UNION
-      SELECT ${SELECT_FIELDS_PREFIXED} FROM memos m
+      SELECT ${SELECT_FIELDS_PREFIXED_SQL} FROM memos m
       JOIN messages msg ON m.source_message_id = msg.id AND msg.workspace_id = m.workspace_id
-      WHERE m.workspace_id = $1 AND msg.stream_id = $2 ${scopeClause} ${statusClause}
+      WHERE m.workspace_id = ${workspaceId} AND msg.stream_id = ${streamId} AND ${filters}
       ORDER BY ${orderBy} DESC
-      LIMIT $${paramIndex}
-    `
-
-    const result = await db.query<MemoRow>(query, values)
+      LIMIT ${options.limit ?? 50}
+    `)
     return result.rows.map(mapRowToMemo)
   },
 
@@ -536,10 +577,17 @@ export const MemoRepository = {
     return new Set(result.rows.map((row) => row.source_conversation_id))
   },
 
-  async findActiveBySourceConversation(db: Querier, workspaceId: string, conversationId: string): Promise<Memo[]> {
-    const result = await db.query<MemoRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM memos
+  /** Only memos every audience may read come back. */
+  async findActiveBySourceConversation(
+    db: Querier,
+    workspaceId: string,
+    conversationId: string,
+    audiences: readonly MemoAudience[]
+  ): Promise<Memo[]> {
+    const result = await db.query<MemoRow>(composeSql`
+      SELECT ${SELECT_FIELDS_SQL} FROM memos
       WHERE workspace_id = ${workspaceId} AND source_conversation_id = ${conversationId} AND status = 'active'
+        AND ${memoAudienceVisibleSql(workspaceId, audiences, "memos")}
       ORDER BY created_at ASC
     `)
     return result.rows.map(mapRowToMemo)
@@ -550,16 +598,18 @@ export const MemoRepository = {
    * of `messageIds` edited after the memo was made: everything but private memos,
    * plus `scopeUserId`'s own when the batch is that owner's. A conversation
    * memo is reconsidered through its own conversation, so it is not returned here.
+   * Only memos every audience may read come back.
    */
   async findActiveMessageMemosCitingEdited(
     db: Querier,
     workspaceId: string,
     messageIds: string[],
-    scopeUserId: string | null
+    scopeUserId: string | null,
+    audiences: readonly MemoAudience[]
   ): Promise<Memo[]> {
     if (messageIds.length === 0) return []
-    const result = await db.query<MemoRow>(sql`
-      SELECT ${sql.raw(SELECT_FIELDS)} FROM memos
+    const result = await db.query<MemoRow>(composeSql`
+      SELECT ${SELECT_FIELDS_SQL} FROM memos
       WHERE workspace_id = ${workspaceId}
         AND status = 'active'
         AND memo_type = 'message'
@@ -572,6 +622,7 @@ export const MemoRepository = {
             AND messages.id = ANY(${messageIds}::text[])
             AND messages.edited_at > memos.created_at
         )
+        AND ${memoAudienceVisibleSql(workspaceId, audiences, "memos")}
       ORDER BY created_at ASC
     `)
     return result.rows.map(mapRowToMemo)
@@ -634,14 +685,17 @@ export const MemoRepository = {
       maxDistance: number
       scope?: MemoScope
       scopeUserId?: string | null
+      /** Only memos every audience may read count as duplicates, so a save never resolves to a memo its writer's readers cannot open. */
+      audiences: readonly MemoAudience[]
     }
   ): Promise<{ memo: Memo; distance: number } | null> {
-    const { workspaceId, streamId, embedding, maxDistance, scope = "workspace", scopeUserId = null } = params
+    const { workspaceId, streamId, embedding, maxDistance, scope = "workspace", scopeUserId = null, audiences } = params
     const embeddingLiteral = `[${embedding.join(",")}]`
+    const audienceVisible = memoAudienceVisibleSql(workspaceId, audiences, "m")
 
-    const result = await db.query<MemoRow & { distance: number }>(sql`
+    const result = await db.query<MemoRow & { distance: number }>(composeSql`
       WITH stream_memos AS (
-        SELECT ${sql.raw(SELECT_FIELDS_PREFIXED)},
+        SELECT ${SELECT_FIELDS_PREFIXED_SQL},
                m.embedding <=> ${embeddingLiteral}::vector AS distance
         FROM memos m
         JOIN conversations c ON m.source_conversation_id = c.id AND c.workspace_id = m.workspace_id
@@ -652,8 +706,9 @@ export const MemoRepository = {
           AND m.scope_user_id IS NOT DISTINCT FROM ${scopeUserId}
           AND m.embedding IS NOT NULL
           AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
+          AND ${audienceVisible}
         UNION
-        SELECT ${sql.raw(SELECT_FIELDS_PREFIXED)},
+        SELECT ${SELECT_FIELDS_PREFIXED_SQL},
                m.embedding <=> ${embeddingLiteral}::vector AS distance
         FROM memos m
         JOIN messages msg ON m.source_message_id = msg.id AND msg.workspace_id = m.workspace_id
@@ -664,6 +719,7 @@ export const MemoRepository = {
           AND m.scope_user_id IS NOT DISTINCT FROM ${scopeUserId}
           AND m.embedding IS NOT NULL
           AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
+          AND ${audienceVisible}
       )
       SELECT * FROM stream_memos
       ORDER BY distance ASC
@@ -788,7 +844,7 @@ export const MemoRepository = {
         id, workspace_id, memo_type, source_message_id, source_conversation_id,
         title, abstract, key_points, search_config, source_message_ids, participant_ids,
         knowledge_type, tags, parent_memo_id, status, version,
-        authored_by_kind, source_session_id, scope, scope_user_id
+        authored_by_kind, source_session_id, source_stream_ids, requires_browse, scope, scope_user_id
       )
       VALUES (
         ${params.id},
@@ -809,6 +865,8 @@ export const MemoRepository = {
         ${params.version ?? 1},
         ${params.authoredByKind ?? "pipeline"},
         ${params.sourceSessionId ?? null},
+        ${params.sourceStreamIds ? [...new Set(params.sourceStreamIds)].sort() : null},
+        ${params.requiresBrowse ?? false},
         ${params.scope ?? "workspace"},
         ${params.scopeUserId ?? null}
       )
@@ -1014,7 +1072,7 @@ export const MemoRepository = {
           OR (m.scope <> 'user' AND (
             root.id = ${scope.rootStreamId}
             OR ${roomReadableWithoutMembershipSql(workspaceId, scope.rootStreamId, "root")}
-          ))
+          ) AND ${memoAudienceVisibleSql(workspaceId, [{ kind: "room", roomStreamId: scope.rootStreamId }], "m")})
         )
       ORDER BY tag
     `)
@@ -1025,18 +1083,19 @@ export const MemoRepository = {
   async fullTextSearch(db: Querier, params: FullTextSearchParams): Promise<MemoSearchResult[]> {
     const { workspaceId, query, filters, limit = 10 } = params
     const streamIds = filters?.streamIds
-    const hasStreamFilter = streamIds && streamIds.length > 0
+    const hasStreamFilter = streamIds !== undefined
     const hasMemoTypeFilter = Boolean(filters?.memoTypes?.length)
     const hasKnowledgeTypeFilter = Boolean(filters?.knowledgeTypes?.length)
     const hasTagFilter = Boolean(filters?.tags?.length)
     const scopeCond = scopeConditions(filters)
     const statuses = filters?.statuses ?? DEFAULT_SEARCH_STATUSES
+    const audienceVisible = memoAudienceVisibleSql(workspaceId, filters?.audiences ?? [], "m")
 
     if (!query.trim()) {
-      const result = await db.query<MemoSearchRow>(sql`
+      const result = await db.query<MemoSearchRow>(composeSql`
         WITH memo_with_stream AS (
           SELECT
-            ${sql.raw(SELECT_FIELDS_PREFIXED)},
+            ${SELECT_FIELDS_PREFIXED_SQL},
             COALESCE(msg_stream.id, conv_stream.id) as stream_id,
             COALESCE(msg_stream.type, conv_stream.type) as stream_type,
             COALESCE(msg_stream.display_name, msg_stream.slug, conv_stream.display_name, conv_stream.slug) as stream_name,
@@ -1059,6 +1118,7 @@ export const MemoRepository = {
             AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
             AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
             AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
+            AND ${audienceVisible}
         )
         SELECT * FROM memo_with_stream
         WHERE (${!hasStreamFilter} OR stream_id = ANY(${streamIds ?? []}) OR root_stream_id = ANY(${streamIds ?? []}))
@@ -1070,10 +1130,10 @@ export const MemoRepository = {
     }
 
     // websearch_to_tsquery over plainto_tsquery for phrase support.
-    const result = await db.query<MemoSearchRow & { rank: number }>(sql`
+    const result = await db.query<MemoSearchRow & { rank: number }>(composeSql`
       WITH memo_with_stream AS (
         SELECT
-          ${sql.raw(SELECT_FIELDS_PREFIXED)},
+          ${SELECT_FIELDS_PREFIXED_SQL},
           ts_rank(${MEMO_TSVECTOR}, websearch_to_tsquery(${MEMO_ROW_CONFIG}, ${query})) as rank,
           COALESCE(msg_stream.id, conv_stream.id) as stream_id,
           COALESCE(msg_stream.type, conv_stream.type) as stream_type,
@@ -1097,6 +1157,7 @@ export const MemoRepository = {
           AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
           AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
           AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
+          AND ${audienceVisible}
           AND ${MEMO_TSVECTOR} @@ websearch_to_tsquery(${MEMO_ROW_CONFIG}, ${query})
       )
       SELECT * FROM memo_with_stream
@@ -1140,15 +1201,16 @@ export const MemoRepository = {
     if (!query.trim()) return []
 
     const streamIds = filters?.streamIds
-    const hasStreamFilter = streamIds && streamIds.length > 0
+    const hasStreamFilter = streamIds !== undefined
     const hasMemoTypeFilter = Boolean(filters?.memoTypes?.length)
     const hasKnowledgeTypeFilter = Boolean(filters?.knowledgeTypes?.length)
     const hasTagFilter = Boolean(filters?.tags?.length)
     const scopeCond = scopeConditions(filters)
     const statuses = filters?.statuses ?? DEFAULT_SEARCH_STATUSES
+    const audienceVisible = memoAudienceVisibleSql(workspaceId, filters?.audiences ?? [], "m")
 
     const embeddingLiteral = `[${embedding.join(",")}]`
-    const streamJoins = sql.raw(`
+    const streamJoins = rawSql(`
       LEFT JOIN messages msg ON m.source_message_id = msg.id AND msg.workspace_id = m.workspace_id
       LEFT JOIN streams msg_stream ON msg.stream_id = msg_stream.id AND msg_stream.workspace_id = m.workspace_id
       LEFT JOIN conversations conv ON m.source_conversation_id = conv.id AND conv.workspace_id = m.workspace_id
@@ -1165,7 +1227,7 @@ export const MemoRepository = {
     // B2: structural boost, applied only in the outer hydrate stage.
     const boost = buildBoostExpression(applyStructuralBoost)
 
-    const result = await db.query<MemoSearchRow & { score: number }>(sql`
+    const result = await db.query<MemoSearchRow & { score: number }>(composeSql`
       WITH keyword_ranked AS (
         SELECT
           m.id,
@@ -1188,6 +1250,7 @@ export const MemoRepository = {
           AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
           AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
           AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
+          AND ${audienceVisible}
           AND ${MEMO_TSVECTOR} @@ websearch_to_tsquery(${MEMO_ROW_CONFIG}, ${query})
         LIMIT ${internalLimit}
       ),
@@ -1213,6 +1276,7 @@ export const MemoRepository = {
           AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
           AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
           AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
+          AND ${audienceVisible}
         LIMIT ${internalLimit}
       ),
       fused AS (
@@ -1224,7 +1288,7 @@ export const MemoRepository = {
         FULL OUTER JOIN semantic_ranked sr ON kr.id = sr.id
       )
       SELECT
-        ${sql.raw(SELECT_FIELDS_PREFIXED)},
+        ${SELECT_FIELDS_PREFIXED_SQL},
         (f.score * ${boost}) as score,
         COALESCE(msg_stream.id, conv_stream.id) as stream_id,
         COALESCE(msg_stream.type, conv_stream.type) as stream_type,
@@ -1245,12 +1309,13 @@ export const MemoRepository = {
   async exactSearch(db: Querier, params: FullTextSearchParams): Promise<MemoSearchResult[]> {
     const { workspaceId, query, filters, limit = 10 } = params
     const streamIds = filters?.streamIds
-    const hasStreamFilter = streamIds && streamIds.length > 0
+    const hasStreamFilter = streamIds !== undefined
     const hasMemoTypeFilter = Boolean(filters?.memoTypes?.length)
     const hasKnowledgeTypeFilter = Boolean(filters?.knowledgeTypes?.length)
     const hasTagFilter = Boolean(filters?.tags?.length)
     const scopeCond = scopeConditions(filters)
     const statuses = filters?.statuses ?? DEFAULT_SEARCH_STATUSES
+    const audienceVisible = memoAudienceVisibleSql(workspaceId, filters?.audiences ?? [], "m")
 
     if (!query.trim()) {
       return this.fullTextSearch(db, { workspaceId, query, filters, limit })
@@ -1258,10 +1323,10 @@ export const MemoRepository = {
 
     const escapedQuery = query.replace(/[%_\\]/g, "\\$&")
 
-    const result = await db.query<MemoSearchRow>(sql`
+    const result = await db.query<MemoSearchRow>(composeSql`
       WITH memo_with_stream AS (
         SELECT
-          ${sql.raw(SELECT_FIELDS_PREFIXED)},
+          ${SELECT_FIELDS_PREFIXED_SQL},
           COALESCE(msg_stream.id, conv_stream.id) as stream_id,
           COALESCE(msg_stream.type, conv_stream.type) as stream_type,
           COALESCE(msg_stream.display_name, msg_stream.slug, conv_stream.display_name, conv_stream.slug) as stream_name,
@@ -1284,6 +1349,7 @@ export const MemoRepository = {
           AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
           AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
           AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
+          AND ${audienceVisible}
           AND (
             m.title ILIKE '%' || ${escapedQuery} || '%'
             OR m.abstract ILIKE '%' || ${escapedQuery} || '%'

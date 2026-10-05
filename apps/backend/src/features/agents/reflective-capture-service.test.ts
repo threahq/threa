@@ -65,13 +65,13 @@ function makeMessage(id: string, content: string): Message {
 }
 
 /** A turn_digest step carrying research findings — the reflective-capture gate. */
-function digestStep(findings: string): AgentSessionStep {
+function digestStep(findings: string, audienceBrowses?: boolean): AgentSessionStep {
   return {
     id: "step_1",
     sessionId: "session_1",
     stepNumber: 1,
     stepType: "turn_digest",
-    content: { findings },
+    content: { findings, ...(audienceBrowses === undefined ? {} : { audienceBrowses }) },
     contentCiphertext: null,
     contentEnvelope: null,
     sources: null,
@@ -147,8 +147,30 @@ describe("ReflectiveCaptureService", () => {
         sessionId: "session_1",
         anchorMessageId: "msg_trigger_1",
         participantIds: ["usr_1"],
+        requiresBrowse: true,
       })
     )
+  })
+
+  test("passes requiresBrowse false through when every digest was written for an audience that could not browse", async () => {
+    const { service: memoService, captureSessionReflection } = makeMemoService({
+      classified: true,
+      captured: 1,
+      deduped: 0,
+    })
+    spyOn(AgentSessionRepository, "findById").mockResolvedValue(makeSession())
+    spyOn(MessageRepository, "findById").mockResolvedValue(makeMessage("msg_trigger_1", "how do we deploy?"))
+    spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([
+      digestStep("Deploys run Fridays after the smoke suite.", false),
+    ])
+    spyOn(MessageRepository, "findByIds").mockResolvedValue(
+      new Map([["msg_agent_1", makeMessage("msg_agent_1", "We deploy on Fridays only.")]])
+    )
+    spyOn(AgentSessionRepository, "setReflectiveCaptured").mockResolvedValue(true)
+
+    await service(memoService).capture({ workspaceId: "ws_1", sessionId: "session_1" })
+
+    expect(captureSessionReflection).toHaveBeenCalledWith(expect.objectContaining({ requiresBrowse: false }))
   })
 
   test("no-ops without claiming when the session is not completed", async () => {

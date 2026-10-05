@@ -88,6 +88,7 @@ The search matches against filenames and extracted content summaries.`,
         logger.debug({ query: input.query, resultCount: results.length }, "Attachment search completed")
 
         return {
+          provenanceStreamIds: results.flatMap((r) => (r.streamId ? [r.streamId] : [])),
           output: JSON.stringify({
             query: input.query,
             contentTypes: input.contentTypes,

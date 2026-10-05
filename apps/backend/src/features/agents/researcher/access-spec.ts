@@ -4,6 +4,7 @@ import { DM_PARTICIPANT_COUNT, StreamTypes, Visibilities } from "@threahq/types"
 import { StreamRepository, type Stream } from "../../streams"
 import { StreamMemberRepository } from "../../streams"
 import type { PeopleViewer } from "../../workspaces"
+import type { MemoAudience } from "../../memos"
 
 /**
  * Specifies what streams an agent can access based on invocation context.
@@ -98,6 +99,17 @@ export async function computeAgentAccessSpec(db: Querier, params: ComputeAccessS
  */
 export function resolveMemoViewer(spec: AgentAccessSpec): string | undefined {
   return spec.type === "user_full_access" ? spec.userId : undefined
+}
+
+export function memoAudienceForSpec(spec: AgentAccessSpec): MemoAudience {
+  switch (spec.type) {
+    case "user_full_access":
+      return { kind: "users", userIds: [spec.userId] }
+    case "user_intersection":
+      return { kind: "users", userIds: spec.userIds }
+    case "room_readable":
+      return { kind: "room", roomStreamId: spec.roomStreamId }
+  }
 }
 
 /**

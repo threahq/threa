@@ -306,7 +306,11 @@ describe("memo sources: deleted and edited messages", () => {
       pool,
       embeddingService: new StubEmbeddingService(),
       reranker: new StubReranker(),
-    }).getById(testWorkspaceId, memo, { accessibleStreamIds: [seeded.streamId], userId: testUserId })
+    }).getById(testWorkspaceId, memo, {
+      accessibleStreamIds: [seeded.streamId],
+      userId: testUserId,
+      audiences: [{ kind: "users", userIds: [testUserId] }],
+    })
 
     expect(detail?.sourceMessages.map((m) => m.id)).toEqual([liveId])
   })
@@ -438,6 +442,9 @@ describe("memo sources: deleted and edited messages", () => {
         streamId: threadId,
         sessionId: null,
         sourceStreamIds: [threadId, seeded.streamId],
+        provenanceStreamIds: [],
+        audience: null,
+        requiresBrowse: true,
         title: "Flag flip",
         abstract: "The flag flips on Wednesday.",
         keyPoints: [],
@@ -472,6 +479,7 @@ describe("memo sources: deleted and edited messages", () => {
         participantIds: [testUserId],
         citedStreamIds: [cited.streamId],
         citedMessageIds: [cited.messageId],
+        requiresBrowse: false,
       })
       const { rows } = await pool.query(`SELECT source_message_ids FROM memos WHERE source_session_id = $1`, [session])
       return rows.map((row) => row.source_message_ids)

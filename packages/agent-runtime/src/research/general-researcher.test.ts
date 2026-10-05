@@ -142,6 +142,85 @@ describe("runGeneralResearch", () => {
   })
 })
 
+describe("runGeneralResearch provenance", () => {
+  function readingTool(onRead: () => void = () => {}): GeneralResearchRunInput["tools"][number] {
+    return {
+      name: "get_stream_messages",
+      config: {
+        name: "get_stream_messages",
+        description: "stub",
+        categories: [],
+        inputSchema: z.object({}),
+        execute: async () => {
+          onRead()
+          return { output: "{}", provenanceStreamIds: ["stream_private"] }
+        },
+        trace: { stepType: "workspace_search" as const, hidden: true, formatContent: () => "{}" },
+      },
+    }
+  }
+
+  function readThenAnswer() {
+    let turn = 0
+    return buildDeps(() => {
+      turn += 1
+      if (turn === 1) {
+        return {
+          text: "",
+          toolCalls: [{ toolCallId: "tc_1", toolName: "get_stream_messages", input: {} }],
+          response: { messages: [{ role: "assistant", content: "" }] },
+        }
+      }
+      return { text: "Done.", toolCalls: [], response: { messages: [{ role: "assistant", content: "Done." }] } }
+    })
+  }
+
+  test("should return the streams an inner hidden tool read when the run completes", async () => {
+    const result = await runGeneralResearch(readThenAnswer(), baseInput({ tools: [readingTool()] }))
+
+    expect(result.provenanceStreamIds).toEqual(["stream_private"])
+    expect(result.sources).toEqual([])
+  })
+
+  test("should return the streams an inner tool read before the deadline when the run times out", async () => {
+    const input: GeneralResearchRunInput = baseInput({
+      tools: [
+        readingTool(() => {
+          input.deadlineAt = Date.now() - 1
+        }),
+      ],
+    })
+
+    const result = await runGeneralResearch(readThenAnswer(), input)
+
+    expect(result).toMatchObject({ partial: true, partialReason: "timeout", provenanceStreamIds: ["stream_private"] })
+  })
+
+  test("should return the streams an inner tool read when the run exits at max_iterations without a brief", async () => {
+    let turn = 0
+    const deps = {
+      ...buildDeps(() => {
+        turn += 1
+        return turn === 1
+          ? {
+              text: "",
+              toolCalls: [{ toolCallId: "tc_1", toolName: "get_stream_messages", input: {} }],
+              response: { messages: [{ role: "assistant", content: "" }] },
+            }
+          : { text: "", toolCalls: [], response: { messages: [{ role: "assistant", content: "" }] } }
+      }),
+      maxIterations: 2,
+    }
+
+    const result = await runGeneralResearch(deps, baseInput({ tools: [readingTool()] }))
+
+    expect({ result, turnsRun: turn }).toMatchObject({
+      result: { brief: "", partial: true, partialReason: "max_iterations", provenanceStreamIds: ["stream_private"] },
+      turnsRun: 2,
+    })
+  })
+})
+
 describe("runGeneralResearch is not behind the persona output guard", () => {
   test("returns a brief quoting tool-call markup intact instead of re-prompting to max_iterations", async () => {
     const brief =

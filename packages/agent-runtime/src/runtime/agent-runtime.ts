@@ -1040,6 +1040,7 @@ export class AgentRuntime {
         input: tc.input,
         output: toolResult.output,
         durationMs,
+        ...(toolResult.provenanceStreamIds?.length ? { provenanceStreamIds: toolResult.provenanceStreamIds } : {}),
         trace: {
           stepType: agentTool.config.trace.stepType,
           content: traceContent,

@@ -67,6 +67,7 @@ describe("recallMemos", () => {
       query: "how do we deploy?",
       accessibleStreamIds: new Set(["stream_public"]),
       memoViewerUserId: undefined,
+      memoAudience: { kind: "streams", streamIds: ["stream_public"], browses: true },
       asker: undefined,
     })
     expect(getBody()).toEqual({

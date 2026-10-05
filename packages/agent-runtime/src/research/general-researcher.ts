@@ -4,6 +4,7 @@ import type { CostContext } from "../ai/ai"
 import { AgentRuntime, mergeSourceItems } from "../runtime/agent-runtime"
 import type { AgentRuntimeAI } from "../runtime/agent-runtime"
 import type { AgentTool } from "../runtime/agent-tool"
+import { TurnDigestCollector } from "../runtime/turn-digest"
 import { logger } from "../logger"
 import { composeAbortSignal } from "./research-support"
 import { ResearchProgressObserver } from "./progress-observer"
@@ -30,6 +31,8 @@ export interface GeneralResearchResult {
   brief: string
   sources: SourceItem[]
   substeps: GeneralResearchSubstep[]
+  /** Streams the inner tools put in front of the model; folded into any memo the calling turn saves, never displayed. */
+  provenanceStreamIds: string[]
   /**
    * Set when the run stopped early (user stop or wall-clock deadline). The tool
    * layer derives its status string from this rather than carrying a second
@@ -110,6 +113,7 @@ export async function runGeneralResearch(
   }
 
   const observer = new ResearchProgressObserver(recordSubstep)
+  const provenance = new TurnDigestCollector()
   // Holder object (not a bare `let`) so TS doesn't narrow the captured brief to
   // `null` after the run — it's mutated inside the sendMessage closure.
   const sink: { value: { content: string; sources?: SourceItem[] } | null } = { value: null }
@@ -139,7 +143,7 @@ export async function runGeneralResearch(
     allowNoMessageOutput: true,
     costContext: input.costContext,
     telemetry: deps.telemetry,
-    observers: [observer],
+    observers: [observer, provenance],
     sendMessage: async (msg) => {
       sink.value = { content: msg.content, sources: msg.sources }
       // Synthetic id — the brief is captured here, never persisted as a message.
@@ -164,9 +168,16 @@ export async function runGeneralResearch(
       // synthesising (allowNoMessageOutput makes that a graceful return, not a
       // throw). Treat as partial so the caller acknowledges incomplete research
       // and leans on the gathered sources rather than asserting an answer.
-      return { brief: "", sources, substeps, partial: true, partialReason: "max_iterations" }
+      return {
+        brief: "",
+        sources,
+        substeps,
+        provenanceStreamIds: [...provenance.provenanceStreamIds],
+        partial: true,
+        partialReason: "max_iterations",
+      }
     }
-    return { brief, sources, substeps }
+    return { brief, sources, substeps, provenanceStreamIds: [...provenance.provenanceStreamIds] }
   } catch (err) {
     const aborted = input.signal.aborted
     const timedOut = Date.now() >= input.deadlineAt
@@ -183,6 +194,7 @@ export async function runGeneralResearch(
         brief: clip(sink.value?.content ?? ""),
         sources: mergeSourceItems(sink.value?.sources ?? [], observer.sources).slice(0, MAX_RESULT_SOURCES),
         substeps,
+        provenanceStreamIds: [...provenance.provenanceStreamIds],
         partial: true,
         partialReason: reason,
       }

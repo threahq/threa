@@ -8,6 +8,7 @@ export {
 export {
   computeAgentAccessSpec,
   resolveMemoViewer,
+  memoAudienceForSpec,
   type AgentAccessSpec,
   type ComputeAccessSpecParams,
 } from "./access-spec"

@@ -250,7 +250,7 @@ async function readRows(
  * dispatched by intent (whole file vs. a section) and file type — image vision,
  * document text/data, or paged text/PDF/spreadsheet.
  *
- * Access is enforced once through `attachmentService.getAccessible` on every
+ * Access is enforced once through `attachmentService.getAccessibleVia` on every
  * path, section reads included, so `attachment_references` resends and the
  * sharing-safety status gate paged reads too, not just raw stream membership.
  */
@@ -274,25 +274,28 @@ Use \`search_attachments\` first when you don't already have the attachment id.`
 
     execute: async (input): Promise<AgentToolResult> => {
       try {
-        const attachment = await attachmentService.getAccessible(input.attachmentId, {
+        const access = await attachmentService.getAccessibleVia(input.attachmentId, {
           workspaceId,
           accessibleStreamIds,
         })
-        if (!attachment) {
+        if (!access) {
           return errorOutput("Attachment not found or not accessible", input.attachmentId)
         }
+        const { attachment } = access
 
         const section = input.section
-        if (!section) {
-          return readWhole(db, workspaceId, storage, attachment, supportsVision)
+        const read = (): Promise<AgentToolResult> => {
+          if (!section) return readWhole(db, workspaceId, storage, attachment, supportsVision)
+          if (section.kind === "lines") {
+            return readLines(db, workspaceId, storage, attachment, section.startLine, section.endLine)
+          }
+          if (section.kind === "pages") {
+            return readPages(db, workspaceId, attachment, section.startPage, section.endPage)
+          }
+          return readRows(db, workspaceId, storage, attachment, section.sheetName, section.startRow, section.endRow)
         }
-        if (section.kind === "lines") {
-          return readLines(db, workspaceId, storage, attachment, section.startLine, section.endLine)
-        }
-        if (section.kind === "pages") {
-          return readPages(db, workspaceId, attachment, section.startPage, section.endPage)
-        }
-        return readRows(db, workspaceId, storage, attachment, section.sheetName, section.startRow, section.endRow)
+        const result = await read()
+        return { ...result, provenanceStreamIds: access.viaStreamIds }
       } catch (error) {
         logger.error({ error, attachmentId: input.attachmentId }, "Read attachment failed")
         return errorOutput(

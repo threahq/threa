@@ -7,7 +7,7 @@ import type {
   UserPreferences,
 } from "@threahq/types"
 import type { AttachmentService } from "../../attachments"
-import type { MemoExplorerService } from "../../memos"
+import type { MemoAudience, MemoExplorerService } from "../../memos"
 import type { PeopleViewer } from "../../workspaces"
 import type { SearchService } from "../../search"
 import type { StorageProvider } from "../../../lib/storage/s3-client"
@@ -25,6 +25,8 @@ export interface WorkspaceToolDeps {
    * everyone in the stream, so this is not `invokingUserId`.
    */
   memoViewerUserId: string | undefined
+  /** Who reads what a tool returns from workspace memory: the turn's audience, not the invoker. */
+  memoAudience: MemoAudience
   peopleViewer: PeopleViewer
   /** The invoking user's resolved `search` flag; "off" keeps the pre-rework tool prompt and ranking. */
   searchFlag: FeatureFlagValue<"search">

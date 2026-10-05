@@ -1,5 +1,5 @@
 import { describe, it, expect } from "bun:test"
-import type { MemoExplorerDetail, MemoExplorerService } from "../../memos"
+import type { MemoExplorerDetail, MemoExplorerPermissions, MemoExplorerService } from "../../memos"
 import { createDescribeMemoTool } from "./describe-memo-tool"
 import type { WorkspaceToolDeps } from "./tool-deps"
 
@@ -16,6 +16,7 @@ function makeDeps(memoExplorer: MemoExplorerService): WorkspaceToolDeps {
     accessibleStreamIds: ["stream_1", "stream_2"],
     invokingUserId: "usr_test",
     memoViewerUserId: undefined,
+    memoAudience: { kind: "users", userIds: ["usr_test"] },
     peopleViewer: { kind: "user", userId: "usr_test" },
     searchFlag: "on",
     searchService: {} as WorkspaceToolDeps["searchService"],
@@ -52,6 +53,8 @@ describe("describe_memo tool", () => {
         scopeUserId: null,
         createdAt: new Date("2026-04-30T09:00:00Z"),
         updatedAt: new Date("2026-04-30T09:00:00Z"),
+        sourceStreamIds: null,
+        requiresBrowse: false,
         archivedAt: null,
       },
       distance: 0,
@@ -86,8 +89,10 @@ describe("describe_memo tool", () => {
     const memoExplorer = makeMemoExplorer(async () => detail)
     const tool = createDescribeMemoTool(makeDeps(memoExplorer))
 
-    const { output } = await tool.config.execute({ memoId: "memo_abc" }, toolOpts)
+    const { output, provenanceStreamIds } = await tool.config.execute({ memoId: "memo_abc" }, toolOpts)
     const parsed = JSON.parse(output)
+
+    expect(provenanceStreamIds).toEqual(["stream_1"])
 
     expect(parsed.id).toBe("memo_abc")
     expect(parsed.title).toBe("Deploy plan recap")
@@ -111,17 +116,61 @@ describe("describe_memo tool", () => {
     const memoExplorer = makeMemoExplorer(async () => null)
     const tool = createDescribeMemoTool(makeDeps(memoExplorer))
 
-    const { output } = await tool.config.execute({ memoId: "memo_inaccessible" }, toolOpts)
+    const { output, provenanceStreamIds } = await tool.config.execute({ memoId: "memo_inaccessible" }, toolOpts)
     const parsed = JSON.parse(output)
+
+    expect(provenanceStreamIds).toBeUndefined()
 
     expect(parsed.error).toContain("not found")
     expect(parsed.memoId).toBe("memo_inaccessible")
   })
 
+  it("should report the memo's recorded source streams and its source messages' streams as provenance when the memo carries them", async () => {
+    const detail = {
+      memo: { status: "active", sourceStreamIds: ["stream_9", "stream_3"] },
+      sourceStream: { id: "stream_1", type: "channel", name: "general" },
+      rootStream: null,
+      sourceMessages: [
+        { id: "msg_1", streamId: "stream_thread", content: "hi", createdAt: new Date("2026-04-30T08:50:00Z") },
+      ],
+    } as unknown as MemoExplorerDetail
+    const tool = createDescribeMemoTool(makeDeps(makeMemoExplorer(async () => detail)))
+
+    const { provenanceStreamIds } = await tool.config.execute({ memoId: "memo_agent" }, toolOpts)
+
+    expect(provenanceStreamIds).toEqual(["stream_9", "stream_3", "stream_thread"])
+  })
+
+  it("should report the source stream and the source messages' streams as provenance when the memo records no source streams", async () => {
+    const detail = {
+      memo: { status: "active", sourceStreamIds: null },
+      sourceStream: { id: "stream_1", type: "channel", name: "general" },
+      rootStream: null,
+      sourceMessages: [
+        { id: "msg_1", streamId: "stream_thread", content: "hi", createdAt: new Date("2026-04-30T08:50:00Z") },
+      ],
+    } as unknown as MemoExplorerDetail
+    const tool = createDescribeMemoTool(makeDeps(makeMemoExplorer(async () => detail)))
+
+    const { provenanceStreamIds } = await tool.config.execute({ memoId: "memo_pipeline" }, toolOpts)
+
+    expect(provenanceStreamIds).toEqual(["stream_1", "stream_thread"])
+  })
+
   it("forwards workspaceId and accessibleStreamIds to MemoExplorerService.getById for access gating", async () => {
-    let captured: { workspaceId?: string; memoId?: string; streamIds?: string[] } = {}
+    let captured: {
+      workspaceId?: string
+      memoId?: string
+      streamIds?: string[]
+      audiences?: MemoExplorerPermissions["audiences"]
+    } = {}
     const memoExplorer = makeMemoExplorer(async (workspaceId, memoId, permissions) => {
-      captured = { workspaceId, memoId, streamIds: permissions.accessibleStreamIds }
+      captured = {
+        workspaceId,
+        memoId,
+        streamIds: permissions.accessibleStreamIds,
+        audiences: permissions.audiences,
+      }
       return null
     })
     const tool = createDescribeMemoTool(makeDeps(memoExplorer))
@@ -131,6 +180,7 @@ describe("describe_memo tool", () => {
     expect(captured.workspaceId).toBe("workspace_test")
     expect(captured.memoId).toBe("memo_xyz")
     expect(captured.streamIds).toEqual(["stream_1", "stream_2"])
+    expect(captured.audiences).toEqual([{ kind: "users", userIds: ["usr_test"] }])
   })
 
   it("truncates long source-message previews to 400 chars with an ellipsis", async () => {
@@ -160,6 +210,8 @@ describe("describe_memo tool", () => {
         scopeUserId: null,
         createdAt: new Date("2026-04-30T09:00:00Z"),
         updatedAt: new Date("2026-04-30T09:00:00Z"),
+        sourceStreamIds: null,
+        requiresBrowse: false,
         archivedAt: null,
       },
       distance: 0,

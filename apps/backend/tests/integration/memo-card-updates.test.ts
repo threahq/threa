@@ -150,7 +150,11 @@ describe("memo:updated", () => {
     await explorer.update(
       testWorkspaceId,
       memo,
-      { accessibleStreamIds: [sourceChannel, publicChannel, otherPrivateChannel], userId: testUserId },
+      {
+        accessibleStreamIds: [sourceChannel, publicChannel, otherPrivateChannel],
+        userId: testUserId,
+        audiences: [{ kind: "users", userIds: [testUserId] }],
+      },
       { title: "Launch in June" }
     )
 
@@ -209,7 +213,11 @@ describe("memo:updated", () => {
     await explorer.update(
       testWorkspaceId,
       privateMemo,
-      { accessibleStreamIds: [otherPrivateChannel, publicChannel], userId: testUserId },
+      {
+        accessibleStreamIds: [otherPrivateChannel, publicChannel],
+        userId: testUserId,
+        audiences: [{ kind: "users", userIds: [testUserId] }],
+      },
       { title: "Acquisition target: Initech" }
     )
 
@@ -247,14 +255,24 @@ describe("memo:updated", () => {
       })
     })
 
-    await explorer.update(
+    const updated = await explorer.update(
       testWorkspaceId,
       uncited,
-      { accessibleStreamIds: [publicChannel], userId: testUserId },
+      {
+        accessibleStreamIds: [publicChannel],
+        userId: testUserId,
+        audiences: [{ kind: "users", userIds: [testUserId] }],
+      },
       { title: "Still nobody" }
     )
 
-    expect(await outboxFor(uncited)).toEqual([])
+    expect({
+      updated: updated && { id: updated.memo.id, title: updated.memo.title },
+      events: await outboxFor(uncited),
+    }).toEqual({
+      updated: { id: uncited, title: "Still nobody" },
+      events: [],
+    })
   })
 
   test("carries only the card's fields — never the memo's substance", async () => {
@@ -357,7 +375,11 @@ describe("memo:updated", () => {
     await explorer.update(
       testWorkspaceId,
       memo,
-      { accessibleStreamIds: [sourceChannel, publicChannel, otherPrivateChannel], userId: testUserId },
+      {
+        accessibleStreamIds: [sourceChannel, publicChannel, otherPrivateChannel],
+        userId: testUserId,
+        audiences: [{ kind: "users", userIds: [testUserId] }],
+      },
       { title: "Launch in July" }
     )
 

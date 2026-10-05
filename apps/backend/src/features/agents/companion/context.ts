@@ -7,6 +7,7 @@ import type { UserPreferencesService } from "../../user-preferences"
 import { UserDeviceContextRepository } from "../../device-context"
 import { MessageRepository, SharedMessageRepository, collectSharedMessageIds, type Message } from "../../messaging"
 import { UserRepository, type PeopleViewer, type User } from "../../workspaces"
+import { audienceBrowses, type MemoAudience } from "../../memos"
 import type { Persona } from "../persona-repository"
 import { PersonaAttachmentRepository, type PersonaAttachmentContentItem } from "../persona-attachment-repository"
 import { resolveActorNames } from "../actor-names"
@@ -38,6 +39,7 @@ import { formatMessagesWithTemporal } from "./prompt/message-format"
 import { resolveQuoteReplies, renderMessageWithQuoteContext, DEFAULT_MAX_QUOTE_DEPTH } from "../quote-resolver"
 import {
   computeAgentAccessSpec,
+  memoAudienceForSpec,
   resolveMemoViewer,
   resolvePeopleViewer,
   type AgentAccessSpec,
@@ -127,6 +129,12 @@ export interface AgentContext {
    */
   accessibleStreamIds: Set<string> | null
   memoViewerUserId: string | undefined
+  /** Who reads what this turn retrieves from workspace memory; absent when there is no invoking user, which leaves the turn without memo access. */
+  memoAudience: MemoAudience | undefined
+  /** Whether everyone this turn answers to browses the workspace, as of turn start; with no invoker, the room it posts into. */
+  memoAudienceBrowses: boolean
+  /** The audience `memoAudienceBrowses` was measured against, for re-measuring it later in the turn. */
+  memoBrowseAudience: MemoAudience
   peopleViewer: PeopleViewer | undefined
   /** Another workspace reads this room, so nothing private to this workspace may reach the answer. */
   roomShared: boolean
@@ -139,6 +147,8 @@ export interface AgentContext {
   streamBrief: StreamBrief | null
   /** Memos prepared recall put in front of the model this turn. */
   recalledMemos: RecalledMemo[]
+  /** Source streams of the prior-session digests and summaries injected into the prompt. */
+  carriedSourceStreamIds: string[]
 }
 
 async function resolveScratchpadCustomPrompt(
@@ -237,6 +247,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   // (no invoking user) get `null`; downstream consumers decide how to treat it.
   let accessibleStreamIds: Set<string> | null = null
   let memoViewerUserId: string | undefined
+  let memoAudience: MemoAudience | undefined
   let accessType: AgentAccessSpec["type"] | null = null
   let peopleViewer: PeopleViewer | undefined
   if (invokingUserId) {
@@ -244,9 +255,15 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     const ids = await SearchRepository.getAccessibleStreamsForAgent(db, accessSpec, workspaceId)
     accessibleStreamIds = new Set(ids)
     memoViewerUserId = resolveMemoViewer(accessSpec)
+    memoAudience = memoAudienceForSpec(accessSpec)
     accessType = accessSpec.type
     peopleViewer = resolvePeopleViewer(accessSpec, stream.id)
   }
+  const memoBrowseAudience: MemoAudience = memoAudience ?? {
+    kind: "room",
+    roomStreamId: stream.rootStreamId ?? stream.id,
+  }
+  const memoAudienceBrowses = await audienceBrowses(db, workspaceId, memoBrowseAudience)
   const memoryModeStream = stream.rootStreamId ? await findMemoryModeStream(db, workspaceId, stream.id) : stream
   const selfKnowledge: SelfKnowledge =
     stream.e2eEnabled === true
@@ -273,7 +290,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       includeAttachments: true,
       includeLinkPreviews: true,
     }),
-    invokingUserId && accessibleStreamIds && triggerMessage
+    invokingUserId && accessibleStreamIds && memoAudience && triggerMessage
       ? preparedRecall.recall({
           workspaceId,
           invokingUserId,
@@ -281,6 +298,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
           query: triggerMessage.contentMarkdown,
           accessibleStreamIds,
           memoViewerUserId,
+          memoAudience,
           asker:
             invokingUser && preferences
               ? {
@@ -313,11 +331,12 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   // concluded*, so "as we discussed last week" survives the window scrolling
   // past. Single pooled read (INV-30); the in-flight session has no summary yet
   // so it's excluded by construction.
-  const previousSessionsBlock = await loadEpisodeSummaryPromptBlock(db, {
+  const previousSessions = await loadEpisodeSummaryPromptBlock(db, {
     workspaceId,
     streamId: stream.id,
     personaId: persona.id,
     accessibleStreamIds,
+    memoAudienceBrowses,
   })
 
   // Durable stream brief (roadmap 4.1): the stream's standing working document,
@@ -537,14 +556,16 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   // fresh episode — the prior session's cursor fell outside this window — must
   // not carry that episode's digest chain. Bounded surfaces always carry
   // (`policy.carryDigests` is true for them).
-  const turnDigestBlock = policy.carryDigests
+  const turnDigests = policy.carryDigests
     ? await loadTurnDigestPromptBlock(db, {
         workspaceId,
         streamId: stream.id,
         personaId: persona.id,
         accessibleStreamIds,
+        memoAudienceBrowses,
       })
-    : null
+    : { text: null, sourceStreamIds: [] }
+  const carriedSourceStreamIds = [...previousSessions.sourceStreamIds, ...turnDigests.sourceStreamIds]
 
   // Render the stitched discussion once author names are fully resolved. Null
   // when there's nothing to stitch (no spawning conversation, or a deep thread
@@ -569,7 +590,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       spawnedFromContext,
       followUp,
       subagentBrief,
-      previousSessions: previousSessionsBlock,
+      previousSessions: previousSessions.text,
       // Only when the tool that can act on them is actually in this turn's
       // toolset. Elsewhere these values are tokens the model can neither use
       // nor was asked about — and `composeSystemPrompt` receives the built
@@ -585,7 +606,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     })
     // Prior-turn digests and recalled memos are re-derived each turn, so they
     // belong outside the cached span alongside temporal grounding.
-    const volatileTail = [turnDigestBlock, recalledMemosBlock].filter((block) => block !== null)
+    const volatileTail = [turnDigests.text, recalledMemosBlock].filter((block) => block !== null)
     return volatileTail.length > 0
       ? { ...systemPrompt, volatile: [systemPrompt.volatile, ...volatileTail].join("\n\n") }
       : systemPrompt
@@ -604,9 +625,13 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
     streamContext,
     accessibleStreamIds,
     memoViewerUserId,
+    memoAudience,
+    memoAudienceBrowses,
+    memoBrowseAudience,
     peopleViewer,
     roomShared,
     streamBrief,
     recalledMemos,
+    carriedSourceStreamIds,
   }
 }

@@ -83,7 +83,65 @@ describe("TurnDigestCollector", () => {
 
     expect(collector.hasToolWork).toBe(true)
     expect(collector.records).toEqual([
-      { toolName: "web_search", content: "tides query results", sources: [webSource("Tides", "https://a.example")] },
+      {
+        toolName: "web_search",
+        content: "tides query results",
+        sources: [webSource("Tides", "https://a.example")],
+        provenanceStreamIds: [],
+      },
+    ])
+  })
+
+  it("should collect provenance stream ids from hidden tools and trace sources when tools complete", async () => {
+    const collector = new TurnDigestCollector()
+
+    await collector.handle({
+      type: "tool:start",
+      toolCallId: "tc_hidden",
+      toolName: "search_messages",
+      stepType: AgentStepTypes.WORKSPACE_SEARCH,
+      input: {},
+      hidden: true,
+    })
+    await collector.handle({
+      type: "tool:complete",
+      toolCallId: "tc_hidden",
+      toolName: "search_messages",
+      input: {},
+      output: "raw",
+      durationMs: 5,
+      provenanceStreamIds: ["stream_private", "stream_shared"],
+      trace: { stepType: AgentStepTypes.WORKSPACE_SEARCH, content: "hidden content" },
+    })
+    await collector.handle({
+      type: "tool:start",
+      toolCallId: "tc_visible",
+      toolName: "workspace_research",
+      stepType: AgentStepTypes.WORKSPACE_SEARCH,
+      input: {},
+    })
+    await collector.handle({
+      type: "tool:complete",
+      toolCallId: "tc_visible",
+      toolName: "workspace_research",
+      input: {},
+      output: "raw",
+      durationMs: 5,
+      trace: {
+        stepType: AgentStepTypes.WORKSPACE_SEARCH,
+        content: "research",
+        sources: [workspaceSource("Notes", "stream_notes"), webSource("Tides", "https://a.example")],
+      },
+    })
+
+    expect([...collector.provenanceStreamIds]).toEqual(["stream_private", "stream_shared", "stream_notes"])
+    expect(collector.records).toEqual([
+      {
+        toolName: "workspace_research",
+        content: "research",
+        sources: [workspaceSource("Notes", "stream_notes"), webSource("Tides", "https://a.example")],
+        provenanceStreamIds: [],
+      },
     ])
   })
 
@@ -107,16 +165,19 @@ describe("generateTurnDigest", () => {
           toolName: "web_search",
           content: "search results about tides",
           sources: [webSource("Tides", "https://a.example")],
+          provenanceStreamIds: [],
         },
         {
           toolName: "read_url",
           content: "page content",
           sources: [webSource("Tides", "https://a.example"), webSource("Moon", "https://b.example")],
+          provenanceStreamIds: [],
         },
         {
           toolName: "web_search",
           content: "second search",
           sources: [workspaceSource("Standup notes", "stream_notes")],
+          provenanceStreamIds: [],
         },
       ],
       replyText: "Tides come from the moon.",
@@ -138,6 +199,37 @@ describe("generateTurnDigest", () => {
     expect(seen[0]!.user).toContain("Tides come from the moon.")
   })
 
+  it("should record a stream a visible tool reported only through provenance when the digest is assembled", async () => {
+    const collector = new TurnDigestCollector()
+    await collector.handle({
+      type: "tool:start",
+      toolCallId: "tc_1",
+      toolName: "read_attachment",
+      stepType: AgentStepTypes.TOOL_CALL,
+      input: {},
+    })
+    await collector.handle({
+      type: "tool:complete",
+      toolCallId: "tc_1",
+      toolName: "read_attachment",
+      input: {},
+      output: "raw",
+      durationMs: 5,
+      provenanceStreamIds: ["stream_reference"],
+      trace: { stepType: AgentStepTypes.TOOL_CALL, content: "attachment text" },
+    })
+
+    const { ai } = stubAI("Found the thing.")
+    const digest = await generateTurnDigest({ ai, model: MODEL, records: collector.records })
+
+    expect(digest).toEqual({
+      findings: "Found the thing.",
+      toolsCalled: ["read_attachment"],
+      sources: [],
+      sourceStreamIds: ["stream_reference"],
+    })
+  })
+
   it("returns null with no records and never calls the model", async () => {
     const { ai, seen } = stubAI("unused")
     const digest = await generateTurnDigest({ ai, model: MODEL, records: [] })
@@ -150,7 +242,7 @@ describe("generateTurnDigest", () => {
     const digest = await generateTurnDigest({
       ai,
       model: MODEL,
-      records: [{ toolName: "web_search", content: "results", sources: [] }],
+      records: [{ toolName: "web_search", content: "results", sources: [], provenanceStreamIds: [] }],
     })
     expect(digest).toBeNull()
   })
@@ -160,7 +252,7 @@ describe("generateTurnDigest", () => {
     const digest = await generateTurnDigest({
       ai,
       model: MODEL,
-      records: [{ toolName: "web_search", content: "results", sources: [] }],
+      records: [{ toolName: "web_search", content: "results", sources: [], provenanceStreamIds: [] }],
     })
     expect(digest!.findings).toHaveLength(1200)
   })
@@ -191,6 +283,15 @@ describe("parseTurnDigestStepContent", () => {
     })
     expect(parseTurnDigestStepContent(JSON.stringify({ toolsCalled: ["x"] }))).toBeNull()
     expect(parseTurnDigestStepContent(JSON.stringify({ findings: "   " }))).toBeNull()
+  })
+
+  it("keeps audienceBrowses only when it is a boolean", () => {
+    expect([
+      parseTurnDigestStepContent({ ...valid, audienceBrowses: false })?.audienceBrowses,
+      parseTurnDigestStepContent({ ...valid, audienceBrowses: true })?.audienceBrowses,
+      parseTurnDigestStepContent({ ...valid, audienceBrowses: "false" })?.audienceBrowses,
+      parseTurnDigestStepContent(valid)?.audienceBrowses,
+    ]).toEqual([false, true, undefined, undefined])
   })
 
   it("drops source entries that are not objects", () => {

@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
+import * as memosModule from "../memos"
 import { AgentToolNames, AuthorTypes, StreamTypes } from "@threahq/types"
 import * as dbModule from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { HttpError } from "../../lib/errors"
+import { logger } from "../../lib/logger"
 import { MessageRepository, MessageVersionRepository } from "../messaging"
 import {
   StreamPoliciesRepository,
@@ -19,6 +21,8 @@ import type { SubagentRun } from "../subagents"
 import { SessionAbortRegistry } from "./session-abort-registry"
 import { TraceEmitter } from "./trace-emitter"
 import { ONBOARDING_GREETING_OPENER } from "./companion/prompt/turn-purpose-prompt"
+import { GENERAL_RESEARCH_TOOL_POLICY } from "./general-researcher"
+import type { WorkspaceIntegrationService } from "../workspace-integrations"
 
 const SONNET = "openrouter:anthropic/claude-sonnet-4.6"
 const OPUS = "openrouter:anthropic/claude-opus-4.8"
@@ -152,6 +156,16 @@ function makeTriggerMessage(authorId: string) {
 /** Every unstubbed repository read hits this and sees an empty database. */
 const emptyDb = { query: async () => ({ rows: [], rowCount: 0 }) } as any
 
+let audienceBrowsesSpy: ReturnType<typeof stubAudienceBrowses>
+
+function stubAudienceBrowses() {
+  return spyOn(memosModule, "audienceBrowses").mockResolvedValue(true)
+}
+
+beforeEach(() => {
+  audienceBrowsesSpy = stubAudienceBrowses()
+})
+
 function makeFakeIo() {
   const target: any = { emit: () => target, to: () => target }
   return { to: () => target } as any
@@ -175,6 +189,7 @@ async function runSupersedeRerun(params: {
   firstTurnToolCalls?: Array<{ toolCallId: string; toolName: string; input: unknown }>
   subagentRun?: SubagentRun
   finalText?: string
+  extraDeps?: Partial<PersonaAgentDeps>
 }) {
   const supersededSession = makeSession({
     id: SUPERSEDED_SESSION_ID,
@@ -245,7 +260,7 @@ async function runSupersedeRerun(params: {
   )
   spyOn(AgentSessionRepository, "findStepsBySession").mockResolvedValue([])
 
-  const researchInputs: Array<{ modelId?: string }> = []
+  const researchInputs: Array<{ modelId?: string; tools?: Array<{ name: string }> }> = []
   const capturedModelStrings: string[] = []
   const capturedVolatilePrompts: string[] = []
   const capturedStablePrompts: string[] = []
@@ -282,7 +297,7 @@ async function runSupersedeRerun(params: {
     generateObject: async () => ({ value: { verdict: "accept", reason: "directly answers the edit" } }),
   } as any
 
-  const research = mock(async (input: { modelId?: string }) => {
+  const research = mock(async (input: { modelId?: string; tools?: Array<{ name: string }> }) => {
     researchInputs.push(input)
     return { brief: "Research brief.", sources: [], substeps: [] }
   })
@@ -329,6 +344,7 @@ async function runSupersedeRerun(params: {
     cancelFollowUp: async () => ({}),
     updateFollowUp: async () => ({}),
     loadActiveSubagentRun: async () => params.subagentRun ?? null,
+    ...params.extraDeps,
   } as unknown as PersonaAgentDeps
 
   const agent = new PersonaAgent(deps)
@@ -349,7 +365,11 @@ async function runSupersedeRerun(params: {
   })
 
   const escalationSteps = upsertStep.mock.calls.filter(([, , input]: any[]) => input.stepType === "model_escalated")
+  const digestContents = upsertStep.mock.calls
+    .filter(([, , input]: any[]) => input.stepType === "turn_digest")
+    .map(([, , input]: any[]) => JSON.parse(input.content))
   return {
+    digestContents,
     result,
     researchInputs,
     capturedModelStrings,
@@ -711,5 +731,148 @@ describe("PersonaAgent per-turn model resolution (roadmap 2.3)", () => {
     expect(result).toMatchObject({ status: "failed", retryable: false, messagesSent: 0, sentMessageIds: [] })
     expect(capturedModelStrings).toEqual([])
     expect(createMessage).not.toHaveBeenCalled()
+  })
+})
+
+describe("PersonaAgent memo browse flag", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  const room: memosModule.MemoAudience = { kind: "room", roomStreamId: STREAM_ID }
+  const measurements = [
+    { name: "browse only now", atStart: false, atWrite: true, stored: true },
+    { name: "browse only at turn start", atStart: true, atWrite: false, stored: true },
+    { name: "never browse", atStart: false, atWrite: false, stored: false },
+  ]
+
+  for (const { name, atStart, atWrite, stored } of measurements) {
+    it(`should store the turn digest's browse flag as ${stored} when the audience's reach is: ${name}`, async () => {
+      audienceBrowsesSpy.mockReset()
+      audienceBrowsesSpy.mockResolvedValueOnce(atStart).mockResolvedValue(atWrite)
+
+      const { digestContents } = await runSupersedeRerun({
+        supersededFailedValidation: false,
+        personaOverride: { enabledTools: [AgentToolNames.LIST_FOLLOW_UPS] },
+        firstTurnToolCalls: [{ toolCallId: "call_1", toolName: AgentToolNames.LIST_FOLLOW_UPS, input: {} }],
+        finalText: "Nothing pending.",
+      })
+
+      expect({
+        digestContents,
+        measured: audienceBrowsesSpy.mock.calls.map(([, workspaceId, audience]) => ({ workspaceId, audience })),
+      }).toEqual({
+        digestContents: [
+          {
+            findings: "Nothing pending.",
+            toolsCalled: ["list_follow_ups"],
+            sources: [],
+            sourceStreamIds: [],
+            audienceBrowses: stored,
+          },
+        ],
+        measured: atStart
+          ? [{ workspaceId: WORKSPACE_ID, audience: room }]
+          : [
+              { workspaceId: WORKSPACE_ID, audience: room },
+              { workspaceId: WORKSPACE_ID, audience: room },
+            ],
+      })
+    })
+
+    it(`should pass save_memo requiresBrowse ${stored} when the audience's reach is: ${name}`, async () => {
+      audienceBrowsesSpy.mockReset()
+      audienceBrowsesSpy.mockResolvedValueOnce(atStart).mockResolvedValue(atWrite)
+      const saveMemo = mock(async () => ({
+        ok: true as const,
+        memoId: "memo_1",
+        title: "Deploy day",
+        deduped: false,
+        scope: "workspace" as const,
+      }))
+
+      await runSupersedeRerun({
+        supersededFailedValidation: false,
+        personaOverride: { enabledTools: [AgentToolNames.SAVE_MEMO] },
+        firstTurnToolCalls: [
+          {
+            toolCallId: "call_1",
+            toolName: AgentToolNames.SAVE_MEMO,
+            input: {
+              title: "Deploy day",
+              abstract: "We deploy on Fridays.",
+              knowledgeType: "decision",
+              sourceMessageIds: [TRIGGER_MESSAGE_ID],
+            },
+          },
+        ],
+        extraDeps: { saveMemo: saveMemo as unknown as PersonaAgentDeps["saveMemo"] },
+      })
+
+      const [saved] = saveMemo.mock.calls.map(([params]: any[]) => ({
+        requiresBrowse: params.requiresBrowse,
+        audience: params.audience,
+      }))
+      expect(saved).toEqual({ requiresBrowse: stored, audience: null })
+    })
+  }
+})
+
+describe("PersonaAgent integration tools", () => {
+  afterEach(() => {
+    mock.restore()
+  })
+
+  const isIntegrationTool = (name: string) => name.startsWith("github_") || name.startsWith("linear_")
+  const workspaceIntegrationService = {} as WorkspaceIntegrationService
+  const generalResearchCall = [
+    { toolCallId: "call_1", toolName: AgentToolNames.GENERAL_RESEARCH, input: { query: "Open incidents?" } },
+  ]
+
+  const integrationToolsOf = async (params: { browses: boolean; enabledTools: string[] | null }) => {
+    audienceBrowsesSpy.mockResolvedValue(params.browses)
+    const warn = spyOn(logger, "warn").mockImplementation(() => logger)
+    const { capturedToolNames, researchInputs } = await runSupersedeRerun({
+      supersededFailedValidation: false,
+      personaOverride: { enabledTools: params.enabledTools as Persona["enabledTools"] },
+      triggerAuthorUserId: "usr_1",
+      firstTurnToolCalls: generalResearchCall,
+      extraDeps: { workspaceIntegrationService },
+    })
+    return {
+      main: capturedToolNames[0]?.filter(isIntegrationTool),
+      researcher: researchInputs[0]?.tools?.map((tool) => tool.name).filter(isIntegrationTool),
+      depsWarnings: warn.mock.calls.filter(([, message]) => /GitHub deps|Linear deps/.test(String(message))),
+    }
+  }
+
+  it("should give the main tool set and the researcher GitHub and Linear when the audience browses the workspace", async () => {
+    expect(
+      await integrationToolsOf({
+        browses: true,
+        enabledTools: [AgentToolNames.GENERAL_RESEARCH, AgentToolNames.GITHUB_REPOS, AgentToolNames.LINEAR_GET_ISSUE],
+      })
+    ).toEqual({
+      main: [AgentToolNames.GITHUB_REPOS, AgentToolNames.LINEAR_GET_ISSUE],
+      researcher: GENERAL_RESEARCH_TOOL_POLICY.filter(isIntegrationTool),
+      depsWarnings: [],
+    })
+  })
+
+  it("should give neither GitHub nor Linear, and warn about neither, when the audience can't browse the workspace", async () => {
+    expect(
+      await integrationToolsOf({
+        browses: false,
+        enabledTools: [AgentToolNames.GENERAL_RESEARCH, AgentToolNames.GITHUB_REPOS, AgentToolNames.LINEAR_GET_ISSUE],
+      })
+    ).toEqual({ main: [], researcher: [], depsWarnings: [] })
+  })
+
+  it("should give neither to a persona with every tool enabled when the audience can't browse the workspace", async () => {
+    expect(await integrationToolsOf({ browses: false, enabledTools: null })).toEqual({
+      main: [],
+      researcher: [],
+      depsWarnings: [],
+    })
   })
 })

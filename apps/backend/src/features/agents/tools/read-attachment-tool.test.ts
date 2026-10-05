@@ -12,9 +12,16 @@ import type { WorkspaceToolDeps } from "./tool-deps"
 const toolOpts = { toolCallId: "test" }
 
 function makeAttachmentService(
-  getAccessible: AttachmentService["getAccessible"] = async () => null
+  getAccessible: AttachmentService["getAccessible"] = async () => null,
+  viaStreamIds?: string[]
 ): AttachmentService {
-  return { getAccessible } as unknown as AttachmentService
+  return {
+    getAccessibleVia: async (...args: Parameters<AttachmentService["getAccessible"]>) => {
+      const attachment = await getAccessible(...args)
+      if (!attachment) return null
+      return { attachment, viaStreamIds: viaStreamIds ?? (attachment.streamId ? [attachment.streamId] : []) }
+    },
+  } as unknown as AttachmentService
 }
 
 function makeDeps(overrides?: Partial<WorkspaceToolDeps>): WorkspaceToolDeps {
@@ -24,6 +31,7 @@ function makeDeps(overrides?: Partial<WorkspaceToolDeps>): WorkspaceToolDeps {
     accessibleStreamIds: ["stream_1", "stream_2"],
     invokingUserId: "usr_test",
     memoViewerUserId: undefined,
+    memoAudience: { kind: "users", userIds: ["usr_test"] },
     peopleViewer: { kind: "user", userId: "usr_test" },
     searchFlag: "on",
     searchService: {} as WorkspaceToolDeps["searchService"],
@@ -71,6 +79,7 @@ describe("read_attachment — whole-file read", () => {
     const parsed = JSON.parse(result.output)
 
     expect(result.multimodal).toBeUndefined()
+    expect(result.provenanceStreamIds).toEqual(["stream_1"])
     expect(parsed).toMatchObject({
       id: "attach_1",
       filename: "snippet.txt",
@@ -150,6 +159,40 @@ describe("read_attachment — whole-file read", () => {
 
     expect(parsed.extraction).toBeNull()
     expect(parsed.processingStatus).toBe("pending")
+
+    extractionSpy.mockRestore()
+  })
+
+  it("should report the streams the access check granted the read through as its provenance", async () => {
+    const referenced = { ...textAttachment, streamId: "stream_private" }
+    const deps = makeDeps({
+      attachmentService: makeAttachmentService(async () => referenced as any, ["stream_2"]),
+    })
+    const extractionSpy = spyOn(AttachmentExtractionRepository, "findByAttachmentId").mockResolvedValue(null as any)
+
+    const tool = createReadAttachmentTool(deps, { supportsVision: true })
+    const result = await tool.config.execute({ attachmentId: "attach_1" }, toolOpts)
+
+    expect({ provenanceStreamIds: result.provenanceStreamIds, id: JSON.parse(result.output).id }).toEqual({
+      provenanceStreamIds: ["stream_2"],
+      id: "attach_1",
+    })
+
+    extractionSpy.mockRestore()
+  })
+
+  it("should return the tool's error output when reading the attachment rejects", async () => {
+    const deps = makeDeps({ attachmentService: makeAttachmentService(async () => textAttachment as any) })
+    const extractionSpy = spyOn(AttachmentExtractionRepository, "findByAttachmentId").mockRejectedValue(
+      new Error("extraction store down")
+    )
+
+    const tool = createReadAttachmentTool(deps, { supportsVision: true })
+    const result = await tool.config.execute({ attachmentId: "attach_1" }, toolOpts)
+
+    expect(result).toEqual({
+      output: JSON.stringify({ error: "Failed to read attachment: extraction store down", attachmentId: "attach_1" }),
+    })
 
     extractionSpy.mockRestore()
   })

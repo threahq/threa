@@ -19,12 +19,13 @@ export type DescribeMemoInput = z.infer<typeof DescribeMemoSchema>
  * Access scope: gated by `accessibleStreamIds` inside `MemoExplorerService.getById`,
  * which rejects memos whose source stream is outside the turn's reach and
  * filters per-source-message access; user-scoped memos resolve only for
- * `memoViewerUserId`. Outputs only ids the caller could have obtained directly
+ * `memoViewerUserId`; agent memos also need `memoAudience` to read their recorded
+ * provenance. Outputs only ids the caller could have obtained directly
  * via `search_messages`, so emitting them as pointer URLs does not widen the
  * access surface.
  */
 export function createDescribeMemoTool(deps: WorkspaceToolDeps) {
-  const { workspaceId, accessibleStreamIds, memoViewerUserId, memoExplorer } = deps
+  const { workspaceId, accessibleStreamIds, memoViewerUserId, memoAudience, memoExplorer } = deps
 
   return defineAgentTool({
     name: "describe_memo",
@@ -54,6 +55,7 @@ Returns the source messages with their \`messageId\`, \`streamId\`, and \`author
         const detail = await memoExplorer.getById(workspaceId, input.memoId, {
           accessibleStreamIds,
           userId: memoViewerUserId,
+          audiences: [memoAudience],
         })
         if (detail?.memo.status !== MemoStatuses.ACTIVE) {
           return {
@@ -67,6 +69,12 @@ Returns the source messages with their \`messageId\`, \`streamId\`, and \`author
         const { memo, sourceStream, rootStream, sourceMessages } = detail
 
         return {
+          provenanceStreamIds: [
+            ...new Set([
+              ...(memo.sourceStreamIds ?? (sourceStream ? [sourceStream.id] : [])),
+              ...sourceMessages.map((m) => m.streamId),
+            ]),
+          ],
           output: JSON.stringify({
             id: memo.id,
             title: memo.title,

@@ -35,6 +35,8 @@ export interface EnrichedMessageResult {
    * accessible. Undefined when there is no quoted-source context to add.
    */
   quoteContext?: string
+  /** Every stream a quote expansion reached in this batch. */
+  quoteStreamIds?: string[]
 }
 
 export interface EnrichedAttachmentResult {

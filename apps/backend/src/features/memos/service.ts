@@ -20,6 +20,7 @@ import { OutboxRepository } from "../../lib/outbox"
 import { UserRepository } from "../workspaces"
 import { WorkspaceSettingsRepository } from "../workspace-settings"
 import { StreamContextRepository, contextSnippet, type NewStreamContextItem } from "../stream-context"
+import type { MemoAudience } from "./audience"
 import { MemoRepository, type Memo } from "./repository"
 import { PendingItemRepository, type PendingMemoItem } from "./pending-item-repository"
 import { classificationFingerprint } from "./classification-fingerprint"
@@ -110,6 +111,21 @@ function resolveExtractedMemoScope(stream: Stream | null): { scope: MemoScope; s
 }
 
 /**
+ * Who reads what the memorizer extracts from a stream. A user-scoped memo is read by its
+ * owner alone, so the owner's own agent memos citing their private streams stay in view;
+ * anything else is read by the whole room and sees only what the room reads.
+ */
+function memorizerAudience(memoScope: {
+  scope: MemoScope
+  scopeUserId: string | null
+  rootStreamId: string
+}): MemoAudience {
+  return memoScope.scope === MemoScopes.USER && memoScope.scopeUserId
+    ? { kind: "users", userIds: [memoScope.scopeUserId] }
+    : { kind: "room", roomStreamId: memoScope.rootStreamId }
+}
+
+/**
  * Load `streamId`'s effective root (a thread carries no type/visibility of its
  * own — INV-62) and derive the extracted-memo tier from it. `save_memo` and
  * reflective capture bind to `session.streamId`, which can be a thread inside a
@@ -159,6 +175,27 @@ interface MemoToCreate {
   parentMemoId?: string
   /** Memos the memorizer explicitly retired (reversed/replaced conclusion), pre-validated. */
   supersedesMemoIds?: string[]
+  /** Inherited from the memos this one retires when any of them reached fewer readers than its location. */
+  sourceStreamIds?: string[]
+  requiresBrowse?: boolean
+}
+
+/**
+ * A revision may carry what the memos it retires said, so it reaches no reader they were hidden from:
+ * once any of them is agent-written or has sources, it takes their sources plus its own stream, and
+ * needs browse when any of them did (a legacy agent memo without sources always does).
+ */
+function inheritedReach(
+  retired: readonly Memo[],
+  streamId: string
+): Pick<MemoToCreate, "sourceStreamIds" | "requiresBrowse"> {
+  const hasSources = (memo: Memo) => (memo.sourceStreamIds?.length ?? 0) > 0
+  const isAgent = (memo: Memo) => memo.authoredByKind === AuthoredByKinds.AGENT
+  if (!retired.some((memo) => isAgent(memo) || hasSources(memo))) return {}
+  return {
+    sourceStreamIds: [...new Set([streamId, ...retired.flatMap((memo) => memo.sourceStreamIds ?? [])])],
+    requiresBrowse: retired.some((memo) => memo.requiresBrowse || (isAgent(memo) && !hasSources(memo))),
+  }
 }
 
 /**
@@ -185,6 +222,16 @@ export interface SaveMemoParams {
    * `participant_ids` when it fails the scope.
    */
   sourceStreamIds: string[]
+  /**
+   * Streams whose content reached the model this turn beyond the turn's own
+   * family. Stored on the memo with the family so a reader needs access to all
+   * of them; a superset only narrows the audience, a subset leaks.
+   */
+  provenanceStreamIds: string[]
+  /** Who the agent wrote for; only memos it reads count as duplicates. Null when unresolved: then only memos the room reads do. */
+  audience: MemoAudience | null
+  /** The turn's audience browsed the workspace, so member-only content may have reached the model: readers who cannot browse never see the memo. */
+  requiresBrowse: boolean
   title: string
   abstract: string
   keyPoints: string[]
@@ -240,6 +287,8 @@ export interface CaptureSessionReflectionParams {
   citedStreamIds: string[]
   /** Messages the session's research cited; those in the session's root become memo sources after the anchor. */
   citedMessageIds: string[]
+  /** The session ran for readers who browse the workspace, so its digest may hold member-only content: readers who cannot browse never see the memos. */
+  requiresBrowse: boolean
   authorTimezone?: string
 }
 
@@ -375,9 +424,12 @@ export class MemoService implements MemoServiceLike {
       // the (top-level) stream — memos from a private scratchpad are the owner's
       // private tier (roadmap 6.4). The model sees only memos in that tier.
       const memoScope = await resolveMemoScopeForStreamId(client, workspaceId, streamId)
+      // The model is shown, and dedupes against, only memos its readers read.
+      const readerAudience = memorizerAudience(memoScope)
 
       const existingMemos = await MemoRepository.findByStream(client, workspaceId, streamId, {
         scopeUserId: memoScope.scopeUserId,
+        audiences: [readerAudience],
         status: MemoStatuses.ACTIVE,
         limit: MEMORY_CONTEXT_LIMIT,
         orderBy: "createdAt",
@@ -401,12 +453,13 @@ export class MemoService implements MemoServiceLike {
           // through a typo fix and a revision can supersede it. Same tier only:
           // a private memo must never feed a shared revision.
           const existingMemos = [
-            ...(await MemoRepository.findActiveBySourceConversation(client, workspaceId, convId)),
+            ...(await MemoRepository.findActiveBySourceConversation(client, workspaceId, convId, [readerAudience])),
             ...(await MemoRepository.findActiveMessageMemosCitingEdited(
               client,
               workspaceId,
               conv.messageIds,
-              memoScope.scopeUserId
+              memoScope.scopeUserId,
+              [readerAudience]
             )),
           ]
           existingConversationMemos.set(convId, existingMemos)
@@ -454,6 +507,7 @@ export class MemoService implements MemoServiceLike {
         authorTimezones,
         memoLanguage,
         memoScope,
+        readerAudience,
       }
     })
 
@@ -870,6 +924,7 @@ export class MemoService implements MemoServiceLike {
           maxDistance: MEMO_DEDUP_DISTANCE,
           scope: memoData.scope,
           scopeUserId: memoData.scopeUserId,
+          audiences: [fetchedData.readerAudience],
         })
         if (duplicate && !explicitSupersedeIds.includes(duplicate.memo.id)) {
           // The reversed memos still retire even though the correction itself
@@ -957,6 +1012,12 @@ export class MemoService implements MemoServiceLike {
         for (const id of [...explicitSupersedeIds, ...toSupersede.map((s) => s.memo.id)]) {
           retiredBy.set(id, [...(retiredBy.get(id) ?? []), memoData])
         }
+
+        const explicitlyRetired = await MemoRepository.findByIdsInWorkspace(client, workspaceId, explicitSupersedeIds)
+        Object.assign(
+          memoData,
+          inheritedReach([...explicitlyRetired.values(), ...toSupersede.map((s) => s.memo)], streamId)
+        )
 
         const { embedding, ...memoFields } = memoData
         await MemoRepository.insert(client, memoFields)
@@ -1162,6 +1223,9 @@ export class MemoService implements MemoServiceLike {
       streamId,
       sessionId,
       sourceStreamIds,
+      provenanceStreamIds,
+      audience,
+      requiresBrowse,
       title,
       abstract,
       keyPoints,
@@ -1271,6 +1335,7 @@ export class MemoService implements MemoServiceLike {
         maxDistance: MEMO_DEDUP_DISTANCE,
         scope: resolvedScope,
         scopeUserId: resolvedScopeUserId,
+        audiences: [audience ?? { kind: "room", roomStreamId: natural.rootStreamId }],
       })
       if (duplicate) {
         logger.info(
@@ -1295,6 +1360,8 @@ export class MemoService implements MemoServiceLike {
         status: MemoStatuses.ACTIVE,
         authoredByKind: AuthoredByKinds.AGENT,
         sourceSessionId: sessionId ?? undefined,
+        sourceStreamIds: [...provenanceStreamIds, ...sourceStreamIds],
+        requiresBrowse,
         scope: resolvedScope,
         scopeUserId: resolvedScopeUserId,
       })
@@ -1370,6 +1437,7 @@ export class MemoService implements MemoServiceLike {
       participantIds,
       citedStreamIds,
       citedMessageIds,
+      requiresBrowse,
       authorTimezone,
     } = params
     const none = { classified: false, captured: 0, deduped: 0 }
@@ -1384,6 +1452,7 @@ export class MemoService implements MemoServiceLike {
       const memoScope = await resolveMemoScopeForStreamId(client, workspaceId, streamId)
       const existingMemos = await MemoRepository.findByStream(client, workspaceId, streamId, {
         scopeUserId: memoScope.scopeUserId,
+        audiences: [memorizerAudience(memoScope)],
         status: MemoStatuses.ACTIVE,
         limit: MEMORY_CONTEXT_LIMIT,
         orderBy: "createdAt",
@@ -1514,6 +1583,7 @@ export class MemoService implements MemoServiceLike {
           maxDistance: MEMO_DEDUP_DISTANCE,
           scope: context.memoScope.scope,
           scopeUserId: context.memoScope.scopeUserId,
+          audiences: [memorizerAudience(context.memoScope)],
         })
         if (duplicate) {
           deduped++
@@ -1540,6 +1610,8 @@ export class MemoService implements MemoServiceLike {
           status: MemoStatuses.ACTIVE,
           authoredByKind: AuthoredByKinds.AGENT,
           sourceSessionId: sessionId,
+          sourceStreamIds: [...citedStreamIds, streamId, context.memoScope.rootStreamId],
+          requiresBrowse,
           scope: context.memoScope.scope,
           scopeUserId: context.memoScope.scopeUserId,
         })

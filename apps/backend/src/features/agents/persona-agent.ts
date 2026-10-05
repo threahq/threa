@@ -42,7 +42,7 @@ import type { AI, CostContext, PageBrowser, WebSearchEngine } from "@threahq/age
 import type { SearchService } from "../search"
 import type { ConversationSummaryService } from "./conversation-summary-service"
 import type { AttachmentService } from "../attachments"
-import type { MemoExplorerService } from "../memos"
+import { audienceBrowses, type MemoAudience, type MemoExplorerService } from "../memos"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import type { DecisionsAvailability, ModelRegistry } from "@threahq/agent-runtime"
 import type { AIResidencyPolicy } from "../ai-usage"
@@ -55,6 +55,7 @@ import {
   buildAgentContext,
   buildToolSet,
   withCompanionSession,
+  type AgentContext,
   type PreparedRecall,
   type WithSessionResult,
 } from "./companion"
@@ -94,6 +95,20 @@ import {
 } from "./config"
 
 export type { WithSessionResult }
+
+/**
+ * Whether what this turn writes must be hidden from readers who cannot browse the workspace: the
+ * turn-start fact, or the audience's browse fact as of this write when it has since come to need
+ * it. The live memo search reads under the live audience, so a snapshot alone can store `false`
+ * for a turn that read browse-gated memos.
+ */
+async function writesRequireBrowse(
+  db: Querier,
+  workspaceId: string,
+  context: Pick<AgentContext, "memoAudienceBrowses" | "memoBrowseAudience">
+): Promise<boolean> {
+  return context.memoAudienceBrowses || (await audienceBrowses(db, workspaceId, context.memoBrowseAudience))
+}
 
 /**
  * What the stub companion claims to have written (`USE_STUB_COMPANION=true`,
@@ -393,6 +408,9 @@ export interface PersonaAgentDeps {
     streamId: string
     sessionId: string | null
     sourceStreamIds: string[]
+    provenanceStreamIds: string[]
+    audience: MemoAudience | null
+    requiresBrowse: boolean
     title: string
     abstract: string
     keyPoints: string[]
@@ -1154,13 +1172,19 @@ export class PersonaAgent {
         // here instead of recomputing (avoids drift between quote-resolution and
         // workspace-tool access scopes).
         let workspaceDeps: import("./tools/tool-deps").WorkspaceToolDeps | undefined
-        if (agentContext.invokingUserId && agentContext.accessibleStreamIds && agentContext.peopleViewer) {
+        if (
+          agentContext.invokingUserId &&
+          agentContext.accessibleStreamIds &&
+          agentContext.peopleViewer &&
+          agentContext.memoAudience
+        ) {
           workspaceDeps = {
             db,
             workspaceId,
             accessibleStreamIds: [...agentContext.accessibleStreamIds],
             invokingUserId: agentContext.invokingUserId,
             memoViewerUserId: agentContext.memoViewerUserId,
+            memoAudience: agentContext.memoAudience,
             peopleViewer: agentContext.peopleViewer,
             searchFlag,
             searchService,
@@ -1386,15 +1410,24 @@ export class PersonaAgent {
         // the producing stream, so it can't be widened by citing a message in a
         // broader stream the user also happens to see.
         const saveMemoStreamIds = Array.from(new Set([session.streamId, resolveBriefStreamId(stream)]))
+
+        // Collects the turn's completed tool calls (content + sources) so a
+        // turn_digest step can carry the tool work into later turns (C-1).
+        const digestCollector = new TurnDigestCollector()
+
         const saveMemoDeps: import("./tools/tool-deps").SaveMemoToolDeps | undefined = saveMemo
           ? {
-              saveMemo: (params) =>
+              saveMemo: async (params) =>
                 saveMemo({
                   initiatingUserId: input.initiatingUserId,
                   workspaceId,
                   streamId: session.streamId,
                   sessionId: session.id,
                   sourceStreamIds: saveMemoStreamIds,
+                  // Read at call time: the collector fills as the turn's tools complete.
+                  provenanceStreamIds: [...agentContext.carriedSourceStreamIds, ...digestCollector.provenanceStreamIds],
+                  audience: agentContext.memoAudience ?? null,
+                  requiresBrowse: await writesRequireBrowse(pool, workspaceId, agentContext),
                   // The human the agent serves owns a `user`-scoped save (roadmap 6.4).
                   invokingUserId: agentContext.invokingUserId,
                   ...params,
@@ -1406,14 +1439,24 @@ export class PersonaAgent {
         const screenOutput = injectionScreen?.forTurn(turn)
         const judgeSearch = webSearchJudge?.forTurn(turn)
 
-        // Integrations read with this workspace's credentials, so they stay off where another workspace reads the room.
-        const integrations = agentContext.roomShared ? undefined : workspaceIntegrationService
+        // Integrations read with this workspace's credentials, not the invoking user's access, so they
+        // stay off where another workspace reads the room or the turn answers to someone who cannot
+        // browse the workspace.
+        const integrations =
+          agentContext.roomShared || !agentContext.memoAudienceBrowses ? undefined : workspaceIntegrationService
         const githubDeps = integrations
           ? { workspaceId, getClient: createMemoizedGithubClient(integrations, workspaceId) }
           : undefined
         const linearDeps = integrations
           ? { workspaceId, getClient: createMemoizedLinearClient(integrations, workspaceId) }
           : undefined
+        // Dropping the tools whose deps were withheld keeps buildToolSet from warning "enabled but no
+        // deps" on every such turn; a workspace with no integration service still warns.
+        const hasDeps = (toolName: string) => {
+          if (toolName.startsWith("github_")) return Boolean(githubDeps)
+          if (toolName.startsWith("linear_")) return Boolean(linearDeps)
+          return true
+        }
 
         // Build the general researcher callback. Like runWorkspaceAgent it
         // requires invoking-user context (workspace search primitives are
@@ -1425,14 +1468,7 @@ export class PersonaAgent {
           | ((query: string, opts: RunGeneralResearchOptions) => Promise<GeneralResearchResult>)
           | undefined
         if (agentContext.triggerMessage && agentContext.invokingUserId) {
-          // Drop integration tools the workspace hasn't connected so buildToolSet
-          // doesn't log "tools enabled but no deps" warnings on every research
-          // call. Web + workspace primitives degrade silently already.
-          const researcherEnabledTools = GENERAL_RESEARCH_TOOL_POLICY.filter((toolName) => {
-            if (toolName.startsWith("github_")) return Boolean(githubDeps)
-            if (toolName.startsWith("linear_")) return Boolean(linearDeps)
-            return true
-          })
+          const researcherEnabledTools = GENERAL_RESEARCH_TOOL_POLICY.filter(hasDeps)
           // The stream's tool policy folds over the sub-loop's toolset too —
           // general_research must not reach surfaces the stream restricts.
           const { tools: researcherTools } = negotiateCapabilities({
@@ -1484,7 +1520,9 @@ export class PersonaAgent {
         const { tools } = negotiateCapabilities({
           streamPolicy: streamToolPolicy,
           tools: buildToolSet({
-            enabledTools: persona.enabledTools,
+            enabledTools: agentContext.memoAudienceBrowses
+              ? persona.enabledTools
+              : (persona.enabledTools?.filter(hasDeps) ?? null),
             webSearchEngines,
             guideArticles,
             pageBrowser,
@@ -1532,10 +1570,6 @@ export class PersonaAgent {
 
         const model = ai.getLanguageModel(turnModel.model)
         const parsed = ai.parseModel(turnModel.model)
-
-        // Collects the turn's completed tool calls (content + sources) so a
-        // turn_digest step can carry the tool work into later turns (C-1).
-        const digestCollector = new TurnDigestCollector()
 
         // Split at its cache boundary: the stable half is what the prompt-cache
         // breakpoint covers (tool definitions ride the same span), the volatile
@@ -1917,6 +1951,8 @@ export class PersonaAgent {
             workspaceId,
             streamId,
             invokingUserId: agentContext.invokingUserId,
+            pool,
+            browseContext: agentContext,
             replyText: loopResult.sentContents.at(-1),
           })
 
@@ -1949,9 +1985,22 @@ export class PersonaAgent {
     workspaceId: string
     streamId: string
     invokingUserId: string | undefined
+    pool: Querier
+    browseContext: Pick<AgentContext, "memoAudienceBrowses" | "memoBrowseAudience">
     replyText: string | undefined
   }): Promise<void> {
-    const { ai, digestCollector, trace, sessionId, workspaceId, streamId, invokingUserId, replyText } = params
+    const {
+      ai,
+      digestCollector,
+      trace,
+      sessionId,
+      workspaceId,
+      streamId,
+      invokingUserId,
+      pool,
+      browseContext,
+      replyText,
+    } = params
     if (!digestCollector.hasToolWork) return
 
     try {
@@ -1982,7 +2031,10 @@ export class PersonaAgent {
 
       const step = await trace.startStep({
         stepType: AgentStepTypes.TURN_DIGEST,
-        content: JSON.stringify(digest),
+        content: JSON.stringify({
+          ...digest,
+          audienceBrowses: await writesRequireBrowse(pool, workspaceId, browseContext),
+        }),
       })
       await step.complete({})
     } catch (err) {

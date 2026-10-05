@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
+import * as memosModule from "../../memos"
 import { AgentToolNames, DEFAULT_USER_PREFERENCES, MemoryModes, StreamTypes, Visibilities } from "@threahq/types"
-import { StreamBriefRepository, StreamRepository, type StreamBrief } from "../../streams"
+import { StreamBriefRepository, StreamMemberRepository, StreamRepository, type StreamBrief } from "../../streams"
 import { MessageRepository } from "../../messaging"
 import { UserDeviceContextRepository } from "../../device-context"
 import { UserRepository } from "../../workspaces"
@@ -8,7 +9,11 @@ import { buildAgentContext } from "./context"
 import type { PreparedRecallParams } from "./prepared-recall"
 import type { Persona } from "../persona-repository"
 import { PersonaAttachmentRepository } from "../persona-attachment-repository"
+import { AgentSessionRepository } from "../session-repository"
+import { SearchRepository } from "../../search"
 import { joinSystemPrompt } from "./prompt/system-prompt"
+import * as episodeSummaries from "./episode-summaries"
+import * as turnDigests from "./turn-digests"
 import * as contextBuilder from "../context-builder"
 
 const persona: Persona = {
@@ -38,6 +43,10 @@ const persona: Persona = {
 
 /** Every unstubbed repository read sees an empty database. */
 const emptyDb = { query: async () => ({ rows: [], rowCount: 0 }) } as never
+
+beforeEach(() => {
+  spyOn(memosModule, "audienceBrowses").mockResolvedValue(true)
+})
 
 const deps = {
   db: emptyDb,
@@ -194,6 +203,221 @@ describe("buildAgentContext prepared recall", () => {
       volatile: expect.stringMatching(/## Recalled from memory[\s\S]*<memo id="memo_allergy"/),
       recalled: ["memo_allergy"],
     })
+  })
+})
+
+describe("buildAgentContext prepared recall audience", () => {
+  afterEach(() => mock.restore())
+
+  it("should recall for the audience the stream's access spec names when the turn runs in an aside, a DM or a channel", async () => {
+    const trigger = {
+      id: "msg_1",
+      streamId: "stream_x",
+      authorType: "user",
+      authorId: "usr_1",
+      contentMarkdown: "What did we decide?",
+      contentJson: { type: "doc", content: [] },
+      createdAt: new Date("2026-10-01T10:00:00Z"),
+      reactions: {},
+    }
+    spyOn(MessageRepository, "findById").mockResolvedValue(trigger as never)
+    spyOn(UserRepository, "findById").mockResolvedValue({ name: "Alice Ek", timezone: null } as never)
+    spyOn(StreamMemberRepository, "list").mockResolvedValue([{ memberId: "usr_1" }, { memberId: "usr_2" }] as never)
+
+    const recalledAudienceIn = async (stream: { id: string; type: string; visibility: string }) => {
+      const recall = mock(async (_params: PreparedRecallParams) => ({
+        outcome: "nothing_relevant" as const,
+        memos: [],
+      }))
+      await buildAgentContext(
+        { ...deps, preparedRecall: { recall } as never },
+        {
+          workspaceId: "ws_1",
+          streamId: stream.id,
+          stream: {
+            ...stream,
+            workspaceId: "ws_1",
+            rootStreamId: null,
+            parentStreamId: null,
+            createdBy: "usr_1",
+          } as never,
+          messageId: "msg_1",
+          persona,
+          purpose: { kind: "catch_up" },
+          policy: { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests: false },
+        }
+      )
+      return recall.mock.calls[0]?.[0].memoAudience
+    }
+
+    expect({
+      aside: await recalledAudienceIn({
+        id: "stream_aside",
+        type: StreamTypes.ASIDE,
+        visibility: Visibilities.PRIVATE,
+      }),
+      dm: await recalledAudienceIn({ id: "stream_dm", type: StreamTypes.DM, visibility: Visibilities.PRIVATE }),
+      channel: await recalledAudienceIn({
+        id: "stream_channel",
+        type: StreamTypes.CHANNEL,
+        visibility: Visibilities.PUBLIC,
+      }),
+    }).toEqual({
+      aside: { kind: "users", userIds: ["usr_1"] },
+      dm: { kind: "users", userIds: ["usr_1", "usr_2"] },
+      channel: { kind: "room", roomStreamId: "stream_channel" },
+    })
+  })
+})
+
+describe("buildAgentContext memo browse flag", () => {
+  afterEach(() => mock.restore())
+
+  const buildFor = (streamId: string, rootStreamId: string | null, audienceBrowses: boolean, carryDigests: boolean) => {
+    const audienceBrowsesSpy = spyOn(memosModule, "audienceBrowses").mockResolvedValue(audienceBrowses)
+    const stream = {
+      id: streamId,
+      workspaceId: "ws_1",
+      type: rootStreamId ? StreamTypes.THREAD : StreamTypes.CHANNEL,
+      rootStreamId,
+      parentStreamId: rootStreamId,
+      displayName: "Room",
+      createdBy: "usr_1",
+    }
+    return {
+      audienceBrowsesSpy,
+      build: () =>
+        buildAgentContext(deps, {
+          workspaceId: "ws_1",
+          streamId,
+          stream: stream as never,
+          messageId: "msg_1",
+          persona,
+          purpose: { kind: "catch_up" },
+          policy: { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests },
+        }),
+    }
+  }
+
+  it("should measure the room's reach, the thread's root for a thread, when no one invoked the turn", async () => {
+    spyOn(StreamRepository, "findById").mockResolvedValue({ id: "stream_root", rootStreamId: null } as never)
+    spyOn(StreamBriefRepository, "findByStreamId").mockResolvedValue(null)
+
+    const measure = async (streamId: string, rootStreamId: string | null) => {
+      const { audienceBrowsesSpy, build } = buildFor(streamId, rootStreamId, false, false)
+      audienceBrowsesSpy.mockClear()
+      const context = await build()
+      return {
+        calls: audienceBrowsesSpy.mock.calls.map(([, workspaceId, audience]) => ({ workspaceId, audience })),
+        context: { browses: context.memoAudienceBrowses, audience: context.memoBrowseAudience },
+      }
+    }
+
+    expect({
+      channel: await measure("stream_channel", null),
+      thread: await measure("stream_thread", "stream_root"),
+    }).toEqual({
+      channel: {
+        calls: [{ workspaceId: "ws_1", audience: { kind: "room", roomStreamId: "stream_channel" } }],
+        context: { browses: false, audience: { kind: "room", roomStreamId: "stream_channel" } },
+      },
+      thread: {
+        calls: [{ workspaceId: "ws_1", audience: { kind: "room", roomStreamId: "stream_root" } }],
+        context: { browses: false, audience: { kind: "room", roomStreamId: "stream_root" } },
+      },
+    })
+  })
+
+  it("should hand the measured flag, not a constant, to the episode summary and turn digest loaders", async () => {
+    spyOn(StreamBriefRepository, "findByStreamId").mockResolvedValue(null)
+    const loaded = { text: null, sourceStreamIds: [] }
+    const summaries = spyOn(episodeSummaries, "loadEpisodeSummaryPromptBlock").mockResolvedValue(loaded)
+    const digests = spyOn(turnDigests, "loadTurnDigestPromptBlock").mockResolvedValue(loaded)
+
+    const flagsFor = async (audienceBrowses: boolean) => {
+      summaries.mockClear()
+      digests.mockClear()
+      await buildFor("stream_channel", null, audienceBrowses, true).build()
+      return {
+        summaries: summaries.mock.calls.map(([, params]) => params.memoAudienceBrowses),
+        digests: digests.mock.calls.map(([, params]) => params.memoAudienceBrowses),
+      }
+    }
+
+    expect({ browsing: await flagsFor(true), notBrowsing: await flagsFor(false) }).toEqual({
+      browsing: { summaries: [true], digests: [true] },
+      notBrowsing: { summaries: [false], digests: [false] },
+    })
+  })
+})
+
+describe("buildAgentContext carried source streams", () => {
+  afterEach(() => mock.restore())
+
+  it("should report the source streams of the summaries, and of the digests only, when the policy carries digests", async () => {
+    spyOn(MessageRepository, "findById").mockResolvedValue({
+      id: "msg_1",
+      streamId: "stream_pad",
+      authorType: "user",
+      authorId: "usr_1",
+      contentMarkdown: "Continue",
+      contentJson: { type: "doc", content: [] },
+      createdAt: new Date("2026-10-01T10:00:00Z"),
+      reactions: {},
+    } as never)
+    spyOn(UserRepository, "findById").mockResolvedValue({ name: "Alice Ek", timezone: "Europe/Stockholm" } as never)
+    spyOn(SearchRepository, "getAccessibleStreamsForAgent").mockResolvedValue([
+      "stream_pad",
+      "stream_summary",
+      "stream_digest",
+    ])
+    const digestContent = (sourceStreamIds: string[]) =>
+      JSON.stringify({ findings: "f", toolsCalled: [], sources: [], sourceStreamIds })
+    spyOn(AgentSessionRepository, "findRecentEpisodeSummariesByStream").mockResolvedValue([
+      {
+        summary: "Read the summary stream.",
+        sessionCreatedAt: new Date("2026-10-01T09:00:00Z"),
+        sessionCompletedAt: null,
+        turnDigests: [digestContent(["stream_summary"])],
+      },
+      {
+        summary: "Read a stream the viewer lost.",
+        sessionCreatedAt: new Date("2026-10-01T08:00:00Z"),
+        sessionCompletedAt: null,
+        turnDigests: [digestContent(["stream_revoked"])],
+      },
+    ])
+    spyOn(AgentSessionRepository, "findRecentDigestStepsByStream").mockResolvedValue([
+      {
+        step: { content: digestContent(["stream_digest"]) } as never,
+        sessionCreatedAt: new Date("2026-10-01T09:00:00Z"),
+        sessionCompletedAt: null,
+      },
+    ])
+
+    const build = (carryDigests: boolean) =>
+      buildAgentContext(deps, {
+        workspaceId: "ws_1",
+        streamId: "stream_pad",
+        stream: {
+          id: "stream_pad",
+          workspaceId: "ws_1",
+          type: StreamTypes.SCRATCHPAD,
+          rootStreamId: null,
+          parentStreamId: null,
+          displayName: "Pad",
+          createdBy: "usr_1",
+        } as never,
+        messageId: "msg_1",
+        persona,
+        purpose: { kind: "catch_up" },
+        policy: { episode: { kind: "stream" }, maxMessages: 10, maxChars: 10_000, carryDigests },
+      })
+
+    expect({
+      carried: (await build(true)).carriedSourceStreamIds.sort(),
+      withoutDigests: (await build(false)).carriedSourceStreamIds,
+    }).toEqual({ carried: ["stream_digest", "stream_summary"], withoutDigests: ["stream_summary"] })
   })
 })
 

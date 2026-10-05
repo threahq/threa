@@ -11,6 +11,7 @@ import { MemoRepository, memoSearchText, type Memo, type MemoSearchFilters } fro
 import { classifyMemoQueryIntent } from "./query-intent"
 import { resolveMemoSearchMode, MEMO_RERANKER_CANDIDATE_LIMIT, type MemoSearchMode } from "./config"
 import type { RerankerLike } from "./reranker"
+import type { MemoAudience } from "./audience"
 import type { EmbeddingServiceLike } from "./embedding-service"
 import { StreamRepository, type Stream } from "../streams"
 import { AgentSessionRepository, PersonaRepository } from "../agents"
@@ -46,6 +47,8 @@ export interface MemoExplorerPermissions {
    * memos are visible.
    */
   userId?: string
+  /** Who will read what this call returns; every audience must be allowed to see a memo for it to surface. */
+  audiences: readonly MemoAudience[]
 }
 
 export interface MemoExplorerSearchParams {
@@ -139,6 +142,7 @@ export class MemoExplorerService {
       statuses: filters.statuses,
       viewerUserId: permissions.userId,
       scope: filters.scope,
+      audiences: permissions.audiences,
     }
 
     if (!query.trim()) {
@@ -418,6 +422,11 @@ export class MemoExplorerService {
       return null
     }
 
+    const visible = await MemoRepository.filterVisibleIds(this.pool, workspaceId, [memo.id], permissions.audiences)
+    if (!visible.has(memo.id)) {
+      return null
+    }
+
     return { memo, sourceContext }
   }
 
@@ -430,6 +439,13 @@ export class MemoExplorerService {
     const sourceMessages = await this.loadSourceMessages(workspaceId, memo, permissions.accessibleStreamIds)
     const successor =
       memo.status === "superseded" ? await MemoRepository.findSupersededBy(this.pool, workspaceId, memo.id) : null
+    const visibleSuccessorId =
+      successor &&
+      (await MemoRepository.filterVisibleIds(this.pool, workspaceId, [successor.id], permissions.audiences)).has(
+        successor.id
+      )
+        ? successor.id
+        : null
     const capturedByPersonaName = await this.resolveCapturedByPersonaName(workspaceId, memo)
 
     return {
@@ -438,7 +454,7 @@ export class MemoExplorerService {
       sourceStream: this.toStreamRef(sourceContext.sourceStream),
       rootStream: this.toStreamRef(sourceContext.rootStream),
       sourceMessages,
-      successorMemoId: successor?.id ?? null,
+      successorMemoId: visibleSuccessorId,
       capturedByPersonaName,
     }
   }

@@ -12,6 +12,7 @@ function makeDeps(overrides?: Partial<WorkspaceToolDeps>): WorkspaceToolDeps {
     accessibleStreamIds: ["stream_1", "stream_2"],
     invokingUserId: "usr_test",
     memoViewerUserId: undefined,
+    memoAudience: { kind: "users", userIds: ["usr_test"] },
     peopleViewer: { kind: "user", userId: "usr_test" },
     searchFlag: "on",
     searchService: {} as WorkspaceToolDeps["searchService"],
@@ -40,9 +41,13 @@ describe("search_attachments tool", () => {
     ])
 
     const tool = createSearchAttachmentsTool(makeDeps())
-    const { output } = await tool.config.execute({ query: "financial report", limit: 10 }, toolOpts)
+    const { output, provenanceStreamIds } = await tool.config.execute(
+      { query: "financial report", limit: 10 },
+      toolOpts
+    )
     const parsed = JSON.parse(output)
 
+    expect(provenanceStreamIds).toEqual(["stream_1"])
     expect(parsed.query).toBe("financial report")
     expect(parsed.results).toHaveLength(1)
     expect(parsed.results[0]).toMatchObject({

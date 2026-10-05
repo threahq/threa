@@ -482,7 +482,11 @@ describe("SearchService memo leg", () => {
 
     expect(search).toHaveBeenCalledWith({
       workspaceId: "ws_1",
-      permissions: { accessibleStreamIds: ["stream_1"], userId: "usr_1" },
+      permissions: {
+        accessibleStreamIds: ["stream_1"],
+        userId: "usr_1",
+        audiences: [{ kind: "users", userIds: ["usr_1"] }],
+      },
       query: "launch date mid June",
       filters: { before, after: undefined },
       limit: 3,
@@ -513,13 +517,41 @@ describe("SearchService memo leg", () => {
     await service.searchClusters({
       searchFlag: "on",
       workspaceId: "ws_1",
-      permissions: { accessibleStreamIds: ["stream_1"] },
+      permissions: { accessibleStreamIds: ["stream_1"], userId: "usr_1" },
       query: " launch date ",
     })
 
     expect(search).toHaveBeenCalledWith(
-      expect.objectContaining({ query: "launch date", mode: "fast", embedding: [0.5, 0.5] })
+      expect.objectContaining({
+        permissions: {
+          accessibleStreamIds: ["stream_1"],
+          userId: "usr_1",
+          audiences: [{ kind: "users", userIds: ["usr_1"] }],
+        },
+        query: "launch date",
+        mode: "fast",
+        embedding: [0.5, 0.5],
+      })
     )
+  })
+
+  test("should reject a memo search without a searching user when the memo leg would run", async () => {
+    const hybrid = spyOn(SearchRepository, "hybridSearch").mockResolvedValue([])
+    const search = mock(async () => [])
+    const service = makeService({ embeddingService: embedding, memoSearch: { search } })
+
+    await expect(
+      service.searchClusters({
+        searchFlag: "on",
+        workspaceId: "ws_1",
+        permissions: { accessibleStreamIds: ["stream_1"] },
+        query: "launch date",
+      })
+    ).rejects.toThrow("Memo search requires the searching user")
+    expect({ memoSearches: search.mock.calls.length, messageSearches: hybrid.mock.calls.length }).toEqual({
+      memoSearches: 0,
+      messageSearches: 0,
+    })
   })
 
   test("should skip the memo leg for a from: filter, for the legacy ranking, and for plain search", async () => {

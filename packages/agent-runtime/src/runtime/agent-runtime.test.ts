@@ -617,6 +617,59 @@ describe("AgentRuntime source commitment", () => {
 
     expect(committed).toEqual([{ sources: [] }])
   })
+
+  it("should forward a tool's provenanceStreamIds on tool:complete without turning them into message sources when the tool completes", async () => {
+    const committed: Array<{ sources: SourceItem[] }> = []
+    const events: AgentEvent[] = []
+    const readingTool = defineAgentTool({
+      name: "reading_tool",
+      description: "test",
+      categories: [],
+      inputSchema: z.object({}),
+      execute: async () => ({ output: "{}", provenanceStreamIds: ["stream_private"] }),
+      trace: {
+        stepType: AgentStepTypes.WORKSPACE_SEARCH,
+        hidden: true,
+        formatContent: () => "{}",
+      },
+    })
+
+    let firstCall = true
+    const generateTextWithTools = async () => {
+      if (firstCall) {
+        firstCall = false
+        return {
+          text: "",
+          toolCalls: [{ toolCallId: "tc_1", toolName: "reading_tool", input: {} }],
+          response: { messages: [{ role: "assistant" as const, content: "reading" } as any] },
+        }
+      }
+      return {
+        text: "Done.",
+        toolCalls: [],
+        response: { messages: [{ role: "assistant" as const, content: "Done." } as any] },
+      }
+    }
+
+    const runtime = new AgentRuntime({
+      ai: { generateTextWithTools } as any,
+      model: {} as any,
+      systemPrompt: "You are helpful.",
+      messages: [{ role: "user", content: "read it" }],
+      tools: [readingTool],
+      sendMessage: async ({ sources }) => {
+        committed.push({ sources })
+        return { messageId: "msg_1", operation: "created" }
+      },
+      observers: [{ handle: async (event: AgentEvent) => void events.push(event) }],
+    })
+
+    await runtime.run()
+
+    const complete = events.find((e) => e.type === "tool:complete") as Extract<AgentEvent, { type: "tool:complete" }>
+    expect(complete.provenanceStreamIds).toEqual(["stream_private"])
+    expect(committed).toEqual([{ sources: [] }])
+  })
 })
 
 describe("AgentRuntime reasoning replay", () => {

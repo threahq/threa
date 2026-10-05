@@ -46,6 +46,8 @@ export interface TurnDigestStepContent {
    * first digest shipped: provenance cannot be retrofitted onto old digests.
    */
   sourceStreamIds: string[]
+  /** Whether the audience the turn ran for browses the workspace; absent on digests written before it existed. */
+  audienceBrowses?: boolean
 }
 
 export type AgentSessionRerunCause = "invoking_message_edited" | "referenced_message_edited"

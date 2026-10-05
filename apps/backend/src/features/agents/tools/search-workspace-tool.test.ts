@@ -20,6 +20,7 @@ function makeTool(searchFlag: FeatureFlagValue<"search">) {
     accessibleStreamIds: ["stream_1"],
     invokingUserId: "usr_1",
     memoViewerUserId: undefined,
+    memoAudience: { kind: "users", userIds: ["usr_1"] },
     peopleViewer: { kind: "user", userId: "usr_1" },
     searchFlag,
     searchService: { search } as unknown as WorkspaceToolDeps["searchService"],
@@ -37,6 +38,7 @@ function makeDeps(searchFlag: FeatureFlagValue<"search">, searchService?: unknow
     accessibleStreamIds: ["stream_1", "stream_2"],
     invokingUserId: "usr_1",
     memoViewerUserId: undefined,
+    memoAudience: { kind: "users", userIds: ["usr_1"] },
     peopleViewer: { kind: "user", userId: "usr_1" },
     searchFlag,
     searchService: (searchService ?? {
@@ -121,6 +123,7 @@ describe("search_messages carries ready-to-use links", () => {
     try {
       const result = await tool.config.execute({ query: "bun", exact: false }, { toolCallId: "t1" })
       const output = JSON.parse(result.output)
+      expect(result.provenanceStreamIds).toEqual(["stream_1", "stream_1"])
       expect(output.results[0]).toMatchObject({
         id: "msg_1",
         streamId: "stream_1",
@@ -147,6 +150,7 @@ describe("search_streams and get_stream_messages carry URLs", () => {
     const tool = createSearchStreamsTool(makeDeps("off"))
     try {
       const result = await tool.config.execute({ query: "deploys" }, { toolCallId: "t1" })
+      expect(result.provenanceStreamIds).toEqual(["stream_2"])
       expect(JSON.parse(result.output).results[0]).toMatchObject({
         id: "stream_2",
         url: "/w/ws_1/s/stream_2",
@@ -161,6 +165,7 @@ describe("search_streams and get_stream_messages carry URLs", () => {
     const createdAt = new Date("2026-07-01T10:00:00Z")
     const message = {
       id: "msg_1",
+      streamId: "stream_1",
       contentMarkdown: "hello",
       authorType: "user",
       authorId: "usr_1",
@@ -176,6 +181,7 @@ describe("search_streams and get_stream_messages carry URLs", () => {
     try {
       const result = await tool.config.execute({ stream: "stream_1", limit: 10 }, { toolCallId: "t1" })
       const output = JSON.parse(result.output)
+      expect(result.provenanceStreamIds).toEqual(["stream_1"])
       expect(output).toMatchObject({
         stream: "stream_1",
         streamId: "stream_1",

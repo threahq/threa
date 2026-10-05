@@ -296,9 +296,13 @@ export class SearchService {
       return { results, conversations: [], memos: [], excludedE2eStreamCount, streamIds }
     }
 
+    const normalizedQuery = query.trim()
+    const memoQuery = [normalizedQuery, ...phrases].join(" ").trim()
+    const runMemoLeg = legs.memos && ranking === "improved" && memoQuery.length > 0 && filters.authorId === undefined
+    if (runMemoLeg && !permissions.userId) throw new Error("Memo search requires the searching user")
+
     // One query embedding serves the message leg, the conversation leg and
     // deep mode's original-query variant (INV-41: no connection held yet).
-    const normalizedQuery = query.trim()
     let queryEmbedding: number[] = []
     if (!skipEmbedding && normalizedQuery) {
       try {
@@ -350,12 +354,15 @@ export class SearchService {
     // The leg runs `fast`: no model call on the default path, the query
     // embedding reused when the memo query is the same text. A refinement is the
     // one place a search waits on a model.
-    const memoQuery = [normalizedQuery, ...phrases].join(" ").trim()
     const memoLeg =
-      legs.memos && ranking === "improved" && memoQuery.length > 0 && filters.authorId === undefined
+      runMemoLeg && permissions.userId
         ? this.memoSearch.search({
             workspaceId,
-            permissions: { accessibleStreamIds: streamIds, userId: permissions.userId },
+            permissions: {
+              accessibleStreamIds: streamIds,
+              userId: permissions.userId,
+              audiences: [{ kind: "users", userIds: [permissions.userId] }],
+            },
             query: memoQuery,
             filters: { before: filters.before, after: filters.after },
             limit: MEMO_SEARCH_LIMIT,

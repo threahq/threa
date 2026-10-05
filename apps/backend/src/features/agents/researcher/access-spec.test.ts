@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { resolveMemoViewer, resolvePeopleViewer, type AgentAccessSpec } from "./access-spec"
+import { memoAudienceForSpec, resolveMemoViewer, resolvePeopleViewer, type AgentAccessSpec } from "./access-spec"
 
 describe("resolveMemoViewer — user-scoped memo retrieval gate (roadmap 6.4)", () => {
   it("returns the owner id only for a private scratchpad (user_full_access)", () => {
@@ -35,6 +35,29 @@ describe("resolvePeopleViewer — whose people an agent turn may search", () => 
     expect(resolvePeopleViewer({ type: "user_intersection", userIds: ["usr_a", "usr_b"] }, "stream_dm")).toEqual({
       kind: "room",
       roomStreamId: "stream_dm",
+    })
+  })
+})
+
+describe("memoAudienceForSpec — who reads what an agent turn retrieves", () => {
+  it("should make the invoker the audience when the spec is a private scratchpad", () => {
+    expect(memoAudienceForSpec({ type: "user_full_access", userId: "usr_owner" })).toEqual({
+      kind: "users",
+      userIds: ["usr_owner"],
+    })
+  })
+
+  it("should make both participants the audience when the spec is a DM", () => {
+    expect(memoAudienceForSpec({ type: "user_intersection", userIds: ["usr_a", "usr_b"] })).toEqual({
+      kind: "users",
+      userIds: ["usr_a", "usr_b"],
+    })
+  })
+
+  it("should make the room the audience when the spec is a channel, by the spec's effective root", () => {
+    expect(memoAudienceForSpec({ type: "room_readable", roomStreamId: "stream_room" })).toEqual({
+      kind: "room",
+      roomStreamId: "stream_room",
     })
   })
 })

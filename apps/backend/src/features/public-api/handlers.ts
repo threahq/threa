@@ -38,7 +38,13 @@ import {
 import { UserE2eKeysRepository } from "../user-e2e-keys"
 import { isSandboxStreamReadable, recordSandboxReads, sandboxReadableStreamIds } from "../sandboxes"
 import { failSessionWithLifecycleInTransaction, PersonaRepository, type PreparedRecall } from "../agents"
-import { type Memo, type MemoExplorerService, type MemoExplorerDetail, type MemoExplorerResult } from "../memos"
+import {
+  type Memo,
+  type MemoAudience,
+  type MemoExplorerService,
+  type MemoExplorerDetail,
+  type MemoExplorerResult,
+} from "../memos"
 import {
   AttachmentExtractionRepository,
   AttachmentRepository,
@@ -439,7 +445,12 @@ function normalizeMemoSearchMode(query: string, exact?: boolean): { query: strin
   return { query: unquoted, exact: unquoted.length > 0 }
 }
 
-function serializeMemo({ cardVersion: _cardVersion, ...memo }: Memo) {
+function serializeMemo({
+  cardVersion: _cardVersion,
+  sourceStreamIds: _sourceStreamIds,
+  requiresBrowse: _requiresBrowse,
+  ...memo
+}: Memo) {
   return {
     ...memo,
     createdAt: memo.createdAt.toISOString(),
@@ -827,6 +838,12 @@ export function createPublicApiHandlers({
       return botChannelService.getAccessibleStreamIdsForBot(req.workspaceId!, req.botApiKey.botId)
     }
     throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
+  }
+
+  function memoAudienceForRequest(req: Request, accessibleStreamIds: string[]): MemoAudience {
+    return req.userApiKey
+      ? { kind: "users", userIds: [req.user!.id] }
+      : { kind: "streams", streamIds: accessibleStreamIds, browses: !req.sandboxSession }
   }
 
   /**
@@ -2943,7 +2960,11 @@ export function createPublicApiHandlers({
         workspaceId,
         // A user API key's principal owns its user-scoped memos; a bot key has no
         // user, so user-scoped memos stay invisible to it (roadmap 6.4).
-        permissions: { accessibleStreamIds, userId: req.userApiKey ? req.user!.id : undefined },
+        permissions: {
+          accessibleStreamIds,
+          userId: req.userApiKey ? req.user!.id : undefined,
+          audiences: [memoAudienceForRequest(req, accessibleStreamIds)],
+        },
         query: normalized.query,
         exact: normalized.exact,
         filters: {
@@ -2982,6 +3003,7 @@ export function createPublicApiHandlers({
         query,
         accessibleStreamIds: new Set(accessibleStreamIds),
         memoViewerUserId: userId,
+        memoAudience: memoAudienceForRequest(req, accessibleStreamIds),
         asker: undefined,
       })
 
@@ -3006,6 +3028,7 @@ export function createPublicApiHandlers({
       const memo = await memoExplorerService.getById(workspaceId, memoId, {
         accessibleStreamIds,
         userId: req.userApiKey ? req.user!.id : undefined,
+        audiences: [memoAudienceForRequest(req, accessibleStreamIds)],
       })
       if (!memo) {
         throw new HttpError("Memo not found", { status: 404, code: "NOT_FOUND" })

@@ -210,6 +210,7 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
         )
 
         return {
+          provenanceStreamIds: [...results.map((r) => r.streamId), ...conversations.map((c) => c.streamId)],
           output: JSON.stringify({
             query: input.query,
             stream: input.stream,
@@ -376,6 +377,7 @@ export function createSearchStreamsTool(deps: WorkspaceToolDeps) {
         logger.debug({ query: input.query, types: input.types, resultCount: results.length }, "Stream search completed")
 
         return {
+          provenanceStreamIds: results.map((r) => r.id),
           output: JSON.stringify({
             query: input.query,
             types: input.types,
@@ -538,6 +540,7 @@ You can reference streams by their ID (stream_xxx), slug (general), or prefixed 
         logger.debug({ stream: input.stream, messageCount: results.length }, "Stream messages retrieved")
 
         return {
+          provenanceStreamIds: [resolved.id],
           output: JSON.stringify({
             stream: input.stream,
             streamId: resolved.id,

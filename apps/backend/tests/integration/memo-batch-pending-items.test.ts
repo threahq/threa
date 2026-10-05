@@ -140,7 +140,7 @@ describe("memo batch: pending items", () => {
   }
 
   async function memoCount(convId: string): Promise<number> {
-    return (await MemoRepository.findActiveBySourceConversation(pool, testWorkspaceId, convId)).length
+    return (await MemoRepository.findActiveBySourceConversation(pool, testWorkspaceId, convId, [])).length
   }
 
   beforeAll(async () => {
@@ -419,6 +419,7 @@ describe("memo batch: pending items", () => {
       participantIds: [testUserId],
       citedStreamIds: [],
       citedMessageIds: [],
+      requiresBrowse: false,
     })
 
     const { rows } = await pool.query(`SELECT id FROM memos WHERE source_session_id = $1`, [sessionId])

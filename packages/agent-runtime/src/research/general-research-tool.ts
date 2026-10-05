@@ -125,6 +125,7 @@ export function createGeneralResearchTool(callbacks: GeneralResearchCallbacks) {
 
       return {
         output,
+        provenanceStreamIds: result.provenanceStreamIds,
         sources: sourceItems,
         systemContext: result.brief.trim() || undefined,
       }
