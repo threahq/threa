@@ -405,8 +405,13 @@ describe("buildAgentContext persona knowledge (context attachments, decision 7)"
       }
     )
 
-    expect(listWithContent).not.toHaveBeenCalled()
-    expect(joinSystemPrompt(context.composeSystemPrompt([], { kind: "catch_up" }))).not.toContain("## Knowledge")
+    expect({
+      roomShared: context.roomShared,
+      attachmentsListed: listWithContent.mock.calls.length,
+      knowledgeInPrompt: joinSystemPrompt(context.composeSystemPrompt([], { kind: "catch_up" })).includes(
+        "## Knowledge"
+      ),
+    }).toEqual({ roomShared: true, attachmentsListed: 0, knowledgeInPrompt: false })
   })
 })
 

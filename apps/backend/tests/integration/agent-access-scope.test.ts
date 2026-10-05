@@ -4,7 +4,7 @@ import { DM_PARTICIPANT_COUNT, StreamTypes, Visibilities } from "@threahq/types"
 import { computeAgentAccessSpec, type AgentAccessSpec } from "../../src/features/agents"
 import { AttachmentExtractionRepository, AttachmentRepository } from "../../src/features/attachments"
 import { SearchRepository } from "../../src/features/search"
-import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
+import { isRoomShared, StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { StreamConnectionRepository } from "../../src/features/stream-connections"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { attachmentId, extractionId, streamId, userId, workspaceId } from "../../src/lib/id"
@@ -304,17 +304,25 @@ describe("Agent Access Scope", () => {
       const readable = async (workspace: string, roomStreamId: string) => {
         const stream = await StreamRepository.findById(client, workspace, roomStreamId)
         const spec = await computeAgentAccessSpec(client, { stream: stream!, invokingUserId: owner.id })
-        return new Set(await SearchRepository.getAccessibleStreamsForAgent(client, spec, workspace))
+        return {
+          shared: await isRoomShared(client, workspace, roomStreamId),
+          streams: new Set(await SearchRepository.getAccessibleStreamsForAgent(client, spec, workspace)),
+        }
       }
 
       expect({
         sharedHost: await readable(hostId, sharedChannelId),
+        threadInSharedHost: await readable(hostId, sharedThreadId),
         partnerCopy: await readable(partnerId, copyId),
         revokedShare: await readable(hostId, revokedChannelId),
       }).toEqual({
-        sharedHost: new Set([sharedChannelId, sharedThreadId]),
-        partnerCopy: new Set([copyId]),
-        revokedShare: new Set([sharedChannelId, sharedThreadId, revokedChannelId, otherChannelId]),
+        sharedHost: { shared: true, streams: new Set([sharedChannelId, sharedThreadId]) },
+        threadInSharedHost: { shared: true, streams: new Set([sharedChannelId, sharedThreadId]) },
+        partnerCopy: { shared: true, streams: new Set([copyId]) },
+        revokedShare: {
+          shared: false,
+          streams: new Set([sharedChannelId, sharedThreadId, revokedChannelId, otherChannelId]),
+        },
       })
     })
   })

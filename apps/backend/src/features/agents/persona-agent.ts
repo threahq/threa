@@ -1406,11 +1406,13 @@ export class PersonaAgent {
         const screenOutput = injectionScreen?.forTurn(turn)
         const judgeSearch = webSearchJudge?.forTurn(turn)
 
-        const githubDeps = workspaceIntegrationService
-          ? { workspaceId, getClient: createMemoizedGithubClient(workspaceIntegrationService, workspaceId) }
+        // Integrations read with this workspace's credentials, so they stay off where another workspace reads the room.
+        const integrations = agentContext.roomShared ? undefined : workspaceIntegrationService
+        const githubDeps = integrations
+          ? { workspaceId, getClient: createMemoizedGithubClient(integrations, workspaceId) }
           : undefined
-        const linearDeps = workspaceIntegrationService
-          ? { workspaceId, getClient: createMemoizedLinearClient(workspaceIntegrationService, workspaceId) }
+        const linearDeps = integrations
+          ? { workspaceId, getClient: createMemoizedLinearClient(integrations, workspaceId) }
           : undefined
 
         // Build the general researcher callback. Like runWorkspaceAgent it
