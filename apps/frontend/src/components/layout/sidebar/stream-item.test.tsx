@@ -382,14 +382,7 @@ describe("StreamItem", () => {
     const stream = createStream({ visibility: Visibilities.GUEST_PUBLIC })
 
     renderWithRouter(
-      <StreamItem
-        workspaceId="workspace_1"
-        stream={stream}
-        isActive={false}
-        unreadCount={0}
-        mentionCount={0}
-        allStreams={[stream]}
-      />
+      <StreamItem workspaceId="workspace_1" stream={stream} isActive={false} unreadCount={0} mentionCount={0} />
     )
 
     expect(screen.getByLabelText("Open to guests")).toBeInTheDocument()
