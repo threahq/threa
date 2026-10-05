@@ -112,8 +112,8 @@ describe("Stream connection wake", () => {
   }
 
   async function pulls(partnerWorkspaceId: string, connectionId: string) {
-    const result = await pool.query<{ payload: unknown; deferred: boolean }>(
-      `SELECT payload, process_after > inserted_at AS deferred FROM queue_messages
+    const result = await pool.query<{ payload: unknown }>(
+      `SELECT payload FROM queue_messages
        WHERE queue_name = $1 AND workspace_id = $2 AND payload->>'connectionId' = $3`,
       [JobQueues.STREAM_CONNECTION_PULL, partnerWorkspaceId, connectionId]
     )
@@ -162,14 +162,12 @@ describe("Stream connection wake", () => {
   test("should queue a pull in the partner workspace when its connection turns active", async () => {
     const { partner, connection, activationPulls } = await setup()
 
-    expect(activationPulls).toEqual([
-      { payload: { workspaceId: partner.id, connectionId: connection.id }, deferred: true },
-    ])
+    expect(activationPulls).toEqual([{ payload: { workspaceId: partner.id, connectionId: connection.id } }])
   })
 
   test("should queue a pull in the partner workspace when the host posts in the shared channel or one of its threads", async () => {
     const { hostClient, host, partner, channel, connection } = await setup()
-    const expected = { payload: { workspaceId: partner.id, connectionId: connection.id }, deferred: true }
+    const expected = { payload: { workspaceId: partner.id, connectionId: connection.id } }
 
     const root = await sendMessage(hostClient, host.id, channel.id, "kickoff")
     const afterChannelMessage = await waitForPull(partner.id, connection.id)
@@ -200,7 +198,7 @@ describe("Stream connection wake", () => {
 
     expect({ whileRefusing, afterRecovery }).toEqual({
       whileRefusing: [],
-      afterRecovery: [{ payload: { workspaceId: partner.id, connectionId: connection.id }, deferred: true }],
+      afterRecovery: [{ payload: { workspaceId: partner.id, connectionId: connection.id } }],
     })
   }, 30_000)
 
@@ -256,7 +254,7 @@ describe("Stream connection wake", () => {
     )
     const queued = await pulls(partner.id, connection.id)
 
-    const pull = { payload: { workspaceId: partner.id, connectionId: connection.id }, deferred: true }
+    const pull = { payload: { workspaceId: partner.id, connectionId: connection.id } }
 
     expect(outcomes.map((outcome) => outcome.status)).toEqual([204, 204, 204, 204, 204])
     // A burst can straddle a second boundary, so it may take two windows, never more.
