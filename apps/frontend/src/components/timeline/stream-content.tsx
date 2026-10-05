@@ -886,12 +886,14 @@ export function StreamContent({
     isJumpMode,
   } = useEvents(workspaceId, streamId, { enabled: !isDraft, loadAll: isThread })
 
-  // The viewer's newest message in this stream — drives the "Show in
-  // conversation" membership heal below.
+  // The viewer's newest message the server holds in this stream — drives the
+  // "Show in conversation" membership heal below. An unsent row has no
+  // membership to fetch, and its request would run ahead of the send itself.
   const ownLatestMessageId = useMemo(() => {
     for (let i = events.length - 1; i >= 0; i--) {
       const event = events[i]
       if (event.eventType !== "message_created" || event.actorId !== currentWorkspaceUserId) continue
+      if (event.id.startsWith("temp_")) continue
       return (event.payload as { messageId?: string })?.messageId ?? null
     }
     return null
