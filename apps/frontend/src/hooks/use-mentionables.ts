@@ -52,7 +52,11 @@ interface MentionStreamSource {
 }
 
 function pickMentionAccess(bootstrap: CachedStreamBootstrap) {
-  return { members: bootstrap.members, botMemberIds: bootstrap.botMemberIds }
+  return {
+    members: bootstrap.members,
+    botMemberIds: bootstrap.botMemberIds,
+    connectedWorkspaceIds: bootstrap.connectedWorkspaceIds,
+  }
 }
 
 /**
