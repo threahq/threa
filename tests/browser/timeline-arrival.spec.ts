@@ -27,7 +27,7 @@ interface Frame {
   /** Top of the row carrying `anchorText`. */
   anchorTop: number
   /** Gap between the arrival's bottom edge and the list's; a growing row starts clipped below its final place. */
-  arrivalGap: number
+  arrivalGap: number | null
 }
 
 async function seedMessages(page: Page, workspaceId: string, streamId: string, count: number): Promise<void> {
@@ -55,30 +55,41 @@ async function postMessage(page: Page, workspaceId: string, streamId: string, co
   return ((await response.json()) as { message: { id: string } }).message.id
 }
 
-/** Samples in-frame geometry every frame the arrival's row resizes, starting with the frame it first lays out. */
+/**
+ * Samples in-frame geometry from the frame the arrival's row first lays out. A
+ * send's row is remounted when it confirms, so every read resolves it again; a
+ * frame without the row reads `null`.
+ */
 function sampleArrival({ anchorText, arrivalText }: { anchorText: string; arrivalText: string }) {
   const frames: Frame[] = []
-  const laterGaps: number[] = []
+  const laterGaps: (number | null)[] = []
   Object.assign(window, { __frames: frames, __laterGaps: laterGaps })
   const rowWith = (text: string) =>
     [...document.querySelectorAll<HTMLElement>("main [data-event-id]")].find((row) => row.textContent?.includes(text))
   let scroller = rowWith(anchorText)!.parentElement!
   while (getComputedStyle(scroller).overflowY !== "auto") scroller = scroller.parentElement!
-  const gap = () => Math.round(scroller.getBoundingClientRect().bottom - arrival.getBoundingClientRect().bottom)
-  // A growing row's inner box never resizes, so the frames after the first are read from rAF.
-  const sampleLater = () => {
-    laterGaps.push(gap())
-    if (laterGaps.length < 30) requestAnimationFrame(sampleLater)
+  let arrival: HTMLElement | undefined
+  const gap = () => {
+    if (!arrival?.isConnected) arrival = rowWith(arrivalText)
+    if (!arrival) return null
+    return Math.round(scroller.getBoundingClientRect().bottom - arrival.getBoundingClientRect().bottom)
   }
+  // A growing row's inner box never resizes, so the frames after the first need a read of their own. An rAF read
+  // runs before the frame's layout and the app's pin; resizing a probe each frame puts the read in a ResizeObserver.
+  const beat = document.body.appendChild(document.createElement("div"))
+  beat.style.cssText = "position:fixed;visibility:hidden;width:1px;height:1px"
+  const later = new ResizeObserver(() => {
+    laterGaps.push(gap())
+    if (laterGaps.length < 30) requestAnimationFrame(() => (beat.style.width = `${(laterGaps.length % 2) + 1}px`))
+  })
   const resize = new ResizeObserver(() => {
-    if (frames.length === 0) requestAnimationFrame(sampleLater)
+    if (frames.length === 0) requestAnimationFrame(() => later.observe(beat))
     frames.push({
       distance: Math.round(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight),
       anchorTop: Math.round(rowWith(anchorText)!.getBoundingClientRect().top * 10) / 10,
       arrivalGap: gap(),
     })
   })
-  let arrival: HTMLElement
   const mutations = new MutationObserver(() => {
     const row = rowWith(arrivalText)
     if (!row) return
@@ -107,8 +118,8 @@ async function readFrames(page: Page): Promise<Frame[]> {
   return page.evaluate(() => (window as unknown as { __frames: Frame[] }).__frames)
 }
 
-async function readLaterGaps(page: Page): Promise<number[]> {
-  return page.evaluate(() => (window as unknown as { __laterGaps: number[] }).__laterGaps)
+async function readLaterGaps(page: Page): Promise<(number | null)[]> {
+  return page.evaluate(() => (window as unknown as { __laterGaps: (number | null)[] }).__laterGaps)
 }
 
 async function arrivalGapNow(page: Page, text: string): Promise<number> {
