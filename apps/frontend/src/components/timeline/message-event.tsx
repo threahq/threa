@@ -1322,6 +1322,33 @@ function SentMessageEvent({
   // never knows, so the reply action waits for the echo.
   const awaitingServerId = payload.messageId === event.id
 
+  const handleQuoteReply = useMemo(
+    () =>
+      quoteReplyCtx
+        ? () =>
+            quoteReplyCtx.triggerQuoteReply({
+              messageId: payload.messageId,
+              streamId,
+              authorName: actorName,
+              authorId: event.actorId ?? "",
+              actorType: event.actorType ?? "user",
+              snippet: payload.contentMarkdown,
+              version: payload.revision ?? null,
+              range: null,
+            })
+        : undefined,
+    [
+      quoteReplyCtx,
+      payload.messageId,
+      streamId,
+      actorName,
+      event.actorId,
+      event.actorType,
+      payload.contentMarkdown,
+      payload.revision,
+    ]
+  )
+
   // Shared action context for both desktop dropdown and mobile drawer
   const actionContext = useMemo(
     () => ({
@@ -1358,19 +1385,7 @@ function SentMessageEvent({
       onRequestReminder: handleRequestReminder,
       onOpenAside: canOpenAside ? handleOpenAside : undefined,
       onInsertAgentBlock: canInsertAgentBlock ? handleInsertAgentBlock : undefined,
-      onQuoteReply: quoteReplyCtx
-        ? () =>
-            quoteReplyCtx.triggerQuoteReply({
-              messageId: payload.messageId,
-              streamId,
-              authorName: actorName,
-              authorId: event.actorId ?? "",
-              actorType: event.actorType ?? "user",
-              snippet: payload.contentMarkdown,
-              version: payload.revision ?? null,
-              range: null,
-            })
-        : undefined,
+      onQuoteReply: handleQuoteReply,
       onQuoteReplyWithSelection: quoteReplyCtx
         ? (selection: QuoteSelection) =>
             quoteReplyCtx.triggerQuoteReply({
@@ -1512,6 +1527,7 @@ function SentMessageEvent({
       streamId,
       startEditing,
       handleAddReaction,
+      handleQuoteReply,
       quoteReplyCtx,
       actorName,
       isSaved,
@@ -1619,7 +1635,7 @@ function SentMessageEvent({
                 allReactionShortcodes={allReactionShortcodes}
               />
               <SaveMessageButton workspaceId={workspaceId} messageId={payload.messageId} />
-              {actionContext.onQuoteReply && <QuoteReplyButton onQuoteReply={actionContext.onQuoteReply} />}
+              {handleQuoteReply && <QuoteReplyButton onQuoteReply={handleQuoteReply} />}
               {/* Reply-in-thread sits adjacent to the overflow menu so it mirrors
                 the top entry of the expanded context menu — the two thread
                 actions read as one visual neighborhood. Kept visible even when

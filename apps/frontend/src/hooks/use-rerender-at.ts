@@ -9,13 +9,14 @@ const MAX_TIMEOUT_MS = 2_147_483_647
  * on time instead of waiting for an unrelated re-render.
  */
 export function useRerenderAt(instant: string | null | undefined): void {
-  const [, rerender] = useReducer((n: number) => n + 1, 0)
+  const [tick, rerender] = useReducer((n: number) => n + 1, 0)
 
   useEffect(() => {
     if (!instant) return
     const delay = new Date(instant).getTime() - Date.now()
-    if (delay <= 0 || delay > MAX_TIMEOUT_MS) return
-    const timer = setTimeout(rerender, delay)
+    if (delay <= 0) return
+    // A clamped timer re-renders early; the new tick re-arms it for the rest.
+    const timer = setTimeout(rerender, Math.min(delay, MAX_TIMEOUT_MS))
     return () => clearTimeout(timer)
-  }, [instant])
+  }, [instant, tick])
 }
