@@ -1,10 +1,7 @@
 import { useLayoutEffect } from "react"
 import { cn } from "@/lib/utils"
+import { PANE_TRANSITION_MS } from "@/components/panes"
 import { PanelResizeHandle } from "./panel-resize-handle"
-
-// Keep in sync with the `duration-200` class on the slot: consumers of
-// `--panel-inset-duration` animate their edge against this element's width.
-const PANEL_TRANSITION_MS = 200
 
 interface ThreadPanelSlotProps {
   displayWidth: number
@@ -53,10 +50,45 @@ export function ThreadPanelSlot({
   resizeLabel,
   children,
 }: ThreadPanelSlotProps) {
+  usePanelInset(insetRight, insetAnimates)
+
+  return (
+    <div
+      data-testid={testId}
+      inert={inert || undefined}
+      className={cn("flex-shrink-0 overflow-hidden", shouldAnimate && "transition-[width] ease-out")}
+      style={{ width: displayWidth, transitionDuration: shouldAnimate ? `${PANE_TRANSITION_MS}ms` : undefined }}
+      onTransitionEnd={onTransitionEnd}
+    >
+      {showContent && (
+        <ResizablePanelFrame
+          panelWidth={panelWidth}
+          isResizing={isResizing}
+          minWidth={minWidth}
+          maxWidth={maxWidth}
+          onResizeStart={onResizeStart}
+          onResizeMove={onResizeMove}
+          onResizeEnd={onResizeEnd}
+          onResizeKeyDown={onResizeKeyDown}
+          resizeLabel={resizeLabel}
+        >
+          {children}
+        </ResizablePanelFrame>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Publish the width docked at the right edge as `--panel-inset-right`, and
+ * whether its change animates. Every docked column in a row publishes the same
+ * pair, so their write order is moot.
+ */
+export function usePanelInset(insetRight: number, insetAnimates: boolean) {
   useLayoutEffect(() => {
     const root = document.documentElement
     root.style.setProperty("--panel-inset-right", `${insetRight}px`)
-    root.style.setProperty("--panel-inset-duration", insetAnimates ? `${PANEL_TRANSITION_MS}ms` : "0ms")
+    root.style.setProperty("--panel-inset-duration", insetAnimates ? `${PANE_TRANSITION_MS}ms` : "0ms")
   }, [insetRight, insetAnimates])
 
   // A layout-effect cleanup, not a passive one: routes that each mount their own
@@ -72,31 +104,56 @@ export function ThreadPanelSlot({
     },
     []
   )
+}
 
+interface ResizablePanelFrameProps {
+  panelWidth: number
+  isResizing: boolean
+  minWidth: number
+  maxWidth: number
+  onResizeStart: (e: React.PointerEvent) => void
+  onResizeMove: (e: React.PointerEvent) => void
+  onResizeEnd: (e: React.PointerEvent) => void
+  onResizeKeyDown: (e: React.KeyboardEvent) => void
+  resizeLabel?: string
+  /**
+   * Take the whole cell with no handle — the phone's takeover. The content keeps
+   * its place in the tree either way, so crossing the breakpoint doesn't remount it.
+   */
+  fill?: boolean
+  children: React.ReactNode
+}
+
+/** A side panel's content at its full width, with the resize handle on its left edge. */
+export function ResizablePanelFrame({
+  panelWidth,
+  isResizing,
+  minWidth,
+  maxWidth,
+  onResizeStart,
+  onResizeMove,
+  onResizeEnd,
+  onResizeKeyDown,
+  resizeLabel,
+  fill = false,
+  children,
+}: ResizablePanelFrameProps) {
   return (
-    <div
-      data-testid={testId}
-      inert={inert || undefined}
-      className={cn("flex-shrink-0 overflow-hidden", shouldAnimate && "transition-[width] duration-200 ease-out")}
-      style={{ width: displayWidth }}
-      onTransitionEnd={onTransitionEnd}
-    >
-      {showContent && (
-        <div className="flex h-full" style={{ width: panelWidth, minWidth: panelWidth }}>
-          <PanelResizeHandle
-            isResizing={isResizing}
-            panelWidth={panelWidth}
-            minWidth={minWidth}
-            maxWidth={maxWidth}
-            onPointerDown={onResizeStart}
-            onPointerMove={onResizeMove}
-            onPointerEnd={onResizeEnd}
-            onKeyDown={onResizeKeyDown}
-            ariaLabel={resizeLabel}
-          />
-          <div className="flex-1 min-w-0 overflow-hidden">{children}</div>
-        </div>
+    <div className="flex h-full" style={fill ? undefined : { width: panelWidth, minWidth: panelWidth }}>
+      {!fill && (
+        <PanelResizeHandle
+          isResizing={isResizing}
+          panelWidth={panelWidth}
+          minWidth={minWidth}
+          maxWidth={maxWidth}
+          onPointerDown={onResizeStart}
+          onPointerMove={onResizeMove}
+          onPointerEnd={onResizeEnd}
+          onKeyDown={onResizeKeyDown}
+          ariaLabel={resizeLabel}
+        />
       )}
+      <div className="flex-1 min-w-0 overflow-hidden">{children}</div>
     </div>
   )
 }
