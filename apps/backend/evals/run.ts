@@ -25,6 +25,7 @@ import { personaStyleSuite } from "./suites/persona-style/suite"
 import { voicePolishSuite } from "./suites/voice-polish/suite"
 import { toolGuardianSuite } from "./suites/tool-guardian/suite"
 import { memoryRecallSuite } from "./suites/memory-recall/suite"
+import { groupMemBenchSuite, groupMemBenchNoMemorySuite } from "./suites/groupmembench/suite"
 import { qualifyVoicePolishPermutation } from "./suites/voice-polish/evaluators"
 import { decideVoicePolishComparison } from "./suites/voice-polish/reporting"
 import { isConfigFilePath } from "./framework/config-loader"
@@ -43,6 +44,8 @@ const allSuites = [
   voicePolishSuite,
   toolGuardianSuite,
   memoryRecallSuite,
+  groupMemBenchSuite,
+  groupMemBenchNoMemorySuite,
 ]
 
 function printHelp(): void {
