@@ -6,6 +6,7 @@ import { StreamContextGallery } from "./stream-context-gallery"
 import { StreamContextSurface } from "./stream-context-surface"
 import { useStreamContextOpen } from "./use-stream-context-open"
 import { useStreamGallery } from "./use-stream-gallery"
+import { PANEL_PARAM, formatPanelTabs, openPanelTab, parsePanelTabs } from "@/lib/panel-tabs"
 
 /**
  * One stream's "In this stream" overview with its media gallery, mounted by the
@@ -32,7 +33,7 @@ export function StreamContextOverlay({ workspaceId, streamId }: { workspaceId: s
       const next = new URLSearchParams(prev)
       if (inStreamId !== streamId) {
         next.delete("context")
-        next.set("panel", inStreamId)
+        next.set(PANEL_PARAM, formatPanelTabs(openPanelTab(parsePanelTabs(next.get(PANEL_PARAM)), inStreamId))!)
       } else if (coversStream) next.delete("context")
       next.set("m", messageId)
       return next

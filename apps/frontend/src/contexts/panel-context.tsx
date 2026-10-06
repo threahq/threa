@@ -1,7 +1,18 @@
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react"
-import { useSearchParams, useLocation } from "react-router-dom"
-import { useCoverClose } from "@/hooks/use-cover-close"
+import { useSearchParams, useLocation, useMatch } from "react-router-dom"
+import { useCoverHistory } from "@/hooks/use-cover-close"
 import { PANEL_COVER } from "@/lib/covers"
+import {
+  NO_PANEL_TABS,
+  PANEL_PARAM,
+  activatePanelTab,
+  closePanelTab,
+  formatPanelTabs,
+  openPanelTab,
+  parsePanelTabs,
+  replacePanelTab,
+  type PanelTabs,
+} from "@/lib/panel-tabs"
 
 /** Which pane the user most recently interacted with — drives "copy current link" (mod+L). */
 export type FocusedPane = "main" | "panel"
@@ -59,22 +70,35 @@ export function createConversationPanelId(conversationId: string): string {
 export interface OpenPanelOptions {
   /** Overwrite the current history entry instead of adding one. Only for a panel
    *  that SUPERSEDES the open one — a draft thread promoted to its real stream —
-   *  where going back would land on an id that no longer exists. */
+   *  where going back would land on an id that no longer exists. The new id
+   *  takes the superseded one's tab. */
   replace?: boolean
 }
 
 interface PanelContextValue {
-  /** ID of the currently open panel (stream ID or draft panel ID) */
+  /** The panel this consumer belongs to: inside a {@link PaneScope}, that
+   *  tab's id; elsewhere, the active tab's. Stream id or draft/conv panel id. */
   panelId: string | null
+  /** Every open tab, in order. */
+  panelIds: readonly string[]
+  /** The tab the panel is showing. */
+  activePanelId: string | null
   /** Whether a panel is currently open */
   isPanelOpen: boolean
 
-  /** Generate URL for opening a panel (for use in <a> or <Link> href) */
-  getPanelUrl: (streamId: string) => string
-  /** Open a panel - streamId can be real stream or "draft:parentStreamId:anchorId" */
-  openPanel: (streamId: string, options?: OpenPanelOptions) => void
-  /** Close the current panel */
+  /** URL that opens a panel from here (for `<Link>`): on the stream page it adds
+   *  or activates a tab; pages without tabs swap the one panel. */
+  getPanelUrl: (panelId: string) => string
+  /** Imperative twin of {@link getPanelUrl}. */
+  openPanel: (panelId: string, options?: OpenPanelOptions) => void
+  /** URL that shows `panelId` in this panel's own tab instead (breadcrumbs). */
+  getNavigateUrl: (panelId: string) => string
+  /** URL that brings an open tab to the front. Switching tabs is not a step of
+   *  its own in history, so its link replaces. */
+  getTabUrl: (panelId: string) => string
+  /** Close this consumer's panel tab. */
   closePanel: () => void
+  closeTab: (panelId: string) => void
 
   /** Record which pane the user is interacting with (main view vs thread panel). */
   setFocusedPane: (pane: FocusedPane) => void
@@ -82,11 +106,64 @@ interface PanelContextValue {
   getFocusedPane: () => FocusedPane
 }
 
+interface PanelOps {
+  tabs: PanelTabs
+  urlFor: (edit: (tabs: PanelTabs) => PanelTabs) => string
+  tabUrl: (panelId: string) => string
+  open: (edit: (tabs: PanelTabs) => PanelTabs, replace: boolean) => void
+  /** Opening from here: a tab on the stream page, the one panel elsewhere. */
+  contextual: (tabs: PanelTabs, panelId: string) => PanelTabs
+  closeTab: (panelId: string) => void
+  setFocusedPane: (pane: FocusedPane) => void
+  getFocusedPane: () => FocusedPane
+}
+
+const PanelOpsContext = createContext<PanelOps | null>(null)
 const PanelContext = createContext<PanelContextValue | null>(null)
 
 /** A newly opened panel starts bare: the old panel's (or the page's) overview must not reopen over it. */
 function clearPanelCover(params: URLSearchParams) {
   for (const param of PANEL_COVER) params.delete(param)
+}
+
+/** A tab switch or close is not a deep link: the `?m=` one tab opened at must not
+ *  send the tab coming to the front looking for it. */
+function dropDeepLink(params: URLSearchParams) {
+  params.delete("m")
+}
+
+function withTabs(params: URLSearchParams, tabs: PanelTabs): URLSearchParams {
+  const next = new URLSearchParams(params)
+  clearPanelCover(next)
+  const value = formatPanelTabs(tabs)
+  if (value) next.set(PANEL_PARAM, value)
+  return next
+}
+
+function buildValue(ops: PanelOps, scopeId: string | null): PanelContextValue {
+  const { tabs } = ops
+  const own = scopeId ?? tabs.active
+  const supersede = (current: PanelTabs, panelId: string) =>
+    own ? replacePanelTab(current, own, panelId) : openPanelTab(current, panelId)
+  return {
+    panelId: own,
+    panelIds: tabs.ids,
+    activePanelId: tabs.active,
+    isPanelOpen: tabs.active !== null,
+    getPanelUrl: (panelId) => ops.urlFor((current) => ops.contextual(current, panelId)),
+    openPanel: (panelId, options) =>
+      options?.replace
+        ? ops.open((current) => supersede(current, panelId), true)
+        : ops.open((current) => ops.contextual(current, panelId), false),
+    getNavigateUrl: (panelId) => ops.urlFor((current) => supersede(current, panelId)),
+    getTabUrl: ops.tabUrl,
+    closePanel: () => {
+      if (own) ops.closeTab(own)
+    },
+    closeTab: ops.closeTab,
+    setFocusedPane: ops.setFocusedPane,
+    getFocusedPane: ops.getFocusedPane,
+  }
 }
 
 interface PanelProviderProps {
@@ -96,49 +173,69 @@ interface PanelProviderProps {
 export function PanelProvider({ children }: PanelProviderProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation()
+  // Only the stream page shows tabs. Elsewhere (the board) a second panel
+  // replaces the first, as it always has.
+  const tabbed = useMatch("/w/:workspaceId/s/:streamId") !== null
 
-  // Parse panel ID from URL - single panel only
-  const panelId = useMemo(() => {
-    return searchParams.get("panel")
-  }, [searchParams])
+  const panelValue = searchParams.get(PANEL_PARAM)
+  const tabs = useMemo(() => parsePanelTabs(panelValue), [panelValue])
 
-  const isPanelOpen = panelId !== null
+  const contextual = useCallback(
+    (current: PanelTabs, panelId: string) => openPanelTab(tabbed ? current : NO_PANEL_TABS, panelId),
+    [tabbed]
+  )
 
-  const getPanelUrl = useCallback(
-    (streamId: string) => {
-      const newParams = new URLSearchParams(searchParams)
-      clearPanelCover(newParams)
-      newParams.set("panel", streamId)
-      return `${location.pathname}?${newParams.toString()}`
+  const urlFor = useCallback(
+    (edit: (tabs: PanelTabs) => PanelTabs) => `${location.pathname}?${withTabs(searchParams, edit(tabs)).toString()}`,
+    [searchParams, location.pathname, tabs]
+  )
+
+  const tabUrl = useCallback(
+    (panelId: string) => {
+      const params = new URLSearchParams(searchParams)
+      dropDeepLink(params)
+      params.set(PANEL_PARAM, formatPanelTabs(activatePanelTab(tabs, panelId)) ?? "")
+      return `${location.pathname}?${params.toString()}`
     },
-    [searchParams, location.pathname]
+    [searchParams, location.pathname, tabs]
   )
 
   // Opening a panel PUSHES: on mobile it takes over the whole screen, so back has
   // to close it rather than leave the page. `<Link to={getPanelUrl(...)}>` (branch
   // rows, thread anchors) already pushed; this makes the imperative path match.
-  const openPanel = useCallback(
-    (streamId: string, options?: OpenPanelOptions) => {
-      setSearchParams(
-        (prev) => {
-          const next = new URLSearchParams(prev)
-          clearPanelCover(next)
-          next.set("panel", streamId)
-          return next
-        },
-        { replace: options?.replace ?? false }
-      )
+  const open = useCallback(
+    (edit: (tabs: PanelTabs) => PanelTabs, replace: boolean) => {
+      setSearchParams((prev) => withTabs(prev, edit(parsePanelTabs(prev.get(PANEL_PARAM)))), { replace })
     },
     [setSearchParams]
   )
 
-  const closePanel = useCoverClose(PANEL_COVER)
+  const { close, closeTo } = useCoverHistory(PANEL_COVER)
+  const closeTab = useCallback(
+    (panelId: string) => {
+      if (!tabs.ids.includes(panelId)) return
+      const next = closePanelTab(tabs, panelId)
+      if (next.active === null) {
+        close()
+        return
+      }
+      const params = new URLSearchParams(searchParams)
+      // The overview belongs to the tab on show; a tab closing behind it leaves it be.
+      if (panelId === tabs.active) {
+        clearPanelCover(params)
+        dropDeepLink(params)
+      }
+      params.set(PANEL_PARAM, formatPanelTabs(next)!)
+      closeTo(params)
+    },
+    [close, closeTo, searchParams, tabs]
+  )
 
   // Tracked via a ref, not state: only the copy-link shortcut reads it (on
   // keypress), so updating it on every click/focus must not re-render panel
   // consumers. Seed from the initial URL so a deep link that opens a panel
   // (which then autofocuses) reports the panel before any pointer interaction.
-  const focusedPaneRef = useRef<FocusedPane>(panelId !== null ? "panel" : "main")
+  const focusedPaneRef = useRef<FocusedPane>(tabs.active !== null ? "panel" : "main")
   const setFocusedPane = useCallback((pane: FocusedPane) => {
     focusedPaneRef.current = pane
   }, [])
@@ -146,22 +243,31 @@ export function PanelProvider({ children }: PanelProviderProps) {
 
   // When the panel closes, focus belongs to the main pane again.
   useEffect(() => {
-    if (panelId === null) focusedPaneRef.current = "main"
-  }, [panelId])
+    if (tabs.active === null) focusedPaneRef.current = "main"
+  }, [tabs.active])
 
-  const value = useMemo<PanelContextValue>(
-    () => ({
-      panelId,
-      isPanelOpen,
-      getPanelUrl,
-      openPanel,
-      closePanel,
-      setFocusedPane,
-      getFocusedPane,
-    }),
-    [panelId, isPanelOpen, getPanelUrl, openPanel, closePanel, setFocusedPane, getFocusedPane]
+  const ops = useMemo<PanelOps>(
+    () => ({ tabs, urlFor, tabUrl, open, contextual, closeTab, setFocusedPane, getFocusedPane }),
+    [tabs, urlFor, tabUrl, open, contextual, closeTab, setFocusedPane, getFocusedPane]
   )
+  const value = useMemo(() => buildValue(ops, null), [ops])
 
+  return (
+    <PanelOpsContext.Provider value={ops}>
+      <PanelContext.Provider value={value}>{children}</PanelContext.Provider>
+    </PanelOpsContext.Provider>
+  )
+}
+
+/**
+ * Scopes everything inside to one of the panel's tabs: `usePanel().panelId` is
+ * that tab even while another is on show, closing closes that tab, and a
+ * superseding open (`replace`) or in-place navigation swaps that tab.
+ */
+export function PaneScope({ panelId, children }: { panelId: string; children: ReactNode }) {
+  const ops = useContext(PanelOpsContext)
+  if (!ops) throw new Error("PaneScope must be used within a PanelProvider")
+  const value = useMemo(() => buildValue(ops, panelId), [ops, panelId])
   return <PanelContext.Provider value={value}>{children}</PanelContext.Provider>
 }
 

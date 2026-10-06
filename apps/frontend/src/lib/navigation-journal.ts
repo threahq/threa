@@ -1,4 +1,5 @@
 import { BOARD_FILTER_PARAMS, BOARD_LENS_PARAM } from "@/components/board/board-filter-params"
+import { PANEL_PARAM, parsePanelTabs } from "./panel-tabs"
 
 const STORAGE_PREFIX = "threa-navigation-journal"
 
@@ -61,7 +62,8 @@ export function isJournaledPath(pathname: string, workspaceId: string): boolean 
 export function journalTouchesStream(path: string, workspaceId: string, streamIds: ReadonlySet<string>): boolean {
   const pageId = pageStreamId(path, workspaceId)
   if (pageId && streamIds.has(pageId)) return true
-  return new URLSearchParams(path.split("?")[1]).getAll("panel").some((panel) => streamIds.has(panel))
+  const tabs = parsePanelTabs(new URLSearchParams(path.split("?")[1]).get(PANEL_PARAM))
+  return tabs.ids.some((panel) => streamIds.has(panel))
 }
 
 export interface VisitOptions {

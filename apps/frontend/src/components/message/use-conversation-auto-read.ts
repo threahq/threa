@@ -3,6 +3,7 @@ import { useAutoReadAttention } from "@/hooks/use-auto-mark-as-read"
 import type { RowReadState } from "@/components/timeline/read-frontier-context"
 import type { ConversationRowRead } from "@/components/message/conversation-read-context"
 import type { RenderableMessage } from "@/components/message/message-item"
+import { usePaneCovered } from "@/components/panes"
 
 /**
  * Flag-gated tracer (`window.__threaAutoReadDebug = true`, then reload) — the
@@ -130,8 +131,11 @@ export function useConversationAutoRead({
   markRead,
   registerExplicitUnread,
   getReadTruth,
-  disabled = false,
+  disabled: disabledOption = false,
 }: UseConversationAutoReadOptions): void {
+  // A covered pane (a background panel tab) keeps its geometry: its rows still
+  // intersect the viewport while nobody can see them.
+  const disabled = disabledOption || usePaneCovered()
   const canAutoRead = useAutoReadAttention() && !disabled
   const disabledRef = useRef(disabled)
   disabledRef.current = disabled

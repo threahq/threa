@@ -76,6 +76,7 @@ import { useDecryptedStreamName } from "@/hooks/use-decrypted-stream-name"
 import { copyStreamLink } from "@/lib/stream-links"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { LabelStack } from "@/components/labels/label-stack"
+import { PanelTabStrip, usePaneCovered } from "@/components/panes"
 
 interface StreamPanelProps {
   workspaceId: string
@@ -86,8 +87,10 @@ interface StreamPanelProps {
 export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProps) {
   const { isMobile } = useSidebar()
   const [searchParams] = useSearchParams()
-  const highlightMessageId = searchParams.get("m")
-  const { panelId, openPanel, getPanelUrl, closePanel, setFocusedPane } = usePanel()
+  // A background tab doesn't chase the deep link the tab on show opened at.
+  const covered = usePaneCovered()
+  const highlightMessageId = covered ? null : searchParams.get("m")
+  const { panelId, panelIds, openPanel, getNavigateUrl, closePanel, setFocusedPane } = usePanel()
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   const { openStreamSettings } = useStreamSettings()
   const { open: openExplorer } = useExplorerUrlState()
@@ -518,8 +521,13 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
 
   if (!panelId) return null
 
+  // With more than one tab open, the tab row stands in for the title and each
+  // tab carries its own close.
+  const tabbed = panelIds.length > 1
   let headerContent: React.ReactNode
-  if (isDraft && parentStream) {
+  if (tabbed) {
+    headerContent = <PanelTabStrip workspaceId={workspaceId} className={isMobile ? undefined : "-ml-2"} />
+  } else if (isDraft && parentStream) {
     headerContent = (
       <div className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden pr-2">
         {!isMobile && (
@@ -532,7 +540,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
           currentLabel="New thread"
           isMainViewStream={isMainViewStream}
           onClosePanel={closePanel}
-          getNavigationUrl={getPanelUrl}
+          getNavigationUrl={getNavigateUrl}
         />
       </div>
     )
@@ -640,7 +648,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
             )
           ))}
         {/* Hide X close button on mobile (back button used instead) */}
-        {!isMobile && <SidePanelClose onClose={onClose} />}
+        {!isMobile && !tabbed && <SidePanelClose onClose={onClose} />}
       </SidePanelHeader>
 
       <SidePanelContent className="relative flex flex-col" data-editor-zone="panel" ref={setDraftPortalTarget}>
