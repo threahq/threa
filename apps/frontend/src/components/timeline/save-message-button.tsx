@@ -2,7 +2,8 @@ import { useMemo } from "react"
 import { Bookmark, BookmarkCheck, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
-import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card"
+import { HoverCardContent } from "@/components/ui/hover-card"
+import { LazyHoverCard } from "@/components/ui/lazy-overlay"
 import { cn } from "@/lib/utils"
 import { useSavedForMessage, useSaveMessage, useUpdateSaved, useDeleteSaved } from "@/hooks/use-saved"
 import { ReminderPopoverContent } from "./reminder-popover-content"
@@ -64,8 +65,10 @@ export function SaveMessageButton({ workspaceId, messageId, conversationId }: Sa
   }
 
   return (
-    <HoverCard openDelay={200} closeDelay={120}>
-      <HoverCardTrigger asChild>
+    <LazyHoverCard
+      openDelay={200}
+      closeDelay={120}
+      trigger={
         <Button
           variant="outline"
           size="icon"
@@ -80,7 +83,8 @@ export function SaveMessageButton({ workspaceId, messageId, conversationId }: Sa
         >
           <Icon className={cn("h-3.5 w-3.5", isPending && "animate-spin")} />
         </Button>
-      </HoverCardTrigger>
+      }
+    >
       <HoverCardContent align="end" className="w-72 p-0">
         <ReminderPopoverContent
           workspaceId={workspaceId}
@@ -89,6 +93,6 @@ export function SaveMessageButton({ workspaceId, messageId, conversationId }: Sa
           saved={saved ?? null}
         />
       </HoverCardContent>
-    </HoverCard>
+    </LazyHoverCard>
   )
 }

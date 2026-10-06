@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react"
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { LazyTooltip } from "@/components/ui/lazy-overlay"
+import { TooltipContent } from "@/components/ui/tooltip"
 import { useFormattedDate } from "@/hooks"
 
 interface RelativeTimeProps {
@@ -38,15 +39,10 @@ export function RelativeTime({ date, className, terse }: RelativeTimeProps) {
   const full = formatFull(dateObj)
 
   return (
-    <TooltipProvider>
-      <Tooltip delayDuration={300}>
-        <TooltipTrigger asChild>
-          <span className={className}>{relative}</span>
-        </TooltipTrigger>
-        <TooltipContent>
-          <p>{full}</p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <LazyTooltip delayDuration={300} trigger={<span className={className}>{relative}</span>}>
+      <TooltipContent>
+        <p>{full}</p>
+      </TooltipContent>
+    </LazyTooltip>
   )
 }

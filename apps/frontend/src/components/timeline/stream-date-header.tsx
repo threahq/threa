@@ -1,6 +1,7 @@
 import { useState } from "react"
 import { ChevronDown } from "lucide-react"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { LazyPopover } from "@/components/ui/lazy-overlay"
+import { PopoverContent } from "@/components/ui/popover"
 import { formatDayDivider } from "@/lib/dates"
 import { DateJumpMenu } from "./date-jump-menu"
 import { useForwardScroll } from "@/hooks/use-forward-scroll"
@@ -49,8 +50,10 @@ export function StreamDateHeader({ dayStartMs, visible, onJumpToDate, scrollerRe
         visible ? "opacity-100" : "opacity-0"
       )}
     >
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
+      <LazyPopover
+        open={open}
+        onOpenChange={setOpen}
+        trigger={
           <button
             type="button"
             aria-label={`Jump to date — showing ${label}`}
@@ -74,11 +77,12 @@ export function StreamDateHeader({ dayStartMs, visible, onJumpToDate, scrollerRe
             <span>{label}</span>
             <ChevronDown className="h-3 w-3 -mr-0.5 opacity-60" aria-hidden />
           </button>
-        </PopoverTrigger>
+        }
+      >
         <PopoverContent align="center" className="w-64 p-0">
           <DateJumpMenu defaultMonth={new Date(dayStartMs)} onPick={jump} />
         </PopoverContent>
-      </Popover>
+      </LazyPopover>
     </div>
   )
 }
