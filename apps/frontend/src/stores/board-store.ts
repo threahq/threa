@@ -265,6 +265,7 @@ export async function addBoardConversationStream(
   conversationId: string,
   streamId: string
 ): Promise<void> {
+  if (!(await hasBoardRow(workspaceId, conversationId))) return
   await db.transaction("rw", db.conversations, async () => {
     const existing = await db.conversations.get([workspaceId, conversationId])
     if (!existing) return
@@ -272,6 +273,12 @@ export async function addBoardConversationStream(
     if (streamIds.includes(streamId)) return
     await db.conversations.put({ ...existing, streamIds: [...streamIds, streamId] })
   })
+}
+
+// Most conversation events name a conversation the board never cached; a readonly
+// probe skips opening a readwrite transaction for them.
+async function hasBoardRow(workspaceId: string, conversationId: string): Promise<boolean> {
+  return (await db.conversations.where(":id").equals([workspaceId, conversationId]).count()) > 0
 }
 
 /**
@@ -290,17 +297,19 @@ export async function mergeBoardConversation(
    *  (an emitter that doesn't report it) keeps the cached value. */
   settlingMessageIds?: string[]
 ): Promise<boolean> {
+  // An emptied conversation is no longer a board card — it mirrors the server's
+  // `cardinality(message_ids) > 0` board filter, so a conversation whose last
+  // message was reassigned or threaded off (the source of a `threadFromMessage`
+  // reply) drops here rather than lingering as a stale card. Report it handled
+  // even with no row so the caller doesn't hydrate a card that shouldn't exist.
+  // Guard on an EXPLICIT empty array: a payload that omits `messageIds` (a
+  // partial/aggregate-only event) is not "known empty" — fall through to upsert.
+  const emptied = Array.isArray(conversation.messageIds) && conversation.messageIds.length === 0
+  if (!emptied && !(await hasBoardRow(workspaceId, conversationId))) return false
   // Read-modify-write in one rw transaction so a concurrent optimistic write or
   // a second echo can't merge over a stale read of this row.
   return db.transaction("rw", db.conversations, async () => {
-    // An emptied conversation is no longer a board card — it mirrors the server's
-    // `cardinality(message_ids) > 0` board filter, so a conversation whose last
-    // message was reassigned or threaded off (the source of a `threadFromMessage`
-    // reply) drops here rather than lingering as a stale card. Report it handled
-    // even with no row so the caller doesn't hydrate a card that shouldn't exist.
-    // Guard on an EXPLICIT empty array: a payload that omits `messageIds` (a
-    // partial/aggregate-only event) is not "known empty" — fall through to upsert.
-    if (Array.isArray(conversation.messageIds) && conversation.messageIds.length === 0) {
+    if (emptied) {
       await db.conversations.delete([workspaceId, conversationId])
       // A separate table, so it can't join this transaction's scope — run it
       // outside the zone rather than letting Dexie reject a foreign-table write.
