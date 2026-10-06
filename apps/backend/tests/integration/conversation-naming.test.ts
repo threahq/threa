@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { streamConnectionId } from "@threahq/backend-common"
-import { Pool } from "pg"
+import { Pool, type PoolClient } from "pg"
 import { withTransaction } from "../../src/db"
 import { ConversationRepository } from "../../src/features/conversations"
 import {
@@ -38,6 +38,8 @@ describe("dynamic conversation naming", () => {
     count: number
     title?: string
     streamType?: "channel" | "scratchpad"
+    /** Records the title as written while the stream was shared. */
+    sharedTitle?: boolean
   }): Promise<Fixture> {
     const ws = workspaceId()
     const workosUserId = userId()
@@ -68,6 +70,7 @@ describe("dynamic conversation naming", () => {
         workspaceId: ws,
         topicSummary: params.title,
         topicSummarySource: params.title ? "generated" : undefined,
+        sharedRootStreamId: params.sharedTitle ? stream : undefined,
       })
       for (let sequence = 1; sequence <= params.count; sequence += 1) {
         const id = messageId()
@@ -84,6 +87,14 @@ describe("dynamic conversation naming", () => {
       }
     })
     return { workspaceId: ws, userId: user, streamId: stream, conversationId: conversation }
+  }
+
+  async function share(db: Pool | PoolClient, item: Fixture) {
+    await db.query(
+      `INSERT INTO stream_connections (workspace_id, id, role, state, stream_id, remote_workspace_id, remote_workspace_name, expires_at, revision)
+       VALUES ($1, $2, 'host', 'active', $3, $4, 'Partner', NOW() + INTERVAL '1 day', 1)`,
+      [item.workspaceId, streamConnectionId(), item.streamId, workspaceId()]
+    )
   }
 
   function service(decide: (input: DynamicNamingEvaluationInput) => Promise<DynamicNamingDecision>) {
@@ -150,7 +161,7 @@ describe("dynamic conversation naming", () => {
   })
 
   test("should name a conversation from what the partner reads when its channel is shared", async () => {
-    const item = await fixture({ count: 3, title: "Deployment issue" })
+    const item = await fixture({ count: 3, title: "Deployment issue", sharedTitle: true })
     const outside = streamId()
     const linkId = messageId()
     const prUrl = "https://github.com/acme/private/pull/7"
@@ -215,13 +226,10 @@ describe("dynamic conversation naming", () => {
           workspaceId: item.workspaceId,
           topicSummary: title,
           topicSummarySource: "generated",
+          sharedRootStreamId: item.streamId,
         })
       }
-      await client.query(
-        `INSERT INTO stream_connections (workspace_id, id, role, state, stream_id, remote_workspace_id, remote_workspace_name, expires_at, revision)
-         VALUES ($1, $2, 'host', 'active', $3, $4, 'Partner', NOW() + INTERVAL '1 day', 1)`,
-        [item.workspaceId, streamConnectionId(), item.streamId, workspaceId()]
-      )
+      await share(client, item)
     })
     let seen: { linksOutside: boolean; mentionsSlug: boolean; preview: boolean; existingTitles: string[] } | null = null
     const naming = service(async (input) => {
@@ -253,7 +261,7 @@ describe("dynamic conversation naming", () => {
   })
 
   test("should name from what the partner reads when the newest messages of a shared conversation are deleted", async () => {
-    const item = await fixture({ count: 3, title: "Deployment issue" })
+    const item = await fixture({ count: 3, title: "Deployment issue", sharedTitle: true })
     await withTransaction(pool, async (client) => {
       for (let sequence = 4; sequence <= 13; sequence += 1) {
         const id = messageId()
@@ -269,11 +277,7 @@ describe("dynamic conversation naming", () => {
         await ConversationRepository.addPrimaryMessage(client, item.workspaceId, item.conversationId, id, item.userId)
         await MessageRepository.softDelete(client, item.workspaceId, id)
       }
-      await client.query(
-        `INSERT INTO stream_connections (workspace_id, id, role, state, stream_id, remote_workspace_id, remote_workspace_name, expires_at, revision)
-         VALUES ($1, $2, 'host', 'active', $3, $4, 'Partner', NOW() + INTERVAL '1 day', 1)`,
-        [item.workspaceId, streamConnectionId(), item.streamId, workspaceId()]
-      )
+      await share(client, item)
     })
     let seen: { deleted: boolean; kept: boolean[] } | null = null
     const naming = service(async (input) => {
@@ -295,6 +299,58 @@ describe("dynamic conversation naming", () => {
     )
 
     expect(seen).toEqual({ deleted: false, kept: [true, true, true] })
+  })
+
+  test("should withhold a title and summary written before the share, and stamp the rename, when the channel is shared", async () => {
+    const item = await fixture({ count: 3, title: "Initech plan" })
+    await ConversationRepository.update(pool, item.workspaceId, item.conversationId, {
+      summary: "Acquire Initech quietly",
+    })
+    for (const [title, sharedRootStreamId] of [
+      ["Acme merger", undefined],
+      ["Release checklist", item.streamId],
+    ]) {
+      await ConversationRepository.insert(pool, {
+        id: conversationId(),
+        streamId: item.streamId,
+        workspaceId: item.workspaceId,
+        topicSummary: title,
+        topicSummarySource: "generated",
+        sharedRootStreamId,
+      })
+    }
+    await share(pool, item)
+    let seen: { currentTitle: string | null; summary: boolean; existingTitles: string[] } | null = null
+    const naming = service(async (input) => {
+      seen = {
+        currentTitle: input.currentTitle,
+        summary: input.context.includes("Acquire Initech"),
+        existingTitles: input.existingTitles,
+      }
+      return { action: "rename", title: "Deployment rollback" }
+    })
+
+    await naming.evaluate(
+      {
+        workspaceId: item.workspaceId,
+        targetKind: "conversation",
+        targetId: item.conversationId,
+        initiatingUserId: item.userId,
+      },
+      "job_shared_pre_share"
+    )
+
+    const renamed = await ConversationRepository.findById(pool, item.workspaceId, item.conversationId)
+    const { rows: stamps } = await pool.query(
+      `SELECT topic_summary_shared_root_stream_id, summary_shared_root_stream_id FROM conversations
+       WHERE workspace_id = $1 AND id = $2`,
+      [item.workspaceId, item.conversationId]
+    )
+    expect({ seen, title: renamed?.topicSummary, stamps }).toEqual({
+      seen: { currentTitle: null, summary: false, existingTitles: ["Release checklist"] },
+      title: "Deployment rollback",
+      stamps: [{ topic_summary_shared_root_stream_id: item.streamId, summary_shared_root_stream_id: null }],
+    })
   })
 
   test("an untitled deterministic conversation evaluates checkpoint 1", async () => {
@@ -432,6 +488,7 @@ describe("dynamic conversation naming", () => {
         conversationId: item.conversationId,
         topicSummary: "My rollback plan",
         source: "explicit",
+        sharedRootStreamId: null,
         updatedByUserId: item.userId,
       })
       return { action: "rename", title: "Stale model title" }

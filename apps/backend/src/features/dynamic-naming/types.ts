@@ -53,7 +53,11 @@ export interface DynamicNamingEvaluationInput {
 
 export interface DynamicNamingTargetContext {
   context: string
+  /** The title as the context's reader may see it: a shared channel withholds one its partner never saw. */
+  currentTitle: string | null
   existingTitles: string[]
+  /** The shared channel the context was read for, as its partner reads it. */
+  sharedRootStreamId: string | null
 }
 
 export type DynamicNamingClaimReason = "ordinary" | "structural" | "regenerate"
@@ -72,7 +76,12 @@ export interface DynamicNamingTargetAdapter {
     params: DynamicNamingTargetLockParams
   ): Promise<DynamicNamingTargetSnapshot | null>
   loadContext(target: DynamicNamingTargetSnapshot): Promise<DynamicNamingTargetContext | null>
-  applyRename(client: PoolClient, target: DynamicNamingTargetSnapshot, title: string): Promise<number | null>
+  applyRename(
+    client: PoolClient,
+    target: DynamicNamingTargetSnapshot,
+    title: string,
+    sharedRootStreamId: string | null
+  ): Promise<number | null>
 }
 
 export interface DynamicNamingDecisionProvider {

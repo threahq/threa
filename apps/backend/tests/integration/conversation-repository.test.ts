@@ -702,6 +702,7 @@ describe("ConversationRepository", () => {
           conversationId: convId,
           topicSummary: "Updated topic",
           source: "explicit",
+          sharedRootStreamId: null,
         })
       })
 
@@ -732,6 +733,7 @@ describe("ConversationRepository", () => {
             conversationId: convId,
             topicSummary: "Stale topic",
             source: "generated",
+            sharedRootStreamId: null,
           })
         ).toBeNull()
       }
@@ -772,6 +774,7 @@ describe("ConversationRepository", () => {
           completenessScore: 5,
           status: ConversationStatuses.STALLED,
           summary: "Rolling summary from the extractor",
+          sharedRootStreamId: null,
         })
       })
 
@@ -795,6 +798,7 @@ describe("ConversationRepository", () => {
           completenessScore: 7,
           status: ConversationStatuses.ACTIVE,
           summary: "Refined summary",
+          sharedRootStreamId: null,
         })
       })
 
@@ -979,6 +983,7 @@ describe("ConversationRepository", () => {
           conversationId: foreignConvId,
           topicSummary: "Hijacked topic",
           source: "explicit",
+          sharedRootStreamId: null,
         })
       })
 

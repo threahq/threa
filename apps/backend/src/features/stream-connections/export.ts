@@ -9,6 +9,9 @@ import {
   type BridgeActor,
   type BridgeAttachmentResponse,
   type BridgeChange,
+  type BridgeConversation,
+  type BridgeConversationIndex,
+  type BridgeConversations,
   type BridgeEvents,
   type BridgeManifest,
   type BridgeMemo,
@@ -27,6 +30,7 @@ import { withClient, type Querier } from "../../db"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { PersonaRepository } from "../agents"
 import { AttachmentRepository, AttachmentUploadRepository, type Attachment } from "../attachments"
+import { ConversationRepository, readableByPartner, type SharedConversation } from "../conversations"
 import type { FeatureFlagService } from "../feature-flags"
 import { MemoRepository, type Memo } from "../memos"
 import { MessageRepository, deriveContentMarkdown, type Message } from "../messaging"
@@ -337,6 +341,48 @@ export class StreamConnectionExportService {
     })
   }
 
+  /** The conversations in the shared tree, each with its version. */
+  async getConversationIndex(caller: BridgeCaller): Promise<BridgeConversationIndex> {
+    await this.assertEnabled(caller.workspaceId)
+    return withClient(this.pool, async (client) => {
+      const { tree } = await loadSharedTree(client, caller)
+      const conversations = await ConversationRepository.listSharedVersions(
+        client,
+        caller.workspaceId,
+        tree.map((stream) => stream.id)
+      )
+      return { conversations }
+    })
+  }
+
+  /**
+   * The asked conversations the index lists, as the partner keeps them. A
+   * title or summary written before the share, or for another share, is left
+   * out, and so are messages outside the tree and participants who never wrote
+   * or reacted in it.
+   */
+  async getConversations(caller: BridgeCaller & { conversationIds: string[] }): Promise<BridgeConversations> {
+    await this.assertEnabled(caller.workspaceId)
+    return withClient(this.pool, async (client) => {
+      const { connection, tree } = await loadSharedTree(client, caller)
+      const treeIds = tree.map((stream) => stream.id)
+      const rows = await ConversationRepository.findShared(client, caller.workspaceId, treeIds, caller.conversationIds)
+      const conversations = rows.map((row) => row.conversation)
+      const streamOf = await MessageRepository.findStreamIdsByIds(client, caller.workspaceId, [
+        ...new Set(conversations.flatMap((c) => [...c.messageIds, ...c.secondaryMessageIds])),
+      ])
+      const inTree = new Set(treeIds)
+      const participants = await MessageRepository.filterParticipants(client, caller.workspaceId, treeIds, [
+        ...new Set(conversations.flatMap((c) => c.participantIds)),
+      ])
+      return {
+        conversations: rows.map((row) =>
+          toBridgeConversation(row, connection.streamId, (id) => inTree.has(streamOf.get(id) ?? ""), participants)
+        ),
+      }
+    })
+  }
+
   private async assertEnabled(workspaceId: string): Promise<void> {
     const flag = await this.featureFlagService.getWorkspaceFlag(workspaceId, "streamConnections")
     if (flag !== "on") throw connectionNotFound()
@@ -542,6 +588,30 @@ function toBridgeMemo(
     cardVersion: memo.cardVersion,
     embedding,
     createdAt: memo.createdAt.toISOString(),
+  }
+}
+
+function toBridgeConversation(
+  shared: SharedConversation,
+  rootStreamId: string,
+  isInTree: (messageId: string) => boolean,
+  participants: ReadonlySet<string>
+): BridgeConversation {
+  const { conversation, version } = shared
+  return {
+    id: conversation.id,
+    streamId: conversation.streamId,
+    ...readableByPartner(shared, rootStreamId),
+    topicSummaryRevision: conversation.topicSummaryRevision ?? 0,
+    status: conversation.status,
+    messageIds: conversation.messageIds.filter(isInTree),
+    secondaryMessageIds: conversation.secondaryMessageIds.filter(isInTree),
+    participantIds: conversation.participantIds.filter((id) => participants.has(id)),
+    completenessScore: conversation.completenessScore,
+    confidence: conversation.confidence,
+    version,
+    lastActivityAt: conversation.lastActivityAt.toISOString(),
+    createdAt: conversation.createdAt.toISOString(),
   }
 }
 

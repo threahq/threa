@@ -3,11 +3,13 @@ import type { Pool, PoolClient } from "pg"
 import { generateUniqueSlug } from "@threahq/backend-common"
 import {
   AuthorTypes,
+  BRIDGE_CONVERSATIONS_MAX_IDS,
   BRIDGE_MEMOS_MAX_IDS,
   StreamConnectionStates,
   StreamTypes,
   TitleSources,
   type BridgeActor,
+  type BridgeConversation,
   type BridgeEvents,
   type BridgeMemo,
   type BridgeMessage,
@@ -19,6 +21,12 @@ import { OutboxRepository } from "../../lib/outbox"
 import { eventId, streamContextItemId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import { PersonaRepository } from "../agents"
+import {
+  ConversationRepository,
+  addStalenessFields,
+  resolveConversationDelivery,
+  type Conversation,
+} from "../conversations"
 import type { FeatureFlagService } from "../feature-flags"
 import { MemoRepository, publishMemoCardUpdates, recordConversationCaptures } from "../memos"
 import { MessageRepository, applyCopyChanges } from "../messaging"
@@ -136,7 +144,37 @@ export class StreamConnectionPullService {
         if (!page.hasMore) break
       }
     }
-    return options.streamId ? true : this.syncMemos(connection, address)
+    if (options.streamId) return true
+    return (await this.syncConversations(connection, address)) && this.syncMemos(connection, address)
+  }
+
+  /**
+   * Copies the conversations the host found in the channel that are new or
+   * moved since this workspace's copy. A conversation in a thread this pull
+   * has no copy of yet waits for the next pull. The host never withdraws one:
+   * a copy stays as last sent.
+   */
+  private async syncConversations(connection: ActivePartnerConnection, address: ConnectionAddress): Promise<boolean> {
+    const { workspaceId, hostWorkspaceId, rootStreamId } = connection
+    const held = await ConversationRepository.listCopyVersions(this.pool, workspaceId, hostWorkspaceId, rootStreamId)
+    const heldVersions = new Map(held.map((copy) => [copy.id, copy.version]))
+    const index = await this.bridgeClient.getConversationIndex(address)
+    const changed = index.conversations
+      .filter((conversation) => {
+        const version = heldVersions.get(conversation.id)
+        return version === undefined || version < conversation.version
+      })
+      .map((conversation) => conversation.id)
+
+    for (let start = 0; start < changed.length; start += BRIDGE_CONVERSATIONS_MAX_IDS) {
+      const { conversations } = await this.bridgeClient.getConversations(
+        address,
+        changed.slice(start, start + BRIDGE_CONVERSATIONS_MAX_IDS)
+      )
+      const applied = await this.locked(connection, (client) => applyConversations(client, connection, conversations))
+      if (applied === null) return false
+    }
+    return true
   }
 
   /**
@@ -446,6 +484,67 @@ async function applyPage(
     hostSequence: BigInt(page.cursor),
   })
   return true
+}
+
+/**
+ * Writes the host's conversations into the copies of the streams they live in
+ * and tells the partner's board about each one. A conversation naming a stream
+ * that exists here but is not a copy in this tree, or whose id this workspace
+ * holds as anything but this channel's copy, is refused.
+ */
+async function applyConversations(
+  client: PoolClient,
+  connection: ActivePartnerConnection,
+  conversations: BridgeConversation[]
+): Promise<void> {
+  const { workspaceId, hostWorkspaceId, rootStreamId } = connection
+  const streams = await StreamRepository.findByIds(client, workspaceId, [
+    ...new Set(conversations.map((conversation) => conversation.streamId)),
+  ])
+  for (const stream of streams) {
+    if (stream.originWorkspaceId !== hostWorkspaceId || (stream.rootStreamId ?? stream.id) !== rootStreamId) {
+      throw new Error(`Stream ${stream.id} in ${workspaceId} is not a copy in connection ${connection.connectionId}`)
+    }
+  }
+  const streamById = new Map(streams.map((stream) => [stream.id, stream]))
+  const placed = conversations.filter((conversation) => streamById.has(conversation.streamId))
+  const { inserted, updated } = await ConversationRepository.upsertCopies(client, workspaceId, hostWorkspaceId, placed)
+  const written = new Set([...inserted, ...updated].map((conversation) => conversation.id))
+  const skipped = placed.filter((conversation) => !written.has(conversation.id))
+  if (skipped.length > 0) {
+    const held = new Set(
+      (await ConversationRepository.listCopyVersions(client, workspaceId, hostWorkspaceId, rootStreamId)).map(
+        (copy) => copy.id
+      )
+    )
+    const foreign = skipped.find((conversation) => !held.has(conversation.id))
+    if (foreign) {
+      throw new Error(
+        `Conversation ${foreign.id} in ${workspaceId} is not a copy in connection ${connection.connectionId}`
+      )
+    }
+  }
+
+  const delivery = new Map<string, Awaited<ReturnType<typeof resolveConversationDelivery>>>()
+  for (const conversation of [...inserted, ...updated]) {
+    if (delivery.has(conversation.streamId)) continue
+    delivery.set(
+      conversation.streamId,
+      await resolveConversationDelivery(client, streamById.get(conversation.streamId) ?? null)
+    )
+  }
+  const payload = (conversation: Conversation) => ({
+    workspaceId,
+    streamId: conversation.streamId,
+    conversationId: conversation.id,
+    conversation: addStalenessFields(conversation),
+    ...delivery.get(conversation.streamId),
+    settlingMessageIds: [],
+  })
+  await OutboxRepository.insertMany(client, [
+    ...inserted.map((conversation) => ({ eventType: "conversation:created" as const, payload: payload(conversation) })),
+    ...updated.map((conversation) => ({ eventType: "conversation:updated" as const, payload: payload(conversation) })),
+  ])
 }
 
 /**

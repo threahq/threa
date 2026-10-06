@@ -57,6 +57,7 @@ export {
 export type { StalenessSweepWorkerDeps } from "./staleness-sweep-worker"
 
 export { ConversationRepository } from "./repository"
+export { readableByPartner, viewConversationsAsPartner } from "./partner-view"
 
 export { ConversationEmbeddingHandler } from "./embedding-outbox-handler"
 export { createConversationEmbeddingWorker } from "./embedding-worker"
@@ -69,7 +70,12 @@ export {
 export type { MessageConversationState, SettledByReason, SettlingRow } from "./settling-repository"
 export { settleMessagesOnEngagement, emitSettledConversationUpdates } from "./settling-service"
 export { ConversationFeedbackRepository } from "./feedback-repository"
-export type { Conversation, InsertConversationParams, UpdateConversationParams } from "./repository"
+export type {
+  Conversation,
+  InsertConversationParams,
+  SharedConversation,
+  UpdateConversationParams,
+} from "./repository"
 
 export { addStalenessFields, computeTemporalStaleness, computeEffectiveCompleteness } from "./staleness"
 export { resolveConversationDelivery } from "./conversation-delivery"

@@ -101,12 +101,12 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
       const attachmentIds = [...attachmentsByMessage.values()].flatMap((attachments) =>
         attachments.map((attachment) => attachment.id)
       )
-      return { stream, messages, siblings, attachmentIds, shared: sharedTree !== null }
+      return { stream, messages, siblings, attachmentIds, sharedRootStreamId: sharedTree?.rootStreamId ?? null }
     })
     if (!fetched || fetched.messages.length === 0) return null
 
     // A shared channel's partner sees no previews; the host fetched them, some with its own integrations.
-    const linkPreviewProcessing = fetched.shared
+    const linkPreviewProcessing = fetched.sharedRootStreamId
       ? null
       : awaitLinkPreviewProcessing(this.pool, target.workspaceId, fetched.messages)
     if (fetched.attachmentIds.length > 0) {
@@ -144,7 +144,12 @@ export class DynamicNamingStreamTarget implements DynamicNamingTargetAdapter {
       .filter((stream) => stream.id !== target.targetId && stream.displayName)
       .slice(0, DYNAMIC_NAMING_MAX_EXISTING_TITLES)
       .map((stream) => stream.displayName!)
-    return { context, existingTitles }
+    return {
+      context,
+      currentTitle: target.title,
+      existingTitles,
+      sharedRootStreamId: fetched.sharedRootStreamId,
+    }
   }
 
   async applyRename(client: PoolClient, target: DynamicNamingTargetSnapshot, title: string): Promise<number | null> {

@@ -884,7 +884,7 @@ describe("BoundaryExtractionService", () => {
         }
       })
 
-      return { sharedStreamId, priorMsgId, triggerMsgId, threadReplyId, cardThreadReplyId }
+      return { sharedStreamId, replyThreadStreamId, priorMsgId, triggerMsgId, threadReplyId, cardThreadReplyId }
     }
 
     test("should read the channel as its partner does when the channel is shared", async () => {
@@ -945,6 +945,7 @@ describe("BoundaryExtractionService", () => {
           streamId: sharedStreamId,
           workspaceId: testWorkspaceId,
           topicSummary: "Outside work",
+          summary: "Planning the Initech deal",
         })
         for (const id of [priorMsgId, triggerMsgId, threadReplyId, cardThreadReplyId, deletedMsgId]) {
           await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, id, testUserId)
@@ -953,13 +954,19 @@ describe("BoundaryExtractionService", () => {
 
       await service.proposeSplit(convId, testWorkspaceId)
 
-      expect(stubExtractor.lastSplitContext?.messages.map((m) => [m.id, m.contentMarkdown]).toSorted()).toEqual(
-        [
+      expect({
+        topicSummary: stubExtractor.lastSplitContext?.topicSummary,
+        summary: stubExtractor.lastSplitContext?.summary,
+        messages: stubExtractor.lastSplitContext?.messages.map((m) => [m.id, m.contentMarkdown]).toSorted(),
+      }).toEqual({
+        topicSummary: null,
+        summary: null,
+        messages: [
           [priorMsgId, "Before the card"],
           [triggerMsgId, "see #outside per https://github.com/acme/private/pull/7"],
           [threadReplyId, "A reply"],
-        ].toSorted()
-      )
+        ].toSorted(),
+      })
     })
 
     test("should quote what the partner reads when the channel is shared", async () => {
@@ -996,6 +1003,7 @@ describe("BoundaryExtractionService", () => {
           streamId: sharedStreamId,
           workspaceId: testWorkspaceId,
           topicSummary: "Rollout",
+          sharedRootStreamId: sharedStreamId,
         })
         for (const id of [triggerMsgId, deletedMsgId]) {
           await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, convId, id, testUserId)
@@ -1029,6 +1037,67 @@ describe("BoundaryExtractionService", () => {
           snippet: "see #outside per https://github.com/acme/private/pull/7",
         },
       ])
+    })
+    test("should show a title and summary only when written while shared, and stamp new ones with the channel, when the channel is shared", async () => {
+      const { sharedStreamId, replyThreadStreamId, priorMsgId, triggerMsgId, threadReplyId } =
+        await seedSharedChannel()
+      const preShareId = conversationId()
+      const sharedId = conversationId()
+      const laterReplyId = messageId()
+      await withTransaction(pool, async (client) => {
+        await ConversationRepository.insert(client, {
+          id: preShareId,
+          streamId: sharedStreamId,
+          workspaceId: testWorkspaceId,
+          topicSummary: "Initech plan",
+          summary: "Acquire Initech quietly",
+          status: ConversationStatuses.ACTIVE,
+        })
+        await ConversationRepository.insert(client, {
+          id: sharedId,
+          streamId: replyThreadStreamId,
+          workspaceId: testWorkspaceId,
+          topicSummary: "Rollout",
+          summary: "Rolling out on Friday",
+          status: ConversationStatuses.ACTIVE,
+          sharedRootStreamId: sharedStreamId,
+        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, preShareId, priorMsgId, testUserId)
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, sharedId, threadReplyId, testUserId)
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: laterReplyId,
+          streamId: replyThreadStreamId,
+          sequence: BigInt(2),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Another reply"),
+        })
+      })
+      stubExtractor.setNextResult({
+        assignments: [{ conversationId: null, isPrimary: true }],
+        newConversationTopic: "Card links",
+        newConversationSummary: "Where the links point",
+        confidence: 0.8,
+      })
+
+      const inChannel = await service.processMessage(triggerMsgId, sharedStreamId, testWorkspaceId)
+      const active = stubExtractor.lastContext?.activeConversations.map((c) => [c.id, c.topicSummary, c.summary])
+      const inThread = await service.processMessage(laterReplyId, replyThreadStreamId, testWorkspaceId)
+      const { rows: stamps } = await pool.query(
+        `SELECT topic_summary_shared_root_stream_id, summary_shared_root_stream_id FROM conversations
+         WHERE workspace_id = $1 AND id = ANY($2)`,
+        [testWorkspaceId, [inChannel!.id, inThread!.id]]
+      )
+
+      const stamped = { topic_summary_shared_root_stream_id: sharedStreamId, summary_shared_root_stream_id: sharedStreamId }
+      expect({ active: active?.toSorted(), stamps }).toEqual({
+        active: [
+          [preShareId, null, null],
+          [sharedId, "Rollout", "Rolling out on Friday"],
+        ].toSorted(),
+        stamps: [stamped, stamped],
+      })
     })
   })
 

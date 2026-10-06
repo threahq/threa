@@ -2,6 +2,8 @@ import {
   BRIDGE_WORKSPACE_HEADER,
   INTERNAL_API_KEY_HEADER,
   bridgeAttachmentResponseSchema,
+  bridgeConversationIndexSchema,
+  bridgeConversationsSchema,
   bridgeEventsSchema,
   bridgeManifestSchema,
   bridgeMemoIndexSchema,
@@ -10,6 +12,9 @@ import {
   bridgeSendMessageResponseSchema,
   type BridgeAddReaction,
   type BridgeAttachmentResponse,
+  type BridgeConversationIndex,
+  type BridgeConversations,
+  type BridgeConversationsRequest,
   type BridgeEditMessage,
   type BridgeEvents,
   type BridgeManifest,
@@ -94,6 +99,20 @@ export class BridgeClient {
   async getMemos(address: ConnectionAddress, memoIds: string[]): Promise<BridgeMemos> {
     const res = await this.request(address, "/memos", "POST", { memoIds } satisfies BridgeMemosRequest)
     return bridgeMemosSchema.parse(await res.json())
+  }
+
+  /** The conversations in the shared tree, each with its version. */
+  async getConversationIndex(address: ConnectionAddress): Promise<BridgeConversationIndex> {
+    const res = await this.request(address, "/conversations", "GET")
+    return bridgeConversationIndexSchema.parse(await res.json())
+  }
+
+  /** The given conversations, for those still in the shared tree. */
+  async getConversations(address: ConnectionAddress, conversationIds: string[]): Promise<BridgeConversations> {
+    const res = await this.request(address, "/conversations", "POST", {
+      conversationIds,
+    } satisfies BridgeConversationsRequest)
+    return bridgeConversationsSchema.parse(await res.json())
   }
 
   /** The other end's current name and avatar of the given users, for those it shares. */

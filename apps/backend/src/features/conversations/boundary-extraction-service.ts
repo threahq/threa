@@ -26,6 +26,7 @@ import { SETTLING_CONFIDENCE_THRESHOLD } from "./boundary-extraction/config"
 import { resolveConversationDelivery } from "./conversation-delivery"
 import { emitAssignmentEvents } from "./assignment-events"
 import { resolveEventAnchoredParentConversationId } from "./parent-conversation"
+import { viewConversationsAsPartner } from "./partner-view"
 import { isClusteredAuthorType, isClusteredStreamType } from "./extraction-eligibility"
 import { conversationId } from "../../lib/id"
 import {
@@ -78,8 +79,9 @@ export class BoundaryExtractionService {
         .map((id) => messagesMap.get(id))
         .filter((m): m is Message => m !== undefined)
       const sharedTree = await findSharedTree(client, workspaceId, conversation.streamId)
+      const [readable] = await viewConversationsAsPartner(client, workspaceId, sharedTree, [conversation])
       return {
-        conversation,
+        conversation: readable!,
         stream,
         messages: await viewAsPartner(client, workspaceId, sharedTree, messages),
       }
@@ -240,10 +242,11 @@ export class BoundaryExtractionService {
       ])
       const allContextMessageIds = allContextMessages.map((m) => m.id)
 
-      const relevantConversations = await ConversationRepository.findByMessageIds(
+      const relevantConversations = await viewConversationsAsPartner(
         client,
         workspaceId,
-        allContextMessageIds
+        sharedTree,
+        await ConversationRepository.findByMessageIds(client, workspaceId, allContextMessageIds)
       )
 
       // Resolve explicit quote-replies to a strong continuity signal (INV-54:
@@ -264,10 +267,11 @@ export class BoundaryExtractionService {
 
       let parentMessageConversations: Conversation[] = []
       if (stream.type === StreamTypes.THREAD && stream.parentAnchorId?.startsWith("msg_")) {
-        parentMessageConversations = await ConversationRepository.findByMessageId(
+        parentMessageConversations = await viewConversationsAsPartner(
           client,
           workspaceId,
-          stream.parentAnchorId
+          sharedTree,
+          await ConversationRepository.findByMessageId(client, workspaceId, stream.parentAnchorId)
         )
       }
 
@@ -311,7 +315,7 @@ export class BoundaryExtractionService {
         attachmentTargetIds: [message.id, ...allContextMessageIds],
         validUpdateTargets,
         validReassignmentMessageIds: new Set(allContextMessageIds),
-        shared: sharedTree !== null,
+        sharedRootStreamId: sharedTree?.rootStreamId ?? null,
       }
     })
 
@@ -346,7 +350,7 @@ export class BoundaryExtractionService {
       scratchpadConversations,
       validUpdateTargets,
       validReassignmentMessageIds,
-      shared,
+      sharedRootStreamId,
     } = fetchedData
 
     // Phase 1.5 (channels/threads only): await attachment processing with no DB
@@ -354,7 +358,7 @@ export class BoundaryExtractionService {
     let extractionContext: ExtractionContext | null = null
     if (extractionContextBase && attachmentTargetIds) {
       // A shared channel's partner sees no previews; the host fetched them, some with its own integrations.
-      const linkPreviewProcessing = shared ? null : awaitLinkPreviewProcessing(this.pool, workspaceId, [message])
+      const linkPreviewProcessing = sharedRootStreamId ? null : awaitLinkPreviewProcessing(this.pool, workspaceId, [message])
       if (newMessageAttachmentIds && newMessageAttachmentIds.length > 0) {
         logger.debug(
           { messageId, attachmentCount: newMessageAttachmentIds.length },
@@ -378,7 +382,7 @@ export class BoundaryExtractionService {
 
       const [attachmentsByMessage, previewRowsByMessage] = await Promise.all([
         AttachmentRepository.findByMessageIdsWithExtractions(this.pool, workspaceId, attachmentTargetIds),
-        shared
+        sharedRootStreamId
           ? new Map<string, LinkPreview[]>()
           : LinkPreviewRepository.findByMessageIds(this.pool, workspaceId, attachmentTargetIds),
       ])
@@ -481,6 +485,7 @@ export class BoundaryExtractionService {
               topicSummary: decision.newTopic,
               topicSummarySource: decision.newTopic === undefined ? undefined : TitleSources.GENERATED,
               summary: decision.newSummary,
+              sharedRootStreamId,
               confidence: decision.confidence,
               status: ConversationStatuses.ACTIVE,
             })
@@ -766,6 +771,7 @@ export class BoundaryExtractionService {
             completenessScore: update.score,
             status,
             summary: update.summary,
+            sharedRootStreamId: sharedRootStreamId ?? null,
           })
           touchedConversationIds.add(update.conversationId)
         }
@@ -981,16 +987,20 @@ export class BoundaryExtractionService {
     )
     if (quotedMessages.size === 0) return { replyTargets: [], quotedConversations: [] }
 
-    const primariesByMessageId = await ConversationRepository.findPrimariesByMessageIds(client, workspaceId, [
+    const primaries = await ConversationRepository.findPrimariesByMessageIds(client, workspaceId, [
       ...quotedMessages.keys(),
     ])
+    const readable = new Map(
+      (await viewConversationsAsPartner(client, workspaceId, sharedTree, [...primaries.values()])).map((c) => [c.id, c])
+    )
 
     const replyTargets: ReplyTarget[] = []
     const quotedConversations: Conversation[] = []
     for (const quotedMessageId of quotedMessageIds) {
       const quotedMessage = quotedMessages.get(quotedMessageId)
       if (!quotedMessage) continue
-      const conv = primariesByMessageId.get(quotedMessageId)
+      const primary = primaries.get(quotedMessageId)
+      const conv = primary && readable.get(primary.id)
       if (!conv) continue
       replyTargets.push({
         quotedMessageId,

@@ -26,6 +26,7 @@ import { conversationFeedbackId, conversationId as generateConversationId } from
 import { HttpError } from "../../lib/errors"
 import { logger } from "../../lib/logger"
 import { DynamicNamingStateRepository } from "../dynamic-naming/state-repository"
+import { findSharedTree } from "../stream-connections"
 import {
   BOARD_TAIL_MAX_ROWS,
   ConversationStatuses,
@@ -840,6 +841,7 @@ export class ConversationService {
         conversationId,
         topicSummary: locked.topicSummary,
         source: TitleSources.GENERATED,
+        sharedRootStreamId: undefined,
         expectedRevision: locked.topicSummaryRevision ?? 0,
         expectedSource: source,
       })
@@ -937,6 +939,7 @@ export class ConversationService {
           conversationId,
           topicSummary,
           source: TitleSources.EXPLICIT,
+          sharedRootStreamId: (await findSharedTree(client, workspaceId, updated.streamId))?.rootStreamId ?? null,
           updatedByUserId: actorUserId,
         })
         if (!updated) throw new HttpError("Conversation not found", { status: 404, code: "CONVERSATION_NOT_FOUND" })
@@ -1563,13 +1566,18 @@ export class ConversationService {
         movingIds,
         distinctAuthors(remainingSourceIds, memberMessages)
       )
+      const sharedRootStreamId = (await findSharedTree(client, workspaceId, streamId))?.rootStreamId ?? null
       if (sourceFullyAnalyzed) {
-        await ConversationRepository.update(client, workspaceId, source.id, { summary: keepGroup.summary })
+        await ConversationRepository.update(client, workspaceId, source.id, {
+          summary: keepGroup.summary,
+          sharedRootStreamId,
+        })
         await ConversationRepository.updateTopicSummary(client, {
           workspaceId,
           conversationId: source.id,
           topicSummary: keepGroup.title,
           source: TitleSources.EXPLICIT,
+          sharedRootStreamId,
           updatedByUserId: actorUserId,
         })
       }
@@ -1590,6 +1598,7 @@ export class ConversationService {
           topicSummarySource: TitleSources.EXPLICIT,
           topicSummaryUpdatedByUserId: actorUserId,
           summary: g.summary,
+          sharedRootStreamId,
           confidence: 1,
           status: ConversationStatuses.ACTIVE,
         })
