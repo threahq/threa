@@ -37,7 +37,7 @@ export function PanelTabStrip({
   labels?: ReactNode
   className?: string
 }) {
-  const { layout, section, getTabUrl, closeTab, splitTab, splits, setCurrentPane } = usePanel()
+  const { layout, section, getTabUrl, closeTab, splitTab, splits, setCurrentPane, focusTab } = usePanel()
   const currentPane = useCurrentPane()
   const { isMobile } = useSidebar()
   const panelIds = section?.ids ?? []
@@ -90,9 +90,12 @@ export function PanelTabStrip({
                 replace
                 onClick={(event) => {
                   // The tab on show is the panel's title: following its link would close its overview.
+                  // A floating tab's title puts it back in its place.
                   setCurrentPane(id)
-                  if (active) event.preventDefault()
-                  else handOffFocus(id)
+                  if (active) {
+                    event.preventDefault()
+                    if (layout.focused === id) focusTab(null)
+                  } else handOffFocus(id)
                 }}
                 aria-current={active ? "page" : undefined}
                 className={cn(
@@ -263,7 +266,7 @@ export function usePanelCloseFocusLanding() {
   return closeRef
 }
 
-function PanelTabTitle({ workspaceId, panelId }: { workspaceId: string; panelId: string }) {
+export function PanelTabTitle({ workspaceId, panelId }: { workspaceId: string; panelId: string }) {
   if (isDraftPanel(panelId)) return <>New thread</>
   const conversationId = parseConversationPanel(panelId)
   if (conversationId) {

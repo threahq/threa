@@ -3,7 +3,8 @@
  * section a stack of tabs. Tabs are joined by `.` with the one on show marked by
  * a trailing `*`, sections by `-`, and a section stacked under the one before it
  * in the same column by `--`. The marker is written only when the active tab is
- * not its section's last, so a single panel (`?panel=stream_x`) and an S2a tab
+ * not its section's last; the focused tab, floating over the rest, is marked
+ * `**` wherever it is, so a single panel (`?panel=stream_x`) and an S2a tab
  * row read exactly as they always have, and every arrangement has one spelling —
  * history entries compare by URL. `-` and `.` are left alone by URL encoding and
  * never occur in a panel id.
@@ -17,6 +18,10 @@ type PanelColumn = readonly PanelSection[]
 
 export interface PanelLayout {
   columns: readonly PanelColumn[]
+  /** The tab floating over the rest, always its section's active tab. Bringing
+   *  another tab forward or opening one puts it back; closing or swapping out
+   *  another leaves it floating. */
+  focused?: string
 }
 
 export type SplitDirection = "right" | "down"
@@ -25,12 +30,14 @@ export const PANEL_PARAM = "panel"
 const TAB_SEPARATOR = "."
 const SECTION_SEPARATOR = "-"
 const ACTIVE_MARK = "*"
+const FOCUS_MARK = "**"
 
 export const NO_PANELS: PanelLayout = { columns: [] }
 
 export function parsePanelLayout(value: string | null): PanelLayout {
   if (!value) return NO_PANELS
   const seen = new Set<string>()
+  const focus: { id: string | null } = { id: null }
   const columns: PanelSection[][] = []
   let stackNext = false
   for (const token of value.split(SECTION_SEPARATOR)) {
@@ -38,7 +45,7 @@ export function parsePanelLayout(value: string | null): PanelLayout {
       stackNext = columns.length > 0
       continue
     }
-    const section = parseSection(token, seen)
+    const section = parseSection(token, seen, focus)
     if (!section) {
       stackNext = false
       continue
@@ -47,35 +54,42 @@ export function parsePanelLayout(value: string | null): PanelLayout {
     else columns.push([section])
     stackNext = false
   }
-  return columns.length === 0 ? NO_PANELS : { columns }
+  if (columns.length === 0) return NO_PANELS
+  return focus.id === null ? { columns } : { columns, focused: focus.id }
 }
 
-function parseSection(token: string, seen: Set<string>): PanelSection | null {
+function parseSection(token: string, seen: Set<string>, focus: { id: string | null }): PanelSection | null {
   const ids: string[] = []
   let active: string | null = null
+  let focused: string | null = null
   for (const part of token.split(TAB_SEPARATOR)) {
-    const marked = part.endsWith(ACTIVE_MARK)
-    const id = marked ? part.slice(0, -ACTIVE_MARK.length) : part
+    const mark = [FOCUS_MARK, ACTIVE_MARK].find((candidate) => part.endsWith(candidate)) ?? ""
+    const id = part.slice(0, part.length - mark.length)
     if (!id || seen.has(id)) continue
     seen.add(id)
     ids.push(id)
-    if (marked && active === null) active = id
+    if (mark === FOCUS_MARK && focus.id === null) focus.id = focused = id
+    else if (mark !== "" && active === null) active = id
   }
   if (ids.length === 0) return null
-  return { ids, active: active ?? ids[ids.length - 1] }
+  return { ids, active: focused ?? active ?? ids[ids.length - 1] }
 }
 
 export function formatPanelLayout(layout: PanelLayout): string | null {
   if (layout.columns.length === 0) return null
   return layout.columns
-    .map((column) => column.map(formatSection).join(SECTION_SEPARATOR.repeat(2)))
+    .map((column) => column.map((section) => formatSection(section, layout.focused)).join(SECTION_SEPARATOR.repeat(2)))
     .join(SECTION_SEPARATOR)
 }
 
-function formatSection(section: PanelSection): string {
+function formatSection(section: PanelSection, focused: string | undefined): string {
   const last = section.ids[section.ids.length - 1]
   return section.ids
-    .map((id) => (id === section.active && id !== last ? `${id}${ACTIVE_MARK}` : id))
+    .map((id) => {
+      if (id !== section.active) return id
+      if (id === focused) return `${id}${FOCUS_MARK}`
+      return id === last ? id : `${id}${ACTIVE_MARK}`
+    })
     .join(TAB_SEPARATOR)
 }
 
@@ -123,11 +137,24 @@ function insertColumn(layout: PanelLayout, index: number, section: PanelSection)
   return { columns: [...layout.columns.slice(0, index), [section], ...layout.columns.slice(index)] }
 }
 
+/** Floats `id` over the rest, bringing it to the front of its section; null puts it back. */
+export function focusPanelTab(layout: PanelLayout, id: string | null): PanelLayout {
+  if (id === layout.focused || (id !== null && !locate(layout, id))) return layout
+  const { columns } = id === null ? layout : activatePanelTab(layout, id)
+  return id === null ? { columns } : { columns, focused: id }
+}
+
 export function activatePanelTab(layout: PanelLayout, id: string): PanelLayout {
   const at = locate(layout, id)
   if (!at) return layout
   const section = sectionAt(layout, at)
-  return section.active === id ? layout : withSection(layout, at, { ids: section.ids, active: id })
+  if (section.active !== id) return withSection(layout, at, { ids: section.ids, active: id })
+  return layout.focused === undefined || layout.focused === id ? layout : { columns: layout.columns }
+}
+
+/** `next` with `prev`'s focused tab still floating, when it is still on show. */
+function keepFocus(prev: PanelLayout, next: PanelLayout, focused = prev.focused): PanelLayout {
+  return focused !== undefined && isPanelOnShow(next, focused) ? { ...next, focused } : next
 }
 
 function appendTab(layout: PanelLayout, at: PanelLocation, id: string): PanelLayout {
@@ -181,13 +208,13 @@ function removeTab(layout: PanelLayout, at: PanelLocation, id: string): PanelLay
 /** Removes `id`; a section left empty closes, and so does a column left empty. */
 export function closePanelTab(layout: PanelLayout, id: string): PanelLayout {
   const at = locate(layout, id)
-  return at ? removeTab(layout, at, id) : layout
+  return at ? keepFocus(layout, removeTab(layout, at, id)) : layout
 }
 
-/** The tab showing `from` shows `to` instead, keeping its place and whether it
- *  is active. When `to` is already open in another tab, that tab moves into
- *  `from`'s place: an id is open at most once, and the pane navigating keeps
- *  showing where it went. */
+/** The tab showing `from` shows `to` instead, keeping its place, whether it
+ *  is active and whether it is focused. When `to` is already open in another
+ *  tab, that tab moves into `from`'s place: an id is open at most once, and the
+ *  pane navigating keeps showing where it went. */
 export function replacePanelTab(layout: PanelLayout, from: string, to: string): PanelLayout {
   if (from === to) return layout
   if (!locate(layout, from)) return openPanelTab(layout, to)
@@ -195,10 +222,11 @@ export function replacePanelTab(layout: PanelLayout, from: string, to: string): 
   const rest = elsewhere ? removeTab(layout, elsewhere, to) : layout
   const at = locate(rest, from)!
   const section = sectionAt(rest, at)
-  return withSection(rest, at, {
+  const replaced = withSection(rest, at, {
     ids: section.ids.map((id) => (id === from ? to : id)),
     active: section.active === from ? to : section.active,
   })
+  return keepFocus(layout, replaced, layout.focused === from ? to : layout.focused)
 }
 
 /** Moves `id` out of its section into a new one to its right or below it. A

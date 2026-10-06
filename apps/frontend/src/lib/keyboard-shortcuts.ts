@@ -186,6 +186,14 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     category: "view",
     global: true,
   },
+  {
+    id: "togglePaneFocus",
+    label: "Focus Pane",
+    description: "Float the pane you're working in over the rest, or put it back",
+    defaultKey: "alt+enter",
+    category: "view",
+    global: true,
+  },
   // Editor formatting shortcuts (not global — only active when editor is focused)
   {
     id: "formatBold",
@@ -494,6 +502,9 @@ export function formatKeyBinding(binding: string): string {
       break
     case "tab":
       formatted.push(mac ? "⇥" : "Tab")
+      break
+    case "enter":
+      formatted.push(mac ? "↩" : "Enter")
       break
     case ",":
       formatted.push(",")

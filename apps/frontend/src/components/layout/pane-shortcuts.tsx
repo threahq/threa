@@ -5,7 +5,14 @@ import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { findVisibleZoneEditor, focusAtEnd, zoneContainer } from "@/hooks/use-type-to-focus"
 import { activatePanelTab, closePanelTab, followCurrentPanel } from "@/lib/panel-tabs"
 
-type PaneAction = "closePane" | "reopenPane" | "nextPaneTab" | "previousPaneTab" | "nextPane" | "previousPane"
+type PaneAction =
+  | "closePane"
+  | "reopenPane"
+  | "nextPaneTab"
+  | "previousPaneTab"
+  | "nextPane"
+  | "previousPane"
+  | "togglePaneFocus"
 
 /** How long a pane may take to come out from under the one it was behind. */
 const UNCOVER_WAIT_MS = 2000
@@ -23,7 +30,8 @@ const NO_PANES: readonly (string | null)[] = []
  * by side. Unscoped, with no panel open, only reopening has anything to act on.
  */
 export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string | null)[] }) {
-  const { panelId, layout, section, getTabUrl, closePanel, reopenTab, canReopenTab, setCurrentPane } = usePanel()
+  const { panelId, layout, section, getTabUrl, closePanel, reopenTab, canReopenTab, setCurrentPane, focusTab } =
+    usePanel()
   const current = useCurrentPane()
   const navigate = useNavigate()
   const location = useLocation()
@@ -66,6 +74,10 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string |
     previousPaneTab: () => showTab(-1),
     nextPane: () => showPane(1),
     previousPane: () => showPane(-1),
+    togglePaneFocus: () => {
+      focusTab(layout.focused === undefined ? panelId : null)
+      return true
+    },
   }
 
   // A shortcut with nothing to act on leaves its key to typing, except a held
@@ -78,6 +90,8 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string |
     previousPaneTab: tabs > 1,
     nextPane: panes.length > 1,
     previousPane: panes.length > 1,
+    // Only a tab beside others can float, and only while worked in; whatever floats can always go back.
+    togglePaneFocus: layout.focused !== undefined || (panes.length > 0 && current !== null && panelId !== null),
   }
 
   // The router commits a navigation in a transition, so the URL can be a step
@@ -124,6 +138,7 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string |
     previousPaneTab: handle("previousPaneTab"),
     nextPane: handle("nextPane"),
     previousPane: handle("previousPane"),
+    togglePaneFocus: handle("togglePaneFocus"),
   })
 
   return null

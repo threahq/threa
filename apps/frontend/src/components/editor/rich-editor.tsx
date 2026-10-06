@@ -993,6 +993,8 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           onSubmitRef.current()
           return true
         }
+        // ⌥Enter is the page's pane-focus shortcut: neither a new line nor a send here.
+        if (event.key === "Enter" && event.altKey && !event.shiftKey) return true
         // Enter in "enter" send mode: send unless a suggestion popup is active
         if (event.key === "Enter" && !event.shiftKey && messageSendModeRef.current === "enter") {
           if (currentEditor && isSuggestionActive(currentEditor)) {

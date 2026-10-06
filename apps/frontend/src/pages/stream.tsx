@@ -96,6 +96,7 @@ export function StreamPage() {
   // "In this stream" overview. While a panel is open, `?context` is the panel's.
   const [isContextOpen, setContextOpen] = useStreamContextOpen()
   const containerRef = useRef<HTMLDivElement>(null)
+  const mainPaneRef = useRef<HTMLDivElement>(null)
   const dockFits = fitsDockedColumns(useElementWidth(containerRef), isPanelOpen ? 2 : 1)
   const isDockOpen = isContextOpen && !isMobile && dockFits
   const {
@@ -913,6 +914,8 @@ export function StreamPage() {
   // re-running the opening scroll.
   const mobileTakeover = isMobile && isPanelOpen && !panelInAside
   const tabStackShown = isMobile ? mobileTakeover : showContent && !asideStage && !panelInAside
+  // A tab floating over the page leaves everything else under it out of reach, as the stage does.
+  const floating = !isMobile && tabStackShown && layout.focused !== undefined
 
   return (
     <StreamContextDockProvider value={{ target: dock.target, fits: dockFits }}>
@@ -928,7 +931,9 @@ export function StreamPage() {
           // The stage covers this row: everything under it stays mounted (the
           // page keeps its header and its state) but must leave the tab order,
           // or focus walks into content nobody can see.
-          inert={asideStage}
+          inert={asideStage || floating}
+          className={cn(floating && "isolate")}
+          ref={mainPaneRef}
           onPointerDownCapture={() => setCurrentPane(null)}
           onFocusCapture={() => setCurrentPane(null)}
         >
@@ -956,7 +961,7 @@ export function StreamPage() {
               onResizeEnd={handleResizeEnd}
               onResizeKeyDown={handleResizeKeyDown}
             >
-              <PanelTabStack workspaceId={workspaceId} maxColumns={maxColumns} stacked={isMobile} />
+              <PanelTabStack workspaceId={workspaceId} maxColumns={maxColumns} stacked={isMobile} main={mainPaneRef} />
             </ResizablePanelFrame>
           )}
         </Pane>
@@ -967,7 +972,7 @@ export function StreamPage() {
             dock={dock}
             insetRight={panelInset}
             insetAnimates={panelInsetAnimates}
-            inert={asideStage}
+            inert={asideStage || floating}
           />
         )}
         <AsideSlot workspaceId={workspaceId} hostKey={asideHostKey} />
