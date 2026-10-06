@@ -28,6 +28,7 @@ import { usePendingMessages, usePendingMessageStatus, usePanel, createConversati
 import { useUserProfile } from "@/components/user-profile"
 import { useDeleteMessage } from "@/hooks/use-delete-message"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
+import { useRerenderAt } from "@/hooks/use-rerender-at"
 import { formatStatusClearLabel } from "@/lib/status"
 import { useMessageMarkdownCopy } from "@/hooks/use-message-markdown-copy"
 import { useDecryptedMessageContent, type DecryptedMessageContent } from "@/hooks/use-decrypted-message-content"
@@ -516,8 +517,8 @@ const MessageAuthorStatus = memo(function MessageAuthorStatus({
   // Match the rest of this component, which treats a null/undefined actorType as
   // a user (`event.actorType ?? "user"`), so legacy rows still show status.
   const resolvedActorType = actorType ?? "user"
-  if (resolvedActorType !== "user" || !actorId) return null
-  const status = getActorAvatar(actorId, resolvedActorType).status
+  const status = resolvedActorType === "user" && actorId ? getActorAvatar(actorId, resolvedActorType).status : undefined
+  useRerenderAt(status?.expiresAt)
   if (!status?.emoji) return null
   const clears = formatStatusClearLabel(status.expiresAt)
   const glyph = (

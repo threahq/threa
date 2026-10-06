@@ -4,6 +4,7 @@ import { Moon } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { useActors } from "@/hooks"
+import { useRerenderAt } from "@/hooks/use-rerender-at"
 import { formatNotificationPauseLabel, formatStatusClearLabel } from "@/lib/status"
 import { cn } from "@/lib/utils"
 
@@ -75,6 +76,8 @@ export const ActorAvatar = memo(function ActorAvatar({
 }: ActorAvatarProps) {
   const { getActorAvatar } = useActors(workspaceId)
   const info = getActorAvatar(actorId, actorType)
+  useRerenderAt(info.status?.expiresAt)
+  useRerenderAt(info.dnd?.until)
 
   if (actorType === "persona") {
     return (
