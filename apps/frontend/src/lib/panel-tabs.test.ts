@@ -192,6 +192,11 @@ describe("focusPanelTab", () => {
     expect(focusPanelTab(layout, "z")).toBe(layout)
   })
 
+  it("should leave the layout alone when putting back with nothing focused", () => {
+    const layout = at("a.b")
+    expect(focusPanelTab(layout, null)).toBe(layout)
+  })
+
   it("should read the first focus mark only when a hand-edited value has two", () => {
     expect(spell(at("a**-b**.c"))).toBe("a**-b*.c")
   })

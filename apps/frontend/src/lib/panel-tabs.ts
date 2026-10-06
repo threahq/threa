@@ -3,10 +3,10 @@
  * section a stack of tabs. Tabs are joined by `.` with the one on show marked by
  * a trailing `*`, sections by `-`, and a section stacked under the one before it
  * in the same column by `--`. The marker is written only when the active tab is
- * not its section's last; the focused tab, floating over the rest, is marked
- * `**` wherever it is, so a single panel (`?panel=stream_x`) and an S2a tab
+ * not its section's last, so a single panel (`?panel=stream_x`) and an S2a tab
  * row read exactly as they always have, and every arrangement has one spelling —
- * history entries compare by URL. `-` and `.` are left alone by URL encoding and
+ * history entries compare by URL. The focused tab, floating over the rest, is
+ * marked `**` wherever it is. `-` and `.` are left alone by URL encoding and
  * never occur in a panel id.
  */
 export interface PanelSection {
@@ -137,9 +137,14 @@ function insertColumn(layout: PanelLayout, index: number, section: PanelSection)
   return { columns: [...layout.columns.slice(0, index), [section], ...layout.columns.slice(index)] }
 }
 
+/** The tab floating over the page. A phone shows one pane at a time, so nothing floats there; the URL keeps the mark for a wider window. */
+export function floatingPanelTab(layout: PanelLayout, stacked: boolean): string | null {
+  return stacked ? null : (layout.focused ?? null)
+}
+
 /** Floats `id` over the rest, bringing it to the front of its section; null puts it back. */
 export function focusPanelTab(layout: PanelLayout, id: string | null): PanelLayout {
-  if (id === layout.focused || (id !== null && !locate(layout, id))) return layout
+  if (id === (layout.focused ?? null) || (id !== null && !locate(layout, id))) return layout
   if (id === null) return { columns: layout.columns }
   return { columns: activatePanelTab(layout, id).columns, focused: id }
 }

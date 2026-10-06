@@ -437,11 +437,14 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const focusTab = useCallback(
     (panelId: string | null) => {
       if (panelId !== null) {
+        // A second press can land before the router commits the first, which already pushed this step.
+        if (parsePanelLayout(new URLSearchParams(window.location.search).get(PANEL_PARAM)).focused === panelId) return
         open((current) => focusPanelTab(current, panelId), false)
         return
       }
-      if (layout.focused === undefined) return
-      const value = formatPanelLayout(focusPanelTab(layout, null))
+      const next = focusPanelTab(layout, null)
+      if (next === layout) return
+      const value = formatPanelLayout(next)
       if (value === null) return
       const params = new URLSearchParams(searchParams)
       params.set(PANEL_PARAM, value)

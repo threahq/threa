@@ -5,29 +5,33 @@ describe("fitPanelTabs", () => {
   const active = 180
   const three = active + 2 * MIN_TAB_WIDTH
 
-  it("should show every tab and the labels when both fit", () => {
-    expect(fitPanelTabs(three + 60, 3, active, 60)).toEqual({ labels: true, visible: 3 })
+  it("should show every tab, the labels and the Focus button when they all fit", () => {
+    expect(fitPanelTabs(three + 60 + 32, 3, active, 60, 32)).toEqual({ labels: true, focus: true, visible: 3 })
   })
 
-  it("should fold the labels before any tab", () => {
-    expect(fitPanelTabs(three + 59, 3, active, 60)).toEqual({ labels: false, visible: 3 })
-    expect(fitPanelTabs(three, 3, active, 60)).toEqual({ labels: false, visible: 3 })
+  it("should fold the labels, then the Focus button, before any tab", () => {
+    expect(fitPanelTabs(three + 60 + 31, 3, active, 60, 32)).toEqual({ labels: false, focus: true, visible: 3 })
+    expect(fitPanelTabs(three + 32, 3, active, 60, 32)).toEqual({ labels: false, focus: true, visible: 3 })
+    expect(fitPanelTabs(three + 31, 3, active, 60, 32)).toEqual({ labels: false, focus: false, visible: 3 })
+    expect(fitPanelTabs(three, 3, active, 60, 32)).toEqual({ labels: false, focus: false, visible: 3 })
   })
 
   it("should fold trailing tabs into the menu once the labels are gone", () => {
-    expect(fitPanelTabs(three - 1, 3, active, 60)).toEqual({ labels: false, visible: 2 })
-    expect(fitPanelTabs(active + MIN_TAB_WIDTH + MORE_TABS_WIDTH, 3, active, 0)).toEqual({
+    expect(fitPanelTabs(three - 1, 3, active, 60, 32)).toEqual({ labels: false, focus: false, visible: 2 })
+    expect(fitPanelTabs(active + MIN_TAB_WIDTH + MORE_TABS_WIDTH, 3, active, 0, 0)).toEqual({
       labels: false,
+      focus: false,
       visible: 2,
     })
-    expect(fitPanelTabs(active + MIN_TAB_WIDTH + MORE_TABS_WIDTH - 1, 3, active, 0)).toEqual({
+    expect(fitPanelTabs(active + MIN_TAB_WIDTH + MORE_TABS_WIDTH - 1, 3, active, 0, 0)).toEqual({
       labels: false,
+      focus: false,
       visible: 1,
     })
   })
 
   it("should keep the tab on show however narrow the row gets", () => {
-    expect(fitPanelTabs(40, 5, active, 60)).toEqual({ labels: false, visible: 1 })
+    expect(fitPanelTabs(40, 5, active, 60, 32)).toEqual({ labels: false, focus: false, visible: 1 })
   })
 })
 

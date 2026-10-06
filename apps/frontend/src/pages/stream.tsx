@@ -32,6 +32,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { SidebarActionMenu, type SidebarActionItem } from "@/components/layout/sidebar/sidebar-actions"
 import { cn } from "@/lib/utils"
+import { floatingPanelTab } from "@/lib/panel-tabs"
 import {
   useStreamOrDraft,
   useStreamError,
@@ -915,10 +916,11 @@ export function StreamPage() {
   const mobileTakeover = isMobile && isPanelOpen && !panelInAside
   const tabStackShown = isMobile ? mobileTakeover : showContent && !asideStage && !panelInAside
   // A tab floating over the page leaves everything else under it out of reach, as the stage does.
-  const floating = !isMobile && tabStackShown && layout.focused !== undefined
+  const floating = tabStackShown && floatingPanelTab(layout, isMobile) !== null
 
   return (
-    <StreamContextDockProvider value={{ target: dock.target, fits: dockFits }}>
+    // A floating tab's overview floats over it too: the dock is under it.
+    <StreamContextDockProvider value={{ target: dock.target, fits: dockFits && !floating }}>
       <PaneHost
         ref={containerRef}
         columns={isMobile ? "minmax(0,1fr)" : `minmax(0,1fr) ${displayWidth}px auto`}
@@ -960,6 +962,7 @@ export function StreamPage() {
               onResizeMove={handleResizeMove}
               onResizeEnd={handleResizeEnd}
               onResizeKeyDown={handleResizeKeyDown}
+              handleInert={floating}
             >
               <PanelTabStack workspaceId={workspaceId} maxColumns={maxColumns} stacked={isMobile} main={mainPaneRef} />
             </ResizablePanelFrame>

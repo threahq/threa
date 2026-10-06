@@ -41,6 +41,9 @@ const composer = (page: Page, id: string) => tabPane(page, id).locator('[content
 const panelParam = (page: Page) => new URL(page.url()).searchParams.get("panel")
 const floatingPane = (page: Page) => page.locator("[data-focused-pane]")
 const scrim = (page: Page) => page.getByTestId("pane-focus-scrim")
+const ghost = (page: Page) => page.getByTestId("pane-focus-ghost")
+const mainPane = (page: Page) => page.locator('[data-editor-zone="main"]')
+const inertMain = (page: Page) => page.locator('[inert]:has([data-editor-zone="main"])')
 
 async function openPanels(page: Page, workspaceId: string, streamId: string, panel: string, last: number) {
   await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${panel}`)
@@ -55,11 +58,11 @@ test("should float a tab over the page and put it back, keeping its draft", asyn
   const [a, b] = threads
   await openPanels(page, workspaceId, streamId, `${a}--${b}`, 2)
   const before = (await tabPane(page, b).boundingBox())!
-  const main = (await page.locator('[data-editor-zone="main"]').boundingBox())!
+  const main = (await mainPane(page).boundingBox())!
 
   await composer(page, b).click()
   await page.keyboard.type("half a thought")
-  await tabPane(page, b).getByRole("button", { name: "Focus", exact: true }).click()
+  await tabPane(page, b).getByRole("button", { name: "Focus pane", exact: true }).click()
 
   await expect.poll(() => panelParam(page)).toBe(`${a}--${b}**`)
   await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", b)
@@ -72,18 +75,37 @@ test("should float a tab over the page and put it back, keeping its draft", asyn
   expect(floating.y).toBeGreaterThanOrEqual(main.y)
   expect(floating.height).toBeGreaterThan(before.height * 1.5)
   await expect(tabPane(page, b).getByText("reply in thread 2", { exact: true })).toBeVisible()
-  // Everything under it is out of reach.
+  // A ghost holds its cell, and everything under it is out of reach.
+  expect(await ghost(page).boundingBox()).toEqual(before)
   await expect(tabPane(page, a)).toHaveAttribute("inert", "")
+  await expect(inertMain(page)).toHaveCount(1)
   await expect(tabPane(page, b).getByRole("button", { name: "Restore to layout" })).toBeVisible()
 
-  // A field keeps its Escape; out of it, Escape puts the pane back.
+  // A field keeps its Escape. Restoring moves history, synchronously inside the keydown.
+  await composer(page, b).click()
+  await page.evaluate(() => {
+    const spy = window as unknown as { historyMoves: number }
+    spy.historyMoves = 0
+    for (const name of ["go", "back", "pushState", "replaceState"] as const) {
+      const original = history[name].bind(history) as (...args: unknown[]) => void
+      ;(history as unknown as Record<string, unknown>)[name] = (...args: unknown[]) => {
+        spy.historyMoves++
+        original(...args)
+      }
+    }
+  })
   await page.keyboard.press("Escape")
-  await expect.poll(() => panelParam(page)).toBe(`${a}--${b}**`)
+  expect(await page.evaluate(() => (window as unknown as { historyMoves: number }).historyMoves)).toBe(0)
+  expect(panelParam(page)).toBe(`${a}--${b}**`)
+  // Out of it, Escape puts the pane back.
   await tabPane(page, b).getByText("reply in thread 2", { exact: true }).click()
   await page.keyboard.press("Escape")
   await expect.poll(() => panelParam(page)).toBe(`${a}--${b}`)
   await expect(floatingPane(page)).toHaveCount(0)
   await expect(scrim(page)).toHaveCount(0)
+  await expect(ghost(page)).toHaveCount(0)
+  await expect(tabPane(page, a)).not.toHaveAttribute("inert")
+  await expect(inertMain(page)).toHaveCount(0)
   await expect(composer(page, b)).toHaveText("half a thought")
   expect(await tabPane(page, b).boundingBox()).toEqual(before)
 
@@ -101,15 +123,24 @@ test("should keep a floating tab across a reload and put it back from the scrim 
   await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", a)
 
   await page.reload()
-  await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", a)
+  // The router commits in a transition, which a page still syncing after a reload can hold back for seconds in dev.
+  await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", a, { timeout: 15_000 })
   await expect(tabPane(page, a).getByText("reply in thread 1", { exact: true })).toBeVisible({ timeout: 30_000 })
+
+  // The overview it opens floats above it and keeps its own Escape.
+  await tabPane(page, a).getByRole("button", { name: "In this stream" }).click()
+  const overview = page.getByRole("complementary", { name: "In this stream" })
+  await expect(overview).toHaveCount(1)
+  await page.keyboard.press("Escape")
+  await expect(overview).toHaveCount(0)
+  expect(panelParam(page)).toBe(`${a}**.${b}`)
+  await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", a)
 
   await scrim(page).click({ position: { x: 6, y: 300 } })
   await expect.poll(() => panelParam(page)).toBe(`${a}*.${b}`)
-  // The router commits in a transition, which a page still syncing after a reload can hold back for seconds in dev.
   await expect(floatingPane(page)).toHaveCount(0, { timeout: 15_000 })
 
-  await tabPane(page, a).getByRole("button", { name: "Focus", exact: true }).click()
+  await tabPane(page, a).getByRole("button", { name: "Focus pane", exact: true }).click()
   await expect.poll(() => panelParam(page)).toBe(`${a}**.${b}`)
   await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", a)
   await tabPane(page, a).getByRole("navigation", { name: "Panel tabs" }).locator('[aria-current="page"]').click()
@@ -146,5 +177,5 @@ test("should leave a phone showing one pane when the URL marks a floating tab", 
 
   await expect(floatingPane(page)).toHaveCount(0)
   await expect(scrim(page)).toHaveCount(0)
-  await expect(tabPane(page, a).getByRole("button", { name: "Focus", exact: true })).toHaveCount(0)
+  await expect(tabPane(page, a).getByRole("button", { name: "Focus pane", exact: true })).toHaveCount(0)
 })

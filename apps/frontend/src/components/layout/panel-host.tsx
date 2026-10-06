@@ -4,7 +4,13 @@ import { Minimize2 } from "lucide-react"
 import { Pane, PaneFocusContext, PanelTabTitle, usePaneFocusEscape, type PaneMapCell } from "@/components/panes"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 import { compilePanelGrid, defaultPanelGridSizes, panelGridShape, resplit, type PanelGridSizes } from "@/lib/panel-grid"
-import { fitPanelLayout, type PanelLayout, type PanelSection, type SplitDirection } from "@/lib/panel-tabs"
+import {
+  fitPanelLayout,
+  floatingPanelTab,
+  type PanelLayout,
+  type PanelSection,
+  type SplitDirection,
+} from "@/lib/panel-tabs"
 import { cn } from "@/lib/utils"
 import { PanelResizeHandle } from "./panel-resize-handle"
 import { PaneShortcuts } from "./pane-shortcuts"
@@ -53,6 +59,7 @@ const MIN_SECTION_WIDTH = 200
 const MIN_SECTION_HEIGHT = 120
 
 const NO_SPLITS: readonly SplitDirection[] = []
+const NO_MAP: readonly PaneMapCell[] = []
 const SPLIT_DOWN: readonly SplitDirection[] = ["down"]
 const SPLIT_ANY: readonly SplitDirection[] = ["right", "down"]
 
@@ -63,7 +70,7 @@ interface PanelTabStackProps {
   /** Show every tab in one section (a phone). */
   stacked: boolean
   /** The main view beside the tabs, which a floating tab's map shows too. */
-  main?: RefObject<HTMLElement | null>
+  main: RefObject<HTMLElement | null>
 }
 
 interface PlacedTab {
@@ -88,16 +95,14 @@ export function PanelTabStack({ workspaceId, maxColumns, stacked, main }: PanelT
   const front = useFrontPanel()
   const current = useCurrentPane()
   const display = useMemo(
-    () => fitPanelLayout(layout, maxColumns, stacked, front),
+    // A floating tab is always on show, even from a folded column.
+    () => fitPanelLayout(layout, maxColumns, stacked, layout.focused ?? front),
     [layout, maxColumns, stacked, front]
   )
   const [sizes, setSizes] = usePanelGridSizes(display)
   const grid = compilePanelGrid(sizes)
   const ref = useRef<HTMLDivElement>(null)
   const box = useBoxSize(ref)
-  const noMain = useRef<HTMLElement>(null)
-  const mainWidth = useBoxSize(main ?? noMain).width
-  const mainShare = mainWidth > 0 ? mainWidth / (mainWidth + box.width) : 0
 
   // A folded section shows more than its own tabs, so a split from it would move a tab it doesn't hold.
   const folded = display !== layout
@@ -126,14 +131,19 @@ export function PanelTabStack({ workspaceId, maxColumns, stacked, main }: PanelT
   const shortcutSection = onShow(current) ?? onShow(front) ?? sections[0]
   const panes = stacked ? undefined : [null, ...sections.map((section) => section.active)]
 
-  // A phone shows one pane at a time, so nothing floats there; the URL keeps the mark for a wider window.
-  const focused = !stacked && layout.focused !== undefined && onShow(layout.focused) ? layout.focused : null
+  const focused = floatingPanelTab(layout, stacked)
+  // Measured only while a tab floats, the one time its map shows.
+  const unmeasured = useRef<HTMLElement>(null)
+  const mainWidth = useBoxSize(focused !== null ? main : unmeasured).width
+  const mainShare = mainWidth > 0 ? mainWidth / (mainWidth + box.width) : 0
   const restore = useCallback(() => focusTab(null), [focusTab])
   usePaneFocusEscape(focused, restore)
-  const focus = useMemo(
-    () => (stacked ? null : { focused, map: paneMap(display, sizes, focused, mainShare) }),
-    [stacked, focused, display, sizes, mainShare]
+  // Only Restore draws the map, so resizing with nothing floating leaves every pane's header alone.
+  const map = useMemo(
+    () => (focused === null ? NO_MAP : paneMap(display, sizes, focused, mainShare)),
+    [focused, display, sizes, mainShare]
   )
+  const focus = useMemo(() => (stacked ? null : { focused, map }), [stacked, focused, map])
   const ghost = tabs.find((tab) => tab.id === focused)
 
   const columnUnit = box.width / sum(sizes.columns)
@@ -201,6 +211,7 @@ export function PanelTabStack({ workspaceId, maxColumns, stacked, main }: PanelT
       {ghost && (
         <div
           aria-hidden
+          data-testid="pane-focus-ghost"
           style={{ gridArea: ghost.area }}
           className="grid min-h-0 min-w-0 place-items-center bg-background bg-[repeating-linear-gradient(135deg,transparent_0_10px,hsl(0_0%_50%/0.05)_10px_20px)] text-sm text-muted-foreground"
         >
@@ -220,8 +231,9 @@ export function PanelTabStack({ workspaceId, maxColumns, stacked, main }: PanelT
           onClick={restore}
         />
       )}
-      {columnResizers}
-      {rowResizers}
+      {/* Under a floating tab they would still take Tab and the arrow keys. */}
+      {focused === null && columnResizers}
+      {focused === null && rowResizers}
       {shortcutSection?.active && (
         <PaneScope panelId={shortcutSection.active} section={shortcutSection} splits={NO_SPLITS}>
           <PaneShortcuts panes={panes} />
