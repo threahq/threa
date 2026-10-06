@@ -1,6 +1,6 @@
 import type { JSONContent } from "@threahq/types"
 import { collectLinkUrls } from "@threahq/prosemirror"
-import { PANEL_PARAM, parsePanelTabs } from "./panel-tabs"
+import { PANEL_PARAM, parsePanelLayout, primaryPanelOf } from "./panel-tabs"
 
 /** Mirrors the backend `parseInAppLink` path shapes (`url-utils.ts`). */
 const STREAM_PATH = /^\/w\/[^/]+\/s\/([^/]+)$/
@@ -78,7 +78,7 @@ export function classifyDraftLink(url: string, origin: string | null = currentOr
       const delegationId = parsed.pathname.match(DELEGATION_PATH)?.[1]
       if (delegationId) return { kind: "delegation", url, workspaceId, delegationId }
       if (BOARD_PATH.test(parsed.pathname)) {
-        const panel = parsePanelTabs(parsed.searchParams.get(PANEL_PARAM)).active
+        const panel = primaryPanelOf(parsePanelLayout(parsed.searchParams.get(PANEL_PARAM)))
         if (panel?.startsWith(CONVERSATION_PANEL_PREFIX)) {
           const conversationId = panel.slice(CONVERSATION_PANEL_PREFIX.length)
           if (conversationId) return { kind: "conversation", url, workspaceId, conversationId }

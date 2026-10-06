@@ -42,7 +42,7 @@ import {
   useTrace,
   MediaGalleryProvider,
   CodeViewerProvider,
-  usePanel,
+  useCurrentPane,
   isDraftPanel,
   isConversationPanel,
   parseConversationPanel,
@@ -99,7 +99,7 @@ import { AnalyticsConsentBanner } from "@/components/analytics-consent-banner"
 import { useResolveOrBounce } from "./use-resolve-or-bounce"
 import { useNotificationAccountSwitch } from "./use-notification-account-switch"
 import { useNotificationActionFailure } from "./use-notification-action-failure"
-import { PANEL_PARAM, parsePanelTabs } from "@/lib/panel-tabs"
+import { PANEL_PARAM, panelIdsOf, parsePanelLayout } from "@/lib/panel-tabs"
 
 /**
  * How long the tab must be backgrounded before a resume triggers the engine's
@@ -170,10 +170,9 @@ function useOnlineStatus(): boolean {
 
 /**
  * Registers the "copy link" shortcut. Must be rendered inside PanelProvider so
- * it can read which pane (main view vs thread panel) the user last interacted
- * with. When the panel is focused: a conversation panel copies the conversation
- * link, a real (non-draft) thread copies the thread link; otherwise it falls
- * through to the main stream link.
+ * it can read the current pane. When it is a panel: a conversation panel copies
+ * the conversation link, a real (non-draft) thread copies the thread link;
+ * otherwise it falls through to the main stream link.
  */
 function StreamLinkKeyboardHandler({
   workspaceId,
@@ -182,11 +181,11 @@ function StreamLinkKeyboardHandler({
   workspaceId: string
   mainStreamId: string | undefined
 }) {
-  const { panelId, getFocusedPane } = usePanel()
+  const panelId = useCurrentPane()
 
   useKeyboardShortcuts({
     copyStreamLink: () => {
-      if (getFocusedPane() === "panel" && panelId) {
+      if (panelId) {
         if (isConversationPanel(panelId)) {
           const conversationId = parseConversationPanel(panelId)
           if (conversationId) {
@@ -426,9 +425,9 @@ function NotificationSweeper({ workspaceId }: { workspaceId: string }) {
 }
 
 /**
- * Publishes the URL-derived visible streams (main stream + bare-stream panels)
- * for push suppression. `conv:` panels resolve their stream ids only after
- * their post loads, so the conversation panel registers those itself.
+ * Publishes the main stream for push suppression. Panel panes register their
+ * own streams while they show: a covered or folded tab is in the URL but not
+ * on screen, and its pushes must still arrive.
  */
 function VisibleStreamPresence({ workspaceId, streamIds }: { workspaceId: string; streamIds: string[] }) {
   useVisibleStreams(workspaceId, streamIds.filter(isServerStreamId))
@@ -558,15 +557,21 @@ function WorkspaceLayoutContent() {
   // Collect all stream IDs: main stream + any open panels
   const panelValue = searchParams.get(PANEL_PARAM)
   const streamIds = useMemo(
-    () => [streamId, ...parsePanelTabs(panelValue).ids].filter((id): id is string => Boolean(id)),
+    () => [streamId, ...panelIdsOf(parsePanelLayout(panelValue))].filter((id): id is string => Boolean(id)),
     [streamId, panelValue]
   )
-  // Background tabs stay synced but aren't on screen, so they hold back neither
-  // push nor the first reveal.
+  // The first reveal waits for each section's tab on show; background tabs stay
+  // synced without holding it. Sections folded away at this width still count:
+  // that costs a slower reveal, never an early one.
   const onScreenStreamIds = useMemo(
-    () => [streamId, parsePanelTabs(panelValue).active].filter((id): id is string => Boolean(id)),
+    () =>
+      [
+        streamId,
+        ...parsePanelLayout(panelValue).columns.flatMap((column) => column.map(({ active }) => active)),
+      ].filter((id): id is string => Boolean(id)),
     [streamId, panelValue]
   )
+  const mainStreamIds = useMemo(() => (streamId ? [streamId] : []), [streamId])
   // A `conv:<id>` panel is not a stream: fetching its bootstrap 404s and joining
   // its room is rejected, and both delayed the coordinated reveal on every cold
   // open with a conversation panel in the URL. Same rule the SyncEngine and the
@@ -612,7 +617,7 @@ function WorkspaceLayoutContent() {
           <WorkspaceSyncHandler workspaceId={workspaceId} visibleStreamIds={streamIds}>
             <UnreadTabIndicator workspaceId={workspaceId} />
             <NotificationSweeper workspaceId={workspaceId} />
-            <VisibleStreamPresence workspaceId={workspaceId} streamIds={onScreenStreamIds} />
+            <VisibleStreamPresence workspaceId={workspaceId} streamIds={mainStreamIds} />
             <AppUpdateChecker />
             <FreshnessWatchers />
             <MessageQueueHandler workspaceId={workspaceId} />

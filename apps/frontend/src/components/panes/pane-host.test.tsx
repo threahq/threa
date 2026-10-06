@@ -8,7 +8,7 @@ function CoveredProbe() {
 
 describe("Pane", () => {
   it("should hide a covered pane with visibility and make it inert when another pane covers it", () => {
-    render(<Pane column={1} covered data-testid="pane" />)
+    render(<Pane area="1 / 1" covered data-testid="pane" />)
     const pane = screen.getByTestId("pane")
     // Tailwind's `hidden` is `display: none`, which destroys the scroller's box
     // and its offset — a covered pane must keep both.
@@ -20,7 +20,7 @@ describe("Pane", () => {
   })
 
   it("should leave an uncovered pane visible and reachable when nothing covers it", () => {
-    render(<Pane column={2} data-testid="pane" />)
+    render(<Pane area="1 / 2" data-testid="pane" />)
     const pane = screen.getByTestId("pane")
     expect({ invisible: pane.classList.contains("invisible"), inert: pane.hasAttribute("inert") }).toEqual({
       invisible: false,
@@ -30,8 +30,8 @@ describe("Pane", () => {
 
   it("should report a pane as covered when a pane around it is covered", () => {
     render(
-      <Pane column={1} covered>
-        <Pane column={1}>
+      <Pane area="1 / 1" covered>
+        <Pane area="1 / 1">
           <CoveredProbe />
         </Pane>
       </Pane>
@@ -41,7 +41,7 @@ describe("Pane", () => {
 
   it("should report a pane as on screen when nothing around it is covered", () => {
     render(
-      <Pane column={1}>
+      <Pane area="1 / 1">
         <CoveredProbe />
       </Pane>
     )

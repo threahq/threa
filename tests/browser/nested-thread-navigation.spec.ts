@@ -26,15 +26,16 @@ import {
 const openPanelIds = (page: Page) =>
   new URL(page.url()).searchParams
     .get("panel")!
-    .split(".")
+    .split(/[.-]+/)
     .map((id) => id.replace("*", ""))
 
-/** Brings an open thread's tab to the front from the tab row and waits for it to show. */
-async function switchToTab(page: Page, threadId: string): Promise<void> {
-  await getActivePanel(page)
+/** Brings an open thread's pane to the front. A nested thread opens beside its
+ *  parent, so the parent is still on show and its own tab title takes it. */
+async function bringToFront(page: Page, threadId: string): Promise<void> {
+  await page
+    .locator(`[data-panel-tab="${threadId}"]`)
     .getByRole("navigation", { name: "Panel tabs" })
-    .getByRole("link")
-    .nth(openPanelIds(page).indexOf(threadId))
+    .locator('[aria-current="page"]')
     .click()
   await expect(getActivePanel(page)).toHaveAttribute("data-panel-tab", threadId)
 }
@@ -62,7 +63,9 @@ test.describe("Nested Thread Navigation", () => {
     await loginAndCreateWorkspace(page, "nested-thread")
   })
 
-  test("should show nested thread reply count when switching back to the parent thread's tab", async ({ page }) => {
+  test("should show nested thread reply count when the parent thread's pane comes back to the front", async ({
+    page,
+  }) => {
     test.setTimeout(90000)
     const testId = generateTestId()
 
@@ -117,8 +120,8 @@ test.describe("Nested Thread Navigation", () => {
     // Wait for nested thread to be created
     await waitForRealThreadPanel(page)
 
-    // Switch back to the first-level thread's tab
-    await switchToTab(page, parentThreadId)
+    // Bring the first-level thread, still on show beside the nested one, to the front
+    await bringToFront(page, parentThreadId)
 
     // Verify we're back in the first-level thread by checking for the firstReply message
     await expect(getActivePanel(page).getByText(firstReply).first()).toBeVisible({ timeout: 5000 })
@@ -255,20 +258,17 @@ test.describe("Nested Thread Navigation", () => {
     await expect(getActivePanel(page).getByText(level2Message)).toBeVisible({ timeout: 10000 })
     const [, level2ThreadId] = openPanelIds(page)
 
-    // Switch back to the parent thread's tab
-    await switchToTab(page, level1ThreadId)
+    // Bring the parent thread back to the front
+    await bringToFront(page, level1ThreadId)
 
     // Verify reply count shows
     const level1InPanel = getActivePanel(page).locator(".message-item").filter({ hasText: level1Message }).first()
     await expect(level1InPanel).toContainText(/1 reply/i, { timeout: 20000 })
 
-    // Navigate forward again by clicking the reply count: brings the nested thread's tab forward
-    await level1InPanel.getByText(/1 reply/i).click()
-    await expect(getActivePanel(page)).toHaveAttribute("data-panel-tab", level2ThreadId)
-    await expect(getActivePanel(page).getByText(level2Message)).toBeVisible({ timeout: 10000 })
-
-    // Switch back again
-    await switchToTab(page, level1ThreadId)
+    // Over to the nested thread and back again
+    await bringToFront(page, level2ThreadId)
+    await expect(getActivePanel(page).getByText(level2Message)).toBeVisible()
+    await bringToFront(page, level1ThreadId)
 
     // Reply count should still show correctly
     await expect(level1InPanel).toContainText(/1 reply/i, { timeout: 20000 })

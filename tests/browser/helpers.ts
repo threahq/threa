@@ -311,25 +311,28 @@ export async function createChannel(
 }
 
 /**
- * The panel tab on show. Tabs behind it stay mounted but inert, so text in
- * them still matches unscoped locators.
+ * The panel pane in front: the one last opened or used. Tabs behind it stay
+ * mounted but inert, and a split shows panes beside it, so text in those still
+ * matches locators scoped only to the panel.
  */
 export function getActivePanel(page: Page): Locator {
-  return page.locator("[data-testid='panel'] [data-panel-tab]:not([inert])")
+  return page.locator("[data-testid='panel'] [data-front-panel]")
 }
 
 /**
- * Return the composer used inside the thread panel tab on show.
+ * Return the composer of the panel pane in front, or of the panel the aside holds.
  */
 export function getPanelEditor(page: Page): Locator {
-  return page.locator("[data-editor-zone='panel']:not([inert] *) [contenteditable='true']")
+  return page.locator(
+    "[data-editor-zone='panel']:not([inert] *):not([data-panel-tab]:not([data-front-panel]) *) [contenteditable='true']"
+  )
 }
 
 /**
  * Send a reply through the currently visible thread panel composer.
  */
 export async function sendPanelReply(page: Page, text: string): Promise<void> {
-  const panel = page.getByTestId("panel")
+  const panel = getActivePanel(page)
   const editor = getPanelEditor(page)
   const sendButton = panel.getByRole("button", { name: /^(Send|Reply)$/ })
 
@@ -362,7 +365,7 @@ export async function sendPanelReply(page: Page, text: string): Promise<void> {
  * transient failed send if the UI exposes the Retry action while under load.
  */
 export async function waitForRealThreadPanel(page: Page): Promise<void> {
-  const panel = page.getByTestId("panel")
+  const panel = getActivePanel(page)
   const sendButton = panel.getByRole("button", { name: /^(Send|Reply)$/ })
   const retryButton = panel.getByRole("button", { name: "Retry" })
   const deadline = Date.now() + 30000
