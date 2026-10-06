@@ -1,5 +1,5 @@
 import { BOARD_FILTER_PARAMS, BOARD_LENS_PARAM } from "@/components/board/board-filter-params"
-import { PANEL_PARAM, parsePanelTabs } from "./panel-tabs"
+import { PANEL_PARAM, formatPanelTabs, parsePanelTabs } from "./panel-tabs"
 
 const STORAGE_PREFIX = "threa-navigation-journal"
 
@@ -66,6 +66,16 @@ export function journalTouchesStream(path: string, workspaceId: string, streamId
   return tabs.ids.some((panel) => streamIds.has(panel))
 }
 
+/** The path with `?panel=` reduced to which tabs are open, not which one is on show. */
+function tabLayoutOf(path: string): string {
+  const [pathname, query] = path.split("?")
+  const params = new URLSearchParams(query)
+  const tabs = parsePanelTabs(params.get(PANEL_PARAM))
+  const value = formatPanelTabs({ ids: tabs.ids, active: tabs.ids.at(-1) ?? null })
+  if (value) params.set(PANEL_PARAM, value)
+  return `${pathname}?${params.toString()}`
+}
+
 export interface VisitOptions {
   cursorHint?: number
   navigationType: "PUSH" | "POP" | "REPLACE"
@@ -89,6 +99,12 @@ export function recordVisit(
 
   const hint = opts.cursorHint
   if (typeof hint === "number" && entries[hint]?.path === path) return stamp(hint)
+
+  // A tab switch replaces its history entry, so it rewrites this stop rather than adding one.
+  const current = entries[cursor]
+  if (opts.navigationType === "REPLACE" && current && tabLayoutOf(current.path) === tabLayoutOf(path)) {
+    return { entries: entries.map((entry, i) => (i === cursor ? { path, at: now } : entry)), cursor }
+  }
 
   if (opts.navigationType === "POP") {
     if (entries[cursor - 1]?.path === path) return stamp(cursor - 1)

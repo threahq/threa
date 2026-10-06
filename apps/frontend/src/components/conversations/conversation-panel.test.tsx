@@ -1129,6 +1129,24 @@ describe("ConversationPanel", () => {
     }
   })
 
+  it("should stay where the ?m= link landed when the link leaves the URL", async () => {
+    // A tab going behind another, or coming back to the front, drops `?m=`: the
+    // marker must not take a second landing over the one the link already took.
+    installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
+    const restore = installRowLayout()
+    try {
+      const { nav } = mountPanel({ ...unreadFixture(), highlightMessageId: "msg_1" })
+      await screen.findByText("Reply two body.")
+      await waitFor(() => expect(scroller().scrollTop).toBe(rowCenterScrollTop(0)))
+
+      act(() => nav.openConversation(CONVERSATION_ID))
+      await new Promise((r) => setTimeout(r, 300))
+      expect(scroller().scrollTop).toBe(rowCenterScrollTop(0))
+    } finally {
+      restore()
+    }
+  })
+
   it("shows the N-new banner while the divider sits above the viewport, and dismissing it tails the bottom", async () => {
     installReadState({ lastReadAt: "2026-06-22T11:30:00.000Z" })
     const restore = installRowLayout()

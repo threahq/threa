@@ -185,6 +185,15 @@ test("should leave a background tab unread until it comes to the front", async (
   // Long enough for an auto-read to have fired if anything judged it on screen.
   await page.waitForTimeout(2_000)
   expect(await unread()).toBeGreaterThan(0)
+  // Reopened with the unread waiting, the tab behind lands on its new-messages
+  // divider; Escape settles the stream on show, never that one.
+  await page.reload()
+  await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
+  await expect(replyIn(page, threadA, "news for the tab behind")).toBeAttached()
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+  await page.keyboard.press("Escape")
+  await page.waitForTimeout(1_000)
+  expect(await unread()).toBeGreaterThan(0)
 
   await tabStrip(page).getByRole("link").first().click()
   await expect(replyIn(page, threadA, "news for the tab behind")).toBeVisible()
@@ -193,25 +202,62 @@ test("should leave a background tab unread until it comes to the front", async (
   await other.context.close()
 })
 
-test("should show the tab row on a phone with the back control and keep both tabs mounted", async ({ page }) => {
-  await page.setViewportSize({ width: 400, height: 800 })
+test("should show one overview and hand keyboard focus to the tab brought forward", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
   const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
 
   await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}.${threadB}`)
   await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
-  await tag(replyIn(page, threadB, "reply in thread B"), "B")
+
+  // Only the tab on show draws its overview, though both tabs read `?context=`.
+  await tabPane(page, threadB).getByRole("button", { name: "In this stream" }).click()
+  await expect(page.getByRole("complementary", { name: "In this stream" })).toHaveCount(1)
+
   const strip = tabStrip(page)
-  await expect(strip.getByRole("link")).toHaveCount(2)
-  // The strip fits the phone header without pushing the page sideways.
-  const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth)
-  expect(scrollWidth).toBeLessThanOrEqual(400)
-
-  await strip.getByRole("link").first().click()
+  await strip.getByRole("link").first().focus()
+  await page.keyboard.press("Enter")
   await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
-  expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
+  await expect(
+    tabPane(page, threadA).getByRole("navigation", { name: "Panel tabs" }).locator('[aria-current="page"]')
+  ).toBeFocused()
+})
 
-  // Back on a phone closes the panel's newest step, not the page.
-  await tabPane(page, threadA).getByRole("button", { name: "Back" }).click()
-  await expect.poll(() => panelParam(page)).toBe(threadB)
-  await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
+test.describe("on a phone", () => {
+  test.use({ viewport: { width: 400, height: 800 }, isMobile: true, hasTouch: true })
+
+  test("should show the tab row with the back control and keep both tabs mounted", async ({ page }) => {
+    const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
+
+    await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}.${threadB}`)
+    await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
+    await tag(replyIn(page, threadB, "reply in thread B"), "B")
+    const strip = tabPane(page, threadB).getByRole("navigation", { name: "Panel tabs" })
+    await expect(strip.getByRole("link")).toHaveCount(2)
+
+    // The row sits between Back and the header actions, and the tab on show,
+    // close included, is scrolled fully into it.
+    const back = tabPane(page, threadB).getByRole("button", { name: "Back" })
+    const actions = tabPane(page, threadB).getByRole("button", { name: "Stream actions" })
+    const [stripBox, backBox, actionsBox, activeCloseBox] = await Promise.all([
+      strip.boundingBox(),
+      back.boundingBox(),
+      actions.boundingBox(),
+      strip.getByRole("button", { name: "Close tab" }).last().boundingBox(),
+    ])
+    expect(backBox!.x + backBox!.width).toBeLessThanOrEqual(stripBox!.x)
+    expect(stripBox!.x + stripBox!.width).toBeLessThanOrEqual(actionsBox!.x)
+    expect(activeCloseBox!.x).toBeGreaterThanOrEqual(stripBox!.x)
+    expect(activeCloseBox!.x + activeCloseBox!.width).toBeLessThanOrEqual(stripBox!.x + stripBox!.width)
+    // No hover on touch, so the tab behind shows its close outright.
+    await expect(strip.getByRole("button", { name: "Close tab" }).first()).toHaveCSS("opacity", "1")
+
+    await strip.getByRole("link").first().click()
+    await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
+    expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
+
+    // Back on a phone closes the panel's newest step, not the page.
+    await tabPane(page, threadA).getByRole("button", { name: "Back" }).click()
+    await expect.poll(() => panelParam(page)).toBe(threadB)
+    await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
+  })
 })

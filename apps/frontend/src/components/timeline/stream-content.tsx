@@ -2199,7 +2199,7 @@ export function StreamContent({
     lastReadEventId,
     readOverlay,
     // Away arrivals get the divider (blur re-latch below), not the flash.
-    canAutoRead
+    canAutoRead && !paneCovered
   )
 
   // Unread divider state — a bookmark line at the first unread message. The
@@ -2232,7 +2232,7 @@ export function StreamContent({
     // Same signal that gates auto-read: while the viewer is away the divider may
     // re-latch forward at the first away-arrival (messages that came in while
     // blurred get the persistent red→grey strip, as if the stream were re-opened).
-    isAttentive: canAutoRead,
+    isAttentive: canAutoRead && !paneCovered,
   })
 
   // The divider is red while unread still sits at/after it, and turns muted-gray
@@ -2282,7 +2282,7 @@ export function StreamContent({
   // never swallows Escape elsewhere; the composer/editor keep their own Escape
   // via the isInput guard, and search owns Escape while open.
   useEffect(() => {
-    if (isMobile || isDraft || isSearchOpen || (!dividerEventId && !canSettleOnEscape)) return
+    if (isMobile || isDraft || isSearchOpen || paneCovered || (!dividerEventId && !canSettleOnEscape)) return
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.repeat || event.defaultPrevented) return
       const target = event.target as HTMLElement | null
@@ -2326,6 +2326,7 @@ export function StreamContent({
   }, [
     isMobile,
     isDraft,
+    paneCovered,
     dividerEventId,
     canSettleOnEscape,
     isSearchOpen,
@@ -3046,6 +3047,7 @@ export function StreamContent({
                   <StreamReadTracker
                     key={streamId}
                     workspaceId={workspaceId}
+                    covered={paneCovered}
                     // The virtualized scroller late-mounts via a ref callback, AFTER
                     // `autoMarkEnabled` flips true — pass the mounted element so the read-frontier
                     // scan re-arms its observers once the scroller exists. The plain thread

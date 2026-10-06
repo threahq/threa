@@ -127,7 +127,9 @@ export function useCoverHistory(cover: Cover): { close: () => void; closeTo: (ne
   const closeTo = useCallback(
     (next: URLSearchParams) => {
       const open = new URLSearchParams(location.search).has(cover[0])
+      // Consumed like a claim, so a second close before the pop commits can't pop twice.
       if (open && beneathOf.current.get(location.key) === entryUrl(location.pathname, next)) {
+        beneathOf.current.delete(location.key)
         navigate(-1)
         return
       }

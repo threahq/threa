@@ -6,7 +6,6 @@ import { StreamContextGallery } from "./stream-context-gallery"
 import { StreamContextSurface } from "./stream-context-surface"
 import { useStreamContextOpen } from "./use-stream-context-open"
 import { useStreamGallery } from "./use-stream-gallery"
-import { PANEL_PARAM, formatPanelTabs, openPanelTab, parsePanelTabs } from "@/lib/panel-tabs"
 
 /**
  * One stream's "In this stream" overview with its media gallery, mounted by the
@@ -17,7 +16,7 @@ export function StreamContextOverlay({ workspaceId, streamId }: { workspaceId: s
   const [isOpen, setOpen] = useStreamContextOpen()
   const [, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
-  const { openPanel } = usePanel()
+  const { openPanel, withPanelOpen } = usePanel()
   const { isMobile } = useSidebar()
   const dock = useStreamContextDock()
   const coversStream = isMobile || dock?.fits === false
@@ -30,11 +29,8 @@ export function StreamContextOverlay({ workspaceId, streamId }: { workspaceId: s
   // StreamContent's `?m=` effect a new location key to act on.
   const jumpToMessage = (messageId: string, inStreamId = streamId) => {
     setSearchParams((prev) => {
-      const next = new URLSearchParams(prev)
-      if (inStreamId !== streamId) {
-        next.delete("context")
-        next.set(PANEL_PARAM, formatPanelTabs(openPanelTab(parsePanelTabs(next.get(PANEL_PARAM)), inStreamId))!)
-      } else if (coversStream) next.delete("context")
+      const next = inStreamId !== streamId ? withPanelOpen(prev, inStreamId) : new URLSearchParams(prev)
+      if (coversStream) next.delete("context")
       next.set("m", messageId)
       return next
     })

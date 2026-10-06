@@ -8,6 +8,8 @@ import { useCoarsePointer } from "./use-pointer"
 
 interface UseAutoMarkAsReadOptions {
   enabled?: boolean
+  /** The pane went behind another (a background tab): a leave, so a pending mark flushes instead of being dropped. */
+  covered?: boolean
   /**
    * When true, `lastEventId` is the bottom of what the viewer has seen, not the
    * tail of the loaded window — unread messages remain below the fold. The read
@@ -69,7 +71,13 @@ export function useAutoMarkAsRead(
   lastEventId: string | undefined,
   options: UseAutoMarkAsReadOptions = {}
 ) {
-  const { enabled = true, partial = false, readPointerEventId = null, activityHealEnabled = true } = options
+  const {
+    enabled = true,
+    covered = false,
+    partial = false,
+    readPointerEventId = null,
+    activityHealEnabled = true,
+  } = options
   const { unreadCount, activityCount } = useStreamUnreadState(workspaceId, streamId)
   const canAutoRead = useAutoReadAttention()
   const queue = useReadCommitQueue()
@@ -110,11 +118,13 @@ export function useAutoMarkAsRead(
     const reportEventId = lastEventId ?? healEventId
     const reportPartial = lastEventId ? partial : true
     if (!enabled || !canAutoRead) {
-      // The gate closed with a mark still debouncing: drop it, matching the
-      // pre-queue semantics — a blur cancels rather than commits, so content
-      // glimpsed right before switching windows stays unread (never
-      // over-mark). The next attentive pass re-reports the frontier.
-      queue.cancel(streamId)
+      // The gate closed with a mark still debouncing. A blur drops it, matching
+      // the pre-queue semantics — content glimpsed right before switching
+      // windows stays unread (never over-mark), and the next attentive pass
+      // re-reports the frontier. A cover is a leave: those rows were seen
+      // while attentive, so the mark commits, as on a stream switch.
+      if (covered) queue.flush(streamId)
+      else queue.cancel(streamId)
       return
     }
     // A cleared frontier leaves a debouncing mark alone: its rows were seen
@@ -160,6 +170,7 @@ export function useAutoMarkAsRead(
     }
   }, [
     enabled,
+    covered,
     streamId,
     lastEventId,
     partial,
