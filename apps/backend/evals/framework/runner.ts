@@ -269,13 +269,22 @@ interface PermutationRunOptions extends RunnerOptions {
 }
 
 async function setupRunDatabase(
+  suite: Pick<EvalSuite<unknown, unknown, unknown>, "name" | "reusesDatabase">,
   label: string,
   options: Pick<RunnerOptions, "fromDatabase" | "keepDatabase">
 ): Promise<{ dbResult: EvalDatabaseResult; fixture: WorkspaceFixture }> {
+  if (options.fromDatabase && !suite.reusesDatabase) {
+    throw new Error(`Suite ${suite.name} cannot run from a kept database: its setup would seed over it`)
+  }
   const dbResult = await setupEvalDatabase({ label, from: options.fromDatabase, keep: options.keepDatabase })
-  if (!options.fromDatabase) return { dbResult, fixture: await createWorkspaceFixture(dbResult.pool) }
-  console.log(`${colors.dim}Cloned ${options.fromDatabase} into ${dbResult.databaseName}${colors.reset}`)
-  return { dbResult, fixture: await loadWorkspaceFixture(dbResult.pool) }
+  try {
+    if (!options.fromDatabase) return { dbResult, fixture: await createWorkspaceFixture(dbResult.pool) }
+    console.log(`${colors.dim}Cloned ${options.fromDatabase} into ${dbResult.databaseName}${colors.reset}`)
+    return { dbResult, fixture: await loadWorkspaceFixture(dbResult.pool) }
+  } catch (error) {
+    await dbResult.cleanup()
+    throw error
+  }
 }
 
 /**
@@ -679,12 +688,12 @@ export async function runSuite<TInput, TOutput, TExpected>(
   // Use parallel execution with template DBs if multiple permutations
   const useParallel = permutations.length > 1 && (options.parallel ?? 1) > 1
 
-  if (options.fromDatabase && !suite.reusesDatabase) {
-    throw new Error(`Suite ${suite.name} cannot run from a kept database: its setup would seed over it`)
+  if (options.keepDatabase && permutations.length > 1) {
+    throw new Error("--keep-db keeps one setup's database; run a single permutation")
   }
 
-  if (useParallel && (options.fromDatabase || options.keepDatabase)) {
-    throw new Error("--from-db and --keep-db run permutations sequentially; drop -p")
+  if (useParallel && options.fromDatabase) {
+    throw new Error("--from-db runs permutations sequentially; drop -p")
   }
 
   if (useParallel) {
@@ -716,7 +725,7 @@ export async function runSuite<TInput, TOutput, TExpected>(
     }
   } else {
     // Sequential execution with single database
-    const { dbResult, fixture } = await setupRunDatabase(suite.name, options)
+    const { dbResult, fixture } = await setupRunDatabase(suite, suite.name, options)
 
     try {
       for (const permutation of permutations) {
@@ -877,6 +886,7 @@ export async function runFromConfigFile(
 
     // Set up database and run
     const { dbResult, fixture } = await setupRunDatabase(
+      suite,
       `${suite.name}-${runConfig.title.replace(/\s+/g, "-")}`,
       baseOptions
     )
