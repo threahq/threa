@@ -244,6 +244,11 @@ describe("getEffectiveEditorBindings", () => {
     expect(bindings.formatItalic).toBe("mod+i")
   })
 
+  it("should exclude an editor binding when a global shortcut presses the same chord through ctrl", () => {
+    const bindings = getEffectiveEditorBindings({ toggleSidebar: "ctrl+b" })
+    expect(bindings.formatBold).toBeUndefined()
+  })
+
   it("respects custom editor bindings", () => {
     const bindings = getEffectiveEditorBindings({ formatBold: "mod+shift+b" })
     expect(bindings.formatBold).toBe("mod+shift+b")

@@ -676,13 +676,13 @@ export function getEffectiveEditorBindings(customBindings: Record<string, string
   for (const action of SHORTCUT_ACTIONS) {
     if (!action.global) continue
     const binding = getEffectiveKeyBinding(action.id, customBindings)
-    if (binding) globalBindings.add(binding)
+    if (binding) globalBindings.add(shortcutChord(binding))
   }
 
   const result: Record<string, string> = {}
   for (const id of EDITOR_SHORTCUT_IDS) {
     const binding = getEffectiveKeyBinding(id, customBindings)
-    if (binding && isSafeShortcutBinding(binding) && !globalBindings.has(binding)) {
+    if (binding && isSafeShortcutBinding(binding) && !globalBindings.has(shortcutChord(binding))) {
       result[id] = binding
     }
   }
