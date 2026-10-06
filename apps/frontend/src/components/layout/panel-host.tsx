@@ -1,4 +1,5 @@
-import { usePanel, isConversationPanel } from "@/contexts"
+import { usePanel, isConversationPanel, PaneScope } from "@/contexts"
+import { Pane } from "@/components/panes"
 import { getDraftPromotionSource } from "@/lib/draft-promotions"
 import { StreamPanel } from "@/components/thread"
 import { ConversationPanel } from "@/components/conversations/conversation-panel"
@@ -27,4 +28,35 @@ export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
   }
   const panelKey = panelId ? (getDraftPromotionSource(workspaceId, panelId) ?? panelId) : panelId
   return <StreamPanel key={panelKey} workspaceId={workspaceId} onClose={onClose} className={className} />
+}
+
+/**
+ * Every open panel tab stacked in one cell: the active tab shows and the rest
+ * stay mounted under it, so switching tabs keeps each one's scroll, draft and
+ * focus. Tabs are keyed the way {@link PanelHost} keys its content, so a draft
+ * promoted in its tab keeps its pane.
+ */
+export function PanelTabStack({ workspaceId }: { workspaceId: string }) {
+  const { panelIds, activePanelId } = usePanel()
+  return (
+    <div className="grid h-full grid-cols-[minmax(0,1fr)] grid-rows-[minmax(0,1fr)]">
+      {panelIds.map((id) => (
+        <Pane
+          key={getDraftPromotionSource(workspaceId, id) ?? id}
+          column={1}
+          covered={id !== activePanelId}
+          data-panel-tab={id}
+        >
+          <PaneScope panelId={id}>
+            <ScopedPanelHost workspaceId={workspaceId} />
+          </PaneScope>
+        </Pane>
+      ))}
+    </div>
+  )
+}
+
+function ScopedPanelHost({ workspaceId }: { workspaceId: string }) {
+  const { closePanel } = usePanel()
+  return <PanelHost workspaceId={workspaceId} onClose={closePanel} />
 }

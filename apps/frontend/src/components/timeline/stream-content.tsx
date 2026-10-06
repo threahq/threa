@@ -139,6 +139,7 @@ import { ConversationReplyProvider } from "./conversation-reply-context"
 import { SlotsProvider } from "@/components/slots/context"
 import { HostArchivedProvider } from "./host-archived-context"
 import { useStreamSlots } from "@/hooks/use-stream-slots"
+import { usePaneCovered } from "@/components/panes"
 import { TextSelectionQuote } from "./text-selection-quote"
 import { StreamSearchBar } from "./stream-search-bar"
 import { useStreamSearch } from "@/hooks/use-stream-search"
@@ -2168,7 +2169,10 @@ export function StreamContent({
   // screen. Only the virtualized timeline settles; the plain thread scroller has
   // no settle phase (`isInitialSettling` would never clear there), so exempt it.
   const settledAtBottom = !useVirtualized || !virtualIsInitialSettling
-  const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode && settledAtBottom
+  // A covered pane (a background tab, the timeline under a phone thread) keeps
+  // its geometry, so the scan would read rows nobody can see.
+  const paneCovered = usePaneCovered()
+  const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode && settledAtBottom && !paneCovered
   const canAutoRead = useAutoReadAttention()
 
   const isMobile = useIsMobile()

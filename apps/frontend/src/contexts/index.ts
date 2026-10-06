@@ -42,6 +42,7 @@ export {
 export {
   PanelProvider,
   usePanel,
+  PaneScope,
   isDraftPanel,
   parseDraftPanel,
   createDraftPanelId,

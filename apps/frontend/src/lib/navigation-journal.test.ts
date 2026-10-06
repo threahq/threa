@@ -62,8 +62,8 @@ describe("isJournaledPath", () => {
 })
 
 describe("journalTouchesStream", () => {
-  it("sees the page stream and every panel stream", () => {
-    const path = `/w/${WS}/s/stream_a?panel=stream_b&panel=stream_c`
+  it("sees the page stream and every panel tab", () => {
+    const path = `/w/${WS}/s/stream_a?panel=stream_b.stream_c`
     expect(journalTouchesStream(path, WS, new Set(["stream_a"]))).toBe(true)
     expect(journalTouchesStream(path, WS, new Set(["stream_c"]))).toBe(true)
     expect(journalTouchesStream(path, WS, new Set(["stream_d"]))).toBe(false)

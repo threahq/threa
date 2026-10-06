@@ -53,11 +53,11 @@ export function ThreadHeader({ workspaceId, stream, inPanel = false }: ThreadHea
     return []
   }, [hookAncestors, stream.rootStreamId, streams])
 
-  const { getPanelUrl, closePanel } = usePanel()
+  const { getNavigateUrl, closePanel } = usePanel()
   const { streamId: mainViewStreamId } = useParams<{ streamId: string }>()
 
   const getNavigationUrl = (streamId: string) => {
-    return inPanel ? getPanelUrl(streamId) : `/w/${workspaceId}/s/${streamId}`
+    return inPanel ? getNavigateUrl(streamId) : `/w/${workspaceId}/s/${streamId}`
   }
 
   const isMainViewStream = (streamId: string) => {

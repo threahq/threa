@@ -95,6 +95,7 @@ import { useScrollToMessage } from "@/hooks/use-scroll-to-message"
 import { VirtualizedScroller, useRenderedContentLatch } from "@/components/timeline/virtualized-scroller"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
+import { PanelTabStrip, usePaneCovered } from "@/components/panes"
 
 const TYPE_GLYPH: Record<string, LucideIcon> = {
   channel: Hash,
@@ -213,6 +214,7 @@ function ConversationPanelHeader({
   const [menuOpen, setMenuOpen] = useState(false)
   const title = effectiveTitle ?? locator
   const resolved = post?.conversation.status === "resolved"
+  const tabbed = usePanel().panelIds.length > 1
   // On touch the identity line IS the actions trigger, as the stream header's
   // name is. The header is `relative` so the press-and-hold name overlay, which
   // portals into its nearest <header>, can fill the bar here too.
@@ -230,6 +232,40 @@ function ConversationPanelHeader({
       )}
     </>
   )
+  let titleArea: React.ReactNode
+  if (tabbed) {
+    titleArea = <PanelTabStrip workspaceId={workspaceId} className={isMobile ? undefined : "-ml-2"} />
+  } else if (revealed && isMobile) {
+    titleArea = (
+      <StreamTitlePreview name={title}>
+        <button
+          type="button"
+          onClick={() => setMenuOpen(true)}
+          aria-label={`${resolved ? "Resolved — " : ""}${title} — conversation details and actions`}
+          aria-haspopup="dialog"
+          className="-ml-2 flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left transition-colors active:bg-accent/50"
+        >
+          {identity}
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+        </button>
+      </StreamTitlePreview>
+    )
+  } else {
+    titleArea = (
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        {revealed ? (
+          <StreamTitlePreview name={title}>
+            <span className="flex min-w-0 flex-1 items-center gap-1.5">{identity}</span>
+          </StreamTitlePreview>
+        ) : (
+          <>
+            <div className="h-4 w-4 shrink-0" />
+            {phase === "skeleton" && <Skeleton className="h-4 w-40 max-w-full" />}
+          </>
+        )}
+      </div>
+    )
+  }
   return (
     <SidePanelHeader className="relative">
       {isMobile && <SidebarToggle location="page" />}
@@ -245,33 +281,7 @@ function ConversationPanelHeader({
           stream locator all resolve with the rows, and rendering their fallbacks
           first made the header show a generic icon over the literal word
           "Conversation" and then swap. */}
-      {revealed && isMobile ? (
-        <StreamTitlePreview name={title}>
-          <button
-            type="button"
-            onClick={() => setMenuOpen(true)}
-            aria-label={`${resolved ? "Resolved — " : ""}${title} — conversation details and actions`}
-            aria-haspopup="dialog"
-            className="-ml-2 flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left transition-colors active:bg-accent/50"
-          >
-            {identity}
-            <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
-          </button>
-        </StreamTitlePreview>
-      ) : (
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
-          {revealed ? (
-            <StreamTitlePreview name={title}>
-              <span className="flex min-w-0 flex-1 items-center gap-1.5">{identity}</span>
-            </StreamTitlePreview>
-          ) : (
-            <>
-              <div className="h-4 w-4 shrink-0" />
-              {phase === "skeleton" && <Skeleton className="h-4 w-40 max-w-full" />}
-            </>
-          )}
-        </div>
-      )}
+      {titleArea}
       {/* Same live pill as the stream header and the board card, over this
           conversation's own sessions. Compact on mobile so it can't squeeze the
           topic out of the row. Mounted only with entries: the chip reads
@@ -298,7 +308,7 @@ function ConversationPanelHeader({
       ) : (
         <div className="h-8 w-8 shrink-0" />
       )}
-      {!isMobile && <SidePanelClose onClose={onClose} />}
+      {!isMobile && !tabbed && <SidePanelClose onClose={onClose} />}
     </SidePanelHeader>
   )
 }
@@ -319,6 +329,8 @@ export function ConversationPanel({ workspaceId, onClose, className }: Conversat
   // element but not the provider.
   const [floatingAnchorEl, setFloatingAnchorEl] = useState<HTMLElement | null>(null)
   const { panelId } = usePanel()
+  // A background tab: it stays live, but isn't on screen and doesn't take keys.
+  const covered = usePaneCovered()
   const conversationId = panelId ? parseConversationPanel(panelId) : null
   const { post, notFound, loadFailed, refetch } = useConversationBoardPost(workspaceId, conversationId)
   // Both ends the load: a 404 verdict and a failed request are equally terminal
@@ -387,13 +399,14 @@ export function ConversationPanel({ workspaceId, onClose, className }: Conversat
   usePanelStreamSubscriptions(panelStreamIds)
   // The panel's streams aren't in the URL (`?panel=conv:…`), so the SW's push
   // suppression can only know they're on screen if we register them here.
-  useVisibleStreams(workspaceId, panelStreamIds)
+  useVisibleStreams(workspaceId, covered ? [] : panelStreamIds)
 
   // Escape closes the panel, matching StreamPanel — the two are peers in the same
   // slot, so the keyboard affordance should be consistent. Skip when the event was
   // already handled (the reply composer's own Escape collapses the editor first) or
   // when focus is in a text field, so closing the panel never eats a composer Escape.
   useEffect(() => {
+    if (covered) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape" || e.defaultPrevented) return
       const active = document.activeElement as HTMLElement | null
@@ -402,7 +415,7 @@ export function ConversationPanel({ workspaceId, onClose, className }: Conversat
     }
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
-  }, [onClose])
+  }, [covered, onClose])
 
   const anchorStreamId = post?.conversation.streamId
   const hostStream = useStreamFromStore(workspaceId, anchorStreamId)
@@ -556,7 +569,8 @@ function ConversationPanelBody({
   // shared conversation link lands on the right message without a competing
   // main-view highlight.
   const [searchParams] = useSearchParams()
-  const highlightMessageId = searchParams.get("m")
+  const covered = usePaneCovered()
+  const highlightMessageId = covered ? null : searchParams.get("m")
 
   // The docked footer composer arms to a sub-conversation instead of mounting a
   // mid-flow editor: replying in the panel always happens at the bottom dock
