@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render } from "@testing-library/react"
 import * as contextsModule from "@/contexts"
 import * as accountScopeModule from "@/auth/account-scope"
+import type { WorkspaceBootstrap } from "@threahq/types"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import * as workspaceUserModule from "@/hooks/use-current-workspace-user-id"
 import * as posthogModule from "./posthog"
@@ -30,9 +31,14 @@ function mockInputs(params: {
     },
     isLoading: params.preferencesPending ?? false,
   } as unknown as ReturnType<typeof contextsModule.usePreferencesOptional>)
-  vi.spyOn(useWorkspacesModule, "useWorkspaceBootstrap").mockReturnValue({
-    data: { analytics: params.analytics, featureFlags: { user: { perfDiagnostics: "available" } } },
-  } as unknown as ReturnType<typeof useWorkspacesModule.useWorkspaceBootstrap>)
+  const bootstrap = {
+    analytics: params.analytics,
+    featureFlags: { user: { perfDiagnostics: "available" } },
+  } as unknown as WorkspaceBootstrap
+  vi.spyOn(useWorkspacesModule, "useWorkspaceBootstrap").mockImplementation(
+    (_workspaceId, select) =>
+      ({ data: select ? select(bootstrap) : bootstrap }) as ReturnType<typeof useWorkspacesModule.useWorkspaceBootstrap>
+  )
   vi.spyOn(workspaceUserModule, "useCurrentWorkspaceUserId").mockReturnValue(params.userId)
   vi.spyOn(accountScopeModule, "useAccountScopeOptional").mockReturnValue(
     params.accountId === null

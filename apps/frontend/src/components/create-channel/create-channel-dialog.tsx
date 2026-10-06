@@ -124,6 +124,8 @@ function DialogActions({
   )
 }
 
+const isLoaded = () => true
+
 interface CreateChannelDialogProps {
   workspaceId: string
 }
@@ -131,7 +133,7 @@ interface CreateChannelDialogProps {
 export function CreateChannelDialog({ workspaceId }: CreateChannelDialogProps) {
   const { isOpen, closeCreateChannel } = useCreateChannel()
   const canManageChannels = useCanManageChannels(workspaceId)
-  const bootstrapLoaded = useCachedWorkspaceBootstrap(workspaceId) !== null
+  const bootstrapLoaded = useCachedWorkspaceBootstrap(workspaceId, isLoaded) !== null
   const { user } = useAuth()
   const navigate = useNavigate()
   const createStream = useCreateStream(workspaceId)

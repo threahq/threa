@@ -1,16 +1,21 @@
 import { useState } from "react"
+import type { WorkspaceBootstrap } from "@threahq/types"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { usePreferences } from "@/contexts"
 import { useWorkspaceBootstrap } from "@/hooks/use-workspaces"
 import { ApiError } from "@/api/client"
 
+function selectHasAnalytics(bootstrap: WorkspaceBootstrap): boolean {
+  return !!bootstrap.analytics
+}
+
 export function AnalyticsConsentBanner({ workspaceId }: { workspaceId: string }) {
   const { preferences, updatePreference } = usePreferences()
-  const { data: bootstrap } = useWorkspaceBootstrap(workspaceId)
+  const { data: hasAnalytics } = useWorkspaceBootstrap(workspaceId, selectHasAnalytics)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  if (preferences?.analyticsConsent !== "unset" || !bootstrap?.analytics) return null
+  if (preferences?.analyticsConsent !== "unset" || !hasAnalytics) return null
 
   async function respond(consent: "granted" | "denied") {
     setIsSubmitting(true)

@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { toast } from "sonner"
 import * as contextsModule from "@/contexts"
+import type { WorkspaceBootstrap } from "@threahq/types"
 import * as useWorkspacesModule from "@/hooks/use-workspaces"
 import { AnalyticsConsentBanner } from "./analytics-consent-banner"
 
@@ -16,9 +17,11 @@ function mount(
     preferences: { analyticsConsent: consent },
     updatePreference,
   } as unknown as ReturnType<typeof contextsModule.usePreferences>)
-  vi.spyOn(useWorkspacesModule, "useWorkspaceBootstrap").mockReturnValue({
-    data: { analytics },
-  } as unknown as ReturnType<typeof useWorkspacesModule.useWorkspaceBootstrap>)
+  const bootstrap = { analytics } as unknown as WorkspaceBootstrap
+  vi.spyOn(useWorkspacesModule, "useWorkspaceBootstrap").mockImplementation(
+    (_workspaceId, select) =>
+      ({ data: select ? select(bootstrap) : bootstrap }) as ReturnType<typeof useWorkspacesModule.useWorkspaceBootstrap>
+  )
   return render(<AnalyticsConsentBanner workspaceId="ws_1" />)
 }
 
