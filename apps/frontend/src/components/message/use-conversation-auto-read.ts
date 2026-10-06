@@ -131,12 +131,14 @@ export function useConversationAutoRead({
   markRead,
   registerExplicitUnread,
   getReadTruth,
-  disabled: disabledOption = false,
+  disabled = false,
 }: UseConversationAutoReadOptions): void {
   // A covered pane (a background panel tab) keeps its geometry: its rows still
-  // intersect the viewport while nobody can see them.
-  const disabled = disabledOption || usePaneCovered()
-  const canAutoRead = useAutoReadAttention() && !disabled
+  // intersect the viewport while nobody can see them. Covering stops new dwells
+  // like a blur, but leaves `evaluate` armed: rows seen before the switch still
+  // mark, as they would on unmount.
+  const covered = usePaneCovered()
+  const canAutoRead = useAutoReadAttention() && !disabled && !covered
   const disabledRef = useRef(disabled)
   disabledRef.current = disabled
   const canAutoReadRef = useRef(canAutoRead)

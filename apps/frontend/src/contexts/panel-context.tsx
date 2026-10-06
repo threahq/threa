@@ -1,4 +1,13 @@
-import { createContext, useContext, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react"
+import {
+  createContext,
+  useContext,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  type MutableRefObject,
+  type ReactNode,
+} from "react"
 import { useSearchParams, useLocation, useMatch } from "react-router-dom"
 import { useCoverHistory } from "@/hooks/use-cover-close"
 import { PANEL_COVER } from "@/lib/covers"
@@ -85,12 +94,16 @@ interface PanelContextValue {
   activePanelId: string | null
   /** Whether a panel is currently open */
   isPanelOpen: boolean
+  /** Whether the panel shows its tab row: more than one tab, on a page that has tabs. */
+  tabbed: boolean
 
   /** URL that opens a panel from here (for `<Link>`): on the stream page it adds
    *  or activates a tab; pages without tabs swap the one panel. */
   getPanelUrl: (panelId: string) => string
   /** Imperative twin of {@link getPanelUrl}. */
   openPanel: (panelId: string, options?: OpenPanelOptions) => void
+  /** {@link openPanel} as a params edit, for a navigation that changes more than the panel. */
+  withPanelOpen: (params: URLSearchParams, panelId: string) => URLSearchParams
   /** URL that shows `panelId` in this panel's own tab instead (breadcrumbs). */
   getNavigateUrl: (panelId: string) => string
   /** URL that brings an open tab to the front. Switching tabs is not a step of
@@ -111,11 +124,14 @@ interface PanelOps {
   urlFor: (edit: (tabs: PanelTabs) => PanelTabs) => string
   tabUrl: (panelId: string) => string
   open: (edit: (tabs: PanelTabs) => PanelTabs, replace: boolean) => void
+  /** Whether this page shows tabs (the stream page); elsewhere a second panel replaces the first. */
+  tabbed: boolean
   /** Opening from here: a tab on the stream page, the one panel elsewhere. */
   contextual: (tabs: PanelTabs, panelId: string) => PanelTabs
   closeTab: (panelId: string) => void
   setFocusedPane: (pane: FocusedPane) => void
   getFocusedPane: () => FocusedPane
+  tabFocusHandoff: MutableRefObject<string | null>
 }
 
 const PanelOpsContext = createContext<PanelOps | null>(null)
@@ -150,11 +166,14 @@ function buildValue(ops: PanelOps, scopeId: string | null): PanelContextValue {
     panelIds: tabs.ids,
     activePanelId: tabs.active,
     isPanelOpen: tabs.active !== null,
+    tabbed: ops.tabbed && tabs.ids.length > 1,
     getPanelUrl: (panelId) => ops.urlFor((current) => ops.contextual(current, panelId)),
     openPanel: (panelId, options) =>
       options?.replace
         ? ops.open((current) => supersede(current, panelId), true)
         : ops.open((current) => ops.contextual(current, panelId), false),
+    withPanelOpen: (params, panelId) =>
+      withTabs(params, ops.contextual(parsePanelTabs(params.get(PANEL_PARAM)), panelId)),
     getNavigateUrl: (panelId) => ops.urlFor((current) => supersede(current, panelId)),
     getTabUrl: ops.tabUrl,
     closePanel: () => {
@@ -192,9 +211,9 @@ export function PanelProvider({ children }: PanelProviderProps) {
 
   const tabUrl = useCallback(
     (panelId: string) => {
-      const params = new URLSearchParams(searchParams)
+      // The overview belongs to the tab on show, so it stays behind with the tab it covered.
+      const params = withTabs(searchParams, activatePanelTab(tabs, panelId))
       dropDeepLink(params)
-      params.set(PANEL_PARAM, formatPanelTabs(activatePanelTab(tabs, panelId)) ?? "")
       return `${location.pathname}?${params.toString()}`
     },
     [searchParams, location.pathname, tabs]
@@ -246,9 +265,22 @@ export function PanelProvider({ children }: PanelProviderProps) {
     if (tabs.active === null) focusedPaneRef.current = "main"
   }, [tabs.active])
 
+  const tabFocusHandoff = useRef<string | null>(null)
+
   const ops = useMemo<PanelOps>(
-    () => ({ tabs, urlFor, tabUrl, open, contextual, closeTab, setFocusedPane, getFocusedPane }),
-    [tabs, urlFor, tabUrl, open, contextual, closeTab, setFocusedPane, getFocusedPane]
+    () => ({
+      tabs,
+      urlFor,
+      tabUrl,
+      open,
+      tabbed,
+      contextual,
+      closeTab,
+      setFocusedPane,
+      getFocusedPane,
+      tabFocusHandoff,
+    }),
+    [tabs, urlFor, tabUrl, open, tabbed, contextual, closeTab, setFocusedPane, getFocusedPane]
   )
   const value = useMemo(() => buildValue(ops, null), [ops])
 
@@ -269,6 +301,17 @@ export function PaneScope({ panelId, children }: { panelId: string; children: Re
   if (!ops) throw new Error("PaneScope must be used within a PanelProvider")
   const value = useMemo(() => buildValue(ops, panelId), [ops, panelId])
   return <PanelContext.Provider value={value}>{children}</PanelContext.Provider>
+}
+
+/**
+ * Every tab renders its own row, so switching or closing from the keyboard
+ * leaves focus in a row that just went inert or unmounted. The tab that ends up
+ * on show is recorded here, and its row takes focus once it is uncovered.
+ */
+export function usePanelTabFocusHandoff(): MutableRefObject<string | null> {
+  const ops = useContext(PanelOpsContext)
+  if (!ops) throw new Error("usePanelTabFocusHandoff must be used within a PanelProvider")
+  return ops.tabFocusHandoff
 }
 
 export function usePanel(): PanelContextValue {

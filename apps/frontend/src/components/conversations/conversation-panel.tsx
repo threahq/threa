@@ -214,7 +214,7 @@ function ConversationPanelHeader({
   const [menuOpen, setMenuOpen] = useState(false)
   const title = effectiveTitle ?? locator
   const resolved = post?.conversation.status === "resolved"
-  const tabbed = usePanel().panelIds.length > 1
+  const { tabbed } = usePanel()
   // On touch the identity line IS the actions trigger, as the stream header's
   // name is. The header is `relative` so the press-and-hold name overlay, which
   // portals into its nearest <header>, can fill the bar here too.
@@ -1100,6 +1100,11 @@ function ConversationPanelBody({
     landedRef.current.key = null
     userInteractedAtRef.current = 0
     programmaticScrollAtRef.current = 0
+  } else if (highlightMessageId == null && landingIntentRef.current != null && landedRef.current.key != null) {
+    // The deep link left the URL (this tab went behind another, or a switch
+    // dropped `?m=`) after its landing engaged: that landing stands, the marker
+    // doesn't take a second one.
+    landedRef.current.key = landingTargetId
   }
   landingIntentRef.current = highlightMessageId
   markerHeldRef.current = markerMessageId != null

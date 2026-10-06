@@ -186,7 +186,10 @@ export function useTypeToFocus() {
         return
       }
 
-      const inlineEditor = document.querySelector<HTMLElement>("[data-inline-edit] [contenteditable='true']")
+      // A background panel tab keeps its open edit, but behind `inert` it can't take focus.
+      const inlineEditor = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-inline-edit] [contenteditable='true']")
+      ).find((editor) => !editor.closest("[inert]"))
       if (inlineEditor) {
         focusAtEnd(inlineEditor)
         return

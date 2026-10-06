@@ -200,6 +200,21 @@ describe("useTypeToFocus", () => {
     expect(document.activeElement).toBe(thread)
   })
 
+  it("should route the key to the tab on show when the last-clicked panel tab went behind it", () => {
+    buildDom(
+      '<div inert><div data-editor-zone="panel" id="tab-a"><div contenteditable="true" id="a"></div></div></div>' +
+        '<div data-editor-zone="panel" id="tab-b"><div contenteditable="true" id="b"></div></div>'
+    )
+    const behind = document.getElementById("a") as HTMLElement
+    const onShow = document.getElementById("b") as HTMLElement
+    setVisible(behind, true)
+    setVisible(onShow, true)
+
+    document.getElementById("tab-a")!.dispatchEvent(new MouseEvent("click", { bubbles: true }))
+    press("a")
+    expect(document.activeElement).toBe(onShow)
+  })
+
   it("a rendered panel with no composer (archived: the disabled notice) swallows the key instead of typing into a board card", () => {
     buildDom(
       '<main data-editor-zone="main"><div contenteditable="true" id="m"></div></main>' +

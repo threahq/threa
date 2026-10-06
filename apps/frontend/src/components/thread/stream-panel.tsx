@@ -90,7 +90,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   // A background tab doesn't chase the deep link the tab on show opened at.
   const covered = usePaneCovered()
   const highlightMessageId = covered ? null : searchParams.get("m")
-  const { panelId, panelIds, openPanel, getNavigateUrl, closePanel, setFocusedPane } = usePanel()
+  const { panelId, tabbed, openPanel, getNavigateUrl, closePanel, setFocusedPane } = usePanel()
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   const { openStreamSettings } = useStreamSettings()
   const { open: openExplorer } = useExplorerUrlState()
@@ -368,7 +368,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
 
   // Escape to close — only when focus is inside this expanded editor
   useEffect(() => {
-    if (!draftExpanded) return
+    if (!draftExpanded || covered) return
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return
       if (e.key !== "Escape") return
@@ -385,7 +385,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
     }
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
-  }, [draftExpanded])
+  }, [draftExpanded, covered])
 
   const handleDraftExpand = useCallback(() => {
     if (!draftPortalTargetRef.current) {
@@ -523,7 +523,6 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
 
   // With more than one tab open, the tab row stands in for the title and each
   // tab carries its own close.
-  const tabbed = panelIds.length > 1
   let headerContent: React.ReactNode
   if (tabbed) {
     headerContent = <PanelTabStrip workspaceId={workspaceId} className={isMobile ? undefined : "-ml-2"} />
@@ -782,7 +781,9 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
           onOpenChange={setLabelPickerOpen}
         />
       )}
-      {!isDraft && stream && panelId && <StreamContextOverlay workspaceId={workspaceId} streamId={panelId} />}
+      {!covered && !isDraft && stream && panelId && (
+        <StreamContextOverlay workspaceId={workspaceId} streamId={panelId} />
+      )}
     </SidePanel>
   )
 }

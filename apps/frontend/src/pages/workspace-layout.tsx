@@ -561,7 +561,8 @@ function WorkspaceLayoutContent() {
     () => [streamId, ...parsePanelTabs(panelValue).ids].filter((id): id is string => Boolean(id)),
     [streamId, panelValue]
   )
-  // Background tabs stay synced but aren't on screen, so they don't hold back push.
+  // Background tabs stay synced but aren't on screen, so they hold back neither
+  // push nor the first reveal.
   const onScreenStreamIds = useMemo(
     () => [streamId, parsePanelTabs(panelValue).active].filter((id): id is string => Boolean(id)),
     [streamId, panelValue]
@@ -570,7 +571,7 @@ function WorkspaceLayoutContent() {
   // its room is rejected, and both delayed the coordinated reveal on every cold
   // open with a conversation panel in the URL. Same rule the SyncEngine and the
   // presence registration above already apply (INV-35).
-  const coordinatedStreamIds = useMemo(() => streamIds.filter(isServerStreamId), [streamIds])
+  const coordinatedStreamIds = useMemo(() => onScreenStreamIds.filter(isServerStreamId), [onScreenStreamIds])
 
   useCapturePageviews()
 
