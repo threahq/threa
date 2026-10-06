@@ -365,13 +365,13 @@ describe("SectionHeader view options", () => {
   it("should close the menu on Escape and return focus to the opener", async () => {
     vi.spyOn(useMobileModule, "useIsMobile").mockReturnValue(false)
     renderHeader({ label: "Channels", viewOptions: makeViewOptions() })
-    const opener = screen.getByRole("button", { name: "Channels view options" })
-    await userEvent.click(opener)
+    await userEvent.click(screen.getByRole("button", { name: "Channels view options" }))
 
     await userEvent.keyboard("{Escape}")
 
     expect(screen.queryByRole("menu", { name: "Channels view options" })).not.toBeInTheDocument()
-    expect(opener).toHaveFocus()
+    // Opening swaps the bare trigger for the Radix-wrapped one, so query the opener afresh.
+    expect(screen.getByRole("button", { name: "Channels view options" })).toHaveFocus()
   })
 
   it("should open a sheet of pressable rows on mobile", async () => {

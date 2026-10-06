@@ -1,4 +1,4 @@
-import { useId, type ReactNode } from "react"
+import { useId, type ComponentProps } from "react"
 import {
   ArrowDown01,
   ArrowDown10,
@@ -23,7 +23,6 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { SidebarDropdownMenu } from "./sidebar-actions"
 
@@ -113,15 +112,14 @@ interface SectionViewMenuProps {
   options: SectionViewOptions
   open: boolean
   onOpenChange: (open: boolean) => void
-  trigger: ReactNode
+  trigger: ComponentProps<typeof SidebarDropdownMenu>["trigger"]
 }
 
 /** Desktop: the options as a dropdown off the section header. */
 export function SectionViewMenu({ label, options, open, onOpenChange, trigger }: SectionViewMenuProps) {
   const filters = filterRows(options)
   return (
-    <SidebarDropdownMenu open={open} onOpenChange={onOpenChange}>
-      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
+    <SidebarDropdownMenu open={open} onOpenChange={onOpenChange} trigger={trigger}>
       <DropdownMenuContent side="right" align="start" className="w-48" aria-label={`${label} view options`}>
         {filters.length > 0 && (
           <>

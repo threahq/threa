@@ -1,5 +1,5 @@
 import { RollingNumber } from "@/components/rolling-number"
-import type { ReactNode } from "react"
+import { memo, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { SidebarQuickLink, SidebarQuickLinkKey } from "@threahq/types"
 import { QUICK_LINK_META } from "./quick-link-meta"
@@ -54,7 +54,7 @@ function countSlot(count: number): ReactNode {
   ) : null
 }
 
-export function SidebarQuickLinks({
+export const SidebarQuickLinks = memo(function SidebarQuickLinks({
   workspaceId,
   quickLinks,
   isDraftsPage,
@@ -180,4 +180,4 @@ export function SidebarQuickLinks({
       )}
     </div>
   )
-}
+})

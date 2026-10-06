@@ -23,6 +23,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { LazyDropdownMenu } from "@/components/ui/lazy-overlay"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -95,9 +96,12 @@ export interface SidebarActionPreview {
   createdAt?: string
 }
 
+type SidebarMenuTrigger = ComponentProps<typeof LazyDropdownMenu>["trigger"]
+
 interface SidebarActionMenuProps {
   actions: SidebarActionItem[]
-  trigger?: ReactNode
+  /** Must forward props and a ref to its DOM node, as `DropdownMenuTrigger asChild` requires. */
+  trigger?: SidebarMenuTrigger
   ariaLabel?: string
   align?: ComponentProps<typeof DropdownMenuContent>["align"]
   side?: ComponentProps<typeof DropdownMenuContent>["side"]
@@ -250,14 +254,19 @@ function useSidebarMenu(open: boolean, close: () => void) {
 interface SidebarDropdownMenuProps {
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  /** Must forward props and a ref to its DOM node, as `DropdownMenuTrigger asChild` requires. */
+  trigger: SidebarMenuTrigger
+  /** The `DropdownMenuContent`. */
   children: ReactNode
 }
 
 /**
  * The dropdown root for every menu inside the sidebar: registers itself while
  * open so closing the sidebar (swipe, shortcut, backdrop) closes the menu too.
+ * The sidebar re-renders on every incoming message, so a menu mounts its Radix
+ * root only once it is first used.
  */
-export function SidebarDropdownMenu({ open, onOpenChange, children }: SidebarDropdownMenuProps) {
+export function SidebarDropdownMenu({ open, onOpenChange, trigger, children }: SidebarDropdownMenuProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
   const isOpen = open ?? uncontrolledOpen
   const handleOpenChange = (next: boolean) => {
@@ -267,9 +276,9 @@ export function SidebarDropdownMenu({ open, onOpenChange, children }: SidebarDro
   useSidebarMenu(isOpen, () => handleOpenChange(false))
 
   return (
-    <DropdownMenu open={isOpen} onOpenChange={handleOpenChange}>
+    <LazyDropdownMenu trigger={trigger} open={isOpen} onOpenChange={handleOpenChange}>
       {children}
-    </DropdownMenu>
+    </LazyDropdownMenu>
   )
 }
 
@@ -305,8 +314,7 @@ export function SidebarActionMenu({
   )
 
   return (
-    <SidebarDropdownMenu open={open} onOpenChange={onOpenChange}>
-      <DropdownMenuTrigger asChild>{trigger ?? defaultTrigger}</DropdownMenuTrigger>
+    <SidebarDropdownMenu open={open} onOpenChange={onOpenChange} trigger={trigger ?? defaultTrigger}>
       <DropdownMenuContent
         side={side}
         align={align}

@@ -37,7 +37,7 @@ import {
   parseLensParam,
 } from "@/components/board/board-filter-params"
 import { BOARD_LENS_DEFS } from "@/lib/board/lens-defs"
-import { DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu"
 import { SidebarDropdownMenu } from "./sidebar-actions"
 import { BoardFilterChips } from "./board-filter-chips"
 import { BoardUnreadRow } from "./board-link-row"
@@ -142,8 +142,8 @@ export function BoardModeBlock({ workspaceId, lensTotals, unreadStreamCount }: B
                     now, and touch has no hover to reveal a hidden trigger.
                     Fixed footprint per INV-21. Management verbs are actions,
                     not navigation. */}
-                <SidebarDropdownMenu>
-                  <DropdownMenuTrigger asChild>
+                <SidebarDropdownMenu
+                  trigger={
                     <button
                       type="button"
                       aria-label={`Actions for ${view.name}`}
@@ -151,7 +151,8 @@ export function BoardModeBlock({ workspaceId, lensTotals, unreadStreamCount }: B
                     >
                       <MoreHorizontal className="h-4 w-4" />
                     </button>
-                  </DropdownMenuTrigger>
+                  }
+                >
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem onClick={() => void prefs?.updatePreferences({ boardDefaultViewId: view.id })}>
                       <Pin className={cn("mr-2 h-4 w-4", isHome && "fill-current")} />
@@ -219,8 +220,8 @@ export function BoardModeBlock({ workspaceId, lensTotals, unreadStreamCount }: B
                   </span>
                 )}
               </Link>
-              <SidebarDropdownMenu>
-                <DropdownMenuTrigger asChild>
+              <SidebarDropdownMenu
+                trigger={
                   <button
                     type="button"
                     aria-label={isHome ? `Actions for ${def.label} (board home)` : `Actions for ${def.label}`}
@@ -228,7 +229,8 @@ export function BoardModeBlock({ workspaceId, lensTotals, unreadStreamCount }: B
                   >
                     <MoreHorizontal className="h-4 w-4" />
                   </button>
-                </DropdownMenuTrigger>
+                }
+              >
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem
                     onClick={() => void prefs?.updatePreferences({ boardDefaultLens: value, boardDefaultViewId: null })}
