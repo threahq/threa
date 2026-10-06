@@ -29,16 +29,17 @@ export function PaneFocusToggle() {
   const { panelId, focusTab } = usePanel()
   const { preferences } = usePreferences()
   if (!focus || !panelId) return null
+  const binding = getEffectiveKeyBinding("togglePaneFocus", preferences?.keyboardShortcuts ?? {})
 
   if (focus.focused !== panelId) {
-    const binding = getEffectiveKeyBinding("togglePaneFocus", preferences?.keyboardShortcuts ?? {})
     return (
       <Button
         variant="ghost"
         size="icon"
-        className="h-8 w-8 shrink-0"
-        aria-label="Focus"
-        title={binding ? `Focus (${formatKeyBinding(binding)})` : "Focus"}
+        // Folds after the tab row's labels and before its tabs (PanelTabStrip).
+        className="h-8 w-8 shrink-0 peer-data-[focus-folded]/tabs:hidden"
+        aria-label="Focus pane"
+        title={binding ? `Focus pane (${formatKeyBinding(binding)})` : "Focus pane"}
         onClick={() => focusTab(panelId)}
       >
         <Maximize2 className="h-4 w-4" />
@@ -51,7 +52,7 @@ export function PaneFocusToggle() {
       variant="ghost"
       className="h-8 shrink-0 gap-1.5 px-2 text-muted-foreground"
       aria-label="Restore to layout"
-      title="Back to its place (Esc)"
+      title={binding ? `Restore to layout (Esc, ${formatKeyBinding(binding)})` : "Restore to layout (Esc)"}
       onClick={() => focusTab(null)}
     >
       <svg viewBox="0 0 30 20" className="h-5 w-[30px]" aria-hidden>
@@ -76,7 +77,8 @@ export function PaneFocusToggle() {
 /**
  * Escape puts a floating pane back. It runs before anything else on the page
  * listens, so the floating pane's own Escape (marking its stream read) waits
- * for the next press; a field or an open overlay keeps its Escape.
+ * for the next press; a field, an open overlay, or anything outside the pane
+ * with focus (the overview floating over it) keeps its Escape.
  */
 export function usePaneFocusEscape(focused: string | null, restore: () => void) {
   useEffect(() => {
@@ -85,6 +87,7 @@ export function usePaneFocusEscape(focused: string | null, restore: () => void) 
       if (event.key !== "Escape" || event.repeat || event.defaultPrevented) return
       const target = event.target as HTMLElement | null
       if (target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable) return
+      if (target && target !== document.body && !target.closest("[data-focused-pane]")) return
       if (overlayOwnsEscape()) return
       event.preventDefault()
       event.stopPropagation()

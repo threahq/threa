@@ -88,10 +88,11 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string |
     reopenPane: canReopenTab(),
     nextPaneTab: tabs > 1,
     previousPaneTab: tabs > 1,
-    nextPane: panes.length > 1,
-    previousPane: panes.length > 1,
+    // Panes under a floating one are out of reach.
+    nextPane: layout.focused === undefined && panes.length > 1,
+    previousPane: layout.focused === undefined && panes.length > 1,
     // Only a tab beside others can float, and only while worked in; whatever floats can always go back.
-    togglePaneFocus: layout.focused !== undefined || (panes.length > 0 && current !== null && panelId !== null),
+    togglePaneFocus: panes.length > 0 && (layout.focused !== undefined || (current !== null && panelId !== null)),
   }
 
   // The router commits a navigation in a transition, so the URL can be a step

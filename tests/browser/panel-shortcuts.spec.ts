@@ -56,7 +56,7 @@ async function openPanels(page: Page, workspaceId: string, streamId: string, pan
 }
 
 test("should switch, close and reopen tabs from the keyboard, landing in each tab's composer", async ({ page }) => {
-  await page.setViewportSize({ width: 1800, height: 900 })
+  await page.setViewportSize({ width: 1600, height: 900 })
   const { workspaceId, streamId, threads } = await seedThreads(page, 3)
   const [a, b, c] = threads
   await openPanels(page, workspaceId, streamId, `${a}.${b}.${c}`, 3)

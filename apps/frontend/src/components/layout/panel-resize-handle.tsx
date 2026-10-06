@@ -16,6 +16,7 @@ interface PanelResizeHandleProps {
   axis?: "x" | "y"
   className?: string
   style?: CSSProperties
+  inert?: boolean
 }
 
 export function PanelResizeHandle({
@@ -31,11 +32,13 @@ export function PanelResizeHandle({
   axis = "x",
   className,
   style,
+  inert,
 }: PanelResizeHandleProps) {
   const Grip = axis === "x" ? GripVertical : GripHorizontal
   return (
     <div
       style={style}
+      inert={inert}
       className={cn(
         "relative flex flex-shrink-0 items-center justify-center bg-border",
         axis === "x"

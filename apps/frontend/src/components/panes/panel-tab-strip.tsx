@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react"
+import { useContext, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react"
 import { flushSync } from "react-dom"
 import { Link } from "react-router-dom"
 import { ChevronDown, Ellipsis, X } from "lucide-react"
@@ -16,17 +16,18 @@ import { useThreadAnchorSnippet } from "@/hooks/use-thread-anchor-snippet"
 import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { useConversationTitle } from "@/hooks/use-conversation-title"
 import { closePanelTab, followCurrentPanel } from "@/lib/panel-tabs"
-import { fitPanelTabs, splitVisibleTabs, type PanelTabFit } from "@/lib/panel-tab-fit"
+import { fitPanelTabs, splitVisibleTabs, FOCUS_TOGGLE_WIDTH, type PanelTabFit } from "@/lib/panel-tab-fit"
 import { cn } from "@/lib/utils"
 import { usePaneCovered } from "./pane-host"
+import { PaneFocusContext } from "./pane-focus"
 
 /**
  * A section's open tabs as an underline row, standing in for the panel's title
  * while more than one tab is open anywhere. Each tab is a link (switching is
  * navigation, so it's in the URL) and the one on show is underlined and
  * `aria-current`; the underline mutes while another pane is current. The row
- * never scrolls: short of room, the panel's `labels` fold first, then trailing
- * tabs fold into a "+N" menu.
+ * never scrolls: short of room, the panel's `labels` fold first, then the
+ * pane's Focus button, then trailing tabs fold into a "+N" menu.
  */
 export function PanelTabStrip({
   workspaceId,
@@ -37,7 +38,7 @@ export function PanelTabStrip({
   labels?: ReactNode
   className?: string
 }) {
-  const { layout, section, getTabUrl, closeTab, splitTab, splits, setCurrentPane, focusTab } = usePanel()
+  const { panelId, layout, section, getTabUrl, closeTab, splitTab, splits, setCurrentPane, focusTab } = usePanel()
   const currentPane = useCurrentPane()
   const { isMobile } = useSidebar()
   const panelIds = section?.ids ?? []
@@ -48,7 +49,10 @@ export function PanelTabStrip({
   const covered = usePaneCovered()
   const linkIdPrefix = useId()
   const focusHandoff = usePanelTabFocusHandoff()
-  const fit = usePanelTabFit(stripRef, labelsRef, panelIds, activePanelId)
+  const paneFocus = useContext(PaneFocusContext)
+  // Only the Focus button folds: a floating pane's Restore button stays put.
+  const focusWidth = paneFocus && panelId && paneFocus.focused !== panelId ? FOCUS_TOGGLE_WIDTH : 0
+  const fit = usePanelTabFit(stripRef, labelsRef, panelIds, activePanelId, focusWidth)
   const { shown, folded } = splitVisibleTabs(panelIds, activePanelId, fit.visible)
 
   useLayoutEffect(() => {
@@ -66,7 +70,8 @@ export function PanelTabStrip({
       <nav
         ref={stripRef}
         aria-label="Panel tabs"
-        className={cn("relative flex min-w-0 flex-1 self-stretch overflow-hidden", className)}
+        data-focus-folded={!fit.focus || undefined}
+        className={cn("peer/tabs relative flex min-w-0 flex-1 self-stretch overflow-hidden", className)}
       >
         {shown.map((id, index) => {
           const active = id === activePanelId
@@ -94,7 +99,7 @@ export function PanelTabStrip({
                   setCurrentPane(id)
                   if (active) {
                     event.preventDefault()
-                    if (layout.focused === id) focusTab(null)
+                    if (paneFocus?.focused === id) focusTab(null)
                   } else handOffFocus(id)
                 }}
                 aria-current={active ? "page" : undefined}
@@ -219,11 +224,14 @@ function usePanelTabFit(
   stripRef: RefObject<HTMLElement | null>,
   labelsRef: RefObject<HTMLElement | null>,
   panelIds: readonly string[],
-  activePanelId: string | null
+  activePanelId: string | null,
+  focusWidth: number
 ): PanelTabFit {
-  const [fit, setFit] = useState<PanelTabFit>({ labels: true, visible: panelIds.length })
+  const [fit, setFit] = useState<PanelTabFit>({ labels: true, focus: true, visible: panelIds.length })
   const labelsShown = useRef(fit.labels)
   labelsShown.current = fit.labels
+  const focusShown = useRef(fit.focus)
+  focusShown.current = fit.focus
   const tabs = panelIds.length
 
   useLayoutEffect(() => {
@@ -232,10 +240,17 @@ function usePanelTabFit(
     const activeTab = strip.querySelector<HTMLElement>('[aria-current="page"]')?.parentElement
     const measure = () => {
       const labelsWidth = Math.ceil(labelsRef.current?.getBoundingClientRect().width ?? 0)
-      const room = Math.floor(strip.getBoundingClientRect().width) + (labelsShown.current ? labelsWidth : 0)
+      const room =
+        Math.floor(strip.getBoundingClientRect().width) +
+        (labelsShown.current ? labelsWidth : 0) +
+        (focusShown.current ? focusWidth : 0)
       const activeWidth = Math.ceil(activeTab?.getBoundingClientRect().width ?? 0)
-      const next = fitPanelTabs(room, tabs, activeWidth, labelsWidth)
-      setFit((current) => (current.labels === next.labels && current.visible === next.visible ? current : next))
+      const next = fitPanelTabs(room, tabs, activeWidth, labelsWidth, focusWidth)
+      setFit((current) =>
+        current.labels === next.labels && current.focus === next.focus && current.visible === next.visible
+          ? current
+          : next
+      )
     }
     measure()
     // Re-fit before the resized frame paints, so it never shows the old fit clipped.
@@ -244,7 +259,7 @@ function usePanelTabFit(
     if (labelsRef.current) observer.observe(labelsRef.current)
     if (activeTab) observer.observe(activeTab)
     return () => observer.disconnect()
-  }, [stripRef, labelsRef, tabs, activePanelId])
+  }, [stripRef, labelsRef, tabs, activePanelId, focusWidth])
 
   return fit
 }
