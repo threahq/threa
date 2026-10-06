@@ -42,6 +42,7 @@ function buildSlots(ids: string[], binding: string): Map<string, QuickJumpRowSlo
   const parsed = parseKeyBinding(binding)
   const modifiers: string[] = []
   if (parsed.mod) modifiers.push(isMac() ? "Meta" : "Control")
+  if (parsed.ctrl) modifiers.push("Control")
   if (parsed.shift) modifiers.push("Shift")
   if (parsed.alt) modifiers.push("Alt")
 

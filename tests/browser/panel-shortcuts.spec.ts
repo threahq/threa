@@ -102,6 +102,15 @@ test("should switch, close and reopen tabs from the keyboard, landing in each ta
   await expect.poll(() => panelParam(page)).toBe(`${a}*.${b}.${c}`)
   await expect.poll(() => focusedComposer(page)).toBe(a)
 
+  // A press right after a tab click waits for it, however long since the last shortcut.
+  await page.waitForTimeout(2_100)
+  await tabPane(page, a).getByRole("link", { name: "parent number 3" }).click()
+  await page.keyboard.press("Alt+BracketLeft")
+  await expect.poll(() => panelParam(page)).toBe(`${a}.${b}*.${c}`)
+  await expect.poll(() => focusedComposer(page)).toBe(b)
+  await page.keyboard.press("Alt+BracketLeft")
+  await expect.poll(() => panelParam(page)).toBe(`${a}*.${b}.${c}`)
+
   await page.keyboard.press("Alt+w")
   await expect.poll(() => panelParam(page)).toBe(`${b}*.${c}`)
   await expect.poll(() => focusedComposer(page)).toBe(b)
@@ -167,6 +176,20 @@ test("should step focus through the main view and the panes beside it", async ({
   await expect.poll(() => panelParam(page)).toBeNull()
   await page.keyboard.type("ing")
   await expect(page.locator('[data-editor-zone="main"] [contenteditable="true"]').last()).toHaveText("drafting")
+})
+
+test("should act on each queued press after the one before it", async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 900 })
+  const { workspaceId, streamId, threads } = await seedThreads(page, 3)
+  const [a, b, c] = threads
+  await openPanels(page, workspaceId, streamId, `${a}.${c}-${b}`, 2)
+  await tabPane(page, c).locator('[contenteditable="true"]').last().click()
+
+  // Moving to the next pane changes no URL, so the close queued behind it must still see the move.
+  await page.keyboard.press("Alt+BracketRight")
+  await page.keyboard.press("Alt+Period")
+  await page.keyboard.press("Alt+w")
+  await expect.poll(() => panelParam(page)).toBe(`${a}*.${c}`)
 })
 
 test("should switch the tabs of a split folded into one section without waiting on the URL", async ({ page }) => {
