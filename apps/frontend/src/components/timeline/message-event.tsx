@@ -14,7 +14,8 @@ import {
   type MovedFromProvenance,
 } from "@threahq/types"
 import { toast } from "sonner"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { LazyTooltip } from "@/components/ui/lazy-overlay"
+import { TooltipContent } from "@/components/ui/tooltip"
 import { Button } from "@/components/ui/button"
 import { MarkdownContent, AttachmentProvider } from "@/components/ui/markdown-content"
 import { MessageContextBadge } from "@/components/composer"
@@ -528,13 +529,12 @@ function MessageAuthorStatus({
   )
   if (!status.text && !clears) return glyph
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>{glyph}</TooltipTrigger>
+    <LazyTooltip trigger={glyph}>
       <TooltipContent>
         {status.text && <div>{status.text}</div>}
         {clears && <div className="text-muted-foreground">{clears}</div>}
       </TooltipContent>
-    </Tooltip>
+    </LazyTooltip>
   )
 }
 
@@ -695,12 +695,11 @@ function MessageLayout({
       {theme.badge}
       {modelBadgeId && <ModelBadge modelId={modelBadgeId} />}
       {event.actorType !== "bot" && payload.sentVia && isSentViaApi(payload.sentVia) && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="text-[10px] text-muted-foreground/70 font-medium cursor-default">via API</span>
-          </TooltipTrigger>
+        <LazyTooltip
+          trigger={<span className="text-[10px] text-muted-foreground/70 font-medium cursor-default">via API</span>}
+        >
           <TooltipContent>Sent on behalf of this user by an API key</TooltipContent>
-        </Tooltip>
+        </LazyTooltip>
       )}
       {statusIndicator}
       <MessageAuthorStatus actorId={event.actorId} actorType={event.actorType} workspaceId={workspaceId} />
@@ -1560,8 +1559,8 @@ function SentMessageEvent({
               />
               <SaveMessageButton workspaceId={workspaceId} messageId={payload.messageId} />
               {actionContext.onQuoteReply && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
+                <LazyTooltip
+                  trigger={
                     <Button
                       variant="ghost"
                       size="icon"
@@ -1571,9 +1570,10 @@ function SentMessageEvent({
                     >
                       <Quote className="h-3.5 w-3.5" />
                     </Button>
-                  </TooltipTrigger>
+                  }
+                >
                   <TooltipContent>Quote reply</TooltipContent>
-                </Tooltip>
+                </LazyTooltip>
               )}
               {/* Reply-in-thread sits adjacent to the overflow menu so it mirrors
                 the top entry of the expanded context menu — the two thread
@@ -1582,9 +1582,9 @@ function SentMessageEvent({
                 to the same panel) so the toolbar never shuffles buttons in and
                 out as the user opens/closes the thread. */}
               {!sharedCopy && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    {awaitingServerId ? (
+                <LazyTooltip
+                  trigger={
+                    awaitingServerId ? (
                       <Button
                         variant="ghost"
                         size="icon"
@@ -1605,10 +1605,11 @@ function SentMessageEvent({
                           <MessageSquareReply className="h-3.5 w-3.5" />
                         </Link>
                       </Button>
-                    )}
-                  </TooltipTrigger>
+                    )
+                  }
+                >
                   <TooltipContent>Reply in thread</TooltipContent>
-                </Tooltip>
+                </LazyTooltip>
               )}
               <MessageContextMenu context={actionContext} saved={savedForMessage ?? null} />
             </>

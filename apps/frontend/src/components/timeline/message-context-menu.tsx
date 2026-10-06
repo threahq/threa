@@ -3,13 +3,12 @@ import type { SavedMessageView } from "@threahq/types"
 import { EllipsisVertical } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
-  DropdownMenu,
   DropdownMenuContent,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { LazyDropdownMenu } from "@/components/ui/lazy-overlay"
 import { ActionDropdownItems } from "@/components/actions/action-dropdown-items"
 import {
   type MessageActionContext,
@@ -55,8 +54,10 @@ export function MessageContextMenu({ context, saved, open: openProp, onOpenChang
   if (actions.length === 0) return null
 
   return (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger asChild>
+    <LazyDropdownMenu
+      open={open}
+      onOpenChange={setOpen}
+      trigger={
         <Button
           ref={triggerRef}
           variant="outline"
@@ -66,7 +67,8 @@ export function MessageContextMenu({ context, saved, open: openProp, onOpenChang
         >
           <EllipsisVertical className="h-3.5 w-3.5" />
         </Button>
-      </DropdownMenuTrigger>
+      }
+    >
       <DropdownMenuContent
         align="end"
         className="min-w-[200px]"
@@ -108,7 +110,7 @@ export function MessageContextMenu({ context, saved, open: openProp, onOpenChang
           }}
         />
       </DropdownMenuContent>
-    </DropdownMenu>
+    </LazyDropdownMenu>
   )
 }
 

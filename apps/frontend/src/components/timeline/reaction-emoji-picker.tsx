@@ -2,7 +2,8 @@ import { useState, useMemo, useCallback, useRef, useEffect, memo } from "react"
 import { Search, SmilePlus } from "lucide-react"
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso"
 import { Button } from "@/components/ui/button"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { LazyPopover } from "@/components/ui/lazy-overlay"
+import { PopoverContent } from "@/components/ui/popover"
 import { Drawer, DrawerContent, DrawerTitle, DrawerTrigger } from "@/components/ui/drawer"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -35,7 +36,7 @@ interface ReactionEmojiPickerProps {
   workspaceId: string
   onSelect: (emoji: string) => void
   /** Custom trigger element — defaults to SmilePlus icon button */
-  trigger?: React.ReactNode
+  trigger?: React.ReactElement
   /** Additional class for the trigger wrapper */
   triggerClassName?: string
   /** Shortcodes the current user has already reacted with — highlighted */
@@ -633,8 +634,7 @@ export function ReactionEmojiPicker({
   }
 
   return (
-    <Popover open={open} onOpenChange={handleOpenChange}>
-      <PopoverTrigger asChild>{triggerElement}</PopoverTrigger>
+    <LazyPopover open={open} onOpenChange={handleOpenChange} trigger={triggerElement}>
       <PopoverContent
         align="end"
         side="top"
@@ -648,6 +648,6 @@ export function ReactionEmojiPicker({
       >
         {gridContent}
       </PopoverContent>
-    </Popover>
+    </LazyPopover>
   )
 }
