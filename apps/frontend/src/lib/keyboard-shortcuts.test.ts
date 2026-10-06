@@ -466,12 +466,31 @@ describe("pane shortcuts", () => {
     expect(matchesKeyBinding(key({ key: "z", code: "KeyW", altKey: true }), "alt+w")).toBe(false)
   })
 
+  it("should match Alt bindings by physical key off a Mac when the key prints no ASCII character", () => {
+    for (const name of ["Win32", "Linux x86_64"]) {
+      platform(name)
+      // Swedish has "å" where a US layout has "[", German has "ü".
+      expect(matchesKeyBinding(key({ key: "å", code: "BracketLeft", altKey: true }), "alt+[")).toBe(true)
+      expect(matchesKeyBinding(key({ key: "ü", code: "BracketLeft", altKey: true }), "alt+[")).toBe(true)
+      expect(keyEventToBinding(key({ key: "å", code: "BracketLeft", altKey: true }))).toBe("alt+[")
+    }
+  })
+
   it("should see ctrl and mod as one chord, since mod answers to Control on a Mac too", () => {
     installed(true)
     for (const name of ["Win32", "MacIntel"]) {
       platform(name)
       expect(detectConflicts({ toggleSidebar: "mod+tab" }).get("mod+tab")).toEqual(["toggleSidebar", "nextPaneTab"])
     }
+  })
+
+  it("should clear the binding a Mac's Control chord takes over when one action is rebound onto it", () => {
+    installed(true)
+    platform("MacIntel")
+    expect(resolveShortcutBindingUpdate({}, "toggleSidebar", "ctrl+tab")).toEqual({
+      nextPaneTab: "none",
+      toggleSidebar: "ctrl+tab",
+    })
   })
 
   it("should keep matching ⌥ bindings recorded as the character ⌥ types", () => {

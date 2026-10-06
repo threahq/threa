@@ -282,7 +282,12 @@ export function getEffectiveKeyBinding(
   return action && defaultKeyOf(action)
 }
 
-/** Returns a map of key binding to the action IDs that share it (length > 1). */
+/** The chord a binding presses: "mod" answers to Control everywhere, so ctrl+tab and mod+tab are one chord. */
+export function shortcutChord(binding: string): string {
+  return binding.replace(/^ctrl\+/, "mod+")
+}
+
+/** Returns a map of chord ({@link shortcutChord}) to the action IDs that share it (length > 1). */
 export function detectConflicts(customBindings: Record<string, string> = {}): Map<string, string[]> {
   const keyToActions = new Map<string, string[]>()
 
@@ -290,8 +295,7 @@ export function detectConflicts(customBindings: Record<string, string> = {}): Ma
     const key = getEffectiveKeyBinding(action.id, customBindings)
     if (!key) continue
     for (const occupied of occupiedBindings(action.id, key)) {
-      // "mod" answers to Control everywhere, so ctrl+tab and mod+tab share a chord.
-      const chord = occupied.replace(/^ctrl\+/, "mod+")
+      const chord = shortcutChord(occupied)
       const existing = keyToActions.get(chord) || []
       keyToActions.set(chord, [...existing, action.id])
     }
@@ -383,16 +387,24 @@ const PHYSICAL_PUNCTUATION: Record<string, string> = {
 /**
  * The key an event names. Under ⌥ on a Mac it is the physical key, as on a US
  * layout, since ⌥ rewrites the character (⌥W is "∑"). Alt elsewhere leaves the
- * character alone, so AZERTY's Alt+W stays the key printed W.
+ * character alone, so AZERTY's Alt+W stays the key printed W, unless the key
+ * prints no ASCII character to match by.
  */
 function eventKey(event: KeyboardEvent): string {
-  if (event.altKey && isMac()) {
+  if ((event.altKey && isMac()) || isRewrittenUnderModifier(event)) {
     const code = event.code ?? ""
     const letterOrDigit = /^(?:Key|Digit)(.)$/.exec(code)?.[1]
     if (letterOrDigit) return letterOrDigit.toLowerCase()
     if (code in PHYSICAL_PUNCTUATION) return PHYSICAL_PUNCTUATION[code]
   }
   return event.key.toLowerCase()
+}
+
+/** A modifier held over a key whose character isn't ASCII, as Alt+[ is "å" on a
+ *  Swedish layout and "ü" on a German one, can only match by the key's position. */
+function isRewrittenUnderModifier(event: KeyboardEvent): boolean {
+  if (!event.altKey && !event.ctrlKey && !event.metaKey) return false
+  return event.key === "Dead" || (event.key.length === 1 && !/^[ -~]$/.test(event.key))
 }
 
 /** ⌥ typing a plain character on a Mac: "[" is ⌥8 on Nordic and German Macs and
@@ -675,17 +687,24 @@ export function getEffectiveEditorBindings(customBindings: Record<string, string
   return result
 }
 
+/** The other actions whose bindings press a chord `binding` would take for `actionId`. */
+export function conflictingActions(
+  customBindings: Record<string, string>,
+  actionId: string,
+  binding: string
+): string[] {
+  const conflicts = detectConflicts({ ...customBindings, [actionId]: binding })
+  const ids = occupiedBindings(actionId, binding).flatMap((occupied) => conflicts.get(shortcutChord(occupied)) ?? [])
+  return [...new Set(ids)].filter((id) => id !== actionId)
+}
+
 export function resolveShortcutBindingUpdate(
   customBindings: Record<string, string> = {},
   actionId: string,
   binding: string
 ): Record<string, string> {
   const nextBindings = { ...customBindings }
-  const testBindings = { ...customBindings, [actionId]: binding }
-  const conflicts = detectConflicts(testBindings)
-  const conflicting = conflicts.get(binding)?.filter((id) => id !== actionId) ?? []
-
-  for (const conflictId of conflicting) {
+  for (const conflictId of conflictingActions(customBindings, actionId, binding)) {
     nextBindings[conflictId] = "none"
   }
 

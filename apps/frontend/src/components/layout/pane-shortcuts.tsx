@@ -3,7 +3,7 @@ import { useLocation, useNavigate } from "react-router-dom"
 import { usePanel, useCurrentPane, usePaneShortcutQueue } from "@/contexts"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { findVisibleZoneEditor, focusAtEnd, zoneContainer } from "@/hooks/use-type-to-focus"
-import { closePanelTab, followCurrentPanel } from "@/lib/panel-tabs"
+import { activatePanelTab, closePanelTab, followCurrentPanel } from "@/lib/panel-tabs"
 
 type PaneAction = "closePane" | "reopenPane" | "nextPaneTab" | "previousPaneTab" | "nextPane" | "previousPane"
 
@@ -23,7 +23,7 @@ const NO_PANES: readonly (string | null)[] = []
  * by side. Unscoped, with no panel open, only reopening has anything to act on.
  */
 export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string | null)[] }) {
-  const { panelId, layout, section, getTabUrl, closePanel, reopenTab, setCurrentPane } = usePanel()
+  const { panelId, layout, section, getTabUrl, closePanel, reopenTab, canReopenTab, setCurrentPane } = usePanel()
   const current = useCurrentPane()
   const navigate = useNavigate()
   const location = useLocation()
@@ -35,7 +35,8 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string |
     navigate(getTabUrl(next), { replace: true })
     setCurrentPane(next)
     landFocus(next)
-    return true
+    // A section folded on screen can switch to a tab its own section already shows, which leaves the URL as it was.
+    return activatePanelTab(layout, next) !== layout
   }
 
   const showPane = (step: number) => {
@@ -71,7 +72,7 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string |
   const tabs = section?.ids.length ?? 0
   const available: Record<PaneAction, boolean> = {
     closePane: panelId !== null,
-    reopenPane: true,
+    reopenPane: canReopenTab(),
     nextPaneTab: tabs > 1,
     previousPaneTab: tabs > 1,
     nextPane: panes.length > 1,
@@ -100,8 +101,10 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string |
   })
 
   const handle = (action: PaneAction) => (event: KeyboardEvent) => {
-    if (!caughtUp()) queue.current.pending.push(action)
-    else if (available[action]) act(action)
+    // A held key's repeats outrun the router, and must not go on acting after it is let go.
+    if (!caughtUp()) {
+      if (!event.repeat) queue.current.pending.push(action)
+    } else if (available[action]) act(action)
     else return event.repeat
     return true
   }
