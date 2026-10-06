@@ -77,7 +77,7 @@ import { useDecryptedStreamName } from "@/hooks/use-decrypted-stream-name"
 import { copyStreamLink } from "@/lib/stream-links"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { LabelStack } from "@/components/labels/label-stack"
-import { PanelTabStrip, usePaneCovered, usePanelCloseFocusLanding } from "@/components/panes"
+import { PaneFocusToggle, PanelTabStrip, usePaneCovered, usePanelCloseFocusLanding } from "@/components/panes"
 import { isServerStreamId } from "@/lib/stream-ids"
 
 interface StreamPanelProps {
@@ -669,6 +669,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
               />
             )
           ))}
+        <PaneFocusToggle />
         {/* Hide X close button on mobile (back button used instead) */}
         {!isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />}
       </SidePanelHeader>

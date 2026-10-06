@@ -45,6 +45,7 @@ interface PaneProps extends HTMLAttributes<HTMLDivElement> {
    */
   covered?: boolean
   inert?: boolean
+  ref?: Ref<HTMLDivElement>
 }
 
 const PaneCoveredContext = createContext(false)

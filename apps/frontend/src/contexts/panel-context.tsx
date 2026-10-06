@@ -16,6 +16,7 @@ import {
   PANEL_PARAM,
   activatePanelTab,
   closePanelTab,
+  focusPanelTab,
   followCurrentPanel,
   followPanel,
   formatPanelLayout,
@@ -128,6 +129,8 @@ interface PanelContextValue {
   canReopenTab: () => boolean
   /** Move a tab out of its section into a new one beside or below it. */
   splitTab: (panelId: string, direction: SplitDirection) => void
+  /** Float a tab over the rest of the page, or put the floating one back with null. */
+  focusTab: (panelId: string | null) => void
   /** The ways this consumer's tab can split off as it is laid out now. */
   splits: readonly SplitDirection[]
   /** Record the pane the user is working in: a panel id, or null for the main view. */
@@ -151,6 +154,7 @@ interface PanelOps {
   reopenTab: (scopeId: string | null) => string | null
   canReopenTab: () => boolean
   splitTab: (panelId: string, direction: SplitDirection) => void
+  focusTab: (panelId: string | null) => void
   setCurrentPane: (panelId: string | null) => void
   coverOwner: string | null
   claimCover: (panelId: string) => void
@@ -247,6 +251,7 @@ function buildValue(
     reopenTab: () => ops.reopenTab(scopeId),
     canReopenTab: ops.canReopenTab,
     splitTab: ops.splitTab,
+    focusTab: ops.focusTab,
     splits,
     setCurrentPane: ops.setCurrentPane,
     ownsCover: scopeId === null || scopeId === ops.coverOwner,
@@ -276,9 +281,11 @@ function followPanes(
   restored: boolean
 ): PaneState {
   const moved = state.layout !== layout
-  const front = moved ? followCurrentPanel(state.layout, layout, state.front) : state.front
-  // Only a tab opening takes the user out of the main view.
-  const inMain = state.inMain && (!moved || followCurrentPanel(state.layout, layout, null) === null)
+  const focused = layout.focused !== state.layout.focused ? layout.focused : undefined
+  const front = focused ?? (moved ? followCurrentPanel(state.layout, layout, state.front) : state.front)
+  // Only a tab opening or floating takes the user out of the main view.
+  const inMain =
+    state.inMain && focused === undefined && (!moved || followCurrentPanel(state.layout, layout, null) === null)
   // Whoever sets `?context` or `?m` owns both; clearing one hands nothing on, and
   // otherwise they stay with the pane they were set in. Back and Forward set
   // nothing: the pane they were set in is still the one following them.
@@ -313,7 +320,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
   // it in with others brings it forward. Starting from the newest panel keeps a
   // reload showing what the URL's last open showed.
   const [paneState, setPaneState] = useState<PaneState>(() => {
-    const front = newestPanelOf(layout)
+    const front = layout.focused ?? newestPanelOf(layout)
     return { layout, context, deepLink, front, inMain: false, coverOwner: front }
   })
   let panes = paneState
@@ -425,6 +432,23 @@ export function PanelProvider({ children }: PanelProviderProps) {
     [open, setCurrentPane]
   )
 
+  // Focusing is a step of its own in history, so Back puts the tab back; putting
+  // it back by hand pops that step rather than adding one.
+  const focusTab = useCallback(
+    (panelId: string | null) => {
+      if (panelId !== null) {
+        open((current) => focusPanelTab(current, panelId), false)
+        return
+      }
+      const value = formatPanelLayout(focusPanelTab(layout, null))
+      if (value === null || layout.focused === undefined) return
+      const params = new URLSearchParams(searchParams)
+      params.set(PANEL_PARAM, value)
+      closeTo(params)
+    },
+    [open, closeTo, layout, searchParams]
+  )
+
   const tabFocusHandoff = useRef<string | null>(null)
   const paneShortcutQueue = useRef<PaneShortcutQueue>({ navigatedFrom: null, waitingSince: 0, pending: [] })
   const paneFocusLanding = useRef(0)
@@ -440,6 +464,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       reopenTab,
       canReopenTab,
       splitTab,
+      focusTab,
       setCurrentPane,
       coverOwner,
       claimCover,
@@ -457,6 +482,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       reopenTab,
       canReopenTab,
       splitTab,
+      focusTab,
       setCurrentPane,
       coverOwner,
       claimCover,

@@ -153,6 +153,7 @@ import { getPerfCapture } from "@/lib/perf/capture"
 import { addStartBatchSelectListener, type BatchSelectIntent } from "@/lib/batch-selection-events"
 import { addMarkReadUpToHereListener, addMarkUnreadListener } from "@/lib/mark-read-events"
 import { clearTimelineAnchor, loadTimelineAnchor, saveTimelineAnchor } from "@/lib/timeline-anchor-storage"
+import { overlayOwnsEscape } from "@/lib/overlay-escape"
 import { ReadFrontierContext, type ReadFrontier } from "./read-frontier-context"
 import { StreamReadTracker } from "./stream-read-tracker"
 import { useReadMessageIds, useStreamInInbox, useUnreadActions } from "@/hooks/use-unread-counts"
@@ -2288,23 +2289,7 @@ export function StreamContent({
       const target = event.target as HTMLElement | null
       const isInput = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable
       if (isInput) return
-      // An open Radix overlay that owns Escape (move dialog, dropdown, the
-      // reaction popover) listens in the capture phase and does not stop
-      // propagation, so without this our bubble-phase handler would ALSO mark
-      // the stream read and jump to the tail on the same keypress. Dialogs and
-      // menus match by role; other popovers match the popper wrapper (only in
-      // the DOM while open — no forceMount). Hover-only tooltips render in a
-      // popper wrapper too but never own Escape, so a tooltip showing on a
-      // hovered message must not block the shortcut — skip wrappers whose
-      // content is a tooltip.
-      const overlayOwnsEscape =
-        document.querySelector(
-          '[role="dialog"][data-state="open"],[role="alertdialog"][data-state="open"],[role="menu"][data-state="open"]'
-        ) != null ||
-        Array.from(document.querySelectorAll("[data-radix-popper-content-wrapper]")).some(
-          (wrapper) => wrapper.querySelector('[role="tooltip"]') == null
-        )
-      if (overlayOwnsEscape) return
+      if (overlayOwnsEscape()) return
       if (dividerEventId) escapeUnread()
       // Settle only a stream alone on the page: with a panel, an aside, the
       // conversation list or the docked overview open, Escape belongs to that surface.
