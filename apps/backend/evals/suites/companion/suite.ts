@@ -607,6 +607,14 @@ export async function runCompanionTask(
 
     runStartedAt = Date.now()
     const runResult = await personaAgent.run(agentInput)
+    // A failed session says nothing about answer quality; scoring its empty reply would count infra as a wrong answer.
+    let error: string | undefined
+    if (runResult.status === "failed") {
+      const session = runResult.sessionId
+        ? await AgentSessionRepository.findById(ctx.pool, ctx.workspaceId, runResult.sessionId)
+        : null
+      error = `agent session failed: ${session?.error ?? "no error recorded"}`
+    }
 
     // Read back messages sent by the agent.
     // Mention-triggered responses are posted in the spawned thread stream.
@@ -657,6 +665,7 @@ export async function runCompanionTask(
       trajectory,
       firstReplyMs,
       recalledMemoIds: readRecalledMemoIds(steps),
+      error,
     }
   } catch (error) {
     return {
