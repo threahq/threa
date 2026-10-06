@@ -5,6 +5,7 @@ import type { GitHubToolDeps } from "./deps"
 import { withGithubClient, isGitHubToolError, toToolResult } from "./client-accessor"
 import { toActor, truncateBytes } from "./format"
 import { toTraceGithubSources } from "./trace"
+import { truncateCodePoints } from "../../../../lib/truncate"
 
 const MAX_COMMIT_FILES = 30
 const MAX_COMMIT_PATCH_BYTES = 32_000
@@ -77,7 +78,7 @@ async function listCommits(deps: GitHubToolDeps, input: CommitsInput): Promise<A
     .slice(0, 10)
     .map((c) => ({
       type: "github",
-      title: `${input.owner}/${input.repo}@${c.shortSha ?? ""}: ${c.message ?? ""}`.slice(0, 200),
+      title: truncateCodePoints(`${input.owner}/${input.repo}@${c.shortSha ?? ""}: ${c.message ?? ""}`, 200),
       url: c.htmlUrl,
     }))
 

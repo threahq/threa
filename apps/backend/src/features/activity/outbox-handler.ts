@@ -14,6 +14,7 @@ import type { ActivityService } from "./service"
 import { ActivityRepository, type Activity } from "./repository"
 import { withTransaction } from "../../db"
 import { E2eStreamsRepository } from "../e2e-streams"
+import { truncateCodePoints } from "../../lib/truncate"
 
 const DEFAULT_CONFIG = {
   batchSize: 100,
@@ -234,7 +235,8 @@ export class ActivityFeedHandler implements OutboxHandler {
 
     // Standalone items preview their own title; message saves preview the
     // live message content.
-    const contentPreview = payload.saved?.message?.contentMarkdown?.slice(0, 200) ?? payload.saved?.title ?? null
+    const markdown = payload.saved?.message?.contentMarkdown
+    const contentPreview = markdown != null ? truncateCodePoints(markdown, 200) : (payload.saved?.title ?? null)
     const streamName = payload.saved?.message?.streamName ?? null
     return this.activityService.processSavedReminderFired({
       workspaceId: payload.workspaceId,

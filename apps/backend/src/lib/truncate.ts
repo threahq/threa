@@ -1,6 +1,6 @@
 /**
  * Cuts by code point: a UTF-16 cut can split an emoji into a lone surrogate,
- * which Postgres rejects in JSON and TEXT parameters.
+ * which Postgres rejects in JSON and silently stores as U+FFFD in TEXT.
  */
 export function truncateCodePoints(text: string, max: number, suffix = ""): string {
   if (text.length <= max) return text
