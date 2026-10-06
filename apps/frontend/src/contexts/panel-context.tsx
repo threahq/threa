@@ -156,6 +156,7 @@ interface PanelOps {
   claimCover: (panelId: string) => void
   tabFocusHandoff: MutableRefObject<string | null>
   paneShortcutQueue: MutableRefObject<PaneShortcutQueue>
+  paneFocusLanding: MutableRefObject<number>
 }
 
 /**
@@ -426,6 +427,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
 
   const tabFocusHandoff = useRef<string | null>(null)
   const paneShortcutQueue = useRef<PaneShortcutQueue>({ navigatedFrom: null, waitingSince: 0, pending: [] })
+  const paneFocusLanding = useRef(0)
 
   const ops = useMemo<PanelOps>(
     () => ({
@@ -443,6 +445,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       claimCover,
       tabFocusHandoff,
       paneShortcutQueue,
+      paneFocusLanding,
     }),
     [
       layout,
@@ -523,6 +526,16 @@ export function usePaneShortcutQueue(): MutableRefObject<PaneShortcutQueue> {
   const ops = useContext(PanelOpsContext)
   if (!ops) throw new Error("usePaneShortcutQueue must be used within a PanelProvider")
   return ops.paneShortcutQueue
+}
+
+/**
+ * The latest pane-shortcut focus landing. Landings outlive the shortcuts that
+ * started them, so a newer one cancels the last through this counter.
+ */
+export function usePaneFocusLanding(): MutableRefObject<number> {
+  const ops = useContext(PanelOpsContext)
+  if (!ops) throw new Error("usePaneFocusLanding must be used within a PanelProvider")
+  return ops.paneFocusLanding
 }
 
 /** The pane the user is working in: an open panel's id, or null for the main view. */
