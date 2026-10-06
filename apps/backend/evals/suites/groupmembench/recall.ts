@@ -147,15 +147,20 @@ const summaryEvaluator: RunEvaluator<RecallOutput, BenchQuestion> = {
       rateLine("gold message retrieved", withGold, (o) => o.messageHit),
       rateLine("gold stream retrieved", withGold, (o) => o.streamHit),
       rateLine("answer in context", withAnswer, (o) => o.answerInContext === true),
-      ...QUESTION_TYPES.map((type) =>
-        rateLine(
-          `${type} answer in context`,
-          withAnswer.filter((r) => r.expectedOutput.type === type),
-          (o) => o.answerInContext === true
-        )
-      ),
+      ...QUESTION_TYPES.flatMap((type) => {
+        const typeGold = withGold.filter((r) => r.expectedOutput.type === type)
+        return [
+          rateLine(`${type} gold message retrieved`, typeGold, (o) => o.messageHit),
+          rateLine(`${type} gold stream retrieved`, typeGold, (o) => o.streamHit),
+          rateLine(
+            `${type} answer in context`,
+            withAnswer.filter((r) => r.expectedOutput.type === type),
+            (o) => o.answerInContext === true
+          ),
+        ]
+      }),
       `partial ${ran.filter((r) => r.output.partial).length} · errored ${results.length - ran.length}`,
-      `research p50 ${seconds(percentile(latency, 50))} p95 ${seconds(percentile(latency, 95))}`,
+      `research p50 ${seconds(percentile(latency, 50))} p90 ${seconds(percentile(latency, 90))}`,
     ]
     return { name: "summary", score: 1, passed: true, details: lines.join("\n") }
   },
