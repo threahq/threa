@@ -602,6 +602,8 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
             className="flex-shrink-0"
           />
         )}
+        {/* Left of the stream's icons, so folding it away leaves them where they are. */}
+        <PaneFocusToggle />
         {!isDraft && stream && !isMobile && contextDock && (
           <Button
             variant="ghost"
@@ -669,7 +671,6 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
               />
             )
           ))}
-        <PaneFocusToggle />
         {/* Hide X close button on mobile (back button used instead) */}
         {!isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />}
       </SidePanelHeader>

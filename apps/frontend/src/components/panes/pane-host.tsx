@@ -60,7 +60,8 @@ export function usePaneCovered(): boolean {
 }
 
 export function Pane({ area, covered = false, inert = false, className, style, ...rest }: PaneProps) {
-  const hidden = usePaneCovered() || covered
+  // Out of reach is out of sight: a pane under a floating one shows through the scrim but is not being read.
+  const hidden = usePaneCovered() || covered || inert
   return (
     <PaneCoveredContext.Provider value={hidden}>
       <div

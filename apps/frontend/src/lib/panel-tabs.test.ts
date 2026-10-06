@@ -222,6 +222,10 @@ describe("focusPanelTab", () => {
       spell(replacePanelTab(layout, "c", "x")),
     ]).toEqual(["b**-c", "a.b**", "a-c", "a.x**-c", "a.b**-x"])
   })
+
+  it("should keep a floating tab floating when a background tab navigates to it", () => {
+    expect(spell(replacePanelTab(at("a.b-c**"), "a", "c"))).toBe("c**.b")
+  })
 })
 
 describe("splitPanelTab", () => {

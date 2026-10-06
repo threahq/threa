@@ -229,7 +229,7 @@ export function replacePanelTab(layout: PanelLayout, from: string, to: string): 
   const section = sectionAt(rest, at)
   const replaced = withSection(rest, at, {
     ids: section.ids.map((id) => (id === from ? to : id)),
-    active: section.active === from ? to : section.active,
+    active: section.active === from || layout.focused === to ? to : section.active,
   })
   return keepFocus(layout, replaced, layout.focused === from ? to : layout.focused)
 }
