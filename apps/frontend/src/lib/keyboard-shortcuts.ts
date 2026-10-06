@@ -260,9 +260,17 @@ export function getShortcutsByCategory(): Record<ShortcutAction["category"], Sho
   return result
 }
 
-/** The action's default where Threa runs now: installed, or in a browser tab. */
-export function defaultKeyOf(action: ShortcutAction): string {
-  return action.installedKey && isStandaloneApp() ? action.installedKey : action.defaultKey
+/** The action's default where Threa runs now: installed, or in a browser tab.
+ *  An installed default another action's custom binding already holds (rebound
+ *  in a browser tab, where the key was free) gives way to the browser's. */
+export function defaultKeyOf(action: ShortcutAction, customBindings: Record<string, string> = {}): string {
+  const { installedKey } = action
+  if (!installedKey || !isStandaloneApp()) return action.defaultKey
+  const chord = shortcutChord(installedKey)
+  const held = Object.entries(customBindings).some(
+    ([id, binding]) => id !== action.id && shortcutChord(binding) === chord
+  )
+  return held ? action.defaultKey : installedKey
 }
 
 /**
@@ -279,7 +287,7 @@ export function getEffectiveKeyBinding(
   const custom = customBindings[actionId]
   if (custom === "none") return undefined
   if (custom) return custom
-  return action && defaultKeyOf(action)
+  return action && defaultKeyOf(action, customBindings)
 }
 
 /** The chord a binding presses: "mod" answers to Control everywhere, so ctrl+tab and mod+tab are one chord. */
@@ -400,11 +408,13 @@ function eventKey(event: KeyboardEvent): string {
   return event.key.toLowerCase()
 }
 
-/** A modifier held over a key whose character isn't ASCII, as Alt+[ is "å" on a
- *  Swedish layout and "ü" on a German one, can only match by the key's position. */
+/** Alt held over a key whose character isn't ASCII, as Alt+[ is "å" on a Swedish
+ *  layout and "ü" on a German one, can only match by the key's position. Under
+ *  Control or ⌘ the character stands, so Swedish ⌘§ stays "§" (and AltGr, which
+ *  reports Control with Alt, keeps what it typed); a dead key has none at all. */
 function isRewrittenUnderModifier(event: KeyboardEvent): boolean {
-  if (!event.altKey && !event.ctrlKey && !event.metaKey) return false
-  return event.key === "Dead" || (event.key.length === 1 && !/^[ -~]$/.test(event.key))
+  if (event.key === "Dead") return event.altKey || event.ctrlKey || event.metaKey
+  return event.altKey && !event.ctrlKey && !event.metaKey && event.key.length === 1 && !/^[ -~]$/.test(event.key)
 }
 
 /** ⌥ typing a plain character on a Mac: "[" is ⌥8 on Nordic and German Macs and
