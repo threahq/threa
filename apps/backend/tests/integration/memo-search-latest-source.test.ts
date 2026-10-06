@@ -48,7 +48,11 @@ describe("MemoRepository search latestSourceAt", () => {
       })
       await StreamMemberRepository.insert(client, testWorkspaceId, channelId, ownerId)
 
-      const postedAt = [new Date("2026-03-01T09:00:00Z"), new Date("2026-03-09T09:00:00Z")]
+      const postedAt = [
+        new Date("2026-03-01T09:00:00Z"),
+        new Date("2026-03-09T09:00:00Z"),
+        new Date("2026-03-20T09:00:00Z"),
+      ]
       const sources = await Promise.all(
         postedAt.map((createdAt, index) =>
           MessageRepository.insert(client, {
@@ -64,6 +68,7 @@ describe("MemoRepository search latestSourceAt", () => {
         )
       )
       newestSourceAt = sources[1]!.createdAt
+      await MessageRepository.softDelete(client, testWorkspaceId, sources[2]!.id)
 
       await MemoRepository.insert(client, {
         id: sourcedMemoId,
@@ -73,7 +78,7 @@ describe("MemoRepository search latestSourceAt", () => {
         title: "Deploy order",
         abstract: "Regions deploy before the control plane.",
         keyPoints: [],
-        sourceMessageIds: [sources[0]!.id, sources[1]!.id, messageId()],
+        sourceMessageIds: sources.map((source) => source.id).concat(messageId()),
         participantIds: [ownerId],
         knowledgeType: "decision",
       })
@@ -98,7 +103,7 @@ describe("MemoRepository search latestSourceAt", () => {
     await pool.end()
   })
 
-  test("every search path dates a memo by its newest resolvable source message, and null without one", async () => {
+  test("every search path dates a memo by its newest undeleted source message, and null without one", async () => {
     const filters = { streamIds: [channelId] }
     const byMemo = (rows: MemoSearchResult[]) =>
       Object.fromEntries(rows.map((row) => [row.memo.id, row.latestSourceAt?.toISOString() ?? null]))

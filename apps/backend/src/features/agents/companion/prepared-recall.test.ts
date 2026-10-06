@@ -186,7 +186,7 @@ describe("formatRecalledMemosBlock", () => {
 
     expect({ block, empty: formatRecalledMemosBlock([]) }).toEqual({
       block: expect.stringContaining(
-        '<memo id="memo_allergy" title="Peanut &lt;allergy&gt;" type="context" as_of="2026-03-02">\nPeanut &lt;allergy&gt; abstract\n</memo>\n<memo id="memo_sourceless" title="Agent note" type="context" as_of="2026-09-30">'
+        '<memo id="memo_allergy" title="Peanut &lt;allergy&gt;" type="context" as_of="2026-03-02T09:00Z">\nPeanut &lt;allergy&gt; abstract\n</memo>\n<memo id="memo_sourceless" title="Agent note" type="context" as_of="2026-09-30T10:00Z">'
       ),
       empty: null,
     })

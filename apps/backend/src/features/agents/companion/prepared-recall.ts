@@ -186,11 +186,11 @@ export function formatRecalledMemosBlock(memos: RecalledMemo[]): string | null {
   if (memos.length === 0) return null
   const entries = memos.map(
     (memo) =>
-      `<memo id="${escapeXmlAttr(memo.id)}" title="${escapeXmlAttr(memo.title)}" type="${memo.knowledgeType}" as_of="${(memo.latestSourceAt ?? memo.createdAt).toISOString().slice(0, 10)}">\n${escapeXmlAttr(memo.abstract)}\n</memo>`
+      `<memo id="${escapeXmlAttr(memo.id)}" title="${escapeXmlAttr(memo.title)}" type="${memo.knowledgeType}" as_of="${(memo.latestSourceAt ?? memo.createdAt).toISOString().slice(0, 16)}Z">\n${escapeXmlAttr(memo.abstract)}\n</memo>`
   )
   return `## Recalled from memory
 
-Workspace memory retrieved for the latest message before you started. Take what bears on your reply into account without being asked, and say so briefly when it changes your answer. Memos are summaries and can be out of date. A memo's as_of is when the newest message it summarizes was posted, and a later message on the same topic overrides the memo, so look further when the reply depends on a detail. Leave out memos that don't bear on the reply.
+Workspace memory retrieved for the latest message before you started. Take what bears on your reply into account without being asked, and say so briefly when it changes your answer. Memos are summaries and can be out of date, so look further when the reply depends on a detail. A memo's as_of is when the newest message it summarizes was posted, and a later message on the same topic overrides the memo. Leave out memos that don't bear on the reply.
 
 ${entries.join("\n")}`
 }

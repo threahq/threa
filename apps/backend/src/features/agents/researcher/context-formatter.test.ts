@@ -64,9 +64,12 @@ describe("formatRetrievedContext", () => {
 
   test("memos are dated by their newest source message, falling back to capture when none resolve", () => {
     const text = formatRetrievedContext([memo(), memo({ latestSourceAt: null })], [], [], WORKSPACE)
-    expect(text).toContain("A related message posted after that date on the same topic overrides the memo.")
-    expect(text).toContain("(memo:memo_1 from General stream:stream_1)_, as of Jul 1, 2026")
-    expect(text).toContain("(memo:memo_1 from General stream:stream_1)_, as of May 15, 2026")
+    expect(text).toEqual(
+      expect.stringContaining(
+        "Each memo is as of its newest source message. A related message posted after that date on the same topic overrides the memo.\n\n**Deploy runbook**"
+      )
+    )
+    expect(text?.match(/_, as of [^\n]+/g)).toEqual(["_, as of Jul 1, 2026", "_, as of May 15, 2026"])
   })
 
   test("attachments link to their stream when one is present, and not otherwise", () => {

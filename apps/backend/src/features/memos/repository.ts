@@ -232,7 +232,7 @@ export interface MemoSearchResult {
     type: string
     name: string | null
   } | null
-  /** When the newest source message was posted; null when the memo has no resolvable source messages. */
+  /** When the newest undeleted source message was posted; null when none resolves. */
   latestSourceAt: Date | null
 }
 
@@ -374,6 +374,7 @@ function latestSourceAtSql(memoAlias: string) {
   return rawSql(`(
     SELECT max(src.created_at) FROM messages src
     WHERE src.workspace_id = ${memoAlias}.workspace_id AND src.id = ANY(${memoAlias}.source_message_ids)
+      AND src.deleted_at IS NULL
   ) as latest_source_at`)
 }
 
