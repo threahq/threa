@@ -1,5 +1,12 @@
 import { test, expect, type Page } from "@playwright/test"
-import { createChannel, expectApiOk, generateTestId, loginAndCreateWorkspace, loginInNewContext } from "./helpers"
+import {
+  createChannel,
+  expectApiOk,
+  generateTestId,
+  loginAndCreateWorkspace,
+  loginInNewContext,
+  workspaceIdFromUrl,
+} from "./helpers"
 import { seedStream } from "./perf-fixtures"
 import { installRenderCounter, measureRenders, type RenderSample } from "./render-counter"
 import { RENDER_BUDGETS, type RenderBudgetAction } from "./render-budgets"
@@ -88,7 +95,7 @@ function checkBudget(action: RenderBudgetAction, samples: RenderSample[]): void 
 test("component render counts stay within their budgets", async ({ page, browser }) => {
   await installRenderCounter(page)
   const { testId } = await loginAndCreateWorkspace(page, "render-budget")
-  const workspaceId = page.url().match(/\/w\/([^/]+)/)![1]!
+  const workspaceId = workspaceIdFromUrl(page)
 
   // A third stream takes the off-screen messages so the switch target's
   // timeline, and with it the switch's render count, stays the same size.
@@ -184,8 +191,14 @@ test("component render counts stay within their budgets", async ({ page, browser
     const incoming = `incoming-${rep}-${generateTestId()}`
     samples["incoming message in the open stream"].push(
       await measureRenders(page, "incoming message in the open stream", async () => {
+        // The read commit trails the row by a debounce plus a round trip, which
+        // can outlast the quiet window; its renders belong to this action.
+        const readCommit = page.waitForResponse(
+          (r) => r.request().method() === "POST" && new URL(r.url()).pathname.endsWith(`/streams/${mainStreamId}/read`)
+        )
         await postMessage(sender.page, workspaceId, mainStreamId, incoming)
         await expect(timeline.getByText(incoming, { exact: true })).toBeVisible()
+        await readCommit
       })
     )
 

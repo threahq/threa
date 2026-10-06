@@ -1,4 +1,4 @@
-import { type Page } from "@playwright/test"
+import { errors, type Page } from "@playwright/test"
 
 /**
  * Counts React component renders by posing as the DevTools global hook, which
@@ -91,7 +91,8 @@ async function waitForQuiet(page: Page, label: string): Promise<void> {
       QUIET_MS,
       { timeout: QUIET_CAP_MS, polling: 50 }
     )
-    .catch(() => {
+    .catch((error: unknown) => {
+      if (!(error instanceof errors.TimeoutError)) throw error
       throw new Error(`${label}: React kept committing for ${QUIET_CAP_MS}ms without a ${QUIET_MS}ms pause`)
     })
 }
