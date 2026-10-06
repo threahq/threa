@@ -1,6 +1,6 @@
 import type { Pool } from "pg"
 import { z } from "zod"
-import { withClient } from "../../../db"
+import { withClient, type Querier } from "../../../db"
 import { composeAbortSignal, isAbortError, type AI } from "@threahq/agent-runtime"
 import type { ConfigResolver, ResearcherConfig } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
@@ -9,7 +9,7 @@ import type { EmbeddingServiceLike, MemoAudience } from "../../memos"
 import { MessageRepository, type Message } from "../../messaging"
 import { MemoRepository, classifyMemoQueryIntent } from "../../memos"
 import { SearchRepository } from "../../search"
-import { StreamRepository } from "../../streams"
+import { StreamRepository, type Stream } from "../../streams"
 import { AttachmentRepository } from "../../attachments"
 import { computeAgentAccessSpec, memoAudienceForSpec, resolveMemoViewer, type AgentAccessSpec } from "./access-spec"
 import {
@@ -184,6 +184,13 @@ interface MemoReaders {
   audiences: readonly MemoAudience[]
 }
 
+/** The room a question is asked in: its root stream, and for an aside also the room of the stream it was opened over. */
+async function roomRootIds(db: Querier, stream: Stream): Promise<string[]> {
+  if (stream.type !== StreamTypes.ASIDE || !stream.parentStreamId) return [stream.rootStreamId ?? stream.id]
+  const host = await StreamRepository.findById(db, stream.workspaceId, stream.parentStreamId)
+  return host ? [stream.id, host.rootStreamId ?? host.id] : [stream.id]
+}
+
 function mergeMemoResults(existing: EnrichedMemoResult[], incoming: EnrichedMemoResult[]): EnrichedMemoResult[] {
   const merged = [...existing]
   const seen = new Set(existing.map((memo) => memo.memo.id))
@@ -288,7 +295,7 @@ export class WorkspaceAgent {
 
       const accessible = new Set(accessibleStreamIds)
       const roomStreamIds = (
-        await SearchRepository.expandStreamIdsWithThreads(client, workspaceId, [stream.rootStreamId ?? stream.id])
+        await SearchRepository.expandStreamIdsWithThreads(client, workspaceId, await roomRootIds(client, stream))
       ).filter((id) => accessible.has(id))
 
       return { stream, accessSpec, accessibleStreamIds, roomStreamIds }

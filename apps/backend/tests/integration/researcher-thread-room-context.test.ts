@@ -34,7 +34,14 @@ describe("WorkspaceAgent thread and room context", () => {
   let minute = 0
   let roomHistory: Message[] = []
 
-  const stream = { launch: streamId(), thread: streamId(), busy: streamId(), room: streamId(), elsewhere: streamId() }
+  const stream = {
+    launch: streamId(),
+    thread: streamId(),
+    busy: streamId(),
+    room: streamId(),
+    elsewhere: streamId(),
+    aside: streamId(),
+  }
   const msg = {} as Record<"root" | "reply" | "chatter" | "roomHit" | "question", Message>
 
   async function post(streamIdValue: string, text: string): Promise<Message> {
@@ -100,6 +107,15 @@ describe("WorkspaceAgent thread and room context", () => {
       rootStreamId: stream.launch,
       createdBy: member,
     })
+    await StreamRepository.insert(pool, {
+      id: stream.aside,
+      workspaceId: ws,
+      type: StreamTypes.ASIDE,
+      visibility: Visibilities.PRIVATE,
+      parentStreamId: stream.room,
+      createdBy: member,
+    })
+    await StreamMemberRepository.insert(pool, ws, stream.aside, member)
     const busy: Message[] = []
     for (let i = 0; i < 4; i++) busy.push(await post(stream.busy, `${TOKEN} busy note ${i}`))
     msg.reply = await post(stream.thread, `${TOKEN} is signed off`)
@@ -167,5 +183,16 @@ describe("WorkspaceAgent thread and room context", () => {
       historyRetrieved: fromRoom.messages.some((m) => roomHistory.some((h) => h.id === m.id)),
       roomGroupFirst: context.indexOf("(the room this question was asked in)") < context.indexOf("#### Thread in"),
     }).toEqual({ foundFromElsewhere: false, foundFromRoom: true, historyRetrieved: false, roomGroupFirst: true })
+  })
+
+  test("an aside's room includes the stream it was opened over", async () => {
+    const [fromElsewhere, fromAside] = await Promise.all([research(stream.elsewhere), research(stream.aside)])
+    const roomMessages = (result: typeof fromAside) =>
+      result.messages.filter((m) => m.streamId === stream.room && m.inCurrentRoom).length
+
+    expect({ fromElsewhere: roomMessages(fromElsewhere), fromAside: roomMessages(fromAside) > 0 }).toEqual({
+      fromElsewhere: 0,
+      fromAside: true,
+    })
   })
 })
