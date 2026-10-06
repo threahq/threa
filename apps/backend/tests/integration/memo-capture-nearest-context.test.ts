@@ -25,22 +25,22 @@ function axis(index: number): number[] {
 
 const TOPIC_AXIS = 0
 
+interface Channel {
+  ws: string
+  channel: string
+  author: string
+  other: string
+}
+
 describe("memo capture: the memorizer is shown older stream memos near the conversation", () => {
   let pool: Pool
   let nextSequence = 1n
+  let nextAxis = 100
 
-  beforeAll(async () => {
-    pool = await setupTestDatabase()
-  })
-
-  afterAll(async () => {
-    await pool.end()
-  })
-
-  test("a conversation revising a memo older than the newest twenty retires it, without seeing another member's private memo", async () => {
+  async function seedChannel(): Promise<Channel> {
     const ws = workspaceId()
     const channel = streamId()
-    const { author, other } = await withTransaction(pool, async (client) => {
+    return withTransaction(pool, async (client) => {
       const workosUserId = userId()
       await WorkspaceRepository.insert(client, {
         id: ws,
@@ -57,66 +57,77 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
         visibility: "public",
         createdBy: author,
       })
-      return { author, other }
+      return { ws, channel, author, other }
     })
+  }
 
-    async function seedMessage(): Promise<string> {
-      const id = messageId()
-      await MessageRepository.insert(pool, {
-        id,
-        workspaceId: ws,
-        streamId: channel,
-        sequence: nextSequence++,
-        authorId: author,
-        authorType: "user",
-        ...testMessageContent("the plan costs money"),
-      })
-      return id
-    }
+  async function seedMessage(c: Channel): Promise<string> {
+    const id = messageId()
+    await MessageRepository.insert(pool, {
+      id,
+      workspaceId: c.ws,
+      streamId: c.channel,
+      sequence: nextSequence++,
+      authorId: c.author,
+      authorType: "user",
+      ...testMessageContent("the plan costs money"),
+    })
+    return id
+  }
 
-    async function seedMemo(title: string, embedding: number[], owner?: string): Promise<string> {
-      const id = memoId()
-      const source = await seedMessage()
-      await MemoRepository.insert(pool, {
-        id,
-        workspaceId: ws,
-        memoType: "message",
-        sourceMessageId: source,
-        title,
-        abstract: title,
-        sourceMessageIds: [source],
-        participantIds: [],
-        knowledgeType: "decision",
-        tags: [],
-        ...(owner ? { scope: "user", scopeUserId: owner } : {}),
-      })
-      await MemoRepository.updateEmbedding(pool, ws, id, embedding)
-      return id
-    }
+  async function seedMemo(c: Channel, title: string, embedding: number[], owner?: string): Promise<string> {
+    const id = memoId()
+    const source = await seedMessage(c)
+    await MemoRepository.insert(pool, {
+      id,
+      workspaceId: c.ws,
+      memoType: "message",
+      sourceMessageId: source,
+      title,
+      abstract: title,
+      sourceMessageIds: [source],
+      participantIds: [],
+      knowledgeType: "decision",
+      tags: [],
+      ...(owner ? { scope: "user", scopeUserId: owner } : {}),
+    })
+    await MemoRepository.updateEmbedding(pool, c.ws, id, embedding)
+    return id
+  }
 
-    const price = await seedMemo("Price is $9", axis(TOPIC_AXIS))
-    await seedMemo("Their price note", axis(TOPIC_AXIS), other)
-    for (let i = 1; i <= 20; i++) await seedMemo(`Unrelated ${i}`, axis(i))
+  /** The topic memo, buried under twenty newer unrelated ones. */
+  async function seedBuriedPrice(c: Channel): Promise<string> {
+    const price = await seedMemo(c, "Price is $9", axis(TOPIC_AXIS))
+    for (let i = 1; i <= 20; i++) await seedMemo(c, `Unrelated ${i}`, axis(i))
+    return price
+  }
 
-    const conversation = conversationId()
-    const messages = [await seedMessage(), await seedMessage()]
+  async function queueConversation(c: Channel): Promise<void> {
+    const id = conversationId()
+    const messages = [await seedMessage(c), await seedMessage(c)]
     await withTransaction(pool, async (client) => {
       await ConversationRepository.insert(client, {
-        id: conversation,
-        streamId: channel,
-        workspaceId: ws,
+        id,
+        streamId: c.channel,
+        workspaceId: c.ws,
         status: ConversationStatuses.RESOLVED,
       })
       for (const message of messages) {
-        await ConversationRepository.addPrimaryMessage(client, ws, conversation, message, author)
+        await ConversationRepository.addPrimaryMessage(client, c.ws, id, message, c.author)
       }
       await PendingItemRepository.queue(client, [
-        { id: pendingItemId(), workspaceId: ws, streamId: channel, itemType: "conversation", itemId: conversation },
+        { id: pendingItemId(), workspaceId: c.ws, streamId: c.channel, itemType: "conversation", itemId: id },
       ])
     })
+  }
 
+  /** Captures "Price is $12", superseding `target` whenever it was shown. */
+  async function capture(
+    c: Channel,
+    target: string,
+    duringInference: () => Promise<void> = async () => {}
+  ): Promise<string[]> {
     let shown: string[] = []
-    let nextAxis = 100
     await new MemoService({
       analyticsReporter: new DisabledAnalyticsReporter(),
       pool,
@@ -127,6 +138,7 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
           context: { memoryContext: { id: string; title: string }[]; content: { id: string }[] }
         ) => {
           shown = context.memoryContext.map((m) => m.title)
+          await duringInference()
           return [
             {
               title: "Price is $12",
@@ -135,7 +147,7 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
               sourceMessageIds: context.content.map((m) => m.id),
               knowledgeType: "decision",
               tags: [],
-              supersedesMemoIds: context.memoryContext.some((m) => m.id === price) ? [price] : [],
+              supersedesMemoIds: context.memoryContext.some((m) => m.id === target) ? [target] : [],
             },
           ]
         },
@@ -145,20 +157,59 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
           texts.map(() => (opts.functionId === "memo-context-embedding" ? axis(TOPIC_AXIS) : axis(nextAxis++))),
       } as never,
       messageFormatter: { formatMessages: async () => "formatted transcript" } as never,
-    }).processBatch(ws, channel)
+    }).processBatch(c.ws, c.channel)
+    return shown
+  }
 
-    const statuses = await pool.query<{ title: string; status: string }>(
-      "SELECT title, status FROM memos WHERE workspace_id = $1 AND title LIKE '%rice%'",
-      [ws]
+  async function priceStatuses(c: Channel): Promise<Record<string, string>> {
+    const result = await pool.query<{ title: string; status: string }>(
+      "SELECT title, status FROM memos WHERE workspace_id = $1 AND title NOT LIKE 'Unrelated%'",
+      [c.ws]
     )
+    return Object.fromEntries(result.rows.map((row) => [row.title, row.status]))
+  }
+
+  beforeAll(async () => {
+    pool = await setupTestDatabase()
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  test("a conversation revising a memo older than the newest twenty retires it, without seeing another member's private memo", async () => {
+    const c = await seedChannel()
+    const price = await seedBuriedPrice(c)
+    await seedMemo(c, "Their price note", axis(TOPIC_AXIS), c.other)
+    await queueConversation(c)
+
+    const shown = await capture(c, price)
+
     expect({
       shownPrice: shown.includes("Price is $9"),
       shownPrivate: shown.includes("Their price note"),
-      statuses: Object.fromEntries(statuses.rows.map((row) => [row.title, row.status])),
+      statuses: await priceStatuses(c),
     }).toEqual({
       shownPrice: true,
       shownPrivate: false,
       statuses: { "Price is $9": "superseded", "Their price note": "active", "Price is $12": "active" },
+    })
+  })
+
+  test("a nearest memo edited while the model ran survives, and the conversation re-runs against the edit", async () => {
+    const c = await seedChannel()
+    const price = await seedBuriedPrice(c)
+    await queueConversation(c)
+
+    await capture(c, price, async () => {
+      await MemoRepository.update(pool, c.ws, price, { title: "Price is $9, edited" })
+    })
+    const afterEdit = await priceStatuses(c)
+    await capture(c, price)
+
+    expect({ afterEdit, afterRerun: await priceStatuses(c) }).toEqual({
+      afterEdit: { "Price is $9, edited": "active" },
+      afterRerun: { "Price is $9, edited": "superseded", "Price is $12": "active" },
     })
   })
 })

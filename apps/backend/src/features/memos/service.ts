@@ -733,9 +733,8 @@ export class MemoService implements MemoServiceLike {
         // The memorizer can only retire a memo it is shown, and the stream's
         // newest memos miss an older one this conversation revises. Keeps the
         // tail: a long conversation's latest messages carry the revision.
-        const conversationText = Array.from(messagesArray.map((m) => m.contentMarkdown).join("\n"))
         const [conversationEmbedding] = await this.embeddingService.embedBatch(
-          [conversationText.slice(-MEMORY_CONTEXT_EMBED_MAX_CHARS).join("")],
+          [Array.from(formattedMessages).slice(-MEMORY_CONTEXT_EMBED_MAX_CHARS).join("")],
           { workspaceId, functionId: "memo-context-embedding" }
         )
         if (!conversationEmbedding) throw new Error(`No context embedding for conversation ${conversation.id}`)
@@ -753,7 +752,9 @@ export class MemoService implements MemoServiceLike {
           ...fetchedData.existingMemos,
           ...nearest.map(({ memo }) => memo).filter((memo) => !shownIds.has(memo.id)),
         ]
-        for (const memo of memoryContext) shownContextMemos.set(memo.id, memo)
+        // First snapshot wins: a later conversation may see a newer edit, and
+        // recording that version would let this one retire text it never saw.
+        for (const memo of memoryContext) if (!shownContextMemos.has(memo.id)) shownContextMemos.set(memo.id, memo)
 
         // A conversation yields a set of single-topic memos. On revision the
         // memorizer sees the existing memos and emits only what is new or changed;
