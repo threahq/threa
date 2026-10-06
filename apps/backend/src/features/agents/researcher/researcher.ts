@@ -186,9 +186,12 @@ interface MemoReaders {
 
 /** The room a question is asked in: its root stream, and for an aside also the room of the stream it was opened over. */
 async function roomRootIds(db: Querier, stream: Stream): Promise<string[]> {
-  if (stream.type !== StreamTypes.ASIDE || !stream.parentStreamId) return [stream.rootStreamId ?? stream.id]
-  const host = await StreamRepository.findById(db, stream.workspaceId, stream.parentStreamId)
-  return host ? [stream.id, host.rootStreamId ?? host.id] : [stream.id]
+  const root = stream.rootStreamId
+    ? await StreamRepository.findById(db, stream.workspaceId, stream.rootStreamId)
+    : stream
+  if (!root || root.type !== StreamTypes.ASIDE || !root.parentStreamId) return [stream.rootStreamId ?? stream.id]
+  const host = await StreamRepository.findById(db, stream.workspaceId, root.parentStreamId)
+  return host ? [root.id, host.rootStreamId ?? host.id] : [root.id]
 }
 
 function mergeMemoResults(existing: EnrichedMemoResult[], incoming: EnrichedMemoResult[]): EnrichedMemoResult[] {

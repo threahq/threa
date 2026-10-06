@@ -41,6 +41,9 @@ describe("WorkspaceAgent thread and room context", () => {
     room: streamId(),
     elsewhere: streamId(),
     aside: streamId(),
+    asideThread: streamId(),
+    left: streamId(),
+    asideOverLeft: streamId(),
   }
   const msg = {} as Record<"root" | "reply" | "chatter" | "roomHit" | "question", Message>
 
@@ -116,6 +119,35 @@ describe("WorkspaceAgent thread and room context", () => {
       createdBy: member,
     })
     await StreamMemberRepository.insert(pool, ws, stream.aside, member)
+    const asideNote = await post(stream.aside, "Looking at this over the room")
+    await StreamRepository.insert(pool, {
+      id: stream.asideThread,
+      workspaceId: ws,
+      type: StreamTypes.THREAD,
+      visibility: Visibilities.PRIVATE,
+      parentStreamId: stream.aside,
+      parentAnchorId: asideNote.id,
+      rootStreamId: stream.aside,
+      createdBy: member,
+    })
+    await StreamRepository.insert(pool, {
+      id: stream.left,
+      workspaceId: ws,
+      type: StreamTypes.CHANNEL,
+      visibility: Visibilities.PRIVATE,
+      slug: `c-${stream.left.slice(-8).toLowerCase()}`,
+      createdBy: owner,
+    })
+    await StreamRepository.insert(pool, {
+      id: stream.asideOverLeft,
+      workspaceId: ws,
+      type: StreamTypes.ASIDE,
+      visibility: Visibilities.PRIVATE,
+      parentStreamId: stream.left,
+      createdBy: member,
+    })
+    await StreamMemberRepository.insert(pool, ws, stream.asideOverLeft, member)
+    const leftNote = await post(stream.left, `${TOKEN} in a channel the member left`)
     const busy: Message[] = []
     for (let i = 0; i < 4; i++) busy.push(await post(stream.busy, `${TOKEN} busy note ${i}`))
     msg.reply = await post(stream.thread, `${TOKEN} is signed off`)
@@ -125,7 +157,7 @@ describe("WorkspaceAgent thread and room context", () => {
     msg.question = await post(stream.room, "What about that budget?")
     roomHistory = [...earlier, msg.question]
     await MessageRepository.updateEmbeddings(pool, ws, [
-      ...[...busy, msg.reply, ...earlier].map((m) => ({
+      ...[...busy, msg.reply, ...earlier, leftNote].map((m) => ({
         id: m.id,
         embedding: axis(0),
         sourceHash: "t",
@@ -185,14 +217,25 @@ describe("WorkspaceAgent thread and room context", () => {
     }).toEqual({ foundFromElsewhere: false, foundFromRoom: true, historyRetrieved: false, roomGroupFirst: true })
   })
 
-  test("an aside's room includes the stream it was opened over", async () => {
-    const [fromElsewhere, fromAside] = await Promise.all([research(stream.elsewhere), research(stream.aside)])
+  test("an aside's room, and its threads' room, includes the stream it was opened over", async () => {
+    const [fromElsewhere, fromAside, fromAsideThread] = await Promise.all([
+      research(stream.elsewhere),
+      research(stream.aside),
+      research(stream.asideThread),
+    ])
     const roomMessages = (result: typeof fromAside) =>
       result.messages.filter((m) => m.streamId === stream.room && m.inCurrentRoom).length
 
-    expect({ fromElsewhere: roomMessages(fromElsewhere), fromAside: roomMessages(fromAside) > 0 }).toEqual({
-      fromElsewhere: 0,
-      fromAside: true,
-    })
+    expect({
+      fromElsewhere: roomMessages(fromElsewhere),
+      fromAside: roomMessages(fromAside) > 0,
+      fromAsideThread: roomMessages(fromAsideThread) > 0,
+    }).toEqual({ fromElsewhere: 0, fromAside: true, fromAsideThread: true })
+  })
+
+  test("an aside over a channel the asker can no longer read searches none of it", async () => {
+    const result = await research(stream.asideOverLeft)
+
+    expect(result.messages.filter((m) => m.streamId === stream.left)).toEqual([])
   })
 })
