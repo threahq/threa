@@ -645,7 +645,7 @@ export async function runCompanionTask(
       sourceMessageIds: (step.sources ?? []).flatMap((source) => (source.messageId ? [source.messageId] : [])),
       durationMs: step.completedAt ? step.completedAt.getTime() - step.startedAt.getTime() : null,
       ...(step.stepType === "tool_error" || step.stepType === "tool_call" || step.stepType === "workspace_search"
-        ? { content: typeof step.content === "string" ? step.content.slice(0, 4000) : null }
+        ? { content: typeof step.content === "string" ? Array.from(step.content).slice(0, 4000).join("") : null }
         : {}),
     }))
 

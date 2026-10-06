@@ -28,7 +28,7 @@ function call(content: string, completed = true): CompanionTrajectoryStep {
     sourceMemoIds: [],
     sourceStreamIds: [],
     sourceMessageIds: [],
-    durationMs: 10,
+    durationMs: completed ? 10 : null,
     content,
   }
 }
