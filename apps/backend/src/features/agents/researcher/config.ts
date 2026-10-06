@@ -21,14 +21,6 @@ export const WORKSPACE_AGENT_MODEL_ID = "openrouter:openai/gpt-6-luna"
 /** Lower temperature to reduce decision variance in retrieval planning */
 export const WORKSPACE_AGENT_TEMPERATURE = 0.1
 
-/**
- * Maximum iterations for the plan→execute→evaluate→iterate loop.
- *
- * One: a single broad plan covers several directions at once, and the main agent keeps its own tools to look again
- * if the answer is still missing, so an evaluator pass mostly adds wall-clock time.
- */
-export const WORKSPACE_AGENT_MAX_ITERATIONS = 1
-
 /** Upper bound on the planner's queries, so one broad pass stays a bounded fan-out */
 export const WORKSPACE_AGENT_MAX_PLANNED_QUERIES = 6
 
@@ -37,12 +29,6 @@ export const WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH = 5
 
 /** Hits per search taken from the room the question was asked in, on top of the workspace-wide ones */
 export const WORKSPACE_AGENT_MAX_ROOM_RESULTS_PER_SEARCH = 3
-
-/**
- * Maximum number of additional queries the evaluator is allowed to request
- * after iteration 1. Caps the worst-case iteration-2 fan-out.
- */
-export const WORKSPACE_AGENT_MAX_ADDITIONAL_QUERIES = 3
 
 /**
  * Hard wall-clock budget for a single workspace_research tool call in milliseconds.
@@ -55,9 +41,6 @@ export const WORKSPACE_AGENT_TOTAL_BUDGET_MS = 45_000
 
 /** Per-call timeout for the planner LLM. Fails over to baseline queries on timeout. */
 export const WORKSPACE_AGENT_PLANNER_TIMEOUT_MS = 20_000
-
-/** Per-call timeout for the evaluator LLM. Treated as "sufficient" on timeout. */
-export const WORKSPACE_AGENT_EVALUATOR_TIMEOUT_MS = 15_000
 
 /** Per-call timeout for embedding generation. */
 export const WORKSPACE_AGENT_EMBED_TIMEOUT_MS = 10_000

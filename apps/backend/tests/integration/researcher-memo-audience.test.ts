@@ -153,7 +153,7 @@ describe("WorkspaceAgent memo search audience", () => {
     agent = new WorkspaceAgent({
       pool,
       ai: {} as AI,
-      configResolver: { resolve: async () => ({ maxIterations: 1 }) } as unknown as ConfigResolver,
+      configResolver: { resolve: async () => ({}) } as unknown as ConfigResolver,
       embeddingService: { embed: async () => axis(0) } as unknown as EmbeddingServiceLike,
     })
     ;(agent as unknown as { planRetrieval: () => Promise<typeof planner> }).planRetrieval = async () => planner

@@ -17,7 +17,6 @@ function buildAgent(): WorkspaceAgent {
     resolve: mock(async () => ({
       modelId: "openrouter:anthropic/claude-haiku-4.5",
       temperature: 0.1,
-      maxIterations: 2,
     })),
   } as unknown as ConfigResolver
   const embeddingService = {
@@ -122,13 +121,13 @@ describe("WorkspaceAgent abort/deadline checkpoints", () => {
   })
 
   test("makePerCallSignal clamps per-call timeout to remaining deadline (PR #333 regression)", async () => {
-    // Regression for PR #333 review finding: planRetrieval/evaluateResults were
+    // Regression for PR #333 review finding: planRetrieval was
     // casting { signal } as WorkspaceAgentInput, dropping deadlineAt and letting the
     // full per-call cap apply even when the total budget was nearly exhausted.
     const agent = buildAgent()
 
     // Reach the now-internal-API helper. This is a deliberate white-box test of the
-    // deadline-clamping contract — the public path (planRetrieval/evaluateResults)
+    // deadline-clamping contract — the public path (planRetrieval)
     // requires a full pool+AI stub to exercise.
     const makePerCallSignal = (
       agent as unknown as {
@@ -175,105 +174,31 @@ describe("WorkspaceAgent abort/deadline checkpoints", () => {
 })
 
 /**
- * White-box tests for the configurable iteration loop.
- *
- * The loop is hard to drive end-to-end because the entry point goes through
- * `withClient` + repository calls + real AI. Instead we monkey-patch the
- * private seams (`planRetrieval`, `evaluateResults`, `executeQueries`) on a
- * concrete agent instance and call `runSearchLoop` directly. This proves the
- * structural property the refactor was meant to enable: `maxIterations` linearly
- * controls how many refinement passes the loop runs.
+ * White-box test of the search loop: the private seams (`planRetrieval`, `executeQueries`) are patched on a concrete
+ * agent and `runSearchLoop` is called directly, since the entry point goes through `withClient` + repositories + AI.
  */
-describe("WorkspaceAgent runSearchLoop iteration count", () => {
-  type Plan = { reasoning: string; queries: Array<{ target: "memos"; type: "semantic"; query: string }> }
-  type Eval = {
-    sufficient: boolean
-    additionalQueries: Array<{ target: "memos"; type: "semantic"; query: string }> | null
-    reasoning: string
-  }
-
-  function buildAgentWithMaxIterations(maxIterations: number) {
-    const ai = {} as AI
+describe("WorkspaceAgent runSearchLoop", () => {
+  test("plans once and runs the planned queries once, with no evaluator round", async () => {
     const configResolver = {
-      resolve: mock(async () => ({
-        modelId: "openrouter:anthropic/claude-haiku-4.5",
-        temperature: 0.1,
-        maxIterations,
-      })),
+      resolve: mock(async () => ({ modelId: "openrouter:anthropic/claude-haiku-4.5", temperature: 0.1 })),
     } as unknown as ConfigResolver
-    const embeddingService = {} as unknown as EmbeddingServiceLike
-    const pool = {} as unknown as Pool
-    return new WorkspaceAgent({ pool, ai, configResolver, embeddingService })
-  }
-
-  /**
-   * Drive `runSearchLoop` directly with stubbed seams.
-   *
-   * - planRetrieval returns one fake query so iteration 1 has work.
-   * - executeQueries always returns one fake memo, so iteration 1 finds results
-   *   and the short-circuit doesn't fire.
-   * - evaluateResults returns sufficient=false with one *new* query each call,
-   *   forcing the loop to keep going up to `maxIterations`.
-   */
-  function stubAgent(agent: WorkspaceAgent, opts: { sufficientAfter?: number } = {}) {
-    let evalCalls = 0
-    let planCalls = 0
-    let executeCalls = 0
-    let queryCounter = 0
-
-    const planRetrieval = mock(async (): Promise<Plan> => {
-      planCalls++
-      return { reasoning: "plan", queries: [{ target: "memos", type: "semantic", query: `plan-${queryCounter++}` }] }
+    const agent = new WorkspaceAgent({
+      pool: {} as unknown as Pool,
+      ai: {} as AI,
+      configResolver,
+      embeddingService: {} as unknown as EmbeddingServiceLike,
     })
+    const planRetrieval = mock(async () => ({
+      reasoning: "plan",
+      queries: [{ target: "memos" as const, type: "semantic" as const, query: "plan-0" }],
+    }))
+    const executeQueries = mock(async (_pool: Pool, _queries: Array<{ query: string }>) => ({
+      memos: [],
+      messages: [],
+      attachments: [],
+    }))
+    Object.assign(agent, { planRetrieval, executeQueries })
 
-    const evaluateResults = mock(async (): Promise<Eval> => {
-      evalCalls++
-      const sufficient = opts.sufficientAfter !== undefined && evalCalls >= opts.sufficientAfter
-      return {
-        sufficient,
-        additionalQueries: sufficient ? null : [{ target: "memos", type: "semantic", query: `eval-${queryCounter++}` }],
-        reasoning: "eval",
-      }
-    })
-
-    const executeQueries = mock(async () => {
-      executeCalls++
-      return {
-        memos: [
-          {
-            memo: {
-              id: `memo_${executeCalls}`,
-              title: "t",
-              abstract: "a",
-              keyPoints: [],
-              sourceMessageIds: [],
-              createdAt: new Date("2026-05-15T10:00:00Z"),
-            },
-            distance: 0,
-            sourceStream: null,
-            latestSourceAt: null,
-          } as unknown as never,
-        ],
-        messages: [],
-        attachments: [],
-      }
-    })
-
-    // Patch instance methods (white-box). The cast mirrors the existing
-    // makePerCallSignal pattern in this file.
-    const writableAgent = agent as unknown as {
-      planRetrieval: typeof planRetrieval
-      evaluateResults: typeof evaluateResults
-      executeQueries: typeof executeQueries
-    }
-    writableAgent.planRetrieval = planRetrieval
-    writableAgent.evaluateResults = evaluateResults
-    writableAgent.executeQueries = executeQueries
-
-    return { planRetrieval, evaluateResults, executeQueries, getCounts: () => ({ evalCalls, executeCalls, planCalls }) }
-  }
-
-  function runLoop(agent: WorkspaceAgent, input: Partial<WorkspaceAgentInput> = {}) {
     const runSearchLoop = (
       agent as unknown as {
         runSearchLoop: (
@@ -286,53 +211,27 @@ describe("WorkspaceAgent runSearchLoop iteration count", () => {
         ) => Promise<unknown>
       }
     ).runSearchLoop.bind(agent)
+    await runSearchLoop(
+      {} as Pool,
+      {
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        query: "what did we decide",
+        conversationHistory: [],
+        invokingUserId: "user_1",
+        searchFlag: "on",
+      },
+      { type: "all_streams" },
+      ["stream_1"],
+      [],
+      []
+    )
 
-    const fullInput: WorkspaceAgentInput = {
-      workspaceId: "ws_1",
-      streamId: "stream_1",
-      query: "what did we decide",
-      conversationHistory: [],
-      invokingUserId: "user_1",
-      searchFlag: "on",
-      ...input,
-    }
-
-    return runSearchLoop({} as Pool, fullInput, { type: "all_streams" }, ["stream_1"], [], [])
-  }
-
-  test("maxIterations=1 runs the bootstrap pass and skips the refinement loop entirely", async () => {
-    const agent = buildAgentWithMaxIterations(1)
-    const stubs = stubAgent(agent)
-
-    await runLoop(agent)
-
-    expect(stubs.planRetrieval).toHaveBeenCalledTimes(1)
-    expect(stubs.evaluateResults).not.toHaveBeenCalled()
-    // Bootstrap calls executeQueries once for planner-only queries (baseline path
-    // is empty when buildBaselineQueries returns nothing for our test query).
-    expect(stubs.getCounts().executeCalls).toBeGreaterThanOrEqual(1)
-  })
-
-  test("maxIterations=3 runs evaluator twice when each pass keeps requesting more", async () => {
-    const agent = buildAgentWithMaxIterations(3)
-    const stubs = stubAgent(agent)
-
-    await runLoop(agent)
-
-    // Refinement passes = maxIterations - 1 = 2; each pass invokes the evaluator
-    // once and (when not sufficient) executeQueries once.
-    expect(stubs.evaluateResults).toHaveBeenCalledTimes(2)
-  })
-
-  test("loop exits early when the evaluator returns sufficient=true", async () => {
-    const agent = buildAgentWithMaxIterations(5)
-    const stubs = stubAgent(agent, { sufficientAfter: 2 })
-
-    await runLoop(agent)
-
-    // Despite maxIterations=5 (4 refinement passes available), the loop should
-    // stop after the second evaluator call returns sufficient.
-    expect(stubs.evaluateResults).toHaveBeenCalledTimes(2)
+    const plannedRuns = executeQueries.mock.calls.filter(([, queries]) => queries.some((q) => q.query === "plan-0"))
+    expect({ plans: planRetrieval.mock.calls.length, plannedRuns: plannedRuns.length }).toEqual({
+      plans: 1,
+      plannedRuns: 1,
+    })
   })
 })
 
@@ -345,7 +244,6 @@ describe("WorkspaceAgent abort/deadline checkpoints (continued)", () => {
       resolve: mock(async () => ({
         modelId: "openrouter:anthropic/claude-haiku-4.5",
         temperature: 0.1,
-        maxIterations: 2,
       })),
     } as unknown as ConfigResolver
     const embeddingService = {} as unknown as EmbeddingServiceLike
