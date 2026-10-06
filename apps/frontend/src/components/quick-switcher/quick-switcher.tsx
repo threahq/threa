@@ -1,4 +1,13 @@
-import { useState, useEffect, useMemo, useCallback, useRef, useSyncExternalStore } from "react"
+import {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+  useSyncExternalStore,
+  useImperativeHandle,
+  type RefObject,
+} from "react"
 import { hashKey, useQueryClient } from "@tanstack/react-query"
 import type { StreamBootstrap, WorkspaceSettingsTab } from "@threahq/types"
 import { streamKeys } from "@/hooks/use-streams"
@@ -98,6 +107,17 @@ export function getDisplayQuery(query: string, mode: QuickSwitcherMode): string 
   return query
 }
 
+interface ArchiveTarget {
+  streamId: string
+  name: string
+  isDraft: boolean
+}
+
+interface PaletteKeyHandlers {
+  onEscapeKeyDown: (e: KeyboardEvent) => void
+  onKeyDown: (e: React.KeyboardEvent<HTMLDivElement>) => void
+}
+
 export function QuickSwitcher({
   workspaceId,
   open,
@@ -107,31 +127,174 @@ export function QuickSwitcher({
   openAside,
 }: QuickSwitcherProps) {
   const navigate = useNavigate()
+  const { createScratchpad, deleteScratchpad } = useDraftScratchpads(workspaceId)
+  const archiveStream = useArchiveStream(workspaceId)
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const keyHandlersRef = useRef<PaletteKeyHandlers>(null)
+
+  // Destructive stream actions confirm before running; the label picker is a
+  // standalone dialog opened after the palette closes. Both live here because
+  // the palette body unmounts on close. The pending-archive target captures its
+  // name/draft-status at request time so the confirm copy can't drift if the
+  // route (and thus `currentStreamId`) changes underneath.
+  const [pendingArchive, setPendingArchive] = useState<ArchiveTarget | null>(null)
+  const [labelPickerStreamId, setLabelPickerStreamId] = useState<string | null>(null)
+
+  const handleClose = useCallback(() => {
+    onOpenChange(false)
+  }, [onOpenChange])
+
+  const requestArchive = useCallback(
+    (target: ArchiveTarget) => {
+      handleClose()
+      setPendingArchive(target)
+    },
+    [handleClose]
+  )
+
+  const openLabelPicker = useCallback(
+    (streamId: string) => {
+      handleClose()
+      setLabelPickerStreamId(streamId)
+    },
+    [handleClose]
+  )
+
+  const handleConfirmArchive = useCallback(async () => {
+    if (!pendingArchive) return
+    const { streamId, isDraft } = pendingArchive
+    try {
+      if (isDraft) {
+        await deleteScratchpad(streamId)
+        // Drafts are fully deleted — leave the (now-gone) stream if viewing it.
+        if (currentStreamId === streamId) navigate(`/w/${workspaceId}`)
+      } else {
+        await archiveStream.mutateAsync(streamId)
+      }
+    } catch {
+      toast.error(isDraft ? "Failed to delete draft" : "Failed to archive stream")
+    } finally {
+      setPendingArchive(null)
+    }
+  }, [pendingArchive, deleteScratchpad, navigate, workspaceId, currentStreamId, archiveStream])
+
+  const archiveIsDraft = pendingArchive?.isDraft ?? false
+  const archiveStreamLabel = pendingArchive?.name ?? "this stream"
+
+  return (
+    <>
+      <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+        <ResponsiveDialogContent
+          ref={dialogRef}
+          desktopClassName="overflow-hidden p-0 gap-0 shadow-lg sm:!fixed sm:!top-[20%] sm:!translate-y-0 sm:max-w-[600px] sm:rounded-2xl sm:border"
+          drawerClassName="overflow-hidden p-0"
+          hideCloseButton
+          onPointerDownOutside={(e) => {
+            // Prevent closing when clicking on suggestion popover (rendered via portal)
+            const target = e.target as HTMLElement
+            if (target.closest('[role="listbox"]')) {
+              e.preventDefault()
+            }
+          }}
+          onEscapeKeyDown={(e) => keyHandlersRef.current?.onEscapeKeyDown(e)}
+          onKeyDown={(e) => keyHandlersRef.current?.onKeyDown(e)}
+        >
+          <QuickSwitcherBody
+            workspaceId={workspaceId}
+            initialMode={initialMode}
+            currentStreamId={currentStreamId}
+            openAside={openAside}
+            onClose={handleClose}
+            createScratchpad={createScratchpad}
+            onRequestArchive={requestArchive}
+            onOpenLabelPicker={openLabelPicker}
+            dialogRef={dialogRef}
+            keyHandlersRef={keyHandlersRef}
+          />
+        </ResponsiveDialogContent>
+      </ResponsiveDialog>
+
+      <ResponsiveAlertDialog
+        open={pendingArchive !== null}
+        onOpenChange={(next) => {
+          if (!next) setPendingArchive(null)
+        }}
+      >
+        <ResponsiveAlertDialogContent>
+          <ResponsiveAlertDialogHeader>
+            <ResponsiveAlertDialogTitle>
+              {archiveIsDraft ? "Delete this draft?" : `Archive ${archiveStreamLabel}?`}
+            </ResponsiveAlertDialogTitle>
+            <ResponsiveAlertDialogDescription>
+              {archiveIsDraft
+                ? "This draft will be permanently deleted. This can't be undone."
+                : "This stream will be hidden from the sidebar. You can unarchive it later."}
+            </ResponsiveAlertDialogDescription>
+          </ResponsiveAlertDialogHeader>
+          <ResponsiveAlertDialogFooter>
+            <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
+            <ResponsiveAlertDialogAction onClick={handleConfirmArchive}>
+              {archiveIsDraft ? "Delete" : "Archive"}
+            </ResponsiveAlertDialogAction>
+          </ResponsiveAlertDialogFooter>
+        </ResponsiveAlertDialogContent>
+      </ResponsiveAlertDialog>
+
+      {labelPickerStreamId && (
+        <LabelPicker
+          workspaceId={workspaceId}
+          resourceType={LabelableResourceTypes.STREAM}
+          resourceId={labelPickerStreamId}
+          open={labelPickerStreamId !== null}
+          onOpenChange={(next) => {
+            if (!next) setLabelPickerStreamId(null)
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+interface QuickSwitcherBodyProps {
+  workspaceId: string
+  initialMode?: QuickSwitcherMode
+  currentStreamId?: string | null
+  openAside?: (streamId: string) => Promise<void>
+  onClose: () => void
+  createScratchpad: CommandContext["createDraftScratchpad"]
+  onRequestArchive: (target: ArchiveTarget) => void
+  onOpenLabelPicker: (streamId: string) => void
+  dialogRef: RefObject<HTMLDivElement | null>
+  keyHandlersRef: RefObject<PaletteKeyHandlers | null>
+}
+
+// Mounted only while the dialog content is, so its store subscriptions stop
+// when the palette is closed.
+function QuickSwitcherBody({
+  workspaceId,
+  initialMode,
+  currentStreamId,
+  openAside,
+  onClose: handleClose,
+  createScratchpad,
+  onRequestArchive,
+  onOpenLabelPicker,
+  dialogRef,
+  keyHandlersRef,
+}: QuickSwitcherBodyProps) {
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const [, setSearchParams] = useSearchParams()
   const user = useUser()
-  const { createScratchpad, deleteScratchpad } = useDraftScratchpads(workspaceId)
   const { openSettings } = useSettings()
   const { openCreateChannel } = useCreateChannel()
   const { open: openExplorer } = useExplorerUrlState()
   const { open: openOutcomes } = useOutcomesUrlState()
   const { openStreamSettings } = useStreamSettings()
-  const archiveStream = useArchiveStream(workspaceId)
   const unarchiveStream = useUnarchiveStream(workspaceId)
   const currentStreamName = useStreamName(workspaceId, currentStreamId ?? "")
   const { isInInbox, clearInbox } = useUnreadCounts(workspaceId)
   const canSettle = !!currentStreamId && isInInbox(currentStreamId)
-
-  // Destructive stream actions confirm before running; the label picker is a
-  // standalone dialog opened after the palette closes. The pending-archive
-  // target captures its name/draft-status at request time so the confirm copy
-  // can't drift if the route (and thus `currentStreamId`) changes underneath.
-  const [pendingArchive, setPendingArchive] = useState<{
-    streamId: string
-    name: string
-    isDraft: boolean
-  } | null>(null)
-  const [labelPickerStreamId, setLabelPickerStreamId] = useState<string | null>(null)
 
   const allStreams = useWorkspaceStreams(workspaceId)
   // The palette's "Open an aside here" follows the host rules the server
@@ -172,7 +335,7 @@ export function QuickSwitcher({
   const users = useWorkspaceUsers(workspaceId)
   const dmPeers = useWorkspaceDmPeers(workspaceId)
 
-  const [query, setQuery] = useState("")
+  const [query, setQuery] = useState(() => (initialMode ? MODE_PREFIXES[initialMode] : ""))
   const [selectedIndex, setSelectedIndex] = useState(0)
   const [inputRequest, setInputRequest] = useState<InputRequest | null>(null)
   const [inputValue, setInputValue] = useState("")
@@ -206,16 +369,11 @@ export function QuickSwitcher({
   // keyboard-hint visibility) so a mouse on a touchscreen laptop autofocuses
   // and sees the hints.
   const isTouchInput = useInputMode() === "touch"
-  const inputRef = useRef<HTMLInputElement>(null)
   const richInputRef = useRef<RichInputRef>(null)
 
   const handlePopoverActiveChange = useCallback((active: boolean) => {
     isSuggestionPopoverActiveRef.current = active
   }, [])
-
-  const handleClose = useCallback(() => {
-    onOpenChange(false)
-  }, [onOpenChange])
 
   const setMode = useCallback((newMode: QuickSwitcherMode) => {
     setQuery(MODE_PREFIXES[newMode])
@@ -286,16 +444,15 @@ export function QuickSwitcher({
 
   const requestArchiveStream = useCallback(
     (streamId: string) => {
-      handleClose()
       // Contextual archive only ever targets the current stream, so its
       // resolved name is correct here — freeze it for the confirm dialog.
-      setPendingArchive({
+      onRequestArchive({
         streamId,
         name: currentStreamName ?? "this stream",
         isDraft: isDraftId(streamId),
       })
     },
-    [handleClose, currentStreamName]
+    [onRequestArchive, currentStreamName]
   )
 
   const handleUnarchiveStream = useCallback(
@@ -321,14 +478,6 @@ export function QuickSwitcher({
       clearInbox([streamId])
     },
     [handleClose, clearInbox]
-  )
-
-  const openLabelPicker = useCallback(
-    (streamId: string) => {
-      handleClose()
-      setLabelPickerStreamId(streamId)
-    },
-    [handleClose]
   )
 
   // Workspace settings is URL-param driven like the user settings dialog, but
@@ -376,7 +525,7 @@ export function QuickSwitcher({
       openStreamSettings: handleOpenStreamSettings,
       requestArchiveStream,
       unarchiveStream: handleUnarchiveStream,
-      openLabelPicker,
+      openLabelPicker: onOpenLabelPicker,
       createSavedTodo,
       openAside: canOpenAside ? openAside : undefined,
       settleStream: canSettle ? settleStream : undefined,
@@ -406,7 +555,7 @@ export function QuickSwitcher({
       handleOpenStreamSettings,
       requestArchiveStream,
       handleUnarchiveStream,
-      openLabelPicker,
+      onOpenLabelPicker,
       createSavedTodo,
     ]
   )
@@ -446,42 +595,29 @@ export function QuickSwitcher({
     setSelectedIndex(0)
   }, [items.length, mode])
 
+  // Re-opening the palette in another mode while it is already open swaps the
+  // mode in place; the mount run is a no-op against the initial state.
   useEffect(() => {
-    if (!open) return
-    const prefix = initialMode ? MODE_PREFIXES[initialMode] : ""
-    setQuery(prefix)
+    setQuery(initialMode ? MODE_PREFIXES[initialMode] : "")
     setSelectedIndex(0)
     setFocusedTabIndex(null)
-  }, [open, initialMode])
+  }, [initialMode])
 
   useEffect(() => {
     // Auto-focus on open for mouse; skip on touch so the virtual keyboard
     // doesn't shift the layout. Kept separate from the init effect so an
     // input-mode flip while the palette is open can't reset query/selection.
-    if (!open || isTouchInput) return
+    if (isTouchInput) return
     requestAnimationFrame(() => {
       richInputRef.current?.focus()
     })
-  }, [open, isTouchInput])
-
-  useEffect(() => {
-    if (!open) {
-      setQuery("")
-      setSelectedIndex(0)
-      setInputRequest(null)
-      setInputValue("")
-      setFocusedTabIndex(null)
-      setShowEscapeHint(false)
-    }
-  }, [open])
-
-  const dialogRef = useRef<HTMLDivElement>(null)
+  }, [isTouchInput])
 
   // Show escape hint after 2 seconds if focus has left the dialog (Vimium scenario)
   // Only on desktop — the hint uses absolute positioning below the dialog which is
   // clipped by the mobile drawer's overflow-hidden
   useEffect(() => {
-    if (!open || isMobile) return
+    if (isMobile) return
 
     const timer = setTimeout(() => {
       const focusInDialog = dialogRef.current?.contains(document.activeElement)
@@ -491,7 +627,7 @@ export function QuickSwitcher({
     }, 2000)
 
     return () => clearTimeout(timer)
-  }, [open, isMobile])
+  }, [isMobile, dialogRef])
 
   const focusInput = useCallback(() => {
     setFocusedTabIndex(null)
@@ -524,257 +660,184 @@ export function QuickSwitcher({
     [inputRequest, inputValue]
   )
 
-  const handleConfirmArchive = useCallback(async () => {
-    if (!pendingArchive) return
-    const { streamId, isDraft } = pendingArchive
-    try {
-      if (isDraft) {
-        await deleteScratchpad(streamId)
-        // Drafts are fully deleted — leave the (now-gone) stream if viewing it.
-        if (currentStreamId === streamId) navigate(`/w/${workspaceId}`)
-      } else {
-        await archiveStream.mutateAsync(streamId)
-      }
-    } catch {
-      toast.error(isDraft ? "Failed to delete draft" : "Failed to archive stream")
-    } finally {
-      setPendingArchive(null)
-    }
-  }, [pendingArchive, deleteScratchpad, navigate, workspaceId, currentStreamId, archiveStream])
-
-  const archiveIsDraft = pendingArchive?.isDraft ?? false
-  const archiveStreamLabel = pendingArchive?.name ?? "this stream"
-
   const ModeIcon = inputRequest?.icon ?? MODE_ICONS[mode]
+
+  useImperativeHandle(keyHandlersRef, () => ({
+    onEscapeKeyDown: (e) => {
+      // If TipTap already handled this event (closed a popover), don't close dialog
+      if (e.defaultPrevented) return
+
+      // Use ref for synchronous access (state updates are batched)
+      // When suggestion popover is open, close it instead of closing dialog
+      // (Radix intercepts Escape before TipTap sees it, so we close imperatively)
+      if (isSuggestionPopoverActiveRef.current) {
+        e.preventDefault()
+        richInputRef.current?.closePopovers()
+        return
+      }
+      // When filter select picker is open, close it instead of closing dialog
+      if (currentResult.isFilterSelectActive && currentResult.closeFilterSelect) {
+        e.preventDefault()
+        currentResult.closeFilterSelect()
+        return
+      }
+      // When in inputRequest mode, Escape returns to command list instead of closing
+      if (inputRequest) {
+        e.preventDefault()
+        clearInputRequest()
+        requestAnimationFrame(() => {
+          richInputRef.current?.focus()
+        })
+      }
+    },
+    onKeyDown: (e) => {
+      // If TipTap already handled this event (e.g., popover keyboard nav), don't interfere
+      if (e.defaultPrevented) return
+
+      const isMod = e.metaKey || e.ctrlKey
+      // Use ref for synchronous access (state updates are batched)
+      // When suggestion popover is open, let TipTap handle keyboard events
+      if (isSuggestionPopoverActiveRef.current) return
+
+      // Global arrow key navigation - works even when focus is on tabs
+      // Refocus input so Enter works on items (not mode tabs)
+      switch (true) {
+        case !inputRequest && e.key === "ArrowDown":
+          e.preventDefault()
+          setSelectedIndex((prev) => clamp(prev + 1, 0, items.length - 1))
+          if (focusedTabIndex !== null) {
+            focusInput()
+          }
+          break
+        case !inputRequest && e.key === "ArrowUp":
+          e.preventDefault()
+          setSelectedIndex((prev) => clamp(prev - 1, 0, items.length - 1))
+          if (focusedTabIndex !== null) {
+            focusInput()
+          }
+          break
+        case !inputRequest && e.key === "Enter" && focusedTabIndex === null:
+          e.preventDefault()
+          const item = items[selectedIndex]
+          if (!item) return
+          handleSelectItem(item, isMod)
+          break
+      }
+    },
+  }))
 
   return (
     <>
-      <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
-        <ResponsiveDialogContent
-          ref={dialogRef}
-          desktopClassName="overflow-hidden p-0 gap-0 shadow-lg sm:!fixed sm:!top-[20%] sm:!translate-y-0 sm:max-w-[600px] sm:rounded-2xl sm:border"
-          drawerClassName="overflow-hidden p-0"
-          hideCloseButton
-          onPointerDownOutside={(e) => {
-            // Prevent closing when clicking on suggestion popover (rendered via portal)
-            const target = e.target as HTMLElement
-            if (target.closest('[role="listbox"]')) {
-              e.preventDefault()
-            }
-          }}
-          onEscapeKeyDown={(e) => {
-            // If TipTap already handled this event (closed a popover), don't close dialog
-            if (e.defaultPrevented) return
-
-            // Use ref for synchronous access (state updates are batched)
-            // When suggestion popover is open, close it instead of closing dialog
-            // (Radix intercepts Escape before TipTap sees it, so we close imperatively)
-            if (isSuggestionPopoverActiveRef.current) {
-              e.preventDefault()
-              richInputRef.current?.closePopovers()
-              return
-            }
-            // When filter select picker is open, close it instead of closing dialog
-            if (currentResult.isFilterSelectActive && currentResult.closeFilterSelect) {
-              e.preventDefault()
-              currentResult.closeFilterSelect()
-              return
-            }
-            // When in inputRequest mode, Escape returns to command list instead of closing
-            if (inputRequest) {
-              e.preventDefault()
-              clearInputRequest()
-              requestAnimationFrame(() => {
-                richInputRef.current?.focus()
-              })
-            }
-          }}
-          onKeyDown={(e) => {
-            // If TipTap already handled this event (e.g., popover keyboard nav), don't interfere
-            if (e.defaultPrevented) return
-
-            const isMod = e.metaKey || e.ctrlKey
-            // Use ref for synchronous access (state updates are batched)
-            // When suggestion popover is open, let TipTap handle keyboard events
-            if (isSuggestionPopoverActiveRef.current) return
-
-            // Global arrow key navigation - works even when focus is on tabs
-            // Refocus input so Enter works on items (not mode tabs)
-            switch (true) {
-              case !inputRequest && e.key === "ArrowDown":
-                e.preventDefault()
-                setSelectedIndex((prev) => clamp(prev + 1, 0, items.length - 1))
-                if (focusedTabIndex !== null) {
-                  focusInput()
-                }
-                break
-              case !inputRequest && e.key === "ArrowUp":
-                e.preventDefault()
-                setSelectedIndex((prev) => clamp(prev - 1, 0, items.length - 1))
-                if (focusedTabIndex !== null) {
-                  focusInput()
-                }
-                break
-              case !inputRequest && e.key === "Enter" && focusedTabIndex === null:
-                e.preventDefault()
-                const item = items[selectedIndex]
-                if (!item) return
-                handleSelectItem(item, isMod)
-                break
-            }
-          }}
-        >
-          {/* Mobile: mode tabs above the input for better hierarchy */}
-          {!inputRequest && isMobile && (
-            <ModeTabs
-              currentMode={mode}
-              onModeChange={handleModeChange}
-              focusedTabIndex={focusedTabIndex}
-              onFocusedTabIndexChange={setFocusedTabIndex}
-              onTabSelect={focusInput}
-            />
-          )}
-
-          <div className="p-4 border-b border-border">
-            <div className="flex items-center gap-3 px-4 py-3 rounded-[10px] border border-border bg-background transition-all focus-within:border-primary/60 focus-within:shadow-[0_0_0_2px_hsl(var(--primary)/0.06)]">
-              <ModeIcon className="h-4 w-4 shrink-0 opacity-50" />
-              {inputRequest ? (
-                // Plain input for command input requests (e.g., "Enter channel name")
-                <input
-                  ref={inputRef}
-                  value={inputValue}
-                  onChange={(e) => setInputValue(e.target.value)}
-                  onKeyDown={handleInputKeyDown}
-                  placeholder={inputRequest.placeholder}
-                  className="flex h-11 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                  autoFocus={!isTouchInput}
-                  aria-label="Command input"
-                />
-              ) : (
-                <RichInput
-                  ref={richInputRef}
-                  value={query}
-                  onChange={(value) => {
-                    // Normalize the query in two steps:
-                    // 1. Remove redundant prefixes: "> > bar" → "> bar"
-                    // 2. Ensure space after prefix: ">bar" → "> bar" (TipTap strips trailing whitespace)
-                    const withoutRedundant = value.replace(/^(>)\s*\1/, "$1")
-                    const normalized = withoutRedundant.replace(/^(>)(?=\S)/, "$1 ")
-                    setQuery(normalized)
-                    setSelectedIndex(0)
-                  }}
-                  onSubmit={(withModifier) => {
-                    // Enter pressed with no popover open - select current item
-                    const item = items[selectedIndex]
-                    if (item) {
-                      handleSelectItem(item, withModifier)
-                    }
-                  }}
-                  onPopoverActiveChange={handlePopoverActiveChange}
-                  triggers={triggers}
-                  placeholder={MODE_PLACEHOLDERS[mode]}
-                  ariaLabel="Quick switcher input"
-                  autoFocus={!isTouchInput}
-                />
-              )}
-            </div>
-          </div>
-
-          {/* Desktop: mode tabs below the input (keyboard-navigable) */}
-          {!inputRequest && !isMobile && (
-            <ModeTabs
-              currentMode={mode}
-              onModeChange={handleModeChange}
-              focusedTabIndex={focusedTabIndex}
-              onFocusedTabIndexChange={setFocusedTabIndex}
-              onTabSelect={focusInput}
-            />
-          )}
-
-          {inputRequest && (
-            <div className="px-4 py-3 text-xs text-muted-foreground border-b border-border">{inputRequest.hint}</div>
-          )}
-
-          {!inputRequest && currentResult.header}
-
-          {!inputRequest && (
-            <ItemList
-              items={items}
-              selectedIndex={selectedIndex}
-              onSelectIndex={setSelectedIndex}
-              onSelectItem={handleSelectItem}
-              isLoading={currentResult.isLoading}
-              emptyMessage={currentResult.emptyMessage}
-            />
-          )}
-
-          {/* Keyboard hints footer — shown whenever the active input is a mouse
-              (not a finger), so a mouse on any width sees the hints. */}
-          {!inputRequest && !isTouchInput && (
-            <div className="flex items-center justify-between border-t border-border px-4 py-3 text-[11px] text-muted-foreground">
-              <div className="flex gap-4">
-                <span>
-                  <kbd className="kbd-hint">↑↓</kbd> Navigate
-                </span>
-                <span>
-                  <kbd className="kbd-hint">↵</kbd> Open
-                </span>
-                <span>
-                  <kbd className="kbd-hint">{navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}↵</kbd> New tab
-                </span>
-              </div>
-              <span>
-                <kbd className="kbd-hint">esc</kbd> Close
-              </span>
-            </div>
-          )}
-
-          {/* Escape hint - shown after 2s to help users with Vimium or similar */}
-          {/* Uses absolute positioning to avoid layout shift (INV-21) */}
-          {showEscapeHint && (
-            <div className="absolute -bottom-8 left-0 right-0 text-xs text-muted-foreground/80 text-center animate-in fade-in duration-500">
-              Tip: Use <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">Ctrl+[</kbd> or click outside to close
-            </div>
-          )}
-        </ResponsiveDialogContent>
-      </ResponsiveDialog>
-
-      <ResponsiveAlertDialog
-        open={pendingArchive !== null}
-        onOpenChange={(next) => {
-          if (!next) setPendingArchive(null)
-        }}
-      >
-        <ResponsiveAlertDialogContent>
-          <ResponsiveAlertDialogHeader>
-            <ResponsiveAlertDialogTitle>
-              {archiveIsDraft ? "Delete this draft?" : `Archive ${archiveStreamLabel}?`}
-            </ResponsiveAlertDialogTitle>
-            <ResponsiveAlertDialogDescription>
-              {archiveIsDraft
-                ? "This draft will be permanently deleted. This can't be undone."
-                : "This stream will be hidden from the sidebar. You can unarchive it later."}
-            </ResponsiveAlertDialogDescription>
-          </ResponsiveAlertDialogHeader>
-          <ResponsiveAlertDialogFooter>
-            <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
-            <ResponsiveAlertDialogAction onClick={handleConfirmArchive}>
-              {archiveIsDraft ? "Delete" : "Archive"}
-            </ResponsiveAlertDialogAction>
-          </ResponsiveAlertDialogFooter>
-        </ResponsiveAlertDialogContent>
-      </ResponsiveAlertDialog>
-
-      {labelPickerStreamId && (
-        <LabelPicker
-          workspaceId={workspaceId}
-          resourceType={LabelableResourceTypes.STREAM}
-          resourceId={labelPickerStreamId}
-          open={labelPickerStreamId !== null}
-          onOpenChange={(next) => {
-            if (!next) setLabelPickerStreamId(null)
-          }}
+      {/* Mobile: mode tabs above the input for better hierarchy */}
+      {!inputRequest && isMobile && (
+        <ModeTabs
+          currentMode={mode}
+          onModeChange={handleModeChange}
+          focusedTabIndex={focusedTabIndex}
+          onFocusedTabIndexChange={setFocusedTabIndex}
+          onTabSelect={focusInput}
         />
+      )}
+
+      <div className="p-4 border-b border-border">
+        <div className="flex items-center gap-3 px-4 py-3 rounded-[10px] border border-border bg-background transition-all focus-within:border-primary/60 focus-within:shadow-[0_0_0_2px_hsl(var(--primary)/0.06)]">
+          <ModeIcon className="h-4 w-4 shrink-0 opacity-50" />
+          {inputRequest ? (
+            // Plain input for command input requests (e.g., "Enter channel name")
+            <input
+              value={inputValue}
+              onChange={(e) => setInputValue(e.target.value)}
+              onKeyDown={handleInputKeyDown}
+              placeholder={inputRequest.placeholder}
+              className="flex h-11 w-full rounded-md bg-transparent py-3 text-sm outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              autoFocus={!isTouchInput}
+              aria-label="Command input"
+            />
+          ) : (
+            <RichInput
+              ref={richInputRef}
+              value={query}
+              onChange={(value) => {
+                // Normalize the query in two steps:
+                // 1. Remove redundant prefixes: "> > bar" → "> bar"
+                // 2. Ensure space after prefix: ">bar" → "> bar" (TipTap strips trailing whitespace)
+                const withoutRedundant = value.replace(/^(>)\s*\1/, "$1")
+                const normalized = withoutRedundant.replace(/^(>)(?=\S)/, "$1 ")
+                setQuery(normalized)
+                setSelectedIndex(0)
+              }}
+              onSubmit={(withModifier) => {
+                // Enter pressed with no popover open - select current item
+                const item = items[selectedIndex]
+                if (item) {
+                  handleSelectItem(item, withModifier)
+                }
+              }}
+              onPopoverActiveChange={handlePopoverActiveChange}
+              triggers={triggers}
+              placeholder={MODE_PLACEHOLDERS[mode]}
+              ariaLabel="Quick switcher input"
+              autoFocus={!isTouchInput}
+            />
+          )}
+        </div>
+      </div>
+
+      {/* Desktop: mode tabs below the input (keyboard-navigable) */}
+      {!inputRequest && !isMobile && (
+        <ModeTabs
+          currentMode={mode}
+          onModeChange={handleModeChange}
+          focusedTabIndex={focusedTabIndex}
+          onFocusedTabIndexChange={setFocusedTabIndex}
+          onTabSelect={focusInput}
+        />
+      )}
+
+      {inputRequest && (
+        <div className="px-4 py-3 text-xs text-muted-foreground border-b border-border">{inputRequest.hint}</div>
+      )}
+
+      {!inputRequest && currentResult.header}
+
+      {!inputRequest && (
+        <ItemList
+          items={items}
+          selectedIndex={selectedIndex}
+          onSelectIndex={setSelectedIndex}
+          onSelectItem={handleSelectItem}
+          isLoading={currentResult.isLoading}
+          emptyMessage={currentResult.emptyMessage}
+        />
+      )}
+
+      {/* Keyboard hints footer — shown whenever the active input is a mouse
+          (not a finger), so a mouse on any width sees the hints. */}
+      {!inputRequest && !isTouchInput && (
+        <div className="flex items-center justify-between border-t border-border px-4 py-3 text-[11px] text-muted-foreground">
+          <div className="flex gap-4">
+            <span>
+              <kbd className="kbd-hint">↑↓</kbd> Navigate
+            </span>
+            <span>
+              <kbd className="kbd-hint">↵</kbd> Open
+            </span>
+            <span>
+              <kbd className="kbd-hint">{navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}↵</kbd> New tab
+            </span>
+          </div>
+          <span>
+            <kbd className="kbd-hint">esc</kbd> Close
+          </span>
+        </div>
+      )}
+
+      {/* Escape hint - shown after 2s to help users with Vimium or similar */}
+      {/* Uses absolute positioning to avoid layout shift (INV-21) */}
+      {showEscapeHint && (
+        <div className="absolute -bottom-8 left-0 right-0 text-xs text-muted-foreground/80 text-center animate-in fade-in duration-500">
+          Tip: Use <kbd className="px-1 py-0.5 bg-muted rounded text-[10px]">Ctrl+[</kbd> or click outside to close
+        </div>
       )}
     </>
   )

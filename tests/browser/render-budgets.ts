@@ -6,7 +6,7 @@
  * the number the failing test prints.
  */
 export const RENDER_BUDGETS = {
-  "type 5 characters": { baseline: 1700, tolerance: 0.1 },
+  "type 5 characters": { baseline: 1620, tolerance: 0.1 },
   "incoming message in the open stream": { baseline: 3394, tolerance: 0.15 },
   "message in another stream": { baseline: 1030, tolerance: 0.25 },
   "switch stream (warm)": { baseline: 11000, tolerance: 0.1 },
