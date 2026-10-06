@@ -34,6 +34,9 @@ export const WORKSPACE_AGENT_MAX_ITERATIONS = 2
 /** Maximum number of memos/messages to retrieve per search */
 export const WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH = 5
 
+/** Hits per search taken from the room the question was asked in, on top of the workspace-wide ones */
+export const WORKSPACE_AGENT_MAX_ROOM_RESULTS_PER_SEARCH = 3
+
 /**
  * Maximum number of additional queries the evaluator is allowed to request
  * after iteration 1. Caps the worst-case iteration-2 fan-out.

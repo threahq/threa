@@ -281,6 +281,7 @@ describe("WorkspaceAgent runSearchLoop iteration count", () => {
           input: WorkspaceAgentInput,
           accessSpec: { type: "all_streams" },
           accessibleStreamIds: string[],
+          roomStreamIds: string[],
           substeps: Array<{ text: string; at: string }>
         ) => Promise<unknown>
       }
@@ -296,7 +297,7 @@ describe("WorkspaceAgent runSearchLoop iteration count", () => {
       ...input,
     }
 
-    return runSearchLoop({} as Pool, fullInput, { type: "all_streams" }, ["stream_1"], [])
+    return runSearchLoop({} as Pool, fullInput, { type: "all_streams" }, ["stream_1"], [], [])
   }
 
   test("maxIterations=1 runs the bootstrap pass and skips the refinement loop entirely", async () => {
@@ -392,6 +393,7 @@ describe("WorkspaceAgent searchMessages workspace scope", () => {
       { target: "messages", type: "semantic", query: "launch date" },
       "ws_1",
       ["stream_1"],
+      [],
       false,
       new Set(),
       "improved"

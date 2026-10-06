@@ -4,7 +4,7 @@ import { withClient } from "../../../db"
 import { composeAbortSignal, isAbortError, type AI } from "@threahq/agent-runtime"
 import type { ConfigResolver, ResearcherConfig } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
-import type { AuthoredByKind, FeatureFlagValue, TraceSource } from "@threahq/types"
+import { StreamTypes, type AuthoredByKind, type FeatureFlagValue, type TraceSource } from "@threahq/types"
 import type { EmbeddingServiceLike, MemoAudience } from "../../memos"
 import { MessageRepository, type Message } from "../../messaging"
 import { MemoRepository, classifyMemoQueryIntent } from "../../memos"
@@ -18,6 +18,7 @@ import {
   type EnrichedMemoResult,
   type EnrichedMessageResult,
   type EnrichedAttachmentResult,
+  type RawMessageSearchResult,
 } from "./context-formatter"
 import {
   resolveQuoteReplies,
@@ -31,6 +32,7 @@ import { hybridWeightsForQuery, searchRankingForFlag, type SearchRanking } from 
 import {
   WORKSPACE_AGENT_MAX_ITERATIONS,
   WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
+  WORKSPACE_AGENT_MAX_ROOM_RESULTS_PER_SEARCH,
   WORKSPACE_AGENT_MAX_ADDITIONAL_QUERIES,
   WORKSPACE_AGENT_PLANNER_TIMEOUT_MS,
   WORKSPACE_AGENT_EVALUATOR_TIMEOUT_MS,
@@ -195,6 +197,17 @@ function mergeMemoResults(existing: EnrichedMemoResult[], incoming: EnrichedMemo
   return merged
 }
 
+function messageAsSearchResult(message: Message): RawMessageSearchResult {
+  return {
+    id: message.id,
+    streamId: message.streamId,
+    content: message.contentMarkdown,
+    authorId: message.authorId,
+    authorType: message.authorType,
+    createdAt: message.createdAt,
+  }
+}
+
 function mergeMessageResults(
   existing: EnrichedMessageResult[],
   incoming: EnrichedMessageResult[]
@@ -263,7 +276,7 @@ export class WorkspaceAgent {
     const fetchedData = await withClient(pool, async (client) => {
       const stream = await StreamRepository.findById(client, workspaceId, streamId)
       if (!stream) {
-        return { stream: null, accessSpec: null, accessibleStreamIds: null }
+        return { stream: null, accessSpec: null, accessibleStreamIds: null, roomStreamIds: [] }
       }
 
       const accessSpec = await computeAgentAccessSpec(client, {
@@ -273,7 +286,14 @@ export class WorkspaceAgent {
 
       const accessibleStreamIds = await SearchRepository.getAccessibleStreamsForAgent(client, accessSpec, workspaceId)
 
-      return { stream, accessSpec, accessibleStreamIds }
+      const roomRootId = stream.rootStreamId ?? stream.id
+      const accessible = new Set(accessibleStreamIds)
+      const roomStreamIds = [
+        roomRootId,
+        ...(await StreamRepository.listThreadsByRoot(client, workspaceId, roomRootId)).map((thread) => thread.id),
+      ].filter((id) => accessible.has(id))
+
+      return { stream, accessSpec, accessibleStreamIds, roomStreamIds }
     })
 
     if (!fetchedData.stream || !fetchedData.accessSpec || !fetchedData.accessibleStreamIds) {
@@ -300,7 +320,14 @@ export class WorkspaceAgent {
     }
 
     // Phase 2: Run search loop (AI calls + DB queries, no connection held)
-    return this.runSearchLoop(pool, input, fetchedData.accessSpec, fetchedData.accessibleStreamIds, substeps)
+    return this.runSearchLoop(
+      pool,
+      input,
+      fetchedData.accessSpec,
+      fetchedData.accessibleStreamIds,
+      fetchedData.roomStreamIds,
+      substeps
+    )
   }
 
   /**
@@ -331,6 +358,7 @@ export class WorkspaceAgent {
     input: WorkspaceAgentInput,
     accessSpec: AgentAccessSpec,
     accessibleStreamIds: string[],
+    roomStreamIds: string[],
     substeps: WorkspaceAgentSubstep[]
   ): Promise<WorkspaceAgentResult> {
     const { configResolver, embeddingService } = this.deps
@@ -353,7 +381,8 @@ export class WorkspaceAgent {
 
     const contextSummary = this.buildContextSummary(query, conversationHistory)
     const maxIterations = config.maxIterations ?? WORKSPACE_AGENT_MAX_ITERATIONS
-    const excludedMessageIds = new Set<string>()
+    // Already in the main agent's prompt; retrieving them again only crowds out new context.
+    const excludedMessageIds = new Set(conversationHistory.map((message) => message.id))
     const seenQueryKeys = new Set<string>()
 
     let allMemos: EnrichedMemoResult[] = []
@@ -393,6 +422,7 @@ export class WorkspaceAgent {
             baselineQueries,
             workspaceId,
             accessibleStreamIds,
+            roomStreamIds,
             embeddingService,
             memoReaders,
             true,
@@ -448,6 +478,7 @@ export class WorkspaceAgent {
         plannerOnlyDeduped,
         workspaceId,
         accessibleStreamIds,
+        roomStreamIds,
         embeddingService,
         memoReaders,
         true,
@@ -547,6 +578,7 @@ export class WorkspaceAgent {
         iterationQueries,
         workspaceId,
         accessibleStreamIds,
+        roomStreamIds,
         embeddingService,
         memoReaders,
         true,
@@ -867,6 +899,7 @@ Each query must have:
     queries: SearchQuery[],
     workspaceId: string,
     accessibleStreamIds: string[],
+    roomStreamIds: string[],
     embeddingService: EmbeddingServiceLike,
     memoReaders: MemoReaders,
     includeSurroundingContext: boolean,
@@ -907,6 +940,7 @@ Each query must have:
             query,
             workspaceId,
             accessibleStreamIds,
+            roomStreamIds,
             includeSurroundingContext,
             excludedMessageIds,
             ranking
@@ -1080,6 +1114,7 @@ Each query must have:
     query: SearchQuery,
     workspaceId: string,
     accessibleStreamIds: string[],
+    roomStreamIds: string[],
     includeSurroundingContext: boolean,
     excludedMessageIds: Set<string>,
     ranking: SearchRanking
@@ -1109,91 +1144,54 @@ Each query must have:
         const normalizedQuery = searchQuery.trim()
         const hasQuery = normalizedQuery.length > 0
         const hasEmbedding = embedding.length > 0
-        const primaryResults =
-          !hasQuery || !hasEmbedding
-            ? await SearchRepository.fullTextSearch(client, {
-                workspaceId,
-                query: normalizedQuery,
-                streamIds: accessibleStreamIds,
-                filters,
-                limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
-                ranking,
-              })
-            : await SearchRepository.hybridSearch(client, {
-                workspaceId,
-                query: normalizedQuery,
-                embedding,
-                streamIds: accessibleStreamIds,
-                filters,
-                limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
-                ranking,
-                ...hybridWeightsForQuery(normalizedQuery, ranking),
-              })
-        const searchResults =
-          hasQuery && hasEmbedding && primaryResults.length === 0
-            ? await SearchRepository.fullTextSearch(client, {
-                workspaceId,
-                query: normalizedQuery,
-                streamIds: accessibleStreamIds,
-                filters,
-                limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
-                ranking,
-              })
-            : primaryResults
+        const search = async (streamIds: string[], limit: number) => {
+          const params = { workspaceId, query: normalizedQuery, streamIds, filters, limit, ranking }
+          const primary =
+            hasQuery && hasEmbedding
+              ? await SearchRepository.hybridSearch(client, {
+                  ...params,
+                  embedding,
+                  ...hybridWeightsForQuery(normalizedQuery, ranking),
+                })
+              : await SearchRepository.fullTextSearch(client, params)
+          return hasQuery && hasEmbedding && primary.length === 0
+            ? await SearchRepository.fullTextSearch(client, params)
+            : primary
+        }
 
-        const filteredSearchResults = searchResults.filter((result) => !excludedMessageIds.has(result.id))
-        const rawResults = [...filteredSearchResults]
+        const workspaceResults = await search(accessibleStreamIds, WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH)
+        // Ranking always fills its limit, so the room leg is capped below the workspace leg: an irrelevant room
+        // still contributes only a few hits.
+        const roomResults =
+          roomStreamIds.length > 0 ? await search(roomStreamIds, WORKSPACE_AGENT_MAX_ROOM_RESULTS_PER_SEARCH) : []
+
+        const filteredSearchResults = [...workspaceResults, ...roomResults].filter(
+          (result) => !excludedMessageIds.has(result.id)
+        )
+        const rawResults: RawMessageSearchResult[] = [...filteredSearchResults]
         if (includeSurroundingContext && filteredSearchResults.length > 0) {
           const surroundingBatches = await Promise.all(
             filteredSearchResults
               .slice(0, 3)
               .map((result) => MessageRepository.findSurrounding(client, workspaceId, result.id, result.streamId, 1, 1))
           )
+          rawResults.push(...surroundingBatches.flat().map(messageAsSearchResult))
 
-          for (const surrounding of surroundingBatches) {
-            for (const message of surrounding) {
-              if (excludedMessageIds.has(message.id)) {
-                continue
-              }
-              rawResults.push({
-                id: message.id,
-                streamId: message.streamId,
-                content: message.contentMarkdown,
-                authorId: message.authorId,
-                authorType: message.authorType,
-                sequence: message.sequence,
-                replyCount: message.replyCount,
-                metadata: message.metadata,
-                editedAt: message.editedAt,
-                createdAt: message.createdAt,
-                rank: 0,
-              })
-            }
-          }
-
-          const topStreamIds = [...new Set(filteredSearchResults.slice(0, 2).map((result) => result.streamId))]
-          const recentMessagesByStream = await Promise.all(
-            topStreamIds.map((streamId) => MessageRepository.list(client, workspaceId, streamId, { limit: 5 }))
+          // A reply read without the post that opened its thread loses what it is replying to.
+          const hitStreams = await StreamRepository.findByIds(client, workspaceId, [
+            ...new Set(filteredSearchResults.map((result) => result.streamId)),
+          ])
+          const rootMessageIds = hitStreams.flatMap((stream) =>
+            stream.type === StreamTypes.THREAD && stream.parentAnchorId ? [stream.parentAnchorId] : []
           )
-          for (const streamMessages of recentMessagesByStream) {
-            for (const message of streamMessages) {
-              if (excludedMessageIds.has(message.id)) {
-                continue
-              }
-              rawResults.push({
-                id: message.id,
-                streamId: message.streamId,
-                content: message.contentMarkdown,
-                authorId: message.authorId,
-                authorType: message.authorType,
-                sequence: message.sequence,
-                replyCount: message.replyCount,
-                metadata: message.metadata,
-                editedAt: message.editedAt,
-                createdAt: message.createdAt,
-                rank: 0,
-              })
-            }
+          if (rootMessageIds.length > 0) {
+            const roots = await MessageRepository.findByIdsInStreams(
+              client,
+              workspaceId,
+              rootMessageIds,
+              accessibleStreamIds
+            )
+            rawResults.push(...[...roots.values()].map(messageAsSearchResult))
           }
         }
 
@@ -1208,6 +1206,10 @@ Each query must have:
         }
 
         const enriched = await enrichMessageSearchResults(client, workspaceId, [...dedupedResultsById.values()])
+        const room = new Set(roomStreamIds)
+        for (const e of enriched) {
+          if (room.has(e.streamId)) e.inCurrentRoom = true
+        }
 
         // Resolve quote-reply precursors for each retrieved message so Ariadne
         // sees the full source of anything that was quoted, not just the
