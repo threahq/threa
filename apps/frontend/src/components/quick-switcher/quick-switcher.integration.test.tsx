@@ -171,6 +171,11 @@ function ActiveStreamBootstrap({
   return null
 }
 
+function StatefulSwitcher(props: Omit<React.ComponentProps<typeof QuickSwitcher>, "open" | "onOpenChange">) {
+  const [open, setOpen] = useState(true)
+  return <QuickSwitcher {...props} open={open} onOpenChange={setOpen} />
+}
+
 function renderWithProviders(ui: React.ReactElement, queryClient = createTestQueryClient()) {
   return render(
     <QueryClientProvider client={queryClient}>
@@ -521,6 +526,24 @@ describe("QuickSwitcher Integration Tests", () => {
       renderWithProviders(<QuickSwitcher {...defaultProps} open={false} />)
 
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument()
+    })
+
+    it("does not run the palette body while closed, and runs it once opened", () => {
+      const queryClient = createTestQueryClient()
+      const { rerender } = renderWithProviders(<QuickSwitcher {...defaultProps} open={false} />, queryClient)
+
+      expect(workspaceStoreModule.useWorkspaceStreams).not.toHaveBeenCalled()
+      expect(workspaceStoreModule.useWorkspaceUsers).not.toHaveBeenCalled()
+
+      rerender(
+        <QueryClientProvider client={queryClient}>
+          <ProvidersWrapper>
+            <QuickSwitcher {...defaultProps} open={true} />
+          </ProvidersWrapper>
+        </QueryClientProvider>
+      )
+
+      expect(workspaceStoreModule.useWorkspaceStreams).toHaveBeenCalled()
     })
 
     it("should focus input when dialog opens", async () => {
@@ -1511,6 +1534,26 @@ describe("QuickSwitcher Integration Tests", () => {
         expect(mockArchiveMutateAsync).toHaveBeenCalledWith("stream_channel1")
       })
     })
+
+    it("keeps the archive confirmation open after the palette closes", async () => {
+      const user = userEvent.setup({ pointerEventsCheck: 0 })
+      renderWithProviders(
+        <StatefulSwitcher workspaceId="workspace_1" initialMode="command" currentStreamId="stream_channel1" />
+      )
+
+      await user.click(await screen.findByText("Archive this stream"))
+
+      await waitFor(() => {
+        expect(screen.queryByLabelText("Quick switcher input")).not.toBeInTheDocument()
+      })
+      expect(screen.getByText("Archive #general?")).toBeInTheDocument()
+
+      await user.click(screen.getByRole("button", { name: "Archive" }))
+
+      await waitFor(() => {
+        expect(mockArchiveMutateAsync).toHaveBeenCalledWith("stream_channel1")
+      })
+    })
   })
 
   describe("initial mode", () => {
@@ -1643,9 +1686,12 @@ describe("QuickSwitcher Integration Tests", () => {
       const user = userEvent.setup({ pointerEventsCheck: 0 })
       stubSession("locked")
       stubUnlockProvider()
-      renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" />)
+      renderWithProviders(<StatefulSwitcher workspaceId="workspace_1" initialMode="command" />)
 
       await user.click(await screen.findByText("New Encrypted Scratchpad"))
+      await waitFor(() => {
+        expect(screen.queryByLabelText("Quick switcher input")).not.toBeInTheDocument()
+      })
 
       // Routed through the unlock modal; the create is deferred, not thrown.
       expect(mockOpenUnlock).toHaveBeenCalledTimes(1)
