@@ -19,6 +19,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  TOTAL_SHARDS: 4
+
 jobs:
   build-frontend:
     runs-on: ubuntu-latest
@@ -51,8 +54,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     continue-on-error: true
-    env:
-      TOTAL_SHARDS: 4
     strategy:
       fail-fast: false
       matrix:
@@ -272,23 +273,21 @@ jobs:
           passed_count=0
           flaky_count=0
           failed_count=0
+          missing_count=0
 
-          # Derive shards from downloaded artifact directories so this stays
-          # correct if TOTAL_SHARDS changes without touching evaluate-results.
-          # nullglob so a missing artifact dir expands to zero iterations rather
-          # than the literal pattern — otherwise `cat` would abort the step under
-          # `set -e` before the no-markers guard below could report it cleanly.
-          shopt -s nullglob
-          result_files=(shard-results/shard-result-*/shard-result.txt)
-
-          for result_file in "${result_files[@]}"; do
-            shard_num=$(basename "$(dirname "$result_file")" | sed 's/shard-result-//')
-            result=$(cat "$result_file")
+          for shard_num in $(seq 1 "$TOTAL_SHARDS"); do
+            result_file="shard-results/shard-result-$shard_num/shard-result.txt"
+            if [[ -f "$result_file" ]]; then
+              result=$(cat "$result_file")
+            else
+              result="missing"
+            fi
 
             case "$result" in
-              passed) icon="✅"; passed_count=$((passed_count + 1)) ;;
-              flaky)  icon="🌀"; flaky_count=$((flaky_count + 1)) ;;
-              *)      icon="❌"; failed_count=$((failed_count + 1)) ;;
+              passed)  icon="✅"; passed_count=$((passed_count + 1)) ;;
+              flaky)   icon="🌀"; flaky_count=$((flaky_count + 1)) ;;
+              missing) icon="⛔"; missing_count=$((missing_count + 1)) ;;
+              *)       icon="❌"; failed_count=$((failed_count + 1)) ;;
             esac
 
             echo "| $shard_num | $icon $result |" >> "$GITHUB_STEP_SUMMARY"
@@ -296,10 +295,10 @@ jobs:
 
           echo "" >> "$GITHUB_STEP_SUMMARY"
 
-          # No markers at all means the matrix never reported — treat as a
-          # failure so a job that dies before writing results can't pass silently.
-          if [[ ${#result_files[@]} -eq 0 ]]; then
-            echo "⛔ No shard results were reported — the test job did not run to completion." >> "$GITHUB_STEP_SUMMARY"
+          # A shard whose job died before uploading its marker (runner shutdown,
+          # timeout, cancel) ran an unknown share of its tests, so it can't pass.
+          if [[ $missing_count -gt 0 ]]; then
+            echo "⛔ $missing_count of $TOTAL_SHARDS shards reported no result — their jobs did not run to completion." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
 
