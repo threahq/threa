@@ -79,7 +79,7 @@ describe("formatRetrievedContext", () => {
     const text = formatRetrievedContext([memo(), memo({ latestSourceAt: null })], [], [], WORKSPACE)
     expect(text).toEqual(
       expect.stringContaining(
-        "Each memo is as of its newest source message. A related message posted after that date on the same topic overrides the memo.\n\n**Deploy runbook**"
+        "Each memo is as of its newest source message. A message posted after that date that explicitly changes or reverses what the memo states overrides it. A question, proposal or passing remark does not.\n\n**Deploy runbook**"
       )
     )
     expect(text?.match(/_, as of [^\n]+/g)).toEqual(["_, as of 2026-07-01T10:00Z", "_, as of 2026-05-15T10:00Z"])

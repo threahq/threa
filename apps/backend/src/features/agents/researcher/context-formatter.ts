@@ -5,7 +5,6 @@ import { UserRepository } from "../../workspaces"
 import { StreamRepository } from "../../streams"
 import type { Memo } from "../../memos"
 import { PersonaRepository } from "../persona-repository"
-import { formatRelativeDate } from "../../../lib/temporal"
 import { workspaceMemoUrl, workspaceMessageUrl, workspaceStreamUrl } from "../workspace-links"
 
 export interface EnrichedMemoResult {
@@ -103,13 +102,13 @@ ${keyPointsList}${sourcesLine}${linkLine}`
 
   return `### Memos
 
-Each memo is as of its newest source message. A related message posted after that date on the same topic overrides the memo.
+Each memo is as of its newest source message. A message posted after that date that explicitly changes or reverses what the memo states overrides it. A question, proposal or passing remark does not.
 
 ${memoEntries}
 `
 }
 
-// Memos and messages share one absolute minute-precision clock: the memo prompt says a later message
+// Memos, messages and attachments share one absolute minute-precision clock: the memo prompt says a later change
 // overrides the memo, and relative day labels cannot order two items from the same day.
 function formatMinute(date: Date): string {
   return `${date.toISOString().slice(0, 16)}Z`
@@ -146,14 +145,14 @@ ${messageEntries}
 function formatAttachmentsSection(attachments: EnrichedAttachmentResult[], workspaceId: string): string {
   const attachmentEntries = attachments
     .map((att) => {
-      const relativeDate = formatRelativeDate(att.createdAt)
+      const postedAt = formatMinute(att.createdAt)
       const contentInfo = att.contentType ? ` (${att.contentType})` : ""
       const summary = att.summary ? `\n${att.summary}` : ""
       // Surface attachment id for `attachment:` resurfacing pointer URLs.
       const attachTag = formatAttachWithStreamTag(att.id, att.streamId)
       const linkLine = att.streamId ? `\nLink: ${workspaceStreamUrl(workspaceId, att.streamId)}` : ""
 
-      return `**${att.filename}**${contentInfo} _(${attachTag}, ${relativeDate})_${summary}${linkLine}`
+      return `**${att.filename}**${contentInfo} _(${attachTag}, ${postedAt})_${summary}${linkLine}`
     })
     .join("\n\n")
 
