@@ -440,8 +440,9 @@ export function PanelProvider({ children }: PanelProviderProps) {
         open((current) => focusPanelTab(current, panelId), false)
         return
       }
+      if (layout.focused === undefined) return
       const value = formatPanelLayout(focusPanelTab(layout, null))
-      if (value === null || layout.focused === undefined) return
+      if (value === null) return
       const params = new URLSearchParams(searchParams)
       params.set(PANEL_PARAM, value)
       closeTo(params)
