@@ -263,6 +263,52 @@ describe("useScrollBehavior", () => {
     }
   })
 
+  it("lets a scroll-up gesture during the opening pins detach from the tail", () => {
+    const { trigger, restore } = installManualResizeObserver()
+    try {
+      const scrollable = makeScrollableDiv({ scrollHeight: 5000, clientHeight: 800 })
+      const api = renderHookWithElement({ isLoading: false, itemCount: 100, bottomThreshold: 4 }, scrollable.el)
+
+      // Still inside the grace window of the opening pin: the reader wheels up
+      // while rows keep growing in under the tail.
+      scrollable.setScrollHeight(5400)
+      act(() => trigger())
+      act(() => {
+        scrollable.el.dispatchEvent(new WheelEvent("wheel", { deltaY: -120 }))
+        scrollable.el.scrollTop = 4000
+        api.current.handleScroll()
+      })
+      scrollable.setScrollHeight(5800)
+      act(() => trigger())
+
+      expect(scrollable.scrollTop).toBe(4000)
+    } finally {
+      restore()
+    }
+  })
+
+  it("holds a scroll-up whose scroll event lands after the next growth", () => {
+    const { trigger, restore } = installManualResizeObserver()
+    try {
+      const scrollable = makeScrollableDiv({ scrollHeight: 5000, clientHeight: 800 })
+      const api = renderHookWithElement({ isLoading: false, itemCount: 100, bottomThreshold: 4 }, scrollable.el)
+
+      act(() => {
+        scrollable.el.dispatchEvent(new WheelEvent("wheel", { deltaY: -120 }))
+        scrollable.el.scrollTop = 4000
+      })
+      scrollable.setScrollHeight(5400)
+      act(() => trigger())
+      act(() => api.current.handleScroll())
+      scrollable.setScrollHeight(5800)
+      act(() => trigger())
+
+      expect(scrollable.scrollTop).toBe(4000)
+    } finally {
+      restore()
+    }
+  })
+
   describe("rows arriving while detached", () => {
     type Rows = { itemCount: number; firstItemKey: string; isFetchingOlder?: boolean }
 
