@@ -311,10 +311,18 @@ export async function createChannel(
 }
 
 /**
- * Return the composer used inside the thread panel.
+ * The panel tab on show. Tabs behind it stay mounted but inert, so text in
+ * them still matches unscoped locators.
+ */
+export function getActivePanel(page: Page): Locator {
+  return page.locator("[data-testid='panel'] [data-panel-tab]:not([inert])")
+}
+
+/**
+ * Return the composer used inside the thread panel tab on show.
  */
 export function getPanelEditor(page: Page): Locator {
-  return page.locator("[data-editor-zone='panel'] [contenteditable='true']")
+  return page.locator("[data-editor-zone='panel']:not([inert] *) [contenteditable='true']")
 }
 
 /**
@@ -373,10 +381,13 @@ export async function waitForRealThreadPanel(page: Page): Promise<void> {
     // %3A, so read the decoded value via searchParams rather than matching the
     // raw URL with a regex.
     const panelId = new URL(page.url()).searchParams.get("panel")
-    const isDraftPanel = panelId?.startsWith("draft:") ?? false
+    const isDraftPanel = panelId?.includes("draft:") ?? false
     const hasSendButton = await sendButton.isVisible().catch(() => false)
+    // The URL moves to the real thread a render before the panel does: a tab
+    // pane still keyed to the draft means links on screen still point at it.
+    const showsDraftTab = (await page.locator("[data-panel-tab^='draft:']:not([inert])").count()) > 0
 
-    if (!hasDraftIntro && !isDraftPanel && hasSendButton) {
+    if (!hasDraftIntro && !isDraftPanel && !showsDraftTab && hasSendButton) {
       return
     }
 
@@ -385,7 +396,7 @@ export async function waitForRealThreadPanel(page: Page): Promise<void> {
 
   await expect(page.getByText(/Start a new thread/)).not.toBeVisible({ timeout: 5000 })
   await expect
-    .poll(() => new URL(page.url()).searchParams.get("panel")?.startsWith("draft:") ?? false, { timeout: 5000 })
+    .poll(() => new URL(page.url()).searchParams.get("panel")?.includes("draft:") ?? false, { timeout: 5000 })
     .toBe(false)
   await expect(sendButton).toBeVisible({ timeout: 5000 })
 }
