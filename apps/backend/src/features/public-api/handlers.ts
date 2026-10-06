@@ -3013,7 +3013,10 @@ export function createPublicApiHandlers({
         memos.map((memo) => ({ type: "memo", id: memo.id }))
       )
       const payload: WireMemoRecall = {
-        data: memos.map((memo) => ({ ...memo, createdAt: memo.createdAt.toISOString() })),
+        data: memos.map(({ latestSourceAt: _latestSourceAt, ...memo }) => ({
+          ...memo,
+          createdAt: memo.createdAt.toISOString(),
+        })),
         outcome,
       }
       res.json(payload)

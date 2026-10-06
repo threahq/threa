@@ -77,6 +77,7 @@ export interface MemoExplorerResult {
   distance: number
   sourceStream: MemoStreamRef | null
   rootStream: MemoStreamRef | null
+  latestSourceAt: Date | null
 }
 
 export interface MemoExplorerSourceMessage {
@@ -438,6 +439,10 @@ export class MemoExplorerService {
       distance: 0,
       sourceStream: this.toStreamRef(sourceContext.sourceStream),
       rootStream: this.toStreamRef(sourceContext.rootStream),
+      latestSourceAt: sourceMessages.reduce<Date | null>(
+        (latest, message) => (latest && latest >= message.createdAt ? latest : message.createdAt),
+        null
+      ),
       sourceMessages,
       successorMemoId: visibleSuccessorId,
       capturedByPersonaName,

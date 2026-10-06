@@ -21,9 +21,11 @@ function memo(overrides: Partial<EnrichedMemoResult> = {}): EnrichedMemoResult {
       keyPoints: ["Ship on Tuesday"],
       sourceMessageIds: ["msg_1"],
       authoredByKind: "user",
+      createdAt: new Date("2026-05-15T10:00:00Z"),
     } as unknown as EnrichedMemoResult["memo"],
     distance: 0.1,
     sourceStream: { id: "stream_1", type: "channel", name: "General" },
+    latestSourceAt: new Date("2026-07-01T10:00:00Z"),
     ...overrides,
   }
 }
@@ -58,6 +60,13 @@ describe("formatRetrievedContext", () => {
     const text = formatRetrievedContext([memo()], [], [], WORKSPACE)
     expect(text).toContain("(memo:memo_1 from General stream:stream_1)")
     expect(text).toContain("Link: /w/ws_1/memory?memo=memo_1")
+  })
+
+  test("memos are dated by their newest source message, falling back to capture when none resolve", () => {
+    const text = formatRetrievedContext([memo(), memo({ latestSourceAt: null })], [], [], WORKSPACE)
+    expect(text).toContain("A related message posted after that date on the same topic overrides the memo.")
+    expect(text).toContain("(memo:memo_1 from General stream:stream_1)_, as of Jul 1, 2026")
+    expect(text).toContain("(memo:memo_1 from General stream:stream_1)_, as of May 15, 2026")
   })
 
   test("attachments link to their stream when one is present, and not otherwise", () => {

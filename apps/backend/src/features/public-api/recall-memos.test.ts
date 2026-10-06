@@ -51,6 +51,7 @@ describe("recallMemos", () => {
             knowledgeType: "procedure",
             sourceMessageIds: ["msg_1"],
             createdAt: new Date("2026-07-19T12:02:00.000Z"),
+            latestSourceAt: new Date("2026-07-18T09:00:00.000Z"),
             score: 0.9,
           },
         ],

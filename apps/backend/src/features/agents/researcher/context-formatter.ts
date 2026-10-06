@@ -16,6 +16,7 @@ export interface EnrichedMemoResult {
     type: string
     name: string | null
   } | null
+  latestSourceAt: Date | null
 }
 
 export interface EnrichedMessageResult {
@@ -78,7 +79,7 @@ ${memosSection}${messagesSection}${attachmentsSection}Use this knowledge to info
 
 function formatMemosSection(memos: EnrichedMemoResult[], workspaceId: string): string {
   const memoEntries = memos
-    .map(({ memo, sourceStream }) => {
+    .map(({ memo, sourceStream, latestSourceAt }) => {
       const location = sourceStream?.name ?? sourceStream?.type ?? "workspace"
       const keyPointsList =
         memo.keyPoints.length > 0 ? `\nKey points:\n${memo.keyPoints.map((kp) => `- ${kp}`).join("\n")}\n` : ""
@@ -91,7 +92,9 @@ function formatMemosSection(memos: EnrichedMemoResult[], workspaceId: string): s
           : ""
       const linkLine = `Link: ${workspaceMemoUrl(workspaceId, memo.id)}\n`
 
-      return `**${memo.title}** _(${memoTag})_
+      const asOf = formatRelativeDate(latestSourceAt ?? memo.createdAt)
+
+      return `**${memo.title}** _(${memoTag})_, as of ${asOf}
 
 ${memo.abstract}
 ${keyPointsList}${sourcesLine}${linkLine}`
@@ -99,6 +102,8 @@ ${keyPointsList}${sourcesLine}${linkLine}`
     .join("\n")
 
   return `### Memos
+
+Each memo is as of its newest source message. A related message posted after that date on the same topic overrides the memo.
 
 ${memoEntries}
 `

@@ -62,6 +62,7 @@ describe("describe_memo tool", () => {
       distance: 0,
       sourceStream: { id: "stream_1", type: "channel", name: "general" },
       rootStream: { id: "stream_1", type: "channel", name: "general" },
+      latestSourceAt: null,
       successorMemoId: null,
       capturedByPersonaName: null,
       sourceMessages: [
@@ -221,6 +222,7 @@ describe("describe_memo tool", () => {
       distance: 0,
       sourceStream: { id: "stream_1", type: "channel", name: "g" },
       rootStream: null,
+      latestSourceAt: null,
       successorMemoId: null,
       capturedByPersonaName: null,
       sourceMessages: [
