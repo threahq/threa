@@ -111,9 +111,19 @@ export async function measureRenders(page: Page, label: string, action: () => Pr
   })
   await action()
   await waitForQuiet(page, label)
-  return await page.evaluate(() => {
+  const sample = await page.evaluate(() => {
     const state = (window as CounterWindow).__renderCounter!
     state.counting = false
     return { renders: state.renders, byComponent: state.byComponent }
   })
+  // Every gated action renders something, so zero means the counter is broken
+  // (React no longer reports commits to the stand-in hook, or its fiber flags
+  // changed). Reported as an improvement, it would talk a reader into setting
+  // the baseline to 0, which disables the gate.
+  if (sample.renders === 0) {
+    throw new Error(
+      `${label}: the render counter saw no component renders. React did not report commits to the stand-in DevTools hook, or the fiber tags/flags render-counter.ts reads have changed.`
+    )
+  }
+  return sample
 }

@@ -1,10 +1,11 @@
 import { test, expect, type Page } from "@playwright/test"
-import { createChannel, expectApiOk, generateTestId, loginAndCreateWorkspace } from "./helpers"
+import { createChannel, expectApiOk, generateTestId, loginAndCreateWorkspace, loginInNewContext } from "./helpers"
 import { seedStream } from "./perf-fixtures"
 import { installRenderCounter, measureRenders, type RenderSample } from "./render-counter"
 import { RENDER_BUDGETS, type RenderBudgetAction } from "./render-budgets"
 
-test.describe.configure({ timeout: 300_000 })
+// A budget failure repeats on every attempt, so retrying it only delays the red.
+test.describe.configure({ timeout: 300_000, retries: 0 })
 
 const REPETITIONS = 5
 const SEED_COUNT = 30
@@ -37,9 +38,9 @@ function checkBudget(action: RenderBudgetAction, samples: RenderSample[]): void 
   const lowest = sorted[0]!
   const median = sorted[Math.floor(sorted.length / 2)]!
   const counts = samples.map((s) => s.renders)
-  const baseline = RENDER_BUDGETS.baselines[action]
-  const max = Math.floor(baseline * (1 + RENDER_BUDGETS.tolerance))
-  const min = Math.ceil(baseline * (1 - RENDER_BUDGETS.tolerance))
+  const { baseline, tolerance } = RENDER_BUDGETS[action]
+  const max = Math.floor(baseline * (1 + tolerance))
+  const min = Math.ceil(baseline * (1 - tolerance))
   console.log(
     `render-budget "${action}": lowest ${lowest.renders}, median ${median.renders} (samples ${counts.join(", ")}), baseline ${baseline}`
   )
@@ -50,7 +51,7 @@ function checkBudget(action: RenderBudgetAction, samples: RenderSample[]): void 
       `Action: ${action}`,
       `Samples (component renders per repetition): ${counts.join(", ")}`,
       `Judged on ${judgedAs}: ${judged.renders}`,
-      `Baseline: ${baseline}; allowed range ${min}..${max} (±${RENDER_BUDGETS.tolerance * 100}%); measured ${delta > 0 ? "+" : ""}${delta}%`,
+      `Baseline: ${baseline}; allowed range ${min}..${max} (±${tolerance * 100}%); measured ${delta > 0 ? "+" : ""}${delta}%`,
       `Top ${TOP_COMPONENTS} components in that sample:\n${topComponents(judged)}`,
       `Baselines live in ${BUDGETS_FILE}.`,
       `Reproduce: ${REPRO}`,
@@ -84,7 +85,7 @@ function checkBudget(action: RenderBudgetAction, samples: RenderSample[]): void 
   }
 }
 
-test("component render counts stay within their budgets", async ({ page }) => {
+test("component render counts stay within their budgets", async ({ page, browser }) => {
   await installRenderCounter(page)
   const { testId } = await loginAndCreateWorkspace(page, "render-budget")
   const workspaceId = page.url().match(/\/w\/([^/]+)/)![1]!
@@ -104,6 +105,33 @@ test("component render counts stay within their budgets", async ({ page }) => {
   await createChannel(page, mainName)
   const mainStreamId = streamIdFromUrl(page)
   await seedStream(page, workspaceId, mainStreamId, SEED_COUNT, `main-${testId}`)
+
+  // Incoming messages come from another member: the viewer's own messages skip
+  // the unread raise, the Inbox arrival and the read commit that real traffic pays for.
+  const sender = await loginInNewContext(browser, `rb-sender-${testId}@example.com`, `RB Sender ${testId}`)
+  await expectApiOk(
+    await sender.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, {
+      data: { role: "member", name: `RB Sender ${testId}` },
+    }),
+    "Sender joins the workspace"
+  )
+  for (const streamId of [mainStreamId, backgroundStreamId]) {
+    await expectApiOk(
+      await sender.page.request.post(`/api/workspaces/${workspaceId}/streams/${streamId}/join`, { data: {} }),
+      "Sender joins the channel"
+    )
+    await expect
+      .poll(
+        async () =>
+          (
+            await sender.page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+              data: { streamId, content: `sender-ready-${generateTestId()}` },
+            })
+          ).status(),
+        { timeout: 10_000, message: "the sender's first post should be accepted after joining" }
+      )
+      .toBe(201)
+  }
 
   const timeline = page.getByTestId("stream-timeline")
   const composer = page.locator("[data-editor-zone='main'] [contenteditable='true']").first()
@@ -156,7 +184,7 @@ test("component render counts stay within their budgets", async ({ page }) => {
     const incoming = `incoming-${rep}-${generateTestId()}`
     samples["incoming message in the open stream"].push(
       await measureRenders(page, "incoming message in the open stream", async () => {
-        await postMessage(page, workspaceId, mainStreamId, incoming)
+        await postMessage(sender.page, workspaceId, mainStreamId, incoming)
         await expect(timeline.getByText(incoming, { exact: true })).toBeVisible()
       })
     )
@@ -164,7 +192,7 @@ test("component render counts stay within their budgets", async ({ page }) => {
     const elsewhere = `elsewhere-${rep}-${generateTestId()}`
     samples["message in another stream"].push(
       await measureRenders(page, "message in another stream", async () => {
-        await postMessage(page, workspaceId, backgroundStreamId, elsewhere)
+        await postMessage(sender.page, workspaceId, backgroundStreamId, elsewhere)
         await expect(backgroundLink).toContainText(elsewhere)
       })
     )
@@ -177,4 +205,5 @@ test("component render counts stay within their budgets", async ({ page }) => {
 
   console.log(`render-budget "send a message" (not gated): ${sendSamples.map((s) => s.renders).join(", ")}`)
   for (const action of Object.keys(samples) as RenderBudgetAction[]) checkBudget(action, samples[action])
+  await sender.context.close()
 })
