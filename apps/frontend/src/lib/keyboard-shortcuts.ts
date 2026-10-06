@@ -5,6 +5,8 @@ export interface ShortcutAction {
   label: string
   description: string
   defaultKey: string
+  /** Default in the installed app, which can claim keys a browser tab never sees (⌘W, ⌃Tab). */
+  installedKey?: string
   category: "navigation" | "editing" | "view"
   /** If true, shortcut works even when focus is in an input field */
   global?: boolean
@@ -12,7 +14,8 @@ export interface ShortcutAction {
   installedAppOnly?: boolean
 }
 
-/** "mod" is the platform-agnostic modifier: Cmd on Mac, Ctrl elsewhere. */
+/** "mod" is the platform-agnostic modifier: Cmd on Mac, Ctrl elsewhere. "ctrl" is
+ *  Control itself, for the bindings that mean ⌃ on a Mac too (⌃Tab). */
 export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   {
     id: "openQuickSwitcher",
@@ -131,6 +134,58 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     category: "navigation",
     global: true,
   },
+  {
+    id: "closePane",
+    label: "Close Pane",
+    description: "Close the pane you're working in",
+    defaultKey: "alt+w",
+    installedKey: "mod+w",
+    category: "view",
+    global: true,
+  },
+  {
+    id: "reopenPane",
+    label: "Reopen Closed Pane",
+    description: "Reopen the pane closed last",
+    defaultKey: "alt+shift+t",
+    installedKey: "mod+shift+t",
+    category: "view",
+    global: true,
+  },
+  {
+    id: "nextPaneTab",
+    label: "Next Tab",
+    description: "Show the next tab in the pane you're working in",
+    defaultKey: "alt+]",
+    installedKey: "ctrl+tab",
+    category: "view",
+    global: true,
+  },
+  {
+    id: "previousPaneTab",
+    label: "Previous Tab",
+    description: "Show the previous tab in the pane you're working in",
+    defaultKey: "alt+[",
+    installedKey: "ctrl+shift+tab",
+    category: "view",
+    global: true,
+  },
+  {
+    id: "nextPane",
+    label: "Next Pane",
+    description: "Move to the pane to the right of or below the one you're working in",
+    defaultKey: "alt+.",
+    category: "view",
+    global: true,
+  },
+  {
+    id: "previousPane",
+    label: "Previous Pane",
+    description: "Move to the pane to the left of or above the one you're working in",
+    defaultKey: "alt+,",
+    category: "view",
+    global: true,
+  },
   // Editor formatting shortcuts (not global — only active when editor is focused)
   {
     id: "formatBold",
@@ -205,6 +260,11 @@ export function getShortcutsByCategory(): Record<ShortcutAction["category"], Sho
   return result
 }
 
+/** The action's default where Threa runs now: installed, or in a browser tab. */
+export function defaultKeyOf(action: ShortcutAction): string {
+  return action.installedKey && isStandaloneApp() ? action.installedKey : action.defaultKey
+}
+
 /**
  * Get the effective key binding for an action, considering user customizations.
  * Returns undefined if the shortcut is explicitly disabled ("none"), unregistered,
@@ -219,7 +279,7 @@ export function getEffectiveKeyBinding(
   const custom = customBindings[actionId]
   if (custom === "none") return undefined
   if (custom) return custom
-  return action?.defaultKey
+  return action && defaultKeyOf(action)
 }
 
 /** Returns a map of key binding to the action IDs that share it (length > 1). */
@@ -230,8 +290,10 @@ export function detectConflicts(customBindings: Record<string, string> = {}): Ma
     const key = getEffectiveKeyBinding(action.id, customBindings)
     if (!key) continue
     for (const occupied of occupiedBindings(action.id, key)) {
-      const existing = keyToActions.get(occupied) || []
-      keyToActions.set(occupied, [...existing, action.id])
+      // "mod" answers to Control everywhere, so ctrl+tab and mod+tab share a chord.
+      const chord = occupied.replace(/^ctrl\+/, "mod+")
+      const existing = keyToActions.get(chord) || []
+      keyToActions.set(chord, [...existing, action.id])
     }
   }
 
@@ -253,11 +315,13 @@ export function isMac(): boolean {
 export function parseKeyBinding(key: string): {
   key: string
   mod: boolean
+  ctrl: boolean
   shift: boolean
   alt: boolean
 } {
   const parts = key.toLowerCase().split("+")
   let mod = false
+  let ctrl = false
   let shift = false
   let alt = false
   let keyStartIndex = 0
@@ -266,6 +330,12 @@ export function parseKeyBinding(key: string): {
     const part = parts[keyStartIndex]
     if (part === "mod") {
       mod = true
+      keyStartIndex += 1
+      continue
+    }
+
+    if (part === "ctrl") {
+      ctrl = true
       keyStartIndex += 1
       continue
     }
@@ -290,28 +360,89 @@ export function parseKeyBinding(key: string): {
   return {
     key: actualKey,
     mod,
+    ctrl,
     shift,
     alt,
   }
 }
 
+const PHYSICAL_PUNCTUATION: Record<string, string> = {
+  BracketLeft: "[",
+  BracketRight: "]",
+  Comma: ",",
+  Period: ".",
+  Slash: "/",
+  Semicolon: ";",
+  Quote: "'",
+  Backquote: "`",
+  Backslash: "\\",
+  Minus: "-",
+  Equal: "=",
+}
+
+/**
+ * The key an event names. Under ⌥ on a Mac it is the physical key, as on a US
+ * layout, since ⌥ rewrites the character (⌥W is "∑"). Alt elsewhere leaves the
+ * character alone, so AZERTY's Alt+W stays the key printed W.
+ */
+function eventKey(event: KeyboardEvent): string {
+  if (event.altKey && isMac()) {
+    const code = event.code ?? ""
+    const letterOrDigit = /^(?:Key|Digit)(.)$/.exec(code)?.[1]
+    if (letterOrDigit) return letterOrDigit.toLowerCase()
+    if (code in PHYSICAL_PUNCTUATION) return PHYSICAL_PUNCTUATION[code]
+  }
+  return event.key.toLowerCase()
+}
+
+/** ⌥ typing a plain character on a Mac: "[" is ⌥8 on Nordic and German Macs and
+ *  ⌥ on the bracket keys of Italian ones, so no binding may take it. */
+function isOptionTyping(event: KeyboardEvent): boolean {
+  return isMac() && event.altKey && !event.metaKey && !event.ctrlKey && /^[ -~]$/.test(event.key)
+}
+
+/** Control without Command on a Mac; elsewhere Control is the "mod" key, so this is never captured. */
+function isMacControl(event: KeyboardEvent): boolean {
+  return isMac() && event.ctrlKey && !event.metaKey
+}
+
+/** The binding's modifier parts for an event, in binding order. */
+function modifierParts(event: KeyboardEvent): string[] {
+  const parts: string[] = []
+  if (isMacControl(event)) parts.push("ctrl")
+  else if (event.metaKey || event.ctrlKey) parts.push("mod")
+  if (event.shiftKey) parts.push("shift")
+  if (event.altKey) parts.push("alt")
+  return parts
+}
+
+function matchesModifiers(event: KeyboardEvent, parsed: ReturnType<typeof parseKeyBinding>): boolean {
+  const modifier = parsed.ctrl ? event.ctrlKey && !event.metaKey : (event.metaKey || event.ctrlKey) === parsed.mod
+  return modifier && event.shiftKey === parsed.shift && event.altKey === parsed.alt
+}
+
 export function matchesKeyBinding(event: KeyboardEvent, binding: string): boolean {
+  if (isOptionTyping(event)) return false
   const parsed = parseKeyBinding(binding)
-  // "mod" matches metaKey OR ctrlKey for cross-platform parity.
-  const modPressed = event.metaKey || event.ctrlKey
 
   // vim-style ctrl+[ as escape. AltGr reports as ctrl+alt, and `[` sits on
   // AltGr+8 on Nordic and German layouts, so typing it must not match here.
-  if (parsed.key === "[" && event.ctrlKey && event.key === "[" && !event.altKey && !event.metaKey && !event.shiftKey) {
+  if (
+    parsed.mod &&
+    parsed.key === "[" &&
+    event.ctrlKey &&
+    event.key === "[" &&
+    !event.altKey &&
+    !event.metaKey &&
+    !event.shiftKey
+  ) {
     return true
   }
 
-  return (
-    event.key.toLowerCase() === parsed.key &&
-    modPressed === parsed.mod &&
-    event.shiftKey === parsed.shift &&
-    event.altKey === parsed.alt
-  )
+  // "mod" matches metaKey OR ctrlKey for cross-platform parity. The typed
+  // character still matches so ⌥ bindings recorded as it ("alt+˚") keep working.
+  const key = eventKey(event)
+  return (key === parsed.key || event.key.toLowerCase() === parsed.key) && matchesModifiers(event, parsed)
 }
 
 /**
@@ -326,6 +457,7 @@ export function formatKeyBinding(binding: string): string {
   }
 
   const formatted: string[] = []
+  if (parsed.ctrl) formatted.push(mac ? "⌃" : "Ctrl")
   if (parsed.mod) formatted.push(mac ? "⌘" : "Ctrl")
   if (parsed.shift) formatted.push(mac ? "⇧" : "Shift")
   if (parsed.alt) formatted.push(mac ? "⌥" : "Alt")
@@ -339,6 +471,15 @@ export function formatKeyBinding(binding: string): string {
       break
     case "arrowdown":
       formatted.push("↓")
+      break
+    case "arrowleft":
+      formatted.push("←")
+      break
+    case "arrowright":
+      formatted.push("→")
+      break
+    case "tab":
+      formatted.push(mac ? "⇥" : "Tab")
       break
     case ",":
       formatted.push(",")
@@ -366,6 +507,7 @@ export function formatKeyBindingText(binding: string): string {
   }
 
   const formatted: string[] = []
+  if (parsed.ctrl) formatted.push("ctrl")
   if (parsed.mod) formatted.push(mac ? "cmd" : "ctrl")
   if (parsed.shift) formatted.push("shift")
   if (parsed.alt) formatted.push(mac ? "opt" : "alt")
@@ -411,7 +553,7 @@ export function isSafeShortcutBinding(binding: string): boolean {
     return false
   }
 
-  if (parsed.mod || parsed.alt) {
+  if (parsed.mod || parsed.ctrl || parsed.alt) {
     return true
   }
 
@@ -423,13 +565,10 @@ export function isSafeShortcutBinding(binding: string): boolean {
  * Returns null for lone modifier presses or unsafe bare keys that would hijack normal typing.
  */
 export function keyEventToBinding(event: KeyboardEvent): string | null {
-  if (MODIFIER_KEYS.has(event.key)) return null
+  if (MODIFIER_KEYS.has(event.key) || isOptionTyping(event)) return null
 
-  const parts: string[] = []
-  if (event.metaKey || event.ctrlKey) parts.push("mod")
-  if (event.shiftKey) parts.push("shift")
-  if (event.altKey) parts.push("alt")
-  parts.push(event.key.toLowerCase())
+  const parts = modifierParts(event)
+  parts.push(eventKey(event))
 
   const binding = parts.join("+")
   return isSafeShortcutBinding(binding) ? binding : null
@@ -473,10 +612,7 @@ function eventDigit(event: KeyboardEvent): number | null {
 
 /** The event's modifiers are exactly the binding's, whatever key it carries. */
 export function matchesBindingModifiers(event: KeyboardEvent, binding: string): boolean {
-  const parsed = parseKeyBinding(binding)
-  return (
-    (event.metaKey || event.ctrlKey) === parsed.mod && event.shiftKey === parsed.shift && event.altKey === parsed.alt
-  )
+  return matchesModifiers(event, parseKeyBinding(binding))
 }
 
 /** The slot a keydown selects under the quick-jump binding, or null. */
@@ -495,10 +631,7 @@ export function captureBindingForAction(actionId: string, event: KeyboardEvent):
   if (isModifierKey(event.key)) return null
   if (eventDigit(event) === null) return null
 
-  const parts: string[] = []
-  if (event.metaKey || event.ctrlKey) parts.push("mod")
-  if (event.shiftKey) parts.push("shift")
-  if (event.altKey) parts.push("alt")
+  const parts = modifierParts(event)
   parts.push("1")
 
   const binding = parts.join("+")

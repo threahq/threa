@@ -23,6 +23,7 @@ import {
   newestPanelOf,
   openPanelTab,
   openPanelTabBeside,
+  openPanelTabWith,
   panelIdsOf,
   parsePanelLayout,
   primaryPanelOf,
@@ -120,6 +121,8 @@ interface PanelContextValue {
   /** Close this consumer's panel tab. */
   closePanel: () => void
   closeTab: (panelId: string) => void
+  /** Reopen the tab on this page closed most recently and not open since, as {@link openPanel} would. */
+  reopenTab: () => string | null
   /** Move a tab out of its section into a new one beside or below it. */
   splitTab: (panelId: string, direction: SplitDirection) => void
   /** The ways this consumer's tab can split off as it is laid out now. */
@@ -142,11 +145,24 @@ interface PanelOps {
   /** Opening from `scopeId`'s tab, or the main view when null. */
   contextual: (layout: PanelLayout, panelId: string, scopeId: string | null) => PanelLayout
   closeTab: (panelId: string) => void
+  reopenTab: (scopeId: string | null) => string | null
   splitTab: (panelId: string, direction: SplitDirection) => void
   setCurrentPane: (panelId: string | null) => void
   coverOwner: string | null
   claimCover: (panelId: string) => void
   tabFocusHandoff: MutableRefObject<string | null>
+  paneShortcutQueue: MutableRefObject<PaneShortcutQueue>
+}
+
+/**
+ * Pane shortcuts pressed before the URL caught up with the last one, and the
+ * URL that one acted on. Held here because the pane taking the shortcuts
+ * changes as the last tab closes or the first one opens.
+ */
+export interface PaneShortcutQueue {
+  navigatedFrom: string | null
+  navigatedAt: number
+  pending: string[]
 }
 
 const PanelOpsContext = createContext<PanelOps | null>(null)
@@ -182,6 +198,12 @@ function withLayout(params: URLSearchParams, layout: PanelLayout, coverOwner: st
 
 const NO_SPLITS: readonly SplitDirection[] = []
 
+interface ClosedTab {
+  path: string
+  panelId: string
+}
+const MAX_CLOSED_TABS = 20
+
 function buildValue(
   ops: PanelOps,
   scopeId: string | null,
@@ -216,6 +238,7 @@ function buildValue(
       if (own) ops.closeTab(own)
     },
     closeTab: ops.closeTab,
+    reopenTab: () => ops.reopenTab(scopeId),
     splitTab: ops.splitTab,
     splits,
     setCurrentPane: ops.setCurrentPane,
@@ -339,11 +362,17 @@ export function PanelProvider({ children }: PanelProviderProps) {
     [setSearchParams, coverOwner]
   )
 
+  const closedTabs = useRef<ClosedTab[]>([])
   const { close, closeTo } = useCoverHistory(PANEL_COVER)
   const closeTab = useCallback(
     (panelId: string) => {
       const next = closePanelTab(layout, panelId)
       if (next === layout) return
+      // A draft's tab is gone with its draft, so only real panels are remembered for reopening.
+      if (!isDraftPanel(panelId)) {
+        const others = closedTabs.current.filter((tab) => tab.panelId !== panelId || tab.path !== location.pathname)
+        closedTabs.current = [...others, { path: location.pathname, panelId }].slice(-MAX_CLOSED_TABS)
+      }
       const value = formatPanelLayout(next)
       if (value === null) {
         close()
@@ -357,7 +386,22 @@ export function PanelProvider({ children }: PanelProviderProps) {
       params.set(PANEL_PARAM, value)
       closeTo(params)
     },
-    [close, closeTo, searchParams, layout, coverOwner]
+    [close, closeTo, searchParams, layout, coverOwner, location.pathname]
+  )
+
+  const reopenTab = useCallback(
+    (scopeId: string | null) => {
+      const shown = new Set(panelIdsOf(layout))
+      const tab = [...closedTabs.current]
+        .reverse()
+        .find((closed) => closed.path === location.pathname && !shown.has(closed.panelId))
+      if (!tab) return null
+      closedTabs.current = closedTabs.current.filter((closed) => closed !== tab)
+      open((current) => openPanelTabWith(current, scopeId, tab.panelId), false)
+      setCurrentPane(tab.panelId)
+      return tab.panelId
+    },
+    [layout, location.pathname, open, setCurrentPane]
   )
 
   // Splitting rearranges what is already open, so it is not a step of its own in history.
@@ -370,6 +414,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
   )
 
   const tabFocusHandoff = useRef<string | null>(null)
+  const paneShortcutQueue = useRef<PaneShortcutQueue>({ navigatedFrom: null, navigatedAt: 0, pending: [] })
 
   const ops = useMemo<PanelOps>(
     () => ({
@@ -379,13 +424,15 @@ export function PanelProvider({ children }: PanelProviderProps) {
       tabbed,
       contextual,
       closeTab,
+      reopenTab,
       splitTab,
       setCurrentPane,
       coverOwner,
       claimCover,
       tabFocusHandoff,
+      paneShortcutQueue,
     }),
-    [layout, urlFor, open, tabbed, contextual, closeTab, splitTab, setCurrentPane, coverOwner, claimCover]
+    [layout, urlFor, open, tabbed, contextual, closeTab, reopenTab, splitTab, setCurrentPane, coverOwner, claimCover]
   )
   const value = useMemo(() => buildValue(ops, null, null), [ops])
 
@@ -445,6 +492,12 @@ export function usePanelTabFocusHandoff(): MutableRefObject<string | null> {
   const ops = useContext(PanelOpsContext)
   if (!ops) throw new Error("usePanelTabFocusHandoff must be used within a PanelProvider")
   return ops.tabFocusHandoff
+}
+
+export function usePaneShortcutQueue(): MutableRefObject<PaneShortcutQueue> {
+  const ops = useContext(PanelOpsContext)
+  if (!ops) throw new Error("usePaneShortcutQueue must be used within a PanelProvider")
+  return ops.paneShortcutQueue
 }
 
 /** The pane the user is working in: an open panel's id, or null for the main view. */

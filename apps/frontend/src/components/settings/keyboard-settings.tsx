@@ -19,6 +19,7 @@ import {
   detectConflicts,
   occupiedBindings,
   captureBindingForAction,
+  defaultKeyOf,
   resolveShortcutBindingUpdate,
   type ShortcutAction,
 } from "@/lib/keyboard-shortcuts"
@@ -71,7 +72,7 @@ function ShortcutRow({
   const [conflictInfo, setConflictInfo] = useState<{ binding: string; conflictIds: string[] } | null>(null)
   const badgeRef = useRef<HTMLButtonElement>(null)
   const binding = getEffectiveKeyBinding(action.id, customBindings)
-  const isCustom = action.id in customBindings && customBindings[action.id] !== action.defaultKey
+  const isCustom = action.id in customBindings && customBindings[action.id] !== defaultKeyOf(action)
   const conflictLabels =
     conflictInfo?.conflictIds
       .map((id) => SHORTCUT_ACTIONS.find((shortcutAction) => shortcutAction.id === id)?.label)

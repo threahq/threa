@@ -62,6 +62,7 @@ import { AsideSlot, useAsideHost, useAsideIsSheet } from "@/components/aside"
 import { AsideHeaderChip } from "@/components/aside/aside-header-chip"
 import { asideHoldsPanel, useAsideForHost } from "@/stores/aside-store"
 import { PanelTabStack } from "@/components/layout/panel-host"
+import { PaneShortcuts } from "@/components/layout/pane-shortcuts"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useCoverClose } from "@/hooks/use-cover-close"
 import { CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
@@ -958,6 +959,7 @@ export function StreamPage() {
             </ResizablePanelFrame>
           )}
         </Pane>
+        {!isPanelOpen && <PaneShortcuts />}
         {!isMobile && (
           <StreamContextDockSlot
             dock={dock}

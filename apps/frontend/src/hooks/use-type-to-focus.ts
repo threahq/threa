@@ -75,7 +75,7 @@ type PendingOpen = { scope: HTMLElement; chars: string }
  * (a thread in its host pane, the aside's own column), so document order alone
  * would hand every keystroke to the thread.
  */
-function zoneContainer(zone: "main" | "panel", clicked: HTMLElement | null): HTMLElement | null {
+export function zoneContainer(zone: "main" | "panel", clicked: HTMLElement | null): HTMLElement | null {
   if (clicked?.isConnected && clicked.dataset.editorZone === zone && !clicked.closest("[inert]")) return clicked
   return (
     Array.from(document.querySelectorAll<HTMLElement>(`[data-editor-zone="${zone}"]`)).find(
