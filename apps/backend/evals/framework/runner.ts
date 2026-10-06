@@ -31,7 +31,7 @@ import {
   type GenerateTextWithToolsOptions,
 } from "@threahq/agent-runtime"
 import type { UsageAccumulator } from "./types"
-import { createWorkspaceFixture, type WorkspaceFixture } from "../fixtures/workspace"
+import { createWorkspaceFixture, loadWorkspaceFixture, type WorkspaceFixture } from "../fixtures/workspace"
 import { loadConfigFile } from "./config-loader"
 import type { ComponentOverrides, EvalConfigFile, SuiteRunConfig } from "./config-types"
 import { createStaticConfigResolver } from "../../src/lib/ai/static-config-resolver"
@@ -268,6 +268,16 @@ interface PermutationRunOptions extends RunnerOptions {
   componentOverrides?: ComponentOverrides
 }
 
+async function setupRunDatabase(
+  label: string,
+  options: Pick<RunnerOptions, "fromDatabase" | "keepDatabase">
+): Promise<{ dbResult: EvalDatabaseResult; fixture: WorkspaceFixture }> {
+  const dbResult = await setupEvalDatabase({ label, from: options.fromDatabase, keep: options.keepDatabase })
+  if (!options.fromDatabase) return { dbResult, fixture: await createWorkspaceFixture(dbResult.pool) }
+  console.log(`${colors.dim}Cloned ${options.fromDatabase} into ${dbResult.databaseName}${colors.reset}`)
+  return { dbResult, fixture: await loadWorkspaceFixture(dbResult.pool) }
+}
+
 /**
  * Run all cases for a single permutation.
  */
@@ -328,6 +338,7 @@ async function runPermutation<TInput, TOutput, TExpected>(
     judgeModel: options.judgeModel,
     componentOverrides: options.componentOverrides,
     configResolver,
+    reusedDatabase: options.fromDatabase,
   }
 
   // Run suite setup if provided
@@ -668,6 +679,14 @@ export async function runSuite<TInput, TOutput, TExpected>(
   // Use parallel execution with template DBs if multiple permutations
   const useParallel = permutations.length > 1 && (options.parallel ?? 1) > 1
 
+  if (options.fromDatabase && !suite.reusesDatabase) {
+    throw new Error(`Suite ${suite.name} cannot run from a kept database: its setup would seed over it`)
+  }
+
+  if (useParallel && (options.fromDatabase || options.keepDatabase)) {
+    throw new Error("--from-db and --keep-db run permutations sequentially; drop -p")
+  }
+
   if (useParallel) {
     // Create template DB once with migrations
     console.log(`\n${colors.dim}Setting up template database...${colors.reset}`)
@@ -697,8 +716,7 @@ export async function runSuite<TInput, TOutput, TExpected>(
     }
   } else {
     // Sequential execution with single database
-    const dbResult = await setupEvalDatabase({ label: suite.name })
-    const fixture = await createWorkspaceFixture(dbResult.pool)
+    const { dbResult, fixture } = await setupRunDatabase(suite.name, options)
 
     try {
       for (const permutation of permutations) {
@@ -858,8 +876,10 @@ export async function runFromConfigFile(
     }
 
     // Set up database and run
-    const dbResult = await setupEvalDatabase({ label: `${suite.name}-${runConfig.title.replace(/\s+/g, "-")}` })
-    const fixture = await createWorkspaceFixture(dbResult.pool)
+    const { dbResult, fixture } = await setupRunDatabase(
+      `${suite.name}-${runConfig.title.replace(/\s+/g, "-")}`,
+      baseOptions
+    )
 
     try {
       const permLabel = permutation.runTitle || permutation.model

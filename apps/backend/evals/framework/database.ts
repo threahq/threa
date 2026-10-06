@@ -201,13 +201,16 @@ export interface EvalDatabaseResult {
 }
 
 /**
- * Set up an isolated database for eval runs.
- *
- * Creates a fresh database with unique name for full isolation.
+ * Set up an isolated database for eval runs: fresh, or cloned from a kept one.
+ * Migrations run either way, so a kept database stays usable as code moves on.
  */
 export async function setupEvalDatabase(options: DatabaseOptions = {}): Promise<EvalDatabaseResult> {
   const databaseName = generateEvalDatabaseName(options.label)
-  await createEvalDatabase(databaseName)
+  if (options.from) {
+    await cloneFromTemplate(options.from, databaseName)
+  } else {
+    await createEvalDatabase(databaseName)
+  }
 
   const connectionString = `${DATABASE_HOST}/${databaseName}`
   const pool = createDatabasePool(connectionString)
@@ -221,6 +224,10 @@ export async function setupEvalDatabase(options: DatabaseOptions = {}): Promise<
     databaseName,
     cleanup: async () => {
       await pool.end()
+      if (options.keep) {
+        console.log(`Kept eval database ${databaseName}`)
+        return
+      }
       await dropEvalDatabase(databaseName)
     },
   }

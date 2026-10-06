@@ -100,6 +100,8 @@ export interface EvalContext {
    */
   judgeModel?: string
   componentOverrides?: ComponentOverrides
+  /** Set when the run cloned a kept database: setup finds its seeded data already in place. */
+  reusedDatabase?: string
   /**
    * Config resolver for AI components.
    * Use this to get model/temperature/prompt configs instead of importing from config.ts.
@@ -279,6 +281,9 @@ export interface EvalSuite<TInput, TOutput, TExpected> {
   /** Optional suite-level setup (runs once before all cases) */
   setup?: (ctx: EvalContext) => Promise<void>
 
+  /** Setup recognizes a cloned kept database (EvalContext.reusedDatabase) instead of seeding over it. */
+  reusesDatabase?: boolean
+
   /** Optional suite-level teardown (runs once after all cases) */
   teardown?: (ctx: EvalContext) => Promise<void>
 }
@@ -320,6 +325,14 @@ export interface RunnerOptions {
    * A case passing 5/6 runs clears 0.8 but fails the default.
    */
   minPassRate?: number
+  /**
+   * Clone this database, kept by an earlier `keepDatabase` run, instead of
+   * seeding a fresh one. Its workspace becomes the run's fixture, and suites
+   * that support it reuse what their setup seeded (see EvalContext.reusedDatabase).
+   */
+  fromDatabase?: string
+  /** Keep the run's database after it finishes, for a later `fromDatabase` run. */
+  keepDatabase?: boolean
   /** Write machine-readable results JSON to this path. */
   jsonOutput?: string
   /** Verbose output */
@@ -336,4 +349,8 @@ export interface RunnerOptions {
 export interface DatabaseOptions {
   /** Label for the database (used in name) */
   label?: string
+  /** Clone this kept database instead of starting empty */
+  from?: string
+  /** Leave the database in place after the run */
+  keep?: boolean
 }
