@@ -31,6 +31,7 @@ import { StreamContentSkeleton } from "@/components/loading"
 import { ApiError } from "@/api/client"
 import { markInitialRevealComplete } from "@/sync/reveal-gate"
 import { createSelectorContext } from "@/lib/selector-context"
+import { isServerStreamId } from "@/lib/stream-ids"
 import { getAvatarUrl } from "@threahq/types"
 
 /**
@@ -204,10 +205,7 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
     [syncSnapshot]
   )
   const { loadState: streamsLoadState, results } = useCoordinatedStreamQueries(workspaceId, streamIds)
-  const serverStreamIds = useMemo(
-    () => streamIds.filter((id) => !id.startsWith("draft_") && !id.startsWith("draft:")),
-    [streamIds]
-  )
+  const serverStreamIds = useMemo(() => streamIds.filter(isServerStreamId), [streamIds])
 
   // When bypassing via IDB cache, verify the data is actually populated —
   // don't just trust the loading flags. usePreloadImages resolves immediately
@@ -474,9 +472,8 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
         // This is intentional: individual stream loading indicators only appear AFTER initial load.
         if (!isReady) return "idle"
 
-        // Drafts are always idle (no server fetch)
-        // Check both draft scratchpads (draft_xxx) and draft thread panels (draft:xxx:xxx)
-        if (streamId.startsWith("draft_") || streamId.startsWith("draft:")) return "idle"
+        // Client-side ids are always idle (no server fetch)
+        if (!isServerStreamId(streamId)) return "idle"
 
         const state = streamStateMap.get(streamId)
         if (!state) return "idle"

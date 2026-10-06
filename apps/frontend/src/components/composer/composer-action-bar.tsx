@@ -270,19 +270,9 @@ export function ComposerActionBar({
                   asChild={action.href !== undefined}
                 >
                   {action.href !== undefined ? (
-                    <Link to={action.href}>
-                      <span className="flex h-4 w-4 items-center justify-center text-muted-foreground">
-                        {action.icon}
-                      </span>
-                      {action.label}
-                    </Link>
+                    <Link to={action.href}>{overflowItemContent(action)}</Link>
                   ) : (
-                    <>
-                      <span className="flex h-4 w-4 items-center justify-center text-muted-foreground">
-                        {action.icon}
-                      </span>
-                      {action.label}
-                    </>
+                    overflowItemContent(action)
                   )}
                 </DropdownMenuItem>
               ))}
@@ -395,5 +385,14 @@ export function ComposerActionBar({
       )}
       {sendButton}
     </div>
+  )
+}
+
+function overflowItemContent(action: CollapsibleAction) {
+  return (
+    <>
+      <span className="flex h-4 w-4 items-center justify-center text-muted-foreground">{action.icon}</span>
+      {action.label}
+    </>
   )
 }

@@ -88,7 +88,7 @@ export function createConversationPanelId(conversationId: string): string {
 /** A stream's draft, written in a pane of its own. One per stream: the stream's composer, shown there instead. */
 const COMPOSE_PANEL_PREFIX = "compose:"
 
-export function isComposePanel(panelId: string): boolean {
+function isComposePanel(panelId: string): boolean {
   return panelId.startsWith(COMPOSE_PANEL_PREFIX)
 }
 
