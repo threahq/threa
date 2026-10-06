@@ -642,8 +642,10 @@ export async function runCompanionTask(
       sourceUrls: (step.sources ?? []).flatMap((source) => (typeof source.url === "string" ? [source.url] : [])),
       sourceMemoIds: (step.sources ?? []).flatMap((source) => (source.memoId ? [source.memoId] : [])),
       sourceStreamIds: (step.sources ?? []).flatMap((source) => (source.streamId ? [source.streamId] : [])),
-      ...(step.stepType === "tool_error" || step.stepType === "tool_call"
-        ? { content: typeof step.content === "string" ? step.content.slice(0, 500) : null }
+      sourceMessageIds: (step.sources ?? []).flatMap((source) => (source.messageId ? [source.messageId] : [])),
+      durationMs: step.completedAt ? step.completedAt.getTime() - step.startedAt.getTime() : null,
+      ...(step.stepType === "tool_error" || step.stepType === "tool_call" || step.stepType === "workspace_search"
+        ? { content: typeof step.content === "string" ? step.content.slice(0, 4000) : null }
         : {}),
     }))
 
