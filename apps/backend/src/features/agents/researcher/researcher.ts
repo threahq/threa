@@ -31,6 +31,7 @@ import { workspaceHomeUrl, workspaceMemoUrl, workspaceMessageUrl, workspaceStrea
 import { hybridWeightsForQuery, searchRankingForFlag, type SearchRanking } from "../../search"
 import {
   WORKSPACE_AGENT_MAX_ITERATIONS,
+  WORKSPACE_AGENT_MAX_PLANNED_QUERIES,
   WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
   WORKSPACE_AGENT_MAX_ROOM_RESULTS_PER_SEARCH,
   WORKSPACE_AGENT_MAX_ADDITIONAL_QUERIES,
@@ -472,7 +473,9 @@ export class WorkspaceAgent {
     }
 
     // Compute planner-only queries: any planner queries not already in the baseline set.
-    const plannerOnlyDeduped = dedupeQueries(plan.queries.filter((q) => !seenQueryKeys.has(queryKey(q))))
+    const plannerOnlyDeduped = dedupeQueries(
+      plan.queries.slice(0, WORKSPACE_AGENT_MAX_PLANNED_QUERIES).filter((q) => !seenQueryKeys.has(queryKey(q)))
+    )
 
     if (plannerOnlyDeduped.length > 0) {
       this.emitSubstep(
@@ -779,7 +782,7 @@ export class WorkspaceAgent {
           { role: "system", content: WORKSPACE_AGENT_SYSTEM_PROMPT },
           {
             role: "user",
-            content: `Break down this query into targeted search queries to find relevant workspace knowledge.
+            content: `Plan the searches for this query.
 
 ## Query
 ${query}
@@ -787,20 +790,8 @@ ${query}
 ${contextSummary}
 
 Respond with:
-- reasoning: brief explanation of your retrieval strategy
-- queries: array of search queries to execute
-
-Each query must have:
-- target: "memos" | "messages" | "attachments"
-- type: "semantic" | "exact"
-- query: the search text
-
-Guidelines for search:
-- Use target "memos" for summarized knowledge (decisions, context, discussions)
-- Use target "messages" for specific quotes, recent activity, or exact terms
-- Use target "attachments" when looking for documents, images, or files
-- Use type "semantic" for concepts/topics
-- Use type "exact" for error messages, IDs, or quoted text`,
+- reasoning: the directions you chose and why
+- queries: the search queries, each with target, type, and query text`,
           },
         ],
         temperature: config.temperature,
