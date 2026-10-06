@@ -1,3 +1,5 @@
+import type { ComponentProps } from "react"
+import { spyOnExport } from "@/test/spy"
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -31,14 +33,17 @@ function mount(prefs: { pushActions?: PushAction[]; pushReminderMinutes?: number
   vi.spyOn(workspaceStoreModule, "useWorkspaceUsers").mockReturnValue([
     { id: "usr_1", workosUserId: "workos_1", name: "Kris", avatarUrl: "avatars/ws_1/usr_1/1700" },
   ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceUsers>)
-  vi.spyOn(reactionEmojiPickerModule, "ReactionEmojiPicker").mockImplementation(({ onSelect, trigger }) => (
+  spyOnExport(reactionEmojiPickerModule, "ReactionEmojiPicker").mockReturnValue((({
+    onSelect,
+    trigger,
+  }: ComponentProps<typeof reactionEmojiPickerModule.ReactionEmojiPicker>) => (
     <div>
       {trigger}
       <button type="button" onClick={() => onSelect("🎉")}>
         choose party
       </button>
     </div>
-  ))
+  )) as unknown as typeof reactionEmojiPickerModule.ReactionEmojiPicker)
   render(<PushActionsSection workspaceId={WS} />)
   return { updatePreference }
 }

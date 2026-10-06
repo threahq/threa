@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { memo, useMemo } from "react"
 import type { MemoEmbedSummary } from "@threahq/types"
 import { extractMemoRefs } from "@/lib/markdown/memo-refs"
 import { MemoEmbedBlock } from "@/lib/markdown/memo-embed-block"
@@ -14,7 +14,7 @@ import { MemoEmbedBlock } from "@/lib/markdown/memo-embed-block"
  * fetch: a memo the room cannot read, or one the server could not resolve at
  * all (a sealed body), renders its reference's label alone and stays that way.
  */
-export function MemoPreviewList({
+export const MemoPreviewList = memo(function MemoPreviewList({
   contentMarkdown,
   memoEmbeds,
 }: {
@@ -38,4 +38,4 @@ export function MemoPreviewList({
       ))}
     </div>
   )
-}
+})

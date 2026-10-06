@@ -1,3 +1,4 @@
+import { memo } from "react"
 import { Archive, Bookmark, Check } from "lucide-react"
 import type { SavedMessageView } from "@threahq/types"
 import { cn } from "@/lib/utils"
@@ -13,7 +14,7 @@ interface SavedIndicatorProps {
  * distinct variant per status keeps users from "re-saving" a message already
  * in their done/archived lists.
  */
-export function SavedIndicator({ saved, className }: SavedIndicatorProps) {
+export const SavedIndicator = memo(function SavedIndicator({ saved, className }: SavedIndicatorProps) {
   if (!saved) return null
 
   if (saved.status === "done") {
@@ -49,4 +50,4 @@ export function SavedIndicator({ saved, className }: SavedIndicatorProps) {
       <ReminderBadge remindAt={saved.remindAt} reminderSentAt={saved.reminderSentAt} />
     </span>
   )
-}
+})

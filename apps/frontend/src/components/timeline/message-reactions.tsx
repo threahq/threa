@@ -1,5 +1,5 @@
 import { RollingNumber } from "@/components/rolling-number"
-import { forwardRef, useMemo, useCallback, useEffect, useLayoutEffect, useReducer, useRef } from "react"
+import { memo, forwardRef, useMemo, useCallback, useEffect, useLayoutEffect, useReducer, useRef } from "react"
 import { SmilePlus, X } from "lucide-react"
 import { useMessageReactions, stripColons, reactionShortcodes } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
@@ -136,7 +136,7 @@ function useReactionMotion(visible: readonly Reaction[]) {
 
 /** Mounted for every message, with or without reactions, so a first reaction
  *  can tell itself apart from reactions the message loaded with. */
-export function MessageReactions(props: MessageReactionsProps) {
+export const MessageReactions = memo(function MessageReactions(props: MessageReactionsProps) {
   const sorted = Object.entries(props.reactions)
     .filter(([, users]) => users.length > 0)
     .sort((a, b) => b[1].length - a[1].length)
@@ -148,7 +148,7 @@ export function MessageReactions(props: MessageReactionsProps) {
       <ReactionRow {...props} shown={shown} overflowCount={sorted.length - MAX_VISIBLE_REACTIONS} />
     </PopIn>
   )
-}
+})
 
 function ReactionRow({
   reactions,

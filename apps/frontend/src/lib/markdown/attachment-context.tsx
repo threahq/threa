@@ -1,4 +1,4 @@
-import { createContext, useContext, useCallback, useState, type ReactNode } from "react"
+import { createContext, useContext, useCallback, useMemo, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 import { attachmentsApi } from "@/api"
 import { triggerDownload } from "@/lib/image-utils"
@@ -119,13 +119,12 @@ export function AttachmentProvider({ workspaceId, attachments, children }: Attac
     [workspaceId, attachments, openMedia]
   )
 
-  return (
-    <AttachmentContext.Provider
-      value={{ openAttachment, getAttachmentPendingState, hoveredAttachmentId, setHoveredAttachmentId }}
-    >
-      {children}
-    </AttachmentContext.Provider>
+  const value = useMemo(
+    () => ({ openAttachment, getAttachmentPendingState, hoveredAttachmentId, setHoveredAttachmentId }),
+    [openAttachment, getAttachmentPendingState, hoveredAttachmentId]
   )
+
+  return <AttachmentContext.Provider value={value}>{children}</AttachmentContext.Provider>
 }
 
 export function useAttachmentContext(): AttachmentContextValue | null {

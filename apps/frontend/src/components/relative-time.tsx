@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { memo, useState, useEffect } from "react"
 import { LazyTooltip } from "@/components/ui/lazy-overlay"
 import { TooltipContent } from "@/components/ui/tooltip"
 import { useFormattedDate } from "@/hooks"
@@ -14,7 +14,7 @@ interface RelativeTimeProps {
   terse?: boolean
 }
 
-export function RelativeTime({ date, className, terse }: RelativeTimeProps) {
+export const RelativeTime = memo(function RelativeTime({ date, className, terse }: RelativeTimeProps) {
   const [, setTick] = useState(0)
   const { formatRelative, formatFull } = useFormattedDate()
 
@@ -45,4 +45,4 @@ export function RelativeTime({ date, className, terse }: RelativeTimeProps) {
       </TooltipContent>
     </LazyTooltip>
   )
-}
+})

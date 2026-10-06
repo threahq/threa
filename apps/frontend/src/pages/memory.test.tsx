@@ -1,6 +1,6 @@
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { describe, expect, it, vi, beforeEach } from "vitest"
-import { render, screen, userEvent } from "@/test"
+import { render, screen, userEvent, spyOnExport } from "@/test"
 import { MemoryPage } from "./memory"
 import { SidebarProvider } from "@/contexts"
 import * as hooksModule from "@/hooks"
@@ -75,7 +75,9 @@ describe("MemoryPage", () => {
       (...args) => mockUseWorkspaceStreams(...args) as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>
     )
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => mockUseIsMobile())
-    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(() => <span>just now</span>)
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((() => (
+      <span>just now</span>
+    )) as unknown as typeof relativeTimeModule.RelativeTime)
     vi.spyOn(hooksModule, "useUpdateMemo").mockReturnValue(
       stubMutation as unknown as ReturnType<typeof hooksModule.useUpdateMemo>
     )

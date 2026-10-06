@@ -7,7 +7,7 @@
  */
 export const RENDER_BUDGETS = {
   "type 5 characters": { baseline: 1310, tolerance: 0.1 },
-  "incoming message in the open stream": { baseline: 1095, tolerance: 0.15 },
+  "incoming message in the open stream": { baseline: 848, tolerance: 0.15 },
   "message in another stream": { baseline: 417, tolerance: 0.25 },
   "switch stream (warm)": { baseline: 4353, tolerance: 0.1 },
 } as const

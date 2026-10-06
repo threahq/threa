@@ -1,3 +1,4 @@
+import { memo } from "react"
 import { Link } from "react-router-dom"
 import type { LabelableResourceType } from "@threahq/types"
 import { cn } from "@/lib/utils"
@@ -29,7 +30,12 @@ interface LabelStackProps {
  * inputs. Reads the viewer's active assignments (already deduped + active-only)
  * and stays live via the `label:assigned`/`label:unassigned` socket handlers.
  */
-export function LabelStack({ workspaceId, resourceType, resourceId, className }: LabelStackProps) {
+export const LabelStack = memo(function LabelStack({
+  workspaceId,
+  resourceType,
+  resourceId,
+  className,
+}: LabelStackProps) {
   const { labels } = useResourceLabelAssignments(workspaceId, resourceType, resourceId)
   // Drawer-vs-hovercard keys off the active input mode: a finger taps for the
   // drawer, a mouse (even on a touchscreen laptop) hovers for the hovercard.
@@ -101,4 +107,4 @@ export function LabelStack({ workspaceId, resourceType, resourceId, className }:
       </HoverCardContent>
     </HoverCard>
   )
-}
+})

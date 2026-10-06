@@ -1,3 +1,4 @@
+import { spyOnExport } from "@/test/spy"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -83,7 +84,7 @@ describe("TraceStepList", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     clearDecryptCache()
-    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((() => (
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((() => (
       <span>just now</span>
     )) as unknown as typeof relativeTimeModule.RelativeTime)
   })

@@ -1,6 +1,6 @@
 import { MemoryRouter } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen, userEvent, waitFor } from "@/test"
+import { render, screen, userEvent, waitFor, spyOnExport } from "@/test"
 import * as relativeTimeModule from "@/components/relative-time"
 import { MemoDetailContent, type MemoEditControls } from "./memo-detail"
 import type { MemoExplorerDetail } from "@/api"
@@ -59,7 +59,9 @@ function renderDetail(ui: React.ReactElement) {
 
 describe("MemoDetailContent edit controls (roadmap 6.1)", () => {
   beforeEach(() => {
-    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(() => <span>just now</span>)
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((() => (
+      <span>just now</span>
+    )) as unknown as typeof relativeTimeModule.RelativeTime)
   })
 
   it("has no edit affordances without the edit prop (read-only preview surfaces)", () => {
@@ -163,7 +165,9 @@ describe("MemoDetailContent edit controls (roadmap 6.1)", () => {
 
 describe("MemoDetailContent agent provenance (roadmap 6.6)", () => {
   beforeEach(() => {
-    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(() => <span>just now</span>)
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((() => (
+      <span>just now</span>
+    )) as unknown as typeof relativeTimeModule.RelativeTime)
   })
 
   it("flags an agent-authored memo with the capturing persona's name", () => {
@@ -192,7 +196,9 @@ describe("MemoDetailContent agent provenance (roadmap 6.6)", () => {
 
 describe("MemoDetailContent — user scope (roadmap 6.4)", () => {
   beforeEach(() => {
-    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(() => <span>just now</span>)
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((() => (
+      <span>just now</span>
+    )) as unknown as typeof relativeTimeModule.RelativeTime)
   })
 
   it("badges a user-scoped memo as 'About you' and offers Delete with a confirm", async () => {

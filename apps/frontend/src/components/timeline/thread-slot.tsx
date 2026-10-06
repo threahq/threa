@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { memo, useEffect, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
 import type { ActiveAgentSession, ThreadSummary } from "@threahq/types"
 import type { ScopeDraftPreview } from "@/hooks"
@@ -54,7 +54,7 @@ interface ThreadSlotProps {
  * persists and `visible` never flips, which is what stops the grow-in animation
  * from replaying on the send.
  */
-export function ThreadSlot({
+export const ThreadSlot = memo(function ThreadSlot({
   anchorId,
   streamId,
   hideSessionCards = false,
@@ -161,7 +161,7 @@ export function ThreadSlot({
       </CollapsibleRow>
     </div>
   )
-}
+})
 
 function CollapsibleRow({ open, children }: { open: boolean; children: ReactNode }) {
   return (

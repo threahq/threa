@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from "react"
+import { createContext, useContext, useState, useCallback, useMemo, type ReactNode } from "react"
 
 interface LinkPreviewContextValue {
   hoveredLinkUrl: string | null
@@ -18,9 +18,10 @@ export function LinkPreviewProvider({ children }: { children: ReactNode }) {
     setHoveredLinkUrl(url)
   }, [])
 
-  return (
-    <LinkPreviewContext.Provider value={{ hoveredLinkUrl, setHoveredLinkUrl: handleSetHoveredUrl }}>
-      {children}
-    </LinkPreviewContext.Provider>
+  const value = useMemo(
+    () => ({ hoveredLinkUrl, setHoveredLinkUrl: handleSetHoveredUrl }),
+    [hoveredLinkUrl, handleSetHoveredUrl]
   )
+
+  return <LinkPreviewContext.Provider value={value}>{children}</LinkPreviewContext.Provider>
 }

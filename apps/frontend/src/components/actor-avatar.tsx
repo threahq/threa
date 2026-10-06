@@ -1,3 +1,4 @@
+import { memo } from "react"
 import type { AuthorType } from "@threahq/types"
 import { Moon } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
@@ -63,7 +64,7 @@ interface ActorAvatarProps {
  * - **System**: always fallback with blue tint (no image).
  * - **User**: image when available, muted fallback with initials.
  */
-export function ActorAvatar({
+export const ActorAvatar = memo(function ActorAvatar({
   actorId,
   actorType,
   workspaceId,
@@ -128,4 +129,4 @@ export function ActorAvatar({
       </span>
     </span>
   )
-}
+})

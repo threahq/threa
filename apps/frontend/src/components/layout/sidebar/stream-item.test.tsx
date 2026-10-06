@@ -109,7 +109,7 @@ describe("StreamItem", () => {
     vi.spyOn(inputModeModule, "useInputMode").mockImplementation(() => touchState.inputMode)
     vi.spyOn(touchCapableModule, "useTouchCapable").mockImplementation(() => touchState.touchCapable)
 
-    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((({
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((({
       date,
       className,
     }: {
@@ -745,7 +745,7 @@ describe("StreamItem — board mode", () => {
     } as unknown as ReturnType<typeof hooksModule.useActors>)
     vi.spyOn(inputModeModule, "useInputMode").mockImplementation(() => touchState.inputMode)
     vi.spyOn(touchCapableModule, "useTouchCapable").mockImplementation(() => touchState.touchCapable)
-    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue(
       (() => null) as unknown as typeof relativeTimeModule.RelativeTime
     )
     spyOnExport(drawerModule, "Drawer").mockReturnValue((({

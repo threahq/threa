@@ -1,3 +1,4 @@
+import { spyOnExport } from "@/test/spy"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -35,7 +36,7 @@ function createStep(overrides: Partial<AgentSessionStep> = {}): AgentSessionStep
 describe("TraceStep", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((() => (
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((() => (
       <span>just now</span>
     )) as unknown as typeof relativeTimeModule.RelativeTime)
     vi.spyOn(hooksModule, "useActors").mockReturnValue({
@@ -735,7 +736,7 @@ describe("TraceStep", () => {
 describe("TraceStep guardian verification", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((() => (
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((() => (
       <span>just now</span>
     )) as unknown as typeof relativeTimeModule.RelativeTime)
   })
@@ -831,7 +832,7 @@ describe("TraceStep guardian verification", () => {
 describe("TraceStep effects", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
-    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((() => (
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((() => (
       <span>just now</span>
     )) as unknown as typeof relativeTimeModule.RelativeTime)
   })

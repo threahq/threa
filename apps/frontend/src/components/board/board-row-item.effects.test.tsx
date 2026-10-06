@@ -1,3 +1,4 @@
+import { spyOnExport } from "@/test/spy"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
@@ -34,7 +35,9 @@ describe("BoardEventRowItem session effects", () => {
     vi.spyOn(contextsModule, "useTrace").mockReturnValue({
       getTraceUrl: (sessionId: string) => `/trace/${sessionId}`,
     } as ReturnType<typeof contextsModule.useTrace>)
-    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(() => <span>just now</span>)
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((() => (
+      <span>just now</span>
+    )) as unknown as typeof relativeTimeModule.RelativeTime)
   })
 
   it("renders the effect grid without nesting an interactive element in the card link", () => {
@@ -109,7 +112,9 @@ describe("BoardEventRowItem running session", () => {
     } as ReturnType<typeof contextsModule.useTrace>)
     vi.spyOn(contextsModule, "useSocket").mockReturnValue(null as never)
     vi.spyOn(workspacesModule, "useWorkspaceUserId").mockReturnValue("usr_me")
-    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(() => <span>just now</span>)
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((() => (
+      <span>just now</span>
+    )) as unknown as typeof relativeTimeModule.RelativeTime)
   })
 
   function mount(onRedirectSession?: () => void) {
