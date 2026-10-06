@@ -37,8 +37,8 @@ export function PaneHost({ columns, animate, className, style, ref, ...rest }: P
 }
 
 interface PaneProps extends HTMLAttributes<HTMLDivElement> {
-  /** 1-based grid column. Panes sharing a column stack, and only one is shown. */
-  column: number
+  /** `grid-area` of the pane's cell. Panes sharing a cell stack, and only one is shown. */
+  area: string
   /**
    * Covered by another pane in the same cell. `visibility`, never `display`:
    * the box, and with it the scroll offset, has to survive being hidden.
@@ -58,13 +58,13 @@ export function usePaneCovered(): boolean {
   return useContext(PaneCoveredContext)
 }
 
-export function Pane({ column, covered = false, inert = false, className, style, ...rest }: PaneProps) {
+export function Pane({ area, covered = false, inert = false, className, style, ...rest }: PaneProps) {
   const hidden = usePaneCovered() || covered
   return (
     <PaneCoveredContext.Provider value={hidden}>
       <div
         className={cn("min-h-0 min-w-0 overflow-hidden", covered && "invisible", className)}
-        style={{ ...style, gridArea: `1 / ${column}` }}
+        style={{ ...style, gridArea: area }}
         inert={covered || inert || undefined}
         {...rest}
       />

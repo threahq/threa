@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, type RefObject } from "react"
 import { useResizeDrag } from "./use-resize-drag"
 import { useElementWidth } from "./use-element-width"
+import { BESIDE_SPLIT_RATIO } from "@/lib/panel-grid"
 
 const DEFAULT_PANEL_WIDTH = 480
 export const MIN_PANEL_WIDTH = 300
@@ -35,6 +36,8 @@ interface PanelLayoutOptions {
   reservedWidth?: number
   /** Whether a close animates the column away. One that doesn't never ends a transition, so content goes at once. */
   animates?: boolean
+  /** Side-by-side columns the panel's arrangement has. The panel widens for each one that fits. */
+  columns?: number
 }
 
 export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions = {}) {
@@ -56,7 +59,16 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
   const measuredWidth = useElementWidth(containerRef)
   const containerWidth = measuredWidth > 0 ? Math.max(1, measuredWidth - (options.reservedWidth ?? 0)) : 0
   const maxWidth = panelMaxWidth(containerWidth)
-  const effectiveWidth = containerWidth > 0 ? Math.max(MIN_PANEL_WIDTH, Math.min(maxWidth, panelWidth)) : panelWidth
+  // The stored width is the first column's; each column beside it adds its
+  // share of that (a panel opened beside another takes 1 to its 1.4).
+  const requestedColumns = Math.max(1, options.columns ?? 1)
+  const maxColumns =
+    containerWidth > 0 ? Math.max(1, Math.floor((containerWidth - MIN_MAIN_WIDTH) / MIN_PANEL_WIDTH)) : requestedColumns
+  const columns = Math.min(requestedColumns, maxColumns)
+  const scale = 1 + (columns - 1) / BESIDE_SPLIT_RATIO
+  const minWidth = Math.min(MIN_PANEL_WIDTH * columns, Math.max(MIN_PANEL_WIDTH, maxWidth))
+  const effectiveWidth =
+    containerWidth > 0 ? Math.max(minWidth, Math.min(maxWidth, Math.round(panelWidth * scale))) : panelWidth * scale
 
   // Enable transitions after first paint to prevent animation on page load
   useEffect(() => {
@@ -83,9 +95,9 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
     (newWidth: number) => {
       // No measurement yet (pre-mount drag is impossible, but stay safe) — skip.
       if (containerWidth <= 0) return
-      setPanelWidth(Math.max(MIN_PANEL_WIDTH, Math.min(maxWidth, newWidth)))
+      setPanelWidth(Math.max(minWidth, Math.min(maxWidth, newWidth)) / scale)
     },
-    [containerWidth, maxWidth]
+    [containerWidth, minWidth, maxWidth, scale]
   )
 
   const { isResizing, handleResizeStart, handleResizeMove, handleResizeEnd } = useResizeDrag({
@@ -125,7 +137,9 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
     containerRef,
     panelWidth: effectiveWidth,
     maxWidth,
-    minWidth: MIN_PANEL_WIDTH,
+    minWidth,
+    /** How many columns fit side by side, whether or not the arrangement has them. */
+    maxColumns,
     displayWidth: isPanelOpen ? effectiveWidth : 0,
     shouldAnimate: enableTransition && !isResizing,
     isResizing,

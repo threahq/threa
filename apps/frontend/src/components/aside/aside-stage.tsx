@@ -75,7 +75,7 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
   // A thread opened from the host pane takes the pane. The page's own slot
   // shows nothing while the stage stands (stream.tsx, board.tsx), so this is
   // the thread's only mount, and the panel's close hands the pane back.
-  const { panelId, closePanel } = usePanel()
+  const { panelId, closePanel, setCurrentPane } = usePanel()
   const threadInPane = asideHoldsPanel(panelId, hostStreamId)
   // Closing the thread means back to the host, so its composer takes focus on
   // the hand-back (the page does the same for main when a panel closes);
@@ -171,7 +171,13 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
             own: type-to-focus and the composer's height observer both route by
             zone, and a zone they do not know is a zone they ignore. */}
           {threadInPane ? (
-            <div data-testid="aside-host-pane" data-view="panel" className={cn(ASIDE_PANE, "min-w-0 flex-1")}>
+            <div
+              data-testid="aside-host-pane"
+              data-view="panel"
+              className={cn(ASIDE_PANE, "min-w-0 flex-1")}
+              onPointerDownCapture={() => setCurrentPane(panelId)}
+              onFocusCapture={() => setCurrentPane(panelId)}
+            >
               <PanelHost workspaceId={workspaceId} onClose={closePanel} className="bg-card sm:border-l-0" />
             </div>
           ) : (

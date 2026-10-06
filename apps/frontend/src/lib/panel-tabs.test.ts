@@ -1,117 +1,255 @@
 import { describe, it, expect } from "vitest"
 import {
-  NO_PANEL_TABS,
+  NO_PANELS,
   activatePanelTab,
   closePanelTab,
-  formatPanelTabs,
+  fitPanelLayout,
+  followCurrentPanel,
+  formatPanelLayout,
   openPanelTab,
-  parsePanelTabs,
+  openPanelTabBeside,
+  parsePanelLayout,
+  primaryPanelOf,
   replacePanelTab,
+  splitPanelTab,
+  type PanelLayout,
 } from "./panel-tabs"
 
-describe("parsePanelTabs", () => {
+const at = parsePanelLayout
+const spell = (layout: PanelLayout) => formatPanelLayout(layout)
+
+describe("parsePanelLayout", () => {
   it("should read a single panel id as one active tab when the URL predates tabs", () => {
-    expect(parsePanelTabs("stream_a")).toEqual({ ids: ["stream_a"], active: "stream_a" })
+    expect(at("stream_a")).toEqual({ columns: [[{ ids: ["stream_a"], active: "stream_a" }]] })
   })
 
-  it("should make the last tab active when no tab is marked", () => {
-    expect(parsePanelTabs("stream_a.stream_b")).toEqual({ ids: ["stream_a", "stream_b"], active: "stream_b" })
+  it("should make the last tab of each section active when none is marked", () => {
+    expect(at("stream_a.stream_b")).toEqual({ columns: [[{ ids: ["stream_a", "stream_b"], active: "stream_b" }]] })
   })
 
   it("should make the marked tab active when one is marked", () => {
-    expect(parsePanelTabs("stream_a*.conv:conv_b")).toEqual({ ids: ["stream_a", "conv:conv_b"], active: "stream_a" })
+    expect(at("stream_a*.conv:conv_b")).toEqual({
+      columns: [[{ ids: ["stream_a", "conv:conv_b"], active: "stream_a" }]],
+    })
+  })
+
+  it("should read sections side by side and stacked when the value has splits", () => {
+    expect(at("a*.b-c--d.e")).toEqual({
+      columns: [
+        [{ ids: ["a", "b"], active: "a" }],
+        [
+          { ids: ["c"], active: "c" },
+          { ids: ["d", "e"], active: "e" },
+        ],
+      ],
+    })
   })
 
   it("should keep draft ids whole when they carry colons", () => {
-    expect(parsePanelTabs("draft:stream_p:msg_1.stream_b")).toEqual({
-      ids: ["draft:stream_p:msg_1", "stream_b"],
-      active: "stream_b",
+    expect(at("draft:stream_p:msg_1.stream_b")).toEqual({
+      columns: [[{ ids: ["draft:stream_p:msg_1", "stream_b"], active: "stream_b" }]],
     })
   })
 
-  it("should drop empty and repeated ids when the value was hand-edited", () => {
-    expect(parsePanelTabs(".stream_a..stream_a*.stream_b.")).toEqual({
-      ids: ["stream_a", "stream_b"],
-      active: "stream_b",
-    })
+  it("should drop empty sections and ids open twice when the value was hand-edited", () => {
+    expect(spell(at("--.a..a*.b.-a-c-"))).toBe("a.b-c")
   })
 
-  it("should read no tabs when the param is missing or empty", () => {
-    expect([parsePanelTabs(null), parsePanelTabs(""), parsePanelTabs("*")]).toEqual([
-      NO_PANEL_TABS,
-      NO_PANEL_TABS,
-      NO_PANEL_TABS,
-    ])
+  it("should keep the next column beside when the section stacked before it was dropped", () => {
+    expect([spell(at("a--a-b")), spell(at("a--*-b"))]).toEqual(["a-b", "a-b"])
+  })
+
+  it("should read no panels when the param is missing or empty", () => {
+    expect([at(null), at(""), at("*"), at("-.--")]).toEqual([NO_PANELS, NO_PANELS, NO_PANELS, NO_PANELS])
   })
 })
 
-describe("formatPanelTabs", () => {
+describe("formatPanelLayout", () => {
   it("should write one spelling per arrangement when it round-trips", () => {
-    const values = ["stream_a", "stream_a.stream_b", "stream_a*.stream_b", "stream_a.stream_b*.stream_c"]
-    expect(values.map((value) => formatPanelTabs(parsePanelTabs(value)))).toEqual(values)
+    const values = ["stream_a", "a.b", "a*.b", "a.b*.c", "a-b", "a*.b-c--d", "a--b-c*.d"]
+    expect(values.map((value) => spell(at(value)))).toEqual(values)
   })
 
-  it("should write nothing when no tab is open", () => {
-    expect(formatPanelTabs(NO_PANEL_TABS)).toBeNull()
+  it("should write nothing when no panel is open", () => {
+    expect(spell(NO_PANELS)).toBeNull()
   })
 })
 
-describe("tab operations", () => {
-  const tabs = parsePanelTabs("stream_a.stream_b*.stream_c")
-
-  it("should append and activate a tab when it isn't open", () => {
-    expect(openPanelTab(tabs, "stream_d")).toEqual({
-      ids: ["stream_a", "stream_b", "stream_c", "stream_d"],
-      active: "stream_d",
-    })
+describe("opening", () => {
+  it("should add a tab to the first section when the main view opens it", () => {
+    expect(spell(openPanelTab(at("a.b*.c-d"), "x"))).toBe("a.b.c.x-d")
   })
 
-  it("should activate a tab in place when it is already open", () => {
-    expect(openPanelTab(tabs, "stream_a")).toEqual({ ids: ["stream_a", "stream_b", "stream_c"], active: "stream_a" })
+  it("should open a first section when nothing is open", () => {
+    expect(spell(openPanelTab(NO_PANELS, "x"))).toBe("x")
   })
 
-  it("should leave the tabs alone when activating one that isn't open", () => {
-    expect(activatePanelTab(tabs, "stream_z")).toBe(tabs)
+  it("should activate a tab where it is when it is already open", () => {
+    expect(spell(openPanelTab(at("a-b.c"), "b"))).toBe("a-b*.c")
   })
 
-  it("should hand focus to the tab that slides into place when the active tab closes", () => {
-    expect(closePanelTab(tabs, "stream_b")).toEqual({ ids: ["stream_a", "stream_c"], active: "stream_c" })
+  it("should split a column off to the right when a tab opens beside one in the last column", () => {
+    expect(spell(openPanelTabBeside(at("a.b"), "b", "x"))).toBe("a.b-x")
   })
 
-  it("should hand focus to the new last tab when the active last tab closes", () => {
-    expect(closePanelTab(parsePanelTabs("stream_a.stream_b"), "stream_b")).toEqual({
-      ids: ["stream_a"],
-      active: "stream_a",
-    })
+  it("should add to the top section of the next column when one is there", () => {
+    expect(spell(openPanelTabBeside(at("a-b--c"), "a", "x"))).toBe("a-b.x--c")
+  })
+
+  it("should activate rather than move a tab opened beside when it is already open", () => {
+    expect(spell(openPanelTabBeside(at("a.b-c"), "c", "a"))).toBe("a*.b-c")
+  })
+
+  it("should fall back to the first section when the opener is no longer open", () => {
+    expect(spell(openPanelTabBeside(at("a"), "gone", "x"))).toBe("a.x")
+  })
+})
+
+describe("activating and closing", () => {
+  const layout = at("a.b*.c")
+
+  it("should leave the layout alone when activating a tab that isn't open", () => {
+    expect(activatePanelTab(layout, "z")).toBe(layout)
+  })
+
+  it("should hand the section to the tab that slides into place when the active tab closes", () => {
+    expect(spell(closePanelTab(layout, "b"))).toBe("a.c")
+  })
+
+  it("should hand the section to the new last tab when the active last tab closes", () => {
+    expect(spell(closePanelTab(at("a.b"), "b"))).toBe("a")
   })
 
   it("should keep the active tab when another tab closes", () => {
-    expect(closePanelTab(tabs, "stream_a")).toEqual({ ids: ["stream_b", "stream_c"], active: "stream_b" })
+    expect(spell(closePanelTab(layout, "a"))).toBe("b*.c")
   })
 
-  it("should leave no tabs when the only one closes", () => {
-    expect(closePanelTab(parsePanelTabs("stream_a"), "stream_a")).toEqual(NO_PANEL_TABS)
+  it("should close the section and its emptied column when its last tab closes", () => {
+    expect([spell(closePanelTab(at("a-b-c"), "b")), spell(closePanelTab(at("a-b--c"), "b"))]).toEqual(["a-c", "a-c"])
   })
+
+  it("should leave no panels when the only one closes", () => {
+    expect(closePanelTab(at("a"), "a")).toEqual(NO_PANELS)
+  })
+})
+
+describe("replacePanelTab", () => {
+  const layout = at("a.b*.c-d")
 
   it("should swap a tab in place when it navigates somewhere new", () => {
-    expect(replacePanelTab(tabs, "stream_b", "stream_x")).toEqual({
-      ids: ["stream_a", "stream_x", "stream_c"],
-      active: "stream_x",
-    })
+    expect(spell(replacePanelTab(layout, "b", "x"))).toBe("a.x*.c-d")
   })
 
   it("should keep an inactive tab inactive when it is replaced", () => {
-    expect(replacePanelTab(tabs, "stream_a", "stream_x")).toEqual({
-      ids: ["stream_x", "stream_b", "stream_c"],
-      active: "stream_b",
-    })
+    expect(spell(replacePanelTab(layout, "a", "x"))).toBe("x.b*.c-d")
   })
 
-  it("should close the navigating tab and activate the target when the target is already open", () => {
-    expect(replacePanelTab(tabs, "stream_b", "stream_c")).toEqual({ ids: ["stream_a", "stream_c"], active: "stream_c" })
+  it("should move the target into the navigating tab's place when it is open in another section", () => {
+    expect(spell(replacePanelTab(layout, "b", "d"))).toBe("a.d*.c")
+  })
+
+  it("should close the navigating tab and show the target when the target is a tab beside it", () => {
+    expect([spell(replacePanelTab(layout, "b", "c")), spell(replacePanelTab(at("a.b.c"), "b", "c"))]).toEqual([
+      "a.c-d",
+      "a.c",
+    ])
   })
 
   it("should open the target as a new tab when the navigating tab is already gone", () => {
-    expect(replacePanelTab(tabs, "stream_gone", "stream_x")).toEqual(openPanelTab(tabs, "stream_x"))
+    expect(replacePanelTab(layout, "gone", "x")).toEqual(openPanelTab(layout, "x"))
+  })
+})
+
+describe("splitPanelTab", () => {
+  it("should move a tab into a new column to the right of its own", () => {
+    expect(spell(splitPanelTab(at("a.b*.c-d"), "b", "right"))).toBe("a.c-b-d")
+  })
+
+  it("should move a tab into a new section under its own", () => {
+    expect(spell(splitPanelTab(at("a.b--c"), "a", "down"))).toBe("b--a--c")
+  })
+
+  it("should leave a section's only tab where it is", () => {
+    const layout = at("a-b")
+    expect(splitPanelTab(layout, "b", "right")).toBe(layout)
+  })
+})
+
+describe("fitPanelLayout", () => {
+  const layout = at("a-b.c*--d-e")
+
+  it("should keep the arrangement when every column fits", () => {
+    expect(fitPanelLayout(layout, 3, false, null)).toBe(layout)
+  })
+
+  it("should fold the columns that don't fit into one section showing the last one's tab", () => {
+    expect(spell(fitPanelLayout(layout, 2, false, null))).toBe("a-b.c.d.e")
+  })
+
+  it("should show the current pane when it is on show in a folded section", () => {
+    expect(spell(fitPanelLayout(layout, 2, false, "c"))).toBe("a-b.c*.d.e")
+  })
+
+  it("should show the last folded section's tab when the current pane is covered in its own", () => {
+    expect(spell(fitPanelLayout(layout, 2, false, "b"))).toBe("a-b.c.d.e")
+  })
+
+  it("should fold everything into one section when stacked", () => {
+    expect(spell(fitPanelLayout(layout, 3, true, null))).toBe("a.b.c.d.e")
+  })
+
+  it("should keep a single section as it is when stacked", () => {
+    const single = at("a*.b")
+    expect(fitPanelLayout(single, 1, true, "b")).toBe(single)
+  })
+})
+
+describe("primaryPanelOf", () => {
+  it("should name the tab on show in the first section", () => {
+    expect([primaryPanelOf(at("a*.b-c")), primaryPanelOf(NO_PANELS)]).toEqual(["a", null])
+  })
+})
+
+describe("followCurrentPanel", () => {
+  it("should make a tab just opened current", () => {
+    expect(followCurrentPanel(at("a"), at("a-x"), "a")).toBe("x")
+  })
+
+  it("should keep the current pane while it stays on show", () => {
+    expect(followCurrentPanel(at("a-b.c"), at("a-b*.c"), "a")).toBe("a")
+  })
+
+  it("should hand current to the tab now on show in its section when it is covered or closed", () => {
+    expect([
+      followCurrentPanel(at("a.b-c"), at("a*.b-c"), "b"),
+      followCurrentPanel(at("a.b-c"), at("a-c"), "b"),
+    ]).toEqual(["a", "a"])
+  })
+
+  it("should hand current to the section before its own when its whole section closed", () => {
+    expect([
+      followCurrentPanel(at("a-b"), at("a"), "b"),
+      followCurrentPanel(at("a-b--c-d"), at("a-b-d"), "c"),
+      followCurrentPanel(at("a-b"), at("b"), "a"),
+    ]).toEqual(["a", "b", "b"])
+  })
+
+  it("should stay on the main view when no tab opened", () => {
+    expect(followCurrentPanel(at("a-b"), at("a"), null)).toBeNull()
+  })
+
+  it("should not treat a tab swapped in place as an opening", () => {
+    const prev = at("a-draft")
+    const promoted = replacePanelTab(prev, "draft", "x")
+    expect([
+      followCurrentPanel(prev, promoted, "a"),
+      followCurrentPanel(prev, promoted, null),
+      followCurrentPanel(prev, promoted, "draft"),
+    ]).toEqual(["a", null, "x"])
+  })
+
+  it("should follow a tab that navigated to one open in another section", () => {
+    const prev = at("a.b*.c-d")
+    expect(followCurrentPanel(prev, replacePanelTab(prev, "b", "d"), "b")).toBe("d")
   })
 })

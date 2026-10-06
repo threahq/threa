@@ -222,6 +222,114 @@ test("should show one overview and hand keyboard focus to the tab brought forwar
   ).toBeFocused()
 })
 
+const stripOf = (page: Page, id: string) => tabPane(page, id).getByRole("navigation", { name: "Panel tabs" })
+
+test("should split a tab beside its own and keep the split through back, forward, reload and a narrow window", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { parentA, parentB, threadA, threadB } = await seedTwoThreads(page)
+
+  await openFromTimeline(page, parentA)
+  await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
+  await openFromTimeline(page, parentB)
+  await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
+  await tag(replyIn(page, threadA, "reply in thread A"), "A")
+  await tag(replyIn(page, threadB, "reply in thread B"), "B")
+  const tabbedWidth = (await page.getByTestId("panel").boundingBox())!.width
+
+  await tabPane(page, threadB).getByRole("button", { name: "Tab actions" }).click()
+  await page.getByRole("menuitem", { name: "Split right" }).click()
+  await expect.poll(() => panelParam(page)).toBe(`${threadA}-${threadB}`)
+  // Both show side by side without remounting, and the panel widens to hold them.
+  await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
+  await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
+  expect(await tagOf(replyIn(page, threadA, "reply in thread A"))).toBe("A")
+  expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
+  const [boxA, boxB] = await Promise.all([tabPane(page, threadA).boundingBox(), tabPane(page, threadB).boundingBox()])
+  expect(boxA!.x + boxA!.width).toBeLessThanOrEqual(boxB!.x + 1)
+  await expect.poll(async () => (await page.getByTestId("panel").boundingBox())!.width).toBeGreaterThan(tabbedWidth)
+
+  // The tab split off is current; the other section's underline mutes until it is used.
+  const activeTitle = (id: string) => stripOf(page, id).locator('[aria-current="page"]')
+  await expect(activeTitle(threadB)).toHaveClass(/text-foreground/)
+  await expect(activeTitle(threadA)).toHaveClass(/text-muted-foreground/)
+  await replyIn(page, threadA, "reply in thread A").click()
+  await expect(activeTitle(threadA)).toHaveClass(/text-foreground/)
+  await expect(activeTitle(threadB)).toHaveClass(/text-muted-foreground/)
+
+  // The divider moves by drag and by keyboard.
+  const divider = page.getByRole("separator", { name: "Resize panels side by side" })
+  const valueOf = async () => Number(await divider.getAttribute("aria-valuenow"))
+  // The panel's widening transition moves the divider too: start from where it settles.
+  await expect
+    .poll(async () => {
+      const width = await valueOf()
+      await page.waitForTimeout(250)
+      return (await valueOf()) === width
+    })
+    .toBe(true)
+  const beforeDrag = await valueOf()
+  const grip = (await divider.boundingBox())!
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(grip.x + grip.width / 2 + 60, grip.y + grip.height / 2, { steps: 5 })
+  await page.mouse.up()
+  await expect.poll(async () => Math.abs((await valueOf()) - beforeDrag - 60)).toBeLessThanOrEqual(2)
+  const before = await valueOf()
+  await divider.focus()
+  await page.keyboard.press("ArrowRight")
+  await expect.poll(valueOf).toBe(before + 10)
+
+  // The split replaced the entry B opened with: back returns to A alone.
+  await page.goBack()
+  await expect.poll(() => panelParam(page)).toBe(threadA)
+  await page.goForward()
+  await expect.poll(() => panelParam(page)).toBe(`${threadA}-${threadB}`)
+  await page.reload()
+  await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible({ timeout: 30_000 })
+  await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
+
+  // Too narrow for two columns: they fold into one section's tabs, the URL keeps the split.
+  await page.setViewportSize({ width: 1000, height: 900 })
+  await expect(stripOf(page, threadB).getByRole("link")).toHaveCount(2)
+  await expect(replyIn(page, threadA, "reply in thread A")).not.toBeVisible()
+  expect(panelParam(page)).toBe(`${threadA}-${threadB}`)
+  // Using the main view leaves the folded section showing what it showed, not its last column.
+  await stripOf(page, threadB).getByRole("link", { name: "first parent" }).click()
+  await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
+  await page.locator('[data-editor-zone="main"]').getByText("second parent").click()
+  await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
+  await expect(replyIn(page, threadB, "reply in thread B")).not.toBeVisible()
+  expect(panelParam(page)).toBe(`${threadA}-${threadB}`)
+  await page.setViewportSize({ width: 1600, height: 900 })
+  await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
+  await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
+})
+
+test("should stack a tab split down under its own section", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
+
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}*.${threadB}`)
+  await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible({ timeout: 30_000 })
+  // The tab behind loads while covered, so the split shows it without a wait.
+  await expect(replyIn(page, threadB, "reply in thread B")).toBeAttached({ timeout: 30_000 })
+  await tag(replyIn(page, threadA, "reply in thread A"), "A")
+  await tag(replyIn(page, threadB, "reply in thread B"), "B")
+  await tabPane(page, threadA).getByRole("button", { name: "Tab actions" }).click()
+  await page.getByRole("menuitem", { name: "Split down" }).click()
+  await expect.poll(() => panelParam(page)).toBe(`${threadB}--${threadA}`)
+  await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
+  await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
+  // Neither tab remounts, so each keeps its scroll and draft.
+  expect(await tagOf(replyIn(page, threadA, "reply in thread A"))).toBe("A")
+  expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
+  const [boxA, boxB] = await Promise.all([tabPane(page, threadA).boundingBox(), tabPane(page, threadB).boundingBox()])
+  expect(boxB!.y + boxB!.height).toBeLessThanOrEqual(boxA!.y + 1)
+  await expect(page.getByRole("separator", { name: "Resize stacked panels" })).toBeVisible()
+})
+
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 400, height: 800 }, isMobile: true, hasTouch: true })
 
@@ -259,5 +367,16 @@ test.describe("on a phone", () => {
     await tabPane(page, threadA).getByRole("button", { name: "Back" }).click()
     await expect.poll(() => panelParam(page)).toBe(threadB)
     await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
+  })
+
+  test("should show a split from a wider screen as tabs of one section and keep the URL", async ({ page }) => {
+    const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
+
+    await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}-${threadB}`)
+    await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
+    await expect(replyIn(page, threadA, "reply in thread A")).not.toBeVisible()
+    await expect(stripOf(page, threadB).getByRole("link")).toHaveCount(2)
+    await expect(tabPane(page, threadB).getByRole("button", { name: "Tab actions" })).toHaveCount(0)
+    expect(panelParam(page)).toBe(`${threadA}-${threadB}`)
   })
 })
