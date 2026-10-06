@@ -121,8 +121,11 @@ interface PanelContextValue {
   /** Close this consumer's panel tab. */
   closePanel: () => void
   closeTab: (panelId: string) => void
-  /** Reopen the tab on this page closed most recently and not open since, as {@link openPanel} would. */
+  /** Reopen the tab on this page closed most recently and not open since, as a tab of the section
+   *  worked in (the first section from the main view). */
   reopenTab: () => string | null
+  /** Whether {@link reopenTab} has a tab to reopen. */
+  canReopenTab: () => boolean
   /** Move a tab out of its section into a new one beside or below it. */
   splitTab: (panelId: string, direction: SplitDirection) => void
   /** The ways this consumer's tab can split off as it is laid out now. */
@@ -146,6 +149,7 @@ interface PanelOps {
   contextual: (layout: PanelLayout, panelId: string, scopeId: string | null) => PanelLayout
   closeTab: (panelId: string) => void
   reopenTab: (scopeId: string | null) => string | null
+  canReopenTab: () => boolean
   splitTab: (panelId: string, direction: SplitDirection) => void
   setCurrentPane: (panelId: string | null) => void
   coverOwner: string | null
@@ -239,6 +243,7 @@ function buildValue(
     },
     closeTab: ops.closeTab,
     reopenTab: () => ops.reopenTab(scopeId),
+    canReopenTab: ops.canReopenTab,
     splitTab: ops.splitTab,
     splits,
     setCurrentPane: ops.setCurrentPane,
@@ -389,19 +394,24 @@ export function PanelProvider({ children }: PanelProviderProps) {
     [close, closeTo, searchParams, layout, coverOwner, location.pathname]
   )
 
+  const findReopenable = useCallback(() => {
+    const shown = new Set(panelIdsOf(layout))
+    return [...closedTabs.current]
+      .reverse()
+      .find((closed) => closed.path === location.pathname && !shown.has(closed.panelId))
+  }, [layout, location.pathname])
+  const canReopenTab = useCallback(() => findReopenable() !== undefined, [findReopenable])
+
   const reopenTab = useCallback(
     (scopeId: string | null) => {
-      const shown = new Set(panelIdsOf(layout))
-      const tab = [...closedTabs.current]
-        .reverse()
-        .find((closed) => closed.path === location.pathname && !shown.has(closed.panelId))
+      const tab = findReopenable()
       if (!tab) return null
       closedTabs.current = closedTabs.current.filter((closed) => closed !== tab)
       open((current) => openPanelTabWith(current, scopeId, tab.panelId), false)
       setCurrentPane(tab.panelId)
       return tab.panelId
     },
-    [layout, location.pathname, open, setCurrentPane]
+    [findReopenable, open, setCurrentPane]
   )
 
   // Splitting rearranges what is already open, so it is not a step of its own in history.
@@ -425,6 +435,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       contextual,
       closeTab,
       reopenTab,
+      canReopenTab,
       splitTab,
       setCurrentPane,
       coverOwner,
@@ -432,7 +443,20 @@ export function PanelProvider({ children }: PanelProviderProps) {
       tabFocusHandoff,
       paneShortcutQueue,
     }),
-    [layout, urlFor, open, tabbed, contextual, closeTab, reopenTab, splitTab, setCurrentPane, coverOwner, claimCover]
+    [
+      layout,
+      urlFor,
+      open,
+      tabbed,
+      contextual,
+      closeTab,
+      reopenTab,
+      canReopenTab,
+      splitTab,
+      setCurrentPane,
+      coverOwner,
+      claimCover,
+    ]
   )
   const value = useMemo(() => buildValue(ops, null, null), [ops])
 

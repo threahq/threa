@@ -169,6 +169,22 @@ test("should step focus through the main view and the panes beside it", async ({
   await expect(page.locator('[data-editor-zone="main"] [contenteditable="true"]').last()).toHaveText("drafting")
 })
 
+test("should switch the tabs of a split folded into one section without waiting on the URL", async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 900 })
+  const { workspaceId, streamId, threads } = await seedThreads(page, 2)
+  const [a, b] = threads
+  await openPanels(page, workspaceId, streamId, `${a}-${b}`, 2)
+  await tabPane(page, b).locator('[contenteditable="true"]').last().click()
+
+  // Each column keeps its own tab in front, so switching between them leaves the URL as it was.
+  await page.keyboard.press("Alt+BracketLeft")
+  await expect.poll(() => focusedComposer(page)).toBe(a)
+  await page.keyboard.press("Alt+BracketRight")
+  await expect.poll(() => focusedComposer(page), { timeout: 1_000 }).toBe(b)
+  await expect(tabPane(page, b).getByText("reply in thread 2")).toBeVisible()
+  expect(panelParam(page)).toBe(`${a}-${b}`)
+})
+
 test.describe("installed", () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
