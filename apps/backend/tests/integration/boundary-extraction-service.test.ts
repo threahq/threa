@@ -1084,10 +1084,14 @@ describe("BoundaryExtractionService", () => {
       const inChannel = await service.processMessage(triggerMsgId, sharedStreamId, testWorkspaceId)
       const active = stubExtractor.lastContext?.activeConversations.map((c) => [c.id, c.topicSummary, c.summary])
       const inThread = await service.processMessage(laterReplyId, replyThreadStreamId, testWorkspaceId)
-      const stamps = await ConversationRepository.findSharedStamps(pool, testWorkspaceId, [inChannel!.id, inThread!.id])
+      const { rows: stamps } = await pool.query(
+        `SELECT topic_summary_shared_root_stream_id, summary_shared_root_stream_id FROM conversations
+         WHERE workspace_id = $1 AND id = ANY($2)`,
+        [testWorkspaceId, [inChannel!.id, inThread!.id]]
+      )
 
-      const stamped = { topicSummarySharedRootStreamId: sharedStreamId, summarySharedRootStreamId: sharedStreamId }
-      expect({ active: active?.toSorted(), stamps: [stamps.get(inChannel!.id), stamps.get(inThread!.id)] }).toEqual({
+      const stamped = { topic_summary_shared_root_stream_id: sharedStreamId, summary_shared_root_stream_id: sharedStreamId }
+      expect({ active: active?.toSorted(), stamps }).toEqual({
         active: [
           [preShareId, null, null],
           [sharedId, "Rollout", "Rolling out on Friday"],

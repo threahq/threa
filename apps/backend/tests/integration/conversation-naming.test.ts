@@ -341,11 +341,15 @@ describe("dynamic conversation naming", () => {
     )
 
     const renamed = await ConversationRepository.findById(pool, item.workspaceId, item.conversationId)
-    const stamps = await ConversationRepository.findSharedStamps(pool, item.workspaceId, [item.conversationId])
-    expect({ seen, title: renamed?.topicSummary, stamps: stamps.get(item.conversationId) }).toEqual({
+    const { rows: stamps } = await pool.query(
+      `SELECT topic_summary_shared_root_stream_id, summary_shared_root_stream_id FROM conversations
+       WHERE workspace_id = $1 AND id = $2`,
+      [item.workspaceId, item.conversationId]
+    )
+    expect({ seen, title: renamed?.topicSummary, stamps }).toEqual({
       seen: { currentTitle: null, summary: false, existingTitles: ["Release checklist"] },
       title: "Deployment rollback",
-      stamps: { topicSummarySharedRootStreamId: item.streamId, summarySharedRootStreamId: null },
+      stamps: [{ topic_summary_shared_root_stream_id: item.streamId, summary_shared_root_stream_id: null }],
     })
   })
 

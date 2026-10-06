@@ -1192,8 +1192,8 @@ export const ConversationRepository = {
   },
 
   /**
-   * `listSharedVersions`'s conversations among `ids`, each with its version and
-   * the shared channel its title and its summary were written for.
+   * The workspace's own conversations in `streamIds` among `ids`, each with its
+   * version and the shared channel its title and its summary were written for.
    */
   async findShared(db: Querier, workspaceId: string, streamIds: string[], ids: string[]): Promise<SharedConversation[]> {
     const result = await db.query<
@@ -1217,33 +1217,6 @@ export const ConversationRepository = {
       topicSummarySharedRootStreamId: row.topic_summary_shared_root_stream_id,
       summarySharedRootStreamId: row.summary_shared_root_stream_id,
     }))
-  },
-
-  /** The shared channel each conversation's title and its summary were written for. */
-  async findSharedStamps(
-    db: Querier,
-    workspaceId: string,
-    ids: string[]
-  ): Promise<Map<string, { topicSummarySharedRootStreamId: string | null; summarySharedRootStreamId: string | null }>> {
-    if (ids.length === 0) return new Map()
-    const result = await db.query<{
-      id: string
-      topic_summary_shared_root_stream_id: string | null
-      summary_shared_root_stream_id: string | null
-    }>(sql`
-      SELECT id, topic_summary_shared_root_stream_id, summary_shared_root_stream_id
-      FROM conversations
-      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids})
-    `)
-    return new Map(
-      result.rows.map((row) => [
-        row.id,
-        {
-          topicSummarySharedRootStreamId: row.topic_summary_shared_root_stream_id,
-          summarySharedRootStreamId: row.summary_shared_root_stream_id,
-        },
-      ])
-    )
   },
 
   /** The copies a partner holds of the conversations in `originWorkspaceId`'s shared channel. */

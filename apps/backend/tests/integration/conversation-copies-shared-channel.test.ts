@@ -25,15 +25,18 @@ import { StreamMemberRepository, StreamRepository } from "../../src/features/str
 import {
   ConversationRepository,
   ConversationService,
+  viewConversationsAsPartner,
   type InsertConversationParams,
 } from "../../src/features/conversations"
 import { FeatureFlagOverrideRepository, FeatureFlagService } from "../../src/features/feature-flags"
 import {
   BridgeClient,
   StreamConnectionExportService,
+  StreamConnectionPokeHandler,
   StreamConnectionPullService,
   StreamConnectionRepository,
 } from "../../src/features/stream-connections"
+import type { OutboxEvent } from "../../src/lib/outbox"
 import { conversationId, streamId, userId, workspaceId } from "../../src/lib/id"
 
 type Address = Parameters<BridgeClient["getManifest"]>[0]
@@ -73,6 +76,25 @@ class DirectBridgeClient extends BridgeClient {
 
   override async getMemoIndex(address: Address): Promise<BridgeMemoIndex> {
     return bridgeMemoIndexSchema.parse(await this.exporter.getMemoIndex(address))
+  }
+}
+
+/** Records the pokes a handler sends instead of sending them. */
+class RecordingBridgeClient extends BridgeClient {
+  readonly pokes: Parameters<BridgeClient["poke"]>[0][] = []
+
+  constructor() {
+    super({ routerUrl: "http://bridge.invalid", apiKey: "unused" })
+  }
+
+  override async poke(params: Parameters<BridgeClient["poke"]>[0]): Promise<void> {
+    this.pokes.push(params)
+  }
+}
+
+class TestPokeHandler extends StreamConnectionPokeHandler {
+  run(events: OutboxEvent[]) {
+    return this.processBatch(events)
   }
 }
 
@@ -262,6 +284,43 @@ describe("Conversations in a shared channel's copy", () => {
       untitled: { title: null, source: null, summary: null },
       renamed: { title: "Postgres it is", source: "explicit", summary: null },
     })
+  })
+
+  test("should copy a conversation without its title or summary when they were written for another shared channel", async () => {
+    const world = await seedWorld()
+    const message = await hostMessage(world, "we picked postgres")
+    const elsewhere = await hostConversation(world, [message.id], { sharedRootStreamId: streamId() })
+
+    await world.pull()
+    const [copy] = await rows(world.partner.id, [elsewhere])
+
+    expect({ title: copy.topic_summary, source: copy.topic_summary_source, summary: copy.summary }).toEqual({
+      title: null,
+      source: null,
+      summary: null,
+    })
+  })
+
+  test("should show the host's AI a title renamed while shared, not the pre-share title it read earlier", async () => {
+    const world = await seedWorld()
+    const message = await hostMessage(world, "we picked postgres")
+    const conversation = await hostConversation(world, [message.id], { sharedRootStreamId: null })
+    const readEarlier = (await ConversationRepository.findById(pool, world.host.id, conversation))!
+    await conversationService.updateConversation({
+      workspaceId: world.host.id,
+      conversationId: conversation,
+      topicSummary: "Postgres it is",
+      actorUserId: world.host.adminId,
+    })
+
+    const [seen] = await viewConversationsAsPartner(
+      pool,
+      world.host.id,
+      { rootStreamId: world.channel.id, streamIds: new Set([world.channel.id]) },
+      [readEarlier]
+    )
+
+    expect({ title: seen!.topicSummary, summary: seen!.summary }).toEqual({ title: "Postgres it is", summary: null })
   })
 
   test("should move the copy to the host's newest version when the conversation changes, and fetch nothing when it did not", async () => {
@@ -534,6 +593,43 @@ describe("Conversations in a shared channel's copy", () => {
       swept: swept.filter((c) => c.workspaceId === world.partner.id),
       status: (await rows(world.partner.id))[0].status,
     }).toEqual({ swept: [], status: ConversationStatuses.ACTIVE })
+  })
+
+  test("should poke the partner when the host's conversation changes, and not when its copy does", async () => {
+    const world = await seedWorld()
+    const message = await hostMessage(world, "we picked postgres")
+    const conversation = await hostConversation(world, [message.id])
+    await conversationService.updateConversation({
+      workspaceId: world.host.id,
+      conversationId: conversation,
+      actorUserId: world.host.adminId,
+      topicSummary: "Schema choice",
+    })
+    await world.pull()
+    const { rows: events } = await pool.query(
+      `SELECT id, event_type, payload, created_at FROM outbox
+       WHERE event_type IN ('conversation:created', 'conversation:updated') AND payload->>'conversationId' = $1
+       ORDER BY id`,
+      [conversation]
+    )
+    const toOutboxEvent = (row: (typeof events)[number]): OutboxEvent => ({
+      id: BigInt(row.id),
+      eventType: row.event_type,
+      payload: row.payload,
+      createdAt: row.created_at,
+    })
+    const pokesFor = async (workspace: string) => {
+      const bridgeClient = new RecordingBridgeClient()
+      await new TestPokeHandler(pool, bridgeClient).run(
+        events.filter((row) => row.payload.workspaceId === workspace).map(toOutboxEvent)
+      )
+      return bridgeClient.pokes
+    }
+
+    expect({ host: await pokesFor(world.host.id), copy: await pokesFor(world.partner.id) }).toEqual({
+      host: [{ hostWorkspaceId: world.host.id, connectionId: world.connectionId, partnerWorkspaceId: world.partner.id }],
+      copy: [],
+    })
   })
 
   test("should refuse a partner's rename or status change on a copy", async () => {

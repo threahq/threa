@@ -57,7 +57,7 @@ export {
 export type { StalenessSweepWorkerDeps } from "./staleness-sweep-worker"
 
 export { ConversationRepository } from "./repository"
-export { viewConversationsAsPartner } from "./partner-view"
+export { readableByPartner, viewConversationsAsPartner } from "./partner-view"
 
 export { ConversationEmbeddingHandler } from "./embedding-outbox-handler"
 export { createConversationEmbeddingWorker } from "./embedding-worker"

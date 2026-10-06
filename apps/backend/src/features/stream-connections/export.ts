@@ -30,7 +30,7 @@ import { withClient, type Querier } from "../../db"
 import type { StorageProvider } from "../../lib/storage/s3-client"
 import { PersonaRepository } from "../agents"
 import { AttachmentRepository, AttachmentUploadRepository, type Attachment } from "../attachments"
-import { ConversationRepository, type SharedConversation } from "../conversations"
+import { ConversationRepository, readableByPartner, type SharedConversation } from "../conversations"
 import type { FeatureFlagService } from "../feature-flags"
 import { MemoRepository, type Memo } from "../memos"
 import { MessageRepository, deriveContentMarkdown, type Message } from "../messaging"
@@ -592,19 +592,20 @@ function toBridgeMemo(
 }
 
 function toBridgeConversation(
-  { conversation, version, topicSummarySharedRootStreamId, summarySharedRootStreamId }: SharedConversation,
+  shared: SharedConversation,
   rootStreamId: string,
   isInTree: (messageId: string) => boolean,
   participants: ReadonlySet<string>
 ): BridgeConversation {
-  const titled = topicSummarySharedRootStreamId === rootStreamId
+  const { conversation, version } = shared
+  const { topicSummary, topicSummarySource, summary } = readableByPartner(conversation, shared, rootStreamId)
   return {
     id: conversation.id,
     streamId: conversation.streamId,
-    topicSummary: titled ? conversation.topicSummary : null,
-    topicSummarySource: titled ? (conversation.topicSummarySource ?? null) : null,
+    topicSummary,
+    topicSummarySource: topicSummarySource ?? null,
     topicSummaryRevision: conversation.topicSummaryRevision ?? 0,
-    summary: summarySharedRootStreamId === rootStreamId ? conversation.summary : null,
+    summary,
     status: conversation.status,
     messageIds: conversation.messageIds.filter(isInTree),
     secondaryMessageIds: conversation.secondaryMessageIds.filter(isInTree),
