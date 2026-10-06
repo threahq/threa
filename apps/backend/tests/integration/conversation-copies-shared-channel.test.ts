@@ -152,11 +152,11 @@ describe("Conversations in a shared channel's copy", () => {
 
   type World = Awaited<ReturnType<typeof seedWorld>>
 
-  async function hostMessage(world: World, text: string, inStreamId = world.channel.id) {
+  async function hostMessage(world: World, text: string, inStreamId = world.channel.id, authorId = world.host.adminId) {
     return eventService.createMessage({
       workspaceId: world.host.id,
       streamId: inStreamId,
-      authorId: world.host.adminId,
+      authorId,
       authorType: AuthorTypes.USER,
       ...testMessageContent(text),
     })
@@ -342,12 +342,12 @@ describe("Conversations in a shared channel's copy", () => {
     })
   })
 
-  test("should drop messages outside the shared tree and people who never took part in it", async () => {
+  test("should drop messages outside the shared tree and people who took part only outside it", async () => {
     const world = await seedWorld()
     const inside = await hostMessage(world, "we picked postgres")
     const elsewhere = await seedChannel(world.host, "Private")
-    const outside = await hostMessage(world, "the budget is tight", elsewhere.id)
     const bystander = await addTestMember(pool, world.host.id, `bystander-${world.host.id}`, "member")
+    const outside = await hostMessage(world, "the budget is tight", elsewhere.id, bystander.id)
     const conversation = await hostConversation(world, [inside.id, outside.id], {
       participantIds: [world.host.adminId, bystander.id],
     })
@@ -358,6 +358,80 @@ describe("Conversations in a shared channel's copy", () => {
     expect({ messageIds: copy.message_ids, participantIds: copy.participant_ids }).toEqual({
       messageIds: [inside.id],
       participantIds: [world.host.adminId],
+    })
+  })
+
+  test("should copy a conversation in a thread under one of the channel's messages", async () => {
+    const world = await seedWorld()
+    const anchor = await hostMessage(world, "we picked postgres")
+    const thread = await StreamRepository.insert(pool, {
+      id: streamId(),
+      workspaceId: world.host.id,
+      type: "thread",
+      parentStreamId: world.channel.id,
+      parentAnchorId: anchor.id,
+      rootStreamId: world.channel.id,
+      visibility: "public",
+      createdBy: world.host.adminId,
+    })
+    const reply = await hostMessage(world, "version 17", thread.id)
+    const conversation = await hostConversation(world, [reply.id], { streamId: thread.id })
+    const [host] = await rows(world.host.id, [conversation])
+
+    await world.pull()
+
+    expect({ host: host.stream_id, copies: await rows(world.partner.id) }).toEqual({
+      host: thread.id,
+      copies: [{ ...host, origin_workspace_id: world.host.id }],
+    })
+  })
+
+  test("should keep a summary shared when an extraction pass leaves it unchanged", async () => {
+    const world = await seedWorld()
+    const message = await hostMessage(world, "we picked postgres")
+    const conversation = await hostConversation(world, [message.id])
+    await ConversationRepository.applyExtractionUpdate(pool, world.host.id, conversation, {
+      status: ConversationStatuses.RESOLVED,
+      sharedRootStreamId: null,
+    })
+    const [host] = await rows(world.host.id, [conversation])
+
+    await world.pull()
+
+    expect({ host: [host.summary, host.status], copies: await rows(world.partner.id) }).toEqual({
+      host: ["They picked postgres", ConversationStatuses.RESOLVED],
+      copies: [{ ...host, origin_workspace_id: world.host.id }],
+    })
+  })
+
+  test("should keep the newer copy when a body from an older version arrives after it", async () => {
+    const world = await seedWorld()
+    const message = await hostMessage(world, "we picked postgres")
+    const conversation = await hostConversation(world, [message.id])
+    let firstBodies: BridgeConversation[] = []
+    world.bridgeClient.tamper = (conversations) => {
+      firstBodies = conversations
+      return conversations
+    }
+    await world.pull()
+    world.bridgeClient.tamper = null
+    await ConversationRepository.update(pool, world.host.id, conversation, { status: ConversationStatuses.RESOLVED })
+    await world.pull()
+    const newer = await rows(world.partner.id)
+    await ConversationRepository.update(pool, world.host.id, conversation, { completenessScore: 5 })
+    world.bridgeClient.tamper = () => firstBodies
+
+    expect(await world.pull()).toBe(true)
+
+    expect({
+      copies: await rows(world.partner.id),
+      outbox: (await partnerOutbox(world)).map((event) => [event.eventType, event.status]),
+    }).toEqual({
+      copies: newer,
+      outbox: [
+        ["conversation:created", ConversationStatuses.ACTIVE],
+        ["conversation:updated", ConversationStatuses.RESOLVED],
+      ],
     })
   })
 

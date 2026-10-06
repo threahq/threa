@@ -223,7 +223,7 @@ export class DynamicNamingService {
             checkpoint: prepared.eligibility.checkpoint,
             forced: prepared.eligibility.forced,
             messageCount: prepared.target.messageCount,
-            currentTitle: prepared.target.title,
+            currentTitle: context.currentTitle,
             context: context.context,
             existingTitles: context.existingTitles,
           },
@@ -233,7 +233,7 @@ export class DynamicNamingService {
       if (prepared.eligibility.forced && decision.action === "defer") {
         throw new Error("Dynamic naming may not defer a forced checkpoint")
       }
-      if (prepared.target.title === null && decision.action === "keep") {
+      if (context.currentTitle === null && decision.action === "keep") {
         throw new Error("Dynamic naming may not keep a missing title")
       }
     } catch (error) {
@@ -273,7 +273,7 @@ export class DynamicNamingService {
 
       let revision: number | null = null
       if (decision.action === "rename") {
-        revision = await adapter.applyRename(client, target, decision.title, context.sharedRootStreamId ?? null)
+        revision = await adapter.applyRename(client, target, decision.title, context.sharedRootStreamId)
         if (revision === null) throw new Error("Dynamic naming title CAS failed after state claim was consumed")
       }
       return { state: result.state, target, revision }

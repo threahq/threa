@@ -9,6 +9,7 @@ import {
   ConversationRepository,
   MessageConversationStateRepository,
   resolveConversationDelivery,
+  viewConversationsAsPartner,
   type Conversation,
 } from "../conversations"
 import { E2eStreamsRepository } from "../e2e-streams"
@@ -86,36 +87,42 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
 
   async loadContext(target: DynamicNamingTargetSnapshot): Promise<DynamicNamingTargetContext | null> {
     const fetched = await withClient(this.pool, async (client) => {
-      const conversation = await ConversationRepository.findById(client, target.workspaceId, target.targetId)
-      if (!conversation) return null
-      const stream = await StreamRepository.findById(client, target.workspaceId, conversation.streamId)
+      const stored = await ConversationRepository.findById(client, target.workspaceId, target.targetId)
+      if (!stored) return null
+      const stream = await StreamRepository.findById(client, target.workspaceId, stored.streamId)
       if (!stream || stream.type === StreamTypes.SCRATCHPAD || stream.type === StreamTypes.ASIDE) return null
-      if (await E2eStreamsRepository.isE2eStream(client, target.workspaceId, conversation.streamId)) return null
-      const byId = await MessageRepository.findByIds(client, target.workspaceId, conversation.messageIds)
+      if (await E2eStreamsRepository.isE2eStream(client, target.workspaceId, stored.streamId)) return null
       // A shared channel's titles cross to its partner, so they come from what the partner can read.
       const sharedTree = await findSharedTree(client, target.workspaceId, stream.id)
+      const [conversation] = await viewConversationsAsPartner(client, target.workspaceId, sharedTree, [stored])
+      const byId = await MessageRepository.findByIds(client, target.workspaceId, stored.messageIds)
       const readable = await viewAsPartner(
         client,
         target.workspaceId,
         sharedTree,
-        orderedPrimaryMessages(conversation, byId)
+        orderedPrimaryMessages(stored, byId)
       )
       const messages = readable.slice(-DYNAMIC_NAMING_MAX_MESSAGES)
-      const siblings = (
-        await ConversationRepository.findByStreamIncludingThreads(
-          client,
-          target.workspaceId,
-          stream.rootStreamId ?? stream.id,
-          { limit: DYNAMIC_NAMING_MAX_EXISTING_TITLES + 1 }
-        )
-      ).filter((sibling) => !sharedTree || sharedTree.streamIds.has(sibling.streamId))
+      const siblings = await viewConversationsAsPartner(
+        client,
+        target.workspaceId,
+        sharedTree,
+        (
+          await ConversationRepository.findByStreamIncludingThreads(
+            client,
+            target.workspaceId,
+            stream.rootStreamId ?? stream.id,
+            { limit: DYNAMIC_NAMING_MAX_EXISTING_TITLES + 1 }
+          )
+        ).filter((sibling) => !sharedTree || sharedTree.streamIds.has(sibling.streamId))
+      )
       const attachments = await AttachmentRepository.findByMessageIds(
         client,
         target.workspaceId,
         messages.map((message) => message.id)
       )
       return {
-        conversation,
+        conversation: conversation!,
         messages,
         siblings,
         attachmentIds: [...attachments.values()].flatMap((items) => items.map((item) => item.id)),
@@ -154,6 +161,7 @@ export class DynamicNamingConversationTarget implements DynamicNamingTargetAdapt
       : ""
     return {
       context: `${summary}${messages}`,
+      currentTitle: fetched.conversation.topicSummary,
       existingTitles: fetched.siblings
         .filter((conversation) => conversation.id !== target.targetId && conversation.topicSummary)
         .map((conversation) => conversation.topicSummary!)

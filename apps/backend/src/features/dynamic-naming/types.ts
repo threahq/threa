@@ -53,9 +53,11 @@ export interface DynamicNamingEvaluationInput {
 
 export interface DynamicNamingTargetContext {
   context: string
+  /** The title as the context's reader may see it: a shared channel withholds one its partner never saw. */
+  currentTitle: string | null
   existingTitles: string[]
   /** The shared channel the context was read for, as its partner reads it. */
-  sharedRootStreamId?: string | null
+  sharedRootStreamId: string | null
 }
 
 export type DynamicNamingClaimReason = "ordinary" | "structural" | "regenerate"

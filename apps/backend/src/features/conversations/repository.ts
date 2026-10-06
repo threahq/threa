@@ -1219,6 +1219,33 @@ export const ConversationRepository = {
     }))
   },
 
+  /** The shared channel each conversation's title and its summary were written for. */
+  async findSharedStamps(
+    db: Querier,
+    workspaceId: string,
+    ids: string[]
+  ): Promise<Map<string, { topicSummarySharedRootStreamId: string | null; summarySharedRootStreamId: string | null }>> {
+    if (ids.length === 0) return new Map()
+    const result = await db.query<{
+      id: string
+      topic_summary_shared_root_stream_id: string | null
+      summary_shared_root_stream_id: string | null
+    }>(sql`
+      SELECT id, topic_summary_shared_root_stream_id, summary_shared_root_stream_id
+      FROM conversations
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids})
+    `)
+    return new Map(
+      result.rows.map((row) => [
+        row.id,
+        {
+          topicSummarySharedRootStreamId: row.topic_summary_shared_root_stream_id,
+          summarySharedRootStreamId: row.summary_shared_root_stream_id,
+        },
+      ])
+    )
+  },
+
   /** The copies a partner holds of the conversations in `originWorkspaceId`'s shared channel. */
   async listCopyVersions(
     db: Querier,
@@ -1231,7 +1258,7 @@ export const ConversationRepository = {
       JOIN streams s ON s.workspace_id = c.workspace_id AND s.id = c.stream_id
       WHERE c.workspace_id = ${workspaceId}
         AND c.origin_workspace_id = ${originWorkspaceId}
-        AND COALESCE(s.root_stream_id, s.id) = ${sharedRootStreamId}
+        AND ((s.id = ${sharedRootStreamId} AND s.root_stream_id IS NULL) OR s.root_stream_id = ${sharedRootStreamId})
       ORDER BY c.id
     `)
     return result.rows
