@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useRef, type ReactNode } from "react"
+import { Link } from "react-router-dom"
 import { AtSign, Maximize2, Paperclip, Plus, Slash } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -24,7 +25,9 @@ interface CollapsibleAction {
   /** Accessible name; defaults to `label` when the two should match. */
   ariaLabel?: string
   icon: ReactNode
-  onSelect: () => void
+  onSelect?: () => void
+  /** Where the action navigates; a link rather than a button when set. */
+  href?: string
   /** Lower folds into the overflow menu first as the bar narrows. */
   collapsePriority: number
 }
@@ -92,6 +95,8 @@ export interface ComposerActionBarProps {
   onAttachClick?: () => void
   /** Desktop fullscreen-expand entry point; omitted by hosts without one. */
   onExpandClick?: () => void
+  /** Where expanding navigates, for hosts whose expanded editor lives at a URL. Wins over `onExpandClick`. */
+  expandHref?: string
   /**
    * Dictation button. Can't fold into the "+" menu (its live recording overlays
    * — clock, polish toggle, error toast — anchor to the button), so it stays
@@ -129,6 +134,7 @@ export function ComposerActionBar({
   onInsertCommand,
   onAttachClick,
   onExpandClick,
+  expandHref,
   micButton,
   stashedDraftsTrigger,
   scheduledMessagesTrigger,
@@ -141,7 +147,16 @@ export function ComposerActionBar({
 
   const actions = useMemo<CollapsibleAction[]>(() => {
     const list: CollapsibleAction[] = []
-    if (onExpandClick) {
+    if (expandHref) {
+      list.push({
+        key: "expand",
+        label: "Expand editor",
+        ariaLabel: "Expand editor into a pane",
+        icon: <Maximize2 className="h-3.5 w-3.5" />,
+        href: expandHref,
+        collapsePriority: 1,
+      })
+    } else if (onExpandClick) {
       list.push({
         key: "expand",
         label: "Expand editor",
@@ -184,7 +199,7 @@ export function ComposerActionBar({
       })
     }
     return list
-  }, [onInsertEmoji, onInsertMention, onInsertCommand, onAttachClick, onExpandClick])
+  }, [onInsertEmoji, onInsertMention, onInsertCommand, onAttachClick, onExpandClick, expandHref])
 
   // Un-foldable triggers in keep-priority order (dictation kept longest, schedule
   // dropped first). Each present one stays inline until the bar is squeezed past
@@ -248,9 +263,27 @@ export function ComposerActionBar({
                   flips the whole row, so "+" and its neighbours mirror together
                   and their relative order is preserved. */}
               {[...overflowActions].reverse().map((action) => (
-                <DropdownMenuItem key={action.key} className="gap-2 cursor-pointer" onSelect={action.onSelect}>
-                  <span className="flex h-4 w-4 items-center justify-center text-muted-foreground">{action.icon}</span>
-                  {action.label}
+                <DropdownMenuItem
+                  key={action.key}
+                  className="gap-2 cursor-pointer"
+                  onSelect={action.onSelect}
+                  asChild={action.href !== undefined}
+                >
+                  {action.href !== undefined ? (
+                    <Link to={action.href}>
+                      <span className="flex h-4 w-4 items-center justify-center text-muted-foreground">
+                        {action.icon}
+                      </span>
+                      {action.label}
+                    </Link>
+                  ) : (
+                    <>
+                      <span className="flex h-4 w-4 items-center justify-center text-muted-foreground">
+                        {action.icon}
+                      </span>
+                      {action.label}
+                    </>
+                  )}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
@@ -274,17 +307,29 @@ export function ComposerActionBar({
       {expandAction && (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={expandAction.ariaLabel ?? expandAction.label}
-              className="h-7 w-7 shrink-0"
-              onClick={expandAction.onSelect}
-              disabled={disabled}
-            >
-              {expandAction.icon}
-            </Button>
+            {expandAction.href !== undefined && !disabled ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={expandAction.ariaLabel ?? expandAction.label}
+                className="h-7 w-7 shrink-0"
+                asChild
+              >
+                <Link to={expandAction.href}>{expandAction.icon}</Link>
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label={expandAction.ariaLabel ?? expandAction.label}
+                className="h-7 w-7 shrink-0"
+                onClick={expandAction.onSelect}
+                disabled={disabled}
+              >
+                {expandAction.icon}
+              </Button>
+            )}
           </TooltipTrigger>
           <TooltipContent side="top" className="text-xs">
             {expandAction.label}

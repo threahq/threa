@@ -14,7 +14,7 @@ export interface PaneMapCell {
   focused: boolean
 }
 
-interface PaneFocus {
+export interface PaneFocus {
   /** The tab floating over the rest, or null. */
   focused: string | null
   map: readonly PaneMapCell[]
