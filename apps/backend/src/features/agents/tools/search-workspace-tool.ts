@@ -11,6 +11,7 @@ import { resolveStreamIdentifier } from "./identifier-resolver"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import { workspaceMessageUrl, workspaceStreamUrl } from "../workspace-links"
 import type { WorkspaceToolDeps } from "./tool-deps"
+import { truncateCodePoints } from "../../../lib/truncate"
 
 const SearchMessagesSchema = z.object({
   query: z.string().describe("The search query to find relevant messages in the workspace"),
@@ -182,7 +183,7 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
         const conversations = conversationHits.map((c) => ({
           id: c.id,
           topic: c.topicSummary,
-          summary: c.summary ? truncate(c.summary, 300) : null,
+          summary: c.summary ? truncateCodePoints(c.summary, 297, "...") : null,
           stream: streamNameById.get(c.streamId) ?? "Unknown",
           streamId: c.streamId,
           messageCount: c.messageCount,
@@ -217,7 +218,7 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
             exact: input.exact,
             results: results.slice(0, MAX_RESULTS).map((r) => ({
               id: r.id,
-              content: truncate(r.content, 300),
+              content: truncateCodePoints(r.content, 297, "..."),
               author: r.authorName,
               authorId: r.authorId,
               authorType: r.authorType,
@@ -385,7 +386,7 @@ export function createSearchStreamsTool(deps: WorkspaceToolDeps) {
               id: r.id,
               type: r.type,
               name: r.name ?? "(unnamed)",
-              description: r.description ? truncate(r.description, 100) : null,
+              description: r.description ? truncateCodePoints(r.description, 97, "...") : null,
               url: workspaceStreamUrl(workspaceId, r.id),
             })),
           }),
@@ -548,7 +549,7 @@ You can reference streams by their ID (stream_xxx), slug (general), or prefixed 
             url: workspaceStreamUrl(workspaceId, resolved.id),
             messages: results.map((r) => ({
               id: r.id,
-              content: truncate(r.content, 500),
+              content: truncateCodePoints(r.content, 497, "..."),
               author: r.authorName,
               authorType: r.authorType,
               date: r.createdAt,
@@ -573,11 +574,6 @@ You can reference streams by their ID (stream_xxx), slug (general), or prefixed 
       formatContent: (input) => JSON.stringify({ tool: "get_stream_messages", stream: input.stream ?? null }),
     },
   })
-}
-
-function truncate(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text
-  return text.slice(0, maxLength - 3) + "..."
 }
 
 function scoreStreamSearchResultName(name: string, query: string): number {

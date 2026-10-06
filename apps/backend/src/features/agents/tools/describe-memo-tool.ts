@@ -3,6 +3,7 @@ import { AgentStepTypes, AgentToolNames, MemoStatuses, TOOL_CATEGORIES_BY_NAME }
 import { logger } from "../../../lib/logger"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import type { WorkspaceToolDeps } from "./tool-deps"
+import { truncateCodePoints } from "../../../lib/truncate"
 
 const DescribeMemoSchema = z.object({
   memoId: z.string().describe("The ID of the memo to describe (e.g. memo_xyz from a workspace_research result)"),
@@ -94,7 +95,7 @@ Returns the source messages with their \`messageId\`, \`streamId\`, and \`author
               authorId: m.authorId,
               authorType: m.authorType,
               authorName: m.authorName,
-              contentMarkdownPreview: truncate(m.content, 400),
+              contentMarkdownPreview: truncateCodePoints(m.content, 397, "..."),
               createdAt: m.createdAt.toISOString(),
             })),
           }),
@@ -118,9 +119,4 @@ Returns the source messages with their \`messageId\`, \`streamId\`, and \`author
       formatContent: (input) => JSON.stringify({ tool: "describe_memo", memoId: input.memoId }),
     },
   })
-}
-
-function truncate(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text
-  return text.slice(0, maxLength - 3) + "..."
 }

@@ -5,6 +5,7 @@ import type { GitHubToolDeps } from "./deps"
 import { withGithubClient, isGitHubToolError, toToolResult } from "./client-accessor"
 import { toActor, truncateBytes } from "./format"
 import { toTraceGithubSources } from "./trace"
+import { truncateCodePoints } from "../../../../lib/truncate"
 
 const MAX_ISSUE_BODY_BYTES = 8_000
 const MAX_ISSUE_COMMENTS = 20
@@ -96,7 +97,7 @@ async function searchIssues(deps: GitHubToolDeps, input: IssuesInput): Promise<A
     .slice(0, 10)
     .map((i: any) => ({
       type: "github" as const,
-      title: `${i.kind === "pull_request" ? "PR" : "Issue"} #${i.number}: ${i.title}`.slice(0, 200),
+      title: truncateCodePoints(`${i.kind === "pull_request" ? "PR" : "Issue"} #${i.number}: ${i.title}`, 200),
       url: i.htmlUrl,
     }))
 
@@ -177,7 +178,10 @@ async function getIssue(deps: GitHubToolDeps, input: IssuesInput): Promise<Agent
     ? [
         {
           type: "github",
-          title: `${result.kind === "pull_request" ? "PR" : "Issue"} #${result.number}: ${result.title}`.slice(0, 200),
+          title: truncateCodePoints(
+            `${result.kind === "pull_request" ? "PR" : "Issue"} #${result.number}: ${result.title}`,
+            200
+          ),
           url: result.htmlUrl,
         },
       ]

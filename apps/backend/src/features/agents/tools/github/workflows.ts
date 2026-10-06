@@ -5,6 +5,7 @@ import { defineAgentTool, type AgentToolResult } from "../../runtime"
 import type { GitHubToolDeps } from "./deps"
 import { withGithubClient, isGitHubToolError, toToolResult } from "./client-accessor"
 import { toTraceGithubSources } from "./trace"
+import { truncateCodePoints } from "../../../../lib/truncate"
 
 const MAX_JOBS_PER_RUN = 20
 const MAX_JOB_LOG_BYTES = 12_000
@@ -108,7 +109,7 @@ async function listWorkflowRuns(deps: GitHubToolDeps, input: WorkflowsInput): Pr
     .slice(0, 10)
     .map((r: any) => ({
       type: "github" as const,
-      title: `${r.name ?? "workflow"} #${r.runNumber} (${r.conclusion ?? r.status})`.slice(0, 200),
+      title: truncateCodePoints(`${r.name ?? "workflow"} #${r.runNumber} (${r.conclusion ?? r.status})`, 200),
       url: r.htmlUrl,
     }))
 
