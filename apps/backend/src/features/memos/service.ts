@@ -22,6 +22,7 @@ import { UserRepository } from "../workspaces"
 import { WorkspaceSettingsRepository } from "../workspace-settings"
 import type { MemoAudience } from "./audience"
 import { MemoRepository, type Memo } from "./repository"
+import { publishSharedMemoChanges } from "./embed-summaries"
 import { indexCapturedMemos, recordConversationCaptures } from "./captures"
 import { PendingItemRepository, type PendingMemoItem } from "./pending-item-repository"
 import { classificationFingerprint } from "./classification-fingerprint"
@@ -972,6 +973,8 @@ export class MemoService implements MemoServiceLike {
               explicitSupersedeIds,
               `Conclusion reversed; corrected knowledge already captured by ${duplicate.memo.id}`
             )
+            const retired = await MemoRepository.findByIdsInWorkspace(client, workspaceId, explicitSupersedeIds)
+            await publishSharedMemoChanges(client, [...retired.values()])
           }
           memosDeduped++
           logger.info(

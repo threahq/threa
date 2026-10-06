@@ -22,7 +22,7 @@ import {
 import { HttpError, streamConnectionId } from "@threahq/backend-common"
 import { addTestMember, createTestStorage, setupIsolatedTestDatabase, testMessageContent } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { EventService } from "../../src/features/messaging"
+import { EventService, MessageRepository } from "../../src/features/messaging"
 import { StreamRepository } from "../../src/features/streams"
 import { ConversationRepository } from "../../src/features/conversations"
 import {
@@ -32,14 +32,18 @@ import {
   type EmbeddingServiceLike,
   type InsertMemoParams,
 } from "../../src/features/memos"
+import { retireMemosCitingDeletedMessage } from "../../src/features/memos/accumulator-outbox-handler"
+import { withTransaction } from "../../src/db"
 import { FeatureFlagOverrideRepository, FeatureFlagService } from "../../src/features/feature-flags"
 import {
   BridgeClient,
   StreamConnectionExportService,
+  StreamConnectionPokeHandler,
   StreamConnectionPullService,
   StreamConnectionRepository,
 } from "../../src/features/stream-connections"
 import { conversationId, eventId, memoId, streamId, userId, workspaceId } from "../../src/lib/id"
+import type { OutboxEvent } from "../../src/lib/outbox"
 
 type Address = Parameters<BridgeClient["getManifest"]>[0]
 
@@ -85,6 +89,25 @@ class DirectBridgeClient extends BridgeClient {
     this.beforeNextWrite = null
     if (interleaved) await interleaved()
     return { memos: this.tamper ? this.tamper(memos) : memos }
+  }
+}
+
+/** Records the pokes a handler sends instead of sending them. */
+class RecordingBridgeClient extends BridgeClient {
+  readonly pokes: Parameters<BridgeClient["poke"]>[0][] = []
+
+  constructor() {
+    super({ routerUrl: "http://bridge.invalid", apiKey: "unused" })
+  }
+
+  override async poke(params: Parameters<BridgeClient["poke"]>[0]): Promise<void> {
+    this.pokes.push(params)
+  }
+}
+
+class TestPokeHandler extends StreamConnectionPokeHandler {
+  run(events: OutboxEvent[]) {
+    return this.processBatch(events)
   }
 }
 
@@ -244,6 +267,20 @@ describe("Memos in a shared channel's copy", () => {
       [world.partner.id]
     )
     return rows.map((row) => row.payload)
+  }
+
+  async function hostSharedChangeOutbox(world: World): Promise<OutboxEvent[]> {
+    const { rows } = await pool.query(
+      `SELECT id, event_type, payload, created_at FROM outbox
+       WHERE event_type = 'memo:shared_changed' AND payload->>'workspaceId' = $1 ORDER BY id`,
+      [world.host.id]
+    )
+    return rows.map((row) => ({
+      id: BigInt(row.id),
+      eventType: row.event_type,
+      payload: row.payload,
+      createdAt: row.created_at,
+    }))
   }
 
   test("should copy each memo the host captured while sharing, and show it captured in its stream, when the partner pulls", async () => {
@@ -598,6 +635,65 @@ describe("Memos in a shared channel's copy", () => {
     expect({ index, bodies: memos.map((memo) => ({ id: memo.id, participantIds: memo.participantIds })) }).toEqual({
       index: { memos: [{ id: shared, cardVersion: 1 }] },
       bodies: [{ id: shared, participantIds: [world.host.adminId] }],
+    })
+  })
+
+  test("should poke the partner when a host member edits, archives or restores a memo captured while sharing, and not one captured before", async () => {
+    const world = await seedWorld()
+    const message = await hostMessage(world, "we picked postgres")
+    const conversation = await hostConversation(world)
+    const shared = await hostMemo(world, conversation, "Shared", [message.id])
+    const beforeShare = await hostMemo(world, conversation, "Before share", [message.id], {
+      sharedRootStreamId: undefined,
+    })
+    const explorer = new MemoExplorerService({
+      pool,
+      embeddingService: { embed: async () => EMBEDDING } as unknown as EmbeddingServiceLike,
+      reranker: new StubReranker(),
+    })
+    const permissions = {
+      accessibleStreamIds: [world.channel.id],
+      userId: world.host.adminId,
+      audiences: [{ kind: "users" as const, userIds: [world.host.adminId] }],
+    }
+    const acted = []
+    for (const memo of [shared, beforeShare]) {
+      acted.push(
+        (await explorer.update(world.host.id, memo, permissions, { title: "Edited" }))?.memo.status,
+        (await explorer.archive(world.host.id, memo, permissions))?.memo.status,
+        (await explorer.unarchive(world.host.id, memo, permissions))?.memo.status
+      )
+    }
+
+    const changes = await hostSharedChangeOutbox(world)
+    const bridgeClient = new RecordingBridgeClient()
+    await new TestPokeHandler(pool, bridgeClient).run(changes)
+
+    const change = { workspaceId: world.host.id, streamId: world.channel.id, memoId: shared }
+    expect({ acted, changes: changes.map((event) => event.payload), pokes: bridgeClient.pokes }).toEqual({
+      acted: ["active", "archived", "active", "active", "archived", "active"],
+      changes: [change, change, change],
+      pokes: [
+        { hostWorkspaceId: world.host.id, connectionId: world.connectionId, partnerWorkspaceId: world.partner.id },
+      ],
+    })
+  })
+
+  test("should poke the partner when a deleted source retires a memo captured while sharing, and not one captured before", async () => {
+    const world = await seedWorld()
+    const message = await hostMessage(world, "we picked postgres")
+    const conversation = await hostConversation(world)
+    const shared = await hostMemo(world, conversation, "Shared", [message.id])
+    await hostMemo(world, conversation, "Before share", [message.id], { sharedRootStreamId: undefined })
+    await MessageRepository.softDelete(pool, world.host.id, message.id)
+
+    const retired = await withTransaction(pool, (client) =>
+      retireMemosCitingDeletedMessage(client, world.host.id, world.channel.id, message.id)
+    )
+
+    expect({ retired, changes: (await hostSharedChangeOutbox(world)).map((event) => event.payload) }).toEqual({
+      retired: 2,
+      changes: [{ workspaceId: world.host.id, streamId: world.channel.id, memoId: shared }],
     })
   })
 

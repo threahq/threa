@@ -105,6 +105,7 @@ interface MemoRow {
   scope: string
   scope_user_id: string | null
   origin_workspace_id: string | null
+  shared_root_stream_id: string | null
   created_at: Date
   updated_at: Date
   archived_at: Date | null
@@ -142,6 +143,8 @@ export interface Memo {
   scopeUserId: string | null
   /** Set on a partner's read-only copy of a memo captured in a channel another workspace shares with it. */
   originWorkspaceId: string | null
+  /** The shared channel this memo was captured from while shared; null when it never crossed. */
+  sharedRootStreamId: string | null
   createdAt: Date
   updatedAt: Date
   archivedAt: Date | null
@@ -340,6 +343,7 @@ function mapRowToMemo(row: MemoRow): Memo {
     scope: row.scope as MemoScope,
     scopeUserId: row.scope_user_id,
     originWorkspaceId: row.origin_workspace_id,
+    sharedRootStreamId: row.shared_root_stream_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archivedAt: row.archived_at,
@@ -351,7 +355,7 @@ const SELECT_FIELDS = `
   title, abstract, key_points, source_message_ids, participant_ids,
   knowledge_type, tags, parent_memo_id, status, version, card_version, revision_reason,
   authored_by_kind, source_session_id, source_stream_ids, requires_browse, scope, scope_user_id,
-  origin_workspace_id, created_at, updated_at, archived_at
+  origin_workspace_id, shared_root_stream_id, created_at, updated_at, archived_at
 `
 
 const SELECT_FIELDS_PREFIXED = `
@@ -359,7 +363,7 @@ const SELECT_FIELDS_PREFIXED = `
   m.title, m.abstract, m.key_points, m.source_message_ids, m.participant_ids,
   m.knowledge_type, m.tags, m.parent_memo_id, m.status, m.version, m.card_version, m.revision_reason,
   m.authored_by_kind, m.source_session_id, m.source_stream_ids, m.requires_browse, m.scope, m.scope_user_id,
-  m.origin_workspace_id, m.created_at, m.updated_at, m.archived_at
+  m.origin_workspace_id, m.shared_root_stream_id, m.created_at, m.updated_at, m.archived_at
 `
 const SELECT_FIELDS_SQL = rawSql(SELECT_FIELDS)
 const SELECT_FIELDS_PREFIXED_SQL = rawSql(SELECT_FIELDS_PREFIXED)

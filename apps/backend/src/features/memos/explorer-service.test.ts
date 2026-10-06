@@ -38,6 +38,7 @@ function fakeMemo(overrides: Partial<Memo> = {}): Memo {
     scope: "workspace",
     scopeUserId: null,
     originWorkspaceId: null,
+    sharedRootStreamId: null,
     createdAt: new Date("2026-05-01T00:00:00Z"),
     updatedAt: new Date("2026-05-01T00:00:00Z"),
     sourceStreamIds: null,
@@ -169,6 +170,11 @@ describe("MemoExplorerService.update (roadmap 6.1)", () => {
 })
 
 describe("MemoExplorerService.archive / unarchive (roadmap 6.1)", () => {
+  beforeEach(() => {
+    spyOn(dbModule, "withTransaction").mockImplementation((async (_pool: unknown, fn: (c: unknown) => unknown) =>
+      fn({} as never)) as typeof dbModule.withTransaction)
+  })
+
   it("archives an accessible memo", async () => {
     const { service } = buildService()
     stubSourceStreamResolution()

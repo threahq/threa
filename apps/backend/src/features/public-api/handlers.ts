@@ -449,6 +449,7 @@ function serializeMemo({
   cardVersion: _cardVersion,
   sourceStreamIds: _sourceStreamIds,
   requiresBrowse: _requiresBrowse,
+  sharedRootStreamId: _sharedRootStreamId,
   ...memo
 }: Memo) {
   return {

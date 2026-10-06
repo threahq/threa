@@ -72,6 +72,7 @@ export type OutboxEventType =
   | "board:stream_mute_changed"
   | "memo:created"
   | "memo:updated"
+  | "memo:shared_changed"
   | "command:dispatched"
   | "command:completed"
   | "command:failed"
@@ -697,6 +698,15 @@ export interface MemoCreatedOutboxPayload extends StreamScopedPayload {
 export interface MemoUpdatedOutboxPayload extends StreamScopedPayload {
   memoId: string
   summary: MemoEmbedSummary
+}
+
+/**
+ * A memo captured from a shared channel changed or retired without a new memo
+ * being created, so the channel's partner re-pulls it now. Internal: never
+ * broadcast or logged. `streamId` is the shared channel the memo is stamped with.
+ */
+export interface MemoSharedChangedOutboxPayload extends StreamScopedPayload {
+  memoId: string
 }
 
 // Author-scoped event payloads (only visible to the author)
@@ -1466,6 +1476,7 @@ export interface OutboxEventPayloadMap {
   "board:stream_mute_changed": BoardStreamMuteChangedOutboxPayload
   "memo:created": MemoCreatedOutboxPayload
   "memo:updated": MemoUpdatedOutboxPayload
+  "memo:shared_changed": MemoSharedChangedOutboxPayload
   "command:dispatched": CommandDispatchedOutboxPayload
   "command:completed": CommandCompletedOutboxPayload
   "command:failed": CommandFailedOutboxPayload

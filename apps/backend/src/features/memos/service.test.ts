@@ -615,6 +615,30 @@ describe("MemoService.processBatch — explicit supersession (reversed conclusio
     )
   })
 
+  it("should poke the partner when a memo captured while sharing retires behind a duplicate", async () => {
+    const reversal: MemoContent = { ...memoContent, supersedesMemoIds: ["memo_wrong", "memo_before_share"] }
+    const { service, outboxInsertMany } = setupService({ memoContents: [reversal] })
+    spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue({
+      memo: fakeMemoRow("memo_unrelated_dupe"),
+      distance: 0.1,
+    })
+    spyOn(MemoRepository, "findByIdsInWorkspace").mockResolvedValue(
+      new Map([
+        ["memo_wrong", fakeMemoRow("memo_wrong", { sharedRootStreamId: "stream_shared" })],
+        ["memo_before_share", fakeMemoRow("memo_before_share")],
+      ])
+    )
+
+    await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(outboxInsertMany).toHaveBeenCalledWith(expect.anything(), [
+      {
+        eventType: "memo:shared_changed",
+        payload: { workspaceId: WORKSPACE_ID, streamId: "stream_shared", memoId: "memo_wrong" },
+      },
+    ])
+  })
+
   it("keeps the explicit parent when the embedding fallback also finds near memos", async () => {
     const reversal: MemoContent = { ...memoContent, supersedesMemoIds: ["memo_old_a"] }
     const { service } = setupService({ memoContents: [reversal] })
@@ -654,6 +678,7 @@ function fakeMemoRow(id: string, overrides: Partial<import("./repository").Memo>
     scope: "workspace",
     scopeUserId: null,
     originWorkspaceId: null,
+    sharedRootStreamId: null,
     createdAt: new Date(),
     updatedAt: new Date(),
     sourceStreamIds: null,

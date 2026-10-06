@@ -7,7 +7,7 @@ import { detectSearchConfig } from "../../lib/text-search-config"
 import { ConversationRepository } from "../conversations"
 import { MessageRepository, type Message } from "../messaging"
 import { MemoRepository, memoSearchText, type Memo, type MemoSearchFilters } from "./repository"
-import { publishMemoCardUpdates } from "./embed-summaries"
+import { publishMemoCardUpdates, publishSharedMemoChanges } from "./embed-summaries"
 import { classifyMemoQueryIntent } from "./query-intent"
 import { resolveMemoSearchMode, MEMO_RERANKER_CANDIDATE_LIMIT, type MemoSearchMode } from "./config"
 import type { RerankerLike } from "./reranker"
@@ -297,7 +297,10 @@ export class MemoExplorerService {
       if (row && embedding) {
         await MemoRepository.updateEmbedding(client, workspaceId, memoId, embedding)
       }
-      if (row) await publishMemoCardUpdates(client, workspaceId, [row.id])
+      if (row) {
+        await publishMemoCardUpdates(client, workspaceId, [row.id])
+        await publishSharedMemoChanges(client, [row])
+      }
       return row
     })
 
@@ -317,7 +320,11 @@ export class MemoExplorerService {
       return null
     }
     assertOwnMemo(resolved.memo)
-    const archived = await MemoRepository.archive(this.pool, workspaceId, memoId)
+    const archived = await withTransaction(this.pool, async (client) => {
+      const row = await MemoRepository.archive(client, workspaceId, memoId)
+      if (row) await publishSharedMemoChanges(client, [row])
+      return row
+    })
     if (!archived) {
       return null
     }
@@ -334,7 +341,11 @@ export class MemoExplorerService {
       return null
     }
     assertOwnMemo(resolved.memo)
-    const restored = await MemoRepository.unarchive(this.pool, workspaceId, memoId)
+    const restored = await withTransaction(this.pool, async (client) => {
+      const row = await MemoRepository.unarchive(client, workspaceId, memoId)
+      if (row) await publishSharedMemoChanges(client, [row])
+      return row
+    })
     // null when the memo was not archived (e.g. superseded) — nothing to restore.
     if (!restored) {
       return null

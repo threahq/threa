@@ -4,7 +4,7 @@ import type { PoolClient } from "pg"
 import type { Querier } from "../../db"
 import { OutboxRepository } from "../../lib/outbox"
 import { StreamRepository } from "../streams"
-import { MemoRepository } from "./repository"
+import { MemoRepository, type Memo } from "./repository"
 
 /**
  * Card content for every memo a message body references, for the payload that
@@ -144,5 +144,24 @@ export async function publishMemoCardUpdates(
     const summary = summariesByStream.get(streamId)?.get(memoId)
     return summary ? [{ eventType: "memo:updated" as const, payload: { workspaceId, streamId, memoId, summary } }] : []
   })
+  if (entries.length > 0) await OutboxRepository.insertMany(client, entries)
+}
+
+/**
+ * Pokes the partners of the shared channels these memos were captured from, in
+ * the caller's transaction (INV-4/7). Without it a partner sees a copied memo
+ * change or retire only on its next sweep. Memos that never crossed are skipped.
+ */
+export async function publishSharedMemoChanges(client: PoolClient, memos: Memo[]): Promise<void> {
+  const entries = memos.flatMap((memo) =>
+    memo.sharedRootStreamId
+      ? [
+          {
+            eventType: "memo:shared_changed" as const,
+            payload: { workspaceId: memo.workspaceId, streamId: memo.sharedRootStreamId, memoId: memo.id },
+          },
+        ]
+      : []
+  )
   if (entries.length > 0) await OutboxRepository.insertMany(client, entries)
 }

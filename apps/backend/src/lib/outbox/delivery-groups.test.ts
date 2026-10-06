@@ -46,6 +46,14 @@ describe("resolveDeliveryGroups — internal events", () => {
       )
     ).toEqual([])
   })
+
+  it("should keep a shared memo change out of client delivery when a partner is poked", () => {
+    expect(
+      resolveDeliveryGroups(
+        event("memo:shared_changed", { workspaceId: "ws_1", streamId: "stream_1", memoId: "memo_1" })
+      )
+    ).toEqual([])
+  })
 })
 
 describe("resolveDeliveryGroups — stream:created thread routing", () => {
