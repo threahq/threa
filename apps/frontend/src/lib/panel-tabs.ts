@@ -140,8 +140,8 @@ function insertColumn(layout: PanelLayout, index: number, section: PanelSection)
 /** Floats `id` over the rest, bringing it to the front of its section; null puts it back. */
 export function focusPanelTab(layout: PanelLayout, id: string | null): PanelLayout {
   if (id === layout.focused || (id !== null && !locate(layout, id))) return layout
-  const { columns } = id === null ? layout : activatePanelTab(layout, id)
-  return id === null ? { columns } : { columns, focused: id }
+  if (id === null) return { columns: layout.columns }
+  return { columns: activatePanelTab(layout, id).columns, focused: id }
 }
 
 export function activatePanelTab(layout: PanelLayout, id: string): PanelLayout {
