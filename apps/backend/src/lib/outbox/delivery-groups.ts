@@ -223,9 +223,9 @@ export function workspaceUserOf(event: OutboxEvent): { workspaceId: string; user
  * emitted.
  */
 export function resolveDeliveryGroups(event: OutboxEvent): string[] | null {
-  // Internal lifecycle wake-up: clients receive the resulting title projection,
-  // never this scheduler request in workspace sync logs or sockets.
-  if (isOutboxEventType(event, "dynamic_naming:requested")) return []
+  // Internal wake-ups: clients receive what they cause (a title projection, a
+  // partner's re-pull), never the request itself in sync logs or sockets.
+  if (isOneOfOutboxEventType(event, ["dynamic_naming:requested", "memo:shared_changed"])) return []
   if (isBotScopedEvent(event)) {
     return null
   }

@@ -59,7 +59,7 @@ describe("memo sources: deleted and edited messages", () => {
   /** A resolved two-message conversation in its own public channel, with nothing queued. */
   async function seedConversation(
     memoryMode: MemoryMode = MemoryModes.AUTO,
-    stream: { type: StreamType; visibility: Visibility } = {
+    stream: { type: StreamType; visibility: Visibility; originWorkspaceId?: string } = {
       type: StreamTypes.CHANNEL,
       visibility: Visibilities.PUBLIC,
     }
@@ -663,5 +663,20 @@ describe("memo sources: deleted and edited messages", () => {
       onlyDeleted: MemoStatuses.ARCHIVED,
       partlyDeleted: MemoStatuses.SUPERSEDED,
     })
+  })
+
+  test("should leave a shared copy's deleted sources to its host when the backfill plans", async () => {
+    const seeded = await seedConversation(MemoryModes.AUTO, {
+      type: StreamTypes.CHANNEL,
+      visibility: Visibilities.PUBLIC,
+      originWorkspaceId: workspaceId(),
+    })
+    const [deletedId] = seeded.messageIds
+    await seedMemo(seeded, [deletedId])
+    await MessageRepository.softDelete(pool, testWorkspaceId, deletedId)
+
+    const planned = (await plan({ pool }, testWorkspaceId)).flatMap((chunk) => chunk.ids)
+
+    expect(planned).not.toContain(deletedId)
   })
 })

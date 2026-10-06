@@ -26,6 +26,7 @@ const SHARED_CHANGE_EVENTS = [
   "stream:display_name_updated",
   "stream:description_set",
   "memo:created",
+  "memo:shared_changed",
   "conversation:created",
   "conversation:updated",
 ] satisfies OutboxEventType[]

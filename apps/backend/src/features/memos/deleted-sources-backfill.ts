@@ -8,7 +8,11 @@ const MEMO_DELETED_SOURCES_BACKFILL_NAME = "memo-deleted-sources"
 
 type MemoDeletedSourcesChunk = { ids: string[] }
 
-/** Deleted messages that active memos still cite, from before deletes retired them. */
+/**
+ * Deleted messages that active memos still cite, from before deletes retired
+ * them. Copy streams are skipped, as on the live path: their host retires the
+ * memos and the partner's pull withdraws the copies.
+ */
 export async function plan(ctx: BackfillContext, workspaceId: string): Promise<MemoDeletedSourcesChunk[]> {
   const result = await ctx.pool.query<{ id: string }>(composeSql`
     SELECT DISTINCT msg.id
@@ -16,6 +20,7 @@ export async function plan(ctx: BackfillContext, workspaceId: string): Promise<M
     JOIN messages msg ON msg.id = ANY(m.source_message_ids) AND msg.workspace_id = m.workspace_id
     JOIN streams s ON s.id = msg.stream_id AND s.workspace_id = m.workspace_id
     WHERE m.workspace_id = ${workspaceId} AND m.status = 'active' AND msg.deleted_at IS NOT NULL
+      AND s.origin_workspace_id IS NULL
     ORDER BY msg.id
   `)
   return chunkIds(result.rows.map((row) => row.id)).map((ids) => ({ ids }))

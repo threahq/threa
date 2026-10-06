@@ -3,6 +3,7 @@ import { StreamRepository, StreamStateRepository, findMemoryModeStream, isMemory
 import { ConversationRepository } from "../conversations"
 import { PendingItemRepository } from "./pending-item-repository"
 import { MemoRepository } from "./repository"
+import { publishSharedMemoChanges } from "./embed-summaries"
 import { pendingItemId } from "../../lib/id"
 import { logger } from "../../lib/logger"
 import { DebouncedOutboxHandler, type DebouncedOutboxHandlerConfig, type OutboxEvent } from "../../lib/outbox"
@@ -135,6 +136,10 @@ export async function retireMemosCitingDeletedMessage(
   const superseded = citing.filter((c) => c.hasLiveSource).map((c) => c.memo.id)
   await MemoRepository.archiveMany(client, workspaceId, archived)
   await MemoRepository.markSuperseded(client, workspaceId, superseded, "A source message was deleted")
+  await publishSharedMemoChanges(
+    client,
+    citing.map((c) => c.memo)
+  )
   return archived.length + superseded.length
 }
 
