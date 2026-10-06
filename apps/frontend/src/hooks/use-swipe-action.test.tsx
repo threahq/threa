@@ -1,5 +1,6 @@
+import { useLayoutEffect, useRef } from "react"
 import { describe, it, expect, vi } from "vitest"
-import { renderHook, act } from "@testing-library/react"
+import { renderHook, act, render, screen, fireEvent } from "@testing-library/react"
 import { useSwipeAction } from "./use-swipe-action"
 
 function touchEvent(target: EventTarget, x: number, y: number): React.TouchEvent {
@@ -7,6 +8,30 @@ function touchEvent(target: EventTarget, x: number, y: number): React.TouchEvent
     target,
     touches: [{ clientX: x, clientY: y }],
   } as unknown as React.TouchEvent
+}
+
+const hosted = (host: HTMLElement, x: number, y: number) =>
+  ({ ...touchEvent(host, x, y), currentTarget: host }) as React.TouchEvent
+
+function follower(tag = "div"): HTMLElement {
+  const el = document.createElement(tag)
+  el.setAttribute("data-swipe-follow", "")
+  return el
+}
+
+function InboxRow({ onRevealLayout }: { onRevealLayout: (swipeX: string) => void }) {
+  const swipe = useSwipeAction({ onSwipe: () => {}, threshold: 80, direction: "right" })
+  const revealRef = useRef<HTMLSpanElement>(null)
+  // Layout effects run before the browser paints, so this is what the reveal's first frame shows.
+  useLayoutEffect(() => {
+    if (revealRef.current) onRevealLayout(revealRef.current.style.getPropertyValue("--swipe-x"))
+  })
+  return (
+    <div data-swipe-host>
+      {swipe.isSwiping && <span ref={revealRef} data-swipe-follow />}
+      <a data-testid="row" data-swipe-follow {...swipe.handlers} />
+    </div>
+  )
 }
 
 function makeScroller({
@@ -41,7 +66,7 @@ describe("useSwipeAction", () => {
     })
 
     expect(onSwipe).not.toHaveBeenCalled()
-    expect(result.current.offset).toBe(0)
+    expect(result.current.isSwiping).toBe(false)
     expect(result.current.isLocked).toBe(false)
 
     el.remove()
@@ -66,19 +91,86 @@ describe("useSwipeAction", () => {
   it("with direction right, fires on a rightward swipe and follows the finger with a positive offset", () => {
     const onSwipe = vi.fn()
     const { result } = renderHook(() => useSwipeAction({ onSwipe, threshold: 80, direction: "right" }))
-    const target = document.createElement("div")
+    const target = follower()
     document.body.appendChild(target)
 
     act(() => {
-      result.current.handlers.onTouchStart(touchEvent(target, 100, 100))
+      result.current.handlers.onTouchStart(hosted(target, 100, 100))
       result.current.handlers.onTouchMove(touchEvent(target, 190, 100))
     })
-    expect({ offset: result.current.offset, isLocked: result.current.isLocked }).toEqual({ offset: 90, isLocked: true })
+    expect({
+      x: target.style.getPropertyValue("--swipe-x"),
+      isSwiping: result.current.isSwiping,
+      isLocked: result.current.isLocked,
+    }).toEqual({ x: "90px", isSwiping: true, isLocked: true })
 
     act(() => result.current.handlers.onTouchEnd())
     expect(onSwipe).toHaveBeenCalledTimes(1)
+    expect(target.style.getPropertyValue("--swipe-x")).toBe("")
 
     target.remove()
+  })
+
+  it("follows the finger without rendering: a move that flips no flag never reaches React", () => {
+    let renders = 0
+    const { result } = renderHook(() => {
+      renders++
+      return useSwipeAction({ onSwipe: vi.fn(), threshold: 80 })
+    })
+    const target = follower()
+    document.body.appendChild(target)
+
+    act(() => {
+      result.current.handlers.onTouchStart(hosted(target, 200, 100))
+      result.current.handlers.onTouchMove(touchEvent(target, 180, 100))
+    })
+    const afterStart = renders
+    const seen: string[] = []
+    for (const x of [175, 170, 160, 150, 140, 130]) {
+      act(() => result.current.handlers.onTouchMove(touchEvent(target, x, 100)))
+      seen.push(target.style.getPropertyValue("--swipe-x"))
+    }
+    expect({ seen, renders: renders - afterStart }).toEqual({
+      seen: ["-25px", "-30px", "-40px", "-50px", "-60px", "-70px"],
+      renders: 0,
+    })
+
+    target.remove()
+  })
+
+  it("writes the offset on the followers inside the nearest [data-swipe-host], and on nothing else", () => {
+    const { result } = renderHook(() => useSwipeAction({ onSwipe: vi.fn(), threshold: 80, direction: "right" }))
+    const host = document.createElement("div")
+    host.setAttribute("data-swipe-host", "")
+    const row = follower("a")
+    const label = document.createElement("span")
+    row.appendChild(label)
+    const reveal = follower()
+    host.append(reveal, row)
+    document.body.appendChild(host)
+
+    const read = () => [host, row, label, reveal].map((el) => el.style.getPropertyValue("--swipe-x"))
+    act(() => {
+      result.current.handlers.onTouchStart(hosted(row, 100, 100))
+      result.current.handlers.onTouchMove(touchEvent(row, 140, 100))
+    })
+    expect(read()).toEqual(["", "40px", "", "40px"])
+
+    act(() => result.current.handlers.onTouchEnd())
+    expect(read()).toEqual(["", "", "", ""])
+
+    host.remove()
+  })
+
+  it("a follower the swipe itself mounts has the offset before its first paint", () => {
+    const atLayout: string[] = []
+    render(<InboxRow onRevealLayout={(swipeX) => atLayout.push(swipeX)} />)
+    const row = screen.getByTestId("row")
+
+    fireEvent.touchStart(row, { touches: [{ clientX: 100, clientY: 100 }] })
+    fireEvent.touchMove(row, { touches: [{ clientX: 140, clientY: 100 }] })
+
+    expect(atLayout).toEqual(["40px"])
   })
 
   it("with direction right, ignores a leftward swipe", () => {
@@ -94,7 +186,7 @@ describe("useSwipeAction", () => {
     })
 
     expect(onSwipe).not.toHaveBeenCalled()
-    expect(result.current.offset).toBe(0)
+    expect(result.current.isSwiping).toBe(false)
 
     target.remove()
   })
@@ -119,16 +211,16 @@ describe("useSwipeAction", () => {
   it("snaps back to 0 and does not fire onSwipe when the touch is cancelled mid-swipe", () => {
     const onSwipe = vi.fn()
     const { result } = renderHook(() => useSwipeAction({ onSwipe, threshold: 80 }))
-    const target = document.createElement("div")
+    const target = follower()
     document.body.appendChild(target)
 
     act(() => {
-      result.current.handlers.onTouchStart(touchEvent(target, 200, 100))
+      result.current.handlers.onTouchStart(hosted(target, 200, 100))
       result.current.handlers.onTouchMove(touchEvent(target, 110, 100))
     })
 
     // Mid-swipe the message is shifted left.
-    expect(result.current.offset).toBeLessThan(0)
+    expect(target.style.getPropertyValue("--swipe-x")).toBe("-90px")
 
     act(() => {
       // The browser/OS takes over the gesture and fires touchcancel
@@ -137,7 +229,8 @@ describe("useSwipeAction", () => {
     })
 
     // Offset must reset so the message does not stay stuck shifted left.
-    expect(result.current.offset).toBe(0)
+    expect(target.style.getPropertyValue("--swipe-x")).toBe("")
+    expect(result.current.isSwiping).toBe(false)
     expect(result.current.isLocked).toBe(false)
     expect(onSwipe).not.toHaveBeenCalled()
 
@@ -214,7 +307,7 @@ describe("useSwipeAction", () => {
       Object.defineProperty(scroller, "clientHeight", { value: 500, configurable: true })
       const cell = document.createElement("div")
       cell.style.position = "absolute"
-      const row = document.createElement("div")
+      const row = follower()
       cell.appendChild(row)
       scroller.appendChild(cell)
       document.body.appendChild(scroller)
@@ -234,8 +327,6 @@ describe("useSwipeAction", () => {
       }
       return { scroller, cell, row, nativeMove, listeners }
     }
-    const withCurrentTarget = (row: HTMLElement, x: number, y: number) =>
-      ({ ...touchEvent(row, x, y), currentTarget: row }) as React.TouchEvent
 
     it("takes the touch half-way to the threshold: moves are prevented and the timeline is pinned until release", () => {
       const onSwipeDown = vi.fn()
@@ -243,7 +334,7 @@ describe("useSwipeAction", () => {
       const { scroller, cell, row, nativeMove, listeners } = scrollerWithRow()
 
       act(() => {
-        result.current.handlers.onTouchStart(withCurrentTarget(row, 200, 100))
+        result.current.handlers.onTouchStart(hosted(row, 200, 100))
         result.current.handlers.onTouchMove(touchEvent(row, 170, 100))
       })
       expect(nativeMove()).not.toHaveBeenCalled()
@@ -258,17 +349,19 @@ describe("useSwipeAction", () => {
         result.current.handlers.onTouchMove(touchEvent(row, 100, 100))
         result.current.handlers.onTouchMove(touchEvent(row, 100, 120))
       })
-      expect(result.current.offsetY).toBe(20)
+      expect(row.style.getPropertyValue("--swipe-y")).toBe("20px")
+      expect(result.current.isPulled).toBe(true)
       // The virtualizer's cell is raised so the pulled row paints over the next one.
       expect(cell.style.zIndex).toBe("1")
       act(() => result.current.handlers.onTouchMove(touchEvent(row, 100, 200)))
-      expect(result.current.offsetY).toBe(36)
+      expect(row.style.getPropertyValue("--swipe-y")).toBe("36px")
       expect(result.current.arm).toBe("down")
 
       act(() => result.current.handlers.onTouchEnd())
       expect(onSwipeDown).toHaveBeenCalledTimes(1)
       expect(scroller.style.overflowY).toBe("auto")
-      expect(result.current.offsetY).toBe(0)
+      expect(row.style.getPropertyValue("--swipe-y")).toBe("")
+      expect(result.current.isPulled).toBe(false)
       expect(cell.style.zIndex).toBe("")
       expect(listeners).toHaveLength(0)
       scroller.remove()
@@ -276,7 +369,7 @@ describe("useSwipeAction", () => {
 
     function claimAndRaise(result: { current: ReturnType<typeof useSwipeAction> }, row: HTMLElement) {
       act(() => {
-        result.current.handlers.onTouchStart(withCurrentTarget(row, 200, 100))
+        result.current.handlers.onTouchStart(hosted(row, 200, 100))
         result.current.handlers.onTouchMove(touchEvent(row, 100, 100))
         result.current.handlers.onTouchMove(touchEvent(row, 100, 120))
       })
@@ -302,16 +395,20 @@ describe("useSwipeAction", () => {
         overflowY: scroller.style.overflowY,
         zIndex: cell.style.zIndex,
         listeners: listeners.length,
-        offset: result.current.offset,
-        offsetY: result.current.offsetY,
+        x: row.style.getPropertyValue("--swipe-x"),
+        y: row.style.getPropertyValue("--swipe-y"),
+        isSwiping: result.current.isSwiping,
+        isPulled: result.current.isPulled,
         isLocked: result.current.isLocked,
         arm: result.current.arm,
       }).toEqual({
         overflowY: "auto",
         zIndex: "",
         listeners: 0,
-        offset: 0,
-        offsetY: 0,
+        x: "",
+        y: "",
+        isSwiping: false,
+        isPulled: false,
         isLocked: false,
         arm: "primary",
       })
@@ -344,21 +441,25 @@ describe("useSwipeAction", () => {
       act(() => result.current.handlers.onTouchMove(touchEvent(row, 100, 200)))
       expect(result.current.arm).toBe("down")
 
-      act(() => result.current.handlers.onTouchStart(withCurrentTarget(row, 100, 200)))
+      act(() => result.current.handlers.onTouchStart(hosted(row, 100, 200)))
       expect({
         overflowY: scroller.style.overflowY,
         zIndex: cell.style.zIndex,
         listeners: listeners.length,
-        offset: result.current.offset,
-        offsetY: result.current.offsetY,
+        x: row.style.getPropertyValue("--swipe-x"),
+        y: row.style.getPropertyValue("--swipe-y"),
+        isSwiping: result.current.isSwiping,
+        isPulled: result.current.isPulled,
         isLocked: result.current.isLocked,
         arm: result.current.arm,
       }).toEqual({
         overflowY: "auto",
         zIndex: "",
         listeners: 1,
-        offset: 0,
-        offsetY: 0,
+        x: "",
+        y: "",
+        isSwiping: false,
+        isPulled: false,
         isLocked: false,
         arm: "primary",
       })

@@ -61,6 +61,19 @@
   font-style: italic;
 }
 
+/* Swipe offsets written by useSwipeAction. Not inherited, so a touchmove
+   restyles the elements that follow the finger and not their subtrees. */
+@property --swipe-x {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+@property --swipe-y {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

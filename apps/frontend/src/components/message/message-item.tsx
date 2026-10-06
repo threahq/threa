@@ -730,12 +730,12 @@ export function MessageItem({
     onSwipeDown: canOpenAside ? handleOpenAside : undefined,
     enabled: touchCapable && !!quoteReplyCtx && !isEditing,
   })
-  const hasSwipe = swipe.offset !== 0
-  const swipeStyle = hasSwipe ? { transform: `translateX(${swipe.offset}px)` } : undefined
-  const swipePulled = hasSwipe && swipe.offsetY > 0
+  const hasSwipe = swipe.isSwiping
+  const swipeStyle = hasSwipe ? { transform: "translateX(var(--swipe-x))" } : undefined
+  const swipePulled = swipe.isPulled
   // The L's downward leg moves the whole row (clip box included) so the pulled
   // message rides over the next one rather than out of its own clip.
-  const swipePullStyle = swipePulled ? { transform: `translateY(${swipe.offsetY}px)` } : undefined
+  const swipePullStyle = swipePulled ? { transform: "translateY(var(--swipe-y))" } : undefined
 
   // Long-press (→ action drawer) and swipe (→ quote) share the touch surface, so
   // their handlers are fanned out to both. `onContextMenu` comes from long-press.
@@ -813,6 +813,7 @@ export function MessageItem({
           swipePulled && "z-10",
           rowInsetClassName
         )}
+        data-swipe-follow
         style={swipePullStyle}
         {...touchHandlers}
       >
@@ -833,6 +834,7 @@ export function MessageItem({
             longPress.isPressed && "opacity-70",
             isHighlighted && "animate-highlight-flash"
           )}
+          data-swipe-follow
           style={swipeStyle}
         >
           {settlingRail}
@@ -882,6 +884,7 @@ export function MessageItem({
         swipePulled && "z-10",
         rowInsetClassName
       )}
+      data-swipe-follow
       style={swipePullStyle}
       {...touchHandlers}
     >
@@ -902,6 +905,7 @@ export function MessageItem({
           longPress.isPressed && "opacity-70",
           isHighlighted && "animate-highlight-flash"
         )}
+        data-swipe-follow
         style={swipeStyle}
       >
         {settlingRail}

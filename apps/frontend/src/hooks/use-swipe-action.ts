@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState, useEffect } from "react"
+import { useRef, useCallback, useState, useEffect, useLayoutEffect } from "react"
 
 interface UseSwipeActionOptions {
   /** Minimum horizontal distance (px) to trigger the action (default: 80) */
@@ -30,10 +30,10 @@ export type SwipeArm = "primary" | "down"
 
 interface UseSwipeActionReturn {
   handlers: SwipeHandlers
-  /** Current horizontal offset (negative = swiped left, positive = swiped right) */
-  offset: number
-  /** How far the row follows the finger down the L's leg (px, ≥ 0). */
-  offsetY: number
+  /** Whether the row is off its resting position, i.e. `--swipe-x` is non-zero. */
+  isSwiping: boolean
+  /** Whether the row is pulled down the L's leg, i.e. `--swipe-y` is non-zero. */
+  isPulled: boolean
   /** Whether the user has passed the threshold */
   isLocked: boolean
   /** Which action a release fires while locked: the swipe's own, or the L's. */
@@ -83,10 +83,24 @@ function startedInHorizontalScroller(target: EventTarget | null): boolean {
   return false
 }
 
+function swipeFollowers(host: HTMLElement): HTMLElement[] {
+  const inside = Array.from(host.querySelectorAll<HTMLElement>("[data-swipe-follow]"))
+  return host.matches("[data-swipe-follow]") ? [host, ...inside] : inside
+}
+
 /**
  * Horizontal swipe (quote reply on messages, settle on sidebar rows). Once the
  * drag crosses the threshold, haptic feedback fires and the action locks in.
  * Releasing triggers the callback.
+ *
+ * The finger's position never reaches React: every move writes `--swipe-x`
+ * (negative = left) and `--swipe-y` (the L's leg, ≥ 0) in px on the elements
+ * marked `data-swipe-follow`, which read them in CSS. They are looked up in
+ * the element carrying the handlers, or in its nearest `[data-swipe-host]`
+ * ancestor when something outside that element follows the finger too. Both
+ * properties are registered as non-inherited in index.css, so a move restyles
+ * the followers and not everything inside them. Holding the offset in state
+ * re-rendered the whole row on every touchmove.
  */
 export function useSwipeAction({
   threshold = 80,
@@ -118,8 +132,10 @@ export function useSwipeAction({
   // itself is raised, and put back on release.
   const raisedRef = useRef<{ cell: HTMLElement; zIndex: string } | null>(null)
   const claimedRef = useRef(false)
-  const [offset, setOffset] = useState(0)
-  const [offsetY, setOffsetY] = useState(0)
+  const hostRef = useRef<HTMLElement | null>(null)
+  const positionRef = useRef<{ x: number; y: number } | null>(null)
+  const [isSwiping, setIsSwiping] = useState(false)
+  const [isPulled, setIsPulled] = useState(false)
   const [isLocked, setIsLocked] = useState(false)
   const [arm, setArm] = useState<SwipeArm>("primary")
 
@@ -146,8 +162,33 @@ export function useSwipeAction({
       raisedRef.current.cell.style.zIndex = raisedRef.current.zIndex
       raisedRef.current = null
     }
+    if (hostRef.current) {
+      for (const follower of swipeFollowers(hostRef.current)) {
+        follower.style.removeProperty("--swipe-x")
+        follower.style.removeProperty("--swipe-y")
+      }
+      hostRef.current = null
+    }
+    positionRef.current = null
     claimedRef.current = false
   }, [])
+
+  const paint = useCallback(() => {
+    if (!hostRef.current || !positionRef.current) return
+    const { x, y } = positionRef.current
+    for (const follower of swipeFollowers(hostRef.current)) {
+      follower.style.setProperty("--swipe-x", `${x}px`)
+      follower.style.setProperty("--swipe-y", `${y}px`)
+    }
+  }, [])
+
+  // React re-renders once for a same-value setState that follows a real change,
+  // so the flags are mirrored here and only a flip reaches setState.
+  const flagsRef = useRef({ swiping: false, pulled: false })
+
+  // A follower that only mounts once the row is swiping (the sidebar's reveal)
+  // gets the offset before its first paint, not on the next touchmove.
+  useLayoutEffect(paint, [paint, isSwiping, isPulled])
 
   const reset = useCallback(() => {
     releaseGesture()
@@ -155,8 +196,9 @@ export function useSwipeAction({
     isHorizontalRef.current = null
     lockedRef.current = false
     armRef.current = "primary"
-    setOffset(0)
-    setOffsetY(0)
+    flagsRef.current = { swiping: false, pulled: false }
+    setIsSwiping(false)
+    setIsPulled(false)
     setIsLocked(false)
     setArm("primary")
   }, [releaseGesture])
@@ -172,6 +214,7 @@ export function useSwipeAction({
       startPos.current = { x: touch.clientX, y: touch.clientY }
       if (e.currentTarget instanceof HTMLElement) {
         elementRef.current = e.currentTarget
+        hostRef.current = e.currentTarget.closest<HTMLElement>("[data-swipe-host]") ?? e.currentTarget
         e.currentTarget.addEventListener("touchmove", claimTouchMove, { passive: false })
       }
     },
@@ -205,7 +248,7 @@ export function useSwipeAction({
 
       // Only track swipes in `direction`, capped at threshold * 1.2
       const clampedOffset = sign * Math.min(Math.max(dx * sign, 0), threshold * 1.2)
-      setOffset(clampedOffset)
+      let pull = 0
 
       // Half-way to the threshold the row owns the touch: from here the
       // timeline stays still whatever the finger does next.
@@ -233,7 +276,6 @@ export function useSwipeAction({
         armRef.current = "primary"
         setIsLocked(false)
         setArm("primary")
-        setOffsetY(0)
       }
 
       // The L's leg: down from the lock point arms the second action, back up
@@ -241,7 +283,7 @@ export function useSwipeAction({
       if (lockedRef.current && onSwipeDownRef.current) {
         const leg = touch.clientY - lockYRef.current
         // The row follows the finger down, a little past the arming point.
-        setOffsetY(Math.min(Math.max(leg, 0), downThreshold * 1.5))
+        pull = Math.min(Math.max(leg, 0), downThreshold * 1.5)
         if (leg > 0 && !raisedRef.current && elementRef.current) {
           const cell = findAbsoluteCell(elementRef.current)
           if (cell) {
@@ -262,8 +304,15 @@ export function useSwipeAction({
           }
         }
       }
+
+      positionRef.current = { x: clampedOffset, y: pull }
+      paint()
+      const flags = { swiping: clampedOffset !== 0, pulled: pull > 0 }
+      if (flags.swiping !== flagsRef.current.swiping) setIsSwiping(flags.swiping)
+      if (flags.pulled !== flagsRef.current.pulled) setIsPulled(flags.pulled)
+      flagsRef.current = flags
     },
-    [enabled, threshold, downThreshold, sign, reset]
+    [enabled, threshold, downThreshold, sign, reset, paint]
   )
 
   const onTouchEnd = useCallback(() => {
@@ -287,8 +336,8 @@ export function useSwipeAction({
 
   return {
     handlers: { onTouchStart, onTouchEnd, onTouchMove, onTouchCancel },
-    offset,
-    offsetY,
+    isSwiping,
+    isPulled,
     isLocked,
     arm,
   }
