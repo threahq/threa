@@ -1180,7 +1180,6 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
     p.streamId !== n.streamId ||
     p.hideSessionCards !== n.hideSessionCards ||
     p.subagentThreadRun !== n.subagentThreadRun ||
-    p.isDividerDimmed !== n.isDividerDimmed ||
     p.onStopSession !== n.onStopSession ||
     p.runFoldStore !== n.runFoldStore
   ) {
@@ -1188,6 +1187,7 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
   }
   const item = next.item
   if (isFirstUnread(item, p.firstUnreadEventId) !== isFirstUnread(item, n.firstUnreadEventId)) return false
+  if (isFirstUnread(item, n.firstUnreadEventId) && p.isDividerDimmed !== n.isDividerDimmed) return false
 
   // A session_group row reads its live progress from the agent-activity store,
   // so no ctx field can make it stale.

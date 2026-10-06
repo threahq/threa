@@ -1236,6 +1236,15 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
     expect(timelineRowPropsEqual(rowA(before), rowA(after))).toBe(false)
   })
 
+  it("divider dim flip invalidates only the row carrying the divider", () => {
+    const red = makeCtx({ firstUnreadEventId: "evt_a", isDividerDimmed: false })
+    const grey = makeCtx({ firstUnreadEventId: "evt_a", isDividerDimmed: true })
+    const rowA = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgA), ctx, deferSecondaryHydration: false })
+    const rowB = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgB), ctx, deferSecondaryHydration: false })
+    expect(timelineRowPropsEqual(rowA(red), rowA(grey))).toBe(false)
+    expect(timelineRowPropsEqual(rowB(red), rowB(grey))).toBe(true)
+  })
+
   it("deferSecondaryHydration flip invalidates the row", () => {
     const prev = { item: messageItem(msgA), ctx: makeCtx(), deferSecondaryHydration: true }
     const next = { item: messageItem(msgA), ctx: makeCtx(), deferSecondaryHydration: false }
