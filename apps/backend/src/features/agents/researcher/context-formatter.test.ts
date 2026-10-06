@@ -79,7 +79,7 @@ describe("formatRetrievedContext", () => {
           streamId: "stream_thread",
           streamName: "thread",
           content: "Signed off",
-          thread: { channelName: "Launch", rootMessageId: "msg_root" },
+          thread: { channelName: "Launch", title: null, rootMessageId: "msg_root" },
         }),
         message({ id: "msg_other", streamId: "stream_other", streamName: "Random", content: "Unrelated" }),
         message({

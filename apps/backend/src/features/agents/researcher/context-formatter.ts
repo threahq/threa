@@ -39,7 +39,7 @@ export interface EnrichedMessageResult {
   /** Every stream a quote expansion reached in this batch. */
   quoteStreamIds?: string[]
   /** Set when the message is a thread reply: the channel the thread hangs off and the post that opened it. */
-  thread?: { channelName: string; rootMessageId: string | null }
+  thread?: { channelName: string; title: string | null; rootMessageId: string | null }
   /** Posted in the room the research was asked from: its root stream or one of that root's threads. */
   inCurrentRoom?: boolean
 }
@@ -140,7 +140,7 @@ function groupMessages(messages: EnrichedMessageResult[]): MessageGroup[] {
       const threadMsg = key === msg.streamId ? msg : messages.find((m) => m.streamId === key)!
       group = {
         header: threadMsg.thread
-          ? `Thread in _${threadMsg.thread.channelName}_${threadMsg.streamName === "thread" ? "" : `: ${threadMsg.streamName}`}`
+          ? `Thread in _${threadMsg.thread.channelName}_${threadMsg.thread.title ? `: ${threadMsg.thread.title}` : ""}`
           : `_${msg.streamName}_`,
         inCurrentRoom: false,
         rootMessageId: threadMsg.thread?.rootMessageId ?? null,
@@ -299,7 +299,13 @@ export async function enrichMessageSearchResults(
       streamType: stream?.type ?? "unknown",
       createdAt: r.createdAt,
       ...(stream?.type === StreamTypes.THREAD
-        ? { thread: { channelName: streamName(channel), rootMessageId: stream.parentAnchorId } }
+        ? {
+            thread: {
+              channelName: streamName(channel),
+              title: stream.displayName,
+              rootMessageId: stream.parentAnchorId,
+            },
+          }
         : {}),
     }
   })

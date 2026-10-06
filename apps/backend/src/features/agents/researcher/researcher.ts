@@ -286,12 +286,10 @@ export class WorkspaceAgent {
 
       const accessibleStreamIds = await SearchRepository.getAccessibleStreamsForAgent(client, accessSpec, workspaceId)
 
-      const roomRootId = stream.rootStreamId ?? stream.id
       const accessible = new Set(accessibleStreamIds)
-      const roomStreamIds = [
-        roomRootId,
-        ...(await StreamRepository.listThreadsByRoot(client, workspaceId, roomRootId)).map((thread) => thread.id),
-      ].filter((id) => accessible.has(id))
+      const roomStreamIds = (
+        await SearchRepository.expandStreamIdsWithThreads(client, workspaceId, [stream.rootStreamId ?? stream.id])
+      ).filter((id) => accessible.has(id))
 
       return { stream, accessSpec, accessibleStreamIds, roomStreamIds }
     })
@@ -1144,8 +1142,9 @@ Each query must have:
         const normalizedQuery = searchQuery.trim()
         const hasQuery = normalizedQuery.length > 0
         const hasEmbedding = embedding.length > 0
-        const search = async (streamIds: string[], limit: number) => {
-          const params = { workspaceId, query: normalizedQuery, streamIds, filters, limit, ranking }
+        // Skipped ids are dropped after ranking, so the fetch widens by their count to still fill `limit`.
+        const search = async (streamIds: string[], limit: number, skip: Set<string>) => {
+          const params = { workspaceId, query: normalizedQuery, streamIds, filters, limit: limit + skip.size, ranking }
           const primary =
             hasQuery && hasEmbedding
               ? await SearchRepository.hybridSearch(client, {
@@ -1154,20 +1153,30 @@ Each query must have:
                   ...hybridWeightsForQuery(normalizedQuery, ranking),
                 })
               : await SearchRepository.fullTextSearch(client, params)
-          return hasQuery && hasEmbedding && primary.length === 0
-            ? await SearchRepository.fullTextSearch(client, params)
-            : primary
+          const results =
+            hasQuery && hasEmbedding && primary.length === 0
+              ? await SearchRepository.fullTextSearch(client, params)
+              : primary
+          return results.filter((result) => !skip.has(result.id)).slice(0, limit)
         }
 
-        const workspaceResults = await search(accessibleStreamIds, WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH)
+        const workspaceResults = await search(
+          accessibleStreamIds,
+          WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
+          excludedMessageIds
+        )
         // Ranking always fills its limit, so the room leg is capped below the workspace leg: an irrelevant room
         // still contributes only a few hits.
         const roomResults =
-          roomStreamIds.length > 0 ? await search(roomStreamIds, WORKSPACE_AGENT_MAX_ROOM_RESULTS_PER_SEARCH) : []
+          roomStreamIds.length > 0
+            ? await search(
+                roomStreamIds,
+                WORKSPACE_AGENT_MAX_ROOM_RESULTS_PER_SEARCH,
+                new Set([...excludedMessageIds, ...workspaceResults.map((result) => result.id)])
+              )
+            : []
 
-        const filteredSearchResults = [...workspaceResults, ...roomResults].filter(
-          (result) => !excludedMessageIds.has(result.id)
-        )
+        const filteredSearchResults = [...workspaceResults, ...roomResults]
         const rawResults: RawMessageSearchResult[] = [...filteredSearchResults]
         if (includeSurroundingContext && filteredSearchResults.length > 0) {
           const surroundingBatches = await Promise.all(

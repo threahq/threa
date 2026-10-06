@@ -32,6 +32,7 @@ describe("WorkspaceAgent thread and room context", () => {
   let agent: WorkspaceAgent
   let sequence = 1n
   let minute = 0
+  let roomHistory: Message[] = []
 
   const stream = { launch: streamId(), thread: streamId(), busy: streamId(), room: streamId(), elsewhere: streamId() }
   const msg = {} as Record<"root" | "reply" | "chatter" | "roomHit" | "question", Message>
@@ -85,7 +86,8 @@ describe("WorkspaceAgent thread and room context", () => {
     }
 
     // The busy notes and the reply match the query on keywords and embedding, so those five fill the workspace-wide
-    // limit; the room's messages match on embedding alone and rank below them.
+    // limit; the room's messages match on embedding alone and rank below them. The room's earlier messages sit
+    // closest to the query in the room, so they would take every room slot if already-read messages counted.
     msg.roomHit = await post(stream.room, "The gardening budget came up here")
     msg.root = await post(stream.launch, "Kicking off the launch checklist")
     await StreamRepository.insert(pool, {
@@ -102,9 +104,17 @@ describe("WorkspaceAgent thread and room context", () => {
     for (let i = 0; i < 4; i++) busy.push(await post(stream.busy, `${TOKEN} busy note ${i}`))
     msg.reply = await post(stream.thread, `${TOKEN} is signed off`)
     msg.chatter = await post(stream.launch, "Lunch is at noon")
+    const earlier: Message[] = []
+    for (let i = 0; i < 3; i++) earlier.push(await post(stream.room, `Earlier room message ${i}`))
     msg.question = await post(stream.room, "What about that budget?")
+    roomHistory = [...earlier, msg.question]
     await MessageRepository.updateEmbeddings(pool, ws, [
-      ...[...busy, msg.reply].map((m) => ({ id: m.id, embedding: axis(0), sourceHash: "t", expectedSourceHash: null })),
+      ...[...busy, msg.reply, ...earlier].map((m) => ({
+        id: m.id,
+        embedding: axis(0),
+        sourceHash: "t",
+        expectedSourceHash: null,
+      })),
       ...[msg.roomHit, msg.question].map((m) => ({
         id: m.id,
         embedding: axis(1),
@@ -143,10 +153,10 @@ describe("WorkspaceAgent thread and room context", () => {
     }).toEqual({ root: true, reply: true, chatter: false, rootOpensThread: true, threadHeader: true })
   })
 
-  test("the room the question was asked in is searched on its own and listed first, without the question itself", async () => {
+  test("the room the question was asked in is searched on its own and listed first, without what was already read", async () => {
     const [fromElsewhere, fromRoom] = await Promise.all([
       research(stream.elsewhere),
-      research(stream.room, [msg.question]),
+      research(stream.room, roomHistory),
     ])
     const roomHit = fromRoom.messages.find((m) => m.id === msg.roomHit.id)
     const context = fromRoom.retrievedContext ?? ""
@@ -154,8 +164,8 @@ describe("WorkspaceAgent thread and room context", () => {
     expect({
       foundFromElsewhere: fromElsewhere.messages.some((m) => m.id === msg.roomHit.id),
       foundFromRoom: roomHit?.inCurrentRoom,
-      questionRetrieved: fromRoom.messages.some((m) => m.id === msg.question.id),
+      historyRetrieved: fromRoom.messages.some((m) => roomHistory.some((h) => h.id === m.id)),
       roomGroupFirst: context.indexOf("(the room this question was asked in)") < context.indexOf("#### Thread in"),
-    }).toEqual({ foundFromElsewhere: false, foundFromRoom: true, questionRetrieved: false, roomGroupFirst: true })
+    }).toEqual({ foundFromElsewhere: false, foundFromRoom: true, historyRetrieved: false, roomGroupFirst: true })
   })
 })
