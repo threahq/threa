@@ -55,7 +55,6 @@ export {
   isConversationPanel,
   parseConversationPanel,
   createConversationPanelId,
-  isComposePanel,
   parseComposePanel,
   createComposePanelId,
 } from "./panel-context"

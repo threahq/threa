@@ -1,7 +1,7 @@
 import { memo, useState, useCallback, useEffect, useMemo, useRef, type ComponentProps } from "react"
 import { createPortal } from "react-dom"
 import { toast } from "sonner"
-import { Link, useNavigate } from "react-router-dom"
+import { Link, useLocation, useNavigate } from "react-router-dom"
 import { PenLine } from "lucide-react"
 import { useStableCallback } from "@/hooks/use-stable-callback"
 import {
@@ -47,6 +47,7 @@ import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { boardPostLastActiveStreamId } from "@/lib/board/reply-plan"
 import { boardReplyDraftKey, parseBoardDraftKey } from "@/lib/board/draft-keys"
 import { usePanel, createConversationPanelId, createComposePanelId } from "@/contexts"
+import { useAsideForHost } from "@/stores/aside-store"
 import { PaneFocusContext, useComposeSlot } from "@/components/panes"
 import { Button } from "@/components/ui/button"
 import { panelIdsOf } from "@/lib/panel-tabs"
@@ -423,6 +424,8 @@ function MessageInputComponent({
   // document editor — the pane is the surface. Those three slots stay off.
   const isAsideComposer = useStreamFromStore(workspaceId, streamId)?.type === StreamTypes.ASIDE
   const schedulingHidden = isAsideComposer || sharedCopy
+  // The aside's stage covers the page's panes, so a draft pane would open out of sight.
+  const asideOnPage = useAsideForHost(useLocation().pathname) !== null
 
   // Stashed drafts — explicit "Save for later" pile scoped to this stream.
   // Active DraftMessage stays one-per-scope; this hook manages the sibling
@@ -780,7 +783,7 @@ function MessageInputComponent({
   // Expanded is the stream's compose pane being open: the composer renders there, and a bar holds its place here.
   const composeId = createComposePanelId(streamId)
   const expanded = panelIdsOf(layout).includes(composeId)
-  const composeSlot = useComposeSlot(streamId, expanded)
+  const composeSlot = useComposeSlot(streamId, expanded && !(disabled && disabledReason))
   const collapse = useStableCallback(() => {
     if (expanded) closeTab(composeId)
   })
@@ -1150,7 +1153,7 @@ function MessageInputComponent({
             <MemoizedMessageComposer
               {...composerProps}
               autoFocus={autoFocus}
-              expandHref={hasTabs && !isAsideComposer ? getFocusedPanelUrl(composeId) : undefined}
+              expandHref={hasTabs && !isAsideComposer && !asideOnPage ? getFocusedPanelUrl(composeId) : undefined}
             />
           </>
         )}

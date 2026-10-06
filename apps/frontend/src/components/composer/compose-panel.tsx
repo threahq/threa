@@ -19,10 +19,12 @@ import {
   useProvideComposeSlot,
 } from "@/components/panes"
 import { SidebarToggle } from "@/components/layout"
-import { parseComposePanel, usePanel, useSidebar } from "@/contexts"
+import { createComposePanelId, usePanel, useSidebar } from "@/contexts"
+import { cn } from "@/lib/utils"
 
 interface ComposePanelProps {
   workspaceId: string
+  streamId: string
   onClose: () => void
   className?: string
 }
@@ -32,9 +34,8 @@ interface ComposePanelProps {
  * stream's composer renders into this pane, so it is the same draft, with the
  * same attachments and send, as the one it replaces inline.
  */
-export function ComposePanel({ workspaceId, onClose, className }: ComposePanelProps) {
-  const { panelId, tabbed, getPanelUrl } = usePanel()
-  const streamId = (panelId && parseComposePanel(panelId)) ?? ""
+export function ComposePanel({ workspaceId, streamId, onClose, className }: ComposePanelProps) {
+  const { tabbed, getPanelUrl } = usePanel()
   const paneFocus = useContext(PaneFocusContext)
   const { isMobile } = useSidebar()
   const closeRef = usePanelCloseFocusLanding()
@@ -56,14 +57,14 @@ export function ComposePanel({ workspaceId, onClose, className }: ComposePanelPr
           <PanelTabStrip workspaceId={workspaceId} className={isMobile ? undefined : "-ml-2"} />
         ) : (
           <SidePanelTitle className="min-w-0 flex-1 truncate">
-            {panelId && <PanelTabTitle workspaceId={workspaceId} panelId={panelId} />}
+            <PanelTabTitle workspaceId={workspaceId} panelId={createComposePanelId(streamId)} />
           </SidePanelTitle>
         )}
         <PaneFocusToggle />
         {!isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />}
       </SidePanelHeader>
       <SidePanelContent className="relative flex flex-col">
-        <div ref={setNode} className="flex min-h-0 flex-1 flex-col" hidden={!composing} />
+        <div ref={setNode} className={cn("flex min-h-0 flex-1 flex-col", !composing && "hidden")} />
         {!composing && (
           <Empty>
             <EmptyHeader>

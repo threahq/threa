@@ -1,5 +1,5 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react"
-import { usePanel, useFrontPanel, useCurrentPane, isConversationPanel, isComposePanel, PaneScope } from "@/contexts"
+import { usePanel, useFrontPanel, useCurrentPane, isConversationPanel, parseComposePanel, PaneScope } from "@/contexts"
 import { Minimize2 } from "lucide-react"
 import { Pane, PaneFocusContext, PanelTabTitle, usePaneFocusEscape, type PaneMapCell } from "@/components/panes"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
@@ -44,11 +44,20 @@ interface PanelHostProps {
  */
 export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
   const { panelId } = usePanel()
+  const composeStreamId = panelId && parseComposePanel(panelId)
   if (panelId && isConversationPanel(panelId)) {
     return <ConversationPanel key={panelId} workspaceId={workspaceId} onClose={onClose} className={className} />
   }
-  if (panelId && isComposePanel(panelId)) {
-    return <ComposePanel key={panelId} workspaceId={workspaceId} onClose={onClose} className={className} />
+  if (composeStreamId) {
+    return (
+      <ComposePanel
+        key={panelId}
+        workspaceId={workspaceId}
+        streamId={composeStreamId}
+        onClose={onClose}
+        className={className}
+      />
+    )
   }
   return (
     <StreamPanel

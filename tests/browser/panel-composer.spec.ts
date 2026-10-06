@@ -65,6 +65,7 @@ test("should carry the draft into a floating pane and back, and close it on send
 
   // Escape leaves the editor first, then puts the pane back.
   await page.keyboard.press("Escape")
+  await expect(paneEditor(page, streamId)).not.toBeFocused()
   expect(panelParam(page)).toBe(`${compose}**`)
   await page.keyboard.press("Escape")
   await expect.poll(() => panelParam(page)).toBe(compose)
@@ -75,6 +76,7 @@ test("should carry the draft into a floating pane and back, and close it on send
   await mainPane(page).getByRole("button", { name: "Write here" }).click()
   await expect.poll(() => panelParam(page)).toBeNull()
   await expect(mainComposer(page)).toHaveText("a long thought, continued")
+  await expect(mainComposer(page)).toBeFocused()
 
   // Sending from the pane clears the draft and closes the pane.
   await expandLink(page).click()
@@ -98,8 +100,14 @@ test("should keep a docked draft pane across a reload and toggle it with Alt+Ent
   await tabPane(page, compose).getByRole("button", { name: "Restore to layout" }).click()
   await expect.poll(() => panelParam(page)).toBe(compose)
 
+  // The pane's id names no stream the server knows, so nothing fetches it as one.
+  const strayFetches: string[] = []
+  page.on("request", (request) => {
+    if (/\/api\/.*compose(:|%3A)/i.test(request.url())) strayFetches.push(request.url())
+  })
   await page.reload()
   await expect(paneEditor(page, streamId)).toHaveText("kept", { timeout: 30_000 })
+  expect(strayFetches).toEqual([])
   expect(new URL(page.url()).pathname).toBe(`/w/${workspaceId}/s/${streamId}`)
 
   await paneEditor(page, streamId).click()
