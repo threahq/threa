@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk } from "./helpers"
 
 /**
  * Focus floats a tab's pane over the page, marked `**` in `?panel=`, while a
@@ -44,6 +44,14 @@ const scrim = (page: Page) => page.getByTestId("pane-focus-scrim")
 const ghost = (page: Page) => page.getByTestId("pane-focus-ghost")
 const mainPane = (page: Page) => page.locator('[data-editor-zone="main"]')
 const inertMain = (page: Page) => page.locator('[inert]:has([data-editor-zone="main"])')
+
+async function unreadCount(page: Page, workspaceId: string, streamId: string): Promise<number> {
+  const response = await page.request.get(`/api/workspaces/${workspaceId}/bootstrap`)
+  await expectApiOk(response, "bootstrap")
+  return (
+    ((await response.json()) as { data: { unreadCounts: Record<string, number> } }).data.unreadCounts[streamId] ?? 0
+  )
+}
 
 async function openPanels(page: Page, workspaceId: string, streamId: string, panel: string, last: number) {
   await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${panel}`)
@@ -167,6 +175,43 @@ test("should toggle focus with Alt+Enter from the composer without sending", asy
   await expect(composer(page, a).locator("p")).toHaveCount(1)
   await expect(composer(page, a)).toHaveText("not yet")
   await expect(tabPane(page, a).getByText("not yet", { exact: true })).toHaveCount(1)
+})
+
+test("should leave what arrives under a floating tab unread until it is put back", async ({ page, browser }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId, threads } = await seedThreads(page, 2)
+  const [a, b] = threads
+  const other = await loginInNewContext(browser, `focus-b-${Date.now()}@example.com`, "Focus B")
+  await expectApiOk(
+    await other.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, {
+      data: { role: "member", name: "Focus B" },
+    }),
+    "join workspace"
+  )
+  await expectApiOk(
+    await other.page.request.post(`/api/workspaces/${workspaceId}/streams/${streamId}/join`, { data: {} }),
+    "join channel"
+  )
+  await openPanels(page, workspaceId, streamId, `${a}**-${b}`, 1)
+  await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", a)
+
+  await expect
+    .poll(async () => {
+      const response = await other.page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+        data: { streamId, content: "arrived under the float" },
+      })
+      return response.status()
+    })
+    .toBe(201)
+  await expect(mainPane(page).getByText("arrived under the float", { exact: true })).toBeVisible({ timeout: 15_000 })
+  // The main view shows through the scrim, but nobody is reading it.
+  await page.waitForTimeout(3000)
+  expect(await unreadCount(page, workspaceId, streamId)).toBe(1)
+
+  await tabPane(page, a).getByRole("button", { name: "Restore to layout" }).click()
+  await expect.poll(() => panelParam(page)).toBe(`${a}-${b}`)
+  await expect.poll(() => unreadCount(page, workspaceId, streamId), { timeout: 15_000 }).toBe(0)
+  await other.context.close()
 })
 
 test("should leave a phone showing one pane when the URL marks a floating tab", async ({ page }) => {
