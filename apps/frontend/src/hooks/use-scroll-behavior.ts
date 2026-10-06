@@ -1,10 +1,13 @@
 import { useRef, useState, useEffect, useLayoutEffect, useCallback, type RefObject } from "react"
 import { EVENT_PAGE_SIZE, SCROLL_FETCH_RATIO } from "@/lib/constants"
+import { TOUCH_DIRECTION_HYSTERESIS_PX, USER_SCROLL_GRACE_MS } from "./use-timeline-scroll"
 
 /** Number of items from the bottom before showing "Jump to latest" */
 const JUMP_TO_LATEST_ITEM_THRESHOLD = 10
 
-const USER_GESTURE_WINDOW_MS = 300
+function scrolledUpRecently(userScrollUpAt: RefObject<number>): boolean {
+  return performance.now() - userScrollUpAt.current < USER_SCROLL_GRACE_MS
+}
 
 function supportsScrollAnchoring(): boolean {
   return typeof CSS !== "undefined" && CSS.supports?.("overflow-anchor", "auto") === true
@@ -120,8 +123,8 @@ export function useScrollBehavior({
   const pinnedScrollTop = useRef<number | null>(null)
   // When the reader last asked to move up. Taken from the input itself: pins
   // and renders landing between a gesture and its scroll event make scrollTop
-  // deltas unreadable. It overrides the pin grace below, which otherwise eats a
-  // scroll-up during an opening's churn and lets the next growth yank it back.
+  // deltas unreadable. It holds off pins and overrides the pin grace below, which
+  // otherwise eat a scroll-up during an opening's churn and yank it back.
   const userScrollUpAt = useRef(0)
   // Read through a ref so the reset below keys on `resetKey` alone: the option is
   // derived from live URL state (`?m=`), which other surfaces strip while the
@@ -144,6 +147,7 @@ export function useScrollBehavior({
     newerFetchScheduled.current = false
     lastProgrammaticScrollAt.current = 0
     pinnedScrollTop.current = null
+    userScrollUpAt.current = 0
     setIsScrolledFarFromBottom(false)
   }, [resetKey])
 
@@ -151,7 +155,7 @@ export function useScrollBehavior({
     const el = scrollContainerRef.current
     if (!el) return
 
-    if (!options?.force && !shouldAutoScroll.current) {
+    if (!options?.force && (!shouldAutoScroll.current || scrolledUpRecently(userScrollUpAt))) {
       return
     }
 
@@ -260,7 +264,7 @@ export function useScrollBehavior({
       const delta = prevHeight - newHeight
       prevHeight = newHeight
 
-      if (shouldAutoScroll.current) {
+      if (shouldAutoScroll.current && !scrolledUpRecently(userScrollUpAt)) {
         el.scrollTop = el.scrollHeight
         pinnedScrollTop.current = el.scrollTop
       } else if (delta !== 0) {
@@ -288,11 +292,17 @@ export function useScrollBehavior({
     const onTouchStart = (e: TouchEvent) => {
       lastTouchY = e.touches[0]?.clientY ?? null
     }
-    // A finger moving down drags the content down, which scrolls up.
+    // A finger moving down drags the content down, which scrolls up. The anchor
+    // only advances past the hysteresis, so a lift-off wobble reads as nothing.
     const onTouchMove = (e: TouchEvent) => {
       const y = e.touches[0]?.clientY
       if (y === undefined) return
-      if (lastTouchY !== null && y > lastTouchY) markUp()
+      if (lastTouchY === null) {
+        lastTouchY = y
+        return
+      }
+      if (Math.abs(y - lastTouchY) <= TOUCH_DIRECTION_HYSTERESIS_PX) return
+      if (y > lastTouchY) markUp()
       lastTouchY = y
     }
     el.addEventListener("wheel", onWheel, { passive: true })
@@ -327,8 +337,7 @@ export function useScrollBehavior({
     // making the user falsely appear to not be at the bottom.
     const isInGracePeriod = performance.now() - lastProgrammaticScrollAt.current < 150
     const grewUnderPin = pinnedScrollTop.current !== null && scrollTop >= pinnedScrollTop.current
-    const userScrolledUp = performance.now() - userScrollUpAt.current < USER_GESTURE_WINDOW_MS
-    if (!userScrolledUp && (isInGracePeriod || (shouldAutoScroll.current && grewUnderPin))) {
+    if (!scrolledUpRecently(userScrollUpAt) && (isInGracePeriod || (shouldAutoScroll.current && grewUnderPin))) {
       if (isNearBottom) shouldAutoScroll.current = true
     } else {
       shouldAutoScroll.current = isNearBottom

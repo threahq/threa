@@ -287,6 +287,28 @@ describe("useScrollBehavior", () => {
     }
   })
 
+  it("holds a scroll-up whose scroll event lands after the next growth", () => {
+    const { trigger, restore } = installManualResizeObserver()
+    try {
+      const scrollable = makeScrollableDiv({ scrollHeight: 5000, clientHeight: 800 })
+      const api = renderHookWithElement({ isLoading: false, itemCount: 100, bottomThreshold: 4 }, scrollable.el)
+
+      act(() => {
+        scrollable.el.dispatchEvent(new WheelEvent("wheel", { deltaY: -120 }))
+        scrollable.el.scrollTop = 4000
+      })
+      scrollable.setScrollHeight(5400)
+      act(() => trigger())
+      act(() => api.current.handleScroll())
+      scrollable.setScrollHeight(5800)
+      act(() => trigger())
+
+      expect(scrollable.scrollTop).toBe(4000)
+    } finally {
+      restore()
+    }
+  })
+
   describe("rows arriving while detached", () => {
     type Rows = { itemCount: number; firstItemKey: string; isFetchingOlder?: boolean }
 

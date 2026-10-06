@@ -7,7 +7,7 @@ const AT_BOTTOM_PX = 32
 const JUMP_TO_LATEST_PX = 600
 /** A scroll-away-from-bottom only disarms follow if a real user gesture landed
  *  within this window; otherwise it's content growth and the tail re-pins. */
-const USER_SCROLL_GRACE_MS = 300
+export const USER_SCROLL_GRACE_MS = 300
 /** Consecutive frames of unchanged scrollHeight that mark the cold-load settle
  *  as converged, so the content can be revealed without a visible bounce. */
 const SETTLE_STABLE_FRAMES = 3
@@ -21,7 +21,7 @@ const SETTLE_DEFER_FAILSAFE_MS = 1500
  *  downward drag to "up" and detached follow as it reached the bottom.
  *  Sub-threshold moves keep the anchor, so a slow consistent drag accumulates
  *  past it while jitter oscillates around it and never flips. */
-const TOUCH_DIRECTION_HYSTERESIS_PX = 8
+export const TOUCH_DIRECTION_HYSTERESIS_PX = 8
 
 /**
  * Default CSS variable carrying the reserved composer height: `--composer-height`,
