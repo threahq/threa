@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react"
+import { useMemo } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useSocket, useWorkspaceService } from "@/contexts"
@@ -175,13 +175,8 @@ export function useWorkspaceBootstrap<T = WorkspaceBootstrap>(
     isError: query.isError,
   })
 
-  // Manual retry that resets error state first
-  const retryBootstrap = useCallback(() => {
-    queryClient.resetQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
-  }, [queryClient, workspaceId])
-
   // Spreading the query result would read every tracked field, so each cache write would re-render the caller.
-  return { data: query.data, fetchStatus: query.fetchStatus, loadState, retryBootstrap }
+  return { data: query.data, fetchStatus: query.fetchStatus }
 }
 
 /**
