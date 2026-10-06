@@ -733,25 +733,28 @@ export class MemoService implements MemoServiceLike {
         // The memorizer can only retire a memo it is shown, and the stream's
         // newest memos miss an older one this conversation revises. Keeps the
         // tail: a long conversation's latest messages carry the revision.
-        const [conversationEmbedding] = await this.embeddingService.embedBatch(
-          [Array.from(formattedMessages).slice(-MEMORY_CONTEXT_EMBED_MAX_CHARS).join("")],
-          { workspaceId, functionId: "memo-context-embedding" }
-        )
-        if (!conversationEmbedding) throw new Error(`No context embedding for conversation ${conversation.id}`)
-        const nearest = await MemoRepository.findNearestInStream(this.pool, {
-          workspaceId,
-          streamId,
-          embedding: conversationEmbedding,
-          scope: fetchedData.memoScope.scope,
-          scopeUserId: fetchedData.memoScope.scopeUserId,
-          audiences: [fetchedData.readerAudience],
-          limit: MEMORY_CONTEXT_NEAREST_LIMIT,
-        })
+        // Below the limit the newest memos are every memo, so nothing is missing.
+        let nearest: Memo[] = []
+        if (fetchedData.existingMemos.length >= MEMORY_CONTEXT_LIMIT) {
+          const conversationText = messagesArray.map((m) => m.contentMarkdown).join("\n")
+          const [conversationEmbedding] = await this.embeddingService.embedBatch(
+            [Array.from(conversationText).slice(-MEMORY_CONTEXT_EMBED_MAX_CHARS).join("")],
+            { workspaceId, functionId: "memo-context-embedding" }
+          )
+          if (!conversationEmbedding) throw new Error(`No context embedding for conversation ${conversation.id}`)
+          const found = await MemoRepository.findNearestInStream(this.pool, {
+            workspaceId,
+            streamId,
+            embedding: conversationEmbedding,
+            scope: fetchedData.memoScope.scope,
+            scopeUserId: fetchedData.memoScope.scopeUserId,
+            audiences: [fetchedData.readerAudience],
+            limit: MEMORY_CONTEXT_NEAREST_LIMIT,
+          })
+          nearest = found.map(({ memo }) => memo)
+        }
         const shownIds = new Set([...fetchedData.existingMemos, ...existingMemos].map((m) => m.id))
-        const memoryContext = [
-          ...fetchedData.existingMemos,
-          ...nearest.map(({ memo }) => memo).filter((memo) => !shownIds.has(memo.id)),
-        ]
+        const memoryContext = [...fetchedData.existingMemos, ...nearest.filter((memo) => !shownIds.has(memo.id))]
         // First snapshot wins: a later conversation may see a newer edit, and
         // recording that version would let this one retire text it never saw.
         for (const memo of memoryContext) if (!shownContextMemos.has(memo.id)) shownContextMemos.set(memo.id, memo)

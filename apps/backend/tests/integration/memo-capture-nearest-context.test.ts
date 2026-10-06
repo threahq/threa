@@ -36,6 +36,7 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
   let pool: Pool
   let nextSequence = 1n
   let nextAxis = 100
+  let contextEmbeddings = 0
 
   async function seedChannel(): Promise<Channel> {
     const ws = workspaceId()
@@ -173,8 +174,10 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
         },
       } as never,
       embeddingService: {
-        embedBatch: async (texts: string[], opts: { functionId: string }) =>
-          texts.map(() => (opts.functionId === "memo-context-embedding" ? axis(TOPIC_AXIS) : axis(nextAxis++))),
+        embedBatch: async (texts: string[], opts: { functionId: string }) => {
+          if (opts.functionId === "memo-context-embedding") contextEmbeddings++
+          return texts.map(() => (opts.functionId === "memo-context-embedding" ? axis(TOPIC_AXIS) : axis(nextAxis++)))
+        },
       } as never,
       messageFormatter: { formatMessages: async () => "formatted transcript" } as never,
     }).processBatch(c.ws, c.channel)
@@ -224,6 +227,20 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
     await capture(c, price)
 
     expect(await priceStatuses(c)).toEqual({ "Price is $9": "superseded", "Price is $12": "active" })
+  })
+
+  test("a stream with fewer memos than the context limit shows them all without a context embedding", async () => {
+    const c = await seedChannel()
+    const price = await seedMemo(c, "Price is $9", axis(TOPIC_AXIS))
+    await queueConversation(c)
+    const before = contextEmbeddings
+
+    await capture(c, price)
+
+    expect({ contextEmbeddings: contextEmbeddings - before, statuses: await priceStatuses(c) }).toEqual({
+      contextEmbeddings: 0,
+      statuses: { "Price is $9": "superseded", "Price is $12": "active" },
+    })
   })
 
   test("a nearest memo edited while the model ran survives, and the conversation re-runs against the edit", async () => {
