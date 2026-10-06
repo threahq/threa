@@ -85,6 +85,23 @@ export function createConversationPanelId(conversationId: string): string {
   return `${CONVERSATION_PANEL_PREFIX}${conversationId}`
 }
 
+/** A stream's draft, written in a pane of its own. One per stream: the stream's composer, shown there instead. */
+const COMPOSE_PANEL_PREFIX = "compose:"
+
+export function isComposePanel(panelId: string): boolean {
+  return panelId.startsWith(COMPOSE_PANEL_PREFIX)
+}
+
+/** The stream behind a `compose:<id>` panel, or null when it isn't one. */
+export function parseComposePanel(panelId: string): string | null {
+  if (!isComposePanel(panelId)) return null
+  return panelId.slice(COMPOSE_PANEL_PREFIX.length) || null
+}
+
+export function createComposePanelId(streamId: string): string {
+  return `${COMPOSE_PANEL_PREFIX}${streamId}`
+}
+
 export interface OpenPanelOptions {
   /** Overwrite the current history entry instead of adding one. Only for a panel
    *  that SUPERSEDES the open one — a draft thread promoted to its real stream —
@@ -105,11 +122,15 @@ interface PanelContextValue {
   isPanelOpen: boolean
   /** Whether panels show their tab rows: more than one panel open, on a page that has tabs. */
   tabbed: boolean
+  /** Whether this page lays panels out as tabs beside each other (the stream page). */
+  hasTabs: boolean
 
   /** URL that opens a panel from here (for `<Link>`). On the stream page the main
    *  view adds or activates a tab of the first section and a tab opens it beside
    *  itself; pages without tabs swap the one panel. */
   getPanelUrl: (panelId: string) => string
+  /** {@link getPanelUrl}, opening the panel floating over the rest. */
+  getFocusedPanelUrl: (panelId: string) => string
   /** Imperative twin of {@link getPanelUrl}. */
   openPanel: (panelId: string, options?: OpenPanelOptions) => void
   /** {@link openPanel} as a params edit, for a navigation that changes more than the panel. */
@@ -230,7 +251,10 @@ function buildValue(
     section: scopeSection ?? layout.columns[0]?.[0] ?? null,
     isPanelOpen: own !== null,
     tabbed: ops.tabbed && panelIdsOf(layout).length > 1,
+    hasTabs: ops.tabbed,
     getPanelUrl: (panelId) => ops.urlFor((current) => ops.contextual(current, panelId, scopeId)),
+    getFocusedPanelUrl: (panelId) =>
+      ops.urlFor((current) => focusPanelTab(ops.contextual(current, panelId, scopeId), panelId)),
     openPanel: (panelId, options) =>
       options?.replace
         ? ops.open((current) => supersede(current, panelId), true)
@@ -380,10 +404,12 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const { close, closeTo } = useCoverHistory(PANEL_COVER)
   const closeTab = useCallback(
     (panelId: string) => {
-      const next = closePanelTab(layout, panelId)
+      // A stream's draft pane goes with the stream: its composer is that stream's.
+      const next = closePanelTab(closePanelTab(layout, panelId), createComposePanelId(panelId))
       if (next === layout) return
-      // A draft's tab is gone with its draft, so only real panels are remembered for reopening.
-      if (!isDraftPanel(panelId)) {
+      // A draft's tab is gone with its draft, and a compose tab's draft is back
+      // inline, so only real panels are remembered for reopening.
+      if (!isDraftPanel(panelId) && !isComposePanel(panelId)) {
         const others = closedTabs.current.filter((tab) => tab.panelId !== panelId || tab.path !== location.pathname)
         closedTabs.current = [...others, { path: location.pathname, panelId }].slice(-MAX_CLOSED_TABS)
       }

@@ -156,24 +156,6 @@ test.describe("Message Send Mode", () => {
 
       await expect(editor).not.toBeFocused()
     })
-
-    test("should require a second Escape to close the fullscreen editor", async ({ page }) => {
-      await page.getByRole("button", { name: "+ New Scratchpad" }).click()
-
-      await page.getByRole("button", { name: "Expand to fullscreen editor" }).click()
-
-      const fullscreenEditor = page.getByRole("textbox", { name: "Fullscreen message editor" })
-      await expect(fullscreenEditor).toBeVisible({ timeout: 5000 })
-      await expect(fullscreenEditor).toBeFocused()
-
-      await page.keyboard.press("Escape")
-      await expect(fullscreenEditor).toBeVisible()
-      await expect(fullscreenEditor).not.toBeFocused()
-
-      await page.keyboard.press("Escape")
-      await expect(fullscreenEditor).not.toBeVisible()
-      await expect(page.getByRole("textbox", { name: "Message input" })).toBeVisible()
-    })
   })
 
   test.describe("cmdEnter mode (via settings)", () => {

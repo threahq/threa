@@ -1,6 +1,8 @@
 import { memo, useState, useCallback, useEffect, useMemo, useRef, type ComponentProps } from "react"
+import { createPortal } from "react-dom"
 import { toast } from "sonner"
-import { useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
+import { PenLine } from "lucide-react"
 import { useStableCallback } from "@/hooks/use-stable-callback"
 import {
   hasDocContent,
@@ -31,12 +33,9 @@ import {
   FloatingComposerShell,
   ComposerDisabledNotice,
   MessageComposer,
-  OverlayComposerShell,
   ScheduledMessagesPicker,
 } from "@/components/composer"
 import type { ComposerControlHandle } from "@/components/composer"
-import { useStreamName } from "@/hooks/use-stream-name"
-import { STREAM_ICONS } from "@/lib/streams"
 import { useScheduleMessage } from "@/hooks"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { parseMarkdown } from "@threahq/prosemirror"
@@ -47,7 +46,11 @@ import { useConversationReply, type ConversationReplyData } from "./conversation
 import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { boardPostLastActiveStreamId } from "@/lib/board/reply-plan"
 import { boardReplyDraftKey, parseBoardDraftKey } from "@/lib/board/draft-keys"
-import { usePanel, createConversationPanelId } from "@/contexts"
+import { usePanel, createConversationPanelId, createComposePanelId } from "@/contexts"
+import { PaneFocusContext, useComposeSlot } from "@/components/panes"
+import { Button } from "@/components/ui/button"
+import { panelIdsOf } from "@/lib/panel-tabs"
+import { collapsedComposerPreview } from "@/lib/drafts/collapsed-composer-preview"
 import {
   acknowledgeShareHandoffBatch,
   peekShareHandoffBatch,
@@ -487,7 +490,7 @@ function MessageInputComponent({
   // target in one local-first transaction. An empty composer with no row simply
   // opens the destination's existing draft, if any.
   const conversationReplyCtx = useConversationReply()
-  const { openPanel } = usePanel()
+  const { openPanel, layout, hasTabs, getFocusedPanelUrl, getTabUrl, closeTab, setCurrentPane } = usePanel()
   useEffect(() => {
     if (!conversationReplyCtx) return
     return conversationReplyCtx.registerHandler((data: ConversationReplyData) => {
@@ -774,34 +777,24 @@ function MessageInputComponent({
   }, [workspaceId, streamId])
 
   const [error, setError] = useState<string | null>(null)
-  const [expanded, setExpanded] = useState(false)
+  // Expanded is the stream's compose pane being open: the composer renders there, and a bar holds its place here.
+  const composeId = createComposePanelId(streamId)
+  const expanded = panelIdsOf(layout).includes(composeId)
+  const composeSlot = useComposeSlot(streamId, expanded)
+  const collapse = useStableCallback(() => {
+    if (expanded) closeTab(composeId)
+  })
   const messageSendMode = preferences?.messageSendMode ?? "enter"
   const connectionState = useConnectionState()
   const isOffline = connectionState === "offline"
 
-  const composerHeightRef = useComposerHeightPublish({
-    active: !expanded,
-    onHeightChange: onComposerHeightChange,
-  })
+  const composerHeightRef = useComposerHeightPublish({ onHeightChange: onComposerHeightChange })
 
   // Reset local state on stream change (e.g., draft promotion) without remounting
   useEffect(() => {
     setError(null)
-    setExpanded(false)
     setPreserveConversationStripSpace(false)
   }, [streamId])
-
-  // Collapse the fullscreen overlay when the viewport crosses to mobile (expand is
-  // a desktop affordance; mobile authors long messages via the mobile-expanded chrome).
-  useEffect(() => {
-    if (isMobile) setExpanded(false)
-  }, [isMobile])
-
-  const handleExpandClick = useCallback(() => setExpanded(true), [])
-  const handleCollapse = useCallback(() => setExpanded(false), [])
-
-  // Stream label for the fullscreen overlay header (the post's destination).
-  const overlayStreamName = useStreamName(workspaceId, streamId)
 
   const handleSubmit = useStableCallback(async (editorContent?: JSONContent) => {
     if (!composer.canSend) return
@@ -831,7 +824,7 @@ function MessageInputComponent({
       // see their chip linger after pressing send.
       composer.setContent(EMPTY_DOC)
       composer.resolveDraft()
-      setExpanded(false)
+      collapse()
       try {
         await dispatchCommand(sendPlan, normalizedContent)
       } catch {
@@ -867,7 +860,7 @@ function MessageInputComponent({
     // draft is kept until the send resolves, so a failed draft promotion can
     // restore the content.
     composer.setContent(EMPTY_DOC)
-    setExpanded(false)
+    collapse()
     try {
       const result = await sendMessage({
         contentJson: messageContent,
@@ -931,7 +924,7 @@ function MessageInputComponent({
 
     try {
       composer.setContent(EMPTY_DOC)
-      setExpanded(false)
+      collapse()
       await scheduleMessageMutation.mutateAsync({
         streamId,
         contentJson: normalizedContent,
@@ -1123,45 +1116,77 @@ function MessageInputComponent({
     )
   }
 
-  const StreamGlyph = stream ? STREAM_ICONS[stream.type] : null
-
   return (
     <>
-      {/* Fullscreen editor — the shared overlay shell (Linear-style modal on
-          desktop), the same surface the board authoring overlay uses. Posts into
-          THIS stream: the header shows it, and the full composer prop bag (E2E,
-          thread, schedule, quote, stash) rides along unchanged. */}
-      <OverlayComposerShell
-        open={expanded}
-        onOpenChange={setExpanded}
-        title="Message editor"
-        header={
-          <div className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full border bg-background px-3 text-sm font-medium">
-            {StreamGlyph && <StreamGlyph className="h-4 w-4 shrink-0 text-muted-foreground" />}
-            <span className="truncate">{overlayStreamName ?? "This stream"}</span>
-          </div>
-        }
-      >
-        {conversationReplyStrip}
-        <div className="min-h-0 flex-1">
-          <MemoizedMessageComposer {...composerProps} expanded onCollapse={handleCollapse} autoFocus />
-        </div>
-      </OverlayComposerShell>
-
-      {/* Inline composer — hidden while expanded. Mobile inline editing hides the
-          composer via the body-level inline-edit presence attribute. */}
-      <FloatingComposerShell ref={composerHeightRef} hidden={expanded} data-message-composer-root>
+      {composeSlot &&
+        createPortal(
+          // Read from the pane it shows in, not the pane this stream sits in.
+          <PaneFocusContext.Provider value={composeSlot.paneFocus}>
+            {/* Its events bubble through this stream's pane, which claims them first; the draft's pane takes them back. */}
+            <div
+              className="flex min-h-0 flex-1 flex-col"
+              onPointerDownCapture={() => setCurrentPane(composeId)}
+              onFocusCapture={() => setCurrentPane(composeId)}
+            >
+              {conversationReplyStrip}
+              <div className="min-h-0 flex-1">
+                <MemoizedMessageComposer {...composerProps} expanded autoFocus />
+              </div>
+            </div>
+          </PaneFocusContext.Provider>,
+          composeSlot.node
+        )}
+      <FloatingComposerShell ref={composerHeightRef} data-message-composer-root>
         <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={e2eEnabled} streamId={e2eRootStreamId} />
-        {!expanded && conversationReplyStrip}
-        {!expanded && (
-          <MemoizedMessageComposer
-            {...composerProps}
-            autoFocus={autoFocus}
-            onExpandClick={isAsideComposer ? undefined : handleExpandClick}
+        {expanded ? (
+          <ComposingInPaneBar
+            href={getTabUrl(composeId)}
+            preview={collapsedComposerPreview(composer.content)}
+            onWriteHere={collapse}
           />
+        ) : (
+          <>
+            {conversationReplyStrip}
+            <MemoizedMessageComposer
+              {...composerProps}
+              autoFocus={autoFocus}
+              expandHref={hasTabs && !isAsideComposer ? getFocusedPanelUrl(composeId) : undefined}
+            />
+          </>
         )}
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
       </FloatingComposerShell>
     </>
+  )
+}
+
+/** Holds the composer's place while its draft is open in a pane: a way to that pane, and a way to bring it back. */
+function ComposingInPaneBar({
+  href,
+  preview,
+  onWriteHere,
+}: {
+  href: string
+  preview: string
+  onWriteHere: () => void
+}) {
+  return (
+    <div className="flex items-center gap-2 rounded-xl border bg-background p-1.5 shadow-sm">
+      <Link to={href} className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted">
+        <PenLine className="h-4 w-4 shrink-0 text-muted-foreground" />
+        <span className={preview ? "truncate" : "truncate text-muted-foreground"}>
+          {preview || "Draft open in a pane"}
+        </span>
+      </Link>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        title="Close the pane and keep writing here"
+        onClick={onWriteHere}
+      >
+        Write here
+      </Button>
+    </div>
   )
 }

@@ -1,5 +1,5 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react"
-import { usePanel, useFrontPanel, useCurrentPane, isConversationPanel, PaneScope } from "@/contexts"
+import { usePanel, useFrontPanel, useCurrentPane, isConversationPanel, isComposePanel, PaneScope } from "@/contexts"
 import { Minimize2 } from "lucide-react"
 import { Pane, PaneFocusContext, PanelTabTitle, usePaneFocusEscape, type PaneMapCell } from "@/components/panes"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
@@ -17,6 +17,7 @@ import { PaneShortcuts } from "./pane-shortcuts"
 import { getDraftPromotionSource } from "@/lib/draft-promotions"
 import { StreamPanel } from "@/components/thread"
 import { ConversationPanel } from "@/components/conversations/conversation-panel"
+import { ComposePanel } from "@/components/composer/compose-panel"
 
 /** A draft thread promoted to its real stream keeps the draft's key, so its pane survives the handoff. */
 function panelKeyFor(workspaceId: string, panelId: string): string {
@@ -31,7 +32,8 @@ interface PanelHostProps {
 
 /**
  * Picks the side panel's content by panel kind: a `conv:<id>` panel opens a
- * conversation projection (Mechanism B), every other id is a stream/thread/draft
+ * conversation projection (Mechanism B), a `compose:<id>` panel a stream's
+ * draft, every other id is a stream/thread/draft
  * handled by {@link StreamPanel}. Both stream.tsx and board.tsx host the panel
  * through this, so either surface can open either kind. Keyed on the panel id so
  * switching targets remounts cleanly — except a draft thread promoted to its real
@@ -44,6 +46,9 @@ export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
   const { panelId } = usePanel()
   if (panelId && isConversationPanel(panelId)) {
     return <ConversationPanel key={panelId} workspaceId={workspaceId} onClose={onClose} className={className} />
+  }
+  if (panelId && isComposePanel(panelId)) {
+    return <ComposePanel key={panelId} workspaceId={workspaceId} onClose={onClose} className={className} />
   }
   return (
     <StreamPanel
