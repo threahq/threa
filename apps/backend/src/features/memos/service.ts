@@ -749,6 +749,7 @@ export class MemoService implements MemoServiceLike {
             scope: fetchedData.memoScope.scope,
             scopeUserId: fetchedData.memoScope.scopeUserId,
             audiences: [fetchedData.readerAudience],
+            sharedRootStreamId: fetchedData.sharedRootStreamId,
             limit: MEMORY_CONTEXT_NEAREST_LIMIT,
           })
           nearest = found.map(({ memo }) => memo)

@@ -166,7 +166,7 @@ describe("memo capture in a channel its workspace shares as host", () => {
   async function seedMemo(
     ws: Workspace,
     stream: string,
-    memo: { abstract: string; tags: string[]; sharedRootStreamId?: string }
+    memo: { abstract: string; tags: string[]; sharedRootStreamId?: string; embedding?: number[] }
   ): Promise<void> {
     const id = memoId()
     const source = memo.sharedRootStreamId
@@ -184,7 +184,7 @@ describe("memo capture in a channel its workspace shares as host", () => {
       tags: memo.tags,
       sharedRootStreamId: memo.sharedRootStreamId,
     })
-    await MemoRepository.updateEmbedding(pool, ws.id, id, SAME_EMBEDDING)
+    await MemoRepository.updateEmbedding(pool, ws.id, id, memo.embedding ?? SAME_EMBEDDING)
   }
 
   /** A settled conversation of these messages in `stream`. */
@@ -307,6 +307,23 @@ describe("memo capture in a channel its workspace shares as host", () => {
     await service().processBatch(ws.id, channel)
 
     expect(await capturedMemos(ws)).toEqual([{ title: "Start with auth", shared_root_stream_id: channel }])
+  })
+
+  test("should keep a memo made before the share out of the memorizer's nearest context when the channel is shared", async () => {
+    const ws = await seedWorkspace()
+    const channel = await seedChannel(ws)
+    await seedMemo(ws, channel, { abstract: "pre-share", tags: [] })
+    for (let i = 1; i <= 20; i++) {
+      const embedding = Array.from({ length: 1536 }, (_, d) => (d === i ? 1 : 0))
+      await seedMemo(ws, channel, { abstract: `while shared ${i}`, tags: [], sharedRootStreamId: channel, embedding })
+    }
+    await queueConversation(ws, channel, [await seedMessage(ws, channel), await seedMessage(ws, channel)])
+    await share(ws, channel)
+    embedAlike = true
+
+    await service().processBatch(ws.id, channel)
+
+    expect(memorizerContexts.map((c) => c.memoryContext.includes("pre-share"))).toEqual([false])
   })
 
   test("should let a memo made while shared block a near-identical one when the channel is shared", async () => {
