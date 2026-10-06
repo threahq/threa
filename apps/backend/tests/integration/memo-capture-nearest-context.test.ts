@@ -77,7 +77,7 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
     return thread
   }
 
-  async function seedMessage(c: Channel, stream = c.channel): Promise<string> {
+  async function seedMessage(c: Channel, stream = c.channel, text = "the plan costs money"): Promise<string> {
     const id = messageId()
     await MessageRepository.insert(pool, {
       id,
@@ -86,7 +86,7 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
       sequence: nextSequence++,
       authorId: c.author,
       authorType: "user",
-      ...testMessageContent("the plan costs money"),
+      ...testMessageContent(text),
     })
     return id
   }
@@ -123,9 +123,9 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
     return price
   }
 
-  async function queueConversation(c: Channel): Promise<void> {
+  async function queueConversation(c: Channel, text?: string): Promise<void> {
     const id = conversationId()
-    const messages = [await seedMessage(c), await seedMessage(c)]
+    const messages = [await seedMessage(c, c.channel, text), await seedMessage(c, c.channel, text)]
     await withTransaction(pool, async (client) => {
       await ConversationRepository.insert(client, {
         id,
@@ -175,6 +175,7 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
       } as never,
       embeddingService: {
         embedBatch: async (texts: string[], opts: { functionId: string }) => {
+          if (texts.some((text) => !text.trim())) throw new Error("embedding input is empty")
           if (opts.functionId === "memo-context-embedding") contextEmbeddings++
           return texts.map(() => (opts.functionId === "memo-context-embedding" ? axis(TOPIC_AXIS) : axis(nextAxis++)))
         },
@@ -241,6 +242,16 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
       contextEmbeddings: 0,
       statuses: { "Price is $9": "superseded", "Price is $12": "active" },
     })
+  })
+
+  test("an attachment-only conversation with no message text still finds the memo it revises", async () => {
+    const c = await seedChannel()
+    const price = await seedBuriedPrice(c)
+    await queueConversation(c, "")
+
+    await capture(c, price)
+
+    expect(await priceStatuses(c)).toEqual({ "Price is $9": "superseded", "Price is $12": "active" })
   })
 
   test("a nearest memo edited while the model ran survives, and the conversation re-runs against the edit", async () => {

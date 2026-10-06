@@ -736,7 +736,9 @@ export class MemoService implements MemoServiceLike {
         // Below the limit the newest memos are every memo, so nothing is missing.
         let nearest: Memo[] = []
         if (fetchedData.existingMemos.length >= MEMORY_CONTEXT_LIMIT) {
-          const conversationText = messagesArray.map((m) => m.contentMarkdown).join("\n")
+          // Attachment-only messages have no text, and embedding rejects an empty input.
+          const messageText = messagesArray.map((m) => m.contentMarkdown).join("\n")
+          const conversationText = messageText.trim() ? messageText : formattedMessages
           const [conversationEmbedding] = await this.embeddingService.embedBatch(
             [Array.from(conversationText).slice(-MEMORY_CONTEXT_EMBED_MAX_CHARS).join("")],
             { workspaceId, functionId: "memo-context-embedding" }
