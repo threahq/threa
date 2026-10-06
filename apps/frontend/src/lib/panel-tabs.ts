@@ -155,6 +155,13 @@ export function openPanelTabBeside(layout: PanelLayout, from: string, id: string
   return insertColumn(layout, right, { ids: [id], active: id })
 }
 
+/** Activates `id` where it is, or adds it as a tab of the section holding `of`. */
+export function openPanelTabWith(layout: PanelLayout, of: string | null, id: string): PanelLayout {
+  if (locate(layout, id)) return activatePanelTab(layout, id)
+  const at = of ? locate(layout, of) : null
+  return at ? appendTab(layout, at, id) : openPanelTab(layout, id)
+}
+
 function removeTab(layout: PanelLayout, at: PanelLocation, id: string): PanelLayout {
   const section = sectionAt(layout, at)
   const index = section.ids.indexOf(id)

@@ -43,6 +43,7 @@ export {
   PanelProvider,
   usePanel,
   usePanelTabFocusHandoff,
+  usePaneShortcutQueue,
   useCurrentPane,
   useFrontPanel,
   useMainOwnsCover,
