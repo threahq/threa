@@ -1,27 +1,29 @@
+import type { TitleSource } from "@threahq/types"
 import type { Querier } from "../../db"
 import type { SharedTree } from "../stream-connections"
 import { ConversationRepository, type Conversation, type SharedConversation } from "./repository"
 
-type PartnerReadableText = Pick<Conversation, "topicSummary" | "topicSummarySource" | "summary">
+interface PartnerReadableText {
+  topicSummary: string | null
+  topicSummarySource: TitleSource | null
+  summary: string | null
+}
 
 const WITHHELD: PartnerReadableText = { topicSummary: null, topicSummarySource: null, summary: null }
 
 /**
  * A conversation's title and summary as the partner of the share rooted at
  * `rootStreamId` reads them: each only when it was written while shared.
- * `text` and `stamps` must come from the same row read, or a rename landing
- * between two reads would mark pre-share text as shared.
  */
 export function readableByPartner(
-  text: PartnerReadableText,
-  stamps: Pick<SharedConversation, "topicSummarySharedRootStreamId" | "summarySharedRootStreamId">,
+  { conversation, topicSummarySharedRootStreamId, summarySharedRootStreamId }: SharedConversation,
   rootStreamId: string
 ): PartnerReadableText {
-  const titled = stamps.topicSummarySharedRootStreamId === rootStreamId
+  const titled = topicSummarySharedRootStreamId === rootStreamId
   return {
-    topicSummary: titled ? text.topicSummary : null,
-    topicSummarySource: titled ? (text.topicSummarySource ?? null) : null,
-    summary: stamps.summarySharedRootStreamId === rootStreamId ? text.summary : null,
+    topicSummary: titled ? conversation.topicSummary : null,
+    topicSummarySource: titled ? (conversation.topicSummarySource ?? null) : null,
+    summary: summarySharedRootStreamId === rootStreamId ? conversation.summary : null,
   }
 }
 
@@ -51,7 +53,7 @@ export async function viewConversationsAsPartner(
     const row = shared.get(conversation.id)
     return {
       ...conversation,
-      ...(row ? readableByPartner(row.conversation, row, sharedTree.rootStreamId) : WITHHELD),
+      ...(row ? readableByPartner(row, sharedTree.rootStreamId) : WITHHELD),
     }
   })
 }

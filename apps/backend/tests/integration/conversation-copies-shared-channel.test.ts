@@ -619,16 +619,18 @@ describe("Conversations in a shared channel's copy", () => {
       createdAt: row.created_at,
     })
     const pokesFor = async (workspace: string) => {
+      const sent = events.filter((row) => row.payload.workspaceId === workspace)
       const bridgeClient = new RecordingBridgeClient()
-      await new TestPokeHandler(pool, bridgeClient).run(
-        events.filter((row) => row.payload.workspaceId === workspace).map(toOutboxEvent)
-      )
-      return bridgeClient.pokes
+      await new TestPokeHandler(pool, bridgeClient).run(sent.map(toOutboxEvent))
+      return { events: sent.map((row) => row.event_type), pokes: bridgeClient.pokes }
     }
 
     expect({ host: await pokesFor(world.host.id), copy: await pokesFor(world.partner.id) }).toEqual({
-      host: [{ hostWorkspaceId: world.host.id, connectionId: world.connectionId, partnerWorkspaceId: world.partner.id }],
-      copy: [],
+      host: {
+        events: ["conversation:updated"],
+        pokes: [{ hostWorkspaceId: world.host.id, connectionId: world.connectionId, partnerWorkspaceId: world.partner.id }],
+      },
+      copy: { events: ["conversation:created"], pokes: [] },
     })
   })
 

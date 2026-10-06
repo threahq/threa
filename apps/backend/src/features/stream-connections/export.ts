@@ -598,14 +598,11 @@ function toBridgeConversation(
   participants: ReadonlySet<string>
 ): BridgeConversation {
   const { conversation, version } = shared
-  const { topicSummary, topicSummarySource, summary } = readableByPartner(conversation, shared, rootStreamId)
   return {
     id: conversation.id,
     streamId: conversation.streamId,
-    topicSummary,
-    topicSummarySource: topicSummarySource ?? null,
+    ...readableByPartner(shared, rootStreamId),
     topicSummaryRevision: conversation.topicSummaryRevision ?? 0,
-    summary,
     status: conversation.status,
     messageIds: conversation.messageIds.filter(isInTree),
     secondaryMessageIds: conversation.secondaryMessageIds.filter(isInTree),
