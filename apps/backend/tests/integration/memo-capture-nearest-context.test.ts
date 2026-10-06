@@ -61,12 +61,27 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
     })
   }
 
-  async function seedMessage(c: Channel): Promise<string> {
+  async function seedThread(c: Channel): Promise<string> {
+    const thread = streamId()
+    await StreamRepository.insert(pool, {
+      id: thread,
+      workspaceId: c.ws,
+      type: "thread",
+      visibility: "public",
+      parentStreamId: c.channel,
+      parentAnchorId: await seedMessage(c),
+      rootStreamId: c.channel,
+      createdBy: c.author,
+    })
+    return thread
+  }
+
+  async function seedMessage(c: Channel, stream = c.channel): Promise<string> {
     const id = messageId()
     await MessageRepository.insert(pool, {
       id,
       workspaceId: c.ws,
-      streamId: c.channel,
+      streamId: stream,
       sequence: nextSequence++,
       authorId: c.author,
       authorType: "user",
@@ -75,9 +90,14 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
     return id
   }
 
-  async function seedMemo(c: Channel, title: string, embedding: number[], owner?: string): Promise<string> {
+  async function seedMemo(
+    c: Channel,
+    title: string,
+    embedding: number[],
+    { owner, stream }: { owner?: string; stream?: string } = {}
+  ): Promise<string> {
     const id = memoId()
-    const source = await seedMessage(c)
+    const source = await seedMessage(c, stream)
     await MemoRepository.insert(pool, {
       id,
       workspaceId: c.ws,
@@ -96,8 +116,8 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
   }
 
   /** The topic memo, buried under twenty newer unrelated ones. */
-  async function seedBuriedPrice(c: Channel): Promise<string> {
-    const price = await seedMemo(c, "Price is $9", axis(TOPIC_AXIS))
+  async function seedBuriedPrice(c: Channel, stream?: string): Promise<string> {
+    const price = await seedMemo(c, "Price is $9", axis(TOPIC_AXIS), { stream })
     for (let i = 1; i <= 20; i++) await seedMemo(c, `Unrelated ${i}`, axis(i))
     return price
   }
@@ -180,7 +200,7 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
   test("a conversation revising a memo older than the newest twenty retires it, without seeing another member's private memo", async () => {
     const c = await seedChannel()
     const price = await seedBuriedPrice(c)
-    await seedMemo(c, "Their price note", axis(TOPIC_AXIS), c.other)
+    await seedMemo(c, "Their price note", axis(TOPIC_AXIS), { owner: c.other })
     await queueConversation(c)
 
     const shown = await capture(c, price)
@@ -194,6 +214,16 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
       shownPrivate: false,
       statuses: { "Price is $9": "superseded", "Their price note": "active", "Price is $12": "active" },
     })
+  })
+
+  test("a memo captured in one of the channel's threads is retired by a revision in the channel", async () => {
+    const c = await seedChannel()
+    const price = await seedBuriedPrice(c, await seedThread(c))
+    await queueConversation(c)
+
+    await capture(c, price)
+
+    expect(await priceStatuses(c)).toEqual({ "Price is $9": "superseded", "Price is $12": "active" })
   })
 
   test("a nearest memo edited while the model ran survives, and the conversation re-runs against the edit", async () => {
