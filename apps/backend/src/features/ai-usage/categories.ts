@@ -61,6 +61,7 @@ export const AI_FUNCTIONS: Record<string, AIFunction> = {
   "message-embedding": { category: "memory", stage: "embeddings" },
   "message-embedding-backfill": { category: "memory", stage: "embeddings" },
   "memo-embedding": { category: "memory", stage: "embeddings" },
+  "memo-context-embedding": { category: "memory", stage: "embeddings" },
   "memo-edit-embedding": { category: "memory", stage: "embeddings" },
   "conversation-embedding": { category: "conversation", stage: "embeddings" },
   "conversation-embedding-backfill": { category: "conversation", stage: "embeddings" },

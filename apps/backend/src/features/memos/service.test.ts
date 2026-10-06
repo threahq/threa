@@ -134,6 +134,7 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
   spyOn(MemoRepository, "getAllTags").mockResolvedValue([])
   const findActiveBySourceConversation = spyOn(MemoRepository, "findActiveBySourceConversation").mockResolvedValue([])
   spyOn(MemoRepository, "findNearDuplicate").mockResolvedValue(null)
+  spyOn(MemoRepository, "findNearestInStream").mockResolvedValue([])
   spyOn(MemoRepository, "findSameConversationNear").mockResolvedValue([])
   spyOn(MemoRepository, "markSuperseded").mockResolvedValue(undefined as never)
   spyOn(MemoRepository, "filterSupersedable").mockImplementation(async (_db, _workspaceId, ids) => ids)

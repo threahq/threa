@@ -284,7 +284,10 @@ describe("memo sources: deleted and edited messages", () => {
           return []
         },
       } as never,
-      embeddingService: { embedBatch: async () => [] } as never,
+      embeddingService: {
+        embedBatch: async (texts: string[]) =>
+          texts.map(() => Array.from({ length: 1536 }, (_, i) => (i === 2 ? 1 : 0))),
+      } as never,
       messageFormatter: {
         formatMessages: async (_db: unknown, _ws: string, messages: Message[]) => {
           formatted.push(messages.map((m) => m.id))

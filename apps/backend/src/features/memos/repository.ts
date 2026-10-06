@@ -770,10 +770,40 @@ export const MemoRepository = {
       sharedRootStreamId?: string
     }
   ): Promise<{ memo: Memo; distance: number } | null> {
-    const { workspaceId, streamId, embedding, maxDistance, scope = "workspace", scopeUserId = null, audiences } = params
+    const [nearest] = await MemoRepository.findNearestInStream(db, { ...params, limit: 1 })
+    return nearest ?? null
+  },
+
+  /** Active memos sourced in a stream, nearest an embedding first; `maxDistance` omitted means no cutoff. */
+  async findNearestInStream(
+    db: Querier,
+    params: {
+      workspaceId: string
+      streamId: string
+      embedding: number[]
+      maxDistance?: number
+      scope?: MemoScope
+      scopeUserId?: string | null
+      audiences: readonly MemoAudience[]
+      /** Only memos captured while this channel was shared are returned. */
+      sharedRootStreamId?: string
+      limit: number
+    }
+  ): Promise<{ memo: Memo; distance: number }[]> {
+    const {
+      workspaceId,
+      streamId,
+      embedding,
+      maxDistance,
+      scope = "workspace",
+      scopeUserId = null,
+      audiences,
+      limit,
+    } = params
     const embeddingLiteral = `[${embedding.join(",")}]`
     const audienceVisible = memoAudienceVisibleSql(workspaceId, audiences, "m")
     const sharedOnly = capturedWhileSharedSql(params.sharedRootStreamId, "m")
+    const withinDistance = composeSql`(${maxDistance === undefined} OR m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance ?? 0})`
 
     const result = await db.query<MemoRow & { distance: number }>(composeSql`
       WITH stream_memos AS (
@@ -788,7 +818,7 @@ export const MemoRepository = {
           AND m.scope_user_id IS NOT DISTINCT FROM ${scopeUserId}
           ${sharedOnly}
           AND m.embedding IS NOT NULL
-          AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
+          AND ${withinDistance}
           AND ${audienceVisible}
         UNION
         SELECT ${SELECT_FIELDS_PREFIXED_SQL},
@@ -802,17 +832,15 @@ export const MemoRepository = {
           AND m.scope_user_id IS NOT DISTINCT FROM ${scopeUserId}
           ${sharedOnly}
           AND m.embedding IS NOT NULL
-          AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
+          AND ${withinDistance}
           AND ${audienceVisible}
       )
       SELECT * FROM stream_memos
       ORDER BY distance ASC
-      LIMIT 1
+      LIMIT ${limit}
     `)
 
-    const row = result.rows[0]
-    if (!row) return null
-    return { memo: mapRowToMemo(row), distance: row.distance }
+    return result.rows.map((row) => ({ memo: mapRowToMemo(row), distance: row.distance }))
   },
 
   /**
