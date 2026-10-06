@@ -92,7 +92,7 @@ function formatMemosSection(memos: EnrichedMemoResult[], workspaceId: string): s
           : ""
       const linkLine = `Link: ${workspaceMemoUrl(workspaceId, memo.id)}\n`
 
-      const asOf = formatRelativeDate(latestSourceAt ?? memo.createdAt)
+      const asOf = formatMinute(latestSourceAt ?? memo.createdAt)
 
       return `**${memo.title}** _(${memoTag})_, as of ${asOf}
 
@@ -109,10 +109,16 @@ ${memoEntries}
 `
 }
 
+// Memos and messages share one absolute minute-precision clock: the memo prompt says a later message
+// overrides the memo, and relative day labels cannot order two items from the same day.
+function formatMinute(date: Date): string {
+  return `${date.toISOString().slice(0, 16)}Z`
+}
+
 function formatMessagesSection(messages: EnrichedMessageResult[], workspaceId: string): string {
   const messageEntries = messages
     .map((msg) => {
-      const relativeDate = formatRelativeDate(msg.createdAt)
+      const postedAt = formatMinute(msg.createdAt)
       const author = msg.authorType === "user" ? `@${msg.authorName}` : msg.authorName
       const content = msg.content.replace(/\s+/g, " ").trim()
       const quoteBlock = msg.quoteContext ? `\n${msg.quoteContext}` : ""
@@ -124,7 +130,7 @@ function formatMessagesSection(messages: EnrichedMessageResult[], workspaceId: s
       const idTag = formatRetrievedMessageTag(msg.id, msg.streamId, msg.authorId, msg.authorType)
       const link = workspaceMessageUrl(workspaceId, msg.streamId, msg.id)
 
-      return `> ${idTag} **${author}** in _${msg.streamName}_ (${relativeDate}):
+      return `> ${idTag} **${author}** in _${msg.streamName}_ (${postedAt}):
 > ${content}${quoteBlock}
 > Link: ${link}`
     })

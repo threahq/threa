@@ -56,6 +56,19 @@ describe("formatRetrievedContext", () => {
     expect(text).toContain("Link: /w/ws_1/s/stream_1?m=msg_1")
   })
 
+  test("a same-day message and memo stay ordered on the shared minute clock", () => {
+    const text = formatRetrievedContext(
+      [memo({ latestSourceAt: new Date("2026-07-01T10:00:00Z") })],
+      [message({ createdAt: new Date("2026-07-01T10:05:30Z") })],
+      [],
+      WORKSPACE
+    )
+    expect([text?.match(/_, as of [^\n]+/)?.[0], text?.match(/in _General_ \([^)]+\)/)?.[0]]).toEqual([
+      "_, as of 2026-07-01T10:00Z",
+      "in _General_ (2026-07-01T10:05Z)",
+    ])
+  })
+
   test("memos link into the memory explorer", () => {
     const text = formatRetrievedContext([memo()], [], [], WORKSPACE)
     expect(text).toContain("(memo:memo_1 from General stream:stream_1)")
@@ -69,7 +82,7 @@ describe("formatRetrievedContext", () => {
         "Each memo is as of its newest source message. A related message posted after that date on the same topic overrides the memo.\n\n**Deploy runbook**"
       )
     )
-    expect(text?.match(/_, as of [^\n]+/g)).toEqual(["_, as of Jul 1, 2026", "_, as of May 15, 2026"])
+    expect(text?.match(/_, as of [^\n]+/g)).toEqual(["_, as of 2026-07-01T10:00Z", "_, as of 2026-05-15T10:00Z"])
   })
 
   test("attachments link to their stream when one is present, and not otherwise", () => {
