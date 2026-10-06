@@ -77,7 +77,7 @@ import { useDecryptedStreamName } from "@/hooks/use-decrypted-stream-name"
 import { copyStreamLink } from "@/lib/stream-links"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { LabelStack } from "@/components/labels/label-stack"
-import { PanelTabStrip, usePaneCovered } from "@/components/panes"
+import { PanelTabStrip, usePaneCovered, usePanelCloseFocusLanding } from "@/components/panes"
 import { isServerStreamId } from "@/lib/stream-ids"
 
 interface StreamPanelProps {
@@ -91,6 +91,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   const [searchParams] = useSearchParams()
   const covered = usePaneCovered()
   const { panelId, tabbed, openPanel, getNavigateUrl, closePanel, ownsCover, claimCover } = usePanel()
+  const closeRef = usePanelCloseFocusLanding()
   // The deep link and the overview are the front pane's: a background tab, or a
   // pane beside the one that opened them, leaves them be.
   const showsCover = ownsCover && !covered
@@ -534,7 +535,18 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   // tab carries its own close.
   let headerContent: React.ReactNode
   if (tabbed) {
-    headerContent = <PanelTabStrip workspaceId={workspaceId} className={isMobile ? undefined : "-ml-2"} />
+    headerContent = (
+      <PanelTabStrip
+        workspaceId={workspaceId}
+        className={isMobile ? undefined : "-ml-2"}
+        labels={
+          !isDraft &&
+          stream && (
+            <LabelStack workspaceId={workspaceId} resourceType={LabelableResourceTypes.STREAM} resourceId={panelId} />
+          )
+        }
+      />
+    )
   } else if (isDraft && parentStream) {
     headerContent = (
       <div className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden pr-2">
@@ -571,7 +583,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
         {isMobile && <SidebarToggle location="page" />}
         {/* Mobile back button — replaces X close on small screens */}
         {isMobile && (
-          <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0" onClick={onClose}>
+          <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0" onClick={onClose} ref={closeRef}>
             <ChevronLeft className="h-4 w-4" />
             <span className="sr-only">Back</span>
           </Button>
@@ -580,9 +592,9 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
         <AgentActivityHeaderChip
           workspaceId={workspaceId}
           streamId={isDraft ? undefined : panelId}
-          compact={isMobile}
+          compact={isMobile || tabbed}
         />
-        {!isDraft && stream && panelId && (
+        {!tabbed && !isDraft && stream && (
           <LabelStack
             workspaceId={workspaceId}
             resourceType={LabelableResourceTypes.STREAM}
@@ -658,7 +670,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
             )
           ))}
         {/* Hide X close button on mobile (back button used instead) */}
-        {!isMobile && !tabbed && <SidePanelClose onClose={onClose} />}
+        {!isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />}
       </SidePanelHeader>
 
       <SidePanelContent className="relative flex flex-col" data-editor-zone="panel" ref={setDraftPortalTarget}>
