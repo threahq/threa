@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useRef } from "react"
+import { type CSSProperties, type ReactElement, type ReactNode, useRef } from "react"
 import { Virtualizer, type VirtualizerHandle } from "virtua"
 import { cn } from "@/lib/utils"
 
@@ -107,6 +107,9 @@ export function VirtualizedScroller({
   skeleton,
   ...dataAttributes
 }: VirtualizedScrollerProps) {
+  // virtua memoizes each row's wrapper on its children, so an unchanged node
+  // must get back the identical wrapper element or every mounted row re-renders.
+  const wrappers = useRef(new WeakMap<object, { key: string; className?: string; element: ReactElement }>())
   // Never mount the list empty: the initial landing and the settle mask in
   // useTimelineScroll both arm when items first exist, so a list mounted with
   // zero items paints an empty top-anchored frame and the populate + pin a
@@ -163,11 +166,19 @@ export function VirtualizedScroller({
               // without profiling on a low-end device.
               bufferSize={2000}
             >
-              {items.map((item) => (
-                <div key={item.key} className={itemClassName}>
-                  {item.node}
-                </div>
-              ))}
+              {items.map(({ key, node }) => {
+                const cached = typeof node === "object" && node !== null ? wrappers.current.get(node) : undefined
+                if (cached?.key === key && cached.className === itemClassName) return cached.element
+                const element = (
+                  <div key={key} className={itemClassName}>
+                    {node}
+                  </div>
+                )
+                if (typeof node === "object" && node !== null) {
+                  wrappers.current.set(node, { key, className: itemClassName, element })
+                }
+                return element
+              })}
             </Virtualizer>
           </div>
           {footer}

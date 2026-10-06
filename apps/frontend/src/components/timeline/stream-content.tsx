@@ -90,6 +90,7 @@ import {
 import {
   EventList,
   TimelineItemContent,
+  timelineRowPropsEqual,
   groupTimelineItems,
   annotateAuthorGroups,
   annotateConversationRows,
@@ -113,6 +114,7 @@ import {
   OLDER_SKELETON_ITEMS,
   type TimelineItem,
   type TimelineItemRenderContext,
+  type TimelineItemContentProps,
   type BatchTimelineState,
 } from "./event-list"
 import { ConversationOverlayPanel } from "./conversation-overlay/conversation-overlay"
@@ -1292,6 +1294,9 @@ export function StreamContent({
     movePhase = "validating"
   }
   const moveDialogOpen = !!moveAttempt
+  // Mounted on first use, not while closed: this component re-renders on every incoming message.
+  const [moveDialogMounted, setMoveDialogMounted] = useState(moveDialogOpen)
+  if (moveDialogOpen && !moveDialogMounted) setMoveDialogMounted(true)
   const moveMessageCount = moveAttempt?.messageIds.length ?? 0
   const moveMessageCountLabel = `${moveMessageCount} selected message${moveMessageCount === 1 ? "" : "s"}`
 
@@ -3111,49 +3116,51 @@ export function StreamContent({
                       </div>
                     </div>
                   )}
-                  <AlertDialog
-                    open={moveDialogOpen}
-                    onOpenChange={(open) => {
-                      if (open) return
-                      // Cancel + Esc are allowed during validating (we just bump the
-                      // cancellation token and the in-flight request becomes a no-op
-                      // on resolve). Only the irreversible commit phase blocks
-                      // dismiss — there is no rollback once moveToThread succeeds.
-                      if (isMoveConfirming) return
-                      closePendingMove()
-                    }}
-                  >
-                    <AlertDialogContent>
-                      <AlertDialogHeader>
-                        <AlertDialogTitle>Move messages?</AlertDialogTitle>
-                        <AlertDialogDescription>{`Move ${moveMessageCountLabel} into this thread?`}</AlertDialogDescription>
-                      </AlertDialogHeader>
-                      {/* Custom footer: status row (left) + actions (right). Replaces
+                  {moveDialogMounted && (
+                    <AlertDialog
+                      open={moveDialogOpen}
+                      onOpenChange={(open) => {
+                        if (open) return
+                        // Cancel + Esc are allowed during validating (we just bump the
+                        // cancellation token and the in-flight request becomes a no-op
+                        // on resolve). Only the irreversible commit phase blocks
+                        // dismiss — there is no rollback once moveToThread succeeds.
+                        if (isMoveConfirming) return
+                        closePendingMove()
+                      }}
+                    >
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Move messages?</AlertDialogTitle>
+                          <AlertDialogDescription>{`Move ${moveMessageCountLabel} into this thread?`}</AlertDialogDescription>
+                        </AlertDialogHeader>
+                        {/* Custom footer: status row (left) + actions (right). Replaces
                   shadcn's AlertDialogFooter, which forces flex-col-reverse on
                   mobile and would invert our vertical stacking. */}
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                        <MoveStatusRow phase={movePhase} />
-                        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:gap-2">
-                          <AlertDialogCancel disabled={movePhase === "moving"}>Cancel</AlertDialogCancel>
-                          {/* `preventDefault` keeps the dialog open through the
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                          <MoveStatusRow phase={movePhase} />
+                          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:gap-2">
+                            <AlertDialogCancel disabled={movePhase === "moving"}>Cancel</AlertDialogCancel>
+                            {/* `preventDefault` keeps the dialog open through the
                       moving phase so the inline status row can transition
                       to "Moving…" — Radix's default Action behavior would
                       auto-close on click. confirmPendingMove closes the
                       dialog itself on success via cancelBatchMode. */}
-                          <AlertDialogAction
-                            onClick={(event) => {
-                              event.preventDefault()
-                              void confirmPendingMove()
-                            }}
-                            disabled={movePhase !== "validated"}
-                            aria-busy={movePhase === "moving"}
-                          >
-                            Move
-                          </AlertDialogAction>
+                            <AlertDialogAction
+                              onClick={(event) => {
+                                event.preventDefault()
+                                void confirmPendingMove()
+                              }}
+                              disabled={movePhase !== "validated"}
+                              aria-busy={movePhase === "moving"}
+                            >
+                              Move
+                            </AlertDialogAction>
+                          </div>
                         </div>
-                      </div>
-                    </AlertDialogContent>
-                  </AlertDialog>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  )}
                   {membershipResolved && !isMember && isOpenChannel && (
                     <div className="absolute inset-x-0 bottom-0 z-10">
                       <JoinChannelBar
@@ -3186,6 +3193,11 @@ export function StreamContent({
     </ReadFrontierContext.Provider>
   )
   return <HostArchivedProvider value={isArchived}>{timeline}</HostArchivedProvider>
+}
+
+interface RowCacheEntry {
+  props: TimelineItemContentProps
+  node: React.ReactElement
 }
 
 /** Virtuoso-powered message list for streams, channels, and scratchpads */
@@ -3631,6 +3643,7 @@ function TimelineMessageList({
   // living inside it would answer "nothing rendered yet" on the next empty
   // window and flash a skeleton over a stream the reader is already in.
   const hasRenderedContent = useRenderedContentLatch(visibleItems.length)
+  const rowCacheRef = useRef(new Map<string, RowCacheEntry>())
 
   if (isLoading || holdForDeepLink) {
     return skeleton
@@ -3655,19 +3668,27 @@ function TimelineMessageList({
 
   // Built inline rather than memoized: `deferSecondaryHydration` reads
   // `fullyHydratedRef` during render, so a memo keyed on the wave state could
-  // hand back rows still marked deferred after the ref flips.
-  const scrollerItems = visibleItems.map((item, index) => ({
-    key: getTimelineItemKey(item),
-    node: (
-      <TimelineItemContent
-        item={item}
-        ctx={renderCtx}
-        deferSecondaryHydration={
-          !fullyHydratedRef.current && (phase !== "ready" || index < visibleItems.length - releasedFromBottom)
-        }
-      />
-    ),
-  }))
+  // hand back rows still marked deferred after the ref flips. A row whose props
+  // are equal by the row's own comparator keeps its element, so the scroller
+  // can hand virtua the same children and skip the row's wrapper too.
+  const rowCache = new Map<string, RowCacheEntry>()
+  const scrollerItems = visibleItems.map((item, index) => {
+    const key = getTimelineItemKey(item)
+    const props: TimelineItemContentProps = {
+      item,
+      ctx: renderCtx,
+      deferSecondaryHydration:
+        !fullyHydratedRef.current && (phase !== "ready" || index < visibleItems.length - releasedFromBottom),
+    }
+    const cached = rowCacheRef.current.get(key)
+    const entry =
+      cached && timelineRowPropsEqual(cached.props, props)
+        ? cached
+        : { props, node: <TimelineItemContent {...props} /> }
+    rowCache.set(key, entry)
+    return { key, node: entry.node }
+  })
+  rowCacheRef.current = rowCache
 
   return (
     <VirtualizedScroller

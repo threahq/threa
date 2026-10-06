@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { memo, useEffect, useMemo, useState } from "react"
 import { CircleDot, Eye, EyeOff, FolderInput, GripVertical, Plus, RotateCcw, X } from "lucide-react"
 import {
   DndContext,
@@ -88,7 +88,11 @@ interface SidebarEditorDialogProps {
  * cross-device sync) — there is no save step, so the live sidebar reflects each
  * change as it's made.
  */
-export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: SidebarEditorDialogProps) {
+export const SidebarEditorDialog = memo(function SidebarEditorDialog({
+  workspaceId,
+  open,
+  onOpenChange,
+}: SidebarEditorDialogProps) {
   const { config, setConfig, setBasePreset } = useSidebarConfig(workspaceId)
   const { preferences } = usePreferences()
   // dnd-kit applies its reorder transition via an inline style, which the global
@@ -239,7 +243,7 @@ export function SidebarEditorDialog({ workspaceId, open, onOpenChange }: Sidebar
       </ResponsiveDialogContent>
     </ResponsiveDialog>
   )
-}
+})
 
 /** Small uppercase group heading inside the editor. Top-level per INV-18. */
 function EditorGroupHeading({ children }: { children: React.ReactNode }) {

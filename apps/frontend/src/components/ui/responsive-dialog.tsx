@@ -1,4 +1,5 @@
 import * as React from "react"
+import { Slot } from "@radix-ui/react-slot"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { ResponsiveModeProvider, useResponsiveMode } from "./responsive-mode"
 import {
@@ -35,6 +36,8 @@ const DEFAULT_ACTIVE_SNAP = 0.8
 // snap points to anchor to.
 const DisableSnapPointsContext = React.createContext(false)
 const ActiveSnapPointContext = React.createContext<number | string | null>(null)
+// Set while a controlled dialog has never opened: its trigger opens it and its content renders nothing.
+const DeferredOpenContext = React.createContext<(() => void) | null>(null)
 
 function getSnapPointOffset(activeSnapPoint: number | string | null): string {
   if (typeof activeSnapPoint === "number") {
@@ -84,6 +87,14 @@ function ResponsiveDialog({ children, snapPoints, disableSnapPoints, historyEntr
     [props.onOpenChange, resolvedSnaps]
   )
 
+  // Many dialogs sit under surfaces that re-render on every incoming message, and
+  // a closed root still renders its whole tree; once opened it stays mounted so
+  // the close animation runs.
+  const [opened, setOpened] = React.useState(props.open !== false)
+  if (props.open && !opened) setOpened(true)
+  const openDeferred = React.useCallback(() => handleOpenChange(true), [handleOpenChange])
+  if (!opened) return <DeferredOpenContext.Provider value={openDeferred}>{children}</DeferredOpenContext.Provider>
+
   // Resolve the root once and share the decision via context so the content and
   // sub-parts can never disagree with the root mid-resize (see responsive-mode.tsx).
   let root: React.ReactNode
@@ -127,10 +138,28 @@ function ResponsiveDialog({ children, snapPoints, disableSnapPoints, historyEntr
 const ResponsiveDialogTrigger = React.forwardRef<
   HTMLButtonElement,
   React.ComponentPropsWithoutRef<typeof DialogTrigger>
->(({ className, ...props }, ref) => {
+>(({ className, asChild, onClick, ...props }, ref) => {
   const isMobile = useResponsiveMode()
+  const openDeferred = React.useContext(DeferredOpenContext)
+  if (openDeferred) {
+    const Bare = asChild ? Slot : "button"
+    return (
+      <Bare
+        ref={ref}
+        type={asChild ? undefined : "button"}
+        aria-haspopup="dialog"
+        aria-expanded={false}
+        className={className}
+        {...props}
+        onClick={(event: React.MouseEvent<HTMLButtonElement>) => {
+          onClick?.(event)
+          if (!event.defaultPrevented) openDeferred()
+        }}
+      />
+    )
+  }
   const Comp = isMobile ? DrawerTrigger : DialogTrigger
-  return <Comp ref={ref} className={className} {...props} />
+  return <Comp ref={ref} className={className} asChild={asChild} onClick={onClick} {...props} />
 })
 ResponsiveDialogTrigger.displayName = "ResponsiveDialogTrigger"
 
@@ -159,6 +188,7 @@ const ResponsiveDialogContent = React.forwardRef<HTMLDivElement, ResponsiveDialo
     const isMobile = useResponsiveMode()
     const noSnapPoints = React.useContext(DisableSnapPointsContext)
     const activeSnapPoint = React.useContext(ActiveSnapPointContext)
+    if (React.useContext(DeferredOpenContext)) return null
 
     if (isMobile) {
       // With snap points: vaul's transform-based positioning needs the drawer
