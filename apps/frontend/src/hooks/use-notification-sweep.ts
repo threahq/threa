@@ -1,7 +1,6 @@
 import { useEffect } from "react"
-import { useQuery, useQueryClient } from "@tanstack/react-query"
 import type { WorkspaceBootstrap } from "@threahq/types"
-import { workspaceKeys } from "./use-workspaces"
+import { useCachedWorkspaceBootstrap } from "./use-workspaces"
 import { sweepStaleStreamNotifications } from "@/lib/notification-sweep"
 
 /**
@@ -17,19 +16,10 @@ import { sweepStaleStreamNotifications } from "@/lib/notification-sweep"
  * and a stream read elsewhere sweeps promptly via the same cache writes.
  */
 export function useNotificationSweep(workspaceId: string): void {
-  const queryClient = useQueryClient()
-  // Cache-only observer — useWorkspaceBootstrap higher in the tree owns the fetch.
-  const { data } = useQuery({
-    queryKey: workspaceKeys.bootstrap(workspaceId),
-    queryFn: () => queryClient.getQueryData<WorkspaceBootstrap>(workspaceKeys.bootstrap(workspaceId)) ?? null,
-    enabled: false,
-    staleTime: Infinity,
-  })
-
-  // Key on the unread-stream signature, not the data reference: bootstrap cache
-  // writes happen on every message, and only changes to WHAT is unread can make
-  // a displayed notification stale.
-  const unreadSignature = data ? buildUnreadSignature(data) : null
+  // Select the unread-stream signature, not the data: bootstrap cache writes
+  // happen on every message, and only changes to WHAT is unread can make a
+  // displayed notification stale.
+  const unreadSignature = useCachedWorkspaceBootstrap(workspaceId, buildUnreadSignature)
 
   useEffect(() => {
     if (unreadSignature === null) return

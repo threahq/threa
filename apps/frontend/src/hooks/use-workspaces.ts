@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react"
+import { useMemo } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useSocket, useWorkspaceService } from "@/contexts"
@@ -82,7 +82,15 @@ export function useWorkspace(workspaceId: string) {
   })
 }
 
-export function useWorkspaceBootstrap(workspaceId: string) {
+/**
+ * The fetching observer for the workspace bootstrap. The entry is rewritten on
+ * every message, so an always-mounted caller passes `select` to re-render only
+ * when its own slice changes.
+ */
+export function useWorkspaceBootstrap<T = WorkspaceBootstrap>(
+  workspaceId: string,
+  select?: (bootstrap: WorkspaceBootstrap) => T
+) {
   const socket = useSocket()
   const workspaceService = useWorkspaceService()
   const queryClient = useQueryClient()
@@ -150,6 +158,7 @@ export function useWorkspaceBootstrap(workspaceId: string) {
     refetchOnMount: false,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    select,
   })
 
   const loadState = getQueryLoadState(query.status, query.fetchStatus)
@@ -166,12 +175,8 @@ export function useWorkspaceBootstrap(workspaceId: string) {
     isError: query.isError,
   })
 
-  // Manual retry that resets error state first
-  const retryBootstrap = useCallback(() => {
-    queryClient.resetQueries({ queryKey: workspaceKeys.bootstrap(workspaceId) })
-  }, [queryClient, workspaceId])
-
-  return { ...query, loadState, retryBootstrap }
+  // Spreading the query result would read every tracked field, so each cache write would re-render the caller.
+  return { data: query.data, fetchStatus: query.fetchStatus }
 }
 
 /**

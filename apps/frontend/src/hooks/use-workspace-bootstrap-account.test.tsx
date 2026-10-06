@@ -151,3 +151,45 @@ it("should take the SyncEngine's first-connect snapshot instead of fetching a se
     await database.delete()
   }
 })
+
+it("should re-render a selecting caller only when its slice changes", async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const bootstrap = makeWorkspaceBootstrap()
+  queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), bootstrap)
+  vi.spyOn(contexts, "useSocket").mockReturnValue({} as ReturnType<typeof contexts.useSocket>)
+  vi.spyOn(contexts, "useWorkspaceService").mockReturnValue({} as ReturnType<typeof contexts.useWorkspaceService>)
+  vi.spyOn(auth, "useAccountScope").mockReturnValue({ activeWorkosUserId: "workos_a" } as ReturnType<
+    typeof auth.useAccountScope
+  >)
+  function Wrapper({ children }: { children: ReactNode }) {
+    return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+  }
+  let renders = 0
+  const hook = renderHook(
+    () => {
+      renders++
+      return useWorkspaceBootstrap("ws_1", (b) => b.analytics)
+    },
+    { wrapper: Wrapper }
+  )
+  const rendersAfterMount = renders
+
+  // Query observers notify on a macrotask, so each write waits one out.
+  await act(async () => {
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), { ...bootstrap, unreadCounts: { stream_1: 3 } })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  })
+  const rendersAfterUnrelatedWrite = renders
+
+  const analytics = { posthogToken: "phc_1", posthogHost: "https://eu.posthog.com" }
+  await act(async () => {
+    queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), { ...bootstrap, analytics })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  })
+
+  expect({
+    afterUnrelatedWrite: rendersAfterUnrelatedWrite - rendersAfterMount,
+    afterSliceWrite: renders - rendersAfterUnrelatedWrite,
+    data: hook.result.current.data,
+  }).toEqual({ afterUnrelatedWrite: 0, afterSliceWrite: 1, data: analytics })
+})

@@ -1,5 +1,5 @@
 import { useEffect } from "react"
-import { coerceLayers, resolveFeatureFlags } from "@threahq/types"
+import { coerceLayers, resolveFeatureFlags, type WorkspaceBootstrap } from "@threahq/types"
 import { usePreferencesOptional } from "@/contexts"
 import { useAccountScopeOptional } from "@/auth/account-scope"
 import { useCurrentWorkspaceUserId } from "@/hooks/use-current-workspace-user-id"
@@ -11,8 +11,16 @@ import {
   suspendConnectivityDiagnostics,
 } from "@/lib/connectivity-diagnostics"
 
+function selectAnalyticsInputs(bootstrap: WorkspaceBootstrap) {
+  return {
+    analytics: bootstrap.analytics,
+    diagnosticFlag: resolveFeatureFlags(coerceLayers(bootstrap.featureFlags ?? null) ?? { workspace: {}, user: {} })
+      .perfDiagnostics,
+  }
+}
+
 export function AnalyticsConsentGate({ workspaceId }: { workspaceId: string }) {
-  const { data } = useWorkspaceBootstrap(workspaceId)
+  const { data } = useWorkspaceBootstrap(workspaceId, selectAnalyticsInputs)
   const analytics = data?.analytics
   const preferencesContext = usePreferencesOptional()
   const preferences = preferencesContext?.preferences
@@ -20,9 +28,7 @@ export function AnalyticsConsentGate({ workspaceId }: { workspaceId: string }) {
   const consent = preferences?.analyticsConsent
   const replayOptIn = preferences?.sessionReplayOptIn === true
   const distinctId = useCurrentWorkspaceUserId(workspaceId)
-  const diagnosticFlag = data
-    ? resolveFeatureFlags(coerceLayers(data.featureFlags ?? null) ?? { workspace: {}, user: {} }).perfDiagnostics
-    : null
+  const diagnosticFlag = data?.diagnosticFlag ?? null
   const diagnosticsOptIn = preferences?.performanceDiagnosticsOptIn
   const diagnosticsDecisionVersion = preferences?.updatedAt
   const accountId = useAccountScopeOptional()?.activeWorkosUserId ?? null
