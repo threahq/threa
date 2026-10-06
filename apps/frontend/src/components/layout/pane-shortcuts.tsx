@@ -1,6 +1,6 @@
-import { useLayoutEffect, useReducer } from "react"
+import { useLayoutEffect, useReducer, type MutableRefObject } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
-import { usePanel, useCurrentPane, usePaneShortcutQueue } from "@/contexts"
+import { usePanel, useCurrentPane, usePaneFocusLanding, usePaneShortcutQueue } from "@/contexts"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { findVisibleZoneEditor, focusAtEnd, zoneContainer } from "@/hooks/use-type-to-focus"
 import { activatePanelTab, closePanelTab, followCurrentPanel } from "@/lib/panel-tabs"
@@ -27,6 +27,7 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string |
   const current = useCurrentPane()
   const navigate = useNavigate()
   const location = useLocation()
+  const landing = usePaneFocusLanding()
 
   const showTab = (step: number) => {
     const ids = section?.ids ?? []
@@ -34,7 +35,7 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string |
     const next = ids[(ids.indexOf(section.active) + step + ids.length) % ids.length]
     navigate(getTabUrl(next), { replace: true })
     setCurrentPane(next)
-    landFocus(next)
+    landFocus(landing, next)
     // A section folded on screen can switch to a tab its own section already shows, which leaves the URL as it was.
     return activatePanelTab(layout, next) !== layout
   }
@@ -43,7 +44,7 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string |
     const at = panes.indexOf(current)
     const next = panes[((at === -1 ? panes.indexOf(panelId) : at) + step + panes.length) % panes.length]
     setCurrentPane(next)
-    landFocus(next)
+    landFocus(landing, next)
     return false
   }
 
@@ -52,13 +53,13 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string |
     closePane: () => {
       if (!panelId) return false
       // Closing a panel from the main view leaves focus where it is.
-      if (current !== null) landFocus(followCurrentPanel(layout, closePanelTab(layout, panelId), panelId))
+      if (current !== null) landFocus(landing, followCurrentPanel(layout, closePanelTab(layout, panelId), panelId))
       closePanel()
       return true
     },
     reopenPane: () => {
       const reopened = reopenTab()
-      if (reopened) landFocus(reopened)
+      if (reopened) landFocus(landing, reopened)
       return reopened !== null
     },
     nextPaneTab: () => showTab(1),
@@ -138,21 +139,19 @@ function findPane(paneId: string | null): HTMLElement | null {
   return zoneContainer("main", null)
 }
 
-let landing = 0
-
 /**
  * Focus the pane's composer once the pane has come out from under the one it
  * was behind, or its tab on show when it has no composer. A null pane is the
  * main view. A later landing, or the user moving focus first, calls it off.
  */
-function landFocus(paneId: string | null) {
-  const run = ++landing
+function landFocus(landing: MutableRefObject<number>, paneId: string | null) {
+  const run = ++landing.current
   const from = document.activeElement
   const deadline = performance.now() + UNCOVER_WAIT_MS
   let uncoveredFrames = 0
   const attempt = () => {
     const active = document.activeElement
-    if (run !== landing || (active !== from && active !== document.body && active !== null)) return
+    if (run !== landing.current || (active !== from && active !== document.body && active !== null)) return
     const pane = findPane(paneId)
     const uncovered = pane !== null && !pane.closest("[inert]")
     const editor = uncovered ? findVisibleZoneEditor(pane) : null

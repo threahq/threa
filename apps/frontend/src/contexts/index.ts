@@ -44,6 +44,7 @@ export {
   usePanel,
   usePanelTabFocusHandoff,
   usePaneShortcutQueue,
+  usePaneFocusLanding,
   useCurrentPane,
   useFrontPanel,
   useMainOwnsCover,
