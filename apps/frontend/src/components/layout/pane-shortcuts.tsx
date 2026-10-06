@@ -1,4 +1,4 @@
-import { useLayoutEffect } from "react"
+import { useLayoutEffect, useReducer } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { usePanel, useCurrentPane, usePaneShortcutQueue } from "@/contexts"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
@@ -11,7 +11,7 @@ type PaneAction = "closePane" | "reopenPane" | "nextPaneTab" | "previousPaneTab"
 const UNCOVER_WAIT_MS = 2000
 /** How long an uncovered pane may take to mount its composer before its tab takes focus. */
 const EDITOR_WAIT_FRAMES = 10
-/** How long a press waits for the last shortcut's navigation to show before it is dropped. */
+/** How long a press waits for the page to catch up with the URL before it is dropped. */
 const CATCH_UP_WAIT_MS = 2000
 
 const NO_PANES: readonly (string | null)[] = []
@@ -82,28 +82,36 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string |
   // The router commits a navigation in a transition, so the URL can be a step
   // ahead of what this render saw, and a close that pops history moves the URL
   // only once the pop lands. A press waits for the render that shows both,
-  // rather than acting on the layout the URL already left behind.
+  // rather than acting on the layout the URL already left behind, and queued
+  // presses act one per render so each sees what the one before it did.
   const queue = usePaneShortcutQueue()
+  const [, nextRender] = useReducer((n: number) => n + 1, 0)
   const rendered = panesAt(location.pathname, location.search)
-  const waited = () => performance.now() - queue.current.navigatedAt > CATCH_UP_WAIT_MS
+  const waited = () => performance.now() - queue.current.waitingSince > CATCH_UP_WAIT_MS
   const caughtUp = () =>
     (queue.current.navigatedFrom === null || waited()) &&
     panesAt(window.location.pathname, window.location.search) === rendered
   const act = (action: PaneAction) => {
     if (!available[action] || !actions[action]()) return
     queue.current.navigatedFrom = rendered
-    queue.current.navigatedAt = performance.now()
+    queue.current.waitingSince = performance.now()
   }
   useLayoutEffect(() => {
     if (queue.current.navigatedFrom !== rendered) queue.current.navigatedFrom = null
     if (waited()) queue.current.pending = []
-    while (queue.current.pending.length > 0 && caughtUp()) act(queue.current.pending.shift() as PaneAction)
+    if (queue.current.pending.length === 0 || !caughtUp()) return
+    act(queue.current.pending.shift() as PaneAction)
+    if (queue.current.pending.length === 0) return
+    queue.current.waitingSince = performance.now()
+    nextRender()
   })
 
   const handle = (action: PaneAction) => (event: KeyboardEvent) => {
     // A held key's repeats outrun the router, and must not go on acting after it is let go.
-    if (!caughtUp()) {
-      if (!event.repeat) queue.current.pending.push(action)
+    if (queue.current.pending.length > 0 || !caughtUp()) {
+      if (event.repeat) return true
+      if (queue.current.pending.length === 0) queue.current.waitingSince = performance.now()
+      queue.current.pending.push(action)
     } else if (available[action]) act(action)
     else return event.repeat
     return true

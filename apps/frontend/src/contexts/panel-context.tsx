@@ -159,13 +159,14 @@ interface PanelOps {
 }
 
 /**
- * Pane shortcuts pressed before the URL caught up with the last one, and the
- * URL that one acted on. Held here because the pane taking the shortcuts
- * changes as the last tab closes or the first one opens.
+ * Pane shortcuts pressed before the URL caught up with the last one, the URL
+ * that one acted on, and since when the queue has been waiting. Held here
+ * because the pane taking the shortcuts changes as the last tab closes or the
+ * first one opens.
  */
 export interface PaneShortcutQueue {
   navigatedFrom: string | null
-  navigatedAt: number
+  waitingSince: number
   pending: string[]
 }
 
@@ -424,7 +425,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
   )
 
   const tabFocusHandoff = useRef<string | null>(null)
-  const paneShortcutQueue = useRef<PaneShortcutQueue>({ navigatedFrom: null, navigatedAt: 0, pending: [] })
+  const paneShortcutQueue = useRef<PaneShortcutQueue>({ navigatedFrom: null, waitingSince: 0, pending: [] })
 
   const ops = useMemo<PanelOps>(
     () => ({

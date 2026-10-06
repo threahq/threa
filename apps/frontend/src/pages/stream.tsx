@@ -912,6 +912,7 @@ export function StreamPage() {
   // behind it so closing a thread lands back where the reader was rather than
   // re-running the opening scroll.
   const mobileTakeover = isMobile && isPanelOpen && !panelInAside
+  const tabStackShown = isMobile ? mobileTakeover : showContent && !asideStage && !panelInAside
 
   return (
     <StreamContextDockProvider value={{ target: dock.target, fits: dockFits }}>
@@ -943,7 +944,7 @@ export function StreamPage() {
         >
           {/* The stage mounts the panel in its host pane; this pane keeps its
               width lifecycle but shows nothing under the overlay. */}
-          {(isMobile ? mobileTakeover : showContent && !asideStage && !panelInAside) && (
+          {tabStackShown && (
             <ResizablePanelFrame
               fill={isMobile}
               panelWidth={panelWidth}
@@ -959,7 +960,8 @@ export function StreamPage() {
             </ResizablePanelFrame>
           )}
         </Pane>
-        {!isPanelOpen && <PaneShortcuts />}
+        {/* The tab stack takes the shortcuts over once it mounts, which trails the panel opening. */}
+        {(!isPanelOpen || !(tabStackShown || panelInAside || asideStage)) && <PaneShortcuts />}
         {!isMobile && (
           <StreamContextDockSlot
             dock={dock}
