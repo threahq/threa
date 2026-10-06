@@ -35,7 +35,8 @@ interface RecallOutput {
   goldMessages: number
   messageHit: boolean
   streamHit: boolean
-  answerInContext: boolean
+  /** Null when the answer is too short to look for in the context. */
+  answerInContext: boolean | null
   partial: boolean
   latencyMs: number
   retrievedMessages: number
@@ -101,7 +102,10 @@ async function runRecall({ question }: RecallInput, ctx: EvalContext): Promise<R
     goldMessages: gold.length,
     messageHit: gold.some((g) => retrievedIds.has(g.id)),
     streamHit: gold.some((g) => retrievedStreams.has(g.stream_id)),
-    answerInContext: (result.retrievedContext ?? "").toLowerCase().includes(question.answer.trim().toLowerCase()),
+    answerInContext:
+      question.answer.trim().length < MIN_GOLD_ANSWER_CHARS
+        ? null
+        : (result.retrievedContext ?? "").toLowerCase().includes(question.answer.trim().toLowerCase()),
     partial: result.partial === true,
     latencyMs,
     retrievedMessages: result.messages.length,
@@ -113,7 +117,7 @@ const recallEvaluator: Evaluator<RecallOutput, BenchQuestion> = {
   name: "gold-retrieved",
   evaluate: (output) => {
     if (output.goldMessages === 0) {
-      return { name: "gold-retrieved", score: 1, passed: true, details: "no verbatim gold" }
+      return { name: "gold-retrieved", score: 0, passed: false, details: "no verbatim gold, unscored" }
     }
     return {
       name: "gold-retrieved",
@@ -137,16 +141,17 @@ const summaryEvaluator: RunEvaluator<RecallOutput, BenchQuestion> = {
   evaluate: (results) => {
     const ran = results.filter((r) => r.output !== undefined)
     const withGold = ran.filter((r) => r.output.goldMessages > 0)
+    const withAnswer = ran.filter((r) => r.output.answerInContext !== null)
     const latency = ran.map((r) => r.output.latencyMs)
     const lines = [
       rateLine("gold message retrieved", withGold, (o) => o.messageHit),
       rateLine("gold stream retrieved", withGold, (o) => o.streamHit),
-      rateLine("answer in context", ran, (o) => o.answerInContext),
+      rateLine("answer in context", withAnswer, (o) => o.answerInContext === true),
       ...QUESTION_TYPES.map((type) =>
         rateLine(
           `${type} answer in context`,
-          ran.filter((r) => r.expectedOutput.type === type),
-          (o) => o.answerInContext
+          withAnswer.filter((r) => r.expectedOutput.type === type),
+          (o) => o.answerInContext === true
         )
       ),
       `partial ${ran.filter((r) => r.output.partial).length} · errored ${results.length - ran.length}`,
