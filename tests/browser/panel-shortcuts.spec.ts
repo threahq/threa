@@ -186,9 +186,18 @@ test("should act on each queued press after the one before it", async ({ page })
   await tabPane(page, c).locator('[contenteditable="true"]').last().click()
 
   // Moving to the next pane changes no URL, so the close queued behind it must still see the move.
-  await page.keyboard.press("Alt+BracketRight")
-  await page.keyboard.press("Alt+Period")
-  await page.keyboard.press("Alt+w")
+  // One synchronous burst, so no render lands between the presses.
+  await page.evaluate(() => {
+    for (const [key, code] of [
+      ["]", "BracketRight"],
+      [".", "Period"],
+      ["w", "KeyW"],
+    ]) {
+      document.activeElement?.dispatchEvent(
+        new KeyboardEvent("keydown", { key, code, altKey: true, bubbles: true, cancelable: true })
+      )
+    }
+  })
   await expect.poll(() => panelParam(page)).toBe(`${a}*.${c}`)
 })
 
