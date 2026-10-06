@@ -126,21 +126,24 @@ test("should return a phone reader to the same mid-stream position after closing
   await page.setViewportSize({ width: 400, height: 800 })
   const { streamId, parentId } = await seedStreamWithThread(page)
   await tag(scroller(page, streamId), "main")
+  // The offset from the top, not the distance from the bottom: the parent's
+  // reply summary grows once its thread has been opened, below the reader.
+  const offset = () => scroller(page, streamId).evaluate((el) => Math.round(el.scrollTop))
   const fromBottom = () =>
     scroller(page, streamId).evaluate((el) => Math.round(el.scrollHeight - el.scrollTop - el.clientHeight))
   // Read from mid-stream: a remount, or a stick-to-bottom correction on show,
-  // would land at the tail and look the same as a kept offset of zero.
+  // would land at the tail.
   await revealParent(page, streamId, parentId)
   // The load and the jump settle over several frames; sample once it holds still.
   let before = Number.NaN
   await expect
     .poll(async () => {
       const previous = before
-      before = await fromBottom()
+      before = await offset()
       return before === previous
     })
     .toBe(true)
-  expect(before).toBeGreaterThan(200)
+  expect(await fromBottom()).toBeGreaterThan(200)
 
   await openThread(page, parentId)
   await expect(scroller(page, streamId)).not.toBeVisible()
@@ -154,7 +157,7 @@ test("should return a phone reader to the same mid-stream position after closing
   await page.goBack()
   await expect(scroller(page, streamId)).toBeVisible()
   expect(await tagOf(scroller(page, streamId))).toBe("main")
-  expect(await fromBottom()).toBe(before)
+  expect(await offset()).toBe(before)
   // And with the panel closed, the timeline takes taps again.
   const mainHit = await page.evaluate(() => {
     const el = document.elementFromPoint(200, 400)
