@@ -26,6 +26,7 @@ import {
   DEFAULT_MAX_QUOTE_DEPTH,
 } from "../quote-resolver"
 import { logger } from "../../../lib/logger"
+import { truncateCodePoints } from "../../../lib/truncate"
 import { workspaceHomeUrl, workspaceMemoUrl, workspaceMessageUrl, workspaceStreamUrl } from "../workspace-links"
 import { hybridWeightsForQuery, searchRankingForFlag, type SearchRanking } from "../../search"
 import {
@@ -1259,7 +1260,7 @@ Each query must have:
         traceType: "workspace_memo",
         title: memo.title,
         url: workspaceMemoUrl(workspaceId, memo.id),
-        snippet: memo.abstract.slice(0, 200),
+        snippet: truncateCodePoints(memo.abstract, 200),
         memoId: memo.id,
         streamId: sourceStream?.id,
         streamName: sourceStream?.name ?? sourceStream?.type,
@@ -1273,7 +1274,7 @@ Each query must have:
         traceType: "workspace_message",
         title: `${msg.authorName} in ${msg.streamName}`,
         url: workspaceMessageUrl(workspaceId, msg.streamId, msg.id),
-        snippet: msg.content.slice(0, 200),
+        snippet: truncateCodePoints(msg.content, 200),
         streamId: msg.streamId,
         streamName: msg.streamName,
         messageId: msg.id,
@@ -1287,7 +1288,7 @@ Each query must have:
         traceType: "workspace",
         title: att.filename,
         url: att.streamId ? workspaceStreamUrl(workspaceId, att.streamId) : workspaceHomeUrl(workspaceId),
-        snippet: att.summary?.slice(0, 200),
+        snippet: att.summary != null ? truncateCodePoints(att.summary, 200) : undefined,
         streamId: att.streamId ?? undefined,
       })
     }
@@ -1387,5 +1388,5 @@ function dedupeQueries(queries: SearchQuery[]): SearchQuery[] {
 function truncateSnippet(text: string, max = 80): string {
   const normalized = text.replace(/\s+/g, " ").trim()
   if (normalized.length <= max) return normalized
-  return `${normalized.slice(0, max - 1)}…`
+  return truncateCodePoints(normalized, max - 1, "…")
 }

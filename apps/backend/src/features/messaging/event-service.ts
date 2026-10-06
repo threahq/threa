@@ -44,6 +44,7 @@ import {
   type AttachmentUpload,
 } from "../attachments"
 import { OutboxRepository } from "../../lib/outbox"
+import { truncateCodePoints } from "../../lib/truncate"
 import { AgentSessionRepository, StreamPersonaParticipantRepository } from "../agents"
 import { settleMessagesOnEngagement } from "../conversations"
 import { DraftsRepository, toDraftView } from "../drafts"
@@ -382,15 +383,6 @@ async function assertNotShared(client: PoolClient, workspaceId: string, stream: 
  * to avoid lying about completeness on already-short messages.
  */
 const MOVED_MESSAGE_PREVIEW_CHAR_CAP = 200
-
-function capMovedPreview(content: string): string {
-  if (content.length <= MOVED_MESSAGE_PREVIEW_CHAR_CAP) return content
-  // Iterate by code points so non-BMP characters aren't split into a lone
-  // surrogate at the truncation boundary.
-  const codePoints = Array.from(content)
-  if (codePoints.length <= MOVED_MESSAGE_PREVIEW_CHAR_CAP) return content
-  return `${codePoints.slice(0, MOVED_MESSAGE_PREVIEW_CHAR_CAP).join("")}…`
-}
 
 function canonicalMoveLeasePayload(params: {
   sourceStreamId: string
@@ -2196,7 +2188,7 @@ export class EventService {
         id: message.id,
         authorId: message.authorId,
         authorType: message.authorType,
-        contentMarkdown: capMovedPreview(message.contentMarkdown),
+        contentMarkdown: truncateCodePoints(message.contentMarkdown, MOVED_MESSAGE_PREVIEW_CHAR_CAP, "…"),
         createdAt: message.createdAt.toISOString(),
       }))
       const tombstonePayload: MessagesMovedEventPayload = {
@@ -2853,7 +2845,12 @@ export class EventService {
     const sourceStreamByMessage = new Map(
       messageCreatedEvents.map((event) => [(event.payload as MessageCreatedPayload).messageId, event.streamId])
     )
-    const memoEmbedsByMessageId = await this.refreshMemoEmbeds(messagesMap, messageIdsWithKey, sourceStreamByMessage, scope)
+    const memoEmbedsByMessageId = await this.refreshMemoEmbeds(
+      messagesMap,
+      messageIdsWithKey,
+      sourceStreamByMessage,
+      scope
+    )
 
     return events
       .filter((e) => e.eventType !== "message_edited" && e.eventType !== "message_deleted")

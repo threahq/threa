@@ -27,6 +27,7 @@ import { enrichMessagesWithLinkPreviews } from "../link-previews"
 import { getUtcOffset, type TemporalContext, type ParticipantTemporal } from "../../lib/temporal"
 import { DEFAULT_CONTEXT_WINDOW_MESSAGES } from "./context-window-policy"
 import { findThreadAnchorContext } from "./thread-anchor-context"
+import { truncateCodePoints } from "../../lib/truncate"
 
 export interface Participant {
   id: string
@@ -462,7 +463,7 @@ async function buildThreadPath(db: Querier, stream: Stream): Promise<ThreadPathE
       const authorName = await resolveAuthorName(db, current.workspaceId, message.authorId, message.authorType)
       anchorMessage = {
         id: message.id,
-        content: message.contentMarkdown.slice(0, 200),
+        content: truncateCodePoints(message.contentMarkdown, 200),
         authorName,
       }
     }
