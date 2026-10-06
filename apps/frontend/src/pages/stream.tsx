@@ -134,6 +134,12 @@ export function StreamPage() {
   // Unified error checking - checks both coordinated loading and direct query errors
   const streamError = useStreamError(streamId, error)
 
+  const panelInset = displayWidth + dock.layout.displayWidth
+  const panelInsetAnimates = shouldAnimate && dock.layout.shouldAnimate
+  // Above the error/early returns: a stream that turns inaccessible mid-session
+  // must not change this component's hook count.
+  usePanelInset(isMobile || streamError ? 0 : panelInset, panelInsetAnimates)
+
   const isConversationViewOpen = searchParams.get("convView") === "open"
   // The closed drawer stays in the DOM for its slide transition, but its list
   // re-renders on every conversation update, so it mounts only while shown.
@@ -903,10 +909,6 @@ export function StreamPage() {
   // behind it so closing a thread lands back where the reader was rather than
   // re-running the opening scroll.
   const mobileTakeover = isMobile && isPanelOpen && !panelInAside
-
-  const panelInset = displayWidth + dock.layout.displayWidth
-  const panelInsetAnimates = shouldAnimate && dock.layout.shouldAnimate
-  usePanelInset(isMobile ? 0 : panelInset, panelInsetAnimates)
 
   return (
     <StreamContextDockProvider value={{ target: dock.target, fits: dockFits }}>
