@@ -482,44 +482,33 @@ describe("pane shortcuts", () => {
       ["MacIntel", { metaKey: true }],
     ] as const) {
       platform(name)
-      // Swedish § sits where a US layout has `; AltGr reports Control with Alt.
+      // Swedish §, where a US layout has another character.
       expect(keyEventToBinding(key({ key: "§", code: "Backquote", ...modifier }))).toBe("mod+§")
       expect(detectConflicts({ nextPane: "mod+§" }).get("mod+§")).toEqual(["toggleSidebar", "nextPane"])
     }
+    // AltGr reports Control with Alt, and keeps what it types.
     platform("Win32")
-    expect(matchesKeyBinding(key({ key: "€", code: "KeyE", ctrlKey: true, altKey: true }), "mod+alt+e")).toBe(false)
-  })
-
-  it("should keep a browser default when a custom binding holds the installed one", () => {
-    installed(true)
-    platform("Win32")
-    expect(getEffectiveKeyBinding("closePane", { toggleSidebar: "mod+w" })).toBe("alt+w")
-    expect(getEffectiveKeyBinding("closePane", {})).toBe("mod+w")
+    const altGrE = key({ key: "€", code: "KeyE", ctrlKey: true, altKey: true })
+    expect(keyEventToBinding(altGrE)).toBe("mod+alt+€")
+    expect(matchesKeyBinding(altGrE, "mod+alt+€")).toBe(true)
+    expect(matchesKeyBinding(altGrE, "mod+alt+e")).toBe(false)
   })
 
   it("should see ctrl and mod as one chord, since mod answers to Control on a Mac too", () => {
+    installed(true)
     for (const name of ["Win32", "MacIntel"]) {
       platform(name)
-      expect(detectConflicts({ toggleSidebar: "mod+tab", nextPane: "ctrl+tab" }).get("mod+tab")).toEqual([
-        "toggleSidebar",
-        "nextPane",
-      ])
+      expect(detectConflicts({ toggleSidebar: "mod+tab" }).get("mod+tab")).toEqual(["toggleSidebar", "nextPaneTab"])
     }
   })
 
   it("should clear the binding a Mac's Control chord takes over when one action is rebound onto it", () => {
-    platform("MacIntel")
-    expect(resolveShortcutBindingUpdate({ nextPane: "mod+tab" }, "toggleSidebar", "ctrl+tab")).toEqual({
-      nextPane: "none",
-      toggleSidebar: "ctrl+tab",
-    })
-  })
-
-  it("should move an installed default back to the browser's when an action is rebound onto it", () => {
     installed(true)
     platform("MacIntel")
-    expect(resolveShortcutBindingUpdate({}, "toggleSidebar", "ctrl+tab")).toEqual({ toggleSidebar: "ctrl+tab" })
-    expect(getEffectiveKeyBinding("nextPaneTab", { toggleSidebar: "ctrl+tab" })).toBe("alt+]")
+    expect(resolveShortcutBindingUpdate({}, "toggleSidebar", "ctrl+tab")).toEqual({
+      nextPaneTab: "none",
+      toggleSidebar: "ctrl+tab",
+    })
   })
 
   it("should keep matching ⌥ bindings recorded as the character ⌥ types", () => {

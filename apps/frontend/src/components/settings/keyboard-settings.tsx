@@ -74,7 +74,7 @@ function ShortcutRow({
   const [conflictInfo, setConflictInfo] = useState<{ binding: string; conflictIds: string[] } | null>(null)
   const badgeRef = useRef<HTMLButtonElement>(null)
   const binding = getEffectiveKeyBinding(action.id, customBindings)
-  const isCustom = action.id in customBindings && customBindings[action.id] !== defaultKeyOf(action, customBindings)
+  const isCustom = action.id in customBindings && customBindings[action.id] !== defaultKeyOf(action)
   const conflictLabels =
     conflictInfo?.conflictIds
       .map((id) => SHORTCUT_ACTIONS.find((shortcutAction) => shortcutAction.id === id)?.label)

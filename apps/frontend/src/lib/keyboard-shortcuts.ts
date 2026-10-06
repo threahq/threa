@@ -260,17 +260,9 @@ export function getShortcutsByCategory(): Record<ShortcutAction["category"], Sho
   return result
 }
 
-/** The action's default where Threa runs now: installed, or in a browser tab.
- *  An installed default another action's custom binding already holds (rebound
- *  in a browser tab, where the key was free) gives way to the browser's. */
-export function defaultKeyOf(action: ShortcutAction, customBindings: Record<string, string> = {}): string {
-  const { installedKey } = action
-  if (!installedKey || !isStandaloneApp()) return action.defaultKey
-  const chord = shortcutChord(installedKey)
-  const held = Object.entries(customBindings).some(
-    ([id, binding]) => id !== action.id && shortcutChord(binding) === chord
-  )
-  return held ? action.defaultKey : installedKey
+/** The action's default where Threa runs now: installed, or in a browser tab. */
+export function defaultKeyOf(action: ShortcutAction): string {
+  return action.installedKey && isStandaloneApp() ? action.installedKey : action.defaultKey
 }
 
 /**
@@ -287,7 +279,7 @@ export function getEffectiveKeyBinding(
   const custom = customBindings[actionId]
   if (custom === "none") return undefined
   if (custom) return custom
-  return action && defaultKeyOf(action, customBindings)
+  return action && defaultKeyOf(action)
 }
 
 /** The chord a binding presses: "mod" answers to Control everywhere, so ctrl+tab and mod+tab are one chord. */
