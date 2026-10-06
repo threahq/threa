@@ -42,6 +42,16 @@ async function setUpHostAndPartner(hostPage: Page, partnerPage: Page, partnerReg
   return { host, partner, slug, streamId }
 }
 
+/** The partner's copy lands with its first pull, a moment after the accept; a page opened before then stays not-found. */
+async function openPartnerCopy(page: Page, workspaceId: string, streamId: string) {
+  await expect
+    .poll(async () => (await page.request.get(`/api/workspaces/${workspaceId}/streams/${streamId}`)).status(), {
+      timeout: 30_000,
+    })
+    .toBe(200)
+  await page.goto(`/w/${workspaceId}/s/${streamId}`)
+}
+
 function settingsUrl(workspaceId: string, streamId: string, tab: string): string {
   return `/w/${workspaceId}/s/${streamId}?stream-settings=${tab}&sid=${streamId}`
 }
@@ -131,6 +141,8 @@ async function editMessage(page: Page, message: Locator, text: string) {
   await editor.press("ControlOrMeta+a")
   await editor.pressSequentially(text)
   await page.getByRole("main").getByRole("button", { name: "Save", exact: true }).click()
+  // A copy's edit saves through the host; the form, still showing the new text, collapses only once it lands.
+  await expect(page.locator("[data-inline-edit]")).toHaveCount(0, { timeout: 15_000 })
 }
 
 async function deleteMessage(page: Page, message: Locator) {
@@ -198,7 +210,7 @@ test.describe("Stream connections", () => {
       await expect(page.getByText(`Shared with ${partner.workspaceName}`, { exact: true })).toBeVisible({
         timeout: 15_000,
       })
-      await partnerPage.goto(`/w/${partner.workspaceId}/s/${streamId}`)
+      await openPartnerCopy(partnerPage, partner.workspaceId, streamId)
       await expect(partnerPage.getByText(`Shared with ${host.workspaceName}`, { exact: true })).toBeVisible({
         timeout: 30_000,
       })
@@ -247,7 +259,7 @@ test.describe("Stream connections", () => {
       await page.getByRole("main").getByRole("button", { name: "Send", exact: true }).click()
       await expect(editor.locator("span[data-type='attachment-reference']")).toHaveCount(0, { timeout: 15_000 })
 
-      await partnerPage.goto(`/w/${partner.workspaceId}/s/${streamId}`)
+      await openPartnerCopy(partnerPage, partner.workspaceId, streamId)
       await expect(partnerPage.getByRole("main").getByText(text)).toBeVisible({ timeout: 30_000 })
       const image = partnerPage.getByRole("main").locator("img[src*='/content?variant=thumbnail']")
       await expect(image).toBeAttached({ timeout: 30_000 })
@@ -291,7 +303,7 @@ test.describe("Stream connections", () => {
       })
       await expectApiOk(opened, "Send host message")
 
-      await partnerPage.goto(`/w/${partner.workspaceId}/s/${streamId}`)
+      await openPartnerCopy(partnerPage, partner.workspaceId, streamId)
       await expect(timelineMessage(partnerPage, opener)).toBeVisible({ timeout: 30_000 })
 
       const reply = `Looks good to me ${host.testId}`
@@ -346,7 +358,7 @@ test.describe("Stream connections", () => {
       })
       await expectApiOk(opened, "Send host message")
 
-      await partnerPage.goto(`/w/${partner.workspaceId}/s/${streamId}`)
+      await openPartnerCopy(partnerPage, partner.workspaceId, streamId)
       await expect(timelineMessage(partnerPage, host.testId)).toBeVisible({ timeout: 30_000 })
       const reply = `Looks good to me ${host.testId}`
       await sendText(partnerPage, reply)
@@ -387,7 +399,7 @@ test.describe("Stream connections", () => {
       await acceptInvite(partnerPage, await createInviteLink(page), slug, host.workspaceName, partner.workspaceName)
 
       const text = `Partner mockups ${host.testId}`
-      await partnerPage.goto(`/w/${partner.workspaceId}/s/${streamId}`)
+      await openPartnerCopy(partnerPage, partner.workspaceId, streamId)
       const editor = partnerPage.locator("[data-message-composer-root] [contenteditable='true']").first()
       await editor.click()
       await editor.pressSequentially(text)
@@ -444,7 +456,7 @@ test.describe("Stream connections", () => {
       })
       await expectApiOk(opened, "Send host message")
 
-      await partnerPage.goto(`/w/${partner.workspaceId}/s/${streamId}`)
+      await openPartnerCopy(partnerPage, partner.workspaceId, streamId)
       const message = timelineMessage(partnerPage, opener)
       await expect(message).toBeVisible({ timeout: 30_000 })
       await message.hover()
@@ -487,7 +499,7 @@ test.describe("Stream connections", () => {
         data: { streamId, content: opener },
       })
       await expectApiOk(opened, "Send host message")
-      await partnerPage.goto(`/w/${partner.workspaceId}/s/${streamId}`)
+      await openPartnerCopy(partnerPage, partner.workspaceId, streamId)
       await expect(timelineMessage(partnerPage, opener)).toBeVisible({ timeout: 30_000 })
       await expect(partnerPage.getByText(`Shared with ${host.workspaceName}`)).toBeVisible({ timeout: 15_000 })
 
@@ -496,7 +508,9 @@ test.describe("Stream connections", () => {
 
       await partnerPage.goto(settingsUrl(partner.workspaceId, streamId, "connect"))
       const settings = partnerPage.getByRole("dialog")
-      await expect(settings.getByText("Only the workspace this channel comes from can share it.")).toBeVisible()
+      await expect(settings.getByText("Only the workspace this channel comes from can share it.")).toBeVisible({
+        timeout: 15_000,
+      })
       await expect(settings.getByRole("button", { name: "Create invite link" })).toHaveCount(0)
       await settings.getByRole("button", { name: "Disconnect" }).click()
       const confirm = partnerPage.getByRole("alertdialog", { name: `Disconnect ${host.workspaceName}?` })
@@ -523,7 +537,9 @@ test.describe("Stream connections", () => {
         page.getByRole("main").locator('div[data-event-id][data-message-id^="msg_"]').filter({ hasText: stillHere })
       ).toBeVisible({ timeout: 15_000 })
       await page.goto(settingsUrl(host.workspaceId, streamId, "connect"))
-      await expect(page.getByRole("dialog").getByRole("button", { name: "Create invite link" })).toBeVisible()
+      await expect(page.getByRole("dialog").getByRole("button", { name: "Create invite link" })).toBeVisible({
+        timeout: 15_000,
+      })
       await expect(page.getByRole("dialog").getByText(partner.workspaceName)).toHaveCount(0)
     } finally {
       await partnerContext.close()
