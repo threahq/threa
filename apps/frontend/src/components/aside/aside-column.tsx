@@ -3,7 +3,6 @@ import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { ASIDE_STAGE_MIN_WIDTH, type OpenAsideState } from "@/stores/aside-store"
 import { MIN_MAIN_WIDTH } from "@/hooks/use-panel-layout"
 import { ResizablePanelFrame } from "@/components/layout"
-import { StreamContextDockProvider } from "@/components/stream-context"
 import { cn } from "@/lib/utils"
 import { AsideConversation } from "./aside-conversation"
 import { AsideDrafts } from "./aside-drafts"
@@ -58,50 +57,47 @@ export function AsideColumn({
   const streams = useWorkspaceStreams(workspaceId)
   const aside = useMemo(() => streams.find((stream) => stream.id === asideId), [streams, asideId])
 
-  // The aside is its own stream with no overview of its own here.
   return (
-    <StreamContextDockProvider value={null}>
-      <ResizablePanelFrame
-        panelWidth={layout.width}
-        isResizing={layout.isResizing}
-        minWidth={ASIDE_STAGE_MIN_WIDTH}
-        maxWidth={layout.maxWidth}
-        onResizeStart={layout.handleResizeStart}
-        onResizeMove={layout.handleResizeMove}
-        onResizeEnd={layout.handleResizeEnd}
-        onResizeKeyDown={layout.onKeyDown}
-        resizeLabel="Resize aside"
+    <ResizablePanelFrame
+      panelWidth={layout.width}
+      isResizing={layout.isResizing}
+      minWidth={ASIDE_STAGE_MIN_WIDTH}
+      maxWidth={layout.maxWidth}
+      onResizeStart={layout.handleResizeStart}
+      onResizeMove={layout.handleResizeMove}
+      onResizeEnd={layout.handleResizeEnd}
+      onResizeKeyDown={layout.onKeyDown}
+      resizeLabel="Resize aside"
+    >
+      <div
+        data-testid="aside-column"
+        data-aside-id={asideId}
+        data-aside-surface
+        // Type-to-focus and the composer's height observer route by zone, and a zone they don't know they ignore.
+        data-editor-zone="panel"
+        className="flex h-full min-h-0 flex-col bg-background"
       >
-        <div
-          data-testid="aside-column"
-          data-aside-id={asideId}
-          data-aside-surface
-          // Type-to-focus and the composer's height observer route by zone, and a zone they don't know they ignore.
-          data-editor-zone="panel"
-          className="flex h-full min-h-0 flex-col bg-background"
-        >
-          <AsideHeader workspaceId={workspaceId} asideId={asideId} hostStreamId={hostStreamId} aside={aside} />
-          <div ref={split.containerRef} className="flex min-h-0 flex-1 flex-col">
-            <AsideDrafts
+        <AsideHeader workspaceId={workspaceId} asideId={asideId} hostStreamId={hostStreamId} aside={aside} />
+        <div ref={split.containerRef} className="flex min-h-0 flex-1 flex-col">
+          <AsideDrafts
+            workspaceId={workspaceId}
+            asideId={asideId}
+            surface={draftSurface}
+            className={cn("shrink-0", !draftSurface.openScope && "border-b")}
+            style={draftSurface.openScope ? { height: split.height } : undefined}
+          />
+          {draftSurface.openScope && <AsideSplitHandle split={split} />}
+          <div className="relative min-h-0 flex-1">
+            <AsideConversation
               workspaceId={workspaceId}
               asideId={asideId}
-              surface={draftSurface}
-              className={cn("shrink-0", !draftSurface.openScope && "border-b")}
-              style={draftSurface.openScope ? { height: split.height } : undefined}
+              aside={aside}
+              autoFocus={!draftSurface.openScope}
+              onInsertAgentBlock={draftSurface.insertAgentBlock}
             />
-            {draftSurface.openScope && <AsideSplitHandle split={split} />}
-            <div className="relative min-h-0 flex-1">
-              <AsideConversation
-                workspaceId={workspaceId}
-                asideId={asideId}
-                aside={aside}
-                autoFocus={!draftSurface.openScope}
-                onInsertAgentBlock={draftSurface.insertAgentBlock}
-              />
-            </div>
           </div>
         </div>
-      </ResizablePanelFrame>
-    </StreamContextDockProvider>
+      </div>
+    </ResizablePanelFrame>
   )
 }

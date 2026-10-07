@@ -8,9 +8,9 @@ import { ASIDE_STAGE_MIN_WIDTH, asideHoldsPanel } from "@/stores/aside-store"
 import { PanelResizeHandle } from "@/components/layout"
 import { PanelHost } from "@/components/layout/panel-host"
 import { usePanel } from "@/contexts"
-import { StreamContextDockProvider } from "@/components/stream-context"
 import { cn } from "@/lib/utils"
 import { AsideConversation } from "./aside-conversation"
+import { AsideCoversPanesContext } from "./aside-presentation"
 import { AsideDrafts } from "./aside-drafts"
 import { ASIDE_PANE, ASIDE_PANE_HEAD, AsideGlyph } from "./aside-chrome"
 import { AsideHeader } from "./aside-header"
@@ -98,10 +98,10 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
     handleResizeEnd,
   } = useAsideWidth(asideId, maxWidth)
 
-  // The page's overview dock sits under this stage, so a thread held in the
-  // host pane offers no overview here.
+  // The page's panes sit under this stage, so a thread held in the host pane
+  // opens none of its own here.
   return (
-    <StreamContextDockProvider value={null}>
+    <AsideCoversPanesContext.Provider value={true}>
       <div
         data-testid="aside-stage"
         data-aside-id={asideId}
@@ -198,6 +198,6 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
           </div>
         </div>
       </div>
-    </StreamContextDockProvider>
+    </AsideCoversPanesContext.Provider>
   )
 }

@@ -82,14 +82,8 @@ import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes
 import { getStreamName, getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
 import { SharedWithBadge } from "@/components/shared-with-badge"
-import {
-  StreamContextDockProvider,
-  StreamContextDockSlot,
-  StreamContextOverlay,
-  useStreamContextDockLayout,
-  useStreamContextOpen,
-} from "@/components/stream-context"
-import { MIN_PANEL_WIDTH, fitsDockedColumns } from "@/hooks/use-panel-layout"
+import { useStreamContextToggle } from "@/components/stream-context"
+import { MIN_PANEL_WIDTH } from "@/hooks/use-panel-layout"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { copyStreamLink } from "@/lib/stream-links"
 import { setPageStreamName } from "@/lib/page-title"
@@ -102,8 +96,7 @@ export function StreamPage() {
     useStreamOrDraft(workspaceId!, streamId!)
   const { isMobile } = useSidebar()
   const { panelId, isPanelOpen, layout, setCurrentPane } = usePanel()
-  // "In this stream" overview. While a panel is open, `?context` is the panel's.
-  const [isContextOpen, setContextOpen] = useStreamContextOpen()
+  const [isContextOpen, toggleContext] = useStreamContextToggle(streamId!)
   const containerRef = useRef<HTMLDivElement>(null)
   const mainPaneRef = useRef<HTMLDivElement>(null)
   const containerWidth = useElementWidth(containerRef)
@@ -116,14 +109,8 @@ export function StreamPage() {
   // A thread the sheet holds is mounted there and nowhere else: not in the
   // slot, not as the phone's takeover behind the sheet.
   const panelInAside = asideIsSheet && openAside !== null && asideHoldsPanel(panelId, openAside.hostStreamId)
-  // The aside clamps against the other columns' minimums, the overview's included whether or not it ends up docked.
-  const asideLayout = useAsideColumnLayout(
-    asideColumn,
-    containerWidth,
-    (isPanelOpen ? MIN_PANEL_WIDTH : 0) + (isContextOpen && !isMobile ? MIN_PANEL_WIDTH : 0)
-  )
-  const dockFits = fitsDockedColumns(containerWidth > 0 ? containerWidth - asideLayout.width : 0, isPanelOpen ? 2 : 1)
-  const isDockOpen = isContextOpen && !isMobile && dockFits
+  // The aside clamps against the other columns' minimums.
+  const asideLayout = useAsideColumnLayout(asideColumn, containerWidth, isPanelOpen ? MIN_PANEL_WIDTH : 0)
   const {
     panelWidth,
     maxWidth,
@@ -141,18 +128,17 @@ export function StreamPage() {
   } = usePanelLayout(isPanelOpen && !panelInAside, {
     containerRef,
     columns: layout.columns.length,
-    reservedWidth: asideLayout.width + (isDockOpen ? MIN_PANEL_WIDTH : 0),
+    reservedWidth: asideLayout.width,
     animates: !isMobile,
   })
-  const dock = useStreamContextDockLayout(containerRef, isDockOpen, displayWidth + asideLayout.width)
 
   useTypeToFocus()
 
   // Unified error checking - checks both coordinated loading and direct query errors
   const streamError = useStreamError(streamId, error)
 
-  const panelInset = displayWidth + dock.layout.displayWidth + asideLayout.width
-  const panelInsetAnimates = shouldAnimate && dock.layout.shouldAnimate && !asideLayout.isResizing
+  const panelInset = displayWidth + asideLayout.width
+  const panelInsetAnimates = shouldAnimate && !asideLayout.isResizing
   // Above the error/early returns: a stream that turns inaccessible mid-session
   // must not change this component's hook count.
   usePanelInset(isMobile || streamError ? 0 : panelInset, panelInsetAnimates)
@@ -190,21 +176,6 @@ export function StreamPage() {
     setSearchParams((prev) => {
       const newParams = new URLSearchParams(prev)
       newParams.set("convOverlay", "on")
-      return newParams
-    })
-  }
-
-  const isPageContextOpen = isContextOpen && !isPanelOpen
-  // The page's own overview takes the right edge back from an open panel.
-  const togglePageContext = () => {
-    if (!isPanelOpen) {
-      setContextOpen(!isContextOpen)
-      return
-    }
-    setSearchParams((prev) => {
-      const newParams = new URLSearchParams(prev)
-      newParams.delete("panel")
-      newParams.set("context", "all")
       return newParams
     })
   }
@@ -427,7 +398,7 @@ export function StreamPage() {
         label: "In this stream",
         description: "Links, files & memories",
         icon: PanelRight,
-        onSelect: () => setContextOpen(true),
+        onSelect: toggleContext,
       })
     }
     if (isChannel || isDm) {
@@ -754,11 +725,11 @@ export function StreamPage() {
             <Button
               variant="ghost"
               size="icon"
-              className={cn("h-8 w-8", isPageContextOpen && "bg-accent text-accent-foreground")}
+              className={cn("h-8 w-8", isContextOpen && "bg-accent text-accent-foreground")}
               title="In this stream — links, files & memories"
               aria-label="In this stream"
-              aria-pressed={isPageContextOpen}
-              onClick={togglePageContext}
+              aria-pressed={isContextOpen}
+              onClick={toggleContext}
             >
               <PanelRight className="h-4 w-4" />
             </Button>
@@ -912,12 +883,6 @@ export function StreamPage() {
     </>
   )
 
-  // The panel mounts its own overlay while it is open. A sheet covers the
-  // page, so it hides the overlay too; `?context` brings it back after.
-  const streamContextOverlay = stream && !isDraft && !isPanelOpen && !(asideIsSheet && openAside) && (
-    <StreamContextOverlay workspaceId={workspaceId!} streamId={streamId!} />
-  )
-
   // On mobile the panel takes over the full screen, but the timeline stays mounted
   // behind it so closing a thread lands back where the reader was rather than
   // re-running the opening scroll.
@@ -927,88 +892,69 @@ export function StreamPage() {
   const floating = tabStackShown && floatingPanelTab(layout, isMobile) !== null
 
   return (
-    // A floating tab's overview floats over it too: the dock is under it.
-    <StreamContextDockProvider
-      value={{ target: dock.target, fits: dockFits && !floating, insetRight: asideLayout.width }}
-    >
-      <AsideCoversPanesContext.Provider value={asideIsSheet && openAside !== null}>
-        <PaneHost
-          ref={containerRef}
-          columns={isMobile ? "minmax(0,1fr)" : `minmax(0,1fr) ${displayWidth}px auto ${asideLayout.width}px`}
-          animate={shouldAnimate && !isMobile && !asideLayout.isResizing}
-          onTransitionEnd={handleTransitionEnd}
+    <AsideCoversPanesContext.Provider value={asideIsSheet && openAside !== null}>
+      <PaneHost
+        ref={containerRef}
+        columns={isMobile ? "minmax(0,1fr)" : `minmax(0,1fr) ${displayWidth}px ${asideLayout.width}px`}
+        animate={shouldAnimate && !isMobile && !asideLayout.isResizing}
+        onTransitionEnd={handleTransitionEnd}
+      >
+        <Pane
+          area="1 / 1"
+          covered={mobileTakeover}
+          inert={floating}
+          className={cn(floating && "isolate")}
+          ref={mainPaneRef}
+          onPointerDownCapture={() => setCurrentPane(null)}
+          onFocusCapture={() => setCurrentPane(null)}
         >
-          <Pane
-            area="1 / 1"
-            covered={mobileTakeover}
-            inert={floating}
-            className={cn(floating && "isolate")}
-            ref={mainPaneRef}
-            onPointerDownCapture={() => setCurrentPane(null)}
-            onFocusCapture={() => setCurrentPane(null)}
-          >
-            {mainStreamContent}
+          {mainStreamContent}
+        </Pane>
+        <Pane
+          area={isMobile ? "1 / 1" : "1 / 2"}
+          // An empty pane over the timeline's cell would still take its taps.
+          covered={isMobile && !mobileTakeover}
+          data-testid="panel"
+          className="bg-background"
+        >
+          {tabStackShown && (
+            <ResizablePanelFrame
+              fill={isMobile}
+              panelWidth={panelWidth}
+              isResizing={isResizing}
+              minWidth={minWidth}
+              maxWidth={maxWidth}
+              onResizeStart={handleResizeStart}
+              onResizeMove={handleResizeMove}
+              onResizeEnd={handleResizeEnd}
+              onResizeKeyDown={handleResizeKeyDown}
+              handleInert={floating}
+            >
+              <PanelTabStack workspaceId={workspaceId} maxColumns={maxColumns} stacked={isMobile} main={mainPaneRef} />
+            </ResizablePanelFrame>
+          )}
+        </Pane>
+        {/* The tab stack takes the shortcuts over once it mounts, which trails the panel opening. */}
+        {(!isPanelOpen || !(tabStackShown || panelInAside)) && <PaneShortcuts />}
+        {asideColumn && (
+          <Pane area="1 / 3" inert={floating} className={cn(floating && "isolate")}>
+            <AsideColumn workspaceId={workspaceId} aside={asideColumn} layout={asideLayout} />
           </Pane>
-          <Pane
-            area={isMobile ? "1 / 1" : "1 / 2"}
-            // An empty pane over the timeline's cell would still take its taps.
-            covered={isMobile && !mobileTakeover}
-            data-testid="panel"
-            className="bg-background"
-          >
-            {tabStackShown && (
-              <ResizablePanelFrame
-                fill={isMobile}
-                panelWidth={panelWidth}
-                isResizing={isResizing}
-                minWidth={minWidth}
-                maxWidth={maxWidth}
-                onResizeStart={handleResizeStart}
-                onResizeMove={handleResizeMove}
-                onResizeEnd={handleResizeEnd}
-                onResizeKeyDown={handleResizeKeyDown}
-                handleInert={floating}
-              >
-                <PanelTabStack
-                  workspaceId={workspaceId}
-                  maxColumns={maxColumns}
-                  stacked={isMobile}
-                  main={mainPaneRef}
-                />
-              </ResizablePanelFrame>
-            )}
-          </Pane>
-          {/* The tab stack takes the shortcuts over once it mounts, which trails the panel opening. */}
-          {(!isPanelOpen || !(tabStackShown || panelInAside)) && <PaneShortcuts />}
-          {!isMobile && (
-            <StreamContextDockSlot
-              dock={dock}
-              insetRight={panelInset}
-              insetAnimates={panelInsetAnimates}
-              inert={floating}
-            />
-          )}
-          {asideColumn && (
-            <Pane area="1 / 4" inert={floating} className={cn(floating && "isolate")}>
-              <AsideColumn workspaceId={workspaceId} aside={asideColumn} layout={asideLayout} />
-            </Pane>
-          )}
-          {asideIsSheet && openAside && (
-            <AsideMobileSheet
-              workspaceId={workspaceId}
-              asideId={openAside.asideId}
-              hostStreamId={openAside.hostStreamId}
-              originScope={openAside.originScope}
-              historyEntry={asideSheetOnly}
-            />
-          )}
-        </PaneHost>
-        {/* A `fixed` overlay that would paint over a fullscreen panel, so a takeover
+        )}
+        {asideIsSheet && openAside && (
+          <AsideMobileSheet
+            workspaceId={workspaceId}
+            asideId={openAside.asideId}
+            hostStreamId={openAside.hostStreamId}
+            originScope={openAside.originScope}
+            historyEntry={asideSheetOnly}
+          />
+        )}
+      </PaneHost>
+      {/* A `fixed` overlay that would paint over a fullscreen panel, so a takeover
           keeps it out of the tree entirely rather than merely closed. Its
           `?convView` state survives in the URL and returns when the panel closes. */}
-        {!mobileTakeover && conversationPanel}
-        {streamContextOverlay}
-      </AsideCoversPanesContext.Provider>
-    </StreamContextDockProvider>
+      {!mobileTakeover && conversationPanel}
+    </AsideCoversPanesContext.Provider>
   )
 }

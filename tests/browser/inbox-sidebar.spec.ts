@@ -292,7 +292,7 @@ test.describe("Inbox sidebar section", () => {
     await otherContext.close()
   })
 
-  test("Escape with the docked overview open leaves the stream in the Inbox", async ({ page, browser }) => {
+  test("Escape leaves the stream in the Inbox while its overview is open", async ({ page, browser }) => {
     const { workspaceId, streamId, otherContext } = await seedUnreadChannel(page, browser, "inbox-esc-context")
 
     const inboxRow = sidebarRow(sectionByHeading(page, "Inbox"), streamId)
@@ -300,28 +300,28 @@ test.describe("Inbox sidebar section", () => {
     await expect.poll(() => serverUnreadCount(page, workspaceId, streamId), { timeout: 15000 }).toBe(0)
     await expect.poll(() => isDimmed(inboxRow), { timeout: 10000 }).toBe(true)
 
-    await page.getByRole("button", { name: "In this stream" }).click()
-    const dock = page.getByRole("complementary", { name: "In this stream" })
-    await expect(dock).toBeVisible()
+    const toggle = page.locator("header").getByRole("button", { name: "In this stream" })
+    await toggle.click()
+    const overview = page.getByRole("region", { name: "In this stream" })
+    await expect(overview).toBeVisible()
 
-    // From the timeline: the overview owns Escape, as a thread panel does.
     const message = page.locator('[data-editor-zone="main"]').getByText(/unread hello/)
-    await message.click()
-    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
-    await page.keyboard.press("Escape")
-    await page.keyboard.press("Escape")
-    // From inside the overview: closes it and nothing else.
-    await dock.getByRole("button", { name: /close/i }).focus()
-    await page.keyboard.press("Escape")
-    await expect(dock).toHaveCount(0)
+    const pressEscapeFromTimeline = async () => {
+      await message.click()
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
+      await page.keyboard.press("Escape")
+      await page.keyboard.press("Escape")
+    }
+
+    // An open pane holds Escape, as a thread panel does.
+    await pressEscapeFromTimeline()
     // Give a wrongly-fired settle time to land before asserting it didn't.
     await page.waitForTimeout(1500)
     await expect(inboxRow).toHaveCount(1)
 
-    await message.click()
-    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
-    await page.keyboard.press("Escape")
-    await page.keyboard.press("Escape")
+    await toggle.click()
+    await expect(overview).toHaveCount(0)
+    await pressEscapeFromTimeline()
     await expect(inboxRow).toHaveCount(0, { timeout: 10000 })
 
     await otherContext.close()

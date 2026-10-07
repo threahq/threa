@@ -18,15 +18,6 @@ interface ThreadPanelSlotProps {
   onResizeKeyDown: (e: React.KeyboardEvent) => void
   /** Hold the panel out of the tab order while something covers it. */
   inert?: boolean
-  /**
-   * Total width docked at the right edge, published as `--panel-inset-right`,
-   * and whether its change animates. Every slot in a row publishes the same
-   * pair, so their write order is moot.
-   */
-  insetRight?: number
-  insetAnimates?: boolean
-  testId?: string
-  resizeLabel?: string
   children: React.ReactNode
 }
 
@@ -44,17 +35,13 @@ export function ThreadPanelSlot({
   onResizeEnd,
   onResizeKeyDown,
   inert,
-  insetRight = displayWidth,
-  insetAnimates = shouldAnimate,
-  testId = "panel",
-  resizeLabel,
   children,
 }: ThreadPanelSlotProps) {
-  usePanelInset(insetRight, insetAnimates)
+  usePanelInset(displayWidth, shouldAnimate)
 
   return (
     <div
-      data-testid={testId}
+      data-testid="panel"
       inert={inert || undefined}
       className={cn("flex-shrink-0 overflow-hidden", shouldAnimate && "transition-[width] ease-out")}
       style={{ width: displayWidth, transitionDuration: shouldAnimate ? `${PANE_TRANSITION_MS}ms` : undefined }}
@@ -70,7 +57,6 @@ export function ThreadPanelSlot({
           onResizeMove={onResizeMove}
           onResizeEnd={onResizeEnd}
           onResizeKeyDown={onResizeKeyDown}
-          resizeLabel={resizeLabel}
         >
           {children}
         </ResizablePanelFrame>
@@ -81,8 +67,7 @@ export function ThreadPanelSlot({
 
 /**
  * Publish the width docked at the right edge as `--panel-inset-right`, and
- * whether its change animates. Every docked column in a row publishes the same
- * pair, so their write order is moot.
+ * whether its change animates.
  */
 export function usePanelInset(insetRight: number, insetAnimates: boolean) {
   useLayoutEffect(() => {

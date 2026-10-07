@@ -57,6 +57,9 @@ export {
   createConversationPanelId,
   parseComposePanel,
   createComposePanelId,
+  parseContextPanel,
+  createContextPanelId,
+  contextPanelOf,
 } from "./panel-context"
 export { QuickSwitcherProvider, useQuickSwitcher } from "./quick-switcher-context"
 export { PreferencesProvider, usePreferences, usePreferencesOptional, useResolvedTheme } from "./preferences-context"
