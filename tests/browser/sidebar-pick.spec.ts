@@ -133,3 +133,33 @@ test("should move main to the picked stream, closing main's thread but keeping a
   await expect.poll(() => streamIdOf(page)).toBe(streamA)
   await expect(tabPane(page, thread).getByText("reply in a's thread")).toBeVisible()
 })
+
+test("should show main when its stream is picked on a phone, and swap the page in front for any other", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  const { workspaceId, names, streamA, streamB, streamC } = await seed(page)
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto(`/w/${workspaceId}/s/${streamA}?panel=${streamB}`)
+  await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible({ timeout: 30_000 })
+
+  const pickOnPhone = async (name: string) => {
+    await page.getByRole("button", { name: "Pin sidebar" }).filter({ visible: true }).last().click()
+    await expect(
+      page.getByRole("navigation", { name: "Sidebar navigation" }).getByLabel("Collapse sidebar")
+    ).toBeInViewport()
+    await sidebarRow(page, name).click()
+  }
+
+  await pickOnPhone(names.a)
+  await expect(page.getByRole("main").getByText("parent in a")).toBeVisible()
+  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({ stream: streamA, panel: null })
+  await expect(tabPane(page, streamB)).toHaveCount(0)
+
+  await page.goBack()
+  await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
+  await pickOnPhone(names.c)
+  await expect.poll(() => panelParam(page)).toBe(streamC)
+  expect(streamIdOf(page)).toBe(streamA)
+  await expect(tabPane(page, streamB)).toHaveCount(0)
+})

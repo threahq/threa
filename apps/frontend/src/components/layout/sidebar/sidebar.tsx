@@ -158,10 +158,11 @@ const SidebarBody = memo(function SidebarBody({
   const agentActiveStreamIds = useAgentActiveStreamIds(workspaceId)
   const keptThreadIds = useMemo(() => {
     const ids = new Set(agentActiveStreamIds)
+    if (routeStreamId) ids.add(routeStreamId)
     if (activeStreamId) ids.add(activeStreamId)
     if (panelId) ids.add(panelId)
     return ids
-  }, [agentActiveStreamIds, activeStreamId, panelId])
+  }, [agentActiveStreamIds, routeStreamId, activeStreamId, panelId])
   const heldThreadIds = useHeldSidebarThreads(workspaceId)
   const location = useLocation()
   const syncStatus = useSyncStatus(`workspace:${workspaceId}`)

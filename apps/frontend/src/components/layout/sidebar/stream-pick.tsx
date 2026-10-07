@@ -6,7 +6,9 @@ import {
   parseContextPanel,
   parseDraftPanel,
   useCurrentPane,
+  useFrontPanel,
   usePanel,
+  useSidebar,
 } from "@/contexts"
 import { useStableCallback } from "@/hooks/use-stable-callback"
 import {
@@ -15,9 +17,11 @@ import {
   formatPanelLayout,
   panelIdsOf,
   replacePanelTab,
+  NO_PANELS,
   PANEL_PARAM,
   type PanelLayout,
 } from "@/lib/panel-tabs"
+import { isServerStreamId } from "@/lib/stream-ids"
 import { getCachedWorkspaceTables, indexStreams } from "@/stores/workspace-store"
 
 export interface StreamPage {
@@ -25,6 +29,8 @@ export interface StreamPage {
   layout: PanelLayout
   /** The pane worked in, or null for the main view. */
   current: string | null
+  /** A phone, which shows one pane at a time. */
+  stacked: boolean
 }
 
 type ParentOf = (streamId: string) => string | null
@@ -34,10 +40,20 @@ function openedFrom(id: string, parentOf: ParentOf): string | null {
   return parseComposePanel(id) ?? parseContextPanel(id)?.streamId ?? parseDraftPanel(id)?.parentStreamId ?? parentOf(id)
 }
 
-/** The stream whose row stands for a pane: a draft's or overview's stream, a stream's own; null for a pane no row lists. */
+/** The stream a pane belongs to: a draft's or overview's stream, a new thread's parent, a stream's own; null for a conversation. */
 export function streamOfPane(id: string): string | null {
-  if (parseDraftPanel(id) !== null || isConversationPanel(id)) return null
-  return parseComposePanel(id) ?? parseContextPanel(id)?.streamId ?? id
+  if (isConversationPanel(id)) return null
+  return parseComposePanel(id) ?? parseContextPanel(id)?.streamId ?? parseDraftPanel(id)?.parentStreamId ?? id
+}
+
+/** The page a pick replaces: a draft's or overview's stream, as a tab or the main view (null), else the pane itself. */
+function pageOfPane(page: StreamPage): string | null {
+  const { current, layout, mainStreamId } = page
+  if (current === null) return null
+  const streamId = streamOfPane(current)
+  if (streamId === null || streamId === current) return current
+  if (streamId === mainStreamId) return null
+  return panelIdsOf(layout).includes(streamId) ? streamId : current
 }
 
 /** The panes opened from `owner`: its draft and overview, the threads under it, and theirs. A pane whose stream isn't known stays. */
@@ -53,21 +69,29 @@ export function panesOpenedFrom(layout: PanelLayout, owner: string, parentOf: Pa
 }
 
 /**
- * Where a sidebar pick of `streamId` leaves the stream page: the pane worked in
- * becomes that stream and what was opened from it closes. Other tabs stay. A
+ * Where a sidebar pick of `streamId` leaves the stream page: the page worked in
+ * becomes that stream and what was opened from it closes. Other tabs stay,
+ * except on a phone, where the main view shows only with no tab over it. A
  * stream already open is brought forward instead.
  */
 export function pickStream(page: StreamPage, streamId: string, parentOf: ParentOf): StreamPage {
-  const { mainStreamId, layout, current } = page
+  const next = pickOnPage(page, streamId, parentOf)
+  return page.stacked && next.current === null ? { ...next, layout: NO_PANELS } : next
+}
+
+function pickOnPage(page: StreamPage, streamId: string, parentOf: ParentOf): StreamPage {
+  const { mainStreamId, layout, stacked } = page
+  const current = pageOfPane(page)
   if (streamId === mainStreamId) {
-    return { mainStreamId, layout: layout.focused === undefined ? layout : { columns: layout.columns }, current: null }
+    const unfocused = layout.focused === undefined ? layout : { columns: layout.columns }
+    return { mainStreamId, layout: unfocused, current: null, stacked }
   }
   if (panelIdsOf(layout).includes(streamId)) {
-    return { mainStreamId, layout: activatePanelTab(layout, streamId), current: streamId }
+    return { mainStreamId, layout: activatePanelTab(layout, streamId), current: streamId, stacked }
   }
   const rest = panesOpenedFrom(layout, current ?? mainStreamId, parentOf).reduce(closePanelTab, layout)
-  if (current === null) return { mainStreamId: streamId, layout: rest, current: null }
-  return { mainStreamId, layout: replacePanelTab(rest, current, streamId), current: streamId }
+  if (current === null) return { mainStreamId: streamId, layout: rest, current: null, stacked }
+  return { mainStreamId, layout: replacePanelTab(rest, current, streamId), current: streamId, stacked }
 }
 
 /** Picks a stream from the sidebar on the stream page; false elsewhere, where a row's link goes to the stream on its own. */
@@ -77,15 +101,16 @@ function useStreamPicker(workspaceId: string): (streamId: string) => boolean {
   const mainStreamId = useMatch("/w/:workspaceId/s/:streamId")?.params.streamId
   const [searchParams] = useSearchParams()
   const { layout, setCurrentPane } = usePanel()
+  const { isMobile } = useSidebar()
   const current = useCurrentPane()
+  const front = useFrontPanel()
   return useStableCallback((streamId: string) => {
-    if (!mainStreamId) return false
+    // A draft stream only opens as the main view.
+    if (!mainStreamId || !isServerStreamId(streamId)) return false
     const streams = indexStreams(getCachedWorkspaceTables(workspaceId).streams ?? [])
-    const next = pickStream(
-      { mainStreamId, layout, current },
-      streamId,
-      (id) => streams.get(id)?.parentStreamId ?? null
-    )
+    // A phone shows the pane in front, whichever was last touched.
+    const page = { mainStreamId, layout, current: isMobile ? front : current, stacked: isMobile }
+    const next = pickStream(page, streamId, (id) => streams.get(id)?.parentStreamId ?? null)
     // A pick is a fresh look: a deep link and anything else main carried stay behind with it.
     const params = next.mainStreamId === mainStreamId ? new URLSearchParams(searchParams) : new URLSearchParams()
     params.delete("m")
@@ -94,7 +119,10 @@ function useStreamPicker(workspaceId: string): (streamId: string) => boolean {
     else params.delete(PANEL_PARAM)
     const query = params.toString()
     const url = `/w/${workspaceId}/s/${next.mainStreamId}${query ? `?${query}` : ""}`
-    setCurrentPane(next.current)
+    // A tab swapped in place is followed by the panes themselves; setting it here,
+    // ahead of the URL, would have a second quick pick replace a tab not yet there.
+    const swapped = next.current !== null && !panelIdsOf(layout).includes(streamId)
+    if (!swapped) setCurrentPane(next.current)
     if (url !== `${location.pathname}${location.search}`) navigate(url)
     return true
   })
