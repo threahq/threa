@@ -213,7 +213,9 @@ describe("WorkspaceAgent thread and room context", () => {
       foundFromElsewhere: fromElsewhere.messages.some((m) => m.id === msg.roomHit.id),
       foundFromRoom: roomHit?.inCurrentRoom,
       historyRetrieved: fromRoom.messages.some((m) => roomHistory.some((h) => h.id === m.id)),
-      roomGroupFirst: context.indexOf("(the room this question was asked in)") < context.indexOf("#### Thread in"),
+      roomGroupFirst:
+        context.indexOf("(the room this question was asked in)") > -1 &&
+        context.indexOf("(the room this question was asked in)") < context.indexOf("#### Thread in"),
     }).toEqual({ foundFromElsewhere: false, foundFromRoom: true, historyRetrieved: false, roomGroupFirst: true })
   })
 
