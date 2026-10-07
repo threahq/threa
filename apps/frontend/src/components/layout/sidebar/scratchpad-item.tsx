@@ -63,6 +63,7 @@ import { StreamHoverCard, useSidebarHoverIntent } from "./stream-hover-card"
 import { truncateContent } from "./utils"
 import type { SidebarBoardMode } from "./board-sidebar-mode"
 import type { StreamItemData } from "./types"
+import { useStreamRowPick } from "./stream-pick"
 
 interface ScratchpadItemProps {
   workspaceId: string
@@ -309,6 +310,7 @@ export function ScratchpadItem({
 
   // An E2E scratchpad has no board cards (extraction skips it), so its Link opens
   // the timeline rather than focusing an empty scope. See {@link StreamItem}.
+  const pickRow = useStreamRowPick()
   const timelineHref = `/w/${workspaceId}/s/${streamWithPreview.id}`
   const rowTo = boardMode && !isE2e ? boardMode.focusHref(streamWithPreview.id) : timelineHref
   const handleRowClick = (e: MouseEvent<HTMLAnchorElement>) => {
@@ -319,6 +321,7 @@ export function ScratchpadItem({
     }
     hover.close()
     handleClick(e)
+    pickRow(e, streamWithPreview.id)
   }
   // Mute-skip parity with StreamItem: an active `?in=` include overrides the
   // board mute, so the muted dim + status line yield to the include state.
@@ -380,6 +383,7 @@ export function ScratchpadItem({
             <Link
               ref={itemRef}
               to={rowTo}
+              aria-current={isActive ? "page" : undefined}
               aria-keyshortcuts={quickJump?.keyshortcut}
               onClick={handleRowClick}
               {...touchHandlers}

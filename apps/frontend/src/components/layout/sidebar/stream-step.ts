@@ -1,5 +1,6 @@
 import { useNavigate } from "react-router-dom"
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
+import { useStreamPick } from "./stream-pick"
 
 /**
  * The stream `direction` rows away from the active one in sidebar order. An active
@@ -22,9 +23,10 @@ interface SidebarStreamStepShortcutsProps {
 /** Alt+Shift+↓/↑: open the next or previous stream in the sidebar's visible order. */
 export function SidebarStreamStepShortcuts({ workspaceId, order, activeStreamId }: SidebarStreamStepShortcutsProps) {
   const navigate = useNavigate()
+  const pick = useStreamPick()
   const step = (direction: 1 | -1) => {
     const target = stepSidebarStream(order, activeStreamId, direction)
-    if (target) navigate(`/w/${workspaceId}/s/${target}`)
+    if (target && !pick(target)) navigate(`/w/${workspaceId}/s/${target}`)
   }
 
   useKeyboardShortcuts({
