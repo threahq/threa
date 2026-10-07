@@ -117,7 +117,7 @@ export const conversationAssigner: ConversationAssigner = {
     return target.id
   },
 
-  async attachProvisionalInTransaction(client, { workspaceId, message, stream, authorType }) {
+  async attachProvisionalInTransaction(client, { workspaceId, message, stream, authorType, now }) {
     if (!stream) return null
     if (
       !(await isClusteredSend(client, {
@@ -130,7 +130,7 @@ export const conversationAssigner: ConversationAssigner = {
       return null
     }
 
-    const candidate = await findProvisionalCandidate(client, workspaceId, stream)
+    const candidate = await findProvisionalCandidate(client, workspaceId, stream, now)
     if (!candidate) return null
 
     // Same lock order as the declared `existing` path (INV-20): the candidate
@@ -170,13 +170,14 @@ export const conversationAssigner: ConversationAssigner = {
 async function findProvisionalCandidate(
   client: PoolClient,
   workspaceId: string,
-  stream: Stream
+  stream: Stream,
+  now: Date
 ): Promise<{ id: string } | null> {
   if (stream.type === StreamTypes.THREAD) {
     if (!stream.parentAnchorId?.startsWith("msg_")) return null
     return ConversationRepository.findPrimaryByMessageId(client, workspaceId, stream.parentAnchorId)
   }
-  const activeSince = new Date(Date.now() - PROVISIONAL_ATTACH_WINDOW_MINUTES * 60_000)
+  const activeSince = new Date(now.getTime() - PROVISIONAL_ATTACH_WINDOW_MINUTES * 60_000)
   return ConversationRepository.findLatestActiveByStream(client, workspaceId, stream.id, activeSince)
 }
 

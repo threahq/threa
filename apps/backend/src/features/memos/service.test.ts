@@ -116,7 +116,7 @@ const classification: ConversationClassification = {
   containsActionItems: false,
 }
 
-function setupService(options: { memoContents: MemoContent[]; pendingItem?: Partial<PendingMemoItem> }) {
+function setupService(options: { memoContents: MemoContent[]; pendingItem?: Partial<PendingMemoItem>; now?: Date }) {
   const clientQuery = mock(async () => ({ rows: [] }))
   const fakeClient = { query: clientQuery } as unknown as PoolClient
   spyOn(dbModule, "withClient").mockImplementation((async (_pool: unknown, fn: (c: PoolClient) => unknown) =>
@@ -183,6 +183,7 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
       embedBatch: async (texts: string[]) => texts.map(() => [0.1, 0.2]),
     } as never,
     messageFormatter: { formatMessages: async () => "formatted conversation" } as never,
+    now: options.now ? () => options.now! : undefined,
   })
 
   return {
@@ -426,6 +427,34 @@ describe("MemoService.processBatch — settle gate (active conversations defer u
       ...fakeConversation(),
       status: "active",
       lastActivityAt: new Date(Date.now() - 31 * 60 * 1000),
+    } as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(result.memosCreated).toBe(1)
+  })
+
+  it("measures quiet time against the injected clock, not wall time", async () => {
+    const clock = new Date("2025-03-01T12:00:00Z")
+    const { service } = setupService({ memoContents: [memoContent], now: clock })
+    spyOn(ConversationRepository, "findById").mockResolvedValue({
+      ...fakeConversation(),
+      status: "active",
+      lastActivityAt: new Date(clock.getTime() - 10 * 60 * 1000),
+    } as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(result).toEqual({ processed: 0, memosCreated: 0 })
+  })
+
+  it("memorizes once the injected clock is past the settle window", async () => {
+    const clock = new Date("2025-03-01T12:00:00Z")
+    const { service } = setupService({ memoContents: [memoContent], now: clock })
+    spyOn(ConversationRepository, "findById").mockResolvedValue({
+      ...fakeConversation(),
+      status: "active",
+      lastActivityAt: new Date(clock.getTime() - 31 * 60 * 1000),
     } as never)
 
     const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)

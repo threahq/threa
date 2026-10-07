@@ -343,6 +343,7 @@ export interface MemoServiceConfig {
   /** Optional — when absent, the memo pipeline runs exactly as before. */
   suggestionCollector?: SuggestionCollectorLike
   analyticsReporter: AnalyticsReporter
+  now?: () => Date
 }
 
 export class MemoService implements MemoServiceLike {
@@ -353,6 +354,7 @@ export class MemoService implements MemoServiceLike {
   private messageFormatter: MessageFormatter
   private suggestionCollector?: SuggestionCollectorLike
   private analyticsReporter: AnalyticsReporter
+  private now: () => Date
 
   constructor(config: MemoServiceConfig) {
     this.pool = config.pool
@@ -362,6 +364,7 @@ export class MemoService implements MemoServiceLike {
     this.messageFormatter = config.messageFormatter
     this.suggestionCollector = config.suggestionCollector
     this.analyticsReporter = config.analyticsReporter
+    this.now = config.now ?? (() => new Date())
   }
 
   /**
@@ -548,7 +551,7 @@ export class MemoService implements MemoServiceLike {
     // Format completed preview-card metadata into the same transcript consumed
     // by classification, suggestions, and memorization. Memo accumulation is
     // delayed, so unlike send-time AI consumers it does not need to poll.
-    const relativeTo = new Date()
+    const now = this.now()
     const allMessageRows = [...fetchedData.conversationMessages.values()].flatMap((messages) =>
       [...messages.values()].filter((message): message is Message => message !== null)
     )
@@ -565,7 +568,7 @@ export class MemoService implements MemoServiceLike {
       if (messageRows.length === 0) continue
       const formatted = await this.messageFormatter.formatMessages(this.pool, workspaceId, messageRows, {
         includeIds: true,
-        relativeTo,
+        relativeTo: now,
       })
       fetchedData.formattedConversations.set(conversationId, formatted)
     }
@@ -606,7 +609,7 @@ export class MemoService implements MemoServiceLike {
 
         // Defer young single-message conversations — give time for replies to arrive
         if (conversation.messageIds.length === 1) {
-          const ageMs = Date.now() - new Date(conversation.lastActivityAt).getTime()
+          const ageMs = now.getTime() - new Date(conversation.lastActivityAt).getTime()
           if (ageMs < MEMO_SINGLE_MESSAGE_AGE_GATE_MS) {
             deferredItemIds.add(item.id)
             logger.debug(
@@ -623,7 +626,7 @@ export class MemoService implements MemoServiceLike {
         // resolves/stalls or goes quiet; the item retries each batch cycle, and
         // resolution queues a fresh item, so settle-time capture is never missed.
         if (conversation.status === ConversationStatuses.ACTIVE) {
-          const quietMs = Date.now() - new Date(conversation.lastActivityAt).getTime()
+          const quietMs = now.getTime() - new Date(conversation.lastActivityAt).getTime()
           if (quietMs < MEMO_ACTIVE_CONVERSATION_QUIET_MS) {
             deferredItemIds.add(item.id)
             logger.debug(
@@ -786,6 +789,7 @@ export class MemoService implements MemoServiceLike {
               conversationId: conversation.id,
               authorTimezone,
               memoLanguage: fetchedData.memoLanguage,
+              now,
             })
           : await this.memorizer.memorizeConversation(formattedMessages, {
               memoryContext,
@@ -795,6 +799,7 @@ export class MemoService implements MemoServiceLike {
               conversationId: conversation.id,
               authorTimezone,
               memoLanguage: fetchedData.memoLanguage,
+              now,
             })
 
         if (contents.length === 0) {
@@ -1508,6 +1513,7 @@ export class MemoService implements MemoServiceLike {
         streamId,
         authorTimezone,
         memoLanguage: context.memoLanguage,
+        now: this.now(),
       })
     )
       .slice(0, MEMO_REFLECTIVE_MAX_MEMOS)

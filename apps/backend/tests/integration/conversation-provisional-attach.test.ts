@@ -232,6 +232,54 @@ describe("provisional conversation attach", () => {
     })
   })
 
+  describe("window measured on the injected clock", () => {
+    const sendAt = async (clock: Date, text: string) => {
+      const clocked = new EventService(pool, conversationAssigner, undefined, () => clock)
+      return clocked.createMessageReturningConversationInternal({
+        workspaceId: testWorkspaceId,
+        streamId: testStreamId,
+        authorId: testUserId,
+        authorType: "user",
+        ...testMessageContent(text),
+      })
+    }
+
+    const seedOpenedConversation = async () => {
+      const opener = await send("Opener")
+      const convId = await seedConversation({ messageIds: [opener.message.id] })
+      const seeded = await ConversationRepository.findById(pool, testWorkspaceId, convId)
+      return { convId, lastActivityAt: seeded!.lastActivityAt }
+    }
+
+    test("a send 5 minutes after the last activity joins the conversation", async () => {
+      const { convId, lastActivityAt } = await seedOpenedConversation()
+
+      const sent = await sendAt(new Date(lastActivityAt.getTime() + 5 * 60_000), "Soon after")
+
+      expect({
+        returnedConversationId: sent.conversationId,
+        state: (await settlingRow(sent.message.id))?.state,
+      }).toEqual({
+        returnedConversationId: convId,
+        state: "settling",
+      })
+    })
+
+    test("a send past the window on the injected clock is not joined, whatever wall time says", async () => {
+      const { lastActivityAt } = await seedOpenedConversation()
+
+      const sent = await sendAt(
+        new Date(lastActivityAt.getTime() + (PROVISIONAL_ATTACH_WINDOW_MINUTES + 1) * 60_000),
+        "Long after"
+      )
+
+      expect({ returnedConversationId: sent.conversationId, settling: await settlingRow(sent.message.id) }).toEqual({
+        returnedConversationId: undefined,
+        settling: null,
+      })
+    })
+  })
+
   test("a stream with no conversation mints nothing", async () => {
     const sent = await send("First ever message")
 

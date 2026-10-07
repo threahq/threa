@@ -474,8 +474,11 @@ function memoLanguageRule(memoLanguage?: string | null): string {
   return `WRITE IN THE CONVERSATION'S LANGUAGE. Use the same language the participants used. Do NOT translate (e.g. a Swedish conversation produces Swedish memos).`
 }
 
-export function getMemorizerSystemPrompt(timezone?: string, memoLanguage?: string | null): string {
-  const now = new Date()
+export function getMemorizerSystemPrompt(
+  timezone: string | undefined,
+  memoLanguage: string | null | undefined,
+  now: Date
+): string {
   const tz = timezone ?? "UTC"
   const today = formatDate(now, tz, "YYYY-MM-DD")
   return MEMORIZER_SYSTEM_PROMPT_TEMPLATE.replace("{{CURRENT_DATE}}", today).replace(

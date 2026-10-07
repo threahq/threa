@@ -504,6 +504,7 @@ export interface ConversationAssigner {
       message: Message
       stream: Stream | null
       authorType: CreateMessageParams["authorType"]
+      now: Date
     }
   ): Promise<string | null>
 }
@@ -532,7 +533,8 @@ export class EventService {
   constructor(
     private pool: Pool,
     private conversationAssigner?: ConversationAssigner,
-    private getComposeTraceMode?: GetComposeTraceMode
+    private getComposeTraceMode?: GetComposeTraceMode,
+    private now: () => Date = () => new Date()
   ) {}
 
   /**
@@ -957,6 +959,7 @@ export class EventService {
       } satisfies MessageCreatedPayload,
       actorId: params.authorId,
       actorType: params.authorType,
+      createdAt: this.now(),
     })
 
     const message = await MessageRepository.insert(client, {
@@ -1204,6 +1207,7 @@ export class EventService {
               message,
               stream: stream ?? null,
               authorType: params.authorType,
+              now: this.now(),
             })
           )) ?? undefined
       } catch (err) {
@@ -2853,7 +2857,12 @@ export class EventService {
     const sourceStreamByMessage = new Map(
       messageCreatedEvents.map((event) => [(event.payload as MessageCreatedPayload).messageId, event.streamId])
     )
-    const memoEmbedsByMessageId = await this.refreshMemoEmbeds(messagesMap, messageIdsWithKey, sourceStreamByMessage, scope)
+    const memoEmbedsByMessageId = await this.refreshMemoEmbeds(
+      messagesMap,
+      messageIdsWithKey,
+      sourceStreamByMessage,
+      scope
+    )
 
     return events
       .filter((e) => e.eventType !== "message_edited" && e.eventType !== "message_deleted")
