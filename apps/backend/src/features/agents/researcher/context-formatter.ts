@@ -1,5 +1,6 @@
 import type { AuthorType } from "@threahq/types"
 import type { Querier } from "../../../db"
+import { formatInstant } from "../../../lib/temporal"
 import { formatAttachWithStreamTag, formatMemoTag, formatMsgRefToken, formatRetrievedMessageTag } from "../pointer-tags"
 import { UserRepository } from "../../workspaces"
 import { StreamRepository } from "../../streams"
@@ -59,15 +60,17 @@ export function formatRetrievedContext(
   memos: EnrichedMemoResult[],
   messages: EnrichedMessageResult[],
   attachments: EnrichedAttachmentResult[],
-  workspaceId: string
+  workspaceId: string,
+  /** The asker's clock; UTC when the asker has none. */
+  timezone = "UTC"
 ): string | null {
   if (memos.length === 0 && messages.length === 0 && attachments.length === 0) {
     return null
   }
 
-  const memosSection = memos.length > 0 ? formatMemosSection(memos, workspaceId) : ""
-  const messagesSection = messages.length > 0 ? formatMessagesSection(messages, workspaceId) : ""
-  const attachmentsSection = attachments.length > 0 ? formatAttachmentsSection(attachments, workspaceId) : ""
+  const memosSection = memos.length > 0 ? formatMemosSection(memos, workspaceId, timezone) : ""
+  const messagesSection = messages.length > 0 ? formatMessagesSection(messages, workspaceId, timezone) : ""
+  const attachmentsSection = attachments.length > 0 ? formatAttachmentsSection(attachments, workspaceId, timezone) : ""
 
   return `## Retrieved Knowledge
 
@@ -76,7 +79,7 @@ The following relevant information was found in the workspace:
 ${memosSection}${messagesSection}${attachmentsSection}Use this knowledge to inform your response. Cite sources when relevant.`
 }
 
-function formatMemosSection(memos: EnrichedMemoResult[], workspaceId: string): string {
+function formatMemosSection(memos: EnrichedMemoResult[], workspaceId: string, timezone: string): string {
   const memoEntries = memos
     .map(({ memo, sourceStream, latestSourceAt }) => {
       const location = sourceStream?.name ?? sourceStream?.type ?? "workspace"
@@ -91,7 +94,7 @@ function formatMemosSection(memos: EnrichedMemoResult[], workspaceId: string): s
           : ""
       const linkLine = `Link: ${workspaceMemoUrl(workspaceId, memo.id)}\n`
 
-      const asOf = formatMinute(latestSourceAt ?? memo.createdAt)
+      const asOf = formatInstant(latestSourceAt ?? memo.createdAt, timezone)
 
       return `**${memo.title}** _(${memoTag})_, as of ${asOf}
 
@@ -108,16 +111,10 @@ ${memoEntries}
 `
 }
 
-// Memos, messages and attachments share one absolute minute-precision clock: the memo prompt says a later change
-// overrides the memo, and relative day labels cannot order two items from the same day.
-function formatMinute(date: Date): string {
-  return `${date.toISOString().slice(0, 16)}Z`
-}
-
-function formatMessagesSection(messages: EnrichedMessageResult[], workspaceId: string): string {
+function formatMessagesSection(messages: EnrichedMessageResult[], workspaceId: string, timezone: string): string {
   const messageEntries = messages
     .map((msg) => {
-      const postedAt = formatMinute(msg.createdAt)
+      const postedAt = formatInstant(msg.createdAt, timezone)
       const author = msg.authorType === "user" ? `@${msg.authorName}` : msg.authorName
       const content = msg.content.replace(/\s+/g, " ").trim()
       const quoteBlock = msg.quoteContext ? `\n${msg.quoteContext}` : ""
@@ -142,10 +139,14 @@ ${messageEntries}
 `
 }
 
-function formatAttachmentsSection(attachments: EnrichedAttachmentResult[], workspaceId: string): string {
+function formatAttachmentsSection(
+  attachments: EnrichedAttachmentResult[],
+  workspaceId: string,
+  timezone: string
+): string {
   const attachmentEntries = attachments
     .map((att) => {
-      const postedAt = formatMinute(att.createdAt)
+      const postedAt = formatInstant(att.createdAt, timezone)
       const contentInfo = att.contentType ? ` (${att.contentType})` : ""
       const summary = att.summary ? `\n${att.summary}` : ""
       // Surface attachment id for `attachment:` resurfacing pointer URLs.

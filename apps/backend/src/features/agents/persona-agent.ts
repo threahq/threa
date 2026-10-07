@@ -1011,6 +1011,7 @@ export class PersonaAgent {
               signal,
               onSubstep,
               deadlineAt,
+              timezone: agentContext.streamContext.temporal?.timezone,
             })
         }
 

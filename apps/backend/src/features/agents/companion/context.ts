@@ -575,7 +575,7 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
       ? formatSpawnedFromContext(crossSurfaceStitch, authorNames, streamContext.temporal)
       : null
 
-  const recalledMemosBlock = formatRecalledMemosBlock(recalledMemos)
+  const recalledMemosBlock = formatRecalledMemosBlock(recalledMemos, streamContext.temporal?.timezone)
 
   const composeSystemPrompt = (tools: AgentTool[], effectivePurpose: TurnPurpose): SplitSystemPrompt => {
     const systemPrompt = buildSystemPrompt({

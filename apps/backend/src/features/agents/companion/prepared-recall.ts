@@ -2,6 +2,7 @@ import type { KnowledgeType, MemoRecallOutcome } from "@threahq/types"
 import type { AnalyticsReporter } from "@threahq/backend-common"
 import type { MemoAudience, MemoExplorerService, RelevanceScorerLike } from "../../memos"
 import { logger } from "../../../lib/logger"
+import { formatInstant } from "../../../lib/temporal"
 import { escapeXmlAttr } from "../../../lib/xml"
 import {
   PREPARED_RECALL_CANDIDATE_LIMIT,
@@ -182,11 +183,12 @@ export class PreparedRecall {
   }
 }
 
-export function formatRecalledMemosBlock(memos: RecalledMemo[]): string | null {
+/** `timezone` is the asker's clock; UTC when the asker has none. */
+export function formatRecalledMemosBlock(memos: RecalledMemo[], timezone = "UTC"): string | null {
   if (memos.length === 0) return null
   const entries = memos.map(
     (memo) =>
-      `<memo id="${escapeXmlAttr(memo.id)}" title="${escapeXmlAttr(memo.title)}" type="${memo.knowledgeType}" as_of="${(memo.latestSourceAt ?? memo.createdAt).toISOString().slice(0, 16)}Z">\n${escapeXmlAttr(memo.abstract)}\n</memo>`
+      `<memo id="${escapeXmlAttr(memo.id)}" title="${escapeXmlAttr(memo.title)}" type="${memo.knowledgeType}" as_of="${formatInstant(memo.latestSourceAt ?? memo.createdAt, timezone)}">\n${escapeXmlAttr(memo.abstract)}\n</memo>`
   )
   return `## Recalled from memory
 

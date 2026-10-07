@@ -134,6 +134,8 @@ export interface WorkspaceAgentInput {
    * `partialReason: "timeout"`.
    */
   deadlineAt?: number
+  /** The asker's IANA timezone, the clock retrieved times are shown on. */
+  timezone?: string
 }
 
 /**
@@ -254,7 +256,7 @@ export class WorkspaceAgent {
 
     const earlyExit = this.checkAbortOrDeadline(input)
     if (earlyExit) {
-      return this.buildPartialResult([], [], [], workspaceId, substeps, earlyExit)
+      return this.buildPartialResult([], [], [], workspaceId, input.timezone, substeps, earlyExit)
     }
 
     // Phase 1: Fetch all setup data with withClient (no transaction, fast reads ~100-200ms)
@@ -370,7 +372,15 @@ export class WorkspaceAgent {
 
     const preExec = this.checkAbortOrDeadline(input)
     if (preExec) {
-      return this.buildPartialResult(allMemos, allMessages, allAttachments, workspaceId, substeps, preExec)
+      return this.buildPartialResult(
+        allMemos,
+        allMessages,
+        allAttachments,
+        workspaceId,
+        input.timezone,
+        substeps,
+        preExec
+      )
     }
 
     const baselineQueries = buildBaselineQueries(query)
@@ -412,7 +422,15 @@ export class WorkspaceAgent {
     // Abort may have fired during planner/baseline
     const postPlan = this.checkAbortOrDeadline(input)
     if (postPlan) {
-      return this.buildPartialResult(allMemos, allMessages, allAttachments, workspaceId, substeps, postPlan)
+      return this.buildPartialResult(
+        allMemos,
+        allMessages,
+        allAttachments,
+        workspaceId,
+        input.timezone,
+        substeps,
+        postPlan
+      )
     }
 
     // Compute planner-only queries: any planner queries not already in the baseline set.
@@ -455,7 +473,7 @@ export class WorkspaceAgent {
         { query, accessSpecType: accessSpec.type },
         "Workspace agent iteration 1 returned no results; short-circuiting"
       )
-      return this.buildFinalResult(allMemos, allMessages, allAttachments, workspaceId, substeps, false)
+      return this.buildFinalResult(allMemos, allMessages, allAttachments, workspaceId, input.timezone, substeps, false)
     }
 
     // ── Refinement loop (iterations 2..maxIterations): evaluator-driven ──
@@ -468,7 +486,15 @@ export class WorkspaceAgent {
       // Abort check before evaluator (each iteration is a checkpoint)
       const preEval = this.checkAbortOrDeadline(input)
       if (preEval) {
-        return this.buildPartialResult(allMemos, allMessages, allAttachments, workspaceId, substeps, preEval)
+        return this.buildPartialResult(
+          allMemos,
+          allMessages,
+          allAttachments,
+          workspaceId,
+          input.timezone,
+          substeps,
+          preEval
+        )
       }
 
       this.emitSubstep(substeps, "Evaluating results…", input.onSubstep)
@@ -499,7 +525,15 @@ export class WorkspaceAgent {
 
       const preExecIter = this.checkAbortOrDeadline(input)
       if (preExecIter) {
-        return this.buildPartialResult(allMemos, allMessages, allAttachments, workspaceId, substeps, preExecIter)
+        return this.buildPartialResult(
+          allMemos,
+          allMessages,
+          allAttachments,
+          workspaceId,
+          input.timezone,
+          substeps,
+          preExecIter
+        )
       }
 
       this.emitSubstep(
@@ -528,7 +562,15 @@ export class WorkspaceAgent {
 
     const postLoop = this.checkAbortOrDeadline(input)
     if (postLoop) {
-      return this.buildPartialResult(allMemos, allMessages, allAttachments, workspaceId, substeps, postLoop)
+      return this.buildPartialResult(
+        allMemos,
+        allMessages,
+        allAttachments,
+        workspaceId,
+        input.timezone,
+        substeps,
+        postLoop
+      )
     }
 
     logger.info(
@@ -542,7 +584,7 @@ export class WorkspaceAgent {
       "Workspace agent completed"
     )
 
-    return this.buildFinalResult(allMemos, allMessages, allAttachments, workspaceId, substeps, false)
+    return this.buildFinalResult(allMemos, allMessages, allAttachments, workspaceId, input.timezone, substeps, false)
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -608,11 +650,12 @@ export class WorkspaceAgent {
     messages: EnrichedMessageResult[],
     attachments: EnrichedAttachmentResult[],
     workspaceId: string,
+    timezone: string | undefined,
     substeps: WorkspaceAgentSubstep[],
     partial: boolean
   ): WorkspaceAgentResult {
     const sources = this.buildSources(memos, messages, attachments, workspaceId)
-    const retrievedContext = formatRetrievedContext(memos, messages, attachments, workspaceId)
+    const retrievedContext = formatRetrievedContext(memos, messages, attachments, workspaceId, timezone)
     return {
       retrievedContext,
       sources,
@@ -633,6 +676,7 @@ export class WorkspaceAgent {
     messages: EnrichedMessageResult[],
     attachments: EnrichedAttachmentResult[],
     workspaceId: string,
+    timezone: string | undefined,
     substeps: WorkspaceAgentSubstep[],
     reason: WorkspaceAgentPartialReason
   ): WorkspaceAgentResult {
@@ -644,7 +688,7 @@ export class WorkspaceAgent {
     substeps.push({ text: stopText, at: new Date().toISOString() })
 
     const sources = this.buildSources(memos, messages, attachments, workspaceId)
-    const retrievedContext = formatRetrievedContext(memos, messages, attachments, workspaceId)
+    const retrievedContext = formatRetrievedContext(memos, messages, attachments, workspaceId, timezone)
 
     logger.info(
       {
