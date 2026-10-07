@@ -52,8 +52,6 @@ import { SIM_CLOCK_POOL_CONFIG, type SimClock } from "../framework/sim-clock"
 /** The memo batch-check and staleness-sweep cron cadences in server.ts. */
 const BATCH_TICK_MS = 30_000
 const SWEEP_TICK_MS = 600_000
-/** Past the sweep's 7-day resolve threshold, so every conversation ends resolved. */
-const TAIL_MS = 8 * 24 * 60 * 60 * 1000
 const IDLE_POLL_MS = 100
 const DRAIN_TIMEOUT_MS = 10 * 60 * 1000
 
@@ -72,17 +70,22 @@ interface ReplayMessageBase {
   createdAt: Date
 }
 
-/** A top-level post in `streamId`, or a reply in the thread under the message keyed `threadOf`. */
-export type ReplayMessage = ReplayMessageBase & ({ streamId: string } | { threadOf: string })
+/**
+ * A top-level post in `streamId`, or a reply in the thread under the message
+ * keyed `threadOf`; the thread's first reply names it `threadName`.
+ */
+export type ReplayMessage = ReplayMessageBase & ({ streamId: string } | { threadOf: string; threadName?: string })
 
 export interface ReplayResult {
   /** Pipeline jobs that exhausted their retries; their work is missing from the replay. */
   deadLetteredJobs: number
+  /** Memo work production would still have pending at `until`, such as conversations active then. */
+  unprocessedMemoItems: number
 }
 
 export interface ReplayPipeline {
-  /** Posts `messages` (oldest first) at their timestamps, then advances time until every memo is processed. */
-  replay(messages: ReplayMessage[]): Promise<ReplayResult>
+  /** Posts `messages` (oldest first) at their timestamps, then runs the pipeline on to `until`. */
+  replay(messages: ReplayMessage[], until: Date): Promise<ReplayResult>
   stop(): Promise<void>
 }
 
@@ -210,45 +213,57 @@ export async function startReplayPipeline(deps: {
   }
   const drain = () => waitIdle(null)
 
-  const hasPendingMemoItems = async (): Promise<boolean> => {
-    const result = await pool.query<{ pending: boolean }>(
-      "SELECT EXISTS (SELECT 1 FROM memo_pending_items WHERE processed_at IS NULL) AS pending"
+  const countPendingMemoItems = async (exceptStreamIds: string[] = []): Promise<number> => {
+    const result = await pool.query<{ count: string }>(
+      "SELECT COUNT(*) AS count FROM memo_pending_items WHERE processed_at IS NULL AND NOT stream_id = ANY($1)",
+      [exceptStreamIds]
     )
-    return result.rows[0].pending
+    return Number(result.rows[0].count)
   }
 
-  const runBatchCheck = async (): Promise<void> => {
+  /** Returns the streams whose batch processed nothing: every item left in them was deferred or failed */
+  const runBatchCheck = async (): Promise<string[]> => {
+    const idle: string[] = []
     for (const ready of await StreamStateRepository.findStreamsReadyToProcess(pool)) {
-      await memoService.processBatch(ready.workspaceId, ready.streamId)
+      const result = await memoService.processBatch(ready.workspaceId, ready.streamId)
+      if (result.processed === 0) idle.push(ready.streamId)
     }
+    return idle
   }
 
   const nextBoundary = (stepMs: number): number => (Math.floor(clock.now().getTime() / stepMs) + 1) * stepMs
 
+  const runSweep = async (tick: number): Promise<void> => {
+    await stalenessSweep({
+      id: `replay_sweep_${tick}`,
+      name: JobQueues.CONVERSATION_STALENESS_SWEEP,
+      data: { workspaceId: "system" },
+    })
+    await drain()
+  }
+
   /**
    * Fires each cron tick up to `target` at its own instant, after the pipeline
-   * has finished what production would have finished by then. A batch tick with
-   * no unprocessed memo items is a no-op, so those are skipped for the next
-   * sweep tick until the pipeline queues memo work again.
+   * has finished what production would have finished by then. A batch tick can
+   * only matter while some stream holds memo items it has not yet found idle;
+   * items it deferred stay deferred until a sweep moves their conversation or a
+   * new message arrives, so those wait for the next sweep tick. That releases a
+   * conversation deferred for its quiet period up to one sweep interval late.
    */
   const advanceTo = async (target: Date): Promise<void> => {
+    let idleStreamIds: string[] = []
     while (nextBoundary(BATCH_TICK_MS) <= target.getTime()) {
       await drain()
-      const tick = (await hasPendingMemoItems()) ? nextBoundary(BATCH_TICK_MS) : nextBoundary(SWEEP_TICK_MS)
+      const batchDue = (await countPendingMemoItems(idleStreamIds)) > 0
+      const tick = batchDue ? nextBoundary(BATCH_TICK_MS) : nextBoundary(SWEEP_TICK_MS)
       if (tick > target.getTime()) return
       await clock.set(new Date(tick))
-      await runBatchCheck()
-      if (tick % SWEEP_TICK_MS === 0) {
-        await stalenessSweep({
-          id: `replay_sweep_${tick}`,
-          name: JobQueues.CONVERSATION_STALENESS_SWEEP,
-          data: { workspaceId: "system" },
-        })
-      }
+      if (tick % SWEEP_TICK_MS === 0) await runSweep(tick)
+      idleStreamIds = await runBatchCheck()
     }
   }
 
-  const replay = async (messages: ReplayMessage[]): Promise<ReplayResult> => {
+  const replay = async (messages: ReplayMessage[], until: Date): Promise<ReplayResult> => {
     const posted = new Map<string, { id: string; streamId: string }>()
     const threadIds = new Map<string, string>()
     const rootOf = (key: string) => {
@@ -278,6 +293,13 @@ export async function startReplayPipeline(deps: {
           parentAnchorId: root.id,
           createdBy: message.authorId,
         })
+        if (message.threadName) {
+          await streamService.updateStream(
+            thread.id,
+            { displayName: message.threadName },
+            { workspaceId, principal: { kind: "user", userId: message.authorId } }
+          )
+        }
         threadIds.set(message.threadOf, thread.id)
         streamId = thread.id
       }
@@ -293,16 +315,15 @@ export async function startReplayPipeline(deps: {
       posted.set(message.key, { id: created.id, streamId })
     }
 
-    const last = messages.at(-1)
-    if (last) await advanceTo(new Date(last.createdAt.getTime() + TAIL_MS))
+    await advanceTo(until)
     await drain()
-    if (await hasPendingMemoItems()) throw new Error("Replay ended with unprocessed memo items")
+    await clock.set(until)
 
     const dead = await pool.query<{ count: string }>(
       "SELECT COUNT(*) AS count FROM queue_messages WHERE queue_name = ANY($1) AND dlq_at IS NOT NULL",
       [PIPELINE_QUEUES]
     )
-    return { deadLetteredJobs: Number(dead.rows[0].count) }
+    return { deadLetteredJobs: Number(dead.rows[0].count), unprocessedMemoItems: await countPendingMemoItems() }
   }
 
   return {
