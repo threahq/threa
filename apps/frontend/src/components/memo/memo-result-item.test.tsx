@@ -1,6 +1,6 @@
 import { MemoryRouter } from "react-router-dom"
-import { beforeEach, describe, expect, it, vi } from "vitest"
-import { render, screen } from "@/test"
+import { beforeEach, describe, expect, it } from "vitest"
+import { render, screen, spyOnExport } from "@/test"
 import { createMockMemoResult } from "@/test/fixtures/search"
 import * as relativeTimeModule from "@/components/relative-time"
 import { MemoResultItem } from "./memo-result-item"
@@ -15,9 +15,9 @@ function renderItem(memo: Parameters<typeof createMockMemoResult>[0]) {
 
 describe("MemoResultItem time", () => {
   beforeEach(() => {
-    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(({ date }) => (
-      <span data-testid="memo-time">{String(date)}</span>
-    ))
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((({ date }: { date: string }) => (
+      <span data-testid="memo-time">{date}</span>
+    )) as unknown as typeof relativeTimeModule.RelativeTime)
   })
 
   it("shows when the newest source was posted, not when the memo was revised", () => {
