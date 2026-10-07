@@ -10,7 +10,7 @@
  * source of a retrieved memo, and a stream hit is any retrieval from the
  * channel or thread holding one.
  *
- *   bun run eval -- -s groupmembench-recall --from-db threa_gmb_capture_v4
+ *   bun run eval -- -s groupmembench-recall --from-db threa_eval_gmb_capture_v4
  */
 
 import type { CaseResult, EvalContext, EvalSuite, Evaluator, RunEvaluator } from "../../framework/types"
