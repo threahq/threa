@@ -181,12 +181,14 @@ export async function setupEvalTemplate(
       const cloneName = `${templateName}_${++cloneCounter}_${cloneLabel.replace(/[^a-z0-9]/gi, "_").toLowerCase()}`
       await cloneFromTemplate(templateName, cloneName)
 
-      const pool = createDatabasePool(`${DATABASE_HOST}/${cloneName}`, poolConfig)
+      const connectionString = `${DATABASE_HOST}/${cloneName}`
+      const pool = createDatabasePool(connectionString, poolConfig)
       const clock = options.simClock ? await SimClock.attach(pool, options.simClock) : undefined
 
       return {
         pool,
         databaseName: cloneName,
+        connectionString,
         clock,
         cleanup: async () => {
           await pool.end()
@@ -208,6 +210,7 @@ export interface EvalDatabaseResult {
   pool: Pool
   /** Database name (for cleanup) */
   databaseName: string
+  connectionString: string
   /** Drives the database's `now()`; set only when the run opted into `simClock` */
   clock: SimClock | undefined
   /** Cleanup function to drop the database */
@@ -251,6 +254,7 @@ export async function setupEvalDatabase(options: DatabaseOptions = {}): Promise<
   return {
     pool,
     databaseName,
+    connectionString,
     clock,
     cleanup: async () => {
       await pool.end()
