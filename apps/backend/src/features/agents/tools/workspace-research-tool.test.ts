@@ -17,7 +17,6 @@ const baseResult: WorkspaceAgentResult = {
       memo: {} as unknown as import("../../memos").Memo,
       distance: 0.1,
       sourceStream: null,
-      latestSourceAt: null,
     },
   ],
   messages: [],
@@ -83,13 +82,11 @@ describe("workspace_research tool", () => {
             memo: { sourceStreamIds: ["stream_a", "stream_b"] } as unknown as import("../../memos").Memo,
             distance: 0.1,
             sourceStream: { id: "stream_capture", type: "channel", name: null },
-            latestSourceAt: null,
           },
           {
             memo: { sourceStreamIds: null } as unknown as import("../../memos").Memo,
             distance: 0.2,
             sourceStream: { id: "stream_legacy", type: "channel", name: null },
-            latestSourceAt: null,
           },
         ],
         messages: [

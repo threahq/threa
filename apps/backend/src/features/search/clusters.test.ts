@@ -72,13 +72,14 @@ function memoHit(id: string, sourceMessageIds: string[]): MemoExplorerResult {
     sourceStreamIds: null,
     requiresBrowse: false,
     archivedAt: null,
+    earliestSourceAt: null,
+    latestSourceAt: null,
   }
   return {
     memo,
     distance: 0.1,
     sourceStream: { id: "stream_1", type: "scratchpad", name: null },
     rootStream: null,
-    latestSourceAt: null,
   }
 }
 

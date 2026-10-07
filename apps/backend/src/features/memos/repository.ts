@@ -120,6 +120,8 @@ interface MemoRow {
   created_at: Date
   updated_at: Date
   archived_at: Date | null
+  earliest_source_at: Date | null
+  latest_source_at: Date | null
 }
 
 export interface Memo {
@@ -159,6 +161,10 @@ export interface Memo {
   createdAt: Date
   updatedAt: Date
   archivedAt: Date | null
+  /** When the oldest source message was posted; null when none resolves. createdAt is when the memo was captured. */
+  earliestSourceAt: Date | null
+  /** When the newest source message was posted, deleted ones included; null when none resolves. */
+  latestSourceAt: Date | null
 }
 
 export interface InsertMemoParams {
@@ -208,6 +214,8 @@ export interface MemoCopy {
   cardVersion: number
   embedding: number[]
   createdAt: string
+  earliestSourceAt: string | null
+  latestSourceAt: string | null
 }
 
 export interface UpdateMemoParams {
@@ -220,7 +228,6 @@ export interface UpdateMemoParams {
    * detects it from the merged memo (`memoSearchText`) and passes it here.
    */
   searchConfig?: string
-  sourceMessageIds?: string[]
   participantIds?: string[]
   knowledgeType?: KnowledgeType
   tags?: string[]
@@ -243,8 +250,6 @@ export interface MemoSearchResult {
     type: string
     name: string | null
   } | null
-  /** When the newest undeleted source message was posted; null when none resolves. */
-  latestSourceAt: Date | null
 }
 
 export interface MemoSearchFilters {
@@ -253,7 +258,9 @@ export interface MemoSearchFilters {
   memoTypes?: MemoType[]
   knowledgeTypes?: KnowledgeType[]
   tags?: string[]
+  /** Memos whose source messages began before this instant. */
   before?: Date
+  /** Memos whose source messages continued at or after this instant. */
   after?: Date
   /**
    * Which memo lifecycle statuses to return. Defaults to `["active"]` so
@@ -363,6 +370,8 @@ function mapRowToMemo(row: MemoRow): Memo {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     archivedAt: row.archived_at,
+    earliestSourceAt: row.earliest_source_at,
+    latestSourceAt: row.latest_source_at,
   }
 }
 
@@ -371,7 +380,8 @@ const SELECT_FIELDS = `
   title, abstract, key_points, source_message_ids, participant_ids,
   knowledge_type, tags, parent_memo_id, status, version, card_version, revision_reason,
   authored_by_kind, source_session_id, source_stream_ids, requires_browse, scope, scope_user_id,
-  origin_workspace_id, shared_root_stream_id, created_at, updated_at, archived_at
+  origin_workspace_id, shared_root_stream_id, created_at, updated_at, archived_at,
+  earliest_source_at, latest_source_at
 `
 
 const SELECT_FIELDS_PREFIXED = `
@@ -379,18 +389,11 @@ const SELECT_FIELDS_PREFIXED = `
   m.title, m.abstract, m.key_points, m.source_message_ids, m.participant_ids,
   m.knowledge_type, m.tags, m.parent_memo_id, m.status, m.version, m.card_version, m.revision_reason,
   m.authored_by_kind, m.source_session_id, m.source_stream_ids, m.requires_browse, m.scope, m.scope_user_id,
-  m.origin_workspace_id, m.shared_root_stream_id, m.created_at, m.updated_at, m.archived_at
+  m.origin_workspace_id, m.shared_root_stream_id, m.created_at, m.updated_at, m.archived_at,
+  m.earliest_source_at, m.latest_source_at
 `
 const SELECT_FIELDS_SQL = rawSql(SELECT_FIELDS)
 const SELECT_FIELDS_PREFIXED_SQL = rawSql(SELECT_FIELDS_PREFIXED)
-
-function latestSourceAtSql(memoAlias: string) {
-  return rawSql(`(
-    SELECT max(src.created_at) FROM messages src
-    WHERE src.workspace_id = ${memoAlias}.workspace_id AND src.id = ANY(${memoAlias}.source_message_ids)
-      AND src.deleted_at IS NULL
-  ) as latest_source_at`)
-}
 
 interface MemoSearchRow extends MemoRow {
   stream_id: string | null
@@ -399,7 +402,6 @@ interface MemoSearchRow extends MemoRow {
   root_stream_id: string | null
   root_stream_type: string | null
   root_stream_name: string | null
-  latest_source_at: Date | null
 }
 
 function mapMemoSearchResult(row: MemoSearchRow, distance: number): MemoSearchResult {
@@ -420,7 +422,6 @@ function mapMemoSearchResult(row: MemoSearchRow, distance: number): MemoSearchRe
           name: row.root_stream_name,
         }
       : null,
-    latestSourceAt: row.latest_source_at,
   }
 }
 
@@ -616,11 +617,13 @@ export const MemoRepository = {
       audiences: readonly MemoAudience[]
       status?: MemoStatus
       limit?: number
-      orderBy?: "createdAt" | "updatedAt"
+      orderBy?: "sourceAt" | "updatedAt"
       sharedRootStreamId?: string
     }
   ): Promise<Memo[]> {
-    const orderBy = rawSql(options.orderBy === "updatedAt" ? "updated_at" : "created_at")
+    const orderBy = rawSql(
+      options.orderBy === "updatedAt" ? "updated_at DESC" : "latest_source_at DESC NULLS LAST, created_at DESC"
+    )
     const filters = composeSql`(m.scope <> 'user' OR m.scope_user_id = ${options.scopeUserId})
         ${options.status ? composeSql`AND m.status = ${options.status}` : rawSql("")}
         ${capturedWhileSharedSql(options.sharedRootStreamId, "m")}
@@ -636,7 +639,7 @@ export const MemoRepository = {
       SELECT ${SELECT_FIELDS_PREFIXED_SQL} FROM memos m
       JOIN messages msg ON m.source_message_id = msg.id AND msg.workspace_id = m.workspace_id
       WHERE m.workspace_id = ${workspaceId} AND ${inStreamTreeSql(workspaceId, streamId, "msg.stream_id")} AND ${filters}
-      ORDER BY ${orderBy} DESC
+      ORDER BY ${orderBy}, id
       LIMIT ${options.limit ?? 50}
     `)
     return result.rows.map(mapRowToMemo)
@@ -679,7 +682,7 @@ export const MemoRepository = {
       WHERE workspace_id = ${workspaceId} AND source_conversation_id = ${conversationId} AND status = 'active'
         ${capturedWhileSharedSql(sharedRootStreamId, "memos")}
         AND ${memoAudienceVisibleSql(workspaceId, audiences, "memos")}
-      ORDER BY created_at ASC
+      ORDER BY latest_source_at ASC NULLS LAST, created_at ASC, id
     `)
     return result.rows.map(mapRowToMemo)
   },
@@ -716,7 +719,7 @@ export const MemoRepository = {
         )
         AND ${memoAudienceVisibleSql(workspaceId, audiences, "memos")}
         ${capturedWhileSharedSql(sharedRootStreamId, "memos")}
-      ORDER BY created_at ASC
+      ORDER BY latest_source_at ASC NULLS LAST, created_at ASC, id
     `)
     return result.rows.map(mapRowToMemo)
   },
@@ -895,8 +898,9 @@ export const MemoRepository = {
    * conversation, and those whose newest source message is no newer than the
    * candidate's newest. A re-run of an older conversation can contradict a
    * memo that already reversed it; without this it would retire the newer
-   * conclusion. Compares `created_at`, not `edited_at`, so a typo fix can't
-   * make old knowledge look new.
+   * conclusion. Compares post times, not `edited_at`, so a typo fix can't
+   * make old knowledge look new. A memo not yet backfilled is dated from its
+   * sources here; one whose sources all fail to resolve is not retired.
    */
   async filterSupersedable(
     db: Querier,
@@ -912,11 +916,14 @@ export const MemoRepository = {
         AND m.id = ANY(${ids}::text[])
         AND (
           m.source_conversation_id = ${candidate.conversationId}
-          OR (
-            SELECT max(msg.created_at)
-            FROM messages msg
-            WHERE msg.workspace_id = m.workspace_id
-              AND msg.id = ANY(array_append(m.source_message_ids, m.source_message_id))
+          OR COALESCE(
+            m.latest_source_at,
+            (
+              SELECT max(own.created_at)
+              FROM messages own
+              WHERE own.workspace_id = m.workspace_id
+                AND own.id = ANY(array_append(m.source_message_ids, m.source_message_id))
+            )
           ) <= (
             SELECT max(msg.created_at)
             FROM messages msg
@@ -971,14 +978,21 @@ export const MemoRepository = {
     `)
   },
 
+  /**
+   * The span is read from the sources' post times in the same statement: an
+   * active memo's sources never change, so it is computed once, here.
+   */
   async insert(db: Querier, params: InsertMemoParams): Promise<Memo> {
+    const sourceIds = params.sourceMessageId
+      ? [...params.sourceMessageIds, params.sourceMessageId]
+      : params.sourceMessageIds
     const result = await db.query<MemoRow>(sql`
       INSERT INTO memos (
         id, workspace_id, memo_type, source_message_id, source_conversation_id,
         title, abstract, key_points, search_config, source_message_ids, participant_ids,
         knowledge_type, tags, parent_memo_id, status, version,
         authored_by_kind, source_session_id, source_stream_ids, requires_browse, scope, scope_user_id,
-        shared_root_stream_id
+        shared_root_stream_id, earliest_source_at, latest_source_at
       )
       VALUES (
         ${params.id},
@@ -1003,7 +1017,9 @@ export const MemoRepository = {
         ${params.requiresBrowse ?? false},
         ${params.scope ?? "workspace"},
         ${params.scopeUserId ?? null},
-        ${params.sharedRootStreamId ?? null}
+        ${params.sharedRootStreamId ?? null},
+        (SELECT min(msg.created_at) FROM messages msg WHERE msg.workspace_id = ${params.workspaceId} AND msg.id = ANY(${sourceIds}::text[])),
+        (SELECT max(msg.created_at) FROM messages msg WHERE msg.workspace_id = ${params.workspaceId} AND msg.id = ANY(${sourceIds}::text[]))
       )
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
@@ -1030,10 +1046,6 @@ export const MemoRepository = {
     if (params.searchConfig !== undefined) {
       updates.push(`search_config = $${paramIndex++}`)
       values.push(params.searchConfig)
-    }
-    if (params.sourceMessageIds !== undefined) {
-      updates.push(`source_message_ids = $${paramIndex++}`)
-      values.push(params.sourceMessageIds)
     }
     if (params.participantIds !== undefined) {
       updates.push(`participant_ids = $${paramIndex++}`)
@@ -1175,7 +1187,9 @@ export const MemoRepository = {
    * Writes a partner's copies of memos its host captured from a shared channel,
    * under the host's ids. A copy only moves forward: a row already at the
    * host's `cardVersion`, or one that is not this channel's copy, is left as it
-   * is. Returns the ids it inserted and the ids it updated.
+   * is. A copy from a host that sends no source span is dated from this
+   * workspace's copies of its sources, and never clears a span already stored.
+   * Returns the ids it inserted and the ids it updated.
    */
   async upsertCopies(
     db: Querier,
@@ -1200,13 +1214,15 @@ export const MemoRepository = {
       card_version: copy.cardVersion,
       embedding: JSON.stringify(copy.embedding),
       created_at: copy.createdAt,
+      earliest_source_at: copy.earliestSourceAt,
+      latest_source_at: copy.latestSourceAt,
     }))
     const result = await db.query<{ id: string; inserted: boolean }>(sql`
       INSERT INTO memos (
         id, workspace_id, memo_type, source_conversation_id,
         title, abstract, key_points, search_config, source_message_ids, participant_ids,
         knowledge_type, tags, status, version, card_version, authored_by_kind, scope,
-        shared_root_stream_id, origin_workspace_id, embedding, created_at
+        shared_root_stream_id, origin_workspace_id, embedding, created_at, earliest_source_at, latest_source_at
       )
       SELECT
         x.id, ${workspaceId}, 'conversation', x.conversation_id,
@@ -1214,12 +1230,20 @@ export const MemoRepository = {
         ARRAY(SELECT jsonb_array_elements_text(x.source_message_ids)),
         ARRAY(SELECT jsonb_array_elements_text(x.participant_ids)),
         x.knowledge_type, ARRAY(SELECT jsonb_array_elements_text(x.tags)), 'active', x.version, x.card_version,
-        'pipeline', 'workspace', ${sharedRootStreamId}, ${originWorkspaceId}, x.embedding::vector, x.created_at
+        'pipeline', 'workspace', ${sharedRootStreamId}, ${originWorkspaceId}, x.embedding::vector, x.created_at,
+        COALESCE(x.earliest_source_at, local_span.earliest), COALESCE(x.latest_source_at, local_span.latest)
       FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS x(
         id text, conversation_id text, title text, abstract text, key_points jsonb, search_config text,
         source_message_ids jsonb, participant_ids jsonb, knowledge_type text, tags jsonb,
-        version int, card_version int, embedding text, created_at timestamptz
+        version int, card_version int, embedding text, created_at timestamptz,
+        earliest_source_at timestamptz, latest_source_at timestamptz
       )
+      CROSS JOIN LATERAL (
+        SELECT min(msg.created_at) AS earliest, max(msg.created_at) AS latest
+        FROM messages msg
+        WHERE msg.workspace_id = ${workspaceId}
+          AND msg.id IN (SELECT jsonb_array_elements_text(x.source_message_ids))
+      ) local_span
       ON CONFLICT (workspace_id, id) DO UPDATE SET
         source_conversation_id = EXCLUDED.source_conversation_id,
         title = EXCLUDED.title,
@@ -1233,6 +1257,8 @@ export const MemoRepository = {
         version = EXCLUDED.version,
         card_version = EXCLUDED.card_version,
         embedding = EXCLUDED.embedding,
+        earliest_source_at = COALESCE(EXCLUDED.earliest_source_at, memos.earliest_source_at),
+        latest_source_at = COALESCE(EXCLUDED.latest_source_at, memos.latest_source_at),
         updated_at = NOW()
       WHERE memos.origin_workspace_id = EXCLUDED.origin_workspace_id
         AND memos.shared_root_stream_id = EXCLUDED.shared_root_stream_id
@@ -1413,13 +1439,13 @@ export const MemoRepository = {
             AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
             AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
             AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
-            AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
-            AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
+            AND (${filters?.before === undefined} OR m.earliest_source_at < ${filters?.before ?? new Date()})
+            AND (${filters?.after === undefined} OR m.latest_source_at >= ${filters?.after ?? new Date(0)})
             AND ${audienceVisible}
         )
-        SELECT mws.*, ${latestSourceAtSql("mws")} FROM memo_with_stream mws
+        SELECT mws.* FROM memo_with_stream mws
         WHERE (${!hasStreamFilter} OR stream_id = ANY(${streamIds ?? []}) OR root_stream_id = ANY(${streamIds ?? []}))
-        ORDER BY updated_at DESC
+        ORDER BY latest_source_at DESC NULLS LAST, updated_at DESC, id
         LIMIT ${limit}
       `)
 
@@ -1452,12 +1478,12 @@ export const MemoRepository = {
           AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
           AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
           AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
-          AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
-          AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
+          AND (${filters?.before === undefined} OR m.earliest_source_at < ${filters?.before ?? new Date()})
+          AND (${filters?.after === undefined} OR m.latest_source_at >= ${filters?.after ?? new Date(0)})
           AND ${audienceVisible}
           AND ${MEMO_TSVECTOR} @@ websearch_to_tsquery(${MEMO_ROW_CONFIG}, ${query})
       )
-      SELECT mws.*, ${latestSourceAtSql("mws")} FROM memo_with_stream mws
+      SELECT mws.* FROM memo_with_stream mws
       WHERE (${!hasStreamFilter} OR stream_id = ANY(${streamIds ?? []}) OR root_stream_id = ANY(${streamIds ?? []}))
       ORDER BY rank DESC
       LIMIT ${limit}
@@ -1545,8 +1571,8 @@ export const MemoRepository = {
           AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
           AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
           AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
-          AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
-          AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
+          AND (${filters?.before === undefined} OR m.earliest_source_at < ${filters?.before ?? new Date()})
+          AND (${filters?.after === undefined} OR m.latest_source_at >= ${filters?.after ?? new Date(0)})
           AND ${audienceVisible}
           AND ${MEMO_TSVECTOR} @@ websearch_to_tsquery(${MEMO_ROW_CONFIG}, ${query})
         LIMIT ${internalLimit}
@@ -1571,8 +1597,8 @@ export const MemoRepository = {
           AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
           AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
           AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
-          AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
-          AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
+          AND (${filters?.before === undefined} OR m.earliest_source_at < ${filters?.before ?? new Date()})
+          AND (${filters?.after === undefined} OR m.latest_source_at >= ${filters?.after ?? new Date(0)})
           AND ${audienceVisible}
         LIMIT ${internalLimit}
       ),
@@ -1592,8 +1618,7 @@ export const MemoRepository = {
         COALESCE(msg_stream.display_name, msg_stream.slug, conv_stream.display_name, conv_stream.slug) as stream_name,
         root_stream.id as root_stream_id,
         root_stream.type as root_stream_type,
-        COALESCE(root_stream.display_name, root_stream.slug) as root_stream_name,
-        ${latestSourceAtSql("m")}
+        COALESCE(root_stream.display_name, root_stream.slug) as root_stream_name
       FROM fused f
       JOIN memos m ON m.id = f.id AND m.workspace_id = ${workspaceId}
       ${streamJoins}
@@ -1645,8 +1670,8 @@ export const MemoRepository = {
           AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
           AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
           AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
-          AND (${filters?.before === undefined} OR m.created_at < ${filters?.before ?? new Date()})
-          AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
+          AND (${filters?.before === undefined} OR m.earliest_source_at < ${filters?.before ?? new Date()})
+          AND (${filters?.after === undefined} OR m.latest_source_at >= ${filters?.after ?? new Date(0)})
           AND ${audienceVisible}
           AND (
             m.title ILIKE '%' || ${escapedQuery} || '%'
@@ -1658,9 +1683,9 @@ export const MemoRepository = {
             )
           )
       )
-      SELECT mws.*, ${latestSourceAtSql("mws")} FROM memo_with_stream mws
+      SELECT mws.* FROM memo_with_stream mws
       WHERE (${!hasStreamFilter} OR stream_id = ANY(${streamIds ?? []}) OR root_stream_id = ANY(${streamIds ?? []}))
-      ORDER BY updated_at DESC
+      ORDER BY latest_source_at DESC NULLS LAST, updated_at DESC, id
       LIMIT ${limit}
     `)
 

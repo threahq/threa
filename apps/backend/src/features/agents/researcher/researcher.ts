@@ -921,7 +921,6 @@ Respond with:
           memo: r.memo,
           distance: r.distance,
           sourceStream: r.sourceStream,
-          latestSourceAt: r.latestSourceAt,
         }))
       } catch (error) {
         logger.warn({ error, query: query.query }, "Memo hybrid search failed; falling back to full-text")
@@ -936,7 +935,6 @@ Respond with:
             memo: r.memo,
             distance: r.distance,
             sourceStream: r.sourceStream,
-            latestSourceAt: r.latestSourceAt,
           }))
         } catch (fallbackError) {
           logger.warn({ fallbackError, query: query.query }, "Memo full-text fallback failed")
@@ -958,7 +956,6 @@ Respond with:
         memo: r.memo,
         distance: r.distance,
         sourceStream: r.sourceStream,
-        latestSourceAt: r.latestSourceAt,
       }))
     } catch (error) {
       logger.warn({ error, query: query.query }, "Memo full-text search failed")

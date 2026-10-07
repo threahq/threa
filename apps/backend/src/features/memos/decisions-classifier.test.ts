@@ -38,7 +38,7 @@ function memo(): Memo {
     id: "memo_existing",
     title: "Rollback decision",
     abstract: "The team rolled the migration back.",
-    createdAt: new Date("2026-09-10T08:00:00Z"),
+    latestSourceAt: new Date("2026-09-10T08:00:00Z"),
   } as Memo
 }
 
@@ -137,7 +137,7 @@ describe("DecisionsMemoClassifier", () => {
         {
           title: "Rollback decision",
           abstract: "The team rolled the migration back.",
-          created: "2026-09-10",
+          asOf: "2026-09-10",
         },
       ],
     })

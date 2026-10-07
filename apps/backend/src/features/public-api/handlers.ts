@@ -457,6 +457,8 @@ function serializeMemo({
     createdAt: memo.createdAt.toISOString(),
     updatedAt: memo.updatedAt.toISOString(),
     archivedAt: memo.archivedAt?.toISOString() ?? null,
+    earliestSourceAt: memo.earliestSourceAt?.toISOString() ?? null,
+    latestSourceAt: memo.latestSourceAt?.toISOString() ?? null,
   }
 }
 
@@ -3013,9 +3015,11 @@ export function createPublicApiHandlers({
         memos.map((memo) => ({ type: "memo", id: memo.id }))
       )
       const payload: WireMemoRecall = {
-        data: memos.map(({ latestSourceAt: _latestSourceAt, ...memo }) => ({
+        data: memos.map((memo) => ({
           ...memo,
           createdAt: memo.createdAt.toISOString(),
+          earliestSourceAt: memo.earliestSourceAt?.toISOString() ?? null,
+          latestSourceAt: memo.latestSourceAt?.toISOString() ?? null,
         })),
         outcome,
       }

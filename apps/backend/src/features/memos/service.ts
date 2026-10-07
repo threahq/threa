@@ -442,7 +442,7 @@ export class MemoService implements MemoServiceLike {
         audiences: [readerAudience],
         status: MemoStatuses.ACTIVE,
         limit: MEMORY_CONTEXT_LIMIT,
-        orderBy: "createdAt",
+        orderBy: "sourceAt",
         sharedRootStreamId,
       })
 
@@ -1450,7 +1450,7 @@ export class MemoService implements MemoServiceLike {
         audiences: [memorizerAudience(memoScope)],
         status: MemoStatuses.ACTIVE,
         limit: MEMORY_CONTEXT_LIMIT,
-        orderBy: "createdAt",
+        orderBy: "sourceAt",
       })
       const existingTags = await MemoRepository.getAllTags(client, workspaceId, memoScope)
       // Only the explicit workspace setting is honored here (no participant-locale

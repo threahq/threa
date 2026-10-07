@@ -453,6 +453,8 @@ const memoSchema = z.object({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   archivedAt: z.string().datetime().nullable(),
+  earliestSourceAt: z.string().datetime().nullable(),
+  latestSourceAt: z.string().datetime().nullable(),
 })
 
 const memoSearchResultSchema = z.object({
@@ -469,6 +471,8 @@ const recalledMemoSchema = z.object({
   knowledgeType: z.enum(KNOWLEDGE_TYPES),
   sourceMessageIds: z.array(z.string()),
   createdAt: z.string().datetime(),
+  earliestSourceAt: z.string().datetime().nullable(),
+  latestSourceAt: z.string().datetime().nullable(),
   score: z.number(),
 })
 
@@ -1041,7 +1045,8 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     path: "/api/v1/workspaces/{workspaceId}/memos/search",
     operationId: "searchMemos",
     summary: "Search memos",
-    description: "Search preserved workspace memos with semantic, exact, or recent-first retrieval.",
+    description:
+      "Search preserved workspace memos with semantic, exact, or recent-first retrieval. `before` and `after` filter by when the source messages were posted, not when the memo was captured.",
     tags: ["Memos"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.MEMOS_READ],
     parameters: [workspaceIdParam],

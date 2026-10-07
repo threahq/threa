@@ -17,7 +17,6 @@ export interface EnrichedMemoResult {
     type: string
     name: string | null
   } | null
-  latestSourceAt: Date | null
 }
 
 export interface EnrichedMessageResult {
@@ -86,7 +85,7 @@ ${memosSection}${messagesSection}${attachmentsSection}Use this knowledge to info
 
 function formatMemosSection(memos: EnrichedMemoResult[], workspaceId: string, timezone: string): string {
   const memoEntries = memos
-    .map(({ memo, sourceStream, latestSourceAt }) => {
+    .map(({ memo, sourceStream }) => {
       const location = sourceStream?.name ?? sourceStream?.type ?? "workspace"
       const keyPointsList =
         memo.keyPoints.length > 0 ? `\nKey points:\n${memo.keyPoints.map((kp) => `- ${kp}`).join("\n")}\n` : ""
@@ -99,9 +98,9 @@ function formatMemosSection(memos: EnrichedMemoResult[], workspaceId: string, ti
           : ""
       const linkLine = `Link: ${workspaceMemoUrl(workspaceId, memo.id)}\n`
 
-      const asOf = formatInstant(latestSourceAt ?? memo.createdAt, timezone)
+      const asOf = memo.latestSourceAt ? `, as of ${formatInstant(memo.latestSourceAt, timezone)}` : ""
 
-      return `**${memo.title}** _(${memoTag})_, as of ${asOf}
+      return `**${memo.title}** _(${memoTag})_${asOf}
 
 ${memo.abstract}
 ${keyPointsList}${sourcesLine}${linkLine}`

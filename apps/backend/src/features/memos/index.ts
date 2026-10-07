@@ -108,6 +108,7 @@ export type { EmbeddingWorkerDeps } from "./embedding-worker"
 
 export { registerMessageEmbeddingBackfill } from "./message-embedding-backfill"
 export { registerMemoDeletedSourcesBackfill } from "./deleted-sources-backfill"
+export { registerMemoSourceSpanBackfill } from "./source-span-backfill"
 export { hashEmbeddingText, writeEmbeddingWithSourceHashGuard } from "./embedding-write-guard"
 
 export { createMemoHandlers, serializeMemoResult } from "./handlers"

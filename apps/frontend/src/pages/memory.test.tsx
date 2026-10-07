@@ -7,6 +7,7 @@ import * as hooksModule from "@/hooks"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as useMobileModule from "@/hooks/use-mobile"
 import * as relativeTimeModule from "@/components/relative-time"
+import * as contextsModule from "@/contexts"
 import * as analyticsModule from "@/lib/analytics/posthog"
 
 const mockUseMemoSearch = vi.fn()
@@ -65,6 +66,7 @@ function buildMemo(overrides: Partial<Record<string, unknown>> = {}) {
 describe("MemoryPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    vi.spyOn(contextsModule, "usePreferences").mockReturnValue({ preferences: undefined } as never)
     vi.spyOn(hooksModule, "useMemoSearch").mockImplementation(
       (...args) => mockUseMemoSearch(...args) as ReturnType<typeof hooksModule.useMemoSearch>
     )

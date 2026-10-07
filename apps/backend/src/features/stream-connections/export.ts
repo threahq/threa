@@ -588,6 +588,8 @@ function toBridgeMemo(
     cardVersion: memo.cardVersion,
     embedding,
     createdAt: memo.createdAt.toISOString(),
+    earliestSourceAt: memo.earliestSourceAt?.toISOString() ?? null,
+    latestSourceAt: memo.latestSourceAt?.toISOString() ?? null,
   }
 }
 

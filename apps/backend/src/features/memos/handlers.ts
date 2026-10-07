@@ -122,6 +122,8 @@ function serializeMemo({
     createdAt: memo.createdAt.toISOString(),
     updatedAt: memo.updatedAt.toISOString(),
     archivedAt: memo.archivedAt?.toISOString() ?? null,
+    earliestSourceAt: memo.earliestSourceAt?.toISOString() ?? null,
+    latestSourceAt: memo.latestSourceAt?.toISOString() ?? null,
   }
 }
 

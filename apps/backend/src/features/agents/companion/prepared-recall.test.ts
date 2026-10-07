@@ -12,11 +12,11 @@ function result(id: string, title: string, latestSourceAt: Date | null = null): 
       knowledgeType: "context",
       sourceMessageIds: [] as string[],
       createdAt: new Date("2026-09-30T10:00:00Z"),
+      latestSourceAt,
     },
     distance: 0,
     sourceStream: null,
     rootStream: null,
-    latestSourceAt,
   } as MemoExplorerResult
 }
 
@@ -186,7 +186,7 @@ describe("formatRecalledMemosBlock", () => {
 
     expect({ block, empty: formatRecalledMemosBlock([]) }).toEqual({
       block: expect.stringContaining(
-        '<memo id="memo_allergy" title="Peanut &lt;allergy&gt;" type="context" as_of="2026-03-02 10:00 UTC+1">\nPeanut &lt;allergy&gt; abstract\n</memo>\n<memo id="memo_sourceless" title="Agent note" type="context" as_of="2026-09-30 12:00 UTC+2">'
+        '<memo id="memo_allergy" title="Peanut &lt;allergy&gt;" type="context" as_of="2026-03-02 10:00 UTC+1">\nPeanut &lt;allergy&gt; abstract\n</memo>\n<memo id="memo_sourceless" title="Agent note" type="context">'
       ),
       empty: null,
     })
