@@ -129,7 +129,9 @@ export function isCreditRejection(error: unknown): boolean {
     error instanceof Error ? error.message : String(error),
     APICallError.isInstance(error) && typeof error.responseBody === "string" ? error.responseBody : "",
   ]
-  return /requires more credits|insufficient credit|exceeded your credit|quota exceeded/i.test(parts.join(" "))
+  return /requires more credits|insufficient credit|exceeded your credit|quota exceeded|key limit exceeded/i.test(
+    parts.join(" ")
+  )
 }
 
 /**
@@ -396,7 +398,7 @@ async function runPermutation<TInput, TOutput, TExpected>(
   // even looks plausible. Refuse to report it (INV-11).
   if (credit.rejections > 0) {
     throw new Error(
-      `${credit.rejections} model call(s) were rejected for insufficient OpenRouter credit. This run did not ` +
+      `${credit.rejections} model call(s) were rejected for insufficient OpenRouter credit or a key spending limit. This run did not ` +
         `measure the models and its numbers must not be compared — top up the key's limit and re-run.`
     )
   }

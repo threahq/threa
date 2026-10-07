@@ -158,7 +158,7 @@ export async function rescoreReport(
 
       if (credit.rejections > 0) {
         throw new Error(
-          `${credit.rejections} judge call(s) were rejected for insufficient OpenRouter credit. Every evaluator ` +
+          `${credit.rejections} judge call(s) were rejected for insufficient OpenRouter credit or a key spending limit. Every evaluator ` +
             `catches its own errors, so these would have been reported as quality failures — top up and re-run.`
         )
       }

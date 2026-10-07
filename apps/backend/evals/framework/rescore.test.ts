@@ -154,7 +154,10 @@ describe("rescore", () => {
     })
     expect(result!.permutations[0]!.cases[0]!.evaluations[0]!.details).toMatch(/tried to query the database/)
   })
-  test("refuses to report scores when a judge call was rejected for credit", async () => {
+  test.each([
+    "This request requires more credits, or fewer max_tokens.",
+    "Key limit exceeded (weekly limit). Manage it using https://openrouter.ai/workspaces/default/keys/k",
+  ])("refuses to report scores when a judge call was rejected for credit: %s", async (rejection) => {
     const path = await writeReport([
       { caseId: "c1", caseName: "Case one", expectedOutput: { must: "yes" }, outputs: [{ text: "yes" }] },
     ])
@@ -164,7 +167,7 @@ describe("rescore", () => {
     // report would then be wrong in a way nothing on its face reveals.
     const rejectingAi = {
       generateObject: async () => {
-        throw new Error("This request requires more credits, or fewer max_tokens.")
+        throw new Error(rejection)
       },
     } as unknown as AI
 
