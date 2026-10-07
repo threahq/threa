@@ -47,7 +47,7 @@ async function seedStreamWithThread(page: Page) {
 const parentRow = (page: Page, parentId: string) =>
   page.locator(`[data-editor-zone="main"] [data-message-id="${parentId}"]`).first()
 const threadReply = (page: Page) => page.getByTestId("panel").getByText("a reply in the thread")
-const panelHandle = (page: Page) => page.getByTestId("panel").getByRole("separator")
+const panelHandle = (page: Page) => page.getByRole("separator", { name: "Resize thread panel" })
 
 async function tag(target: Locator, name: string) {
   await target.first().evaluate((el, n) => {
@@ -115,8 +115,13 @@ test("should keep the timeline and thread panel mounted through open, close and 
   // Closing animates the column away, then unmounts the thread; the timeline stays.
   await page.goBack()
   await expect(threadReply(page)).toHaveCount(0)
-  await expect.poll(async () => Math.round((await page.getByTestId("panel").boundingBox())?.width ?? -1)).toBe(0)
-  // The column's own transition end is what takes the frame, handle and all, away.
+  await expect
+    .poll(async () => {
+      const box = await page.getByTestId("main-pane").boundingBox()
+      return Math.round((box?.x ?? 0) + (box?.width ?? 0))
+    })
+    .toBe(1400)
+  // The column's own transition end is what takes the handle away.
   await expect(panelHandle(page)).toHaveCount(0)
   expect(await tagOf(scroller(page, streamId))).toBe("main")
   await expect(scroller(page, streamId)).toBeVisible()

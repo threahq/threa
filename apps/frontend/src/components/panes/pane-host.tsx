@@ -7,6 +7,8 @@ export const PANE_TRANSITION_MS = 200
 interface PaneHostProps extends HTMLAttributes<HTMLDivElement> {
   /** `grid-template-columns` for the docked arrangement. */
   columns: string
+  /** `grid-template-rows`: the panel sections' row tracks. */
+  rows: string
   animate: boolean
   ref?: Ref<HTMLDivElement>
 }
@@ -17,18 +19,19 @@ interface PaneHostProps extends HTMLAttributes<HTMLDivElement> {
  * React would remount it and its scroll offset, draft and focus would go.
  * Overlays a page anchors to this row (`absolute inset-0`) stop at the sidebar.
  */
-export function PaneHost({ columns, animate, className, style, ref, ...rest }: PaneHostProps) {
+export function PaneHost({ columns, rows, animate, className, style, ref, ...rest }: PaneHostProps) {
   return (
     <div
       ref={ref}
       className={cn(
-        "relative grid h-full min-h-0 grid-rows-[minmax(0,1fr)]",
+        "relative grid h-full min-h-0",
         animate && "transition-[grid-template-columns] ease-out",
         className
       )}
       style={{
         ...style,
         gridTemplateColumns: columns,
+        gridTemplateRows: rows,
         transitionDuration: animate ? `${PANE_TRANSITION_MS}ms` : undefined,
       }}
       {...rest}
