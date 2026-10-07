@@ -1192,12 +1192,12 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
     // Simulates a data tick: new ctx object, new Set/Map identities, same content.
     const prev = {
       item: messageItem(msgA),
-      ctx: makeCtx({ newMessageIds: new Set(["evt_x"]) }),
+      ctx: makeCtx({ highlightMessageId: "msg_x" }),
       deferSecondaryHydration: false,
     }
     const next = {
       item: { ...prev.item } as TimelineItem,
-      ctx: makeCtx({ newMessageIds: new Set(["evt_x"]) }),
+      ctx: makeCtx({ highlightMessageId: "msg_x" }),
       deferSecondaryHydration: false,
     }
     expect(timelineRowPropsEqual(prev, next)).toBe(true)
@@ -1208,15 +1208,6 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
     const prev = { item: messageItem(msgA), ctx: makeCtx(), deferSecondaryHydration: false }
     const next = { item: messageItem(patched), ctx: makeCtx(), deferSecondaryHydration: false }
     expect(timelineRowPropsEqual(prev, next)).toBe(false)
-  })
-
-  it("newMessageIds membership change invalidates only the member row", () => {
-    const before = makeCtx({ newMessageIds: new Set<string>() })
-    const after = makeCtx({ newMessageIds: new Set(["evt_a"]) })
-    const rowA = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgA), ctx, deferSecondaryHydration: false })
-    const rowB = (ctx: TimelineItemRenderContext) => ({ item: messageItem(msgB), ctx, deferSecondaryHydration: false })
-    expect(timelineRowPropsEqual(rowA(before), rowA(after))).toBe(false)
-    expect(timelineRowPropsEqual(rowB(before), rowB(after))).toBe(true)
   })
 
   it("highlight change invalidates only the highlighted row (both directions)", () => {
@@ -1279,7 +1270,7 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
       ctx,
       deferSecondaryHydration: false,
     })
-    const churned = makeCtx({ newMessageIds: new Set(["evt_x"]), highlightMessageId: "msg_a" })
+    const churned = makeCtx({ highlightMessageId: "msg_a" })
     expect(timelineRowPropsEqual(row(1, makeCtx()), row(1, churned))).toBe(true)
     expect(timelineRowPropsEqual(row(1, makeCtx()), row(2, makeCtx()))).toBe(false)
     expect(timelineRowPropsEqual(row(1, makeCtx()), row(1, makeCtx({ hideSessionCards: true })))).toBe(false)
@@ -1302,8 +1293,8 @@ describe("timelineRowPropsEqual (memoized row comparator)", () => {
 
   it("skeleton rows stay equal when ctx is rebuilt with fresh containers (no churn while fetching)", () => {
     const item = OLDER_SKELETON_ITEMS[0]
-    const prev = { item, ctx: makeCtx({ newMessageIds: new Set(["evt_x"]) }), deferSecondaryHydration: false }
-    const next = { item, ctx: makeCtx({ newMessageIds: new Set(["evt_y"]) }), deferSecondaryHydration: false }
+    const prev = { item, ctx: makeCtx({ highlightMessageId: "msg_x" }), deferSecondaryHydration: false }
+    const next = { item, ctx: makeCtx({ highlightMessageId: "msg_y" }), deferSecondaryHydration: false }
     expect(timelineRowPropsEqual(prev, next)).toBe(true)
   })
 
