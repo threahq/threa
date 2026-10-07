@@ -65,6 +65,7 @@ import type { StreamItemData } from "./types"
 import { boardScopeStreamId, type SidebarBoardMode } from "./board-sidebar-mode"
 import type { BoardStreamStats } from "@/hooks/use-board-sidebar-stats"
 import { ScratchpadItem } from "./scratchpad-item"
+import { useStreamRowPick } from "./stream-pick"
 import { StreamHoverCard, useSidebarHoverIntent } from "./stream-hover-card"
 
 export type BoardTileState = "included" | "excluded" | "neutral"
@@ -664,6 +665,7 @@ export function StreamItem({
   // Non-null only while the quick-jump modifier is held and this row is one of
   // the first nine. It takes over the "…" menu's slot below.
   const quickJump = useQuickJumpSlot(stream.id)
+  const pickRow = useStreamRowPick()
 
   if (stream.type === StreamTypes.SCRATCHPAD) {
     return (
@@ -701,6 +703,7 @@ export function StreamItem({
     }
     hover.close()
     handleClick(e)
+    pickRow(e, stream.id)
   }
   // An explicit `?in=` scope overrides a board mute (the server's mute-skip
   // rule), so a muted-but-focused row must read as on the board — the muted
@@ -765,6 +768,7 @@ export function StreamItem({
             <Link
               ref={itemRef}
               to={rowTo}
+              aria-current={isActive ? "page" : undefined}
               aria-keyshortcuts={quickJump?.keyshortcut}
               onClick={handleRowClick}
               {...touchHandlers}

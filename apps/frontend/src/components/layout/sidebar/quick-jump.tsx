@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react"
 import { useNavigate } from "react-router-dom"
+import { useStreamPick } from "./stream-pick"
 import { usePreferences } from "@/contexts"
 import {
   QUICK_JUMP_ACTION_ID,
@@ -73,6 +74,7 @@ interface SidebarQuickJumpProviderProps {
  */
 export function SidebarQuickJumpProvider({ workspaceId, order, children }: SidebarQuickJumpProviderProps) {
   const navigate = useNavigate()
+  const pick = useStreamPick()
   const { preferences } = usePreferences()
   const binding = getEffectiveKeyBinding(QUICK_JUMP_ACTION_ID, preferences?.keyboardShortcuts ?? {})
 
@@ -105,7 +107,7 @@ export function SidebarQuickJumpProvider({ workspaceId, order, children }: Sideb
         if (!streamId || event.defaultPrevented) return
         event.preventDefault()
         disarm()
-        navigate(`/w/${workspaceId}/s/${streamId}`)
+        if (!pick(streamId)) navigate(`/w/${workspaceId}/s/${streamId}`)
         return
       }
 
@@ -137,7 +139,7 @@ export function SidebarQuickJumpProvider({ workspaceId, order, children }: Sideb
       window.removeEventListener("blur", disarm)
       document.removeEventListener("visibilitychange", disarm)
     }
-  }, [binding, navigate, workspaceId])
+  }, [binding, navigate, pick, workspaceId])
 
   return <QuickJumpContext.Provider value={slots}>{children}</QuickJumpContext.Provider>
 }
