@@ -602,9 +602,10 @@ export function StreamContent({
 }: StreamContentProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   // The page's own stream: the search shortcut, the conversation overlay and the
-  // inbox settle are the page's, never a pane's beside it.
+  // inbox settle are the page's, never a pane's beside it. A page with no stream
+  // route (the persona editor's test chat) has only this one.
   const { streamId: routeStreamId } = useParams<{ streamId: string }>()
-  const isRouteStream = routeStreamId === streamId
+  const isRouteStream = routeStreamId === undefined || routeStreamId === streamId
   const location = useLocation()
   const navigationType = useNavigationType()
   const messageService = useMessageService()
