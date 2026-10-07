@@ -113,9 +113,9 @@ export class RailwayClient {
   }
 
   /**
-   * Logs across all deployments of the environment, oldest-first. Railway pads the result
-   * with ~100 lines from before `after` unless `beforeLimit: 0` is sent, and `beforeDate`
-   * is not a strict bound either, so the window is also enforced client-side.
+   * Logs across all deployments of the environment, oldest-first. Railway ignores
+   * `afterDate`/`beforeDate` (only `anchorDate` positions the window), pads with lines before the
+   * anchor despite `beforeLimit: 0`, and has no upper bound, so both bounds are enforced client-side.
    */
   async environmentLogs(params: {
     filter: string
@@ -134,16 +134,15 @@ export class RailwayClient {
         tags: { serviceId: string | null } | null
       }>
     }>(
-      `query($envId: String!, $filter: String, $after: String, $before: String, $n: Int) {
-        environmentLogs(environmentId: $envId, filter: $filter, afterDate: $after, beforeDate: $before, afterLimit: $n, beforeLimit: 0) {
+      `query($envId: String!, $filter: String, $anchor: String, $n: Int) {
+        environmentLogs(environmentId: $envId, filter: $filter, anchorDate: $anchor, afterLimit: $n, beforeLimit: 0) {
           timestamp severity message attributes { key value } tags { serviceId }
         }
       }`,
       {
         envId: environmentId,
         filter: params.filter,
-        after: params.after,
-        before: params.before ?? null,
+        anchor: params.after,
         n: params.limit,
       }
     )
