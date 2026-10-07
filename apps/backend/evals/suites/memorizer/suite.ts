@@ -29,6 +29,7 @@ import {
   exclusionEvaluator,
   conclusionEvaluator,
   supersessionEvaluator,
+  survivingClaimEvaluator,
   accuracyEvaluator,
   overCaptureRateEvaluator,
 } from "./evaluators"
@@ -118,7 +119,14 @@ export const memorizerSuite: EvalSuite<MemorizerInput, MemorizerOutput, Memorize
 
   task: runMemorizerTask,
 
-  evaluators: [memoCountEvaluator, coverageEvaluator, exclusionEvaluator, conclusionEvaluator, supersessionEvaluator],
+  evaluators: [
+    memoCountEvaluator,
+    coverageEvaluator,
+    exclusionEvaluator,
+    conclusionEvaluator,
+    supersessionEvaluator,
+    survivingClaimEvaluator,
+  ],
 
   runEvaluators: [accuracyEvaluator, overCaptureRateEvaluator],
 

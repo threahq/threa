@@ -185,6 +185,19 @@ export const supersessionEvaluator: Evaluator<MemorizerOutput, MemorizerExpected
   },
 }
 
+/** Retiring a memo drops every claim it holds, so a claim the conversation left standing must reappear in a memo. */
+export const survivingClaimEvaluator: Evaluator<MemorizerOutput, MemorizerExpected> = {
+  name: "surviving-claim",
+  evaluate: async (output, expected, ctx): Promise<EvaluatorResult> => {
+    const survives = expected.survives
+    if (!survives || !output.memos.some((m) => m.supersedesTitles.includes(survives.title))) {
+      return { name: "surviving-claim", score: 1, passed: true }
+    }
+    const result = await conclusionEvaluator.evaluate(output, { conclusionMustState: survives.claim }, ctx)
+    return { ...result, name: "surviving-claim" }
+  },
+}
+
 export const accuracyEvaluator: RunEvaluator<MemorizerOutput, MemorizerExpected> = {
   name: "accuracy",
   evaluate: (cases: CaseResult<MemorizerOutput, MemorizerExpected>[]): EvaluatorResult => {
