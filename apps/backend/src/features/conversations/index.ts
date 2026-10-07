@@ -15,6 +15,7 @@ export { LLMBoundaryExtractor } from "./boundary-extraction/llm-extractor"
 export { DecisionsBoundaryExtractor } from "./boundary-extraction/decisions-extractor"
 export { ResidencyRoutedBoundaryExtractor } from "./boundary-extraction/residency-routed-extractor"
 export { StubBoundaryExtractor } from "./boundary-extraction/stub-extractor"
+export { createBoundaryExtractor } from "./boundary-extraction/create-boundary-extractor"
 export type {
   BoundaryExtractor,
   ExtractionContext,
@@ -70,12 +71,7 @@ export {
 export type { MessageConversationState, SettledByReason, SettlingRow } from "./settling-repository"
 export { settleMessagesOnEngagement, emitSettledConversationUpdates } from "./settling-service"
 export { ConversationFeedbackRepository } from "./feedback-repository"
-export type {
-  Conversation,
-  InsertConversationParams,
-  SharedConversation,
-  UpdateConversationParams,
-} from "./repository"
+export type { Conversation, InsertConversationParams, SharedConversation, UpdateConversationParams } from "./repository"
 
 export { addStalenessFields, computeTemporalStaleness, computeEffectiveCompleteness } from "./staleness"
 export { resolveConversationDelivery } from "./conversation-delivery"
