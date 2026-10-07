@@ -6,7 +6,7 @@
  */
 
 /**
- * Model for workspace agent retrieval planning / evaluation.
+ * Model for workspace agent retrieval planning.
  *
  * Chosen for fast, predictable tail latency (single reliable provider path) and
  * solid structured-output compliance. Was `claude-haiku-4.5`, on the reasoning

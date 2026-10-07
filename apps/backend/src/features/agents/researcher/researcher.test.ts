@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test, mock, spyOn } from "bun:test"
 import { WorkspaceAgent, type WorkspaceAgentDeps, type WorkspaceAgentInput } from "./researcher"
+import { WORKSPACE_AGENT_MAX_PLANNED_QUERIES } from "./config"
+import { buildBaselineQueries } from "./query/baseline-queries"
 import type { Pool } from "pg"
 import { SearchRepository } from "../../search"
 import type { AI } from "@threahq/agent-runtime"
@@ -178,7 +180,7 @@ describe("WorkspaceAgent abort/deadline checkpoints", () => {
  * agent and `runSearchLoop` is called directly, since the entry point goes through `withClient` + repositories + AI.
  */
 describe("WorkspaceAgent runSearchLoop", () => {
-  test("plans once and runs the planned queries once, with no evaluator round", async () => {
+  test("plans once and runs the planned queries once, capped after dropping repeats and baseline queries", async () => {
     const configResolver = {
       resolve: mock(async () => ({ modelId: "openrouter:anthropic/claude-haiku-4.5", temperature: 0.1 })),
     } as unknown as ConfigResolver
@@ -190,7 +192,14 @@ describe("WorkspaceAgent runSearchLoop", () => {
     })
     const planRetrieval = mock(async () => ({
       reasoning: "plan",
-      queries: [{ target: "memos" as const, type: "semantic" as const, query: "plan-0" }],
+      queries: [
+        ...buildBaselineQueries("what did we decide"),
+        ...["plan-0", " PLAN-0", ...Array.from({ length: 7 }, (_, i) => `plan-${i + 1}`)].map((query) => ({
+          target: "memos" as const,
+          type: "semantic" as const,
+          query,
+        })),
+      ],
     }))
     const executeQueries = mock(async (_pool: Pool, _queries: Array<{ query: string }>) => ({
       memos: [],
@@ -228,9 +237,12 @@ describe("WorkspaceAgent runSearchLoop", () => {
     )
 
     const plannedRuns = executeQueries.mock.calls.filter(([, queries]) => queries.some((q) => q.query === "plan-0"))
-    expect({ plans: planRetrieval.mock.calls.length, plannedRuns: plannedRuns.length }).toEqual({
+    expect({
+      plans: planRetrieval.mock.calls.length,
+      plannedRuns: plannedRuns.map(([, queries]) => queries.map((q) => q.query)),
+    }).toEqual({
       plans: 1,
-      plannedRuns: 1,
+      plannedRuns: [Array.from({ length: WORKSPACE_AGENT_MAX_PLANNED_QUERIES }, (_, i) => `plan-${i}`)],
     })
   })
 })

@@ -437,14 +437,15 @@ export class WorkspaceAgent {
     }
 
     // Compute planner-only queries: any planner queries not already in the baseline set.
-    const plannerOnlyDeduped = dedupeQueries(
-      plan.queries.slice(0, WORKSPACE_AGENT_MAX_PLANNED_QUERIES).filter((q) => !baselineKeys.has(queryKey(q)))
+    const plannerOnlyDeduped = dedupeQueries(plan.queries.filter((q) => !baselineKeys.has(queryKey(q)))).slice(
+      0,
+      WORKSPACE_AGENT_MAX_PLANNED_QUERIES
     )
 
     if (plannerOnlyDeduped.length > 0) {
       this.emitSubstep(
         substeps,
-        `Refining with ${plannerOnlyDeduped.length} planned ${plannerOnlyDeduped.length === 1 ? "query" : "queries"}…`,
+        `Searching with ${plannerOnlyDeduped.length} planned ${plannerOnlyDeduped.length === 1 ? "query" : "queries"}…`,
         input.onSubstep
       )
 
