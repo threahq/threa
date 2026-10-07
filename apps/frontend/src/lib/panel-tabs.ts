@@ -249,6 +249,54 @@ export function splitPanelTab(layout: PanelLayout, id: string, direction: SplitD
   }
 }
 
+export type PaneEdge = "left" | "right" | "top" | "bottom"
+
+/**
+ * Where a dragged tab lands. `tab` joins the section holding `of`, before the
+ * tab `before` or at its end when null. `edge` starts a section of its own on
+ * that side of `of`'s section: left and right as a new column, top and bottom in
+ * `of`'s column. An `of` of null is the main view, whose right edge is a new
+ * first column.
+ */
+export type PaneDrop =
+  | { kind: "tab"; of: string; before: string | null }
+  | { kind: "edge"; of: string | null; side: PaneEdge }
+
+function edgeAnchor(layout: PanelLayout, id: string, of: string | null, target: PanelLocation | null): string | null {
+  if (of !== id) return of
+  return sectionAt(layout, target!).ids.find((other) => other !== id) ?? id
+}
+
+/** `id` placed where it was dropped, moved there if already open, and on show. */
+export function dropPanelTab(layout: PanelLayout, id: string, drop: PaneDrop): PanelLayout {
+  const from = locate(layout, id)
+  const target = drop.of === null ? null : locate(layout, drop.of)
+  const stay = from ? activatePanelTab(layout, id) : layout
+  if (drop.of !== null && !target) return stay
+  // The place is named by a tab that stays put while `id` leaves its own: an
+  // edge of `id`'s own section is the edge of the rest of that section.
+  const anchor = drop.kind === "tab" ? (drop.before ?? drop.of) : edgeAnchor(layout, id, drop.of, target)
+  if (anchor === id || (anchor !== null && !locate(layout, anchor))) return stay
+  const rest = from ? removeTab(layout, from, id) : layout
+  const section: PanelSection = { ids: [id], active: id }
+  const at = anchor === null ? null : locate(rest, anchor)!
+  if (at === null) return keepFocus(layout, insertColumn(rest, 0, section))
+  if (drop.kind === "tab") {
+    const ids = [...sectionAt(rest, at).ids]
+    ids.splice(drop.before === null ? ids.length : ids.indexOf(drop.before), 0, id)
+    return keepFocus(layout, withSection(rest, at, { ids, active: id }))
+  }
+  if (drop.side === "left" || drop.side === "right") {
+    return keepFocus(layout, insertColumn(rest, at.column + (drop.side === "right" ? 1 : 0), section))
+  }
+  const row = at.row + (drop.side === "bottom" ? 1 : 0)
+  return keepFocus(layout, {
+    columns: rest.columns.map((sections, column) =>
+      column === at.column ? [...sections.slice(0, row), section, ...sections.slice(row)] : sections
+    ),
+  })
+}
+
 /**
  * The arrangement as it fits on screen. `stacked` (a phone) shows every tab in
  * one section; otherwise columns past `maxColumns` fold into the last column
