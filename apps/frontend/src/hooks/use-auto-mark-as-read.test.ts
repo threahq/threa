@@ -4,13 +4,10 @@ import { createElement, type ReactNode } from "react"
 import { useAutoMarkAsRead } from "./use-auto-mark-as-read"
 import { ReadCommitQueue, ReadCommitQueueContext } from "@/sync/read-commit-queue"
 import * as useUnreadCountsModule from "./use-unread-counts"
-import * as useActivityCountsModule from "./use-activity-counts"
 import * as useMobileModule from "./use-mobile"
 import * as usePointerModule from "./use-pointer"
 
 const mockMarkAsRead = vi.fn()
-const mockGetUnreadCount = vi.fn()
-const mockGetActivityCount = vi.fn()
 
 // The hook reports into the workspace ReadCommitQueue; give every render a
 // real queue wired straight to the markAsRead mock so the tests exercise the
@@ -43,8 +40,6 @@ describe("useAutoMarkAsRead", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     mockMarkAsRead.mockReset()
-    mockGetUnreadCount.mockReset()
-    mockGetActivityCount.mockReset()
     vi.useFakeTimers()
 
     unreadCount = 1
@@ -53,9 +48,6 @@ describe("useAutoMarkAsRead", () => {
     visibilityState = "visible"
     isMobileViewport = false
     isCoarsePointer = false
-
-    mockGetUnreadCount.mockImplementation(() => unreadCount)
-    mockGetActivityCount.mockImplementation(() => activityCount)
 
     queue = new ReadCommitQueue({
       commitRef: {
@@ -69,13 +61,11 @@ describe("useAutoMarkAsRead", () => {
     vi.spyOn(useMobileModule, "useIsMobile").mockImplementation(() => isMobileViewport)
     vi.spyOn(usePointerModule, "useCoarsePointer").mockImplementation(() => isCoarsePointer)
 
-    vi.spyOn(useUnreadCountsModule, "useUnreadCounts").mockReturnValue({
-      markAsRead: mockMarkAsRead,
-      getUnreadCount: mockGetUnreadCount,
-    } as unknown as ReturnType<typeof useUnreadCountsModule.useUnreadCounts>)
-    vi.spyOn(useActivityCountsModule, "useActivityCounts").mockReturnValue({
-      getActivityCount: mockGetActivityCount,
-    } as unknown as ReturnType<typeof useActivityCountsModule.useActivityCounts>)
+    vi.spyOn(useUnreadCountsModule, "useStreamUnreadState").mockImplementation(() => ({
+      unreadCount,
+      activityCount,
+      inInbox: unreadCount > 0,
+    }))
 
     vi.spyOn(document, "hasFocus").mockImplementation(() => hasFocus)
 

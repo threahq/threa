@@ -21,7 +21,6 @@ import {
   useAutoMarkAsRead,
   useAutoReadAttention,
   useLastSeenEvent,
-  useUnreadCounts,
   useUnreadDivider,
   isDividerReadPast,
   useIsMobile,
@@ -156,7 +155,7 @@ import { addStartBatchSelectListener, type BatchSelectIntent } from "@/lib/batch
 import { addMarkReadUpToHereListener, addMarkUnreadListener } from "@/lib/mark-read-events"
 import { clearTimelineAnchor, loadTimelineAnchor, saveTimelineAnchor } from "@/lib/timeline-anchor-storage"
 import { ReadFrontierContext, type ReadFrontier } from "./read-frontier-context"
-import { useReadMessageIds } from "@/hooks/use-unread-counts"
+import { useReadMessageIds, useStreamUnreadState, useUnreadActions } from "@/hooks/use-unread-counts"
 import { deepLinkDebug } from "./deep-link-debug"
 import { VirtualizedScroller, useRenderedContentLatch } from "./virtualized-scroller"
 import { useScrollToMessage, snapshotTopVisibleRow, UNREAD_MARKER_TOP_GAP_PX } from "@/hooks/use-scroll-to-message"
@@ -206,11 +205,13 @@ function pickTimelineStream(stream: Stream & { parentMessageId?: string | null }
 /**
  * The bootstrap entry is replaced on every message (its events and the
  * stream's message count); the shell renders from the few fields below.
+ * Its `readState` is only a first-paint stand-in for the IDB row, and a read
+ * commit rewrites it, so it is dropped once that row exists.
  */
-function pickTimelineBootstrap(bootstrap: CachedStreamBootstrap) {
+function pickTimelineBootstrap(bootstrap: CachedStreamBootstrap, includeReadState: boolean) {
   return {
     membership: bootstrap.membership,
-    readState: bootstrap.readState,
+    readState: includeReadState ? bootstrap.readState : undefined,
     archivedAncestor: bootstrap.archivedAncestor,
     stream: pickTimelineStream(bootstrap.stream),
     serverWindowHiddenOnly: holdsOnlyThreadHiddenEvents(bootstrap.events),
@@ -685,15 +686,19 @@ export function StreamContent({
   // Resolve current workspace-scoped user ID. The hook deduplicates with SentMessageEvent instances.
   const currentWorkspaceUserId = useWorkspaceUserId(workspaceId)
   const idbMembership = useWorkspaceStreamMembership(workspaceId, streamId, currentWorkspaceUserId)
-  const selectBootstrap = useMemo(() => createStableSelect(pickTimelineBootstrap), [workspaceId, streamId])
+  // Read frontier: stream_read_state is the sole source. A present row wins —
+  // a null watermark is an explicit unread-to-zero.
+  const idbReadState = useWorkspaceStreamReadState(workspaceId, streamId)
+  const hasIdbReadState = idbReadState !== undefined
+  const selectBootstrap = useMemo(
+    () => createStableSelect((bootstrap: CachedStreamBootstrap) => pickTimelineBootstrap(bootstrap, !hasIdbReadState)),
+    [workspaceId, streamId, hasIdbReadState]
+  )
   const { data: bootstrap } = useStreamBootstrap(workspaceId, streamId, {
     enabled: !isDraft && (!idbStream || !idbMembership),
     select: selectBootstrap,
   })
   const membership = idbMembership ?? bootstrap?.membership
-  // Read frontier: stream_read_state is the sole source. A present row wins —
-  // a null watermark is an explicit unread-to-zero.
-  const idbReadState = useWorkspaceStreamReadState(workspaceId, streamId)
   // The per-stream bootstrap carries the viewer's frontier; IDB catches up a
   // tick after the query resolves, so consult the in-memory payload for first
   // paint. A confirmed-absent row (null) resolves as never-read (frontier
@@ -2200,12 +2205,12 @@ export function StreamContent({
 
   const isMobile = useIsMobile()
   const readCommitQueue = useReadCommitQueue()
-  const { markAsRead, markUnread, getUnreadCount, isInInbox, clearInbox } = useUnreadCounts(workspaceId)
-  const unreadCount = getUnreadCount(streamId)
+  const { markAsRead, markUnread, clearInbox } = useUnreadActions(workspaceId)
+  const { unreadCount, inInbox } = useStreamUnreadState(workspaceId, streamId)
   // Only the page's own stream settles on Escape: a thread panel mounts a second
   // StreamContent, and one keypress must never settle both.
   const { streamId: routeStreamId } = useParams<{ streamId: string }>()
-  const canSettleOnEscape = routeStreamId === streamId && isInInbox(streamId)
+  const canSettleOnEscape = routeStreamId === streamId && inInbox
   const { panelId } = usePanel()
 
   // The stream's sparse read overlay — message ids read individually above the
