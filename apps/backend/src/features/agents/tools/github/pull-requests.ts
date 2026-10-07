@@ -5,6 +5,7 @@ import type { GitHubToolDeps } from "./deps"
 import { withGithubClient, isGitHubToolError, toToolResult } from "./client-accessor"
 import { toActor, truncateBytes } from "./format"
 import { toTraceGithubSources } from "./trace"
+import { truncateCodePoints } from "../../../../lib/truncate"
 
 const MAX_PR_BODY_BYTES = 8_000
 const MAX_PR_FILES = 50
@@ -92,7 +93,7 @@ async function listPullRequests(deps: GitHubToolDeps, input: PullsInput): Promis
     .slice(0, 10)
     .map((p) => ({
       type: "github",
-      title: `PR #${p.number}: ${p.title}`.slice(0, 200),
+      title: truncateCodePoints(`PR #${p.number}: ${p.title}`, 200),
       url: p.htmlUrl,
     }))
 
@@ -180,7 +181,7 @@ async function getPullRequest(deps: GitHubToolDeps, input: PullsInput): Promise<
     ? [
         {
           type: "github",
-          title: `PR #${result.number}: ${result.title}`.slice(0, 200),
+          title: truncateCodePoints(`PR #${result.number}: ${result.title}`, 200),
           url: result.htmlUrl,
         },
       ]

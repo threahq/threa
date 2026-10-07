@@ -49,6 +49,7 @@ import type { AIResidencyPolicy } from "../ai-usage"
 import { WorkspaceAgent, type WorkspaceAgentResult } from "./researcher"
 import { GeneralResearcher, GENERAL_RESEARCH_TOOL_POLICY, type GeneralResearchResult } from "./general-researcher"
 import { logger } from "../../lib/logger"
+import { truncateCodePoints } from "../../lib/truncate"
 import { repairMessageReferences } from "@threahq/prosemirror"
 import type { GuideArticle } from "@threahq/user-guide"
 import {
@@ -950,7 +951,7 @@ export class PersonaAgent {
                     messageId: m.messageId,
                     authorName: m.authorName,
                     createdAt: m.createdAt,
-                    content: m.contentMarkdown.slice(0, 300),
+                    content: truncateCodePoints(m.contentMarkdown, 300),
                   })),
                 })),
               }
@@ -974,7 +975,7 @@ export class PersonaAgent {
                     type: "workspace_memo",
                     title: memo.title,
                     memoId: memo.id,
-                    snippet: memo.abstract.slice(0, 200),
+                    snippet: truncateCodePoints(memo.abstract, 200),
                   })
                 ),
               }),
@@ -2169,9 +2170,7 @@ function formatConversationContext(
     const text = message.contentMarkdown.trim()
     if (!text) continue
     const author = authorNames.get(message.authorId) ?? "Unknown"
-    const clipped =
-      text.length > RESEARCH_CONTEXT_MESSAGE_CHARS ? `${text.slice(0, RESEARCH_CONTEXT_MESSAGE_CHARS)}…` : text
-    lines.push(`${author}: ${clipped}`)
+    lines.push(`${author}: ${truncateCodePoints(text, RESEARCH_CONTEXT_MESSAGE_CHARS, "…")}`)
   }
   return lines.length > 0 ? lines.join("\n") : undefined
 }
@@ -2249,7 +2248,7 @@ function buildSupersedeResponseValidator(params: {
               rerunCause: rerunContext?.cause ?? null,
               editedMessageBefore: editedBefore,
               editedMessageAfter: editedAfter,
-              candidateResponse: candidate.length > 4000 ? `${candidate.slice(0, 4000)}...` : candidate,
+              candidateResponse: truncateCodePoints(candidate, 4000, "..."),
             }),
           },
         ],

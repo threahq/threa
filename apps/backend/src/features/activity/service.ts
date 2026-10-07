@@ -31,6 +31,7 @@ import {
 import { withClient, withTransaction } from "../../db"
 import { OutboxRepository, type ActivityReadOutboxPayload } from "../../lib/outbox"
 import { logger } from "../../lib/logger"
+import { truncateCodePoints } from "../../lib/truncate"
 
 const ARIADNE_PUSH_ICON_URL = "/ariadne-192.png"
 
@@ -167,7 +168,7 @@ export class ActivityService {
       if (userIds.size === 0) return []
 
       const streamContext = resolveStreamContext(stream, rootStream)
-      const contentPreview = contentMarkdown.slice(0, 200)
+      const contentPreview = truncateCodePoints(contentMarkdown, 200)
       const author = await this.resolveAuthor(client, workspaceId, actorId, actorType)
 
       const recipientIds = [...userIds]
@@ -219,7 +220,7 @@ export class ActivityService {
         ? await StreamRepository.findById(client, stream.workspaceId, stream.rootStreamId)
         : null
       const streamContext = resolveStreamContext(stream, rootStream)
-      const contentPreview = contentMarkdown.slice(0, 200)
+      const contentPreview = truncateCodePoints(contentMarkdown, 200)
       const author = await this.resolveAuthor(client, workspaceId, actorId, actorType)
 
       const rows = await ActivityRepository.insertBatch(client, {
@@ -313,7 +314,7 @@ export class ActivityService {
       const isDirectStream = effectiveType === StreamTypes.DM || effectiveType === StreamTypes.SCRATCHPAD
 
       const streamContext = resolveStreamContext(stream, rootStream)
-      const contentPreview = contentMarkdown.slice(0, 200)
+      const contentPreview = truncateCodePoints(contentMarkdown, 200)
       const author = await this.resolveAuthor(client, workspaceId, actorId, actorType)
 
       const resolved = await resolveNotificationLevelsForStream(client, stream, streamMembers)
@@ -438,7 +439,7 @@ export class ActivityService {
         ? await StreamRepository.findById(client, stream.workspaceId, stream.rootStreamId)
         : null
       const streamContext = resolveStreamContext(stream, rootStream)
-      const contentPreview = (message.contentMarkdown ?? "").slice(0, 200)
+      const contentPreview = truncateCodePoints(message.contentMarkdown ?? "", 200)
       const actor = await this.resolveAuthor(client, workspaceId, actorId, actorType)
 
       const context = {

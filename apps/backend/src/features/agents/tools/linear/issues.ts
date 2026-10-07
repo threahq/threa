@@ -5,6 +5,7 @@ import type { LinearToolDeps } from "./deps"
 import { isLinearToolError, toToolResult, withLinearClient } from "./client-accessor"
 import { toLinearActor, truncateBytes } from "./format"
 import { toTraceLinearSources } from "./trace"
+import { truncateCodePoints } from "../../../../lib/truncate"
 
 const MAX_ISSUE_DESCRIPTION_BYTES = 8_000
 const MAX_ISSUE_COMMENTS = 20
@@ -78,7 +79,11 @@ export function createLinearListIssuesTool(deps: LinearToolDeps) {
       const sources: SourceItem[] = result
         .filter((issue): issue is typeof issue & { url: string } => typeof issue.url === "string")
         .slice(0, 10)
-        .map((issue) => ({ type: "web", title: `${issue.identifier}: ${issue.title}`.slice(0, 200), url: issue.url }))
+        .map((issue) => ({
+          type: "web",
+          title: truncateCodePoints(`${issue.identifier}: ${issue.title}`, 200),
+          url: issue.url,
+        }))
 
       return { output: JSON.stringify({ count: result.length, issues: result }), sources }
     },
@@ -182,7 +187,7 @@ export function createLinearGetIssueTool(deps: LinearToolDeps) {
       if (!result) return toToolResult({ error: "Linear issue not found", code: "LINEAR_NOT_FOUND" })
 
       const sources: SourceItem[] = result.url
-        ? [{ type: "web", title: `${result.identifier}: ${result.title}`.slice(0, 200), url: result.url }]
+        ? [{ type: "web", title: truncateCodePoints(`${result.identifier}: ${result.title}`, 200), url: result.url }]
         : []
 
       return { output: JSON.stringify({ issue: result }), sources }
