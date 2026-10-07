@@ -9,6 +9,7 @@ import type { Pool } from "pg"
 import type { AI, WebSearchEngine } from "@threahq/agent-runtime"
 import type { ConfigResolver } from "../../src/lib/ai/config-resolver"
 import type { ComponentOverrides } from "./config-types"
+import type { SimClock } from "./sim-clock"
 
 // -----------------------------------------------------------------------------
 // Usage Tracking
@@ -102,6 +103,10 @@ export interface EvalContext {
   componentOverrides?: ComponentOverrides
   /** Set when the run cloned a kept database: setup finds its seeded data already in place. */
   reusedDatabase?: string
+  /** For collaborators that hold their own connection, like the outbox dispatcher's LISTEN pool; absent when rescoring without a database */
+  connectionString?: string
+  /** Drives the database's `now()`; set when the suite opted into `simClock` */
+  clock?: SimClock
   /**
    * Config resolver for AI components.
    * Use this to get model/temperature/prompt configs instead of importing from config.ts.
@@ -283,6 +288,9 @@ export interface EvalSuite<TInput, TOutput, TExpected> {
 
   /** Setup recognizes a cloned kept database (EvalContext.reusedDatabase) instead of seeding over it. */
   reusesDatabase?: boolean
+
+  /** Run the database's `now()` on a simulated clock starting at this instant, driven by setup through `EvalContext.clock` */
+  simClock?: Date
 
   /** Optional suite-level teardown (runs once after all cases) */
   teardown?: (ctx: EvalContext) => Promise<void>

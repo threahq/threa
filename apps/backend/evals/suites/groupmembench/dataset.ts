@@ -138,25 +138,3 @@ export function loadQuestions(dir: string): BenchQuestion[] {
       })
   )
 }
-
-/**
- * Splits a stream's messages (oldest first) into conversations the way
- * production captures them: a gap longer than `maxGapMs` ends one, since that
- * long a quiet spell both closes a conversation to new messages and lets
- * capture settle it. Cut every `maxSize` messages too, since capture keeps at
- * most a handful of memos per conversation.
- */
-export function segmentConversations(messages: BenchMessage[], maxSize: number, maxGapMs: number): BenchMessage[][] {
-  const conversations: BenchMessage[][] = []
-  let current: BenchMessage[] = []
-  for (const message of messages) {
-    const last = current.at(-1)
-    if (last && (current.length === maxSize || message.createdAt.getTime() - last.createdAt.getTime() > maxGapMs)) {
-      conversations.push(current)
-      current = []
-    }
-    current.push(message)
-  }
-  if (current.length > 0) conversations.push(current)
-  return conversations
-}

@@ -269,14 +269,19 @@ interface PermutationRunOptions extends RunnerOptions {
 }
 
 async function setupRunDatabase(
-  suite: Pick<EvalSuite<unknown, unknown, unknown>, "name" | "reusesDatabase">,
+  suite: Pick<EvalSuite<unknown, unknown, unknown>, "name" | "reusesDatabase" | "simClock">,
   label: string,
   options: Pick<RunnerOptions, "fromDatabase" | "keepDatabase">
 ): Promise<{ dbResult: EvalDatabaseResult; fixture: WorkspaceFixture }> {
   if (options.fromDatabase && !suite.reusesDatabase) {
     throw new Error(`Suite ${suite.name} cannot run from a kept database: its setup would seed over it`)
   }
-  const dbResult = await setupEvalDatabase({ label, from: options.fromDatabase, keep: options.keepDatabase })
+  const dbResult = await setupEvalDatabase({
+    label,
+    from: options.fromDatabase,
+    keep: options.keepDatabase,
+    simClock: suite.simClock,
+  })
   try {
     if (!options.fromDatabase) return { dbResult, fixture: await createWorkspaceFixture(dbResult.pool) }
     console.log(`${colors.dim}Cloned ${options.fromDatabase} into ${dbResult.databaseName}${colors.reset}`)
@@ -348,6 +353,8 @@ async function runPermutation<TInput, TOutput, TExpected>(
     componentOverrides: options.componentOverrides,
     configResolver,
     reusedDatabase: options.fromDatabase,
+    connectionString: dbResult.connectionString,
+    clock: dbResult.clock,
   }
 
   // Run suite setup if provided
@@ -700,7 +707,7 @@ export async function runSuite<TInput, TOutput, TExpected>(
   if (useParallel) {
     // Create template DB once with migrations
     console.log(`\n${colors.dim}Setting up template database...${colors.reset}`)
-    const template = await setupEvalTemplate(suite.name)
+    const template = await setupEvalTemplate(suite.name, { simClock: suite.simClock })
 
     try {
       // Run permutations in parallel (limited concurrency)
