@@ -50,7 +50,7 @@ beforeEach(() => {
     leaveStream: vi.fn(),
   } as never)
   // The page body is the whole virtualized timeline; the header is what's under test.
-  spyOnExport(timelineModule, "TimelineView").mockReturnValue((() => <div data-testid="timeline" />) as never)
+  spyOnExport(timelineModule, "StreamContent").mockReturnValue((() => <div data-testid="timeline" />) as never)
 })
 
 function renderStreamPage() {
