@@ -1,5 +1,14 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react"
-import { usePanel, useFrontPanel, useCurrentPane, isConversationPanel, parseComposePanel, PaneScope } from "@/contexts"
+import {
+  usePanel,
+  useFrontPanel,
+  useCurrentPane,
+  isConversationPanel,
+  parseComposePanel,
+  parseContextPanel,
+  createContextPanelId,
+  PaneScope,
+} from "@/contexts"
 import { Minimize2 } from "lucide-react"
 import { Pane, PaneFocusContext, PanelTabTitle, usePaneFocusEscape, type PaneMapCell } from "@/components/panes"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
@@ -18,9 +27,15 @@ import { getDraftPromotionSource } from "@/lib/draft-promotions"
 import { StreamPanel } from "@/components/thread"
 import { ConversationPanel } from "@/components/conversations/conversation-panel"
 import { ComposePanel } from "@/components/composer/compose-panel"
+import { StreamContextPane } from "@/components/stream-context"
 
-/** A draft thread promoted to its real stream keeps the draft's key, so its pane survives the handoff. */
+/**
+ * A draft thread promoted to its real stream keeps the draft's key, so its pane
+ * survives the handoff; an overview keeps one key across its filters.
+ */
 function panelKeyFor(workspaceId: string, panelId: string): string {
+  const context = parseContextPanel(panelId)
+  if (context) return createContextPanelId(context.streamId)
   return getDraftPromotionSource(workspaceId, panelId) ?? panelId
 }
 
@@ -33,7 +48,7 @@ interface PanelHostProps {
 /**
  * Picks the side panel's content by panel kind: a `conv:<id>` panel opens a
  * conversation projection (Mechanism B), a `compose:<id>` panel a stream's
- * draft, every other id is a stream/thread/draft
+ * draft, a `context:<id>` panel a stream's overview, every other id is a stream/thread/draft
  * handled by {@link StreamPanel}. Both stream.tsx and board.tsx host the panel
  * through this, so either surface can open either kind. Keyed on the panel id so
  * switching targets remounts cleanly — except a draft thread promoted to its real
@@ -45,6 +60,7 @@ interface PanelHostProps {
 export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
   const { panelId } = usePanel()
   const composeStreamId = panelId && parseComposePanel(panelId)
+  const context = panelId && parseContextPanel(panelId)
   if (panelId && isConversationPanel(panelId)) {
     return <ConversationPanel key={panelId} workspaceId={workspaceId} onClose={onClose} className={className} />
   }
@@ -54,6 +70,18 @@ export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
         key={panelId}
         workspaceId={workspaceId}
         streamId={composeStreamId}
+        onClose={onClose}
+        className={className}
+      />
+    )
+  }
+  if (context) {
+    return (
+      <StreamContextPane
+        key={panelKeyFor(workspaceId, panelId)}
+        workspaceId={workspaceId}
+        streamId={context.streamId}
+        filter={context.filter}
         onClose={onClose}
         className={className}
       />

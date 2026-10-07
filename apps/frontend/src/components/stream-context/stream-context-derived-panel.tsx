@@ -15,10 +15,8 @@ import {
   filterCategories,
   filterCount,
   ContextEmpty,
-  ContextPanelHeader,
   ContextSkeleton,
   ContextTimeline,
-  useContextFilter,
   type Filter,
   type StreamContextPanelProps,
 } from "./stream-context-chrome"
@@ -38,7 +36,9 @@ const DAY_MS = 24 * 60 * 60 * 1000
 export function StreamContextDerivedPanel({
   workspaceId,
   streamId,
-  onClose,
+  filter,
+  onFilterChange,
+  header,
   onJumpToMessage,
   onOpenThread,
   onOpenMemo,
@@ -67,13 +67,11 @@ export function StreamContextDerivedPanel({
     [events, delegationItems, followUpItems]
   )
 
-  const [filter, setFilter] = useContextFilter()
-
   // A previously-selected filter can empty out as the live event set changes
   // (e.g. a thread's last reply scrolls out of the loaded window); fall back to
   // "all" so the body never strands the user on an empty filter. The delegation
-  // count isn't known until its query settles, so a `?context=delegation` deep
-  // link holds the requested view instead of flickering All → Delegations.
+  // count isn't known until its query settles, so a pane reloaded on that filter
+  // holds the requested view instead of flickering All → Delegations.
   // The Agent chip stands for both agent categories, so it only settles once
   // both of their queries have.
   const agentPending = delegationsPending || outcomesQuery.isPending
@@ -138,9 +136,9 @@ export function StreamContextDerivedPanel({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <ContextPanelHeader total={total} onClose={onClose} />
+      {header(total)}
       {(total > 0 || isLoading) && (
-        <ContextChipRow chips={chipsFromCounts(counts, total)} active={effectiveFilter} onSelect={setFilter} />
+        <ContextChipRow chips={chipsFromCounts(counts, total)} active={effectiveFilter} onSelect={onFilterChange} />
       )}
       {note && <p className="shrink-0 border-b px-3 py-1.5 text-[11px] text-muted-foreground">{note}</p>}
       <div

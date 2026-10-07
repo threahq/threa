@@ -10,6 +10,7 @@ import {
   isDraftPanel,
   parseConversationPanel,
   parseComposePanel,
+  parseContextPanel,
 } from "@/contexts"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -289,6 +290,14 @@ export function PanelTabTitle({ workspaceId, panelId }: { workspaceId: string; p
     return (
       <>
         Draft to <StreamTabTitle workspaceId={workspaceId} streamId={composeStreamId} />
+      </>
+    )
+  }
+  const context = parseContextPanel(panelId)
+  if (context) {
+    return (
+      <>
+        In <StreamTabTitle workspaceId={workspaceId} streamId={context.streamId} />
       </>
     )
   }

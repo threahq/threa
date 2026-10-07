@@ -10,14 +10,6 @@ import { PanelHost } from "@/components/layout/panel-host"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
 import { usePanel, usePreferencesOptional, useSidebar } from "@/contexts"
 import { usePanelLayout, useTypeToFocus } from "@/hooks"
-import { MIN_PANEL_WIDTH, fitsDockedColumns } from "@/hooks/use-panel-layout"
-import { useElementWidth } from "@/hooks/use-element-width"
-import {
-  StreamContextDockProvider,
-  StreamContextDockSlot,
-  useStreamContextDockLayout,
-  useStreamContextOpen,
-} from "@/components/stream-context"
 import { resolveStreamName } from "@/lib/streams"
 import { localStartOfDayMs } from "@/lib/dates"
 import {
@@ -218,8 +210,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   const asideStage = !asideIsSheet && asideOpen !== null
   const { isMobile } = useSidebar()
   const { panelId, isPanelOpen, closePanel } = usePanel()
-  // The board has no overview of its own; `?context` belongs to the open panel.
-  const [isContextOpen] = useStreamContextOpen()
   // A thread the aside's surface holds (the stage's host pane, or the phone's
   // sheet) is mounted there and nowhere else: not in the slot, not as the
   // phone's takeover behind the sheet.
@@ -436,9 +426,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     ]
   )
   const containerRef = useRef<HTMLDivElement>(null)
-  // The overview only docks beside an open panel, so it always needs room for two columns.
-  const dockFits = fitsDockedColumns(useElementWidth(containerRef), 2)
-  const isDockOpen = isContextOpen && isPanelOpen && !isMobile && dockFits
   const {
     panelWidth,
     maxWidth,
@@ -452,8 +439,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     handleResizeEnd,
     handleResizeKeyDown,
     handleTransitionEnd,
-  } = usePanelLayout(isPanelOpen, { containerRef, reservedWidth: isDockOpen ? MIN_PANEL_WIDTH : 0 })
-  const dock = useStreamContextDockLayout(containerRef, isDockOpen, displayWidth)
+  } = usePanelLayout(isPanelOpen, { containerRef })
 
   // The query is the fetch/seed engine; the board reads reactively from IDB. The
   // stable-view projection holds the order the viewer is looking at frozen and
@@ -1024,52 +1010,37 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   const mobileTakeover = isMobile && isPanelOpen && !panelInAside
   const layout = panelTakeoverClasses(mobileTakeover)
 
-  const panelInset = displayWidth + dock.layout.displayWidth
-  const panelInsetAnimates = shouldAnimate && dock.layout.shouldAnimate
-
   return (
-    <StreamContextDockProvider value={{ target: dock.target, fits: dockFits }}>
-      <div ref={containerRef} className={layout.container}>
-        <div className={layout.main} inert={layout.mainInert || asideStage || undefined}>
-          {boardColumn}
-        </div>
-        {mobileTakeover ? (
-          <div className={layout.panel}>
-            <PanelHost workspaceId={workspaceId} onClose={closePanel} />
-          </div>
-        ) : (
-          <ThreadPanelSlot
-            displayWidth={displayWidth}
-            panelWidth={panelWidth}
-            shouldAnimate={shouldAnimate}
-            // The stage mounts the panel in its host pane; the slot keeps its
-            // width lifecycle but shows nothing under the overlay.
-            showContent={showContent && !asideStage && !panelInAside}
-            isResizing={isResizing}
-            maxWidth={maxWidth}
-            minWidth={minWidth}
-            onTransitionEnd={handleTransitionEnd}
-            onResizeStart={handleResizeStart}
-            onResizeMove={handleResizeMove}
-            onResizeEnd={handleResizeEnd}
-            onResizeKeyDown={handleResizeKeyDown}
-            insetRight={panelInset}
-            insetAnimates={panelInsetAnimates}
-            inert={asideStage}
-          >
-            <PanelHost workspaceId={workspaceId} onClose={closePanel} />
-          </ThreadPanelSlot>
-        )}
-        {!isMobile && (
-          <StreamContextDockSlot
-            dock={dock}
-            insetRight={panelInset}
-            insetAnimates={panelInsetAnimates}
-            inert={asideStage}
-          />
-        )}
-        <AsideSlot workspaceId={workspaceId} hostKey={asideHostKey} />
+    <div ref={containerRef} className={layout.container}>
+      <div className={layout.main} inert={layout.mainInert || asideStage || undefined}>
+        {boardColumn}
       </div>
-    </StreamContextDockProvider>
+      {mobileTakeover ? (
+        <div className={layout.panel}>
+          <PanelHost workspaceId={workspaceId} onClose={closePanel} />
+        </div>
+      ) : (
+        <ThreadPanelSlot
+          displayWidth={displayWidth}
+          panelWidth={panelWidth}
+          shouldAnimate={shouldAnimate}
+          // The stage mounts the panel in its host pane; the slot keeps its
+          // width lifecycle but shows nothing under the overlay.
+          showContent={showContent && !asideStage && !panelInAside}
+          isResizing={isResizing}
+          maxWidth={maxWidth}
+          minWidth={minWidth}
+          onTransitionEnd={handleTransitionEnd}
+          onResizeStart={handleResizeStart}
+          onResizeMove={handleResizeMove}
+          onResizeEnd={handleResizeEnd}
+          onResizeKeyDown={handleResizeKeyDown}
+          inert={asideStage}
+        >
+          <PanelHost workspaceId={workspaceId} onClose={closePanel} />
+        </ThreadPanelSlot>
+      )}
+      <AsideSlot workspaceId={workspaceId} hostKey={asideHostKey} />
+    </div>
   )
 }

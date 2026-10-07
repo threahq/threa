@@ -40,10 +40,8 @@ import {
   filterCategories,
   filterCount,
   ContextEmpty,
-  ContextPanelHeader,
   ContextSkeleton,
   ContextTimeline,
-  useContextFilter,
   type Filter,
   type StreamContextPanelProps,
 } from "./stream-context-chrome"
@@ -78,14 +76,23 @@ const DAY_MS = 24 * 60 * 60 * 1000
 const MAX_JUMP_PAGES = 10
 
 export function StreamContextIndexPanel(props: StreamContextPanelProps) {
-  const { workspaceId, streamId, onClose, onJumpToMessage, onOpenThread, onOpenMemo, onOpenGallery } = props
+  const {
+    workspaceId,
+    streamId,
+    filter,
+    onFilterChange,
+    header,
+    onJumpToMessage,
+    onOpenThread,
+    onOpenMemo,
+    onOpenGallery,
+  } = props
   const stream = useStreamFromStore(workspaceId, streamId)
   const { rootStreamId, scope } = useStreamContextScope(workspaceId, streamId)
   const rootStream = useStreamFromStore(workspaceId, rootStreamId)
   const isOnline = useIsOnline()
   const users = useWorkspaceUsers(workspaceId)
 
-  const [filter, setFilter] = useContextFilter()
   const [query, setQuery] = useState("")
   const [debouncedQuery, setDebouncedQuery] = useState("")
   useEffect(() => {
@@ -117,12 +124,12 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   const [heldCounts, setHeldCounts] = useState<{ key: string; counts: Record<ContextCategory, number> } | null>(null)
   const serverCounts = heldCounts?.key === countsKey ? heldCounts.counts : null
 
-  // A `?context=<category>` deep link (or a chip whose category later empties
+  // A filter reloaded from the pane's id (or a chip whose category later empties
   // out) must not strand the panel on a filter the scope has nothing for — fall
   // back to "all" once the server-owned counts say so, for the query and the
   // chip row alike.
-  // `filterCount` reads the Agent chip as the SUM of its two categories, so a
-  // `?context=agent` link survives once counts land as long as either has rows —
+  // `filterCount` reads the Agent chip as the SUM of its two categories, so an
+  // `agent` filter survives once counts land as long as either has rows —
   // `counts["agent"]` is not a key and indexing for it would read `undefined`.
   const effectiveFilter: Filter =
     filter !== "all" && serverCounts !== null && filterCount(serverCounts, filter, 0) === 0 ? "all" : filter
@@ -381,7 +388,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
-      <ContextPanelHeader total={total} onClose={onClose} />
+      {header(total)}
 
       <div className="flex shrink-0 flex-col gap-1.5 border-b px-3 py-2">
         <div className="relative">
@@ -426,7 +433,7 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
       </div>
 
       {total > 0 && (
-        <ContextChipRow chips={chipsFromCounts(counts, total)} active={effectiveFilter} onSelect={setFilter} />
+        <ContextChipRow chips={chipsFromCounts(counts, total)} active={effectiveFilter} onSelect={onFilterChange} />
       )}
 
       <div
