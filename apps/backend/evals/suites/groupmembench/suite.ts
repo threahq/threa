@@ -132,11 +132,6 @@ function requireClock(ctx: EvalContext) {
   return ctx.clock
 }
 
-function requireConnectionString(ctx: EvalContext) {
-  if (!ctx.connectionString) throw new Error("groupmembench replays against a database")
-  return ctx.connectionString
-}
-
 /**
  * Creates a channel as its first author would, and returns its history as
  * replay input: posts in the channel, replies in a thread under their root post.
@@ -223,9 +218,10 @@ export function seedWorkspace(variant: Variant) {
     const names = [...new Set([...channels.flatMap((c) => c.authors), ...askers])].sort()
     const userIds = await insertUsers(ctx, names)
 
+    if (!ctx.connectionString) throw new Error("groupmembench replays against a database")
     const pipeline = await startReplayPipeline({
       pool: ctx.pool,
-      connectionString: requireConnectionString(ctx),
+      connectionString: ctx.connectionString,
       clock: requireClock(ctx),
       ai: ctx.ai,
       workspaceId: ctx.workspaceId,

@@ -6,29 +6,6 @@ import type { Pool, PoolConfig } from "pg"
  */
 export const SIM_CLOCK_POOL_CONFIG: Partial<PoolConfig> = { options: "-c search_path=public,pg_catalog" }
 
-/**
- * Column `DEFAULT NOW()` binds to whichever `now()` resolves at CREATE TABLE time, so this runs
- * before migrations. CURRENT_TIMESTAMP is a keyword and is not shadowed.
- */
-async function installSimClock(pool: Pool, start: Date): Promise<void> {
-  await pool.query(`
-    CREATE TABLE public.eval_clock (
-      singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
-      t TIMESTAMPTZ NOT NULL
-    )
-  `)
-  await pool.query("INSERT INTO public.eval_clock (t) VALUES ($1)", [start])
-  await pool.query(`
-    CREATE FUNCTION public.now() RETURNS TIMESTAMPTZ LANGUAGE sql STABLE
-    AS $$ SELECT t FROM public.eval_clock $$
-  `)
-}
-
-async function hasSimClock(pool: Pool): Promise<boolean> {
-  const result = await pool.query("SELECT to_regclass('public.eval_clock') IS NOT NULL AS present")
-  return result.rows[0].present
-}
-
 /** Simulated wall clock shared by the eval database's `now()` and the pipeline's injected clock. */
 export class SimClock {
   private current: Date
@@ -40,9 +17,22 @@ export class SimClock {
     this.current = new Date(start)
   }
 
-  /** Installs the clock in a fresh, unmigrated database. */
+  /**
+   * Column `DEFAULT NOW()` binds to whichever `now()` resolves at CREATE TABLE time, so this runs
+   * on a fresh database before migrations. CURRENT_TIMESTAMP is a keyword and is not shadowed.
+   */
   static async install(pool: Pool, start: Date): Promise<SimClock> {
-    await installSimClock(pool, start)
+    await pool.query(`
+      CREATE TABLE public.eval_clock (
+        singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+        t TIMESTAMPTZ NOT NULL
+      )
+    `)
+    await pool.query("INSERT INTO public.eval_clock (t) VALUES ($1)", [start])
+    await pool.query(`
+      CREATE FUNCTION public.now() RETURNS TIMESTAMPTZ LANGUAGE sql STABLE
+      AS $$ SELECT t FROM public.eval_clock $$
+    `)
     return new SimClock(pool, start)
   }
 
@@ -69,7 +59,8 @@ export class SimClock {
  * its rows would silently be stamped by the other clock.
  */
 export async function assertClockMatches(pool: Pool, source: string, simClock: boolean): Promise<void> {
-  const present = await hasSimClock(pool)
+  const result = await pool.query("SELECT to_regclass('public.eval_clock') IS NOT NULL AS present")
+  const present: boolean = result.rows[0].present
   if (present === simClock) return
   throw new Error(
     present

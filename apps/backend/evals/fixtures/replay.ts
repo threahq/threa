@@ -233,15 +233,6 @@ export async function startReplayPipeline(deps: {
 
   const nextBoundary = (stepMs: number): number => (Math.floor(clock.now().getTime() / stepMs) + 1) * stepMs
 
-  const runSweep = async (tick: number): Promise<void> => {
-    await stalenessSweep({
-      id: `replay_sweep_${tick}`,
-      name: JobQueues.CONVERSATION_STALENESS_SWEEP,
-      data: { workspaceId: "system" },
-    })
-    await drain()
-  }
-
   /**
    * Fires each cron tick up to `target` at its own instant, after the pipeline
    * has finished what production would have finished by then. A batch tick can
@@ -258,7 +249,14 @@ export async function startReplayPipeline(deps: {
       const tick = batchDue ? nextBoundary(BATCH_TICK_MS) : nextBoundary(SWEEP_TICK_MS)
       if (tick > target.getTime()) return
       await clock.set(new Date(tick))
-      if (tick % SWEEP_TICK_MS === 0) await runSweep(tick)
+      if (tick % SWEEP_TICK_MS === 0) {
+        await stalenessSweep({
+          id: `replay_sweep_${tick}`,
+          name: JobQueues.CONVERSATION_STALENESS_SWEEP,
+          data: { workspaceId: "system" },
+        })
+        await drain()
+      }
       idleStreamIds = await runBatchCheck()
     }
   }
