@@ -79,6 +79,8 @@ export const PEOPLE_ROSTER_LIMIT = 400
 export const PEOPLE_RESOLVED_AT = 0.6
 /** A pick at or above this probability is a candidate worth asking about. */
 export const PEOPLE_PLAUSIBLE_AT = 0.2
+/** Candidates listed for an ambiguous reference, most likely first. */
+export const PEOPLE_MAX_CANDIDATES = 5
 /** People resolved per research call; the planner's list is cut to this many. */
 export const PEOPLE_MAX_REFERENCES = 6
 /** Resolved people whose own messages are searched with the original query, in the planner's order. */

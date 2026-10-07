@@ -110,6 +110,21 @@ describe("PeopleResolver", () => {
     ])
   })
 
+  test("should list at most the five most likely candidates for an ambiguous reference", async () => {
+    const kates = Array.from({ length: 7 }, (_, i) => person(`usr_kate_${i}`, 3))
+    const { resolver } = createResolver({
+      beliefs: { ref0: Object.fromEntries(kates.map((kate, i) => [kate.id, 0.3 + i * 0.01])) },
+    })
+
+    expect(await resolver.resolve({ ...input(["Kate"]), roster: kates })).toEqual([
+      {
+        reference: "Kate",
+        status: "ambiguous",
+        candidates: [6, 5, 4, 3, 2].map((i) => named(`usr_kate_${i}`)),
+      },
+    ])
+  })
+
   test("should leave a choice with no probability of its own unresolved, whatever the answer's confidence", async () => {
     const { resolver } = createResolver({ beliefs: { ref0: {} }, sparseChoice: "usr_kate_room" })
 

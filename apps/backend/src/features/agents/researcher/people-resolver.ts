@@ -18,6 +18,7 @@ import {
   PEOPLE_RESOLVER_CHUNK_SIZE,
   PEOPLE_RESOLVER_MODEL_ID,
   PEOPLE_RESOLVER_TIMEOUT_MS,
+  PEOPLE_MAX_CANDIDATES,
   peopleReferenceQuestion,
 } from "./config"
 
@@ -95,7 +96,11 @@ export class PeopleResolver {
     } catch (error) {
       if (error instanceof AISpendDeniedError) throw error
       if (isAbortError(error)) {
-        logger.debug({ workspaceId: input.workspaceId }, "People resolver timed out or was aborted; people unresolved")
+        if (input.signal?.aborted) return null
+        logger.warn(
+          { workspaceId: input.workspaceId, timeoutMs: PEOPLE_RESOLVER_TIMEOUT_MS },
+          "People resolver timed out; people unresolved"
+        )
         return null
       }
       this.availability.recordFailure(error)
@@ -166,7 +171,10 @@ function ambiguous(reference: string, picks: Pick[]): PersonResolution {
   return {
     reference,
     status: "ambiguous",
-    candidates: [...picks].sort((a, b) => b.probability - a.probability).map((pick) => pick.person),
+    candidates: [...picks]
+      .sort((a, b) => b.probability - a.probability)
+      .slice(0, PEOPLE_MAX_CANDIDATES)
+      .map((pick) => pick.person),
   }
 }
 
