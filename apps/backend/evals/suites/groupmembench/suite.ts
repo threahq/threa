@@ -192,8 +192,7 @@ async function seedChannel(
 }
 
 /** A kept database already holds the seeded channels and captured memos; only the lookup state is rebuilt. */
-async function reuseWorkspace(ctx: EvalContext, variant: Variant): Promise<void> {
-  if (variant !== "memory") throw new Error(`groupmembench-${variant} cannot reuse a database with captured memos`)
+async function reuseWorkspace(ctx: EvalContext): Promise<void> {
   const users = await ctx.pool.query<{ id: string; name: string }>(
     `SELECT id, name FROM users WHERE workspace_id = $1 AND email LIKE '%@groupmembench.test'`,
     [ctx.workspaceId]
@@ -226,7 +225,7 @@ async function reuseWorkspace(ctx: EvalContext, variant: Variant): Promise<void>
 
 function seedWorkspace(variant: Variant) {
   return async (ctx: EvalContext): Promise<void> => {
-    if (ctx.reusedDatabase) return reuseWorkspace(ctx, variant)
+    if (ctx.reusedDatabase) return reuseWorkspace(ctx)
     const startedAt = Date.now()
     const channels = selectedChannels()
     const askers = loadQuestions(datasetDir()).map((q) => q.askingUser)
@@ -441,7 +440,7 @@ function buildSuite(variant: Variant): EvalSuite<GroupMemBenchInput, GroupMemBen
       }))
     },
     setup: seedWorkspace(variant),
-    reusesDatabase: true,
+    reusesDatabase: variant === "memory",
     task: runQuestion(variant),
     evaluators: [correctnessEvaluator],
     runEvaluators: [summaryEvaluator],

@@ -59,10 +59,12 @@ function createQuietMigrator(pool: Pool) {
 /**
  * Generate a unique database name for an eval run.
  */
+const EVAL_DATABASE_PREFIX = "threa_eval_"
+
 function generateEvalDatabaseName(label?: string): string {
   const timestamp = Date.now()
   const suffix = label ? `_${label.replace(/[^a-z0-9]/gi, "_").toLowerCase()}` : ""
-  return `threa_eval_${timestamp}${suffix}`
+  return `${EVAL_DATABASE_PREFIX}${timestamp}${suffix}`
 }
 
 /**
@@ -205,6 +207,10 @@ export interface EvalDatabaseResult {
  * Migrations run either way, so a kept database stays usable as code moves on.
  */
 export async function setupEvalDatabase(options: DatabaseOptions = {}): Promise<EvalDatabaseResult> {
+  // Cloning terminates every connection to the source, so only an eval's own kept database may be one.
+  if (options.from && !options.from.startsWith(EVAL_DATABASE_PREFIX)) {
+    throw new Error(`--from-db must name a kept eval database (${EVAL_DATABASE_PREFIX}…), got ${options.from}`)
+  }
   const databaseName = generateEvalDatabaseName(options.label)
   if (options.from) {
     await cloneFromTemplate(options.from, databaseName)
@@ -215,9 +221,13 @@ export async function setupEvalDatabase(options: DatabaseOptions = {}): Promise<
   const connectionString = `${DATABASE_HOST}/${databaseName}`
   const pool = createDatabasePool(connectionString)
 
-  // Run migrations (quietly)
-  const migrator = createQuietMigrator(pool)
-  await migrator.up()
+  try {
+    await createQuietMigrator(pool).up()
+  } catch (error) {
+    await pool.end()
+    await dropEvalDatabase(databaseName)
+    throw error
+  }
 
   return {
     pool,
