@@ -65,6 +65,7 @@ export {
   presentsAsDrawer,
   coverPaneOf,
   createContextPanelId,
+  paneIdentity,
   contextPanelOf,
 } from "./panel-context"
 export { QuickSwitcherProvider, useQuickSwitcher } from "./quick-switcher-context"

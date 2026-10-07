@@ -6,7 +6,7 @@ import {
   isConversationPanel,
   parseComposePanel,
   parseContextPanel,
-  createContextPanelId,
+  paneIdentity,
   PaneScope,
   DisplayedPanelLayoutProvider,
   InPaneDrawerProvider,
@@ -42,9 +42,7 @@ import { StreamContextPane } from "@/components/stream-context"
  * survives the handoff; an overview keeps one key across its filters.
  */
 function panelKeyFor(workspaceId: string, panelId: string): string {
-  const context = parseContextPanel(panelId)
-  if (context) return createContextPanelId(context.streamId)
-  return getDraftPromotionSource(workspaceId, panelId) ?? panelId
+  return getDraftPromotionSource(workspaceId, panelId) ?? paneIdentity(panelId)
 }
 
 interface PanelHostProps {
