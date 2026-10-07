@@ -3040,6 +3040,7 @@ export function StreamContent({
               from under the active search-result navigation, and the Escape
               mark-read shortcut is gated on `!isSearchOpen` too. */}
                   <StreamReadTracker
+                    key={streamId}
                     workspaceId={workspaceId}
                     // The virtualized scroller late-mounts via a ref callback, AFTER
                     // `autoMarkEnabled` flips true — pass the mounted element so the read-frontier
