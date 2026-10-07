@@ -26,11 +26,16 @@ import {
   EmbeddingHandler,
   EmbeddingService,
   MemoAccumulatorHandler,
+  MemoExplorerService,
+  Reranker,
   createEmbeddingWorker,
   createMemoService,
 } from "../../src/features/memos"
+import { DelegationService } from "../../src/features/delegations"
+import { LinkPreviewOutboxHandler, LinkPreviewService, createLinkPreviewWorker } from "../../src/features/link-previews"
 import { EventService } from "../../src/features/messaging"
 import { StreamService, StreamStateRepository } from "../../src/features/streams"
+import { WorkspaceIntegrationService } from "../../src/features/workspace-integrations"
 import { MessageFormatter } from "../../src/lib/ai/message-formatter"
 import { createStaticConfigResolver } from "../../src/lib/ai/static-config-resolver"
 import { OutboxDispatcher } from "../../src/lib/outbox"
@@ -56,6 +61,7 @@ const PIPELINE_QUEUES = [
   JobQueues.BOUNDARY_EXTRACT,
   JobQueues.EMBEDDING_GENERATE,
   JobQueues.CONVERSATION_EMBEDDING_GENERATE,
+  JobQueues.LINK_PREVIEW_EXTRACT,
 ]
 
 interface ReplayMessageBase {
@@ -112,6 +118,23 @@ export async function startReplayPipeline(deps: {
     now: clock.now,
   })
   const stalenessSweep = createStalenessSweepWorker({ pool })
+  // AI context assembly waits on the previews of the messages it reads, so the
+  // replay settles them the way production does rather than letting each wait time out.
+  const linkPreviewService = new LinkPreviewService({
+    pool,
+    streamService,
+    memoExplorerService: new MemoExplorerService({
+      pool,
+      embeddingService,
+      reranker: new Reranker({ ai, subject: "knowledge memos", functionId: "memo-rerank" }),
+    }),
+    delegationService: new DelegationService({ pool }),
+  })
+  const workspaceIntegrationService = new WorkspaceIntegrationService({
+    pool,
+    github: { enabled: false, appId: "", appSlug: "", privateKey: "", integrationSecret: "" },
+    linear: { enabled: false, clientId: "", clientSecret: "", redirectUri: "", integrationSecret: "" },
+  })
 
   const jobQueue = new QueueManager({
     pool,
@@ -134,6 +157,11 @@ export async function startReplayPipeline(deps: {
     createBoundaryExtractionWorker({ service: boundaryExtractionService }),
     light
   )
+  jobQueue.registerHandler(
+    JobQueues.LINK_PREVIEW_EXTRACT,
+    createLinkPreviewWorker({ linkPreviewService, workspaceIntegrationService }),
+    light
+  )
 
   const listenPool = createDatabasePool(deps.connectionString, SIM_CLOCK_POOL_CONFIG)
   const outboxDispatcher = new OutboxDispatcher({ listenPool, fallbackPollMs: 2000 })
@@ -142,6 +170,7 @@ export async function startReplayPipeline(deps: {
     new BoundaryExtractionHandler(pool, jobQueue),
     new MemoAccumulatorHandler(pool),
     new ConversationEmbeddingHandler(pool, jobQueue),
+    new LinkPreviewOutboxHandler(pool, jobQueue),
   ]
   for (const handler of handlers) {
     await handler.ensureListener()
