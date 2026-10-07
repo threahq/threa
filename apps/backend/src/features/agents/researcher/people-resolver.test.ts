@@ -93,7 +93,7 @@ describe("PeopleResolver", () => {
     const { resolver } = createResolver({ beliefs: { ref0: { usr_kate_room: 0.3, usr_kate_shared: 0.95 } } })
 
     expect(await resolver.resolve(input(["Kate"]))).toEqual([
-      { reference: "Kate", status: "ambiguous", candidates: [named("usr_kate_shared"), named("usr_kate_room")] },
+      { reference: "Kate", status: "ambiguous", candidates: [named("usr_kate_room"), named("usr_kate_shared")] },
     ])
   })
 
@@ -107,7 +107,7 @@ describe("PeopleResolver", () => {
       {
         reference: "Kate",
         status: "ambiguous",
-        candidates: [named("usr_kate_far"), named("usr_kate_a"), named("usr_kate_b")],
+        candidates: [named("usr_kate_a"), named("usr_kate_b"), named("usr_kate_far")],
       },
     ])
   })
@@ -120,11 +120,36 @@ describe("PeopleResolver", () => {
     ])
   })
 
-  test("should report only unsure matches as ambiguous, most likely first", async () => {
+  test("should report only unsure matches as ambiguous, nearest circle first", async () => {
     const { resolver } = createResolver({ beliefs: { ref0: { usr_kate_room: 0.3, usr_john_far: 0.5 } } })
 
     expect(await resolver.resolve(input(["Kate"]))).toEqual([
-      { reference: "Kate", status: "ambiguous", candidates: [named("usr_john_far"), named("usr_kate_room")] },
+      { reference: "Kate", status: "ambiguous", candidates: [named("usr_kate_room"), named("usr_john_far")] },
+    ])
+  })
+
+  test("should keep the near namesakes that made a reference ambiguous when farther matches would fill the list", async () => {
+    const roster = [
+      person("usr_kate_a", 1),
+      person("usr_kate_b", 1),
+      ...[0, 1, 2, 3, 4].map((i) => person(`usr_kate_far_${i}`, 3)),
+    ]
+    const { resolver } = createResolver({
+      beliefs: {
+        ref0: {
+          usr_kate_a: 0.3,
+          usr_kate_b: 0.35,
+          ...Object.fromEntries([0, 1, 2, 3, 4].map((i) => [`usr_kate_far_${i}`, 0.9])),
+        },
+      },
+    })
+
+    expect(await resolver.resolve({ ...input(["Kate"]), roster })).toEqual([
+      {
+        reference: "Kate",
+        status: "ambiguous",
+        candidates: [named("usr_kate_b"), named("usr_kate_a"), ...[0, 1, 2].map((i) => named(`usr_kate_far_${i}`))],
+      },
     ])
   })
 
@@ -198,13 +223,17 @@ describe("PeopleResolver", () => {
     })
   })
 
-  test("should return null when every decision call fails, and rethrow a spend denial", async () => {
+  test("should return null when every decision call fails, nothing once the caller aborts, and rethrow a spend denial", async () => {
     const failing = createResolver({ throws: new Error("boom") })
+    const aborted = createResolver({ throws: new DOMException("aborted", "AbortError") })
+    const controller = new AbortController()
+    controller.abort()
     const denied = createResolver({
       throws: new AISpendDeniedError({ workspaceId: "ws_test", functionId: "researcher-people" }, "workspace_limit"),
     })
 
     expect(await failing.resolver.resolve(input(["Kate"]))).toBeNull()
+    expect(await aborted.resolver.resolve({ ...input(["Kate"]), signal: controller.signal })).toEqual([])
     await expect(denied.resolver.resolve(input(["Kate"]))).rejects.toBeInstanceOf(AISpendDeniedError)
   })
 })

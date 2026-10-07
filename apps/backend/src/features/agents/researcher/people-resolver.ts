@@ -94,7 +94,7 @@ export class PeopleResolver implements PeopleResolverLike {
       const spendDenied = failures.find((error) => error instanceof AISpendDeniedError)
       if (spendDenied) throw spendDenied
       if (failures.length > 0) {
-        if (input.signal?.aborted) return null
+        if (input.signal?.aborted) return []
         const failure = failures.find((error) => !isAbortError(error))
         if (failures.length === settled.flat().length) {
           if (failure) {
@@ -109,7 +109,7 @@ export class PeopleResolver implements PeopleResolverLike {
           return null
         }
         logger.warn(
-          { error: failure, workspaceId: input.workspaceId, failedCalls: failures.length },
+          { error: failure ?? failures[0], workspaceId: input.workspaceId, failedCalls: failures.length },
           "People resolver calls failed; their circles count as unknown"
         )
       }
@@ -175,8 +175,8 @@ function picks(result: DecisionsResult, key: string, people: RosterPerson[]): Pi
 
 /**
  * The nearest circle with a plausible pick decides: exactly one sure pick there names the person; anything else is
- * ambiguous over that circle and every circle beyond it, so a farther sure match is offered but never chosen over a
- * nearer namesake. A circle whose calls failed (null) is unknown, and reaching it leaves the reference unresolved.
+ * ambiguous over that circle and every circle beyond it, nearest first, so a farther sure match is offered but never
+ * chosen over, or listed ahead of, a nearer namesake. A circle whose calls failed (null) is unknown, and reaching it leaves the reference unresolved.
  */
 function readResolution(reference: string, circles: (Pick[] | null)[]): PersonResolution {
   for (const [index, circle] of circles.entries()) {
@@ -186,7 +186,7 @@ function readResolution(reference: string, circles: (Pick[] | null)[]): PersonRe
     if (sure.length === 1) return { reference, status: "resolved", person: sure[0]!.person }
     return ambiguous(
       reference,
-      circles.slice(index).flatMap((later) => later ?? [])
+      circles.slice(index).flatMap((later) => [...(later ?? [])].sort((a, b) => b.probability - a.probability))
     )
   }
   return { reference, status: "unresolved" }
@@ -196,10 +196,7 @@ function ambiguous(reference: string, picks: Pick[]): PersonResolution {
   return {
     reference,
     status: "ambiguous",
-    candidates: [...picks]
-      .sort((a, b) => b.probability - a.probability)
-      .slice(0, PEOPLE_MAX_CANDIDATES)
-      .map((pick) => pick.person),
+    candidates: picks.slice(0, PEOPLE_MAX_CANDIDATES).map((pick) => pick.person),
   }
 }
 
