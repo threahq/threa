@@ -43,8 +43,8 @@ const noopSubscribe = () => () => {}
 
 /**
  * Tracks messages that arrive via socket while the stream is open,
- * from users other than the current user. Returns a set of event IDs
- * that should briefly display a "new message" visual indicator.
+ * from users other than the current user. Returns a stable store of the
+ * event IDs that should briefly display a "new message" visual indicator.
  *
  * Each ID auto-expires after the CSS animation completes (~2s).
  *
