@@ -168,7 +168,7 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
           <div
             ref={split.containerRef}
             data-editor-zone="panel"
-            data-aside-column
+            data-aside-surface
             className="flex min-h-0 min-w-0 shrink-0 flex-col gap-3"
             style={{ width: columnWidth }}
           >
