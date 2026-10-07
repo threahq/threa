@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react"
-import { useUnreadCounts } from "./use-unread-counts"
-import { useActivityCounts } from "./use-activity-counts"
+import { useStreamUnreadState } from "./use-unread-counts"
 import { usePageActivity } from "./use-page-activity"
 import { computeAutoReadAttention } from "@/lib/auto-read-attention"
 import { useReadCommitQueue } from "@/sync/read-commit-queue"
@@ -71,19 +70,16 @@ export function useAutoMarkAsRead(
   options: UseAutoMarkAsReadOptions = {}
 ) {
   const { enabled = true, partial = false, readPointerEventId = null, activityHealEnabled = true } = options
-  const { getUnreadCount } = useUnreadCounts(workspaceId)
-  const { getActivityCount } = useActivityCounts(workspaceId)
+  const { unreadCount, activityCount } = useStreamUnreadState(workspaceId, streamId)
   const canAutoRead = useAutoReadAttention()
   const queue = useReadCommitQueue()
-  // Effect DEPS, not just reads: both hooks subscribe this component to the
-  // unread store, so an `activity:created` landing while the frontier is
+  // Effect DEPS, not just reads: this hook subscribes the component to this
+  // stream's unread and activity counts, so an `activity:created` landing while the frontier is
   // unchanged re-runs the effect through these values and re-fires the mark
   // that clears it. The old code got that re-fire by accident — `markAsRead`'s
   // identity churned every render, re-running the effect — so stable deps
   // alone would silently kill the activity-arrival re-mark (witness finding
   // on #1882).
-  const unreadCount = getUnreadCount(streamId)
-  const activityCount = getActivityCount(streamId)
 
   const streamIdRef = useRef(streamId)
   streamIdRef.current = streamId

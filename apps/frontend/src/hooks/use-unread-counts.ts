@@ -4,7 +4,7 @@ import { toast } from "sonner"
 import { useWorkspaceService, useStreamService } from "@/contexts"
 import { workspaceKeys } from "./use-workspaces"
 import { streamKeys } from "./use-streams"
-import { useWorkspaceUnreadState } from "@/stores/workspace-store"
+import { getWorkspaceUnreadState, useWorkspaceUnreadState } from "@/stores/workspace-store"
 import { db, type CachedUnreadState } from "@/db"
 import { applyInboxHeld, applyStreamReadOrdinal, deriveActivityCounts } from "@/sync/unread-counters"
 import { commitCounterMutation } from "@/sync/catch-up-batch"
@@ -211,10 +211,26 @@ const pickInboxState = (state: CachedUnreadState) => ({
   inboxHeldStreamIds: state.inboxHeldStreamIds,
 })
 
+/**
+ * One stream's counters. The unread row is rewritten for every message in the
+ * workspace, so an open stream reads only its own slice of it.
+ */
+export function useStreamUnreadState(workspaceId: string, streamId: string) {
+  const pick = useCallback(
+    (state: CachedUnreadState) => ({
+      unreadCount: state.unreadCounts[streamId] ?? 0,
+      activityCount: state.activityCounts?.[streamId] ?? 0,
+      inInbox:
+        !state.mutedStreamIds?.includes(streamId) &&
+        ((state.unreadCounts[streamId] ?? 0) > 0 || !!state.inboxHeldStreamIds?.includes(streamId)),
+    }),
+    [streamId]
+  )
+  return useWorkspaceUnreadState(workspaceId, pick) ?? { unreadCount: 0, activityCount: 0, inInbox: false }
+}
+
 export function useUnreadCounts(workspaceId: string) {
-  const queryClient = useQueryClient()
-  const streamService = useStreamService()
-  const workspaceService = useWorkspaceService()
+  const actions = useUnreadActions(workspaceId)
 
   // Read from IDB via useLiveQuery — reactive and offline-capable.
   // Use refs so callback identity stays stable; the sidebar memos that
@@ -247,6 +263,15 @@ export function useUnreadCounts(workspaceId: string) {
       ((unreadCountsRef.current[streamId] ?? 0) > 0 || inboxHeldStreamIdsRef.current.has(streamId)),
     []
   )
+
+  return { ...actions, unreadCounts, getUnreadCount, getTotalUnreadCount, isInInbox, isInboxHeld }
+}
+
+/** The read/unread mutations, without subscribing the caller to the unread row. */
+export function useUnreadActions(workspaceId: string) {
+  const queryClient = useQueryClient()
+  const streamService = useStreamService()
+  const workspaceService = useWorkspaceService()
 
   const markAsReadMutation = useMutation({
     mutationFn: async ({ streamId, lastEventId }: { streamId: string; lastEventId: string; partial?: boolean }) => {
@@ -461,7 +486,8 @@ export function useUnreadCounts(workspaceId: string) {
       // Record which of the requested ids were actually held before the
       // optimistic unhold, so a failed clear can restore exactly those — not
       // every requested id, some of which may not have been held at all.
-      const previouslyHeldStreamIds = streamIds.filter((streamId) => inboxHeldStreamIdsRef.current.has(streamId))
+      const held = getWorkspaceUnreadState(workspaceId)?.inboxHeldStreamIds ?? []
+      const previouslyHeldStreamIds = streamIds.filter((streamId) => held.includes(streamId))
       // Optimistic: unhold immediately, ahead of the response — the request's
       // own `stream:inbox_updated` echo (or a bootstrap) reconciles/corrects it
       // if the server disagrees (e.g. a stream re-held by a newer message since).
@@ -540,14 +566,9 @@ export function useUnreadCounts(workspaceId: string) {
   )
 
   return {
-    unreadCounts,
-    getUnreadCount,
-    getTotalUnreadCount,
     markAsRead,
     markUnread,
     markAllAsRead,
-    isInInbox,
-    isInboxHeld,
     clearInbox,
     isMarkingAsRead: markAsReadMutation.isPending,
     isMarkingAllAsRead: markAllAsReadMutation.isPending,

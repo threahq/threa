@@ -2,7 +2,7 @@ import { useState, useCallback, useRef, useMemo } from "react"
 import { searchMessages, type SearchFilters, type SearchResultItem } from "@/api"
 import { db, type CachedEvent } from "@/db"
 import { requestDecryption } from "@/lib/crypto/decrypt-cache"
-import { resolveDecryptContext } from "@/lib/crypto/decrypt-context"
+import { pickDecryptStreamFields, resolveDecryptContext } from "@/lib/crypto/decrypt-context"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { useStreamFromStore } from "@/stores/stream-store"
 
@@ -191,7 +191,7 @@ export function useStreamSearch({
   const session = useE2eSession(workspaceId, userId ?? "")
   const sessionRef = useRef(session)
   sessionRef.current = session
-  const streamRow = useStreamFromStore(workspaceId, streamId)
+  const streamRow = useStreamFromStore(workspaceId, streamId, pickDecryptStreamFields)
   const streamRowRef = useRef(streamRow)
   streamRowRef.current = streamRow
 

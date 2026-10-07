@@ -618,14 +618,23 @@ export function useWorkspaceStreamMemberships(workspaceId: string | undefined): 
   return useArrayStoreHook(workspaceId, "memberships", cached)
 }
 
+/** `_cachedAt` moves on every rewrite of a row, including rewrites that change nothing a reader renders. */
+function withoutCachedAt<T extends { _cachedAt: number }>(row: T | undefined): Omit<T, "_cachedAt"> | undefined {
+  if (!row) return undefined
+  const { _cachedAt, ...rest } = row
+  return rest
+}
+
 export function useWorkspaceStreamMembership(
   workspaceId: string | undefined,
   streamId: string,
   memberId: string | null
-): CachedStreamMembership | undefined {
+): Omit<CachedStreamMembership, "_cachedAt"> | undefined {
   const select = useCallback(
     (rows: CachedStreamMembership[]) =>
-      memberId ? rows.find((row) => row.streamId === streamId && row.memberId === memberId) : undefined,
+      memberId
+        ? withoutCachedAt(rows.find((row) => row.streamId === streamId && row.memberId === memberId))
+        : undefined,
     [streamId, memberId]
   )
   return useTableSelect(workspaceId, "memberships", select)
@@ -639,9 +648,9 @@ export function useWorkspaceStreamReadStates(workspaceId: string | undefined): C
 export function useWorkspaceStreamReadState(
   workspaceId: string | undefined,
   streamId: string
-): CachedStreamReadState | undefined {
+): Omit<CachedStreamReadState, "_cachedAt"> | undefined {
   const select = useCallback(
-    (rows: CachedStreamReadState[]) => rows.find((row) => row.streamId === streamId),
+    (rows: CachedStreamReadState[]) => withoutCachedAt(rows.find((row) => row.streamId === streamId)),
     [streamId]
   )
   return useTableSelect(workspaceId, "readStates", select)
@@ -706,6 +715,11 @@ export function useWorkspaceUnreadState<T>(
 ): CachedUnreadState | T | undefined {
   const cached = workspaceId ? cache.unreadState.get(workspaceId) : undefined
   return useSingletonStoreHook<"unreadState", CachedUnreadState | T>(workspaceId, "unreadState", cached, pick)
+}
+
+/** The unread row as its readers see it, for a handler that needs it once rather than a subscription. */
+export function getWorkspaceUnreadState(workspaceId: string): CachedUnreadState | undefined {
+  return getWorkspaceTableSnapshot(workspaceId, "unreadState")?.[0] ?? cache.unreadState.get(workspaceId)
 }
 
 export function useWorkspaceUserPreferences(workspaceId: string | undefined): CachedUserPreferences | undefined {
