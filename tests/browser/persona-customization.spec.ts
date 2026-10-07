@@ -190,6 +190,25 @@ test.describe("Persona roster + editors", () => {
     ).toBeVisible({ timeout: 10000 })
   })
 
+  test("should search the test chat with the stream search shortcut when the editor has no stream route", async ({
+    page,
+  }) => {
+    const { testId } = await loginAndCreateWorkspace(page, "persona-test-search")
+    const workspaceId = page.url().match(/\/w\/(ws_[^/]+)/)![1]
+    const forkRes = await page.request.post(`/api/workspaces/${workspaceId}/personas`, {
+      data: { sourcePersonaId: "persona_system_ariadne", name: `Search agent ${testId}` },
+    })
+    await expectApiOk(forkRes, "Persona fork")
+    const personaId = ((await forkRes.json()) as { persona: { id: string } }).persona.id
+
+    await page.goto(`/w/${workspaceId}/settings/personas/${personaId}`)
+    await page.getByRole("button", { name: "Start test chat" }).click()
+    await expect(page.getByRole("button", { name: "End test chat" })).toBeVisible({ timeout: 10000 })
+
+    await page.keyboard.press("ControlOrMeta+f")
+    await expect(page.getByPlaceholder("Search in conversation...")).toBeVisible()
+  })
+
   test("defaults pin at create: a later default change never switches an existing scratchpad's agent", async ({
     page,
   }) => {
