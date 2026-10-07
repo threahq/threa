@@ -353,4 +353,6 @@ export interface DatabaseOptions {
   from?: string
   /** Leave the database in place after the run */
   keep?: boolean
+  /** Run the database's `now()` on a simulated clock starting at this instant */
+  simClock?: Date
 }

@@ -11,6 +11,7 @@ import { Umzug } from "umzug"
 import path from "path"
 import { createDatabasePool } from "../../src/db"
 import type { DatabaseOptions } from "./types"
+import { SIM_CLOCK_POOL_CONFIG, SimClock, assertClockMatches } from "./sim-clock"
 
 const ADMIN_DATABASE_URL = "postgresql://threa:threa@localhost:5454/postgres"
 const DATABASE_HOST = "postgresql://threa:threa@localhost:5454"
@@ -143,7 +144,7 @@ async function cloneFromTemplate(templateName: string, newName: string): Promise
 export interface EvalTemplateResult {
   /** Template database name */
   templateName: string
-  /** Clone a new database from this template */
+  /** Clone a new database from this template; each clone's sim clock restarts at the template's start */
   clone: (label: string) => Promise<EvalDatabaseResult>
   /** Clean up the template database */
   cleanup: () => Promise<void>
@@ -155,15 +156,22 @@ export interface EvalTemplateResult {
  * Creates one database with migrations, then clones can be made quickly.
  * Use this when running multiple permutations in parallel.
  */
-export async function setupEvalTemplate(label: string): Promise<EvalTemplateResult> {
+export async function setupEvalTemplate(
+  label: string,
+  options: Pick<DatabaseOptions, "simClock"> = {}
+): Promise<EvalTemplateResult> {
   const templateName = `threa_eval_template_${Date.now()}_${label.replace(/[^a-z0-9]/gi, "_").toLowerCase()}`
+  const poolConfig = options.simClock ? SIM_CLOCK_POOL_CONFIG : undefined
 
   // Create and migrate the template
   await createEvalDatabase(templateName)
-  const templatePool = createDatabasePool(`${DATABASE_HOST}/${templateName}`)
-  const migrator = createQuietMigrator(templatePool)
-  await migrator.up()
-  await templatePool.end()
+  const templatePool = createDatabasePool(`${DATABASE_HOST}/${templateName}`, poolConfig)
+  try {
+    if (options.simClock) await SimClock.install(templatePool, options.simClock)
+    await createQuietMigrator(templatePool).up()
+  } finally {
+    await templatePool.end()
+  }
 
   let cloneCounter = 0
 
@@ -173,11 +181,13 @@ export async function setupEvalTemplate(label: string): Promise<EvalTemplateResu
       const cloneName = `${templateName}_${++cloneCounter}_${cloneLabel.replace(/[^a-z0-9]/gi, "_").toLowerCase()}`
       await cloneFromTemplate(templateName, cloneName)
 
-      const pool = createDatabasePool(`${DATABASE_HOST}/${cloneName}`)
+      const pool = createDatabasePool(`${DATABASE_HOST}/${cloneName}`, poolConfig)
+      const clock = options.simClock ? await SimClock.attach(pool, options.simClock) : undefined
 
       return {
         pool,
         databaseName: cloneName,
+        clock,
         cleanup: async () => {
           await pool.end()
           await dropEvalDatabase(cloneName)
@@ -198,6 +208,8 @@ export interface EvalDatabaseResult {
   pool: Pool
   /** Database name (for cleanup) */
   databaseName: string
+  /** Drives the database's `now()`; set only when the run opted into `simClock` */
+  clock: SimClock | undefined
   /** Cleanup function to drop the database */
   cleanup: () => Promise<void>
 }
@@ -219,9 +231,16 @@ export async function setupEvalDatabase(options: DatabaseOptions = {}): Promise<
   }
 
   const connectionString = `${DATABASE_HOST}/${databaseName}`
-  const pool = createDatabasePool(connectionString)
+  const pool = createDatabasePool(connectionString, options.simClock ? SIM_CLOCK_POOL_CONFIG : undefined)
 
+  let clock: SimClock | undefined
   try {
+    if (options.from) {
+      await assertClockMatches(pool, options.from, options.simClock !== undefined)
+      if (options.simClock) clock = await SimClock.attach(pool, options.simClock)
+    } else if (options.simClock) {
+      clock = await SimClock.install(pool, options.simClock)
+    }
     await createQuietMigrator(pool).up()
   } catch (error) {
     await pool.end()
@@ -232,6 +251,7 @@ export async function setupEvalDatabase(options: DatabaseOptions = {}): Promise<
   return {
     pool,
     databaseName,
+    clock,
     cleanup: async () => {
       await pool.end()
       if (options.keep) {
