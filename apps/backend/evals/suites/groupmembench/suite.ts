@@ -251,7 +251,7 @@ export function seedWorkspace(variant: Variant) {
       `\n  Replayed ${messageCount} messages in ${channels.length} channels into ${rows[0]!.conversations} conversations and ${rows[0]!.memos} memos (${seconds(Date.now() - startedAt)}, $${ctx.usage.getTotal().totalCost.toFixed(2)} generation)`
     )
     console.log(
-      `  ${result.unprocessedMemoItems} memo items still pending at ${ASKED_AT}, ${rows[0]!.abandoned} abandoned after failed model calls, ${result.deadLetteredJobs} pipeline jobs dead-lettered\n`
+      `  ${result.unprocessedMemoItems} memo items still pending at ${ASKED_AT}, ${rows[0]!.abandoned} abandoned after failed model calls, ${result.deadLetteredJobs} pipeline jobs and ${result.deadLetteredEvents} outbox events dead-lettered\n`
     )
 
     const streams = await ctx.pool.query<{ id: string }>(`SELECT id FROM streams WHERE workspace_id = $1`, [

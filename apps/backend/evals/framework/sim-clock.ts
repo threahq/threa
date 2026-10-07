@@ -43,6 +43,12 @@ export class SimClock {
     return clock
   }
 
+  /** Takes over a reused database's clock where it stopped, so time never runs backwards over its rows. */
+  static async resume(pool: Pool): Promise<SimClock> {
+    const result = await pool.query<{ t: Date }>("SELECT t FROM public.eval_clock")
+    return new SimClock(pool, result.rows[0].t)
+  }
+
   now = (): Date => new Date(this.current)
 
   async set(next: Date): Promise<void> {

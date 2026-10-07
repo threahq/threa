@@ -240,7 +240,7 @@ export async function setupEvalDatabase(options: DatabaseOptions = {}): Promise<
   try {
     if (options.from) {
       await assertClockMatches(pool, options.from, options.simClock !== undefined)
-      if (options.simClock) clock = await SimClock.attach(pool, options.simClock)
+      if (options.simClock) clock = await SimClock.resume(pool)
     } else if (options.simClock) {
       clock = await SimClock.install(pool, options.simClock)
     }

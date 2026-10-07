@@ -361,6 +361,6 @@ export interface DatabaseOptions {
   from?: string
   /** Leave the database in place after the run */
   keep?: boolean
-  /** Run the database's `now()` on a simulated clock starting at this instant */
+  /** Run the database's `now()` on a simulated clock starting at this instant; a database cloned `from` a kept one resumes where its clock stopped */
   simClock?: Date
 }

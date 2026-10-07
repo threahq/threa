@@ -29,12 +29,14 @@ import {
   MemoExplorerService,
   Reranker,
   createEmbeddingWorker,
+  createMemoBatchCheckWorker,
+  createMemoBatchProcessWorker,
   createMemoService,
 } from "../../src/features/memos"
 import { DelegationService } from "../../src/features/delegations"
 import { LinkPreviewOutboxHandler, LinkPreviewService, createLinkPreviewWorker } from "../../src/features/link-previews"
 import { EventService } from "../../src/features/messaging"
-import { StreamService, StreamStateRepository } from "../../src/features/streams"
+import { StreamService } from "../../src/features/streams"
 import { WorkspaceIntegrationService } from "../../src/features/workspace-integrations"
 import { MessageFormatter } from "../../src/lib/ai/message-formatter"
 import { createStaticConfigResolver } from "../../src/lib/ai/static-config-resolver"
@@ -53,13 +55,15 @@ import { SIM_CLOCK_POOL_CONFIG, type SimClock } from "../framework/sim-clock"
 const BATCH_TICK_MS = 30_000
 const SWEEP_TICK_MS = 600_000
 const IDLE_POLL_MS = 100
-const DRAIN_TIMEOUT_MS = 10 * 60 * 1000
+/** A hang guard; one tick's memo batches can run a few hundred model calls. */
+const DRAIN_TIMEOUT_MS = 30 * 60 * 1000
 
 const PIPELINE_QUEUES = [
   JobQueues.BOUNDARY_EXTRACT,
   JobQueues.EMBEDDING_GENERATE,
   JobQueues.CONVERSATION_EMBEDDING_GENERATE,
   JobQueues.LINK_PREVIEW_EXTRACT,
+  JobQueues.MEMO_BATCH_PROCESS,
 ]
 
 interface ReplayMessageBase {
@@ -79,6 +83,8 @@ export type ReplayMessage = ReplayMessageBase & ({ streamId: string } | { thread
 export interface ReplayResult {
   /** Pipeline jobs that exhausted their retries; their work is missing from the replay. */
   deadLetteredJobs: number
+  /** Outbox events a pipeline listener gave up on; whatever they would have triggered is missing too. */
+  deadLetteredEvents: number
   /** Memo work production would still have pending at `until`, such as conversations active then. */
   unprocessedMemoItems: number
 }
@@ -146,9 +152,15 @@ export async function startReplayPipeline(deps: {
     pollIntervalMs: 500,
     refillDebounceMs: 100,
     processingConcurrency: 3,
-    tiers: { [QueueTiers.LIGHT]: { maxActiveTokens: 6 } },
+    tiers: { [QueueTiers.LIGHT]: { maxActiveTokens: 6 }, [QueueTiers.HEAVY]: { maxActiveTokens: 3 } },
   })
   const light = { tier: QueueTiers.LIGHT, fairness: QueueFairness.NONE }
+  const memoBatchCheck = createMemoBatchCheckWorker({ pool, memoService, jobQueue })
+  jobQueue.registerHandler(
+    JobQueues.MEMO_BATCH_PROCESS,
+    createMemoBatchProcessWorker({ pool, memoService, jobQueue }),
+    { tier: QueueTiers.HEAVY, fairness: QueueFairness.WORKSPACE }
+  )
   jobQueue.registerHandler(JobQueues.EMBEDDING_GENERATE, createEmbeddingWorker({ pool, embeddingService }), light)
   jobQueue.registerHandler(
     JobQueues.CONVERSATION_EMBEDDING_GENERATE,
@@ -175,14 +187,21 @@ export async function startReplayPipeline(deps: {
     new ConversationEmbeddingHandler(pool, jobQueue),
     new LinkPreviewOutboxHandler(pool, jobQueue),
   ]
-  for (const handler of handlers) {
-    await handler.ensureListener()
-    outboxDispatcher.register(handler)
-  }
   const listenerIds = handlers.map((handler) => handler.listenerId)
 
-  jobQueue.start()
-  await outboxDispatcher.start()
+  try {
+    for (const handler of handlers) {
+      await handler.ensureListener()
+      outboxDispatcher.register(handler)
+    }
+    jobQueue.start()
+    await outboxDispatcher.start()
+  } catch (error) {
+    await outboxDispatcher.stop()
+    await jobQueue.stop()
+    await listenPool.end()
+    throw error
+  }
 
   // One statement reads one snapshot, so work in flight between the outbox and
   // the queue is always visible on one side or the other.
@@ -213,22 +232,51 @@ export async function startReplayPipeline(deps: {
   }
   const drain = () => waitIdle(null)
 
-  const countPendingMemoItems = async (exceptStreamIds: string[] = []): Promise<number> => {
-    const result = await pool.query<{ count: string }>(
-      "SELECT COUNT(*) AS count FROM memo_pending_items WHERE processed_at IS NULL AND NOT stream_id = ANY($1)",
-      [exceptStreamIds]
+  type MemoItemState = { streamId: string; failedAttempts: number; processed: boolean }
+  /** The items still pending, or with `ids` those items whatever became of them. */
+  const memoItems = async (ids: string[] | null = null): Promise<Map<string, MemoItemState>> => {
+    const result = await pool.query<{ id: string; stream_id: string; failed_attempts: number; processed: boolean }>(
+      `SELECT id, stream_id, failed_attempts, processed_at IS NOT NULL AS processed
+       FROM memo_pending_items
+       WHERE CASE WHEN $1::text[] IS NULL THEN processed_at IS NULL ELSE id = ANY($1) END`,
+      [ids]
     )
-    return Number(result.rows[0].count)
+    return new Map(
+      result.rows.map((row) => [
+        row.id,
+        { streamId: row.stream_id, failedAttempts: row.failed_attempts, processed: row.processed },
+      ])
+    )
   }
 
-  /** Returns the streams whose batch processed nothing: every item left in them was deferred or failed */
-  const runBatchCheck = async (): Promise<string[]> => {
-    const idle: string[] = []
-    for (const ready of await StreamStateRepository.findStreamsReadyToProcess(pool)) {
-      const result = await memoService.processBatch(ready.workspaceId, ready.streamId)
-      if (result.processed === 0) idle.push(ready.streamId)
+  /**
+   * Runs the production memo batch check at `tick` and waits for the batches it
+   * dispatched. Returns the streams whose batch left every item as it was, all
+   * deferred, and whether any item failed this tick.
+   */
+  const runBatchCheck = async (tick: number): Promise<{ settled: Set<string>; failed: boolean }> => {
+    const before = await memoItems()
+    await memoBatchCheck({
+      id: `replay_batch_${tick}`,
+      name: JobQueues.MEMO_BATCH_CHECK,
+      data: { workspaceId: "system" },
+    })
+    await drain()
+    const after = await memoItems([...before.keys()])
+    const changed = new Set<string>()
+    let failed = false
+    for (const [id, prior] of before) {
+      const current = after.get(id)
+      if (current && !current.processed && current.failedAttempts === prior.failedAttempts) continue
+      changed.add(prior.streamId)
+      if (current && current.failedAttempts > prior.failedAttempts) failed = true
     }
-    return idle
+    const processed = await pool.query<{ stream_id: string }>(
+      "SELECT stream_id FROM memo_stream_state WHERE last_processed_at = $1",
+      [new Date(tick)]
+    )
+    const settled = new Set(processed.rows.map((row) => row.stream_id).filter((streamId) => !changed.has(streamId)))
+    return { settled, failed }
   }
 
   const nextBoundary = (stepMs: number): number => (Math.floor(clock.now().getTime() / stepMs) + 1) * stepMs
@@ -236,16 +284,19 @@ export async function startReplayPipeline(deps: {
   /**
    * Fires each cron tick up to `target` at its own instant, after the pipeline
    * has finished what production would have finished by then. A batch tick can
-   * only matter while some stream holds memo items it has not yet found idle;
+   * only matter while some stream holds memo items it has not yet found settled;
    * items it deferred stay deferred until a sweep moves their conversation or a
    * new message arrives, so those wait for the next sweep tick. That releases a
    * conversation deferred for its quiet period up to one sweep interval late.
+   * Production retries a failed memo item on a later 30s tick, so a tick that
+   * failed one waits that long in real time too, letting transient AI errors clear.
    */
   const advanceTo = async (target: Date): Promise<void> => {
-    let idleStreamIds: string[] = []
+    let settled = new Set<string>()
     while (nextBoundary(BATCH_TICK_MS) <= target.getTime()) {
       await drain()
-      const batchDue = (await countPendingMemoItems(idleStreamIds)) > 0
+      const pending = await memoItems()
+      const batchDue = [...pending.values()].some((item) => !settled.has(item.streamId))
       const tick = batchDue ? nextBoundary(BATCH_TICK_MS) : nextBoundary(SWEEP_TICK_MS)
       if (tick > target.getTime()) return
       await clock.set(new Date(tick))
@@ -257,7 +308,9 @@ export async function startReplayPipeline(deps: {
         })
         await drain()
       }
-      idleStreamIds = await runBatchCheck()
+      const result = await runBatchCheck(tick)
+      settled = result.settled
+      if (result.failed) await Bun.sleep(BATCH_TICK_MS)
     }
   }
 
@@ -321,7 +374,15 @@ export async function startReplayPipeline(deps: {
       "SELECT COUNT(*) AS count FROM queue_messages WHERE queue_name = ANY($1) AND dlq_at IS NOT NULL",
       [PIPELINE_QUEUES]
     )
-    return { deadLetteredJobs: Number(dead.rows[0].count), unprocessedMemoItems: await countPendingMemoItems() }
+    const deadEvents = await pool.query<{ count: string }>(
+      "SELECT COUNT(*) AS count FROM outbox_dead_letters WHERE listener_id = ANY($1)",
+      [listenerIds]
+    )
+    return {
+      deadLetteredJobs: Number(dead.rows[0].count),
+      deadLetteredEvents: Number(deadEvents.rows[0].count),
+      unprocessedMemoItems: (await memoItems()).size,
+    }
   }
 
   return {
