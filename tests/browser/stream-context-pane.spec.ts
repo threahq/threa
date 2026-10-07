@@ -5,7 +5,8 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
  * "In this stream" is a pane of its own (`context:<streamId>[:<filter>]`)
  * beside the stream it lists: the stream stays usable, a jump scrolls it in
  * place with the overview still open, and a thread's overview opens to the
- * right of the thread and closes with it.
+ * right of the thread and closes with it. Where it can't sit beside its stream
+ * (a phone, the board) it is a bottom drawer over that stream.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -41,6 +42,7 @@ async function seedChannelWithThread(page: Page, prefix: string, filler = 0) {
 }
 
 const overview = (page: Page) => page.getByRole("region", { name: "In this stream" })
+const drawer = (page: Page) => page.getByRole("dialog", { name: "In this stream" })
 const tabPane = (page: Page, id: string) => page.locator(`[data-panel-tab="${id}"]`)
 const panelParam = (page: Page) => new URL(page.url()).searchParams.get("panel")
 
@@ -111,7 +113,7 @@ test("should open a thread's overview beside the thread and close it with the th
   await expect(overview(page)).toHaveCount(0)
 })
 
-test("phone: a jump closes the pane over the stream and Back brings it back", async ({ page }) => {
+test("phone: the overview is a drawer over the stream; a jump closes it and Back brings it back", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 })
   const { workspaceId, streamId, anchorId } = await seedChannelWithThread(page, "context-phone", 40)
 
@@ -119,14 +121,89 @@ test("phone: a jump closes the pane over the stream and Back brings it back", as
   await page.goto(`/w/${workspaceId}/s/${streamId}`)
   await page.locator("header").getByRole("button", { name: "Stream actions" }).click()
   await page.getByRole("button", { name: /In this stream/ }).click()
-  await expect(overview(page).getByText("example.com").first()).toBeVisible()
+  await expect(drawer(page).getByText("example.com").first()).toBeVisible()
+  await expect.poll(() => panelParam(page)).toBe(`context:${streamId}`)
+  // A drawer, not a page: the stream stays on show under it, and the drawer has no page header of its own.
+  await expect(page.locator('[data-editor-zone="main"]')).toBeVisible()
+  await expect(drawer(page).getByRole("button", { name: "Back" })).toHaveCount(0)
 
-  await overview(page).getByRole("button", { name: "Go to message" }).last().click()
-  await expect(overview(page)).toHaveCount(0)
+  await drawer(page).getByRole("button", { name: "Go to message" }).last().click()
+  await expect(drawer(page)).toHaveCount(0)
   await expect(page.locator(`[data-event-id][data-message-id="${anchorId}"]`)).toBeInViewport()
 
   await page.goBack()
-  await expect(overview(page).getByText("example.com").first()).toBeVisible()
+  await expect(drawer(page).getByText("example.com").first()).toBeVisible()
+
+  // Dismissing it pops its entry, so Back leaves the stream rather than reopening it.
+  await page.keyboard.press("Escape")
+  await expect(drawer(page)).toHaveCount(0)
+  await expect.poll(() => panelParam(page)).toBeNull()
+})
+
+test("phone: a thread's overview is a drawer over the thread, and closing it leaves the thread", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId, threadId } = await seedChannelWithThread(page, "context-phone-thread")
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadId}.context:${threadId}`)
+  await expect(drawer(page).getByText("example.org", { exact: true })).toBeVisible({ timeout: 30_000 })
+  await expect(tabPane(page, threadId).getByText("thread link")).toBeVisible()
+
+  await page.keyboard.press("Escape")
+  await expect(drawer(page)).toHaveCount(0)
+  await expect.poll(() => panelParam(page)).toBe(threadId)
+  await expect(tabPane(page, threadId).getByText("thread link")).toBeVisible()
+})
+
+test("phone: the main view's overview opened last is a drawer over the main view, not under a thread", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId, threadId } = await seedChannelWithThread(page, "context-phone-main")
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadId}.context:${streamId}*`)
+  await expect(drawer(page).getByText("example.com").first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.locator('[data-editor-zone="main"]')).toBeVisible()
+  await expect(tabPane(page, threadId)).not.toBeVisible()
+})
+
+test("board: the overview opens as a drawer over the thread panel", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, threadId } = await seedChannelWithThread(page, "context-board")
+  await page.goto(`/w/${workspaceId}/board?panel=${threadId}`)
+
+  await page.getByRole("button", { name: "In this stream", exact: true }).click()
+  await expect.poll(() => panelParam(page)).toBe(`${threadId}-context:${threadId}`)
+  await expect(drawer(page).getByText("example.org", { exact: true })).toBeVisible()
+  await expect(page.getByTestId("panel").getByText("thread link").first()).toBeAttached()
+
+  await page.keyboard.press("Escape")
+  await expect(drawer(page)).toHaveCount(0)
+  await expect.poll(() => panelParam(page)).toBe(threadId)
+  await expect(page.getByText("thread link").first()).toBeVisible()
+})
+
+test("should show the toggle off while the overview is folded behind its thread", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId, threadId } = await seedChannelWithThread(page, "context-fold")
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadId}-context:${threadId}`)
+  await expect(overview(page).getByText("example.org", { exact: true })).toBeVisible({ timeout: 30_000 })
+
+  // Too narrow for two columns, the two fold into one section, the thread worked in on show.
+  await tabPane(page, threadId).getByText("thread link").click()
+  await page.setViewportSize({ width: 1000, height: 900 })
+  await expect(tabPane(page, threadId).getByRole("button", { name: "1 more tab" })).toBeVisible()
+  const toggle = tabPane(page, threadId).getByRole("button", { name: "In this stream" })
+  await expect(toggle).toHaveAttribute("aria-pressed", "false")
+  await expect(overview(page)).not.toBeInViewport()
+
+  // Bringing it forward changes nothing in the URL, so it is no step in history either.
+  const entries = await page.evaluate(() => history.length)
+  await toggle.click()
+  await expect(overview(page)).toBeInViewport()
+  expect(panelParam(page)).toBe(`${threadId}-context:${threadId}`)
+  expect(await page.evaluate(() => history.length)).toBe(entries)
 })
 
 test("should offer the overview from an archived channel's mobile sheet", async ({ page }) => {

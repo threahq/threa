@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest"
 import { render, screen, act, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createMemoryRouter, Link, RouterProvider, useLocation, useSearchParams } from "react-router-dom"
-import { PanelProvider, PaneScope, useFrontPanel, usePanel } from "./panel-context"
+import { PanelProvider, PaneScope, useFrontPanel, useMainOwnsCover, usePanel } from "./panel-context"
 
 /**
  * On mobile an open panel takes over the whole screen, so the platform back
@@ -157,6 +157,7 @@ function TabsProbe() {
       <span data-testid="loc">{decodeURIComponent(`${location.pathname}${location.search}`)}</span>
       <span data-testid="front">{useFrontPanel()}</span>
       <button onClick={() => setCurrentPane(null)}>work in main</button>
+      {useMainOwnsCover() && <span>main owns the deep link</span>}
       <Link to={getPanelUrl("stream_b")}>open b</Link>
       {layout.columns.flat().flatMap((section) =>
         section.ids.map((id) => (
@@ -179,6 +180,7 @@ function ScopedTab() {
       <button onClick={closePanel}>{`close ${panelId}`}</button>
       <Link to={getNavigateUrl("stream_x")}>{`${panelId} to x`}</Link>
       <Link to={getPanelUrl("stream_y")}>{`${panelId} opens y`}</Link>
+      <Link to={getPanelUrl(`context:${panelId}`)}>{`${panelId} overview`}</Link>
       {/* A section folded on screen lists tabs of other URL sections. */}
       <Link to={getTabUrl("stream_a")} replace>{`${panelId} shows stream_a`}</Link>
       <button onClick={() => openPanel(`${panelId}_real`, { replace: true })}>{`promote ${panelId}`}</button>
@@ -346,6 +348,40 @@ describe("panel tabs history", () => {
 
     await user.click(screen.getByRole("button", { name: "close stream_a" }))
     expect(loc()).toBe(`${PAGE}?panel=stream_b`)
+  })
+
+  it("should give a reloaded deep link to the stream an overview lists, not the overview", async () => {
+    mountTabs([`${PAGE}?panel=stream_a.context:stream_a&m=msg_1`])
+    expect(screen.queryAllByText(/owns the deep link/).map((owner) => owner.textContent)).toEqual([
+      "stream_a owns the deep link",
+    ])
+  })
+
+  it("should give a reloaded deep link to main when the overview lists main", async () => {
+    mountTabs([`${PAGE}?panel=context:stream_main&m=msg_1`])
+    expect(screen.queryAllByText(/owns the deep link/).map((owner) => owner.textContent)).toEqual([
+      "main owns the deep link",
+    ])
+  })
+
+  it("should close a stream's overview when another stream takes its tab", async () => {
+    const { user, loc } = mountTabs([`${PAGE}?panel=stream_a-context:stream_a`])
+
+    await user.click(screen.getByRole("link", { name: "stream_a to x" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_x`)
+  })
+
+  it("should keep a stream under its overview when the overview opens off the stream page", async () => {
+    const { user, back, loc } = mountTabs(["/w/ws/board", "/w/ws/board?panel=stream_a"])
+
+    await user.click(screen.getByRole("link", { name: "stream_a overview" }))
+    expect(loc()).toBe("/w/ws/board?panel=stream_a-context:stream_a")
+    await user.click(screen.getByRole("button", { name: "close context:stream_a" }))
+    expect(loc()).toBe("/w/ws/board?panel=stream_a")
+
+    // The close popped the overview's entry rather than stacking another.
+    await back()
+    expect(loc()).toBe("/w/ws/board")
   })
 
   it("should drop the deep link when its pane's row switches to a tab of another section", async () => {

@@ -32,7 +32,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { SidebarActionMenu, type SidebarActionItem } from "@/components/layout/sidebar/sidebar-actions"
 import { cn } from "@/lib/utils"
-import { floatingPanelTab } from "@/lib/panel-tabs"
+import { floatingPanelTab, primaryPanelOf } from "@/lib/panel-tabs"
 import {
   useStreamOrDraft,
   useStreamError,
@@ -70,7 +70,7 @@ import {
 } from "@/components/aside"
 import { AsideHeaderChip } from "@/components/aside/aside-header-chip"
 import { asideHoldsPanel, useAsideForHost } from "@/stores/aside-store"
-import { PanelTabStack } from "@/components/layout/panel-host"
+import { PaneDrawer, PanelTabStack, useFittedPanelLayout } from "@/components/layout/panel-host"
 import { PaneShortcuts } from "@/components/layout/pane-shortcuts"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useCoverClose } from "@/hooks/use-cover-close"
@@ -96,7 +96,6 @@ export function StreamPage() {
     useStreamOrDraft(workspaceId!, streamId!)
   const { isMobile } = useSidebar()
   const { panelId, isPanelOpen, layout, setCurrentPane } = usePanel()
-  const [isContextOpen, toggleContext] = useStreamContextToggle(streamId!)
   const containerRef = useRef<HTMLDivElement>(null)
   const mainPaneRef = useRef<HTMLDivElement>(null)
   const containerWidth = useElementWidth(containerRef)
@@ -106,9 +105,12 @@ export function StreamPage() {
   const asideIsSheet = asideSheetOnly || !asideColumnFits(containerWidth, isPanelOpen ? MIN_PANEL_WIDTH : 0)
   const openAside = useAsideForHost(asideHostKey)
   const asideColumn = asideIsSheet ? null : openAside
+  // A phone's pages, without the drawers over them; the one on show, null for the main view.
+  const phonePages = useFittedPanelLayout(1, true)
+  const pagePanel = isMobile ? primaryPanelOf(phonePages) : panelId
   // A thread the sheet holds is mounted there and nowhere else: not in the
   // slot, not as the phone's takeover behind the sheet.
-  const panelInAside = asideIsSheet && openAside !== null && asideHoldsPanel(panelId, openAside.hostStreamId)
+  const panelInAside = asideIsSheet && openAside !== null && asideHoldsPanel(pagePanel, openAside.hostStreamId)
   // The aside clamps against the other columns' minimums.
   const asideLayout = useAsideColumnLayout(asideColumn, containerWidth, isPanelOpen ? MIN_PANEL_WIDTH : 0)
   const {
@@ -131,6 +133,8 @@ export function StreamPage() {
     reservedWidth: asideLayout.width,
     animates: !isMobile,
   })
+  const fittedPanels = useFittedPanelLayout(maxColumns, false)
+  const [isContextOpen, toggleContext] = useStreamContextToggle(streamId!, isMobile ? phonePages : fittedPanels)
 
   useTypeToFocus()
 
@@ -886,7 +890,7 @@ export function StreamPage() {
   // On mobile the panel takes over the full screen, but the timeline stays mounted
   // behind it so closing a thread lands back where the reader was rather than
   // re-running the opening scroll.
-  const mobileTakeover = isMobile && isPanelOpen && !panelInAside
+  const mobileTakeover = isMobile && pagePanel !== null && !panelInAside
   const tabStackShown = isMobile ? mobileTakeover : showContent && !panelInAside
   // A tab floating over the page leaves everything else under it out of reach.
   const floating = tabStackShown && floatingPanelTab(layout, isMobile) !== null
@@ -941,6 +945,8 @@ export function StreamPage() {
             <AsideColumn workspaceId={workspaceId} aside={asideColumn} layout={asideLayout} />
           </Pane>
         )}
+        {/* One drawer at a time: the aside's sheet holds the page under the overview's. */}
+        {isMobile && !(asideIsSheet && openAside) && <PaneDrawer workspaceId={workspaceId} page={pagePanel} />}
         {asideIsSheet && openAside && (
           <AsideMobileSheet
             workspaceId={workspaceId}

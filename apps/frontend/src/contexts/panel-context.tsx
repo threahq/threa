@@ -122,6 +122,21 @@ export function contextPanelOf(layout: PanelLayout, streamId: string): string | 
   return panelIdsOf(layout).find((id) => parseContextPanel(id)?.streamId === streamId) ?? null
 }
 
+/** A pane that lists its stream rather than showing one: where it can't sit
+ *  beside that stream (a phone, the board), it is a drawer over it. */
+export function presentsAsDrawer(panelId: string): boolean {
+  return parseContextPanel(panelId) !== null
+}
+
+/** The pane that shows `?m` set from `panelId`: a draft or an overview shows no
+ *  messages of its own, so its stream does — main (null) unless it is a tab. */
+export function coverPaneOf(layout: PanelLayout, panelId: string | null): string | null {
+  if (panelId === null) return null
+  const streamId = parseComposePanel(panelId) ?? parseContextPanel(panelId)?.streamId
+  if (!streamId) return panelId
+  return panelIdsOf(layout).includes(streamId) ? streamId : null
+}
+
 /** The panes that belong to a stream's own: its draft and its overview. */
 function panesOwnedBy(layout: PanelLayout, streamId: string): string[] {
   return panelIdsOf(layout).filter(
@@ -256,8 +271,13 @@ function buildValue(
 ): PanelContextValue {
   const { layout } = ops
   const own = scopeId ?? primaryPanelOf(layout)
-  const supersede = (current: PanelLayout, panelId: string) =>
-    own ? replacePanelTab(current, own, panelId) : openPanelTab(current, panelId)
+  const supersede = (current: PanelLayout, panelId: string) => {
+    if (!own) return openPanelTab(current, panelId)
+    // An overview lists its own stream, not whatever took that stream's tab.
+    const overview = panelId === own ? null : contextPanelOf(current, own)
+    const next = replacePanelTab(current, own, panelId)
+    return overview ? closePanelTab(next, overview) : next
+  }
   return {
     panelId: own,
     layout,
@@ -318,7 +338,7 @@ function followPanes(state: PaneState, layout: PanelLayout, deepLink: string | n
   // was set in is still the one following it.
   const set = !restored && deepLink !== null && deepLink !== state.deepLink
   let coverOwner = state.coverOwner
-  if (set) coverOwner = inMain ? null : front
+  if (set) coverOwner = inMain ? null : coverPaneOf(layout, front)
   else if (moved) coverOwner = followPanel(state.layout, layout, coverOwner)
   return { layout, deepLink, front, inMain, coverOwner }
 }
@@ -346,7 +366,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
   // reload showing what the URL's last open showed.
   const [paneState, setPaneState] = useState<PaneState>(() => {
     const front = layout.focused ?? newestPanelOf(layout)
-    return { layout, deepLink, front, inMain: false, coverOwner: front }
+    return { layout, deepLink, front, inMain: false, coverOwner: coverPaneOf(layout, front) }
   })
   let panes = paneState
   if (panes.layout !== layout || panes.deepLink !== deepLink) {
@@ -366,7 +386,14 @@ export function PanelProvider({ children }: PanelProviderProps) {
 
   const contextual = useCallback(
     (current: PanelLayout, panelId: string, scopeId: string | null) => {
-      if (!tabbed) return openPanelTab(NO_PANELS, panelId)
+      if (!tabbed) {
+        // Without tabs a panel replaces the one open, except a drawer, which keeps its stream under it.
+        const primary = primaryPanelOf(current)
+        if (!presentsAsDrawer(panelId) || primary === null || presentsAsDrawer(primary)) {
+          return openPanelTab(NO_PANELS, panelId)
+        }
+        return openPanelTabBeside(openPanelTab(NO_PANELS, primary), primary, panelId)
+      }
       return scopeId ? openPanelTabBeside(current, scopeId, panelId) : openPanelTab(current, panelId)
     },
     [tabbed]
@@ -592,6 +619,24 @@ export function useMainOwnsCover(): boolean {
   const ops = useContext(PanelOpsContext)
   if (!ops) throw new Error("useMainOwnsCover must be used within a PanelProvider")
   return ops.coverOwner === null
+}
+
+const InPaneDrawerContext = createContext(false)
+export const InPaneDrawerProvider = InPaneDrawerContext.Provider
+/** Whether this pane shows as a drawer over its stream rather than as a pane of the grid. */
+export function useInPaneDrawer(): boolean {
+  return useContext(InPaneDrawerContext)
+}
+
+const DisplayedPanelLayoutContext = createContext<PanelLayout | null>(null)
+
+/** Where the screen arranges the tabs differently from the URL: a narrow window folds sections together. */
+export const DisplayedPanelLayoutProvider = DisplayedPanelLayoutContext.Provider
+
+/** The tabs as arranged on screen. */
+export function useDisplayedPanelLayout(): PanelLayout {
+  const { layout } = usePanel()
+  return useContext(DisplayedPanelLayoutContext) ?? layout
 }
 
 /** The panel last worked in, even while the user is in the main view. */

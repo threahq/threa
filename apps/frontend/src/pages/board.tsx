@@ -6,9 +6,9 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { ThreadPanelSlot, panelTakeoverClasses } from "@/components/layout"
 import { AsideSlot, useAsideHost, useAsideIsSheet } from "@/components/aside"
 import { asideHoldsPanel, useAsideForHost } from "@/stores/aside-store"
-import { PanelHost } from "@/components/layout/panel-host"
+import { PaneDrawer, PanelHost } from "@/components/layout/panel-host"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
-import { usePanel, usePreferencesOptional, useSidebar } from "@/contexts"
+import { presentsAsDrawer, usePanel, usePreferencesOptional, useSidebar } from "@/contexts"
 import { usePanelLayout, useTypeToFocus } from "@/hooks"
 import { resolveStreamName } from "@/lib/streams"
 import { localStartOfDayMs } from "@/lib/dates"
@@ -209,7 +209,9 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // order, or focus walks into content nobody can see.
   const asideStage = !asideIsSheet && asideOpen !== null
   const { isMobile } = useSidebar()
-  const { panelId, isPanelOpen, closePanel } = usePanel()
+  const { panelId, closePanel } = usePanel()
+  // A drawer opens over the board, its panel slot closed.
+  const isPanelOpen = panelId !== null && !presentsAsDrawer(panelId)
   // A thread the aside's surface holds (the stage's host pane, or the phone's
   // sheet) is mounted there and nowhere else: not in the slot, not as the
   // phone's takeover behind the sheet.
@@ -1041,6 +1043,9 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
         </ThreadPanelSlot>
       )}
       <AsideSlot workspaceId={workspaceId} hostKey={asideHostKey} />
+      {!(asideIsSheet && asideOpen !== null) && (
+        <PaneDrawer workspaceId={workspaceId} page={isPanelOpen ? panelId : null} />
+      )}
     </div>
   )
 }
