@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, test, mock, spyOn } from "bun:test"
 import { WorkspaceAgent, type WorkspaceAgentDeps, type WorkspaceAgentInput } from "./researcher"
 import { WORKSPACE_AGENT_MAX_PLANNED_QUERIES } from "./config"
-import { buildBaselineQueries } from "./query/baseline-queries"
+import { buildBaselineQueries, type BaselineQuery } from "./query/baseline-queries"
 import type { Pool } from "pg"
 import { SearchRepository } from "../../search"
 import type { AI } from "@threahq/agent-runtime"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
 import type { EmbeddingServiceLike } from "../../memos"
+import { UserRepository } from "../../workspaces"
+import type { PeopleResolver } from "./people-resolver"
 
 /**
  * Build a stub WorkspaceAgent dep set sufficient to exercise the abort-before-work
@@ -180,7 +182,17 @@ describe("WorkspaceAgent abort/deadline checkpoints", () => {
  * agent and `runSearchLoop` is called directly, since the entry point goes through `withClient` + repositories + AI.
  */
 describe("WorkspaceAgent runSearchLoop", () => {
-  test("plans once and runs the planned queries once, capped after dropping repeats and baseline queries", async () => {
+  afterEach(() => mock.restore())
+
+  const planned = (...queries: string[]): BaselineQuery[] =>
+    queries.map((query) => ({ target: "memos", type: "semantic", query }))
+
+  function runLoop(options: {
+    query: string
+    people: string[]
+    peopleResolver?: PeopleResolver
+    queries?: BaselineQuery[]
+  }) {
     const configResolver = {
       resolve: mock(async () => ({ modelId: "openrouter:anthropic/claude-haiku-4.5", temperature: 0.1 })),
     } as unknown as ConfigResolver
@@ -189,23 +201,20 @@ describe("WorkspaceAgent runSearchLoop", () => {
       ai: {} as AI,
       configResolver,
       embeddingService: {} as unknown as EmbeddingServiceLike,
+      peopleResolver: options.peopleResolver,
     })
-    const planRetrieval = mock(async () => ({
+    const planRetrieval = mock(async (_params: { contextSummary: string }) => ({
       reasoning: "plan",
-      queries: [
-        ...buildBaselineQueries("what did we decide"),
-        ...["plan-0", " PLAN-0", ...Array.from({ length: 7 }, (_, i) => `plan-${i + 1}`)].map((query) => ({
-          target: "memos" as const,
-          type: "semantic" as const,
-          query,
-        })),
-      ],
+      queries: options.queries ?? planned("plan-0"),
+      people: options.people,
     }))
-    const executeQueries = mock(async (_pool: Pool, _queries: Array<{ query: string }>) => ({
-      memos: [],
-      messages: [],
-      attachments: [],
-    }))
+    const executeQueries = mock(
+      async (_pool: Pool, _queries: Array<{ target: string; type: string; query: string; authorId?: string }>) => ({
+        memos: [],
+        messages: [],
+        attachments: [],
+      })
+    )
     Object.assign(agent, { planRetrieval, executeQueries })
 
     const runSearchLoop = (
@@ -216,16 +225,17 @@ describe("WorkspaceAgent runSearchLoop", () => {
           accessSpec: { type: "all_streams" },
           accessibleStreamIds: string[],
           roomStreamIds: string[],
+          names: Map<string, { name: string; slug: string }>,
           substeps: Array<{ text: string; at: string }>
-        ) => Promise<unknown>
+        ) => Promise<{ retrievedContext: string | null }>
       }
     ).runSearchLoop.bind(agent)
-    await runSearchLoop(
+    const result = runSearchLoop(
       {} as Pool,
       {
         workspaceId: "ws_1",
         streamId: "stream_1",
-        query: "what did we decide",
+        query: options.query,
         conversationHistory: [],
         invokingUserId: "user_1",
         searchFlag: "on",
@@ -233,8 +243,22 @@ describe("WorkspaceAgent runSearchLoop", () => {
       { type: "all_streams" },
       ["stream_1"],
       [],
+      new Map([["user_1", { name: "Ada", slug: "ada" }]]),
       []
     )
+    return { result, planRetrieval, executeQueries }
+  }
+
+  test("plans once and runs the planned queries once, capped after dropping repeats and baseline queries", async () => {
+    const { result, planRetrieval, executeQueries } = runLoop({
+      query: "what did we decide",
+      people: [],
+      queries: [
+        ...buildBaselineQueries("what did we decide"),
+        ...planned("plan-0", " PLAN-0", ...Array.from({ length: 7 }, (_, i) => `plan-${i + 1}`)),
+      ],
+    })
+    await result
 
     const plannedRuns = executeQueries.mock.calls.filter(([, queries]) => queries.some((q) => q.query === "plan-0"))
     expect({
@@ -243,6 +267,46 @@ describe("WorkspaceAgent runSearchLoop", () => {
     }).toEqual({
       plans: 1,
       plannedRuns: [Array.from({ length: WORKSPACE_AGENT_MAX_PLANNED_QUERIES }, (_, i) => `plan-${i}`)],
+    })
+  })
+
+  test("tells the planner who is asking, searches what a resolved person wrote, and reports who each name is", async () => {
+    const listByCircle = spyOn(UserRepository, "listByCircle").mockResolvedValue([])
+    const resolve = mock(async () => [
+      { reference: "Kate", status: "resolved" as const, person: { id: "user_kate", name: "Kate Moss", slug: "kate" } },
+      {
+        reference: "John",
+        status: "ambiguous" as const,
+        candidates: [
+          { id: "user_john_a", name: "John Ash", slug: "john-a" },
+          { id: "user_john_b", name: "John Birch", slug: "john-b" },
+        ],
+      },
+    ])
+    const { result, planRetrieval, executeQueries } = runLoop({
+      query: "what did Kate tell John",
+      people: ["Kate", "John"],
+      peopleResolver: { resolve } as unknown as PeopleResolver,
+    })
+    const { retrievedContext } = await result
+
+    expect({
+      askedBy: planRetrieval.mock.calls[0]![0].contextSummary.startsWith("## Asked by\nAda (@ada)"),
+      rosterFor: listByCircle.mock.calls[0]![2].askerId,
+      authorQueries: executeQueries.mock.calls.flatMap(([, queries]) => queries.filter((q) => q.authorId)),
+      people: retrievedContext?.slice(retrievedContext.indexOf("## People")),
+    }).toEqual({
+      askedBy: true,
+      rosterFor: "user_1",
+      authorQueries: [
+        { target: "messages", type: "semantic", query: "what did Kate tell John", authorId: "user_kate" },
+      ],
+      people: [
+        "## People",
+        "",
+        '- "Kate" is Kate Moss (kate).',
+        '- "John" could be John Ash (john-a) or John Birch (john-b). If the answer depends on which, ask which one is meant, naming them without @-mentions.',
+      ].join("\n"),
     })
   })
 })

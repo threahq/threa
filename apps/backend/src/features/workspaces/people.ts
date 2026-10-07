@@ -46,7 +46,8 @@ function streamPeopleSql(workspaceId: string): QueryConfig {
     SELECT m.stream_id, m.author_id FROM messages m WHERE m.workspace_id = ${workspaceId} AND m.deleted_at IS NULL`
 }
 
-function peopleOfStreamsSql(workspaceId: string, streamIdsSql: QueryConfig): QueryConfig {
+/** `u.id IN (…)`: the members and authors of the streams `streamIdsSql` selects. */
+export function peopleOfStreamsSql(workspaceId: string, streamIdsSql: QueryConfig): QueryConfig {
   // eslint-disable-next-line threa/workspace-scoped-sql -- streamPeopleSql pins workspace_id in both arms, checked where it is written
   return composeSql`u.id IN (
     SELECT sp.person_id FROM (${streamPeopleSql(workspaceId)}) sp WHERE sp.stream_id IN (${streamIdsSql})

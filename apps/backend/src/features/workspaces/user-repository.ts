@@ -3,7 +3,15 @@ import type { QueryConfig } from "pg"
 import type { Querier } from "../../db"
 import { composeSql, sql } from "../../db"
 import { HttpError } from "../../lib/errors"
-import { peopleScopeSql, type PeopleScope } from "./people"
+import { peopleOfStreamsSql, peopleScopeSql, type PeopleScope } from "./people"
+
+export interface RosterPerson {
+  id: string
+  name: string
+  slug: string
+  description: string | null
+  circle: 1 | 2 | 3
+}
 
 export const KNOWN_ROLE_SLUGS: ReadonlySet<string> = new Set(WORKSPACE_USER_ROLES)
 
@@ -369,6 +377,40 @@ export const UserRepository = {
       LIMIT ${limit}
     `)
     return result.rows.map(mapRowToUser)
+  },
+
+  /**
+   * The people `scope` may see, nearest to `askerId` first: circle 1 is the asker and the members and authors
+   * of `roomStreamIds`, circle 2 the people of the other streams the asker is a member of, circle 3 everyone
+   * else. `limit` cuts from the far end.
+   */
+  async listByCircle(
+    db: Querier,
+    workspaceId: string,
+    params: { askerId: string; roomStreamIds: string[]; scope: PeopleScope; limit: number }
+  ): Promise<RosterPerson[]> {
+    const { askerId, roomStreamIds, scope, limit } = params
+    const room = peopleOfStreamsSql(
+      workspaceId,
+      composeSql`SELECT s.id FROM streams s WHERE s.workspace_id = ${workspaceId} AND s.id = ANY(${roomStreamIds})`
+    )
+    // Members only: authors across every stream the asker is in would scan all of their messages.
+    const shared = composeSql`u.id IN (
+      SELECT mate.member_id FROM stream_members mate
+      JOIN stream_members own ON own.stream_id = mate.stream_id AND own.workspace_id = mate.workspace_id
+      WHERE mate.workspace_id = ${workspaceId} AND own.member_id = ${askerId}
+    )`
+    const result = await db.query<RosterPerson>(
+      composeSql`
+        SELECT u.id, u.name, u.slug, u.description,
+          CASE WHEN u.id = ${askerId} OR ${room} THEN 1 WHEN ${shared} THEN 2 ELSE 3 END AS circle
+        FROM users u
+        WHERE u.workspace_id = ${workspaceId} AND ${peopleScopeSql(workspaceId, scope)}
+        ORDER BY circle, u.joined_at, u.id
+        LIMIT ${limit}
+      `
+    )
+    return result.rows
   },
 
   async insert(db: Querier, params: InsertUserParams): Promise<User> {

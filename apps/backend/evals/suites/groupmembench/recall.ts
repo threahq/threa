@@ -16,7 +16,14 @@
 import type { CaseResult, EvalContext, EvalSuite, Evaluator, RunEvaluator } from "../../framework/types"
 import { seedWorkspace, seededWorkspace, percentile, seconds } from "./suite"
 import { QUESTION_TYPES, datasetDir, loadQuestions, type BenchQuestion } from "./dataset"
-import { WorkspaceAgent, WORKSPACE_AGENT_MODEL_ID, WORKSPACE_AGENT_TEMPERATURE } from "../../../src/features/agents"
+import { DecisionsAvailability } from "@threahq/agent-runtime"
+import {
+  PeopleResolver,
+  WorkspaceAgent,
+  WORKSPACE_AGENT_MODEL_ID,
+  WORKSPACE_AGENT_TEMPERATURE,
+} from "../../../src/features/agents"
+import { WorkspaceAIResidencyPolicy } from "../../../src/features/ai-usage"
 import { WORKSPACE_AGENT_TOTAL_BUDGET_MS } from "../../../src/features/agents/researcher/config"
 import { EmbeddingService } from "../../../src/features/memos"
 import { StreamRepository, StreamMemberRepository } from "../../../src/features/streams"
@@ -77,6 +84,11 @@ async function runRecall({ question }: RecallInput, ctx: EvalContext): Promise<R
     ai: ctx.ai,
     configResolver: ctx.configResolver,
     embeddingService: new EmbeddingService({ ai: ctx.ai }),
+    peopleResolver: new PeopleResolver({
+      ai: ctx.ai,
+      residency: new WorkspaceAIResidencyPolicy({ pool: ctx.pool }),
+      availability: new DecisionsAvailability(),
+    }),
   })
   const startedAt = Date.now()
   const result = await researcher.search({
