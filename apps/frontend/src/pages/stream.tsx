@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 import { floatingPanelTab, primaryPanelOf, type PaneEdge } from "@/lib/panel-tabs"
 import { useStreamOrDraft, useStreamError, usePanelLayout, useTypeToFocus } from "@/hooks"
 import { useMainOwnsCover, usePanel, useSidebar } from "@/contexts"
-import { ResizablePanelFrame, usePanelInset } from "@/components/layout"
+import { PanelResizeHandle, usePanelInset } from "@/components/layout"
 import { PaneHost, Pane, PaneDropContext, PaneDropIndicator, paneDropZone, usePaneDropState } from "@/components/panes"
 import { StreamPane, useConversationViewParam } from "@/components/panes/stream-pane"
 import {
@@ -19,7 +19,7 @@ import {
   useAsideIsSheet,
 } from "@/components/aside"
 import { asideHoldsPanel, useAsideForHost } from "@/stores/aside-store"
-import { PaneDrawer, PanelTabStack, useFittedPanelLayout } from "@/components/layout/panel-host"
+import { PaneDrawer, PanelTabStack, useFittedPanelLayout, usePanelGrid } from "@/components/layout/panel-host"
 import { PaneShortcuts } from "@/components/layout/pane-shortcuts"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
@@ -28,6 +28,7 @@ import { getStreamName } from "@/lib/streams"
 import { MIN_PANEL_WIDTH } from "@/hooks/use-panel-layout"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { setPageStreamName } from "@/lib/page-title"
+import { panelColumnWidths } from "@/lib/panel-grid"
 
 const MAIN_DROP_EDGES: readonly PaneEdge[] = ["right"]
 
@@ -75,6 +76,9 @@ export function StreamPage() {
     animates: !isMobile,
   })
   const fittedPanels = useFittedPanelLayout(maxColumns, false)
+  const display = isMobile ? phonePages : fittedPanels
+  // A phone stacks every pane in the one cell; anywhere else the main view keeps the first column.
+  const panelGrid = usePanelGrid(display, isMobile ? 0 : 1)
   const paneDrops = usePaneDropState(workspaceId!, streamId!)
   const [searchParams] = useSearchParams()
   const highlightMessageId = useMainOwnsCover() ? searchParams.get("m") : null
@@ -167,6 +171,13 @@ export function StreamPage() {
   const floating = tabStackShown && floatingPanelTab(layout, isMobile) !== null
 
   const drops = isMobile || floating || panelInAside ? null : paneDrops
+  // A track for every column that fits, so opening, closing or resizing one animates from the width it had.
+  const columnWidths = displayWidth > 0 ? panelColumnWidths(panelGrid.sizes.columns, displayWidth) : []
+  const panelTracks = Array.from({ length: maxColumns }, (_, column) => columnWidths[column] ?? 0)
+  const columns = isMobile
+    ? "minmax(0,1fr)"
+    : ["minmax(0,1fr)", ...panelTracks.map((width) => `${width}px`), `${asideLayout.width}px`].join(" ")
+  const mainArea = isMobile ? "1 / 1" : "1 / 1 / -1 / 2"
   // Main's right edge opens a first column; its centre and left edge wait for main to be a pane.
   const mainDropZone =
     layout.columns.length < maxColumns ? paneDropZone(drops, null, MAIN_DROP_EDGES, false) : undefined
@@ -175,14 +186,15 @@ export function StreamPage() {
     <AsideCoversPanesContext.Provider value={asideIsSheet && openAside !== null}>
       <PaneHost
         ref={containerRef}
-        columns={isMobile ? "minmax(0,1fr)" : `minmax(0,1fr) ${displayWidth}px ${asideLayout.width}px`}
+        columns={columns}
+        rows={panelGrid.rows || "minmax(0,1fr)"}
         animate={shouldAnimate && !isMobile && !asideLayout.isResizing}
         onTransitionEnd={handleTransitionEnd}
       >
         {/* Drops reach the page's own panes only: never the aside's, nor a drawer's. */}
         <PaneDropContext.Provider value={drops}>
           <Pane
-            area="1 / 1"
+            area={mainArea}
             covered={mobileTakeover}
             inert={floating}
             className={cn(floating && "isolate")}
@@ -197,44 +209,42 @@ export function StreamPage() {
               streamId={streamId}
               highlightMessageId={highlightMessageId}
               autoFocus={!isMobile}
-              contextLayout={isMobile ? phonePages : fittedPanels}
+              contextLayout={display}
             />
           </Pane>
-          <PaneDropIndicator of={null} area="1 / 1" />
-          <Pane
-            area={isMobile ? "1 / 1" : "1 / 2"}
-            // An empty pane over the timeline's cell would still take its taps.
-            covered={isMobile && !mobileTakeover}
-            data-testid="panel"
-            className="bg-background"
-          >
-            {tabStackShown && (
-              <ResizablePanelFrame
-                fill={isMobile}
-                panelWidth={panelWidth}
-                isResizing={isResizing}
-                minWidth={minWidth}
-                maxWidth={maxWidth}
-                onResizeStart={handleResizeStart}
-                onResizeMove={handleResizeMove}
-                onResizeEnd={handleResizeEnd}
-                onResizeKeyDown={handleResizeKeyDown}
-                handleInert={floating}
-              >
-                <PanelTabStack
-                  workspaceId={workspaceId}
-                  maxColumns={maxColumns}
-                  stacked={isMobile}
-                  main={mainPaneRef}
-                />
-              </ResizablePanelFrame>
-            )}
-          </Pane>
+          <PaneDropIndicator of={null} area={mainArea} />
+          {tabStackShown && (
+            <PanelTabStack
+              workspaceId={workspaceId}
+              maxColumns={maxColumns}
+              stacked={isMobile}
+              display={display}
+              grid={panelGrid}
+              width={isMobile ? null : panelWidth}
+              host={containerRef}
+              main={mainPaneRef}
+            />
+          )}
+          {tabStackShown && !isMobile && (
+            <PanelResizeHandle
+              style={{ gridArea: "1 / 2 / -1 / 3" }}
+              className="z-10 justify-self-start"
+              isResizing={isResizing}
+              panelWidth={panelWidth}
+              minWidth={minWidth}
+              maxWidth={maxWidth}
+              onPointerDown={handleResizeStart}
+              onPointerMove={handleResizeMove}
+              onPointerEnd={handleResizeEnd}
+              onKeyDown={handleResizeKeyDown}
+              inert={floating}
+            />
+          )}
         </PaneDropContext.Provider>
         {/* The tab stack takes the shortcuts over once it mounts, which trails the panel opening. */}
         {(!isPanelOpen || !(tabStackShown || panelInAside)) && <PaneShortcuts />}
         {asideColumn && (
-          <Pane area="1 / 3" inert={floating} className={cn(floating && "isolate")}>
+          <Pane area="1 / -2 / -1 / -1" inert={floating} className={cn(floating && "isolate")}>
             <AsideColumn workspaceId={workspaceId} aside={asideColumn} layout={asideLayout} />
           </Pane>
         )}

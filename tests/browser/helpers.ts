@@ -316,7 +316,7 @@ export async function createChannel(
  * matches locators scoped only to the panel.
  */
 export function getActivePanel(page: Page): Locator {
-  return page.locator("[data-testid='panel'] [data-front-panel]")
+  return page.locator("[data-testid='panel'][data-front-panel]")
 }
 
 /**

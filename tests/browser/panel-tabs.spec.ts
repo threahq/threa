@@ -237,7 +237,7 @@ test("should split a tab beside its own and keep the split through back, forward
   await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
   await tag(replyIn(page, threadA, "reply in thread A"), "A")
   await tag(replyIn(page, threadB, "reply in thread B"), "B")
-  const tabbedWidth = (await page.getByTestId("panel").boundingBox())!.width
+  const tabbedWidth = (await tabPane(page, threadB).boundingBox())!.width
 
   await tabPane(page, threadB).getByRole("button", { name: "Tab actions" }).click()
   await page.getByRole("menuitem", { name: "Split right" }).click()
@@ -249,7 +249,12 @@ test("should split a tab beside its own and keep the split through back, forward
   expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
   const [boxA, boxB] = await Promise.all([tabPane(page, threadA).boundingBox(), tabPane(page, threadB).boundingBox()])
   expect(boxA!.x + boxA!.width).toBeLessThanOrEqual(boxB!.x + 1)
-  await expect.poll(async () => (await page.getByTestId("panel").boundingBox())!.width).toBeGreaterThan(tabbedWidth)
+  await expect
+    .poll(async () => {
+      const [a, b] = await Promise.all([tabPane(page, threadA).boundingBox(), tabPane(page, threadB).boundingBox()])
+      return a!.width + b!.width
+    })
+    .toBeGreaterThan(tabbedWidth)
 
   // The tab split off is current; the other section's underline mutes until it is used.
   const activeTitle = (id: string) => stripOf(page, id).locator('[aria-current="page"]')

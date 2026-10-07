@@ -10,7 +10,6 @@ export interface PanelGridSizes {
 }
 
 interface PanelGrid {
-  columns: string
   rows: string
   /** `grid-area` of each section, by column then row. */
   areas: string[][]
@@ -40,24 +39,31 @@ export function resplit(shares: readonly number[], index: number, leading: numbe
 }
 
 const track = (share: number) => `minmax(0,${Number(share.toFixed(4))}fr)`
+const sum = (shares: readonly number[]) => shares.reduce((total, share) => total + share, 0)
+
+/** Each column's width when the columns share `width` pixels by their shares. */
+export function panelColumnWidths(shares: readonly number[], width: number): number[] {
+  const total = sum(shares)
+  return shares.map((share) => (width * share) / total)
+}
 const edgeKey = (edge: number) => edge.toFixed(4)
 
 /**
- * Compiles the arrangement to one grid, so every tab can be a flat child of the
- * same parent wherever its section sits. Columns stack their sections
+ * Compiles the arrangement to the page's grid, so every tab can be a flat child
+ * of the same parent wherever its section sits. Columns stack their sections
  * independently, so the row tracks are cut at every column's section edges and
- * each section spans the tracks between its own.
+ * each section spans the tracks between its own. The arrangement's columns
+ * start after `firstColumn` columns the page keeps for itself.
  */
-export function compilePanelGrid(sizes: PanelGridSizes): PanelGrid {
+export function compilePanelGrid(sizes: PanelGridSizes, firstColumn = 0): PanelGrid {
   const edges = sizes.rows.map((rows) => {
-    const total = rows.reduce((sum, share) => sum + share, 0)
+    const total = sum(rows)
     let reached = 0
     return [0, ...rows.map((share) => (reached += share) / total)]
   })
   const cuts = [...new Map(edges.flat().map((edge) => [edgeKey(edge), edge])).values()].sort((a, b) => a - b)
   const line = new Map(cuts.map((cut, index) => [edgeKey(cut), index + 1]))
   return {
-    columns: sizes.columns.map(track).join(" "),
     rows: cuts
       .slice(1)
       .map((cut, index) => track(cut - cuts[index]))
@@ -67,7 +73,7 @@ export function compilePanelGrid(sizes: PanelGridSizes): PanelGrid {
         .slice(1)
         .map(
           (end, row) =>
-            `${line.get(edgeKey(columnEdges[row]))} / ${column + 1} / ${line.get(edgeKey(end))} / ${column + 2}`
+            `${line.get(edgeKey(columnEdges[row]))} / ${firstColumn + column + 1} / ${line.get(edgeKey(end))} / ${firstColumn + column + 2}`
         )
     ),
   }
