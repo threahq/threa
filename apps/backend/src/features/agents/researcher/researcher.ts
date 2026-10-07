@@ -1,7 +1,7 @@
 import type { Pool } from "pg"
 import { z } from "zod"
 import { withClient, type Querier } from "../../../db"
-import { composeAbortSignal, isAbortError, type AI } from "@threahq/agent-runtime"
+import { AISpendDeniedError, composeAbortSignal, isAbortError, type AI } from "@threahq/agent-runtime"
 import type { ConfigResolver, ResearcherConfig } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
 import { StreamTypes, type AuthoredByKind, type FeatureFlagValue, type TraceSource } from "@threahq/types"
@@ -12,8 +12,14 @@ import { SearchRepository } from "../../search"
 import { StreamRepository, type Stream } from "../../streams"
 import { AttachmentRepository } from "../../attachments"
 import { PeoplePurposes, UserRepository } from "../../workspaces"
-import type { PeopleResolver, PersonResolution } from "./people-resolver"
-import { computeAgentAccessSpec, memoAudienceForSpec, resolveMemoViewer, type AgentAccessSpec } from "./access-spec"
+import type { PeopleResolverLike, PersonResolution } from "./people-resolver"
+import {
+  computeAgentAccessSpec,
+  memoAudienceForSpec,
+  resolveMemoViewer,
+  resolvePeopleViewer,
+  type AgentAccessSpec,
+} from "./access-spec"
 import {
   formatPeopleSection,
   formatRetrievedContext,
@@ -152,8 +158,7 @@ export interface WorkspaceAgentDeps {
   ai: AI
   configResolver: ConfigResolver
   embeddingService: EmbeddingServiceLike
-  /** Absent under stub AI: the people a query names go unresolved. */
-  peopleResolver?: PeopleResolver
+  peopleResolver: PeopleResolverLike
 }
 
 // Schema for retrieval planning (always generates queries, no needsSearch gate)
@@ -481,7 +486,7 @@ export class WorkspaceAgent {
         input.onSubstep
       )
     }
-    const references = this.deps.peopleResolver ? [...new Set(plan.people)].slice(0, PEOPLE_MAX_REFERENCES) : []
+    const references = [...new Set(plan.people)].slice(0, PEOPLE_MAX_REFERENCES)
     if (references.length > 0) {
       this.emitSubstep(substeps, `Identifying ${references.join(", ")}…`, input.onSubstep)
     }
@@ -503,10 +508,12 @@ export class WorkspaceAgent {
     // what they wrote.
     const [plannerResults, { people, authorResults }] = await Promise.all([
       searchFor(plannerOnlyDeduped),
-      this.resolvePeople(pool, input, references, asker, conversation, roomStreamIds).then(async (people) => ({
-        people,
-        authorResults: await searchFor(authorQueries(query, people)),
-      })),
+      this.resolvePeople(pool, input, accessSpec, references, asker, conversation, roomStreamIds).then(
+        async (people) => ({
+          people,
+          authorResults: await searchFor(authorQueries(query, people)),
+        })
+      ),
     ])
     for (const results of [plannerResults, authorResults]) {
       allMemos = mergeMemoResults(allMemos, results.memos)
@@ -1209,32 +1216,29 @@ Respond with:
     return sources
   }
 
-  /**
-   * The workspace users `references` name, nearest to the asker first, or none when there is no resolver, no
-   * asker, or the resolver could not answer.
-   */
+  /** The workspace users `references` name, nearest to the asker first, or none when the resolver could not answer. */
   private async resolvePeople(
     pool: Pool,
     input: WorkspaceAgentInput,
+    accessSpec: AgentAccessSpec,
     references: string[],
     asker: PersonName | undefined,
     conversation: { author: string; text: string }[],
     roomStreamIds: string[]
   ): Promise<PersonResolution[]> {
-    const { peopleResolver } = this.deps
-    if (!peopleResolver || !asker || references.length === 0) return []
+    if (!asker || references.length === 0) return []
     const { workspaceId, invokingUserId } = input
     try {
       const roster = await UserRepository.listByCircle(pool, workspaceId, {
         askerId: invokingUserId,
         roomStreamIds,
-        scope: { viewer: { kind: "room", roomStreamId: input.streamId }, purpose: PeoplePurposes.VISIBLE },
+        scope: { viewer: resolvePeopleViewer(accessSpec, input.streamId), purpose: PeoplePurposes.VISIBLE },
         limit: PEOPLE_ROSTER_LIMIT,
       })
       if (roster.length === PEOPLE_ROSTER_LIMIT) {
         logger.info({ workspaceId, references }, "Workspace agent people roster truncated; farthest people left out")
       }
-      const resolutions = await peopleResolver.resolve({
+      const resolutions = await this.deps.peopleResolver.resolve({
         workspaceId,
         userId: invokingUserId,
         asker: { id: invokingUserId, ...asker },
@@ -1244,8 +1248,13 @@ Respond with:
         roster,
         signal: input.signal,
       })
-      return resolutions ?? []
+      if (!resolutions) {
+        logger.info({ workspaceId, references }, "People resolver unavailable; references left unresolved")
+        return []
+      }
+      return resolutions
     } catch (error) {
+      if (error instanceof AISpendDeniedError) throw error
       if (isAbortError(error)) return []
       logger.warn({ error, workspaceId }, "Workspace agent people resolution failed")
       return []

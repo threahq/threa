@@ -75,7 +75,7 @@ export const PEOPLE_RESOLVER_TIMEOUT_MS = 4000
 export const PEOPLE_RESOLVER_CHUNK_SIZE = 100
 /** Roster rows loaded per research call, nearest circles first. */
 export const PEOPLE_ROSTER_LIMIT = 400
-/** A pick at or above this probability is sure; the nearest circle with exactly one sure pick names that person. */
+/** A pick at or above this probability is sure; it names the person only as the one sure pick of the nearest circle with any plausible pick. */
 export const PEOPLE_RESOLVED_AT = 0.6
 /** A pick at or above this probability is a candidate worth asking about. */
 export const PEOPLE_PLAUSIBLE_AT = 0.2

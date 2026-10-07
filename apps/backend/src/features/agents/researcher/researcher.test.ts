@@ -4,11 +4,12 @@ import { WORKSPACE_AGENT_MAX_PLANNED_QUERIES } from "./config"
 import { buildBaselineQueries, type BaselineQuery } from "./query/baseline-queries"
 import type { Pool } from "pg"
 import { SearchRepository } from "../../search"
-import type { AI } from "@threahq/agent-runtime"
+import { AISpendDeniedError, type AI } from "@threahq/agent-runtime"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
 import type { EmbeddingServiceLike } from "../../memos"
 import { UserRepository } from "../../workspaces"
-import type { PeopleResolver } from "./people-resolver"
+import type { PeopleResolverLike } from "./people-resolver"
+import { StubPeopleResolver } from "./people-resolver.stub"
 
 /**
  * Build a stub WorkspaceAgent dep set sufficient to exercise the abort-before-work
@@ -32,7 +33,13 @@ function buildAgent(): WorkspaceAgent {
     }),
   } as unknown as Pool
 
-  const deps: WorkspaceAgentDeps = { pool, ai, configResolver, embeddingService }
+  const deps: WorkspaceAgentDeps = {
+    pool,
+    ai,
+    configResolver,
+    embeddingService,
+    peopleResolver: new StubPeopleResolver(),
+  }
   return new WorkspaceAgent(deps)
 }
 
@@ -190,7 +197,7 @@ describe("WorkspaceAgent runSearchLoop", () => {
   function runLoop(options: {
     query: string
     people: string[]
-    peopleResolver?: PeopleResolver
+    peopleResolver?: PeopleResolverLike
     queries?: BaselineQuery[]
   }) {
     const configResolver = {
@@ -201,7 +208,7 @@ describe("WorkspaceAgent runSearchLoop", () => {
       ai: {} as AI,
       configResolver,
       embeddingService: {} as unknown as EmbeddingServiceLike,
-      peopleResolver: options.peopleResolver,
+      peopleResolver: options.peopleResolver ?? new StubPeopleResolver(),
     })
     const planRetrieval = mock(async (_params: { contextSummary: string }) => ({
       reasoning: "plan",
@@ -286,7 +293,7 @@ describe("WorkspaceAgent runSearchLoop", () => {
     const { result, planRetrieval, executeQueries } = runLoop({
       query: "what did Kate tell John",
       people: ["Kate", "John"],
-      peopleResolver: { resolve } as unknown as PeopleResolver,
+      peopleResolver: { resolve },
     })
     const { retrievedContext } = await result
 
@@ -309,6 +316,16 @@ describe("WorkspaceAgent runSearchLoop", () => {
       ].join("\n"),
     })
   })
+
+  test("fails the search when the workspace's AI spend is denied while resolving people", async () => {
+    spyOn(UserRepository, "listByCircle").mockResolvedValue([])
+    const resolve = mock(async () => {
+      throw new AISpendDeniedError({ workspaceId: "ws_1", functionId: "researcher-people" }, "workspace_limit")
+    })
+    const { result } = runLoop({ query: "what did Kate decide", people: ["Kate"], peopleResolver: { resolve } })
+
+    await expect(result).rejects.toBeInstanceOf(AISpendDeniedError)
+  })
 })
 
 describe("WorkspaceAgent abort/deadline checkpoints (continued)", () => {
@@ -329,7 +346,13 @@ describe("WorkspaceAgent abort/deadline checkpoints (continued)", () => {
       }),
     } as unknown as Pool
 
-    const agent = new WorkspaceAgent({ pool, ai, configResolver, embeddingService })
+    const agent = new WorkspaceAgent({
+      pool,
+      ai,
+      configResolver,
+      embeddingService,
+      peopleResolver: new StubPeopleResolver(),
+    })
 
     let caught: unknown
     try {
@@ -361,6 +384,7 @@ describe("WorkspaceAgent searchMessages workspace scope", () => {
       ai: {} as AI,
       configResolver: {} as ConfigResolver,
       embeddingService: { embed: mock(async () => embedding) } as unknown as EmbeddingServiceLike,
+      peopleResolver: new StubPeopleResolver(),
     })
     return (agent as unknown as { searchMessages: (...args: unknown[]) => Promise<unknown> }).searchMessages(
       pool,

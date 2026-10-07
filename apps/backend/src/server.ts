@@ -181,6 +181,7 @@ import {
   createReflectiveCaptureWorker,
   WorkspaceAgent,
   PeopleResolver,
+  StubPeopleResolver,
   GeneralResearcher,
   PersonaAgent,
   PreparedRecall,
@@ -1177,7 +1178,7 @@ export async function startServer(): Promise<ServerInstance> {
     configResolver,
     embeddingService,
     peopleResolver: config.useStubAI
-      ? undefined
+      ? new StubPeopleResolver()
       : new PeopleResolver({ ai, residency: aiResidency, availability: decisionsAvailability }),
   })
 

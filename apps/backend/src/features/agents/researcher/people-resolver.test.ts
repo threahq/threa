@@ -20,9 +20,20 @@ const ROSTER: RosterPerson[] = [
 /** Per reference key, the probability each listed user gets; candidates absent from a call's criteria are dropped. */
 type Beliefs = Record<string, Record<string, number>>
 
-function createResolver(options: { beliefs?: Beliefs; pinned?: boolean; throws?: Error; sparseChoice?: string }) {
+function createResolver(options: {
+  beliefs?: Beliefs
+  pinned?: boolean
+  throws?: Error
+  /** Calls listing this user fail; the others answer. */
+  failsFor?: string
+  sparseChoice?: string
+}) {
   const generateDecisions = mock(async (opts: { questions: Record<string, DecisionQuestion> }) => {
     if (options.throws) throw options.throws
+    const question = Object.values(opts.questions)[0]
+    if (options.failsFor && question?.type === "choice" && options.failsFor in question.criteria) {
+      throw new Error("provider unavailable")
+    }
     const answers = Object.fromEntries(
       Object.entries(opts.questions).map(([key, question]) => {
         const criteria = question.type === "choice" ? Object.keys(question.criteria) : []
@@ -78,15 +89,30 @@ describe("PeopleResolver", () => {
     ])
   })
 
-  test("should not let an unsure near namesake hide a sure match further out", async () => {
+  test("should report an unsure near namesake as ambiguous rather than pick a sure match further out", async () => {
     const { resolver } = createResolver({ beliefs: { ref0: { usr_kate_room: 0.3, usr_kate_shared: 0.95 } } })
 
     expect(await resolver.resolve(input(["Kate"]))).toEqual([
-      { reference: "Kate", status: "resolved", person: named("usr_kate_shared") },
+      { reference: "Kate", status: "ambiguous", candidates: [named("usr_kate_shared"), named("usr_kate_room")] },
     ])
   })
 
-  test("should report several sure matches in the nearest sure circle as ambiguous", async () => {
+  test("should report two unsure namesakes in the room as ambiguous alongside a sure one further out", async () => {
+    const roster = [person("usr_kate_a", 1), person("usr_kate_b", 1), person("usr_kate_far", 3)]
+    const { resolver } = createResolver({
+      beliefs: { ref0: { usr_kate_a: 0.45, usr_kate_b: 0.45, usr_kate_far: 0.9 } },
+    })
+
+    expect(await resolver.resolve({ ...input(["Kate"]), roster })).toEqual([
+      {
+        reference: "Kate",
+        status: "ambiguous",
+        candidates: [named("usr_kate_far"), named("usr_kate_a"), named("usr_kate_b")],
+      },
+    ])
+  })
+
+  test("should report several sure matches in the nearest circle with a match as ambiguous", async () => {
     const { resolver } = createResolver({ beliefs: { ref0: { usr_kate_far: 0.7, usr_john_far: 0.8 } } })
 
     expect(await resolver.resolve(input(["Kate"]))).toEqual([
@@ -159,7 +185,20 @@ describe("PeopleResolver", () => {
     }).toEqual({ empty: [], pinned: null, calls: 0 })
   })
 
-  test("should return null when the decision model fails, and rethrow a spend denial", async () => {
+  test("should leave a reference unresolved when a circle nearer than any match failed, and resolve past a farther failure", async () => {
+    const nearFailed = createResolver({ beliefs: { ref0: { usr_kate_shared: 0.9 } }, failsFor: "usr_kate_room" })
+    const farFailed = createResolver({ beliefs: { ref0: { usr_kate_room: 0.9 } }, failsFor: "usr_kate_far" })
+
+    expect({
+      nearFailed: await nearFailed.resolver.resolve(input(["Kate"])),
+      farFailed: await farFailed.resolver.resolve(input(["Kate"])),
+    }).toEqual({
+      nearFailed: [{ reference: "Kate", status: "unresolved" }],
+      farFailed: [{ reference: "Kate", status: "resolved", person: named("usr_kate_room") }],
+    })
+  })
+
+  test("should return null when every decision call fails, and rethrow a spend denial", async () => {
     const failing = createResolver({ throws: new Error("boom") })
     const denied = createResolver({
       throws: new AISpendDeniedError({ workspaceId: "ws_test", functionId: "researcher-people" }, "workspace_limit"),

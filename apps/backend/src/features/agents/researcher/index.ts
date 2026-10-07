@@ -5,7 +5,8 @@ export {
   type WorkspaceAgentDeps,
   type WorkspaceSourceItem,
 } from "./researcher"
-export { PeopleResolver } from "./people-resolver"
+export { PeopleResolver, type PeopleResolverLike } from "./people-resolver"
+export { StubPeopleResolver } from "./people-resolver.stub"
 export {
   computeAgentAccessSpec,
   resolveMemoViewer,

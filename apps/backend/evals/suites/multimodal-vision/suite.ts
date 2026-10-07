@@ -46,6 +46,7 @@ import {
   type PersonaAgentInput,
   type PersonaAgentDeps,
   WorkspaceAgent,
+  PeopleResolver,
   GeneralResearcher,
   PersonaRepository,
   TraceEmitter,
@@ -288,6 +289,11 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
       ai: ctx.ai,
       configResolver: ctx.configResolver,
       embeddingService,
+      peopleResolver: new PeopleResolver({
+        ai: ctx.ai,
+        residency: new WorkspaceAIResidencyPolicy({ pool: ctx.pool }),
+        availability: new DecisionsAvailability(),
+      }),
     })
     const generalResearcher = new GeneralResearcher({ ai: ctx.ai, configResolver: ctx.configResolver })
     const memoExplorerService = new MemoExplorerService({

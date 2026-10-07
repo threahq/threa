@@ -45,16 +45,20 @@ export interface PeopleResolverInput {
   signal?: AbortSignal
 }
 
+export interface PeopleResolverLike {
+  resolve(input: PeopleResolverInput): Promise<PersonResolution[] | null>
+}
+
 const CIRCLES = [1, 2, 3] as const
 
 /**
  * Matches the people a research query names to workspace users with the decision model, nearest circle
- * first: a sure match in the room or the asker's own streams beats any namesake further out, and
- * several sure matches in one circle, or only unsure ones anywhere, come back as ambiguous. Every
- * circle is asked at once and read nearest-first, so resolution costs one round trip. Returns null when
- * the decision model is not available to this workspace or did not answer in time.
+ * first: the nearest circle with a plausible match decides, so a namesake further out never wins over
+ * someone in the room or the asker's own streams. Every circle is asked at once and read nearest-first,
+ * so resolution costs one round trip. Returns null when the decision model is not available to this
+ * workspace or no call answered in time.
  */
-export class PeopleResolver {
+export class PeopleResolver implements PeopleResolverLike {
   private readonly ai: AI
   private readonly residency: AIResidencyPolicy
   private readonly availability: DecisionsAvailability
@@ -75,37 +79,53 @@ export class PeopleResolver {
       timeoutReason: "people resolver timeout",
     })
     try {
-      const picksByCircle = await Promise.all(
-        CIRCLES.map(async (circle) => {
-          const chunks = chunk(
-            input.roster.filter((person) => person.circle === circle),
-            PEOPLE_RESOLVER_CHUNK_SIZE
-          )
-          const results = await Promise.all(chunks.map((people) => this.ask(input, people, composed.signal)))
-          return input.references.map((_, index) =>
-            results.flatMap((result, chunkIndex) => picks(result, referenceKey(index), chunks[chunkIndex]!))
-          )
-        })
+      const chunksByCircle = CIRCLES.map((circle) =>
+        chunk(
+          input.roster.filter((person) => person.circle === circle),
+          PEOPLE_RESOLVER_CHUNK_SIZE
+        )
       )
+      const settled = await Promise.all(
+        chunksByCircle.map((chunks) =>
+          Promise.allSettled(chunks.map((people) => this.ask(input, people, composed.signal)))
+        )
+      )
+      const failures = settled.flat().flatMap((result) => (result.status === "rejected" ? [result.reason] : []))
+      const spendDenied = failures.find((error) => error instanceof AISpendDeniedError)
+      if (spendDenied) throw spendDenied
+      if (failures.length > 0) {
+        if (input.signal?.aborted) return null
+        const failure = failures.find((error) => !isAbortError(error))
+        if (failures.length === settled.flat().length) {
+          if (failure) {
+            this.availability.recordFailure(failure)
+            logger.warn({ error: failure, workspaceId: input.workspaceId }, "People resolver failed; people unresolved")
+          } else {
+            logger.warn(
+              { workspaceId: input.workspaceId, timeoutMs: PEOPLE_RESOLVER_TIMEOUT_MS },
+              "People resolver timed out; people unresolved"
+            )
+          }
+          return null
+        }
+        logger.warn(
+          { error: failure, workspaceId: input.workspaceId, failedCalls: failures.length },
+          "People resolver calls failed; their circles count as unknown"
+        )
+      }
+
       return input.references.map((reference, index) =>
         readResolution(
           reference,
-          picksByCircle.map((circle) => circle[index]!)
+          settled.map((results, circleIndex) =>
+            results.every((result) => result.status === "fulfilled")
+              ? results.flatMap((result, chunkIndex) =>
+                  picks(result.value, referenceKey(index), chunksByCircle[circleIndex]![chunkIndex]!)
+                )
+              : null
+          )
         )
       )
-    } catch (error) {
-      if (error instanceof AISpendDeniedError) throw error
-      if (isAbortError(error)) {
-        if (input.signal?.aborted) return null
-        logger.warn(
-          { workspaceId: input.workspaceId, timeoutMs: PEOPLE_RESOLVER_TIMEOUT_MS },
-          "People resolver timed out; people unresolved"
-        )
-        return null
-      }
-      this.availability.recordFailure(error)
-      logger.warn({ error, workspaceId: input.workspaceId }, "People resolver failed; people unresolved")
-      return null
     } finally {
       composed.cleanup()
     }
@@ -154,17 +174,22 @@ function picks(result: DecisionsResult, key: string, people: RosterPerson[]): Pi
 }
 
 /**
- * The nearest circle with a sure pick decides: one sure pick names the person, several are ambiguous. Plausible
- * picks short of sure only matter when no circle is sure, so a weak near namesake never hides a sure match further out.
+ * The nearest circle with a plausible pick decides: exactly one sure pick there names the person; anything else is
+ * ambiguous over that circle and every circle beyond it, so a farther sure match is offered but never chosen over a
+ * nearer namesake. A circle whose calls failed (null) is unknown, and reaching it leaves the reference unresolved.
  */
-function readResolution(reference: string, circles: Pick[][]): PersonResolution {
-  for (const circle of circles) {
+function readResolution(reference: string, circles: (Pick[] | null)[]): PersonResolution {
+  for (const [index, circle] of circles.entries()) {
+    if (circle === null) return { reference, status: "unresolved" }
+    if (circle.length === 0) continue
     const sure = circle.filter((pick) => pick.probability >= PEOPLE_RESOLVED_AT)
     if (sure.length === 1) return { reference, status: "resolved", person: sure[0]!.person }
-    if (sure.length > 1) return ambiguous(reference, sure)
+    return ambiguous(
+      reference,
+      circles.slice(index).flatMap((later) => later ?? [])
+    )
   }
-  const plausible = circles.flat()
-  return plausible.length > 0 ? ambiguous(reference, plausible) : { reference, status: "unresolved" }
+  return { reference, status: "unresolved" }
 }
 
 function ambiguous(reference: string, picks: Pick[]): PersonResolution {
