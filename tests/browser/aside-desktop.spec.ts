@@ -377,6 +377,11 @@ test.describe("Aside — desktop surface", () => {
     await expect.poll(() => new URL(page.url()).searchParams.get("panel")).toBeNull()
     await expect(sheet).toHaveAttribute("data-view", "aside", { timeout: 10000 })
     await expect(sheet.getByTestId("aside-conversation")).toBeVisible()
+
+    // ⌥W in the sheet's aside closes the aside, as it does in the column.
+    await sheet.getByTestId("aside-conversation").locator("[contenteditable='true']").click()
+    await page.keyboard.press("Alt+w")
+    await expect(sheet).toHaveCount(0)
   })
 
   test("a draft expanded beside an open aside floats over both, and the aside stays out of reach until it docks", async ({

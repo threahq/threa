@@ -75,7 +75,7 @@ export function AsideColumn({
         <div
           data-testid="aside-column"
           data-aside-id={asideId}
-          data-aside-column
+          data-aside-surface
           // Type-to-focus and the composer's height observer route by zone, and a zone they don't know they ignore.
           data-editor-zone="panel"
           className="flex h-full min-h-0 flex-col bg-background"

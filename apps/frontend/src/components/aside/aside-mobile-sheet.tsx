@@ -255,6 +255,7 @@ export function AsideMobileSheet({
         </div>
         <div
           className="flex min-h-0 flex-1 flex-col"
+          data-aside-surface={threadInSheet ? undefined : true}
           onPointerDownCapture={() => {
             if (threadInSheet) setCurrentPane(panelId)
           }}
