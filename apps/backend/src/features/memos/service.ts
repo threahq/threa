@@ -739,22 +739,34 @@ export class MemoService implements MemoServiceLike {
           // Attachment-only messages have no text, and embedding rejects an empty input.
           const messageText = messagesArray.map((m) => m.contentMarkdown).join("\n")
           const conversationText = messageText.trim() ? messageText : formattedMessages
-          const [conversationEmbedding] = await this.embeddingService.embedBatch(
-            [Array.from(conversationText).slice(-MEMORY_CONTEXT_EMBED_MAX_CHARS).join("")],
-            { workspaceId, functionId: "memo-context-embedding" }
-          )
-          if (!conversationEmbedding) throw new Error(`No context embedding for conversation ${conversation.id}`)
-          const found = await MemoRepository.findNearestInStream(this.pool, {
-            workspaceId,
-            streamId,
-            embedding: conversationEmbedding,
-            scope: fetchedData.memoScope.scope,
-            scopeUserId: fetchedData.memoScope.scopeUserId,
-            audiences: [fetchedData.readerAudience],
-            sharedRootStreamId: fetchedData.sharedRootStreamId,
-            limit: MEMORY_CONTEXT_NEAREST_LIMIT,
-          })
-          nearest = found.map(({ memo }) => memo)
+          // A failed embed costs only the older memos: capture proceeds on the newest twenty rather than stalling the stream.
+          let conversationEmbedding: number[] | undefined
+          try {
+            ;[conversationEmbedding] = await this.embeddingService.embedBatch(
+              [Array.from(conversationText).slice(-MEMORY_CONTEXT_EMBED_MAX_CHARS).join("")],
+              { workspaceId, functionId: "memo-context-embedding" }
+            )
+            if (!conversationEmbedding) throw new Error("Embedding service returned no vector")
+          } catch (error) {
+            if (error instanceof AISpendDeniedError) throw error
+            logger.warn(
+              { error, conversationId: conversation.id, workspaceId, streamId },
+              "Memo context embedding failed; capturing against the newest memos only"
+            )
+          }
+          if (conversationEmbedding) {
+            const found = await MemoRepository.findNearestInStream(this.pool, {
+              workspaceId,
+              streamId,
+              embedding: conversationEmbedding,
+              scope: fetchedData.memoScope.scope,
+              scopeUserId: fetchedData.memoScope.scopeUserId,
+              audiences: [fetchedData.readerAudience],
+              sharedRootStreamId: fetchedData.sharedRootStreamId,
+              limit: MEMORY_CONTEXT_NEAREST_LIMIT,
+            })
+            nearest = found.map(({ memo }) => memo)
+          }
         }
         const shownIds = new Set([...fetchedData.existingMemos, ...existingMemos].map((m) => m.id))
         const memoryContext = [...fetchedData.existingMemos, ...nearest.filter((memo) => !shownIds.has(memo.id))]

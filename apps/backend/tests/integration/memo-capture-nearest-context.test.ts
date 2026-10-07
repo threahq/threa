@@ -146,7 +146,8 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
   async function capture(
     c: Channel,
     target: string,
-    duringInference: () => Promise<void> = async () => {}
+    duringInference: () => Promise<void> = async () => {},
+    { contextEmbedFails = false } = {}
   ): Promise<string[]> {
     let shown: string[] = []
     await new MemoService({
@@ -176,7 +177,10 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
       embeddingService: {
         embedBatch: async (texts: string[], opts: { functionId: string }) => {
           if (texts.some((text) => !text.trim())) throw new Error("embedding input is empty")
-          if (opts.functionId === "memo-context-embedding") contextEmbeddings++
+          if (opts.functionId === "memo-context-embedding") {
+            contextEmbeddings++
+            if (contextEmbedFails) throw new Error("embedding provider unavailable")
+          }
           return texts.map(() => (opts.functionId === "memo-context-embedding" ? axis(TOPIC_AXIS) : axis(nextAxis++)))
         },
       } as never,
@@ -252,6 +256,24 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
     await capture(c, price)
 
     expect(await priceStatuses(c)).toEqual({ "Price is $9": "superseded", "Price is $12": "active" })
+  })
+
+  test("a failed context embedding still captures the conversation against the newest memos", async () => {
+    const c = await seedChannel()
+    const price = await seedBuriedPrice(c)
+    await queueConversation(c)
+
+    const shown = await capture(c, price, undefined, { contextEmbedFails: true })
+
+    expect({
+      shownPrice: shown.includes("Price is $9"),
+      shown: shown.length,
+      statuses: await priceStatuses(c),
+    }).toEqual({
+      shownPrice: false,
+      shown: 20,
+      statuses: { "Price is $9": "active", "Price is $12": "active" },
+    })
   })
 
   test("a nearest memo edited while the model ran survives, and the conversation re-runs against the edit", async () => {
