@@ -617,13 +617,9 @@ export const MemoRepository = {
       audiences: readonly MemoAudience[]
       status?: MemoStatus
       limit?: number
-      orderBy?: "sourceAt" | "updatedAt"
       sharedRootStreamId?: string
     }
   ): Promise<Memo[]> {
-    const orderBy = rawSql(
-      options.orderBy === "updatedAt" ? "updated_at DESC" : "latest_source_at DESC NULLS LAST, created_at DESC"
-    )
     const filters = composeSql`(m.scope <> 'user' OR m.scope_user_id = ${options.scopeUserId})
         ${options.status ? composeSql`AND m.status = ${options.status}` : rawSql("")}
         ${capturedWhileSharedSql(options.sharedRootStreamId, "m")}
@@ -639,7 +635,7 @@ export const MemoRepository = {
       SELECT ${SELECT_FIELDS_PREFIXED_SQL} FROM memos m
       JOIN messages msg ON m.source_message_id = msg.id AND msg.workspace_id = m.workspace_id
       WHERE m.workspace_id = ${workspaceId} AND ${inStreamTreeSql(workspaceId, streamId, "msg.stream_id")} AND ${filters}
-      ORDER BY ${orderBy}, id
+      ORDER BY latest_source_at DESC NULLS LAST, created_at DESC, id
       LIMIT ${options.limit ?? 50}
     `)
     return result.rows.map(mapRowToMemo)

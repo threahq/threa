@@ -1339,7 +1339,6 @@ describe("MemoService — memo and pending-item repository calls carry the calle
           STREAM_ID,
           expect.objectContaining({
             status: "active",
-            orderBy: "sourceAt",
             audiences: [{ kind: "room", roomStreamId: STREAM_ID }],
           }),
         ],
@@ -1370,7 +1369,7 @@ describe("MemoService — memo and pending-item repository calls carry the calle
       findByStream: findByStream.mock.calls.map((c) => c.slice(1)),
       updateEmbedding: updateEmbedding.mock.calls.map((c) => c.slice(1)),
     }).toEqual({
-      findByStream: [[WORKSPACE_ID, STREAM_ID, expect.objectContaining({ status: "active", orderBy: "sourceAt" })]],
+      findByStream: [[WORKSPACE_ID, STREAM_ID, expect.objectContaining({ status: "active" })]],
       updateEmbedding: [[WORKSPACE_ID, insert.mock.calls[0]![1].id, [0.3, 0.6]]],
     })
   })
