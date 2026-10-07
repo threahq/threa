@@ -39,6 +39,8 @@ When to use describe_memo:
 - When the abstract is too lossy and you need the original wording from a specific source message
 - To find the conversation that produced a memo so you can reference it with \`shared-message:\` / \`quote:\` pointer URLs
 
+A memo id that has since been revised resolves to its current version, which names the requested id under \`supersedes\`.
+
 The tool returns each source message's \`messageId\`, \`streamId\`, and \`authorId\` — exactly the ids you need to compose a pointer URL per the "Referring to messages and attachments" section.`,
     description: `Describe a memo by id: returns its abstract, key points, tags, and the source messages it was derived from.
 
@@ -52,11 +54,11 @@ Returns the source messages with their \`messageId\`, \`streamId\`, and \`author
 
     execute: async (input): Promise<AgentToolResult> => {
       try {
-        const detail = await memoExplorer.getById(workspaceId, input.memoId, {
-          accessibleStreamIds,
-          userId: memoViewerUserId,
-          audiences: [memoAudience],
-        })
+        const permissions = { accessibleStreamIds, userId: memoViewerUserId, audiences: [memoAudience] }
+        const requested = await memoExplorer.getById(workspaceId, input.memoId, permissions)
+        const detail = requested?.successorMemoId
+          ? await memoExplorer.getById(workspaceId, requested.successorMemoId, permissions)
+          : requested
         if (detail?.memo.status !== MemoStatuses.ACTIVE) {
           return {
             output: JSON.stringify({
@@ -77,6 +79,7 @@ Returns the source messages with their \`messageId\`, \`streamId\`, and \`author
           ],
           output: JSON.stringify({
             id: memo.id,
+            ...(memo.id !== input.memoId ? { supersedes: input.memoId } : {}),
             title: memo.title,
             abstract: memo.abstract,
             keyPoints: memo.keyPoints,

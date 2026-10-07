@@ -424,7 +424,7 @@ export class MemoExplorerService {
   ): Promise<MemoExplorerDetail> {
     const sourceMessages = await this.loadSourceMessages(workspaceId, memo, permissions.accessibleStreamIds)
     const successor =
-      memo.status === "superseded" ? await MemoRepository.findSupersededBy(this.pool, workspaceId, memo.id) : null
+      memo.status === "superseded" ? await MemoRepository.findActiveSuccessor(this.pool, workspaceId, memo.id) : null
     const visibleSuccessorId =
       successor &&
       (await MemoRepository.filterVisibleIds(this.pool, workspaceId, [successor.id], permissions.audiences)).has(

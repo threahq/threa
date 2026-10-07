@@ -135,7 +135,7 @@ export async function retireMemosCitingDeletedMessage(
   const archived = citing.filter((c) => !c.hasLiveSource).map((c) => c.memo.id)
   const superseded = citing.filter((c) => c.hasLiveSource).map((c) => c.memo.id)
   await MemoRepository.archiveMany(client, workspaceId, archived)
-  await MemoRepository.markSuperseded(client, workspaceId, superseded, "A source message was deleted")
+  await MemoRepository.markSuperseded(client, workspaceId, superseded, "A source message was deleted", null)
   await publishSharedMemoChanges(
     client,
     citing.map((c) => c.memo)

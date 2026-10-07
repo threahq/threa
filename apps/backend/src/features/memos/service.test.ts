@@ -327,7 +327,8 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-69)", 
       expect.anything(),
       WORKSPACE_ID,
       ["memo_prior"],
-      expect.stringContaining("Superseded by revised capture")
+      expect.stringContaining("Superseded by revised capture"),
+      (insert.mock.calls[0][1] as { id: string }).id
     )
     // The new memo links back to the memo it replaced.
     expect(insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ parentMemoId: "memo_prior" }))
@@ -360,7 +361,8 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-69)", 
       expect.anything(),
       WORKSPACE_ID,
       ["memo_nearest", "memo_farther"],
-      expect.stringContaining("Superseded by revised capture")
+      expect.stringContaining("Superseded by revised capture"),
+      (insert.mock.calls[0][1] as { id: string }).id
     )
     expect(insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ parentMemoId: "memo_nearest" }))
   })
@@ -556,7 +558,8 @@ describe("MemoService.processBatch — explicit supersession (reversed conclusio
       expect.anything(),
       WORKSPACE_ID,
       ["memo_old_a", "memo_old_b"],
-      expect.stringContaining("Conclusion reversed or replaced")
+      expect.stringContaining("Conclusion reversed or replaced"),
+      (insert.mock.calls[0][1] as { id: string }).id
     )
     expect(insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ parentMemoId: "memo_old_a" }))
     // The embedding fallback excludes the explicitly retired memos.
@@ -587,7 +590,8 @@ describe("MemoService.processBatch — explicit supersession (reversed conclusio
       expect.anything(),
       WORKSPACE_ID,
       ["memo_wrong"],
-      expect.stringContaining("Conclusion reversed or replaced")
+      expect.stringContaining("Conclusion reversed or replaced"),
+      (insert.mock.calls[0][1] as { id: string }).id
     )
     expect(insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ parentMemoId: "memo_wrong" }))
   })
@@ -613,7 +617,8 @@ describe("MemoService.processBatch — explicit supersession (reversed conclusio
       expect.anything(),
       WORKSPACE_ID,
       ["memo_wrong"],
-      expect.stringContaining("memo_unrelated_dupe")
+      expect.stringContaining("memo_unrelated_dupe"),
+      "memo_unrelated_dupe"
     )
   })
 
