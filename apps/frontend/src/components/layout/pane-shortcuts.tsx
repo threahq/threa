@@ -4,6 +4,7 @@ import { usePanel, useCurrentPane, usePaneFocusLanding, usePaneShortcutQueue } f
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { findVisibleZoneEditor, focusAtEnd, zoneContainer } from "@/hooks/use-type-to-focus"
 import { activatePanelTab, closePanelTab, followCurrentPanel } from "@/lib/panel-tabs"
+import { closeAside } from "@/stores/aside-store"
 
 type PaneAction =
   | "closePane"
@@ -123,6 +124,12 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string |
   })
 
   const handle = (action: PaneAction) => (event: KeyboardEvent) => {
+    // The aside is no pane, so from inside it the rest would act on one the user isn't working in.
+    if (event.target instanceof Element && event.target.closest("[data-aside-column]")) {
+      if (action !== "closePane") return event.repeat
+      closeAside()
+      return true
+    }
     // A held key's repeats outrun the router, and must not go on acting after it is let go.
     if (queue.current.pending.length > 0 || !caughtUp()) {
       if (event.repeat) return true

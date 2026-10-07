@@ -10,7 +10,7 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
  *
  * Position assertions go through scroller geometry, never Playwright
  * visibility (virtua keeps rows mounted off-screen). The host scroller is
- * addressed by `data-stream-scroller` because the aside pane mounts a second
+ * addressed by `data-stream-scroller` because the aside column mounts a
  * timeline scroller of its own.
  */
 
@@ -104,14 +104,14 @@ async function openMessageActions(page: Page, streamId: string, prefix: string, 
   await expect(page.getByRole("menuitem", { name: "Open an aside here" })).toBeVisible()
 }
 
-const stage = (page: Page) => page.getByTestId("aside-stage")
-// The stage carries two live timelines and two real composers; this is the
+const column = (page: Page) => page.getByTestId("aside-column")
+// The page carries two live timelines and two real composers; this is the
 // aside's own.
 const asideChat = (page: Page) => page.getByTestId("aside-conversation")
 const anchorRow = (page: Page, streamId: string) => hostScroller(page, streamId).locator("[data-aside-id]").first()
 
 async function expectNoAsideChrome(page: Page): Promise<void> {
-  await expect(stage(page)).toHaveCount(0)
+  await expect(column(page)).toHaveCount(0)
 }
 
 async function expectSilent(page: Page, asideId: string): Promise<void> {
@@ -125,9 +125,9 @@ test.describe("Aside — desktop surface", () => {
   test.beforeEach(async ({ page }) => {
     const result = await loginAndCreateWorkspace(page, "aside")
     testId = result.testId
-    // Wide enough that a 400px dock never reflows the 800px-max timeline column,
-    // so any host scroll movement on open is the surface's doing, not a reflow.
-    await page.setViewportSize({ width: 1600, height: 600 })
+    // Wide enough that the default 620px aside column beside a 260px sidebar never reflows the 800px-max
+    // timeline column, so any host scroll movement on open is the surface's doing, not a reflow.
+    await page.setViewportSize({ width: 1920, height: 600 })
   })
 
   test("opens from a message beside the host without scrolling it, and the companion answers in the aside", async ({
@@ -166,18 +166,20 @@ test.describe("Aside — desktop surface", () => {
     await openMessageActions(page, streamId, prefix, anchorNum! + 1)
     await page.getByRole("menuitem", { name: "Open an aside here" }).click()
 
-    await expect(stage(page)).toBeVisible({ timeout: 15000 })
-    const asideId = await stage(page).getAttribute("data-aside-id")
+    await expect(column(page)).toBeVisible({ timeout: 15000 })
+    const asideId = await column(page).getAttribute("data-aside-id")
     expect(asideId).toBeTruthy()
 
-    // The stage brings the host with it as the left pane, and it is the only
-    // one: the page stands its own timeline down rather than leaving a second
-    // live copy of the same stream mounted behind the overlay.
+    // The aside is a column beside the page's own timeline, which stays put.
     await expect(hostScroller(page, streamId)).toHaveCount(1)
+    const columnBox = (await column(page).boundingBox())!
+    const hostBox = (await hostScroller(page, streamId).boundingBox())!
+    expect(hostBox.x + hostBox.width).toBeLessThanOrEqual(columnBox.x + 1)
 
     // The creator-only anchor row lands in the host timeline at the message.
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-aside-id", asideId!, { timeout: 15000 })
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-state", "open")
+    expect((await settledScrollMetrics(page, streamId)).topNum).toBe(anchorNum)
 
     // Talk to Ariadne in the aside: the first turn carries the viewport
     // snapshot ("what you saw") and the companion answers in the aside pane.
@@ -214,76 +216,200 @@ test.describe("Aside — desktop surface", () => {
     )
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-attention", "new", { timeout: AGENT_REPLY_TIMEOUT })
     await anchorRow(page, streamId).click()
-    await expect(stage(page)).toBeVisible({ timeout: 10000 })
+    await expect(column(page)).toBeVisible({ timeout: 10000 })
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-attention", "open")
     await expectSilent(page, asideId!)
   })
 
-  test("a thread opened from the host pane takes the pane, and nothing shows through the stage", async ({ page }) => {
+  test("a thread opens as a tab between the host and the aside, and the host never remounts", async ({ page }) => {
     await createChannel(page, `aside-${testId}`)
     const { workspaceId, streamId } = extractIds(page)
     const prefix = `[${testId}]`
     await seedMessages(page, workspaceId, streamId, prefix)
     await page.goto(`/w/${workspaceId}/s/${streamId}`)
     await expect(hostRow(page, streamId, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
+    // A remount would drop this mark along with the reader's scroll and draft.
+    await hostScroller(page, streamId).evaluate((element) => element.setAttribute("data-spec-mark", "kept"))
+    const hostKept = page.locator(`[data-stream-scroller="${streamId}"][data-spec-mark="kept"]`)
 
     await openMessageActions(page, streamId, prefix, MESSAGE_COUNT)
     await page.getByRole("menuitem", { name: "Open an aside here" }).click()
-    await expect(stage(page)).toBeVisible({ timeout: 15000 })
+    await expect(column(page)).toBeVisible({ timeout: 15000 })
+    await expect(hostKept).toHaveCount(1)
 
-    // The stage is opaque: the page keeps its own row mounted underneath, and a
-    // translucent ground let the thread panel's chrome bleed through it.
-    const alpha = await stage(page).evaluate((element) => {
-      const parts = getComputedStyle(element).backgroundColor.match(/[\d.]+/g) ?? []
-      return parts.length === 4 ? Number(parts[3]) : 1
-    })
-    expect(alpha).toBe(1)
+    // By keyboard: the link only shows on hover, and the rows under the pointer move as the column settles.
+    await hostRow(page, streamId, prefix, MESSAGE_COUNT - 2)
+      .getByRole("link", { name: "Reply in thread" })
+      .focus()
+    await page.keyboard.press("Enter")
+    const panel = page.getByTestId("panel")
+    await expect(panel.getByText(/Start a new thread/)).toBeVisible({ timeout: 10000 })
+    await expect(column(page)).toBeVisible()
+    await expect(hostKept).toHaveCount(1)
+    // Host, thread, aside: left to right, side by side.
+    const [hostBox, panelBox, columnBox] = await Promise.all([
+      hostScroller(page, streamId).boundingBox(),
+      panel.boundingBox(),
+      column(page).boundingBox(),
+    ])
+    expect(hostBox!.x + hostBox!.width).toBeLessThanOrEqual(panelBox!.x + 1)
+    expect(panelBox!.x + panelBox!.width).toBeLessThanOrEqual(columnBox!.x + 1)
+    expect(hostBox!.width).toBeGreaterThanOrEqual(380)
 
-    // A thread from the host pane takes the pane rather than opening behind
-    // the stage; the page's own slot shows nothing.
-    const hostPane = stage(page).getByTestId("aside-host-pane")
-    const row = hostRow(page, streamId, prefix, MESSAGE_COUNT - 2)
-    await row.hover()
-    await row.getByRole("link", { name: "Reply in thread" }).click()
-    await expect(hostPane).toHaveAttribute("data-view", "panel", { timeout: 10000 })
-    await expect(hostPane.getByText(/Start a new thread/)).toBeVisible()
-    await expect(page.getByTestId("panel").locator("[data-editor-zone]")).toHaveCount(0)
-    await expect(hostScroller(page, streamId)).toHaveCount(0)
-
-    const threadEditor = hostPane.locator("[contenteditable='true']").first()
-    await threadEditor.click()
+    await panel.locator("[contenteditable='true']").last().click()
     await page.keyboard.type("in the thread")
     await page.keyboard.press("Meta+Enter")
-    await expect(hostPane.locator(".message-item").filter({ hasText: "in the thread" })).toBeVisible({ timeout: 10000 })
-    await expect(asideChat(page)).toBeVisible()
-
-    // Closing the thread hands the pane back to the host, on the same stage.
-    await hostPane.getByRole("button", { name: "Close", exact: true }).click()
-    await expect(hostPane).toHaveAttribute("data-view", "host", { timeout: 10000 })
-    await expect(hostScroller(page, streamId)).toHaveCount(1)
-    await expect(stage(page)).toBeVisible()
-    await expect(page.getByTestId("panel").locator("[data-editor-zone]")).toHaveCount(0)
-
-    // The anchor chip is the way back to the host row, so from the thread it
-    // hands the pane back too — a jump on an unmounted timeline would be a
-    // dead click.
-    const reopen = hostRow(page, streamId, prefix, MESSAGE_COUNT - 2).getByRole("link", { name: /1 reply/ })
-    await reopen.click()
-    await expect(hostPane).toHaveAttribute("data-view", "panel", { timeout: 10000 })
-    await stage(page).getByTestId("aside-anchor-line").click()
-    await expect(hostPane).toHaveAttribute("data-view", "host", { timeout: 10000 })
-    expect(new URL(page.url()).searchParams.get("panel")).toBeNull()
-
-    // Closing the stage with the thread in its pane returns the thread to the
-    // page's own slot, beside the host timeline.
-    await reopen.click()
-    await expect(hostPane).toHaveAttribute("data-view", "panel", { timeout: 10000 })
-    await page.getByRole("button", { name: "Close aside" }).click()
-    await expectNoAsideChrome(page)
-    await expect(page.getByTestId("panel").locator(".message-item").filter({ hasText: "in the thread" })).toBeVisible({
-      timeout: 10000,
+    await expect(panel.locator(".message-item").filter({ hasText: "in the thread" })).toBeVisible({ timeout: 10000 })
+    // The first reply turns the draft thread into a real one, and the tab follows it.
+    await expect.poll(() => new URL(page.url()).searchParams.get("panel")).toMatch(/^stream_/)
+    const panelParam = new URL(page.url()).searchParams.get("panel")
+    // Nothing around the columns can scroll, or focus moving into them shifts the whole page: the shell once
+    // overflowed sideways by the off-screen sheet it holds, and downward when its height followed its content.
+    const scrolledAncestors = await hostScroller(page, streamId).evaluate((element) => {
+      const scrolled: string[] = []
+      for (let node = element.parentElement; node; node = node.parentElement) {
+        node.scrollLeft = 10_000
+        node.scrollTop = 10_000
+        if (node.scrollLeft !== 0 || node.scrollTop !== 0) scrolled.push(`${node.tagName}.${node.className}`)
+      }
+      return scrolled
     })
-    await expect(hostScroller(page, streamId)).toHaveCount(1)
+    expect(scrolledAncestors).toEqual([])
+
+    // The anchor chip scrolls the host, which is on screen, and leaves the thread open.
+    // The router commits the promotion in a transition, so the page can trail the URL while the thread loads.
+    await expect(column(page).getByTestId("aside-anchor-line")).toHaveAttribute(
+      "href",
+      new RegExp(`panel=${panelParam}`)
+    )
+    await column(page).getByTestId("aside-anchor-line").click()
+    await expect.poll(() => new URL(page.url()).searchParams.get("m")).toBeTruthy()
+    expect(new URL(page.url()).searchParams.get("panel")).toBe(panelParam)
+    await expect(panel.locator(".message-item").filter({ hasText: "in the thread" })).toBeVisible()
+
+    // ⌥W in the aside closes the aside, not the thread beside it. Its width goes back to the host; the thread
+    // and the host stay as they were.
+    await asideChat(page).locator("[contenteditable='true']").click()
+    await page.keyboard.press("Alt+w")
+    await expectNoAsideChrome(page)
+    await expect
+      .poll(async () => (await hostScroller(page, streamId).boundingBox())!.width)
+      .toBeGreaterThanOrEqual(hostBox!.width + columnBox!.width - 1)
+    await expect(panel.locator(".message-item").filter({ hasText: "in the thread" })).toBeVisible()
+    expect(new URL(page.url()).searchParams.get("panel")).toBe(panelParam)
+    await expect(hostKept).toHaveCount(1)
+  })
+
+  test("turns into a sheet holding the thread when a thread leaves it no room beside the host", async ({ page }) => {
+    await page.setViewportSize({ width: 1100, height: 700 })
+    await createChannel(page, `aside-${testId}`)
+    const { workspaceId, streamId } = extractIds(page)
+    const prefix = `[${testId}]`
+    await seedMessages(page, workspaceId, streamId, prefix)
+    await page.goto(`/w/${workspaceId}/s/${streamId}`)
+    await expect(hostRow(page, streamId, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
+    await openMessageActions(page, streamId, prefix, MESSAGE_COUNT)
+    await page.getByRole("menuitem", { name: "Open an aside here" }).click()
+
+    // The host and the aside fit side by side; nothing spills past the window.
+    await expect(column(page)).toBeVisible({ timeout: 15000 })
+    await expect
+      .poll(async () => {
+        const box = (await column(page).boundingBox())!
+        return box.x + box.width
+      })
+      .toBeLessThanOrEqual(1100 + 1)
+    const asideId = await column(page).getAttribute("data-aside-id")
+
+    // A thread on top leaves no room for three columns, so the aside becomes the sheet and holds the thread.
+    await hostRow(page, streamId, prefix, MESSAGE_COUNT - 2)
+      .getByRole("link", { name: "Reply in thread" })
+      .focus()
+    await page.keyboard.press("Enter")
+    const sheet = page.getByTestId("aside-sheet")
+    await expect(sheet).toBeVisible({ timeout: 10000 })
+    await expect(column(page)).toHaveCount(0)
+    await expect(sheet.getByText(/Start a new thread/)).toBeVisible({ timeout: 10000 })
+    await expect(page.getByTestId("panel").locator("[data-editor-zone]")).toHaveCount(0)
+    await expect(sheet.getByTestId("aside-conversation")).toHaveCount(0)
+
+    // The sheet stands in for the column and owns no history entry, so the
+    // thread's Close closes the thread, and the aside gets its column back.
+    await sheet.getByRole("button", { name: "Close", exact: true }).click()
+    await expect.poll(() => new URL(page.url()).searchParams.get("panel")).toBeNull()
+    await expect(column(page)).toHaveAttribute("data-aside-id", asideId!, { timeout: 10000 })
+    await expect(sheet).toHaveCount(0)
+
+    // Back, likewise, takes the thread it reopens, not the aside.
+    await hostRow(page, streamId, prefix, MESSAGE_COUNT - 2)
+      .getByRole("link", { name: "Reply in thread" })
+      .focus()
+    await page.keyboard.press("Enter")
+    await expect(sheet).toBeVisible({ timeout: 10000 })
+    await page.goBack()
+    await expect.poll(() => new URL(page.url()).searchParams.get("panel")).toBeNull()
+    await expect(column(page)).toHaveAttribute("data-aside-id", asideId!, { timeout: 10000 })
+  })
+
+  test("opened as a sheet over an open thread, leaves the thread's Close to the thread", async ({ page }) => {
+    // Too narrow to split, with a fine pointer: the aside is a sheet from the start.
+    await page.setViewportSize({ width: 900, height: 700 })
+    await createChannel(page, `aside-${testId}`)
+    const { workspaceId, streamId } = extractIds(page)
+    const prefix = `[${testId}]`
+    await seedMessages(page, workspaceId, streamId, prefix)
+    await page.goto(`/w/${workspaceId}/s/${streamId}`)
+    await expect(hostRow(page, streamId, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
+    await hostRow(page, streamId, prefix, MESSAGE_COUNT - 2)
+      .getByRole("link", { name: "Reply in thread" })
+      .focus()
+    await page.keyboard.press("Enter")
+    await expect.poll(() => new URL(page.url()).searchParams.get("panel")).not.toBeNull()
+
+    await page.keyboard.press("ControlOrMeta+Shift+KeyK")
+    await page.getByText("Open an aside here").first().click()
+    const sheet = page.getByTestId("aside-sheet")
+    await expect(sheet).toHaveAttribute("data-view", "panel", { timeout: 15000 })
+    await expect(sheet.getByText(/Start a new thread/)).toBeVisible({ timeout: 10000 })
+
+    // The sheet pushed no entry over the thread's, so its Close closes the thread and the aside stays.
+    await sheet.getByRole("button", { name: "Close", exact: true }).click()
+    await expect.poll(() => new URL(page.url()).searchParams.get("panel")).toBeNull()
+    await expect(sheet).toHaveAttribute("data-view", "aside", { timeout: 10000 })
+    await expect(sheet.getByTestId("aside-conversation")).toBeVisible()
+  })
+
+  test("a draft expanded beside an open aside floats over both, and the aside stays out of reach until it docks", async ({
+    page,
+  }) => {
+    await createChannel(page, `aside-${testId}`)
+    const { workspaceId, streamId } = extractIds(page)
+    const prefix = `[${testId}]`
+    await seedMessages(page, workspaceId, streamId, prefix)
+    await page.goto(`/w/${workspaceId}/s/${streamId}`)
+    await expect(hostRow(page, streamId, prefix, MESSAGE_COUNT)).toBeVisible({ timeout: 20000 })
+    await openMessageActions(page, streamId, prefix, MESSAGE_COUNT)
+    await page.getByRole("menuitem", { name: "Open an aside here" }).click()
+    await expect(column(page)).toBeVisible({ timeout: 15000 })
+
+    const main = page.locator('[data-editor-zone="main"]')
+    await main.locator("[contenteditable='true']").last().click()
+    await page.keyboard.type("a longer thought")
+    await main.getByRole("link", { name: "Expand editor into a pane" }).click()
+    const compose = `compose:${streamId}`
+    await expect.poll(() => new URL(page.url()).searchParams.get("panel")).toBe(`${compose}**`)
+    const editor = page
+      .locator(`[data-panel-tab="${compose}"]`)
+      .getByRole("textbox", { name: "Expanded message editor" })
+    await expect(editor).toHaveText("a longer thought")
+    await expect(page.locator('[inert]:has([data-testid="aside-column"])')).toHaveCount(1)
+
+    await page.keyboard.press("Escape")
+    await page.keyboard.press("Escape")
+    await expect.poll(() => new URL(page.url()).searchParams.get("panel")).toBe(compose)
+    await expect(page.locator('[inert]:has([data-testid="aside-column"])')).toHaveCount(0)
+    await expect(editor).toHaveText("a longer thought")
+    await expect(column(page)).toBeVisible()
   })
 
   test("folds away on navigation, leaves the next stream clean, and resumes silently from the anchor row", async ({
@@ -310,15 +436,14 @@ test.describe("Aside — desktop surface", () => {
       .click()
     await page.keyboard.press("Meta+Enter")
 
-    await expect(stage(page)).toBeVisible({ timeout: 15000 })
-    const asideId = await stage(page).getAttribute("data-aside-id")
+    await expect(column(page)).toBeVisible({ timeout: 15000 })
+    const asideId = await column(page).getAttribute("data-aside-id")
     expect(asideId).toBeTruthy()
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-aside-id", asideId!, { timeout: 15000 })
 
-    // One surface: the stage owns the content region, the host rides along
-    // still writable, and exactly one host timeline is mounted.
+    // One host timeline: the page's own, beside the column.
     await expect(hostScroller(page, streamId)).toHaveCount(1)
-    await expect(stage(page).getByRole("group", { name: "Aside surface" })).toHaveCount(0)
+    await expect(column(page).getByRole("group", { name: "Aside surface" })).toHaveCount(0)
 
     // Leave: the next stream carries no aside chrome at all.
     await page.getByRole("link", { name: `#elsewhere-${testId}` }).click()
@@ -334,8 +459,8 @@ test.describe("Aside — desktop surface", () => {
 
     // The whole row is the control, so the click lands anywhere on it.
     await anchorRow(page, streamId).click()
-    await expect(stage(page)).toBeVisible({ timeout: 10000 })
-    await expect(stage(page)).toHaveAttribute("data-aside-id", asideId!)
+    await expect(column(page)).toBeVisible({ timeout: 10000 })
+    await expect(column(page)).toHaveAttribute("data-aside-id", asideId!)
     await expect(anchorRow(page, streamId)).toHaveAttribute("data-state", "open")
     await expectSilent(page, asideId!)
   })

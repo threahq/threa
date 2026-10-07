@@ -1,35 +1,23 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
-import { X } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { TooltipProvider } from "@/components/ui/tooltip"
 import { StreamContent } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { useStreamName } from "@/hooks/use-stream-name"
-import {
-  ASIDE_STAGE_MIN_WIDTH,
-  asideHoldsPanel,
-  closeAside,
-  setAsideStageWidth,
-  useAsideStageWidth,
-} from "@/stores/aside-store"
-import { useResizeDrag } from "@/hooks/use-resize-drag"
+import { ASIDE_STAGE_MIN_WIDTH, asideHoldsPanel } from "@/stores/aside-store"
 import { PanelResizeHandle } from "@/components/layout"
 import { PanelHost } from "@/components/layout/panel-host"
 import { usePanel } from "@/contexts"
 import { StreamContextDockProvider } from "@/components/stream-context"
-import { streamFallbackLabel, streamLabel } from "@/lib/streams"
-import { StreamTypes } from "@threahq/types"
 import { cn } from "@/lib/utils"
-import { AsideAnchorLine } from "./aside-anchor-line"
 import { AsideConversation } from "./aside-conversation"
 import { AsideDrafts } from "./aside-drafts"
-import { ASIDE_META, ASIDE_PANE, ASIDE_PANE_HEAD, AsideGlyph, AsidePrivateBadge } from "./aside-chrome"
+import { ASIDE_PANE, ASIDE_PANE_HEAD, AsideGlyph } from "./aside-chrome"
+import { AsideHeader } from "./aside-header"
 import { AsideSplitHandle } from "./aside-split-handle"
 import { useAsideDraftSurface } from "./use-aside-draft-surface"
 import { useAsideSplit } from "./use-aside-split"
-import { useAsideDrafts } from "./use-aside-drafts"
+import { useAsideWidth } from "./use-aside-width"
 
 /** What the host pane keeps: below this it stops being readable as the thing
  *  you are answering, which is the only reason it is on the stage. */
@@ -64,8 +52,6 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
   const aside = useMemo(() => streams.find((stream) => stream.id === asideId), [streams, asideId])
   const host = useMemo(() => streams.find((stream) => stream.id === hostStreamId), [streams, hostStreamId])
   const hostName = useStreamName(workspaceId, hostStreamId, "breadcrumb")
-  const title = aside ? streamLabel(aside) : streamFallbackLabel(StreamTypes.ASIDE, "generic")
-  const drafts = useAsideDrafts(workspaceId, asideId)
   // The anchor line jumps by `?m=`, and while the stage stands this pane is the
   // only host timeline mounted — so it is the one that has to hear it. Only the
   // URL feeds this: standing in the aside's anchor would keep a deep link
@@ -99,34 +85,18 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
     observer.observe(element)
     return () => observer.disconnect()
   }, [])
-  const storedWidth = useAsideStageWidth(asideId)
   // Before the first measurement the viewport stands in — capping at the
   // stored width would make the divider inert on the frame it is grabbed.
   const measured = stageWidth > 0 ? stageWidth : (globalThis.window?.innerWidth ?? 0)
   const maxWidth = Math.max(ASIDE_STAGE_MIN_WIDTH, measured - MIN_HOST_WIDTH - STAGE_CHROME_WIDTH)
-  const columnWidth = Math.min(Math.max(storedWidth, ASIDE_STAGE_MIN_WIDTH), maxWidth)
-  const applyWidth = useCallback(
-    (next: number) => setAsideStageWidth(asideId, Math.min(Math.max(next, ASIDE_STAGE_MIN_WIDTH), maxWidth)),
-    [asideId, maxWidth]
-  )
-  const { isResizing, handleResizeStart, handleResizeMove, handleResizeEnd } = useResizeDrag({
+  const {
     width: columnWidth,
-    onWidthChange: applyWidth,
-    direction: "left",
-  })
-  const onDividerKeyDown = useCallback(
-    (event: React.KeyboardEvent) => {
-      const step = event.shiftKey ? 50 : 10
-      if (event.key === "ArrowLeft") {
-        event.preventDefault()
-        applyWidth(columnWidth + step)
-      } else if (event.key === "ArrowRight") {
-        event.preventDefault()
-        applyWidth(columnWidth - step)
-      }
-    },
-    [applyWidth, columnWidth]
-  )
+    onKeyDown: onDividerKeyDown,
+    isResizing,
+    handleResizeStart,
+    handleResizeMove,
+    handleResizeEnd,
+  } = useAsideWidth(asideId, maxWidth)
 
   // The page's overview dock sits under this stage, so a thread held in the
   // host pane offers no overview here.
@@ -137,34 +107,13 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
         data-aside-id={asideId}
         className="absolute inset-0 z-30 flex flex-col bg-background"
       >
-        <TooltipProvider delayDuration={300}>
-          <header className="flex h-12 shrink-0 items-center gap-2.5 border-b bg-background px-4">
-            <AsideGlyph className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-            <h2 className="min-w-0 truncate text-[13px] font-semibold tracking-tight">{title}</h2>
-            <AsidePrivateBadge />
-            <AsideAnchorLine
-              workspaceId={workspaceId}
-              hostStreamId={hostStreamId}
-              anchorId={aside?.parentAnchorId}
-              variant="chip"
-            />
-            <span className="flex-1" />
-            {drafts.length > 0 && (
-              <span className={ASIDE_META}>
-                {drafts.length} {drafts.length === 1 ? "draft" : "drafts"}
-              </span>
-            )}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-7 w-7 text-muted-foreground"
-              aria-label="Close aside"
-              onClick={closeAside}
-            >
-              <X className="h-3.5 w-3.5" />
-            </Button>
-          </header>
-        </TooltipProvider>
+        <AsideHeader
+          workspaceId={workspaceId}
+          asideId={asideId}
+          hostStreamId={hostStreamId}
+          aside={aside}
+          className="bg-background"
+        />
 
         <div ref={stageRef} className="flex min-h-0 flex-1 gap-1 bg-muted/40 p-3">
           {/* The two panes carry the app's editor zones rather than one of their
@@ -219,6 +168,7 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
           <div
             ref={split.containerRef}
             data-editor-zone="panel"
+            data-aside-column
             className="flex min-h-0 min-w-0 shrink-0 flex-col gap-3"
             style={{ width: columnWidth }}
           >
