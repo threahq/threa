@@ -36,6 +36,7 @@ import {
   type BenchQuestion,
 } from "./dataset"
 import { COMPANION_MODEL_ID, COMPANION_TEMPERATURE } from "../../../src/features/agents"
+import { PROVISIONAL_ATTACH_WINDOW_MINUTES } from "../../../src/features/conversations"
 import { MEMO_MAX_FAILED_ATTEMPTS } from "../../../src/features/memos/config"
 import { StreamRepository, StreamMemberRepository } from "../../../src/features/streams"
 import { UserRepository } from "../../../src/features/workspaces"
@@ -132,7 +133,11 @@ async function seedChannel(
   const conversations: SeededConversation[] = []
   const addConversations = (streamId: string, messages: BenchMessage[], ids: string[]) => {
     const idByNode = new Map(messages.map((m, i) => [m.node, ids[i]!]))
-    for (const conversation of segmentConversations(messages, MAX_CONVERSATION_MESSAGES)) {
+    for (const conversation of segmentConversations(
+      messages,
+      MAX_CONVERSATION_MESSAGES,
+      PROVISIONAL_ATTACH_WINDOW_MINUTES * 60_000
+    )) {
       conversations.push({
         streamId,
         messageIds: conversation.map((m) => idByNode.get(m.node)!),
@@ -200,10 +205,14 @@ function seedWorkspace(variant: Variant) {
     if (variant === "memory") {
       const memoService = createCaptureMemoService(ctx)
       // A channel's threads queue on the channel, so each channel drains on its own, the channels in parallel.
+      // Each conversation is captured before the next is recorded, as production settles them one at a time.
       const remaining = await Promise.all(
         seededChannels.map(async ({ channelId, conversations }, i) => {
-          for (const c of conversations) await recordConversation(ctx, c.streamId, c.messageIds, c.participantIds)
-          const left = await drainCapture(ctx, memoService, channelId)
+          let left = 0
+          for (const c of conversations) {
+            await recordConversation(ctx, c.streamId, c.messageIds, c.participantIds)
+            left = await drainCapture(ctx, memoService, channelId)
+          }
           console.log(
             `  ${channels[i]!.name}: ${conversations.length} conversations (${seconds(Date.now() - startedAt)})`
           )
@@ -330,7 +339,7 @@ type Result = CaseResult<GroupMemBenchOutput, GroupMemBenchExpected>
 
 const isCorrect = (r: Result) => r.evaluations.find((e) => e.name === "correct")?.passed === true
 
-/** A turn that errored, or whose judge did, says nothing about whether the answer was right. */
+/** A turn that errored, or whose judge did: scored wrong, and counted on its own so a flaky run shows. */
 const errored = (r: Result) =>
   r.output === undefined ||
   r.output.error !== undefined ||
@@ -344,11 +353,11 @@ function percentile(values: number[], p: number): number | undefined {
 
 const seconds = (ms: number | undefined) => (ms === undefined ? "–" : `${(ms / 1000).toFixed(1)}s`)
 
+/** Every question counts, as upstream scores it: an errored one is a wrong answer. */
 function accuracyLine(label: string, results: Result[]): string {
-  const counted = results.filter((r) => !errored(r))
-  const correct = counted.filter(isCorrect).length
-  const pct = counted.length === 0 ? "–" : `${Math.round((100 * correct) / counted.length)}%`
-  return `${label}: ${correct}/${counted.length} (${pct})`
+  const correct = results.filter(isCorrect).length
+  const pct = results.length === 0 ? "–" : `${Math.round((100 * correct) / results.length)}%`
+  return `${label}: ${correct}/${results.length} (${pct})`
 }
 
 const summaryEvaluator: RunEvaluator<GroupMemBenchOutput, GroupMemBenchExpected> = {
