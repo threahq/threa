@@ -109,8 +109,9 @@ export function StreamPage() {
   const phonePages = useFittedPanelLayout(1, true)
   const pagePanel = isMobile ? primaryPanelOf(phonePages) : panelId
   // A thread the sheet holds is mounted there and nowhere else: not in the
-  // slot, not as the phone's takeover behind the sheet.
-  const panelInAside = asideIsSheet && openAside !== null && asideHoldsPanel(pagePanel, openAside.hostStreamId)
+  // slot, not as the phone's takeover behind the sheet. The sheet holds the
+  // primary pane (aside-mobile-sheet.tsx), so this reads the same one.
+  const panelInAside = asideIsSheet && openAside !== null && asideHoldsPanel(panelId, openAside.hostStreamId)
   // The aside clamps against the other columns' minimums.
   const asideLayout = useAsideColumnLayout(asideColumn, containerWidth, isPanelOpen ? MIN_PANEL_WIDTH : 0)
   const {

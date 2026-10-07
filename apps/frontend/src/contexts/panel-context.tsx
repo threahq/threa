@@ -122,6 +122,12 @@ export function contextPanelOf(layout: PanelLayout, streamId: string): string | 
   return panelIdsOf(layout).find((id) => parseContextPanel(id)?.streamId === streamId) ?? null
 }
 
+/** One stream has one overview, whichever filter it shows. */
+export function paneIdentity(panelId: string): string {
+  const context = parseContextPanel(panelId)
+  return context ? createContextPanelId(context.streamId) : panelId
+}
+
 /** A pane that lists its stream rather than showing one: where it can't sit
  *  beside that stream (a phone, the board), it is a drawer over it. */
 export function presentsAsDrawer(panelId: string): boolean {
@@ -267,7 +273,8 @@ function buildValue(
   ops: PanelOps,
   scopeId: string | null,
   scopeSection: PanelSection | null,
-  splits: readonly SplitDirection[] = NO_SPLITS
+  splits: readonly SplitDirection[] = NO_SPLITS,
+  shownTabs: number = panelIdsOf(ops.layout).length
 ): PanelContextValue {
   const { layout } = ops
   const own = scopeId ?? primaryPanelOf(layout)
@@ -283,7 +290,7 @@ function buildValue(
     layout,
     section: scopeSection ?? layout.columns[0]?.[0] ?? null,
     isPanelOpen: own !== null,
-    tabbed: ops.tabbed && panelIdsOf(layout).length > 1,
+    tabbed: ops.tabbed && shownTabs > 1,
     hasTabs: ops.tabbed,
     getPanelUrl: (panelId) => ops.urlFor((current) => ops.contextual(current, panelId, scopeId)),
     getFocusedPanelUrl: (panelId) =>
@@ -447,10 +454,10 @@ export function PanelProvider({ children }: PanelProviderProps) {
   )
 
   const findReopenable = useCallback(() => {
-    const shown = new Set(panelIdsOf(layout))
+    const shown = new Set(panelIdsOf(layout).map(paneIdentity))
     return [...closedTabs.current]
       .reverse()
-      .find((closed) => closed.path === location.pathname && !shown.has(closed.panelId))
+      .find((closed) => closed.path === location.pathname && !shown.has(paneIdentity(closed.panelId)))
   }, [layout, location.pathname])
   const canReopenTab = useCallback(() => findReopenable() !== undefined, [findReopenable])
 
@@ -565,6 +572,9 @@ export function PaneScope({
 }) {
   const ops = useContext(PanelOpsContext)
   if (!ops) throw new Error("PaneScope must be used within a PanelProvider")
+  // A phone's drawer is no tab of the page under it, so it doesn't turn that page's header into a tab row.
+  const displayed = useContext(DisplayedPanelLayoutContext)
+  const shownTabs = panelIdsOf(displayed ?? ops.layout).length
   // Sections and split lists are rebuilt whenever the arrangement is laid out; only what they hold matters.
   const ids = section.ids.join(".")
   const { active } = section
@@ -575,9 +585,10 @@ export function PaneScope({
         ops,
         panelId,
         { ids: ids.split("."), active },
-        directions ? (directions.split(".") as SplitDirection[]) : NO_SPLITS
+        directions ? (directions.split(".") as SplitDirection[]) : NO_SPLITS,
+        shownTabs
       ),
-    [ops, panelId, ids, active, directions]
+    [ops, panelId, ids, active, directions, shownTabs]
   )
   return <PanelContext.Provider value={value}>{children}</PanelContext.Provider>
 }

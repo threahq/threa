@@ -2,7 +2,14 @@ import { describe, it, expect } from "vitest"
 import { render, screen, act, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createMemoryRouter, Link, RouterProvider, useLocation, useSearchParams } from "react-router-dom"
-import { PanelProvider, PaneScope, useFrontPanel, useMainOwnsCover, usePanel } from "./panel-context"
+import {
+  DisplayedPanelLayoutProvider,
+  PanelProvider,
+  PaneScope,
+  useFrontPanel,
+  useMainOwnsCover,
+  usePanel,
+} from "./panel-context"
 
 /**
  * On mobile an open panel takes over the whole screen, so the platform back
@@ -150,13 +157,14 @@ describe("panel history", () => {
 /** Each open tab as the stream page renders it: scoped, with its own close, an
  *  in-place breadcrumb, and its strip link. */
 function TabsProbe() {
-  const { layout, getPanelUrl, getTabUrl, setCurrentPane } = usePanel()
+  const { layout, getPanelUrl, getTabUrl, setCurrentPane, reopenTab } = usePanel()
   const location = useLocation()
   return (
     <div>
       <span data-testid="loc">{decodeURIComponent(`${location.pathname}${location.search}`)}</span>
       <span data-testid="front">{useFrontPanel()}</span>
       <button onClick={() => setCurrentPane(null)}>work in main</button>
+      <button onClick={() => reopenTab()}>reopen tab</button>
       {useMainOwnsCover() && <span>main owns the deep link</span>}
       <Link to={getPanelUrl("stream_b")}>open b</Link>
       {layout.columns.flat().flatMap((section) =>
@@ -196,6 +204,10 @@ function ScopedTab() {
       {ownsCover && <span>{`${panelId} owns the deep link`}</span>}
     </div>
   )
+}
+
+function TabbedProbe() {
+  return <span data-testid="tabbed">{usePanel().tabbed ? "tabbed" : "untabbed"}</span>
 }
 
 const PAGE = "/w/ws/s/stream_main"
@@ -362,6 +374,30 @@ describe("panel tabs history", () => {
     expect(screen.queryAllByText(/owns the deep link/).map((owner) => owner.textContent)).toEqual([
       "main owns the deep link",
     ])
+  })
+
+  it("should not reopen a second overview of a stream that has one open", async () => {
+    const { user, loc } = mountTabs([`${PAGE}?panel=stream_a.context:stream_a:links`])
+
+    await user.click(screen.getByRole("button", { name: "close context:stream_a:links" }))
+    await user.click(screen.getByRole("link", { name: "stream_a overview" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_a-context:stream_a`)
+
+    await user.click(screen.getByRole("button", { name: "reopen tab" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_a-context:stream_a`)
+  })
+
+  it("should not count a drawer the screen shows apart as a tab of the page under it", () => {
+    const section = { ids: ["stream_a"], active: "stream_a" }
+    mount(
+      [`${PAGE}?panel=stream_a.context:stream_a`],
+      <DisplayedPanelLayoutProvider value={{ columns: [[section]] }}>
+        <PaneScope panelId="stream_a" section={section} splits={[]}>
+          <TabbedProbe />
+        </PaneScope>
+      </DisplayedPanelLayoutProvider>
+    )
+    expect(screen.getByTestId("tabbed").textContent).toBe("untabbed")
   })
 
   it("should close a stream's overview when another stream takes its tab", async () => {
