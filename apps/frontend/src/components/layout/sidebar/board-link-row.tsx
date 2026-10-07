@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom"
 import { ArrowLeft, ArrowRight, CircleDot, LayoutGrid } from "lucide-react"
 import { useSidebar, usePreferencesOptional } from "@/contexts"
-import { useWorkspaceStreams } from "@/stores/workspace-store"
+import { useWorkspaceStreamsSelect, type CachedStream } from "@/stores/workspace-store"
 import { useBoardViews } from "@/hooks/use-board-views"
 import { boardHomeHref } from "@/components/board/board-saved-views"
 import {
@@ -18,6 +18,8 @@ import { isBoardPath } from "./board-sidebar-mode"
 
 const ROW_BASE_CLASS = "flex items-center gap-2.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors"
 const ROW_CLASS = `${ROW_BASE_CLASS} text-muted-foreground hover:bg-muted/50`
+
+const selectStreamIdSignature = (streams: CachedStream[]) => streams.map((s) => s.id).join(",")
 
 interface ModeLinkRowProps {
   workspaceId: string
@@ -91,15 +93,13 @@ export function BoardUnreadRow({
  */
 export function BoardLinkRow({ workspaceId, userId }: ModeLinkRowProps) {
   const { collapseOnMobile } = useSidebar()
-  const streams = useWorkspaceStreams(workspaceId)
+  // A signature, not the rows: every stream write re-emits the list, and the
+  // href only changes when the set of ids does.
+  const streamIdSignature = useWorkspaceStreamsSelect(workspaceId, selectStreamIdSignature)
 
   const record = userId ? getLastLocation(userId, workspaceId) : null
   const boardHref = record?.board
-    ? buildBoardHref(
-        workspaceId,
-        record.board,
-        streams.map((s) => s.id)
-      )
+    ? buildBoardHref(workspaceId, record.board, streamIdSignature ? streamIdSignature.split(",") : [])
     : `/w/${workspaceId}/board`
 
   // No BoardUnreadRow here: the unread toggle is a board-mode filter
