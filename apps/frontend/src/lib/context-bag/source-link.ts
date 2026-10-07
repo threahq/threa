@@ -7,7 +7,7 @@ import { createConversationPanelId } from "@/contexts/panel-context"
  * started from.
  *
  * Threa uses `?m=<messageId>` as the canonical deep-link query param for
- * highlighting a message (see `timeline-view.tsx` + `event-item.tsx`'s
+ * highlighting a message (see `stream-pane.tsx` + `event-item.tsx`'s
  * `highlightMessageId`; the conversation panel reads the same `m`). When
  * `originMessageId` is set we include it. A `conversationId` routes to the
  * board conversation panel instead of the stream permalink, since a
