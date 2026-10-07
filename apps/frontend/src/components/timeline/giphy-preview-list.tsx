@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { memo, useMemo } from "react"
 import { extractGiphyRefs } from "@/lib/markdown/giphy-refs"
 import { GiphyEmbedBlock } from "@/lib/markdown/giphy-embed-block"
 
@@ -8,7 +8,7 @@ import { GiphyEmbedBlock } from "@/lib/markdown/giphy-embed-block"
  * `giphy:` chips stay in the rendered markdown; this surfaces the actual GIFs.
  * Returns nothing when the body has no GIF references.
  */
-export function GiphyPreviewList({ contentMarkdown }: { contentMarkdown: string }) {
+export const GiphyPreviewList = memo(function GiphyPreviewList({ contentMarkdown }: { contentMarkdown: string }) {
   const refs = useMemo(() => extractGiphyRefs(contentMarkdown), [contentMarkdown])
   if (refs.length === 0) return null
 
@@ -25,4 +25,4 @@ export function GiphyPreviewList({ contentMarkdown }: { contentMarkdown: string 
       ))}
     </div>
   )
-}
+})

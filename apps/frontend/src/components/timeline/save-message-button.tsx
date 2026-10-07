@@ -1,4 +1,4 @@
-import { useMemo } from "react"
+import { memo, useMemo } from "react"
 import { Bookmark, BookmarkCheck, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -23,7 +23,11 @@ interface SaveMessageButtonProps {
  * (matches the spec: "pressing the bookmark saves, hovering shows the
  * popover").
  */
-export function SaveMessageButton({ workspaceId, messageId, conversationId }: SaveMessageButtonProps) {
+export const SaveMessageButton = memo(function SaveMessageButton({
+  workspaceId,
+  messageId,
+  conversationId,
+}: SaveMessageButtonProps) {
   const saved = useSavedForMessage(workspaceId, messageId)
   const saveMutation = useSaveMessage(workspaceId)
   const updateMutation = useUpdateSaved(workspaceId)
@@ -95,4 +99,4 @@ export function SaveMessageButton({ workspaceId, messageId, conversationId }: Sa
       </HoverCardContent>
     </LazyHoverCard>
   )
-}
+})

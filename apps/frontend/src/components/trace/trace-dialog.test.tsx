@@ -1,3 +1,4 @@
+import { spyOnExport } from "@/test/spy"
 import type { ReactNode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
@@ -110,7 +111,7 @@ describe("TraceDialog", () => {
     })
     vi.spyOn(toast, "error").mockReturnValue("" as ReturnType<typeof toast.error>)
 
-    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((() => (
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((() => (
       <span>just now</span>
     )) as unknown as typeof relativeTimeModule.RelativeTime)
 

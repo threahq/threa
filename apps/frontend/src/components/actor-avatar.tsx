@@ -1,8 +1,10 @@
+import { memo } from "react"
 import type { AuthorType } from "@threahq/types"
 import { Moon } from "lucide-react"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { useActors } from "@/hooks"
+import { useRerenderAt } from "@/hooks/use-rerender-at"
 import { formatNotificationPauseLabel, formatStatusClearLabel } from "@/lib/status"
 import { cn } from "@/lib/utils"
 
@@ -63,7 +65,7 @@ interface ActorAvatarProps {
  * - **System**: always fallback with blue tint (no image).
  * - **User**: image when available, muted fallback with initials.
  */
-export function ActorAvatar({
+export const ActorAvatar = memo(function ActorAvatar({
   actorId,
   actorType,
   workspaceId,
@@ -74,6 +76,8 @@ export function ActorAvatar({
 }: ActorAvatarProps) {
   const { getActorAvatar } = useActors(workspaceId)
   const info = getActorAvatar(actorId, actorType)
+  useRerenderAt(info.status?.expiresAt)
+  useRerenderAt(info.dnd?.until)
 
   if (actorType === "persona") {
     return (
@@ -128,4 +132,4 @@ export function ActorAvatar({
       </span>
     </span>
   )
-}
+})

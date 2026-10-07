@@ -1,3 +1,4 @@
+import { spyOnExport } from "@/test/spy"
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest"
 import { act, render, screen } from "@testing-library/react"
 import * as hooksModule from "@/hooks"
@@ -24,7 +25,7 @@ beforeEach(() => {
   } as ReturnType<typeof workspaceEmojiModule.useWorkspaceEmoji>)
   // Pickers/popovers use portals + Radix; render their triggers only so we can
   // assert on the structural chrome (pills, overflow button).
-  vi.spyOn(reactionPickerModule, "ReactionEmojiPicker").mockImplementation((({
+  spyOnExport(reactionPickerModule, "ReactionEmojiPicker").mockReturnValue((({
     trigger,
   }: {
     trigger: React.ReactNode

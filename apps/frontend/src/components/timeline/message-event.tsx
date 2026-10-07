@@ -1,4 +1,4 @@
-import { type ReactNode, useRef, useEffect, useState, useMemo, useCallback } from "react"
+import { memo, type ReactNode, useRef, useEffect, useState, useMemo, useCallback } from "react"
 import {
   isAsideHostType,
   StreamTypes,
@@ -28,6 +28,7 @@ import { usePendingMessages, usePendingMessageStatus, usePanel, createConversati
 import { useUserProfile } from "@/components/user-profile"
 import { useDeleteMessage } from "@/hooks/use-delete-message"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
+import { useRerenderAt } from "@/hooks/use-rerender-at"
 import { formatStatusClearLabel } from "@/lib/status"
 import { useMessageMarkdownCopy } from "@/hooks/use-message-markdown-copy"
 import { useDecryptedMessageContent, type DecryptedMessageContent } from "@/hooks/use-decrypted-message-content"
@@ -111,6 +112,7 @@ import type { ConversationRevival } from "./conversation-overlay/model"
 
 const SLOW_SEND_THRESHOLD_MS = 5000
 const NO_REACTIONS: Record<string, string[]> = {}
+const NO_ATTACHMENTS: NonNullable<MessagePayload["attachments"]> = []
 
 interface MessagePayload {
   messageId: string
@@ -275,7 +277,7 @@ function focusVisibleZoneEditor(zone: HTMLElement | null, attempt = 0) {
 }
 
 /** Reads hovered link URL from context and passes to LinkPreviewList */
-function MessageLinkPreviews({
+const MessageLinkPreviews = memo(function MessageLinkPreviews({
   messageId,
   workspaceId,
   previews,
@@ -296,7 +298,7 @@ function MessageLinkPreviews({
       hydrateFromApi={hydrateFromApi}
     />
   )
-}
+})
 
 /**
  * On-message topic-provenance chip (mechanism A). Rendered in the message
@@ -502,7 +504,7 @@ function BatchSelectionDot({ selected }: { selected: boolean }) {
  * and never crowds the avatar. Only mounts on head rows (continuations drop the
  * header), so it doesn't add a lookup to every grouped row.
  */
-function MessageAuthorStatus({
+const MessageAuthorStatus = memo(function MessageAuthorStatus({
   actorId,
   actorType,
   workspaceId,
@@ -515,8 +517,8 @@ function MessageAuthorStatus({
   // Match the rest of this component, which treats a null/undefined actorType as
   // a user (`event.actorType ?? "user"`), so legacy rows still show status.
   const resolvedActorType = actorType ?? "user"
-  if (resolvedActorType !== "user" || !actorId) return null
-  const status = getActorAvatar(actorId, resolvedActorType).status
+  const status = resolvedActorType === "user" && actorId ? getActorAvatar(actorId, resolvedActorType).status : undefined
+  useRerenderAt(status?.expiresAt)
   if (!status?.emoji) return null
   const clears = formatStatusClearLabel(status.expiresAt)
   const glyph = (
@@ -536,7 +538,7 @@ function MessageAuthorStatus({
       </TooltipContent>
     </LazyTooltip>
   )
-}
+})
 
 function MessageLayout({
   event,
@@ -592,7 +594,7 @@ function MessageLayout({
   const runFold = useRunFoldBody(payload.messageId)
   const messageBody = children ?? (
     <LinkPreviewProvider>
-      <AttachmentProvider workspaceId={workspaceId} attachments={payload.attachments ?? []}>
+      <AttachmentProvider workspaceId={workspaceId} attachments={payload.attachments ?? NO_ATTACHMENTS}>
         <MarkdownBlockProvider messageId={payload.messageId}>
           <CollapsibleBody
             kind="message"
@@ -903,6 +905,65 @@ interface MessageEventInnerProps {
   batch?: BatchTimelineState
 }
 
+const QuoteReplyButton = memo(function QuoteReplyButton({ onQuoteReply }: { onQuoteReply: () => void }) {
+  return (
+    <LazyTooltip
+      trigger={
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-6 w-6 text-muted-foreground shrink-0 hover:text-foreground"
+          aria-label="Quote reply"
+          onClick={onQuoteReply}
+        >
+          <Quote className="h-3.5 w-3.5" />
+        </Button>
+      }
+    >
+      <TooltipContent>Quote reply</TooltipContent>
+    </LazyTooltip>
+  )
+})
+
+const ReplyInThreadButton = memo(function ReplyInThreadButton({
+  replyUrl,
+  disabled,
+}: {
+  replyUrl: string
+  disabled: boolean
+}) {
+  return (
+    <LazyTooltip
+      trigger={
+        disabled ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 text-muted-foreground shrink-0"
+            aria-label="Reply in thread"
+            disabled
+          >
+            <MessageSquareReply className="h-3.5 w-3.5" />
+          </Button>
+        ) : (
+          <Button
+            asChild
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6 text-muted-foreground shrink-0 hover:text-foreground"
+          >
+            <Link to={replyUrl} aria-label="Reply in thread">
+              <MessageSquareReply className="h-3.5 w-3.5" />
+            </Link>
+          </Button>
+        )
+      }
+    >
+      <TooltipContent>Reply in thread</TooltipContent>
+    </LazyTooltip>
+  )
+})
+
 function pickRowStreamFields(row: CachedStream) {
   return {
     type: row.type,
@@ -1155,8 +1216,8 @@ function SentMessageEvent({
   }
 
   const savedForMessage = useSavedForMessage(workspaceId, payload.messageId)
-  const saveMessageMutation = useSaveMessage(workspaceId)
-  const unsaveMessageMutation = useDeleteSaved(workspaceId)
+  const { mutate: saveMessage, isPending: isSavePending } = useSaveMessage(workspaceId)
+  const { mutate: unsaveMessage, isPending: isUnsavePending } = useDeleteSaved(workspaceId)
   const isSaved = !!savedForMessage && savedForMessage.status === "saved"
   const [reminderSheetOpen, setReminderSheetOpen] = useState(false)
 
@@ -1164,9 +1225,9 @@ function SentMessageEvent({
     // Mirror the desktop hover-button: swallow double-taps while a mutation is
     // in flight and surface a toast on every outcome so the mobile drawer
     // gives the same feedback as the desktop bookmark button.
-    if (saveMessageMutation.isPending || unsaveMessageMutation.isPending) return
+    if (isSavePending || isUnsavePending) return
     if (!savedForMessage) {
-      saveMessageMutation.mutate(
+      saveMessage(
         { messageId: payload.messageId },
         {
           onError: () => toast.error("Could not save message"),
@@ -1175,7 +1236,7 @@ function SentMessageEvent({
       return
     }
     if (savedForMessage.status !== "saved") {
-      saveMessageMutation.mutate(
+      saveMessage(
         { messageId: payload.messageId },
         {
           onError: () => toast.error("Could not restore saved item"),
@@ -1183,10 +1244,10 @@ function SentMessageEvent({
       )
       return
     }
-    unsaveMessageMutation.mutate(savedForMessage.id, {
+    unsaveMessage(savedForMessage.id, {
       onError: () => toast.error("Could not remove saved item"),
     })
-  }, [savedForMessage, saveMessageMutation, unsaveMessageMutation, payload.messageId])
+  }, [savedForMessage, isSavePending, isUnsavePending, saveMessage, unsaveMessage, payload.messageId])
 
   const handleRequestReminder = useCallback(() => setReminderSheetOpen(true), [])
 
@@ -1261,6 +1322,33 @@ function SentMessageEvent({
   // never knows, so the reply action waits for the echo.
   const awaitingServerId = payload.messageId === event.id
 
+  const handleQuoteReply = useMemo(
+    () =>
+      quoteReplyCtx
+        ? () =>
+            quoteReplyCtx.triggerQuoteReply({
+              messageId: payload.messageId,
+              streamId,
+              authorName: actorName,
+              authorId: event.actorId ?? "",
+              actorType: event.actorType ?? "user",
+              snippet: payload.contentMarkdown,
+              version: payload.revision ?? null,
+              range: null,
+            })
+        : undefined,
+    [
+      quoteReplyCtx,
+      payload.messageId,
+      streamId,
+      actorName,
+      event.actorId,
+      event.actorType,
+      payload.contentMarkdown,
+      payload.revision,
+    ]
+  )
+
   // Shared action context for both desktop dropdown and mobile drawer
   const actionContext = useMemo(
     () => ({
@@ -1297,19 +1385,7 @@ function SentMessageEvent({
       onRequestReminder: handleRequestReminder,
       onOpenAside: canOpenAside ? handleOpenAside : undefined,
       onInsertAgentBlock: canInsertAgentBlock ? handleInsertAgentBlock : undefined,
-      onQuoteReply: quoteReplyCtx
-        ? () =>
-            quoteReplyCtx.triggerQuoteReply({
-              messageId: payload.messageId,
-              streamId,
-              authorName: actorName,
-              authorId: event.actorId ?? "",
-              actorType: event.actorType ?? "user",
-              snippet: payload.contentMarkdown,
-              version: payload.revision ?? null,
-              range: null,
-            })
-        : undefined,
+      onQuoteReply: handleQuoteReply,
       onQuoteReplyWithSelection: quoteReplyCtx
         ? (selection: QuoteSelection) =>
             quoteReplyCtx.triggerQuoteReply({
@@ -1451,6 +1527,7 @@ function SentMessageEvent({
       streamId,
       startEditing,
       handleAddReaction,
+      handleQuoteReply,
       quoteReplyCtx,
       actorName,
       isSaved,
@@ -1558,59 +1635,14 @@ function SentMessageEvent({
                 allReactionShortcodes={allReactionShortcodes}
               />
               <SaveMessageButton workspaceId={workspaceId} messageId={payload.messageId} />
-              {actionContext.onQuoteReply && (
-                <LazyTooltip
-                  trigger={
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-6 w-6 text-muted-foreground shrink-0 hover:text-foreground"
-                      aria-label="Quote reply"
-                      onClick={actionContext.onQuoteReply}
-                    >
-                      <Quote className="h-3.5 w-3.5" />
-                    </Button>
-                  }
-                >
-                  <TooltipContent>Quote reply</TooltipContent>
-                </LazyTooltip>
-              )}
+              {handleQuoteReply && <QuoteReplyButton onQuoteReply={handleQuoteReply} />}
               {/* Reply-in-thread sits adjacent to the overflow menu so it mirrors
                 the top entry of the expanded context menu — the two thread
                 actions read as one visual neighborhood. Kept visible even when
                 the thread panel is already open (clicking is a harmless re-nav
                 to the same panel) so the toolbar never shuffles buttons in and
                 out as the user opens/closes the thread. */}
-              {!sharedCopy && (
-                <LazyTooltip
-                  trigger={
-                    awaitingServerId ? (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 text-muted-foreground shrink-0"
-                        aria-label="Reply in thread"
-                        disabled
-                      >
-                        <MessageSquareReply className="h-3.5 w-3.5" />
-                      </Button>
-                    ) : (
-                      <Button
-                        asChild
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 text-muted-foreground shrink-0 hover:text-foreground"
-                      >
-                        <Link to={actionContext.replyUrl} aria-label="Reply in thread">
-                          <MessageSquareReply className="h-3.5 w-3.5" />
-                        </Link>
-                      </Button>
-                    )
-                  }
-                >
-                  <TooltipContent>Reply in thread</TooltipContent>
-                </LazyTooltip>
-              )}
+              {!sharedCopy && <ReplyInThreadButton replyUrl={actionContext.replyUrl} disabled={awaitingServerId} />}
               <MessageContextMenu context={actionContext} saved={savedForMessage ?? null} />
             </>
           )

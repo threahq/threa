@@ -532,7 +532,7 @@ function EmojiGridContent({
 
 const EMPTY_SET = new Set<string>()
 
-export function ReactionEmojiPicker({
+export const ReactionEmojiPicker = memo(function ReactionEmojiPicker({
   workspaceId,
   onSelect,
   trigger,
@@ -650,4 +650,4 @@ export function ReactionEmojiPicker({
       </PopoverContent>
     </LazyPopover>
   )
-}
+})

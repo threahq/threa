@@ -52,7 +52,7 @@ function buildOriginRefs(origin: AsideOrigin): ContextRef[] {
  * Creation failure toasts (the one loud signal); success is the surface itself.
  */
 export function useOpenAside(workspaceId: string) {
-  const createStream = useCreateStream(workspaceId)
+  const { mutateAsync: createStream } = useCreateStream(workspaceId)
   const { pathname: hostKey } = useLocation()
   // The create is a round trip; the page can be left (or the account switched)
   // before it lands. Writing the surface then would strand an aside on a host
@@ -73,7 +73,7 @@ export function useOpenAside(workspaceId: string) {
       const refs = buildOriginRefs(origin)
       let aside
       try {
-        aside = await createStream.mutateAsync({
+        aside = await createStream({
           type: StreamTypes.ASIDE,
           parentStreamId: origin.hostStreamId,
           parentAnchorId: origin.anchorId,

@@ -1,3 +1,4 @@
+import { spyOnExport } from "@/test/spy"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
@@ -47,7 +48,9 @@ beforeEach(() => {
   vi.spyOn(contextsModule, "useTrace").mockReturnValue({
     getTraceUrl: (sessionId: string) => `/trace/${sessionId}`,
   } as ReturnType<typeof contextsModule.useTrace>)
-  vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation(() => <span>just now</span>)
+  spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((() => (
+    <span>just now</span>
+  )) as unknown as typeof relativeTimeModule.RelativeTime)
 })
 
 function createSessionEvent(eventType: StreamEvent["eventType"], payload: unknown): StreamEvent {

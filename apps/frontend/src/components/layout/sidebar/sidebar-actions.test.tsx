@@ -47,7 +47,7 @@ describe("sidebar-actions", () => {
       registerOpenMenu,
     } as unknown as ReturnType<typeof contextsModule.useOptionalSidebar>)
 
-    vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((({
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((({
       date,
       className,
     }: {

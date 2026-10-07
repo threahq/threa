@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react"
+import { memo, useMemo, useRef, useState } from "react"
 import type { SavedMessageView } from "@threahq/types"
 import { EllipsisVertical } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -28,7 +28,12 @@ interface MessageContextMenuProps {
   onOpenChange?: (open: boolean) => void
 }
 
-export function MessageContextMenu({ context, saved, open: openProp, onOpenChange }: MessageContextMenuProps) {
+export const MessageContextMenu = memo(function MessageContextMenu({
+  context,
+  saved,
+  open: openProp,
+  onOpenChange,
+}: MessageContextMenuProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const restoreReminderFocus = useRef(false)
@@ -112,7 +117,7 @@ export function MessageContextMenu({ context, saved, open: openProp, onOpenChang
       </DropdownMenuContent>
     </LazyDropdownMenu>
   )
-}
+})
 
 function ReminderActionSubmenu({
   action,

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, type RefObject } from "react"
+import { memo, useEffect, useState, useCallback, type RefObject } from "react"
 import { createPortal } from "react-dom"
 import { useParams } from "react-router-dom"
 import { Quote, Share2 } from "lucide-react"
@@ -78,7 +78,10 @@ interface TextSelectionQuoteProps {
  * highlighted. Active mouse only — touch input uses select-none on messages and
  * reaches the same two actions through the action drawer.
  */
-export function TextSelectionQuote({ streamId, containerRef }: TextSelectionQuoteProps) {
+export const TextSelectionQuote = memo(function TextSelectionQuote({
+  streamId,
+  containerRef,
+}: TextSelectionQuoteProps) {
   const inputMode = useInputMode()
   const quoteReplyCtx = useQuoteReply()
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -257,4 +260,4 @@ export function TextSelectionQuote({ streamId, containerRef }: TextSelectionQuot
       )}
     </>
   )
-}
+})

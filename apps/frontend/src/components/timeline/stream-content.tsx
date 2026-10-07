@@ -1,7 +1,7 @@
 import { RollingNumber } from "@/components/rolling-number"
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { getDraftPromotionEvents } from "@/lib/draft-promotions"
-import { useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState, useSyncExternalStore } from "react"
+import { memo, useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState, useSyncExternalStore } from "react"
 import { useLocation, useNavigationType, useParams, useSearchParams } from "react-router-dom"
 import { type VirtualizerHandle } from "virtua"
 import { MessageSquare, ArrowDown, ArrowUp, X, Move, Loader2, Check, Plus } from "lucide-react"
@@ -1394,7 +1394,7 @@ export function StreamContent({
             event.stopPropagation()
           },
         }
-      : {}
+      : undefined
 
   // For drafts with pending events, compute timeline items from those events. Drafts
   // are a single-author transcript already, but running the same pipeline keeps the
@@ -3201,7 +3201,7 @@ interface RowCacheEntry {
 }
 
 /** Virtuoso-powered message list for streams, channels, and scratchpads */
-function TimelineMessageList({
+const TimelineMessageList = memo(function TimelineMessageList({
   emptyState,
   visibleItems,
   runFoldStore,
@@ -3735,7 +3735,7 @@ function TimelineMessageList({
       }
     />
   )
-}
+})
 
 // Spacer reserving room for the floating composer pill, so the most recent
 // message sits visually offset above the pill at rest and the at-bottom edge

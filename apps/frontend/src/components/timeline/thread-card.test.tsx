@@ -1,3 +1,4 @@
+import { spyOnExport } from "@/test/spy"
 import { beforeEach, describe, it, expect, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
@@ -16,7 +17,7 @@ beforeEach(() => {
   vi.spyOn(workspaceEmojiModule, "useWorkspaceEmoji").mockReturnValue({
     toEmoji: () => null,
   } as unknown as ReturnType<typeof workspaceEmojiModule.useWorkspaceEmoji>)
-  vi.spyOn(relativeTimeModule, "RelativeTime").mockImplementation((({ date }: { date: string }) => (
+  spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((({ date }: { date: string }) => (
     <time dateTime={date}>{date}</time>
   )) as unknown as typeof relativeTimeModule.RelativeTime)
 })
