@@ -37,6 +37,7 @@ function fakePendingItem(overrides: Partial<PendingMemoItem> = {}): PendingMemoI
     queuedAt: new Date(),
     processedAt: null,
     classifiedFingerprint: null,
+    failedAttempts: 0,
     version: 0,
     ...overrides,
   }

@@ -739,7 +739,6 @@ export class MemoService implements MemoServiceLike {
           // Attachment-only messages have no text, and embedding rejects an empty input.
           const messageText = messagesArray.map((m) => m.contentMarkdown).join("\n")
           const conversationText = messageText.trim() ? messageText : formattedMessages
-          // A failed embed costs only the older memos: capture proceeds on the newest twenty rather than stalling the stream.
           let conversationEmbedding: number[] | undefined
           try {
             ;[conversationEmbedding] = await this.embeddingService.embedBatch(
@@ -748,7 +747,8 @@ export class MemoService implements MemoServiceLike {
             )
             if (!conversationEmbedding) throw new Error("Embedding service returned no vector")
           } catch (error) {
-            if (error instanceof AISpendDeniedError) throw error
+            // Earlier attempts retry the item; the last captures against the newest twenty rather than dropping the conversation.
+            if (error instanceof AISpendDeniedError || item.failedAttempts + 1 < MEMO_MAX_FAILED_ATTEMPTS) throw error
             logger.warn(
               { error, conversationId: conversation.id, workspaceId, streamId },
               "Memo context embedding failed; capturing against the newest memos only"

@@ -11,6 +11,7 @@ interface PendingItemRow {
   queued_at: Date
   processed_at: Date | null
   classified_fingerprint: string | null
+  failed_attempts: number
   version: number
 }
 
@@ -24,6 +25,8 @@ export interface PendingMemoItem {
   processedAt: Date | null
   /** Digest of the classifier inputs at the last pass; null = never classified. */
   classifiedFingerprint: string | null
+  /** Failed processing attempts since the item was last queued. */
+  failedAttempts: number
   /** Bumped on every queue; a batch acknowledges only the version it read. */
   version: number
 }
@@ -48,11 +51,12 @@ function mapRowToPendingItem(row: PendingItemRow): PendingMemoItem {
     queuedAt: row.queued_at,
     processedAt: row.processed_at,
     classifiedFingerprint: row.classified_fingerprint,
+    failedAttempts: row.failed_attempts,
     version: row.version,
   }
 }
 
-const SELECT_FIELDS = `id, workspace_id, stream_id, item_type, item_id, queued_at, processed_at, classified_fingerprint, version`
+const SELECT_FIELDS = `id, workspace_id, stream_id, item_type, item_id, queued_at, processed_at, classified_fingerprint, failed_attempts, version`
 
 export const PendingItemRepository = {
   async queue(client: PoolClient, items: QueuePendingItemParams[]): Promise<PendingMemoItem[]> {

@@ -1,3 +1,4 @@
+import { AISpendDeniedError } from "@threahq/agent-runtime"
 import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
@@ -5,6 +6,7 @@ import { ConversationStatuses } from "@threahq/types"
 import { ConversationRepository } from "../../src/features/conversations"
 import { MemoRepository, MemoService, PendingItemRepository } from "../../src/features/memos"
 import type { ConversationClassification } from "../../src/features/memos/classifier"
+import { MEMO_MAX_FAILED_ATTEMPTS } from "../../src/features/memos/config"
 import { MessageRepository } from "../../src/features/messaging"
 import { StreamRepository } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"
@@ -147,7 +149,7 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
     c: Channel,
     target: string,
     duringInference: () => Promise<void> = async () => {},
-    { contextEmbedFails = false } = {}
+    { contextEmbedError }: { contextEmbedError?: Error } = {}
   ): Promise<string[]> {
     let shown: string[] = []
     await new MemoService({
@@ -179,7 +181,7 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
           if (texts.some((text) => !text.trim())) throw new Error("embedding input is empty")
           if (opts.functionId === "memo-context-embedding") {
             contextEmbeddings++
-            if (contextEmbedFails) throw new Error("embedding provider unavailable")
+            if (contextEmbedError) throw contextEmbedError
           }
           return texts.map(() => (opts.functionId === "memo-context-embedding" ? axis(TOPIC_AXIS) : axis(nextAxis++)))
         },
@@ -258,21 +260,45 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
     expect(await priceStatuses(c)).toEqual({ "Price is $9": "superseded", "Price is $12": "active" })
   })
 
-  test("a failed context embedding still captures the conversation against the newest memos", async () => {
+  test("a failing context embedding retries the conversation, and only its last attempt captures against the newest memos", async () => {
     const c = await seedChannel()
     const price = await seedBuriedPrice(c)
     await queueConversation(c)
 
-    const shown = await capture(c, price, undefined, { contextEmbedFails: true })
+    const attempts = []
+    for (let i = 0; i < MEMO_MAX_FAILED_ATTEMPTS; i++) {
+      const shown = await capture(c, price, undefined, {
+        contextEmbedError: new Error("embedding provider unavailable"),
+      })
+      attempts.push({ shown: shown.length, statuses: await priceStatuses(c) })
+    }
 
-    expect({
-      shownPrice: shown.includes("Price is $9"),
-      shown: shown.length,
-      statuses: await priceStatuses(c),
-    }).toEqual({
-      shownPrice: false,
-      shown: 20,
-      statuses: { "Price is $9": "active", "Price is $12": "active" },
+    expect(attempts).toEqual([
+      { shown: 0, statuses: { "Price is $9": "active" } },
+      { shown: 0, statuses: { "Price is $9": "active" } },
+      { shown: 20, statuses: { "Price is $9": "active", "Price is $12": "active" } },
+    ])
+  })
+
+  test("a spend denial on the context embedding defers the conversation without counting a failed attempt", async () => {
+    const c = await seedChannel()
+    const price = await seedBuriedPrice(c)
+    await queueConversation(c)
+
+    await capture(c, price, undefined, {
+      contextEmbedError: new AISpendDeniedError(
+        { workspaceId: c.ws, functionId: "memo-context-embedding" },
+        "workspace_limit"
+      ),
+    })
+    const pending = await pool.query<{ processed: boolean; failed_attempts: number }>(
+      "SELECT processed_at IS NOT NULL AS processed, failed_attempts FROM memo_pending_items WHERE workspace_id = $1",
+      [c.ws]
+    )
+
+    expect({ statuses: await priceStatuses(c), pending: pending.rows }).toEqual({
+      statuses: { "Price is $9": "active" },
+      pending: [{ processed: false, failed_attempts: 0 }],
     })
   })
 
