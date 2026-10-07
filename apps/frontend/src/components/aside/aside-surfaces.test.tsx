@@ -6,6 +6,7 @@ import { spyOnExport } from "@/test"
 import { createMockStream } from "@/test/fixtures"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as pointerModule from "@/hooks/use-pointer"
+import * as mobileModule from "@/hooks/use-mobile"
 import * as timelineModule from "@/components/timeline"
 import * as boundaryModule from "@/components/stream-error-boundary"
 import * as panelHostModule from "@/components/layout/panel-host"
@@ -24,7 +25,8 @@ import {
 } from "@/stores/aside-store"
 import { AsideSlot, useAsideHost } from "./index"
 
-const HOST_PATH = "/w/ws_1/s/stream_host"
+// The stage is the board's surface; a stream page lays the aside out as a column of its own.
+const HOST_PATH = "/w/ws_1/board"
 const ASIDE = "stream_aside_1"
 const aside = createMockStream({
   id: ASIDE,
@@ -35,7 +37,7 @@ const aside = createMockStream({
 })
 
 /**
- * The page's mount point, bound to the route like the stream page binds it.
+ * The page's mount point, bound to the route like the board binds it.
  * `takeover` is the phone's panel takeover: the main column is hidden and
  * inert, so only the aside can draw.
  */
@@ -81,6 +83,7 @@ beforeEach(() => {
   __resetCallPrefsForTests()
   localStorage.clear()
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([aside] as never)
+  vi.spyOn(mobileModule, "useIsSplitCapable").mockReturnValue(true)
   // The chat pane is the real companion timeline; its data plumbing is out of
   // scope here, so the barrel export renders a marker carrying the stream it
   // was mounted against.
@@ -224,9 +227,10 @@ describe("aside surfaces", () => {
     expect(await screen.findByText("Private")).toBeInTheDocument()
     // Anchored to a message that isn't in this test's timeline cache: it names
     // the host stream rather than inventing an author, and the sentence itself
-    // is the jump — there is no separate "scroll to it" to hunt for.
+    // is the jump — there is no separate "scroll to it" to hunt for. Off the
+    // host's own page, it goes there.
     const jump = screen.getByTestId("aside-anchor-line")
-    expect(jump).toHaveAttribute("href", `${HOST_PATH}?m=msg_anchor_1`)
+    expect(jump).toHaveAttribute("href", "/w/ws_1/s/stream_host?m=msg_anchor_1")
     expect(jump).toHaveTextContent(/^Anchored in/)
   })
 
@@ -274,14 +278,6 @@ describe("aside surfaces", () => {
     expect(mounted[0]).toHaveAttribute("data-auto-focus", "true")
   })
 
-  it("keeps the anchor chip's jump on the host: it drops the thread from the URL", async () => {
-    renderPage(`${HOST_PATH}?panel=stream_thread_1`)
-    openOnHost()
-
-    await screen.findByTestId("aside-host-pane")
-    expect(screen.getByTestId("aside-anchor-line")).toHaveAttribute("href", `${HOST_PATH}?m=msg_anchor_1`)
-  })
-
   it("shows the thread an aside was opened from as the host, not as a panel over itself", async () => {
     renderPage(`${HOST_PATH}?panel=stream_host`)
     openOnHost()
@@ -315,7 +311,16 @@ describe("aside surfaces", () => {
 
   it("should not show another page's aside", () => {
     openOnHost()
-    renderPage("/w/ws_1/board")
+    renderPage("/w/ws_1/s/stream_host")
+    expect(screen.queryByTestId("aside-stage")).toBeNull()
+  })
+
+  it("opens as a sheet in a window too narrow to split, whatever the pointer", () => {
+    vi.spyOn(mobileModule, "useIsSplitCapable").mockReturnValue(false)
+    openOnHost()
+    renderPage()
+
+    expect(screen.getByTestId("aside-sheet")).toBeInTheDocument()
     expect(screen.queryByTestId("aside-stage")).toBeNull()
   })
 

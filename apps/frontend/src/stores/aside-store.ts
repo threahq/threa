@@ -17,9 +17,8 @@ import type { AgentBlockData } from "@/components/timeline/agent-block-context"
  */
 
 /**
- * Where a phone's sheet is resting. Desktop has one surface (the stage), so
- * this is a sheet detent and nothing else — it never decides what is rendered,
- * only how much of it you can see.
+ * Where a phone's sheet is resting. Only the sheet has detents, so this never
+ * decides what is rendered, only how much of it you can see.
  */
 export type AsideSheetDetent = "peek" | "full"
 
@@ -46,9 +45,9 @@ export function asideHoldsPanel(panelId: string | null, hostStreamId: string): b
   return panelId !== null && panelId !== hostStreamId
 }
 
-/** How wide the aside's own column is on the stage. The floor keeps its chat
- *  and composer usable; the ceiling is enforced against the live stage by the
- *  component, which knows how much room the host pane still needs. */
+/** How wide the aside's own column is, on a stream page or the stage. The floor
+ *  keeps its chat and composer usable; the ceiling is enforced by the surface,
+ *  which knows how much room the columns beside it still need. */
 export const ASIDE_STAGE_MIN_WIDTH = 360
 export const ASIDE_STAGE_DEFAULT_WIDTH = 620
 

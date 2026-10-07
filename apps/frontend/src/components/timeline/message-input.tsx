@@ -1,7 +1,7 @@
-import { memo, useState, useCallback, useEffect, useMemo, useRef, type ComponentProps } from "react"
+import { memo, useState, useCallback, useContext, useEffect, useMemo, useRef, type ComponentProps } from "react"
 import { createPortal } from "react-dom"
 import { toast } from "sonner"
-import { Link, useLocation, useNavigate } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import { PenLine } from "lucide-react"
 import { useStableCallback } from "@/hooks/use-stable-callback"
 import {
@@ -47,7 +47,7 @@ import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { boardPostLastActiveStreamId } from "@/lib/board/reply-plan"
 import { boardReplyDraftKey, parseBoardDraftKey } from "@/lib/board/draft-keys"
 import { usePanel, createConversationPanelId, createComposePanelId } from "@/contexts"
-import { useAsideForHost } from "@/stores/aside-store"
+import { AsideCoversPanesContext } from "@/components/aside/aside-presentation"
 import { PaneFocusContext, useComposeSlot } from "@/components/panes"
 import { Button } from "@/components/ui/button"
 import { panelIdsOf } from "@/lib/panel-tabs"
@@ -424,8 +424,7 @@ function MessageInputComponent({
   // document editor — the pane is the surface. Those three slots stay off.
   const isAsideComposer = useStreamFromStore(workspaceId, streamId)?.type === StreamTypes.ASIDE
   const schedulingHidden = isAsideComposer || sharedCopy
-  // The aside's stage covers the page's panes, so a draft pane would open out of sight.
-  const asideOnPage = useAsideForHost(useLocation().pathname) !== null
+  const asideCoversPanes = useContext(AsideCoversPanesContext)
 
   // Stashed drafts — explicit "Save for later" pile scoped to this stream.
   // Active DraftMessage stays one-per-scope; this hook manages the sibling
@@ -1153,7 +1152,7 @@ function MessageInputComponent({
             <MemoizedMessageComposer
               {...composerProps}
               autoFocus={autoFocus}
-              expandHref={hasTabs && !isAsideComposer && !asideOnPage ? getFocusedPanelUrl(composeId) : undefined}
+              expandHref={hasTabs && !isAsideComposer && !asideCoversPanes ? getFocusedPanelUrl(composeId) : undefined}
             />
           </>
         )}
