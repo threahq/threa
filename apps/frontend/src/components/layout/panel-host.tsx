@@ -8,14 +8,22 @@ import {
   parseContextPanel,
   createContextPanelId,
   PaneScope,
+  DisplayedPanelLayoutProvider,
+  InPaneDrawerProvider,
+  presentsAsDrawer,
+  coverPaneOf,
 } from "@/contexts"
 import { Minimize2 } from "lucide-react"
 import { Pane, PaneFocusContext, PanelTabTitle, usePaneFocusEscape, type PaneMapCell } from "@/components/panes"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 import { compilePanelGrid, defaultPanelGridSizes, panelGridShape, resplit, type PanelGridSizes } from "@/lib/panel-grid"
+import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer"
 import {
+  NO_PANELS,
+  closePanelTab,
   fitPanelLayout,
   floatingPanelTab,
+  panelIdsOf,
   type PanelLayout,
   type PanelSection,
   type SplitDirection,
@@ -123,6 +131,62 @@ interface PlacedTab {
   splits: readonly SplitDirection[]
 }
 
+/** The tabs as a window `maxColumns` wide arranges them, or a phone when `stacked`. */
+export function useFittedPanelLayout(maxColumns: number, stacked: boolean): PanelLayout {
+  const { layout } = usePanel()
+  const front = useFrontPanel()
+  return useMemo(() => {
+    // A floating tab is always on show, even from a folded column.
+    if (!stacked) return fitPanelLayout(layout, maxColumns, false, layout.focused ?? front)
+    // A phone shows a drawer over its stream's page, so the page is on show behind it.
+    const pages = panelIdsOf(layout).filter(presentsAsDrawer).reduce(closePanelTab, layout)
+    const shown = front !== null && presentsAsDrawer(front) ? coverPaneOf(layout, front) : front
+    // In front over the main view: no page is on show, the main view is.
+    if (front !== null && shown === null) return NO_PANELS
+    return fitPanelLayout(pages, maxColumns, true, shown)
+  }, [layout, maxColumns, stacked, front])
+}
+
+/** The drawer pane over `page` (null for the main view), when one is open. */
+function drawerOver(layout: PanelLayout, page: string | null): string | null {
+  return panelIdsOf(layout).find((id) => presentsAsDrawer(id) && coverPaneOf(layout, id) === page) ?? null
+}
+
+/**
+ * A pane that can't sit beside its stream (a phone, the board) as a bottom
+ * drawer over the page showing that stream. Its id stays in `?panel=`, so Back
+ * closes and reopens it like any pane; the last one shown stays rendered while
+ * the drawer animates out.
+ */
+export function PaneDrawer({ workspaceId, page }: { workspaceId: string; page: string | null }) {
+  const { layout, closeTab } = usePanel()
+  const id = drawerOver(layout, page)
+  const [shown, setShown] = useState(id)
+  if (id !== null && id !== shown) setShown(id)
+  const section = useMemo(() => (shown ? { ids: [shown], active: shown } : null), [shown])
+
+  return (
+    // The URL is its history entry: opening pushed `?panel=`, so Back already closes it.
+    <Drawer open={id !== null} onOpenChange={(open) => !open && id && closeTab(id)} historyEntry={false}>
+      <DrawerContent className="h-[88dvh] md:mx-auto md:max-w-2xl">
+        <DrawerTitle className="sr-only">In this stream</DrawerTitle>
+        <DrawerDescription className="sr-only">
+          Links, files, images, captured memories, and delegated tasks from this conversation.
+        </DrawerDescription>
+        {shown && section && (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <InPaneDrawerProvider value>
+              <PaneScope panelId={shown} section={section} splits={NO_SPLITS}>
+                <ScopedPanelHost workspaceId={workspaceId} />
+              </PaneScope>
+            </InPaneDrawerProvider>
+          </div>
+        )}
+      </DrawerContent>
+    </Drawer>
+  )
+}
+
 /**
  * Every open panel tab as a flat child of one grid: each section's tabs stack
  * in its cell, the active one shows and the rest stay mounted under it, so
@@ -136,11 +200,7 @@ export function PanelTabStack({ workspaceId, maxColumns, stacked, main }: PanelT
   const { layout, setCurrentPane, focusTab } = usePanel()
   const front = useFrontPanel()
   const current = useCurrentPane()
-  const display = useMemo(
-    // A floating tab is always on show, even from a folded column.
-    () => fitPanelLayout(layout, maxColumns, stacked, layout.focused ?? front),
-    [layout, maxColumns, stacked, front]
-  )
+  const display = useFittedPanelLayout(maxColumns, stacked)
   const [sizes, setSizes] = usePanelGridSizes(display)
   const grid = compilePanelGrid(sizes)
   const ref = useRef<HTMLDivElement>(null)
@@ -225,30 +285,32 @@ export function PanelTabStack({ workspaceId, maxColumns, stacked, main }: PanelT
   return (
     <div ref={ref} className="grid h-full" style={{ gridTemplateColumns: grid.columns, gridTemplateRows: grid.rows }}>
       <PaneFocusContext.Provider value={focus}>
-        {tabs.map((tab) => (
-          <Pane
-            key={tab.key}
-            // Its containing block is the page's grid, which would read its tab-stack area as page lines.
-            area={tab.id === focused ? "auto" : tab.area}
-            covered={tab.id !== tab.section.active}
-            // Focus mode is a class on the same pane, never a dialog: a portal would remount it and lose its draft and scroll.
-            inert={focused !== null && tab.id !== focused}
-            className={cn(
-              tab.id === focused &&
-                "absolute inset-x-5 top-[58px] bottom-5 z-30 rounded-[10px] border bg-background shadow-[0_24px_60px_rgba(0,0,0,0.28)]",
-              focused !== null && tab.id !== focused && "isolate"
-            )}
-            data-panel-tab={tab.id}
-            data-front-panel={tab.id === front || undefined}
-            data-focused-pane={tab.id === focused || undefined}
-            onPointerDownCapture={() => setCurrentPane(tab.id)}
-            onFocusCapture={() => setCurrentPane(tab.id)}
-          >
-            <PaneScope panelId={tab.id} section={tab.section} splits={tab.splits}>
-              <ScopedPanelHost workspaceId={workspaceId} />
-            </PaneScope>
-          </Pane>
-        ))}
+        <DisplayedPanelLayoutProvider value={display}>
+          {tabs.map((tab) => (
+            <Pane
+              key={tab.key}
+              // Its containing block is the page's grid, which would read its tab-stack area as page lines.
+              area={tab.id === focused ? "auto" : tab.area}
+              covered={tab.id !== tab.section.active}
+              // Focus mode is a class on the same pane, never a dialog: a portal would remount it and lose its draft and scroll.
+              inert={focused !== null && tab.id !== focused}
+              className={cn(
+                tab.id === focused &&
+                  "absolute inset-x-5 top-[58px] bottom-5 z-30 rounded-[10px] border bg-background shadow-[0_24px_60px_rgba(0,0,0,0.28)]",
+                focused !== null && tab.id !== focused && "isolate"
+              )}
+              data-panel-tab={tab.id}
+              data-front-panel={tab.id === front || undefined}
+              data-focused-pane={tab.id === focused || undefined}
+              onPointerDownCapture={() => setCurrentPane(tab.id)}
+              onFocusCapture={() => setCurrentPane(tab.id)}
+            >
+              <PaneScope panelId={tab.id} section={tab.section} splits={tab.splits}>
+                <ScopedPanelHost workspaceId={workspaceId} />
+              </PaneScope>
+            </Pane>
+          ))}
+        </DisplayedPanelLayoutProvider>
       </PaneFocusContext.Provider>
       {ghost && (
         <div
