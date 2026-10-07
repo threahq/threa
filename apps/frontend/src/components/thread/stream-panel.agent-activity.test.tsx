@@ -18,6 +18,8 @@ import { SyncStatusContext, SyncStatusStore } from "@/sync/sync-status"
 import { seedAgentActivity, resetAgentActivityStore } from "@/stores/agent-activity-store"
 import { spyOnExport } from "@/test"
 import * as timelineModule from "@/components/timeline"
+import * as syncEngineModule from "@/sync/sync-engine"
+import { UserProfileProvider } from "@/components/user-profile"
 import { StreamPanel } from "./stream-panel"
 
 const workspaceId = "ws_1"
@@ -43,6 +45,10 @@ function session(overrides: Partial<ActiveAgentSession> = {}): ActiveAgentSessio
 beforeEach(() => {
   vi.restoreAllMocks()
   resetAgentActivityStore()
+  vi.spyOn(syncEngineModule, "useSyncEngine").mockReturnValue({
+    joinStream: vi.fn(),
+    leaveStream: vi.fn(),
+  } as never)
   // The panel body is a whole timeline (socket, preferences, virtualizer); the
   // header is what's under test, so the body renders as a marker.
   spyOnExport(timelineModule, "StreamContent").mockReturnValue((() => <div data-testid="panel-body" />) as never)
@@ -71,18 +77,20 @@ function renderPanel(panel: string) {
                 <PreferencesProvider workspaceId={workspaceId}>
                   <TraceProvider>
                     <TooltipProvider>
-                      <SidebarProvider>
-                        <PanelProvider>
-                          <CoordinatedLoadingProvider workspaceId={workspaceId} streamIds={[]}>
-                            <Routes>
-                              <Route
-                                path="/w/:workspaceId/s/:streamId"
-                                element={<StreamPanel workspaceId={workspaceId} onClose={() => {}} />}
-                              />
-                            </Routes>
-                          </CoordinatedLoadingProvider>
-                        </PanelProvider>
-                      </SidebarProvider>
+                      <UserProfileProvider>
+                        <SidebarProvider>
+                          <PanelProvider>
+                            <CoordinatedLoadingProvider workspaceId={workspaceId} streamIds={[]}>
+                              <Routes>
+                                <Route
+                                  path="/w/:workspaceId/s/:streamId"
+                                  element={<StreamPanel workspaceId={workspaceId} onClose={() => {}} />}
+                                />
+                              </Routes>
+                            </CoordinatedLoadingProvider>
+                          </PanelProvider>
+                        </SidebarProvider>
+                      </UserProfileProvider>
                     </TooltipProvider>
                   </TraceProvider>
                 </PreferencesProvider>

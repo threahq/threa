@@ -1,6 +1,6 @@
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, type ReactNode } from "react"
 import { toast } from "sonner"
-import { useSearchParams } from "react-router-dom"
+import { useParams, useSearchParams } from "react-router-dom"
 import {
   ListChecks,
   MoreHorizontal,
@@ -34,12 +34,13 @@ import { cn } from "@/lib/utils"
 import type { PanelLayout } from "@/lib/panel-tabs"
 import { useStreamOrDraft, isDmDraftId, useActiveBotPresence } from "@/hooks"
 import { useWorkspaceDmPeers, useWorkspaceMetadata } from "@/stores/workspace-store"
-import { useMainOwnsCover, useSidebar } from "@/contexts"
+import { useSidebar } from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { StreamContent, AgentActivityHeaderChip } from "@/components/timeline"
+import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { LabelStack } from "@/components/labels/label-stack"
 import { StreamHeaderEncryptionAction } from "@/components/encryption/stream-encryption-affordance"
@@ -63,11 +64,28 @@ import { useStreamContextToggle } from "@/components/stream-context"
 import { copyStreamLink } from "@/lib/stream-links"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
 
+/** A panel tab's own controls around the stream's header. */
+export interface PaneChrome {
+  /** Stands in for the page's sidebar toggle. */
+  leading: ReactNode
+  /** With several tabs open, the tab row stands in for the title and its chips. */
+  tabs?: ReactNode
+  /** Left of the stream's icons, so folding it away leaves them where they are. */
+  focusToggle: ReactNode
+  close?: ReactNode
+}
+
 interface StreamPaneProps {
   workspaceId: string
   streamId: string
+  highlightMessageId: string | null
+  autoFocus: boolean
   /** The panes as fitted on screen, which decide where "In this stream" opens. */
-  contextLayout: PanelLayout
+  contextLayout?: PanelLayout
+  offersContext?: boolean
+  className?: string
+  /** Set for a panel tab; without it the pane is the page's main view. */
+  chrome?: PaneChrome
 }
 
 /** The conversations drawer's open state, kept in `?convView` (INV-59). */
@@ -85,15 +103,26 @@ export function useConversationViewParam() {
 }
 
 /** One stream's header and timeline, the stream named by `streamId`. */
-export function StreamPane({ workspaceId, streamId, contextLayout }: StreamPaneProps) {
+export function StreamPane({
+  workspaceId,
+  streamId,
+  highlightMessageId,
+  autoFocus,
+  contextLayout,
+  offersContext = true,
+  className,
+  chrome,
+}: StreamPaneProps) {
   const [searchParams, setSearchParams] = useSearchParams()
-  const { stream, isDraft, rename, canRename, renamePending, renameError, archive, unarchive } = useStreamOrDraft(
-    workspaceId,
-    streamId
-  )
+  const { stream, isDraft, error, rename, canRename, renamePending, renameError, archive, unarchive } =
+    useStreamOrDraft(workspaceId, streamId)
   const { isMobile } = useSidebar()
   const [isContextOpen, toggleContext] = useStreamContextToggle(streamId, contextLayout)
-  const highlightMessageId = useMainOwnsCover() ? searchParams.get("m") : null
+  // The conversation views are the page's, drawn over the page's stream.
+  const isRouteStream = useParams<{ streamId: string }>().streamId === streamId
+  const tabbed = !!chrome?.tabs
+  // The page has one main landmark: the main view's.
+  const Body = chrome ? "div" : "main"
 
   const [isConversationViewOpen, setConversationViewOpen] = useConversationViewParam()
 
@@ -307,7 +336,7 @@ export function StreamPane({ workspaceId, streamId, contextLayout }: StreamPaneP
         onSelect: () => openUserProfile(dmPeerUserId),
       })
     }
-    if (!isDraft) {
+    if (!isDraft && offersContext) {
       sheetViewActions.push({
         id: "stream-context",
         label: "In this stream",
@@ -316,7 +345,7 @@ export function StreamPane({ workspaceId, streamId, contextLayout }: StreamPaneP
         onSelect: toggleContext,
       })
     }
-    if (isChannel || isDm) {
+    if ((isChannel || isDm) && isRouteStream) {
       sheetViewActions.push({
         id: "conversation-overlay",
         label: "Conversation overlay",
@@ -490,7 +519,7 @@ export function StreamPane({ workspaceId, streamId, contextLayout }: StreamPaneP
       />
     )
   } else if (isThread && stream) {
-    headerTitle = <ThreadHeader workspaceId={workspaceId} stream={stream} />
+    headerTitle = <ThreadHeader workspaceId={workspaceId} stream={stream} inPanel={!!chrome} />
   } else if (isMobile && canOpenSheet) {
     // Mobile: the name is the hero — it takes the full remaining width and IS
     // the sheet trigger. Live state survives as tiny glyphs beside it (lock =
@@ -570,20 +599,33 @@ export function StreamPane({ workspaceId, streamId, contextLayout }: StreamPaneP
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className={cn("flex h-full flex-col", className)} data-editor-zone={chrome ? "panel" : undefined}>
       <header className="relative flex h-12 items-center justify-between border-b px-4">
-        <div className={cn("flex items-center gap-2 flex-1 min-w-0", isTouchInput && !isEditing && "select-none")}>
-          <SidebarToggle location="page" />
-          {headerTitle}
-          {companionModeIndicator}
-          <AgentActivityHeaderChip workspaceId={workspaceId} streamId={streamId} compact={isMobile} />
+        {/* No gaps while tabbed: the tab fit counts only the labels' and focus toggle's own widths as the room they free. */}
+        <div
+          className={cn(
+            "flex items-center flex-1 min-w-0",
+            !tabbed && "gap-2",
+            isTouchInput && !isEditing && "select-none"
+          )}
+        >
+          {chrome ? chrome.leading : <SidebarToggle location="page" />}
+          {chrome?.tabs ?? (
+            <>
+              {headerTitle}
+              {companionModeIndicator}
+            </>
+          )}
+          {/* A sibling of the tab strip, which folds it away when the row runs out of room. */}
+          {tabbed && chrome?.focusToggle}
+          <AgentActivityHeaderChip workspaceId={workspaceId} streamId={streamId} compact={isMobile || tabbed} />
           {/* Chip strip. The chips are non-shrinking (`shrink-0` leaves), so on a
               phone-width header they would otherwise overflow the flex box and
               paint under the search/panel actions — the strip scrolls instead,
               same recipe as PageHeaderTabs' tab strip. On mobile the chips live
               in the stream sheet; the strip only renders when there is no sheet
               to hold them (drafts, archived non-scratchpads). */}
-          {(!isMobile || !canOpenSheet) && (
+          {(!isMobile || !canOpenSheet) && !tabbed && (
             <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-none">
               {stream && !isDraft && (
                 <LabelStack
@@ -619,24 +661,29 @@ export function StreamPane({ workspaceId, streamId, contextLayout }: StreamPaneP
             </div>
           )}
         </div>
-        <div className="flex items-center gap-1 ml-1">
+        <div className={cn("flex items-center", !tabbed && "gap-1 ml-1")}>
+          {!tabbed && chrome?.focusToggle}
           {stream && !isDraft && (isChannel || isDm) && callsEnabled && (
             // A workspace that has switched calls off shows no calls surface at all.
             <CallStartMenu workspaceId={workspaceId} streamId={streamId} startLabel="Start a call" />
           )}
-          {stream && !isDraft && <AsideHeaderChip workspaceId={workspaceId} stream={stream} compact={isMobile} />}
+          {stream && !isDraft && !tabbed && (
+            <AsideHeaderChip workspaceId={workspaceId} stream={stream} compact={isMobile} />
+          )}
           {!isThread && !isDraft && (
             <Button
               variant="ghost"
               size="icon"
               className="h-8 w-8"
               title="Search in conversation"
-              onClick={() => document.dispatchEvent(new CustomEvent("threa:open-stream-search"))}
+              onClick={() =>
+                document.dispatchEvent(new CustomEvent("threa:open-stream-search", { detail: { streamId } }))
+              }
             >
               <Search className="h-4 w-4" />
             </Button>
           )}
-          {stream && !isDraft && !isMobile && (
+          {stream && !isDraft && !isMobile && offersContext && (
             <Button
               variant="ghost"
               size="icon"
@@ -649,7 +696,7 @@ export function StreamPane({ workspaceId, streamId, contextLayout }: StreamPaneP
               <PanelRight className="h-4 w-4" />
             </Button>
           )}
-          {(isChannel || isDm) && !isMobile && (
+          {(isChannel || isDm) && isRouteStream && !isMobile && (
             // Split button (the `GroupedItem` pattern from message-context-menu):
             // primary tap toggles the conversation overlay; the chevron lists
             // every conversation view — overlay first (default, font-medium),
@@ -739,20 +786,24 @@ export function StreamPane({ workspaceId, streamId, contextLayout }: StreamPaneP
               }
             />
           )}
+          {chrome?.close}
         </div>
       </header>
       {(isChannel || isDm) && !isDraft && <RejoinBar workspaceId={workspaceId} streamId={streamId} />}
-      <main className="relative flex-1 overflow-hidden" data-editor-zone="main">
-        <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
-          <StreamContent
-            workspaceId={workspaceId}
-            streamId={streamId}
-            highlightMessageId={highlightMessageId}
-            isDraft={isDraft}
-            autoFocus={!isMobile}
-          />
-        </StreamEncryptionGate>
-      </main>
+      <Body className="relative flex-1 overflow-hidden" data-editor-zone={chrome ? "panel" : "main"}>
+        <StreamErrorBoundary streamId={streamId} queryError={error}>
+          <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
+            <StreamContent
+              workspaceId={workspaceId}
+              streamId={streamId}
+              highlightMessageId={highlightMessageId}
+              isDraft={isDraft}
+              // A tab beside the page takes the focus only for a thread, the reply it was opened to write.
+              autoFocus={autoFocus && (!chrome || isThread)}
+            />
+          </StreamEncryptionGate>
+        </StreamErrorBoundary>
+      </Body>
       {stream && !isDraft && (
         <LabelPicker
           workspaceId={workspaceId}
