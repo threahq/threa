@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react"
-import { useParams, useSearchParams } from "react-router-dom"
+import { useParams } from "react-router-dom"
 import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -8,7 +8,7 @@ import { useStreamOrDraft, useStreamError, usePanelLayout, useTypeToFocus } from
 import { usePanel, useSidebar } from "@/contexts"
 import { ResizablePanelFrame, usePanelInset } from "@/components/layout"
 import { PaneHost, Pane, PaneDropContext, PaneDropIndicator, paneDropZone, usePaneDropState } from "@/components/panes"
-import { StreamPane } from "@/components/panes/stream-pane"
+import { StreamPane, useConversationViewParam } from "@/components/panes/stream-pane"
 import {
   AsideColumn,
   AsideCoversPanesContext,
@@ -33,7 +33,6 @@ const MAIN_DROP_EDGES: readonly PaneEdge[] = ["right"]
 
 export function StreamPage() {
   const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId: string }>()
-  const [searchParams, setSearchParams] = useSearchParams()
   const { stream, error } = useStreamOrDraft(workspaceId!, streamId!)
   const { isMobile } = useSidebar()
   const { panelId, isPanelOpen, layout, setCurrentPane } = usePanel()
@@ -89,23 +88,11 @@ export function StreamPage() {
   // must not change this component's hook count.
   usePanelInset(isMobile || streamError ? 0 : panelInset, panelInsetAnimates)
 
-  const isConversationViewOpen = searchParams.get("convView") === "open"
+  const [isConversationViewOpen, setConversationViewOpen] = useConversationViewParam()
   // The closed drawer stays in the DOM for its slide transition, but its list
   // re-renders on every conversation update, so it mounts only while shown.
   const [conversationListMounted, setConversationListMounted] = useState(isConversationViewOpen)
   if (isConversationViewOpen && !conversationListMounted) setConversationListMounted(true)
-
-  const setConversationViewOpen = (open: boolean) => {
-    setSearchParams((prev) => {
-      const newParams = new URLSearchParams(prev)
-      if (open) {
-        newParams.set("convView", "open")
-      } else {
-        newParams.delete("convView")
-      }
-      return newParams
-    })
-  }
 
   const isChannel = stream?.type === StreamTypes.CHANNEL
   const isDm = stream?.type === StreamTypes.DM

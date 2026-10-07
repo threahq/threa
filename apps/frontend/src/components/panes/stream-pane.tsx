@@ -70,6 +70,20 @@ interface StreamPaneProps {
   contextLayout: PanelLayout
 }
 
+/** The conversations drawer's open state, kept in `?convView` (INV-59). */
+export function useConversationViewParam() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const setOpen = (open: boolean) => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      if (open) next.set("convView", "open")
+      else next.delete("convView")
+      return next
+    })
+  }
+  return [searchParams.get("convView") === "open", setOpen] as const
+}
+
 /** One stream's header and timeline, the stream named by `streamId`. */
 export function StreamPane({ workspaceId, streamId, contextLayout }: StreamPaneProps) {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -81,19 +95,7 @@ export function StreamPane({ workspaceId, streamId, contextLayout }: StreamPaneP
   const [isContextOpen, toggleContext] = useStreamContextToggle(streamId, contextLayout)
   const highlightMessageId = useMainOwnsCover() ? searchParams.get("m") : null
 
-  const isConversationViewOpen = searchParams.get("convView") === "open"
-
-  const setConversationViewOpen = (open: boolean) => {
-    setSearchParams((prev) => {
-      const newParams = new URLSearchParams(prev)
-      if (open) {
-        newParams.set("convView", "open")
-      } else {
-        newParams.delete("convView")
-      }
-      return newParams
-    })
-  }
+  const [isConversationViewOpen, setConversationViewOpen] = useConversationViewParam()
 
   // Conversation overlay: colors timeline rows by conversation membership
   // (rendered by StreamContent, which reads the same param — INV-59).
@@ -132,7 +134,6 @@ export function StreamPane({ workspaceId, streamId, contextLayout }: StreamPaneP
   }, [renameError])
   // An external agent (e.g. a Pi remote bot runtime) attached to this
   // scratchpad. Drives the "External" pill state and its connection dot.
-  // Called here (above the early returns below) to keep hook order stable.
   const activeBotPresence = useActiveBotPresence(workspaceId, streamId)
 
   const callsEnabled = useFeatureFlag(workspaceId, "calls") === "on"
