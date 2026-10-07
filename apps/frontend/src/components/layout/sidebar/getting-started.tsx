@@ -1,4 +1,4 @@
-import { useCallback } from "react"
+import { memo, useCallback, useMemo } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
 import { Bell, Camera, Check, PenLine, Sparkles, UserPlus, X } from "lucide-react"
@@ -83,7 +83,7 @@ export function useGettingStarted({
   // Mounting the hook here also gives the app a persistent auto-resubscribe
   // surface — previously it only ran while the notifications settings tab
   // was open.
-  const push = usePushNotifications(workspaceId)
+  const { permission, pushDisabledOnServer, isSubscribed, requestPermission } = usePushNotifications(workspaceId)
 
   const openProfileSettings = useCallback(() => {
     collapseOnMobile()
@@ -125,76 +125,97 @@ export function useGettingStarted({
     void preferencesContext?.updatePreference("gettingStartedDismissed", false)
   }, [preferencesContext])
 
-  const tasks: GettingStartedTask[] = []
+  const preferences = preferencesContext?.preferences
+  // Memoized so the sidebar's per-message re-renders hand the card the same state.
+  return useMemo(() => {
+    const tasks: GettingStartedTask[] = []
 
-  if (currentUser) {
-    if (push.permission !== "unsupported" && !push.pushDisabledOnServer) {
+    if (currentUser) {
+      if (permission !== "unsupported" && !pushDisabledOnServer) {
+        tasks.push({
+          id: "notifications",
+          label: "Turn on notifications",
+          icon: Bell,
+          done: isSubscribed,
+          hint:
+            permission === "denied" ? "Blocked by the browser — allow notifications for this site first" : undefined,
+          onSelect: () => void requestPermission(),
+        })
+      }
+
       tasks.push({
-        id: "notifications",
-        label: "Turn on notifications",
-        icon: Bell,
-        done: push.isSubscribed,
-        hint:
-          push.permission === "denied" ? "Blocked by the browser — allow notifications for this site first" : undefined,
-        onSelect: () => void push.requestPermission(),
+        id: "avatar",
+        label: "Add a profile photo",
+        icon: Camera,
+        done: currentUser.avatarUrl != null,
+        onSelect: openProfileSettings,
       })
+
+      tasks.push({
+        id: "first-note",
+        label: "Write your first note",
+        icon: PenLine,
+        done: hasWrittenNote,
+        onSelect: () => void onCreateScratchpad(),
+      })
+
+      tasks.push({
+        id: "meet-ariadne",
+        label: "Meet Ariadne",
+        icon: Sparkles,
+        done: onboardingStreamId != null,
+        onSelect: () => void meetAriadne(),
+      })
+
+      const canInvite =
+        currentUser.role === WORKSPACE_ROLE_SLUGS.OWNER || currentUser.role === WORKSPACE_ROLE_SLUGS.ADMIN
+      if (canInvite) {
+        tasks.push({
+          id: "invite",
+          label: "Invite your team",
+          icon: UserPlus,
+          done: memberCount > 1,
+          onSelect: openInvites,
+        })
+      }
     }
 
-    tasks.push({
-      id: "avatar",
-      label: "Add a profile photo",
-      icon: Camera,
-      done: currentUser.avatarUrl != null,
-      onSelect: openProfileSettings,
-    })
+    const doneCount = tasks.filter((task) => task.done).length
+    const allDone = tasks.length === 0 || doneCount === tasks.length
+    // Until preferences hydrate we can't know whether the card was dismissed —
+    // surface nothing rather than flashing it in.
+    const hydrated = Boolean(currentUser && preferences)
+    const dismissed = preferences?.gettingStartedDismissed ?? false
 
-    tasks.push({
-      id: "first-note",
-      label: "Write your first note",
-      icon: PenLine,
-      done: hasWrittenNote,
-      onSelect: () => void onCreateScratchpad(),
-    })
-
-    tasks.push({
-      id: "meet-ariadne",
-      label: "Meet Ariadne",
-      icon: Sparkles,
-      done: onboardingStreamId != null,
-      onSelect: () => void meetAriadne(),
-    })
-
-    const canInvite = currentUser.role === WORKSPACE_ROLE_SLUGS.OWNER || currentUser.role === WORKSPACE_ROLE_SLUGS.ADMIN
-    if (canInvite) {
-      tasks.push({
-        id: "invite",
-        label: "Invite your team",
-        icon: UserPlus,
-        done: memberCount > 1,
-        onSelect: openInvites,
-      })
+    return {
+      tasks,
+      doneCount,
+      showCard: hydrated && !dismissed && !allDone,
+      canRestore: hydrated && dismissed && !allDone,
+      dismiss,
+      restore,
     }
-  }
-
-  const doneCount = tasks.filter((task) => task.done).length
-  const allDone = tasks.length === 0 || doneCount === tasks.length
-  // Until preferences hydrate we can't know whether the card was dismissed —
-  // surface nothing rather than flashing it in.
-  const hydrated = Boolean(currentUser && preferencesContext?.preferences)
-  const dismissed = preferencesContext?.preferences?.gettingStartedDismissed ?? false
-
-  return {
-    tasks,
-    doneCount,
-    showCard: hydrated && !dismissed && !allDone,
-    canRestore: hydrated && dismissed && !allDone,
+  }, [
+    currentUser,
+    permission,
+    pushDisabledOnServer,
+    isSubscribed,
+    requestPermission,
+    openProfileSettings,
+    hasWrittenNote,
+    onCreateScratchpad,
+    onboardingStreamId,
+    meetAriadne,
+    memberCount,
+    openInvites,
+    preferences,
     dismiss,
     restore,
-  }
+  ])
 }
 
 /** Checklist card pinned above the sidebar footer. Renders from useGettingStarted state. */
-export function GettingStarted({ state }: { state: GettingStartedState }) {
+export const GettingStarted = memo(function GettingStarted({ state }: { state: GettingStartedState }) {
   if (!state.showCard) return null
   const { tasks, doneCount, dismiss } = state
 
@@ -242,4 +263,4 @@ export function GettingStarted({ state }: { state: GettingStartedState }) {
       </ul>
     </div>
   )
-}
+})

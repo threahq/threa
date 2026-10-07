@@ -57,6 +57,20 @@ interface AddWiring {
   addMenuActions?: SidebarActionItem[]
 }
 
+type PropSlots = Map<string, { key: unknown; value: unknown }>
+
+/** The slot's value, rebuilt only when `key` changes. The key must cover every
+ *  input `create` reads beyond the slots map's own dependencies. */
+function slotted<V>(slots: PropSlots, slot: string, key: unknown, create: () => V): V {
+  const held = slots.get(slot)
+  if (held && held.key === key) return held.value as V
+  const value = create()
+  slots.set(slot, { key, value })
+  return value
+}
+
+const ALL_CAUGHT_UP = <span className="text-[11px] italic text-muted-foreground/50">All caught up</span>
+
 /** Inbox section header: the Inbox icon + label, matching the section header's
  *  uppercase styling. Top-level per INV-18. When `quiet` (no rows held or
  *  unread) both the icon and label drop to a muted tone so the caught-up
@@ -260,6 +274,23 @@ export const SidebarStreamList = memo(function SidebarStreamList({
 
   const streamsById = useMemo(() => new Map(processedStreams.map((stream) => [stream.id, stream])), [processedStreams])
 
+  // Section headers are memoized; their props come from these slots so a new
+  // message re-renders only the headers whose own section changed. The deps are
+  // everything a slot's value captures besides its key.
+  const headerProps = useMemo(
+    (): PropSlots => new Map(),
+    [
+      toggleSectionState,
+      onSectionViewChange,
+      onCreateScratchpad,
+      onCreateChannel,
+      scratchpadAddMenuActions,
+      onClearInbox,
+      workspaceId,
+      collapseOnMobile,
+    ]
+  )
+
   if (hasError) {
     return <p className="px-2 py-4 text-xs text-destructive text-center">Failed to load</p>
   }
@@ -332,8 +363,12 @@ export const SidebarStreamList = memo(function SidebarStreamList({
     // gold-on-paper palette); label sections use their tinted chip. An empty
     // Unread section mutes the dot + label so the caught-up header recedes.
     let titleContent: ReactNode = undefined
-    if (label) titleContent = <LabelChip label={label} />
-    else if (isUnread) titleContent = <UnreadSectionTitle label={presentation.label} quiet={isEmptyUnread} />
+    if (label) titleContent = slotted(headerProps, `${section.id}:title`, label, () => <LabelChip label={label} />)
+    else if (isUnread) {
+      titleContent = slotted(headerProps, `${section.id}:title`, `${presentation.label}|${isEmptyUnread}`, () => (
+        <UnreadSectionTitle label={presentation.label} quiet={isEmptyUnread} />
+      ))
+    }
     // Label sections get an "open" affordance: the label landing page in
     // chats mode, or — in board mode — the board's own label axis
     // (`?label=<id>`), which stays live as assignments change (design doc
@@ -397,21 +432,34 @@ export const SidebarStreamList = memo(function SidebarStreamList({
       scopeAllTitle = `Scope board to the first ${MAX_BOARD_SCOPE_STREAMS} of ${dedupedScopeIdCount} streams`
 
     const state = getSectionState(section.id, presentation.defaultCollapse)
-    const onToggle = () => toggleSectionState(section.id, presentation.defaultCollapse)
-    const add = addWiringFor(section.spec)
+    const onToggle = slotted(
+      headerProps,
+      `${section.id}:toggle`,
+      presentation.defaultCollapse,
+      () => () => toggleSectionState(section.id, presentation.defaultCollapse)
+    )
+    const add = slotted(
+      headerProps,
+      `${section.id}:add`,
+      section.spec.kind === "type" ? section.spec.streamType : section.spec.kind,
+      () => addWiringFor(section.spec)
+    )
     const moreState = getSectionState(moreKey(section.id), MORE_DEFAULT)
     // View options are chats-mode only: board-mode sections filter the board
     // instead via `filterAffordance`/`filterActive`. The Inbox has its own
     // read/unread model, so it offers order and reverse but no filter.
+    const viewFilter = section.spec.kind === "unread" ? undefined : (section.filter ?? "all")
+    const viewOrder = section.order ?? defaultSectionOrder(section.spec)
+    const viewReverse = section.reverse ?? false
     const viewOptions: SectionViewOptions | undefined = boardMode
       ? undefined
-      : {
-          filter: section.spec.kind === "unread" ? undefined : (section.filter ?? "all"),
-          order: section.order ?? defaultSectionOrder(section.spec),
+      : slotted(headerProps, `${section.id}:view`, `${viewFilter}|${viewOrder}|${viewReverse}`, () => ({
+          filter: viewFilter,
+          order: viewOrder,
           orderOptions: sectionOrderOptions(section.spec),
-          reverse: section.reverse ?? false,
+          reverse: viewReverse,
           onChange: (change) => onSectionViewChange(section.id, change),
-        }
+        }))
     // Walk exactly what this section is about to render: a tiered section or a
     // filtered one holds a tail behind the "more" expander, so raw items are
     // not its rows.
@@ -433,15 +481,20 @@ export const SidebarStreamList = memo(function SidebarStreamList({
     // never reflows the list (INV-21).
     let unreadAccessory: ReactNode = undefined
     if (isEmptyUnread) {
-      unreadAccessory = <span className="text-[11px] italic text-muted-foreground/50">All caught up</span>
+      unreadAccessory = ALL_CAUGHT_UP
     } else if (isInboxSection) {
-      unreadAccessory = (
-        <InboxHeaderActions
-          heldCount={inboxHeldStreamIds.length}
-          totalCount={inboxStreamIds.length}
-          onClearRead={() => onClearInbox(inboxHeldStreamIds)}
-          onClearAll={() => onClearInbox(inboxStreamIds)}
-        />
+      unreadAccessory = slotted(
+        headerProps,
+        `${section.id}:accessory`,
+        `${inboxHeldStreamIds}|${inboxStreamIds}`,
+        () => (
+          <InboxHeaderActions
+            heldCount={inboxHeldStreamIds.length}
+            totalCount={inboxStreamIds.length}
+            onClearRead={() => onClearInbox(inboxHeldStreamIds)}
+            onClearAll={() => onClearInbox(inboxStreamIds)}
+          />
+        )
       )
     }
 

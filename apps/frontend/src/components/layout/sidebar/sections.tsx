@@ -108,7 +108,7 @@ interface SectionHeaderProps {
 }
 
 /** Section header with chevron state indicator. Consistent across all sidebar sections. */
-export function SectionHeader({
+export const SectionHeader = memo(function SectionHeader({
   label,
   icon,
   titleContent,
@@ -352,7 +352,7 @@ export function SectionHeader({
       {viewOptionsSurface}
     </>
   )
-}
+})
 
 interface RenderRowOptions {
   workspaceId: string
