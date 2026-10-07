@@ -143,7 +143,7 @@ function picks(result: DecisionsResult, key: string, people: RosterPerson[]): Pi
   return people
     .map((person) => ({
       person: { id: person.id, name: person.name, slug: person.slug },
-      probability: answer.probabilities[person.id] ?? (answer.choice === person.id ? answer.confidence : 0),
+      probability: answer.probabilities[person.id] ?? 0,
     }))
     .filter((pick) => pick.probability >= PEOPLE_PLAUSIBLE_AT)
 }

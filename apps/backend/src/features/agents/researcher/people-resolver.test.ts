@@ -20,7 +20,7 @@ const ROSTER: RosterPerson[] = [
 /** Per reference key, the probability each listed user gets; candidates absent from a call's criteria are dropped. */
 type Beliefs = Record<string, Record<string, number>>
 
-function createResolver(options: { beliefs?: Beliefs; pinned?: boolean; throws?: Error }) {
+function createResolver(options: { beliefs?: Beliefs; pinned?: boolean; throws?: Error; sparseChoice?: string }) {
   const generateDecisions = mock(async (opts: { questions: Record<string, DecisionQuestion> }) => {
     if (options.throws) throw options.throws
     const answers = Object.fromEntries(
@@ -29,7 +29,9 @@ function createResolver(options: { beliefs?: Beliefs; pinned?: boolean; throws?:
         const probabilities = Object.fromEntries(
           Object.entries(options.beliefs?.[key] ?? {}).filter(([id]) => criteria.includes(id))
         )
-        const [choice] = Object.entries(probabilities).sort((a, b) => b[1] - a[1])[0] ?? ["none"]
+        const [choice] = Object.entries(probabilities).sort((a, b) => b[1] - a[1])[0] ?? [
+          options.sparseChoice ?? "none",
+        ]
         return [key, { type: "choice", choice, probabilities, confidence: probabilities[choice] ?? 0.9 }]
       })
     )
@@ -106,6 +108,12 @@ describe("PeopleResolver", () => {
     expect(await resolver.resolve(input(["Kate"]))).toEqual([
       { reference: "Kate", status: "ambiguous", candidates: [named("usr_kate_room")] },
     ])
+  })
+
+  test("should leave a choice with no probability of its own unresolved, whatever the answer's confidence", async () => {
+    const { resolver } = createResolver({ beliefs: { ref0: {} }, sparseChoice: "usr_kate_room" })
+
+    expect(await resolver.resolve(input(["Kate"]))).toEqual([{ reference: "Kate", status: "unresolved" }])
   })
 
   test("should resolve each reference on its own", async () => {
