@@ -156,7 +156,7 @@ export { useLastSeenEvent } from "./use-last-seen-event"
 
 export { useUnreadDivider, isDividerReadPast } from "./use-unread-divider"
 
-export { useNewMessageIndicator } from "./use-new-message-indicator"
+export { useNewMessageIndicator, useIsNewMessage, type NewMessageFlash } from "./use-new-message-indicator"
 
 export { useScrollToElement } from "./use-scroll-to-element"
 

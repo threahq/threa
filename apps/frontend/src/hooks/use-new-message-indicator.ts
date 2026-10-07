@@ -1,5 +1,45 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useSyncExternalStore } from "react"
 import type { StreamEvent } from "@threahq/types"
+
+/**
+ * The flashing event ids, held outside React state so a flash re-renders only
+ * the row it marks, never the timeline that owns it.
+ */
+export interface NewMessageFlash {
+  has(eventId: string): boolean
+  readonly size: number
+  subscribe(listener: () => void): () => void
+}
+
+function createNewMessageFlash() {
+  let ids: ReadonlySet<string> = new Set()
+  const listeners = new Set<() => void>()
+  const flash: NewMessageFlash & { ids(): ReadonlySet<string>; set(next: ReadonlySet<string>): void } = {
+    has: (eventId) => ids.has(eventId),
+    ids: () => ids,
+    get size() {
+      return ids.size
+    },
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    set(next) {
+      ids = next
+      for (const listener of listeners) listener()
+    },
+  }
+  return flash
+}
+
+/** Whether `eventId` is flashing right now; re-renders the caller only when that flips. */
+export function useIsNewMessage(flash: NewMessageFlash | undefined, eventId: string | undefined): boolean {
+  return useSyncExternalStore(flash?.subscribe ?? noopSubscribe, () =>
+    flash && eventId !== undefined ? flash.has(eventId) : false
+  )
+}
+
+const noopSubscribe = () => () => {}
 
 /**
  * Tracks messages that arrive via socket while the stream is open,
@@ -27,8 +67,8 @@ export function useNewMessageIndicator(
   lastReadEventId?: string | null,
   overlayReadIds?: ReadonlySet<string>,
   isAttentive: boolean = true
-): Set<string> {
-  const [newIds, setNewIds] = useState<Set<string>>(new Set())
+): NewMessageFlash {
+  const [flash] = useState(createNewMessageFlash)
   /** Event IDs present when the stream was opened. With the eventCache removed,
    *  useLiveQuery returns undefined until IDB resolves, then the complete event
    *  set. The first defined render IS the full IDB state — no settling needed. */
@@ -40,14 +80,14 @@ export function useNewMessageIndicator(
   useEffect(() => {
     knownEventIdsRef.current = null
     trackedIdsRef.current = new Set()
-    setNewIds(new Set())
+    flash.set(new Set())
     for (const t of timersRef.current) clearTimeout(t)
     timersRef.current = new Set()
 
     return () => {
       for (const t of timersRef.current) clearTimeout(t)
     }
-  }, [streamId])
+  }, [streamId, flash])
 
   useEffect(() => {
     if (events.length === 0) return
@@ -86,24 +126,17 @@ export function useNewMessageIndicator(
 
     for (const id of freshIds) trackedIdsRef.current.add(id)
 
-    setNewIds((prev) => {
-      const next = new Set(prev)
-      for (const id of freshIds) next.add(id)
-      return next
-    })
+    flash.set(new Set([...flash.ids(), ...freshIds]))
 
     // Auto-expire after the animation completes
     const timer = setTimeout(() => {
       timersRef.current.delete(timer)
       for (const id of freshIds) trackedIdsRef.current.delete(id)
-      setNewIds((prev) => {
-        const next = new Set(prev)
-        for (const id of freshIds) next.delete(id)
-        return next
-      })
+      const expired = new Set(freshIds)
+      flash.set(new Set([...flash.ids()].filter((id) => !expired.has(id))))
     }, 2000)
     timersRef.current.add(timer)
-  }, [events, currentUserId, lastReadEventId, overlayReadIds, isAttentive])
+  }, [events, currentUserId, lastReadEventId, overlayReadIds, isAttentive, flash])
 
-  return newIds
+  return flash
 }

@@ -6,10 +6,10 @@
  * the number the failing test prints.
  */
 export const RENDER_BUDGETS = {
-  "type 5 characters": { baseline: 1310, tolerance: 0.1 },
-  "incoming message in the open stream": { baseline: 815, tolerance: 0.15 },
-  "message in another stream": { baseline: 355, tolerance: 0.25 },
-  "switch stream (warm)": { baseline: 4353, tolerance: 0.1 },
+  "type 5 characters": { baseline: 1308, tolerance: 0.1 },
+  "incoming message in the open stream": { baseline: 770, tolerance: 0.15 },
+  "message in another stream": { baseline: 336, tolerance: 0.25 },
+  "switch stream (warm)": { baseline: 4307, tolerance: 0.1 },
 } as const
 
 export type RenderBudgetAction = keyof typeof RENDER_BUDGETS

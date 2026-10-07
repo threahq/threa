@@ -78,7 +78,7 @@ const READ_BLOCKING_TYPES: ReadonlySet<string> = new Set(READ_BLOCKING_EVENT_TYP
  */
 export const SWEEP_LINK_MS = 1500
 
-interface UseLastSeenEventOptions {
+export interface UseLastSeenEventOptions {
   /** The owned scroll container (virtualized timeline or plain thread scroller). */
   scrollContainerRef: React.RefObject<HTMLElement | null>
   /**

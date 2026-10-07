@@ -1,10 +1,9 @@
-import { RollingNumber } from "@/components/rolling-number"
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { getDraftPromotionEvents } from "@/lib/draft-promotions"
 import { memo, useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState, useSyncExternalStore } from "react"
 import { useLocation, useNavigationType, useParams, useSearchParams } from "react-router-dom"
 import { type VirtualizerHandle } from "virtua"
-import { MessageSquare, ArrowDown, ArrowUp, X, Move, Loader2, Check, Plus } from "lucide-react"
+import { MessageSquare, ArrowDown, X, Move, Loader2, Check, Plus } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useCoverClose } from "@/hooks/use-cover-close"
 import { CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
@@ -18,13 +17,12 @@ import {
   useScrollBehavior,
   useStreamBootstrap,
   useWorkspaceUserId,
-  useAutoMarkAsRead,
   useAutoReadAttention,
-  useLastSeenEvent,
   useUnreadDivider,
   isDividerReadPast,
   useIsMobile,
   useNewMessageIndicator,
+  type NewMessageFlash,
   useSteerAgentSession,
   useStopAgentSession,
   useEditLastMessageTrigger,
@@ -155,7 +153,8 @@ import { addStartBatchSelectListener, type BatchSelectIntent } from "@/lib/batch
 import { addMarkReadUpToHereListener, addMarkUnreadListener } from "@/lib/mark-read-events"
 import { clearTimelineAnchor, loadTimelineAnchor, saveTimelineAnchor } from "@/lib/timeline-anchor-storage"
 import { ReadFrontierContext, type ReadFrontier } from "./read-frontier-context"
-import { useReadMessageIds, useStreamUnreadState, useUnreadActions } from "@/hooks/use-unread-counts"
+import { StreamReadTracker } from "./stream-read-tracker"
+import { useReadMessageIds, useStreamInInbox, useUnreadActions } from "@/hooks/use-unread-counts"
 import { deepLinkDebug } from "./deep-link-debug"
 import { VirtualizedScroller, useRenderedContentLatch } from "./virtualized-scroller"
 import { useScrollToMessage, snapshotTopVisibleRow, UNREAD_MARKER_TOP_GAP_PX } from "@/hooks/use-scroll-to-message"
@@ -2170,43 +2169,12 @@ export function StreamContent({
   // no settle phase (`isInitialSettling` would never clear there), so exempt it.
   const settledAtBottom = !useVirtualized || !virtualIsInitialSettling
   const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode && settledAtBottom
-  const { lastSeenEventId, atLastRow, tailVisible, unreadAboveViewport } = useLastSeenEvent({
-    scrollContainerRef,
-    // The virtualized scroller late-mounts via a ref callback, AFTER
-    // `autoMarkEnabled` flips true — pass the mounted element so the read-frontier
-    // scan re-arms its observers once the scroller exists. The plain thread
-    // scroller mounts synchronously with the content, so it has no element to
-    // track (the ref is already live when enabled flips).
-    scrollContainerEl: useVirtualized ? virtualScrollerEl : null,
-    // Observe the scrolling content box (its height tracks scrollHeight) so a
-    // settle / embed / image resize re-scans even when the stream is too short
-    // to scroll. Both paths pass one — the virtualized list's inner content div
-    // and the plain (thread) scroller's content wrapper. Observing the scroller
-    // itself wouldn't catch it: a fixed h-full box doesn't change as content grows.
-    contentRef: useVirtualized ? virtualContentRef : plainContentRef,
-    events: displayEvents,
-    streamId,
-    lastReadEventId,
-    lastReadSequence: frontierSequence,
-    hasOlderEvents: hasOlderEventsKnown ? hasOlderEvents : null,
-    enabled: autoMarkEnabled,
-    programmaticScrollAtRef,
-    sweepOriginRef,
-  })
-  useAutoMarkAsRead(workspaceId, streamId, lastSeenEventId, {
-    enabled: autoMarkEnabled,
-    partial: !atLastRow,
-    // Raw watermark, not the thread-remapped frontier seed: the heal's anchor
-    // must be the id the server already stores so the advance stays a no-op.
-    readPointerEventId: lastReadEventId,
-    activityHealEnabled: tailVisible,
-  })
   const canAutoRead = useAutoReadAttention()
 
   const isMobile = useIsMobile()
   const readCommitQueue = useReadCommitQueue()
   const { markAsRead, markUnread, clearInbox } = useUnreadActions(workspaceId)
-  const { unreadCount, inInbox } = useStreamUnreadState(workspaceId, streamId)
+  const inInbox = useStreamInInbox(workspaceId, streamId)
   // Only the page's own stream settles on Escape: a thread panel mounts a second
   // StreamContent, and one keypress must never settle both.
   const { streamId: routeStreamId } = useParams<{ streamId: string }>()
@@ -2220,7 +2188,7 @@ export function StreamContent({
   const readOverlay = useReadMessageIds(workspaceId, streamId)
 
   // Track live-arriving messages from other users for brief "new" indicator.
-  const newMessageIds = useNewMessageIndicator(
+  const newMessageFlash = useNewMessageIndicator(
     events,
     currentWorkspaceUserId ?? undefined,
     streamId,
@@ -2477,6 +2445,7 @@ export function StreamContent({
         ?.scrollIntoView({ block: "start" })
     }
   }, [dividerEventId, useVirtualized, visibleItems, listRef, disableAutoScroll, scrollContainerRef])
+  const stableScrollToFirstUnread = useStableCallback(scrollToFirstUnread)
 
   // Atomic stream landing (INV-70): the ONE once-per-stream-open decision
   // about where the viewport starts, resolved by resolveStreamLanding and
@@ -2833,8 +2802,6 @@ export function StreamContent({
     )
   }
 
-  const unreadBannerVisible = unreadAboveViewport && unreadCount > 0 && !batchMode && !isSearchOpen
-
   const timeline = (
     <ReadFrontierContext.Provider value={readFrontier}>
       <EditLastMessageContext.Provider value={editLastMessageCtxWithScroll}>
@@ -2949,7 +2916,7 @@ export function StreamContent({
                           firstUnreadEventId={dividerEventId}
                           isDividerDimmed={isDividerDimmed}
                           hideSessionCards={isChannel}
-                          newMessageIds={newMessageIds}
+                          newMessageFlash={newMessageFlash}
                           isSearchOpen={isSearchOpen}
                           batch={batchState}
                           batchPointerHandlers={batchPointerHandlers}
@@ -3034,7 +3001,7 @@ export function StreamContent({
                             isDividerDimmed={isDividerDimmed}
                             hideSessionCards={isChannel}
                             subagentThreadRun={subagentThreadRun}
-                            newMessageIds={newMessageIds}
+                            newMessageFlash={newMessageFlash}
                             viewerIsMember={isMember}
                             batch={batchState}
                             conversationOverlay={activeConversationOverlay}
@@ -3072,37 +3039,33 @@ export function StreamContent({
               Hidden while search is open: jumping the timeline would yank it out
               from under the active search-result navigation, and the Escape
               mark-read shortcut is gated on `!isSearchOpen` too. */}
-                  {unreadBannerVisible && !chromeCollapsed && (
-                    <div
-                      // Sits clearly below the floating date pill (top-2, ~30px tall)
-                      // so the top-center affordances never overlap.
-                      className="pointer-events-none absolute left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5"
-                      style={{ top: "3.5rem" }}
-                    >
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        className="pointer-events-auto shadow-lg gap-1.5"
-                        onClick={scrollToFirstUnread}
-                      >
-                        <ArrowUp className="h-3.5 w-3.5" />
-                        <span>
-                          <RollingNumber value={unreadCount} /> new message{unreadCount === 1 ? "" : "s"}
-                        </span>
-                      </Button>
-                      {/* Dismiss without scrolling up: mark all loaded read and tail
-                  the live bottom — the touchable equivalent of Escape. */}
-                      <Button
-                        variant="secondary"
-                        size="icon"
-                        className="pointer-events-auto h-9 w-9 shadow-lg"
-                        onClick={escapeUnread}
-                        aria-label="Mark all read"
-                      >
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  )}
+                  <StreamReadTracker
+                    workspaceId={workspaceId}
+                    // The virtualized scroller late-mounts via a ref callback, AFTER
+                    // `autoMarkEnabled` flips true — pass the mounted element so the read-frontier
+                    // scan re-arms its observers once the scroller exists. The plain thread
+                    // scroller mounts synchronously with the content, so it has no element to
+                    // track (the ref is already live when enabled flips).
+                    scrollContainerRef={scrollContainerRef}
+                    scrollContainerEl={useVirtualized ? virtualScrollerEl : null}
+                    // Observe the scrolling content box (its height tracks scrollHeight) so a
+                    // settle / embed / image resize re-scans even when the stream is too short
+                    // to scroll. Both paths pass one — the virtualized list's inner content div
+                    // and the plain (thread) scroller's content wrapper. Observing the scroller
+                    // itself wouldn't catch it: a fixed h-full box doesn't change as content grows.
+                    contentRef={useVirtualized ? virtualContentRef : plainContentRef}
+                    events={displayEvents}
+                    streamId={streamId}
+                    lastReadEventId={lastReadEventId}
+                    lastReadSequence={frontierSequence}
+                    hasOlderEvents={hasOlderEventsKnown ? hasOlderEvents : null}
+                    enabled={autoMarkEnabled}
+                    programmaticScrollAtRef={programmaticScrollAtRef}
+                    sweepOriginRef={sweepOriginRef}
+                    bannerAllowed={!batchMode && !isSearchOpen && !chromeCollapsed}
+                    onJumpToFirstUnread={stableScrollToFirstUnread}
+                    onMarkAllRead={escapeUnread}
+                  />
                   {dragGhost && (
                     <div
                       className="pointer-events-none fixed z-50 max-w-[280px] rounded-md border bg-popover/95 px-3 py-2 text-sm shadow-lg"
@@ -3244,7 +3207,7 @@ const TimelineMessageList = memo(function TimelineMessageList({
   firstUnreadEventId,
   isDividerDimmed,
   hideSessionCards,
-  newMessageIds,
+  newMessageFlash,
   isSearchOpen,
   batch,
   batchPointerHandlers,
@@ -3310,7 +3273,7 @@ const TimelineMessageList = memo(function TimelineMessageList({
   firstUnreadEventId?: string
   isDividerDimmed?: boolean
   hideSessionCards?: boolean
-  newMessageIds?: Set<string>
+  newMessageFlash?: NewMessageFlash
   isSearchOpen: boolean
   batch?: BatchTimelineState
   batchPointerHandlers?: React.HTMLAttributes<HTMLElement>
@@ -3364,7 +3327,7 @@ const TimelineMessageList = memo(function TimelineMessageList({
       firstUnreadEventId,
       isDividerDimmed,
       hideSessionCards,
-      newMessageIds,
+      newMessageFlash,
       firstMessageId,
       onStopSession: handleStopSession,
       onSteerSession: steerAgentSession,
@@ -3387,7 +3350,7 @@ const TimelineMessageList = memo(function TimelineMessageList({
       firstUnreadEventId,
       isDividerDimmed,
       hideSessionCards,
-      newMessageIds,
+      newMessageFlash,
       firstMessageId,
       handleStopSession,
       steerAgentSession,

@@ -211,6 +211,10 @@ const pickInboxState = (state: CachedUnreadState) => ({
   inboxHeldStreamIds: state.inboxHeldStreamIds,
 })
 
+const isStreamInInbox = (state: CachedUnreadState, streamId: string): boolean =>
+  !state.mutedStreamIds?.includes(streamId) &&
+  ((state.unreadCounts[streamId] ?? 0) > 0 || !!state.inboxHeldStreamIds?.includes(streamId))
+
 /**
  * One stream's counters. The unread row is rewritten for every message in the
  * workspace, so an open stream reads only its own slice of it.
@@ -220,13 +224,17 @@ export function useStreamUnreadState(workspaceId: string, streamId: string) {
     (state: CachedUnreadState) => ({
       unreadCount: state.unreadCounts[streamId] ?? 0,
       activityCount: state.activityCounts?.[streamId] ?? 0,
-      inInbox:
-        !state.mutedStreamIds?.includes(streamId) &&
-        ((state.unreadCounts[streamId] ?? 0) > 0 || !!state.inboxHeldStreamIds?.includes(streamId)),
+      inInbox: isStreamInInbox(state, streamId),
     }),
     [streamId]
   )
   return useWorkspaceUnreadState(workspaceId, pick) ?? { unreadCount: 0, activityCount: 0, inInbox: false }
+}
+
+/** Whether the stream sits in the Inbox, without subscribing to its counts. */
+export function useStreamInInbox(workspaceId: string, streamId: string): boolean {
+  const pick = useCallback((state: CachedUnreadState) => isStreamInInbox(state, streamId), [streamId])
+  return useWorkspaceUnreadState(workspaceId, pick) ?? false
 }
 
 export function useUnreadCounts(workspaceId: string) {

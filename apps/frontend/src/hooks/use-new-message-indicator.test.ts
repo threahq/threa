@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { renderHook, act } from "@testing-library/react"
-import { useNewMessageIndicator } from "./use-new-message-indicator"
+import { useIsNewMessage, useNewMessageIndicator } from "./use-new-message-indicator"
 import type { StreamEvent } from "@threahq/types"
 
 function makeEvent(overrides: Partial<StreamEvent> & { id: string; sequence: string }): StreamEvent {
@@ -49,6 +49,35 @@ describe("useNewMessageIndicator", () => {
     rerender({ events: withSocket, lastRead: "evt_5" })
 
     expect(result.current.has("evt_6")).toBe(true)
+  })
+
+  it("re-renders only the row whose flash state flips", () => {
+    const events = [makeEvent({ id: "evt_1", sequence: "1" }), makeEvent({ id: "evt_5", sequence: "5" })]
+    const { result, rerender } = renderHook(
+      ({ events: evts }) => useNewMessageIndicator(evts, currentUserId, streamId, "evt_5"),
+      { initialProps: { events } }
+    )
+    const flash = result.current
+    const renders = { evt_5: 0, evt_6: 0 }
+    const row = (eventId: "evt_5" | "evt_6") =>
+      renderHook(() => {
+        renders[eventId]++
+        return useIsNewMessage(flash, eventId)
+      })
+    const oldRow = row("evt_5")
+    const newRow = row("evt_6")
+
+    rerender({ events: [...events, makeEvent({ id: "evt_6", sequence: "6" })] })
+
+    expect(result.current).toBe(flash)
+    expect({ old: oldRow.result.current, new: newRow.result.current, renders }).toEqual({
+      old: false,
+      new: true,
+      renders: { evt_5: 1, evt_6: 2 },
+    })
+
+    act(() => vi.advanceTimersByTime(2000))
+    expect({ new: newRow.result.current, renders }).toEqual({ new: false, renders: { evt_5: 1, evt_6: 3 } })
   })
 
   it("does not flash events from the current user", () => {

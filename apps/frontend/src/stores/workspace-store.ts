@@ -645,12 +645,16 @@ export function useWorkspaceStreamReadStates(workspaceId: string | undefined): C
   return useArrayStoreHook(workspaceId, "readStates", cached)
 }
 
+/** The stream's read frontier. `lastReadAt` is left out: the read echo rewrites it after the frontier has already moved. */
 export function useWorkspaceStreamReadState(
   workspaceId: string | undefined,
   streamId: string
-): Omit<CachedStreamReadState, "_cachedAt"> | undefined {
+): Pick<CachedStreamReadState, "lastReadEventId" | "lastReadSequence"> | undefined {
   const select = useCallback(
-    (rows: CachedStreamReadState[]) => withoutCachedAt(rows.find((row) => row.streamId === streamId)),
+    (rows: CachedStreamReadState[]) => {
+      const row = rows.find((r) => r.streamId === streamId)
+      return row ? { lastReadEventId: row.lastReadEventId, lastReadSequence: row.lastReadSequence } : undefined
+    },
     [streamId]
   )
   return useTableSelect(workspaceId, "readStates", select)

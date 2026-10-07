@@ -13,7 +13,7 @@ import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "./session-
 import { getCommandId, isOwnCommandEvent } from "./command-grouping"
 import type { SubagentThreadRun } from "@/lib/subagent-display"
 import { useSocket, useCoordinatedLoading } from "@/contexts"
-import { useSteerAgentSession, useStopAgentSession } from "@/hooks"
+import { useSteerAgentSession, useStopAgentSession, useIsNewMessage, type NewMessageFlash } from "@/hooks"
 import { Loader2 } from "lucide-react"
 import { EventItem } from "./event-item"
 import type { RunFold, RunFoldStore } from "./run-fold"
@@ -53,7 +53,7 @@ interface EventListProps {
   /** The subagent run this stream is the thread of, when it is one. */
   subagentThreadRun?: SubagentThreadRun | null
   /** Event IDs that just arrived via socket and should flash briefly */
-  newMessageIds?: Set<string>
+  newMessageFlash?: NewMessageFlash
   /** True when the viewer is a member of this stream — gates the bot-access card's Approve/Deny. */
   viewerIsMember?: boolean
   batch?: BatchTimelineState
@@ -887,7 +887,7 @@ export interface TimelineItemRenderContext {
   firstUnreadEventId?: string
   isDividerDimmed?: boolean
   hideSessionCards?: boolean
-  newMessageIds?: Set<string>
+  newMessageFlash?: NewMessageFlash
   /**
    * messageId of the first message in the stream. Drives the "context attached"
    * badge on the user's first message in a bag-attached scratchpad — same
@@ -949,6 +949,7 @@ export interface TimelineItemContentProps {
 /** Renders a single timeline item. Used by virtua's row mapping and non-virtualized lists. */
 function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: TimelineItemContentProps) {
   const showUnreadDivider = isFirstUnread(item, ctx.firstUnreadEventId)
+  const isNew = useIsNewMessage(ctx.newMessageFlash, item.type === "event" ? item.event.id : undefined)
 
   let eventNode: React.ReactNode = null
   if (item.type === "event") {
@@ -959,7 +960,7 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
         streamId={ctx.streamId}
         highlightMessageId={ctx.highlightMessageId}
         hideSessionCards={ctx.hideSessionCards}
-        isNew={ctx.newMessageIds?.has(item.event.id)}
+        isNew={isNew}
         deferSecondaryHydration={deferSecondaryHydration}
         cancelledFollowUpIds={ctx.cancelledFollowUpIds}
         delegationStatusPatches={ctx.delegationStatusPatches}
@@ -1254,7 +1255,6 @@ export function timelineRowPropsEqual(prev: TimelineItemContentProps, next: Time
   const messageId = getEventMessageId(item.event)
   if ((p.highlightMessageId === messageId) !== (n.highlightMessageId === messageId)) return false
   if ((p.firstMessageId === messageId) !== (n.firstMessageId === messageId)) return false
-  if ((p.newMessageIds?.has(item.event.id) ?? false) !== (n.newMessageIds?.has(item.event.id) ?? false)) return false
 
   const pb = p.batch
   const nb = n.batch
@@ -1341,7 +1341,7 @@ export function EventList({
   isDividerDimmed,
   hideSessionCards,
   subagentThreadRun,
-  newMessageIds,
+  newMessageFlash,
   viewerIsMember,
   batch,
   conversationOverlay,
@@ -1412,7 +1412,7 @@ export function EventList({
     firstUnreadEventId,
     isDividerDimmed,
     hideSessionCards,
-    newMessageIds,
+    newMessageFlash,
     firstMessageId,
     onStopSession: handleStopSession,
     onSteerSession: steerAgentSession,
