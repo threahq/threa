@@ -10,11 +10,13 @@ import { BoardLinkRow, BoardUnreadRow, ChatsLinkRow } from "./board-link-row"
 const WS = "workspace_1"
 const USER = "user_1"
 
-function stub() {
+function stub(streamIds: string[] = []) {
   vi.spyOn(Contexts, "useSidebar").mockReturnValue({
     collapseOnMobile: vi.fn(),
   } as unknown as ReturnType<typeof Contexts.useSidebar>)
-  vi.spyOn(WorkspaceStore, "useWorkspaceStreams").mockReturnValue([] as never)
+  vi.spyOn(WorkspaceStore, "useWorkspaceStreamsSelect").mockImplementation((_workspaceId, select) =>
+    select(streamIds.map((id) => ({ id })) as WorkspaceStore.CachedStream[])
+  )
   vi.spyOn(BoardViewHooks, "useBoardViews").mockReturnValue({ data: [] } as never)
 }
 
@@ -57,6 +59,17 @@ describe("BoardLinkRow", () => {
       </MemoryRouter>
     )
     expect(hrefOf("Board")).toBe(`/w/${WS}/board`)
+  })
+
+  it("restores the retained board scope minus streams that no longer exist", () => {
+    stub(["stream_1", "stream_2"])
+    setLastLocation(USER, WS, { surface: "board", streamId: null, board: { search: "?in=stream_1,stream_gone" } })
+    render(
+      <MemoryRouter>
+        <BoardLinkRow workspaceId={WS} userId={USER} />
+      </MemoryRouter>
+    )
+    expect(hrefOf("Board")).toBe(`/w/${WS}/board?in=stream_1`)
   })
 
   it("carries no unread toggle — that's a board-mode filter, not a chats-mode row", () => {
