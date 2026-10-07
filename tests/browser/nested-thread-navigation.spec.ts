@@ -179,14 +179,10 @@ test.describe("Nested Thread Navigation", () => {
     await expect(getActivePanel(page).getByText(nestedReply)).toBeVisible({ timeout: 5000 })
     await waitForRealThreadPanel(page)
 
-    // Return to the main stream with no panel open through the channel's
-    // sidebar link (tabbed panels show no channel breadcrumb), without
-    // depending on close-button click animations settling first.
-    await page
-      .getByRole("navigation", { name: "Sidebar navigation" })
-      .getByRole("link", { name: `#${channelName}` })
-      .first()
-      .click()
+    // Return to the main stream with no panel open, without depending on
+    // close-button click animations settling first. Picking the channel in
+    // the sidebar would only bring main forward and leave its tabs open.
+    await page.goto(page.url().split("?")[0])
     await expect(page).not.toHaveURL(/panel=/)
     await expect(page.locator("[data-panel-tab]")).toHaveCount(0)
 
