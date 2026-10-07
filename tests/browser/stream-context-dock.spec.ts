@@ -146,7 +146,8 @@ test("floats over the thread where the dock can't fit beside it, and docks once 
   await toggle.click()
   await expect(dock(page)).toBeFocused()
   const composer = page.locator('[data-testid="panel"] [contenteditable="true"]')
-  await composer.click()
+  // The float covers the composer's right side; its left edge is what a reader can reach.
+  await composer.click({ position: { x: 16, y: 8 } })
   await expect(composer).toBeFocused()
   await page.setViewportSize({ width: 1600, height: 900 })
   await expect(page.getByTestId("stream-context-dock").getByText("example.org").first()).toBeVisible()
@@ -166,7 +167,7 @@ test("floats over the thread where the dock can't fit beside it, and docks once 
   await expect(page.getByTestId("panel").getByText("thread link")).toBeInViewport()
 })
 
-test("the floating overview steps aside for an aside stage and returns when it closes", async ({ page }) => {
+test("the floating overview steps aside for an aside sheet and returns when it closes", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 })
   const { workspaceId, streamId } = await seedChannelWithThread(page, "context-stage")
 
@@ -177,12 +178,12 @@ test("the floating overview steps aside for an aside stage and returns when it c
   await expect(dock(page).getByText("example.com").first()).toBeVisible()
 
   await page.getByTestId("aside-header-chip").click()
-  await expect(page.getByTestId("aside-stage")).toBeVisible({ timeout: 15000 })
+  await expect(page.getByTestId("aside-sheet")).toBeVisible({ timeout: 15000 })
   await expect(dock(page)).toHaveCount(0)
   expect(new URL(page.url()).searchParams.get("context")).not.toBeNull()
 
   await page.getByRole("button", { name: "Close aside" }).click()
-  await expect(page.getByTestId("aside-stage")).toHaveCount(0)
+  await expect(page.getByTestId("aside-sheet")).toHaveCount(0)
   await expect(dock(page).getByText("example.com").first()).toBeVisible()
 })
 
