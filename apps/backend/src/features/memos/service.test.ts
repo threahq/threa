@@ -171,18 +171,23 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
   const classifyConversation = mock(async () => classification)
   const captureEvent = mock((_event: AnalyticsEvent) => {})
 
+  const memorizeConversation = mock(async (_text: string, _context: { now: Date }) => options.memoContents)
+  const formatMessages = mock(
+    async (..._args: [unknown, unknown, unknown, { relativeTo?: Date }]) => "formatted conversation"
+  )
+
   const service = new MemoService({
     analyticsReporter: Object.assign(new DisabledAnalyticsReporter(), { captureEvent }),
     pool: {} as never,
     classifier: { classifyConversation } as never,
     memorizer: {
-      memorizeConversation: async () => options.memoContents,
+      memorizeConversation,
       reviseMemo: async () => [],
     } as never,
     embeddingService: {
       embedBatch: async (texts: string[]) => texts.map(() => [0.1, 0.2]),
     } as never,
-    messageFormatter: { formatMessages: async () => "formatted conversation" } as never,
+    messageFormatter: { formatMessages } as never,
     now: options.now ? () => options.now! : undefined,
   })
 
@@ -198,6 +203,8 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
     classifyConversation,
     recordFingerprints,
     captureEvent,
+    memorizeConversation,
+    formatMessages,
     markProcessed,
     findByStream,
     findActiveBySourceConversation,
@@ -434,7 +441,7 @@ describe("MemoService.processBatch — settle gate (active conversations defer u
     expect(result.memosCreated).toBe(1)
   })
 
-  it("measures quiet time against the injected clock, not wall time", async () => {
+  it("defers an active conversation that is quiet by wall time but not by the injected clock", async () => {
     const clock = new Date("2025-03-01T12:00:00Z")
     const { service } = setupService({ memoContents: [memoContent], now: clock })
     spyOn(ConversationRepository, "findById").mockResolvedValue({
@@ -448,9 +455,23 @@ describe("MemoService.processBatch — settle gate (active conversations defer u
     expect(result).toEqual({ processed: 0, memosCreated: 0 })
   })
 
-  it("memorizes once the injected clock is past the settle window", async () => {
+  it("defers a single-message conversation that is old by wall time but young by the injected clock", async () => {
     const clock = new Date("2025-03-01T12:00:00Z")
     const { service } = setupService({ memoContents: [memoContent], now: clock })
+    spyOn(ConversationRepository, "findById").mockResolvedValue({
+      ...fakeConversation(),
+      messageIds: ["msg_1"],
+      lastActivityAt: new Date(clock.getTime() - 60 * 1000),
+    } as never)
+
+    const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(result).toEqual({ processed: 0, memosCreated: 0 })
+  })
+
+  it("memorizes an active conversation that is quiet only by the injected clock, dating the transcript and prompt by it", async () => {
+    const clock = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
+    const { service, memorizeConversation, formatMessages } = setupService({ memoContents: [memoContent], now: clock })
     spyOn(ConversationRepository, "findById").mockResolvedValue({
       ...fakeConversation(),
       status: "active",
@@ -459,7 +480,11 @@ describe("MemoService.processBatch — settle gate (active conversations defer u
 
     const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
-    expect(result.memosCreated).toBe(1)
+    expect({
+      memosCreated: result.memosCreated,
+      relativeTo: formatMessages.mock.calls[0]?.[3]?.relativeTo,
+      memorizerNow: memorizeConversation.mock.calls[0]?.[1].now,
+    }).toEqual({ memosCreated: 1, relativeTo: clock, memorizerNow: clock })
   })
 
   it("memorizes a resolved conversation immediately regardless of recency", async () => {

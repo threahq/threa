@@ -251,7 +251,7 @@ describe("provisional conversation attach", () => {
       return { convId, lastActivityAt: seeded!.lastActivityAt }
     }
 
-    test("a send 5 minutes after the last activity joins the conversation", async () => {
+    test("a send inside the window on the injected clock joins the conversation (control)", async () => {
       const { convId, lastActivityAt } = await seedOpenedConversation()
 
       const sent = await sendAt(new Date(lastActivityAt.getTime() + 5 * 60_000), "Soon after")

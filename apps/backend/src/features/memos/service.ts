@@ -551,7 +551,7 @@ export class MemoService implements MemoServiceLike {
     // Format completed preview-card metadata into the same transcript consumed
     // by classification, suggestions, and memorization. Memo accumulation is
     // delayed, so unlike send-time AI consumers it does not need to poll.
-    const now = this.now()
+    const relativeTo = this.now()
     const allMessageRows = [...fetchedData.conversationMessages.values()].flatMap((messages) =>
       [...messages.values()].filter((message): message is Message => message !== null)
     )
@@ -568,7 +568,7 @@ export class MemoService implements MemoServiceLike {
       if (messageRows.length === 0) continue
       const formatted = await this.messageFormatter.formatMessages(this.pool, workspaceId, messageRows, {
         includeIds: true,
-        relativeTo: now,
+        relativeTo,
       })
       fetchedData.formattedConversations.set(conversationId, formatted)
     }
@@ -609,7 +609,7 @@ export class MemoService implements MemoServiceLike {
 
         // Defer young single-message conversations — give time for replies to arrive
         if (conversation.messageIds.length === 1) {
-          const ageMs = now.getTime() - new Date(conversation.lastActivityAt).getTime()
+          const ageMs = this.now().getTime() - new Date(conversation.lastActivityAt).getTime()
           if (ageMs < MEMO_SINGLE_MESSAGE_AGE_GATE_MS) {
             deferredItemIds.add(item.id)
             logger.debug(
@@ -626,7 +626,7 @@ export class MemoService implements MemoServiceLike {
         // resolves/stalls or goes quiet; the item retries each batch cycle, and
         // resolution queues a fresh item, so settle-time capture is never missed.
         if (conversation.status === ConversationStatuses.ACTIVE) {
-          const quietMs = now.getTime() - new Date(conversation.lastActivityAt).getTime()
+          const quietMs = this.now().getTime() - new Date(conversation.lastActivityAt).getTime()
           if (quietMs < MEMO_ACTIVE_CONVERSATION_QUIET_MS) {
             deferredItemIds.add(item.id)
             logger.debug(
@@ -789,7 +789,7 @@ export class MemoService implements MemoServiceLike {
               conversationId: conversation.id,
               authorTimezone,
               memoLanguage: fetchedData.memoLanguage,
-              now,
+              now: this.now(),
             })
           : await this.memorizer.memorizeConversation(formattedMessages, {
               memoryContext,
@@ -799,7 +799,7 @@ export class MemoService implements MemoServiceLike {
               conversationId: conversation.id,
               authorTimezone,
               memoLanguage: fetchedData.memoLanguage,
-              now,
+              now: this.now(),
             })
 
         if (contents.length === 0) {

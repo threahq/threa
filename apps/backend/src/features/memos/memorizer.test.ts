@@ -18,7 +18,7 @@ describe("getMemorizerSystemPrompt", () => {
   it("should use author timezone for date formatting", () => {
     const prompt = getMemorizerSystemPrompt("Pacific/Auckland", undefined, NOW)
 
-    expect(prompt).toMatch(/\nToday: \d{4}-\d{2}-\d{2}$/)
+    expect(prompt).toContain("\nToday: 2025-03-02")
   })
 
   it("should default to UTC when no timezone provided", () => {

@@ -13,8 +13,8 @@ import type { Memo } from "./repository"
  * already answered.
  *
  * It hashes the *inputs* that determine the prompt, never the rendered prompt.
- * The transcript is rendered with relative ages against `new Date()` at batch
- * time, so its text differs on every pass even when nothing happened; hashing
+ * The transcript is rendered with relative ages against the batch's clock,
+ * so its text differs on every pass even when nothing happened; hashing
  * it would mean the fingerprint never matches and the gate never fires.
  *
  * Deliberately included, each because it can flip the classifier's answer
