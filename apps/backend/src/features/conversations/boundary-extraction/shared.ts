@@ -32,15 +32,10 @@ export function formatRelativeAge(date: Date, reference: Date): string {
 
 /**
  * A thread whose first message has nothing to be classified against: no active
- * conversation and no conversation on the parent message. Every extractor
- * answers this the same way, without a model call.
+ * conversation. Every extractor answers this the same way, without a model call.
  */
 export function isColdStartThread(context: ExtractionContext): boolean {
-  return (
-    context.streamType === StreamTypes.THREAD &&
-    context.activeConversations.length === 0 &&
-    (context.parentMessageConversations?.length ?? 0) === 0
-  )
+  return context.streamType === StreamTypes.THREAD && context.activeConversations.length === 0
 }
 
 export function coldStartThreadResult(context: ExtractionContext): ExtractionResult {

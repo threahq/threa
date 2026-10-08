@@ -6,7 +6,6 @@ import { StreamTypes } from "@threahq/types"
  * Stub boundary extractor for CI/test environments where the LLM API is not available.
  *
  * - Threads with an existing conversation: join it as primary.
- * - Threads with only a parent conversation: join the parent as primary.
  * - Everything else: create a new conversation.
  *
  * Does not emit reassignments (no LLM judgement available).
@@ -20,14 +19,6 @@ export class StubBoundaryExtractor implements BoundaryExtractor {
       if (existingConv) {
         return {
           assignments: [{ conversationId: existingConv.id, isPrimary: true }],
-          confidence: 1.0,
-        }
-      }
-
-      const parentConv = context.parentMessageConversations?.[0]
-      if (parentConv) {
-        return {
-          assignments: [{ conversationId: parentConv.id, isPrimary: true }],
           confidence: 1.0,
         }
       }

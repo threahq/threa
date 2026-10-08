@@ -144,8 +144,6 @@ export interface ExtractionContext {
   recentMessages: Message[]
   activeConversations: ConversationSummary[]
   streamType: string
-  /** For threads: conversations containing the parent message (in the parent channel) */
-  parentMessageConversations?: ConversationSummary[]
   /** Conversations the new message explicitly quote-replies into (strong continuity signal). */
   replyTargets?: ReplyTarget[]
   /**

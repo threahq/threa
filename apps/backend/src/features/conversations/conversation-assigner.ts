@@ -9,7 +9,8 @@ import { conversationId } from "../../lib/id"
 import { ConversationIntents, ConversationStatuses, StreamTypes, type AuthorType } from "@threahq/types"
 import { HttpError } from "../../lib/errors"
 import { MessageConversationStateRepository } from "./settling-repository"
-import { isClusteredSend } from "./extraction-eligibility"
+import { undeclaredSendPlacement } from "./extraction-eligibility"
+import { assignThreadReply } from "./deterministic-assignment"
 
 /**
  * How far back a root-stream send looks for a conversation to provisionally
@@ -117,18 +118,13 @@ export const conversationAssigner: ConversationAssigner = {
     return target.id
   },
 
-  async attachProvisionalInTransaction(client, { workspaceId, message, stream, authorType, now }) {
+  async attachUndeclaredInTransaction(client, { workspaceId, message, stream, authorType, now }) {
     if (!stream) return null
-    if (
-      !(await isClusteredSend(client, {
-        workspaceId,
-        streamId: stream.id,
-        streamType: stream.type,
-        authorType,
-      }))
-    ) {
-      return null
+    const placement = await undeclaredSendPlacement(client, { workspaceId, stream, authorType })
+    if (placement === "thread") {
+      return (await assignThreadReply(client, { workspaceId, message, thread: stream })).id
     }
+    if (placement !== "clustered") return null
 
     const candidate = await findProvisionalCandidate(client, workspaceId, stream, now)
     if (!candidate) return null
@@ -161,11 +157,10 @@ export const conversationAssigner: ConversationAssigner = {
 }
 
 /**
- * The structural guess a send can make without an LLM. A thread reply continues
- * the conversation its anchor belongs to (structural, so no time bound); a root
- * message continues the stream's most recent conversation, but only while that
- * conversation is still warm. Never mints — no candidate means the extractor
- * assigns later, exactly as before.
+ * The guess a send can make without an LLM: a root message continues the
+ * stream's most recent conversation, but only while that conversation is still
+ * warm. A card-anchored thread gets no guess. Never mints — no candidate means
+ * the extractor assigns later.
  */
 async function findProvisionalCandidate(
   client: PoolClient,
@@ -173,10 +168,7 @@ async function findProvisionalCandidate(
   stream: Stream,
   now: Date
 ): Promise<{ id: string } | null> {
-  if (stream.type === StreamTypes.THREAD) {
-    if (!stream.parentAnchorId?.startsWith("msg_")) return null
-    return ConversationRepository.findPrimaryByMessageId(client, workspaceId, stream.parentAnchorId)
-  }
+  if (stream.type === StreamTypes.THREAD) return null
   const activeSince = new Date(now.getTime() - PROVISIONAL_ATTACH_WINDOW_MINUTES * 60_000)
   return ConversationRepository.findLatestActiveByStream(client, workspaceId, stream.id, activeSince)
 }

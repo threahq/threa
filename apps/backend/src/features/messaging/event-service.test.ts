@@ -1215,12 +1215,12 @@ describe("EventService.createMessage conversation declaration (Mechanism C)", ()
   }
 
   const assignInTransaction = mock(async () => "conv_assigned")
-  const attachProvisionalInTransaction = mock(async (): Promise<string | null> => null)
-  const conversationAssigner = { assignInTransaction, attachProvisionalInTransaction }
+  const attachUndeclaredInTransaction = mock(async (): Promise<string | null> => null)
+  const conversationAssigner = { assignInTransaction, attachUndeclaredInTransaction }
 
   beforeEach(() => {
     assignInTransaction.mockClear()
-    attachProvisionalInTransaction.mockClear()
+    attachUndeclaredInTransaction.mockClear()
     spyOn(streamsModule, "assertStreamWritable").mockResolvedValue({} as never)
     spyOn(db, "withTransaction").mockImplementation(((_db: unknown, callback: (client: any) => Promise<unknown>) =>
       callback({})) as any)
@@ -1318,7 +1318,7 @@ describe("EventService.createMessage conversation declaration (Mechanism C)", ()
     const eventPayload = (StreamEventRepository.insert as any).mock.calls[0][1].payload
     expect(eventPayload).not.toHaveProperty("declaredConversationId")
     expect(assignInTransaction).not.toHaveBeenCalled()
-    expect(attachProvisionalInTransaction).toHaveBeenCalled()
+    expect(attachUndeclaredInTransaction).toHaveBeenCalled()
   })
 
   it("surfaces the assigner's conversation id from createMessageReturningConversation for an optimistic board card", async () => {

@@ -347,18 +347,4 @@ describe("DecisionsBoundaryExtractor", () => {
 
     expect(result.assignments).toEqual([{ conversationId: null, isPrimary: true }])
   })
-
-  test("asks about the parent-thread conversation as well as the active ones", async () => {
-    const { ai, decisionCalls } = createAI({ placement: "conv_parent" }, NO_PROSE)
-    await new DecisionsBoundaryExtractor(ai, configResolver).extract(
-      context({ streamType: "thread", parentMessageConversations: [conversation({ id: "conv_parent" })] })
-    )
-
-    const placement = decisionCalls[0].questions.placement
-    expect(placement.type === "choice" && Object.keys(placement.criteria).sort()).toEqual([
-      "conv_a",
-      "conv_parent",
-      "new_conversation",
-    ])
-  })
 })

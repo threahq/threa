@@ -77,7 +77,7 @@ export class DecisionsBoundaryExtractor {
   async extract(context: ExtractionContext): Promise<ExtractionResult> {
     if (isColdStartThread(context)) return coldStartThreadResult(context)
 
-    const candidates = this.candidates(context)
+    const candidates = context.activeConversations
 
     // Nothing to choose between: the message opens the stream's first
     // conversation. Skip the decision call and go straight for its name.
@@ -94,7 +94,6 @@ export class DecisionsBoundaryExtractor {
         metadata: {
           streamType: context.streamType,
           activeConversationCount: context.activeConversations.length,
-          parentConversationCount: context.parentMessageConversations?.length ?? 0,
         },
       },
       context: { workspaceId: context.workspaceId, origin: "system" },
@@ -140,11 +139,6 @@ export class DecisionsBoundaryExtractor {
       completenessUpdates: completeness.map((u) => (u.conversationId === primaryId ? { ...u, summary } : u)),
       confidence: placement.confidence,
     }
-  }
-
-  /** The conversations the message could be placed in, parent-thread ones first (as the prompt path orders them). */
-  private candidates(context: ExtractionContext): ConversationSummary[] {
-    return [...(context.parentMessageConversations ?? []), ...context.activeConversations]
   }
 
   private async openNewConversation(
@@ -299,7 +293,6 @@ export class DecisionsBoundaryExtractor {
    */
   private buildState(context: ExtractionContext, candidates: ConversationSummary[]) {
     const now = context.newMessage.createdAt
-    const parentIds = new Set((context.parentMessageConversations ?? []).map((c) => c.id))
     const placed = this.placedMessages(context, candidates)
 
     return {
@@ -313,7 +306,6 @@ export class DecisionsBoundaryExtractor {
         messageCount: c.messageCount,
         participantCount: c.participantIds.length,
         lastActive: formatRelativeAge(c.lastActivityAt, now),
-        isParentThread: parentIds.has(c.id) || undefined,
       })),
       recentMessages: context.recentMessages
         .filter((m) => m.id !== context.newMessage.id)
