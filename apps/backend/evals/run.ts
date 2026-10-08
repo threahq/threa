@@ -3,7 +3,7 @@
  * CLI entry point for running AI evaluations.
  *
  * Usage:
- *   bun run evals/run.ts                         # Run all suites
+ *   bun run evals/run.ts                         # Run all suites except benchmarks
  *   bun run evals/run.ts -s companion             # Run specific suite
  *   bun run evals/run.ts -s companion -c case-001  # Run specific case
  *   bun run evals/run.ts -m openrouter:openai/gpt-5.4-nano  # Override model
@@ -25,12 +25,12 @@ import { personaStyleSuite } from "./suites/persona-style/suite"
 import { voicePolishSuite } from "./suites/voice-polish/suite"
 import { toolGuardianSuite } from "./suites/tool-guardian/suite"
 import { memoryRecallSuite } from "./suites/memory-recall/suite"
+import { groupMemBenchSuite, groupMemBenchNoMemorySuite } from "./suites/groupmembench/suite"
 import { qualifyVoicePolishPermutation } from "./suites/voice-polish/evaluators"
 import { decideVoicePolishComparison } from "./suites/voice-polish/reporting"
 import { isConfigFilePath } from "./framework/config-loader"
 
-// All available suites
-const allSuites = [
+const defaultSuites = [
   companionSuite,
   streamNamingSuite,
   boundaryExtractionSuite,
@@ -44,6 +44,9 @@ const allSuites = [
   toolGuardianSuite,
   memoryRecallSuite,
 ]
+
+// Benchmarks need an external dataset checkout and are long, costly runs, so they run only when named with -s.
+const allSuites = [...defaultSuites, groupMemBenchSuite, groupMemBenchNoMemorySuite]
 
 function printHelp(): void {
   const suiteNames = allSuites.map((s) => s.name).join(", ")
@@ -79,7 +82,7 @@ Options:
 
 Examples:
   bun run evals/run.ts
-    Run all suites with default configuration
+    Run all suites except benchmarks (those run only via -s)
 
   bun run evals/run.ts -s ${allSuites[0]?.name || "suite-name"}
     Run only the ${allSuites[0]?.name || "suite-name"} suite
@@ -250,7 +253,7 @@ async function main(): Promise<void> {
   if (options.suite) {
     console.log(`\nRunning suite: ${options.suite}`)
   } else {
-    console.log(`\nRunning all ${allSuites.length} suites`)
+    console.log(`\nRunning all ${defaultSuites.length} default suites`)
   }
 
   if (options.model) {
@@ -269,7 +272,7 @@ async function main(): Promise<void> {
   try {
     // Safe cast: runSuites accepts EvalSuite<unknown, unknown, unknown>[] but TypeScript
     // can't unify different generic instantiations. Each suite is processed independently.
-    const results = await runSuites(allSuites as any, options)
+    const results = await runSuites((options.suite ? allSuites : defaultSuites) as any, options)
 
     if (options.jsonOutput) {
       await Bun.write(options.jsonOutput, JSON.stringify(toJsonReport(results), null, 2))

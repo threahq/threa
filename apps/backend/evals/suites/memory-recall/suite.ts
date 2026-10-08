@@ -16,35 +16,19 @@
  *   bun run eval -- -s memory-recall -c offsite-reversed-b
  */
 
-import { DisabledAnalyticsReporter } from "@threahq/backend-common"
 import type { EvalContext, EvalSuite, Evaluator, RunEvaluator, CaseResult } from "../../framework/types"
 import { createAdditionalUser } from "../../fixtures/workspace"
+import { createCaptureMemoService, drainCapture, postMessages, recordConversation } from "../../fixtures/capture"
 import { EVAL_JUDGE_MODEL } from "../../framework/judge-config"
 import { runCompanionTask } from "../companion/suite"
 import type { CompanionInput } from "../companion/cases"
 import { scenarios, questions, type Question, type Scenario } from "./scenarios"
 import { COMPANION_MODEL_ID, COMPANION_TEMPERATURE } from "../../../src/features/agents"
-import {
-  DecisionsMemoClassifier,
-  EmbeddingService,
-  MemoClassifier,
-  MemoRepository,
-  MemoService,
-  Memorizer,
-  ResidencyRoutedMemoClassifier,
-} from "../../../src/features/memos"
-import { queueMemoConversations } from "../../../src/features/memos/accumulator-outbox-handler"
-import { ConversationRepository } from "../../../src/features/conversations"
-import { EventService } from "../../../src/features/messaging"
+import { MemoRepository } from "../../../src/features/memos"
 import { StreamRepository, StreamMemberRepository } from "../../../src/features/streams"
 import { UserRepository } from "../../../src/features/workspaces"
-import { WorkspaceAIResidencyPolicy } from "../../../src/features/ai-usage"
-import { MessageFormatter } from "../../../src/lib/ai/message-formatter"
-import { conversationId as generateConversationId, streamId as generateStreamId } from "../../../src/lib/id"
-import { withTransaction } from "../../../src/db"
-import { DecisionsAvailability } from "@threahq/agent-runtime"
-import { parseMarkdown } from "@threahq/prosemirror"
-import { AgentStepTypes, AuthorTypes, ConversationStatuses, StreamTypes } from "@threahq/types"
+import { streamId as generateStreamId } from "../../../src/lib/id"
+import { AgentStepTypes, StreamTypes } from "@threahq/types"
 import { ulid } from "ulid"
 import { z } from "zod"
 
@@ -132,21 +116,7 @@ async function seedAndCapture(ctx: EvalContext): Promise<void> {
   const { userId: bobId } = await createAdditionalUser(pool, workspaceId, { name: "Bob Lind" })
   const authorIds = { alice: ctx.userId, bob: bobId }
 
-  const messageFormatter = new MessageFormatter()
-  const memoService = new MemoService({
-    pool,
-    analyticsReporter: new DisabledAnalyticsReporter(),
-    classifier: new ResidencyRoutedMemoClassifier({
-      residency: new WorkspaceAIResidencyPolicy({ pool }),
-      decisions: new DecisionsMemoClassifier(ctx.ai),
-      inference: new MemoClassifier(ctx.ai, ctx.configResolver, messageFormatter),
-      availability: new DecisionsAvailability(),
-    }),
-    memorizer: new Memorizer(ctx.ai, ctx.configResolver, messageFormatter),
-    embeddingService: new EmbeddingService({ ai: ctx.ai }),
-    messageFormatter,
-  })
-  const eventService = new EventService(pool)
+  const memoService = createCaptureMemoService(ctx)
 
   const streamByScenario = new Map<string, string>()
   for (const scenario of scenarios) {
@@ -163,29 +133,18 @@ async function seedAndCapture(ctx: EvalContext): Promise<void> {
   for (const { scenario, conversation } of chronological) {
     const streamId = streamByScenario.get(scenario.key)!
     const startedAt = Date.now() - conversation.daysAgo * DAY_MS
-    const messageIds: string[] = []
-    for (const [index, message] of conversation.messages.entries()) {
-      const created = await eventService.createMessage({
-        workspaceId,
-        streamId,
+    const messageIds = await postMessages(
+      ctx,
+      streamId,
+      conversation.messages.map((message, index) => ({
         authorId: authorIds[message.author],
-        authorType: AuthorTypes.USER,
-        contentJson: parseMarkdown(message.content),
-        contentMarkdown: message.content,
-      })
-      await pool.query(`UPDATE messages SET created_at = $1 WHERE id = $2`, [
-        new Date(startedAt + index * 60_000),
-        created.id,
-      ])
-      messageIds.push(created.id)
-    }
-
-    const id = generateConversationId()
+        content: message.content,
+        createdAt: new Date(startedAt + index * 60_000),
+      }))
+    )
     const participantIds = [...new Set(conversation.messages.map((m) => authorIds[m.author]))]
-    await ConversationRepository.insert(pool, { id, streamId, workspaceId, status: ConversationStatuses.RESOLVED })
-    await ConversationRepository.addPrimaryMessages(pool, workspaceId, id, messageIds, participantIds)
-    await withTransaction(pool, (client) => queueMemoConversations(client, workspaceId, streamId, [id]))
-    await memoService.processBatch(workspaceId, streamId)
+    const id = await recordConversation(ctx, streamId, messageIds, participantIds)
+    await drainCapture(ctx, memoService, streamId)
 
     scenarioByConversation.set(id, scenario.key)
     const memos = await MemoRepository.findActiveBySourceConversation(pool, workspaceId, id, [])
