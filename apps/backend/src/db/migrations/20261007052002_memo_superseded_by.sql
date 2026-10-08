@@ -9,7 +9,7 @@ FROM (
   SELECT DISTINCT ON (workspace_id, parent_memo_id) workspace_id, parent_memo_id, id
   FROM memos
   WHERE parent_memo_id IS NOT NULL
-  ORDER BY workspace_id, parent_memo_id, (status = 'active') DESC, created_at DESC, id DESC
+  ORDER BY workspace_id, parent_memo_id, (status = 'active') DESC, (status = 'superseded') DESC, created_at DESC, id DESC
 ) AS successor
 WHERE successor.workspace_id = retired.workspace_id
   AND successor.parent_memo_id = retired.id

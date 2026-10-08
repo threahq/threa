@@ -387,6 +387,7 @@ const correctnessEvaluator: Evaluator<GroupMemBenchOutput, GroupMemBenchExpected
     if (!output.reply.trim()) {
       return { name: "correct", score: 0, passed: false, details: output.error ?? "no reply" }
     }
+    const judgePrompt = `${loadJudgePrompt(datasetDir())}\n\nReturn the judgment in the \`correct\` field rather than a "Final:" line.`
     try {
       const { value } = await ctx.ai.generateObject({
         context: { workspaceId: ctx.workspaceId, userId: ctx.userId },
@@ -395,7 +396,7 @@ const correctnessEvaluator: Evaluator<GroupMemBenchOutput, GroupMemBenchExpected
         messages: [
           {
             role: "system",
-            content: loadJudgePrompt(datasetDir()),
+            content: judgePrompt,
           },
           {
             role: "user",
