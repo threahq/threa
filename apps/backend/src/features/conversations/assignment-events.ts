@@ -9,9 +9,9 @@ import { resolveConversationDelivery } from "./conversation-delivery"
 
 /**
  * Emit the conversation aggregate + per-message membership events for a single
- * deterministic assignment (a declared send or an agent reply), mirroring the
- * boundary extractor's persist phase (INV-4/7). This is the one place the
- * declared-send and agent-reply paths share so their event shape can't drift
+ * deterministic assignment (a declared send, an agent reply, a thread reply),
+ * mirroring the boundary extractor's persist phase (INV-4/7). This is the one
+ * place the deterministic paths share so their event shape can't drift
  * (INV-35/37).
  *
  * Re-reads the conversation so the payload reflects the membership/activity

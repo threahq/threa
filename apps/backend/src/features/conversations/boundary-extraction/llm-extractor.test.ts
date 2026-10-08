@@ -141,29 +141,6 @@ describe("LLMBoundaryExtractor", () => {
       expect(result.assignments[0].conversationId).toBe("conv_thread123")
       expect(result.assignments[0].isPrimary).toBe(true)
     })
-
-    test("calls LLM when thread has only a parent conversation", async () => {
-      const parentConv = createMockConversation({ id: "conv_parent123" })
-      const context = createMockContext({
-        streamType: "thread",
-        activeConversations: [],
-        parentMessageConversations: [parentConv],
-      })
-
-      mockGenerateObject.mockResolvedValueOnce({
-        value: {
-          assignments: [{ conversationId: "conv_parent123", isPrimary: true }],
-          confidence: 0.9,
-        },
-        response: { usage: {} },
-        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      })
-
-      const result = await extractor.extract(context)
-
-      expect(mockGenerateObject).toHaveBeenCalled()
-      expect(result.assignments[0].conversationId).toBe("conv_parent123")
-    })
   })
 
   describe("structured output handling", () => {
@@ -320,47 +297,6 @@ describe("LLMBoundaryExtractor", () => {
       expect(result.reassignments).toEqual([
         { messageId: "msg_prior1", toConversationId: null, reason: "actually about new topic", confidence: 0.8 },
         { messageId: "msg_recent", toConversationId: "conv_existing", reason: "fits existing topic", confidence: 0.9 },
-      ])
-    })
-
-    test("accepts reassignment of a parent-thread context message", async () => {
-      const parentConv = createMockConversation({
-        id: "conv_parent",
-        contextMessageIds: ["msg_parent_ctx"],
-      })
-      const activeConv = createMockConversation({ id: "conv_active" })
-      const context = createMockContext({
-        streamType: "thread",
-        activeConversations: [activeConv],
-        parentMessageConversations: [parentConv],
-      })
-
-      mockGenerateObject.mockResolvedValueOnce({
-        value: {
-          assignments: [{ conversationId: "conv_active", isPrimary: true }],
-          reassignments: [
-            {
-              messageId: "msg_parent_ctx",
-              toConversationId: "conv_active",
-              reason: "belongs to thread topic",
-              confidence: 0.8,
-            },
-          ],
-          confidence: 0.9,
-        },
-        response: { usage: {} },
-        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      })
-
-      const result = await extractor.extract(context)
-
-      expect(result.reassignments).toEqual([
-        {
-          messageId: "msg_parent_ctx",
-          toConversationId: "conv_active",
-          reason: "belongs to thread topic",
-          confidence: 0.8,
-        },
       ])
     })
 

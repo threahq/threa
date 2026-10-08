@@ -94,7 +94,6 @@ export class DecisionsBoundaryExtractor {
         metadata: {
           streamType: context.streamType,
           activeConversationCount: context.activeConversations.length,
-          parentConversationCount: context.parentMessageConversations?.length ?? 0,
         },
       },
       context: { workspaceId: context.workspaceId, origin: "system" },
@@ -142,9 +141,9 @@ export class DecisionsBoundaryExtractor {
     }
   }
 
-  /** The conversations the message could be placed in, parent-thread ones first (as the prompt path orders them). */
+  /** The conversations the message could be placed in. */
   private candidates(context: ExtractionContext): ConversationSummary[] {
-    return [...(context.parentMessageConversations ?? []), ...context.activeConversations]
+    return context.activeConversations
   }
 
   private async openNewConversation(
@@ -299,7 +298,6 @@ export class DecisionsBoundaryExtractor {
    */
   private buildState(context: ExtractionContext, candidates: ConversationSummary[]) {
     const now = context.newMessage.createdAt
-    const parentIds = new Set((context.parentMessageConversations ?? []).map((c) => c.id))
     const placed = this.placedMessages(context, candidates)
 
     return {
@@ -313,7 +311,6 @@ export class DecisionsBoundaryExtractor {
         messageCount: c.messageCount,
         participantCount: c.participantIds.length,
         lastActive: formatRelativeAge(c.lastActivityAt, now),
-        isParentThread: parentIds.has(c.id) || undefined,
       })),
       recentMessages: context.recentMessages
         .filter((m) => m.id !== context.newMessage.id)

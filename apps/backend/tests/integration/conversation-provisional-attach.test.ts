@@ -340,7 +340,7 @@ describe("provisional conversation attach", () => {
     expect(await settlingRow(reply.message.id)).toBeNull()
   })
 
-  test("an undeclared thread reply joins the anchor message's conversation, settling", async () => {
+  test("should place an undeclared thread reply in the anchor message's conversation for good", async () => {
     const anchor = await send("Anchor message")
     const convId = await seedConversation({ messageIds: [anchor.message.id] })
     const threadId = streamId()
@@ -357,20 +357,26 @@ describe("provisional conversation attach", () => {
         rootStreamId: testStreamId,
       })
     })
+    const extract = spyOn(extractor, "extract")
 
     const reply = await send("Thread reply", { streamId: threadId })
+    const afterPass = await extraction.processMessage(reply.message.id, threadId, testWorkspaceId)
 
     const conversation = await ConversationRepository.findById(pool, testWorkspaceId, convId)
-    const row = await settlingRow(reply.message.id)
     expect({
       returnedConversationId: reply.conversationId,
+      afterPassConversationId: afterPass?.id,
       memberIds: conversation!.messageIds,
-      state: row?.state,
+      settling: await settlingRow(reply.message.id),
+      extractCalls: extract.mock.calls.length,
     }).toEqual({
       returnedConversationId: convId,
+      afterPassConversationId: convId,
       memberIds: [anchor.message.id, reply.message.id],
-      state: "settling",
+      settling: null,
+      extractCalls: 0,
     })
+    extract.mockRestore()
   })
 
   test("should mint one thread-anchored conversation when two newSubtopic replies land in the same thread", async () => {

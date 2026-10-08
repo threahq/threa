@@ -608,103 +608,165 @@ describe("BoundaryExtractionService", () => {
       )
     })
 
-    test("thread root assigned as primary in thread conv AND secondary on parent channel conv", async () => {
-      // Parent channel has a conversation anchored on a parent message.
-      // A new thread is opened off that parent message; the thread root
-      // belongs primarily to the thread's own conversation, and secondarily
-      // to the parent channel's conv (cross-references the parent topic).
-      const parentConvId = conversationId()
-      const parentMsgId = messageId()
-      const threadStreamId = streamId()
-      const threadRootMsgId = messageId()
-
+    /** A channel message `anchorId` with a thread under it holding one user reply. */
+    async function seedMessageThread(params: { anchorText: string; replyText: string; sequence: bigint }) {
+      const anchorId = messageId()
+      const threadId = streamId()
+      const replyId = messageId()
       await withTransaction(pool, async (client) => {
-        // Parent channel message + conv.
         await MessageRepository.insert(client, {
           workspaceId: testWorkspaceId,
-          id: parentMsgId,
+          id: anchorId,
           streamId: testStreamId,
-          sequence: BigInt(700),
+          sequence: params.sequence,
           authorId: testUserId,
           authorType: "user",
-          ...testMessageContent("Parent channel topic"),
+          ...testMessageContent(params.anchorText),
         })
-        await ConversationRepository.insert(client, {
-          id: parentConvId,
-          streamId: testStreamId,
-          workspaceId: testWorkspaceId,
-          topicSummary: "Parent topic",
-        })
-        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, parentConvId, parentMsgId, testUserId)
-
-        // Thread stream branching off the parent message.
         await StreamRepository.insert(client, {
-          id: threadStreamId,
+          id: threadId,
           workspaceId: testWorkspaceId,
           type: "thread",
           visibility: "private",
           companionMode: "off",
           createdBy: testUserId,
           parentStreamId: testStreamId,
-          parentAnchorId: parentMsgId,
+          parentAnchorId: anchorId,
+          rootStreamId: testStreamId,
         })
-
-        // Thread root message in the thread stream.
+        await StreamRepository.bumpThreadReplyCount(client, testWorkspaceId, threadId, 1)
         await MessageRepository.insert(client, {
           workspaceId: testWorkspaceId,
-          id: threadRootMsgId,
-          streamId: threadStreamId,
+          id: replyId,
+          streamId: threadId,
           sequence: BigInt(1),
           authorId: testUserId,
           authorType: "user",
-          ...testMessageContent("Branching off into related but separate territory"),
+          ...testMessageContent(params.replyText),
+        })
+      })
+      return { anchorId, threadId, replyId }
+    }
+
+    test("should place a user's reply in a message-anchored thread in the anchor's conversation without the extractor", async () => {
+      const { anchorId, threadId, replyId } = await seedMessageThread({
+        anchorText: "Should we move the deploy to Thursday?",
+        replyText: "Thursday works for me",
+        sequence: BigInt(700),
+      })
+      const anchorConvId = conversationId()
+      await withTransaction(pool, async (client) => {
+        await ConversationRepository.insert(client, {
+          id: anchorConvId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+          topicSummary: "Deploy day",
+        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, anchorConvId, anchorId, testUserId)
+      })
+
+      const result = await service.processMessage(replyId, threadId, testWorkspaceId)
+
+      const settling = await pool.query(sql`SELECT 1 FROM message_conversation_state WHERE message_id = ${replyId}`)
+      const assigned = await pool.query<{ payload: { messageId: string; parentStreamId?: string; reason: string } }>(
+        sql`SELECT payload FROM outbox WHERE event_type = 'conversation:message_assigned'`
+      )
+      expect({
+        conversationId: result?.id,
+        memberIds: result?.messageIds,
+        extractCalls: stubExtractor.extractCallCount,
+        settlingRows: settling.rowCount,
+        assigned: assigned.rows.map((r) => r.payload),
+      }).toEqual({
+        conversationId: anchorConvId,
+        memberIds: [anchorId, replyId],
+        extractCalls: 0,
+        settlingRows: 0,
+        assigned: [
+          expect.objectContaining({ messageId: replyId, parentStreamId: testStreamId, reason: "thread_reply" }),
+        ],
+      })
+    })
+
+    test("should start the thread's own conversation when the anchor has none, and keep later replies in it", async () => {
+      const { threadId, replyId } = await seedMessageThread({
+        anchorText: "Anyone tried the new linter?",
+        replyText: "Yes, it is strict about imports",
+        sequence: BigInt(710),
+      })
+      const laterReplyId = messageId()
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: laterReplyId,
+          streamId: threadId,
+          sequence: BigInt(2),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("And slow on large files"),
         })
       })
 
+      const first = await service.processMessage(replyId, threadId, testWorkspaceId)
+      const second = await service.processMessage(laterReplyId, threadId, testWorkspaceId)
+
+      expect({
+        streamId: first?.streamId,
+        secondConversationId: second?.id,
+        memberIds: second?.messageIds,
+        extractCalls: stubExtractor.extractCallCount,
+      }).toEqual({
+        streamId: threadId,
+        secondConversationId: first?.id,
+        memberIds: [replyId, laterReplyId],
+        extractCalls: 0,
+      })
+    })
+
+    test("should extract a channel message with the thread's conversation as a candidate, and never move the thread's reply", async () => {
+      // A in the channel, B replies in A's thread, C answers A straight in the channel.
+      const { replyId: bId, threadId } = await seedMessageThread({
+        anchorText: "A: which region should the replica live in?",
+        replyText: "B: eu-north, latency is best there",
+        sequence: BigInt(720),
+      })
+      const cId = messageId()
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: cId,
+          streamId: testStreamId,
+          sequence: BigInt(721),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("C: agreed on eu-north for the replica"),
+        })
+      })
+      const threadConv = await service.processMessage(bId, threadId, testWorkspaceId)
+
+      // The model's split is refused for B: its thread placed it.
       stubExtractor.setNextResult({
-        assignments: [
-          { conversationId: null, isPrimary: true },
-          { conversationId: parentConvId, isPrimary: false },
-        ],
-        newConversationTopic: "Thread sub-topic",
-        confidence: 0.8,
+        assignments: [{ conversationId: null, isPrimary: true }],
+        reassignments: [{ messageId: bId, toConversationId: null, reason: "split it off", confidence: 0.9 }],
+        newConversationTopic: "Elsewhere",
+        confidence: 0.9,
       })
+      const result = await service.processMessage(cId, testStreamId, testWorkspaceId)
 
-      const result = await service.processMessage(threadRootMsgId, threadStreamId, testWorkspaceId)
-
-      // Primary lands on a freshly created thread conv in the thread stream.
-      expect(result).not.toBeNull()
-      expect(result?.streamId).toBe(threadStreamId)
-      expect(result?.messageIds).toContain(threadRootMsgId)
-
-      // Parent conv gets the thread root as a secondary membership.
-      const updatedParent = await withTransaction(pool, async (client) => {
-        return ConversationRepository.findById(client, testWorkspaceId, parentConvId)
+      const b = await ConversationRepository.findPrimaryByMessageId(pool, testWorkspaceId, bId)
+      expect({
+        extractCalls: stubExtractor.extractCallCount,
+        candidates: stubExtractor.lastContext?.activeConversations.map((c) => c.id),
+        contextIncludesB: stubExtractor.lastContext?.recentMessages.some((m) => m.id === bId),
+        cInNewConversation: result !== null && result.id !== threadConv!.id,
+        bConversationId: b?.id,
+      }).toEqual({
+        extractCalls: 1,
+        candidates: [threadConv!.id],
+        contextIncludesB: true,
+        cInNewConversation: true,
+        bConversationId: threadConv!.id,
       })
-      expect(updatedParent?.messageIds).toEqual([parentMsgId])
-      expect(updatedParent?.secondaryMessageIds).toContain(threadRootMsgId)
-
-      // Both conversation:message_assigned events carry parentStreamId so the
-      // parent-channel room receives the membership update too.
-      const assignedEvents = await withTransaction(pool, async (client) => {
-        const res = await client.query<{
-          payload: {
-            messageId: string
-            conversationId: string
-            isPrimary: boolean
-            streamId: string
-            parentStreamId?: string
-          }
-        }>(`SELECT payload FROM outbox WHERE event_type = 'conversation:message_assigned'`)
-        return res.rows.map((r) => r.payload)
-      })
-      const forRoot = assignedEvents.filter((e) => e.messageId === threadRootMsgId)
-      expect(forRoot).toHaveLength(2)
-      for (const ev of forRoot) {
-        expect(ev.streamId).toBe(threadStreamId)
-        expect(ev.parentStreamId).toBe(testStreamId)
-      }
-      expect(forRoot.map((e) => e.isPrimary).sort()).toEqual([false, true])
     })
 
     test("replies under an event-anchored (card) thread reach the parent-stream extraction context", async () => {

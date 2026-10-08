@@ -493,11 +493,13 @@ export interface ConversationAssigner {
     }
   ): Promise<string>
 
-  /** Attaches an UNDECLARED message to a cheap structural candidate, marked
-   *  settling, so board viewers see it before the debounced extractor runs.
-   *  Returns null when nothing suitable exists (the extractor assigns later) or
-   *  the send isn't one extraction would cluster. Never mints. */
-  attachProvisionalInTransaction(
+  /** Attaches an UNDECLARED message so board viewers see it before the
+   *  debounced extractor runs: a user's reply in a message-anchored thread is
+   *  placed for good (minting when the thread has no conversation yet), anything
+   *  else extraction clusters joins a cheap candidate, marked settling. Returns
+   *  null when nothing suitable exists (the async pass assigns later) or the
+   *  send gets no send-time placement. */
+  attachUndeclaredInTransaction(
     client: PoolClient,
     params: {
       workspaceId: string
@@ -1191,9 +1193,9 @@ export class EventService {
         initiatingUserId,
       })
     } else if (this.conversationAssigner) {
-      // Undeclared: attach to a structural candidate, marked settling, so the
-      // board isn't blind to the message until the debounced extractor runs.
-      // The extractor still decides — `conversation_intent` stays NULL, so the
+      // Undeclared: attach now so the board isn't blind to the message until
+      // the debounced extractor runs. A clustered guess is marked settling and
+      // the extractor still decides — `conversation_intent` stays NULL, so the
       // pass evaluates the message and re-files it when it disagrees.
       // The attach is an optimization; the send is the contract. A savepoint
       // (`withTransaction` on the client) so a failure rolls back only the
@@ -1202,7 +1204,7 @@ export class EventService {
       try {
         conversationId =
           (await withTransaction(client, (tx) =>
-            this.conversationAssigner!.attachProvisionalInTransaction(tx, {
+            this.conversationAssigner!.attachUndeclaredInTransaction(tx, {
               workspaceId: params.workspaceId,
               message,
               stream: stream ?? null,

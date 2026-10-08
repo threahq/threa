@@ -76,7 +76,6 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
           metadata: {
             streamType: context.streamType,
             activeConversationCount: context.activeConversations.length,
-            parentConversationCount: context.parentMessageConversations?.length ?? 0,
           },
         },
         context: { workspaceId: context.workspaceId, origin: "system" },
@@ -238,20 +237,16 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
 
   private buildPrompt(context: ExtractionContext): string {
     const now = context.newMessage.createdAt
-    const allConvs = [
-      ...(context.parentMessageConversations ?? []).map((c) => ({ ...c, isParent: true })),
-      ...context.activeConversations.map((c) => ({ ...c, isParent: false })),
-    ]
+    const allConvs = context.activeConversations
 
     const convSection =
       allConvs.length > 0
         ? allConvs
             .map((c) => {
-              const tag = c.isParent ? " [parent-thread]" : ""
               const contextIds =
                 c.contextMessageIds.length > 0 ? `, in-context messages: [${c.contextMessageIds.join(", ")}]` : ""
               const summaryLine = c.summary ? `\n  covers: ${c.summary}` : ""
-              return `- ${c.id}${tag}: "${c.topicSummary ?? "No topic yet"}" (status: ${c.status}, last active ${formatRelativeAge(c.lastActivityAt, now)}, ${c.messageCount} messages, completeness: ${c.completenessScore}/7, participants: ${c.participantIds.length}${contextIds})${summaryLine}`
+              return `- ${c.id}: "${c.topicSummary ?? "No topic yet"}" (status: ${c.status}, last active ${formatRelativeAge(c.lastActivityAt, now)}, ${c.messageCount} messages, completeness: ${c.completenessScore}/7, participants: ${c.participantIds.length}${contextIds})${summaryLine}`
             })
             .join("\n")
         : "No active conversations in this stream yet."
@@ -311,10 +306,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
   }
 
   private validateResult(parsed: ExtractionResponse, context: ExtractionContext): ExtractionResult {
-    const validConvIds = new Set([
-      ...context.activeConversations.map((c) => c.id),
-      ...(context.parentMessageConversations ?? []).map((c) => c.id),
-    ])
+    const validConvIds = new Set(context.activeConversations.map((c) => c.id))
 
     const validAssignments: MessageAssignment[] = []
     for (const a of parsed.assignments) {
@@ -354,16 +346,9 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
 
     // Validate reassignments: messageId must be in scope; toConversationId must be
     // a valid existing conv OR null (when this call creates a new conv).
-    // buildPrompt exposes both active AND parent-thread contextMessageIds to the
-    // model, so both must be reassignable — otherwise a valid thread-flow move
-    // (e.g. "this thread message belongs to the parent's conversation") would be
-    // silently dropped here.
     const candidateMessageIds = new Set<string>()
     for (const m of context.recentMessages) candidateMessageIds.add(m.id)
     for (const c of context.activeConversations) {
-      for (const id of c.contextMessageIds) candidateMessageIds.add(id)
-    }
-    for (const c of context.parentMessageConversations ?? []) {
       for (const id of c.contextMessageIds) candidateMessageIds.add(id)
     }
     candidateMessageIds.delete(context.newMessage.id)

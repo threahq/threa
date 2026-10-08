@@ -28,7 +28,8 @@ import { resolveConversationDelivery } from "./conversation-delivery"
 import { emitAssignmentEvents } from "./assignment-events"
 import { resolveEventAnchoredParentConversationId } from "./parent-conversation"
 import { viewConversationsAsPartner } from "./partner-view"
-import { isClusteredAuthorType, isClusteredStreamType } from "./extraction-eligibility"
+import { isClusteredAuthorType, isClusteredStreamType, isMessageAnchoredThread } from "./extraction-eligibility"
+import { assignThreadReply, assignWithoutExtraction } from "./deterministic-assignment"
 import { conversationId } from "../../lib/id"
 import {
   ConversationStatuses,
@@ -119,7 +120,8 @@ export class BoundaryExtractionService {
    *            transaction; emit outbox events.
    *
    * Scratchpads take no AI call: the message joins the active conversation if one
-   * exists, otherwise creates a new one.
+   * exists, otherwise creates a new one. Neither does a user's reply in a
+   * message-anchored thread: it continues the thread's conversation.
    */
   async processMessage(messageId: string, streamId: string, workspaceId: string): Promise<Conversation | null> {
     // Bounds this pass's out-of-window settle to rows that already existed when
@@ -169,6 +171,16 @@ export class BoundaryExtractionService {
           stream,
           extractionContextBase: null,
           agentReply: true,
+          validUpdateTargets: new Set<string>(),
+        }
+      }
+
+      if (isMessageAnchoredThread(stream)) {
+        return {
+          message,
+          stream,
+          extractionContextBase: null,
+          threadReply: true,
           validUpdateTargets: new Set<string>(),
         }
       }
@@ -244,6 +256,12 @@ export class BoundaryExtractionService {
         THREAD_CONTEXT_WINDOW
       )
       const allThreadMessages = Array.from(threadMessagesByParent.values()).flat()
+      // Read as context, never moved: their thread placed them for good.
+      const structurallyPlacedIds = new Set(
+        [...threadMessagesByParent]
+          .filter(([anchorId]) => isMessageAnchoredThread({ type: StreamTypes.THREAD, parentAnchorId: anchorId }))
+          .flatMap(([, replies]) => replies.map((m) => m.id))
+      )
 
       const allContextMessages = await viewAsPartner(client, workspaceId, sharedTree, [
         ...surroundingMessages,
@@ -274,26 +292,11 @@ export class BoundaryExtractionService {
       )
       const candidateConversations = mergeConversationsById(relevantConversations, quotedConversations)
 
-      let parentMessageConversations: Conversation[] = []
-      if (stream.type === StreamTypes.THREAD && stream.parentAnchorId?.startsWith("msg_")) {
-        parentMessageConversations = await viewConversationsAsPartner(
-          client,
-          workspaceId,
-          sharedTree,
-          await ConversationRepository.findByMessageId(client, workspaceId, stream.parentAnchorId)
-        )
-      }
-
-      const contextMessageIdSet = new Set(allContextMessageIds)
       const activeConversations = this.buildConversationSummaries(
         candidateConversations,
         allContextMessages,
-        contextMessageIdSet
+        new Set(allContextMessageIds)
       )
-      const parentConversations =
-        parentMessageConversations.length > 0
-          ? this.buildConversationSummaries(parentMessageConversations, [], contextMessageIdSet)
-          : undefined
 
       // Await only new-message attachments: they're the payload most likely to
       // change classification. Context attachments were processed by their own
@@ -306,15 +309,11 @@ export class BoundaryExtractionService {
         recentMessages: allContextMessages,
         activeConversations,
         streamType: stream.type,
-        parentMessageConversations: parentConversations,
         replyTargets: replyTargets.length > 0 ? replyTargets : undefined,
         workspaceId: stream.workspaceId,
       }
 
-      const validUpdateTargets = new Set<string>([
-        ...candidateConversations.map((c) => c.id),
-        ...parentMessageConversations.map((c) => c.id),
-      ])
+      const validUpdateTargets = new Set<string>(candidateConversations.map((c) => c.id))
 
       return {
         message,
@@ -323,7 +322,7 @@ export class BoundaryExtractionService {
         newMessageAttachmentIds,
         attachmentTargetIds: [message.id, ...allContextMessageIds],
         validUpdateTargets,
-        validReassignmentMessageIds: new Set(allContextMessageIds),
+        validReassignmentMessageIds: new Set(allContextMessageIds.filter((id) => !structurallyPlacedIds.has(id))),
         sharedRootStreamId: sharedTree?.rootStreamId ?? null,
       }
     })
@@ -348,6 +347,10 @@ export class BoundaryExtractionService {
 
     if (fetchedData.agentReply) {
       return this.assignAgentReply(fetchedData.message, fetchedData.stream, workspaceId)
+    }
+
+    if (fetchedData.threadReply) {
+      return this.assignThreadReply(fetchedData.message, fetchedData.stream, workspaceId)
     }
 
     const {
@@ -531,7 +534,7 @@ export class BoundaryExtractionService {
       if (skippedOutOfWindow > 0) {
         logger.warn(
           { skipped: skippedOutOfWindow, streamId },
-          "Dropped reassignments targeting messages outside the extraction window"
+          "Dropped reassignments targeting messages outside the extraction window or placed by their thread"
         )
       }
 
@@ -891,67 +894,58 @@ export class BoundaryExtractionService {
    * An agent reply continues the conversation it's posted within, so it joins the
    * stream's most-recently-active conversation; if the stream has none yet (a
    * fresh thread the agent created for a channel @mention), it mints one, which
-   * the board renders under the triggering message. Mirrors the extractor's
-   * persist phase: the message row is locked before assignment (INV-20) and the
-   * membership write, activity bump, and outbox events commit together (INV-4/7).
+   * the board renders under the triggering message.
    */
-  private async assignAgentReply(message: Message, stream: Stream, workspaceId: string): Promise<Conversation | null> {
+  private assignAgentReply(message: Message, stream: Stream, workspaceId: string): Promise<Conversation | null> {
+    return this.assignOnce(message, workspaceId, (client) =>
+      assignWithoutExtraction(client, {
+        workspaceId,
+        message,
+        stream,
+        reason: "agent_reply",
+        // Scratchpads keep one conversation for the stream's lifetime, so a
+        // sweep-faded conversation is reused (and reactivated) rather than
+        // shadowed by a fresh mint; elsewhere a fully-faded stream means a new
+        // session and a new conversation is correct.
+        findExisting: async () =>
+          (await ConversationRepository.findActiveByStream(client, workspaceId, stream.id))[0] ??
+          (!isClusteredStreamType(stream.type)
+            ? (await ConversationRepository.findByStream(client, workspaceId, stream.id, { limit: 1 }))[0]
+            : undefined),
+      })
+    )
+  }
+
+  /** The async half of a thread reply's placement: the send already placed it unless that attach failed. */
+  private assignThreadReply(message: Message, stream: Stream, workspaceId: string): Promise<Conversation | null> {
+    return this.assignOnce(message, workspaceId, (client) =>
+      assignThreadReply(client, { workspaceId, message, thread: stream })
+    )
+  }
+
+  /**
+   * Runs a deterministic assignment unless the message already has a primary
+   * (re-delivery, or the send placed it). The message row is locked first so a
+   * concurrent re-delivery can't double-assign (INV-20).
+   */
+  private async assignOnce(
+    message: Message,
+    workspaceId: string,
+    assign: (client: PoolClient) => Promise<Conversation>
+  ): Promise<Conversation | null> {
     return withTransaction(this.pool, async (client) => {
-      // Lock the message row so a concurrent re-delivery can't double-assign.
       await client.query(
         sql`SELECT id FROM messages WHERE id = ${message.id} AND workspace_id = ${workspaceId} FOR UPDATE`
       )
-
-      // Idempotent on re-delivery: if already a primary somewhere, leave it.
       const existingPrimary = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, message.id)
       if (existingPrimary) return existingPrimary
 
-      // Lock the stream so two replies racing in a fresh thread don't both mint a
-      // conversation (mirrors the scratchpad create path's stream lock, INV-20).
-      await client.query(
-        sql`SELECT id FROM streams WHERE id = ${stream.id} AND workspace_id = ${workspaceId} FOR UPDATE`
-      )
-
-      // Scratchpads keep one conversation for the stream's lifetime, so a
-      // sweep-faded conversation is reused (and reactivated below) rather than
-      // shadowed by a fresh mint; elsewhere a fully-faded stream means a new
-      // session and a new conversation is correct.
-      const existing =
-        (await ConversationRepository.findActiveByStream(client, workspaceId, stream.id))[0] ??
-        (!isClusteredStreamType(stream.type)
-          ? (await ConversationRepository.findByStream(client, workspaceId, stream.id, { limit: 1 }))[0]
-          : undefined)
-      const isNew = !existing
-      const conversation =
-        existing ??
-        (await ConversationRepository.insert(client, {
-          id: conversationId(),
-          streamId: stream.id,
-          workspaceId,
-          confidence: 1,
-          status: ConversationStatuses.ACTIVE,
-          parentConversationId: await resolveEventAnchoredParentConversationId(client, stream),
-        }))
-
-      await ConversationRepository.addPrimaryMessage(client, workspaceId, conversation.id, message.id, message.authorId)
-      await ConversationRepository.reactivateIfInactive(client, workspaceId, conversation.id)
-      await ConversationRepository.bumpActivityForIds(client, workspaceId, [conversation.id])
-
-      // Same per-message membership emit the declared-send path uses (INV-35/37);
-      // it re-reads the conversation and routes a thread's parent-channel fan-out.
-      const refreshed = await emitAssignmentEvents(client, {
-        workspaceId,
-        message,
-        conversationId: conversation.id,
-        created: isNew,
-        reason: "agent_reply",
-      })
-
+      const conversation = await assign(client)
       logger.info(
-        { messageId: message.id, streamId: stream.id, conversationId: refreshed.id, created: isNew },
-        "Agent reply assigned to conversation"
+        { messageId: message.id, streamId: message.streamId, conversationId: conversation.id },
+        "Message assigned to conversation without extraction"
       )
-      return refreshed
+      return conversation
     })
   }
 
