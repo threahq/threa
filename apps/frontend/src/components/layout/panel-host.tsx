@@ -15,6 +15,7 @@ import {
   isConversationPanel,
   parseComposePanel,
   parseConversationsPanel,
+  parsePersonaTestPanel,
   parseContextPanel,
   paneIdentity,
   PaneScope,
@@ -66,6 +67,7 @@ import { ConversationPanel } from "@/components/conversations/conversation-panel
 import { ConversationsPane } from "@/components/conversations/conversations-pane"
 import { ComposePanel } from "@/components/composer/compose-panel"
 import { StreamContextPane } from "@/components/stream-context"
+import { PersonaTestChatPane } from "@/components/persona-editor/persona-test-chat"
 
 /**
  * A draft thread promoted to its real stream keeps the draft's key, so its pane
@@ -93,7 +95,8 @@ interface PanelHostProps {
  * Picks the side panel's content by panel kind: a `conv:<id>` panel opens a
  * conversation projection (Mechanism B), a `compose:<id>` panel a stream's
  * draft, a `convs:<id>` panel a stream's conversations list, a `context:<id>`
- * panel a stream's overview, every other id is a stream/thread/draft handled
+ * panel a stream's overview, a `test:<id>` panel a persona draft's test
+ * chat, every other id is a stream/thread/draft handled
  * by {@link StreamPanel}, and a route's `page:` pane what its page provides
  * through {@link PagePaneContext}. Keyed on the panel id so
  * switching targets remounts cleanly — except a draft thread promoted to its real
@@ -108,6 +111,18 @@ export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
   const composeStreamId = panelId && parseComposePanel(panelId)
   const context = panelId && parseContextPanel(panelId)
   const conversationsStreamId = panelId && parseConversationsPanel(panelId)
+  const testedPersonaId = panelId && parsePersonaTestPanel(panelId)
+  if (testedPersonaId) {
+    return (
+      <PersonaTestChatPane
+        key={panelId}
+        workspaceId={workspaceId}
+        personaId={testedPersonaId}
+        onClose={onClose}
+        className={className}
+      />
+    )
+  }
   if (panelId && isConversationPanel(panelId)) {
     return <ConversationPanel key={panelId} workspaceId={workspaceId} onClose={onClose} className={className} />
   }

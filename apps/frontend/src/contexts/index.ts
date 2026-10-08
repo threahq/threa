@@ -71,6 +71,9 @@ export {
   paneIdentity,
   contextPanelOf,
   BOARD_PANE,
+  PERSONA_PANE,
+  parsePersonaTestPanel,
+  createPersonaTestPanelId,
 } from "./panel-context"
 export { QuickSwitcherProvider, useQuickSwitcher } from "./quick-switcher-context"
 export { PreferencesProvider, usePreferences, usePreferencesOptional, useResolvedTheme } from "./preferences-context"

@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
-import { render, screen, waitFor } from "@testing-library/react"
-import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { PersonaConfigResponse, WorkspaceBootstrap, WorkspacePermissionSlug } from "@threahq/types"
+import * as contextsModule from "@/contexts"
 import { spyOnExport } from "@/test/spy"
+import { MediaGalleryProvider, PanelProvider, SidebarProvider, TraceProvider } from "@/contexts"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import { personasApi } from "@/api"
 import type { CachedPersona } from "@/stores/workspace-store"
@@ -56,17 +59,19 @@ function renderPage(options: { viewerPermissions: WorkspacePermissionSlug[]; sto
   spyOnExport(builtinEditorModule, "PersonaEditorForm").mockReturnValue((() => (
     <div>built-in editor</div>
   )) as unknown as typeof builtinEditorModule.PersonaEditorForm)
-  // Peripheral header/test-chat chrome needs providers this focused gate test
-  // doesn't set up; stub to no-ops so the body's editor branch is what's asserted.
+  // Peripheral chrome needs providers this focused test doesn't set up; stub to
+  // no-ops so the editor branch and the pane's URL are what's asserted.
   spyOnExport(layoutModule, "SidebarToggle").mockReturnValue(
     (() => null) as unknown as typeof layoutModule.SidebarToggle
   )
-  spyOnExport(testChatModule, "PersonaTestChatDrawer").mockReturnValue(
-    (() => null) as unknown as typeof testChatModule.PersonaTestChatDrawer
-  )
-  spyOnExport(testChatModule, "PersonaTestChatPane").mockReturnValue(
-    (() => null) as unknown as typeof testChatModule.PersonaTestChatPane
-  )
+  spyOnExport(testChatModule, "PersonaTestChatPane").mockReturnValue((() => (
+    <div>test chat pane</div>
+  )) as unknown as typeof testChatModule.PersonaTestChatPane)
+
+  // The pane header's focus toggle reads key bindings from preferences, not mounted here.
+  vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
+    preferences: null,
+  } as unknown as ReturnType<typeof contextsModule.usePreferences>)
 
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   queryClient.setQueryData(workspaceKeys.bootstrap("ws_1"), {
@@ -75,14 +80,30 @@ function renderPage(options: { viewerPermissions: WorkspacePermissionSlug[]; sto
 
   render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={[`/w/ws_1/settings/personas/${PERSONA_ID}`]}>
-        <Routes>
-          <Route path="/w/:workspaceId/settings/personas/:personaId" element={<PersonaEditorPage />} />
-          <Route path="/w/:workspaceId" element={<div>Workspace home</div>} />
-        </Routes>
-      </MemoryRouter>
+      <TooltipProvider>
+        <SidebarProvider>
+          <MemoryRouter initialEntries={[`/w/ws_1/settings/personas/${PERSONA_ID}`]}>
+            <TraceProvider>
+              <PanelProvider>
+                <MediaGalleryProvider>
+                  <LocationProbe />
+                  <Routes>
+                    <Route path="/w/:workspaceId/settings/personas/:personaId" element={<PersonaEditorPage />} />
+                    <Route path="/w/:workspaceId" element={<div>Workspace home</div>} />
+                  </Routes>
+                </MediaGalleryProvider>
+              </PanelProvider>
+            </TraceProvider>
+          </MemoryRouter>
+        </SidebarProvider>
+      </TooltipProvider>
     </QueryClientProvider>
   )
+}
+
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location">{`${location.pathname}${location.search}`}</div>
 }
 
 describe("PersonaEditorPage", () => {
@@ -119,5 +140,20 @@ describe("PersonaEditorPage", () => {
 
     expect(await screen.findByText("built-in editor")).toBeInTheDocument()
     await waitFor(() => expect(getConfig).toHaveBeenCalledWith("ws_1", PERSONA_ID))
+  })
+
+  it("should open the draft's test chat as a URL-backed pane when Test draft is clicked", async () => {
+    vi.spyOn(personasApi, "getConfig").mockResolvedValue(config("personal"))
+    renderPage({ viewerPermissions: [], storePersonas: [cachedPersona({})] })
+
+    fireEvent.click(await screen.findByRole("button", { name: "Test draft" }))
+
+    await waitFor(() =>
+      expect(new URLSearchParams(screen.getByTestId("location").textContent!.split("?")[1]).get("panel")).toBe(
+        `test:${PERSONA_ID}`
+      )
+    )
+    expect(await screen.findByText("test chat pane")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Test draft" })).toHaveAttribute("aria-pressed", "true")
   })
 })
