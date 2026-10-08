@@ -507,13 +507,18 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
   const effectiveEvents: DisplayableEvent[] = getEffectiveEvents(idbResolved, idbEvents ?? [], bootstrap?.events ?? [])
   const optimisticEvents = useOptimisticEvents(streamId)
   const { revokeOptimisticEvent, clearOptimisticEvents } = usePendingMessages()
-  const unpersistedEvents = useMemo(() => {
+  // Carried against the held rows (the hold at the output below), not the live
+  // read: an echo landing under an open apply window replaces its published row
+  // in the render the window releases, never a render earlier.
+  const liveCarrier = useMemo(() => {
     const bridged = liveTailBridge?.streamId === streamId ? liveTailBridge.events : []
-    return getUnpersistedOptimisticEvents(
-      optimisticEvents,
-      bridged.length > 0 ? [...effectiveEvents, ...bridged] : effectiveEvents
-    )
-  }, [optimisticEvents, effectiveEvents, liveTailBridge, streamId])
+    return bridged.length > 0 ? [...effectiveEvents, ...bridged] : effectiveEvents
+  }, [effectiveEvents, liveTailBridge, streamId])
+  const carrier = useBatchedValue(liveCarrier, streamId)
+  const unpersistedEvents = useMemo(
+    () => getUnpersistedOptimisticEvents(optimisticEvents, carrier),
+    [optimisticEvents, carrier]
+  )
   // A carried row is revoked for good: left published, it would come back as a
   // second copy once the persisted one scrolls out of the read window.
   useEffect(() => {
@@ -550,7 +555,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
   // Combine all event sources.
   // In jump mode: use jump window + paginated older/newer events.
   // In normal mode: filter IDB/bootstrap events to display window.
-  const events = useMemo(() => {
+  const persistedEvents = useMemo(() => {
     if (jumpState) {
       const olderEvents = olderData?.pages.flatMap((page) => page.events).filter(Boolean) ?? []
       const newerEvents = newerData?.pages.flatMap((page) => page.events).filter(Boolean) ?? []
@@ -564,15 +569,10 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     // never hide the entire cached set — a non-empty IDB always renders
     // something (see getRenderableEvents).
     const liveEvents = getRenderableEvents(effectiveEvents, displayFloor) as unknown as StreamEvent[]
-    const persisted =
-      !liveTailBridge || liveTailBridge.streamId !== streamId
-        ? liveEvents
-        : dedupeAndSort([liveTailBridge.events, liveEvents])
-    // In-flight sends sit at the tail (orderStreamEvents), so a row published
-    // ahead of its write is appended where the persisted copy will read.
-    if (unpersistedEvents.length === 0) return persisted
-    return [...persisted, ...(unpersistedEvents as unknown as StreamEvent[])]
-  }, [effectiveEvents, olderData, newerData, jumpState, displayFloor, liveTailBridge, streamId, unpersistedEvents])
+    return !liveTailBridge || liveTailBridge.streamId !== streamId
+      ? liveEvents
+      : dedupeAndSort([liveTailBridge.events, liveEvents])
+  }, [effectiveEvents, olderData, newerData, jumpState, displayFloor, liveTailBridge, streamId])
 
   // Contiguity gate (INV-61): detect holes in the broadcast chain of the
   // rendered window. Each hole renders as an in-place loading placeholder
@@ -582,7 +582,10 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
   // on screen. Jump mode is exempt — its window is a single contiguous
   // server response, and holes against the live tail are expected there.
   const syncEngine = useOptionalSyncEngine()
-  const holes = useMemo<TimelineHole[]>(() => (jumpState ? [] : computeTimelineHoles(events)), [events, jumpState])
+  const holes = useMemo<TimelineHole[]>(
+    () => (jumpState ? [] : computeTimelineHoles(persistedEvents)),
+    [persistedEvents, jumpState]
+  )
   const holesKey = holesSignature(holes)
   const holesRef = useRef(holes)
   holesRef.current = holes
@@ -674,7 +677,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     }
 
     // Seed with a cursor-only page, then fetch immediately.
-    const oldestSequence = getOldestSequence(jumpState ? jumpState.events : events)
+    const oldestSequence = getOldestSequence(jumpState ? jumpState.events : persistedEvents)
     if (!oldestSequence) return false
     queryClient.setQueryData(eventKeys.list(workspaceId, streamId), {
       pages: [{ events: [], hasMore: true, cursor: oldestSequence }],
@@ -682,7 +685,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     })
     void fetchOlderPage()
     return true
-  }, [isFetchingOlder, hasOlderPage, jumpState, events, queryClient, workspaceId, streamId, fetchOlderPage])
+  }, [isFetchingOlder, hasOlderPage, jumpState, persistedEvents, queryClient, workspaceId, streamId, fetchOlderPage])
 
   // Auto-load all older events on mount when loadAll is true (e.g. thread panels)
   const loadAll = options?.loadAll ?? false
@@ -848,7 +851,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
   const held = useBatchedValue(
     useMemo(
       () => ({
-        events,
+        events: persistedEvents,
         holes,
         isLoading,
         isConfirmedEmpty,
@@ -863,7 +866,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
         isJumpMode: !!jumpState,
       }),
       [
-        events,
+        persistedEvents,
         holes,
         isLoading,
         isConfirmedEmpty,
@@ -882,8 +885,17 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
     streamId
   )
 
+  // In-flight sends sit at the tail (orderStreamEvents), so a row published
+  // ahead of its write is appended where the persisted copy will read. Appended
+  // after the hold, so outside jump mode a send is not held behind a sync apply.
+  const events = useMemo(() => {
+    if (held.isJumpMode || unpersistedEvents.length === 0) return held.events
+    return [...held.events, ...(unpersistedEvents as unknown as StreamEvent[])]
+  }, [held.events, held.isJumpMode, unpersistedEvents])
+
   return {
     ...held,
+    events,
     fetchOlderEvents,
     fetchNewerEvents,
     jumpToEvent,

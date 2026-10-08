@@ -1,13 +1,14 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { act, renderHook, waitFor } from "@testing-library/react"
 import { createElement, type ReactNode } from "react"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { PendingMessagesProvider, ServicesProvider, usePendingMessages, type StreamService } from "@/contexts"
 import type { StreamEvent } from "@threahq/types"
 import { db, type CachedEvent } from "@/db"
 import { streamKeys } from "@/hooks/use-streams"
 import type { CachedStreamBootstrap } from "@/sync/stream-sync"
 import { loadStreamPrefix, loadStreamTail, unionStreamRanges } from "@/stores/stream-store"
+import { beginApplyWindow, endApplyWindow, resetApplyWindow } from "@/stores/apply-window"
 import {
   computeTimelineLoadState,
   filterEventsForDisplay,
@@ -468,6 +469,7 @@ describe("useEvents published send rows", () => {
     vi.restoreAllMocks()
     await db.events.clear()
   })
+  afterEach(() => resetApplyWindow())
 
   it("shows a published row at the tail before the cache carries it, and once after the echo replaces it", async () => {
     const earlier = row("event_earlier", 1)
@@ -512,6 +514,30 @@ describe("useEvents published send rows", () => {
     cached = [earlier]
     rerender()
     expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id])
+  })
+
+  it("shows a published row while a sync apply window holds the persisted rows", async () => {
+    const earlier = row("event_earlier", 1)
+    const sent = row("temp_sent", 5, { _clientId: "temp_sent", _status: "pending" })
+    let cached: CachedEvent[] = [earlier]
+    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation(() => cached)
+
+    const { result, rerender } = renderHook(
+      () => ({ timeline: useEvents(workspaceId, streamId), pending: usePendingMessages() }),
+      { wrapper: wrapper() }
+    )
+    await waitFor(() => expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id]))
+
+    act(() => beginApplyWindow())
+    act(() => result.current.pending.publishOptimisticEvent(sent))
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id, sent.id])
+
+    cached = [earlier, row("event_real", 2, { payload: { messageId: "msg_real", clientMessageId: "temp_sent" } })]
+    rerender()
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id, sent.id])
+
+    act(() => endApplyWindow())
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id, "event_real"])
   })
 
   it("drops a stream's published rows when its timeline moves to another stream", async () => {
