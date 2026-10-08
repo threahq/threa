@@ -41,6 +41,7 @@ import { logger } from "../../lib/logger"
 
 const MESSAGES_BEFORE = 5
 const MESSAGES_AFTER = 2
+const THREAD_REPLIES_PER_ANCHOR = 10
 
 interface ConversationDecision {
   assignments: MessageAssignment[]
@@ -234,7 +235,12 @@ export class BoundaryExtractionService {
         candidateAnchorIds
       )
       const threadRootIds = candidateAnchorIds.filter((id) => anchorsWithReplies.has(id))
-      const threadMessagesByParent = await MessageRepository.findThreadMessages(client, workspaceId, threadRootIds)
+      const threadMessagesByParent = await MessageRepository.findThreadMessages(
+        client,
+        workspaceId,
+        threadRootIds,
+        THREAD_REPLIES_PER_ANCHOR
+      )
       const allThreadMessages = Array.from(threadMessagesByParent.values()).flat()
 
       const allContextMessages = await viewAsPartner(client, workspaceId, sharedTree, [

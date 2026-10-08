@@ -966,23 +966,35 @@ export const MessageRepository = {
   },
 
   /**
-   * Find messages from threads anchored on the given anchor ids, keyed by
-   * anchorId in chronological order. Anchors may be message ids (`msg_…`) or
-   * card event ids (`event_…`).
+   * Find the latest `latestPerThread` messages from threads anchored on the
+   * given anchor ids, keyed by anchorId in chronological order. Anchors may be
+   * message ids (`msg_…`) or card event ids (`event_…`).
    */
-  async findThreadMessages(db: Querier, workspaceId: string, anchorIds: string[]): Promise<Map<string, Message[]>> {
+  async findThreadMessages(
+    db: Querier,
+    workspaceId: string,
+    anchorIds: string[],
+    latestPerThread: number
+  ): Promise<Map<string, Message[]>> {
     if (anchorIds.length === 0) return new Map()
 
     const result = await db.query<MessageRow & { parent_anchor_id: string }>(sql`
-      SELECT
-        ${sql.raw(QUALIFIED_SELECT_FIELDS)},
-        s.parent_anchor_id
-      FROM messages m
-      JOIN streams s ON m.stream_id = s.id AND s.workspace_id = ${workspaceId}
-      WHERE m.workspace_id = ${workspaceId}
-        AND s.parent_anchor_id = ANY(${anchorIds})
-        AND s.type = 'thread'
-        AND m.deleted_at IS NULL
+      WITH ranked AS (
+        SELECT
+          m.id,
+          s.parent_anchor_id,
+          ROW_NUMBER() OVER (PARTITION BY s.parent_anchor_id ORDER BY m.created_at DESC, m.id DESC) AS recency
+        FROM messages m
+        JOIN streams s ON m.stream_id = s.id AND s.workspace_id = ${workspaceId}
+        WHERE m.workspace_id = ${workspaceId}
+          AND s.parent_anchor_id = ANY(${anchorIds})
+          AND s.type = 'thread'
+          AND m.deleted_at IS NULL
+      )
+      SELECT ${sql.raw(QUALIFIED_SELECT_FIELDS)}, ranked.parent_anchor_id
+      FROM ranked
+      JOIN messages m ON m.id = ranked.id AND m.workspace_id = ${workspaceId}
+      WHERE ranked.recency <= ${latestPerThread}
       ORDER BY m.created_at ASC, m.id ASC
     `)
 
