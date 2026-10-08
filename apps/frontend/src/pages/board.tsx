@@ -915,7 +915,9 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
           <div
             ref={registerScroller}
             data-board-scroll-viewport
-            className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain"
+            data-pane-landing
+            tabIndex={-1}
+            className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain outline-none"
             style={{ overflowAnchor: "none" }}
           >
             <main
