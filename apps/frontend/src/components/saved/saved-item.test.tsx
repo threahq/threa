@@ -113,7 +113,7 @@ describe("SavedItem stream label", () => {
     const { container } = mount(makeView({ streamId: "stream_ch", conversationId: "conv_1" }))
     const href = container.querySelector("a")?.getAttribute("href")
 
-    expect(href).toBe(`/w/${WORKSPACE_ID}/board?panel=conv%3Aconv_1&m=msg_1`)
+    expect(href).toBe(`/w/${WORKSPACE_ID}/board?panel=conv:conv_1&m=msg_1`)
   })
 
   it("keeps the stream permalink when there is no conversation origin", () => {

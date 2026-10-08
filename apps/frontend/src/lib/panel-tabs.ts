@@ -1,3 +1,4 @@
+import type { To, createMemoryRouter } from "react-router-dom"
 import { isPagePane, isServerStreamId } from "./stream-ids"
 
 /**
@@ -75,6 +76,39 @@ function parseSection(token: string, seen: Set<string>, focus: { id: string | nu
   }
   if (ids.length === 0) return null
   return { ids, active: focused ?? active ?? ids[ids.length - 1] }
+}
+
+const PANEL_QUERY_VALUE = new RegExp(`(^|[?&])${PANEL_PARAM}=([^&#]*)`)
+
+/**
+ * `url` (a path with its query, or a query with or without its `?`) with
+ * `?panel=` in its readable grammar: `URLSearchParams` escapes the `:` of
+ * `conv:` and `context:`, which a query may carry as is.
+ */
+export function readablePanelParam(url: string): string {
+  return url.replace(
+    PANEL_QUERY_VALUE,
+    (_, lead: string, value: string) =>
+      `${lead}${PANEL_PARAM}=${value.replace(/%(3A|2A|2E|2D)/gi, (escaped) => decodeURIComponent(escaped))}`
+  )
+}
+
+type DataRouter = ReturnType<typeof createMemoryRouter>
+
+/**
+ * Every navigation and link href the router makes spells `?panel=` readably,
+ * whichever code path serialized it, so the address bar and `location.search`
+ * always agree on one spelling.
+ */
+export function keepPanelParamReadable(router: DataRouter): void {
+  const { navigate, createHref } = router
+  const readable = (to: To | null): To | null => {
+    if (typeof to === "string") return readablePanelParam(to)
+    return to?.search ? { ...to, search: readablePanelParam(to.search) } : to
+  }
+  router.navigate = ((to: To | number | null, options?: Parameters<DataRouter["navigate"]>[1]) =>
+    typeof to === "number" ? navigate(to) : navigate(readable(to), options)) as DataRouter["navigate"]
+  router.createHref = (location) => readablePanelParam(createHref(location))
 }
 
 export function formatPanelLayout(layout: PanelLayout): string | null {

@@ -9,6 +9,7 @@ import { useSidebar } from "@/contexts"
 import { useLastLocation } from "@/hooks"
 import { useAccountScope } from "@/auth"
 import { accountHomePath, getLastWorkspaceId } from "@/lib/last-workspace"
+import { keepPanelParamReadable } from "@/lib/panel-tabs"
 import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { APP_LINK_GO_ROUTE, APP_LINK_SCHEME, parseAppLinkHref } from "@threahq/types"
 
@@ -205,6 +206,7 @@ export const router = createBrowserRouter([
 // The overlay-history coordinator reads router.state directly (never a
 // React-committed location — see history-back-close.tsx).
 attachOverlayHistoryRouter(router)
+keepPanelParamReadable(router)
 
 // PWA `start_url` is `/`. A returning user almost always wants the workspace
 // they last had open, which renders instantly from IndexedDB — so jump

@@ -779,7 +779,7 @@ describe("ConversationPanel", () => {
 
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledWith(
-        expect.stringContaining(`/w/${WORKSPACE_ID}/board?panel=conv%3A${CONVERSATION_ID}`)
+        expect.stringContaining(`/w/${WORKSPACE_ID}/board?panel=conv:${CONVERSATION_ID}`)
       )
     )
   })

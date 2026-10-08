@@ -257,7 +257,7 @@ describe("BoardCard branches", () => {
     expect(await screen.findByText("Child branch second message.")).toBeTruthy()
     expect(nested.closest(".border-l-2")).not.toBeNull()
     const header = screen.getByText("GPU budget").closest("a")
-    expect(header?.getAttribute("href")).toContain("panel=conv%3Aconv_child")
+    expect(header?.getAttribute("href")).toContain("panel=conv:conv_child")
     // The two states share one wrapper box, so toggling never shifts the branch's
     // leading edge (INV-21) — a stray `ml-3` on either side moves the ↳ 0.75rem.
     expect(header!.parentElement!.parentElement!.className).toBe(collapsedWrapperClass)
@@ -315,7 +315,7 @@ describe("BoardCard branches", () => {
     // Expanding keeps the overflow link into the child's panel intact.
     await userEvent.click(row)
     const overflow = await screen.findByText("4 more replies")
-    expect(overflow.closest("a")?.getAttribute("href")).toContain("panel=conv%3Aconv_child")
+    expect(overflow.closest("a")?.getAttribute("href")).toContain("panel=conv:conv_child")
   })
 
   it("carries the settling texture on a collapsed branch row", async () => {
@@ -517,7 +517,7 @@ describe("BoardCard branches", () => {
 
     mount(child)
     const provenance = await screen.findByText("Branched from Hardware refresh")
-    expect(provenance.closest("a")?.getAttribute("href")).toContain("panel=conv%3Aconv_parent")
+    expect(provenance.closest("a")?.getAttribute("href")).toContain("panel=conv:conv_parent")
   })
 
   it("renders a soft migration with a seam and no indent", async () => {
