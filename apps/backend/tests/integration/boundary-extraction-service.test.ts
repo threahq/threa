@@ -13,10 +13,10 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, moc
 import { Pool } from "pg"
 import { withTransaction, addTestMember, seedCompletedLinkPreview } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { StreamRepository, StreamEventRepository } from "../../src/features/streams"
+import { StreamRepository, StreamEventRepository, StreamMemberRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
 import { ConversationRepository, MessageConversationStateRepository } from "../../src/features/conversations"
-import { BoundaryExtractionService } from "../../src/features/conversations"
+import { BoundaryExtractionService, ConversationService } from "../../src/features/conversations"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { sql } from "../../src/db"
 import { userId, workspaceId, streamId, messageId, conversationId, eventId } from "../../src/lib/id"
@@ -1056,6 +1056,74 @@ describe("BoundaryExtractionService", () => {
       expect({ foldedStatus: folded?.status, anchorMemberIds: anchorMembers?.messageIds }).toEqual({
         foldedStatus: ConversationStatuses.RESOLVED,
         anchorMemberIds: [anchorId, replyId],
+      })
+    })
+
+    test("should leave a thread a human split off where it is when its anchor moves", async () => {
+      const { anchorId, threadId, replyId } = await seedMessageThread({
+        anchorText: "Load balancer config review",
+        replyText: "The health check path is wrong",
+        sequence: BigInt(791),
+      })
+      const openerId = messageId()
+      const triggerId = messageId()
+      const anchorConvId = conversationId()
+      const targetConvId = conversationId()
+      await withTransaction(pool, async (client) => {
+        await StreamMemberRepository.insert(client, testWorkspaceId, testStreamId, testUserId)
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: openerId,
+          streamId: testStreamId,
+          sequence: BigInt(790),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Starting the infra audit"),
+        })
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: triggerId,
+          streamId: testStreamId,
+          sequence: BigInt(792),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Folding the LB review into the infra audit"),
+        })
+        await ConversationRepository.insert(client, {
+          id: anchorConvId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, anchorConvId, anchorId, testUserId)
+        await ConversationRepository.insert(client, {
+          id: targetConvId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, targetConvId, openerId, testUserId)
+      })
+      await service.processMessage(replyId, threadId, testWorkspaceId)
+      const { conversation: splitConv } = await new ConversationService(pool).splitThreadIntoConversation({
+        workspaceId: testWorkspaceId,
+        conversationId: anchorConvId,
+        threadStreamId: threadId,
+        actorUserId: testUserId,
+      })
+
+      stubExtractor.setNextResult({
+        assignments: [{ conversationId: targetConvId, isPrimary: true }],
+        reassignments: [{ messageId: anchorId, toConversationId: targetConvId, reason: "Part of the audit" }],
+        confidence: 0.9,
+      })
+      await service.processMessage(triggerId, testStreamId, testWorkspaceId)
+
+      const primaries = await ConversationRepository.findPrimariesByMessageIds(pool, testWorkspaceId, [
+        anchorId,
+        replyId,
+      ])
+      expect({ anchor: primaries.get(anchorId)?.id, reply: primaries.get(replyId)?.id }).toEqual({
+        anchor: targetConvId,
+        reply: splitConv.id,
       })
     })
 

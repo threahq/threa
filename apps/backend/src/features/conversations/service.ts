@@ -1064,8 +1064,9 @@ export class ConversationService {
 
       await ConversationRepository.removePrimaryMessages(client, workspaceId, source.id, moveIds, remainingAuthors)
       await ConversationRepository.addPrimaryMessages(client, workspaceId, newId, moveIds, movedAuthors)
-      // A user split is a human ruling on where these messages belong.
-      await MessageConversationStateRepository.settle(client, workspaceId, moveIds, "user")
+      // A user split is a human ruling on where these messages belong. Upserted:
+      // a structurally placed thread reply has no settling row to settle.
+      await MessageConversationStateRepository.settleForConversationTargets(client, workspaceId, moveIds, newId, "user")
       await ConversationRepository.bumpActivityForIds(client, workspaceId, [source.id, newId])
 
       // Feedback ground truth — one row per moved message (parity with
