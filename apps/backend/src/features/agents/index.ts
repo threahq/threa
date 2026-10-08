@@ -245,7 +245,7 @@ export type {
   EnrichAttachmentsOptions,
 } from "./context-builder"
 
-export { WorkspaceAgent } from "./researcher"
+export { WorkspaceAgent, PeopleResolver, StubPeopleResolver } from "./researcher"
 export type { WorkspaceAgentResult, WorkspaceAgentInput, WorkspaceAgentDeps, WorkspaceSourceItem } from "./researcher"
 export { computeAgentAccessSpec, memoAudienceForSpec } from "./researcher"
 export type { AgentAccessSpec, ComputeAccessSpecParams } from "./researcher"

@@ -180,6 +180,8 @@ import {
   ReflectiveCaptureService,
   createReflectiveCaptureWorker,
   WorkspaceAgent,
+  PeopleResolver,
+  StubPeopleResolver,
   GeneralResearcher,
   PersonaAgent,
   PreparedRecall,
@@ -1170,7 +1172,15 @@ export async function startServer(): Promise<ServerInstance> {
         suggestionCollector: savedSuggestionsService,
       })
 
-  const workspaceAgent = new WorkspaceAgent({ pool, ai, configResolver, embeddingService })
+  const workspaceAgent = new WorkspaceAgent({
+    pool,
+    ai,
+    configResolver,
+    embeddingService,
+    peopleResolver: config.useStubAI
+      ? new StubPeopleResolver()
+      : new PeopleResolver({ ai, residency: aiResidency, availability: decisionsAvailability }),
+  })
 
   // General researcher: bounded multi-surface research (workspace + web +
   // integrations) driving the persona's primitive tools. Stateless beyond ai +

@@ -28,6 +28,7 @@ export const AI_FUNCTIONS: Record<string, AIFunction> = {
   "agent-rerun-response-validation": { category: "agents", stage: "agents" },
   "context-bag.summarize": { category: "agents", stage: "agents" },
   "ws-plan": { category: "agents", stage: "agents" },
+  "researcher-people": { category: "agents", stage: "agents" },
   "ws-eval": { category: "agents", stage: "agents" },
   "ws-memo-embed": { category: "agents", stage: "agents" },
   "ws-msg-embed": { category: "agents", stage: "agents" },

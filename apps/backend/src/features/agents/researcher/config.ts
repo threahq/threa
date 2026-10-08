@@ -66,3 +66,28 @@ Guidelines:
 - type "exact": error messages, IDs, quoted phrases.
 
 The caller has already decided that workspace retrieval is warranted. Do not second-guess the invocation — produce queries.`
+
+/** Decision model that matches the people a query names to workspace users. */
+export const PEOPLE_RESOLVER_MODEL_ID = "openrouter:typesafe/jev-1.13"
+/** One budget for every circle's calls, so an unresolved name costs the researcher at most this much. */
+export const PEOPLE_RESOLVER_TIMEOUT_MS = 4000
+/** Candidates per decision call; a circle larger than this is split across parallel calls. */
+export const PEOPLE_RESOLVER_CHUNK_SIZE = 100
+/** Roster rows loaded per research call, nearest circles first. */
+export const PEOPLE_ROSTER_LIMIT = 400
+/** A pick at or above this probability is sure; it names the person only as the one sure pick of the nearest circle with any plausible pick. */
+export const PEOPLE_RESOLVED_AT = 0.6
+/** A pick at or above this probability is a candidate worth asking about. */
+export const PEOPLE_PLAUSIBLE_AT = 0.2
+/** Candidates listed for an ambiguous reference, most likely first. */
+export const PEOPLE_MAX_CANDIDATES = 5
+/** People resolved per research call; the planner's list is cut to this many. */
+export const PEOPLE_MAX_REFERENCES = 6
+/** Resolved people whose own messages are searched with the original query, in the planner's order. */
+export const PEOPLE_MAX_AUTHOR_SEARCHES = 3
+
+export const PEOPLE_NONE_CHOICE = "none"
+
+export function peopleReferenceQuestion(reference: string): string {
+  return `In this conversation, who does "${reference}" refer to? Pick the workspace member the asker means by it. Pick none when it means someone not listed, the assistant, or nobody in particular.`
+}

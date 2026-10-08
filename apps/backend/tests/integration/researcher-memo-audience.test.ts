@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { AuthoredByKinds, StreamTypes, Visibilities, type Visibility } from "@threahq/types"
 import type { AI } from "@threahq/agent-runtime"
-import { WorkspaceAgent } from "../../src/features/agents/researcher"
+import { StubPeopleResolver, WorkspaceAgent } from "../../src/features/agents/researcher"
 import type { ConfigResolver } from "../../src/lib/ai/config-resolver"
 import { MemoRepository, type EmbeddingServiceLike } from "../../src/features/memos"
 import { MessageRepository } from "../../src/features/messaging"
@@ -155,6 +155,7 @@ describe("WorkspaceAgent memo search audience", () => {
       ai: {} as AI,
       configResolver: { resolve: async () => ({}) } as unknown as ConfigResolver,
       embeddingService: { embed: async () => axis(0) } as unknown as EmbeddingServiceLike,
+      peopleResolver: new StubPeopleResolver(),
     })
     ;(agent as unknown as { planRetrieval: () => Promise<typeof planner> }).planRetrieval = async () => planner
   })

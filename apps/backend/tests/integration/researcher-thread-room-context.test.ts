@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { StreamTypes, Visibilities } from "@threahq/types"
 import type { AI } from "@threahq/agent-runtime"
-import { WorkspaceAgent } from "../../src/features/agents/researcher"
+import { StubPeopleResolver, WorkspaceAgent } from "../../src/features/agents/researcher"
 import type { ConfigResolver } from "../../src/lib/ai/config-resolver"
 import type { EmbeddingServiceLike } from "../../src/features/memos"
 import { MessageRepository, type Message } from "../../src/features/messaging"
@@ -177,6 +177,7 @@ describe("WorkspaceAgent thread and room context", () => {
       ai: {} as AI,
       configResolver: { resolve: async () => ({}) } as unknown as ConfigResolver,
       embeddingService: { embed: async () => axis(0) } as unknown as EmbeddingServiceLike,
+      peopleResolver: new StubPeopleResolver(),
     })
     ;(agent as unknown as { planRetrieval: () => Promise<typeof planner> }).planRetrieval = async () => planner
   })

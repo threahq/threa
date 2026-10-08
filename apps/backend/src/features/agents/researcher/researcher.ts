@@ -1,7 +1,7 @@
 import type { Pool } from "pg"
 import { z } from "zod"
 import { withClient, type Querier } from "../../../db"
-import { composeAbortSignal, isAbortError, type AI } from "@threahq/agent-runtime"
+import { AISpendDeniedError, composeAbortSignal, isAbortError, type AI } from "@threahq/agent-runtime"
 import type { ConfigResolver, ResearcherConfig } from "../../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../../lib/ai/config-resolver"
 import { StreamTypes, type AuthoredByKind, type FeatureFlagValue, type TraceSource } from "@threahq/types"
@@ -11,8 +11,17 @@ import { MemoRepository, classifyMemoQueryIntent } from "../../memos"
 import { SearchRepository } from "../../search"
 import { StreamRepository, type Stream } from "../../streams"
 import { AttachmentRepository } from "../../attachments"
-import { computeAgentAccessSpec, memoAudienceForSpec, resolveMemoViewer, type AgentAccessSpec } from "./access-spec"
+import { PeoplePurposes, UserRepository } from "../../workspaces"
+import type { PeopleResolverLike, PersonResolution } from "./people-resolver"
 import {
+  computeAgentAccessSpec,
+  memoAudienceForSpec,
+  resolveMemoViewer,
+  resolvePeopleViewer,
+  type AgentAccessSpec,
+} from "./access-spec"
+import {
+  formatPeopleSection,
   formatRetrievedContext,
   enrichMessageSearchResults,
   type EnrichedMemoResult,
@@ -30,6 +39,9 @@ import { logger } from "../../../lib/logger"
 import { workspaceHomeUrl, workspaceMemoUrl, workspaceMessageUrl, workspaceStreamUrl } from "../workspace-links"
 import { hybridWeightsForQuery, searchRankingForFlag, type SearchRanking } from "../../search"
 import {
+  PEOPLE_MAX_AUTHOR_SEARCHES,
+  PEOPLE_MAX_REFERENCES,
+  PEOPLE_ROSTER_LIMIT,
   WORKSPACE_AGENT_MAX_PLANNED_QUERIES,
   WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
   WORKSPACE_AGENT_MAX_ROOM_RESULTS_PER_SEARCH,
@@ -146,6 +158,7 @@ export interface WorkspaceAgentDeps {
   ai: AI
   configResolver: ConfigResolver
   embeddingService: EmbeddingServiceLike
+  peopleResolver: PeopleResolverLike
 }
 
 // Schema for retrieval planning (always generates queries, no needsSearch gate)
@@ -158,9 +171,16 @@ const retrievalPlanSchema = z.object({
       query: z.string(),
     })
   ),
+  people: z.array(z.string()),
 })
 
-type SearchQuery = z.infer<typeof retrievalPlanSchema>["queries"][number]
+/** `authorId` narrows a message search to what one person wrote; the planner never sets it. */
+type SearchQuery = z.infer<typeof retrievalPlanSchema>["queries"][number] & { authorId?: string }
+
+interface PersonName {
+  name: string
+  slug: string
+}
 
 interface MemoReaders {
   viewerUserId: string | undefined
@@ -269,7 +289,7 @@ export class WorkspaceAgent {
     const fetchedData = await withClient(pool, async (client) => {
       const stream = await StreamRepository.findById(client, workspaceId, streamId)
       if (!stream) {
-        return { stream: null, accessSpec: null, accessibleStreamIds: null, roomStreamIds: [] }
+        return { stream: null, accessSpec: null, accessibleStreamIds: null, roomStreamIds: [], names: new Map() }
       }
 
       const accessSpec = await computeAgentAccessSpec(client, {
@@ -284,7 +304,15 @@ export class WorkspaceAgent {
         await SearchRepository.expandStreamIdsWithThreads(client, workspaceId, await roomRootIds(client, stream))
       ).filter((id) => accessible.has(id))
 
-      return { stream, accessSpec, accessibleStreamIds, roomStreamIds }
+      const authorIds = new Set([invokingUserId, ...input.conversationHistory.map((message) => message.authorId)])
+      const names = new Map<string, PersonName>(
+        (await UserRepository.findByIds(client, workspaceId, [...authorIds])).map((user) => [
+          user.id,
+          { name: user.name, slug: user.slug },
+        ])
+      )
+
+      return { stream, accessSpec, accessibleStreamIds, roomStreamIds, names }
     })
 
     if (!fetchedData.stream || !fetchedData.accessSpec || !fetchedData.accessibleStreamIds) {
@@ -317,6 +345,7 @@ export class WorkspaceAgent {
       fetchedData.accessSpec,
       fetchedData.accessibleStreamIds,
       fetchedData.roomStreamIds,
+      fetchedData.names,
       substeps
     )
   }
@@ -334,6 +363,7 @@ export class WorkspaceAgent {
     accessSpec: AgentAccessSpec,
     accessibleStreamIds: string[],
     roomStreamIds: string[],
+    names: Map<string, PersonName>,
     substeps: WorkspaceAgentSubstep[]
   ): Promise<WorkspaceAgentResult> {
     const { configResolver, embeddingService } = this.deps
@@ -354,7 +384,9 @@ export class WorkspaceAgent {
     // Resolve config for workspace agent
     const config = (await configResolver.resolve(COMPONENT_PATHS.COMPANION_RESEARCHER)) as ResearcherConfig
 
-    const contextSummary = this.buildContextSummary(query, conversationHistory)
+    const conversation = conversationLines(conversationHistory, names)
+    const asker = names.get(input.invokingUserId)
+    const contextSummary = buildContextSummary(conversation, asker)
     // Already in the main agent's prompt; retrieving them again only crowds out new context.
     const excludedMessageIds = new Set(conversationHistory.map((message) => message.id))
 
@@ -442,16 +474,27 @@ export class WorkspaceAgent {
       WORKSPACE_AGENT_MAX_PLANNED_QUERIES
     )
 
+    if (baselineQueries.length === 0 && plan.queries.length === 0 && plan.people.length === 0) {
+      logger.debug({ query, reasoning: plan.reasoning }, "Workspace agent could not generate any queries")
+      return this.emptyResult(substeps)
+    }
+
     if (plannerOnlyDeduped.length > 0) {
       this.emitSubstep(
         substeps,
         `Searching with ${plannerOnlyDeduped.length} planned ${plannerOnlyDeduped.length === 1 ? "query" : "queries"}…`,
         input.onSubstep
       )
+    }
+    const references = [...new Set(plan.people)].slice(0, PEOPLE_MAX_REFERENCES)
+    if (references.length > 0) {
+      this.emitSubstep(substeps, `Identifying ${references.join(", ")}…`, input.onSubstep)
+    }
 
-      const plannerResults = await this.executeQueries(
+    const searchFor = (queries: SearchQuery[]) =>
+      this.executeQueries(
         pool,
-        plannerOnlyDeduped,
+        queries,
         workspaceId,
         accessibleStreamIds,
         roomStreamIds,
@@ -461,14 +504,21 @@ export class WorkspaceAgent {
         excludedMessageIds,
         ranking
       )
-
-      allMemos = mergeMemoResults(allMemos, plannerResults.memos)
-      allMessages = mergeMessageResults(allMessages, plannerResults.messages)
-      allAttachments = mergeAttachmentResults(allAttachments, plannerResults.attachments)
-    } else if (baselineQueries.length === 0 && plan.queries.length === 0) {
-      // No baseline, no planner queries — nothing to search.
-      logger.debug({ query, reasoning: plan.reasoning }, "Workspace agent could not generate any queries")
-      return this.emptyResult(substeps)
+    // Who the query names is resolved while the planner's queries run; each person found then gets a search of
+    // what they wrote.
+    const [plannerResults, { people, authorResults }] = await Promise.all([
+      searchFor(plannerOnlyDeduped),
+      this.resolvePeople(pool, input, accessSpec, references, asker, conversation, roomStreamIds).then(
+        async (people) => ({
+          people,
+          authorResults: await searchFor(authorQueries(query, people)),
+        })
+      ),
+    ])
+    for (const results of [plannerResults, authorResults]) {
+      allMemos = mergeMemoResults(allMemos, results.memos)
+      allMessages = mergeMessageResults(allMessages, results.messages)
+      allAttachments = mergeAttachmentResults(allAttachments, results.attachments)
     }
 
     const postSearch = this.checkAbortOrDeadline(input)
@@ -480,7 +530,8 @@ export class WorkspaceAgent {
         workspaceId,
         input.timezone,
         substeps,
-        postSearch
+        postSearch,
+        people
       )
     }
 
@@ -491,11 +542,21 @@ export class WorkspaceAgent {
         messageCount: allMessages.length,
         attachmentCount: allAttachments.length,
         accessSpecType: accessSpec.type,
+        people: people.map((person) => person.status),
       },
       "Workspace agent completed"
     )
 
-    return this.buildFinalResult(allMemos, allMessages, allAttachments, workspaceId, input.timezone, substeps, false)
+    return this.buildFinalResult(
+      allMemos,
+      allMessages,
+      allAttachments,
+      workspaceId,
+      input.timezone,
+      substeps,
+      false,
+      people
+    )
   }
 
   // ──────────────────────────────────────────────────────────────────────
@@ -563,10 +624,14 @@ export class WorkspaceAgent {
     workspaceId: string,
     timezone: string | undefined,
     substeps: WorkspaceAgentSubstep[],
-    partial: boolean
+    partial: boolean,
+    people: PersonResolution[]
   ): WorkspaceAgentResult {
     const sources = this.buildSources(memos, messages, attachments, workspaceId)
-    const retrievedContext = formatRetrievedContext(memos, messages, attachments, workspaceId, timezone)
+    const retrievedContext = joinContext(
+      formatRetrievedContext(memos, messages, attachments, workspaceId, timezone),
+      people
+    )
     return {
       retrievedContext,
       sources,
@@ -589,7 +654,8 @@ export class WorkspaceAgent {
     workspaceId: string,
     timezone: string | undefined,
     substeps: WorkspaceAgentSubstep[],
-    reason: WorkspaceAgentPartialReason
+    reason: WorkspaceAgentPartialReason,
+    people: PersonResolution[] = []
   ): WorkspaceAgentResult {
     const stopText =
       reason === "user_abort"
@@ -599,7 +665,10 @@ export class WorkspaceAgent {
     substeps.push({ text: stopText, at: new Date().toISOString() })
 
     const sources = this.buildSources(memos, messages, attachments, workspaceId)
-    const retrievedContext = formatRetrievedContext(memos, messages, attachments, workspaceId, timezone)
+    const retrievedContext = joinContext(
+      formatRetrievedContext(memos, messages, attachments, workspaceId, timezone),
+      people
+    )
 
     logger.info(
       {
@@ -659,7 +728,8 @@ ${contextSummary}
 
 Respond with:
 - reasoning: the directions you chose and why
-- queries: the search queries, each with target, type, and query text`,
+- queries: the search queries, each with target, type, and query text
+- people: every person the answer depends on, as the query or the conversation refers to them ("Kate", "my manager", "me", "she"). Include the asker when they refer to themselves. Leave out the assistant. Empty when the query is about no one in particular.`,
           },
         ],
         temperature: config.temperature,
@@ -672,10 +742,10 @@ Respond with:
     } catch (error) {
       if (isAbortError(error)) {
         logger.debug({ query }, "Workspace planner aborted; returning empty plan")
-        return { reasoning: "Aborted", queries: [] }
+        return { reasoning: "Aborted", queries: [], people: [] }
       }
       logger.warn({ error }, "Workspace agent retrieval planning failed, falling back to baseline")
-      return { reasoning: "Planning failed", queries: [] }
+      return { reasoning: "Planning failed", queries: [], people: [] }
     } finally {
       perCall.cleanup()
     }
@@ -931,7 +1001,7 @@ Respond with:
 
       // DB search (fast, ~10-50ms)
       return await withClient(pool, async (client) => {
-        const filters = {}
+        const filters = query.authorId ? { authorId: query.authorId } : {}
         const normalizedQuery = searchQuery.trim()
         const hasQuery = normalizedQuery.length > 0
         const hasEmbedding = embedding.length > 0
@@ -1146,15 +1216,49 @@ Respond with:
     return sources
   }
 
-  /**
-   * Build context summary for the workspace agent.
-   */
-  private buildContextSummary(query: string, conversationHistory: Message[]): string {
-    const recentMessages = conversationHistory.slice(-5)
-    const historyText = recentMessages.map((m) => `${m.authorType}: ${m.contentMarkdown}`).join("\n")
-
-    return `## Recent Conversation
-${historyText || "No recent messages."}`
+  /** The workspace users `references` name, nearest to the asker first, or none when the resolver could not answer. */
+  private async resolvePeople(
+    pool: Pool,
+    input: WorkspaceAgentInput,
+    accessSpec: AgentAccessSpec,
+    references: string[],
+    asker: PersonName | undefined,
+    conversation: { author: string; text: string }[],
+    roomStreamIds: string[]
+  ): Promise<PersonResolution[]> {
+    if (!asker || references.length === 0) return []
+    const { workspaceId, invokingUserId } = input
+    try {
+      const roster = await UserRepository.listByCircle(pool, workspaceId, {
+        askerId: invokingUserId,
+        roomStreamIds,
+        scope: { viewer: resolvePeopleViewer(accessSpec, input.streamId), purpose: PeoplePurposes.VISIBLE },
+        limit: PEOPLE_ROSTER_LIMIT,
+      })
+      if (roster.length === PEOPLE_ROSTER_LIMIT) {
+        logger.info({ workspaceId, references }, "Workspace agent people roster truncated; farthest people left out")
+      }
+      const resolutions = await this.deps.peopleResolver.resolve({
+        workspaceId,
+        userId: invokingUserId,
+        asker: { id: invokingUserId, ...asker },
+        conversation,
+        query: input.query,
+        references,
+        roster,
+        signal: input.signal,
+      })
+      if (!resolutions) {
+        logger.info({ workspaceId, references }, "People resolver unavailable; references left unresolved")
+        return []
+      }
+      return resolutions
+    } catch (error) {
+      if (error instanceof AISpendDeniedError) throw error
+      if (isAbortError(error)) return []
+      logger.warn({ error, workspaceId }, "Workspace agent people resolution failed")
+      return []
+    }
   }
 
   /**
@@ -1179,7 +1283,39 @@ ${historyText || "No recent messages."}`
 
 /** Normalized key for query-level deduplication across baseline + planner sets. */
 function queryKey(q: SearchQuery): string {
-  return `${q.target}|${q.type}|${q.query.toLowerCase().trim()}`
+  return `${q.target}|${q.type}|${q.query.toLowerCase().trim()}|${q.authorId ?? ""}`
+}
+
+/** The last few messages, each under its author's name when the author is a workspace user. */
+function conversationLines(
+  conversationHistory: Message[],
+  names: Map<string, PersonName>
+): { author: string; text: string }[] {
+  return conversationHistory.slice(-5).map((message) => ({
+    author: names.get(message.authorId)?.name ?? message.authorType,
+    text: message.contentMarkdown,
+  }))
+}
+
+function buildContextSummary(conversation: { author: string; text: string }[], asker: PersonName | undefined): string {
+  const historyText = conversation.map((line) => `${line.author}: ${line.text}`).join("\n")
+  const askedBy = asker ? `## Asked by\n${asker.name} (@${asker.slug})\n\n` : ""
+  return `${askedBy}## Recent Conversation
+${historyText || "No recent messages."}`
+}
+
+function authorQueries(query: string, people: PersonResolution[]): SearchQuery[] {
+  const authorIds = [
+    ...new Set(people.flatMap((resolution) => (resolution.status === "resolved" ? [resolution.person.id] : []))),
+  ]
+  return authorIds
+    .slice(0, PEOPLE_MAX_AUTHOR_SEARCHES)
+    .map((authorId) => ({ target: "messages", type: "semantic", query, authorId }))
+}
+
+function joinContext(retrieved: string | null, people: PersonResolution[]): string | null {
+  const sections = [retrieved, formatPeopleSection(people)].filter((section) => section !== null)
+  return sections.length > 0 ? sections.join("\n\n") : null
 }
 
 /** Deduplicate queries by (target, type, normalized query). Stable order. */

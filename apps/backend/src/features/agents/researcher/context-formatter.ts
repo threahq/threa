@@ -7,6 +7,7 @@ import { StreamRepository, type Stream } from "../../streams"
 import type { Memo } from "../../memos"
 import { PersonaRepository } from "../persona-repository"
 import { workspaceMemoUrl, workspaceMessageUrl, workspaceStreamUrl } from "../workspace-links"
+import type { PersonResolution, ResolvedPerson } from "./people-resolver"
 
 export interface EnrichedMemoResult {
   memo: Memo
@@ -309,4 +310,26 @@ export async function enrichMessageSearchResults(
         : {}),
     }
   })
+}
+
+/** What the researcher made of each person the query names, so the agent answers about the right one or asks which. */
+export function formatPeopleSection(people: PersonResolution[]): string | null {
+  if (people.length === 0) return null
+  const lines = people.map((resolution) => {
+    switch (resolution.status) {
+      case "resolved":
+        return `- "${resolution.reference}" is ${personLabel(resolution.person)}.`
+      case "ambiguous":
+        return resolution.candidates.length === 1
+          ? `- "${resolution.reference}" may be ${personLabel(resolution.candidates[0]!)}, but that is not certain.`
+          : `- "${resolution.reference}" could be ${resolution.candidates.map(personLabel).join(" or ")}. If the answer depends on which, ask which one is meant, naming them without @-mentions.`
+      case "unresolved":
+        return `- "${resolution.reference}" could not be matched to anyone. They may still exist.`
+    }
+  })
+  return `## People\n\n${lines.join("\n")}`
+}
+
+function personLabel(person: ResolvedPerson): string {
+  return `${person.name} (${person.slug})`
 }
