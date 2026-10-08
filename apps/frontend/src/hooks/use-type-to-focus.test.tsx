@@ -179,7 +179,7 @@ describe("useTypeToFocus", () => {
     expect(document.activeElement).toBe(main)
   })
 
-  it("two panel zones (a thread in the aside stage's host pane beside the aside's column): the last-clicked one takes the key", () => {
+  it("two panel zones (a thread pane beside the aside's column): the last-clicked one takes the key", () => {
     buildDom(
       '<div data-editor-zone="panel" id="thread"><div contenteditable="true" id="t"></div></div>' +
         '<div data-editor-zone="panel" id="aside"><div contenteditable="true" id="a"></div></div>'
