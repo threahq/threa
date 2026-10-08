@@ -887,7 +887,7 @@ export function useEvents(workspaceId: string, streamId: string, options?: { ena
 
   // In-flight sends sit at the tail (orderStreamEvents), so a row published
   // ahead of its write is appended where the persisted copy will read. Appended
-  // after the hold: the user's own send is never held behind a sync apply.
+  // after the hold, so outside jump mode a send is not held behind a sync apply.
   const events = useMemo(() => {
     if (held.isJumpMode || unpersistedEvents.length === 0) return held.events
     return [...held.events, ...(unpersistedEvents as unknown as StreamEvent[])]
