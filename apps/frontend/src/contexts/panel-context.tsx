@@ -620,9 +620,8 @@ export function PanelProvider({ children }: PanelProviderProps) {
   )
 
   const contextual = useCallback(
-    (current: PanelLayout, panelId: string, scopeId: string | null) => {
-      return openPanelTabBeside(current, scopeId ?? routePane, panelId)
-    },
+    (current: PanelLayout, panelId: string, scopeId: string | null) =>
+      openPanelTabBeside(current, scopeId ?? routePane, panelId),
     [routePane]
   )
 
