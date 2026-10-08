@@ -1,7 +1,9 @@
-import { Link, useLocation, useSearchParams } from "react-router-dom"
+import { Link } from "react-router-dom"
 import { CornerUpLeft } from "lucide-react"
+import { usePanel } from "@/contexts"
 import { useAsideAnchor } from "@/hooks/use-aside-anchor"
 import { useStreamName } from "@/hooks/use-stream-name"
+import { panelIdsOf } from "@/lib/panel-tabs"
 import { cn } from "@/lib/utils"
 
 interface AsideAnchorLineProps {
@@ -25,8 +27,7 @@ interface AsideAnchorLineProps {
  * instead of inventing an author — but it still goes to the same message.
  */
 export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant = "line" }: AsideAnchorLineProps) {
-  const { pathname } = useLocation()
-  const [searchParams] = useSearchParams()
+  const { layout, hasTabs, getTabUrl } = usePanel()
   const hostName = useStreamName(workspaceId, hostStreamId, "breadcrumb")
   const anchored = useAsideAnchor(workspaceId, hostStreamId, anchorId)
 
@@ -38,21 +39,21 @@ export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant =
     `Anchored in ${hostName ?? "this conversation"}`
   )
 
-  const onHostPage = pathname.endsWith(`/s/${hostStreamId}`)
+  const onHostPage = hasTabs && panelIdsOf(layout).includes(hostStreamId)
   const chip = variant === "chip"
   // `?m=` is how the app scrolls a timeline to a message, and the aside's own
-  // state is keyed by pathname, so the jump never disturbs it (INV-40). Built
-  // on top of the page's other params — a conversation overlay, a board's
-  // filters — rather than replacing them; a board host has no timeline to
-  // scroll, so the jump goes to the host stream's own page.
-  const hostPageSearch = () => {
-    const next = new URLSearchParams(searchParams)
-    next.set("m", anchorId ?? "")
-    return `?${next.toString()}`
+  // state is keyed by the page, so the jump never disturbs it (INV-40). With the
+  // host open in a pane, the jump works in that pane and keeps the rest of the
+  // page — the panes, a conversation overlay — rather than replacing it; a board
+  // host has no timeline to scroll, so the jump goes to the host stream's own page.
+  const hostPaneHref = (messageId: string) => {
+    const url = new URL(getTabUrl(hostStreamId), window.location.origin)
+    url.searchParams.set("m", messageId)
+    return `${url.pathname}${url.search}`
   }
   const to =
     onHostPage && anchorId
-      ? { pathname, search: hostPageSearch() }
+      ? hostPaneHref(anchorId)
       : `/w/${workspaceId}/s/${hostStreamId}${anchorId ? `?m=${anchorId}` : ""}`
 
   // Already looking at the anchor's own stream with nothing to scroll to: the

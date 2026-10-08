@@ -1,14 +1,15 @@
-import { useState, useRef, useEffect } from "react"
-import { useParams, useSearchParams } from "react-router-dom"
+import { useState, useRef, useEffect, useMemo } from "react"
+import { useParams } from "react-router-dom"
 import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { floatingPanelTab, primaryPanelOf, type PaneEdge } from "@/lib/panel-tabs"
+import { isServerStreamId } from "@/lib/stream-ids"
+import { closePanelTab, floatingPanelTab, panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
 import { useStreamOrDraft, useStreamError, usePanelLayout, useTypeToFocus } from "@/hooks"
-import { useMainOwnsCover, usePanel, useSidebar } from "@/contexts"
+import { usePanel, useSidebar } from "@/contexts"
 import { PanelResizeHandle, usePanelInset } from "@/components/layout"
-import { PaneHost, Pane, PaneDropContext, PaneDropIndicator, paneDropZone, usePaneDropState } from "@/components/panes"
-import { StreamPane, useConversationViewParam } from "@/components/panes/stream-pane"
+import { PaneHost, Pane, PaneDropContext, usePaneDropState } from "@/components/panes"
+import { useConversationViewParam } from "@/components/panes/stream-pane"
 import {
   AsideColumn,
   AsideCoversPanesContext,
@@ -18,9 +19,8 @@ import {
   useAsideHost,
   useAsideIsSheet,
 } from "@/components/aside"
-import { asideHoldsPanel, useAsideForHost } from "@/stores/aside-store"
+import { asidePaneOf, useAsideForHost } from "@/stores/aside-store"
 import { PaneDrawer, PanelTabStack, useFittedPanelLayout, usePanelGrid } from "@/components/layout/panel-host"
-import { PaneShortcuts } from "@/components/layout/pane-shortcuts"
 import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
 import { StreamTypes } from "@threahq/types"
@@ -30,29 +30,29 @@ import { useElementWidth } from "@/hooks/use-element-width"
 import { setPageStreamName } from "@/lib/page-title"
 import { panelColumnWidths } from "@/lib/panel-grid"
 
-const MAIN_DROP_EDGES: readonly PaneEdge[] = ["right"]
-
 export function StreamPage() {
   const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId: string }>()
   const { stream, error } = useStreamOrDraft(workspaceId!, streamId!)
   const { isMobile } = useSidebar()
-  const { panelId, isPanelOpen, layout, setCurrentPane } = usePanel()
+  const { layout } = usePanel()
   const containerRef = useRef<HTMLDivElement>(null)
-  const mainPaneRef = useRef<HTMLDivElement>(null)
   const containerWidth = useElementWidth(containerRef)
-  const asideHostKey = useAsideHost()
+  const panes = useMemo(() => panelIdsOf(layout), [layout])
+  const asideHostKey = useAsideHost(panes)
   // A sheet over the page on a phone, or where the columns leave it no room; anywhere else a column of it.
   const asideSheetOnly = useAsideIsSheet()
-  const asideIsSheet = asideSheetOnly || !asideColumnFits(containerWidth, isPanelOpen ? MIN_PANEL_WIDTH : 0)
+  const asideIsSheet =
+    asideSheetOnly || !asideColumnFits(containerWidth, layout.columns.length > 1 ? MIN_PANEL_WIDTH : 0)
   const openAside = useAsideForHost(asideHostKey)
   const asideColumn = asideIsSheet ? null : openAside
-  // A phone's pages, without the drawers over them; the one on show, null for the main view.
-  const phonePages = useFittedPanelLayout(1, true)
-  const pagePanel = isMobile ? primaryPanelOf(phonePages) : panelId
-  // A thread the sheet holds is mounted there and nowhere else: not in the
-  // slot, not as the phone's takeover behind the sheet. The sheet holds the
-  // primary pane (aside-mobile-sheet.tsx), so this reads the same one.
-  const panelInAside = asideIsSheet && openAside !== null && asideHoldsPanel(panelId, openAside.hostStreamId)
+  // A pane the sheet holds is mounted there and nowhere else (aside-mobile-sheet.tsx).
+  const heldPane = asideIsSheet && openAside !== null ? asidePaneOf(layout, openAside.hostStreamId, true) : null
+  const pageLayout = useMemo(() => (heldPane === null ? layout : closePanelTab(layout, heldPane)), [layout, heldPane])
+  // Columns beside the first, which fills what they leave.
+  const isPanelOpen = pageLayout.columns.length > 1
+  // A phone's pages, without the drawers over them, and the one on show.
+  const phonePages = useFittedPanelLayout(pageLayout, 1, true)
+  const page = primaryPanelOf(phonePages)
   // The aside clamps against the other columns' minimums.
   const asideLayout = useAsideColumnLayout(asideColumn, containerWidth, isPanelOpen ? MIN_PANEL_WIDTH : 0)
   const {
@@ -69,30 +69,30 @@ export function StreamPage() {
     handleResizeKeyDown,
     handleTransitionEnd,
     maxColumns,
-  } = usePanelLayout(isPanelOpen && !panelInAside, {
+  } = usePanelLayout(isPanelOpen, {
     containerRef,
-    columns: layout.columns.length,
+    columns: pageLayout.columns.length - 1,
     reservedWidth: asideLayout.width,
     animates: !isMobile,
   })
-  const fittedPanels = useFittedPanelLayout(maxColumns, false)
+  const fittedPanels = useFittedPanelLayout(pageLayout, maxColumns + 1, false)
+  // A phone stacks every pane in the one cell.
   const display = isMobile ? phonePages : fittedPanels
-  // A phone stacks every pane in the one cell; anywhere else the main view keeps the first column.
-  const panelGrid = usePanelGrid(display, isMobile ? 0 : 1)
-  const paneDrops = usePaneDropState(workspaceId!, streamId!)
-  const [searchParams] = useSearchParams()
-  const highlightMessageId = useMainOwnsCover() ? searchParams.get("m") : null
+  const panelGrid = usePanelGrid(display)
+  const paneDrops = usePaneDropState(workspaceId!)
 
   useTypeToFocus()
 
-  // Unified error checking - checks both coordinated loading and direct query errors
+  // Unified error checking - checks both coordinated loading and direct query errors. Beside other panes,
+  // the stream's own pane shows its error and the rest stay usable.
   const streamError = useStreamError(streamId, error)
+  const pageError = panes.length === 1 ? streamError : null
 
   const panelInset = displayWidth + asideLayout.width
   const panelInsetAnimates = shouldAnimate && !asideLayout.isResizing
   // Above the error/early returns: a stream that turns inaccessible mid-session
   // must not change this component's hook count.
-  usePanelInset(isMobile || streamError ? 0 : panelInset, panelInsetAnimates)
+  usePanelInset(isMobile || pageError ? 0 : panelInset, panelInsetAnimates)
 
   const [isConversationViewOpen, setConversationViewOpen] = useConversationViewParam()
   // The closed drawer stays in the DOM for its slide transition, but its list
@@ -100,8 +100,13 @@ export function StreamPage() {
   const [conversationListMounted, setConversationListMounted] = useState(isConversationViewOpen)
   if (isConversationViewOpen && !conversationListMounted) setConversationListMounted(true)
 
-  const isChannel = stream?.type === StreamTypes.CHANNEL
-  const isDm = stream?.type === StreamTypes.DM
+  // The conversation views stay with the first column's stream, wherever the user is working.
+  const primary = primaryPanelOf(layout)
+  const conversationOwner = primary !== null && isServerStreamId(primary) ? primary : streamId!
+  const { stream: ownerStream } = useStreamOrDraft(workspaceId!, conversationOwner)
+  const ownsViews = conversationOwner === primary
+  const isChannel = ownsViews && ownerStream?.type === StreamTypes.CHANNEL
+  const isDm = ownsViews && ownerStream?.type === StreamTypes.DM
 
   // `stream.displayName` is already viewer-resolved by useStreamOrDraft (DM peer
   // names included), so the page title just reads the shared name off it.
@@ -119,8 +124,8 @@ export function StreamPage() {
   }
 
   // Show error page if stream has error (404/403)
-  if (streamError) {
-    return <StreamErrorView type={streamError.type} workspaceId={workspaceId} />
+  if (pageError) {
+    return <StreamErrorView type={pageError.type} workspaceId={workspaceId} />
   }
 
   // Conversation side panel - shown for channels and DMs
@@ -153,7 +158,7 @@ export function StreamPage() {
           {conversationListMounted && (
             <ConversationList
               workspaceId={workspaceId}
-              streamId={streamId}
+              streamId={conversationOwner}
               onMessageClick={() => setConversationViewOpen(false)}
             />
           )}
@@ -162,25 +167,16 @@ export function StreamPage() {
     </>
   )
 
-  // On mobile the panel takes over the full screen, but the timeline stays mounted
-  // behind it so closing a thread lands back where the reader was rather than
-  // re-running the opening scroll.
-  const mobileTakeover = isMobile && pagePanel !== null && !panelInAside
-  const tabStackShown = isMobile ? mobileTakeover : showContent && !panelInAside
   // A tab floating over the page leaves everything else under it out of reach.
-  const floating = tabStackShown && floatingPanelTab(layout, isMobile) !== null
+  const floating = floatingPanelTab(layout, isMobile) !== null
 
-  const drops = isMobile || floating || panelInAside ? null : paneDrops
+  const drops = isMobile || floating || heldPane !== null ? null : paneDrops
   // A track for every column that fits, so opening, closing or resizing one animates from the width it had.
-  const columnWidths = displayWidth > 0 ? panelColumnWidths(panelGrid.sizes.columns, displayWidth) : []
+  const columnWidths = displayWidth > 0 ? panelColumnWidths(panelGrid.sizes.columns.slice(1), displayWidth) : []
   const panelTracks = Array.from({ length: maxColumns }, (_, column) => columnWidths[column] ?? 0)
   const columns = isMobile
     ? "minmax(0,1fr)"
     : ["minmax(0,1fr)", ...panelTracks.map((width) => `${width}px`), `${asideLayout.width}px`].join(" ")
-  const mainArea = isMobile ? "1 / 1" : "1 / 1 / -1 / 2"
-  // Main's right edge opens a first column; its centre and left edge wait for main to be a pane.
-  const mainDropZone =
-    layout.columns.length < maxColumns ? paneDropZone(drops, null, MAIN_DROP_EDGES, false) : undefined
 
   return (
     <AsideCoversPanesContext.Provider value={asideIsSheet && openAside !== null}>
@@ -193,39 +189,17 @@ export function StreamPage() {
       >
         {/* Drops reach the page's own panes only: never the aside's, nor a drawer's. */}
         <PaneDropContext.Provider value={drops}>
-          <Pane
-            area={mainArea}
-            covered={mobileTakeover}
-            inert={floating}
-            className={cn(floating && "isolate")}
-            ref={mainPaneRef}
-            data-testid="main-pane"
-            onPointerDownCapture={() => setCurrentPane(null)}
-            onFocusCapture={() => setCurrentPane(null)}
-            {...mainDropZone}
-          >
-            <StreamPane
-              workspaceId={workspaceId}
-              streamId={streamId}
-              highlightMessageId={highlightMessageId}
-              autoFocus={!isMobile}
-              contextLayout={display}
-            />
-          </Pane>
-          <PaneDropIndicator of={null} area={mainArea} />
-          {tabStackShown && (
-            <PanelTabStack
-              workspaceId={workspaceId}
-              maxColumns={maxColumns}
-              stacked={isMobile}
-              display={display}
-              grid={panelGrid}
-              width={isMobile ? null : panelWidth}
-              host={containerRef}
-              main={mainPaneRef}
-            />
-          )}
-          {tabStackShown && !isMobile && (
+          <PanelTabStack
+            workspaceId={workspaceId}
+            maxColumns={maxColumns + 1}
+            stacked={isMobile}
+            display={display}
+            grid={panelGrid}
+            width={isMobile ? null : panelWidth}
+            firstColumnWidth={Math.max(0, containerWidth - displayWidth - asideLayout.width)}
+            host={containerRef}
+          />
+          {showContent && isPanelOpen && !isMobile && (
             <PanelResizeHandle
               style={{ gridArea: "1 / 2 / -1 / 3" }}
               className="z-10 justify-self-start"
@@ -241,15 +215,13 @@ export function StreamPage() {
             />
           )}
         </PaneDropContext.Provider>
-        {/* The tab stack takes the shortcuts over once it mounts, which trails the panel opening. */}
-        {(!isPanelOpen || !(tabStackShown || panelInAside)) && <PaneShortcuts />}
         {asideColumn && (
           <Pane area="1 / -2 / -1 / -1" inert={floating} className={cn(floating && "isolate")}>
             <AsideColumn workspaceId={workspaceId} aside={asideColumn} layout={asideLayout} />
           </Pane>
         )}
         {/* One drawer at a time: the aside's sheet holds the page under the overview's. */}
-        {isMobile && !(asideIsSheet && openAside) && <PaneDrawer workspaceId={workspaceId} page={pagePanel} />}
+        {isMobile && !(asideIsSheet && openAside) && <PaneDrawer workspaceId={workspaceId} page={page} />}
         {asideIsSheet && openAside && (
           <AsideMobileSheet
             workspaceId={workspaceId}
@@ -260,10 +232,10 @@ export function StreamPage() {
           />
         )}
       </PaneHost>
-      {/* A `fixed` overlay that would paint over a fullscreen panel, so a takeover
-          keeps it out of the tree entirely rather than merely closed. Its
-          `?convView` state survives in the URL and returns when the panel closes. */}
-      {!mobileTakeover && conversationPanel}
+      {/* A `fixed` overlay that would paint over another page on a phone, so it
+          stays out of the tree there rather than merely closed. Its `?convView`
+          state survives in the URL and returns with the page's own stream. */}
+      {(!isMobile || page === conversationOwner) && conversationPanel}
     </AsideCoversPanesContext.Provider>
   )
 }

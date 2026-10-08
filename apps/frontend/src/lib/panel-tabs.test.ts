@@ -2,12 +2,14 @@ import { describe, it, expect } from "vitest"
 import {
   NO_PANELS,
   activatePanelTab,
+  canonicalPanelLayout,
   closePanelTab,
   dropPanelTab,
   fitPanelLayout,
   focusPanelTab,
   followCurrentPanel,
   formatPanelLayout,
+  fullPanelLayout,
   openPanelTab,
   openPanelTabBeside,
   openPanelTabWith,
@@ -15,6 +17,7 @@ import {
   primaryPanelOf,
   replacePanelTab,
   splitPanelTab,
+  streamPaneAfter,
   type PanelLayout,
 } from "./panel-tabs"
 
@@ -279,13 +282,12 @@ describe("dropPanelTab", () => {
     ]).toEqual(["b-a", "b--a", lone])
   })
 
-  it("should open a first column on the main view's right edge", () => {
-    const drop = { kind: "edge", of: null, side: "right" } as const
-    expect([
-      spell(dropPanelTab(NO_PANELS, "x", drop)),
-      spell(dropPanelTab(at("a-b"), "x", drop)),
-      spell(dropPanelTab(at("a.b"), "b", drop)),
-    ]).toEqual(["x", "x-a-b", "b-a"])
+  it("should open a first column on the first column's left edge", () => {
+    const drop = { kind: "edge", of: "a", side: "left" } as const
+    expect([spell(dropPanelTab(at("a-b"), "x", drop)), spell(dropPanelTab(at("a-b"), "b", drop))]).toEqual([
+      "x-a-b",
+      "b-a",
+    ])
   })
 
   it("should only bring a tab forward when dropped on itself or beside a tab that closed", () => {
@@ -320,6 +322,10 @@ describe("fitPanelLayout", () => {
 
   it("should show the last folded section's tab when the current pane is covered in its own", () => {
     expect(spell(fitPanelLayout(layout, 2, false, "b"))).toBe("a-b.c.d.e")
+  })
+
+  it("should show the pane last worked in there when the current pane is in a column that fits", () => {
+    expect(spell(fitPanelLayout(layout, 2, false, "a", "c"))).toBe("a-b.c*.d.e")
   })
 
   it("should fold everything into one section when stacked", () => {
@@ -362,22 +368,93 @@ describe("followCurrentPanel", () => {
     ]).toEqual(["a", "b", "b"])
   })
 
-  it("should stay on the main view when no tab opened", () => {
-    expect(followCurrentPanel(at("a-b"), at("a"), null)).toBeNull()
+  it("should make the newest tab current when no pane was", () => {
+    expect([followCurrentPanel(NO_PANELS, NO_PANELS, null), followCurrentPanel(at("a-b"), at("a-b"), null)]).toEqual([
+      null,
+      "b",
+    ])
   })
 
   it("should not treat a tab swapped in place as an opening", () => {
     const prev = at("a-draft")
     const promoted = replacePanelTab(prev, "draft", "x")
-    expect([
-      followCurrentPanel(prev, promoted, "a"),
-      followCurrentPanel(prev, promoted, null),
-      followCurrentPanel(prev, promoted, "draft"),
-    ]).toEqual(["a", null, "x"])
+    expect([followCurrentPanel(prev, promoted, "a"), followCurrentPanel(prev, promoted, "draft")]).toEqual(["a", "x"])
   })
 
   it("should follow a tab that navigated to one open in another section", () => {
     const prev = at("a.b*.c-d")
     expect(followCurrentPanel(prev, replacePanelTab(prev, "b", "d"), "b")).toBe("d")
+  })
+})
+
+describe("the route's stream pane", () => {
+  const page = (path: string, panel: string | null = null) => fullPanelLayout(path, at(panel))
+  const query = (layout: PanelLayout, path: string) => spell(canonicalPanelLayout(layout, path))
+
+  it("should put the route's stream in a first column of its own when the panel param doesn't place it", () => {
+    expect([
+      spell(page("A")),
+      spell(page("A", "B")),
+      spell(page("A", "B--C.D")),
+      spell(page("A", "B**.C")),
+      fullPanelLayout(null, at("B")),
+    ]).toEqual(["A", "A-B", "A-B--C.D", "A-B**.C", at("B")])
+  })
+
+  it("should take the arrangement as written when the panel param places the route's stream", () => {
+    expect([spell(page("A", "A.B")), spell(page("B", "A-B")), spell(page("A", "B--A"))]).toEqual(["A.B", "A-B", "B--A"])
+  })
+
+  it("should write back the panel param it was read from", () => {
+    const urls: [string, string | null][] = [
+      ["A", null],
+      ["A", "B"],
+      ["A", "A.B"],
+      ["A", "A*.B"],
+      ["A", "B--C.D"],
+      ["A", "B**.C"],
+      ["A", "A**"],
+      ["B", "A-B"],
+    ]
+    expect(urls.map(([path, panel]) => query(page(path, panel), path))).toEqual(urls.map(([, panel]) => panel))
+  })
+
+  it("should move the first column into the panel param when the route names another pane", () => {
+    const layout = page("A", "B")
+    expect([query(layout, "B"), query(layout, "A")]).toEqual(["A-B", "B"])
+  })
+
+  it("should keep the route's stream while it stays open", () => {
+    const prev = page("A", "B.C")
+    expect([
+      streamPaneAfter(prev, closePanelTab(prev, "C"), "A", "C"),
+      streamPaneAfter(prev, activatePanelTab(prev, "B"), "A", "B"),
+    ]).toEqual(["A", "A"])
+  })
+
+  it("should name the pane current after the route's stream closes when it is a stream", () => {
+    const prev = page("A", "B-C")
+    expect([
+      streamPaneAfter(prev, closePanelTab(prev, "A"), "A", "A"),
+      streamPaneAfter(prev, closePanelTab(prev, "A"), "A", "C"),
+    ]).toEqual(["B", "C"])
+  })
+
+  it("should name the first stream on show when the pane current after the close is no stream", () => {
+    const prev = page("A", "draft:A:msg_1-B")
+    expect(streamPaneAfter(prev, closePanelTab(prev, "A"), "A", "draft:A:msg_1")).toBe("B")
+  })
+
+  it("should name a covered stream when no stream is on show", () => {
+    const prev = page("A", "B.draft:A:msg_1")
+    expect(streamPaneAfter(prev, closePanelTab(prev, "A"), "A", "A")).toBe("B")
+  })
+
+  it("should name nothing when the last stream pane closes", () => {
+    const prev = page("A", "draft:A:msg_1.conv:conv_1")
+    expect([
+      streamPaneAfter(prev, closePanelTab(prev, "A"), "A", "A"),
+      streamPaneAfter(page("A"), closePanelTab(page("A"), "A"), "A", "A"),
+    ]).toEqual([null, null])
   })
 })

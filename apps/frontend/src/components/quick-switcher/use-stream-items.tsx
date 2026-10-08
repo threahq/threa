@@ -7,7 +7,7 @@ import { getStreamName, streamLabel, STREAM_ICONS } from "@/lib/streams"
 import { streamsApi } from "@/api"
 import { createDmDraftId, useUnreadCounts, useActivityCounts } from "@/hooks"
 import { isPickableUser, useWorkspaceUnreadState, type CachedUnreadState } from "@/stores/workspace-store"
-import { openAside } from "@/stores/aside-store"
+import { asideHostKey, openAside } from "@/stores/aside-store"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -248,7 +248,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
           closeDialog()
           if (asideHost) {
             openAside({
-              hostKey: href,
+              hostKey: asideHostKey(href),
               hostStreamId: asideHost,
               asideId: stream.id,
               originScope: draftStreamScope(asideHost),

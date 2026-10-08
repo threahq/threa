@@ -1,5 +1,4 @@
 import { useMemo } from "react"
-import { useParams } from "react-router-dom"
 import { useThreadAncestors } from "@/hooks"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { usePanel } from "@/contexts"
@@ -19,11 +18,9 @@ interface ThreadHeaderStream {
 interface ThreadHeaderProps {
   workspaceId: string
   stream: ThreadHeaderStream
-  /** Whether this header is in a panel (true) or main view (false). Affects navigation behavior. */
-  inPanel?: boolean
 }
 
-export function ThreadHeader({ workspaceId, stream, inPanel = false }: ThreadHeaderProps) {
+export function ThreadHeader({ workspaceId, stream }: ThreadHeaderProps) {
   const { ancestors: hookAncestors, isLoading } = useThreadAncestors(
     workspaceId,
     stream.id,
@@ -53,27 +50,16 @@ export function ThreadHeader({ workspaceId, stream, inPanel = false }: ThreadHea
     return []
   }, [hookAncestors, stream.rootStreamId, streams])
 
-  const { getNavigateUrl, closePanel } = usePanel()
-  const { streamId: mainViewStreamId } = useParams<{ streamId: string }>()
-
-  const getNavigationUrl = (streamId: string) => {
-    return inPanel ? getNavigateUrl(streamId) : `/w/${workspaceId}/s/${streamId}`
-  }
-
-  const isMainViewStream = (streamId: string) => {
-    return inPanel && mainViewStreamId === streamId
-  }
+  const { getNavigateUrl } = usePanel()
 
   const showLoadingPlaceholder = isLoading && stream.parentStreamId && ancestors.length === 0
 
   return (
-    <div className={`min-w-0 flex-1 overflow-hidden ${inPanel ? "pr-2" : ""}`}>
+    <div className="min-w-0 flex-1 overflow-hidden pr-2">
       <ResponsiveBreadcrumbs
         ancestors={ancestors}
         currentLabel={streamLabel(stream, "breadcrumb")}
-        isMainViewStream={isMainViewStream}
-        onClosePanel={closePanel}
-        getNavigationUrl={getNavigationUrl}
+        getNavigationUrl={getNavigateUrl}
         isLoading={!!showLoadingPlaceholder}
       />
     </div>

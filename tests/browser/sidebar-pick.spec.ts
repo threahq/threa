@@ -82,13 +82,16 @@ test("should swap the tab worked in for the picked stream, keep main mounted, an
 
   await sidebarRow(page, names.b).click()
   await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
-  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({ stream: streamA, panel: streamB })
+  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({
+    stream: streamB,
+    panel: `${streamA}-${streamB}`,
+  })
   await expect(tabPane(page, thread)).toHaveCount(0)
   await expect(litRow(page)).toHaveAccessibleName(new RegExp(`#${names.b}`))
   expect(await tagOf(mainZone(page).getByText("parent in a"))).toBe("main")
 
   await page.goBack()
-  await expect.poll(() => panelParam(page)).toBe(thread)
+  await expect.poll(() => panelParam(page)).toBe(`${streamA}-${thread}`)
   await expect(tabPane(page, thread).getByText("reply in a's thread")).toBeVisible()
   expect(await tagOf(mainZone(page).getByText("parent in a"))).toBe("main")
 })
@@ -115,10 +118,8 @@ test("should move main to the picked stream, closing main's thread but keeping a
     .click()
   await expect(tabPane(page, thread).getByText("reply in a's thread")).toBeVisible()
   expect(
-    panelParam(page)
-      ?.split(/[-.*]+/)
-      .sort()
-  ).toEqual([streamB, thread].sort())
+    [streamIdOf(page), ...panelParam(page)!.split(/[-.*]+/)].filter((id, at, ids) => ids.indexOf(id) === at).sort()
+  ).toEqual([streamA, streamB, thread].sort())
 
   // Working in main lights A's row; picking C moves main and closes only A's thread.
   await mainZone(page).getByText("parent in a").click()
@@ -159,7 +160,7 @@ test("should show main when its stream is picked on a phone, and swap the page i
   await page.goBack()
   await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
   await pickOnPhone(names.c)
-  await expect.poll(() => panelParam(page)).toBe(streamC)
-  expect(streamIdOf(page)).toBe(streamA)
+  await expect.poll(() => panelParam(page)).toBe(`${streamA}-${streamC}`)
+  expect(streamIdOf(page)).toBe(streamC)
   await expect(tabPane(page, streamB)).toHaveCount(0)
 })

@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useRef } from "react"
-import { useLocation } from "react-router-dom"
+import { matchPath, useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import { ContextRefKinds, StreamTypes, draftStreamScope, type ContextRef } from "@threahq/types"
 import { boardReplyDraftKey } from "@/lib/board/draft-keys"
 import { useCreateStream } from "./use-streams"
 import { buildAsideBag, buildViewportRef } from "@/lib/aside/snapshot"
-import { openAside } from "@/stores/aside-store"
+import { asideHostKey, openAside } from "@/stores/aside-store"
 import { capture } from "@/lib/analytics/posthog"
+import { PANEL_PARAM, fullPanelLayout, panelIdsOf, parsePanelLayout } from "@/lib/panel-tabs"
+
+/** The panes a stream page shows; null off the stream page. */
+function panesAt(pathname: string, search: string): string[] | null {
+  const path = matchPath("/w/:workspaceId/s/:streamId", pathname)?.params.streamId
+  if (path === undefined) return null
+  return panelIdsOf(fullPanelLayout(path, parsePanelLayout(new URLSearchParams(search).get(PANEL_PARAM))))
+}
 
 /**
  * Where an aside is opened from. A timeline surface (channel, DM, scratchpad,
@@ -53,12 +61,14 @@ function buildOriginRefs(origin: AsideOrigin): ContextRef[] {
  */
 export function useOpenAside(workspaceId: string) {
   const { mutateAsync: createStream } = useCreateStream(workspaceId)
-  const { pathname: hostKey } = useLocation()
-  // The create is a round trip; the page can be left (or the account switched)
-  // before it lands. Writing the surface then would strand an aside on a host
-  // that is gone — `dropAsideForHost` already ran against an empty store — and
-  // it would reappear on returning to that path. The ref is the page's own
-  // liveness: null once this host is no longer mounted.
+  const location = useLocation()
+  const hostKey = asideHostKey(location.pathname)
+  // The create is a round trip; the page can be left (or the account switched),
+  // or the host stream's pane closed, before it lands. Writing the surface then
+  // would strand an aside on a host that is gone — `dropAsideForHost` and
+  // `dropAsideForHostStream` already ran against an empty store — and it would
+  // reappear on returning to it. The refs are the page's own liveness: the host
+  // key is null once this host is no longer mounted.
   const mountedHostKey = useRef<string | null>(hostKey)
   useEffect(() => {
     mountedHostKey.current = hostKey
@@ -66,10 +76,16 @@ export function useOpenAside(workspaceId: string) {
       mountedHostKey.current = null
     }
   }, [hostKey])
+  const panes = panesAt(location.pathname, location.search)
+  const livePanes = useRef(panes)
+  useEffect(() => {
+    livePanes.current = panes
+  })
 
   return useCallback(
     async (origin: AsideOrigin) => {
       capture("aside_opened", { kind: origin.kind })
+      const hostShown = livePanes.current?.includes(origin.hostStreamId) ?? false
       const refs = buildOriginRefs(origin)
       let aside
       try {
@@ -85,6 +101,7 @@ export function useOpenAside(workspaceId: string) {
         throw err
       }
       if (mountedHostKey.current !== hostKey) return
+      if (hostShown && !livePanes.current?.includes(origin.hostStreamId)) return
       openAside({
         hostKey,
         hostStreamId: origin.hostStreamId,
@@ -106,7 +123,7 @@ export interface ResumeAsideParams {
 
 /** Re-open an existing aside from its anchor row. */
 export function useResumeAside() {
-  const { pathname: hostKey } = useLocation()
+  const hostKey = asideHostKey(useLocation().pathname)
   return useCallback(
     (params: ResumeAsideParams) => {
       openAside({

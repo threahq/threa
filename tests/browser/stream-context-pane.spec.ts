@@ -90,7 +90,7 @@ test("should open a thread's overview beside the thread and close it with the th
   await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadId}`)
 
   await tabPane(page, threadId).getByRole("button", { name: "In this stream" }).click()
-  await expect.poll(() => panelParam(page)).toBe(`${threadId}-context:${threadId}`)
+  await expect.poll(() => panelParam(page)).toBe(`${streamId}-${threadId}-context:${threadId}`)
   await expect(overview(page).getByText("example.org", { exact: true })).toBeVisible()
   // Exact: the pane's tab title is the thread's name, which quotes the channel's link.
   await expect(overview(page).getByText("example.com", { exact: true })).toHaveCount(0)
@@ -102,7 +102,7 @@ test("should open a thread's overview beside the thread and close it with the th
   await overview(page)
     .getByRole("button", { name: /^Links/ })
     .click()
-  await expect.poll(() => panelParam(page)).toBe(`${threadId}-context:${threadId}:link`)
+  await expect.poll(() => panelParam(page)).toBe(`${streamId}-${threadId}-context:${threadId}:link`)
   await page.reload()
   await expect(overview(page).getByRole("button", { name: /^Links/ })).toHaveAttribute("aria-pressed", "true", {
     timeout: 30_000,
@@ -151,7 +151,8 @@ test("phone: a thread's overview is a drawer over the thread, and closing it lea
 
   await page.keyboard.press("Escape")
   await expect(drawer(page)).toHaveCount(0)
-  await expect.poll(() => panelParam(page)).toBe(threadId)
+  await expect.poll(() => new URL(page.url()).pathname).toBe(`/w/${workspaceId}/s/${threadId}`)
+  expect(panelParam(page)).toBe(`${streamId}-${threadId}`)
   await expect(tabPane(page, threadId).getByText("thread link")).toBeVisible()
 })
 
@@ -200,9 +201,10 @@ test("should show the toggle off while the overview is folded behind its thread"
 
   // Bringing it forward changes nothing in the URL, so it is no step in history either.
   const entries = await page.evaluate(() => history.length)
+  const url = page.url()
   await toggle.click()
   await expect(overview(page)).toBeInViewport()
-  expect(panelParam(page)).toBe(`${threadId}-context:${threadId}`)
+  expect(page.url()).toBe(url)
   expect(await page.evaluate(() => history.length)).toBe(entries)
 })
 

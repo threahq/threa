@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip"
 import {
   SidebarProvider,
   PanelProvider,
+  PaneScope,
   CoordinatedLoadingProvider,
   ServicesProvider,
   TraceProvider,
@@ -84,7 +85,11 @@ function renderPanel(panel: string) {
                               <Routes>
                                 <Route
                                   path="/w/:workspaceId/s/:streamId"
-                                  element={<StreamPanel workspaceId={workspaceId} onClose={() => {}} />}
+                                  element={
+                                    <PaneScope panelId={panel} section={{ ids: [panel], active: panel }} splits={[]}>
+                                      <StreamPanel workspaceId={workspaceId} onClose={() => {}} />
+                                    </PaneScope>
+                                  }
                                 />
                               </Routes>
                             </CoordinatedLoadingProvider>

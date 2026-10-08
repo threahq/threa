@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { formatPanelLayout, parsePanelLayout } from "@/lib/panel-tabs"
+import { canonicalPanelLayout, formatPanelLayout, fullPanelLayout, parsePanelLayout } from "@/lib/panel-tabs"
 import { pickStream, streamOfPane } from "./stream-pick"
 
 const parents: Record<string, string> = {
@@ -10,42 +10,39 @@ const parents: Record<string, string> = {
 }
 const parentOf = (id: string) => parents[id] ?? null
 
-function pick(panel: string | null, current: string | null, streamId: string, stacked = false) {
-  const page = { mainStreamId: "stream_a", layout: parsePanelLayout(panel), current, stacked }
+/** A pick on `/s/stream_a?panel=<panel>`, read back as the route it lands on. */
+function pick(panel: string | null, current: string, streamId: string, stacked = false) {
+  const page = { layout: fullPanelLayout("stream_a", parsePanelLayout(panel)), current, stacked }
   const next = pickStream(page, streamId, parentOf)
-  return { mainStreamId: next.mainStreamId, panel: formatPanelLayout(next.layout), current: next.current }
+  return { path: next.current, panel: formatPanelLayout(canonicalPanelLayout(next.layout, next.current)) }
 }
 
 describe("pickStream", () => {
-  it("should swap the tab worked in for the picked stream and close what was opened from it when a tab is current", () => {
+  it("should swap the pane worked in for the picked stream and close what was opened from it", () => {
     expect(pick("stream_t1*.stream_b-stream_t2-compose:stream_t1", "stream_t1", "stream_c")).toEqual({
-      mainStreamId: "stream_a",
-      panel: "stream_c*.stream_b",
-      current: "stream_c",
+      path: "stream_c",
+      panel: "stream_a-stream_c*.stream_b",
     })
   })
 
-  it("should move main to the picked stream and close only main's own panes when main is current", () => {
-    expect(pick("stream_t1-context:stream_a-draft:stream_a:msg_1-stream_b", null, "stream_c")).toEqual({
-      mainStreamId: "stream_c",
+  it("should swap the route's own stream and close only its own panes when it is current", () => {
+    expect(pick("stream_t1-context:stream_a-draft:stream_a:msg_1-stream_b", "stream_a", "stream_c")).toEqual({
+      path: "stream_c",
       panel: "stream_b",
-      current: null,
     })
   })
 
   it("should bring an open stream forward instead of opening it twice", () => {
-    expect(pick("stream_t1*.stream_b", null, "stream_b")).toEqual({
-      mainStreamId: "stream_a",
-      panel: "stream_t1.stream_b",
-      current: "stream_b",
+    expect(pick("stream_t1*.stream_b", "stream_a", "stream_b")).toEqual({
+      path: "stream_b",
+      panel: "stream_a-stream_t1.stream_b",
     })
   })
 
-  it("should return to main without closing anything when main's own stream is picked from a tab", () => {
+  it("should return to the route's stream without closing anything when it is picked from another pane", () => {
     expect(pick("stream_t1-stream_b", "stream_b", "stream_a")).toEqual({
-      mainStreamId: "stream_a",
+      path: "stream_a",
       panel: "stream_t1-stream_b",
-      current: null,
     })
   })
 
@@ -55,39 +52,38 @@ describe("pickStream", () => {
       pick("stream_t1-draft:stream_t1:msg_1", "draft:stream_t1:msg_1", "stream_c"),
       pick("stream_b-context:stream_a", "context:stream_a", "stream_c"),
     ]).toEqual([
-      { mainStreamId: "stream_a", panel: "stream_c-stream_t1", current: "stream_c" },
-      { mainStreamId: "stream_a", panel: "stream_c", current: "stream_c" },
-      { mainStreamId: "stream_c", panel: "stream_b", current: null },
+      { path: "stream_c", panel: "stream_a-stream_c-stream_t1" },
+      { path: "stream_c", panel: "stream_a-stream_c" },
+      { path: "stream_c", panel: "stream_b" },
     ])
   })
 
-  it("should keep a floating tab floating when it is replaced, and let it sink when main's stream is picked", () => {
+  it("should keep a floating pane floating when it is replaced, and let it sink when another open stream is picked", () => {
     expect([
       pick("stream_t1**.stream_b", "stream_t1", "stream_c"),
       pick("stream_t1**", "stream_t1", "stream_a"),
     ]).toEqual([
-      { mainStreamId: "stream_a", panel: "stream_c**.stream_b", current: "stream_c" },
-      { mainStreamId: "stream_a", panel: "stream_t1", current: null },
+      { path: "stream_c", panel: "stream_a-stream_c**.stream_b" },
+      { path: "stream_a", panel: "stream_t1" },
     ])
   })
 
-  it("should close every tab over the main view when a pick lands there on a phone", () => {
+  it("should close every pane over the first page when a pick lands there on a phone", () => {
     expect([
       pick("stream_b", "stream_b", "stream_a", true),
       pick("stream_b-context:stream_a", "context:stream_a", "stream_c", true),
       pick("stream_b-stream_t1", "stream_t1", "stream_c", true),
     ]).toEqual([
-      { mainStreamId: "stream_a", panel: null, current: null },
-      { mainStreamId: "stream_c", panel: null, current: null },
-      { mainStreamId: "stream_a", panel: "stream_b-stream_c", current: "stream_c" },
+      { path: "stream_a", panel: null },
+      { path: "stream_c", panel: null },
+      { path: "stream_c", panel: "stream_a-stream_b-stream_c" },
     ])
   })
 
   it("should keep panes whose stream it can't place, even when their parents loop", () => {
-    expect(pick("stream_x-stream_unknown", null, "stream_c")).toEqual({
-      mainStreamId: "stream_c",
+    expect(pick("stream_x-stream_unknown", "stream_a", "stream_c")).toEqual({
+      path: "stream_c",
       panel: "stream_x-stream_unknown",
-      current: null,
     })
   })
 })

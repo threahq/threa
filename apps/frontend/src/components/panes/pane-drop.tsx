@@ -8,8 +8,7 @@ import { cn } from "@/lib/utils"
 /**
  * Tabs and sidebar rows dropped on the stream page's panes: a pane's edge
  * splits beside it, its centre adds a tab, a tab strip splices between its
- * tabs, and the main view's right edge opens a first column. Native HTML5 drag,
- * as the sidebar's rows already are (lib/stream-drag.ts), so a stream tab dropped
+ * tabs. Native HTML5 drag, as the sidebar's rows already are (lib/stream-drag.ts), so a stream tab dropped
  * in the composer or another window is its permalink, and one dropped on a
  * sidebar section files it there. Desktop only, like the rows.
  */
@@ -70,8 +69,8 @@ interface PaneDropTarget {
   drop: PaneDrop
   /** A strip draws its own caret; a pane's zone is drawn over the pane. */
   via: "pane" | "strip"
-  /** The pane, or the strip's section, by the tab it shows (null: the main view). */
-  of: string | null
+  /** The pane, or the strip's section, by the tab it shows. */
+  of: string
 }
 
 interface PaneDropState {
@@ -85,11 +84,8 @@ export const PaneDropContext = createContext<PaneDropState | null>(null)
 
 const sameTarget = (a: PaneDropTarget | null, b: PaneDropTarget | null) => JSON.stringify(a) === JSON.stringify(b)
 
-/**
- * Where a drag over the stream page would land, for {@link PaneDropContext};
- * the main view's stream, `mainStreamId`, stays the main view's.
- */
-export function usePaneDropState(workspaceId: string, mainStreamId: string): PaneDropState {
+/** Where a drag over the stream page would land, for {@link PaneDropContext}. */
+export function usePaneDropState(workspaceId: string): PaneDropState {
   const { dropTab } = usePanel()
   const [target, setTarget] = useState<PaneDropTarget | null>(null)
   const hover = useCallback(
@@ -100,10 +96,9 @@ export function usePaneDropState(workspaceId: string, mainStreamId: string): Pan
     (data: DataTransfer, drop: PaneDrop) => {
       setTarget(null)
       const panelId = readPaneDrag(data, workspaceId)
-      // The main view's stream isn't a pane until main is one.
-      if (panelId && panelId !== mainStreamId) dropTab(panelId, drop)
+      if (panelId) dropTab(panelId, drop)
     },
-    [workspaceId, mainStreamId, dropTab]
+    [workspaceId, dropTab]
   )
 
   // A drag cancelled, or dropped where no zone claimed it, never leaves the zone it last crossed.
@@ -130,15 +125,10 @@ const overEditor = (event: DragEvent<HTMLElement>) =>
   event.target instanceof Element && event.target.closest('[contenteditable="true"]') !== null
 
 /**
- * Drop handlers for the pane showing `of` (null: the main view), whose `edges`
- * split and whose centre, when `centre`, adds a tab. Undefined while drops are off.
+ * Drop handlers for the pane showing `of`, whose `edges` split and whose
+ * centre adds a tab. Undefined while drops are off.
  */
-export function paneDropZone(
-  drops: PaneDropState | null,
-  of: string | null,
-  edges: readonly PaneEdge[],
-  centre: boolean
-) {
+export function paneDropZone(drops: PaneDropState | null, of: string, edges: readonly PaneEdge[]) {
   if (!drops) return undefined
   const { hover, land } = drops
   const dropAt = (event: DragEvent<HTMLElement>): PaneDrop | null => {
@@ -146,7 +136,7 @@ export function paneDropZone(
     if (event.defaultPrevented || !carriesPane(event.dataTransfer) || overEditor(event)) return null
     const zone = paneDropZoneAt(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY, edges)
     if (zone !== "centre") return { kind: "edge", of, side: zone }
-    return centre && of !== null ? { kind: "tab", of, before: null } : null
+    return { kind: "tab", of, before: null }
   }
   return {
     onDragOver: (event: DragEvent<HTMLElement>) => {
@@ -226,7 +216,7 @@ const EDGE_SHAPES: Record<PaneEdge, string> = {
 }
 
 /** Where a drop over the pane showing `of` would land, drawn over the grid `area` it fills. */
-export function PaneDropIndicator({ of, area }: { of: string | null; area: string }) {
+export function PaneDropIndicator({ of, area }: { of: string; area: string }) {
   const target = usePaneDrop()?.target
   if (target?.via !== "pane" || target.of !== of) return null
   const { drop } = target
