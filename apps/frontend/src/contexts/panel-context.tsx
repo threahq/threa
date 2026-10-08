@@ -18,7 +18,7 @@ import {
   useNavigationType,
 } from "react-router-dom"
 import { useCoverHistory, type CoverLanding } from "@/hooks/use-cover-close"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { PANEL_COVER } from "@/lib/covers"
 import { isPagePane, isServerStreamId } from "@/lib/stream-ids"
 import {
@@ -534,7 +534,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
   // is in front on its first paint: a phone shows it, and a narrow window folding
   // it in with others brings it forward. Starting from the newest panel keeps a
   // reload showing what the URL's last open showed.
-  const phone = useIsMobile()
+  const phone = useIsMobileOrCoarse()
   const [paneState, setPaneState] = useState<PaneState>(() => {
     // The route names the pane worked in, and a reloaded `?m` goes to the newest pane, as links already written
     // expect. A phone, which shows one pane, lands as {@link phoneLandingOf} says, and so does its `?m`.
