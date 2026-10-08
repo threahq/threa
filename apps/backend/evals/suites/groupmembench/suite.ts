@@ -298,10 +298,13 @@ export function seedWorkspace(variant: Variant) {
             () => undefined
           )
           await copy
-          return messageCount
-        } finally {
-          await db.cleanup()
+        } catch (error) {
+          // The replay cost hours; keep it to inspect or merge by hand.
+          await db.pool.end()
+          throw new Error(`${channel.name} replayed but did not merge; kept ${db.databaseName}`, { cause: error })
         }
+        await db.cleanup()
+        return messageCount
       })
     )
     const failed = replays.flatMap((replay) => (replay.status === "rejected" ? [replay.reason] : []))
