@@ -66,6 +66,7 @@ export type {
 } from "./service"
 
 export { StubMemoService } from "./service.stub"
+export { createMemoService } from "./create-memo-service"
 
 export { MemoExplorerService } from "./explorer-service"
 export type {

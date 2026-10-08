@@ -110,7 +110,7 @@ import {
   StubSearchRefiner,
 } from "./features/search"
 import {
-  MemoService,
+  createMemoService,
   MemoExplorerService,
   Reranker,
   StubReranker,
@@ -118,10 +118,6 @@ import {
   ResidencyRoutedRelevanceScorer,
   DecisionsRelevanceScorer,
   StubMemoService,
-  MemoClassifier,
-  DecisionsMemoClassifier,
-  ResidencyRoutedMemoClassifier,
-  Memorizer,
   EmbeddingService,
   StubEmbeddingService,
   EmbeddingHandler,
@@ -141,9 +137,7 @@ import {
   BoundaryExtractionHandler,
   createBoundaryExtractionWorker,
   createStalenessSweepWorker,
-  DecisionsBoundaryExtractor,
-  LLMBoundaryExtractor,
-  ResidencyRoutedBoundaryExtractor,
+  createBoundaryExtractor,
   StubBoundaryExtractor,
   ConversationEmbeddingHandler,
   createConversationEmbeddingWorker,
@@ -990,12 +984,7 @@ export async function startServer(): Promise<ServerInstance> {
   // worker reuses the same instance (INV-13).
   const boundaryExtractor = config.useStubBoundaryExtraction
     ? new StubBoundaryExtractor()
-    : new ResidencyRoutedBoundaryExtractor({
-        residency: aiResidency,
-        decisions: new DecisionsBoundaryExtractor(ai, configResolver),
-        inference: new LLMBoundaryExtractor(ai, configResolver),
-        availability: decisionsAvailability,
-      })
+    : createBoundaryExtractor({ ai, configResolver, aiResidency, decisionsAvailability })
   const boundaryExtractionService = new BoundaryExtractionService(pool, boundaryExtractor)
 
   registerRoutes(app, {
@@ -1156,18 +1145,15 @@ export async function startServer(): Promise<ServerInstance> {
   // before PersonaAgent so the companion's save_memo callback can bind to it.
   const memoService = config.useStubAI
     ? new StubMemoService()
-    : new MemoService({
+    : createMemoService({
         pool,
-        analyticsReporter,
-        classifier: new ResidencyRoutedMemoClassifier({
-          residency: aiResidency,
-          decisions: new DecisionsMemoClassifier(ai),
-          inference: new MemoClassifier(ai, configResolver, messageFormatter),
-          availability: decisionsAvailability,
-        }),
-        memorizer: new Memorizer(ai, configResolver, messageFormatter),
-        embeddingService,
+        ai,
+        configResolver,
         messageFormatter,
+        aiResidency,
+        decisionsAvailability,
+        embeddingService,
+        analyticsReporter,
         // Passive to-do collection rides the classifier flag on each settled
         // conversation (INV-52 — the capability, not the concrete service).
         suggestionCollector: savedSuggestionsService,

@@ -14,7 +14,7 @@
  */
 
 import type { CaseResult, EvalContext, EvalSuite, Evaluator, RunEvaluator } from "../../framework/types"
-import { seedWorkspace, seededWorkspace, percentile, seconds } from "./suite"
+import { replayStart, seedWorkspace, seededWorkspace, percentile, seconds } from "./suite"
 import { QUESTION_TYPES, datasetDir, loadQuestions, type BenchQuestion } from "./dataset"
 import { DecisionsAvailability } from "@threahq/agent-runtime"
 import {
@@ -188,6 +188,9 @@ export const groupMemBenchRecallSuite: EvalSuite<RecallInput, RecallOutput, Benc
       input: { question },
       expectedOutput: question,
     }))
+  },
+  get simClock() {
+    return replayStart()
   },
   setup: seedWorkspace("memory"),
   reusesDatabase: true,

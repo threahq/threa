@@ -2,15 +2,17 @@
  * GroupMemBench, Technology domain: 30k messages from 18 people across seven
  * channels, asked 213 questions in six types (`dataset.ts`).
  *
- * Setup replays the channels as public Threa channels with the original
- * authors and timestamps. Each top-level post with replies gets a thread,
- * nested replies flattened into it and titled with the post's phase, since the
- * questions name phases the message text mostly does not. Every question is
- * then asked by its own user in a fresh scratchpad, through the production
- * `PersonaAgent.run`, as of the day after the data ends:
+ * Setup replays the channels, all seven interleaved by timestamp, through the
+ * production pipeline on a simulated clock (`fixtures/replay.ts`): boundary
+ * extraction, memo capture and embeddings run as they would have live, up to
+ * the moment the questions are asked. Each top-level post with replies gets a
+ * thread, nested replies flattened into it and titled with the post's phase,
+ * since the questions name phases the message text mostly does not. Every
+ * question is then asked by its own user in a fresh scratchpad, through the
+ * production `PersonaAgent.run`, as of the day after the data ends:
  *
- *   groupmembench            capture on, prepared recall on, every tool
- *   groupmembench-no-memory  nothing captured: message search only
+ *   groupmembench            memory on, prepared recall on, every tool
+ *   groupmembench-no-memory  channels' memory off: message search only
  *
  * Graded with GroupMemBench's own judge prompt, correct or not.
  *
@@ -20,13 +22,13 @@
  * `GROUPMEMBENCH_CHANNELS` (comma-separated) seeds only those channels, for a
  * smoke run; questions about the others then have nothing to find.
  *
- * Capture takes hours. `--keep-db` keeps a run's database, and `--from-db <name>`
+ * The replay takes hours. `--keep-db` keeps a run's database, and `--from-db <name>`
  * clones it into later runs, which then measure recall over the same memos.
  */
 
 import type { CaseResult, EvalContext, EvalSuite, Evaluator, RunEvaluator } from "../../framework/types"
 import { EVAL_JUDGE_MODEL } from "../../framework/judge-config"
-import { createCaptureMemoService, drainCapture, postMessages, recordConversation } from "../../fixtures/capture"
+import { startReplayPipeline, type ReplayMessage } from "../../fixtures/replay"
 import { runCompanionTask } from "../companion/suite"
 import type { CompanionTrajectoryStep } from "../companion/types"
 import {
@@ -34,23 +36,16 @@ import {
   datasetDir,
   loadChannels,
   loadQuestions,
-  segmentConversations,
   type BenchChannel,
   type BenchMessage,
   type BenchQuestion,
 } from "./dataset"
 import { COMPANION_MODEL_ID, COMPANION_TEMPERATURE } from "../../../src/features/agents"
-import { PROVISIONAL_ATTACH_WINDOW_MINUTES } from "../../../src/features/conversations"
-import { EmbeddingService } from "../../../src/features/memos"
 import { MEMO_MAX_FAILED_ATTEMPTS } from "../../../src/features/memos/config"
-import {
-  plan as planMessageEmbeddings,
-  processChunk as embedMessageChunk,
-} from "../../../src/features/memos/message-embedding-backfill"
-import { StreamRepository, StreamMemberRepository } from "../../../src/features/streams"
+import { StreamService } from "../../../src/features/streams"
 import { UserRepository } from "../../../src/features/workspaces"
-import { streamId as generateStreamId, userId as generateUserId } from "../../../src/lib/id"
-import { AgentStepTypes, StreamTypes } from "@threahq/types"
+import { userId as generateUserId } from "../../../src/lib/id"
+import { AgentStepTypes, MemoryModes, StreamTypes } from "@threahq/types"
 import { z } from "zod"
 
 type Variant = "memory" | "no-memory"
@@ -78,7 +73,6 @@ export interface GroupMemBenchOutput {
 
 /** The data ends on 2025-07-28; temporal answers are absolute dates in that range. */
 const ASKED_AT = "2025-07-29T09:00:00Z"
-const MAX_CONVERSATION_MESSAGES = 30
 const RETRIEVAL_STEP_TYPES = new Set<string>([AgentStepTypes.WORKSPACE_SEARCH, AgentStepTypes.RESEARCH])
 
 interface SeededWorkspace {
@@ -125,108 +119,64 @@ async function insertUsers(ctx: EvalContext, names: string[]): Promise<Map<strin
   return userIds
 }
 
-/** A conversation to capture, on the stream that holds it. */
-interface SeededConversation {
-  streamId: string
-  messageIds: string[]
-  participantIds: string[]
-  lastAt: Date
+/** The clock starts just before the first post, so the channels exist before anything is said in them. */
+export function replayStart(): Date {
+  const first = selectedChannels()
+    .flatMap((channel) => channel.posts)
+    .reduce((min, post) => Math.min(min, post.createdAt.getTime()), Infinity)
+  return new Date(first - 60_000)
+}
+
+function requireClock(ctx: EvalContext) {
+  if (!ctx.clock) throw new Error("groupmembench runs on a simulated clock")
+  return ctx.clock
 }
 
 /**
- * Posts a channel's history, its threads under their root posts, and returns
- * its conversations oldest first: the order they would have resolved in.
+ * Creates a channel as its first author would, and returns its history as
+ * replay input: posts in the channel, replies in a thread under their root post.
  */
 async function seedChannel(
   ctx: EvalContext,
+  streamService: StreamService,
   channel: BenchChannel,
-  userIds: Map<string, string>
-): Promise<{ channelId: string; messageCount: number; conversations: SeededConversation[] }> {
-  const { pool, workspaceId } = ctx
-  const authorId = (message: BenchMessage) => userIds.get(message.author)!
-  const toSeed = (messages: BenchMessage[]) =>
-    messages.map((m) => ({ authorId: authorId(m), content: m.content, createdAt: m.createdAt }))
-  const conversations: SeededConversation[] = []
-  const addConversations = (streamId: string, messages: BenchMessage[], ids: string[]) => {
-    const idByNode = new Map(messages.map((m, i) => [m.node, ids[i]!]))
-    for (const conversation of segmentConversations(
-      messages,
-      MAX_CONVERSATION_MESSAGES,
-      PROVISIONAL_ATTACH_WINDOW_MINUTES * 60_000
-    )) {
-      conversations.push({
-        streamId,
-        messageIds: conversation.map((m) => idByNode.get(m.node)!),
-        participantIds: [...new Set(conversation.map(authorId))],
-        lastAt: conversation.at(-1)!.createdAt,
-      })
-    }
-  }
-
-  const channelId = generateStreamId()
-  await StreamRepository.insert(pool, {
-    id: channelId,
+  userIds: Map<string, string>,
+  variant: Variant
+): Promise<ReplayMessage[]> {
+  const { workspaceId } = ctx
+  const createdBy = userIds.get(channel.authors[0]!)!
+  const stream = await streamService.create({
     workspaceId,
     type: StreamTypes.CHANNEL,
-    displayName: channel.name,
     slug: channel.name.replace(/([a-z])([A-Z])/g, "$1-$2").toLowerCase(),
     visibility: "public",
-    companionMode: "off",
-    createdBy: userIds.get(channel.authors[0]!)!,
+    createdBy,
+    memberIds: channel.authors.map((author) => userIds.get(author)!),
   })
-  for (const author of channel.authors) {
-    await StreamMemberRepository.insert(pool, workspaceId, channelId, userIds.get(author)!)
+  if (variant === "no-memory") {
+    await streamService.updateStream(
+      stream.id,
+      { memoryMode: MemoryModes.OFF },
+      { workspaceId, principal: { kind: "user", userId: createdBy } }
+    )
   }
 
-  const postIds = await postMessages(ctx, channelId, toSeed(channel.posts))
-  addConversations(channelId, channel.posts, postIds)
-  const postIdByNode = new Map(channel.posts.map((post, i) => [post.node, postIds[i]!]))
-  let messageCount = channel.posts.length
-
-  for (const thread of channel.threads) {
-    const threadId = generateStreamId()
-    await StreamRepository.insert(pool, {
-      id: threadId,
-      workspaceId,
-      type: StreamTypes.THREAD,
-      displayName: thread.root.phase,
-      visibility: "public",
-      parentStreamId: channelId,
-      parentAnchorId: postIdByNode.get(thread.root.node)!,
-      rootStreamId: channelId,
-      companionMode: "off",
-      createdBy: authorId(thread.replies[0]!),
-    })
-    addConversations(threadId, thread.replies, await postMessages(ctx, threadId, toSeed(thread.replies)))
-    messageCount += thread.replies.length
-  }
-  conversations.sort((a, b) => a.lastAt.getTime() - b.lastAt.getTime())
-  return { channelId, messageCount, conversations }
-}
-
-const EMBED_CONCURRENCY = 4
-
-/**
- * Production embeds every message as it is posted, and the researcher's message
- * search is hybrid over those embeddings. Seeding bypasses the embedding queue,
- * so without this the bench measures keyword-only message search. Chunks skip
- * messages whose stored embedding already matches, so a kept database only pays
- * for what it lacks.
- */
-async function embedMessages(ctx: EvalContext): Promise<number> {
-  const backfill = { pool: ctx.pool, embeddingService: new EmbeddingService({ ai: ctx.ai }) }
-  const chunks = await planMessageEmbeddings(backfill, ctx.workspaceId)
-  const workers = Array.from({ length: EMBED_CONCURRENCY }, async () => {
-    let embedded = 0
-    for (let chunk = chunks.shift(); chunk; chunk = chunks.shift()) {
-      embedded += (await embedMessageChunk(backfill, ctx.workspaceId, chunk)).processed
-    }
-    return embedded
+  const key = (message: BenchMessage) => `${channel.name}/${message.node}`
+  const base = (message: BenchMessage) => ({
+    key: key(message),
+    authorId: userIds.get(message.author)!,
+    content: message.content,
+    createdAt: message.createdAt,
   })
-  return (await Promise.all(workers)).reduce((sum, n) => sum + n, 0)
+  return [
+    ...channel.posts.map((post) => ({ ...base(post), streamId: stream.id })),
+    ...channel.threads.flatMap((thread) =>
+      thread.replies.map((reply) => ({ ...base(reply), threadOf: key(thread.root), threadName: thread.root.phase }))
+    ),
+  ]
 }
 
-/** A kept database already holds the seeded channels and captured memos; only the lookup state is rebuilt. */
+/** A kept database already holds the replayed channels and their memos; only the lookup state is rebuilt. */
 async function reuseWorkspace(ctx: EvalContext): Promise<void> {
   const users = await ctx.pool.query<{ id: string; name: string }>(
     `SELECT id, name FROM users WHERE workspace_id = $1 AND email LIKE '%@groupmembench.test'`,
@@ -253,9 +203,9 @@ async function reuseWorkspace(ctx: EvalContext): Promise<void> {
      WHERE s.id = sm.stream_id AND s.workspace_id = $1 AND NOT (s.id = ANY($2::text[]))`,
     [ctx.workspaceId, streams.rows.map((row) => row.id)]
   )
-  const embedded = await embedMessages(ctx)
+  await requireClock(ctx).set(new Date(ASKED_AT))
   console.log(
-    `\n  Reusing ${ctx.reusedDatabase}: ${streams.rows.length} channels and threads, ${memos.rows[0]!.count} active memos, ${embedded} messages newly embedded\n`
+    `\n  Reusing ${ctx.reusedDatabase}: ${streams.rows.length} channels and threads, ${memos.rows[0]!.count} active memos\n`
   )
 }
 
@@ -268,47 +218,46 @@ export function seedWorkspace(variant: Variant) {
     const names = [...new Set([...channels.flatMap((c) => c.authors), ...askers])].sort()
     const userIds = await insertUsers(ctx, names)
 
-    const seededChannels = await Promise.all(channels.map((channel) => seedChannel(ctx, channel, userIds)))
-    const messageCount = seededChannels.reduce((sum, c) => sum + c.messageCount, 0)
-    const embedded = await embedMessages(ctx)
-    console.log(
-      `\n  Seeded ${messageCount} messages in ${channels.length} channels, ${embedded} embedded (${seconds(Date.now() - startedAt)})`
-    )
-
-    if (variant === "memory") {
-      const memoService = createCaptureMemoService(ctx)
-      // A channel's threads queue on the channel, so each channel drains on its own, the channels in parallel.
-      // Each conversation is captured before the next is recorded, as production settles them one at a time.
-      const remaining = await Promise.all(
-        seededChannels.map(async ({ channelId, conversations }, i) => {
-          let left = 0
-          for (const c of conversations) {
-            await recordConversation(ctx, c.streamId, c.messageIds, c.participantIds)
-            left = await drainCapture(ctx, memoService, channelId)
-          }
-          console.log(
-            `  ${channels[i]!.name}: ${conversations.length} conversations (${seconds(Date.now() - startedAt)})`
-          )
-          return left
-        })
+    if (!ctx.connectionString) throw new Error("groupmembench replays against a database")
+    const pipeline = await startReplayPipeline({
+      pool: ctx.pool,
+      connectionString: ctx.connectionString,
+      clock: requireClock(ctx),
+      ai: ctx.ai,
+      workspaceId: ctx.workspaceId,
+    })
+    let messageCount = 0
+    let result
+    try {
+      const streamService = new StreamService(ctx.pool)
+      const histories = await Promise.all(
+        channels.map((channel) => seedChannel(ctx, streamService, channel, userIds, variant))
       )
-      const { rows } = await ctx.pool.query<{ memos: string; abandoned: string }>(
-        `SELECT
-           (SELECT count(*) FROM memos WHERE workspace_id = $1 AND status = 'active') AS memos,
-           (SELECT count(*) FROM memo_pending_items WHERE workspace_id = $1 AND failed_attempts >= $2) AS abandoned`,
-        [ctx.workspaceId, MEMO_MAX_FAILED_ATTEMPTS]
-      )
-      const captured = seededChannels.reduce((sum, c) => sum + c.conversations.length, 0)
-      const lost = Number(rows[0]!.abandoned) + remaining.reduce((sum, n) => sum + n, 0)
-      console.log(
-        `  Captured ${captured} conversations into ${rows[0]!.memos} memos, ${lost} lost to failed model calls (${seconds(Date.now() - startedAt)}, $${ctx.usage.getTotal().totalCost.toFixed(2)} generation)\n`
-      )
+      const messages = histories.flat().sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      messageCount = messages.length
+      result = await pipeline.replay(messages, new Date(ASKED_AT))
+    } finally {
+      await pipeline.stop()
     }
 
-    const { rows } = await ctx.pool.query<{ id: string }>(`SELECT id FROM streams WHERE workspace_id = $1`, [
+    const { rows } = await ctx.pool.query<{ conversations: string; memos: string; abandoned: string }>(
+      `SELECT
+         (SELECT count(*) FROM conversations WHERE workspace_id = $1) AS conversations,
+         (SELECT count(*) FROM memos WHERE workspace_id = $1 AND status = 'active') AS memos,
+         (SELECT count(*) FROM memo_pending_items WHERE workspace_id = $1 AND failed_attempts >= $2) AS abandoned`,
+      [ctx.workspaceId, MEMO_MAX_FAILED_ATTEMPTS]
+    )
+    console.log(
+      `\n  Replayed ${messageCount} messages in ${channels.length} channels into ${rows[0]!.conversations} conversations and ${rows[0]!.memos} memos (${seconds(Date.now() - startedAt)}, $${ctx.usage.getTotal().totalCost.toFixed(2)} generation)`
+    )
+    console.log(
+      `  ${result.unprocessedMemoItems} memo items still pending at ${ASKED_AT}, ${rows[0]!.abandoned} abandoned after failed model calls, ${result.deadLetteredJobs} pipeline jobs and ${result.deadLetteredEvents} outbox events dead-lettered\n`
+    )
+
+    const streams = await ctx.pool.query<{ id: string }>(`SELECT id FROM streams WHERE workspace_id = $1`, [
       ctx.workspaceId,
     ])
-    seeded.set(ctx.workspaceId, { userIds, baselineStreamIds: new Set(rows.map((row) => row.id)) })
+    seeded.set(ctx.workspaceId, { userIds, baselineStreamIds: new Set(streams.rows.map((row) => row.id)) })
   }
 }
 
@@ -475,6 +424,9 @@ function buildSuite(variant: Variant): EvalSuite<GroupMemBenchInput, GroupMemBen
         input: { question },
         expectedOutput: question,
       }))
+    },
+    get simClock() {
+      return replayStart()
     },
     setup: seedWorkspace(variant),
     reusesDatabase: variant === "memory",

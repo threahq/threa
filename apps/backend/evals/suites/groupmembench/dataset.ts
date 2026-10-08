@@ -109,13 +109,21 @@ export function buildChannel(name: string, raw: RawMessage[]): BenchChannel {
     messages.filter((m) => m.replyTo !== null),
     (m) => rootOf(m).node
   )
-  const posts = messages.filter((m) => m.replyTo === null).sort(byTime)
+  // Some roots are stamped after their own replies, up to nine days. A thread
+  // cannot open before its root exists, so such a root is posted with its first reply.
+  const posts = messages
+    .filter((m) => m.replyTo === null)
+    .map((root) => {
+      const first = repliesByRoot.get(root.node)?.sort(byTime)[0]
+      return first && first.createdAt < root.createdAt ? { ...root, createdAt: first.createdAt } : root
+    })
+    .sort(byTime)
   return {
     name,
     posts,
     threads: posts.flatMap((root) => {
       const replies = repliesByRoot.get(root.node)
-      return replies ? [{ root, replies: replies.sort(byTime) }] : []
+      return replies ? [{ root, replies }] : []
     }),
     authors: [...new Set(messages.map((m) => m.author))].sort(),
   }
@@ -137,26 +145,4 @@ export function loadQuestions(dir: string): BenchQuestion[] {
         return { id: q.id, type, question: q.question, answer: q.answer, askingUser: q.asking_user_id }
       })
   )
-}
-
-/**
- * Splits a stream's messages (oldest first) into conversations the way
- * production captures them: a gap longer than `maxGapMs` ends one, since that
- * long a quiet spell both closes a conversation to new messages and lets
- * capture settle it. Cut every `maxSize` messages too, since capture keeps at
- * most a handful of memos per conversation.
- */
-export function segmentConversations(messages: BenchMessage[], maxSize: number, maxGapMs: number): BenchMessage[][] {
-  const conversations: BenchMessage[][] = []
-  let current: BenchMessage[] = []
-  for (const message of messages) {
-    const last = current.at(-1)
-    if (last && (current.length === maxSize || message.createdAt.getTime() - last.createdAt.getTime() > maxGapMs)) {
-      conversations.push(current)
-      current = []
-    }
-    current.push(message)
-  }
-  if (current.length > 0) conversations.push(current)
-  return conversations
 }
