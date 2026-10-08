@@ -157,6 +157,8 @@ function TabsProbe() {
       <button onClick={() => setCurrentPane("stream_a")}>work in stream_a</button>
       <button onClick={() => setCurrentPane("stream_b")}>work in stream_b</button>
       <button onClick={() => setCurrentPane("conv:c")}>work in conv:c</button>
+      <button onClick={() => setCurrentPane("page:board")}>work in page:board</button>
+      <button onClick={() => setCurrentPane("page:persona")}>work in page:persona</button>
       <button onClick={() => reopenTab()}>reopen tab</button>
       <button onClick={() => closeTabs(["stream_a", "conv:c"])}>close stream_a and conv:c</button>
       <button onClick={() => closeTabs(["stream_main", "stream_a", "conv:c"])}>close every tab</button>
@@ -639,6 +641,45 @@ describe("panel tabs history on a phone", () => {
     expect(front()).toBe("conv:c")
   })
 
+  it("should write the board when a switch brings it in front, so a reload lands on it", async () => {
+    const { user, loc } = mountPhone(["/w/ws/board?panel=conv:c"])
+    expect(front()).toBe("conv:c")
+
+    await user.click(screen.getByRole("button", { name: "work in page:board" }))
+    expect({ loc: loc(), front: front() }).toEqual({ loc: "/w/ws/board?panel=page:board-conv:c", front: "page:board" })
+
+    cleanup()
+    mountPhone(["/w/ws/board?panel=page:board-conv:c"])
+    expect(front()).toBe("page:board")
+  })
+
+  it("should stop writing the board when a switch leaves it", async () => {
+    const { user, loc } = mountPhone(["/w/ws/board?panel=page:board-conv:c"])
+
+    await user.click(screen.getByRole("button", { name: "work in conv:c" }))
+    expect({ loc: loc(), front: front() }).toEqual({ loc: "/w/ws/board?panel=conv:c", front: "conv:c" })
+  })
+
+  it("should keep the board written while it stays in front of a pane closing behind it", async () => {
+    const { loc } = mountPhone(["/w/ws/board?panel=page:board-conv:c-stream_a"])
+    expect(front()).toBe("page:board")
+
+    // A click without a pointer down, which would bring the closing pane in front first.
+    fireEvent.click(screen.getByRole("button", { name: "close stream_a" }))
+    expect(loc()).toBe("/w/ws/board?panel=page:board-conv:c")
+    fireEvent.click(screen.getByRole("button", { name: "close conv:c" }))
+    expect(loc()).toBe("/w/ws/board")
+  })
+
+  it("should write the persona editor when a switch brings it in front of its test chat", async () => {
+    const { user, loc } = mountPhone(["/w/ws/settings/personas/persona_x?panel=test:persona_x"])
+    expect(front()).toBe("test:persona_x")
+
+    await user.click(screen.getByRole("button", { name: "work in page:persona" }))
+    expect(loc()).toBe("/w/ws/settings/personas/persona_x?panel=page:persona-test:persona_x")
+    expect(front()).toBe("page:persona")
+  })
+
   it("should put the route's stream in front when Back restores an entry that writes it", async () => {
     const { back } = mountPhone([`${PAGE}?panel=stream_main-stream_a.stream_b`, `${PAGE}?panel=stream_a.stream_b`])
     expect(front()).toBe("stream_b")
@@ -743,12 +784,12 @@ describe("panel tabs history on a phone", () => {
     expect(loc()).toBe(`${PAGE}?panel=stream_t`)
   })
 
-  it("should work in a pane beside the board without moving the route", async () => {
+  it("should write the pane a switch beside the board brings on show, without moving the route", async () => {
     const { user, loc } = mountPhone(["/w/ws/board?panel=conv:c.stream_b"])
     expect(front()).toBe("stream_b")
 
     await user.click(screen.getByRole("button", { name: "work in conv:c" }))
-    expect({ loc: loc(), front: front() }).toEqual({ loc: "/w/ws/board?panel=conv:c.stream_b", front: "conv:c" })
+    expect({ loc: loc(), front: front() }).toEqual({ loc: "/w/ws/board?panel=conv:c*.stream_b", front: "conv:c" })
   })
 
   it("should keep the route's stream unwritten on a desktop", async () => {
