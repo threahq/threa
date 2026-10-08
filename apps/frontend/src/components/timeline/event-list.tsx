@@ -1067,12 +1067,13 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
   return (
     <>
       {showUnreadDivider && <UnreadDivider isDimmed={ctx.isDividerDimmed} />}
-      {/* The first-unread row reserves `pt-6` (24px) of top padding so the
+      {/* The first-unread row reserves 24px above its content so the
           absolutely-positioned divider, centered at 12px (`top-3`), gets equal
-          12px breathing room above and below the line — `pt-3` left the line
-          flush against the message top. Only wrap when the divider shows so
-          every other row keeps its spacing and DOM shape. */}
-      {showUnreadDivider ? <div className="pt-6">{rowContent}</div> : rowContent}
+          12px breathing room above and below the line. A sibling spacer, not a
+          wrapper: wrapping would remount the row whenever the divider toggles
+          and drop its local state, such as an open memo dialog. */}
+      {showUnreadDivider && <div aria-hidden className="h-6" />}
+      {rowContent}
     </>
   )
 }

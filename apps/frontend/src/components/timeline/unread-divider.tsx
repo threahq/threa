@@ -7,9 +7,9 @@ export function UnreadDivider({ isDimmed }: UnreadDividerProps) {
   return (
     <div
       // The line sits in the gap *above* the first-unread item, centered in the
-      // extra `pt-6` (24px) that row gets while the divider shows (see
+      // extra 24px spacer that row gets while the divider shows (see
       // TimelineItemContent). `top-3` + `-translate-y-1/2` lands the line's
-      // center 12px below the row top — exactly half the reserved padding — so
+      // center 12px below the row top — exactly half the reserved space — so
       // the breathing room above (to the previous row) and below (to the
       // message) is symmetric.
       //
