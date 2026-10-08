@@ -23,6 +23,7 @@ import { collectQuoteReplyMessageIds } from "@threahq/prosemirror"
 import { addStalenessFields } from "./staleness"
 import { MessageConversationStateRepository } from "./settling-repository"
 import { SETTLING_CONFIDENCE_THRESHOLD } from "./boundary-extraction/config"
+import { cutText } from "./boundary-extraction/shared"
 import { resolveConversationDelivery } from "./conversation-delivery"
 import { emitAssignmentEvents } from "./assignment-events"
 import { resolveEventAnchoredParentConversationId } from "./parent-conversation"
@@ -358,7 +359,9 @@ export class BoundaryExtractionService {
     let extractionContext: ExtractionContext | null = null
     if (extractionContextBase && attachmentTargetIds) {
       // A shared channel's partner sees no previews; the host fetched them, some with its own integrations.
-      const linkPreviewProcessing = sharedRootStreamId ? null : awaitLinkPreviewProcessing(this.pool, workspaceId, [message])
+      const linkPreviewProcessing = sharedRootStreamId
+        ? null
+        : awaitLinkPreviewProcessing(this.pool, workspaceId, [message])
       if (newMessageAttachmentIds && newMessageAttachmentIds.length > 0) {
         logger.debug(
           { messageId, attachmentCount: newMessageAttachmentIds.length },
@@ -961,7 +964,7 @@ export class BoundaryExtractionService {
         topicSummary: c.topicSummary,
         summary: c.summary,
         messageCount: c.messageIds.length,
-        lastMessagePreview: lastMessage?.contentMarkdown.slice(0, 100) ?? "",
+        lastMessagePreview: lastMessage ? cutText(lastMessage.contentMarkdown, 100) : "",
         participantIds: c.participantIds,
         completenessScore: c.completenessScore,
         status: c.status,
@@ -1006,7 +1009,7 @@ export class BoundaryExtractionService {
         quotedMessageId,
         conversationId: conv.id,
         topicSummary: conv.topicSummary,
-        snippet: quotedMessage.contentMarkdown.slice(0, 100),
+        snippet: cutText(quotedMessage.contentMarkdown, 100),
       })
       quotedConversations.push(conv)
     }

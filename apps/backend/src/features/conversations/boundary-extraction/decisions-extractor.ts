@@ -16,7 +16,7 @@ import type {
 import type { Message } from "../../messaging"
 import { renderLinkPreviewContext } from "../../link-previews"
 import { logger } from "../../../lib/logger"
-import { coldStartThreadResult, formatRelativeAge, isColdStartThread, truncateAsTopic } from "./shared"
+import { coldStartThreadResult, cutText, formatRelativeAge, isColdStartThread, truncateAsTopic } from "./shared"
 import {
   BOUNDARY_DECISIONS_MODEL_ID,
   BOUNDARY_NAMING_PROMPT,
@@ -287,7 +287,7 @@ export class DecisionsBoundaryExtractor {
           ),
           this.links(context, m.id),
         ].filter((line): line is string => Boolean(line))
-        const head = `(${formatRelativeAge(m.createdAt, now)}) ${this.author(m)}: ${m.contentMarkdown.slice(0, 300)}`
+        const head = `(${formatRelativeAge(m.createdAt, now)}) ${this.author(m)}: ${cutText(m.contentMarkdown, 300)}`
         return extras.length > 0 ? `${head}\n${extras.join("\n")}` : head
       })
       .join("\n")
@@ -322,7 +322,7 @@ export class DecisionsBoundaryExtractor {
           age: formatRelativeAge(m.createdAt, now),
           author: this.author(m),
           conversationId: placed.get(m.id) ?? null,
-          text: m.contentMarkdown.slice(0, 200),
+          text: cutText(m.contentMarkdown, 200),
           attachments: this.attachments(context, m.id, RECENT_ATTACHMENT_CHARS),
           links: this.links(context, m.id),
         })),
@@ -405,7 +405,7 @@ export class DecisionsBoundaryExtractor {
       return {
         filename: a.filename,
         kind: a.contentType ?? a.mimeType,
-        text: body.length > maxChars ? body.slice(0, maxChars) + "…" : body,
+        text: body.length > maxChars ? cutText(body, maxChars) + "…" : body,
       }
     })
   }

@@ -411,6 +411,30 @@ describe("LLMBoundaryExtractor", () => {
     })
   })
 
+  test("never sends half of an emoji cut at a truncation boundary", async () => {
+    mockGenerateObject.mockResolvedValueOnce({
+      value: { assignments: [{ conversationId: null, isPrimary: true }], confidence: 0.5 },
+      response: { usage: {} },
+      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+    })
+    await extractor.extract(
+      createMockContext({
+        activeConversations: [createMockConversation()],
+        recentMessages: [createMockMessage({ id: "msg_recent", contentMarkdown: `${"a".repeat(199)}🚨 alert` })],
+      })
+    )
+
+    const strings = (v: unknown): string[] => {
+      if (typeof v === "string") return [v]
+      return v && typeof v === "object" ? Object.values(v).flatMap(strings) : []
+    }
+    const sent = strings(mockGenerateObject.mock.calls[0]).join("\n")
+    expect({ loneSurrogate: /\p{Cs}/u.test(sent), hasMessage: sent.includes("a".repeat(199)) }).toEqual({
+      loneSurrogate: false,
+      hasMessage: true,
+    })
+  })
+
   describe("error handling", () => {
     test("propagates API errors for retry handling", async () => {
       const context = createMockContext({
