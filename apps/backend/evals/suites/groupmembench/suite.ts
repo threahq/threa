@@ -41,7 +41,12 @@ import {
 } from "./dataset"
 import { COMPANION_MODEL_ID, COMPANION_TEMPERATURE } from "../../../src/features/agents"
 import { PROVISIONAL_ATTACH_WINDOW_MINUTES } from "../../../src/features/conversations"
+import { EmbeddingService } from "../../../src/features/memos"
 import { MEMO_MAX_FAILED_ATTEMPTS } from "../../../src/features/memos/config"
+import {
+  plan as planMessageEmbeddings,
+  processChunk as embedMessageChunk,
+} from "../../../src/features/memos/message-embedding-backfill"
 import { StreamRepository, StreamMemberRepository } from "../../../src/features/streams"
 import { UserRepository } from "../../../src/features/workspaces"
 import { streamId as generateStreamId, userId as generateUserId } from "../../../src/lib/id"
@@ -193,6 +198,28 @@ async function seedChannel(
   return { channelId, messageCount, conversations }
 }
 
+const EMBED_CONCURRENCY = 4
+
+/**
+ * Production embeds every message as it is posted, and the researcher's message
+ * search is hybrid over those embeddings. Seeding bypasses the embedding queue,
+ * so without this the bench measures keyword-only message search. Chunks skip
+ * messages whose stored embedding already matches, so a kept database only pays
+ * for what it lacks.
+ */
+async function embedMessages(ctx: EvalContext): Promise<number> {
+  const backfill = { pool: ctx.pool, embeddingService: new EmbeddingService({ ai: ctx.ai }) }
+  const chunks = await planMessageEmbeddings(backfill, ctx.workspaceId)
+  const workers = Array.from({ length: EMBED_CONCURRENCY }, async () => {
+    let embedded = 0
+    for (let chunk = chunks.shift(); chunk; chunk = chunks.shift()) {
+      embedded += (await embedMessageChunk(backfill, ctx.workspaceId, chunk)).processed
+    }
+    return embedded
+  })
+  return (await Promise.all(workers)).reduce((sum, n) => sum + n, 0)
+}
+
 /** A kept database already holds the seeded channels and captured memos; only the lookup state is rebuilt. */
 async function reuseWorkspace(ctx: EvalContext): Promise<void> {
   const users = await ctx.pool.query<{ id: string; name: string }>(
@@ -220,8 +247,9 @@ async function reuseWorkspace(ctx: EvalContext): Promise<void> {
      WHERE s.id = sm.stream_id AND s.workspace_id = $1 AND NOT (s.id = ANY($2::text[]))`,
     [ctx.workspaceId, streams.rows.map((row) => row.id)]
   )
+  const embedded = await embedMessages(ctx)
   console.log(
-    `\n  Reusing ${ctx.reusedDatabase}: ${streams.rows.length} channels and threads, ${memos.rows[0]!.count} active memos\n`
+    `\n  Reusing ${ctx.reusedDatabase}: ${streams.rows.length} channels and threads, ${memos.rows[0]!.count} active memos, ${embedded} messages newly embedded\n`
   )
 }
 
@@ -236,8 +264,9 @@ function seedWorkspace(variant: Variant) {
 
     const seededChannels = await Promise.all(channels.map((channel) => seedChannel(ctx, channel, userIds)))
     const messageCount = seededChannels.reduce((sum, c) => sum + c.messageCount, 0)
+    const embedded = await embedMessages(ctx)
     console.log(
-      `\n  Seeded ${messageCount} messages in ${channels.length} channels (${seconds(Date.now() - startedAt)})`
+      `\n  Seeded ${messageCount} messages in ${channels.length} channels, ${embedded} embedded (${seconds(Date.now() - startedAt)})`
     )
 
     if (variant === "memory") {
