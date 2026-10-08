@@ -616,7 +616,7 @@ export function StreamContent({
   const { streamId: routeStreamId } = useParams<{ streamId: string }>()
   const isPageStream = routeStreamId === undefined || routeStreamId === streamId
   const { layout: panelLayout } = usePanel()
-  const ownsConversationViews = routeStreamId === undefined || primaryPanelOf(panelLayout) === streamId
+  const ownsConversationOverlay = routeStreamId === undefined || primaryPanelOf(panelLayout) === streamId
   const currentPane = useCurrentPane()
   // A pane with no timeline of its own (a draft, an overview) leaves its keys to the page's stream.
   const isCurrentPane =
@@ -758,7 +758,7 @@ export function StreamContent({
   const supportsConversationOverlay =
     !isDraft && (stream?.type === StreamTypes.CHANNEL || stream?.type === StreamTypes.DM)
   const conversationOverlayActive =
-    supportsConversationOverlay && ownsConversationViews && searchParams.get("convOverlay") === "on"
+    supportsConversationOverlay && ownsConversationOverlay && searchParams.get("convOverlay") === "on"
   const { context: conversationOverlay, inViewConversations } = useConversationOverlay({
     workspaceId,
     streamId,
@@ -2328,10 +2328,9 @@ export function StreamContent({
       if (isInput) return
       if (overlayOwnsEscape()) return
       if (dividerEventId) escapeUnread()
-      // Settle only a stream alone on the page: with a pane, an aside or the
-      // conversation list open, Escape belongs to that surface.
-      else if (aloneOnPage && getAsideState() === null && searchParams.get("convView") !== "open")
-        clearInboxRef.current([streamId])
+      // Settle only a stream alone on the page: with a pane or an aside open,
+      // Escape belongs to that surface.
+      else if (aloneOnPage && getAsideState() === null) clearInboxRef.current([streamId])
       else return
       // One step per keypress: the thread panel's StreamContent listens too.
       event.preventDefault()
@@ -2350,7 +2349,6 @@ export function StreamContent({
     escapeUnread,
     streamId,
     aloneOnPage,
-    searchParams,
   ])
 
   // Manual "Mark as read" from a message action. The pointer is partial

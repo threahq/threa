@@ -7,9 +7,14 @@ import { isPanelOnShow, panelIdsOf } from "@/lib/panel-tabs"
  * closes when on show.
  */
 export function useStreamContextToggle(streamId: string): [boolean, () => void] {
+  const { layout } = usePanel()
+  return usePaneToggle(contextPanelOf(layout, streamId), createContextPanelId(streamId))
+}
+
+/** {@link useStreamContextToggle} for any pane kind: `openId` is the pane when open, `newId` the one to open. */
+export function usePaneToggle(openId: string | null, newId: string): [boolean, () => void] {
   const { layout, openPanel, closeTab, setCurrentPane } = usePanel()
   const screen = useDisplayedPanelLayout()
-  const openId = contextPanelOf(layout, streamId)
   // Off the screen's grid it is a drawer, on show over its stream's page.
   const drawn = openId !== null && !panelIdsOf(screen).includes(openId)
   const host = drawn ? coverPaneOf(layout, openId) : openId
@@ -23,7 +28,7 @@ export function useStreamContextToggle(streamId: string): [boolean, () => void] 
     if (onShow) return closeTab(openId)
     // Folded behind another tab its place in the URL is already right; working in it brings it forward.
     if (openId && isPanelOnShow(layout, openId) && layout.focused === undefined) return setCurrentPane(openId)
-    openPanel(openId ?? createContextPanelId(streamId))
+    openPanel(openId ?? newId)
   }
   return [onShow, toggle]
 }
