@@ -78,6 +78,7 @@ export interface MemorizerContext {
    * omitted, memos follow the conversation's language.
    */
   memoLanguage?: string | null
+  now: Date
 }
 
 export class Memorizer {
@@ -135,7 +136,10 @@ export class Memorizer {
       model: config.modelId,
       schema: memoSetSchema,
       messages: [
-        { role: "system", content: getMemorizerSystemPrompt(context.authorTimezone, context.memoLanguage) },
+        {
+          role: "system",
+          content: getMemorizerSystemPrompt(context.authorTimezone, context.memoLanguage, context.now),
+        },
         { role: "user", content: prompt },
       ],
       temperature: config.temperature,

@@ -87,6 +87,7 @@ async function runMemorizerTask(input: MemorizerInput, ctx: EvalContext): Promis
     content: messages,
     existingMemos,
     workspaceId: ctx.workspaceId,
+    now,
   }
 
   try {

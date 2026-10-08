@@ -6,33 +6,33 @@ import { getMemorizerSystemPrompt, memoSetSchema, MEMO_MAX_PER_CONVERSATION } fr
 import { Memorizer, resolveSourceMessageIds } from "./memorizer"
 import type { Memo } from "./repository"
 
-describe("getMemorizerSystemPrompt", () => {
-  it("should inject current date in YYYY-MM-DD format for UTC", () => {
-    const prompt = getMemorizerSystemPrompt("UTC")
-    const today = new Date().toISOString().split("T")[0]
+const NOW = new Date("2025-03-01T12:00:00Z")
 
-    expect(prompt).toContain(`\nToday: ${today}`)
+describe("getMemorizerSystemPrompt", () => {
+  it("should inject the supplied date in YYYY-MM-DD format for UTC", () => {
+    const prompt = getMemorizerSystemPrompt("UTC", undefined, NOW)
+
+    expect(prompt).toContain("\nToday: 2025-03-01")
   })
 
   it("should use author timezone for date formatting", () => {
-    const prompt = getMemorizerSystemPrompt("Pacific/Auckland")
+    const prompt = getMemorizerSystemPrompt("Pacific/Auckland", undefined, NOW)
 
-    expect(prompt).toMatch(/\nToday: \d{4}-\d{2}-\d{2}$/)
+    expect(prompt).toContain("\nToday: 2025-03-02")
   })
 
   it("should default to UTC when no timezone provided", () => {
-    const prompt = getMemorizerSystemPrompt()
-    const today = new Date().toISOString().split("T")[0]
+    const prompt = getMemorizerSystemPrompt(undefined, undefined, NOW)
 
-    expect(prompt).toContain(`\nToday: ${today}`)
+    expect(prompt).toContain("\nToday: 2025-03-01")
   })
 
   it("keeps the date and language rule in the tail, so the block above them is a stable cache prefix", () => {
     // Two renderings that differ in both timezone and canonical language must
     // share everything up to the tail — that shared span is what the provider
     // caches, and it has to clear the 1024-token floor to cache at all.
-    const sv = getMemorizerSystemPrompt("Europe/Stockholm", "Swedish")
-    const en = getMemorizerSystemPrompt("America/New_York", null)
+    const sv = getMemorizerSystemPrompt("Europe/Stockholm", "Swedish", NOW)
+    const en = getMemorizerSystemPrompt("America/New_York", null, NOW)
 
     let shared = 0
     while (shared < Math.min(sv.length, en.length) && sv[shared] === en[shared]) shared++
@@ -45,14 +45,14 @@ describe("getMemorizerSystemPrompt", () => {
   })
 
   it("should contain normalization guidance", () => {
-    const prompt = getMemorizerSystemPrompt()
+    const prompt = getMemorizerSystemPrompt(undefined, undefined, NOW)
 
     expect(prompt).toContain("RESOLVE PRONOUNS")
     expect(prompt).toContain("ANCHOR DATES")
   })
 
   it("should steer toward terse, single-topic extraction rather than summarization", () => {
-    const prompt = getMemorizerSystemPrompt()
+    const prompt = getMemorizerSystemPrompt(undefined, undefined, NOW)
 
     expect(prompt).toContain("ONE TOPIC PER MEMO")
     expect(prompt).toContain("EXTRACT, DON'T SUMMARIZE")
@@ -60,14 +60,14 @@ describe("getMemorizerSystemPrompt", () => {
   })
 
   it("should instruct the model not to translate the conversation's language", () => {
-    const prompt = getMemorizerSystemPrompt()
+    const prompt = getMemorizerSystemPrompt(undefined, undefined, NOW)
 
     expect(prompt).toContain("WRITE IN THE CONVERSATION'S LANGUAGE")
     expect(prompt).toContain("Do NOT translate")
   })
 
   it("should force a canonical memo language when one is configured", () => {
-    const prompt = getMemorizerSystemPrompt("UTC", "English")
+    const prompt = getMemorizerSystemPrompt("UTC", "English", NOW)
 
     expect(prompt).toContain("WRITE EVERY MEMO IN English")
     expect(prompt).not.toContain("WRITE IN THE CONVERSATION'S LANGUAGE")
@@ -164,6 +164,7 @@ describe("Memorizer — supersession targets", () => {
       memoryContext: [streamMemo],
       content: [],
       workspaceId: "ws_1",
+      now: NOW,
     })
 
     expect({
