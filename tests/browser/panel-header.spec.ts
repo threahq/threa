@@ -213,3 +213,27 @@ test("should keep the tab on show, its close and +N in a split section at its na
     if (row.more) await expect(strip.getByRole("button", { name: /more tabs?$/ })).toBeInViewport({ ratio: 1 })
   }
 })
+
+test("should keep each pane's title at 900px with a thread open, folding the stream's view icons into its menu", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 800 })
+  const { workspaceId, streamId, threads } = await seedThreads(page, 1)
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threads[0]}`)
+  await expect(tabPane(page, threads[0]).getByText("reply in thread 1")).toBeVisible({ timeout: 30_000 })
+
+  const mainHeader = page.locator('div:has(> [data-editor-zone="main"]) > header')
+  const title = mainHeader.getByRole("heading", { level: 1 })
+  await expect(title).toBeInViewport({ ratio: 1 })
+  expect((await title.boundingBox())!.width).toBeGreaterThanOrEqual(80)
+  await expect(tabPane(page, threads[0]).locator("header").getByText("Thread", { exact: true })).toBeInViewport({
+    ratio: 1,
+  })
+
+  // Folded, not gone: "In this stream" rides in the stream's menu.
+  await expect(mainHeader.getByRole("button", { name: "In this stream" })).toHaveCount(0)
+  await mainHeader.getByRole("button", { name: "Stream actions" }).focus()
+  await page.keyboard.press("Enter")
+  await page.getByRole("menuitem", { name: /In this stream/ }).click()
+  await expect(page.getByRole("region", { name: "In this stream" })).toBeVisible()
+})

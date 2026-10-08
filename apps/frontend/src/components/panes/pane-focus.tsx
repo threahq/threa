@@ -36,8 +36,7 @@ export function PaneFocusToggle() {
       <Button
         variant="ghost"
         size="icon"
-        // Folds after the tab row's labels and before its tabs (PanelTabStrip).
-        className="h-8 w-8 shrink-0 peer-data-[focus-folded]/tabs:hidden"
+        className="h-8 w-8 shrink-0"
         aria-label="Focus pane"
         title={binding ? `Focus pane (${formatKeyBinding(binding)})` : "Focus pane"}
         onClick={() => focusTab(panelId)}

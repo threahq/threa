@@ -31,6 +31,8 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { SidebarActionMenu, type SidebarActionItem } from "@/components/layout/sidebar/sidebar-actions"
 import { cn } from "@/lib/utils"
+import { useElementWidth } from "@/hooks/use-element-width"
+import { foldHeaderControls } from "@/lib/pane-header-fold"
 import { useStreamOrDraft, isDmDraftId, useActiveBotPresence } from "@/hooks"
 import { useWorkspaceDmPeers, useWorkspaceMetadata } from "@/stores/workspace-store"
 import { createConversationsPanelId, useCurrentPane, usePanel, useSidebar } from "@/contexts"
@@ -72,7 +74,6 @@ export interface PaneChrome {
   leading: ReactNode
   /** With several tabs open, the tab row stands in for the title and its chips. */
   tabs?: ReactNode
-  /** Left of the stream's icons, so folding it away leaves them where they are. */
   focusToggle: ReactNode
   close?: ReactNode
 }
@@ -107,6 +108,8 @@ export function StreamPane({
   const isPageStream = routeStreamId === streamId
   const { inFirstColumn, layout, hasTabs } = usePanel()
   const headerSwipe = usePhoneHeaderSwipe()
+  const headerRef = useRef<HTMLElement>(null)
+  const headerWidth = useElementWidth(headerRef)
   const ownsConversationOverlay = routeStreamId !== undefined && primaryPanelOf(layout) === streamId
   const currentPane = useCurrentPane()
   const isCurrentPane = currentPane === null || currentPane === streamId
@@ -518,12 +521,75 @@ export function StreamPane({
           ),
         ]
       : []
-  const desktopMenuActions = [
-    ...splitActions,
-    ...ownMenuActions.map((action, i) =>
-      i === 0 && splitActions.length > 0 ? { ...action, separatorBefore: true } : action
-    ),
+  // Before the title gives way, desktop drops the Aside label, then folds the view icons into the menu.
+  const gap = tabbed ? 0 : 4
+  const icon = 32 + gap
+  const offersCall = !!stream && !isDraft && (isChannel || isDm) && callsEnabled
+  const offersAside = !!stream && !isDraft && !tabbed
+  const offersSearch = !isDraft
+  const offersContextIcon = !!stream && !isDraft && offersContext
+  const offersOverlay = (isChannel || isDm) && ownsConversationOverlay
+  const folded = isMobile
+    ? new Set<string>()
+    : foldHeaderControls(
+        headerWidth,
+        // Padding, then the controls that never fold: call, Aside's icon, the menu, maximize and close.
+        32 +
+          (tabbed ? 0 : 4) +
+          (offersCall ? 48 + gap : 0) +
+          (offersAside ? icon : 0) +
+          2 * icon +
+          (chrome.close ? icon : 0),
+        [
+          ...(offersAside ? [{ id: "aside-label", width: 40 }] : []),
+          ...(offersOverlay ? [{ id: "overlay", width: 52 + gap }] : []),
+          ...(offersContextIcon ? [{ id: "context", width: icon }] : []),
+          ...(offersSearch ? [{ id: "search", width: icon }] : []),
+        ]
+      )
+  const openSearch = () => {
+    document.dispatchEvent(new CustomEvent("threa:open-stream-search", { detail: { streamId } }))
+  }
+  const foldedActions: SidebarActionItem[] = [
+    ...(folded.has("search")
+      ? [{ id: "search", label: "Search in conversation", icon: Search, onSelect: openSearch }]
+      : []),
+    ...(folded.has("context")
+      ? [
+          {
+            id: "stream-context",
+            label: "In this stream",
+            description: "Links, files & memories",
+            icon: PanelRight,
+            onSelect: toggleContext,
+          },
+        ]
+      : []),
+    ...(folded.has("overlay")
+      ? [
+          {
+            id: "conversation-overlay",
+            label: "Conversation overlay",
+            description: isConversationOverlayOn ? "On" : null,
+            icon: Layers,
+            groupId: "conversation-views",
+            onSelect: () => setConversationOverlayOn(!isConversationOverlayOn),
+          },
+          {
+            id: "conversations-list",
+            label: "Conversations list",
+            icon: MessageCircle,
+            groupId: "conversation-views",
+            onSelect: toggleConversationsList,
+          },
+        ]
+      : []),
   ]
+  const desktopMenuActions = [foldedActions, splitActions, ownMenuActions]
+    .filter((group) => group.length > 0)
+    .flatMap((group, groupIndex) =>
+      group.map((action, i) => (i === 0 && groupIndex > 0 ? { ...action, separatorBefore: true } : action))
+    )
 
   let headerTitle: React.ReactNode
   if (isEditing) {
@@ -622,8 +688,12 @@ export function StreamPane({
 
   return (
     <div className={cn("flex h-full flex-col", className)} data-editor-zone={inFirstColumn ? undefined : "panel"}>
-      <header className="relative flex h-12 items-center justify-between border-b px-4" {...headerSwipe}>
-        {/* No gaps while tabbed: the tab fit counts only the labels' and focus toggle's own widths as the room they free. */}
+      <header
+        ref={headerRef}
+        className="relative flex h-12 items-center justify-between border-b px-4"
+        {...headerSwipe}
+      >
+        {/* No gaps while tabbed: the tab fit counts only the labels' own width as the room they free. */}
         <div
           className={cn(
             "flex items-center flex-1 min-w-0",
@@ -638,8 +708,6 @@ export function StreamPane({
               {companionModeIndicator}
             </>
           )}
-          {/* A sibling of the tab strip, which folds it away when the row runs out of room. */}
-          {tabbed && chrome.focusToggle}
           <AgentActivityHeaderChip workspaceId={workspaceId} streamId={streamId} compact={isMobile || tabbed} />
           {/* Chip strip. The chips are non-shrinking (`shrink-0` leaves), so on a
               phone-width header they would otherwise overflow the flex box and
@@ -684,28 +752,30 @@ export function StreamPane({
           )}
         </div>
         <div className={cn("flex items-center", !tabbed && "gap-1 ml-1")}>
-          {!tabbed && chrome.focusToggle}
-          {stream && !isDraft && (isChannel || isDm) && callsEnabled && (
+          {offersCall && (
             // A workspace that has switched calls off shows no calls surface at all.
             <CallStartMenu workspaceId={workspaceId} streamId={streamId} startLabel="Start a call" />
           )}
           {stream && !isDraft && !tabbed && (
-            <AsideHeaderChip workspaceId={workspaceId} stream={stream} compact={isMobile} />
+            <AsideHeaderChip
+              workspaceId={workspaceId}
+              stream={stream}
+              compact={isMobile || folded.has("aside-label")}
+            />
           )}
-          {!isDraft && (
+          {offersSearch && !folded.has("search") && (
             <Button
               variant="ghost"
               size="icon"
               className="h-8 w-8"
               title="Search in conversation"
-              onClick={() =>
-                document.dispatchEvent(new CustomEvent("threa:open-stream-search", { detail: { streamId } }))
-              }
+              aria-label="Search in conversation"
+              onClick={openSearch}
             >
               <Search className="h-4 w-4" />
             </Button>
           )}
-          {stream && !isDraft && !isMobile && offersContext && (
+          {offersContextIcon && !isMobile && !folded.has("context") && (
             <Button
               variant="ghost"
               size="icon"
@@ -718,7 +788,7 @@ export function StreamPane({
               <PanelRight className="h-4 w-4" />
             </Button>
           )}
-          {(isChannel || isDm) && ownsConversationOverlay && !isMobile && (
+          {offersOverlay && !isMobile && !folded.has("overlay") && (
             // Split button (the `GroupedItem` pattern from message-context-menu):
             // primary tap toggles the conversation overlay; the chevron lists
             // every conversation view — overlay first (default, font-medium),
@@ -806,6 +876,7 @@ export function StreamPane({
               }
             />
           )}
+          {chrome.focusToggle}
           {chrome.close}
         </div>
       </header>
