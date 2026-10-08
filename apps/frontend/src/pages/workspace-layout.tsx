@@ -47,6 +47,7 @@ import {
   isConversationPanel,
   parseConversationPanel,
   parseComposePanel,
+  parseConversationsPanel,
   parseContextPanel,
 } from "@/contexts"
 import {
@@ -199,7 +200,10 @@ function StreamLinkKeyboardHandler({
         } else if (!isDraftPanel(panelId)) {
           void copyStreamLink(
             workspaceId,
-            parseComposePanel(panelId) ?? parseContextPanel(panelId)?.streamId ?? panelId
+            parseComposePanel(panelId) ??
+              parseConversationsPanel(panelId) ??
+              parseContextPanel(panelId)?.streamId ??
+              panelId
           )
           return
         }

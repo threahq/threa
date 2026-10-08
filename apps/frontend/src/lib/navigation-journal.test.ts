@@ -33,9 +33,9 @@ describe("journalPath", () => {
     expect(
       journalPath({
         pathname: `/w/${WS}/s/stream_a`,
-        search: "?m=evt_1&panel=stream_b&memo=memo_1&trace=trc_1&convView=split&media=1",
+        search: "?m=evt_1&panel=stream_b&memo=memo_1&trace=trc_1&media=1",
       })
-    ).toBe(`/w/${WS}/s/stream_a?panel=stream_b&trace=trc_1&convView=split`)
+    ).toBe(`/w/${WS}/s/stream_a?panel=stream_b&trace=trc_1`)
   })
 
   it("keeps the board vocabulary", () => {

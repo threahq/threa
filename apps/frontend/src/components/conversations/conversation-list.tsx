@@ -8,10 +8,9 @@ interface ConversationListProps {
   workspaceId: string
   streamId: string
   className?: string
-  onMessageClick?: () => void
 }
 
-export function ConversationList({ workspaceId, streamId, className, onMessageClick }: ConversationListProps) {
+export function ConversationList({ workspaceId, streamId, className }: ConversationListProps) {
   const { conversations, isLoading, error } = useConversations(workspaceId, streamId)
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -60,7 +59,6 @@ export function ConversationList({ workspaceId, streamId, className, onMessageCl
           conversation={conversation}
           isExpanded={expandedConversationId === conversation.id}
           onToggle={() => handleToggle(conversation.id)}
-          onMessageClick={onMessageClick}
         />
       ))}
     </div>
