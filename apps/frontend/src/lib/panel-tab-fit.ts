@@ -11,16 +11,16 @@ export interface PanelTabFit {
 
 /**
  * Fits a section's tab row into `room`, the width shared by the tabs and the
- * labels beside them. The tab on show keeps its full width and the others
- * shrink to {@link MIN_TAB_WIDTH}; past that the labels fold first, then
- * trailing tabs, down to the one on show.
+ * labels beside them. The labels show only while every tab does, with the tab
+ * on show at its full `activeWidth` and the others at {@link MIN_TAB_WIDTH}.
+ * Past that, every tab, the one on show included, may shrink to the minimum
+ * and trailing tabs fold, so how many show never depends on which tab is on show.
  */
 export function fitPanelTabs(room: number, tabs: number, activeWidth: number, labelsWidth: number): PanelTabFit {
-  const need = activeWidth + (tabs - 1) * MIN_TAB_WIDTH
-  if (need + labelsWidth <= room) return { labels: true, visible: tabs }
-  if (need <= room) return { labels: false, visible: tabs }
-  const others = Math.floor((room - MORE_TABS_WIDTH - activeWidth) / MIN_TAB_WIDTH)
-  return { labels: false, visible: Math.max(1, Math.min(tabs - 1, others + 1)) }
+  const labels = activeWidth + (tabs - 1) * MIN_TAB_WIDTH + labelsWidth <= room
+  if (labels || tabs * MIN_TAB_WIDTH <= room) return { labels, visible: tabs }
+  const fitting = Math.floor((room - MORE_TABS_WIDTH) / MIN_TAB_WIDTH)
+  return { labels: false, visible: Math.max(1, Math.min(tabs - 1, fitting)) }
 }
 
 /** The tabs a row of `visible` shows, in order, with the one on show always among them, and the rest. */

@@ -197,7 +197,7 @@ test("should show the toggle off while the overview is folded behind its thread"
   // Too narrow for two columns, the two fold into one section, the thread worked in on show.
   await tabPane(page, threadId).getByText("thread link").click()
   await page.setViewportSize({ width: 1000, height: 900 })
-  await expect(tabPane(page, threadId).getByRole("button", { name: "1 more tab" })).toBeVisible()
+  await expect(tabPane(page, threadId).getByRole("link", { name: /^In channel link/ })).toBeVisible()
   const toggle = tabPane(page, threadId).getByRole("button", { name: "In this stream" })
   await expect(toggle).toHaveAttribute("aria-pressed", "false")
   await expect(overview(page)).not.toBeInViewport()

@@ -117,9 +117,7 @@ export function PanelTabStrip({
                 className={cn(
                   "group relative flex items-center",
                   !active && "min-w-24 max-w-48 shrink",
-                  // The tab on show truncates rather than push itself, or "+N", out of a narrow row.
-                  active && "min-w-0 shrink-0",
-                  active && (folded.length > 0 ? "max-w-[min(14rem,calc(100%-3rem))]" : "max-w-[min(14rem,100%)]"),
+                  active && "min-w-0 max-w-56 shrink",
                   active && "after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full",
                   active && (isCurrent ? "after:bg-primary" : "after:bg-muted-foreground/40")
                 )}
@@ -288,7 +286,8 @@ function StripCaret({ side }: { side: "left" | "right" }) {
 
 /**
  * Re-fits the row whenever the room, the labels or the tab on show change
- * size. Folded labels stay laid out out of flow, so their width is always known.
+ * size. Folded labels stay laid out out of flow, so their width is always known,
+ * and the tab on show is measured untruncated, so shrinking it never re-shows them.
  */
 function usePanelTabFit(
   stripRef: RefObject<HTMLElement | null>,
@@ -308,7 +307,7 @@ function usePanelTabFit(
     const measure = () => {
       const labelsWidth = Math.ceil(labelsRef.current?.getBoundingClientRect().width ?? 0)
       const room = Math.floor(strip.getBoundingClientRect().width) + (labelsShown.current ? labelsWidth : 0)
-      const activeWidth = Math.ceil(activeTab?.getBoundingClientRect().width ?? 0)
+      const activeWidth = activeTab ? Math.ceil(naturalTabWidth(activeTab)) : 0
       const next = fitPanelTabs(room, tabs, activeWidth, labelsWidth)
       setFit((current) => (current.labels === next.labels && current.visible === next.visible ? current : next))
     }
@@ -322,6 +321,13 @@ function usePanelTabFit(
   }, [stripRef, labelsRef, tabs, activePanelId])
 
   return fit
+}
+
+/** The tab's width were it not shrunk to fit: its title untruncated, up to its own max width. */
+function naturalTabWidth(tab: HTMLElement): number {
+  const title = tab.querySelector<HTMLElement>(".truncate")
+  const width = tab.getBoundingClientRect().width + (title ? title.scrollWidth - title.clientWidth : 0)
+  return Math.min(width, parseFloat(getComputedStyle(tab).maxWidth) || width)
 }
 
 /**
