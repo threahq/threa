@@ -264,7 +264,7 @@ export function PaneDrawer({ workspaceId, page }: { workspaceId: string; page: s
   return (
     // The URL is its history entry: opening pushed `?panel=`, so Back already closes it.
     <Drawer open={id !== null} onOpenChange={(open) => !open && id && closeTab(id)} historyEntry={false}>
-      <DrawerContent className="h-[88dvh] md:mx-auto md:max-w-2xl">
+      <DrawerContent className="h-[88dvh] outline-none md:mx-auto md:max-w-2xl">
         <DrawerTitle className="sr-only">In this stream</DrawerTitle>
         <DrawerDescription className="sr-only">
           Links, files, images, captured memories, and delegated tasks from this conversation.
