@@ -41,7 +41,9 @@ import { logger } from "../../lib/logger"
 
 const MESSAGES_BEFORE = 5
 const MESSAGES_AFTER = 2
-const THREAD_REPLIES_PER_ANCHOR = 10
+// Newest replies of each nearby thread, by size so terse and long-form
+// writers both leave usable context; the conversation summary carries the rest.
+const THREAD_CONTEXT_WINDOW = { minReplies: 5, maxReplies: 30, maxChars: 4000 }
 
 interface ConversationDecision {
   assignments: MessageAssignment[]
@@ -239,7 +241,7 @@ export class BoundaryExtractionService {
         client,
         workspaceId,
         threadRootIds,
-        THREAD_REPLIES_PER_ANCHOR
+        THREAD_CONTEXT_WINDOW
       )
       const allThreadMessages = Array.from(threadMessagesByParent.values()).flat()
 
