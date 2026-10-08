@@ -107,7 +107,7 @@ export function PhonePaneSwitcher({ workspaceId }: { workspaceId: string }) {
           <DrawerTitle className="sr-only">Open panes</DrawerTitle>
           <ul className="max-h-[60dvh] overflow-y-auto pb-[max(0.5rem,env(safe-area-inset-bottom))]">
             {order.map((id) => (
-              <li key={id} className="flex items-center">
+              <li key={id} className={cn("flex items-center", id === current && "bg-accent")}>
                 <Link
                   to={getTabUrl(id)}
                   replace
@@ -118,7 +118,7 @@ export function PhonePaneSwitcher({ workspaceId }: { workspaceId: string }) {
                   }}
                   className={cn(
                     "flex min-h-11 min-w-0 flex-1 items-center pl-4 text-sm",
-                    id === current ? "bg-accent font-semibold" : "text-muted-foreground"
+                    id === current ? "font-semibold" : "text-muted-foreground"
                   )}
                 >
                   <span id={`${rowId}-title-${id}`} className="truncate">
