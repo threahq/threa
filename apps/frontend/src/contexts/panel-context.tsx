@@ -23,6 +23,7 @@ import { PANEL_COVER } from "@/lib/covers"
 import { isPagePane, isServerStreamId } from "@/lib/stream-ids"
 import {
   PANEL_PARAM,
+  SECTION_SEPARATOR,
   activatePanelTab,
   canonicalPanelLayout,
   closePanelTab,
@@ -446,11 +447,22 @@ function buildValue(
   }
 }
 
-/** Where a phone's reload or Back lands: the route's stream when `?panel=` writes it, else the newest pane, as links written before did. */
-function phoneLandingOf(layout: PanelLayout, panelValue: string | null, path: string | null): string | null {
+/** Where a phone's reload or Back lands: the route's pane when `?panel=` writes it, else the newest pane, as links written before did. */
+function phoneLandingOf(layout: PanelLayout, panelValue: string | null, routePane: string | null): string | null {
   if (layout.focused !== undefined) return layout.focused
-  if (path !== null && panelIdsOf(parsePanelLayout(panelValue)).includes(path)) return path
+  if (routePane !== null && writesRoutePane(panelValue, routePane)) return routePane
   return newestPanelOf(layout)
+}
+
+/** The parser drops a page pane, so one is written only as the first column, in front of the others. */
+function writesRoutePane(panelValue: string | null, routePane: string): boolean {
+  if (isPagePane(routePane)) return panelValue?.split(SECTION_SEPARATOR)[0] === routePane
+  return panelIdsOf(parsePanelLayout(panelValue)).includes(routePane)
+}
+
+function pagePaneAt(pathname: string): string | null {
+  if (matchPath(BOARD_ROUTE, pathname)) return BOARD_PANE
+  return matchPath(PERSONA_ROUTE, pathname) ? PERSONA_PANE : null
 }
 
 interface PaneState {
@@ -540,7 +552,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
     // expect. A phone, which shows one pane, lands as {@link phoneLandingOf} says, and so does its `?m`.
     const newest = layout.focused ?? newestPanelOf(layout)
     const front = phone
-      ? phoneLandingOf(layout, panelValue, path)
+      ? phoneLandingOf(layout, panelValue, routePane)
       : (layout.focused ?? (path === null ? newest : followPanel(layout, layout, path)))
     const owner = phone ? front : newest
     return { layout, path, deepLink, front, coverOwner: owner === null ? null : coverPaneOf(layout, owner) }
@@ -553,7 +565,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       path,
       deepLink,
       restored,
-      phone ? phoneLandingOf(layout, panelValue, path) : undefined
+      phone ? phoneLandingOf(layout, panelValue, routePane) : undefined
     )
     setPaneState(panes)
   }
@@ -567,8 +579,9 @@ export function PanelProvider({ children }: PanelProviderProps) {
   // taking the current pane's place), else the one taking the route's place when it closes.
   const targetOf = useCallback(
     (next: PanelLayout, focus: string | null = null): Target | null => {
-      if (path === null) return { pathname: location.pathname, path: pagePane, keepsPath: false }
       const current = focus ?? followCurrentPanel(layout, next, front)
+      if (path === null)
+        return { pathname: location.pathname, path: pagePane, keepsPath: phone && current === pagePane }
       const after = streamPaneAfter(layout, next, path, front)
       const focusable = current !== null && isServerStreamId(current) && panelIdsOf(next).includes(current)
       const route = phone
@@ -612,16 +625,20 @@ export function PanelProvider({ children }: PanelProviderProps) {
       // anything done to the panes meanwhile would act on the route before it.
       const live = router?.state.location ?? location
       const livePath = matchPath(STREAM_ROUTE, live.pathname)?.params.streamId ?? null
+      const livePane = livePath ?? pagePaneAt(live.pathname)
       const liveParams = new URLSearchParams(live.search)
-      const liveLayout = fullPanelLayout(livePath, parsePanelLayout(liveParams.get(PANEL_PARAM)))
-      if (livePath === null || !panelIdsOf(liveLayout).includes(panelId)) return
+      const liveLayout = fullPanelLayout(livePane, parsePanelLayout(liveParams.get(PANEL_PARAM)))
+      if (livePane === null || !panelIdsOf(liveLayout).includes(panelId)) return
       // A phone also writes which pane it is in front of the others, so a reload or Back lands on it.
-      if (!phone && (panelId === livePath || !isServerStreamId(panelId))) return
+      if (!phone && (livePath === null || panelId === livePath || !isServerStreamId(panelId))) return
       const shown = phone ? activatePanelTab(liveLayout, panelId) : liveLayout
-      const route = phone ? phonePanelRoute(shown, panelId, livePath) : { path: panelId, keepPath: false }
-      const to = route.path ?? livePath
+      // A page's route stays put, writing itself only when it is in front.
+      let route: { path: string | null; keepPath: boolean } = { path: livePane, keepPath: panelId === livePane }
+      if (livePath !== null)
+        route = phone ? phonePanelRoute(shown, panelId, livePath) : { path: panelId, keepPath: false }
+      const to = route.path ?? livePane
       const params = withLayout(liveParams, shown, to, coverOwner, route.keepPath)
-      const href = hrefOf(`/w/${workspaceId}/s/${to}`, params)
+      const href = hrefOf(livePath === null ? live.pathname : `/w/${workspaceId}/s/${to}`, params)
       if (href === hrefOf(live.pathname, liveParams)) return
       navigate(href, { replace: true, flushSync: true, state: PANE_SWITCH_STATE })
     },

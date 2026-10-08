@@ -137,3 +137,43 @@ test.describe("on a phone", () => {
     expect(await boardScrollTop(page)).toBe(scrolled)
   })
 })
+
+// A touch tablet is wide, but stacks its panes as a phone does.
+for (const [device, viewport] of [
+  ["phone", { width: 390, height: 844 }],
+  ["touch tablet", { width: 1024, height: 768 }],
+] as const) {
+  test.describe(`on a ${device}`, () => {
+    test.use({ viewport, isMobile: true, hasTouch: true })
+
+    test("should write the board in front when the sheet switches to it, so a reload lands on it", async ({ page }) => {
+      const { workspaceId } = await seedConversations(page, 1)
+      await page.goto(`/w/${workspaceId}/board?lens=all`)
+      await expect(openers(page).first()).toBeVisible({ timeout: 30_000 })
+      await openers(page)
+        .locator("visible=true")
+        .first()
+        .evaluate((el: HTMLElement) => el.click())
+      await expect.poll(() => panelParam(page)).toMatch(/^conv:[^.]+$/)
+      const conversation = panelParam(page)!
+      const pane = page.getByTestId("panel")
+      await expect(pane).toBeVisible()
+
+      await pane.getByRole("button", { name: "2 open panes" }).click()
+      await page.getByRole("dialog", { name: "Open panes" }).getByRole("link", { name: "Board", exact: true }).click()
+      await expect.poll(() => panelParam(page)).toBe(`page:board-${conversation}`)
+      await expect(board(page)).toBeVisible()
+      await expect(pane).not.toBeVisible()
+
+      await page.reload()
+      await expect(openers(page).first()).toBeVisible({ timeout: 30_000 })
+      await expect(board(page)).toBeVisible()
+      await expect(page.getByTestId("panel")).not.toBeVisible()
+
+      await board(page).getByRole("button", { name: "2 open panes" }).click()
+      await page.getByRole("dialog", { name: "Open panes" }).getByRole("link").last().click()
+      await expect.poll(() => panelParam(page)).toBe(conversation)
+      await expect(page.getByTestId("panel")).toBeVisible()
+    })
+  })
+}
