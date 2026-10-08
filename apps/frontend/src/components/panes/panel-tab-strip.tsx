@@ -20,7 +20,7 @@ import { useStreamName } from "@/hooks/use-stream-name"
 import { useThreadAnchorSnippet } from "@/hooks/use-thread-anchor-snippet"
 import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { useConversationTitle } from "@/hooks/use-conversation-title"
-import { closePanelTab, followCurrentPanel } from "@/lib/panel-tabs"
+import { closePanelTab, followCurrentPanel, soleFirstPanelOf } from "@/lib/panel-tabs"
 import { fitPanelTabs, splitVisibleTabs, FOCUS_TOGGLE_WIDTH, type PanelTabFit } from "@/lib/panel-tab-fit"
 import { cn } from "@/lib/utils"
 import { usePaneCovered } from "./pane-host"
@@ -87,10 +87,13 @@ export function PanelTabStrip({
   const handOffFocus = (nextActive: string | null) => {
     if (stripRef.current?.contains(document.activeElement)) focusHandoff.current = nextActive
   }
-  const activeAfterClosing = (ids: readonly string[]) =>
-    activePanelId !== null && ids.includes(activePanelId)
-      ? followCurrentPanel(layout, ids.reduce(closePanelTab, layout), activePanelId)
-      : activePanelId
+  // The sole first pane shows neither a strip nor a close button, so nothing there would take a handoff.
+  const activeAfterClosing = (ids: readonly string[]) => {
+    if (activePanelId === null || !ids.includes(activePanelId)) return activePanelId
+    const next = ids.reduce(closePanelTab, layout)
+    const active = followCurrentPanel(layout, next, activePanelId)
+    return active === soleFirstPanelOf(next) ? null : active
+  }
   // The menu holds focus while it is open, so its close hands off to the tab left on show unconditionally.
   const closeFromMenu = (ids: readonly string[]) => {
     focusHandoff.current = activeAfterClosing(ids)
