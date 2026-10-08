@@ -426,6 +426,166 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
   },
 
   {
+    id: "cross-conversation-partial-reversal-carries-001",
+    name: "Reversing one claim of a stream memo retires it only with the claims that still hold carried forward",
+    input: {
+      category: "revision",
+      memoryContext: [
+        {
+          title: "Pro plan: $12 per user, invoiced through Stripe",
+          abstract:
+            "The Pro plan costs $12 per user per month. It is invoiced through Stripe in arrears on the 1st, per active user.",
+          createdDaysAgo: 5,
+        },
+      ],
+      messages: [
+        { ...PIERRE, contentMarkdown: "small teams keep bouncing off the pro price", minutesAgo: 30 },
+        { ...KRIS, contentMarkdown: "let's drop it to $9 per user then", minutesAgo: 25 },
+        { ...PIERRE, contentMarkdown: "done, updating the pricing page", minutesAgo: 20 },
+      ],
+    },
+    expectedOutput: {
+      minMemos: 1,
+      maxMemos: 1,
+      conclusionMustState: "The Pro plan costs $9 per user",
+      expectSupersedes: "Pro plan: $12 per user, invoiced through Stripe",
+      survives: {
+        title: "Pro plan: $12 per user, invoiced through Stripe",
+        claim: "The Pro plan is invoiced through Stripe",
+      },
+    },
+  },
+
+  {
+    id: "cross-conversation-agreed-reply-keeps-claims-001",
+    name: "An agreeing reply that overturns one sub-claim keeps the stream memo's other claims in active memory",
+    input: {
+      category: "revision",
+      memoryContext: [
+        {
+          title: "Appen 3.0 släpps stegvis, Android först",
+          abstract:
+            "Android-versionen av 3.0 rullas ut stegvis till 10 % av användarna via Play Console. iOS-versionen skickas in först när kraschfrekvensen på Android ligger under 0,5 %.",
+          createdDaysAgo: 2,
+        },
+      ],
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown:
+            "Håller med om den stegvisa utrullningen på Android. Men vi behöver inte vänta med iOS, Apples granskning tar ändå en vecka, så jag skickar in iOS-bygget idag.",
+          minutesAgo: 30,
+        },
+        { ...KRIS, contentMarkdown: "kör så", minutesAgo: 25 },
+      ],
+    },
+    expectedOutput: {
+      minMemos: 1,
+      maxMemos: 2,
+      conclusionMustState: "The iOS build of 3.0 is submitted now, without waiting on the Android crash rate",
+      survives: {
+        title: "Appen 3.0 släpps stegvis, Android först",
+        claim: "Android 3.0 rolls out in stages, starting with 10% of users",
+      },
+    },
+  },
+
+  {
+    id: "cross-conversation-refinement-keeps-001",
+    name: "Detailing one part of a stream memo's scope retires nothing",
+    input: {
+      category: "extraction",
+      memoryContext: [
+        {
+          title: "Invoices v1 ships PDF export and one payment reminder",
+          abstract:
+            "Invoices v1 includes PDF export and a single payment-reminder email seven days after the due date. Multi-currency and dunning sequences are deferred to v2.",
+          createdDaysAgo: 3,
+        },
+      ],
+      messages: [
+        { ...PIERRE, contentMarkdown: "what actually goes on the v1 invoice PDF?", minutesAgo: 30 },
+        {
+          ...KRIS,
+          contentMarkdown: "logo, line items, VAT breakdown per rate, and the due date. no payment history on it",
+          minutesAgo: 25,
+        },
+        { ...PIERRE, contentMarkdown: "ok, I'll build the template like that", minutesAgo: 20 },
+      ],
+    },
+    expectedOutput: {
+      maxMemos: 1,
+      mustCoverAny: [["VAT"]],
+      expectSupersedes: null,
+    },
+  },
+
+  {
+    id: "cross-conversation-adjacent-decision-keeps-001",
+    name: "A decision next to a stream memo's topic retires nothing",
+    input: {
+      category: "extraction",
+      memoryContext: [
+        {
+          title: "Customer exports run against the read replica",
+          abstract:
+            "Nightly customer CSV exports query the read replica, never the primary, because large exports lock tables on the primary.",
+          createdDaysAgo: 2,
+        },
+      ],
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown: "how do customers get their exports, email attachment or download from the dashboard?",
+          minutesAgo: 30,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "dashboard download only, attachments get too big. links expire after 24h",
+          minutesAgo: 25,
+        },
+        { ...PIERRE, contentMarkdown: "works for me", minutesAgo: 20 },
+      ],
+    },
+    expectedOutput: {
+      minMemos: 1,
+      maxMemos: 1,
+      conclusionMustState: "Customers get exports as dashboard downloads whose links expire after 24 hours",
+      expectSupersedes: null,
+    },
+  },
+
+  {
+    id: "cross-conversation-ratification-keeps-001",
+    name: "An offhand reply ratifying a stream memo neither retires nor inverts it",
+    input: {
+      category: "extraction",
+      memoryContext: [
+        {
+          title: "The v1 onboarding checklist has three steps",
+          abstract:
+            "The v1 onboarding checklist has three steps: invite teammates, connect a calendar, create a first project. Integration setup moves to a follow-up email sent after the first week.",
+          createdDaysAgo: 1,
+        },
+      ],
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown:
+            "ok so the checklist stays at those three and integrations go in the week-one email. shout if marketing wants it different",
+          minutesAgo: 30,
+        },
+        { ...KRIS, contentMarkdown: "👍", minutesAgo: 25 },
+      ],
+    },
+    expectedOutput: {
+      maxMemos: 1,
+      conclusionMustNotState: "Integration setup is a step of the v1 onboarding checklist",
+      expectSupersedes: null,
+    },
+  },
+
+  {
     id: "team-event-booking-001",
     name: "A team event the participants booked is a decision, however logistical",
     input: {

@@ -292,7 +292,7 @@ export const memoItemSchema = z.object({
     .max(5)
     .nullable()
     .describe(
-      "Ids of existing memos (from the Memory Context or Existing Memos list) whose conclusion this memo REPLACES or REVERSES — the retired memos are removed from active memory. Only for genuine reversals/replacements; null when this memo retires nothing"
+      "Ids of existing memos (from the Memory Context or Existing Memos list) whose conclusion this memo REPLACES or REVERSES — the retired memos are removed from active memory with every claim they hold, so list one only when this memo restates each of its claims that still holds. Null when this memo retires nothing"
     ),
 })
 
@@ -486,7 +486,7 @@ export function getMemorizerSystemPrompt(timezone?: string, memoLanguage?: strin
 
 export const MEMORIZER_CONVERSATION_PROMPT = `Extract the memos worth remembering from this conversation.
 
-When the conversation REVERSES or replaces a conclusion a memory-context memo states, emit the corrected memo and list that memo's id in supersedesMemoIds, so the outdated memo is retired instead of standing next to its contradiction. Use supersedesMemoIds ONLY for genuine reversals/replacements; leave it null otherwise.
+When the conversation REVERSES or replaces a conclusion a memory-context memo states, emit the corrected memo and list that memo's id in supersedesMemoIds, so the outdated memo is retired instead of standing next to its contradiction. Retiring a memo removes every claim it holds from active memory. When the conversation reverses only part of a memo, the corrected memo restates each of that memo's claims the conversation left standing, so nothing still true is lost. A conversation that only adds detail, a condition, a next step, or a neighbouring decision retires nothing, even when it is on the same topic. Leave supersedesMemoIds null otherwise.
 
 ## Memory Context (prior memos in this stream)
 {{MEMORY_CONTEXT}}
@@ -502,7 +502,7 @@ export const MEMORIZER_REVISION_PROMPT = `This conversation already has memos. C
 
 Treat the existing memos as authoritative coverage: a topic that is restated, rephrased, elaborated with opinions, or met with agreement in the new messages is COVERED — emit nothing for it. Only a changed conclusion (a decision reversed, a setup replaced, a fact corrected) or a genuinely new topic earns a memo. Returning an empty set is the expected common case when a conversation is re-processed after a few new messages.
 
-When the conversation has REVERSED or replaced a conclusion an existing memo or a memory-context memo states, emit the corrected memo and list the replaced memo's id(s) in supersedesMemoIds — the retired memo is removed from active memory instead of standing next to its own contradiction. Use supersedesMemoIds ONLY for genuine reversals/replacements; a memo on a new topic leaves it null.
+When the conversation has REVERSED or replaced a conclusion an existing memo or a memory-context memo states, emit the corrected memo and list the replaced memo's id(s) in supersedesMemoIds — the retired memo is removed from active memory instead of standing next to its own contradiction. Retiring a memo removes every claim it holds from active memory. When the conversation reverses only part of a memo, the corrected memo restates each of that memo's claims the conversation left standing, so nothing still true is lost. A conversation that only adds detail, a condition, a next step, or a neighbouring decision retires nothing, even when it is on the same topic. A memo on a new topic leaves it null.
 
 ## Memory Context (prior memos in this stream)
 {{MEMORY_CONTEXT}}

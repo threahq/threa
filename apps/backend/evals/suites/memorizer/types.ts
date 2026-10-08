@@ -51,4 +51,6 @@ export interface MemorizerExpected {
   conclusionMustNotState?: string
   /** A title: memos must retire exactly that shown memo via supersedesMemoIds. null: none may retire anything. */
   expectSupersedes?: string | null
+  /** A shown memo and a claim of it the conversation left standing: retiring that memo requires some memo to restate the claim. */
+  survives?: { title: string; claim: string }
 }
