@@ -187,7 +187,7 @@ describe("CallCard", () => {
     expect(screen.getByText("2 replies")).toBeTruthy()
     expect(screen.getByRole("link", { name: "Open call chat" })).toHaveAttribute(
       "href",
-      "/w/ws_1/s/stream_1?panel=stream_thread"
+      "/w/ws_1/s/stream_thread?panel=stream_1-stream_thread"
     )
   })
 

@@ -5,7 +5,7 @@ import { StreamTypes, type StreamEvent } from "@threahq/types"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as eventItemModule from "./event-item"
 import { spyOnExport } from "@/test"
-import { getAsideState, openAside, resetAsideStoreCache, closeAside } from "@/stores/aside-store"
+import { asideHostKey, getAsideState, openAside, resetAsideStoreCache, closeAside } from "@/stores/aside-store"
 import { resetAgentActivityStore, upsertAgentSession } from "@/stores/agent-activity-store"
 import { createMockStream } from "@/test/fixtures"
 import { groupTimelineItems, TimelineItemContent, type TimelineItemRenderContext } from "./event-list"
@@ -14,6 +14,7 @@ const CREATOR = "usr_creator"
 const OTHER = "usr_other"
 const ASIDE = "stream_aside_1"
 const HOST_PATH = "/w/ws_1/s/stream_host"
+const HOST_KEY = asideHostKey(HOST_PATH)
 
 const aside = createMockStream({
   id: ASIDE,
@@ -151,7 +152,7 @@ describe("AsideAnchorEvent", () => {
 
   it("reads as open while the aside is on screen, whatever its unread says", () => {
     unreadOnAside(3)
-    openAside({ hostKey: HOST_PATH, hostStreamId: "stream_host", asideId: ASIDE, originScope: "stream:stream_host" })
+    openAside({ hostKey: HOST_KEY, hostStreamId: "stream_host", asideId: ASIDE, originScope: "stream:stream_host" })
     renderTimeline([anchorEvent()], CREATOR)
 
     expect(row()).toHaveAttribute("data-attention", "open")
@@ -206,7 +207,7 @@ describe("AsideAnchorEvent", () => {
 
   it("resumes the aside on its host page and reads as open", () => {
     openAside({
-      hostKey: HOST_PATH,
+      hostKey: HOST_KEY,
       hostStreamId: "stream_host",
       asideId: ASIDE,
       originScope: "stream:stream_host",
@@ -217,7 +218,7 @@ describe("AsideAnchorEvent", () => {
     fireEvent.click(screen.getByRole("button", { name: /^Resume aside:/ }))
 
     expect(getAsideState()).toEqual({
-      hostKey: HOST_PATH,
+      hostKey: HOST_KEY,
       hostStreamId: "stream_host",
       asideId: ASIDE,
       originScope: "stream:stream_host",
