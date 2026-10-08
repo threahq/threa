@@ -65,6 +65,14 @@ describe("parsePanelLayout", () => {
     expect([spell(at("a--a-b")), spell(at("a--*-b"))]).toEqual(["a-b", "a-b"])
   })
 
+  it("should drop a route's page when the value names one, since only its route places it", () => {
+    expect([spell(at("page:board.stream_x")), spell(at("page:board-stream_x")), at("page:board")]).toEqual([
+      "stream_x",
+      "stream_x",
+      NO_PANELS,
+    ])
+  })
+
   it("should read no panels when the param is missing or empty", () => {
     expect([at(null), at(""), at("*"), at("-.--")]).toEqual([NO_PANELS, NO_PANELS, NO_PANELS, NO_PANELS])
   })

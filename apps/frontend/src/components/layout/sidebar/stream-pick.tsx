@@ -24,7 +24,7 @@ import {
   PANEL_PARAM,
   type PanelLayout,
 } from "@/lib/panel-tabs"
-import { isServerStreamId } from "@/lib/stream-ids"
+import { isPagePane, isServerStreamId } from "@/lib/stream-ids"
 import { getCachedWorkspaceTables, indexStreams } from "@/stores/workspace-store"
 
 export interface StreamPage {
@@ -50,7 +50,7 @@ function openedFrom(id: string, parentOf: ParentOf): string | null {
 
 /** The stream a pane belongs to: a draft's, conversations list's or overview's stream, a new thread's parent, a stream's own; null for a conversation. */
 export function streamOfPane(id: string): string | null {
-  if (isConversationPanel(id)) return null
+  if (isConversationPanel(id) || isPagePane(id)) return null
   return (
     parseComposePanel(id) ??
     parseConversationsPanel(id) ??
