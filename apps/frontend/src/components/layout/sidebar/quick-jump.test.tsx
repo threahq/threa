@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 import { MemoryRouter, useLocation } from "react-router-dom"
 import * as contextsModule from "@/contexts"
+import * as deviceModule from "@/lib/device"
 import { QuickJumpCap, SidebarQuickJumpProvider, createQuickJumpCollector, useQuickJumpSlot } from "./quick-jump"
 
 const mockPreferences = {
@@ -56,6 +57,7 @@ describe("SidebarQuickJumpProvider", () => {
     vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
       preferences: mockPreferences,
     } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+    vi.spyOn(deviceModule, "isStandaloneApp").mockReturnValue(true)
   })
 
   afterEach(() => {
@@ -183,6 +185,33 @@ describe("SidebarQuickJumpProvider", () => {
     // Mac rewrites the character under Alt; the physical key still resolves.
     fireEvent.keyDown(document, { key: "™", code: "Digit2", altKey: true })
     expect(screen.getByTestId("path").textContent).toBe("/w/ws_1/s/stream_b")
+  })
+
+  it("leaves Cmd/Ctrl+digit to the browser outside the installed app", () => {
+    vi.spyOn(deviceModule, "isStandaloneApp").mockReturnValue(false)
+    renderSidebar(["stream_a", "stream_b"])
+
+    fireEvent.keyDown(document, { key: "Meta", metaKey: true })
+    reveal()
+    const handledByBrowser = fireEvent.keyDown(document, { key: "2", code: "Digit2", metaKey: true })
+
+    expect({
+      caps: [capOf("stream_a"), capOf("stream_b")],
+      handledByBrowser,
+      path: screen.getByTestId("path").textContent,
+    }).toEqual({ caps: ["", ""], handledByBrowser: true, path: "/w/ws_1/s/stream_start" })
+  })
+
+  it("yields a digit another shortcut already handled", () => {
+    renderSidebar(["stream_a", "stream_b"])
+    const otherShortcut = (event: KeyboardEvent) => event.preventDefault()
+    document.addEventListener("keydown", otherShortcut)
+
+    holdModifier()
+    fireEvent.keyDown(document, { key: "2", code: "Digit2", ctrlKey: true })
+    document.removeEventListener("keydown", otherShortcut)
+
+    expect(screen.getByTestId("path").textContent).toBe("/w/ws_1/s/stream_start")
   })
 
   it("stays inert when the shortcut is disabled", () => {
