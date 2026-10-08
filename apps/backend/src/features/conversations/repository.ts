@@ -351,6 +351,18 @@ export const ConversationRepository = {
     return mapRowToConversation(result.rows[0])
   },
 
+  /** Locks the rows in id order, so concurrent multi-conversation writers can't deadlock (INV-20). */
+  async findByIdsForUpdate(db: Querier, workspaceId: string, ids: string[]): Promise<Conversation[]> {
+    if (ids.length === 0) return []
+    const result = await db.query<ConversationRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM conversations
+      WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}::text[])
+      ORDER BY id
+      FOR UPDATE
+    `)
+    return result.rows.map(mapRowToConversation)
+  },
+
   /**
    * Batch lookup; returns conversations in arbitrary order. Workspace-scoped
    * (INV-8) — rows from other workspaces are filtered out at the query level
@@ -1195,7 +1207,12 @@ export const ConversationRepository = {
    * The workspace's own conversations in `streamIds` among `ids`, each with its
    * version and the shared channel its title and its summary were written for.
    */
-  async findShared(db: Querier, workspaceId: string, streamIds: string[], ids: string[]): Promise<SharedConversation[]> {
+  async findShared(
+    db: Querier,
+    workspaceId: string,
+    streamIds: string[],
+    ids: string[]
+  ): Promise<SharedConversation[]> {
     const result = await db.query<
       ConversationRow & {
         version: number

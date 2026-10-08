@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg"
 import { sql } from "../../db"
-import { ConversationRepository, distinctAuthors, type Conversation } from "./repository"
+import { ConversationRepository, distinctAuthors } from "./repository"
 import { MessageRepository } from "../messaging"
 import { StreamRepository } from "../streams"
 import { OutboxRepository } from "../../lib/outbox"
@@ -75,12 +75,10 @@ export async function moveThreadsWithAnchors(
   }
   if (moves.length === 0) return []
 
-  const locked = new Map<string, Conversation>()
-  const involved = new Set(moves.flatMap((m) => [m.fromConversationId, m.toConversationId]))
-  for (const id of [...involved].sort()) {
-    const conversation = await ConversationRepository.findByIdForUpdate(client, workspaceId, id)
-    if (conversation) locked.set(id, conversation)
-  }
+  const involved = [...new Set(moves.flatMap((m) => [m.fromConversationId, m.toConversationId]))]
+  const locked = new Map(
+    (await ConversationRepository.findByIdsForUpdate(client, workspaceId, involved)).map((c) => [c.id, c])
+  )
 
   for (const fromId of new Set(moves.map((m) => m.fromConversationId))) {
     const leaving = new Set(moves.filter((m) => m.fromConversationId === fromId).map((m) => m.messageId))
@@ -140,11 +138,11 @@ export async function emitThreadMoves(client: PoolClient, workspaceId: string, m
       settlingMessageIds: settlingByConversation.get(conversation.id) ?? [],
     })
   }
-  for (const move of moves) {
-    await OutboxRepository.insert(client, "conversation:message_reassigned", {
-      workspaceId,
-      ...move,
-      reason: "thread_follows_anchor",
-    })
-  }
+  await OutboxRepository.insertMany(
+    client,
+    moves.map((move) => ({
+      eventType: "conversation:message_reassigned",
+      payload: { workspaceId, ...move, reason: "thread_follows_anchor" },
+    }))
+  )
 }
