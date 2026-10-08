@@ -223,6 +223,14 @@ test.describe("Persona roster + editors", () => {
     await page.reload()
     await expect(pane.getByRole("button", { name: "Start test chat" })).toBeVisible({ timeout: 10000 })
     expect(panelParam(page)).toBe(`test:${personaId}`)
+
+    // Closing the pane is not End: the session is there when it opens again.
+    await pane.getByRole("button", { name: "Start test chat" }).click()
+    await expect(pane.getByRole("button", { name: "End test chat" })).toBeVisible({ timeout: 10000 })
+    await page.getByRole("button", { name: "Test draft" }).click()
+    await expect.poll(() => panelParam(page)).toBeNull()
+    await page.getByRole("button", { name: "Test draft" }).click()
+    await expect(pane.getByRole("button", { name: "End test chat" })).toBeVisible({ timeout: 10000 })
   })
 
   test("defaults pin at create: a later default change never switches an existing scratchpad's agent", async ({
@@ -755,7 +763,7 @@ test.describe("Persona editor on a phone", () => {
     const editorHeading = page.getByRole("heading", { name: /^Edit / })
     await expect(editorHeading).toBeVisible({ timeout: 10000 })
 
-    await page.getByRole("button", { name: "Test draft" }).evaluate((el: HTMLElement) => el.click())
+    await page.getByRole("button", { name: "Test draft" }).click()
     await expect.poll(() => panelParam(page)).toBe(`test:${personaId}`)
     const pane = page.getByRole("region", { name: "Test chat" })
     await expect(pane.getByRole("button", { name: "Start test chat" })).toBeVisible({ timeout: 10000 })
