@@ -1113,4 +1113,60 @@ export const MessageRepository = {
 
     return result.rows.map((row) => mapRowToMessage(row, reactionsByMessage.get(row.id) ?? {}))
   },
+
+  /**
+   * Every message in the message-anchored threads below `anchorIds`, at any
+   * depth and including deleted ones: a reply's own thread hangs off the reply.
+   * `anchorId` is the message each row replies to; `depth` 1 is a direct reply.
+   */
+  async findThreadTrees(
+    db: Querier,
+    workspaceId: string,
+    anchorIds: string[]
+  ): Promise<
+    {
+      id: string
+      streamId: string
+      authorId: string
+      conversationIntent: string | null
+      anchorId: string
+      depth: number
+    }[]
+  > {
+    if (anchorIds.length === 0) return []
+
+    const result = await db.query<{
+      id: string
+      stream_id: string
+      author_id: string
+      conversation_intent: string | null
+      anchor_id: string
+      depth: number
+    }>(sql`
+      WITH RECURSIVE tree AS (
+        SELECT m.id, m.stream_id, m.author_id, m.conversation_intent, a.id AS anchor_id, 1 AS depth
+        FROM messages a
+        JOIN streams s ON s.workspace_id = a.workspace_id AND s.parent_stream_id = a.stream_id
+          AND s.parent_anchor_id = a.id AND s.type = 'thread'
+        JOIN messages m ON m.workspace_id = s.workspace_id AND m.stream_id = s.id
+        WHERE a.workspace_id = ${workspaceId} AND a.id = ANY(${anchorIds}::text[])
+        UNION ALL
+        SELECT m.id, m.stream_id, m.author_id, m.conversation_intent, t.id, t.depth + 1
+        FROM tree t
+        JOIN streams s ON s.workspace_id = ${workspaceId} AND s.parent_stream_id = t.stream_id
+          AND s.parent_anchor_id = t.id AND s.type = 'thread'
+        JOIN messages m ON m.workspace_id = s.workspace_id AND m.stream_id = s.id
+      )
+      SELECT id, stream_id, author_id, conversation_intent, anchor_id, depth FROM tree
+    `)
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      streamId: row.stream_id,
+      authorId: row.author_id,
+      conversationIntent: row.conversation_intent,
+      anchorId: row.anchor_id,
+      depth: row.depth,
+    }))
+  },
 }

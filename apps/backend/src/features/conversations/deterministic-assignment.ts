@@ -5,6 +5,7 @@ import type { Message } from "../messaging"
 import type { Stream } from "../streams"
 import { emitAssignmentEvents } from "./assignment-events"
 import { resolveEventAnchoredParentConversationId } from "./parent-conversation"
+import { emitThreadMoves, moveThreadsWithAnchors } from "./thread-follows-anchor"
 import { conversationId } from "../../lib/id"
 import { ConversationStatuses } from "@threahq/types"
 
@@ -12,7 +13,8 @@ import { ConversationStatuses } from "@threahq/types"
  * Places a message without the extractor: into the conversation `findExisting`
  * picks, else a fresh one in the message's stream. The placement is final — no
  * settling row. The stream row is locked before the lookup so two placements
- * racing in one stream can't both mint (INV-20).
+ * racing in one stream can't both mint (INV-20). The message's own threads
+ * follow it there; the caller holds the message's row lock.
  */
 export async function assignWithoutExtraction(
   client: PoolClient,
@@ -42,21 +44,24 @@ export async function assignWithoutExtraction(
   await ConversationRepository.addPrimaryMessage(client, workspaceId, conversation.id, message.id, message.authorId)
   await ConversationRepository.reactivateIfInactive(client, workspaceId, conversation.id)
   await ConversationRepository.bumpActivityForIds(client, workspaceId, [conversation.id])
+  const threadMoves = await moveThreadsWithAnchors(client, workspaceId, new Map([[message.id, conversation.id]]))
 
-  return emitAssignmentEvents(client, {
+  const assigned = await emitAssignmentEvents(client, {
     workspaceId,
     message,
     conversationId: conversation.id,
     created: !existing,
     reason,
   })
+  await emitThreadMoves(client, workspaceId, threadMoves)
+  return assigned
 }
 
 /**
  * A reply in a message-anchored thread joins its anchor's conversation. Until
- * the anchor has one, the thread holds its own, which the anchor's extraction
+ * the anchor has one, the thread holds its own, which the anchor's placement
  * later folds into the anchor's (`moveThreadsWithAnchors`). The anchor row is
- * share-locked first: a pass moving the anchor holds it, so the reply reads the
+ * share-locked: a pass moving the anchor holds it, so the reply reads the
  * anchor's placement only after that pass commits and can't land behind it.
  */
 export async function assignThreadReply(

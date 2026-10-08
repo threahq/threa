@@ -913,6 +913,152 @@ describe("BoundaryExtractionService", () => {
       })
     })
 
+    test("should bring a thread along when an agent's channel message is placed after its replies", async () => {
+      const agentAnchorId = messageId()
+      const threadId = streamId()
+      const replyId = messageId()
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: agentAnchorId,
+          streamId: testStreamId,
+          sequence: BigInt(760),
+          authorId: "persona_test",
+          authorType: "persona",
+          ...testMessageContent("The release notes are drafted"),
+        })
+        await StreamRepository.insert(client, {
+          id: threadId,
+          workspaceId: testWorkspaceId,
+          type: "thread",
+          visibility: "private",
+          companionMode: "off",
+          createdBy: testUserId,
+          parentStreamId: testStreamId,
+          parentAnchorId: agentAnchorId,
+          rootStreamId: testStreamId,
+        })
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: replyId,
+          streamId: threadId,
+          sequence: BigInt(1),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Add the migration note"),
+        })
+      })
+      const threadConv = await service.processMessage(replyId, threadId, testWorkspaceId)
+
+      const anchorConv = await service.processMessage(agentAnchorId, testStreamId, testWorkspaceId)
+
+      const reply = await ConversationRepository.findPrimaryByMessageId(pool, testWorkspaceId, replyId)
+      const folded = await ConversationRepository.findById(pool, testWorkspaceId, threadConv!.id)
+      const events = await pool.query<{ event_type: string; payload: { conversationId?: string; messageId?: string } }>(
+        sql`SELECT event_type, payload FROM outbox
+            WHERE event_type IN ('conversation:updated', 'conversation:message_reassigned')
+              AND (payload->>'conversationId' = ${threadConv!.id} OR payload->>'messageId' = ${replyId})
+            ORDER BY id`
+      )
+      expect({
+        replyConversationId: reply?.id,
+        folded: { status: folded?.status, memberIds: folded?.messageIds },
+        events: events.rows.map((r) => ({ type: r.event_type, payload: r.payload })),
+      }).toEqual({
+        replyConversationId: anchorConv!.id,
+        folded: { status: ConversationStatuses.RESOLVED, memberIds: [] },
+        events: [
+          {
+            type: "conversation:updated",
+            payload: expect.objectContaining({
+              conversationId: threadConv!.id,
+              conversation: expect.objectContaining({ messageIds: [] }),
+            }),
+          },
+          {
+            type: "conversation:message_reassigned",
+            payload: expect.objectContaining({
+              messageId: replyId,
+              streamId: threadId,
+              fromConversationId: threadConv!.id,
+              toConversationId: anchorConv!.id,
+              reason: "thread_follows_anchor",
+            }),
+          },
+        ],
+      })
+    })
+
+    test("should bring a reply's own thread along when the anchor is placed", async () => {
+      const { anchorId, threadId, replyId } = await seedMessageThread({
+        anchorText: "Rotating the API keys this week",
+        replyText: "Which services read them?",
+        sequence: BigInt(770),
+      })
+      const nestedThreadId = streamId()
+      const nestedReplyId = messageId()
+      await withTransaction(pool, async (client) => {
+        await StreamRepository.insert(client, {
+          id: nestedThreadId,
+          workspaceId: testWorkspaceId,
+          type: "thread",
+          visibility: "private",
+          companionMode: "off",
+          createdBy: testUserId,
+          parentStreamId: threadId,
+          parentAnchorId: replyId,
+          rootStreamId: testStreamId,
+        })
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: nestedReplyId,
+          streamId: nestedThreadId,
+          sequence: BigInt(1),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("The billing worker and the importer"),
+        })
+      })
+      const threadConv = await service.processMessage(replyId, threadId, testWorkspaceId)
+      await service.processMessage(nestedReplyId, nestedThreadId, testWorkspaceId)
+
+      const anchorConv = await service.processMessage(anchorId, testStreamId, testWorkspaceId)
+
+      const primaries = await ConversationRepository.findPrimariesByMessageIds(pool, testWorkspaceId, [
+        replyId,
+        nestedReplyId,
+      ])
+      const folded = await ConversationRepository.findById(pool, testWorkspaceId, threadConv!.id)
+      expect({
+        reply: primaries.get(replyId)?.id,
+        nestedReply: primaries.get(nestedReplyId)?.id,
+        foldedStatus: folded?.status,
+      }).toEqual({
+        reply: anchorConv!.id,
+        nestedReply: anchorConv!.id,
+        foldedStatus: ConversationStatuses.RESOLVED,
+      })
+    })
+
+    test("should bring a deleted reply along so the thread's conversation empties", async () => {
+      const { anchorId, threadId, replyId } = await seedMessageThread({
+        anchorText: "Dropping the staging cluster on Friday",
+        replyText: "Wait, the demo runs there",
+        sequence: BigInt(780),
+      })
+      const threadConv = await service.processMessage(replyId, threadId, testWorkspaceId)
+      await pool.query(sql`UPDATE messages SET deleted_at = NOW() WHERE id = ${replyId}`)
+
+      const anchorConv = await service.processMessage(anchorId, testStreamId, testWorkspaceId)
+
+      const folded = await ConversationRepository.findById(pool, testWorkspaceId, threadConv!.id)
+      const anchorMembers = await ConversationRepository.findById(pool, testWorkspaceId, anchorConv!.id)
+      expect({ foldedStatus: folded?.status, anchorMemberIds: anchorMembers?.messageIds }).toEqual({
+        foldedStatus: ConversationStatuses.RESOLVED,
+        anchorMemberIds: [anchorId, replyId],
+      })
+    })
+
     test("replies under an event-anchored (card) thread reach the parent-stream extraction context", async () => {
       // A delegation card lives in the parent channel; its discussion thread
       // anchors on the card's EVENT id (not a message). A reply in that thread

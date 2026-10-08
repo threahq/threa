@@ -35,6 +35,7 @@ import {
   isMessageAnchorId,
 } from "./extraction-eligibility"
 import { assignThreadReply, assignWithoutExtraction } from "./deterministic-assignment"
+import { isPlacementFrozenByHuman, moveThreadsWithAnchors } from "./thread-follows-anchor"
 import { conversationId } from "../../lib/id"
 import { ConversationStatuses, LinkPreviewStatuses, THREAD_ANCHORABLE_EVENT_TYPES, TitleSources } from "@threahq/types"
 import { logger } from "../../lib/logger"
@@ -119,8 +120,8 @@ export class BoundaryExtractionService {
    *            transaction; emit outbox events.
    *
    * Scratchpads take no AI call: the message joins the active conversation if one
-   * exists, otherwise creates a new one. Neither does a user's reply in a
-   * message-anchored thread: it continues the thread's conversation.
+   * exists, otherwise creates a new one. Neither does a reply in a
+   * message-anchored thread, user or agent: it joins its anchor's conversation.
    */
   async processMessage(messageId: string, streamId: string, workspaceId: string): Promise<Conversation | null> {
     // Bounds this pass's out-of-window settle to rows that already existed when
@@ -350,8 +351,11 @@ export class BoundaryExtractionService {
 
     if (fetchedData.threadReply) {
       const { message, stream } = fetchedData
-      return this.assignOnce(message, workspaceId, (client) =>
-        assignThreadReply(client, { workspaceId, message, thread: stream })
+      return this.assignOnce(
+        message,
+        workspaceId,
+        (client) => assignThreadReply(client, { workspaceId, message, thread: stream }),
+        stream.parentAnchorId!
       )
     }
 
@@ -929,14 +933,22 @@ export class BoundaryExtractionService {
   /**
    * Runs a deterministic assignment unless the message already has a primary
    * (re-delivery, or the send placed it). The message row is locked first so a
-   * concurrent re-delivery can't double-assign (INV-20).
+   * concurrent re-delivery can't double-assign (INV-20). A thread reply's anchor
+   * is share-locked before that: a pass moving the anchor's thread locks anchor
+   * then replies, and taking them in the other order deadlocks against it.
    */
   private async assignOnce(
     message: Message,
     workspaceId: string,
-    assign: (client: PoolClient) => Promise<Conversation>
+    assign: (client: PoolClient) => Promise<Conversation>,
+    anchorId?: string
   ): Promise<Conversation | null> {
     return withTransaction(this.pool, async (client) => {
+      if (anchorId) {
+        await client.query(
+          sql`SELECT id FROM messages WHERE id = ${anchorId} AND workspace_id = ${workspaceId} FOR SHARE`
+        )
+      }
       await client.query(
         sql`SELECT id FROM messages WHERE id = ${message.id} AND workspace_id = ${workspaceId} FOR UPDATE`
       )
@@ -1020,76 +1032,6 @@ export class BoundaryExtractionService {
     }
     return { replyTargets, quotedConversations }
   }
-}
-
-/**
- * Engagement freezes placement: a human who re-filed a message (`'user'`) or
- * engaged with it where it sits (`'engagement'`) has ruled, and no later pass
- * re-files it. `'llm-window'` settles are machine-made and stay decidable.
- */
-function isPlacementFrozenByHuman(row: { state: string; settledBy: string | null } | null): boolean {
-  return row?.state === "settled" && (row.settledBy === "user" || row.settledBy === "engagement")
-}
-
-/**
- * A message-anchored thread lives in its anchor's conversation. Once a pass
- * files anchors (`placements`: anchor id → conversation id), each thread's
- * messages follow, so a thread never stays split between the anchor's old and
- * new conversation. A message declared into a conversation or filed by a human
- * stays where it is.
- */
-async function moveThreadsWithAnchors(
-  client: PoolClient,
-  workspaceId: string,
-  placements: Map<string, string>
-): Promise<{ messageId: string; streamId: string; fromConversationId: string; toConversationId: string }[]> {
-  const threads = await MessageRepository.findThreadMessages(client, workspaceId, [...placements.keys()])
-  const replies = [...threads].flatMap(([anchorId, messages]) =>
-    messages.map((message) => ({ message, toConversationId: placements.get(anchorId)! }))
-  )
-  if (replies.length === 0) return []
-
-  const replyIds = replies.map((r) => r.message.id)
-  await client.query(sql`
-    SELECT id FROM messages
-    WHERE workspace_id = ${workspaceId} AND id = ANY(${replyIds}::text[])
-    FOR UPDATE
-  `)
-  const primaries = await ConversationRepository.findPrimariesByMessageIds(client, workspaceId, replyIds)
-  const states = await MessageConversationStateRepository.findByMessageIds(client, workspaceId, replyIds)
-
-  const moves = replies.flatMap(({ message, toConversationId }) => {
-    const from = primaries.get(message.id)
-    if (!from || from.id === toConversationId) return []
-    if (message.conversationIntent != null || isPlacementFrozenByHuman(states.get(message.id) ?? null)) return []
-    return [{ message, fromConversationId: from.id, toConversationId }]
-  })
-
-  for (const fromId of new Set(moves.map((m) => m.fromConversationId))) {
-    const leaving = new Set(moves.filter((m) => m.fromConversationId === fromId).map((m) => m.message.id))
-    const locked = await ConversationRepository.findByIdForUpdate(client, workspaceId, fromId)
-    const remainingIds = (locked?.messageIds ?? []).filter((id) => !leaving.has(id))
-    const remaining = await MessageRepository.findByIds(client, workspaceId, remainingIds)
-    await ConversationRepository.removePrimaryMessages(
-      client,
-      workspaceId,
-      fromId,
-      [...leaving],
-      distinctAuthors(remainingIds, remaining)
-    )
-    await ConversationRepository.resolveIfEmpty(client, workspaceId, fromId)
-  }
-  for (const { message, toConversationId } of moves) {
-    await ConversationRepository.addPrimaryMessage(client, workspaceId, toConversationId, message.id, message.authorId)
-    await MessageConversationStateRepository.moveConversation(client, workspaceId, [message.id], toConversationId)
-  }
-
-  return moves.map(({ message, fromConversationId, toConversationId }) => ({
-    messageId: message.id,
-    streamId: message.streamId,
-    fromConversationId,
-    toConversationId,
-  }))
 }
 
 /** Append `extra` conversations not already present in `primary`, deduped by id. */
