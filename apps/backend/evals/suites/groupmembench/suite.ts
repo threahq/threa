@@ -28,6 +28,7 @@ import type { CaseResult, EvalContext, EvalSuite, Evaluator, RunEvaluator } from
 import { EVAL_JUDGE_MODEL } from "../../framework/judge-config"
 import { createCaptureMemoService, drainCapture, postMessages, recordConversation } from "../../fixtures/capture"
 import { runCompanionTask } from "../companion/suite"
+import type { CompanionTrajectoryStep } from "../companion/types"
 import {
   QUESTION_TYPES,
   datasetDir,
@@ -67,6 +68,7 @@ export interface GroupMemBenchOutput {
   recalledMemos: number
   /** Generation spend only: embeddings are not tracked. */
   costUsd: number
+  trajectory: CompanionTrajectoryStep[]
 }
 
 /** The data ends on 2025-07-28; temporal answers are absolute dates in that range. */
@@ -318,6 +320,7 @@ function runQuestion(variant: Variant) {
       retrievalSteps,
       recalledMemos,
       costUsd,
+      trajectory: output.trajectory ?? [],
     }
   }
 }
