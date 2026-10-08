@@ -1,3 +1,5 @@
+import { isStandaloneApp } from "@/lib/device"
+
 export interface ShortcutAction {
   id: string
   label: string
@@ -6,6 +8,8 @@ export interface ShortcutAction {
   category: "navigation" | "editing" | "view"
   /** If true, shortcut works even when focus is in an input field */
   global?: boolean
+  /** Exists only in the installed app; a browser tab owns these keys itself. */
+  installedAppOnly?: boolean
 }
 
 /** "mod" is the platform-agnostic modifier: Cmd on Mac, Ctrl elsewhere. */
@@ -25,6 +29,9 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
     defaultKey: "mod+1",
     category: "navigation",
     global: true,
+    // Every browser switches tabs on Cmd/Ctrl+1-9, and Alt or Shift variants
+    // collide with typing (⌥2 is "@" on Nordic Macs) or OS screenshots.
+    installedAppOnly: true,
   },
   {
     id: "sidebarNextStream",
@@ -180,6 +187,10 @@ export function getShortcutAction(id: string): ShortcutAction | undefined {
   return SHORTCUT_ACTIONS.find((a) => a.id === id)
 }
 
+function isShortcutAvailable(action: ShortcutAction): boolean {
+  return !action.installedAppOnly || isStandaloneApp()
+}
+
 export function getShortcutsByCategory(): Record<ShortcutAction["category"], ShortcutAction[]> {
   const result: Record<ShortcutAction["category"], ShortcutAction[]> = {
     navigation: [],
@@ -188,7 +199,7 @@ export function getShortcutsByCategory(): Record<ShortcutAction["category"], Sho
   }
 
   for (const action of SHORTCUT_ACTIONS) {
-    result[action.category].push(action)
+    if (isShortcutAvailable(action)) result[action.category].push(action)
   }
 
   return result
@@ -196,16 +207,19 @@ export function getShortcutsByCategory(): Record<ShortcutAction["category"], Sho
 
 /**
  * Get the effective key binding for an action, considering user customizations.
- * Returns undefined if the shortcut is explicitly disabled ("none") or unregistered.
+ * Returns undefined if the shortcut is explicitly disabled ("none"), unregistered,
+ * or unavailable where the app is running.
  */
 export function getEffectiveKeyBinding(
   actionId: string,
   customBindings: Record<string, string> = {}
 ): string | undefined {
+  const action = getShortcutAction(actionId)
+  if (action && !isShortcutAvailable(action)) return undefined
   const custom = customBindings[actionId]
   if (custom === "none") return undefined
   if (custom) return custom
-  return getShortcutAction(actionId)?.defaultKey
+  return action?.defaultKey
 }
 
 /** Returns a map of key binding to the action IDs that share it (length > 1). */
