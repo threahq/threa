@@ -47,7 +47,8 @@ export async function processChunk(
         client,
         workspaceId,
         message.streamId,
-        conversations.map((c) => c.id)
+        conversations.map((c) => c.id),
+        { rereadFromStart: true }
       )
       processed += retired
     })

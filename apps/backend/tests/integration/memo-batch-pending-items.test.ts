@@ -4,6 +4,10 @@ import type { Pool, PoolClient } from "pg"
 import { ConversationStatuses, MemoryModes } from "@threahq/types"
 import { ConversationRepository } from "../../src/features/conversations"
 import { MemoRepository, MemoService, PendingItemRepository } from "../../src/features/memos"
+import {
+  queueMemoConversations,
+  retireMemosCitingDeletedMessage,
+} from "../../src/features/memos/accumulator-outbox-handler"
 import type { ConversationClassification } from "../../src/features/memos/classifier"
 import { MEMO_CONVERSATION_WINDOW_CHARS, MEMO_MAX_FAILED_ATTEMPTS } from "../../src/features/memos/config"
 import { MessageRepository } from "../../src/features/messaging"
@@ -218,6 +222,38 @@ describe("memo batch: pending items", () => {
         [earlier[2], ...recent, followUp].sort(),
       ],
     })
+  })
+
+  test("deleting a source of a long conversation's memo reads the conversation again from the start", async () => {
+    const seeded = await seedQueuedConversation()
+    const longText = (part: number) => `part ${part} `.repeat(Math.ceil((MEMO_CONVERSATION_WINDOW_CHARS * 0.45) / 7))
+    const earlier = await withTransaction(pool, async (client) => {
+      const ids: string[] = []
+      for (const part of [0, 1, 2, 3]) {
+        ids.push(
+          await addMessage(client, seeded, BigInt(10 + part), {
+            text: longText(part),
+            createdAt: new Date(Date.UTC(2026, 6, 1, 10, part)),
+          })
+        )
+      }
+      return ids
+    })
+    const memorized: string[][] = []
+    const revising = () => serviceWith({ memorized, classify: async () => ({ ...worthy, shouldReviseExisting: true }) })
+    await serviceWith({ memorized }).processBatch(testWorkspaceId, seeded.streamId)
+    await revising().processBatch(testWorkspaceId, seeded.streamId)
+
+    await withTransaction(pool, async (client) => {
+      await MessageRepository.softDelete(client, testWorkspaceId, earlier[1])
+      await retireMemosCitingDeletedMessage(client, testWorkspaceId, seeded.streamId, earlier[1])
+      await queueMemoConversations(client, testWorkspaceId, seeded.streamId, [seeded.conversationId], {
+        rereadFromStart: true,
+      })
+    })
+    await revising().processBatch(testWorkspaceId, seeded.streamId)
+
+    expect([...memorized[2]].sort()).toEqual([earlier[0], earlier[2]].sort())
   })
 
   test("a classifier failure leaves the item pending with no fingerprint", async () => {

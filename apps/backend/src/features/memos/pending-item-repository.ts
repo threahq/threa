@@ -63,7 +63,12 @@ function mapRowToPendingItem(row: PendingItemRow): PendingMemoItem {
 const SELECT_FIELDS = `id, workspace_id, stream_id, item_type, item_id, queued_at, processed_at, classified_fingerprint, read_through, failed_attempts, version`
 
 export const PendingItemRepository = {
-  async queue(client: PoolClient, items: QueuePendingItemParams[]): Promise<PendingMemoItem[]> {
+  /** `rereadFromStart` clears how far earlier passes read, so the next pass starts over. */
+  async queue(
+    client: PoolClient,
+    items: QueuePendingItemParams[],
+    options: { rereadFromStart?: boolean } = {}
+  ): Promise<PendingMemoItem[]> {
     if (items.length === 0) return []
 
     const result = await client.query<PendingItemRow>(sql`
@@ -79,7 +84,8 @@ export const PendingItemRepository = {
       SET version = memo_pending_items.version + 1,
           queued_at = CASE WHEN memo_pending_items.processed_at IS NULL THEN memo_pending_items.queued_at ELSE EXCLUDED.queued_at END,
           processed_at = NULL,
-          failed_attempts = 0
+          failed_attempts = 0,
+          read_through = CASE WHEN ${options.rereadFromStart ?? false} THEN NULL ELSE memo_pending_items.read_through END
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     return result.rows.map(mapRowToPendingItem)
