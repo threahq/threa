@@ -69,7 +69,7 @@ describe("panel history", () => {
     const { back, loc } = mount([STREAM, BOARD])
 
     await user.click(screen.getByRole("button", { name: "open a" }))
-    expect(loc()).toBe("/board?lens=all&panel=conv%3Aa")
+    expect(loc()).toBe("/board?lens=all&panel=conv:a")
 
     await back()
     expect(loc()).toBe(BOARD)
@@ -91,7 +91,7 @@ describe("panel history", () => {
 
   it("closes a deep-linked panel without popping — that entry isn't ours to consume", async () => {
     const user = userEvent.setup()
-    const { back, loc } = mount([STREAM, `${BOARD}&panel=conv%3Aa`])
+    const { back, loc } = mount([STREAM, `${BOARD}&panel=conv:a`])
 
     await user.click(screen.getByRole("button", { name: "close" }))
     // Popping here would have left the app entirely.
@@ -107,7 +107,7 @@ describe("panel history", () => {
 
     await user.click(screen.getByRole("button", { name: "open a" }))
     await user.click(screen.getByRole("button", { name: "supersede with b" }))
-    expect(loc()).toBe("/board?lens=all&panel=conv%3Ab")
+    expect(loc()).toBe("/board?lens=all&panel=conv:b")
 
     // A promoted draft's old id no longer resolves — back must reach the board.
     await back()
@@ -119,7 +119,7 @@ describe("panel history", () => {
     const { back, loc } = mount([STREAM, BOARD])
 
     await user.click(screen.getByRole("link", { name: "link to c" }))
-    expect(loc()).toBe("/board?lens=all&panel=conv%3Ac")
+    expect(loc()).toBe("/board?lens=all&panel=conv:c")
 
     await user.click(screen.getByRole("button", { name: "close" }))
     expect(loc()).toBe(BOARD)

@@ -1244,7 +1244,7 @@ describe("BoardCard ledger", () => {
 
     const head = await screen.findByText(/^4 earlier · /)
     expect(ledgerRows(container).length).toBe(15)
-    expect(head.closest("a")?.getAttribute("href")).toBe(`/w/${WS}/board?panel=conv%3Aconv_1`)
+    expect(head.closest("a")?.getAttribute("href")).toBe(`/w/${WS}/board?panel=conv:conv_1`)
     // The head row stands for the oldest four; the fifth is the ledger's first row.
     expect(screen.queryByText("Reply 4.")).toBeNull()
     expect(screen.getByText("Reply 5.")).toBeTruthy()

@@ -33,6 +33,7 @@ import {
   phonePanelRoute,
   followPanel,
   formatPanelLayout,
+  readablePanelParam,
   fullPanelLayout,
   isPanelOnShow,
   newestPanelOf,
@@ -340,7 +341,7 @@ function withLayout(
 
 function hrefOf(pathname: string, params: URLSearchParams): string {
   const query = params.toString()
-  return query ? `${pathname}?${query}` : pathname
+  return query ? `${pathname}?${readablePanelParam(query)}` : pathname
 }
 
 const NO_SPLITS: readonly SplitDirection[] = []

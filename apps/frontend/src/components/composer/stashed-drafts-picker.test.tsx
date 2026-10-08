@@ -499,7 +499,7 @@ describe("navigate rows (branch replies / mounted composers)", () => {
             tier: "borrowed",
             label: "Reply in Pizza plans",
             checkedOutElsewhere: false,
-            openHref: "/w/ws_1/s/stream_1?panel=conv%3Aconv_1&stash=draft_nav",
+            openHref: "/w/ws_1/s/stream_1?panel=conv:conv_1&stash=draft_nav",
             openConversationId: "conv_1",
             openCarriesDraft: true,
           },
@@ -534,7 +534,7 @@ describe("navigate rows (branch replies / mounted composers)", () => {
     // "somewhere else".
     expect(onRestore).not.toHaveBeenCalled()
     const landed = await screen.findByTestId("navigated-away")
-    expect(landed.textContent).toBe("/w/ws_1/s/stream_1?panel=conv%3Aconv_1&stash=draft_nav")
+    expect(landed.textContent).toBe("/w/ws_1/s/stream_1?panel=conv:conv_1&stash=draft_nav")
     // Arrival focus rides the reply-open store — a same-URL navigation is a
     // router no-op, so without this the tap can be a silent nothing.
     expect(replyOpenSpy).toHaveBeenCalledWith("ws_1", "conv_1")
@@ -550,7 +550,7 @@ describe("navigate rows (branch replies / mounted composers)", () => {
             tier: "borrowed",
             label: "Reply in Pizza plans",
             checkedOutElsewhere: false,
-            openHref: "/w/ws_1/board?panel=conv%3Aconv_orphan",
+            openHref: "/w/ws_1/board?panel=conv:conv_orphan",
             openConversationId: "conv_orphan",
             openCarriesDraft: false,
           },

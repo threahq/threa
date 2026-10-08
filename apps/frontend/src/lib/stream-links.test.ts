@@ -16,23 +16,23 @@ describe("buildStreamLink", () => {
 
 describe("buildConversationLink", () => {
   it("builds a board-hosted conversation panel URL", () => {
-    expect(buildConversationLink("ws_1", "conv_1")).toBe(`${window.location.origin}/w/ws_1/board?panel=conv%3Aconv_1`)
+    expect(buildConversationLink("ws_1", "conv_1")).toBe(`${window.location.origin}/w/ws_1/board?panel=conv:conv_1`)
   })
 
   it("deep-links to a single message via ?m= when a messageId is given", () => {
     expect(buildConversationLink("ws_1", "conv_1", "msg_9")).toBe(
-      `${window.location.origin}/w/ws_1/board?panel=conv%3Aconv_1&m=msg_9`
+      `${window.location.origin}/w/ws_1/board?panel=conv:conv_1&m=msg_9`
     )
   })
 })
 
 describe("buildConversationPanelPath", () => {
   it("returns the origin-less router path the saved/activity Links consume", () => {
-    expect(buildConversationPanelPath("ws_1", "conv_1")).toBe("/w/ws_1/board?panel=conv%3Aconv_1")
+    expect(buildConversationPanelPath("ws_1", "conv_1")).toBe("/w/ws_1/board?panel=conv:conv_1")
   })
 
   it("carries the deep-link message id", () => {
-    expect(buildConversationPanelPath("ws_1", "conv_1", "msg_9")).toBe("/w/ws_1/board?panel=conv%3Aconv_1&m=msg_9")
+    expect(buildConversationPanelPath("ws_1", "conv_1", "msg_9")).toBe("/w/ws_1/board?panel=conv:conv_1&m=msg_9")
   })
 })
 
@@ -75,7 +75,7 @@ describe("copyConversationLink", () => {
 
     await copyConversationLink("ws_1", "conv_1", "msg_9")
 
-    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/ws_1/board?panel=conv%3Aconv_1&m=msg_9`)
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/ws_1/board?panel=conv:conv_1&m=msg_9`)
     expect(success).toHaveBeenCalledWith("Link copied")
   })
 
