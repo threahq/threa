@@ -383,8 +383,8 @@ describe("MemoExplorerService — user-scope owner gate (roadmap 6.4)", () => {
   it("reranks by default and skips both the embedding and the reranker for a fast search with a caller embedding", async () => {
     const { service, embed, rerank } = buildService()
     const hybrid = spyOn(MemoRepository, "hybridSearch").mockResolvedValue([
-      { memo: fakeMemo({ id: "memo_a" }), distance: 0.1, sourceStream: null, rootStream: null },
-      { memo: fakeMemo({ id: "memo_b" }), distance: 0.2, sourceStream: null, rootStream: null },
+      { memo: fakeMemo({ id: "memo_a" }), distance: 0.1, sourceStream: null, rootStream: null, latestSourceAt: null },
+      { memo: fakeMemo({ id: "memo_b" }), distance: 0.2, sourceStream: null, rootStream: null, latestSourceAt: null },
     ])
     const base = { workspaceId: WORKSPACE_ID, permissions: OWNER, query: "prefs" }
 

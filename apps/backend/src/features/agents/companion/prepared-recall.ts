@@ -2,6 +2,7 @@ import type { KnowledgeType, MemoRecallOutcome } from "@threahq/types"
 import type { AnalyticsReporter } from "@threahq/backend-common"
 import type { MemoAudience, MemoExplorerService, RelevanceScorerLike } from "../../memos"
 import { logger } from "../../../lib/logger"
+import { formatInstant } from "../../../lib/temporal"
 import { escapeXmlAttr } from "../../../lib/xml"
 import {
   PREPARED_RECALL_CANDIDATE_LIMIT,
@@ -20,6 +21,7 @@ export interface RecalledMemo {
   knowledgeType: KnowledgeType
   sourceMessageIds: string[]
   createdAt: Date
+  latestSourceAt: Date | null
   score: number
 }
 
@@ -163,13 +165,14 @@ export class PreparedRecall {
     if (!scores) return { outcome: "unscored", candidateCount: candidates.length, memos: [] }
 
     const memos = candidates
-      .map(({ memo }, index) => ({
+      .map(({ memo, latestSourceAt }, index) => ({
         id: memo.id,
         title: memo.title,
         abstract: memo.abstract,
         knowledgeType: memo.knowledgeType,
         sourceMessageIds: memo.sourceMessageIds,
         createdAt: memo.createdAt,
+        latestSourceAt,
         score: scores[index],
       }))
       .filter((memo) => memo.score >= PREPARED_RECALL_MIN_SCORE)
@@ -180,15 +183,16 @@ export class PreparedRecall {
   }
 }
 
-export function formatRecalledMemosBlock(memos: RecalledMemo[]): string | null {
+/** `timezone` is the asker's clock; UTC when the asker has none. */
+export function formatRecalledMemosBlock(memos: RecalledMemo[], timezone = "UTC"): string | null {
   if (memos.length === 0) return null
   const entries = memos.map(
     (memo) =>
-      `<memo id="${escapeXmlAttr(memo.id)}" title="${escapeXmlAttr(memo.title)}" type="${memo.knowledgeType}" captured="${memo.createdAt.toISOString().slice(0, 10)}">\n${escapeXmlAttr(memo.abstract)}\n</memo>`
+      `<memo id="${escapeXmlAttr(memo.id)}" title="${escapeXmlAttr(memo.title)}" type="${memo.knowledgeType}" as_of="${formatInstant(memo.latestSourceAt ?? memo.createdAt, timezone)}">\n${escapeXmlAttr(memo.abstract)}\n</memo>`
   )
   return `## Recalled from memory
 
-Workspace memory retrieved for the latest message before you started. Take what bears on your reply into account without being asked, and say so briefly when it changes your answer. Memos are summaries and can be out of date, so look further when the reply depends on a detail. Leave out memos that don't bear on the reply.
+Workspace memory retrieved for the latest message before you started. Take what bears on your reply into account without being asked, and say so briefly when it changes your answer. Memos are summaries and can be out of date, so look further when the reply depends on a detail. A memo's as_of is when the newest message it summarizes was posted, and a later message that explicitly changes or reverses what the memo states overrides it. A question, proposal or passing remark does not. Leave out memos that don't bear on the reply.
 
 ${entries.join("\n")}`
 }

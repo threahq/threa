@@ -150,6 +150,16 @@ function wallClockParts(
 }
 
 /**
+ * An absolute minute on the asker's clock with its offset, e.g. "2026-10-07 15:30 UTC+2". Every time an agent
+ * compares across memos, retrieved messages and the conversation goes through this, so all of them read on one clock.
+ */
+export function formatInstant(date: Date, timezone: string): string {
+  const wall = wallClockParts(date, timezone)
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${wall.year}-${pad(wall.month)}-${pad(wall.day)} ${pad(wall.hour)}:${pad(wall.minute)} ${getUtcOffset(timezone, date)}`
+}
+
+/**
  * The UTC instant of midnight on the 1st of the given month in `timezone`.
  * `monthIndex` is 0-based and may overflow past 11 (Date.UTC semantics).
  * Two-pass offset correction handles DST; if midnight doesn't exist in the
@@ -210,7 +220,7 @@ export function buildTemporalPromptSection(temporal: TemporalContext, participan
 
   const formatExample = temporal.timeFormat === "12h" ? "2:30 PM" : "14:30"
   const formatInstruction = `When referencing times, use ${temporal.timeFormat === "12h" ? "12-hour" : "24-hour"} format (e.g., ${formatExample}).`
-  const timestampInstruction = `User messages are prefixed with their send time, e.g., (${formatExample}). Do not include timestamps in your responses.`
+  const timestampInstruction = `User messages are prefixed with their send time on the current time's clock, e.g., (${formatExample}). Do not include timestamps in your responses.`
   const groundingInstruction =
     "Treat the current time above as the invocation-time definition of now for relative terms like today, tomorrow, yesterday, this week, recently, latest, and current. It is not your training cutoff date and not the stream creation date. Resolve relative times silently while reasoning; mention the current time only when the user asks for it."
 
@@ -232,7 +242,7 @@ export function buildTemporalPromptSection(temporal: TemporalContext, participan
   }
 
   // Same offset: simple format
-  return `\n\n## Current Time\n\nCurrent time: ${currentTimeFormatted}\n\n${groundingInstruction}\n${formatInstruction}\n${timestampInstruction}`
+  return `\n\n## Current Time\n\nCurrent time: ${currentTimeFormatted} (${temporal.utcOffset})\n\n${groundingInstruction}\n${formatInstruction}\n${timestampInstruction}`
 }
 
 /**

@@ -1,11 +1,11 @@
 import type { AuthorType } from "@threahq/types"
 import type { Querier } from "../../../db"
+import { formatInstant } from "../../../lib/temporal"
 import { formatAttachWithStreamTag, formatMemoTag, formatMsgRefToken, formatRetrievedMessageTag } from "../pointer-tags"
 import { UserRepository } from "../../workspaces"
 import { StreamRepository } from "../../streams"
 import type { Memo } from "../../memos"
 import { PersonaRepository } from "../persona-repository"
-import { formatRelativeDate } from "../../../lib/temporal"
 import { workspaceMemoUrl, workspaceMessageUrl, workspaceStreamUrl } from "../workspace-links"
 
 export interface EnrichedMemoResult {
@@ -16,6 +16,7 @@ export interface EnrichedMemoResult {
     type: string
     name: string | null
   } | null
+  latestSourceAt: Date | null
 }
 
 export interface EnrichedMessageResult {
@@ -59,15 +60,17 @@ export function formatRetrievedContext(
   memos: EnrichedMemoResult[],
   messages: EnrichedMessageResult[],
   attachments: EnrichedAttachmentResult[],
-  workspaceId: string
+  workspaceId: string,
+  /** The asker's clock; UTC when the asker has none. */
+  timezone = "UTC"
 ): string | null {
   if (memos.length === 0 && messages.length === 0 && attachments.length === 0) {
     return null
   }
 
-  const memosSection = memos.length > 0 ? formatMemosSection(memos, workspaceId) : ""
-  const messagesSection = messages.length > 0 ? formatMessagesSection(messages, workspaceId) : ""
-  const attachmentsSection = attachments.length > 0 ? formatAttachmentsSection(attachments, workspaceId) : ""
+  const memosSection = memos.length > 0 ? formatMemosSection(memos, workspaceId, timezone) : ""
+  const messagesSection = messages.length > 0 ? formatMessagesSection(messages, workspaceId, timezone) : ""
+  const attachmentsSection = attachments.length > 0 ? formatAttachmentsSection(attachments, workspaceId, timezone) : ""
 
   return `## Retrieved Knowledge
 
@@ -76,9 +79,9 @@ The following relevant information was found in the workspace:
 ${memosSection}${messagesSection}${attachmentsSection}Use this knowledge to inform your response. Cite sources when relevant.`
 }
 
-function formatMemosSection(memos: EnrichedMemoResult[], workspaceId: string): string {
+function formatMemosSection(memos: EnrichedMemoResult[], workspaceId: string, timezone: string): string {
   const memoEntries = memos
-    .map(({ memo, sourceStream }) => {
+    .map(({ memo, sourceStream, latestSourceAt }) => {
       const location = sourceStream?.name ?? sourceStream?.type ?? "workspace"
       const keyPointsList =
         memo.keyPoints.length > 0 ? `\nKey points:\n${memo.keyPoints.map((kp) => `- ${kp}`).join("\n")}\n` : ""
@@ -91,7 +94,9 @@ function formatMemosSection(memos: EnrichedMemoResult[], workspaceId: string): s
           : ""
       const linkLine = `Link: ${workspaceMemoUrl(workspaceId, memo.id)}\n`
 
-      return `**${memo.title}** _(${memoTag})_
+      const asOf = formatInstant(latestSourceAt ?? memo.createdAt, timezone)
+
+      return `**${memo.title}** _(${memoTag})_, as of ${asOf}
 
 ${memo.abstract}
 ${keyPointsList}${sourcesLine}${linkLine}`
@@ -100,14 +105,16 @@ ${keyPointsList}${sourcesLine}${linkLine}`
 
   return `### Memos
 
+Each memo is as of its newest source message. A message posted after that date that explicitly changes or reverses what the memo states overrides it. A question, proposal or passing remark does not.
+
 ${memoEntries}
 `
 }
 
-function formatMessagesSection(messages: EnrichedMessageResult[], workspaceId: string): string {
+function formatMessagesSection(messages: EnrichedMessageResult[], workspaceId: string, timezone: string): string {
   const messageEntries = messages
     .map((msg) => {
-      const relativeDate = formatRelativeDate(msg.createdAt)
+      const postedAt = formatInstant(msg.createdAt, timezone)
       const author = msg.authorType === "user" ? `@${msg.authorName}` : msg.authorName
       const content = msg.content.replace(/\s+/g, " ").trim()
       const quoteBlock = msg.quoteContext ? `\n${msg.quoteContext}` : ""
@@ -119,7 +126,7 @@ function formatMessagesSection(messages: EnrichedMessageResult[], workspaceId: s
       const idTag = formatRetrievedMessageTag(msg.id, msg.streamId, msg.authorId, msg.authorType)
       const link = workspaceMessageUrl(workspaceId, msg.streamId, msg.id)
 
-      return `> ${idTag} **${author}** in _${msg.streamName}_ (${relativeDate}):
+      return `> ${idTag} **${author}** in _${msg.streamName}_ (${postedAt}):
 > ${content}${quoteBlock}
 > Link: ${link}`
     })
@@ -132,17 +139,21 @@ ${messageEntries}
 `
 }
 
-function formatAttachmentsSection(attachments: EnrichedAttachmentResult[], workspaceId: string): string {
+function formatAttachmentsSection(
+  attachments: EnrichedAttachmentResult[],
+  workspaceId: string,
+  timezone: string
+): string {
   const attachmentEntries = attachments
     .map((att) => {
-      const relativeDate = formatRelativeDate(att.createdAt)
+      const postedAt = formatInstant(att.createdAt, timezone)
       const contentInfo = att.contentType ? ` (${att.contentType})` : ""
       const summary = att.summary ? `\n${att.summary}` : ""
       // Surface attachment id for `attachment:` resurfacing pointer URLs.
       const attachTag = formatAttachWithStreamTag(att.id, att.streamId)
       const linkLine = att.streamId ? `\nLink: ${workspaceStreamUrl(workspaceId, att.streamId)}` : ""
 
-      return `**${att.filename}**${contentInfo} _(${attachTag}, ${relativeDate})_${summary}${linkLine}`
+      return `**${att.filename}**${contentInfo} _(${attachTag}, ${postedAt})_${summary}${linkLine}`
     })
     .join("\n\n")
 

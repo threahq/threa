@@ -3,7 +3,7 @@ import { describe, expect, it, mock } from "bun:test"
 import type { MemoExplorerResult, MemoExplorerService } from "../../memos"
 import { PREPARED_RECALL_EVENT, PreparedRecall, formatRecalledMemosBlock } from "./prepared-recall"
 
-function result(id: string, title: string): MemoExplorerResult {
+function result(id: string, title: string, latestSourceAt: Date | null = null): MemoExplorerResult {
   return {
     memo: {
       id,
@@ -16,6 +16,7 @@ function result(id: string, title: string): MemoExplorerResult {
     distance: 0,
     sourceStream: null,
     rootStream: null,
+    latestSourceAt,
   } as MemoExplorerResult
 }
 
@@ -169,18 +170,23 @@ describe("PreparedRecall", () => {
 })
 
 describe("formatRecalledMemosBlock", () => {
-  it("renders each memo escaped, with its id and capture date, and nothing when none were recalled", async () => {
+  it("renders each memo escaped, as of its newest source message, and nothing when none were recalled", async () => {
     const recall = new PreparedRecall({
       analyticsReporter: new DisabledAnalyticsReporter(),
-      memoExplorerService: { search: async () => [result("memo_allergy", "Peanut <allergy>")] },
-      scorer: { score: async () => [1] },
+      memoExplorerService: {
+        search: async () => [
+          result("memo_allergy", "Peanut <allergy>", new Date("2026-03-02T09:00:00Z")),
+          result("memo_sourceless", "Agent note"),
+        ],
+      },
+      scorer: { score: async () => [1, 0.9] },
     })
 
-    const block = formatRecalledMemosBlock((await recall.recall(params)).memos)
+    const block = formatRecalledMemosBlock((await recall.recall(params)).memos, "Europe/Stockholm")
 
     expect({ block, empty: formatRecalledMemosBlock([]) }).toEqual({
       block: expect.stringContaining(
-        '<memo id="memo_allergy" title="Peanut &lt;allergy&gt;" type="context" captured="2026-09-30">\nPeanut &lt;allergy&gt; abstract\n</memo>'
+        '<memo id="memo_allergy" title="Peanut &lt;allergy&gt;" type="context" as_of="2026-03-02 10:00 UTC+1">\nPeanut &lt;allergy&gt; abstract\n</memo>\n<memo id="memo_sourceless" title="Agent note" type="context" as_of="2026-09-30 12:00 UTC+2">'
       ),
       empty: null,
     })

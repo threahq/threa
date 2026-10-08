@@ -73,7 +73,13 @@ function memoHit(id: string, sourceMessageIds: string[]): MemoExplorerResult {
     requiresBrowse: false,
     archivedAt: null,
   }
-  return { memo, distance: 0.1, sourceStream: { id: "stream_1", type: "scratchpad", name: null }, rootStream: null }
+  return {
+    memo,
+    distance: 0.1,
+    sourceStream: { id: "stream_1", type: "scratchpad", name: null },
+    rootStream: null,
+    latestSourceAt: null,
+  }
 }
 
 const rrf = (...positions: number[]) => positions.reduce((sum, p) => sum + 1 / (K + p), 0)

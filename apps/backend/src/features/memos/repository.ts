@@ -232,6 +232,8 @@ export interface MemoSearchResult {
     type: string
     name: string | null
   } | null
+  /** When the newest undeleted source message was posted; null when none resolves. */
+  latestSourceAt: Date | null
 }
 
 export interface MemoSearchFilters {
@@ -368,6 +370,14 @@ const SELECT_FIELDS_PREFIXED = `
 const SELECT_FIELDS_SQL = rawSql(SELECT_FIELDS)
 const SELECT_FIELDS_PREFIXED_SQL = rawSql(SELECT_FIELDS_PREFIXED)
 
+function latestSourceAtSql(memoAlias: string) {
+  return rawSql(`(
+    SELECT max(src.created_at) FROM messages src
+    WHERE src.workspace_id = ${memoAlias}.workspace_id AND src.id = ANY(${memoAlias}.source_message_ids)
+      AND src.deleted_at IS NULL
+  ) as latest_source_at`)
+}
+
 interface MemoSearchRow extends MemoRow {
   stream_id: string | null
   stream_type: string | null
@@ -375,6 +385,7 @@ interface MemoSearchRow extends MemoRow {
   root_stream_id: string | null
   root_stream_type: string | null
   root_stream_name: string | null
+  latest_source_at: Date | null
 }
 
 function mapMemoSearchResult(row: MemoSearchRow, distance: number): MemoSearchResult {
@@ -395,6 +406,7 @@ function mapMemoSearchResult(row: MemoSearchRow, distance: number): MemoSearchRe
           name: row.root_stream_name,
         }
       : null,
+    latestSourceAt: row.latest_source_at,
   }
 }
 
@@ -1347,7 +1359,7 @@ export const MemoRepository = {
             AND (${filters?.after === undefined} OR m.created_at >= ${filters?.after ?? new Date(0)})
             AND ${audienceVisible}
         )
-        SELECT * FROM memo_with_stream
+        SELECT mws.*, ${latestSourceAtSql("mws")} FROM memo_with_stream mws
         WHERE (${!hasStreamFilter} OR stream_id = ANY(${streamIds ?? []}) OR root_stream_id = ANY(${streamIds ?? []}))
         ORDER BY updated_at DESC
         LIMIT ${limit}
@@ -1387,7 +1399,7 @@ export const MemoRepository = {
           AND ${audienceVisible}
           AND ${MEMO_TSVECTOR} @@ websearch_to_tsquery(${MEMO_ROW_CONFIG}, ${query})
       )
-      SELECT * FROM memo_with_stream
+      SELECT mws.*, ${latestSourceAtSql("mws")} FROM memo_with_stream mws
       WHERE (${!hasStreamFilter} OR stream_id = ANY(${streamIds ?? []}) OR root_stream_id = ANY(${streamIds ?? []}))
       ORDER BY rank DESC
       LIMIT ${limit}
@@ -1522,7 +1534,8 @@ export const MemoRepository = {
         COALESCE(msg_stream.display_name, msg_stream.slug, conv_stream.display_name, conv_stream.slug) as stream_name,
         root_stream.id as root_stream_id,
         root_stream.type as root_stream_type,
-        COALESCE(root_stream.display_name, root_stream.slug) as root_stream_name
+        COALESCE(root_stream.display_name, root_stream.slug) as root_stream_name,
+        ${latestSourceAtSql("m")}
       FROM fused f
       JOIN memos m ON m.id = f.id AND m.workspace_id = ${workspaceId}
       ${streamJoins}
@@ -1587,7 +1600,7 @@ export const MemoRepository = {
             )
           )
       )
-      SELECT * FROM memo_with_stream
+      SELECT mws.*, ${latestSourceAtSql("mws")} FROM memo_with_stream mws
       WHERE (${!hasStreamFilter} OR stream_id = ANY(${streamIds ?? []}) OR root_stream_id = ANY(${streamIds ?? []}))
       ORDER BY updated_at DESC
       LIMIT ${limit}
