@@ -52,8 +52,9 @@ export function PagePanes({ workspaceId, page = null, error = null }: PagePanesP
     asideSheetOnly || !asideColumnFits(containerWidth, layout.columns.length > 1 ? MIN_PANEL_WIDTH : 0)
   const openAside = useAsideForHost(asideHostKey)
   const asideColumn = asideIsSheet ? null : openAside
+  const asideSheet = asideIsSheet ? openAside : null
   // A pane the sheet holds is mounted there and nowhere else (aside-mobile-sheet.tsx).
-  const heldPane = asideIsSheet && openAside !== null ? asidePaneOf(layout, openAside.hostStreamId, true) : null
+  const heldPane = asideSheet !== null ? asidePaneOf(layout, asideSheet.hostStreamId, true) : null
   const pageLayout = useMemo(() => (heldPane === null ? layout : closePanelTab(layout, heldPane)), [layout, heldPane])
   // Columns beside the first, which fills what they leave.
   const isPanelOpen = pageLayout.columns.length > 1
@@ -108,7 +109,7 @@ export function PagePanes({ workspaceId, page = null, error = null }: PagePanesP
 
   return (
     <PagePaneContext.Provider value={page}>
-      <AsideCoversPanesContext.Provider value={asideIsSheet && openAside !== null}>
+      <AsideCoversPanesContext.Provider value={asideSheet !== null}>
         <PaneHost
           ref={containerRef}
           columns={columns}
@@ -150,13 +151,13 @@ export function PagePanes({ workspaceId, page = null, error = null }: PagePanesP
             </Pane>
           )}
           {/* One drawer at a time: the aside's sheet holds the page under the overview's. */}
-          {isMobile && !(asideIsSheet && openAside) && <PaneDrawer workspaceId={workspaceId} page={shownPage} />}
-          {asideIsSheet && openAside && (
+          {isMobile && !asideSheet && <PaneDrawer workspaceId={workspaceId} page={shownPage} />}
+          {asideSheet && (
             <AsideMobileSheet
               workspaceId={workspaceId}
-              asideId={openAside.asideId}
-              hostStreamId={openAside.hostStreamId}
-              originScope={openAside.originScope}
+              asideId={asideSheet.asideId}
+              hostStreamId={asideSheet.hostStreamId}
+              originScope={asideSheet.originScope}
               historyEntry={asideSheetOnly}
             />
           )}
