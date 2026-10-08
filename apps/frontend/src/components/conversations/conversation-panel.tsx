@@ -4,7 +4,6 @@ import type { ActiveAgentSession } from "@threahq/types"
 import { useSearchParams } from "react-router-dom"
 import {
   ChevronDown,
-  ChevronLeft,
   Hash,
   FileEdit,
   User,
@@ -76,7 +75,7 @@ import {
 } from "@/components/composer"
 import { QuoteReplyProvider } from "@/components/timeline/quote-reply-context"
 import { TextSelectionQuote } from "@/components/timeline/text-selection-quote"
-import { SidebarToggle, StreamTitlePreview } from "@/components/layout"
+import { StreamTitlePreview } from "@/components/layout"
 import { useActors, useVisibleStreams, useEffectiveArchived } from "@/hooks"
 import { useArchivedAsideIds } from "@/hooks/use-archived-aside-ids"
 import { useStashParamDraftRow } from "@/hooks/use-stash-composer"
@@ -95,7 +94,15 @@ import { useScrollToMessage } from "@/hooks/use-scroll-to-message"
 import { VirtualizedScroller, useRenderedContentLatch } from "@/components/timeline/virtualized-scroller"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
-import { PaneFocusToggle, PanelTabStrip, usePaneCovered, usePanelCloseFocusLanding } from "@/components/panes"
+import {
+  PaneFocusToggle,
+  PanelTabStrip,
+  PhonePaneLeading,
+  PhonePaneSwitcher,
+  usePaneCovered,
+  usePanelCloseFocusLanding,
+  usePhoneHeaderSwipe,
+} from "@/components/panes"
 
 const TYPE_GLYPH: Record<string, LucideIcon> = {
   channel: Hash,
@@ -216,6 +223,7 @@ function ConversationPanelHeader({
   const resolved = post?.conversation.status === "resolved"
   const { tabbed } = usePanel()
   const closeRef = usePanelCloseFocusLanding()
+  const headerSwipe = usePhoneHeaderSwipe()
   // On touch the identity line IS the actions trigger, as the stream header's
   // name is. The header is `relative` so the press-and-hold name overlay, which
   // portals into its nearest <header>, can fill the bar here too.
@@ -235,7 +243,7 @@ function ConversationPanelHeader({
   )
   let titleArea: React.ReactNode
   if (tabbed) {
-    titleArea = <PanelTabStrip workspaceId={workspaceId} className={isMobile ? undefined : "-ml-2"} />
+    titleArea = <PanelTabStrip workspaceId={workspaceId} className="-ml-2" />
   } else if (revealed && isMobile) {
     titleArea = (
       <StreamTitlePreview name={title}>
@@ -268,16 +276,10 @@ function ConversationPanelHeader({
     )
   }
   return (
-    <SidePanelHeader className="relative">
-      {isMobile && <SidebarToggle location="page" />}
+    <SidePanelHeader className="relative" {...headerSwipe}>
       {/* Mobile replaces the X close with a back chevron; desktop keeps the X
           alone. Both affordances at once was this header's own invention. */}
-      {isMobile && (
-        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onClose} ref={closeRef}>
-          <ChevronLeft className="h-4 w-4" />
-          <span className="sr-only">Back</span>
-        </Button>
-      )}
+      {isMobile && <PhonePaneLeading onBack={onClose} backRef={closeRef} />}
       {/* Nothing here paints before the column does: the glyph, the topic and the
           stream locator all resolve with the rows, and rendering their fallbacks
           first made the header show a generic icon over the literal word
@@ -288,6 +290,7 @@ function ConversationPanelHeader({
           topic out of the row. Mounted only with entries: the chip reads
           useTrace, so an idle panel must not require a TraceProvider. */}
       {runningChipEntries.length > 0 && <AgentRunningChip entries={runningChipEntries} compact={isMobile || tabbed} />}
+      <PhonePaneSwitcher workspaceId={workspaceId} />
       {revealed ? (
         <ConversationActionsMenu
           workspaceId={workspaceId}

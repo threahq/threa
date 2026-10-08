@@ -30,6 +30,7 @@ import {
   focusPanelTab,
   followCurrentPanel,
   firstColumnHolds,
+  phonePanelRoute,
   followPanel,
   formatPanelLayout,
   fullPanelLayout,
@@ -209,6 +210,8 @@ interface PanelContextValue {
   /** Close this consumer's panel tab. */
   closePanel: () => void
   closeTab: (panelId: string) => void
+  /** Whether {@link closeTab} would close `panelId`. */
+  canCloseTab: (panelId: string) => boolean
   /** Reopen the tab closed most recently and not open since, as a tab of the section worked in. */
   reopenTab: () => string | null
   /** Whether {@link reopenTab} has a tab to reopen. */
@@ -223,6 +226,8 @@ interface PanelContextValue {
   splits: readonly SplitDirection[]
   /** Record the pane the user is working in. A stream pane becomes the route's stream. */
   setCurrentPane: (panelId: string) => void
+  /** {@link setCurrentPane} without touching the URL, for a caller navigating there itself. */
+  markCurrentPane: (panelId: string) => void
   /** Whether `?m` is this panel's: it belongs to the pane that was in front
    *  when it was set, so a pane beside it doesn't look for it too. */
   ownsCover: boolean
@@ -240,6 +245,8 @@ interface PanelOps {
   ) => void
   /** Whether this page shows tabs (the stream page); elsewhere a second panel replaces the first. */
   tabbed: boolean
+  /** A phone, which shows one pane at a time and no tab rows. */
+  phone: boolean
   /** Opening from `scopeId`'s tab, or beside the route's stream when null. */
   contextual: (layout: PanelLayout, panelId: string, scopeId: string | null) => PanelLayout
   closeTab: (panelId: string) => void
@@ -250,6 +257,7 @@ interface PanelOps {
   focusTab: (panelId: string | null) => void
   dropTab: (panelId: string, drop: PaneDrop) => void
   setCurrentPane: (panelId: string) => void
+  markCurrentPane: (panelId: string) => void
   coverOwner: string | null
   tabFocusHandoff: MutableRefObject<string | null>
   paneShortcutQueue: MutableRefObject<PaneShortcutQueue>
@@ -277,8 +285,8 @@ function dropDeepLink(params: URLSearchParams) {
   params.delete("m")
 }
 
-function setLayoutParam(params: URLSearchParams, layout: PanelLayout, path: string | null) {
-  const value = formatPanelLayout(canonicalPanelLayout(layout, path))
+function setLayoutParam(params: URLSearchParams, layout: PanelLayout, path: string | null, keepPath = false) {
+  const value = formatPanelLayout(canonicalPanelLayout(layout, path, keepPath))
   if (value) params.set(PANEL_PARAM, value)
   else params.delete(PANEL_PARAM)
 }
@@ -288,11 +296,12 @@ function withLayout(
   params: URLSearchParams,
   layout: PanelLayout,
   path: string | null,
-  coverOwner: string | null
+  coverOwner: string | null,
+  keepPath = false
 ): URLSearchParams {
   const next = new URLSearchParams(params)
   if (coverOwner !== null && !isPanelOnShow(layout, coverOwner)) dropDeepLink(next)
-  setLayoutParam(next, layout, path)
+  setLayoutParam(next, layout, path, keepPath)
   return next
 }
 
@@ -335,7 +344,7 @@ function buildValue(
     panelId: own,
     layout,
     section: scopeSection ?? layout.columns[0]?.[0] ?? null,
-    tabbed: ops.tabbed && own !== sole && shownTabs - (sole === null ? 0 : 1) > 1,
+    tabbed: ops.tabbed && !ops.phone && own !== sole && shownTabs - (sole === null ? 0 : 1) > 1,
     hasTabs: ops.tabbed,
     inFirstColumn: ops.tabbed && own !== null && firstColumnHolds(layout, own),
     canClosePanel: own !== null && ops.canCloseTab(own),
@@ -368,6 +377,7 @@ function buildValue(
       if (own) ops.closeTab(own)
     },
     closeTab: ops.closeTab,
+    canCloseTab: ops.canCloseTab,
     reopenTab: () => ops.reopenTab(scopeId),
     canReopenTab: ops.canReopenTab,
     splitTab: ops.splitTab,
@@ -375,8 +385,16 @@ function buildValue(
     dropTab: ops.dropTab,
     splits,
     setCurrentPane: ops.setCurrentPane,
+    markCurrentPane: ops.markCurrentPane,
     ownsCover: own !== null && own === ops.coverOwner,
   }
+}
+
+/** Where a phone's reload or Back lands: the route's stream when `?panel=` writes it, else the newest pane, as links written before did. */
+function phoneLandingOf(layout: PanelLayout, panelValue: string | null, path: string | null): string | null {
+  if (layout.focused !== undefined) return layout.focused
+  if (path !== null && panelIdsOf(parsePanelLayout(panelValue)).includes(path)) return path
+  return newestPanelOf(layout)
 }
 
 interface PaneState {
@@ -394,15 +412,19 @@ function followPanes(
   layout: PanelLayout,
   path: string | null,
   deepLink: string | null,
-  restored: boolean
+  restored: boolean,
+  /** Where a phone lands on this URL; undefined off a phone. */
+  phoneLanding: string | null | undefined
 ): PaneState {
   const moved = state.layout !== layout
   const focused = layout.focused !== state.layout.focused ? layout.focused : undefined
   const followed = moved ? followCurrentPanel(state.layout, layout, state.front) : state.front
-  // A tab just opened is worked in; otherwise a route moved to another stream is. Back and Forward restore
-  // the pane the route named, except on a phone, which shows the newest as a reload there does.
-  const opened = panelIdsOf(layout).length > panelIdsOf(state.layout).length && !(restored && !isMobileViewport())
-  const front = focused ?? (path !== null && path !== state.path && !opened ? path : followed)
+  // Back and Forward restore the pane the route named; a phone lands where a reload of the URL does. Otherwise a
+  // tab just opened is worked in, else a route moved to another stream is, unless a phone's route moved only
+  // because the pane in front is no stream.
+  const opened = panelIdsOf(layout).length > panelIdsOf(state.layout).length && !restored
+  const named = path !== null && path !== state.path && !opened && (phoneLanding === undefined || phoneLanding === path)
+  const front = focused ?? (restored && phoneLanding !== undefined ? phoneLanding : null) ?? (named ? path : followed)
   // Whoever sets `?m` owns it; clearing it hands nothing on, and otherwise it
   // stays with the pane it was set in. Back and Forward set nothing: the pane it
   // was set in is still the one following it.
@@ -420,6 +442,8 @@ interface PanelProviderProps {
 interface Target {
   pathname: string
   path: string | null
+  /** A phone is working in the stream `path` names, which `?panel=` then writes out. */
+  keepsPath: boolean
 }
 
 export function PanelProvider({ children }: PanelProviderProps) {
@@ -444,16 +468,27 @@ export function PanelProvider({ children }: PanelProviderProps) {
   // is in front on its first paint: a phone shows it, and a narrow window folding
   // it in with others brings it forward. Starting from the newest panel keeps a
   // reload showing what the URL's last open showed.
+  const phone = isMobileViewport()
   const [paneState, setPaneState] = useState<PaneState>(() => {
-    // The route names the pane worked in. A phone, which shows one pane, and a reloaded `?m` still go to the
-    // newest pane, as links already written expect.
+    // The route names the pane worked in, and a reloaded `?m` goes to the newest pane, as links already written
+    // expect. A phone, which shows one pane, lands as {@link phoneLandingOf} says, and so does its `?m`.
     const newest = layout.focused ?? newestPanelOf(layout)
-    const front = isMobileViewport() || path === null ? newest : (layout.focused ?? followPanel(layout, layout, path))
-    return { layout, path, deepLink, front, coverOwner: newest === null ? null : coverPaneOf(layout, newest) }
+    const front = phone
+      ? phoneLandingOf(layout, panelValue, path)
+      : (layout.focused ?? (path === null ? newest : followPanel(layout, layout, path)))
+    const owner = phone ? front : newest
+    return { layout, path, deepLink, front, coverOwner: owner === null ? null : coverPaneOf(layout, owner) }
   })
   let panes = paneState
   if (panes.layout !== layout || panes.deepLink !== deepLink) {
-    panes = followPanes(panes, layout, path, deepLink, restored)
+    panes = followPanes(
+      panes,
+      layout,
+      path,
+      deepLink,
+      restored,
+      phone ? phoneLandingOf(layout, panelValue, path) : undefined
+    )
     setPaneState(panes)
   }
   const { coverOwner, front } = panes
@@ -466,28 +501,40 @@ export function PanelProvider({ children }: PanelProviderProps) {
   // taking the current pane's place), else the one taking the route's place when it closes.
   const targetOf = useCallback(
     (next: PanelLayout, focus: string | null = null): Target | null => {
-      if (path === null) return { pathname: location.pathname, path: null }
+      if (path === null) return { pathname: location.pathname, path: null, keepsPath: false }
       const current = focus ?? followCurrentPanel(layout, next, front)
+      const after = streamPaneAfter(layout, next, path, front)
       const focusable = current !== null && isServerStreamId(current) && panelIdsOf(next).includes(current)
-      const to = focusable ? current : streamPaneAfter(layout, next, path, front)
-      if (to === null) return null
-      return { pathname: to === path ? location.pathname : `/w/${workspaceId}/s/${to}`, path: to }
+      const route = phone
+        ? phonePanelRoute(next, current, after)
+        : { path: focusable ? current : after, keepPath: false }
+      if (route.path === null) return null
+      return {
+        pathname: route.path === path ? location.pathname : `/w/${workspaceId}/s/${route.path}`,
+        path: route.path,
+        keepsPath: route.keepPath,
+      }
     },
-    [path, layout, front, location.pathname, workspaceId]
+    [path, layout, front, location.pathname, workspaceId, phone]
   )
 
   // Every stream pane of `next` can be the route's and show the same panes, so closing pops onto any of them.
   const landingsOf = useCallback(
     (next: PanelLayout, to: Target, params: URLSearchParams): [CoverLanding, ...CoverLanding[]] => {
-      const landing = (pathname: string, path: string | null) => {
+      const landing = (pathname: string, path: string | null, keepPath: boolean) => {
         const landed = new URLSearchParams(params)
-        setLayoutParam(landed, next, path)
+        setLayoutParam(landed, next, path, keepPath)
         return { pathname, params: landed }
       }
       const others = panelIdsOf(next).filter((id) => id !== to.path && isServerStreamId(id))
-      return [landing(to.pathname, to.path), ...others.map((id) => landing(`/w/${workspaceId}/s/${id}`, id))]
+      return [
+        landing(to.pathname, to.path, to.keepsPath),
+        ...others.map((id) =>
+          landing(`/w/${workspaceId}/s/${id}`, id, phone && phonePanelRoute(next, id, id).keepPath)
+        ),
+      ]
     },
-    [workspaceId]
+    [workspaceId, phone]
   )
 
   const setCurrentPane = useCallback(
@@ -501,16 +548,18 @@ export function PanelProvider({ children }: PanelProviderProps) {
       const livePath = matchPath(STREAM_ROUTE, live.pathname)?.params.streamId ?? null
       const liveParams = new URLSearchParams(live.search)
       const liveLayout = fullPanelLayout(livePath, parsePanelLayout(liveParams.get(PANEL_PARAM)))
-      if (livePath === null || panelId === livePath || !isServerStreamId(panelId)) return
-      if (!panelIdsOf(liveLayout).includes(panelId)) return
-      const params = withLayout(liveParams, liveLayout, panelId, coverOwner)
-      navigate(hrefOf(`/w/${workspaceId}/s/${panelId}`, params), {
-        replace: true,
-        flushSync: true,
-        state: PANE_SWITCH_STATE,
-      })
+      if (livePath === null || !panelIdsOf(liveLayout).includes(panelId)) return
+      // A phone also writes which pane it is in front of the others, so a reload or Back lands on it.
+      if (!phone && (panelId === livePath || !isServerStreamId(panelId))) return
+      const shown = phone ? activatePanelTab(liveLayout, panelId) : liveLayout
+      const route = phone ? phonePanelRoute(shown, panelId, livePath) : { path: panelId, keepPath: false }
+      const to = route.path ?? livePath
+      const params = withLayout(liveParams, shown, to, coverOwner, route.keepPath)
+      const href = hrefOf(`/w/${workspaceId}/s/${to}`, params)
+      if (href === hrefOf(live.pathname, liveParams)) return
+      navigate(href, { replace: true, flushSync: true, state: PANE_SWITCH_STATE })
     },
-    [setFront, router, location, coverOwner, navigate, workspaceId]
+    [setFront, router, location, coverOwner, navigate, workspaceId, phone]
   )
 
   const contextual = useCallback(
@@ -531,7 +580,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       const next = edit(layout)
       const to = targetOf(next, focus)
       if (to === null) return `${location.pathname}${location.search}`
-      const params = withLayout(searchParams, next, to.path, coverOwner)
+      const params = withLayout(searchParams, next, to.path, coverOwner, to.keepsPath)
       if (dropsDeepLink) dropDeepLink(params)
       return hrefOf(to.pathname, params)
     },
@@ -552,7 +601,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       const to = targetOf(next, focus)
       if (to === null) return
       if (focus !== null) setFront(focus)
-      const params = withLayout(searchParams, next, to.path, coverOwner)
+      const params = withLayout(searchParams, next, to.path, coverOwner, to.keepsPath)
       if (deepLink !== null) params.set("m", deepLink)
       navigate(hrefOf(to.pathname, params), { replace })
     },
@@ -661,6 +710,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       urlFor,
       open,
       tabbed,
+      phone,
       contextual,
       closeTab,
       canCloseTab,
@@ -670,6 +720,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       focusTab,
       dropTab,
       setCurrentPane,
+      markCurrentPane: setFront,
       coverOwner,
       tabFocusHandoff,
       paneShortcutQueue,
@@ -680,6 +731,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       urlFor,
       open,
       tabbed,
+      phone,
       contextual,
       closeTab,
       canCloseTab,
@@ -689,6 +741,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       focusTab,
       dropTab,
       setCurrentPane,
+      setFront,
       coverOwner,
     ]
   )
@@ -791,6 +844,21 @@ export const DisplayedPanelLayoutProvider = DisplayedPanelLayoutContext.Provider
 export function useDisplayedPanelLayout(): PanelLayout {
   const { layout } = usePanel()
   return useContext(DisplayedPanelLayoutContext) ?? layout
+}
+
+interface PhonePanes {
+  /** The panes a phone steps through, in order: one section, less the drawers. */
+  order: readonly string[]
+  current: string | null
+}
+
+const PhonePanesContext = createContext<PhonePanes | null>(null)
+
+/** Provided where a phone stacks its panes; null on every other surface. */
+export const PhonePanesProvider = PhonePanesContext.Provider
+
+export function usePhonePanes(): PhonePanes | null {
+  return useContext(PhonePanesContext)
 }
 
 export function usePanel(): PanelContextValue {

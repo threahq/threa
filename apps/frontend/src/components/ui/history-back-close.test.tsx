@@ -3,7 +3,7 @@ import { useState } from "react"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { createMemoryRouter, Link, RouterProvider } from "react-router-dom"
 import * as mobileModule from "@/hooks/use-mobile"
-import { __resetOverlayHistoryForTests, attachOverlayHistoryRouter } from "./history-back-close"
+import { __resetOverlayHistoryForTests, afterOverlayHistory, attachOverlayHistoryRouter } from "./history-back-close"
 import { Drawer, DrawerContent, DrawerTitle } from "./drawer"
 import { Dialog, DialogContent, DialogTitle } from "./dialog"
 import { MediaGalleryProvider, useMediaGallery } from "@/contexts/media-gallery-context"
@@ -412,6 +412,25 @@ describe("HistoryBackClose via Drawer (mobile)", () => {
     await waitFor(() => expect(screen.getByText("drawer-closed")).toBeInTheDocument())
   })
 
+  it("a navigation queued with afterOverlayHistory waits for the sentinel's pop, so back leaves the page", async () => {
+    const router = makeRouter(<DrawerHarness />)
+    render(<RouterProvider router={router} />)
+    const lengthBefore = window.history.length
+
+    await openDrawer(router)
+    fireEvent.click(screen.getByText("close-drawer"))
+    afterOverlayHistory(() => {
+      void router.navigate(`${STREAM_PATH}?panel=b`, { replace: true })
+    })
+
+    await waitFor(() => expect(router.state.location.search).toBe("?panel=b"))
+    expect(window.history.length).toBe(lengthBefore)
+    await act(async () => {
+      await router.navigate(-1)
+    })
+    await waitFor(() => expect(router.state.location.pathname).toBe("/other"))
+  })
+
   it("same-tick handoff (close A, open B) keeps back working for B", async () => {
     const router = makeRouter(<StackedHarness />)
     render(<RouterProvider router={router} />)
@@ -767,5 +786,11 @@ describe("HistoryBackClose outside a router", () => {
 
     fireEvent.click(screen.getByText("close-drawer"))
     expect(await screen.findByText("drawer-closed")).toBeInTheDocument()
+  })
+
+  it("runs a queued callback at once", () => {
+    const callback = vi.fn()
+    afterOverlayHistory(callback)
+    expect(callback).toHaveBeenCalledTimes(1)
   })
 })

@@ -3,3 +3,4 @@ export { PanelTabStrip, PanelTabTitle, usePanelCloseFocusLanding } from "./panel
 export { PaneFocusContext, PaneFocusToggle, usePaneFocusEscape, type PaneFocus, type PaneMapCell } from "./pane-focus"
 export { ComposeSlotsProvider, useComposeSlot, useProvideComposeSlot, type ComposeSlot } from "./compose-slots"
 export { PaneDropContext, PaneDropIndicator, paneDropZone, usePaneDrop, usePaneDropState } from "./pane-drop"
+export { PhonePaneLeading, PhonePaneSwitcher, usePhoneHeaderSwipe } from "./phone-pane-header"

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { render, fireEvent } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { ShareMessageModal } from "./share-message-modal"
+import { PanelProvider } from "@/contexts"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as shareHandoffStoreModule from "@/stores/composer-handoff-store"
 import * as useMobileModule from "@/hooks/use-mobile"
@@ -22,7 +23,11 @@ function mountModal({ initialPath = "/w/ws_1/s/current" }: { initialPath?: strin
       <Routes>
         <Route
           path="/w/:workspaceId/s/:streamId"
-          element={<ShareMessageModal open onOpenChange={() => {}} workspaceId="ws_1" attrs={SAMPLE_ATTRS} />}
+          element={
+            <PanelProvider>
+              <ShareMessageModal open onOpenChange={() => {}} workspaceId="ws_1" attrs={SAMPLE_ATTRS} />
+            </PanelProvider>
+          }
         />
       </Routes>
     </MemoryRouter>
@@ -205,13 +210,15 @@ describe("ShareMessageModal — E2E source confirms before decrypt-to-public", (
           <Route
             path="/w/:workspaceId/s/:streamId"
             element={
-              <ShareMessageModal
-                open
-                onOpenChange={() => {}}
-                workspaceId="ws_1"
-                attrs={SAMPLE_ATTRS}
-                sourcePlaintext="the launch codename is VELVET-OTTER"
-              />
+              <PanelProvider>
+                <ShareMessageModal
+                  open
+                  onOpenChange={() => {}}
+                  workspaceId="ws_1"
+                  attrs={SAMPLE_ATTRS}
+                  sourcePlaintext="the launch codename is VELVET-OTTER"
+                />
+              </PanelProvider>
             }
           />
         </Routes>

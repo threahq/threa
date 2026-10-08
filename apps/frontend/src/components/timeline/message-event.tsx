@@ -1023,7 +1023,8 @@ function SentMessageEvent({
   e2eDecryptedMarkdown,
   batch,
 }: MessageEventInnerProps) {
-  const { panelId, openPanel } = usePanel()
+  const panel = usePanel()
+  const { panelId, openPanel } = panel
   const currentUserId = useWorkspaceUserId(workspaceId)
   const { getTraceUrl } = useTrace()
   const quoteReplyCtx = useQuoteReply()
@@ -1416,7 +1417,14 @@ function SentMessageEvent({
                 version: payload.revision ?? null,
                 range: null,
               })
-              navigateAfterShareHandoff({ workspaceId, targetStreamId: rootStream.id, location, navigate, isMobile })
+              navigateAfterShareHandoff({
+                workspaceId,
+                targetStreamId: rootStream.id,
+                location,
+                navigate,
+                isMobile,
+                panel,
+              })
             }
           : undefined,
       shareToRootLabel: rootStream ? buildShareToStreamLabel(rootStream) : undefined,
@@ -1438,6 +1446,7 @@ function SentMessageEvent({
                 location,
                 navigate,
                 isMobile,
+                panel,
               })
             }
           : undefined,
@@ -1539,6 +1548,7 @@ function SentMessageEvent({
       navigate,
       location,
       isMobile,
+      panel,
       canOpenAside,
       handleOpenAside,
       canInsertAgentBlock,

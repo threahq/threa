@@ -3,6 +3,7 @@ import { render, screen, act, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { useEffect, useRef } from "react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { PanelProvider } from "@/contexts"
 import type { JSONContent } from "@threahq/types"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as shareHandoffStoreModule from "@/stores/composer-handoff-store"
@@ -202,12 +203,14 @@ function ShareScene() {
         <Route
           path="/w/:workspaceId/s/:streamId"
           element={
-            <QuoteReplyProvider>
-              <TextSelectionQuote streamId="stream_anchor" containerRef={ref} />
-              <div ref={ref}>
-                <MessageRow messageId="msg_1" streamId="stream_thread" />
-              </div>
-            </QuoteReplyProvider>
+            <PanelProvider>
+              <QuoteReplyProvider>
+                <TextSelectionQuote streamId="stream_anchor" containerRef={ref} />
+                <div ref={ref}>
+                  <MessageRow messageId="msg_1" streamId="stream_thread" />
+                </div>
+              </QuoteReplyProvider>
+            </PanelProvider>
           }
         />
       </Routes>

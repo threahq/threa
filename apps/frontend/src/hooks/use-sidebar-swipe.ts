@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect } from "react"
 
 /** Exclude touches from the very screen edge to avoid OS back-gesture conflicts (px) */
-const OS_GESTURE_ZONE = 8
+export const OS_GESTURE_ZONE = 8
 
 /** Movement before direction is locked (px) */
 const LOCK_THRESHOLD = 10
@@ -134,6 +134,9 @@ export function useSidebarSwipe({ isOpen, isMobile, onOpen, onClose, onCloseStar
 
       // Swipe-to-open: ignore touches from the very edge (OS back-gesture territory)
       if (!isOpen && touch.clientX < OS_GESTURE_ZONE) return
+
+      // A pane's header swipe steps back through the open panes, so it keeps its right swipes
+      if (!isOpen && (touch.target as Element | null)?.closest("[data-pane-swipe-back]")) return
 
       // Don't capture swipes that start on horizontally scrollable elements
       // (e.g. editor style bar, code blocks inside the sidebar) — let them scroll natively
@@ -353,7 +356,7 @@ function isInsideModalOverlay(el: Element | null): boolean {
 }
 
 /** Walk up the DOM checking if any ancestor can scroll horizontally */
-function hasHorizontalScroll(el: Element | null): boolean {
+export function hasHorizontalScroll(el: Element | null): boolean {
   let node = el
   while (node && node !== document.documentElement) {
     if (node.scrollWidth > node.clientWidth) {
