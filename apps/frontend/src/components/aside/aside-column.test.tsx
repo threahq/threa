@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest"
 import { act, renderHook } from "@testing-library/react"
 import type React from "react"
 import {
-  ASIDE_STAGE_DEFAULT_WIDTH,
-  ASIDE_STAGE_MIN_WIDTH,
+  ASIDE_COLUMN_DEFAULT_WIDTH,
+  ASIDE_COLUMN_MIN_WIDTH,
   resetAsideStoreCache,
   type OpenAsideState,
 } from "@/stores/aside-store"
@@ -32,8 +32,8 @@ describe("useAsideColumnLayout", () => {
   it("should keep the stored width while the page is unmeasured", () => {
     const { result } = renderHook(() => useAsideColumnLayout(ASIDE, 0, 0))
     expect({ width: result.current.width, maxWidth: result.current.maxWidth }).toEqual({
-      width: ASIDE_STAGE_DEFAULT_WIDTH,
-      maxWidth: ASIDE_STAGE_DEFAULT_WIDTH,
+      width: ASIDE_COLUMN_DEFAULT_WIDTH,
+      maxWidth: ASIDE_COLUMN_DEFAULT_WIDTH,
     })
   })
 
@@ -45,15 +45,15 @@ describe("useAsideColumnLayout", () => {
 
   it("should hold its own floor when the page is too narrow for it", () => {
     const { result } = renderHook(() => useAsideColumnLayout(ASIDE, 900, 300))
-    expect(result.current.width).toBe(ASIDE_STAGE_MIN_WIDTH)
+    expect(result.current.width).toBe(ASIDE_COLUMN_MIN_WIDTH)
   })
 
   it("should widen on ArrowLeft and narrow on ArrowRight, by 50 with Shift, within its bounds", () => {
     const { result } = renderHook(() => useAsideColumnLayout(ASIDE, 1100, 0))
     act(() => result.current.onKeyDown(arrow("ArrowLeft")))
-    expect(result.current.width).toBe(ASIDE_STAGE_DEFAULT_WIDTH + 10)
+    expect(result.current.width).toBe(ASIDE_COLUMN_DEFAULT_WIDTH + 10)
     act(() => result.current.onKeyDown(arrow("ArrowRight", true)))
-    expect(result.current.width).toBe(ASIDE_STAGE_DEFAULT_WIDTH - 40)
+    expect(result.current.width).toBe(ASIDE_COLUMN_DEFAULT_WIDTH - 40)
     act(() => result.current.onKeyDown(arrow("ArrowLeft", true)))
     act(() => result.current.onKeyDown(arrow("ArrowLeft", true)))
     act(() => result.current.onKeyDown(arrow("ArrowLeft", true)))

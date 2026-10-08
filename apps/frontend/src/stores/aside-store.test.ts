@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { renderHook, act } from "@testing-library/react"
 import {
-  ASIDE_STAGE_DEFAULT_WIDTH,
+  ASIDE_COLUMN_DEFAULT_WIDTH,
   asideOpenDraft,
   asidePendingAgentBlocksForTest,
   asideColumnWidth,
@@ -60,7 +60,7 @@ describe("aside-store", () => {
     closeAside()
     expect(getAsideState()).toBeNull()
     expect(asideColumnWidth(open.asideId)).toBe(780)
-    expect(asideColumnWidth("stream_never")).toBe(ASIDE_STAGE_DEFAULT_WIDTH)
+    expect(asideColumnWidth("stream_never")).toBe(ASIDE_COLUMN_DEFAULT_WIDTH)
   })
 
   it("should open a sheet at the peek, whatever the last one was pulled to", () => {
@@ -111,7 +111,7 @@ describe("aside-store", () => {
     setAsideOpenDraft(open.asideId, "aside:stream_aside:draft_1")
     resetAsideStoreCache()
     expect(getAsideState()).toBeNull()
-    expect(asideColumnWidth(open.asideId)).toBe(ASIDE_STAGE_DEFAULT_WIDTH)
+    expect(asideColumnWidth(open.asideId)).toBe(ASIDE_COLUMN_DEFAULT_WIDTH)
     expect(asideOpenDraft(open.asideId)).toBeNull()
   })
 

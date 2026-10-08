@@ -32,7 +32,7 @@ interface AsidePaneProps {
  *
  * Not both: a phone sheet split between a draft and a timeline gives each half
  * a few lines and a keyboard takes what is left, so neither is usable. The
- * stage stacks them side by side because it has the room to; this doesn't.
+ * column stacks them because it has the height to; this doesn't.
  */
 export function AsidePane({ workspaceId, asideId, hostStreamId, originScope, autoFocus }: AsidePaneProps) {
   const draftSurface = useAsideDraftSurface({ workspaceId, asideId, hostStreamId, originScope })

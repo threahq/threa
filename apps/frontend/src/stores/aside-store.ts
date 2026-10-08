@@ -62,8 +62,8 @@ export function asidePaneOf(layout: PanelLayout, hostStreamId: string, tabbed: b
 /** How wide the aside's own column is. The floor
  *  keeps its chat and composer usable; the ceiling is enforced by the surface,
  *  which knows how much room the columns beside it still need. */
-export const ASIDE_STAGE_MIN_WIDTH = 360
-export const ASIDE_STAGE_DEFAULT_WIDTH = 620
+export const ASIDE_COLUMN_MIN_WIDTH = 360
+export const ASIDE_COLUMN_DEFAULT_WIDTH = 620
 
 /** How tall the drafts half of the aside is, between its own floor and whatever
  *  the surface can spare — the conversation's floor is enforced by the pane. */
@@ -253,11 +253,11 @@ export function useAsideTrayExpanded(asideId: string): boolean {
 
 /** The width this aside's column was last dragged to, or the default. */
 export function asideColumnWidth(asideId: string): number {
-  return columnWidthByAside.get(asideId) ?? ASIDE_STAGE_DEFAULT_WIDTH
+  return columnWidthByAside.get(asideId) ?? ASIDE_COLUMN_DEFAULT_WIDTH
 }
 
 export function setAsideColumnWidth(asideId: string, width: number): void {
-  columnWidthByAside.set(asideId, Math.max(ASIDE_STAGE_MIN_WIDTH, Math.round(width)))
+  columnWidthByAside.set(asideId, Math.max(ASIDE_COLUMN_MIN_WIDTH, Math.round(width)))
   emit()
 }
 

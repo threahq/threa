@@ -1,5 +1,5 @@
 import { useCallback } from "react"
-import { ASIDE_STAGE_MIN_WIDTH, setAsideColumnWidth, useAsideColumnWidth } from "@/stores/aside-store"
+import { ASIDE_COLUMN_MIN_WIDTH, setAsideColumnWidth, useAsideColumnWidth } from "@/stores/aside-store"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 
 /**
@@ -8,9 +8,9 @@ import { useResizeDrag } from "@/hooks/use-resize-drag"
  */
 export function useAsideWidth(asideId: string, maxWidth: number) {
   const storedWidth = useAsideColumnWidth(asideId)
-  const width = Math.min(Math.max(storedWidth, ASIDE_STAGE_MIN_WIDTH), maxWidth)
+  const width = Math.min(Math.max(storedWidth, ASIDE_COLUMN_MIN_WIDTH), maxWidth)
   const applyWidth = useCallback(
-    (next: number) => setAsideColumnWidth(asideId, Math.min(Math.max(next, ASIDE_STAGE_MIN_WIDTH), maxWidth)),
+    (next: number) => setAsideColumnWidth(asideId, Math.min(Math.max(next, ASIDE_COLUMN_MIN_WIDTH), maxWidth)),
     [asideId, maxWidth]
   )
   const drag = useResizeDrag({ width, onWidthChange: applyWidth, direction: "left" })
