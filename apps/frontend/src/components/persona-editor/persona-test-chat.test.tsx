@@ -7,12 +7,13 @@ import { toast } from "sonner"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { PersonaConfigResponse, PersonaResolvedConfig } from "@threahq/types"
 import { personasApi, streamsApi } from "@/api"
-import { ServicesProvider } from "@/contexts"
+import { PanelProvider, ServicesProvider, SidebarProvider, TraceProvider } from "@/contexts"
+import { TooltipProvider } from "@/components/ui/tooltip"
+import * as contextsModule from "@/contexts"
 import { spyOnExport } from "@/test"
 import * as streamContentModule from "@/components/timeline"
 import { personaKeys, usePersonaConfig } from "@/hooks/use-personas"
-import * as drawerModule from "@/components/ui/drawer"
-import { PersonaTestChatDrawer, PersonaTestChatPane } from "./persona-test-chat"
+import { PersonaSyncContext, PersonaTestChatPane } from "./persona-test-chat"
 
 const WS = "ws_1"
 const PERSONA = "persona_system_ariadne"
@@ -80,23 +81,32 @@ function makeClient(initial: PersonaConfigResponse) {
 function PaneHarness() {
   const { data } = usePersonaConfig(WS, PERSONA)
   return (
-    <PersonaTestChatPane
-      workspaceId={WS}
-      personaId={PERSONA}
-      testStreamId={data?.draft?.testStreamId ?? null}
-      syncState="synced"
-    />
+    <PersonaSyncContext.Provider value={{ testStreamId: data?.draft?.testStreamId ?? null, syncState: "synced" }}>
+      <PersonaTestChatPane workspaceId={WS} personaId={PERSONA} onClose={() => {}} />
+    </PersonaSyncContext.Provider>
   )
 }
 
 function renderPane(queryClient: QueryClient) {
+  // The pane header's focus toggle reads key bindings from preferences, not mounted here.
+  vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
+    preferences: null,
+  } as unknown as ReturnType<typeof contextsModule.usePreferences>)
   return render(
     <QueryClientProvider client={queryClient}>
-      <ServicesProvider>
-        <MemoryRouter>
-          <PaneHarness />
-        </MemoryRouter>
-      </ServicesProvider>
+      <TooltipProvider>
+        <ServicesProvider>
+          <SidebarProvider>
+            <MemoryRouter>
+              <TraceProvider>
+                <PanelProvider>
+                  <PaneHarness />
+                </PanelProvider>
+              </TraceProvider>
+            </MemoryRouter>
+          </SidebarProvider>
+        </ServicesProvider>
+      </TooltipProvider>
     </QueryClientProvider>
   )
 }
@@ -161,112 +171,5 @@ describe("PersonaTestChatPane", () => {
 
     await waitFor(() => expect(screen.queryByTestId("test-chat-surface")).not.toBeInTheDocument())
     expect(screen.getByRole("button", { name: "Start test chat" })).toBeInTheDocument()
-  })
-})
-
-/** Drives `testStreamId` off the config cache exactly like the page does. */
-function DrawerHarness() {
-  const { data } = usePersonaConfig(WS, PERSONA)
-  return (
-    <PersonaTestChatDrawer
-      workspaceId={WS}
-      personaId={PERSONA}
-      testStreamId={data?.draft?.testStreamId ?? null}
-      syncState="synced"
-    />
-  )
-}
-
-function renderDrawer(queryClient: QueryClient) {
-  return render(
-    <QueryClientProvider client={queryClient}>
-      <ServicesProvider>
-        <MemoryRouter>
-          <DrawerHarness />
-        </MemoryRouter>
-      </ServicesProvider>
-    </QueryClientProvider>
-  )
-}
-
-describe("PersonaTestChatDrawer (mobile)", () => {
-  beforeEach(() => {
-    // Render the vaul Drawer as a plain open/closed container (the established
-    // stream-sheet pattern) so the test exercises open/close + mount without a
-    // real drawer in jsdom. The stub also exposes an explicit close control.
-    spyOnExport(drawerModule, "Drawer").mockReturnValue((({
-      open,
-      onOpenChange,
-      children,
-    }: {
-      open: boolean
-      onOpenChange?: (open: boolean) => void
-      children: React.ReactNode
-    }) => (
-      <div data-state={open ? "open" : "closed"}>
-        {open && (
-          <button type="button" onClick={() => onOpenChange?.(false)}>
-            close-drawer
-          </button>
-        )}
-        {open ? children : null}
-      </div>
-    )) as unknown as typeof drawerModule.Drawer)
-    spyOnExport(drawerModule, "DrawerContent").mockReturnValue((({ children }: { children: React.ReactNode }) => (
-      <div>{children}</div>
-    )) as unknown as typeof drawerModule.DrawerContent)
-    spyOnExport(drawerModule, "DrawerTitle").mockReturnValue((({ children }: { children: React.ReactNode }) => (
-      <div>{children}</div>
-    )) as unknown as typeof drawerModule.DrawerTitle)
-  })
-
-  it("opens the drawer, starts the session, and mounts the chat", async () => {
-    const create = vi.spyOn(personasApi, "createTestStream").mockResolvedValue({ streamId: "stream_test_9" })
-    vi.spyOn(personasApi, "getConfig").mockResolvedValue(config(null))
-    const user = userEvent.setup()
-    renderDrawer(makeClient(config(null)))
-
-    expect(screen.queryByTestId("test-chat-surface")).not.toBeInTheDocument()
-    await user.click(screen.getByRole("button", { name: "Test draft" }))
-
-    expect(create).toHaveBeenCalledWith(WS, PERSONA)
-    await waitFor(() => expect(screen.getByTestId("test-chat-surface")).toBeInTheDocument())
-    expect(streamContentProps).toMatchObject({ workspaceId: WS, streamId: "stream_test_9", autoFocus: true })
-  })
-
-  it("closing the drawer keeps the session — close is not End", async () => {
-    const archive = vi.spyOn(streamsApi, "archive").mockResolvedValue(undefined)
-    vi.spyOn(personasApi, "getConfig").mockResolvedValue(config("stream_test_1"))
-    const user = userEvent.setup()
-    renderDrawer(makeClient(config("stream_test_1")))
-
-    await user.click(screen.getByRole("button", { name: "Test draft" }))
-    await waitFor(() => expect(screen.getByTestId("test-chat-surface")).toBeInTheDocument())
-
-    await user.click(screen.getByRole("button", { name: "close-drawer" }))
-    // Closing tears down the drawer content but must not archive the stream or
-    // drop the draft — the bound session survives so a reopen resumes it.
-    expect(screen.queryByTestId("test-chat-surface")).not.toBeInTheDocument()
-    expect(archive).not.toHaveBeenCalled()
-
-    await user.click(screen.getByRole("button", { name: "Test draft" }))
-    await waitFor(() => expect(screen.getByTestId("test-chat-surface")).toBeInTheDocument())
-    expect(archive).not.toHaveBeenCalled()
-  })
-
-  it("ends the test chat inside the drawer, archiving and returning to the empty state", async () => {
-    const archive = vi.spyOn(streamsApi, "archive").mockResolvedValue(undefined)
-    vi.spyOn(personasApi, "getConfig").mockResolvedValue(config("stream_test_1"))
-    const user = userEvent.setup()
-    renderDrawer(makeClient(config("stream_test_1")))
-
-    await user.click(screen.getByRole("button", { name: "Test draft" }))
-    expect(screen.getByTestId("test-chat-surface")).toBeInTheDocument()
-
-    await user.click(screen.getByRole("button", { name: "End test chat" }))
-
-    expect(archive).toHaveBeenCalledWith(WS, "stream_test_1")
-    await waitFor(() => expect(screen.getByRole("button", { name: "Start test chat" })).toBeInTheDocument())
-    expect(screen.queryByTestId("test-chat-surface")).not.toBeInTheDocument()
   })
 })

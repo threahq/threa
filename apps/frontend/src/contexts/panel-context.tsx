@@ -22,7 +22,6 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { PANEL_COVER } from "@/lib/covers"
 import { isPagePane, isServerStreamId } from "@/lib/stream-ids"
 import {
-  NO_PANELS,
   PANEL_PARAM,
   activatePanelTab,
   canonicalPanelLayout,
@@ -153,6 +152,19 @@ export function contextPanelOf(layout: PanelLayout, streamId: string): string | 
   return panelIdsOf(layout).find((id) => parseContextPanel(id)?.streamId === streamId) ?? null
 }
 
+/** A persona's draft test chat, a pane beside its editor: `test:<personaId>`. */
+const PERSONA_TEST_PANEL_PREFIX = "test:"
+
+/** The persona behind a `test:` panel, or null when it isn't one. */
+export function parsePersonaTestPanel(panelId: string): string | null {
+  if (!panelId.startsWith(PERSONA_TEST_PANEL_PREFIX)) return null
+  return panelId.slice(PERSONA_TEST_PANEL_PREFIX.length) || null
+}
+
+export function createPersonaTestPanelId(personaId: string): string {
+  return `${PERSONA_TEST_PANEL_PREFIX}${personaId}`
+}
+
 /** One stream has one overview, whichever filter it shows. */
 export function paneIdentity(panelId: string): string {
   const context = parseContextPanel(panelId)
@@ -203,7 +215,7 @@ interface PanelContextValue {
   section: PanelSection | null
   /** Whether panels show their tab rows: more than one tab open beside the page's own stream, on a page that has tabs. */
   tabbed: boolean
-  /** Whether this page lays panels out as tabs beside its route's pane (the stream page, the board). */
+  /** Whether this page lays panels out as tabs beside its route's pane (the stream page, the board, the persona editor). */
   hasTabs: boolean
   /** Whether this consumer's pane sits in the stream page's first column, where the page's stream shows. */
   inFirstColumn: boolean
@@ -261,7 +273,7 @@ interface PanelOps {
     focus?: string | null,
     deepLink?: string | null
   ) => void
-  /** Whether this page shows tabs beside its route's pane; elsewhere a second panel replaces the first. */
+  /** Whether this page shows tabs beside its route's pane; no other page has panes. */
   tabbed: boolean
   /** A phone, which shows one pane at a time and no tab rows. */
   phone: boolean
@@ -336,6 +348,18 @@ const BOARD_ROUTE = "/w/:workspaceId/board"
 
 /** The board, as the pane its route pins in the first column. */
 export const BOARD_PANE = "page:board"
+
+const PERSONA_ROUTE = "/w/:workspaceId/settings/personas/:personaId"
+
+/** The persona editor, as the pane its route pins in the first column. */
+export const PERSONA_PANE = "page:persona"
+
+/** `layout` without a persona's test chat, except `keep`'s: one sits beside its own persona's editor only. */
+function withoutForeignPersonaTests(layout: PanelLayout, keep: string | null): PanelLayout {
+  return panelIdsOf(layout)
+    .filter((id) => id !== keep && parsePersonaTestPanel(id) !== null)
+    .reduce(closePanelTab, layout)
+}
 
 const MAX_CLOSED_TABS = 20
 
@@ -475,17 +499,25 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const navigate = useNavigate()
   const restored = useNavigationType() === "POP"
   // A page whose route pins a pane in the first column shows tabs beside it: the stream page, whose route
-  // names the stream pane worked in, and the board, which stays put. Elsewhere a second panel replaces the first.
+  // names the stream pane worked in, and the board and the persona editor, which stay put. No other page has panes.
   const router = useContext(UNSAFE_DataRouterContext)?.router ?? null
   const match = useMatch(STREAM_ROUTE)
   const workspaceId = match?.params.workspaceId
   const path = match?.params.streamId ?? null
-  const pagePane = useMatch(BOARD_ROUTE) ? BOARD_PANE : null
+  const board = useMatch(BOARD_ROUTE)
+  const personaId = useMatch(PERSONA_ROUTE)?.params.personaId
+  const personaTest = personaId ? createPersonaTestPanelId(personaId) : null
+  let pagePane: string | null = null
+  if (board) pagePane = BOARD_PANE
+  else if (personaTest) pagePane = PERSONA_PANE
   const routePane = path ?? pagePane
   const tabbed = routePane !== null
 
   const panelValue = searchParams.get(PANEL_PARAM)
-  const layout = useMemo(() => fullPanelLayout(routePane, parsePanelLayout(panelValue)), [routePane, panelValue])
+  const layout = useMemo(
+    () => fullPanelLayout(routePane, withoutForeignPersonaTests(parsePanelLayout(panelValue), personaTest)),
+    [routePane, panelValue, personaTest]
+  )
 
   const deepLink = searchParams.get("m")
 
@@ -589,9 +621,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
 
   const contextual = useCallback(
     (current: PanelLayout, panelId: string, scopeId: string | null) => {
-      if (routePane !== null) return openPanelTabBeside(current, scopeId ?? routePane, panelId)
-      // Without tabs a panel replaces the one open.
-      return openPanelTab(NO_PANELS, panelId)
+      return openPanelTabBeside(current, scopeId ?? routePane, panelId)
     },
     [routePane]
   )

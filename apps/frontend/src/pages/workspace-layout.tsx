@@ -48,6 +48,7 @@ import {
   parseConversationPanel,
   parseComposePanel,
   parseConversationsPanel,
+  parsePersonaTestPanel,
   parseContextPanel,
 } from "@/contexts"
 import {
@@ -197,7 +198,7 @@ function StreamLinkKeyboardHandler({
             return
           }
           // Malformed `conv:` id (hand-edited/stale URL) — fall through to the main link.
-        } else if (!isDraftPanel(panelId) && !isPagePane(panelId)) {
+        } else if (!isDraftPanel(panelId) && !isPagePane(panelId) && !parsePersonaTestPanel(panelId)) {
           void copyStreamLink(
             workspaceId,
             parseComposePanel(panelId) ??

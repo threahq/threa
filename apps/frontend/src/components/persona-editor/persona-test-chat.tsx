@@ -1,28 +1,32 @@
-import { useState } from "react"
+import { createContext, useContext } from "react"
 import { MessageSquare } from "lucide-react"
 import { toast } from "sonner"
 import { useQueryClient } from "@tanstack/react-query"
 import type { PersonaConfigResponse } from "@threahq/types"
 import { Button } from "@/components/ui/button"
-import { SidePanel, SidePanelContent, SidePanelHeader, SidePanelTitle } from "@/components/ui/side-panel"
-import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
+import {
+  SidePanel,
+  SidePanelClose,
+  SidePanelContent,
+  SidePanelHeader,
+  SidePanelTitle,
+} from "@/components/ui/side-panel"
+import {
+  PaneFocusToggle,
+  PanelTabStrip,
+  PhonePaneLeading,
+  PhonePaneSwitcher,
+  usePanelCloseFocusLanding,
+  usePhoneHeaderSwipe,
+} from "@/components/panes"
 import { StreamContent } from "@/components/timeline"
+import { usePanel, useSidebar } from "@/contexts"
 import { useArchiveStream } from "@/hooks"
 import { personaKeys, useCreateTestStream } from "@/hooks/use-personas"
 import { syncHintText, type SyncState } from "./persona-form"
 
-interface PersonaTestChatProps {
-  workspaceId: string
-  personaId: string
-  /** The draft's bound test stream (`config.draft?.testStreamId`), or null. */
-  testStreamId: string | null
-  /** Mirrored draft-sync state from the editor form (deliverable 5 indicator). */
-  syncState: SyncState
-}
-
 /**
- * The persona test-chat lifecycle, shared by the desktop pane and the mobile
- * drawer so both drive one ephemeral scratchpad the same way (D5/D6). "Start"
+ * The persona test-chat lifecycle: one ephemeral scratchpad per draft. "Start"
  * create-or-returns the bound test stream (the cache write flips `testStreamId`
  * on, which mounts the chat); "End" archives the scratchpad but KEEPS the draft
  * patch (unlike Discard/Save, which drop it). Durability is server-owned —
@@ -59,7 +63,7 @@ function usePersonaTestSession(workspaceId: string, personaId: string, testStrea
   return { start, end, isStarting: createTestStream.isPending, isEnding: archiveStream.isPending }
 }
 
-/** Empty-state prompt shared by both surfaces: explains the test chat and starts it. */
+/** Empty-state prompt: explains the test chat and starts it. */
 function PersonaTestChatEmptyState({ onStart, isStarting }: { onStart: () => void; isStarting: boolean }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
@@ -75,103 +79,57 @@ function PersonaTestChatEmptyState({ onStart, isStarting }: { onStart: () => voi
   )
 }
 
-/**
- * Desktop right-pane test chat (D5). Mounts {@link StreamContent} directly —
- * never through `usePanel()`, which is a single global `?panel=` slot.
- */
-export function PersonaTestChatPane({ workspaceId, personaId, testStreamId, syncState }: PersonaTestChatProps) {
-  const { start, end, isStarting, isEnding } = usePersonaTestSession(workspaceId, personaId, testStreamId)
+/** What the editor's test pane needs of its draft: its bound test stream and the form's sync state. Null until the persona is editable. */
+export const PersonaSyncContext = createContext<{ testStreamId: string | null; syncState: SyncState } | null>(null)
 
-  if (!testStreamId) {
-    return (
-      <SidePanel>
-        <SidePanelHeader>
-          <SidePanelTitle>Test chat</SidePanelTitle>
-        </SidePanelHeader>
-        <SidePanelContent>
-          <PersonaTestChatEmptyState onStart={start} isStarting={isStarting} />
-        </SidePanelContent>
-      </SidePanel>
-    )
-  }
-
-  const syncHint = syncHintText(syncState)
-
-  return (
-    <SidePanel>
-      <SidePanelHeader>
-        <div className="min-w-0">
-          <SidePanelTitle>Test chat</SidePanelTitle>
-          <p className="truncate text-[11px] text-muted-foreground" aria-live="polite">
-            Chatting with the draft config{syncHint ? ` · ${syncHint}` : ""}
-          </p>
-        </div>
-        <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={end} disabled={isEnding}>
-          End test chat
-        </Button>
-      </SidePanelHeader>
-      <SidePanelContent className="relative">
-        <StreamContent workspaceId={workspaceId} streamId={testStreamId} autoFocus />
-      </SidePanelContent>
-    </SidePanel>
-  )
+interface PersonaTestChatPaneProps {
+  workspaceId: string
+  personaId: string
+  onClose: () => void
+  className?: string
 }
 
-/**
- * Mobile test affordance (D5 revision): a "Test draft" button opens a bottom
- * drawer over the editor mounting the SAME test-chat content — no route change,
- * so the editor form never unmounts and its draft state survives close. The
- * drawer is a tall dvh sheet so {@link StreamContent}'s own mobile keyboard
- * choreography (owned-scroller pin) keeps the composer above the keyboard; the
- * app `Drawer` already runs `repositionInputs={false}` for exactly this reason.
- * Opening the drawer starts the session when none is active (one tap, matching
- * the old navigate-on-click intent); an already-active session just reopens.
- */
-export function PersonaTestChatDrawer({ workspaceId, personaId, testStreamId, syncState }: PersonaTestChatProps) {
-  const [open, setOpen] = useState(false)
+/** The draft's test chat, as the `test:<personaId>` pane beside its editor. */
+export function PersonaTestChatPane({ workspaceId, personaId, onClose, className }: PersonaTestChatPaneProps) {
+  const draft = useContext(PersonaSyncContext)
+  const testStreamId = draft?.testStreamId ?? null
   const { start, end, isStarting, isEnding } = usePersonaTestSession(workspaceId, personaId, testStreamId)
-
-  const handleOpen = () => {
-    setOpen(true)
-    if (!testStreamId) start()
-  }
-
-  const syncHint = syncHintText(syncState)
+  const { tabbed } = usePanel()
+  const { isMobile } = useSidebar()
+  const closeRef = usePanelCloseFocusLanding()
+  const headerSwipe = usePhoneHeaderSwipe()
+  const syncHint = draft ? syncHintText(draft.syncState) : null
 
   return (
-    <>
-      <Button type="button" variant="outline" size="sm" className="shrink-0" onClick={handleOpen} disabled={isStarting}>
-        <MessageSquare className="mr-1 h-3.5 w-3.5" />
-        {isStarting ? "Starting…" : "Test draft"}
-      </Button>
-      <Drawer open={open} onOpenChange={setOpen}>
-        <DrawerContent className="mt-0 h-[92dvh]">
-          <div className="flex min-h-0 flex-1 flex-col">
-            <header className="flex h-12 shrink-0 items-center justify-between gap-2 border-b px-4">
-              <div className="min-w-0">
-                <DrawerTitle className="text-base font-semibold">Test chat</DrawerTitle>
-                <p className="truncate text-[11px] text-muted-foreground" aria-live="polite">
-                  {testStreamId
-                    ? `Chatting with the draft config${syncHint ? ` · ${syncHint}` : ""}`
-                    : "Runs against your draft — nothing is saved to memory."}
-                </p>
-              </div>
-              {testStreamId && (
-                <Button type="button" variant="ghost" size="sm" className="shrink-0" onClick={end} disabled={isEnding}>
-                  End test chat
-                </Button>
-              )}
-            </header>
-            <div className="relative min-h-0 flex-1 overflow-hidden">
-              {testStreamId ? (
-                <StreamContent workspaceId={workspaceId} streamId={testStreamId} autoFocus />
-              ) : (
-                <PersonaTestChatEmptyState onStart={start} isStarting={isStarting} />
-              )}
-            </div>
-          </div>
-        </DrawerContent>
-      </Drawer>
-    </>
+    <SidePanel className={className} data-editor-zone="panel" role="region" aria-label="Test chat">
+      <SidePanelHeader className="relative" {...headerSwipe}>
+        {isMobile && <PhonePaneLeading onBack={onClose} backRef={closeRef} />}
+        {tabbed ? (
+          <PanelTabStrip workspaceId={workspaceId} className="-ml-2" />
+        ) : (
+          <SidePanelTitle className="min-w-0 flex-1 truncate">Test chat</SidePanelTitle>
+        )}
+        <PaneFocusToggle />
+        <PhonePaneSwitcher workspaceId={workspaceId} />
+        {!isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />}
+      </SidePanelHeader>
+      {testStreamId && (
+        <div className="flex h-10 shrink-0 items-center gap-2 border-b px-4">
+          <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground" aria-live="polite">
+            Chatting with the draft config{syncHint ? ` · ${syncHint}` : ""}
+          </p>
+          <Button type="button" variant="ghost" size="sm" className="h-7 shrink-0" onClick={end} disabled={isEnding}>
+            End test chat
+          </Button>
+        </div>
+      )}
+      <SidePanelContent className="relative">
+        {testStreamId ? (
+          <StreamContent workspaceId={workspaceId} streamId={testStreamId} autoFocus />
+        ) : (
+          draft && <PersonaTestChatEmptyState onStart={start} isStarting={isStarting} />
+        )}
+      </SidePanelContent>
+    </SidePanel>
   )
 }

@@ -12,6 +12,8 @@ import {
   parseConversationsPanel,
   parseContextPanel,
   BOARD_PANE,
+  PERSONA_PANE,
+  parsePersonaTestPanel,
 } from "@/contexts"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -310,6 +312,8 @@ export function usePanelCloseFocusLanding() {
 export function PanelTabTitle({ workspaceId, panelId }: { workspaceId: string; panelId: string }) {
   if (isDraftPanel(panelId)) return <>New thread</>
   if (panelId === BOARD_PANE) return <>Board</>
+  if (panelId === PERSONA_PANE) return <>Edit persona</>
+  if (parsePersonaTestPanel(panelId)) return <>Test chat</>
   const composeStreamId = parseComposePanel(panelId)
   if (composeStreamId) {
     return (
