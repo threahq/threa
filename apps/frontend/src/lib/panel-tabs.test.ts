@@ -10,6 +10,7 @@ import {
   closePanelTab,
   dropPanelTab,
   fitPanelLayout,
+  fitPanelRows,
   focusPanelTab,
   followCurrentPanel,
   formatPanelLayout,
@@ -333,6 +334,30 @@ describe("dropPanelTab", () => {
 
   it("should keep the floating tab floating while it stays on show", () => {
     expect(spell(dropPanelTab(at("a**-b"), "x", { kind: "tab", of: "b", before: null }))).toBe("a**-b.x")
+  })
+})
+
+describe("fitPanelRows", () => {
+  const layout = at("a-b--c*--d")
+
+  it("should keep the arrangement when every section fits down its column", () => {
+    expect(fitPanelRows(layout, 3, null)).toBe(layout)
+  })
+
+  it("should fold the sections that don't fit into the last one that does, showing the last one's tab", () => {
+    expect(spell(fitPanelRows(layout, 2, null))).toBe("a-b--c.d")
+  })
+
+  it("should show the current pane when it is on show in a folded section", () => {
+    expect(spell(fitPanelRows(layout, 2, "c"))).toBe("a-b--c*.d")
+  })
+
+  it("should show the pane last worked in when the current pane is in a section that fits", () => {
+    expect(spell(fitPanelRows(layout, 2, "b", "c"))).toBe("a-b--c*.d")
+  })
+
+  it("should fold a column into one section where only one fits", () => {
+    expect(spell(fitPanelRows(layout, 1, null))).toBe("a-b.c.d")
   })
 })
 

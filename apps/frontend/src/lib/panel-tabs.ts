@@ -370,12 +370,38 @@ export function fitPanelLayout(
   const keep = stacked ? 0 : Math.max(1, maxColumns) - 1
   const folding = layout.columns.slice(keep).flat()
   if (folding.length < 2) return layout
-  const ids = folding.flatMap((section) => section.ids)
+  return { columns: [...layout.columns.slice(0, keep), [foldSections(folding, current, previous)]] }
+}
+
+/**
+ * The arrangement as a window tall enough for `maxRows` sections down a column
+ * shows it: the sections past that in a column fold into its last one that
+ * fits, showing a tab as {@link fitPanelLayout} picks it.
+ */
+export function fitPanelRows(
+  layout: PanelLayout,
+  maxRows: number,
+  current: string | null,
+  previous: string | null = null
+): PanelLayout {
+  const keep = Math.max(1, maxRows) - 1
+  if (layout.columns.every((sections) => sections.length <= keep + 1)) return layout
+  return {
+    ...layout,
+    columns: layout.columns.map((sections) =>
+      sections.length <= keep + 1
+        ? sections
+        : [...sections.slice(0, keep), foldSections(sections.slice(keep), current, previous)]
+    ),
+  }
+}
+
+function foldSections(folding: readonly PanelSection[], current: string | null, previous: string | null): PanelSection {
   const shown =
     folding.find((section) => section.active === current) ??
     folding.find((section) => section.active === previous) ??
     folding[folding.length - 1]
-  return { columns: [...layout.columns.slice(0, keep), [{ ids, active: shown.active }]] }
+  return { ids: folding.flatMap((section) => section.ids), active: shown.active }
 }
 
 /**
