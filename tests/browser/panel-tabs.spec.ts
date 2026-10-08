@@ -341,6 +341,45 @@ test("should stack a tab split down under its own section", async ({ page }) => 
   await expect(page.getByRole("separator", { name: "Resize stacked panels" })).toBeVisible()
 })
 
+test("should even the panes along a divider when it is double-clicked", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
+  const boxOf = async (id: string) => (await tabPane(page, id).boundingBox())!
+  const spread = (sizes: number[]) => Math.round(Math.max(...sizes) - Math.min(...sizes))
+  const widths = async (...ids: string[]) => spread(await Promise.all(ids.map(async (id) => (await boxOf(id)).width)))
+  const heights = async (...ids: string[]) => spread(await Promise.all(ids.map(async (id) => (await boxOf(id)).height)))
+  const drag = async (divider: Locator, dx: number, dy: number) => {
+    const grip = (await divider.boundingBox())!
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(grip.x + grip.width / 2 + dx, grip.y + grip.height / 2 + dy, { steps: 5 })
+    await page.mouse.up()
+  }
+
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${streamId}-${threadA}-${threadB}`)
+  await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
+  const columns = page.getByRole("separator", { name: "Resize panels side by side" })
+  await drag(columns, 80, 0)
+  await expect.poll(() => widths(threadA, threadB)).toBeGreaterThan(100)
+  await columns.dblclick()
+  await expect.poll(() => widths(threadA, threadB)).toBeLessThanOrEqual(2)
+
+  // The page's own divider evens every column, the page among them.
+  const pageDivider = page.getByRole("separator", { name: "Resize thread panel" })
+  await drag(pageDivider, 150, 0)
+  await expect.poll(() => widths(streamId, threadA, threadB)).toBeGreaterThan(100)
+  await pageDivider.dblclick()
+  await expect.poll(() => widths(streamId, threadA, threadB)).toBeLessThanOrEqual(4)
+
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${streamId}-${threadA}--${threadB}`)
+  await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
+  const rows = page.getByRole("separator", { name: "Resize stacked panels" })
+  await drag(rows, 0, 120)
+  await expect.poll(() => heights(threadA, threadB)).toBeGreaterThan(100)
+  await rows.dblclick()
+  await expect.poll(() => heights(threadA, threadB)).toBeLessThanOrEqual(2)
+})
+
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 400, height: 800 }, isMobile: true, hasTouch: true })
 

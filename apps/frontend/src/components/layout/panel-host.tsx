@@ -43,6 +43,8 @@ import {
   panelColumnWidths,
   panelGridShape,
   resplit,
+  evenPanelColumns,
+  evenShares,
   type PanelGridSizes,
 } from "@/lib/panel-grid"
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer"
@@ -369,6 +371,7 @@ export function PanelTabStack({
         span={(panelShares[index] + share) * columnUnit}
         min={MIN_SECTION_WIDTH}
         onResize={(px) => setSizes({ ...sizes, columns: resplit(sizes.columns, index + 1, px / columnUnit) })}
+        onReset={() => setSizes(evenPanelColumns(sizes))}
       />
     ))
   const rowResizers = sizes.rows.flatMap((rows, column) => {
@@ -386,6 +389,9 @@ export function PanelTabStack({
             ...sizes,
             rows: sizes.rows.map((shares, at) => (at === column ? resplit(shares, index, px / unit) : shares)),
           })
+        }
+        onReset={() =>
+          setSizes({ ...sizes, rows: sizes.rows.map((shares, at) => (at === column ? evenShares(shares) : shares)) })
         }
       />
     ))
@@ -536,10 +542,11 @@ interface SectionResizerProps {
   span: number
   min: number
   onResize: (size: number) => void
+  onReset: () => void
 }
 
 /** The divider between two sections, dragged or arrow-keyed like the panel's own edge. */
-function SectionResizer({ axis, area, size, span, min, onResize }: SectionResizerProps) {
+function SectionResizer({ axis, area, size, span, min, onResize, onReset }: SectionResizerProps) {
   // Sections squeezed below twice the minimum share what there is, rather than the leading one snapping to it.
   const floor = Math.min(min, span / 2)
   const max = span - floor
@@ -572,6 +579,7 @@ function SectionResizer({ axis, area, size, span, min, onResize }: SectionResize
       onPointerMove={handleResizeMove}
       onPointerEnd={handleResizeEnd}
       onKeyDown={handleKeyDown}
+      onReset={onReset}
       ariaLabel={axis === "x" ? "Resize panels side by side" : "Resize stacked panels"}
     />
   )

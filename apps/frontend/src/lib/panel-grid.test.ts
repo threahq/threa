@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest"
-import { compilePanelGrid, defaultPanelGridSizes, panelColumnWidths, panelGridShape, resplit } from "./panel-grid"
+import {
+  compilePanelGrid,
+  defaultPanelGridSizes,
+  evenPanelColumns,
+  evenShares,
+  panelColumnWidths,
+  panelGridShape,
+  resplit,
+} from "./panel-grid"
 import { parsePanelLayout } from "./panel-tabs"
 
 describe("compilePanelGrid", () => {
@@ -65,5 +73,20 @@ describe("panelGridShape", () => {
 describe("resplit", () => {
   it("should move the divider between two sections and leave the others alone", () => {
     expect(resplit([1, 1, 2], 0, 1.5)).toEqual([1.5, 0.5, 2])
+  })
+})
+
+describe("evenShares", () => {
+  it("should give every section the same share and keep their total", () => {
+    expect(evenShares([1, 1.4, 0.6])).toEqual([1, 1, 1])
+  })
+})
+
+describe("evenPanelColumns", () => {
+  it("should even the panel columns and leave the page's own column and the rows alone", () => {
+    expect(evenPanelColumns({ columns: [2, 1, 3], rows: [[1], [1, 2], [1]] })).toEqual({
+      columns: [2, 2, 2],
+      rows: [[1], [1, 2], [1]],
+    })
   })
 })
