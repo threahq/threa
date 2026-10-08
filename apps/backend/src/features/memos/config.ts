@@ -66,6 +66,14 @@ export const MEMO_MAX_FAILED_ATTEMPTS = 3
 export const MEMO_BATCH_CLAIM_SECONDS = 15 * 60
 
 /**
+ * Most message text one memo pass reads from a conversation. Longer
+ * conversations are read in passes: each reads what came after the previous
+ * one, topped up with the newest earlier messages for context. Sized to hold
+ * 90% of conversations whole (prod p90 ≈ 40k chars).
+ */
+export const MEMO_CONVERSATION_WINDOW_CHARS = 40_000
+
+/**
  * Upper bound on memos extracted from a single conversation. A conversation can
  * settle several unrelated things, but a runaway count usually means the model is
  * transcribing turns instead of extracting durable knowledge — the cap keeps the
