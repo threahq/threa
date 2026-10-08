@@ -237,11 +237,10 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
 
   private buildPrompt(context: ExtractionContext): string {
     const now = context.newMessage.createdAt
-    const allConvs = context.activeConversations
 
     const convSection =
-      allConvs.length > 0
-        ? allConvs
+      context.activeConversations.length > 0
+        ? context.activeConversations
             .map((c) => {
               const contextIds =
                 c.contextMessageIds.length > 0 ? `, in-context messages: [${c.contextMessageIds.join(", ")}]` : ""

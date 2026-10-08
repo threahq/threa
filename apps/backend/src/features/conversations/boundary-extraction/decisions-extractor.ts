@@ -77,7 +77,7 @@ export class DecisionsBoundaryExtractor {
   async extract(context: ExtractionContext): Promise<ExtractionResult> {
     if (isColdStartThread(context)) return coldStartThreadResult(context)
 
-    const candidates = this.candidates(context)
+    const candidates = context.activeConversations
 
     // Nothing to choose between: the message opens the stream's first
     // conversation. Skip the decision call and go straight for its name.
@@ -139,11 +139,6 @@ export class DecisionsBoundaryExtractor {
       completenessUpdates: completeness.map((u) => (u.conversationId === primaryId ? { ...u, summary } : u)),
       confidence: placement.confidence,
     }
-  }
-
-  /** The conversations the message could be placed in. */
-  private candidates(context: ExtractionContext): ConversationSummary[] {
-    return context.activeConversations
   }
 
   private async openNewConversation(

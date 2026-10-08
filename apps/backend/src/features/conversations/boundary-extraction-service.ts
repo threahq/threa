@@ -350,7 +350,10 @@ export class BoundaryExtractionService {
     }
 
     if (fetchedData.threadReply) {
-      return this.assignThreadReply(fetchedData.message, fetchedData.stream, workspaceId)
+      const { message, stream } = fetchedData
+      return this.assignOnce(message, workspaceId, (client) =>
+        assignThreadReply(client, { workspaceId, message, thread: stream })
+      )
     }
 
     const {
@@ -913,13 +916,6 @@ export class BoundaryExtractionService {
             ? (await ConversationRepository.findByStream(client, workspaceId, stream.id, { limit: 1 }))[0]
             : undefined),
       })
-    )
-  }
-
-  /** The async half of a thread reply's placement: the send already placed it unless that attach failed. */
-  private assignThreadReply(message: Message, stream: Stream, workspaceId: string): Promise<Conversation | null> {
-    return this.assignOnce(message, workspaceId, (client) =>
-      assignThreadReply(client, { workspaceId, message, thread: stream })
     )
   }
 
