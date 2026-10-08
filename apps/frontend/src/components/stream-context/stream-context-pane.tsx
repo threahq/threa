@@ -1,4 +1,4 @@
-import { useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { useNavigate } from "react-router-dom"
 import { SidePanel, SidePanelClose, SidePanelHeader, SidePanelTitle } from "@/components/ui/side-panel"
 import { PaneFocusToggle, PanelTabStrip, PanelTabTitle, usePanelCloseFocusLanding } from "@/components/panes"
 import {
@@ -11,7 +11,6 @@ import {
   useSidebar,
 } from "@/contexts"
 import { memoDeepLink } from "@/lib/memo-url"
-import { closePanelTab, formatPanelLayout, parsePanelLayout, PANEL_PARAM } from "@/lib/panel-tabs"
 import { ContextCount, parseFilter, type Filter } from "./stream-context-chrome"
 import { StreamContextGallery } from "./stream-context-gallery"
 import { StreamContextIndexPanel } from "./stream-context-index-panel"
@@ -31,9 +30,7 @@ interface StreamContextPaneProps {
  * (`context:<streamId>[:<filter>]`), beside the stream it lists.
  */
 export function StreamContextPane({ workspaceId, streamId, filter, onClose, className }: StreamContextPaneProps) {
-  const { panelId, tabbed, openPanel, withPanelOpen, setCurrentPane } = usePanel()
-  const { streamId: mainStreamId } = useParams<{ streamId: string }>()
-  const [, setSearchParams] = useSearchParams()
+  const { panelId, tabbed, openPanel, openAtMessage } = usePanel()
   const navigate = useNavigate()
   const { isMobile } = useSidebar()
   const inDrawer = useInPaneDrawer()
@@ -54,23 +51,10 @@ export function StreamContextPane({ workspaceId, streamId, filter, onClose, clas
   const changeFilter = (value: Filter) =>
     openPanel(createContextPanelId(streamId, value === "all" ? null : value), { replace: true })
 
-  // One navigation shows the message where it lives: the main view, or its
-  // stream's tab (a thread the overview found it in opens beside). A drawer
-  // covers that view, so it closes in the same step and Back brings it back. A fresh push gives the `?m=` effect a new location key.
-  const jumpToMessage = (messageId: string, inStreamId = streamId) => {
-    const inMain = inStreamId === mainStreamId
-    setSearchParams((prev) => {
-      const next = inMain ? new URLSearchParams(prev) : withPanelOpen(prev, inStreamId)
-      if (inDrawer && panelId) {
-        const rest = formatPanelLayout(closePanelTab(parsePanelLayout(next.get(PANEL_PARAM)), panelId))
-        if (rest === null) next.delete(PANEL_PARAM)
-        else next.set(PANEL_PARAM, rest)
-      }
-      next.set("m", messageId)
-      return next
-    })
-    setCurrentPane(inMain ? null : inStreamId)
-  }
+  // One navigation shows the message in its stream's pane (a thread the overview
+  // found it in opens beside). A drawer covers that pane, so it closes in the
+  // same step and Back brings it back.
+  const jumpToMessage = (messageId: string, inStreamId = streamId) => openAtMessage(inStreamId, messageId, inDrawer)
 
   return (
     <SidePanel className={className} data-editor-zone="panel" role="region" aria-label="In this stream">

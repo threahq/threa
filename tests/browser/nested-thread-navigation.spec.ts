@@ -24,10 +24,7 @@ import {
  */
 
 const openPanelIds = (page: Page) =>
-  new URL(page.url()).searchParams
-    .get("panel")!
-    .split(/[.-]+/)
-    .map((id) => id.replace("*", ""))
+  page.getByTestId("panel").evaluateAll((panes) => panes.map((pane) => pane.getAttribute("data-panel-tab")!))
 
 /** Brings an open thread's pane to the front. A nested thread opens beside its
  *  parent, so the parent is still on show and its own tab title takes it. */
@@ -98,7 +95,7 @@ test.describe("Nested Thread Navigation", () => {
 
     // Wait for thread to be created (draft transitions to real thread)
     await waitForRealThreadPanel(page)
-    const [parentThreadId] = openPanelIds(page)
+    const [parentThreadId] = await openPanelIds(page)
 
     // Now reply to the first-level thread reply to create a nested (second-level) thread
     const firstReplyContainer = page
@@ -138,6 +135,7 @@ test.describe("Nested Thread Navigation", () => {
     // Create a channel (creating navigates to it)
     const channelName = `nested-reopen-${testId}`
     await createChannel(page, channelName)
+    const channelPage = page.url().split("?")[0]
 
     // Post a message in the channel
     const channelMessage = `Channel post ${testId}`
@@ -182,9 +180,10 @@ test.describe("Nested Thread Navigation", () => {
     // Return to the main stream with no panel open, without depending on
     // close-button click animations settling first. Picking the channel in
     // the sidebar would only bring main forward and leave its tabs open.
-    await page.goto(page.url().split("?")[0])
+    await page.goto(channelPage)
     await expect(page).not.toHaveURL(/panel=/)
-    await expect(page.locator("[data-panel-tab]")).toHaveCount(0)
+    await expect(page.getByTestId("main-pane")).toBeVisible({ timeout: 10000 })
+    await expect(page.getByTestId("panel")).toHaveCount(0)
 
     // Reopen the first-level thread by clicking on the reply count in the main stream
     const channelMessageInMain = page
@@ -237,7 +236,7 @@ test.describe("Nested Thread Navigation", () => {
     await sendPanelReply(page, level1Message)
     await expect(page.getByTestId("panel").getByText(level1Message)).toBeVisible({ timeout: 10000 })
     await waitForRealThreadPanel(page)
-    const [level1ThreadId] = openPanelIds(page)
+    const [level1ThreadId] = await openPanelIds(page)
 
     // Create nested thread
     const level1Container = page
@@ -252,7 +251,7 @@ test.describe("Nested Thread Navigation", () => {
     await sendPanelReply(page, level2Message)
     await waitForRealThreadPanel(page)
     await expect(getActivePanel(page).getByText(level2Message)).toBeVisible({ timeout: 10000 })
-    const [, level2ThreadId] = openPanelIds(page)
+    const [, level2ThreadId] = await openPanelIds(page)
 
     // Bring the parent thread back to the front
     await bringToFront(page, level1ThreadId)

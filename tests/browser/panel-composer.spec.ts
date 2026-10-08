@@ -33,6 +33,10 @@ async function seed(page: Page) {
 }
 
 const panelParam = (page: Page) => new URL(page.url()).searchParams.get("panel")
+const route = (page: Page) => ({
+  stream: new URL(page.url()).pathname.match(/\/s\/([^/]+)/)![1],
+  panel: panelParam(page),
+})
 const tabPane = (page: Page, id: string) => page.locator(`[data-panel-tab="${id}"]`)
 const mainPane = (page: Page) => page.locator('[data-editor-zone="main"]')
 const mainComposer = (page: Page) => mainPane(page).locator('[contenteditable="true"]').last()
@@ -130,14 +134,14 @@ test("should open a thread's draft beside it and close it with the thread's tab"
   await tabPane(page, threadId).locator('[contenteditable="true"]').last().click()
   await page.keyboard.type("thread draft")
   await expandLink(page, tabPane(page, threadId)).click()
-  await expect.poll(() => panelParam(page)).toBe(`${threadId}-${compose}**`)
+  await expect.poll(() => route(page)).toEqual({ stream: threadId, panel: `${streamId}-${threadId}-${compose}**` })
   await expect(paneEditor(page, threadId)).toHaveText("thread draft")
   await page.keyboard.press("Escape")
   await page.keyboard.press("Escape")
-  await expect.poll(() => panelParam(page)).toBe(`${threadId}-${compose}`)
+  await expect.poll(() => route(page)).toEqual({ stream: threadId, panel: `${streamId}-${threadId}-${compose}` })
   await expect(tabPane(page, compose).getByRole("navigation", { name: "Panel tabs" })).toContainText("Draft to")
 
   await tabPane(page, threadId).getByRole("button", { name: "Close tab" }).click()
-  await expect.poll(() => panelParam(page)).toBeNull()
+  await expect.poll(() => route(page)).toEqual({ stream: streamId, panel: null })
   await expect(tabPane(page, compose)).toHaveCount(0)
 })

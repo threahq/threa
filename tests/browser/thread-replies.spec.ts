@@ -88,9 +88,11 @@ test.describe("Thread Replies", () => {
     await sendPanelReply(page, `Reply one ${testId}`)
     await waitForRealThreadPanel(page)
 
-    // Return to the main stream via the breadcrumb rather than depending on
-    // the close-button click animation settling first.
-    const returnToChannel = page.getByRole("button", { name: `Return to #${channelName}` })
+    // The thread's channel crumb shows the channel in the thread's pane, and the channel's own pane moves there.
+    const returnToChannel = page
+      .getByTestId("panel")
+      .getByRole("navigation", { name: "breadcrumb" })
+      .getByRole("link", { name: `#${channelName}` })
     await expect(returnToChannel).toBeVisible({ timeout: 5000 })
     await returnToChannel.click()
     await expect(page).not.toHaveURL(/panel=/)
@@ -119,7 +121,10 @@ test.describe("Thread Replies", () => {
     await sendPanelReply(page, `Thread reply for reminder ${testId}`)
     await waitForRealThreadPanel(page)
 
-    const returnToChannel = page.getByRole("button", { name: `Return to #${channelName}` })
+    const returnToChannel = page
+      .getByTestId("panel")
+      .getByRole("navigation", { name: "breadcrumb" })
+      .getByRole("link", { name: `#${channelName}` })
     await returnToChannel.click()
     await expect(page).not.toHaveURL(/panel=/)
     await expect(parentInStream.getByRole("link", { name: /1 reply/i })).toBeVisible({ timeout: 10000 })
@@ -210,9 +215,11 @@ test.describe("Thread Replies", () => {
     await waitForRealThreadPanel(page)
     await expect(page.getByTestId("panel").getByText(reply1)).toBeVisible({ timeout: 10000 })
 
-    // Return to the main stream via the breadcrumb rather than depending on
-    // the close-button click animation settling first.
-    const returnToChannel = page.getByRole("button", { name: `Return to #${channelName}` })
+    // The thread's channel crumb shows the channel in the thread's pane, and the channel's own pane moves there.
+    const returnToChannel = page
+      .getByTestId("panel")
+      .getByRole("navigation", { name: "breadcrumb" })
+      .getByRole("link", { name: `#${channelName}` })
     await expect(returnToChannel).toBeVisible({ timeout: 5000 })
     await returnToChannel.click()
     await expect(page).not.toHaveURL(/panel=/)

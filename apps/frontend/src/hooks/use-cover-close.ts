@@ -52,15 +52,24 @@ function entryUrl(pathname: string, params: URLSearchParams): string {
   return `${pathname}?${sorted.toString()}`
 }
 
+/** A URL `closeTo` can land on. */
+export interface CoverLanding {
+  pathname: string
+  params: URLSearchParams
+}
+
 /**
  * {@link useCoverClose}, plus `closeTo`: takes part of a cover off (one of the
- * panel's tabs) and lands on `next`. It pops when the entry beneath shows
- * exactly `next`, so Back never brings the closed part back; otherwise it
- * rewrites in place. Each entry's beneath is the one it was pushed over,
- * inherited by a replace or a same-URL push on top, and the stripped view for
- * an attested hop.
+ * panel's tabs) and lands on the first of `landings`, the URLs that all show
+ * the view left. It pops when the entry beneath is one of them, so Back never
+ * brings the closed part back; otherwise it rewrites in place. Each entry's
+ * beneath is the one it was pushed over, inherited by a replace or a same-URL
+ * push on top, and the stripped view for an attested hop.
  */
-export function useCoverHistory(cover: Cover): { close: () => void; closeTo: (next: URLSearchParams) => void } {
+export function useCoverHistory(cover: Cover): {
+  close: () => void
+  closeTo: (landings: readonly [CoverLanding, ...CoverLanding[]]) => void
+} {
   const location = useLocation()
   const navigate = useNavigate()
   const navigationType = useNavigationType()
@@ -125,17 +134,20 @@ export function useCoverHistory(cover: Cover): { close: () => void; closeTo: (ne
   }, [cover, location.key, navigate, setSearchParams])
 
   const closeTo = useCallback(
-    (next: URLSearchParams) => {
+    (landings: readonly [CoverLanding, ...CoverLanding[]]) => {
       const open = new URLSearchParams(location.search).has(cover[0])
+      const beneath = beneathOf.current.get(location.key)
       // Consumed like a claim, so a second close before the pop commits can't pop twice.
-      if (open && beneathOf.current.get(location.key) === entryUrl(location.pathname, next)) {
+      if (open && landings.some(({ pathname, params }) => entryUrl(pathname, params) === beneath)) {
         beneathOf.current.delete(location.key)
         navigate(-1)
         return
       }
-      setSearchParams(next, { replace: true })
+      const [{ pathname, params }] = landings
+      const query = params.toString()
+      navigate(query ? `${pathname}?${query}` : pathname, { replace: true })
     },
-    [cover, location.key, location.pathname, location.search, navigate, setSearchParams]
+    [cover, location.key, location.search, navigate]
   )
 
   return useMemo(() => ({ close, closeTo }), [close, closeTo])

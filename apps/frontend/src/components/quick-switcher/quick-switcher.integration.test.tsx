@@ -408,7 +408,7 @@ describe("QuickSwitcher Integration Tests", () => {
 
       expect(mockNavigate).toHaveBeenCalledWith("/w/workspace_1/s/stream_host")
       expect(getAsideState()).toMatchObject({
-        hostKey: "/w/workspace_1/s/stream_host",
+        hostKey: "/w/workspace_1/s",
         hostStreamId: "stream_host",
         asideId: "stream_aside_mine",
       })

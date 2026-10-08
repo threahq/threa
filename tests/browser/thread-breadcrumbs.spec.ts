@@ -33,6 +33,7 @@ test.describe("Thread Breadcrumbs", () => {
     // Create a channel
     const channelName = `bc-nav-${testId}`
     await createChannel(page, channelName, { switchToAll: false })
+    const channelId = page.url().match(/\/s\/([^/?]+)/)![1]
 
     // Post a message in the channel
     const editor = page.locator("[contenteditable='true']")
@@ -77,24 +78,17 @@ test.describe("Thread Breadcrumbs", () => {
     await waitForRealThreadPanel(page)
 
     // Open the nested thread as the lone panel: its breadcrumbs lead back to the channel
-    const panelTabs = new URL(page.url()).searchParams.get("panel")!.split(/[.-]+/)
-    const level2Id = panelTabs[panelTabs.length - 1].replace("*", "")
-    const lonePanelUrl = new URL(page.url())
-    lonePanelUrl.searchParams.set("panel", level2Id)
-    await page.goto(lonePanelUrl.toString())
-    await expect(getActivePanel(page).getByText(level2Reply)).toBeVisible({ timeout: 10000 })
+    const level2Id = await getActivePanel(page).getAttribute("data-panel-tab")
+    await page.goto(`${new URL(page.url()).pathname.replace(/[^/]+$/, channelId)}?panel=${level2Id}`)
+    await expect(page.getByTestId("panel").getByText(level2Reply)).toBeVisible({ timeout: 10000 })
     await expect(breadcrumbNav.getByText(`#${channelName}`)).toBeVisible({ timeout: 5000 })
 
-    // Navigate to the channel by clicking its breadcrumb link.
-    // Since the channel is the main view, clicking it should close the panel.
-    const channelBreadcrumb = breadcrumbNav.getByRole("link", { name: `#${channelName}` }).first()
-    if (await channelBreadcrumb.isVisible()) {
-      await channelBreadcrumb.click()
-    } else {
-      // Breadcrumb might be a button (for main-view streams that close the panel)
-      const channelButton = breadcrumbNav.getByRole("button", { name: `#${channelName}` }).first()
-      await channelButton.click()
-    }
+    // The channel crumb shows the channel in the nested thread's pane, and the channel's own pane moves there.
+    await breadcrumbNav
+      .getByRole("link", { name: `#${channelName}` })
+      .first()
+      .click()
+    await expect(page).toHaveURL(new RegExp(`/s/${channelId}$`))
 
     // Should be back viewing the channel with the original message visible
     await expect(page.getByRole("main").getByText(channelMessage).first()).toBeVisible({ timeout: 3000 })
@@ -128,7 +122,7 @@ test.describe("Thread Breadcrumbs", () => {
     await expect(page.getByTestId("panel").getByText(`Thread reply ${testId}`)).toBeVisible({ timeout: 5000 })
     await expect(page.getByText(/Start a new thread/)).not.toBeVisible({ timeout: 3000 })
     await waitForRealThreadPanel(page)
-    const threadId = new URL(page.url()).searchParams.get("panel")!
+    const threadId = await page.getByTestId("panel").getAttribute("data-panel-tab")
 
     // Threads only appear in the Smart preset's urgency buckets — the suite's
     // default All preset has type sections (Channels/Scratchpads/DMs) that never

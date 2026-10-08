@@ -1,4 +1,6 @@
 import { useSyncExternalStore } from "react"
+import { matchPath } from "react-router-dom"
+import { closePanelTab, primaryPanelOf, soleFirstPanelOf, type PanelLayout } from "@/lib/panel-tabs"
 import type { AgentBlockData } from "@/components/timeline/agent-block-context"
 
 /**
@@ -23,7 +25,7 @@ import type { AgentBlockData } from "@/components/timeline/agent-block-context"
 export type AsideSheetDetent = "peek" | "full"
 
 export interface OpenAsideState {
-  /** The page hosting the surface — `useLocation().pathname`. */
+  /** The page hosting the surface — {@link asideHostKey} of its pathname. */
   hostKey: string
   hostStreamId: string
   asideId: string
@@ -36,13 +38,25 @@ export interface OpenAsideState {
 }
 
 /**
- * Whether a `?panel=` open belongs inside the aside's surface: any thread but
+ * The page an aside is open on. A stream page's route names whichever stream
+ * pane is worked in, so the page is the key there, not the stream it names.
+ */
+export function asideHostKey(pathname: string): string {
+  const streamPage = matchPath("/w/:workspaceId/s/:streamId", pathname)
+  return streamPage ? `/w/${streamPage.params.workspaceId}/s` : pathname
+}
+
+/**
+ * The pane the aside's surface holds instead of the page: the first one open
+ * beside the stream page's own (`tabbed`), or the board's panel, unless it is
  * the aside's own host. An aside opened from inside a thread has that thread
  * as its host, and the host view already shows it — a panel on top would be
  * two chromes for one stream.
  */
-export function asideHoldsPanel(panelId: string | null, hostStreamId: string): boolean {
-  return panelId !== null && panelId !== hostStreamId
+export function asidePaneOf(layout: PanelLayout, hostStreamId: string, tabbed: boolean): string | null {
+  const sole = tabbed ? soleFirstPanelOf(layout) : null
+  const pane = primaryPanelOf(sole === null ? layout : closePanelTab(layout, sole))
+  return pane !== hostStreamId ? pane : null
 }
 
 /** How wide the aside's own column is, on a stream page or the stage. The floor
@@ -129,6 +143,12 @@ export function closeAside(): void {
 /** Drop the surface when its host page goes away; a no-op for any other host. */
 export function dropAsideForHost(hostKey: string): void {
   if (state?.hostKey !== hostKey) return
+  setState(null)
+}
+
+/** Drop the surface when its host stream's pane closes on its page; a no-op for any other stream. */
+export function dropAsideForHostStream(hostKey: string, hostStreamId: string): void {
+  if (state?.hostKey !== hostKey || state.hostStreamId !== hostStreamId) return
   setState(null)
 }
 

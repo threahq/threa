@@ -8,10 +8,11 @@ import {
 } from "react"
 import { HistoryBackClose } from "@/components/ui/history-back-close"
 import { PanelHost } from "@/components/layout/panel-host"
-import { usePanel } from "@/contexts"
+import { PaneScope, usePanel } from "@/contexts"
 import { cn } from "@/lib/utils"
+import type { SplitDirection } from "@/lib/panel-tabs"
 import {
-  asideHoldsPanel,
+  asidePaneOf,
   closeAside,
   setAsideSheetDetent,
   useAsideOpenDraft,
@@ -41,6 +42,8 @@ const REDUCED_MOTION =
   typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true
 
 const SETTLE_MS = 200
+
+const NO_SPLITS: readonly SplitDirection[] = []
 
 /**
  * The sheet's ceiling is its host's box, never a viewport unit: the app is
@@ -123,8 +126,9 @@ export function AsideMobileSheet({
   // own while the sheet holds it (stream.tsx, board.tsx), so this is the
   // thread's only mount; the panel's close hands the sheet back to the aside.
   // A thread is a whole timeline, so the sheet goes to the full detent for it.
-  const { panelId, closePanel, setCurrentPane } = usePanel()
-  const threadInSheet = asideHoldsPanel(panelId, hostStreamId)
+  const { layout, hasTabs, setCurrentPane, closeTab } = usePanel()
+  const held = asidePaneOf(layout, hostStreamId, hasTabs)
+  const threadInSheet = held !== null
   // Decided once, at mount. An entry pushed over an open thread's own inherits
   // its close claim (use-cover-close.ts), so the thread's Close and Back would
   // pop the aside instead of the thread.
@@ -258,16 +262,18 @@ export function AsideMobileSheet({
           className="flex min-h-0 flex-1 flex-col"
           data-aside-surface={threadInSheet ? undefined : true}
           onPointerDownCapture={() => {
-            if (threadInSheet) setCurrentPane(panelId)
+            if (held !== null) setCurrentPane(held)
           }}
           onFocusCapture={() => {
-            if (threadInSheet) setCurrentPane(panelId)
+            if (held !== null) setCurrentPane(held)
           }}
         >
-          {threadInSheet ? (
+          {held !== null ? (
             // The page's panes sit under this sheet, so the thread it holds opens none of its own here.
             <AsideCoversPanesContext.Provider value={true}>
-              <PanelHost workspaceId={workspaceId} onClose={closePanel} />
+              <PaneScope panelId={held} section={{ ids: [held], active: held }} splits={NO_SPLITS}>
+                <PanelHost workspaceId={workspaceId} onClose={() => closeTab(held)} />
+              </PaneScope>
             </AsideCoversPanesContext.Provider>
           ) : (
             <AsidePane

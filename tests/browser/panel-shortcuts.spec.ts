@@ -37,6 +37,10 @@ async function seedThreads(page: Page, count: number) {
 
 const tabPane = (page: Page, id: string) => page.locator(`[data-panel-tab="${id}"]`)
 const panelParam = (page: Page) => new URL(page.url()).searchParams.get("panel")
+const route = (page: Page) => ({
+  stream: new URL(page.url()).pathname.match(/\/s\/([^/]+)/)![1],
+  panel: panelParam(page),
+})
 
 /** The pane holding the focused composer: a panel id, "main", or null when focus isn't in a composer. */
 function focusedComposer(page: Page) {
@@ -59,21 +63,23 @@ test("should switch, close and reopen tabs from the keyboard, landing in each ta
   await page.setViewportSize({ width: 1600, height: 900 })
   const { workspaceId, streamId, threads } = await seedThreads(page, 3)
   const [a, b, c] = threads
+  // The pane worked in is the route's stream, so the channel is the first column of the rest.
+  const beside = (panel: string) => `${streamId}-${panel}`
   await openPanels(page, workspaceId, streamId, `${a}.${b}.${c}`, 3)
 
   await tabPane(page, c).locator('[contenteditable="true"]').last().click()
   await expect.poll(() => focusedComposer(page)).toBe(c)
 
   await page.keyboard.press("Alt+BracketLeft")
-  await expect.poll(() => panelParam(page)).toBe(`${a}.${b}*.${c}`)
+  await expect.poll(() => panelParam(page)).toBe(beside(`${a}.${b}*.${c}`))
   await expect.poll(() => focusedComposer(page)).toBe(b)
   await page.keyboard.press("Alt+BracketLeft")
   await expect.poll(() => focusedComposer(page)).toBe(a)
   await page.keyboard.press("Alt+BracketLeft")
-  await expect.poll(() => panelParam(page)).toBe(`${a}.${b}.${c}`)
+  await expect.poll(() => panelParam(page)).toBe(beside(`${a}.${b}.${c}`))
   await expect.poll(() => focusedComposer(page)).toBe(c)
   await page.keyboard.press("Alt+BracketRight")
-  await expect.poll(() => panelParam(page)).toBe(`${a}*.${b}.${c}`)
+  await expect.poll(() => panelParam(page)).toBe(beside(`${a}*.${b}.${c}`))
   await expect.poll(() => focusedComposer(page)).toBe(a)
 
   // Typing carries on in the tab landed on.
@@ -83,46 +89,44 @@ test("should switch, close and reopen tabs from the keyboard, landing in each ta
   // Presses faster than the URL settles each act on the layout the one before left.
   await page.keyboard.press("Alt+BracketRight")
   await page.keyboard.press("Alt+BracketRight")
-  await expect.poll(() => panelParam(page)).toBe(`${a}.${b}.${c}`)
+  await expect.poll(() => panelParam(page)).toBe(beside(`${a}.${b}.${c}`))
   await expect.poll(() => focusedComposer(page)).toBe(c)
   await page.keyboard.press("Alt+BracketLeft")
   await page.keyboard.press("Alt+BracketLeft")
-  await expect.poll(() => panelParam(page)).toBe(`${a}*.${b}.${c}`)
+  await expect.poll(() => panelParam(page)).toBe(beside(`${a}*.${b}.${c}`))
   await expect.poll(() => focusedComposer(page)).toBe(a)
 
   // Coming back by mouse to where the last press acted doesn't hold up the next.
   await page.keyboard.press("Alt+BracketRight")
-  await expect.poll(() => panelParam(page)).toBe(`${a}.${b}*.${c}`)
+  await expect.poll(() => panelParam(page)).toBe(beside(`${a}.${b}*.${c}`))
   await tabPane(page, b).getByRole("link", { name: "parent number 1" }).click()
-  await expect.poll(() => panelParam(page)).toBe(`${a}*.${b}.${c}`)
+  await expect.poll(() => panelParam(page)).toBe(beside(`${a}*.${b}.${c}`))
   await page.keyboard.press("Alt+BracketRight")
-  await expect.poll(() => panelParam(page)).toBe(`${a}.${b}*.${c}`)
+  await expect.poll(() => panelParam(page)).toBe(beside(`${a}.${b}*.${c}`))
   await expect.poll(() => focusedComposer(page)).toBe(b)
   await page.keyboard.press("Alt+BracketLeft")
-  await expect.poll(() => panelParam(page)).toBe(`${a}*.${b}.${c}`)
+  await expect.poll(() => panelParam(page)).toBe(beside(`${a}*.${b}.${c}`))
   await expect.poll(() => focusedComposer(page)).toBe(a)
 
   // A press right after a tab click waits for it, however long since the last shortcut.
   await page.waitForTimeout(2_100)
-  await tabPane(page, a).getByRole("link", { name: "parent number 3" }).click()
+  await tabPane(page, a).getByRole("link", { name: "parent number 2" }).click()
   await page.keyboard.press("Alt+BracketLeft")
-  await expect.poll(() => panelParam(page)).toBe(`${a}.${b}*.${c}`)
-  await expect.poll(() => focusedComposer(page)).toBe(b)
-  await page.keyboard.press("Alt+BracketLeft")
-  await expect.poll(() => panelParam(page)).toBe(`${a}*.${b}.${c}`)
+  await expect.poll(() => panelParam(page)).toBe(beside(`${a}*.${b}.${c}`))
+  await expect.poll(() => focusedComposer(page)).toBe(a)
 
   await page.keyboard.press("Alt+w")
-  await expect.poll(() => panelParam(page)).toBe(`${b}*.${c}`)
+  await expect.poll(() => panelParam(page)).toBe(beside(`${b}*.${c}`))
   await expect.poll(() => focusedComposer(page)).toBe(b)
 
   await page.keyboard.press("Alt+Shift+T")
-  await expect.poll(() => panelParam(page)).toBe(`${b}.${c}.${a}`)
+  await expect.poll(() => panelParam(page)).toBe(beside(`${b}.${c}.${a}`))
   await expect.poll(() => focusedComposer(page)).toBe(a)
 
   // Reopening straight after a close brings back the tab just closed.
   await page.keyboard.press("Alt+w")
   await page.keyboard.press("Alt+Shift+T")
-  await expect.poll(() => panelParam(page)).toBe(`${b}.${c}.${a}`)
+  await expect.poll(() => panelParam(page)).toBe(beside(`${b}.${c}.${a}`))
   await expect.poll(() => focusedComposer(page)).toBe(a)
 
   // Closing the last tab lands back in the stream's composer.
@@ -131,7 +135,7 @@ test("should switch, close and reopen tabs from the keyboard, landing in each ta
     await page.keyboard.press("Alt+w")
     await expect.poll(openCount).toBe(remaining)
   }
-  const last = panelParam(page)!
+  const last = panelParam(page)!.split("-")[1]
   await page.keyboard.press("Alt+w")
   await expect.poll(() => panelParam(page)).toBeNull()
   await expect.poll(() => focusedComposer(page)).toBe("main")
@@ -142,7 +146,7 @@ test("should switch, close and reopen tabs from the keyboard, landing in each ta
   await page.keyboard.press("Alt+w")
   await expect.poll(() => panelParam(page)).toBeNull()
   await page.keyboard.press("Alt+Shift+T")
-  await expect.poll(() => panelParam(page)).toBe(last)
+  await expect.poll(() => panelParam(page)).toBe(beside(last))
   await expect.poll(() => focusedComposer(page)).toBe(last)
 })
 
@@ -162,20 +166,19 @@ test("should step focus through the main view and the panes beside it", async ({
   }
   await page.keyboard.press("Alt+Comma")
   await expect.poll(() => focusedComposer(page)).toBe(b)
-  // Moving between panes is not navigation.
-  expect(panelParam(page)).toBe(`${a}-${b}`)
+  // The pane moved to is the route's stream; the arrangement stays as it was.
+  await expect.poll(() => route(page)).toEqual({ stream: b, panel: `${streamId}-${a}-${b}` })
 
   // Closing works on the pane worked in, not the one in front of it in the URL.
   await page.keyboard.press("Alt+w")
-  await expect.poll(() => panelParam(page)).toBe(a)
+  await expect.poll(() => route(page)).toEqual({ stream: a, panel: `${streamId}-${a}` })
 
-  // Closing from the main view closes the panel beside it and leaves focus put.
+  // The channel is a pane like the rest: closing it from its composer leaves the thread, worked in.
   await page.locator('[data-editor-zone="main"] [contenteditable="true"]').last().click()
-  await page.keyboard.type("draft")
+  await expect.poll(() => route(page)).toEqual({ stream: streamId, panel: a })
   await page.keyboard.press("Alt+w")
-  await expect.poll(() => panelParam(page)).toBeNull()
-  await page.keyboard.type("ing")
-  await expect(page.locator('[data-editor-zone="main"] [contenteditable="true"]').last()).toHaveText("drafting")
+  await expect.poll(() => route(page)).toEqual({ stream: a, panel: null })
+  await expect.poll(() => focusedComposer(page)).toBe("main")
 })
 
 test("should act on each queued press after the one before it", async ({ page }) => {
@@ -198,7 +201,7 @@ test("should act on each queued press after the one before it", async ({ page })
       )
     }
   })
-  await expect.poll(() => panelParam(page)).toBe(`${a}*.${c}`)
+  await expect.poll(() => panelParam(page)).toBe(`${streamId}-${a}*.${c}`)
 })
 
 test("should switch the tabs of a split folded into one section without waiting on the URL", async ({ page }) => {
@@ -214,7 +217,7 @@ test("should switch the tabs of a split folded into one section without waiting 
   await page.keyboard.press("Alt+BracketRight")
   await expect.poll(() => focusedComposer(page), { timeout: 1_000 }).toBe(b)
   await expect(tabPane(page, b).getByText("reply in thread 2")).toBeVisible()
-  expect(panelParam(page)).toBe(`${a}-${b}`)
+  await expect.poll(() => route(page)).toEqual({ stream: b, panel: `${streamId}-${a}-${b}` })
 })
 
 test.describe("installed", () => {
@@ -236,16 +239,16 @@ test.describe("installed", () => {
     await tabPane(page, b).locator('[contenteditable="true"]').last().click()
 
     await page.keyboard.press("Control+Tab")
-    await expect.poll(() => panelParam(page)).toBe(`${a}*.${b}`)
+    await expect.poll(() => panelParam(page)).toBe(`${streamId}-${a}*.${b}`)
     await expect.poll(() => focusedComposer(page)).toBe(a)
     await page.keyboard.press("Control+Shift+Tab")
-    await expect.poll(() => panelParam(page)).toBe(`${a}.${b}`)
+    await expect.poll(() => panelParam(page)).toBe(`${streamId}-${a}.${b}`)
     await expect.poll(() => focusedComposer(page)).toBe(b)
 
     await page.keyboard.press("Control+w")
-    await expect.poll(() => panelParam(page)).toBe(a)
+    await expect.poll(() => panelParam(page)).toBe(`${streamId}-${a}`)
     await page.keyboard.press("Control+Shift+T")
-    await expect.poll(() => panelParam(page)).toBe(`${a}.${b}`)
+    await expect.poll(() => panelParam(page)).toBe(`${streamId}-${a}.${b}`)
     await expect.poll(() => focusedComposer(page)).toBe(b)
   })
 })

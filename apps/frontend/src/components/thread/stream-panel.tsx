@@ -1,4 +1,4 @@
-import { useSearchParams, useParams } from "react-router-dom"
+import { useSearchParams } from "react-router-dom"
 import { useContext, useMemo, useCallback, useEffect, useState, useRef, type RefObject } from "react"
 import { createPortal } from "react-dom"
 import { MessageSquare, ChevronLeft } from "lucide-react"
@@ -64,12 +64,15 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   const { isMobile } = useSidebar()
   const [searchParams] = useSearchParams()
   const covered = usePaneCovered()
-  const { panelId, tabbed, openPanel, ownsCover } = usePanel()
+  const { panelId, tabbed, openPanel, ownsCover, inFirstColumn, canClosePanel } = usePanel()
   const closeRef = usePanelCloseFocusLanding()
   // Under an aside, an overview opened from here would land out of sight.
   const offersContext = !useContext(AsideCoversPanesContext)
   useVisibleStreams(workspaceId, !covered && panelId && isServerStreamId(panelId) ? [panelId] : [])
-  const isLoading = useCoordinatedLoading((loading) => !!panelId && loading.getStreamState(panelId) === "loading")
+  // Only a pane beside the first column shows it; the first column's stream would re-render on each load step for nothing.
+  const isLoading = useCoordinatedLoading(
+    (loading) => !inFirstColumn && !!panelId && loading.getStreamState(panelId) === "loading"
+  )
   // Set by a draft thread's own send: the real thread's composer is a different
   // element, so a focused draft composer hands its focus over explicitly — on
   // mobile this is what keeps the keyboard up through the switch. Lives here
@@ -109,9 +112,12 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
       highlightMessageId={ownsCover && !covered ? searchParams.get("m") : null}
       autoFocus={!isMobile || focusPromotedComposer}
       offersContext={offersContext}
-      className={cn("sm:border-l bg-background", className)}
+      className={cn(!inFirstColumn && "sm:border-l", "bg-background", className)}
       chrome={{
-        leading: (
+        // The first column holds the page's own stream, which keeps the page's sidebar toggle and has nothing to go back to.
+        leading: inFirstColumn ? (
+          <SidebarToggle location="page" />
+        ) : (
           <>
             <StreamLoadingIndicator isLoading={isLoading} />
             {isMobile && <PanelBackControls onClose={onClose} closeRef={closeRef} />}
@@ -127,7 +133,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
           />
         ) : undefined,
         focusToggle: <PaneFocusToggle />,
-        close: !isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />,
+        close: !isMobile && !tabbed && canClosePanel && <SidePanelClose onClose={onClose} ref={closeRef} />,
       }}
     />
   )
@@ -164,14 +170,8 @@ interface DraftThreadPanelProps {
 function DraftThreadPanel({ workspaceId, panelId, onClose, onPromoted, closeRef, className }: DraftThreadPanelProps) {
   const { isMobile } = useSidebar()
   const covered = usePaneCovered()
-  const { tabbed, getNavigateUrl, closePanel } = usePanel()
+  const { tabbed, getNavigateUrl } = usePanel()
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
-  const { streamId: mainViewStreamId } = useParams<{ streamId: string }>()
-
-  const isMainViewStream = (streamId: string) => {
-    return mainViewStreamId === streamId
-  }
-
   const draftInfo = parseDraftPanel(panelId)
   const idbStreams = useWorkspaceStreams(workspaceId)
   const currentWorkspaceUserId = useWorkspaceUserId(workspaceId)
@@ -495,13 +495,7 @@ function DraftThreadPanel({ workspaceId, panelId, onClose, onPromoted, closeRef,
             <ChevronLeft className="h-4 w-4" />
           </Button>
         )}
-        <ResponsiveBreadcrumbs
-          ancestors={fullChain}
-          currentLabel="New thread"
-          isMainViewStream={isMainViewStream}
-          onClosePanel={closePanel}
-          getNavigationUrl={getNavigateUrl}
-        />
+        <ResponsiveBreadcrumbs ancestors={fullChain} currentLabel="New thread" getNavigationUrl={getNavigateUrl} />
       </div>
     )
   } else {
