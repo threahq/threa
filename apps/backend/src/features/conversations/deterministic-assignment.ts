@@ -53,29 +53,31 @@ export async function assignWithoutExtraction(
 }
 
 /**
- * A user's reply in a message-anchored thread continues the thread's
- * conversation: the one the thread already holds (an agent's, a branched
- * subtopic, or one minted when the anchor had none), else the anchor message's.
- * With neither, the reply mints the thread's own; the anchor's later extraction
- * sees the reply and its conversation in context and can join it.
+ * A reply in a message-anchored thread joins its anchor's conversation. Until
+ * the anchor has one, the thread holds its own, which the anchor's extraction
+ * later folds into the anchor's (`moveThreadsWithAnchors`). The anchor row is
+ * share-locked first: a pass moving the anchor holds it, so the reply reads the
+ * anchor's placement only after that pass commits and can't land behind it.
  */
-export function assignThreadReply(
+export async function assignThreadReply(
   client: PoolClient,
   params: { workspaceId: string; message: Message; thread: Stream }
 ): Promise<Conversation> {
   const { workspaceId, message, thread } = params
+  const anchorId = thread.parentAnchorId!
+  await client.query(sql`SELECT id FROM messages WHERE id = ${anchorId} AND workspace_id = ${workspaceId} FOR SHARE`)
   return assignWithoutExtraction(client, {
     workspaceId,
     message,
     stream: thread,
     reason: "thread_reply",
     findExisting: async () => {
+      const anchors = await ConversationRepository.findPrimaryByMessageId(client, workspaceId, anchorId)
+      if (anchors) return anchors
       const held = (await ConversationRepository.findByStream(client, workspaceId, thread.id)).filter(
         (c) => c.messageIds.length > 0
       )
-      const own = held.find((c) => c.status === ConversationStatuses.ACTIVE) ?? held[0]
-      if (own) return own
-      return ConversationRepository.findPrimaryByMessageId(client, workspaceId, thread.parentAnchorId!)
+      return held.find((c) => c.status === ConversationStatuses.ACTIVE) ?? held[0]
     },
   })
 }

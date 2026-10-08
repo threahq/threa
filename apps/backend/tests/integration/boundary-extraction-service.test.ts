@@ -15,7 +15,7 @@ import { withTransaction, addTestMember, seedCompletedLinkPreview } from "./setu
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository, StreamEventRepository } from "../../src/features/streams"
 import { MessageRepository } from "../../src/features/messaging"
-import { ConversationRepository } from "../../src/features/conversations"
+import { ConversationRepository, MessageConversationStateRepository } from "../../src/features/conversations"
 import { BoundaryExtractionService } from "../../src/features/conversations"
 import { setupTestDatabase, testMessageContent } from "./setup"
 import { sql } from "../../src/db"
@@ -769,6 +769,150 @@ describe("BoundaryExtractionService", () => {
       })
     })
 
+    test("should fold the thread's own conversation into the anchor's once the anchor is placed", async () => {
+      const { anchorId, threadId, replyId } = await seedMessageThread({
+        anchorText: "Who owns the backup rotation?",
+        replyText: "I can take it this quarter",
+        sequence: BigInt(730),
+      })
+      const threadConv = await service.processMessage(replyId, threadId, testWorkspaceId)
+
+      const anchorConv = await service.processMessage(anchorId, testStreamId, testWorkspaceId)
+
+      const reply = await ConversationRepository.findPrimaryByMessageId(pool, testWorkspaceId, replyId)
+      const folded = await ConversationRepository.findById(pool, testWorkspaceId, threadConv!.id)
+      const reassigned = await pool.query<{ payload: Record<string, unknown> }>(
+        sql`SELECT payload FROM outbox WHERE event_type = 'conversation:message_reassigned'`
+      )
+      expect({
+        replyConversationId: reply?.id,
+        folded: { status: folded?.status, memberIds: folded?.messageIds },
+        reassigned: reassigned.rows.map((r) => r.payload),
+      }).toEqual({
+        replyConversationId: anchorConv!.id,
+        folded: { status: ConversationStatuses.RESOLVED, memberIds: [] },
+        reassigned: [
+          expect.objectContaining({
+            messageId: replyId,
+            streamId: threadId,
+            fromConversationId: threadConv!.id,
+            toConversationId: anchorConv!.id,
+            reason: "thread_follows_anchor",
+          }),
+        ],
+      })
+    })
+
+    test("should move a thread's replies with its reassigned anchor, except a reply a human filed", async () => {
+      const { anchorId, threadId, replyId } = await seedMessageThread({
+        anchorText: "Postgres upgrade window?",
+        replyText: "Sunday night is quietest",
+        sequence: BigInt(741),
+      })
+      const filedReplyId = messageId()
+      const openerId = messageId()
+      const triggerId = messageId()
+      const anchorConvId = conversationId()
+      const targetConvId = conversationId()
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: filedReplyId,
+          streamId: threadId,
+          sequence: BigInt(2),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Unrelated, but the CI cache is broken"),
+        })
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: openerId,
+          streamId: testStreamId,
+          sequence: BigInt(740),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Planning the database maintenance"),
+        })
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: triggerId,
+          streamId: testStreamId,
+          sequence: BigInt(742),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("So the upgrade is part of the maintenance plan"),
+        })
+        await ConversationRepository.insert(client, {
+          id: anchorConvId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, anchorConvId, anchorId, testUserId)
+        await ConversationRepository.insert(client, {
+          id: targetConvId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, targetConvId, openerId, testUserId)
+      })
+      await service.processMessage(replyId, threadId, testWorkspaceId)
+      await service.processMessage(filedReplyId, threadId, testWorkspaceId)
+      await withTransaction(pool, async (client) => {
+        await MessageConversationStateRepository.insertSettling(client, {
+          messageId: filedReplyId,
+          workspaceId: testWorkspaceId,
+          streamId: threadId,
+          conversationId: anchorConvId,
+        })
+        await MessageConversationStateRepository.settle(client, testWorkspaceId, [filedReplyId], "user")
+      })
+
+      stubExtractor.setNextResult({
+        assignments: [{ conversationId: targetConvId, isPrimary: true }],
+        reassignments: [
+          { messageId: anchorId, toConversationId: targetConvId, reason: "Part of the maintenance plan" },
+        ],
+        confidence: 0.9,
+      })
+      await service.processMessage(triggerId, testStreamId, testWorkspaceId)
+
+      const primaries = await ConversationRepository.findPrimariesByMessageIds(pool, testWorkspaceId, [
+        anchorId,
+        replyId,
+        filedReplyId,
+      ])
+      expect({
+        anchor: primaries.get(anchorId)?.id,
+        reply: primaries.get(replyId)?.id,
+        filedReply: primaries.get(filedReplyId)?.id,
+      }).toEqual({ anchor: targetConvId, reply: targetConvId, filedReply: anchorConvId })
+    })
+
+    test("should place an agent's reply in a message-anchored thread in the anchor's conversation", async () => {
+      const { anchorId, threadId } = await seedMessageThread({
+        anchorText: "@ariadne what changed in the release?",
+        replyText: "Following along",
+        sequence: BigInt(750),
+      })
+      const anchorConvId = conversationId()
+      await withTransaction(pool, async (client) => {
+        await ConversationRepository.insert(client, {
+          id: anchorConvId,
+          streamId: testStreamId,
+          workspaceId: testWorkspaceId,
+        })
+        await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, anchorConvId, anchorId, testUserId)
+      })
+      const agentReplyId = await insertPersonaReply(threadId)
+
+      const result = await service.processMessage(agentReplyId, threadId, testWorkspaceId)
+
+      expect({ conversationId: result?.id, extractCalls: stubExtractor.extractCallCount }).toEqual({
+        conversationId: anchorConvId,
+        extractCalls: 0,
+      })
+    })
+
     test("replies under an event-anchored (card) thread reach the parent-stream extraction context", async () => {
       // A delegation card lives in the parent channel; its discussion thread
       // anchors on the card's EVENT id (not a message). A reply in that thread
@@ -1229,19 +1373,21 @@ describe("BoundaryExtractionService", () => {
       const { rows: stamps } = await pool.query(
         `SELECT topic_summary_shared_root_stream_id, summary_shared_root_stream_id FROM conversations
          WHERE workspace_id = $1 AND id = ANY($2)`,
-        [testWorkspaceId, [inChannel!.id, inThread!.id]]
+        [testWorkspaceId, [inChannel!.id]]
       )
 
-      const stamped = {
-        topic_summary_shared_root_stream_id: sharedStreamId,
-        summary_shared_root_stream_id: sharedStreamId,
-      }
-      expect({ active: active?.toSorted(), stamps }).toEqual({
+      expect({ active: active?.toSorted(), inThread: inThread?.id, stamps }).toEqual({
         active: [
           [preShareId, null, null],
           [sharedId, "Rollout", "Rolling out on Friday"],
         ].toSorted(),
-        stamps: [stamped, stamped],
+        inThread: preShareId,
+        stamps: [
+          {
+            topic_summary_shared_root_stream_id: sharedStreamId,
+            summary_shared_root_stream_id: sharedStreamId,
+          },
+        ],
       })
     })
   })

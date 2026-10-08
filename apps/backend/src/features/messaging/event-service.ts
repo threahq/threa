@@ -1215,7 +1215,7 @@ export class EventService {
       } catch (err) {
         logger.warn(
           { err, messageId: message.id, streamId: params.streamId },
-          "Provisional conversation attach failed; sending without it"
+          "Send-time conversation attach failed; sending without it"
         )
       }
     }

@@ -7,8 +7,7 @@ import type { Stream } from "../streams"
  * Which sends boundary extraction LLM-clusters. The dispatch (E2E streams),
  * `BoundaryExtractionService.processMessage` (agent replies, scratchpads,
  * message-anchored threads) and the send-time attach all read this one place, so
- * a send the extractor never clusters can't be provisionally attached either
- * (INV-35).
+ * the send-time guess only ever covers sends the extractor clusters (INV-35).
  */
 
 /** Agent (persona/bot) replies are assigned deterministically, never clustered. */
@@ -27,7 +26,11 @@ export function isClusteredStreamType(streamType: StreamType | string): boolean 
  * (`event_` anchor) has no message to follow and stays clustered.
  */
 export function isMessageAnchoredThread(stream: Pick<Stream, "type" | "parentAnchorId">): boolean {
-  return stream.type === StreamTypes.THREAD && (stream.parentAnchorId?.startsWith("msg_") ?? false)
+  return stream.type === StreamTypes.THREAD && stream.parentAnchorId != null && isMessageAnchorId(stream.parentAnchorId)
+}
+
+export function isMessageAnchorId(anchorId: string): boolean {
+  return anchorId.startsWith("msg_")
 }
 
 /**
@@ -43,7 +46,8 @@ export async function undeclaredSendPlacement(
 ): Promise<"thread" | "clustered" | null> {
   const { workspaceId, stream, authorType } = params
   if (!isClusteredAuthorType(authorType)) return null
-  if (!isMessageAnchoredThread(stream) && !isClusteredStreamType(stream.type)) return null
+  const thread = isMessageAnchoredThread(stream)
+  if (!thread && !isClusteredStreamType(stream.type)) return null
   if (await E2eStreamsRepository.isE2eStream(db, workspaceId, stream.id)) return null
-  return isMessageAnchoredThread(stream) ? "thread" : "clustered"
+  return thread ? "thread" : "clustered"
 }
