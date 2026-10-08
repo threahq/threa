@@ -529,6 +529,16 @@ describe("panel tabs history", () => {
     expect(screen.getByTestId("layout").textContent).toBe("page:board-stream_a")
   })
 
+  it("should not reopen a persona's test chat away from that persona's editor", async () => {
+    const { user, back, loc } = mountTabs([PAGE, "/w/ws/settings/personas/persona_x?panel=test:persona_x"])
+
+    await user.click(screen.getByRole("button", { name: "close test:persona_x" }))
+    expect(loc()).toBe("/w/ws/settings/personas/persona_x")
+    await back()
+    await user.click(screen.getByRole("button", { name: "reopen tab" }))
+    expect(loc()).toBe(PAGE)
+  })
+
   it("should land on the bare board when its last pane closes, and never close the board", async () => {
     const { user, back, loc } = mountTabs(["/w/ws/board", "/w/ws/board?panel=conv:c"])
 

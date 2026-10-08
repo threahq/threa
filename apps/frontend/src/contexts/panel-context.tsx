@@ -222,8 +222,7 @@ interface PanelContextValue {
   /** Whether closing this consumer's pane would close it: the last stream pane of the page stays. */
   canClosePanel: boolean
 
-  /** URL that opens a panel from here (for `<Link>`). On the stream page a tab
-   *  opens it beside itself; pages without tabs swap the one panel. */
+  /** URL that opens a panel from here (for `<Link>`), as a tab beside this pane. */
   getPanelUrl: (panelId: string) => string
   /** {@link getPanelUrl}, opening the panel floating over the rest. */
   getFocusedPanelUrl: (panelId: string) => string
@@ -695,8 +694,10 @@ export function PanelProvider({ children }: PanelProviderProps) {
 
   const findReopenable = useCallback(() => {
     const shown = new Set(panelIdsOf(layout).map(paneIdentity))
-    return [...closedTabs.current].reverse().find((id) => !shown.has(paneIdentity(id)))
-  }, [layout])
+    return [...closedTabs.current]
+      .reverse()
+      .find((id) => !shown.has(paneIdentity(id)) && (parsePersonaTestPanel(id) === null || id === personaTest))
+  }, [layout, personaTest])
   const canReopenTab = useCallback(() => findReopenable() !== undefined, [findReopenable])
 
   const reopenTab = useCallback(
