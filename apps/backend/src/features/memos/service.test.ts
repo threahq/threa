@@ -37,6 +37,7 @@ function fakePendingItem(overrides: Partial<PendingMemoItem> = {}): PendingMemoI
     queuedAt: new Date(),
     processedAt: null,
     classifiedFingerprint: null,
+    readThrough: null,
     failedAttempts: 0,
     version: 0,
     ...overrides,
@@ -85,6 +86,8 @@ function fakeMessages(): Map<string, Message> {
     streamId: STREAM_ID,
     authorId: "usr_1",
     authorType: "user",
+    contentMarkdown: "Every entity id is a prefixed ULID.",
+    editedAt: null,
   }
   return new Map<string, Message>([
     [
@@ -126,9 +129,7 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
 
   spyOn(PendingItemRepository, "findUnprocessed").mockResolvedValue([fakePendingItem(options.pendingItem)])
   const markProcessed = spyOn(PendingItemRepository, "markProcessed").mockResolvedValue(undefined as never)
-  const recordFingerprints = spyOn(PendingItemRepository, "recordClassifiedFingerprints").mockResolvedValue(
-    undefined as never
-  )
+  const recordReads = spyOn(PendingItemRepository, "recordClassifiedReads").mockResolvedValue(undefined as never)
   const findByStream = spyOn(MemoRepository, "findByStream").mockResolvedValue([])
   spyOn(StreamRepository, "findById").mockResolvedValue(fakeStream())
   spyOn(StreamRepository, "findByIdForShare").mockResolvedValue(fakeStream())
@@ -201,7 +202,7 @@ function setupService(options: { memoContents: MemoContent[]; pendingItem?: Part
     contextInsertMany,
     findSourceMessages,
     classifyConversation,
-    recordFingerprints,
+    recordReads,
     captureEvent,
     memorizeConversation,
     formatMessages,
@@ -1369,14 +1370,8 @@ describe("MemoService — memo and pending-item repository calls carry the calle
   afterEach(() => mock.restore())
 
   it("passes the batch's workspace and stream, in order, to every memo and pending-item call in processBatch", async () => {
-    const {
-      service,
-      findByStream,
-      findActiveBySourceConversation,
-      updateEmbedding,
-      markProcessed,
-      recordFingerprints,
-    } = setupService({ memoContents: [memoContent] })
+    const { service, findByStream, findActiveBySourceConversation, updateEmbedding, markProcessed, recordReads } =
+      setupService({ memoContents: [memoContent] })
 
     await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
@@ -1384,7 +1379,7 @@ describe("MemoService — memo and pending-item repository calls carry the calle
       findByStream: findByStream.mock.calls.map((c) => c.slice(1)),
       findActiveBySourceConversation: findActiveBySourceConversation.mock.calls.map((c) => c.slice(1)),
       updateEmbedding: updateEmbedding.mock.calls.map((c) => c.slice(1)),
-      recordClassifiedFingerprints: recordFingerprints.mock.calls.map((c) => c.slice(1)),
+      recordClassifiedReads: recordReads.mock.calls.map((c) => c.slice(1)),
       markProcessed: markProcessed.mock.calls.map((c) => c.slice(1)),
     }).toEqual({
       findByStream: [
@@ -1399,7 +1394,9 @@ describe("MemoService — memo and pending-item repository calls carry the calle
       ],
       findActiveBySourceConversation: [[WORKSPACE_ID, CONVERSATION_ID, [{ kind: "room", roomStreamId: STREAM_ID }]]],
       updateEmbedding: [[WORKSPACE_ID, expect.stringMatching(/^memo_/), [0.1, 0.2]]],
-      recordClassifiedFingerprints: [[WORKSPACE_ID, [{ id: "pend_1", fingerprint: expect.any(String) }]]],
+      recordClassifiedReads: [
+        [WORKSPACE_ID, [{ id: "pend_1", fingerprint: expect.any(String), readThrough: expect.any(Date) }]],
+      ],
       markProcessed: [[WORKSPACE_ID, [expect.objectContaining({ id: "pend_1", version: 0 })]]],
     })
   })
@@ -1433,18 +1430,22 @@ describe("MemoService.processBatch — re-classification change gate", () => {
   afterEach(() => mock.restore())
 
   it("classifies a conversation it has never seen and records what it was shown", async () => {
-    const { service, classifyConversation, recordFingerprints } = setupService({ memoContents: [memoContent] })
+    const { service, classifyConversation, recordReads } = setupService({ memoContents: [memoContent] })
 
     await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
     expect(classifyConversation).toHaveBeenCalledTimes(1)
-    expect(recordFingerprints.mock.calls[0]?.[2]).toEqual([
-      { id: "pend_1", fingerprint: expect.any(String) as unknown as string },
+    expect(recordReads.mock.calls[0]?.[2]).toEqual([
+      {
+        id: "pend_1",
+        fingerprint: expect.any(String) as unknown as string,
+        readThrough: new Date("2026-07-01T10:05:00.000Z"),
+      },
     ])
   })
 
   it("should leave the item pending and unfingerprinted when a spend limit denies classification", async () => {
-    const { service, classifyConversation, recordFingerprints } = setupService({ memoContents: [memoContent] })
+    const { service, classifyConversation, recordReads } = setupService({ memoContents: [memoContent] })
     classifyConversation.mockImplementation(async () => {
       throw new AISpendDeniedError(
         { workspaceId: WORKSPACE_ID, functionId: "memo-classify-conversation" },
@@ -1457,7 +1458,7 @@ describe("MemoService.processBatch — re-classification change gate", () => {
 
     expect({
       result,
-      fingerprints: recordFingerprints.mock.calls[0]?.[2],
+      fingerprints: recordReads.mock.calls[0]?.[2],
       markProcessedCalls: markProcessed.mock.calls.length,
     }).toEqual({ result: { processed: 0, memosCreated: 0 }, fingerprints: [], markProcessedCalls: 0 })
   })
@@ -1466,7 +1467,7 @@ describe("MemoService.processBatch — re-classification change gate", () => {
     // The digest the previous pass would have stored, derived from the same
     // fakes this batch will load.
     const stored = classificationFingerprint(fakeConversation(), [...fakeMessages().values()], [])
-    const { service, classifyConversation, recordFingerprints } = setupService({
+    const { service, classifyConversation, recordReads } = setupService({
       memoContents: [memoContent],
       pendingItem: { classifiedFingerprint: stored },
     })
@@ -1476,7 +1477,7 @@ describe("MemoService.processBatch — re-classification change gate", () => {
     expect(classifyConversation).not.toHaveBeenCalled()
     expect(result.memosCreated).toBe(0)
     // Nothing new was asked, so nothing new is recorded — the stored digest still stands.
-    expect(recordFingerprints.mock.calls[0]?.[2]).toEqual([])
+    expect(recordReads.mock.calls[0]?.[2]).toEqual([])
   })
 
   it("still marks a skipped item processed, so it does not re-queue forever", async () => {

@@ -26,6 +26,7 @@ import { publishSharedMemoChanges } from "./embed-summaries"
 import { indexCapturedMemos, recordConversationCaptures } from "./captures"
 import { PendingItemRepository, type PendingMemoItem } from "./pending-item-repository"
 import { classificationFingerprint } from "./classification-fingerprint"
+import { selectConversationWindow, type ConversationWindow } from "./conversation-window"
 import type { ConversationClassifier } from "./classifier"
 import { Memorizer } from "./memorizer"
 import { MessageFormatter } from "../../lib/ai/message-formatter"
@@ -50,6 +51,7 @@ import {
   MEMO_SINGLE_MESSAGE_AGE_GATE_MS,
   MEMO_ACTIVE_CONVERSATION_QUIET_MS,
   MEMO_MAX_FAILED_ATTEMPTS,
+  MEMO_CONVERSATION_WINDOW_CHARS,
   MEMO_BATCH_CLAIM_SECONDS,
   MEMO_DEDUP_DISTANCE,
   MEMO_SUPERSEDE_DISTANCE,
@@ -560,13 +562,23 @@ export class MemoService implements MemoServiceLike {
       ? allMessageRows
       : await enrichMessagesWithLinkPreviews(this.pool, workspaceId, allMessageRows)
     const enrichedById = new Map(enrichedMessages.map((message) => [message.id, message]))
+    const readThroughByConversation = new Map(
+      fetchedData.pending.filter((p) => p.itemType === "conversation").map((p) => [p.itemId, p.readThrough])
+    )
+    const conversationWindows = new Map<string, ConversationWindow>()
 
     for (const [conversationId, messages] of fetchedData.conversationMessages) {
       const messageRows = [...messages.values()]
         .filter((message): message is Message => message !== null)
         .map((message) => enrichedById.get(message.id) ?? message)
       if (messageRows.length === 0) continue
-      const formatted = await this.messageFormatter.formatMessages(this.pool, workspaceId, messageRows, {
+      const window = selectConversationWindow(
+        messageRows,
+        readThroughByConversation.get(conversationId) ?? null,
+        MEMO_CONVERSATION_WINDOW_CHARS
+      )
+      conversationWindows.set(conversationId, window)
+      const formatted = await this.messageFormatter.formatMessages(this.pool, workspaceId, window.messages, {
         includeIds: true,
         relativeTo,
       })
@@ -576,7 +588,7 @@ export class MemoService implements MemoServiceLike {
     const memosToCreate: MemoToCreate[] = []
     const deferredItemIds = new Set<string>()
     const failedItemIds = new Set<string>()
-    const classifiedFingerprints: Array<{ id: string; fingerprint: string }> = []
+    const classifiedReads = new Map<string, { id: string; fingerprint: string | null; readThrough: Date | null }>()
     const shownContextMemos = new Map(fetchedData.existingMemos.map((memo) => [memo.id, memo]))
     let memosCreated = 0
     let memosDeduped = 0
@@ -651,7 +663,8 @@ export class MemoService implements MemoServiceLike {
 
         // Pre-formatted in Phase 1 while a connection was held (INV-41).
         const formattedMessages = fetchedData.formattedConversations.get(item.itemId)
-        if (!formattedMessages) {
+        const window = conversationWindows.get(item.itemId)
+        if (!formattedMessages || !window) {
           logger.warn({ conversationId: conversation.id }, "No formatted messages found")
           continue
         }
@@ -678,7 +691,13 @@ export class MemoService implements MemoServiceLike {
           ? (fetchedData.authorTimezones.get(firstUserMsg.authorId) ?? undefined)
           : undefined
 
-        classifiedFingerprints.push({ id: item.id, fingerprint })
+        // Unread messages left past the window: the next batch reads on from here.
+        if (!window.complete) deferredItemIds.add(item.id)
+        classifiedReads.set(item.id, {
+          id: item.id,
+          fingerprint: window.complete ? fingerprint : null,
+          readThrough: window.readThrough,
+        })
 
         // AI call (no connection held)
         const classification = await this.classifier.classifyConversation(
@@ -739,7 +758,11 @@ export class MemoService implements MemoServiceLike {
         let nearest: Memo[] = []
         if (fetchedData.existingMemos.length >= MEMORY_CONTEXT_LIMIT) {
           // Attachment-only messages have no text, and embedding rejects an empty input.
-          const messageText = messagesArray.map((m) => m.contentMarkdown).join("\n")
+          const windowIds = new Set(window.messages.map((m) => m.id))
+          const messageText = messagesArray
+            .filter((m) => windowIds.has(m.id))
+            .map((m) => m.contentMarkdown)
+            .join("\n")
           const conversationText = messageText.trim() ? messageText : formattedMessages
           let conversationEmbedding: number[] | undefined
           try {
@@ -782,7 +805,7 @@ export class MemoService implements MemoServiceLike {
         const contents = isRevision
           ? await this.memorizer.reviseMemo(formattedMessages, {
               memoryContext,
-              content: messagesArray,
+              content: window.messages,
               existingMemos,
               existingTags: fetchedData.existingTags,
               workspaceId,
@@ -793,7 +816,7 @@ export class MemoService implements MemoServiceLike {
             })
           : await this.memorizer.memorizeConversation(formattedMessages, {
               memoryContext,
-              content: messagesArray,
+              content: window.messages,
               existingTags: fetchedData.existingTags,
               workspaceId,
               conversationId: conversation.id,
@@ -851,10 +874,10 @@ export class MemoService implements MemoServiceLike {
           memoCount: contents.length,
         })
       } catch (error) {
-        // Unfingerprinted, so the retry asks the model again instead of
-        // skipping the conversation as unchanged.
-        const fingerprintIndex = classifiedFingerprints.findIndex((entry) => entry.id === item.id)
-        if (fingerprintIndex !== -1) classifiedFingerprints.splice(fingerprintIndex, 1)
+        // Unrecorded, so the retry asks the model again over the same window
+        // instead of skipping the conversation as unchanged.
+        classifiedReads.delete(item.id)
+        deferredItemIds.delete(item.id)
         // Blocked by a spend limit: retried once spend allows, with no cap.
         if (error instanceof AISpendDeniedError) {
           deferredItemIds.add(item.id)
@@ -895,7 +918,9 @@ export class MemoService implements MemoServiceLike {
       if (!(await StreamStateRepository.holdsBatchClaim(client, workspaceId, streamId, claimToken))) return false
 
       // A source deleted while the model calls ran drops the memo; the deletion
-      // requeues the conversation, so the next batch re-extracts from the rest.
+      // requeues the conversation to be read from the start, so the next batch
+      // re-extracts from the rest. Its read here is left unrecorded, so a
+      // deletion handled before this commit keeps its cleared watermark.
       const sources = await MessageRepository.findByIds(
         client,
         workspaceId,
@@ -934,11 +959,14 @@ export class MemoService implements MemoServiceLike {
           )
           .map(([conversationId]) => conversationId)
       )
+      const lostSourceConversationIds = new Set(
+        memoryOn ? memosToCreate.filter((m) => !sourced.includes(m)).map((m) => m.sourceConversationId) : []
+      )
       for (const item of fetchedData.pending) {
-        if (item.itemType !== "conversation" || !editedConversationIds.has(item.itemId)) continue
+        if (item.itemType !== "conversation") continue
+        if (!editedConversationIds.has(item.itemId) && !lostSourceConversationIds.has(item.itemId)) continue
         deferredItemIds.add(item.id)
-        const fingerprintIndex = classifiedFingerprints.findIndex((entry) => entry.id === item.id)
-        if (fingerprintIndex !== -1) classifiedFingerprints.splice(fingerprintIndex, 1)
+        classifiedReads.delete(item.id)
       }
       if (editedConversationIds.size > 0) {
         logger.info(
@@ -1155,7 +1183,7 @@ export class MemoService implements MemoServiceLike {
       // already older than the quiet threshold.
       // Written before markProcessed so a conversation that reached the model
       // this pass can be recognised as unchanged on the next one.
-      await PendingItemRepository.recordClassifiedFingerprints(client, workspaceId, classifiedFingerprints)
+      await PendingItemRepository.recordClassifiedReads(client, workspaceId, [...classifiedReads.values()])
 
       const itemsToMark = fetchedData.pending.filter((p) => !deferredItemIds.has(p.id) && !failedItemIds.has(p.id))
       if (itemsToMark.length > 0) {

@@ -77,8 +77,10 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
    * conversations go back through the batch. A delete also retires the memos
    * citing it straight away, whatever the stream's memory mode: archived when
    * none of their sources survive, otherwise superseded. A conversation memo is
-   * re-extracted from the rest by the requeued batch; a saved or reflective
-   * memo has no conversation to re-extract from, so it is gone.
+   * re-extracted from the rest by the requeued batch, which reads the whole
+   * conversation again since the surviving sources may sit in any earlier
+   * pass; a saved or reflective memo has no conversation to re-extract from,
+   * so it is gone.
    */
   private async handleMessageMutation(event: OutboxEvent): Promise<void> {
     const payload = event.payload as unknown as Record<string, unknown>
@@ -102,15 +104,17 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
     if (await StreamRepository.isSharedCopy(this.db, workspaceId, streamId)) return
 
     await withTransaction(this.db, async (client) => {
-      if (event.eventType === "message:deleted") {
-        await retireMemosCitingDeletedMessage(client, workspaceId, streamId, messageId)
-      }
+      const retired =
+        event.eventType === "message:deleted"
+          ? await retireMemosCitingDeletedMessage(client, workspaceId, streamId, messageId)
+          : 0
       const conversations = await ConversationRepository.findByMessageId(client, workspaceId, messageId)
       await queueMemoConversations(
         client,
         workspaceId,
         streamId,
-        conversations.map((c) => c.id)
+        conversations.map((c) => c.id),
+        { rereadFromStart: retired > 0 }
       )
     })
   }
@@ -147,7 +151,8 @@ export async function queueMemoConversations(
   client: PoolClient,
   workspaceId: string,
   streamId: string,
-  conversationIds: string[]
+  conversationIds: string[],
+  options: { rereadFromStart?: boolean } = {}
 ): Promise<void> {
   if (conversationIds.length === 0) return
 
@@ -175,7 +180,8 @@ export async function queueMemoConversations(
       streamId: topLevelStream.id,
       itemType: "conversation",
       itemId,
-    }))
+    })),
+    options
   )
 
   logger.debug(

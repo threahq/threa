@@ -11,6 +11,7 @@ interface PendingItemRow {
   queued_at: Date
   processed_at: Date | null
   classified_fingerprint: string | null
+  read_through: Date | null
   failed_attempts: number
   version: number
 }
@@ -25,6 +26,8 @@ export interface PendingMemoItem {
   processedAt: Date | null
   /** Digest of the classifier inputs at the last pass; null = never classified. */
   classifiedFingerprint: string | null
+  /** Newest message activity (post or edit) the last pass read; null = never read. */
+  readThrough: Date | null
   /** Failed processing attempts since the item was last queued. */
   failedAttempts: number
   /** Bumped on every queue; a batch acknowledges only the version it read. */
@@ -51,15 +54,21 @@ function mapRowToPendingItem(row: PendingItemRow): PendingMemoItem {
     queuedAt: row.queued_at,
     processedAt: row.processed_at,
     classifiedFingerprint: row.classified_fingerprint,
+    readThrough: row.read_through,
     failedAttempts: row.failed_attempts,
     version: row.version,
   }
 }
 
-const SELECT_FIELDS = `id, workspace_id, stream_id, item_type, item_id, queued_at, processed_at, classified_fingerprint, failed_attempts, version`
+const SELECT_FIELDS = `id, workspace_id, stream_id, item_type, item_id, queued_at, processed_at, classified_fingerprint, read_through, failed_attempts, version`
 
 export const PendingItemRepository = {
-  async queue(client: PoolClient, items: QueuePendingItemParams[]): Promise<PendingMemoItem[]> {
+  /** `rereadFromStart` clears how far earlier passes read, so the next pass starts over. */
+  async queue(
+    client: PoolClient,
+    items: QueuePendingItemParams[],
+    options: { rereadFromStart?: boolean } = {}
+  ): Promise<PendingMemoItem[]> {
     if (items.length === 0) return []
 
     const result = await client.query<PendingItemRow>(sql`
@@ -75,7 +84,8 @@ export const PendingItemRepository = {
       SET version = memo_pending_items.version + 1,
           queued_at = CASE WHEN memo_pending_items.processed_at IS NULL THEN memo_pending_items.queued_at ELSE EXCLUDED.queued_at END,
           processed_at = NULL,
-          failed_attempts = 0
+          failed_attempts = 0,
+          read_through = CASE WHEN ${options.rereadFromStart ?? false} THEN NULL ELSE memo_pending_items.read_through END
       RETURNING ${sql.raw(SELECT_FIELDS)}
     `)
     return result.rows.map(mapRowToPendingItem)
@@ -138,24 +148,28 @@ export const PendingItemRepository = {
 
   /**
    * Store what the classifier was shown, so the next pass over the same
-   * conversation can tell whether the question has changed. Written only for
-   * items that actually reached the model — a skipped item's stored digest is
-   * still the right one, and a deferred item was never asked.
+   * conversation can tell whether the question has changed, and how far it
+   * read, so a conversation too long for one pass resumes after it. Written
+   * only for items that actually reached the model. A pass that left unread
+   * messages stores no fingerprint, so the next pass is never skipped as
+   * unchanged.
    */
-  async recordClassifiedFingerprints(
+  async recordClassifiedReads(
     client: PoolClient,
     workspaceId: string,
-    entries: Array<{ id: string; fingerprint: string }>
+    entries: Array<{ id: string; fingerprint: string | null; readThrough: Date | null }>
   ): Promise<void> {
     if (entries.length === 0) return
 
     await client.query(sql`
       UPDATE memo_pending_items AS p
-      SET classified_fingerprint = v.fingerprint
+      SET classified_fingerprint = v.fingerprint,
+          read_through = v.read_through
       FROM UNNEST(
         ${entries.map((e) => e.id)}::text[],
-        ${entries.map((e) => e.fingerprint)}::text[]
-      ) AS v(id, fingerprint)
+        ${entries.map((e) => e.fingerprint)}::text[],
+        ${entries.map((e) => e.readThrough)}::timestamptz[]
+      ) AS v(id, fingerprint, read_through)
       WHERE p.id = v.id AND p.workspace_id = ${workspaceId}
     `)
   },

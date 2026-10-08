@@ -4,8 +4,12 @@ import type { Pool, PoolClient } from "pg"
 import { ConversationStatuses, MemoryModes } from "@threahq/types"
 import { ConversationRepository } from "../../src/features/conversations"
 import { MemoRepository, MemoService, PendingItemRepository } from "../../src/features/memos"
+import {
+  queueMemoConversations,
+  retireMemosCitingDeletedMessage,
+} from "../../src/features/memos/accumulator-outbox-handler"
 import type { ConversationClassification } from "../../src/features/memos/classifier"
-import { MEMO_MAX_FAILED_ATTEMPTS } from "../../src/features/memos/config"
+import { MEMO_CONVERSATION_WINDOW_CHARS, MEMO_MAX_FAILED_ATTEMPTS } from "../../src/features/memos/config"
 import { MessageRepository } from "../../src/features/messaging"
 import { StreamRepository } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"
@@ -38,23 +42,27 @@ describe("memo batch: pending items", () => {
   function serviceWith(overrides: {
     classify?: (conversation: { messageIds: string[] }) => Promise<ConversationClassification>
     embed?: () => Promise<number[][]>
+    /** Collects the message ids each memorizer call was shown. */
+    memorized?: string[][]
   }): MemoService {
+    const memorize = async (_formatted: string, context: { content: { id: string }[] }) => {
+      overrides.memorized?.push(context.content.map((m) => m.id))
+      return [
+        {
+          title: "Start with auth",
+          abstract: "The migration starts with the auth service.",
+          keyPoints: [],
+          sourceMessageIds: context.content.map((m) => m.id),
+          knowledgeType: "decision",
+          tags: [],
+        },
+      ]
+    }
     return new MemoService({
       analyticsReporter: new DisabledAnalyticsReporter(),
       pool,
       classifier: { classifyConversation: overrides.classify ?? (async () => worthy) },
-      memorizer: {
-        memorizeConversation: async (_formatted: string, context: { content: { id: string }[] }) => [
-          {
-            title: "Start with auth",
-            abstract: "The migration starts with the auth service.",
-            keyPoints: [],
-            sourceMessageIds: context.content.map((m) => m.id),
-            knowledgeType: "decision",
-            tags: [],
-          },
-        ],
-      } as never,
+      memorizer: { memorizeConversation: memorize, reviseMemo: memorize } as never,
       embeddingService: { embedBatch: overrides.embed ?? (async () => [nextEmbedding()]) } as never,
       messageFormatter: { formatMessages: async () => "formatted transcript" } as never,
     })
@@ -89,7 +97,8 @@ describe("memo batch: pending items", () => {
   async function addMessage(
     client: PoolClient,
     ids: { streamId: string; conversationId: string },
-    sequence: bigint
+    sequence: bigint,
+    message: { text: string; createdAt?: Date } = { text: "we start the migration with the auth service" }
   ): Promise<string> {
     const id = messageId()
     await MessageRepository.insert(client, {
@@ -99,7 +108,8 @@ describe("memo batch: pending items", () => {
       sequence,
       authorId: testUserId,
       authorType: "user",
-      ...testMessageContent("we start the migration with the auth service"),
+      createdAt: message.createdAt,
+      ...testMessageContent(message.text),
     })
     await ConversationRepository.addPrimaryMessage(client, testWorkspaceId, ids.conversationId, id, testUserId)
     return id
@@ -160,6 +170,90 @@ describe("memo batch: pending items", () => {
 
   afterAll(async () => {
     await pool.end()
+  })
+
+  test("a conversation longer than one pass is read in passes that resume where the last one stopped", async () => {
+    const seeded = await seedQueuedConversation()
+    const longText = (part: number) => `part ${part} `.repeat(Math.ceil((MEMO_CONVERSATION_WINDOW_CHARS * 0.45) / 7))
+    const earlier = await withTransaction(pool, async (client) => {
+      const ids: string[] = []
+      for (const part of [0, 1, 2]) {
+        ids.push(
+          await addMessage(client, seeded, BigInt(10 + part), {
+            text: longText(part),
+            createdAt: new Date(Date.UTC(2026, 6, 1, 10, part)),
+          })
+        )
+      }
+      return ids
+    })
+    const recent = (await ConversationRepository.findById(
+      pool,
+      testWorkspaceId,
+      seeded.conversationId
+    ))!.messageIds.filter((id) => !earlier.includes(id))
+    const memorized: string[][] = []
+    const revising = () => serviceWith({ memorized, classify: async () => ({ ...worthy, shouldReviseExisting: true }) })
+    const readThrough = async () =>
+      (await PendingItemRepository.findUnprocessed(pool, testWorkspaceId, seeded.streamId)).find(
+        (p) => p.itemId === seeded.conversationId
+      )?.readThrough
+
+    await serviceWith({ memorized }).processBatch(testWorkspaceId, seeded.streamId)
+    const afterFirst = { state: await pendingState(seeded.conversationId), readThrough: await readThrough() }
+    await revising().processBatch(testWorkspaceId, seeded.streamId)
+    const afterSecond = await pendingState(seeded.conversationId)
+    const followUp = await withTransaction(pool, async (client) => {
+      const id = await addMessage(client, seeded, 20n, { text: longText(3) })
+      await requeue(client, seeded)
+      return id
+    })
+    await revising().processBatch(testWorkspaceId, seeded.streamId)
+
+    expect({ afterFirst, afterSecond, memorized: memorized.map((ids) => [...ids].sort()) }).toEqual({
+      afterFirst: {
+        state: { processed: false, fingerprint: null, failedAttempts: 0 },
+        readThrough: new Date(Date.UTC(2026, 6, 1, 10, 1)),
+      },
+      afterSecond: { processed: true, fingerprint: expect.any(String), failedAttempts: 0 },
+      memorized: [
+        [earlier[0], earlier[1]].sort(),
+        [earlier[1], earlier[2], ...recent].sort(),
+        [earlier[2], ...recent, followUp].sort(),
+      ],
+    })
+  })
+
+  test("deleting a source of a long conversation's memo reads the conversation again from the start", async () => {
+    const seeded = await seedQueuedConversation()
+    const longText = (part: number) => `part ${part} `.repeat(Math.ceil((MEMO_CONVERSATION_WINDOW_CHARS * 0.45) / 7))
+    const earlier = await withTransaction(pool, async (client) => {
+      const ids: string[] = []
+      for (const part of [0, 1, 2, 3]) {
+        ids.push(
+          await addMessage(client, seeded, BigInt(10 + part), {
+            text: longText(part),
+            createdAt: new Date(Date.UTC(2026, 6, 1, 10, part)),
+          })
+        )
+      }
+      return ids
+    })
+    const memorized: string[][] = []
+    const revising = () => serviceWith({ memorized, classify: async () => ({ ...worthy, shouldReviseExisting: true }) })
+    await serviceWith({ memorized }).processBatch(testWorkspaceId, seeded.streamId)
+    await revising().processBatch(testWorkspaceId, seeded.streamId)
+
+    await withTransaction(pool, async (client) => {
+      await MessageRepository.softDelete(client, testWorkspaceId, earlier[1])
+      await retireMemosCitingDeletedMessage(client, testWorkspaceId, seeded.streamId, earlier[1])
+      await queueMemoConversations(client, testWorkspaceId, seeded.streamId, [seeded.conversationId], {
+        rereadFromStart: true,
+      })
+    })
+    await revising().processBatch(testWorkspaceId, seeded.streamId)
+
+    expect([...memorized[2]].sort()).toEqual([earlier[0], earlier[2]].sort())
   })
 
   test("a classifier failure leaves the item pending with no fingerprint", async () => {
