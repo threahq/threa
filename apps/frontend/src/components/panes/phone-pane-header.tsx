@@ -7,6 +7,7 @@ import { afterOverlayHistory } from "@/components/ui/history-back-close"
 import { SidebarToggle } from "@/components/layout"
 import { usePanel, usePanelTabFocusHandoff, usePhonePanes } from "@/contexts"
 import { hasHorizontalScroll, OS_GESTURE_ZONE } from "@/hooks/use-sidebar-swipe"
+import { closePanelTab, followCurrentPanel, soleFirstPanelOf } from "@/lib/panel-tabs"
 import { cn } from "@/lib/utils"
 import { usePaneCovered } from "./pane-host"
 import { PanelTabTitle } from "./panel-tab-strip"
@@ -51,7 +52,7 @@ type SheetAction = { kind: "switch"; id: string } | { kind: "close"; ids: readon
  */
 export function PhonePaneSwitcher({ workspaceId }: { workspaceId: string }) {
   const phone = usePhonePanes()
-  const { panelId, getTabUrl, setCurrentPane, closeTabs, canCloseTab } = usePanel()
+  const { panelId, layout, getTabUrl, setCurrentPane, closeTabs, canCloseTab } = usePanel()
   const [open, setOpen] = useState(false)
   const pending = useRef<SheetAction | null>(null)
   const rowId = useId()
@@ -83,6 +84,13 @@ export function PhonePaneSwitcher({ workspaceId }: { workspaceId: string }) {
     if (action.kind === "switch" && switched.current) focusHandoff.current = action.id
     setOpen(false)
   }
+  // The menu holds focus, and closing the current pane unmounts this button, so focus goes to the pane left on show.
+  const closeFromMenu = (ids: readonly string[]) => {
+    const next = ids.reduce(closePanelTab, layout)
+    const after = followCurrentPanel(layout, next, current)
+    focusHandoff.current = after === soleFirstPanelOf(next) ? null : after
+    closeTabs(ids)
+  }
 
   return (
     <>
@@ -92,9 +100,9 @@ export function PhonePaneSwitcher({ workspaceId }: { workspaceId: string }) {
             id: "others",
             label: "Close others",
             disabled: !others.some(canCloseTab),
-            onSelect: () => closeTabs(others),
+            onSelect: () => closeFromMenu(others),
           },
-          { id: "all", label: "Close all", disabled: !order.some(canCloseTab), onSelect: () => closeTabs(order) },
+          { id: "all", label: "Close all", disabled: !order.some(canCloseTab), onSelect: () => closeFromMenu(order) },
         ]}
       >
         <Button
