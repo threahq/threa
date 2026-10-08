@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest"
+import { NON_SERVER_STREAM_ID_PREFIXES } from "./stream-ids"
 import {
+  ACTIVE_MARK,
   NO_PANELS,
+  SECTION_SEPARATOR,
+  TAB_SEPARATOR,
   activatePanelTab,
   canonicalPanelLayout,
   closePanelTab,
@@ -82,6 +86,24 @@ describe("formatPanelLayout", () => {
   it("should write one spelling per arrangement when it round-trips", () => {
     const values = ["stream_a", "a.b", "a*.b", "a.b*.c", "a-b", "a*.b-c--d", "a--b-c*.d"]
     expect(values.map((value) => spell(at(value)))).toEqual(values)
+  })
+
+  it("should keep a persona test-chat id whole when it sits beside other panes", () => {
+    const value = "test:persona_x.stream_a-test:persona_y"
+    expect({ layout: at(value), spelled: spell(at(value)) }).toEqual({
+      layout: {
+        columns: [
+          [{ ids: ["test:persona_x", "stream_a"], active: "stream_a" }],
+          [{ ids: ["test:persona_y"], active: "test:persona_y" }],
+        ],
+      },
+      spelled: value,
+    })
+  })
+
+  it("should keep every pane prefix free of the panel grammar characters", () => {
+    const grammar = [TAB_SEPARATOR, ACTIVE_MARK, SECTION_SEPARATOR]
+    expect(NON_SERVER_STREAM_ID_PREFIXES.filter((prefix) => grammar.some((char) => prefix.includes(char)))).toEqual([])
   })
 
   it("should write nothing when no panel is open", () => {
