@@ -18,12 +18,12 @@ const CHANNEL = { id: "chan", type: "channel", parentStreamId: null, rootStreamI
 const THREAD = { id: "thr", type: "thread", parentStreamId: "chan", rootStreamId: "chan" }
 
 function Probe() {
-  const { closePanel } = usePanel()
+  const { closeTab } = usePanel()
   const location = useLocation()
   return (
     <div>
       <span data-testid="loc">{`${location.pathname}${location.search}`}</span>
-      <button onClick={closePanel}>close</button>
+      <button onClick={() => closeTab("conv:c")}>close</button>
     </div>
   )
 }
