@@ -966,23 +966,42 @@ export const MessageRepository = {
   },
 
   /**
-   * Find messages from threads anchored on the given anchor ids, keyed by
-   * anchorId in chronological order. Anchors may be message ids (`msg_…`) or
-   * card event ids (`event_…`).
+   * Find the newest messages of each thread anchored on the given anchor ids:
+   * at least `minReplies`, then more up to `maxReplies` while their markdown
+   * fits `maxChars`. Keyed by anchorId in chronological order. Anchors may be
+   * message ids (`msg_…`) or card event ids (`event_…`).
    */
-  async findThreadMessages(db: Querier, workspaceId: string, anchorIds: string[]): Promise<Map<string, Message[]>> {
+  async findThreadMessages(
+    db: Querier,
+    workspaceId: string,
+    anchorIds: string[],
+    window: { minReplies: number; maxReplies: number; maxChars: number }
+  ): Promise<Map<string, Message[]>> {
     if (anchorIds.length === 0) return new Map()
 
     const result = await db.query<MessageRow & { parent_anchor_id: string }>(sql`
-      SELECT
-        ${sql.raw(QUALIFIED_SELECT_FIELDS)},
-        s.parent_anchor_id
-      FROM messages m
-      JOIN streams s ON m.stream_id = s.id AND s.workspace_id = ${workspaceId}
-      WHERE m.workspace_id = ${workspaceId}
-        AND s.parent_anchor_id = ANY(${anchorIds})
-        AND s.type = 'thread'
-        AND m.deleted_at IS NULL
+      WITH ranked AS (
+        SELECT
+          m.id,
+          s.parent_anchor_id,
+          ROW_NUMBER() OVER newest_first AS recency,
+          SUM(length(m.content_markdown)) OVER newest_first AS chars_through
+        FROM messages m
+        JOIN streams s ON m.stream_id = s.id AND s.workspace_id = ${workspaceId}
+        WHERE m.workspace_id = ${workspaceId}
+          AND s.parent_anchor_id = ANY(${anchorIds})
+          AND s.type = 'thread'
+          AND m.deleted_at IS NULL
+        WINDOW newest_first AS (
+          PARTITION BY s.parent_anchor_id ORDER BY m.created_at DESC, m.id DESC
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        )
+      )
+      SELECT ${sql.raw(QUALIFIED_SELECT_FIELDS)}, ranked.parent_anchor_id
+      FROM ranked
+      JOIN messages m ON m.id = ranked.id AND m.workspace_id = ${workspaceId}
+      WHERE ranked.recency <= ${window.minReplies}
+        OR (ranked.recency <= ${window.maxReplies} AND ranked.chars_through <= ${window.maxChars})
       ORDER BY m.created_at ASC, m.id ASC
     `)
 

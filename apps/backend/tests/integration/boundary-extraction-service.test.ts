@@ -783,6 +783,87 @@ describe("BoundaryExtractionService", () => {
       expect(contextMessageIds).toContain(cardThreadReplyId)
     })
 
+    async function seedLongThread(replyTexts: string[]) {
+      const anchorMsgId = messageId()
+      const triggerMsgId = messageId()
+      const threadId = streamId()
+      const replyIds = replyTexts.map(() => messageId())
+      const start = Date.now() - 60 * 60 * 1000
+
+      await withTransaction(pool, async (client) => {
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: anchorMsgId,
+          streamId: testStreamId,
+          sequence: BigInt(1),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("A post that grew a long thread"),
+        })
+        await MessageRepository.insert(client, {
+          workspaceId: testWorkspaceId,
+          id: triggerMsgId,
+          streamId: testStreamId,
+          sequence: BigInt(2),
+          authorId: testUserId,
+          authorType: "user",
+          ...testMessageContent("Next post in the channel"),
+        })
+        await StreamRepository.insert(client, {
+          id: threadId,
+          workspaceId: testWorkspaceId,
+          type: "thread",
+          visibility: "private",
+          companionMode: "off",
+          createdBy: testUserId,
+          parentStreamId: testStreamId,
+          parentAnchorId: anchorMsgId,
+        })
+        await StreamRepository.bumpThreadReplyCount(client, testWorkspaceId, threadId, replyIds.length)
+        for (const [i, id] of replyIds.entries()) {
+          await MessageRepository.insert(client, {
+            workspaceId: testWorkspaceId,
+            id,
+            streamId: threadId,
+            sequence: BigInt(i + 1),
+            authorId: testUserId,
+            authorType: "user",
+            createdAt: new Date(start + i * 60_000),
+            ...testMessageContent(replyTexts[i]),
+          })
+        }
+      })
+
+      await service.processMessage(triggerMsgId, testStreamId, testWorkspaceId)
+
+      const shownReplyIds = (stubExtractor.lastContext?.recentMessages ?? [])
+        .filter((m) => m.streamId === threadId)
+        .map((m) => m.id)
+      return { replyIds, shownReplyIds }
+    }
+
+    test("should show at most a nearby thread's thirty latest replies when they are short", async () => {
+      const { replyIds, shownReplyIds } = await seedLongThread(Array.from({ length: 35 }, (_, i) => `Reply ${i + 1}`))
+
+      expect(shownReplyIds).toEqual(replyIds.slice(5))
+    })
+
+    test("should show at least a nearby thread's five latest replies when they are long", async () => {
+      const { replyIds, shownReplyIds } = await seedLongThread(
+        Array.from({ length: 8 }, (_, i) => `Reply ${i + 1} `.repeat(150))
+      )
+
+      expect(shownReplyIds).toEqual(replyIds.slice(3))
+    })
+
+    test("should fill a nearby thread's character budget with its latest replies", async () => {
+      const { replyIds, shownReplyIds } = await seedLongThread(
+        Array.from({ length: 12 }, (_, i) => `Reply ${String(i + 1).padStart(2, "0")} `.repeat(50))
+      )
+
+      expect(shownReplyIds).toEqual(replyIds.slice(4))
+    })
+
     /** A shared channel: a linked message, a thread under it, and a card-anchored thread outside the tree. */
     async function seedSharedChannel() {
       const sharedStreamId = streamId()
