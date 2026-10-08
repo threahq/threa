@@ -114,10 +114,7 @@ export function StreamPane({
   const tabbed = !!chrome.tabs
 
   const listId = createConversationsPanelId(streamId)
-  const [isListOpen, toggleConversationsList] = usePaneToggle(
-    panelIdsOf(layout).includes(listId) ? listId : null,
-    listId
-  )
+  const [, toggleConversationsList] = usePaneToggle(panelIdsOf(layout).includes(listId) ? listId : null, listId)
 
   // Conversation overlay: colors timeline rows by conversation membership
   // (rendered by StreamContent, which reads the same param — INV-59).
@@ -742,19 +739,6 @@ export function StreamPane({
               </DropdownMenu>
             </div>
           )}
-          {offersList && !ownsConversationOverlay && !isMobile && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className={cn("h-8 w-8", isListOpen && "bg-accent text-accent-foreground")}
-              title="Conversations list"
-              aria-label="Conversations list"
-              aria-pressed={isListOpen}
-              onClick={toggleConversationsList}
-            >
-              <MessageCircle className="h-4 w-4" />
-            </Button>
-          )}
           <PhonePaneSwitcher workspaceId={workspaceId} />
           {stream && isMobile && canOpenSheet && (
             <>
@@ -785,7 +769,22 @@ export function StreamPane({
           )}
           {stream && !isMobile && !isDraft && offersStreamActions && (
             <SidebarActionMenu
-              actions={streamMenuActions}
+              actions={
+                // Beside the page's stream the list rides in the menu, so the header keeps its room for tabs.
+                offersList && !ownsConversationOverlay
+                  ? [
+                      {
+                        id: "conversations-list",
+                        label: "Conversations list",
+                        icon: MessageCircle,
+                        onSelect: toggleConversationsList,
+                      },
+                      ...streamMenuActions.map((action, i) =>
+                        i === 0 ? { ...action, separatorBefore: true } : action
+                      ),
+                    ]
+                  : streamMenuActions
+              }
               ariaLabel="Stream actions"
               trigger={
                 <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Stream actions">
