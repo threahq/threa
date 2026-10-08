@@ -214,6 +214,56 @@ test("should keep the tab on show, its close and +N in a split section at its na
   }
 })
 
+test("should show as many tabs as fit at their minimum width, whichever is on show", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const { workspaceId, streamId, threads } = await seedThreads(page, 6)
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threads.join(".")}`)
+  await expect(tabPane(page, threads[5]).getByText("reply in thread 6")).toBeVisible({ timeout: 30_000 })
+  const strip = page.getByRole("navigation", { name: "Panel tabs" })
+  const more = strip.getByRole("button", { name: /more tabs?$/ })
+
+  const row = () =>
+    strip.evaluate(async (el) => {
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      const tabs = [...el.querySelectorAll<HTMLElement>("[data-tab-id]")]
+      return {
+        room: el.getBoundingClientRect().width,
+        shown: tabs.length,
+        narrowest: Math.min(...tabs.map((tab) => tab.getBoundingClientRect().width)),
+        overflows: el.scrollWidth > el.clientWidth,
+      }
+    })
+
+  const counts: number[] = []
+  for (let index = 0; index < threads.length; index++) {
+    const title = `parent number ${index + 1}`
+    const link = strip.getByRole("link", { name: title })
+    if ((await link.count()) > 0) await link.click()
+    else {
+      await more.click()
+      await page.getByRole("menuitem", { name: title }).click()
+    }
+    await expect(strip.locator('[aria-current="page"]')).toHaveText(title)
+    const { room, shown, narrowest, overflows } = await row()
+    expect(overflows).toBe(false)
+    expect(narrowest).toBeGreaterThanOrEqual(95.5)
+    // As many as fit beside "+N" at 96px each.
+    expect(shown).toBe(Math.floor((room - 48) / 96))
+    counts.push(shown)
+  }
+  expect(counts[0]).toBeGreaterThanOrEqual(3)
+  expect(new Set(counts).size).toBe(1)
+})
+
+test("should keep Focus pane in a 900px window's two-tab pane", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 800 })
+  const { workspaceId, streamId, threads } = await seedThreads(page, 2)
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threads.join(".")}`)
+  const pane = tabPane(page, threads[1])
+  await expect(pane.getByText("reply in thread 2")).toBeVisible({ timeout: 30_000 })
+  await expect(pane.getByRole("button", { name: "Focus pane", exact: true })).toBeInViewport({ ratio: 1 })
+})
+
 test("should keep each pane's title at 900px with a thread open, folding the stream's view icons into its menu", async ({
   page,
 }) => {
