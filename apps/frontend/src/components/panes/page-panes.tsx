@@ -30,7 +30,7 @@ interface PagePanesProps {
   workspaceId: string
   /** What the route's own `page:` pane shows, where its route pins one. */
   page?: ReactNode
-  /** Shown in place of the panes, which keep their state under it. */
+  /** Shown in place of the panes. */
   error?: ReactNode
 }
 
