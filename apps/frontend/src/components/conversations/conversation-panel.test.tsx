@@ -9,7 +9,16 @@ import type { Socket } from "socket.io-client"
 import type { BoardPost, BoardPostMessage, ConversationWithStaleness, EventType } from "@threahq/types"
 import { ConversationPanel } from "./conversation-panel"
 import { hasUnknownMembers } from "@/hooks/use-conversation-backfill"
-import { ServicesProvider, SidebarProvider, PanelProvider, TraceProvider, SKELETON_DELAY_MS } from "@/contexts"
+import {
+  ServicesProvider,
+  SidebarProvider,
+  PanelProvider,
+  PaneScope,
+  TraceProvider,
+  SKELETON_DELAY_MS,
+  isConversationPanel,
+  usePanel,
+} from "@/contexts"
 import * as authModule from "@/auth"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { spyOnExport } from "@/test/spy"
@@ -44,6 +53,7 @@ import {
 } from "@/stores/conversation-reply-open-store"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 import { formatDayDivider, localStartOfDayMs } from "@/lib/dates"
+import { panelIdsOf } from "@/lib/panel-tabs"
 import * as autoReadModule from "@/components/message/use-conversation-auto-read"
 import { registerWorkspaceSocketHandlers } from "@/sync/workspace-sync"
 import { seedAgentActivity, resetAgentActivityStore } from "@/stores/agent-activity-store"
@@ -56,6 +66,18 @@ const WORKSPACE_ID = "ws_1"
 const CONVERSATION_ID = "conv_1"
 
 /** A stashed draft row on disk — what a `?stash=` deep link points at. */
+/** The conversation pane as the board's panel host mounts it: scoped to its own tab beside the board. */
+function BoardConversationPane({ workspaceId }: { workspaceId: string }) {
+  const { layout } = usePanel()
+  const panelId = panelIdsOf(layout).find(isConversationPanel)
+  if (!panelId) return null
+  return (
+    <PaneScope panelId={panelId} section={{ ids: [panelId], active: panelId }} splits={[]}>
+      <ConversationPanel workspaceId={workspaceId} onClose={vi.fn()} />
+    </PaneScope>
+  )
+}
+
 function seedStashRow(id: string, scope: string) {
   return db.drafts.put({
     id,
@@ -325,7 +347,7 @@ function mountPanel(opts: {
               <TraceProvider>
                 <PanelProvider>
                   <Navigator />
-                  <ConversationPanel workspaceId={WORKSPACE_ID} onClose={vi.fn()} />
+                  <BoardConversationPane workspaceId={WORKSPACE_ID} />
                 </PanelProvider>
               </TraceProvider>
             </MemoryRouter>
