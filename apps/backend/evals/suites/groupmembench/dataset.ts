@@ -109,13 +109,21 @@ export function buildChannel(name: string, raw: RawMessage[]): BenchChannel {
     messages.filter((m) => m.replyTo !== null),
     (m) => rootOf(m).node
   )
-  const posts = messages.filter((m) => m.replyTo === null).sort(byTime)
+  // Some roots are stamped after their own replies, up to nine days. A thread
+  // cannot open before its root exists, so such a root is posted with its first reply.
+  const posts = messages
+    .filter((m) => m.replyTo === null)
+    .map((root) => {
+      const first = repliesByRoot.get(root.node)?.sort(byTime)[0]
+      return first && first.createdAt < root.createdAt ? { ...root, createdAt: first.createdAt } : root
+    })
+    .sort(byTime)
   return {
     name,
     posts,
     threads: posts.flatMap((root) => {
       const replies = repliesByRoot.get(root.node)
-      return replies ? [{ root, replies: replies.sort(byTime) }] : []
+      return replies ? [{ root, replies }] : []
     }),
     authors: [...new Set(messages.map((m) => m.author))].sort(),
   }
