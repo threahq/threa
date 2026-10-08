@@ -59,6 +59,8 @@ import {
 } from "./config"
 
 const MEMORY_CONTEXT_LIMIT = 20
+const MEMORY_CONTEXT_NEAREST_LIMIT = 10
+const MEMORY_CONTEXT_EMBED_MAX_CHARS = 8000
 const MIN_CONVERSATION_MESSAGES = 1
 
 export const MEMO_CAPTURE_OUTCOME_EVENT = "memo_capture_outcome"
@@ -569,11 +571,11 @@ export class MemoService implements MemoServiceLike {
       fetchedData.formattedConversations.set(conversationId, formatted)
     }
 
-    const memoryContext = fetchedData.existingMemos
     const memosToCreate: MemoToCreate[] = []
     const deferredItemIds = new Set<string>()
     const failedItemIds = new Set<string>()
     const classifiedFingerprints: Array<{ id: string; fingerprint: string }> = []
+    const shownContextMemos = new Map(fetchedData.existingMemos.map((memo) => [memo.id, memo]))
     let memosCreated = 0
     let memosDeduped = 0
 
@@ -728,6 +730,50 @@ export class MemoService implements MemoServiceLike {
 
         const isRevision = existingMemos.length > 0
 
+        // The memorizer can only retire a memo it is shown, and the stream's
+        // newest memos miss an older one this conversation revises. Keeps the
+        // tail: a long conversation's latest messages carry the revision.
+        // Below the limit the newest memos are every memo, so nothing is missing.
+        let nearest: Memo[] = []
+        if (fetchedData.existingMemos.length >= MEMORY_CONTEXT_LIMIT) {
+          // Attachment-only messages have no text, and embedding rejects an empty input.
+          const messageText = messagesArray.map((m) => m.contentMarkdown).join("\n")
+          const conversationText = messageText.trim() ? messageText : formattedMessages
+          let conversationEmbedding: number[] | undefined
+          try {
+            ;[conversationEmbedding] = await this.embeddingService.embedBatch(
+              [Array.from(conversationText).slice(-MEMORY_CONTEXT_EMBED_MAX_CHARS).join("")],
+              { workspaceId, functionId: "memo-context-embedding" }
+            )
+            if (!conversationEmbedding) throw new Error("Embedding service returned no vector")
+          } catch (error) {
+            // Earlier attempts retry the item; the last captures against the newest twenty rather than dropping the conversation.
+            if (error instanceof AISpendDeniedError || item.failedAttempts + 1 < MEMO_MAX_FAILED_ATTEMPTS) throw error
+            logger.warn(
+              { error, conversationId: conversation.id, workspaceId, streamId },
+              "Memo context embedding failed; capturing against the newest memos only"
+            )
+          }
+          if (conversationEmbedding) {
+            const found = await MemoRepository.findNearestInStream(this.pool, {
+              workspaceId,
+              streamId,
+              embedding: conversationEmbedding,
+              scope: fetchedData.memoScope.scope,
+              scopeUserId: fetchedData.memoScope.scopeUserId,
+              audiences: [fetchedData.readerAudience],
+              sharedRootStreamId: fetchedData.sharedRootStreamId,
+              limit: MEMORY_CONTEXT_NEAREST_LIMIT,
+            })
+            nearest = found.map(({ memo }) => memo)
+          }
+        }
+        const shownIds = new Set([...fetchedData.existingMemos, ...existingMemos].map((m) => m.id))
+        const memoryContext = [...fetchedData.existingMemos, ...nearest.filter((memo) => !shownIds.has(memo.id))]
+        // First snapshot wins: a later conversation may see a newer edit, and
+        // recording that version would let this one retire text it never saw.
+        for (const memo of memoryContext) if (!shownContextMemos.has(memo.id)) shownContextMemos.set(memo.id, memo)
+
         // A conversation yields a set of single-topic memos. On revision the
         // memorizer sees the existing memos and emits only what is new or changed;
         // existing memos are left untouched (no supersession, no linking yet).
@@ -860,7 +906,7 @@ export class MemoService implements MemoServiceLike {
       // one is re-run against the edit instead. Row-locked so no edit lands
       // between this check and the supersede below (INV-20).
       const observedVersions = new Map(
-        [...memoryContext, ...[...fetchedData.existingConversationMemos.values()].flat()].map((m) => [
+        [...shownContextMemos.values(), ...[...fetchedData.existingConversationMemos.values()].flat()].map((m) => [
           m.id,
           m.cardVersion,
         ])

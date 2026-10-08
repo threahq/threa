@@ -46,6 +46,17 @@ function sharedFromChannelSql(workspaceId: string, sharedRootStreamId: string, s
 }
 
 /**
+ * The stream and its threads: memo capture batches a thread's conversations
+ * on its top-level stream, so a memo sourced in a thread belongs to that stream.
+ */
+function inStreamTreeSql(workspaceId: string, streamId: string, column: string): QueryConfig {
+  return composeSql`${rawSql(column)} IN (
+    SELECT s.id FROM streams s
+    WHERE s.workspace_id = ${workspaceId} AND (s.id = ${streamId} OR s.root_stream_id = ${streamId})
+  )`
+}
+
+/**
  * Memo full-text search computes its tsvector per row — no stored column, no
  * index — so both the vector and the query are stemmed with the config the row
  * itself was written in, rather than the OR-across-configs tsquery an
@@ -617,11 +628,11 @@ export const MemoRepository = {
     const result = await db.query<MemoRow>(composeSql`
       SELECT ${SELECT_FIELDS_PREFIXED_SQL} FROM memos m
       JOIN conversations c ON m.source_conversation_id = c.id AND c.workspace_id = m.workspace_id
-      WHERE m.workspace_id = ${workspaceId} AND c.stream_id = ${streamId} AND ${filters}
+      WHERE m.workspace_id = ${workspaceId} AND ${inStreamTreeSql(workspaceId, streamId, "c.stream_id")} AND ${filters}
       UNION
       SELECT ${SELECT_FIELDS_PREFIXED_SQL} FROM memos m
       JOIN messages msg ON m.source_message_id = msg.id AND msg.workspace_id = m.workspace_id
-      WHERE m.workspace_id = ${workspaceId} AND msg.stream_id = ${streamId} AND ${filters}
+      WHERE m.workspace_id = ${workspaceId} AND ${inStreamTreeSql(workspaceId, streamId, "msg.stream_id")} AND ${filters}
       ORDER BY ${orderBy} DESC
       LIMIT ${options.limit ?? 50}
     `)
@@ -770,10 +781,40 @@ export const MemoRepository = {
       sharedRootStreamId?: string
     }
   ): Promise<{ memo: Memo; distance: number } | null> {
-    const { workspaceId, streamId, embedding, maxDistance, scope = "workspace", scopeUserId = null, audiences } = params
+    const [nearest] = await MemoRepository.findNearestInStream(db, { ...params, limit: 1 })
+    return nearest ?? null
+  },
+
+  /** Active memos sourced in a stream or its threads, nearest an embedding first; `maxDistance` omitted means no cutoff. */
+  async findNearestInStream(
+    db: Querier,
+    params: {
+      workspaceId: string
+      streamId: string
+      embedding: number[]
+      maxDistance?: number
+      scope?: MemoScope
+      scopeUserId?: string | null
+      audiences: readonly MemoAudience[]
+      /** Only memos captured while this channel was shared are returned. */
+      sharedRootStreamId?: string
+      limit: number
+    }
+  ): Promise<{ memo: Memo; distance: number }[]> {
+    const {
+      workspaceId,
+      streamId,
+      embedding,
+      maxDistance,
+      scope = "workspace",
+      scopeUserId = null,
+      audiences,
+      limit,
+    } = params
     const embeddingLiteral = `[${embedding.join(",")}]`
     const audienceVisible = memoAudienceVisibleSql(workspaceId, audiences, "m")
     const sharedOnly = capturedWhileSharedSql(params.sharedRootStreamId, "m")
+    const withinDistance = composeSql`(${maxDistance === undefined} OR m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance ?? 0})`
 
     const result = await db.query<MemoRow & { distance: number }>(composeSql`
       WITH stream_memos AS (
@@ -781,38 +822,36 @@ export const MemoRepository = {
                m.embedding <=> ${embeddingLiteral}::vector AS distance
         FROM memos m
         JOIN conversations c ON m.source_conversation_id = c.id AND c.workspace_id = m.workspace_id
-        WHERE c.stream_id = ${streamId}
+        WHERE ${inStreamTreeSql(workspaceId, streamId, "c.stream_id")}
           AND m.workspace_id = ${workspaceId}
           AND m.status = 'active'
           AND m.scope = ${scope}
           AND m.scope_user_id IS NOT DISTINCT FROM ${scopeUserId}
           ${sharedOnly}
           AND m.embedding IS NOT NULL
-          AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
+          AND ${withinDistance}
           AND ${audienceVisible}
         UNION
         SELECT ${SELECT_FIELDS_PREFIXED_SQL},
                m.embedding <=> ${embeddingLiteral}::vector AS distance
         FROM memos m
         JOIN messages msg ON m.source_message_id = msg.id AND msg.workspace_id = m.workspace_id
-        WHERE msg.stream_id = ${streamId}
+        WHERE ${inStreamTreeSql(workspaceId, streamId, "msg.stream_id")}
           AND m.workspace_id = ${workspaceId}
           AND m.status = 'active'
           AND m.scope = ${scope}
           AND m.scope_user_id IS NOT DISTINCT FROM ${scopeUserId}
           ${sharedOnly}
           AND m.embedding IS NOT NULL
-          AND m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance}
+          AND ${withinDistance}
           AND ${audienceVisible}
       )
       SELECT * FROM stream_memos
       ORDER BY distance ASC
-      LIMIT 1
+      LIMIT ${limit}
     `)
 
-    const row = result.rows[0]
-    if (!row) return null
-    return { memo: mapRowToMemo(row), distance: row.distance }
+    return result.rows.map((row) => ({ memo: mapRowToMemo(row), distance: row.distance }))
   },
 
   /**

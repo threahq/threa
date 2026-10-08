@@ -364,6 +364,38 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
   },
 
   {
+    id: "cross-conversation-reversal-keeps-unrelated-001",
+    name: "A reversal retires only the memo it reverses, not an old fact the conversation mentions in passing",
+    input: {
+      category: "revision",
+      memoryContext: [
+        {
+          title: "Pelle's dog is called Rex",
+          abstract: "Pelle has a beagle called Rex; he brings him to the office on Fridays.",
+          createdDaysAgo: 200,
+        },
+        {
+          title: "Pro plan costs $12 per user",
+          abstract: "They set the Pro plan to $12 per user per month, with no annual discount.",
+          createdDaysAgo: 6,
+        },
+      ],
+      messages: [
+        { ...PIERRE, contentMarkdown: "sorry, late, Rex needed a walk. saw the pro numbers?", minutesAgo: 30 },
+        { ...KRIS, contentMarkdown: "yeah, $12 scares off small teams. let's drop it to $9 per user", minutesAgo: 25 },
+        { ...PIERRE, contentMarkdown: "agreed, I'll update the pricing page today", minutesAgo: 20 },
+      ],
+    },
+    expectedOutput: {
+      minMemos: 1,
+      maxMemos: 1,
+      mustNotContain: ["Rex", "walk"],
+      conclusionMustState: "The Pro plan now costs $9 per user",
+      expectSupersedes: "Pro plan costs $12 per user",
+    },
+  },
+
+  {
     id: "cross-conversation-elaboration-keeps-001",
     name: "A new detail on a stream memo's topic retires nothing",
     input: {
