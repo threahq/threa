@@ -424,6 +424,16 @@ describe("the route's stream pane", () => {
     expect([query(layout, "B"), query(layout, "A")]).toEqual(["A-B", "B"])
   })
 
+  it("should write the route's stream when a phone has it in front and other panes open", () => {
+    const layout = page("A", "B.C")
+    const alone = page("A")
+    expect([
+      spell(canonicalPanelLayout(layout, "A", true)),
+      spell(canonicalPanelLayout(layout, "A", false)),
+      spell(canonicalPanelLayout(alone, "A", true)),
+    ]).toEqual(["A-B.C", "B.C", null])
+  })
+
   it("should keep the route's stream while it stays open", () => {
     const prev = page("A", "B.C")
     expect([

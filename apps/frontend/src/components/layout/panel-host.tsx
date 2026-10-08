@@ -8,6 +8,7 @@ import {
   paneIdentity,
   PaneScope,
   DisplayedPanelLayoutProvider,
+  PhonePanesProvider,
   InPaneDrawerProvider,
   presentsAsDrawer,
   coverPaneOf,
@@ -39,7 +40,6 @@ import {
   fitPanelLayout,
   floatingPanelTab,
   panelIdsOf,
-  soleFirstPanelOf,
   type PaneEdge,
   type PanelLayout,
   type PanelSection,
@@ -156,8 +156,6 @@ interface PlacedTab {
   width: number | null
   inFirstColumn: boolean
   section: PanelSection
-  /** The tabs its own row lists: {@link section}, less a phone's base page. */
-  row: PanelSection
   splits: readonly SplitDirection[]
 }
 
@@ -184,13 +182,6 @@ export function useFittedPanelLayout(layout: PanelLayout, maxColumns: number, st
     const shown = current !== null && presentsAsDrawer(current) ? pageUnder(layout, current) : current
     return fitPanelLayout(pages, maxColumns, true, shown)
   }, [layout, maxColumns, stacked, current, lastPanel])
-}
-
-function rowOf(section: PanelSection, id: string, base: string | null): PanelSection {
-  if (base === null || !section.ids.includes(base)) return section
-  if (id === base) return { ids: [base], active: base }
-  const ids = section.ids.filter((tab) => tab !== base)
-  return { ids, active: section.active === base ? ids[ids.length - 1] : section.active }
 }
 
 /** The page a drawer pane sits over: its stream's, else the first page. */
@@ -259,11 +250,9 @@ export function PanelTabStack({
   firstColumnWidth,
   host,
 }: PanelTabStackProps) {
-  const { layout, hasTabs, setCurrentPane, focusTab } = usePanel()
+  const { layout, setCurrentPane, focusTab } = usePanel()
   const current = useCurrentPane()
   const { sizes, setSizes, areas } = grid
-  // A phone stacks the other panes as pages over the route's stream, so that stream is no tab of theirs.
-  const base = stacked && hasTabs ? soleFirstPanelOf(layout) : null
   const height = useHostHeight(host)
   const panelShares = sizes.columns.slice(1)
   const columnWidths = width === null ? null : panelColumnWidths(panelShares, width)
@@ -289,7 +278,6 @@ export function PanelTabStack({
           width: column === 0 ? null : (columnWidths?.[column - 1] ?? null),
           inFirstColumn: firstColumnHolds(layout, id),
           section,
-          row: rowOf(section, id, base),
           splits,
         }))
       })
@@ -297,9 +285,13 @@ export function PanelTabStack({
     .sort((a, b) => (a.key < b.key ? -1 : 1))
 
   const sections = display.columns.flat()
+  const orderKey = sections.flatMap((section) => section.ids).join(".")
+  const phonePanes = useMemo(
+    () => (stacked ? { order: orderKey.split("."), current } : null),
+    [stacked, orderKey, current]
+  )
   // The pane worked in, else the first on show.
   const shownSection = sections.find((section) => section.active === current) ?? sections[0]
-  const shortcutSection = shownSection && rowOf(shownSection, shownSection.active, base)
   const panes = stacked ? undefined : sections.map((section) => section.active)
 
   const focused = floatingPanelTab(layout, stacked)
@@ -350,7 +342,7 @@ export function PanelTabStack({
   })
 
   return (
-    <>
+    <PhonePanesProvider value={phonePanes}>
       <PaneFocusContext.Provider value={focus}>
         <DisplayedPanelLayoutProvider value={display}>
           {tabs.map((tab) => (
@@ -380,7 +372,7 @@ export function PanelTabStack({
               {...paneDropZone(drops, tab.id, edges)}
             >
               <div className="h-full" style={{ width: tab.id === focused ? undefined : (tab.width ?? undefined) }}>
-                <PaneScope panelId={tab.id} section={tab.row} splits={tab.splits}>
+                <PaneScope panelId={tab.id} section={tab.section} splits={tab.splits}>
                   <ScopedPanelHost workspaceId={workspaceId} />
                 </PaneScope>
               </div>
@@ -419,12 +411,12 @@ export function PanelTabStack({
       {/* Under a floating tab they would still take Tab and the arrow keys. */}
       {focused === null && columnResizers}
       {focused === null && rowResizers}
-      {shortcutSection?.active && (
-        <PaneScope panelId={shortcutSection.active} section={shortcutSection} splits={NO_SPLITS}>
+      {shownSection?.active && (
+        <PaneScope panelId={shownSection.active} section={shownSection} splits={NO_SPLITS}>
           <PaneShortcuts panes={panes} />
         </PaneScope>
       )}
-    </>
+    </PhonePanesProvider>
   )
 }
 

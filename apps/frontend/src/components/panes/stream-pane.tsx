@@ -59,6 +59,7 @@ import { InviteActorButton, InviteBotButton } from "@/components/encryption"
 import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes } from "@threahq/types"
 import { getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
+import { PhonePaneSwitcher, usePhoneHeaderSwipe } from "./phone-pane-header"
 import { SharedWithBadge } from "@/components/shared-with-badge"
 import { useStreamContextToggle } from "@/components/stream-context"
 import { copyStreamLink } from "@/lib/stream-links"
@@ -118,6 +119,7 @@ export function StreamPane({
   const routeStreamId = useParams<{ streamId: string }>().streamId
   const isPageStream = routeStreamId === streamId
   const { inFirstColumn, layout } = usePanel()
+  const headerSwipe = usePhoneHeaderSwipe()
   const ownsConversationViews = routeStreamId !== undefined && primaryPanelOf(layout) === streamId
   const currentPane = useCurrentPane()
   const isCurrentPane = currentPane === null || currentPane === streamId
@@ -601,7 +603,7 @@ export function StreamPane({
 
   return (
     <div className={cn("flex h-full flex-col", className)} data-editor-zone={inFirstColumn ? undefined : "panel"}>
-      <header className="relative flex h-12 items-center justify-between border-b px-4">
+      <header className="relative flex h-12 items-center justify-between border-b px-4" {...headerSwipe}>
         {/* No gaps while tabbed: the tab fit counts only the labels' and focus toggle's own widths as the room they free. */}
         <div
           className={cn(
@@ -749,6 +751,7 @@ export function StreamPane({
               </DropdownMenu>
             </div>
           )}
+          <PhonePaneSwitcher workspaceId={workspaceId} />
           {stream && isMobile && canOpenSheet && (
             <>
               <Button

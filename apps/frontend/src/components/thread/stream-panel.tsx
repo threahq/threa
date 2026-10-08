@@ -48,7 +48,15 @@ import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
 import { LabelableResourceTypes, StreamTypes } from "@threahq/types"
 import { useMentionStreamContext, type MentionStreamContext } from "@/hooks/use-mentionables"
 import { LabelStack } from "@/components/labels/label-stack"
-import { PaneFocusToggle, PanelTabStrip, usePaneCovered, usePanelCloseFocusLanding } from "@/components/panes"
+import {
+  PaneFocusToggle,
+  PanelTabStrip,
+  PhonePaneLeading,
+  PhonePaneSwitcher,
+  usePaneCovered,
+  usePanelCloseFocusLanding,
+  usePhoneHeaderSwipe,
+} from "@/components/panes"
 import { StreamPane } from "@/components/panes/stream-pane"
 import { isServerStreamId } from "@/lib/stream-ids"
 import { cn } from "@/lib/utils"
@@ -114,19 +122,20 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
       offersContext={offersContext}
       className={cn(!inFirstColumn && "sm:border-l", "bg-background", className)}
       chrome={{
-        // The first column holds the page's own stream, which keeps the page's sidebar toggle and has nothing to go back to.
-        leading: inFirstColumn ? (
-          <SidebarToggle location="page" />
-        ) : (
+        leading: (
           <>
-            <StreamLoadingIndicator isLoading={isLoading} />
-            {isMobile && <PanelBackControls onClose={onClose} closeRef={closeRef} />}
+            {!inFirstColumn && <StreamLoadingIndicator isLoading={isLoading} />}
+            {isMobile ? (
+              <PhonePaneLeading onBack={onClose} backRef={closeRef} />
+            ) : (
+              inFirstColumn && <SidebarToggle location="page" />
+            )}
           </>
         ),
         tabs: tabbed ? (
           <PanelTabStrip
             workspaceId={workspaceId}
-            className={isMobile ? undefined : "-ml-2"}
+            className="-ml-2"
             labels={
               <LabelStack workspaceId={workspaceId} resourceType={LabelableResourceTypes.STREAM} resourceId={panelId} />
             }
@@ -136,25 +145,6 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
         close: !isMobile && !tabbed && canClosePanel && <SidePanelClose onClose={onClose} ref={closeRef} />,
       }}
     />
-  )
-}
-
-/** On a phone the tab takes the screen: the sidebar toggle stays reachable, and back replaces the close. */
-function PanelBackControls({
-  onClose,
-  closeRef,
-}: {
-  onClose: () => void
-  closeRef: RefObject<HTMLButtonElement | null>
-}) {
-  return (
-    <>
-      <SidebarToggle location="page" />
-      <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0" onClick={onClose} ref={closeRef}>
-        <ChevronLeft className="h-4 w-4" />
-        <span className="sr-only">Back</span>
-      </Button>
-    </>
   )
 }
 
@@ -171,6 +161,7 @@ function DraftThreadPanel({ workspaceId, panelId, onClose, onPromoted, closeRef,
   const { isMobile } = useSidebar()
   const covered = usePaneCovered()
   const { tabbed, getNavigateUrl } = usePanel()
+  const headerSwipe = usePhoneHeaderSwipe()
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   const draftInfo = parseDraftPanel(panelId)
   const idbStreams = useWorkspaceStreams(workspaceId)
@@ -486,7 +477,7 @@ function DraftThreadPanel({ workspaceId, panelId, onClose, onPromoted, closeRef,
   // tab carries its own close.
   let headerContent: React.ReactNode
   if (tabbed) {
-    headerContent = <PanelTabStrip workspaceId={workspaceId} className={isMobile ? undefined : "-ml-2"} />
+    headerContent = <PanelTabStrip workspaceId={workspaceId} className="-ml-2" />
   } else if (parentStream) {
     headerContent = (
       <div className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden pr-2">
@@ -504,10 +495,11 @@ function DraftThreadPanel({ workspaceId, panelId, onClose, onPromoted, closeRef,
 
   return (
     <SidePanel className={className} data-editor-zone="panel">
-      <SidePanelHeader className="relative">
-        {isMobile && <PanelBackControls onClose={onClose} closeRef={closeRef} />}
+      <SidePanelHeader className="relative" {...headerSwipe}>
+        {isMobile && <PhonePaneLeading onBack={onClose} backRef={closeRef} />}
         {headerContent}
         <PaneFocusToggle />
+        <PhonePaneSwitcher workspaceId={workspaceId} />
         {!isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />}
       </SidePanelHeader>
 
