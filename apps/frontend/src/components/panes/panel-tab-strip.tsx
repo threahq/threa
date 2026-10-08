@@ -349,6 +349,8 @@ function StreamTabTitle({ workspaceId, streamId }: { workspaceId: string; stream
 
 function ConversationTabTitle({ workspaceId, conversationId }: { workspaceId: string; conversationId: string }) {
   const { post } = useConversationBoardPost(workspaceId, conversationId)
-  const title = useConversationTitle(workspaceId, post?.conversation ?? { streamId: "", topicSummary: null })
-  return <>{title ?? "Conversation"}</>
+  const streamId = post?.conversation.streamId ?? ""
+  const title = useConversationTitle(workspaceId, post?.conversation ?? { streamId, topicSummary: null })
+  const streamName = useStreamName(workspaceId, streamId, "breadcrumb")
+  return <>{title ?? streamName ?? "Conversation"}</>
 }
