@@ -341,6 +341,32 @@ test("should stack a tab split down under its own section", async ({ page }) => 
   await expect(page.getByRole("separator", { name: "Resize stacked panels" })).toBeVisible()
 })
 
+test("should fold sections split down into tabs on a window too short for each", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 500 })
+  const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
+
+  // Nothing more fits down the column, so a split never offers it.
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}*.${threadB}`)
+  await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible({ timeout: 30_000 })
+  await tabPane(page, threadA).getByRole("button", { name: "Stream actions" }).click()
+  await expect(page.getByRole("menuitem", { name: "Split right" })).toBeVisible()
+  await expect(page.getByRole("menuitem", { name: "Split down" })).toHaveCount(0)
+  await page.keyboard.press("Escape")
+
+  // An arrangement split down on a taller window shows its sections as tabs of one.
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${streamId}-${threadB}--${threadA}`)
+  await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible({ timeout: 30_000 })
+  await expect(replyIn(page, threadB, "reply in thread B")).toBeHidden()
+  await expect(page.getByRole("separator", { name: "Resize stacked panels" })).toHaveCount(0)
+  const timeline = await tabPane(page, threadA).getByTestId("stream-timeline").boundingBox()
+  expect(timeline!.height).toBeGreaterThanOrEqual(120)
+
+  await page.setViewportSize({ width: 1400, height: 900 })
+  await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
+  await expect(page.getByRole("separator", { name: "Resize stacked panels" })).toBeVisible()
+  expect(panelParam(page)).toBe(`${streamId}-${threadB}--${threadA}`)
+})
+
 test("should close tabs beside one from its menu, and reopen them latest first", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 })
   const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
