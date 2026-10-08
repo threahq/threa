@@ -48,10 +48,9 @@ export function asideHostKey(pathname: string): string {
 
 /**
  * The pane the aside's surface holds instead of the page: the first one open
- * beside the stream page's own (`tabbed`), or the board's panel, unless it is
- * the aside's own host. An aside opened from inside a thread has that thread
- * as its host, and the host view already shows it — a panel on top would be
- * two chromes for one stream.
+ * beside the page's own (`tabbed`), unless it is the aside's own host. An
+ * aside opened from inside a thread has that thread as its host, and the host
+ * view already shows it — a panel on top would be two chromes for one stream.
  */
 export function asidePaneOf(layout: PanelLayout, hostStreamId: string, tabbed: boolean): string | null {
   const sole = tabbed ? soleFirstPanelOf(layout) : null
