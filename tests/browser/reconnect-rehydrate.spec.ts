@@ -252,7 +252,7 @@ test.describe("Reconnect Rehydration", () => {
     await expect(page.getByTestId("panel").getByText(initialReply)).toBeVisible({ timeout: 10000 })
     await waitForRealThreadPanel(page)
 
-    const threadId = new URL(page.url()).searchParams.get("panel")
+    const threadId = await page.getByTestId("panel").getAttribute("data-panel-tab")
     expect(threadId).toBeTruthy()
     expect(threadId?.startsWith("draft:")).toBe(false)
 

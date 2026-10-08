@@ -59,7 +59,7 @@ async function createThread(page: Page, testId: string): Promise<{ channelId: st
   await clickReplyInThread(row)
   await sendPanelReply(page, `launch reply ${testId}`)
   await waitForRealThreadPanel(page)
-  const threadId = new URL(page.url()).searchParams.get("panel")!
+  const threadId = (await page.getByTestId("panel").getAttribute("data-panel-tab"))!
   return { channelId, threadId }
 }
 

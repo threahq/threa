@@ -119,7 +119,7 @@ async function setUpSharedPointer(
   await expect(shareEntry).toBeVisible()
   await shareEntry.click()
 
-  const composer = page.locator("[contenteditable='true']").first()
+  const composer = page.getByTestId("main-pane").locator("[contenteditable='true']")
   await expect(composer).toBeVisible()
   await expect(composer.locator("[data-type='shared-message']")).toHaveCount(1)
   await composer.focus()

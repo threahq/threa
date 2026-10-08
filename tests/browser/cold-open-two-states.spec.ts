@@ -104,7 +104,7 @@ function snapshotRegions(): RegionSnapshot {
   }
   return {
     sidebar,
-    timeline: tailOf(document.querySelector('main[data-editor-zone="main"]')),
+    timeline: tailOf(document.querySelector('[data-testid="main-pane"]')),
     panel: tailOf(document.querySelector('[data-testid="panel"]')),
   }
 }
