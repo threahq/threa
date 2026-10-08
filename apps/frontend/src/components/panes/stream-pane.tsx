@@ -544,16 +544,16 @@ export function StreamPane({
           ...(offersAside ? [{ id: "aside-label", width: 40 }] : []),
           ...(offersOverlay ? [{ id: "overlay", width: 52 + gap }] : []),
           ...(offersContextIcon ? [{ id: "context", width: icon }] : []),
-          ...(offersSearch ? [{ id: "search", width: icon }] : []),
+          ...(offersSearch && !tabbed ? [{ id: "search", width: icon }] : []),
         ]
       )
+  // A tab row needs the room more than search does, which ⌘F and the menu still reach.
+  const searchInMenu = !isMobile && offersSearch && (tabbed || folded.has("search"))
   const openSearch = () => {
     document.dispatchEvent(new CustomEvent("threa:open-stream-search", { detail: { streamId } }))
   }
   const foldedActions: SidebarActionItem[] = [
-    ...(folded.has("search")
-      ? [{ id: "search", label: "Search in conversation", icon: Search, onSelect: openSearch }]
-      : []),
+    ...(searchInMenu ? [{ id: "search", label: "Search in conversation", icon: Search, onSelect: openSearch }] : []),
     ...(folded.has("context")
       ? [
           {
@@ -763,7 +763,7 @@ export function StreamPane({
               compact={isMobile || folded.has("aside-label")}
             />
           )}
-          {offersSearch && !folded.has("search") && (
+          {offersSearch && !searchInMenu && (
             <Button
               variant="ghost"
               size="icon"
