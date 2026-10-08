@@ -94,7 +94,8 @@ test("should open the list from a channel pane outside the first column and clos
   const second = await seedChannel(page, "convs-b")
   await page.goto(`/w/${first.workspaceId}/s/${first.streamId}?panel=${second.streamId}`)
 
-  await tabPane(page, second.streamId).getByRole("button", { name: "Conversations list" }).click()
+  await tabPane(page, second.streamId).getByRole("button", { name: "Stream actions" }).click()
+  await page.getByRole("menuitem", { name: "Conversations list" }).click()
   await expect.poll(() => panelParam(page)).toContain(`convs:${second.streamId}`)
   await expect(list(page).getByText(second.topic).first()).toBeVisible({ timeout: 30_000 })
   await expect(list(page).getByText(first.topic)).toHaveCount(0)
