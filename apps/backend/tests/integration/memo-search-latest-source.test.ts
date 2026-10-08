@@ -19,15 +19,16 @@ describe("MemoRepository search latestSourceAt", () => {
   let testWorkspaceId: string
   let channelId: string
   let sourcedMemoId: string
-  let sourcelessMemoId: string
+  let anchorOnlyMemoId: string
   let newestSourceAt: Date
+  let anchorSourceAt: Date
 
   beforeAll(async () => {
     pool = await setupTestDatabase()
     testWorkspaceId = workspaceId()
     channelId = streamId()
     sourcedMemoId = memoId()
-    sourcelessMemoId = memoId()
+    anchorOnlyMemoId = memoId()
     const workosUserId = userId()
 
     await withTransaction(pool, async (client) => {
@@ -67,7 +68,8 @@ describe("MemoRepository search latestSourceAt", () => {
           })
         )
       )
-      newestSourceAt = sources[1]!.createdAt
+      newestSourceAt = sources[2]!.createdAt
+      anchorSourceAt = sources[0]!.createdAt
       await MessageRepository.softDelete(client, testWorkspaceId, sources[2]!.id)
 
       await MemoRepository.insert(client, {
@@ -83,7 +85,7 @@ describe("MemoRepository search latestSourceAt", () => {
         knowledgeType: "decision",
       })
       await MemoRepository.insert(client, {
-        id: sourcelessMemoId,
+        id: anchorOnlyMemoId,
         workspaceId: testWorkspaceId,
         memoType: "message",
         sourceMessageId: sources[0]!.id,
@@ -95,7 +97,7 @@ describe("MemoRepository search latestSourceAt", () => {
         knowledgeType: "decision",
       })
       await MemoRepository.updateEmbedding(client, testWorkspaceId, sourcedMemoId, axis(0))
-      await MemoRepository.updateEmbedding(client, testWorkspaceId, sourcelessMemoId, axis(0))
+      await MemoRepository.updateEmbedding(client, testWorkspaceId, anchorOnlyMemoId, axis(0))
     })
   })
 
@@ -103,10 +105,10 @@ describe("MemoRepository search latestSourceAt", () => {
     await pool.end()
   })
 
-  test("every search path dates a memo by its newest undeleted source message, and null without one", async () => {
+  test("every search path dates a memo by the newest source message it cites, deleted or not, anchor included", async () => {
     const filters = { streamIds: [channelId] }
     const byMemo = (rows: MemoSearchResult[]) =>
-      Object.fromEntries(rows.map((row) => [row.memo.id, row.latestSourceAt?.toISOString() ?? null]))
+      Object.fromEntries(rows.map((row) => [row.memo.id, row.memo.latestSourceAt?.toISOString() ?? null]))
 
     const [browse, fullText, exact, hybrid] = await Promise.all([
       MemoRepository.fullTextSearch(pool, { workspaceId: testWorkspaceId, query: "", filters }),
@@ -120,7 +122,7 @@ describe("MemoRepository search latestSourceAt", () => {
       }),
     ])
 
-    const expected = { [sourcedMemoId]: newestSourceAt.toISOString(), [sourcelessMemoId]: null }
+    const expected = { [sourcedMemoId]: newestSourceAt.toISOString(), [anchorOnlyMemoId]: anchorSourceAt.toISOString() }
     expect({
       browse: byMemo(browse),
       fullText: byMemo(fullText),

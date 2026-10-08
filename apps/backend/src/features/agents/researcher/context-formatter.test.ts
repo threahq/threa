@@ -12,7 +12,10 @@ import {
 
 const WORKSPACE = "ws_1"
 
-function memo(overrides: Partial<EnrichedMemoResult> = {}): EnrichedMemoResult {
+function memo(
+  overrides: Partial<EnrichedMemoResult> = {},
+  latestSourceAt: Date | null = new Date("2026-07-01T10:00:00Z")
+): EnrichedMemoResult {
   return {
     memo: {
       id: "memo_1",
@@ -22,10 +25,10 @@ function memo(overrides: Partial<EnrichedMemoResult> = {}): EnrichedMemoResult {
       sourceMessageIds: ["msg_1"],
       authoredByKind: "user",
       createdAt: new Date("2026-05-15T10:00:00Z"),
+      latestSourceAt,
     } as unknown as EnrichedMemoResult["memo"],
     distance: 0.1,
     sourceStream: { id: "stream_1", type: "channel", name: "General" },
-    latestSourceAt: new Date("2026-07-01T10:00:00Z"),
     ...overrides,
   }
 }
@@ -58,7 +61,7 @@ describe("formatRetrievedContext", () => {
 
   test("a same-day message and memo stay ordered on the asker's clock, offset stated", () => {
     const text = formatRetrievedContext(
-      [memo({ latestSourceAt: new Date("2026-07-01T10:00:00Z") })],
+      [memo()],
       [message({ createdAt: new Date("2026-07-01T10:05:30Z") })],
       [],
       WORKSPACE,
@@ -117,16 +120,16 @@ describe("formatRetrievedContext", () => {
     expect(text).toContain("Link: /w/ws_1/memory?memo=memo_1")
   })
 
-  test("memos are dated by their newest source message, falling back to capture when none resolve", () => {
-    const text = formatRetrievedContext([memo(), memo({ latestSourceAt: null })], [], [], WORKSPACE)
+  test("memos are dated by their newest source message, and undated when none resolve", () => {
+    const text = formatRetrievedContext([memo(), memo({}, null)], [], [], WORKSPACE)
     expect(text).toEqual(
       expect.stringContaining(
         "Each memo is as of its newest source message. A message posted after that date that explicitly changes or reverses what the memo states overrides it. A question, proposal or passing remark does not.\n\n**Deploy runbook**"
       )
     )
-    expect(text?.match(/_, as of [^\n]+/g)).toEqual([
-      "_, as of 2026-07-01 10:00 UTC+0",
-      "_, as of 2026-05-15 10:00 UTC+0",
+    expect(text?.match(/^\*\*Deploy runbook\*\* _\([^\n]*$/gm)).toEqual([
+      "**Deploy runbook** _(memo:memo_1 from General stream:stream_1)_, as of 2026-07-01 10:00 UTC+0",
+      "**Deploy runbook** _(memo:memo_1 from General stream:stream_1)_",
     ])
   })
 

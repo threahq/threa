@@ -67,10 +67,10 @@ export class MemoClassifier {
         ? CLASSIFIER_EXISTING_MEMO_TEMPLATE.replace(
             "{{MEMOS}}",
             existingMemos
-              .map(
-                (m, i) =>
-                  `${i + 1}. ${m.title} (created ${formatDate(m.createdAt, tz, "YYYY-MM-DD")})\n   ${m.abstract}`
-              )
+              .map((m, i) => {
+                const asOf = m.latestSourceAt ? ` (as of ${formatDate(m.latestSourceAt, tz, "YYYY-MM-DD")})` : ""
+                return `${i + 1}. ${m.title}${asOf}\n   ${m.abstract}`
+              })
               .join("\n")
           )
         : ""

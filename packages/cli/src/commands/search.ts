@@ -24,8 +24,10 @@ export const searchCommand: CommandSpec = {
     "  --what w         messages | memos | attachments (required)\n" +
     "  --stream ref     limit to a source stream (stream_ id or #slug); repeatable\n" +
     "  --limit n        max results (messages/attachments <= 50, memos <= 100; default 20)\n" +
-    "  --before iso     only results before this ISO-8601 datetime (messages and memos only)\n" +
-    "  --after iso      only results after this ISO-8601 datetime (messages and memos only)\n" +
+    "  --before iso     only results before this ISO-8601 datetime (messages and memos only; memos by when\n" +
+    "                   their source messages were posted)\n" +
+    "  --after iso      only results after this ISO-8601 datetime (messages and memos only; memos by when\n" +
+    "                   their source messages were posted)\n" +
     "messages: --semantic  --exact  --type " +
     STREAM_TYPES.join("|") +
     " (repeatable)\n" +
@@ -128,7 +130,7 @@ function renderMemoResult(r: Record<string, unknown>): string {
   const header = joinFields([
     String(memo.id ?? "?"),
     typeof memo.knowledgeType === "string" ? memo.knowledgeType : undefined,
-    fmtTimestamp(memo.createdAt),
+    fmtTimestamp(memo.latestSourceAt),
     scopeLabel || undefined,
   ])
   const title = typeof memo.title === "string" ? memo.title : ""

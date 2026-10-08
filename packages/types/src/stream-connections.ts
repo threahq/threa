@@ -380,6 +380,9 @@ export const bridgeMemoSchema = z.object({
   cardVersion: z.number().int(),
   embedding: z.array(z.number()).min(1),
   createdAt: z.string().datetime(),
+  /** When the memo's source messages were posted; null from a host that predates the span. */
+  earliestSourceAt: z.string().datetime().nullable().default(null),
+  latestSourceAt: z.string().datetime().nullable().default(null),
 })
 export type BridgeMemo = z.infer<typeof bridgeMemoSchema>
 

@@ -32,6 +32,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Skeleton } from "@/components/ui/skeleton"
 import { MarkdownContent } from "@/components/ui/markdown-content"
 import { RelativeTime } from "@/components/relative-time"
+import { useFormattedDate } from "@/hooks"
+import { isSameDay } from "@/lib/dates"
 import { cn } from "@/lib/utils"
 import { buildMemoLink } from "@/lib/memo-url"
 import { streamFallbackLabel } from "@/lib/streams"
@@ -67,6 +69,27 @@ export function formatStreamRef(stream: MemoExplorerStreamRef | null): string | 
   }
 
   return streamFallbackLabel(stream.type as StreamType, "generic")
+}
+
+function MemoTimes({ memo }: { memo: MemoExplorerDetail["memo"] }) {
+  const { formatDate } = useFormattedDate()
+  const start = memo.earliestSourceAt ?? memo.latestSourceAt
+  const end = memo.latestSourceAt ?? memo.earliestSourceAt
+  let posted: string | null = null
+  if (start && end) {
+    const startDate = new Date(start)
+    const endDate = new Date(end)
+    posted = isSameDay(startDate, endDate) ? formatDate(endDate) : `${formatDate(startDate)} – ${formatDate(endDate)}`
+  }
+
+  return (
+    <p className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground tabular-nums">
+      {posted && <span>Posted {posted}</span>}
+      <span>
+        Captured <RelativeTime date={memo.createdAt} />
+      </span>
+    </p>
+  )
 }
 
 function buildSourceLink(workspaceId: string, streamId: string, messageId?: string): string {
@@ -391,7 +414,9 @@ export function MemoDetailContent({
             {data.memo.authoredByKind === "agent" && <AgentAuthoredBadge personaName={data.capturedByPersonaName} />}
             <span className="text-[11px] tabular-nums text-muted-foreground/50">v{data.memo.version}</span>
             <span className="text-muted-foreground/30">&middot;</span>
-            <RelativeTime date={data.memo.updatedAt} className="text-[11px] text-muted-foreground/50" />
+            <span className="text-[11px] text-muted-foreground/50">
+              Updated <RelativeTime date={data.memo.updatedAt} />
+            </span>
           </div>
 
           {!isEditing && (
@@ -522,6 +547,7 @@ export function MemoDetailContent({
       )}
 
       <DetailSection title="Provenance">
+        <MemoTimes memo={data.memo} />
         {data.memo.authoredByKind === "agent" && (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <Bot className="h-3.5 w-3.5 shrink-0" />

@@ -84,5 +84,7 @@ export function toMemo(m: { title: string; abstract: string; createdDaysAgo?: nu
     sourceStreamIds: null,
     requiresBrowse: false,
     archivedAt: null,
+    earliestSourceAt: null,
+    latestSourceAt: null,
   }
 }

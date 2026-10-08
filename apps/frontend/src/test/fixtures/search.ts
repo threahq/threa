@@ -74,6 +74,8 @@ export function createMockMemoResult(overrides: Partial<MemoExplorerResult["memo
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       archivedAt: null,
+      earliestSourceAt: "2025-12-31T09:00:00.000Z",
+      latestSourceAt: "2025-12-31T09:30:00.000Z",
       ...overrides,
     },
     distance: 0,

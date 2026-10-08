@@ -1048,6 +1048,10 @@ export interface Memo {
   createdAt: string
   updatedAt: string
   archivedAt: string | null
+  /** Post time of the oldest source message; null when none resolves. `createdAt` is when the memo was captured. */
+  earliestSourceAt: string | null
+  /** Post time of the newest source message; null when none resolves. */
+  latestSourceAt: string | null
 }
 
 /**

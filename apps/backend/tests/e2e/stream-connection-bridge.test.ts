@@ -735,6 +735,8 @@ describe("Stream connection bridge", () => {
             cardVersion: 1,
             embedding: MEMO_EMBEDDING.length,
             createdAt: expect.any(String),
+            earliestSourceAt: message.createdAt,
+            latestSourceAt: message.createdAt,
           },
         ],
       },

@@ -112,6 +112,7 @@ test("memos list browses via a query-less memo search and renders scope + title"
                   abstract: "Regions before control plane.",
                   knowledgeType: "procedure",
                   createdAt: "2026-07-19T12:02:00.000Z",
+                  latestSourceAt: "2026-07-18T09:00:00.000Z",
                 },
                 distance: 0,
                 sourceStream: { id: "stream_thread", type: "thread", name: "deploy plan" },
@@ -133,8 +134,39 @@ test("memos list browses via a query-less memo search and renders scope + title"
   const [header, abstract] = result.stdout.split("\n")
   expect(header).toContain("memo_1")
   expect(header).toContain("procedure")
+  expect(header).toMatch(TS_RE)
   expect(header).toContain("engineering › deploy plan")
   expect(abstract).toBe("  Deploy order — Regions before control plane.")
+})
+
+test("memo results show the source time, never the capture time, and nothing when it is unknown", async () => {
+  fetchSpy.mockImplementation(
+    workspaceFetch((path) =>
+      path.endsWith("/memos/search")
+        ? jsonResponse(200, {
+            data: [
+              {
+                memo: {
+                  id: "memo_1",
+                  title: "Deploy order",
+                  abstract: "Regions first.",
+                  knowledgeType: "procedure",
+                  createdAt: "2026-07-19T12:02:00.000Z",
+                  latestSourceAt: null,
+                },
+                distance: 0,
+                sourceStream: null,
+                rootStream: null,
+              },
+            ],
+          })
+        : undefined
+    )
+  )
+
+  const result = await run(["memos", "list"], { config: TEST_CONFIG })
+
+  expect(result.stdout.split("\n")[0]).not.toMatch(TS_RE)
 })
 
 test("memos recall posts the message and renders recalled memos", async () => {
@@ -150,6 +182,8 @@ test("memos recall posts the message and renders recalled memos", async () => {
                 knowledgeType: "procedure",
                 sourceMessageIds: ["msg_1"],
                 createdAt: "2026-07-19T12:02:00.000Z",
+                earliestSourceAt: "2026-07-17T08:00:00.000Z",
+                latestSourceAt: "2026-07-18T09:00:00.000Z",
                 score: 0.9,
               },
             ],

@@ -54,10 +54,12 @@ export function MemoResultItem({
           <h3 className="min-w-0 flex-1 text-[13px] font-semibold leading-snug text-foreground line-clamp-2">
             {memo.title}
           </h3>
-          <RelativeTime
-            date={memo.updatedAt}
-            className="mt-0.5 shrink-0 text-[10px] tabular-nums text-muted-foreground/70"
-          />
+          {memo.latestSourceAt && (
+            <RelativeTime
+              date={memo.latestSourceAt}
+              className="mt-0.5 shrink-0 text-[10px] tabular-nums text-muted-foreground/70"
+            />
+          )}
         </div>
 
         <p

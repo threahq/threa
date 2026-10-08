@@ -145,7 +145,7 @@
         "operationId": "searchMemos",
         "summary": "Search memos",
         "tags": ["Memos"],
-        "description": "Search preserved workspace memos with semantic, exact, or recent-first retrieval.",
+        "description": "Search preserved workspace memos with semantic, exact, or recent-first retrieval. `before` and `after` filter by when the source messages were posted, not when the memo was captured.",
         "security": [{ "apiKey": ["memos:read"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -233,6 +233,12 @@
                               "updatedAt": { "type": "string", "format": "date-time" },
                               "archivedAt": {
                                 "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+                              },
+                              "earliestSourceAt": {
+                                "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+                              },
+                              "latestSourceAt": {
+                                "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
                               }
                             },
                             "required": [
@@ -258,7 +264,9 @@
                               "scopeUserId",
                               "createdAt",
                               "updatedAt",
-                              "archivedAt"
+                              "archivedAt",
+                              "earliestSourceAt",
+                              "latestSourceAt"
                             ],
                             "additionalProperties": false
                           },
@@ -389,6 +397,12 @@
                           },
                           "sourceMessageIds": { "type": "array", "items": { "type": "string" } },
                           "createdAt": { "type": "string", "format": "date-time" },
+                          "earliestSourceAt": {
+                            "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+                          },
+                          "latestSourceAt": {
+                            "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+                          },
                           "score": { "type": "number" }
                         },
                         "required": [
@@ -398,6 +412,8 @@
                           "knowledgeType",
                           "sourceMessageIds",
                           "createdAt",
+                          "earliestSourceAt",
+                          "latestSourceAt",
                           "score"
                         ],
                         "additionalProperties": false
@@ -508,7 +524,15 @@
                             "scopeUserId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
                             "createdAt": { "type": "string", "format": "date-time" },
                             "updatedAt": { "type": "string", "format": "date-time" },
-                            "archivedAt": { "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }] }
+                            "archivedAt": {
+                              "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+                            },
+                            "earliestSourceAt": {
+                              "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+                            },
+                            "latestSourceAt": {
+                              "anyOf": [{ "type": "string", "format": "date-time" }, { "type": "null" }]
+                            }
                           },
                           "required": [
                             "id",
@@ -533,7 +557,9 @@
                             "scopeUserId",
                             "createdAt",
                             "updatedAt",
-                            "archivedAt"
+                            "archivedAt",
+                            "earliestSourceAt",
+                            "latestSourceAt"
                           ],
                           "additionalProperties": false
                         },

@@ -2,6 +2,7 @@ import { MemoryRouter } from "react-router-dom"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { render, screen, userEvent, waitFor, spyOnExport } from "@/test"
 import * as relativeTimeModule from "@/components/relative-time"
+import * as contextsModule from "@/contexts"
 import { MemoDetailContent, type MemoEditControls } from "./memo-detail"
 import type { MemoExplorerDetail } from "@/api"
 
@@ -32,6 +33,8 @@ function buildDetail(overrides: Partial<MemoExplorerDetail["memo"]> = {}): MemoE
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       archivedAt: null,
+      earliestSourceAt: "2025-12-31T09:00:00.000Z",
+      latestSourceAt: "2025-12-31T09:30:00.000Z",
       ...overrides,
     },
     distance: 0,
@@ -52,6 +55,10 @@ function buildControls(overrides: Partial<MemoEditControls> = {}): MemoEditContr
     ...overrides,
   }
 }
+
+beforeEach(() => {
+  vi.spyOn(contextsModule, "usePreferences").mockReturnValue({ preferences: undefined } as never)
+})
 
 function renderDetail(ui: React.ReactElement) {
   return render(<MemoryRouter>{ui}</MemoryRouter>)
@@ -232,5 +239,34 @@ describe("MemoDetailContent — user scope (roadmap 6.4)", () => {
     )
     expect(screen.queryByText(/about you/i)).not.toBeInTheDocument()
     expect(screen.queryByRole("button", { name: /delete/i })).not.toBeInTheDocument()
+  })
+})
+
+describe("MemoDetailContent times", () => {
+  const local = (day: number, hour: number) => new Date(2026, 2, day, hour).toISOString()
+
+  function renderTimes(overrides: Partial<MemoExplorerDetail["memo"]>) {
+    renderDetail(<MemoDetailContent data={buildDetail(overrides)} workspaceId="ws_1" isLoading={false} />)
+  }
+
+  it("shows a range when the sources span days", () => {
+    renderTimes({ earliestSourceAt: local(10, 12), latestSourceAt: local(12, 12) })
+    expect(screen.getByText("Posted 2026-03-10 – 2026-03-12")).toBeInTheDocument()
+  })
+
+  it("shows one date when the sources share a day", () => {
+    renderTimes({ earliestSourceAt: local(10, 1), latestSourceAt: local(10, 23) })
+    expect(screen.getByText("Posted 2026-03-10")).toBeInTheDocument()
+  })
+
+  it("shows one date when only one end is known", () => {
+    renderTimes({ earliestSourceAt: null, latestSourceAt: local(12, 12) })
+    expect(screen.getByText("Posted 2026-03-12")).toBeInTheDocument()
+  })
+
+  it("omits the posted time when no source resolves, keeping the capture time", () => {
+    renderTimes({ earliestSourceAt: null, latestSourceAt: null })
+    expect(screen.queryByText(/^Posted/)).not.toBeInTheDocument()
+    expect(screen.getByText(/^Captured/)).toBeInTheDocument()
   })
 })
