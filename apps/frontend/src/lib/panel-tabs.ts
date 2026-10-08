@@ -29,9 +29,9 @@ export interface PanelLayout {
 export type SplitDirection = "right" | "down"
 
 export const PANEL_PARAM = "panel"
-const TAB_SEPARATOR = "."
-const SECTION_SEPARATOR = "-"
-const ACTIVE_MARK = "*"
+export const TAB_SEPARATOR = "."
+export const SECTION_SEPARATOR = "-"
+export const ACTIVE_MARK = "*"
 const FOCUS_MARK = "**"
 
 export const NO_PANELS: PanelLayout = { columns: [] }
