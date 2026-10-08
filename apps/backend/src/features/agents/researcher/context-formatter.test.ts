@@ -64,10 +64,51 @@ describe("formatRetrievedContext", () => {
       WORKSPACE,
       "Europe/Stockholm"
     )
-    expect([text?.match(/_, as of [^\n]+/)?.[0], text?.match(/in _General_ \([^)]+\)/)?.[0]]).toEqual([
+    expect([text?.match(/_, as of [^\n]+/)?.[0], text?.match(/\*\* \(([^)]+)\):/)?.[1]]).toEqual([
       "_, as of 2026-07-01 12:00 UTC+2",
-      "in _General_ (2026-07-01 12:05 UTC+2)",
+      "2026-07-01 12:05 UTC+2",
     ])
+  })
+
+  test("messages group by conversation: the room first, a thread under its channel with its opening post on top", () => {
+    const text = formatRetrievedContext(
+      [],
+      [
+        message({
+          id: "msg_reply",
+          streamId: "stream_thread",
+          streamName: "thread",
+          content: "Signed off",
+          thread: { channelName: "Launch", title: null, rootMessageId: "msg_root" },
+        }),
+        message({ id: "msg_other", streamId: "stream_other", streamName: "Random", content: "Unrelated" }),
+        message({
+          id: "msg_root",
+          streamId: "stream_launch",
+          streamName: "Launch",
+          content: "Checklist",
+          createdAt: new Date("2026-06-30T09:00:00Z"),
+        }),
+        message({
+          id: "msg_room",
+          streamId: "stream_room",
+          streamName: "Ops",
+          content: "Room note",
+          inCurrentRoom: true,
+        }),
+      ],
+      [],
+      WORKSPACE
+    )
+    expect({
+      headers: [...(text ?? "").matchAll(/^#### .+$/gm)].map((m) => m[0]),
+      threadOrder: [...(text ?? "").matchAll(/^> (?:\[[^\]]+\] )?(.+)$/gm)]
+        .map((m) => m[1])
+        .filter((line) => line === "Checklist" || line === "Signed off" || line.includes("started the thread")),
+    }).toEqual({
+      headers: ["#### _Ops_ (the room this question was asked in)", "#### Thread in _Launch_", "#### _Random_"],
+      threadOrder: [expect.stringContaining("started the thread"), "Checklist", "Signed off"],
+    })
   })
 
   test("memos link into the memory explorer", () => {

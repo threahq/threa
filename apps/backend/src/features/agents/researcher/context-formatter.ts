@@ -1,9 +1,9 @@
-import type { AuthorType } from "@threahq/types"
+import { StreamTypes, type AuthorType } from "@threahq/types"
 import type { Querier } from "../../../db"
 import { formatInstant } from "../../../lib/temporal"
 import { formatAttachWithStreamTag, formatMemoTag, formatMsgRefToken, formatRetrievedMessageTag } from "../pointer-tags"
 import { UserRepository } from "../../workspaces"
-import { StreamRepository } from "../../streams"
+import { StreamRepository, type Stream } from "../../streams"
 import type { Memo } from "../../memos"
 import { PersonaRepository } from "../persona-repository"
 import { workspaceMemoUrl, workspaceMessageUrl, workspaceStreamUrl } from "../workspace-links"
@@ -38,6 +38,10 @@ export interface EnrichedMessageResult {
   quoteContext?: string
   /** Every stream a quote expansion reached in this batch. */
   quoteStreamIds?: string[]
+  /** Set when the message is a thread reply: the channel the thread hangs off and the post that opened it. */
+  thread?: { channelName: string; title: string | null; rootMessageId: string | null }
+  /** Posted in the room the research was asked from: its root stream or one of that root's threads. */
+  inCurrentRoom?: boolean
 }
 
 export interface EnrichedAttachmentResult {
@@ -111,30 +115,89 @@ ${memoEntries}
 `
 }
 
-function formatMessagesSection(messages: EnrichedMessageResult[], workspaceId: string, timezone: string): string {
-  const messageEntries = messages
-    .map((msg) => {
-      const postedAt = formatInstant(msg.createdAt, timezone)
-      const author = msg.authorType === "user" ? `@${msg.authorName}` : msg.authorName
-      const content = msg.content.replace(/\s+/g, " ").trim()
-      const quoteBlock = msg.quoteContext ? `\n${msg.quoteContext}` : ""
-      // Surface ids needed for `shared-message:` / `quote:` pointer URLs.
-      // The pointer formats are taught in the "Referring to messages and
-      // attachments" prompt section; this header gives the agent the
-      // matching `[msg:… stream:… author:… type:…]` ids without a follow-
-      // up tool call. The link is copyable as-is — no id reconstruction.
-      const idTag = formatRetrievedMessageTag(msg.id, msg.streamId, msg.authorId, msg.authorType)
-      const link = workspaceMessageUrl(workspaceId, msg.streamId, msg.id)
+interface MessageGroup {
+  header: string
+  inCurrentRoom: boolean
+  rootMessageId: string | null
+  messages: EnrichedMessageResult[]
+}
 
-      return `> ${idTag} **${author}** in _${msg.streamName}_ (${postedAt}):
+/**
+ * Groups hits by the conversation they belong to: a thread's root post opens its thread's group instead of sitting
+ * among the channel's other hits, and the current room's groups come first.
+ */
+function groupMessages(messages: EnrichedMessageResult[]): MessageGroup[] {
+  const threadByRootMessageId = new Map<string, string>()
+  for (const msg of messages) {
+    if (msg.thread?.rootMessageId) threadByRootMessageId.set(msg.thread.rootMessageId, msg.streamId)
+  }
+
+  const groups = new Map<string, MessageGroup>()
+  for (const msg of messages) {
+    const key = threadByRootMessageId.get(msg.id) ?? msg.streamId
+    let group = groups.get(key)
+    if (!group) {
+      const threadMsg = key === msg.streamId ? msg : messages.find((m) => m.streamId === key)!
+      group = {
+        header: threadMsg.thread
+          ? `Thread in _${threadMsg.thread.channelName}_${threadMsg.thread.title ? `: ${threadMsg.thread.title}` : ""}`
+          : `_${msg.streamName}_`,
+        inCurrentRoom: false,
+        rootMessageId: threadMsg.thread?.rootMessageId ?? null,
+        messages: [],
+      }
+      groups.set(key, group)
+    }
+    group.inCurrentRoom ||= msg.inCurrentRoom === true
+    group.messages.push(msg)
+  }
+
+  const ordered = [...groups.values()]
+  for (const group of ordered) {
+    group.messages.sort(
+      (a, b) =>
+        Number(b.id === group.rootMessageId) - Number(a.id === group.rootMessageId) ||
+        a.createdAt.getTime() - b.createdAt.getTime()
+    )
+  }
+  return [...ordered.filter((g) => g.inCurrentRoom), ...ordered.filter((g) => !g.inCurrentRoom)]
+}
+
+function formatMessagesSection(messages: EnrichedMessageResult[], workspaceId: string, timezone: string): string {
+  const groupEntries = groupMessages(messages)
+    .map((group) => {
+      const entries = group.messages
+        .map((msg) => {
+          const postedAt = formatInstant(msg.createdAt, timezone)
+          const author = msg.authorType === "user" ? `@${msg.authorName}` : msg.authorName
+          const action = msg.id === group.rootMessageId ? " started the thread" : ""
+          const content = msg.content.replace(/\s+/g, " ").trim()
+          const quoteBlock = msg.quoteContext ? `\n${msg.quoteContext}` : ""
+          // Surface ids needed for `shared-message:` / `quote:` pointer URLs.
+          // The pointer formats are taught in the "Referring to messages and
+          // attachments" prompt section; this header gives the agent the
+          // matching `[msg:… stream:… author:… type:…]` ids without a follow-
+          // up tool call. The link is copyable as-is — no id reconstruction.
+          const idTag = formatRetrievedMessageTag(msg.id, msg.streamId, msg.authorId, msg.authorType)
+          const link = workspaceMessageUrl(workspaceId, msg.streamId, msg.id)
+
+          return `> ${idTag} **${author}**${action} (${postedAt}):
 > ${content}${quoteBlock}
 > Link: ${link}`
+        })
+        .join("\n\n")
+      const here = group.inCurrentRoom ? " (the room this question was asked in)" : ""
+      return `#### ${group.header}${here}
+
+${entries}`
     })
     .join("\n\n")
 
   return `### Related Messages
 
-${messageEntries}
+Grouped by the conversation they were posted in, oldest first within each.
+
+${groupEntries}
 
 `
 }
@@ -206,6 +269,15 @@ export async function enrichMessageSearchResults(
   const memberMap = new Map(members.map((m) => [m.id, m]))
   const personaMap = new Map(personas.map((p) => [p.id, p]))
   const streamMap = new Map(streams.map((s) => [s.id, s]))
+  const missingChannelIds = [
+    ...new Set(streams.flatMap((s) => (s.rootStreamId && !streamMap.has(s.rootStreamId) ? [s.rootStreamId] : []))),
+  ]
+  if (missingChannelIds.length > 0) {
+    for (const channel of await StreamRepository.findByIds(db, workspaceId, missingChannelIds)) {
+      streamMap.set(channel.id, channel)
+    }
+  }
+  const streamName = (stream: Stream | undefined) => stream?.displayName ?? stream?.slug ?? stream?.type ?? "Unknown"
 
   return results.map((r) => {
     const authorName =
@@ -214,7 +286,7 @@ export async function enrichMessageSearchResults(
         : (personaMap.get(r.authorId)?.name ?? "Assistant")
 
     const stream = streamMap.get(r.streamId)
-    const streamName = stream?.displayName ?? stream?.slug ?? stream?.type ?? "Unknown"
+    const channel = stream?.rootStreamId ? streamMap.get(stream.rootStreamId) : undefined
 
     return {
       id: r.id,
@@ -223,9 +295,18 @@ export async function enrichMessageSearchResults(
       authorId: r.authorId,
       authorType: r.authorType,
       authorName,
-      streamName,
+      streamName: streamName(stream),
       streamType: stream?.type ?? "unknown",
       createdAt: r.createdAt,
+      ...(stream?.type === StreamTypes.THREAD
+        ? {
+            thread: {
+              channelName: streamName(channel),
+              title: stream.displayName,
+              rootMessageId: stream.parentAnchorId,
+            },
+          }
+        : {}),
     }
   })
 }
