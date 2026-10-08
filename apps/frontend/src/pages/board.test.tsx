@@ -18,7 +18,8 @@ import * as userProfileModule from "@/components/user-profile"
 import * as contextsModule from "@/contexts"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
 import * as pointerModule from "@/hooks/use-pointer"
-import * as panelHostModule from "@/components/layout/panel-host"
+import * as threadModule from "@/components/thread"
+import { spyOnExport } from "@/test"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
 import { db } from "@/db"
 import { __resetConversationMessageSnapshots, seedConversationMessages } from "@/stores/conversation-messages-store"
@@ -560,19 +561,20 @@ describe("BoardPage", () => {
     expect(await screen.findByRole("link", { name: "Pierre" })).toBeTruthy()
   })
 
-  it("keeps the board column mounted, hidden and inert behind a fullscreen mobile panel", async () => {
+  it("a phone stacks an opened pane over the board, which stays mounted", async () => {
     vi.spyOn(pointerModule, "useIsMobileOrCoarse").mockReturnValue(true)
     // The panel's own content is covered by its own suites and needs providers
     // this harness doesn't mount; what's under test here is what happens to the
-    // board column beside it.
-    vi.spyOn(panelHostModule, "PanelHost").mockImplementation(() => createElement("div", null, "panel content"))
+    // board under it.
+    spyOnExport(threadModule, "StreamPanel").mockReturnValue((() =>
+      createElement("div", null, "panel content")) as never)
     mountBoard([makePost({}, { contentMarkdown: "Rotate the tokens before Friday." })], {
       entry: `/w/${WORKSPACE_ID}/board?lens=all&panel=stream_panel`,
     })
 
     expect(await screen.findByText("panel content")).toBeTruthy()
-    // Unmounting the column destroys the scroller's box along with its offset, so
-    // closing the panel would re-enter the virtualized feed at the top.
+    // Unmounting the board destroys the scroller's box along with its offset, so
+    // going back to it would re-enter the virtualized feed at the top.
     const body = await screen.findByText("Rotate the tokens before Friday.")
     const hidden = body.closest("[inert]")
     expect(hidden).not.toBeNull()

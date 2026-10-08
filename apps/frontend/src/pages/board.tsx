@@ -3,13 +3,11 @@ import type { VirtualizerHandle } from "virtua"
 import { AlertCircle, LayoutGrid, PenLine } from "lucide-react"
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { ThreadPanelSlot, panelTakeoverClasses } from "@/components/layout"
-import { AsideSlot, useAsideHost, useAsideIsSheet } from "@/components/aside"
-import { asidePaneOf, useAsideForHost } from "@/stores/aside-store"
-import { PaneDrawer, PanelHost } from "@/components/layout/panel-host"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
-import { presentsAsDrawer, usePanel, usePreferencesOptional, useSidebar } from "@/contexts"
-import { usePanelLayout, useTypeToFocus } from "@/hooks"
+import { PhonePaneSwitcher, usePhoneHeaderSwipe } from "@/components/panes"
+import { PagePanes } from "@/components/panes/page-panes"
+import { usePreferencesOptional } from "@/contexts"
+import { useTypeToFocus } from "@/hooks"
 import { resolveStreamName } from "@/lib/streams"
 import { localStartOfDayMs } from "@/lib/dates"
 import {
@@ -202,20 +200,6 @@ export function BoardPage() {
 
 function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: BoardLens }) {
   useTypeToFocus()
-  const asideHostKey = useAsideHost()
-  const asideIsSheet = useAsideIsSheet()
-  const asideOpen = useAsideForHost(asideHostKey)
-  // The stage covers this row; what stays mounted behind it must leave the tab
-  // order, or focus walks into content nobody can see.
-  const asideStage = !asideIsSheet && asideOpen !== null
-  const { isMobile } = useSidebar()
-  const { panelId, layout: panes, closePanel } = usePanel()
-  // A drawer opens over the board, its panel slot closed.
-  const isPanelOpen = panelId !== null && !presentsAsDrawer(panelId)
-  // A thread the aside's surface holds (the stage's host pane, or the phone's
-  // sheet) is mounted there and nowhere else: not in the slot, not as the
-  // phone's takeover behind the sheet.
-  const panelInAside = asideOpen !== null && asidePaneOf(panes, asideOpen.hostStreamId, false) !== null
   // The board's filters live in the URL (INV-59) — six params, three dimensions
   // × include/exclude, parsed here and rewritten by the filter bar's toggles.
   // Id lists are deduped and capped at the shared server limits so a hand-built
@@ -427,21 +411,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       archivedRootIds,
     ]
   )
-  const containerRef = useRef<HTMLDivElement>(null)
-  const {
-    panelWidth,
-    maxWidth,
-    minWidth,
-    displayWidth,
-    shouldAnimate,
-    isResizing,
-    showContent,
-    handleResizeStart,
-    handleResizeMove,
-    handleResizeEnd,
-    handleResizeKeyDown,
-    handleTransitionEnd,
-  } = usePanelLayout(isPanelOpen, { containerRef })
 
   // The query is the fetch/seed engine; the board reads reactively from IDB. The
   // stable-view projection holds the order the viewer is looking at frozen and
@@ -927,11 +896,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
 
   const boardColumn = (
     <div className="flex h-full flex-col">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
-        <SidebarToggle location="page" />
-        <LayoutGrid className="h-5 w-5 shrink-0 text-muted-foreground" />
-        <h1 className="truncate font-semibold">Board</h1>
-      </header>
+      <BoardHeader workspaceId={workspaceId} />
       <span className="sr-only" role="status" aria-live="polite">
         {newCount > 0 ? `${newCount} ${newCount === 1 ? "update" : "updates"} available` : ""}
       </span>
@@ -1005,47 +970,17 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     </div>
   )
 
-  // Mobile: an open conversation panel takes over the full screen (mirrors the
-  // stream page), so the narrow board feed isn't crushed beside it. The column
-  // stays mounted behind it, and must keep its position in this tree to do so —
-  // see `panelTakeoverClasses`.
-  const mobileTakeover = isMobile && isPanelOpen && !panelInAside
-  const layout = panelTakeoverClasses(mobileTakeover)
+  return <PagePanes workspaceId={workspaceId} page={boardColumn} />
+}
 
+/** The board's pane header: always first of a phone's panes, so it keeps the sidebar toggle. */
+function BoardHeader({ workspaceId }: { workspaceId: string }) {
   return (
-    <div ref={containerRef} className={layout.container}>
-      <div className={layout.main} inert={layout.mainInert || asideStage || undefined}>
-        {boardColumn}
-      </div>
-      {mobileTakeover ? (
-        <div className={layout.panel}>
-          <PanelHost workspaceId={workspaceId} onClose={closePanel} />
-        </div>
-      ) : (
-        <ThreadPanelSlot
-          displayWidth={displayWidth}
-          panelWidth={panelWidth}
-          shouldAnimate={shouldAnimate}
-          // The stage mounts the panel in its host pane; the slot keeps its
-          // width lifecycle but shows nothing under the overlay.
-          showContent={showContent && !asideStage && !panelInAside}
-          isResizing={isResizing}
-          maxWidth={maxWidth}
-          minWidth={minWidth}
-          onTransitionEnd={handleTransitionEnd}
-          onResizeStart={handleResizeStart}
-          onResizeMove={handleResizeMove}
-          onResizeEnd={handleResizeEnd}
-          onResizeKeyDown={handleResizeKeyDown}
-          inert={asideStage}
-        >
-          <PanelHost workspaceId={workspaceId} onClose={closePanel} />
-        </ThreadPanelSlot>
-      )}
-      <AsideSlot workspaceId={workspaceId} hostKey={asideHostKey} />
-      {!(asideIsSheet && asideOpen !== null) && (
-        <PaneDrawer workspaceId={workspaceId} page={isPanelOpen ? panelId : null} />
-      )}
-    </div>
+    <header className="relative flex h-12 shrink-0 items-center gap-2 border-b px-4" {...usePhoneHeaderSwipe()}>
+      <SidebarToggle location="page" />
+      <LayoutGrid className="h-5 w-5 shrink-0 text-muted-foreground" />
+      <h1 className="min-w-0 flex-1 truncate font-semibold">Board</h1>
+      <PhonePaneSwitcher workspaceId={workspaceId} />
+    </header>
   )
 }

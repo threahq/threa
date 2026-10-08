@@ -7,7 +7,7 @@ import {
   ASIDE_STAGE_DEFAULT_WIDTH,
   asideOpenDraft,
   asidePendingAgentBlocksForTest,
-  asideStageWidth,
+  asideColumnWidth,
   closeAside,
   dropAsideForHost,
   getAsideSheetDetent,
@@ -18,7 +18,7 @@ import {
   resetAsideStoreCache,
   setAsideOpenDraft,
   setAsideSheetDetent,
-  setAsideStageWidth,
+  setAsideColumnWidth,
   useAsideForHost,
 } from "./aside-store"
 
@@ -53,14 +53,14 @@ describe("aside-store", () => {
     expect(getAsideState()).toBeNull()
   })
 
-  it("should keep the dragged stage width for this aside, and hand every other one the default", () => {
+  it("should keep the dragged column width for this aside, and hand every other one the default", () => {
     openAside(open)
-    setAsideStageWidth(open.asideId, 780)
+    setAsideColumnWidth(open.asideId, 780)
 
     closeAside()
     expect(getAsideState()).toBeNull()
-    expect(asideStageWidth(open.asideId)).toBe(780)
-    expect(asideStageWidth("stream_never")).toBe(ASIDE_STAGE_DEFAULT_WIDTH)
+    expect(asideColumnWidth(open.asideId)).toBe(780)
+    expect(asideColumnWidth("stream_never")).toBe(ASIDE_STAGE_DEFAULT_WIDTH)
   })
 
   it("should open a sheet at the peek, whatever the last one was pulled to", () => {
@@ -74,7 +74,7 @@ describe("aside-store", () => {
   })
 
   it("should hold the open draft for the aside, not for whichever surface is showing it", () => {
-    // The stage and the phone sheet are different components: anything a
+    // The column and the phone sheet are different components: anything a
     // surface owned outright would be destroyed crossing between them.
     openAside(open)
     setAsideOpenDraft(open.asideId, "aside:stream_aside:draft_1")
@@ -107,11 +107,11 @@ describe("aside-store", () => {
 
   it("should forget everything on an account switch", () => {
     openAside(open)
-    setAsideStageWidth(open.asideId, 780)
+    setAsideColumnWidth(open.asideId, 780)
     setAsideOpenDraft(open.asideId, "aside:stream_aside:draft_1")
     resetAsideStoreCache()
     expect(getAsideState()).toBeNull()
-    expect(asideStageWidth(open.asideId)).toBe(ASIDE_STAGE_DEFAULT_WIDTH)
+    expect(asideColumnWidth(open.asideId)).toBe(ASIDE_STAGE_DEFAULT_WIDTH)
     expect(asideOpenDraft(open.asideId)).toBeNull()
   })
 
