@@ -237,3 +237,51 @@ test("should keep each pane's title at 900px with a thread open, folding the str
   await page.getByRole("menuitem", { name: /In this stream/ }).click()
   await expect(page.getByRole("region", { name: "In this stream" })).toBeVisible()
 })
+
+test("should give every tabbed pane header one actions menu, the strip's or the pane's own", async ({ page }) => {
+  test.setTimeout(240_000)
+  const { workspaceId, streamId, threads } = await seedThreads(page, 2)
+  const conversations: string[] = []
+  for (const topic of ["first topic", "second topic"]) {
+    const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+      data: { streamId, content: topic, conversation: { intent: "new" } },
+    })
+    await expectApiOk(response, `post ${topic}`)
+    conversations.push(((await response.json()) as { conversationId: string }).conversationId)
+  }
+  const draftParent = await post(page, workspaceId, streamId, "parent of a draft thread")
+  const [conversationA, conversationB] = conversations
+
+  const layouts = [
+    `board?panel=conv:${conversationA}.conv:${conversationB}*`,
+    `board?panel=${threads[0]}.${threads[1]}*`,
+    `s/${streamId}?panel=${threads[0]}.conv:${conversationA}*`,
+    `s/${streamId}?panel=${threads[0]}.context:${streamId}*`,
+    `s/${streamId}?panel=${threads[0]}.draft:${streamId}:${draftParent}*`,
+    `s/${streamId}?panel=${threads[0]}.compose:${streamId}*`,
+    `s/${streamId}?panel=${threads[0]}.convs:${streamId}*`,
+  ]
+  for (const layout of layouts) {
+    await page.goto(`/w/${workspaceId}/${layout}`, { waitUntil: "commit" })
+    const tabbedHeader = page.locator("header", { has: page.getByRole("button", { name: "Close tab" }) })
+    await expect(tabbedHeader.getByRole("button", { name: "Focus pane" })).toBeVisible({ timeout: 30_000 })
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() =>
+            [...document.querySelectorAll("header")]
+              .filter((header) => header.checkVisibility())
+              .map(
+                (header) =>
+                  [...header.querySelectorAll("button")].filter(
+                    (button) => button.checkVisibility() && button.querySelector("svg.lucide-ellipsis") !== null
+                  ).length
+              )
+              .reduce((most, count) => Math.max(most, count), 0)
+          ),
+        { message: layout }
+      )
+      .toBe(1)
+    await expect(tabbedHeader.getByRole("button", { name: /^(Tab|Stream|Conversation) actions$/ })).toHaveCount(1)
+  }
+})
