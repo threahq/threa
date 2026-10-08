@@ -72,6 +72,28 @@ test("should open two cards as two tabs beside the board and land on the bare bo
   await expect(board(page)).toBeVisible()
 })
 
+test("should move keyboard focus onto the board and leave it unfloatable when the pane shortcuts reach it", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  const { workspaceId } = await seedConversations(page, 1)
+  await page.goto(`/w/${workspaceId}/board?lens=all`)
+  await expect(openers(page)).toHaveCount(1, { timeout: 30_000 })
+  await openers(page).first().click()
+  await expect.poll(() => panelParam(page)).toMatch(/^conv:[^.]+$/)
+  const opened = panelParam(page)
+  const pane = page.locator(`[data-panel-tab="${opened}"]`)
+  await pane.getByRole("textbox").first().click()
+
+  await page.keyboard.press("Alt+,")
+  await expect(page.locator("[data-board-scroll-viewport]")).toBeFocused()
+
+  await page.keyboard.press("Alt+Enter")
+  await page.keyboard.press("Alt+.")
+  await expect(pane.locator("[contenteditable=true]").first()).toBeFocused()
+  expect(panelParam(page)).toBe(opened)
+})
+
 test("should show no tab for the board named in the URL", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 })
   const { workspaceId } = await seedConversations(page, 1)
@@ -98,7 +120,11 @@ test.describe("on a phone", () => {
     await expect.poll(() => boardScrollTop(page)).toBeGreaterThan(0)
     const scrolled = await boardScrollTop(page)
 
-    await openers(page).locator("visible=true").first().click()
+    // A DOM click: Playwright's own would first scroll a clipped opener into view and move the board.
+    await openers(page)
+      .locator("visible=true")
+      .first()
+      .evaluate((el: HTMLElement) => el.click())
     await expect.poll(() => panelParam(page)).toMatch(/^conv:[^.]+$/)
     const pane = page.getByTestId("panel")
     await expect(pane).toBeVisible()

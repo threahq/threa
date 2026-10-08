@@ -4,6 +4,7 @@ import { usePanel, useCurrentPane, usePaneFocusLanding, usePaneShortcutQueue } f
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { findVisibleZoneEditor, focusAtEnd } from "@/hooks/use-type-to-focus"
 import { activatePanelTab, closePanelTab, followCurrentPanel } from "@/lib/panel-tabs"
+import { isPagePane } from "@/lib/stream-ids"
 import { closeAside } from "@/stores/aside-store"
 
 type PaneAction =
@@ -102,7 +103,7 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly string[] 
     nextPane: layout.focused === undefined && panes.length > 1,
     previousPane: layout.focused === undefined && panes.length > 1,
     // Only a pane beside others can float; whatever floats can always go back.
-    togglePaneFocus: panes.length > 1 && (layout.focused !== undefined || panelId !== null),
+    togglePaneFocus: panes.length > 1 && (layout.focused !== undefined || (panelId !== null && !isPagePane(panelId))),
   }
 
   // The router commits a navigation in a transition, so the URL can be a step
@@ -172,7 +173,8 @@ function findPane(paneId: string): HTMLElement | null {
 
 /**
  * Focus the pane's composer once the pane has come out from under the one it
- * was behind, or its tab on show when it has no composer. A later landing, or
+ * was behind, or its tab on show (a page pane: its `data-pane-landing`) when it
+ * has no composer. A later landing, or
  * the user moving focus first, calls it off.
  */
 function landFocus(landing: MutableRefObject<number>, paneId: string | null) {
@@ -192,7 +194,7 @@ function landFocus(landing: MutableRefObject<number>, paneId: string | null) {
       return
     }
     if (uncovered && ++uncoveredFrames >= EDITOR_WAIT_FRAMES) {
-      pane.querySelector<HTMLElement>('[aria-current="page"]')?.focus()
+      pane.querySelector<HTMLElement>('[aria-current="page"],[data-pane-landing]')?.focus()
       return
     }
     if (performance.now() < deadline) requestAnimationFrame(attempt)
