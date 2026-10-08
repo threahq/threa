@@ -100,7 +100,8 @@ export function SidebarQuickJumpProvider({ workspaceId, order, children }: Sideb
       if (slot !== null) {
         // The frozen order when held; the live one when the digit beat the hold.
         const streamId = (heldOrderRef.current ?? orderRef.current)[slot - 1]
-        if (!streamId) return
+        // A synced binding from a browser tab can claim the digit without clearing quick jump.
+        if (!streamId || event.defaultPrevented) return
         event.preventDefault()
         disarm()
         navigate(`/w/${workspaceId}/s/${streamId}`)

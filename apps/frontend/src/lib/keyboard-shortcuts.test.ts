@@ -22,6 +22,14 @@ import {
   getShortcutsByCategory,
 } from "./keyboard-shortcuts"
 
+beforeEach(() => {
+  vi.spyOn(deviceModule, "isStandaloneApp").mockReturnValue(true)
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
 describe("toggleSidebar shortcut", () => {
   it("is registered as a view-category action with mod+§ default", () => {
     const action = getShortcutAction("toggleSidebar")
@@ -261,14 +269,6 @@ describe("resolveShortcutBindingUpdate", () => {
 })
 
 describe("sidebarQuickJump shortcut", () => {
-  beforeEach(() => {
-    vi.spyOn(deviceModule, "isStandaloneApp").mockReturnValue(true)
-  })
-
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
   it("is registered once as a global navigation action defaulting to mod+1", () => {
     const action = getShortcutAction(QUICK_JUMP_ACTION_ID)
     expect(action).toMatchObject({ defaultKey: "mod+1", category: "navigation", global: true })
@@ -292,9 +292,11 @@ describe("sidebarQuickJump shortcut", () => {
   it("does not exist in a browser tab, where Cmd/Ctrl+digit switches tabs", () => {
     vi.spyOn(deviceModule, "isStandaloneApp").mockReturnValue(false)
 
-    expect(getEffectiveKeyBinding(QUICK_JUMP_ACTION_ID, { [QUICK_JUMP_ACTION_ID]: "mod+alt+1" })).toBeUndefined()
-    expect(getShortcutsByCategory().navigation.map((a) => a.id)).not.toContain(QUICK_JUMP_ACTION_ID)
-    expect(detectConflicts({ toggleSidebar: "mod+2" })).toEqual(new Map())
+    expect({
+      binding: getEffectiveKeyBinding(QUICK_JUMP_ACTION_ID, { [QUICK_JUMP_ACTION_ID]: "mod+alt+1" }),
+      listed: getShortcutsByCategory().navigation.some((a) => a.id === QUICK_JUMP_ACTION_ID),
+      conflicts: detectConflicts({ toggleSidebar: "mod+2" }),
+    }).toEqual({ binding: undefined, listed: false, conflicts: new Map() })
   })
 
   it("expands only quick jump into a range of occupied bindings", () => {

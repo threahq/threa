@@ -9,6 +9,7 @@ import type { SidebarBoardMode } from "./board-sidebar-mode"
 import type { ResolvedSection } from "./resolve-sections"
 import type { SectionViewChange } from "./section-view-options"
 import * as contextsModule from "@/contexts"
+import * as deviceModule from "@/lib/device"
 import type { CollapseState } from "@/contexts"
 
 function makeStream(id: string): StreamItemData {
@@ -142,6 +143,7 @@ describe("SidebarStreamList — quick-jump numbering", () => {
   beforeEach(() => {
     vi.useFakeTimers()
     stubSidebarContexts()
+    vi.spyOn(deviceModule, "isStandaloneApp").mockReturnValue(true)
   })
 
   afterEach(() => {

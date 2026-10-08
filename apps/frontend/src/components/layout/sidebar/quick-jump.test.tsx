@@ -193,14 +193,25 @@ describe("SidebarQuickJumpProvider", () => {
 
     fireEvent.keyDown(document, { key: "Meta", metaKey: true })
     reveal()
-    const tabSwitch = new KeyboardEvent("keydown", { key: "2", code: "Digit2", metaKey: true, cancelable: true })
-    document.dispatchEvent(tabSwitch)
+    const handledByBrowser = fireEvent.keyDown(document, { key: "2", code: "Digit2", metaKey: true })
 
     expect({
       caps: [capOf("stream_a"), capOf("stream_b")],
-      prevented: tabSwitch.defaultPrevented,
+      handledByBrowser,
       path: screen.getByTestId("path").textContent,
-    }).toEqual({ caps: ["", ""], prevented: false, path: "/w/ws_1/s/stream_start" })
+    }).toEqual({ caps: ["", ""], handledByBrowser: true, path: "/w/ws_1/s/stream_start" })
+  })
+
+  it("yields a digit another shortcut already handled", () => {
+    renderSidebar(["stream_a", "stream_b"])
+    const otherShortcut = (event: KeyboardEvent) => event.preventDefault()
+    document.addEventListener("keydown", otherShortcut)
+
+    holdModifier()
+    fireEvent.keyDown(document, { key: "2", code: "Digit2", ctrlKey: true })
+    document.removeEventListener("keydown", otherShortcut)
+
+    expect(screen.getByTestId("path").textContent).toBe("/w/ws_1/s/stream_start")
   })
 
   it("stays inert when the shortcut is disabled", () => {

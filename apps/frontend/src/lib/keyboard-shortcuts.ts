@@ -8,7 +8,7 @@ export interface ShortcutAction {
   category: "navigation" | "editing" | "view"
   /** If true, shortcut works even when focus is in an input field */
   global?: boolean
-  /** Exists only in the installed app; a browser tab owns these keys itself. */
+  /** Exists only in the installed app (PWA). */
   installedAppOnly?: boolean
 }
 
