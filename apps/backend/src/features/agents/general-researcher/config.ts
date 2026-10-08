@@ -5,7 +5,7 @@
  * import the same budgets, model, and tool policy from here.
  *
  * The general researcher is a bounded tool-calling sub-agent. Unlike the
- * workspace researcher (`WorkspaceAgent`, fixed plan→execute→evaluate over
+ * workspace researcher (`WorkspaceAgent`, fixed plan→execute over
  * workspace DB search), it drives the persona's primitive tools — web search,
  * URL reads, the workspace search primitives, and connected integrations
  * (GitHub, Linear) — in a multi-step loop, then synthesises a cited brief.

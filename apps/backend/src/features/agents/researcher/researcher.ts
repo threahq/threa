@@ -30,12 +30,10 @@ import { logger } from "../../../lib/logger"
 import { workspaceHomeUrl, workspaceMemoUrl, workspaceMessageUrl, workspaceStreamUrl } from "../workspace-links"
 import { hybridWeightsForQuery, searchRankingForFlag, type SearchRanking } from "../../search"
 import {
-  WORKSPACE_AGENT_MAX_ITERATIONS,
+  WORKSPACE_AGENT_MAX_PLANNED_QUERIES,
   WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
   WORKSPACE_AGENT_MAX_ROOM_RESULTS_PER_SEARCH,
-  WORKSPACE_AGENT_MAX_ADDITIONAL_QUERIES,
   WORKSPACE_AGENT_PLANNER_TIMEOUT_MS,
-  WORKSPACE_AGENT_EVALUATOR_TIMEOUT_MS,
   WORKSPACE_AGENT_SYSTEM_PROMPT,
 } from "./config"
 import { buildBaselineQueries } from "./query/baseline-queries"
@@ -162,21 +160,6 @@ const retrievalPlanSchema = z.object({
   ),
 })
 
-// Schema for evaluation after seeing results
-const evaluationSchema = z.object({
-  sufficient: z.boolean(),
-  additionalQueries: z
-    .array(
-      z.object({
-        target: z.enum(["memos", "messages", "attachments"]),
-        type: z.enum(["semantic", "exact"]),
-        query: z.string(),
-      })
-    )
-    .nullable(),
-  reasoning: z.string(),
-})
-
 type SearchQuery = z.infer<typeof retrievalPlanSchema>["queries"][number]
 
 interface MemoReaders {
@@ -255,7 +238,7 @@ function mergeAttachmentResults(
  *
  * Pure retrieval — the main agent decides *when* to call this. When called,
  * it always searches. Implements the GAM pattern:
- * plan retrieval → execute → evaluate → iterate.
+ * one broad planned search pass alongside a deterministic baseline.
  */
 export class WorkspaceAgent {
   constructor(private readonly deps: WorkspaceAgentDeps) {}
@@ -339,24 +322,8 @@ export class WorkspaceAgent {
   }
 
   /**
-   * Main search loop: bootstrap retrieval → refinement loop.
-   *
-   * This is the GAM "deep research" loop, structured as:
-   *
-   *   Iteration 1 (bootstrap):  parallel speculative baseline + planner LLM
-   *   Iterations 2..N (refine): evaluate accumulated results → run any
-   *                             additional queries the evaluator requests
-   *
-   * Bounded by:
-   * - A hard wall-clock deadline via `input.deadlineAt`
-   * - Per-AI-call abort signals composed from the user-abort signal + deadline
-   * - `config.maxIterations` (defaults to `WORKSPACE_AGENT_MAX_ITERATIONS`)
-   *   controls the total iteration count, so the refinement loop runs
-   *   `maxIterations - 1` times. Setting it to 1 disables refinement entirely.
-   *
-   * `seenQueryKeys` accumulates across every iteration so each refinement pass
-   * deduplicates against the union of all earlier queries — not just the
-   * previous one.
+   * Search loop: a deterministic baseline search runs in parallel with one planner call, then the planner's
+   * extra queries run once. Bounded by `input.deadlineAt` and per-call abort signals.
    *
    * Uses pool.query for individual DB operations instead of holding a connection
    * through the entire loop (which includes AI calls).
@@ -388,16 +355,14 @@ export class WorkspaceAgent {
     const config = (await configResolver.resolve(COMPONENT_PATHS.COMPANION_RESEARCHER)) as ResearcherConfig
 
     const contextSummary = this.buildContextSummary(query, conversationHistory)
-    const maxIterations = config.maxIterations ?? WORKSPACE_AGENT_MAX_ITERATIONS
     // Already in the main agent's prompt; retrieving them again only crowds out new context.
     const excludedMessageIds = new Set(conversationHistory.map((message) => message.id))
-    const seenQueryKeys = new Set<string>()
 
     let allMemos: EnrichedMemoResult[] = []
     let allMessages: EnrichedMessageResult[] = []
     let allAttachments: EnrichedAttachmentResult[] = []
 
-    // ── Iteration 1: parallel speculative baseline search + planner LLM ──
+    // ── Parallel speculative baseline search + planner LLM ──
     //
     // The baseline queries are deterministic — they don't need an LLM. We fire
     // their executeQueries call in parallel with the planner LLM so the slowest
@@ -455,7 +420,7 @@ export class WorkspaceAgent {
     allMemos = mergeMemoResults(allMemos, baselineResults.memos)
     allMessages = mergeMessageResults(allMessages, baselineResults.messages)
     allAttachments = mergeAttachmentResults(allAttachments, baselineResults.attachments)
-    for (const q of baselineQueries) seenQueryKeys.add(queryKey(q))
+    const baselineKeys = new Set(baselineQueries.map(queryKey))
 
     // Abort may have fired during planner/baseline
     const postPlan = this.checkAbortOrDeadline(input)
@@ -472,12 +437,15 @@ export class WorkspaceAgent {
     }
 
     // Compute planner-only queries: any planner queries not already in the baseline set.
-    const plannerOnlyDeduped = dedupeQueries(plan.queries.filter((q) => !seenQueryKeys.has(queryKey(q))))
+    const plannerOnlyDeduped = dedupeQueries(plan.queries.filter((q) => !baselineKeys.has(queryKey(q)))).slice(
+      0,
+      WORKSPACE_AGENT_MAX_PLANNED_QUERIES
+    )
 
     if (plannerOnlyDeduped.length > 0) {
       this.emitSubstep(
         substeps,
-        `Refining with ${plannerOnlyDeduped.length} planned ${plannerOnlyDeduped.length === 1 ? "query" : "queries"}…`,
+        `Searching with ${plannerOnlyDeduped.length} planned ${plannerOnlyDeduped.length === 1 ? "query" : "queries"}…`,
         input.onSubstep
       )
 
@@ -497,111 +465,14 @@ export class WorkspaceAgent {
       allMemos = mergeMemoResults(allMemos, plannerResults.memos)
       allMessages = mergeMessageResults(allMessages, plannerResults.messages)
       allAttachments = mergeAttachmentResults(allAttachments, plannerResults.attachments)
-      for (const q of plannerOnlyDeduped) seenQueryKeys.add(queryKey(q))
     } else if (baselineQueries.length === 0 && plan.queries.length === 0) {
       // No baseline, no planner queries — nothing to search.
       logger.debug({ query, reasoning: plan.reasoning }, "Workspace agent could not generate any queries")
       return this.emptyResult(substeps)
     }
 
-    // Short-circuit: nothing found in iteration 1. The evaluator cannot salvage
-    // an empty workspace — return non-partial empty (this is a successful
-    // "nothing relevant here" result, not a truncated partial).
-    if (allMemos.length + allMessages.length + allAttachments.length === 0) {
-      logger.info(
-        { query, accessSpecType: accessSpec.type },
-        "Workspace agent iteration 1 returned no results; short-circuiting"
-      )
-      return this.buildFinalResult(allMemos, allMessages, allAttachments, workspaceId, input.timezone, substeps, false)
-    }
-
-    // ── Refinement loop (iterations 2..maxIterations): evaluator-driven ──
-    //
-    // Each pass: evaluate accumulated results → if sufficient, exit; else dedupe
-    // additional queries against everything seen so far → execute → merge.
-    // Setting maxIterations=1 skips this loop entirely.
-    //
-    for (let iteration = 2; iteration <= maxIterations; iteration++) {
-      // Abort check before evaluator (each iteration is a checkpoint)
-      const preEval = this.checkAbortOrDeadline(input)
-      if (preEval) {
-        return this.buildPartialResult(
-          allMemos,
-          allMessages,
-          allAttachments,
-          workspaceId,
-          input.timezone,
-          substeps,
-          preEval
-        )
-      }
-
-      this.emitSubstep(substeps, "Evaluating results…", input.onSubstep)
-
-      const evaluation = await this.evaluateResults(
-        contextSummary,
-        allMemos,
-        allMessages,
-        allAttachments,
-        config,
-        workspaceId,
-        query,
-        input.signal,
-        input.deadlineAt
-      )
-
-      if (evaluation.sufficient) {
-        logger.debug({ query, reasoning: evaluation.reasoning }, "Workspace agent found sufficient results")
-        break
-      }
-
-      const additional = (evaluation.additionalQueries ?? []).slice(0, WORKSPACE_AGENT_MAX_ADDITIONAL_QUERIES)
-      const iterationQueries = dedupeQueries(additional).filter((q) => !seenQueryKeys.has(queryKey(q)))
-      if (iterationQueries.length === 0) {
-        logger.debug({ query }, "Workspace agent has no new queries to run; stopping refinement")
-        break
-      }
-
-      const preExecIter = this.checkAbortOrDeadline(input)
-      if (preExecIter) {
-        return this.buildPartialResult(
-          allMemos,
-          allMessages,
-          allAttachments,
-          workspaceId,
-          input.timezone,
-          substeps,
-          preExecIter
-        )
-      }
-
-      this.emitSubstep(
-        substeps,
-        `Iteration ${iteration}/${maxIterations}: refining with ${iterationQueries.length} ${iterationQueries.length === 1 ? "query" : "queries"}…`,
-        input.onSubstep
-      )
-
-      const iterationResults = await this.executeQueries(
-        pool,
-        iterationQueries,
-        workspaceId,
-        accessibleStreamIds,
-        roomStreamIds,
-        embeddingService,
-        memoReaders,
-        true,
-        excludedMessageIds,
-        ranking
-      )
-
-      allMemos = mergeMemoResults(allMemos, iterationResults.memos)
-      allMessages = mergeMessageResults(allMessages, iterationResults.messages)
-      allAttachments = mergeAttachmentResults(allAttachments, iterationResults.attachments)
-      for (const q of iterationQueries) seenQueryKeys.add(queryKey(q))
-    }
-
-    const postLoop = this.checkAbortOrDeadline(input)
-    if (postLoop) {
+    const postSearch = this.checkAbortOrDeadline(input)
+    if (postSearch) {
       return this.buildPartialResult(
         allMemos,
         allMessages,
@@ -609,7 +480,7 @@ export class WorkspaceAgent {
         workspaceId,
         input.timezone,
         substeps,
-        postLoop
+        postSearch
       )
     }
 
@@ -779,7 +650,7 @@ export class WorkspaceAgent {
           { role: "system", content: WORKSPACE_AGENT_SYSTEM_PROMPT },
           {
             role: "user",
-            content: `Break down this query into targeted search queries to find relevant workspace knowledge.
+            content: `Plan the searches for this query.
 
 ## Query
 ${query}
@@ -787,20 +658,8 @@ ${query}
 ${contextSummary}
 
 Respond with:
-- reasoning: brief explanation of your retrieval strategy
-- queries: array of search queries to execute
-
-Each query must have:
-- target: "memos" | "messages" | "attachments"
-- type: "semantic" | "exact"
-- query: the search text
-
-Guidelines for search:
-- Use target "memos" for summarized knowledge (decisions, context, discussions)
-- Use target "messages" for specific quotes, recent activity, or exact terms
-- Use target "attachments" when looking for documents, images, or files
-- Use type "semantic" for concepts/topics
-- Use type "exact" for error messages, IDs, or quoted text`,
+- reasoning: the directions you chose and why
+- queries: the search queries, each with target, type, and query text`,
           },
         ],
         temperature: config.temperature,
@@ -817,82 +676,6 @@ Guidelines for search:
       }
       logger.warn({ error }, "Workspace agent retrieval planning failed, falling back to baseline")
       return { reasoning: "Planning failed", queries: [] }
-    } finally {
-      perCall.cleanup()
-    }
-  }
-
-  /**
-   * Evaluate if current results are sufficient.
-   *
-   * Wrapped in a per-call AbortSignal. On abort, treat as "sufficient" so the loop
-   * exits cleanly with whatever was collected rather than stalling waiting for a
-   * verdict we can't get.
-   */
-  private async evaluateResults(
-    contextSummary: string,
-    memos: EnrichedMemoResult[],
-    messages: EnrichedMessageResult[],
-    attachments: EnrichedAttachmentResult[],
-    config: ResearcherConfig,
-    workspaceId: string,
-    query: string,
-    signal: AbortSignal | undefined,
-    deadlineAt: number | undefined
-  ): Promise<z.infer<typeof evaluationSchema>> {
-    const { ai } = this.deps
-    const resultsText = this.formatResultsForEvaluation(memos, messages, attachments)
-
-    const perCall = this.makePerCallSignal({ signal, deadlineAt }, WORKSPACE_AGENT_EVALUATOR_TIMEOUT_MS)
-    try {
-      const { value } = await ai.generateObject({
-        model: config.modelId,
-        schema: evaluationSchema,
-        messages: [
-          { role: "system", content: WORKSPACE_AGENT_SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: `Evaluate if these search results are sufficient to answer the query.
-
-## Query
-${query}
-
-${contextSummary}
-
-## Current Results
-
-${resultsText || "No results found yet."}
-
-Decision rules:
-- Default to sufficient=true. Return sufficient=false only if the results clearly fail to address the core of the query AND you have a specific narrower query likely to succeed.
-- If uncertain, prefer sufficient=true.
-- Keep additionalQueries to at most ${WORKSPACE_AGENT_MAX_ADDITIONAL_QUERIES} — the caller will cap it anyway.
-
-Respond with:
-- sufficient: true/false
-- reasoning: brief explanation
-- additionalQueries: array of queries (or null if sufficient)
-
-Each query must have:
-- target: "memos" | "messages" | "attachments"
-- type: "semantic" | "exact"
-- query: the search text`,
-          },
-        ],
-        temperature: config.temperature,
-        abortSignal: perCall.signal,
-        telemetry: { functionId: "ws-eval", metadata: { query } },
-        context: { workspaceId, origin: "system" },
-      })
-
-      return value
-    } catch (error) {
-      if (isAbortError(error)) {
-        logger.debug({ query }, "Workspace evaluator aborted; treating as sufficient")
-        return { sufficient: true, additionalQueries: null, reasoning: "Aborted" }
-      }
-      logger.warn({ error }, "Workspace agent evaluation failed, treating as sufficient")
-      return { sufficient: true, additionalQueries: null, reasoning: "Evaluation failed" }
     } finally {
       perCall.cleanup()
     }
@@ -1375,45 +1158,6 @@ ${historyText || "No recent messages."}`
   }
 
   /**
-   * Format results for evaluation prompt.
-   *
-   * Deliberately compact: title + short snippet only. The evaluator only needs enough
-   * signal to judge "do these results address the query?" — sending the full abstracts
-   * inflates the prompt (and per-iteration cost) without improving decisions.
-   */
-  private formatResultsForEvaluation(
-    memos: EnrichedMemoResult[],
-    messages: EnrichedMessageResult[],
-    attachments: EnrichedAttachmentResult[]
-  ): string {
-    const parts: string[] = []
-
-    if (memos.length > 0) {
-      parts.push("### Memos Found")
-      for (const { memo } of memos) {
-        parts.push(`- ${memo.title}: ${truncateSnippet(memo.abstract)}`)
-      }
-    }
-
-    if (messages.length > 0) {
-      parts.push("### Messages Found")
-      for (const msg of messages) {
-        parts.push(`- ${msg.authorName} in ${msg.streamName}: "${truncateSnippet(msg.content)}"`)
-      }
-    }
-
-    if (attachments.length > 0) {
-      parts.push("### Attachments Found")
-      for (const att of attachments) {
-        const summary = att.summary ? `: ${truncateSnippet(att.summary)}` : ""
-        parts.push(`- ${att.filename} (${att.contentType ?? att.mimeType})${summary}`)
-      }
-    }
-
-    return parts.join("\n\n")
-  }
-
-  /**
    * Empty result when no queries could be generated. Preserves any substeps already
    * recorded so the trace shows why the run ended empty.
    */
@@ -1449,11 +1193,4 @@ function dedupeQueries(queries: SearchQuery[]): SearchQuery[] {
     out.push(q)
   }
   return out
-}
-
-/** Truncate a snippet to ~80 chars with ellipsis for compact evaluator prompt. */
-function truncateSnippet(text: string, max = 80): string {
-  const normalized = text.replace(/\s+/g, " ").trim()
-  if (normalized.length <= max) return normalized
-  return `${normalized.slice(0, max - 1)}…`
 }

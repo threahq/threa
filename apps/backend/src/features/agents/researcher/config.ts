@@ -6,7 +6,7 @@
  */
 
 /**
- * Model for workspace agent retrieval planning / evaluation.
+ * Model for workspace agent retrieval planning.
  *
  * Chosen for fast, predictable tail latency (single reliable provider path) and
  * solid structured-output compliance. Was `claude-haiku-4.5`, on the reasoning
@@ -21,27 +21,14 @@ export const WORKSPACE_AGENT_MODEL_ID = "openrouter:openai/gpt-6-luna"
 /** Lower temperature to reduce decision variance in retrieval planning */
 export const WORKSPACE_AGENT_TEMPERATURE = 0.1
 
-/**
- * Maximum iterations for the plan→execute→evaluate→iterate loop.
- *
- * Two is the GAM sweet spot: one initial plan+search, plus one optional refinement
- * when the evaluator finds a specific gap. One iteration removes the "deep" in deep
- * research (no refinement at all); more compounds wall-clock cost too aggressively
- * when the evaluator over-iterates.
- */
-export const WORKSPACE_AGENT_MAX_ITERATIONS = 2
+/** Upper bound on the planner's queries, so one broad pass stays a bounded fan-out */
+export const WORKSPACE_AGENT_MAX_PLANNED_QUERIES = 6
 
 /** Maximum number of memos/messages to retrieve per search */
 export const WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH = 5
 
 /** Hits per search taken from the room the question was asked in, on top of the workspace-wide ones */
 export const WORKSPACE_AGENT_MAX_ROOM_RESULTS_PER_SEARCH = 3
-
-/**
- * Maximum number of additional queries the evaluator is allowed to request
- * after iteration 1. Caps the worst-case iteration-2 fan-out.
- */
-export const WORKSPACE_AGENT_MAX_ADDITIONAL_QUERIES = 3
 
 /**
  * Hard wall-clock budget for a single workspace_research tool call in milliseconds.
@@ -55,18 +42,21 @@ export const WORKSPACE_AGENT_TOTAL_BUDGET_MS = 45_000
 /** Per-call timeout for the planner LLM. Fails over to baseline queries on timeout. */
 export const WORKSPACE_AGENT_PLANNER_TIMEOUT_MS = 20_000
 
-/** Per-call timeout for the evaluator LLM. Treated as "sufficient" on timeout. */
-export const WORKSPACE_AGENT_EVALUATOR_TIMEOUT_MS = 15_000
-
 /** Per-call timeout for embedding generation. */
 export const WORKSPACE_AGENT_EMBED_TIMEOUT_MS = 10_000
 
 /** Workspace agent system prompt */
-export const WORKSPACE_AGENT_SYSTEM_PROMPT = `You are a workspace retrieval agent. Given a query, produce a small, targeted set of search queries across memos, messages, and attachments, then judge whether the results answer the query.
+export const WORKSPACE_AGENT_SYSTEM_PROMPT = `You are a workspace retrieval agent. Given a query, plan one broad set of search queries across memos, messages, and attachments. There is no second round: whatever these queries miss stays missing.
 
-Process:
-1. Plan 1–3 focused queries. Fewer is better when one strong query will do.
-2. After seeing results, decide sufficient vs. not. Default to sufficient=true — only ask for more queries when the results clearly fail to address the core of the query AND you have a specific narrower query likely to succeed.
+Plan up to ${WORKSPACE_AGENT_MAX_PLANNED_QUERIES} queries, each going in a different direction. Directions worth covering when the query touches them:
+- the same question in other words, as people in the workspace would have phrased it
+- the people, roles, or teams involved
+- the specific names, identifiers, or terms at the center of it
+- the wider decision, project, or topic it belongs to
+- later changes to it: updates, reversals, replacements
+- files or documents about it
+
+Skip a direction that does not apply. Never send near-duplicates of the same query; a query that would return the same results as another one wastes a slot.
 
 Guidelines:
 - target "memos": summarized knowledge (decisions, context, discussions).

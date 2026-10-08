@@ -39,7 +39,6 @@ export interface SuggestionExtractorConfig extends ComponentConfig {
 }
 
 export interface ResearcherConfig extends ComponentConfig {
-  maxIterations?: number
   maxResultsPerSearch?: number
 }
 
