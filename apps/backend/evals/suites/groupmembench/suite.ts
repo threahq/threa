@@ -6,11 +6,12 @@
  * clock (`fixtures/replay.ts`): boundary extraction, memo capture and
  * embeddings run as they would have live, up to the moment the questions are
  * asked. The channels replay in parallel, each in its own database on its own
- * clock, and are copied into the run's database as they finish. Each top-level post with replies gets a
- * thread, nested replies flattened into it and titled with the post's phase,
- * since the questions name phases the message text mostly does not. Every
- * question is then asked by its own user in a fresh scratchpad, through the
- * production `PersonaAgent.run`, as of the day after the data ends:
+ * clock, and are copied into the run's database as they finish. Each top-level
+ * post with replies gets a thread, nested replies flattened into it and titled
+ * with the post's phase, since the questions name phases the message text
+ * mostly does not. Every question is then asked by its own user in a fresh
+ * scratchpad, through the production `PersonaAgent.run`, as of the day after
+ * the data ends:
  *
  *   groupmembench            memory on, prepared recall on, every tool
  *   groupmembench-no-memory  channels' memory off: message search only
@@ -214,27 +215,27 @@ async function reuseWorkspace(ctx: EvalContext): Promise<void> {
 
 /** Replays one channel in a database of its own, on its own clock, and returns what the pipeline left behind. */
 async function replayChannel(
-  ctx: EvalContext,
+  ctx: EvalContext & { connectionString: string },
+  runStart: Date,
   channel: BenchChannel,
   userIds: Map<string, string>,
   variant: Variant
 ): Promise<{ db: EvalDatabaseResult; messageCount: number; result: ReplayResult }> {
-  if (!ctx.connectionString) throw new Error("groupmembench replays against a database")
   // Migrations stamp their seed rows with the clock, so every database starts on the run's.
-  const db = await setupEvalDatabase({ label: `gmb_${channel.name}`, simClock: replayStart() })
+  const db = await setupEvalDatabase({ label: `gmb_${channel.name}`, simClock: runStart })
   try {
     await copyDatabaseRows(db.pool, ctx.connectionString)
-    const channelCtx = { ...ctx, pool: db.pool, connectionString: db.connectionString, clock: db.clock }
-    await requireClock(channelCtx).set(replayStart([channel]))
+    const clock = requireClock({ ...ctx, clock: db.clock })
+    await clock.set(replayStart([channel]))
     const pipeline = await startReplayPipeline({
       pool: db.pool,
       connectionString: db.connectionString,
-      clock: requireClock(channelCtx),
+      clock,
       ai: ctx.ai,
       workspaceId: ctx.workspaceId,
     })
     try {
-      const messages = await seedChannel(channelCtx, new StreamService(db.pool), channel, userIds, variant)
+      const messages = await seedChannel(ctx, new StreamService(db.pool), channel, userIds, variant)
       messages.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
       return { db, messageCount: messages.length, result: await pipeline.replay(messages, new Date(ASKED_AT)) }
     } finally {
@@ -259,8 +260,9 @@ async function captureCounts(pool: Pool, workspaceId: string) {
 
 /**
  * Channels share no conversations, so each replays in parallel in a clone of
- * the seeded users, and its rows are copied back once its replay finishes. Memo
- * capture then sees one channel's memos at a time, as it does per stream.
+ * the seeded users, and its rows are copied back once its replay finishes.
+ * Memo capture reads its own stream, except the tag vocabulary: production
+ * offers tags from every public channel, here only the channel's own.
  */
 export function seedWorkspace(variant: Variant) {
   return async (ctx: EvalContext): Promise<void> => {
@@ -270,11 +272,20 @@ export function seedWorkspace(variant: Variant) {
     const askers = loadQuestions(datasetDir()).map((q) => q.askingUser)
     const names = [...new Set([...channels.flatMap((c) => c.authors), ...askers])].sort()
     const userIds = await insertUsers(ctx, names)
+    const { connectionString } = ctx
+    if (!connectionString) throw new Error("groupmembench replays against a database")
+    const runStart = replayStart()
 
     let merging = Promise.resolve()
     const replays = await Promise.allSettled(
       channels.map(async (channel) => {
-        const { db, messageCount, result } = await replayChannel(ctx, channel, userIds, variant)
+        const { db, messageCount, result } = await replayChannel(
+          { ...ctx, connectionString },
+          runStart,
+          channel,
+          userIds,
+          variant
+        )
         try {
           const counts = await captureCounts(db.pool, ctx.workspaceId)
           console.log(

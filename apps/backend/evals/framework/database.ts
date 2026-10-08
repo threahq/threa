@@ -328,7 +328,7 @@ export async function copyDatabaseRows(target: Pool, sourceConnectionString: str
     await client.query("BEGIN")
     let copied = 0
     for (const table of tables) {
-      if (INFRA_TABLES.has(table.name)) continue
+      if (INFRA_TABLES.has(table.name) || table.name === "message_link_previews") continue
       const local = `public.${ident(table.name)}`
       const remote = `${server}.${ident(table.name)}`
       if (table.key.length === 0) {
@@ -346,20 +346,36 @@ export async function copyDatabaseRows(target: Pool, sourceConnectionString: str
         throw new Error(`Cannot copy ${table.name}: ${differing[0].count} rows share a key with different contents`)
       }
       const columns = table.columns.map(ident).join(", ")
+      // Each database mints its own id for a URL, and a workspace previews a URL once: the first copied wins.
+      const sameUrl =
+        table.name === "link_previews"
+          ? " OR (p.workspace_id = s.workspace_id AND p.normalized_url = s.normalized_url)"
+          : ""
       const inserted = await client.query(
         `INSERT INTO ${local} (${columns}) SELECT ${table.columns.map((column) => `s.${ident(column)}`).join(", ")}
-         FROM ${remote} s WHERE NOT EXISTS (SELECT 1 FROM ${local} p WHERE ${sameKey})`
+         FROM ${remote} s WHERE NOT EXISTS (SELECT 1 FROM ${local} p WHERE ${sameKey}${sameUrl})`
       )
       copied += inserted.rowCount ?? 0
     }
+    const links = await client.query(
+      `INSERT INTO public.message_link_previews (workspace_id, message_id, link_preview_id, position)
+       SELECT m.workspace_id, m.message_id, p.id, m.position
+       FROM ${server}.message_link_previews m
+       JOIN ${server}.link_previews s ON s.workspace_id = m.workspace_id AND s.id = m.link_preview_id
+       JOIN public.link_previews p ON p.workspace_id = s.workspace_id AND p.normalized_url = s.normalized_url
+       ON CONFLICT DO NOTHING`
+    )
+    copied += links.rowCount ?? 0
     await client.query("COMMIT")
     return copied
   } catch (error) {
     await client.query("ROLLBACK")
     throw error
   } finally {
-    await client.query(`DROP SCHEMA IF EXISTS ${server} CASCADE`)
-    await client.query(`DROP SERVER IF EXISTS ${server} CASCADE`)
-    client.release()
+    try {
+      await client.query(`DROP SCHEMA IF EXISTS ${server} CASCADE; DROP SERVER IF EXISTS ${server} CASCADE`)
+    } finally {
+      client.release()
+    }
   }
 }
