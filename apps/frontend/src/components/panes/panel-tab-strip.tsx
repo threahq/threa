@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils"
 import { usePaneCovered } from "./pane-host"
 import { PaneFocusContext } from "./pane-focus"
 import { endTabDrag, startTabDrag, useStripCaret, useStripDropZone } from "./pane-drop"
+import { PanelTabMenu, SPLIT_LABELS, closeTabItems, type PanelTabMenuItem } from "./panel-tab-menu"
 
 /**
  * A section's open tabs as an underline row, standing in for the panel's title
@@ -39,12 +40,27 @@ export function PanelTabStrip({
   workspaceId,
   labels,
   className,
+  splitsInPaneMenu = false,
 }: {
   workspaceId: string
   labels?: ReactNode
   className?: string
+  /** The pane's own actions menu offers its splits, so the row drops its "Tab actions" menu. */
+  splitsInPaneMenu?: boolean
 }) {
-  const { panelId, layout, section, getTabUrl, closeTab, splitTab, splits, setCurrentPane, focusTab } = usePanel()
+  const {
+    panelId,
+    layout,
+    section,
+    getTabUrl,
+    closeTab,
+    closeTabs,
+    canCloseTab,
+    splitTab,
+    splits,
+    setCurrentPane,
+    focusTab,
+  } = usePanel()
   const currentPane = useCurrentPane()
   const panelIds = section?.ids ?? []
   const activePanelId = section?.active ?? null
@@ -71,6 +87,27 @@ export function PanelTabStrip({
   const handOffFocus = (nextActive: string | null) => {
     if (stripRef.current?.contains(document.activeElement)) focusHandoff.current = nextActive
   }
+  const activeAfterClosing = (ids: readonly string[]) =>
+    activePanelId !== null && ids.includes(activePanelId)
+      ? followCurrentPanel(layout, ids.reduce(closePanelTab, layout), activePanelId)
+      : activePanelId
+  // The menu holds focus while it is open, so its close hands off to the tab left on show unconditionally.
+  const closeFromMenu = (ids: readonly string[]) => {
+    focusHandoff.current = activeAfterClosing(ids)
+    closeTabs(ids)
+  }
+  const tabMenuItems = (id: string): PanelTabMenuItem[] => [
+    ...closeTabItems({ ids: panelIds, id, canClose: canCloseTab, close: closeFromMenu }),
+    ...splits.map((direction, index) => ({
+      id: `split-${direction}`,
+      label: SPLIT_LABELS[direction],
+      separatorBefore: index === 0,
+      onSelect: () => {
+        focusHandoff.current = id
+        splitTab(id, direction)
+      },
+    })),
+  ]
 
   return (
     <>
@@ -85,83 +122,99 @@ export function PanelTabStrip({
           const active = id === activePanelId
           const linkId = `${linkIdPrefix}-${index}`
           return (
-            <div
-              key={id}
-              data-tab-id={id}
-              className={cn(
-                "group relative flex items-center",
-                !active && "min-w-24 max-w-48 shrink",
-                // The tab on show truncates rather than push itself, or "+N", out of a narrow row.
-                active && "min-w-0 shrink-0",
-                active && (folded.length > 0 ? "max-w-[min(14rem,calc(100%-3rem))]" : "max-w-[min(14rem,100%)]"),
-                active && "after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full",
-                active && (isCurrent ? "after:bg-primary" : "after:bg-muted-foreground/40")
-              )}
-            >
-              {caret?.before === id && <StripCaret side="left" />}
-              {caret?.before === null && index === shown.length - 1 && <StripCaret side="right" />}
-              <Link
-                id={linkId}
-                to={getTabUrl(id)}
-                replace
-                draggable
-                onDragStart={(event) => startTabDrag(event, workspaceId, id)}
-                onDragEnd={endTabDrag}
-                onClick={(event) => {
-                  // The tab on show is the panel's title: following its link would close its overview.
-                  // A floating tab's title puts it back in its place.
-                  setCurrentPane(id)
-                  if (active) {
-                    event.preventDefault()
-                    if (paneFocus?.focused === id) focusTab(null)
-                  } else handOffFocus(id)
-                }}
-                aria-current={active ? "page" : undefined}
+            <PanelTabMenu key={id} items={tabMenuItems(id)}>
+              <div
+                data-tab-id={id}
                 className={cn(
-                  "flex h-full min-w-0 items-center px-2 text-sm whitespace-nowrap",
-                  active && isCurrent && "font-semibold text-foreground",
-                  active && !isCurrent && "font-semibold text-muted-foreground",
-                  !active && "text-muted-foreground hover:text-foreground"
+                  "group relative flex items-center",
+                  !active && "min-w-24 max-w-48 shrink",
+                  // The tab on show truncates rather than push itself, or "+N", out of a narrow row.
+                  active && "min-w-0 shrink-0",
+                  active && (folded.length > 0 ? "max-w-[min(14rem,calc(100%-3rem))]" : "max-w-[min(14rem,100%)]"),
+                  active && "after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full",
+                  active && (isCurrent ? "after:bg-primary" : "after:bg-muted-foreground/40")
                 )}
               >
-                <span className="truncate">
-                  <PanelTabTitle workspaceId={workspaceId} panelId={id} />
-                </span>
-              </Link>
-              <button
-                type="button"
-                onClick={() => {
-                  // A tab closing behind the one on show leaves focus with it, even when the
-                  // strip folds several sections; the last tab left takes it on its close button.
-                  handOffFocus(
-                    id === activePanelId ? followCurrentPanel(layout, closePanelTab(layout, id), id) : activePanelId
-                  )
-                  closeTab(id)
-                }}
-                aria-label="Close tab"
-                aria-describedby={linkId}
-                className={cn(
-                  "-ml-1 mr-1 grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:opacity-100",
-                  !active && "opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-                )}
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
+                {caret?.before === id && <StripCaret side="left" />}
+                {caret?.before === null && index === shown.length - 1 && <StripCaret side="right" />}
+                <Link
+                  id={linkId}
+                  to={getTabUrl(id)}
+                  replace
+                  draggable
+                  onDragStart={(event) => startTabDrag(event, workspaceId, id)}
+                  onDragEnd={endTabDrag}
+                  onClick={(event) => {
+                    // The tab on show is the panel's title: following its link would close its overview.
+                    // A floating tab's title puts it back in its place.
+                    setCurrentPane(id)
+                    if (active) {
+                      event.preventDefault()
+                      if (paneFocus?.focused === id) focusTab(null)
+                    } else handOffFocus(id)
+                  }}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "flex h-full min-w-0 items-center px-2 text-sm whitespace-nowrap",
+                    active && isCurrent && "font-semibold text-foreground",
+                    active && !isCurrent && "font-semibold text-muted-foreground",
+                    !active && "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  <span className="truncate">
+                    <PanelTabTitle workspaceId={workspaceId} panelId={id} />
+                  </span>
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // A tab closing behind the one on show leaves focus with it, even when the
+                    // strip folds several sections; the last tab left takes it on its close button.
+                    handOffFocus(activeAfterClosing([id]))
+                    closeTab(id)
+                  }}
+                  aria-label="Close tab"
+                  aria-describedby={linkId}
+                  className={cn(
+                    "-ml-1 mr-1 grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:opacity-100",
+                    !active && "opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                  )}
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </PanelTabMenu>
           )
         })}
         {folded.length > 0 && (
           <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button
-                type="button"
-                aria-label={`${folded.length} more ${folded.length === 1 ? "tab" : "tabs"}`}
-                className="flex w-12 shrink-0 items-center justify-center gap-0.5 text-sm text-muted-foreground hover:text-foreground"
-              >
-                +{folded.length}
-                <ChevronDown className="h-3.5 w-3.5" />
-              </button>
-            </DropdownMenuTrigger>
+            <PanelTabMenu
+              items={[
+                {
+                  id: "folded",
+                  label: "Close hidden tabs",
+                  disabled: !folded.some(canCloseTab),
+                  onSelect: () => closeFromMenu(folded),
+                },
+                {
+                  id: "all",
+                  label: "Close all",
+                  disabled: !panelIds.some(canCloseTab),
+                  onSelect: () => closeFromMenu(panelIds),
+                },
+              ]}
+            >
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`${folded.length} more ${folded.length === 1 ? "tab" : "tabs"}`}
+                  className="flex w-12 shrink-0 items-center justify-center gap-0.5 text-sm text-muted-foreground hover:text-foreground"
+                >
+                  +{folded.length}
+                  <ChevronDown className="h-3.5 w-3.5" />
+                </button>
+              </DropdownMenuTrigger>
+            </PanelTabMenu>
             <DropdownMenuContent
               align="start"
               onCloseAutoFocus={(event) => {
@@ -194,7 +247,7 @@ export function PanelTabStrip({
           {labels}
         </div>
       )}
-      {activePanelId && splits.length > 0 && (
+      {activePanelId && splits.length > 0 && !splitsInPaneMenu && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -220,7 +273,7 @@ export function PanelTabStrip({
                   splitTab(activePanelId, direction)
                 }}
               >
-                {direction === "right" ? "Split right" : "Split down"}
+                {SPLIT_LABELS[direction]}
               </DropdownMenuItem>
             ))}
           </DropdownMenuContent>
