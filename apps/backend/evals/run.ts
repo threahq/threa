@@ -26,6 +26,7 @@ import { voicePolishSuite } from "./suites/voice-polish/suite"
 import { toolGuardianSuite } from "./suites/tool-guardian/suite"
 import { memoryRecallSuite } from "./suites/memory-recall/suite"
 import { groupMemBenchSuite, groupMemBenchNoMemorySuite } from "./suites/groupmembench/suite"
+import { groupMemBenchRecallSuite } from "./suites/groupmembench/recall"
 import { qualifyVoicePolishPermutation } from "./suites/voice-polish/evaluators"
 import { decideVoicePolishComparison } from "./suites/voice-polish/reporting"
 import { isConfigFilePath } from "./framework/config-loader"
@@ -46,7 +47,7 @@ const defaultSuites = [
 ]
 
 // Benchmarks need an external dataset checkout and are long, costly runs, so they run only when named with -s.
-const allSuites = [...defaultSuites, groupMemBenchSuite, groupMemBenchNoMemorySuite]
+const allSuites = [...defaultSuites, groupMemBenchSuite, groupMemBenchNoMemorySuite, groupMemBenchRecallSuite]
 
 function printHelp(): void {
   const suiteNames = allSuites.map((s) => s.name).join(", ")

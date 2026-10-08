@@ -89,6 +89,12 @@ interface SeededWorkspace {
 
 const seeded = new Map<string, SeededWorkspace>()
 
+export function seededWorkspace(workspaceId: string): SeededWorkspace {
+  const state = seeded.get(workspaceId)
+  if (!state) throw new Error("groupmembench setup did not run for this workspace")
+  return state
+}
+
 function selectedChannels(): BenchChannel[] {
   const channels = loadChannels(datasetDir())
   const only = process.env.GROUPMEMBENCH_CHANNELS?.split(",").map((name) => name.trim())
@@ -253,7 +259,7 @@ async function reuseWorkspace(ctx: EvalContext): Promise<void> {
   )
 }
 
-function seedWorkspace(variant: Variant) {
+export function seedWorkspace(variant: Variant) {
   return async (ctx: EvalContext): Promise<void> => {
     if (ctx.reusedDatabase) return reuseWorkspace(ctx)
     const startedAt = Date.now()
@@ -313,8 +319,7 @@ function tierOf(retrievalSteps: number, recalledMemos: number): Tier {
 
 function runQuestion(variant: Variant) {
   return async ({ question }: GroupMemBenchInput, ctx: EvalContext): Promise<GroupMemBenchOutput> => {
-    const state = seeded.get(ctx.workspaceId)
-    if (!state) throw new Error("groupmembench setup did not run for this workspace")
+    const state = seededWorkspace(ctx.workspaceId)
     const askerId = state.userIds.get(question.askingUser)
     if (!askerId) throw new Error(`${question.id}: no seeded user ${question.askingUser}`)
 
@@ -413,13 +418,13 @@ const errored = (r: Result) =>
   r.output.error !== undefined ||
   r.evaluations.some((e) => e.name === "correct" && e.details?.startsWith(JUDGE_ERROR))
 
-function percentile(values: number[], p: number): number | undefined {
+export function percentile(values: number[], p: number): number | undefined {
   if (values.length === 0) return undefined
   const sorted = [...values].sort((a, b) => a - b)
   return sorted[Math.min(sorted.length - 1, Math.ceil((p / 100) * sorted.length) - 1)]
 }
 
-const seconds = (ms: number | undefined) => (ms === undefined ? "–" : `${(ms / 1000).toFixed(1)}s`)
+export const seconds = (ms: number | undefined) => (ms === undefined ? "–" : `${(ms / 1000).toFixed(1)}s`)
 
 /** Every question counts, as upstream scores it: an errored one is a wrong answer. */
 function accuracyLine(label: string, results: Result[]): string {

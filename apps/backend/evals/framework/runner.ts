@@ -650,6 +650,7 @@ export function printSummary<TOutput, TExpected>(result: SuiteResult<TOutput, TE
       for (const evaluation of permResult.runEvaluations) {
         const status = evaluation.passed ? colors.green : colors.red
         console.log(`    ${status}${evaluation.name}: ${evaluation.score}${colors.reset}`)
+        if (evaluation.details) console.log(`      ${colors.dim}${evaluation.details}${colors.reset}`)
       }
     }
   }
