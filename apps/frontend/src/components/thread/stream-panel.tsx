@@ -136,6 +136,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
           <PanelTabStrip
             workspaceId={workspaceId}
             className="-ml-2"
+            splitsInPaneMenu
             labels={
               <LabelStack workspaceId={workspaceId} resourceType={LabelableResourceTypes.STREAM} resourceId={panelId} />
             }

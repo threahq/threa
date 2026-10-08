@@ -228,6 +228,18 @@ export function closePanelTab(layout: PanelLayout, id: string): PanelLayout {
   return at ? keepFocus(layout, removeTab(layout, at, id)) : layout
 }
 
+export type TabsBeside = "others" | "before" | "after" | "all"
+
+/** The tabs of `ids` a close beside `id` takes, in their order. */
+export function tabsBeside(ids: readonly string[], id: string, which: TabsBeside): string[] {
+  const index = ids.indexOf(id)
+  if (which === "all") return [...ids]
+  if (index === -1) return []
+  if (which === "before") return ids.slice(0, index)
+  if (which === "after") return ids.slice(index + 1)
+  return ids.filter((other) => other !== id)
+}
+
 /** The tab showing `from` shows `to` instead, keeping its place, whether it
  *  is active and whether it is focused. When `to` is already open in another
  *  tab, that tab moves into `from`'s place: an id is open at most once, and the

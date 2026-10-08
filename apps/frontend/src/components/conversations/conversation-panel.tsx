@@ -97,6 +97,7 @@ import type { BoardViewPost } from "@/hooks/use-stable-board-view"
 import {
   PaneFocusToggle,
   PanelTabStrip,
+  usePaneSplitActions,
   PhonePaneLeading,
   PhonePaneSwitcher,
   usePaneCovered,
@@ -224,6 +225,7 @@ function ConversationPanelHeader({
   const { tabbed } = usePanel()
   const closeRef = usePanelCloseFocusLanding()
   const headerSwipe = usePhoneHeaderSwipe()
+  const splitActions = usePaneSplitActions()
   // On touch the identity line IS the actions trigger, as the stream header's
   // name is. The header is `relative` so the press-and-hold name overlay, which
   // portals into its nearest <header>, can fill the bar here too.
@@ -243,7 +245,7 @@ function ConversationPanelHeader({
   )
   let titleArea: React.ReactNode
   if (tabbed) {
-    titleArea = <PanelTabStrip workspaceId={workspaceId} className="-ml-2" />
+    titleArea = <PanelTabStrip workspaceId={workspaceId} className="-ml-2" splitsInPaneMenu={revealed} />
   } else if (revealed && isMobile) {
     titleArea = (
       <StreamTitlePreview name={title}>
@@ -303,6 +305,7 @@ function ConversationPanelHeader({
           contextLabel={locator}
           open={menuOpen}
           onOpenChange={setMenuOpen}
+          leadingActions={splitActions}
           trigger={
             <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Conversation actions">
               <MoreHorizontal className="h-4 w-4" />

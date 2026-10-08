@@ -60,6 +60,7 @@ import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes
 import { getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
 import { PhonePaneSwitcher, usePhoneHeaderSwipe } from "./phone-pane-header"
+import { usePaneSplitActions } from "./panel-tab-menu"
 import { SharedWithBadge } from "@/components/shared-with-badge"
 import { usePaneToggle, useStreamContextToggle } from "@/components/stream-context"
 import { copyStreamLink } from "@/lib/stream-links"
@@ -115,6 +116,7 @@ export function StreamPane({
 
   const listId = createConversationsPanelId(streamId)
   const [, toggleConversationsList] = usePaneToggle(panelIdsOf(layout).includes(listId) ? listId : null, listId)
+  const splitActions = usePaneSplitActions()
 
   // Conversation overlay: colors timeline rows by conversation membership
   // (rendered by StreamContent, which reads the same param — INV-59).
@@ -496,6 +498,32 @@ export function StreamPane({
   // so their sheet holds just the view rows.
   const offersStreamActions = !(isArchived && !isScratchpad)
   const canOpenSheet = !!stream && !isDraft && (offersStreamActions || sheetViewActions.length > 0)
+  // Beside the page's stream the list rides in the menu, so the header keeps its room for tabs.
+  const listInMenu = offersList && !ownsConversationOverlay
+  const ownMenuActions: SidebarActionItem[] =
+    stream && !isDraft && offersStreamActions
+      ? [
+          ...(listInMenu
+            ? [
+                {
+                  id: "conversations-list",
+                  label: "Conversations list",
+                  icon: MessageCircle,
+                  onSelect: toggleConversationsList,
+                },
+              ]
+            : []),
+          ...streamMenuActions.map((action, i) =>
+            i === 0 && listInMenu ? { ...action, separatorBefore: true } : action
+          ),
+        ]
+      : []
+  const desktopMenuActions = [
+    ...splitActions,
+    ...ownMenuActions.map((action, i) =>
+      i === 0 && splitActions.length > 0 ? { ...action, separatorBefore: true } : action
+    ),
+  ]
 
   let headerTitle: React.ReactNode
   if (isEditing) {
@@ -767,24 +795,9 @@ export function StreamPane({
               />
             </>
           )}
-          {stream && !isMobile && !isDraft && offersStreamActions && (
+          {!isMobile && desktopMenuActions.length > 0 && (
             <SidebarActionMenu
-              actions={
-                // Beside the page's stream the list rides in the menu, so the header keeps its room for tabs.
-                offersList && !ownsConversationOverlay
-                  ? [
-                      {
-                        id: "conversations-list",
-                        label: "Conversations list",
-                        icon: MessageCircle,
-                        onSelect: toggleConversationsList,
-                      },
-                      ...streamMenuActions.map((action, i) =>
-                        i === 0 ? { ...action, separatorBefore: true } : action
-                      ),
-                    ]
-                  : streamMenuActions
-              }
+              actions={desktopMenuActions}
               ariaLabel="Stream actions"
               trigger={
                 <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Stream actions">
