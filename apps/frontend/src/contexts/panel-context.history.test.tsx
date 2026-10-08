@@ -521,7 +521,7 @@ describe("panel tabs history", () => {
 
 describe("panel tabs history on a phone", () => {
   beforeEach(() => {
-    vi.spyOn(mobile, "isMobileViewport").mockReturnValue(true)
+    vi.spyOn(mobile, "useIsMobile").mockReturnValue(true)
   })
   afterEach(() => {
     vi.restoreAllMocks()
@@ -680,7 +680,7 @@ describe("panel tabs history on a phone", () => {
   })
 
   it("should keep the route's stream unwritten on a desktop", async () => {
-    vi.mocked(mobile.isMobileViewport).mockReturnValue(false)
+    vi.mocked(mobile.useIsMobile).mockReturnValue(false)
     const { user, loc } = mountPhone([`${PAGE}?panel=stream_a.stream_b`])
 
     await user.click(screen.getByRole("button", { name: "work in stream_main" }))
