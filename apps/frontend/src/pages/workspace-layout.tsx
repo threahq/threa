@@ -69,7 +69,7 @@ import { useDecryptStreamNames } from "@/hooks/use-decrypt-stream-names"
 import { usePageResume } from "@/hooks/use-page-resume"
 import { setLastWorkspaceId } from "@/lib/last-workspace"
 import { useCapturePageviews } from "@/lib/analytics/use-capture-pageviews"
-import { isServerStreamId } from "@/lib/stream-ids"
+import { isPagePane, isServerStreamId } from "@/lib/stream-ids"
 import { useAccountScope, useAuth } from "@/auth"
 import { useWorkspaceStreamsSelect, type CachedStream } from "@/stores/workspace-store"
 import { isLinkableStreamType } from "@/lib/streams"
@@ -197,7 +197,7 @@ function StreamLinkKeyboardHandler({
             return
           }
           // Malformed `conv:` id (hand-edited/stale URL) — fall through to the main link.
-        } else if (!isDraftPanel(panelId)) {
+        } else if (!isDraftPanel(panelId) && !isPagePane(panelId)) {
           void copyStreamLink(
             workspaceId,
             parseComposePanel(panelId) ??

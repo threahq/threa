@@ -20,7 +20,7 @@ import {
 import { useCoverHistory, type CoverLanding } from "@/hooks/use-cover-close"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { PANEL_COVER } from "@/lib/covers"
-import { isServerStreamId } from "@/lib/stream-ids"
+import { isPagePane, isServerStreamId } from "@/lib/stream-ids"
 import {
   NO_PANELS,
   PANEL_PARAM,
@@ -160,7 +160,7 @@ export function paneIdentity(panelId: string): string {
 }
 
 /** A pane that lists its stream rather than showing one: where it can't sit
- *  beside that stream (a phone, the board), it is a drawer over it. */
+ *  beside that stream (a phone), it is a drawer over it. */
 export function presentsAsDrawer(panelId: string): boolean {
   return parseContextPanel(panelId) !== null
 }
@@ -203,7 +203,7 @@ interface PanelContextValue {
   section: PanelSection | null
   /** Whether panels show their tab rows: more than one tab open beside the page's own stream, on a page that has tabs. */
   tabbed: boolean
-  /** Whether this page lays panels out as tabs beside each other (the stream page). */
+  /** Whether this page lays panels out as tabs beside its route's pane (the stream page, the board). */
   hasTabs: boolean
   /** Whether this consumer's pane sits in the stream page's first column, where the page's stream shows. */
   inFirstColumn: boolean
@@ -261,7 +261,7 @@ interface PanelOps {
     focus?: string | null,
     deepLink?: string | null
   ) => void
-  /** Whether this page shows tabs (the stream page); elsewhere a second panel replaces the first. */
+  /** Whether this page shows tabs beside its route's pane; elsewhere a second panel replaces the first. */
   tabbed: boolean
   /** A phone, which shows one pane at a time and no tab rows. */
   phone: boolean
@@ -331,6 +331,11 @@ function hrefOf(pathname: string, params: URLSearchParams): string {
 const NO_SPLITS: readonly SplitDirection[] = []
 
 const STREAM_ROUTE = "/w/:workspaceId/s/:streamId"
+
+const BOARD_ROUTE = "/w/:workspaceId/board"
+
+/** The board, as the pane its route pins in the first column. */
+export const BOARD_PANE = "page:board"
 
 const MAX_CLOSED_TABS = 20
 
@@ -469,16 +474,18 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const location = useLocation()
   const navigate = useNavigate()
   const restored = useNavigationType() === "POP"
-  // Only the stream page shows tabs, and its route names the stream pane worked
-  // in. Elsewhere (the board) a second panel replaces the first, as it always has.
+  // A page whose route pins a pane in the first column shows tabs beside it: the stream page, whose route
+  // names the stream pane worked in, and the board, which stays put. Elsewhere a second panel replaces the first.
   const router = useContext(UNSAFE_DataRouterContext)?.router ?? null
   const match = useMatch(STREAM_ROUTE)
   const workspaceId = match?.params.workspaceId
   const path = match?.params.streamId ?? null
-  const tabbed = path !== null
+  const pagePane = useMatch(BOARD_ROUTE) ? BOARD_PANE : null
+  const routePane = path ?? pagePane
+  const tabbed = routePane !== null
 
   const panelValue = searchParams.get(PANEL_PARAM)
-  const layout = useMemo(() => fullPanelLayout(path, parsePanelLayout(panelValue)), [path, panelValue])
+  const layout = useMemo(() => fullPanelLayout(routePane, parsePanelLayout(panelValue)), [routePane, panelValue])
 
   const deepLink = searchParams.get("m")
 
@@ -519,7 +526,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
   // taking the current pane's place), else the one taking the route's place when it closes.
   const targetOf = useCallback(
     (next: PanelLayout, focus: string | null = null): Target | null => {
-      if (path === null) return { pathname: location.pathname, path: null, keepsPath: false }
+      if (path === null) return { pathname: location.pathname, path: pagePane, keepsPath: false }
       const current = focus ?? followCurrentPanel(layout, next, front)
       const after = streamPaneAfter(layout, next, path, front)
       const focusable = current !== null && isServerStreamId(current) && panelIdsOf(next).includes(current)
@@ -533,7 +540,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
         keepsPath: route.keepPath,
       }
     },
-    [path, layout, front, location.pathname, workspaceId, phone]
+    [path, pagePane, layout, front, location.pathname, workspaceId, phone]
   )
 
   // Every stream pane of `next` can be the route's and show the same panes, so closing pops onto any of them.
@@ -544,7 +551,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
         setLayoutParam(landed, next, path, keepPath)
         return { pathname, params: landed }
       }
-      const others = panelIdsOf(next).filter((id) => id !== to.path && isServerStreamId(id))
+      const others = path === null ? [] : panelIdsOf(next).filter((id) => id !== to.path && isServerStreamId(id))
       return [
         landing(to.pathname, to.path, to.keepsPath),
         ...others.map((id) =>
@@ -552,7 +559,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
         ),
       ]
     },
-    [workspaceId, phone]
+    [path, workspaceId, phone]
   )
 
   const setCurrentPane = useCallback(
@@ -582,15 +589,11 @@ export function PanelProvider({ children }: PanelProviderProps) {
 
   const contextual = useCallback(
     (current: PanelLayout, panelId: string, scopeId: string | null) => {
-      if (path !== null) return openPanelTabBeside(current, scopeId ?? path, panelId)
-      // Without tabs a panel replaces the one open, except a drawer, which keeps its stream under it.
-      const primary = primaryPanelOf(current)
-      if (!presentsAsDrawer(panelId) || primary === null || presentsAsDrawer(primary)) {
-        return openPanelTab(NO_PANELS, panelId)
-      }
-      return openPanelTabBeside(openPanelTab(NO_PANELS, primary), primary, panelId)
+      if (routePane !== null) return openPanelTabBeside(current, scopeId ?? routePane, panelId)
+      // Without tabs a panel replaces the one open.
+      return openPanelTab(NO_PANELS, panelId)
     },
-    [path]
+    [routePane]
   )
 
   const urlFor = useCallback(
@@ -629,7 +632,10 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const closedTabs = useRef<string[]>([])
   const { closeTo } = useCoverHistory(PANEL_COVER)
   const closing = useCallback(
-    (panelId: string) => panesOwnedBy(layout, panelId).reduce(closePanelTab, closePanelTab(layout, panelId)),
+    (panelId: string) =>
+      isPagePane(panelId)
+        ? layout
+        : panesOwnedBy(layout, panelId).reduce(closePanelTab, closePanelTab(layout, panelId)),
     [layout]
   )
   const canCloseTab = useCallback(
@@ -669,7 +675,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       const panelId = findReopenable()
       if (!panelId) return null
       closedTabs.current = closedTabs.current.filter((id) => id !== panelId)
-      const from = scopeId ?? path
+      const from = scopeId ?? routePane
       // The first column reopens beside itself rather than over its stream.
       const beside = from !== null && firstColumnHolds(layout, from)
       open(
@@ -679,7 +685,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       )
       return panelId
     },
-    [findReopenable, open, path, layout]
+    [findReopenable, open, routePane, layout]
   )
 
   // Splitting rearranges what is already open, so it is not a step of its own in history.
@@ -704,6 +710,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const focusTab = useCallback(
     (panelId: string | null) => {
       if (panelId !== null) {
+        if (isPagePane(panelId)) return
         // A second press can land before the router commits the first, which already pushed this step.
         if (parsePanelLayout(new URLSearchParams(window.location.search).get(PANEL_PARAM)).focused === panelId) return
         open((current) => focusPanelTab(current, panelId), false)
