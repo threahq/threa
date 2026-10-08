@@ -317,6 +317,20 @@ describe("WorkspaceAgent runSearchLoop", () => {
     })
   })
 
+  test("reports every named person as unresolved when the resolver cannot answer", async () => {
+    spyOn(UserRepository, "listByCircle").mockResolvedValue([])
+    const { result } = runLoop({
+      query: "what did Kate decide",
+      people: ["Kate"],
+      peopleResolver: new StubPeopleResolver(),
+    })
+    const { retrievedContext } = await result
+
+    expect(retrievedContext?.slice(retrievedContext.indexOf("## People"))).toBe(
+      '## People\n\n- "Kate" could not be matched to anyone. They may still exist.'
+    )
+  })
+
   test("fails the search when the workspace's AI spend is denied while resolving people", async () => {
     spyOn(UserRepository, "listByCircle").mockResolvedValue([])
     const resolve = mock(async () => {

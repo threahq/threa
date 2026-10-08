@@ -146,3 +146,7 @@ export function loadQuestions(dir: string): BenchQuestion[] {
       })
   )
 }
+
+export function loadJudgePrompt(dir: string): string {
+  return readFileSync(join(dir, "prompts", "hipporag_judge_system.txt"), "utf8")
+}

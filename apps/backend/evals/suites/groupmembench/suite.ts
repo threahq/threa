@@ -2,14 +2,16 @@
  * GroupMemBench, Technology domain: 30k messages from 18 people across seven
  * channels, asked 213 questions in six types (`dataset.ts`).
  *
- * Setup replays the channels, all seven interleaved by timestamp, through the
- * production pipeline on a simulated clock (`fixtures/replay.ts`): boundary
- * extraction, memo capture and embeddings run as they would have live, up to
- * the moment the questions are asked. Each top-level post with replies gets a
- * thread, nested replies flattened into it and titled with the post's phase,
- * since the questions name phases the message text mostly does not. Every
- * question is then asked by its own user in a fresh scratchpad, through the
- * production `PersonaAgent.run`, as of the day after the data ends:
+ * Setup replays each channel through the production pipeline on a simulated
+ * clock (`fixtures/replay.ts`): boundary extraction, memo capture and
+ * embeddings run as they would have live, up to the moment the questions are
+ * asked. The channels replay in parallel, each in its own database on its own
+ * clock, and are copied into the run's database as they finish. Each top-level
+ * post with replies gets a thread, nested replies flattened into it and titled
+ * with the post's phase, since the questions name phases the message text
+ * mostly does not. Every question is then asked by its own user in a fresh
+ * scratchpad, through the production `PersonaAgent.run`, as of the day after
+ * the data ends:
  *
  *   groupmembench            memory on, prepared recall on, every tool
  *   groupmembench-no-memory  channels' memory off: message search only
@@ -17,7 +19,7 @@
  * Graded with GroupMemBench's own judge prompt, correct or not.
  *
  *   bun run eval -- -s groupmembench
- *   GROUPMEMBENCH_CHANNELS=MonitoringAgent bun run eval -- -s groupmembench -c temporal_1
+ *   GROUPMEMBENCH_CHANNELS=<Channel> bun run eval -- -s groupmembench -c temporal_1
  *
  * `GROUPMEMBENCH_CHANNELS` (comma-separated) seeds only those channels, for a
  * smoke run; questions about the others then have nothing to find.
@@ -28,13 +30,15 @@
 
 import type { CaseResult, EvalContext, EvalSuite, Evaluator, RunEvaluator } from "../../framework/types"
 import { EVAL_JUDGE_MODEL } from "../../framework/judge-config"
-import { startReplayPipeline, type ReplayMessage } from "../../fixtures/replay"
+import { startReplayPipeline, type ReplayMessage, type ReplayResult } from "../../fixtures/replay"
+import { copyDatabaseRows, setupEvalDatabase, type EvalDatabaseResult } from "../../framework/database"
 import { runCompanionTask } from "../companion/suite"
 import type { CompanionTrajectoryStep } from "../companion/types"
 import {
   QUESTION_TYPES,
   datasetDir,
   loadChannels,
+  loadJudgePrompt,
   loadQuestions,
   type BenchChannel,
   type BenchMessage,
@@ -46,6 +50,7 @@ import { StreamService } from "../../../src/features/streams"
 import { UserRepository } from "../../../src/features/workspaces"
 import { userId as generateUserId } from "../../../src/lib/id"
 import { AgentStepTypes, MemoryModes, StreamTypes } from "@threahq/types"
+import type { Pool } from "pg"
 import { z } from "zod"
 
 type Variant = "memory" | "no-memory"
@@ -120,8 +125,8 @@ async function insertUsers(ctx: EvalContext, names: string[]): Promise<Map<strin
 }
 
 /** The clock starts just before the first post, so the channels exist before anything is said in them. */
-export function replayStart(): Date {
-  const first = selectedChannels()
+export function replayStart(channels = selectedChannels()): Date {
+  const first = channels
     .flatMap((channel) => channel.posts)
     .reduce((min, post) => Math.min(min, post.createdAt.getTime()), Infinity)
   return new Date(first - 60_000)
@@ -209,6 +214,57 @@ async function reuseWorkspace(ctx: EvalContext): Promise<void> {
   )
 }
 
+/** Replays one channel in a database of its own, on its own clock, and returns what the pipeline left behind. */
+async function replayChannel(
+  ctx: EvalContext & { connectionString: string },
+  runStart: Date,
+  channel: BenchChannel,
+  userIds: Map<string, string>,
+  variant: Variant
+): Promise<{ db: EvalDatabaseResult; messageCount: number; result: ReplayResult }> {
+  // Migrations stamp their seed rows with the clock, so every database starts on the run's.
+  const db = await setupEvalDatabase({ label: `gmb_${channel.name}`, simClock: runStart })
+  try {
+    await copyDatabaseRows(db.pool, ctx.connectionString)
+    const clock = requireClock({ ...ctx, clock: db.clock })
+    await clock.set(replayStart([channel]))
+    const pipeline = await startReplayPipeline({
+      pool: db.pool,
+      connectionString: db.connectionString,
+      clock,
+      ai: ctx.ai,
+      workspaceId: ctx.workspaceId,
+    })
+    try {
+      const messages = await seedChannel(ctx, new StreamService(db.pool), channel, userIds, variant)
+      messages.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
+      return { db, messageCount: messages.length, result: await pipeline.replay(messages, new Date(ASKED_AT)) }
+    } finally {
+      await pipeline.stop()
+    }
+  } catch (error) {
+    await db.cleanup()
+    throw error
+  }
+}
+
+async function captureCounts(pool: Pool, workspaceId: string) {
+  const { rows } = await pool.query<{ conversations: string; memos: string; abandoned: string }>(
+    `SELECT
+       (SELECT count(*) FROM conversations WHERE workspace_id = $1) AS conversations,
+       (SELECT count(*) FROM memos WHERE workspace_id = $1 AND status = 'active') AS memos,
+       (SELECT count(*) FROM memo_pending_items WHERE workspace_id = $1 AND failed_attempts >= $2) AS abandoned`,
+    [workspaceId, MEMO_MAX_FAILED_ATTEMPTS]
+  )
+  return rows[0]!
+}
+
+/**
+ * Channels share no conversations, so each replays in parallel in a clone of
+ * the seeded users, and its rows are copied back once its replay finishes.
+ * Memo capture reads its own stream, except the tag vocabulary: production
+ * offers tags from every public channel, here only the channel's own.
+ */
 export function seedWorkspace(variant: Variant) {
   return async (ctx: EvalContext): Promise<void> => {
     if (ctx.reusedDatabase) return reuseWorkspace(ctx)
@@ -217,41 +273,50 @@ export function seedWorkspace(variant: Variant) {
     const askers = loadQuestions(datasetDir()).map((q) => q.askingUser)
     const names = [...new Set([...channels.flatMap((c) => c.authors), ...askers])].sort()
     const userIds = await insertUsers(ctx, names)
+    const { connectionString } = ctx
+    if (!connectionString) throw new Error("groupmembench replays against a database")
+    const runStart = replayStart()
 
-    if (!ctx.connectionString) throw new Error("groupmembench replays against a database")
-    const pipeline = await startReplayPipeline({
-      pool: ctx.pool,
-      connectionString: ctx.connectionString,
-      clock: requireClock(ctx),
-      ai: ctx.ai,
-      workspaceId: ctx.workspaceId,
-    })
-    let messageCount = 0
-    let result
-    try {
-      const streamService = new StreamService(ctx.pool)
-      const histories = await Promise.all(
-        channels.map((channel) => seedChannel(ctx, streamService, channel, userIds, variant))
-      )
-      const messages = histories.flat().sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-      messageCount = messages.length
-      result = await pipeline.replay(messages, new Date(ASKED_AT))
-    } finally {
-      await pipeline.stop()
-    }
+    let merging = Promise.resolve()
+    const replays = await Promise.allSettled(
+      channels.map(async (channel) => {
+        const { db, messageCount, result } = await replayChannel(
+          { ...ctx, connectionString },
+          runStart,
+          channel,
+          userIds,
+          variant
+        )
+        try {
+          const counts = await captureCounts(db.pool, ctx.workspaceId)
+          console.log(
+            `  ${channel.name}: ${messageCount} messages into ${counts.conversations} conversations and ${counts.memos} memos (${seconds(Date.now() - startedAt)}); ${result.unprocessedMemoItems} memo items pending, ${counts.abandoned} abandoned, ${result.deadLetteredJobs} jobs and ${result.deadLetteredEvents} outbox events dead-lettered`
+          )
+          // One copy at a time, so rows two channels share are compared against what the first copied.
+          const copy = merging.then(() => copyDatabaseRows(ctx.pool, db.connectionString))
+          merging = copy.then(
+            () => undefined,
+            () => undefined
+          )
+          await copy
+        } catch (error) {
+          // The replay cost hours; keep it to inspect or merge by hand.
+          await db.pool.end()
+          throw new Error(`${channel.name} replayed but did not merge; kept ${db.databaseName}`, { cause: error })
+        }
+        await db.cleanup()
+        return messageCount
+      })
+    )
+    const failed = replays.flatMap((replay) => (replay.status === "rejected" ? [replay.reason] : []))
+    if (failed.length > 0)
+      throw new AggregateError(failed, `${failed.length} of ${channels.length} channel replays failed`)
+    await requireClock(ctx).set(new Date(ASKED_AT))
 
-    const { rows } = await ctx.pool.query<{ conversations: string; memos: string; abandoned: string }>(
-      `SELECT
-         (SELECT count(*) FROM conversations WHERE workspace_id = $1) AS conversations,
-         (SELECT count(*) FROM memos WHERE workspace_id = $1 AND status = 'active') AS memos,
-         (SELECT count(*) FROM memo_pending_items WHERE workspace_id = $1 AND failed_attempts >= $2) AS abandoned`,
-      [ctx.workspaceId, MEMO_MAX_FAILED_ATTEMPTS]
-    )
+    const messageCount = replays.reduce((sum, replay) => sum + (replay.status === "fulfilled" ? replay.value : 0), 0)
+    const counts = await captureCounts(ctx.pool, ctx.workspaceId)
     console.log(
-      `\n  Replayed ${messageCount} messages in ${channels.length} channels into ${rows[0]!.conversations} conversations and ${rows[0]!.memos} memos (${seconds(Date.now() - startedAt)}, $${ctx.usage.getTotal().totalCost.toFixed(2)} generation)`
-    )
-    console.log(
-      `  ${result.unprocessedMemoItems} memo items still pending at ${ASKED_AT}, ${rows[0]!.abandoned} abandoned after failed model calls, ${result.deadLetteredJobs} pipeline jobs and ${result.deadLetteredEvents} outbox events dead-lettered\n`
+      `\n  Replayed ${messageCount} messages in ${channels.length} channels into ${counts.conversations} conversations and ${counts.memos} memos (${seconds(Date.now() - startedAt)}, $${ctx.usage.getTotal().totalCost.toFixed(2)} generation)\n`
     )
 
     const streams = await ctx.pool.query<{ id: string }>(`SELECT id FROM streams WHERE workspace_id = $1`, [
@@ -322,6 +387,7 @@ const correctnessEvaluator: Evaluator<GroupMemBenchOutput, GroupMemBenchExpected
     if (!output.reply.trim()) {
       return { name: "correct", score: 0, passed: false, details: output.error ?? "no reply" }
     }
+    const judgePrompt = `${loadJudgePrompt(datasetDir())}\n\nReturn the judgment in the \`correct\` field rather than a "Final:" line.`
     try {
       const { value } = await ctx.ai.generateObject({
         context: { workspaceId: ctx.workspaceId, userId: ctx.userId },
@@ -330,8 +396,7 @@ const correctnessEvaluator: Evaluator<GroupMemBenchOutput, GroupMemBenchExpected
         messages: [
           {
             role: "system",
-            content:
-              "You are a strict judge evaluating whether an agent's answer matches the gold answer for a question.\nConsider paraphrases correct if they have the same meaning as the gold answer.\nFirst provide a brief reasoning paragraph, then the final judgment.",
+            content: judgePrompt,
           },
           {
             role: "user",

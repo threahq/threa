@@ -266,3 +266,121 @@ export async function setupEvalDatabase(options: DatabaseOptions = {}): Promise<
     },
   }
 }
+
+/** Queue, outbox, sync and migration state: each database's own machinery, never data to carry over. */
+const INFRA_TABLES = new Set([
+  "umzug_migrations",
+  "eval_clock",
+  "outbox",
+  "outbox_listeners",
+  "outbox_dead_letters",
+  "queue_messages",
+  "queue_tokens",
+  "cron_schedules",
+  "cron_ticks",
+  "socket_io_attachments",
+  "sync_log",
+  "sync_log_retention_state",
+  "sync_log_sweep_state",
+  "workspace_sync_sequences",
+  "backfill_runs",
+  "backfill_chunks",
+  "batch_operation_leases",
+  "access_log",
+])
+
+const ident = (name: string) => `"${name.replace(/"/g, '""')}"`
+
+/**
+ * Copies every data row of the eval database `sourceConnectionString` names into `target`, in one
+ * transaction. Rows already present by primary key must be identical: copies only ever add rows,
+ * so two databases that wrote the same key differently fail the copy rather than drop one side.
+ * Both databases live on the eval Postgres server, which reaches the source over postgres_fdw.
+ */
+export async function copyDatabaseRows(target: Pool, sourceConnectionString: string): Promise<number> {
+  const source = new URL(sourceConnectionString)
+  const sourceName = decodeURIComponent(source.pathname.slice(1))
+  const { rows: targetRows } = await target.query<{ name: string }>("SELECT current_database() AS name")
+  for (const name of [sourceName, targetRows[0]!.name]) {
+    if (!name.startsWith(EVAL_DATABASE_PREFIX)) throw new Error(`Refusing to copy rows with non-eval database ${name}`)
+  }
+  const server = `eval_copy_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`
+  const client = await target.connect()
+  try {
+    await client.query("CREATE EXTENSION IF NOT EXISTS postgres_fdw")
+    const { rows: portRows } = await client.query<{ port: string }>("SELECT current_setting('port') AS port")
+    await client.query(
+      `CREATE SERVER ${server} FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host 'localhost', port '${portRows[0].port}', dbname '${sourceName}')`
+    )
+    await client.query(
+      `CREATE USER MAPPING FOR CURRENT_USER SERVER ${server} OPTIONS (user '${decodeURIComponent(source.username)}', password '${decodeURIComponent(source.password)}')`
+    )
+    await client.query(`CREATE SCHEMA ${server}`)
+    await client.query(`IMPORT FOREIGN SCHEMA public FROM SERVER ${server} INTO ${server}`)
+
+    const { rows: tables } = await client.query<{ name: string; columns: string[]; key: string[] }>(`
+      SELECT c.relname AS name,
+        ARRAY(SELECT a.attname::text FROM pg_attribute a
+              WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped AND a.attgenerated = ''
+              ORDER BY a.attnum) AS columns,
+        ARRAY(SELECT a.attname::text FROM pg_index i JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+              WHERE i.indrelid = c.oid AND i.indisprimary ORDER BY a.attnum) AS key
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relispartition
+      ORDER BY c.relname
+    `)
+
+    await client.query("BEGIN")
+    let copied = 0
+    for (const table of tables) {
+      if (INFRA_TABLES.has(table.name) || table.name === "message_link_previews") continue
+      const local = `public.${ident(table.name)}`
+      const remote = `${server}.${ident(table.name)}`
+      if (table.key.length === 0) {
+        const { rows } = await client.query(`SELECT 1 FROM ${remote} LIMIT 1`)
+        if (rows.length > 0) throw new Error(`Cannot copy ${table.name}: it has rows and no primary key`)
+        continue
+      }
+      const sameKey = table.key.map((column) => `p.${ident(column)} = s.${ident(column)}`).join(" AND ")
+      const row = (alias: string) =>
+        `ROW(${table.columns.map((column) => `${alias}.${ident(column)}`).join(", ")})::text`
+      const { rows: differing } = await client.query<{ count: string }>(
+        `SELECT count(*) FROM ${remote} s JOIN ${local} p ON ${sameKey} WHERE ${row("s")} IS DISTINCT FROM ${row("p")}`
+      )
+      if (Number(differing[0].count) > 0) {
+        throw new Error(`Cannot copy ${table.name}: ${differing[0].count} rows share a key with different contents`)
+      }
+      const columns = table.columns.map(ident).join(", ")
+      // Each database mints its own id for a URL, and a workspace previews a URL once: the first copied wins.
+      const sameUrl =
+        table.name === "link_previews"
+          ? " OR (p.workspace_id = s.workspace_id AND p.normalized_url = s.normalized_url)"
+          : ""
+      const inserted = await client.query(
+        `INSERT INTO ${local} (${columns}) SELECT ${table.columns.map((column) => `s.${ident(column)}`).join(", ")}
+         FROM ${remote} s WHERE NOT EXISTS (SELECT 1 FROM ${local} p WHERE ${sameKey}${sameUrl})`
+      )
+      copied += inserted.rowCount ?? 0
+    }
+    const links = await client.query(
+      `INSERT INTO public.message_link_previews (workspace_id, message_id, link_preview_id, position)
+       SELECT m.workspace_id, m.message_id, p.id, m.position
+       FROM ${server}.message_link_previews m
+       JOIN ${server}.link_previews s ON s.workspace_id = m.workspace_id AND s.id = m.link_preview_id
+       JOIN public.link_previews p ON p.workspace_id = s.workspace_id AND p.normalized_url = s.normalized_url
+       ON CONFLICT DO NOTHING`
+    )
+    copied += links.rowCount ?? 0
+    await client.query("COMMIT")
+    return copied
+  } catch (error) {
+    await client.query("ROLLBACK")
+    throw error
+  } finally {
+    try {
+      await client.query(`DROP SCHEMA IF EXISTS ${server} CASCADE; DROP SERVER IF EXISTS ${server} CASCADE`)
+    } finally {
+      client.release()
+    }
+  }
+}

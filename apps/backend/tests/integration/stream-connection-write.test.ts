@@ -767,7 +767,10 @@ describe("A partner's writes to a shared channel", () => {
       }).toEqual({
         contentJson: {
           type: "doc",
-          content: [...withFile(file, " second").content!, { type: "paragraph", content: [{ type: "text", text: " borrowed" }] }],
+          content: [
+            ...withFile(file, " second").content!,
+            { type: "paragraph", content: [{ type: "text", text: " borrowed" }] },
+          ],
         },
         referencedBy: [id],
       })

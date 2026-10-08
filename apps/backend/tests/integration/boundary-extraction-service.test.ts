@@ -1039,8 +1039,7 @@ describe("BoundaryExtractionService", () => {
       ])
     })
     test("should show a title and summary only when written while shared, and stamp new ones with the channel, when the channel is shared", async () => {
-      const { sharedStreamId, replyThreadStreamId, priorMsgId, triggerMsgId, threadReplyId } =
-        await seedSharedChannel()
+      const { sharedStreamId, replyThreadStreamId, priorMsgId, triggerMsgId, threadReplyId } = await seedSharedChannel()
       const preShareId = conversationId()
       const sharedId = conversationId()
       const laterReplyId = messageId()
@@ -1090,7 +1089,10 @@ describe("BoundaryExtractionService", () => {
         [testWorkspaceId, [inChannel!.id, inThread!.id]]
       )
 
-      const stamped = { topic_summary_shared_root_stream_id: sharedStreamId, summary_shared_root_stream_id: sharedStreamId }
+      const stamped = {
+        topic_summary_shared_root_stream_id: sharedStreamId,
+        summary_shared_root_stream_id: sharedStreamId,
+      }
       expect({ active: active?.toSorted(), stamps }).toEqual({
         active: [
           [preShareId, null, null],

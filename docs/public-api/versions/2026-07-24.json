@@ -266,7 +266,7 @@
         "operationId": "searchMemos",
         "summary": "Search memos",
         "tags": ["Memos"],
-        "description": "Search preserved workspace memos with semantic, exact, or recent-first retrieval. `before` and `after` filter by when the source messages were posted, not when the memo was captured.",
+        "description": "Search preserved workspace memos with semantic, exact, or recent-first retrieval. `before` and `after` filter by when the source messages were posted, not when the memo was captured. Recent-first results are ordered by that time too, so neither `after` nor recent-first order lists newly captured memos first.",
         "security": [{ "apiKey": ["memos:read"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },

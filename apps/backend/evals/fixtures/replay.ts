@@ -178,7 +178,7 @@ export async function startReplayPipeline(deps: {
     light
   )
 
-  const listenPool = createDatabasePool(deps.connectionString, SIM_CLOCK_POOL_CONFIG)
+  const listenPool = createDatabasePool(deps.connectionString, { ...SIM_CLOCK_POOL_CONFIG, max: 2 })
   const outboxDispatcher = new OutboxDispatcher({ listenPool, fallbackPollMs: 2000 })
   const handlers = [
     new EmbeddingHandler(pool, jobQueue),

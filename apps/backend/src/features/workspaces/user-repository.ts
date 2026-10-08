@@ -406,7 +406,7 @@ export const UserRepository = {
           CASE WHEN u.id = ${askerId} OR ${room} THEN 1 WHEN ${shared} THEN 2 ELSE 3 END AS circle
         FROM users u
         WHERE u.workspace_id = ${workspaceId} AND ${peopleScopeSql(workspaceId, scope)}
-        ORDER BY circle, u.joined_at, u.id
+        ORDER BY circle, u.id = ${askerId} DESC, u.joined_at, u.id
         LIMIT ${limit}
       `
     )
