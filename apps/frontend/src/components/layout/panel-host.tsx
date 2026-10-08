@@ -78,6 +78,11 @@ function panelKeyFor(workspaceId: string, panelId: string): string {
 /** What a route's own `page:` pane shows. */
 export const PagePaneContext = createContext<ReactNode>(null)
 
+// Its own component, so a page's re-render reaches only the pane showing it.
+function PagePane() {
+  return useContext(PagePaneContext)
+}
+
 interface PanelHostProps {
   workspaceId: string
   onClose: () => void
@@ -99,8 +104,7 @@ interface PanelHostProps {
  */
 export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
   const { panelId } = usePanel()
-  const page = useContext(PagePaneContext)
-  if (panelId && isPagePane(panelId)) return page
+  if (panelId && isPagePane(panelId)) return <PagePane />
   const composeStreamId = panelId && parseComposePanel(panelId)
   const context = panelId && parseContextPanel(panelId)
   const conversationsStreamId = panelId && parseConversationsPanel(panelId)
