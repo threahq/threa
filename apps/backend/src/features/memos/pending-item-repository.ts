@@ -158,7 +158,7 @@ export const PendingItemRepository = {
     await client.query(sql`
       UPDATE memo_pending_items AS p
       SET classified_fingerprint = v.fingerprint,
-          read_through = COALESCE(v.read_through, p.read_through)
+          read_through = v.read_through
       FROM UNNEST(
         ${entries.map((e) => e.id)}::text[],
         ${entries.map((e) => e.fingerprint)}::text[],
