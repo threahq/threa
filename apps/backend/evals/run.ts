@@ -75,6 +75,9 @@ Options:
   -r, --runs <n>        Repeat every case n times, report per-case pass rates (default: 1)
   --min-pass-rate <n>   Pass-rate a case must clear when runs > 1 (0.0-1.0, default: 1.0)
   --json <file>         Write machine-readable results JSON to <file>
+  --keep-db             Keep the run's database afterwards and print its name
+  --from-db <name>      Clone a kept database instead of seeding: suites that
+                        support it skip setup (groupmembench reuses its captured memos)
   --config <file>       Run from YAML config file (ignores -m; -s narrows it to one suite)
   --rescore <file>      Re-run evaluators over a previous --json report's stored
                         generations. No model turns, so no generation cost.
@@ -134,6 +137,8 @@ async function main(): Promise<void> {
       runs: { type: "string", short: "r" },
       "min-pass-rate": { type: "string" },
       json: { type: "string" },
+      "from-db": { type: "string" },
+      "keep-db": { type: "boolean" },
       config: { type: "string" },
       verbose: { type: "boolean", short: "v" },
     },
@@ -163,6 +168,8 @@ async function main(): Promise<void> {
     runs: values.runs ? parseInt(values.runs, 10) : undefined,
     minPassRate: values["min-pass-rate"] ? parseFloat(values["min-pass-rate"]) : undefined,
     jsonOutput: values.json,
+    fromDatabase: values["from-db"],
+    keepDatabase: values["keep-db"],
     verbose: values.verbose,
   }
 
@@ -221,6 +228,8 @@ async function main(): Promise<void> {
         runs: options.runs,
         suite: options.suite,
         judgeModel: options.judgeModel,
+        fromDatabase: options.fromDatabase,
+        keepDatabase: options.keepDatabase,
         onSuiteResult: options.jsonOutput
           ? async (partial) => {
               await Bun.write(options.jsonOutput!, JSON.stringify(toJsonReport(partial), null, 2))

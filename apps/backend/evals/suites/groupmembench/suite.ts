@@ -19,6 +19,9 @@
  *
  * `GROUPMEMBENCH_CHANNELS` (comma-separated) seeds only those channels, for a
  * smoke run; questions about the others then have nothing to find.
+ *
+ * Capture takes hours. `--keep-db` keeps a run's database, and `--from-db <name>`
+ * clones it into later runs, which then measure recall over the same memos.
  */
 
 import type { CaseResult, EvalContext, EvalSuite, Evaluator, RunEvaluator } from "../../framework/types"
@@ -188,8 +191,41 @@ async function seedChannel(
   return { channelId, messageCount, conversations }
 }
 
+/** A kept database already holds the seeded channels and captured memos; only the lookup state is rebuilt. */
+async function reuseWorkspace(ctx: EvalContext): Promise<void> {
+  const users = await ctx.pool.query<{ id: string; name: string }>(
+    `SELECT id, name FROM users WHERE workspace_id = $1 AND email LIKE '%@groupmembench.test'`,
+    [ctx.workspaceId]
+  )
+  const streams = await ctx.pool.query<{ id: string }>(
+    `SELECT id FROM streams WHERE workspace_id = $1 AND type = ANY($2::text[])`,
+    [ctx.workspaceId, [StreamTypes.CHANNEL, StreamTypes.THREAD]]
+  )
+  const memos = await ctx.pool.query<{ count: string }>(
+    `SELECT count(*) FROM memos WHERE workspace_id = $1 AND status = 'active'`,
+    [ctx.workspaceId]
+  )
+  if (users.rows.length === 0 || streams.rows.length === 0) {
+    throw new Error(`${ctx.reusedDatabase} holds no seeded GroupMemBench workspace`)
+  }
+  seeded.set(ctx.workspaceId, {
+    userIds: new Map(users.rows.map((row) => [row.name, row.id])),
+    baselineStreamIds: new Set(streams.rows.map((row) => row.id)),
+  })
+  // The kept run's scratchpads lost their members case by case, except one still open when it was kept.
+  await ctx.pool.query(
+    `DELETE FROM stream_members sm USING streams s
+     WHERE s.id = sm.stream_id AND s.workspace_id = $1 AND NOT (s.id = ANY($2::text[]))`,
+    [ctx.workspaceId, streams.rows.map((row) => row.id)]
+  )
+  console.log(
+    `\n  Reusing ${ctx.reusedDatabase}: ${streams.rows.length} channels and threads, ${memos.rows[0]!.count} active memos\n`
+  )
+}
+
 function seedWorkspace(variant: Variant) {
   return async (ctx: EvalContext): Promise<void> => {
+    if (ctx.reusedDatabase) return reuseWorkspace(ctx)
     const startedAt = Date.now()
     const channels = selectedChannels()
     const askers = loadQuestions(datasetDir()).map((q) => q.askingUser)
@@ -404,6 +440,7 @@ function buildSuite(variant: Variant): EvalSuite<GroupMemBenchInput, GroupMemBen
       }))
     },
     setup: seedWorkspace(variant),
+    reusesDatabase: variant === "memory",
     task: runQuestion(variant),
     evaluators: [correctnessEvaluator],
     runEvaluators: [summaryEvaluator],

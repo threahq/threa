@@ -70,6 +70,35 @@ export async function createWorkspaceFixture(pool: Pool): Promise<WorkspaceFixtu
   return fixture
 }
 
+/** The fixture a kept eval database was seeded with: its one workspace and that workspace's owner. */
+export async function loadWorkspaceFixture(pool: Pool): Promise<WorkspaceFixture> {
+  const { rows } = await pool.query<{
+    workspace_id: string
+    workspace_name: string
+    workspace_slug: string
+    user_id: string
+    user_name: string
+    user_email: string
+  }>(
+    `SELECT w.id AS workspace_id, w.name AS workspace_name, w.slug AS workspace_slug,
+            u.id AS user_id, u.name AS user_name, u.email AS user_email
+     FROM workspaces w
+     JOIN users u ON u.workspace_id = w.id AND u.role = 'owner'`
+  )
+  if (rows.length !== 1) {
+    throw new Error(`Expected one workspace with one owner in the kept database, found ${rows.length}`)
+  }
+  const row = rows[0]!
+  return {
+    workspaceId: row.workspace_id,
+    workspaceName: row.workspace_name,
+    workspaceSlug: row.workspace_slug,
+    userId: row.user_id,
+    userName: row.user_name,
+    userEmail: row.user_email,
+  }
+}
+
 /**
  * Create additional users in a workspace.
  * Useful for testing multi-participant scenarios.
