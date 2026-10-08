@@ -245,7 +245,7 @@ function ConversationPanelHeader({
   )
   let titleArea: React.ReactNode
   if (tabbed) {
-    titleArea = <PanelTabStrip workspaceId={workspaceId} className="-ml-2" splitsInPaneMenu={revealed} />
+    titleArea = <PanelTabStrip workspaceId={workspaceId} className="-ml-2" splitsInPaneMenu />
   } else if (revealed && isMobile) {
     titleArea = (
       <StreamTitlePreview name={title}>

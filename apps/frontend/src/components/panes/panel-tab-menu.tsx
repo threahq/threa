@@ -92,8 +92,9 @@ export function closeTabItems({
   return [
     entry("one", "Close"),
     entry("others", "Close others"),
-    entry("after", vertical ? "Close below" : "Close to the right"),
-    entry("before", vertical ? "Close above" : "Close to the left"),
+    ...(vertical
+      ? [entry("before", "Close above"), entry("after", "Close below")]
+      : [entry("after", "Close to the right"), entry("before", "Close to the left")]),
     entry("all", "Close all"),
   ]
 }

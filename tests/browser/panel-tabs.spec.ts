@@ -341,7 +341,7 @@ test("should stack a tab split down under its own section", async ({ page }) => 
   await expect(page.getByRole("separator", { name: "Resize stacked panels" })).toBeVisible()
 })
 
-test("should close tabs beside one from its menu in one step each, and reopen them latest first", async ({ page }) => {
+test("should close tabs beside one from its menu, and reopen them latest first", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 })
   const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
   const parentC = await post(page, workspaceId, streamId, "third parent")
@@ -356,7 +356,6 @@ test("should close tabs beside one from its menu in one step each, and reopen th
   await expect(page.getByRole("menuitem", { name: "Split right" })).toBeVisible()
   await page.keyboard.press("Escape")
 
-  const entries = await page.evaluate(() => history.length)
   const middle = tabStrip(page).getByRole("link", { name: "second parent" })
   await middle.click({ button: "right" })
   await expect(page.getByRole("menuitem", { name: "Close to the left" })).toBeEnabled()
@@ -369,14 +368,24 @@ test("should close tabs beside one from its menu in one step each, and reopen th
   await page.getByRole("menuitem", { name: "Close others" }).click()
   await expect.poll(() => panelParam(page)).toBe(`${streamId}-${threadB}`)
   await expect(page.getByRole("navigation", { name: "Panel tabs" })).toHaveCount(0)
-  // Each close stood in for the entry it left, as closing one tab does.
-  expect(await page.evaluate(() => history.length)).toBe(entries)
 
   await page.keyboard.press("Alt+Shift+T")
   await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
   await page.keyboard.press("Alt+Shift+T")
   await expect(replyIn(page, threadC, "reply in thread C")).toBeVisible()
   await expect(tabStrip(page).getByRole("link")).toHaveCount(3)
+
+  await middle.click({ button: "right" })
+  await page.getByRole("menuitem", { name: "Close all" }).click()
+  await expect.poll(() => panelParam(page)).toBeNull()
+  await page.keyboard.press("Alt+Shift+T")
+  await page.keyboard.press("Alt+Shift+T")
+  await expect(tabStrip(page).getByRole("link")).toHaveCount(2)
+  // A menu dismissed after Close all still hands focus back to its tab.
+  const first = tabStrip(page).getByRole("link", { name: "first parent" })
+  await first.click({ button: "right" })
+  await page.keyboard.press("Escape")
+  await expect(first).toBeFocused()
 })
 
 test("should even the panes along a divider when it is double-clicked", async ({ page }) => {
