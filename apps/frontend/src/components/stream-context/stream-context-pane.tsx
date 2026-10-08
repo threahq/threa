@@ -66,7 +66,7 @@ export function StreamContextPane({ workspaceId, streamId, filter, onClose, clas
         header={(total) => (
           <SidePanelHeader className="relative">
             {showTabs ? (
-              <PanelTabStrip workspaceId={workspaceId} className="-ml-2" labels={<ContextCount total={total} />} />
+              <PanelTabStrip workspaceId={workspaceId} className="-ml-2" />
             ) : (
               <div className="flex min-w-0 flex-1 items-center gap-2">
                 <SidePanelTitle className="min-w-0">
