@@ -220,7 +220,7 @@ function ConversationPanelHeader({
   const effectiveTitle = useConversationTitle(workspaceId, post?.conversation ?? { streamId: "", topicSummary: null })
   const revealed = phase === "ready" && post !== null
   const [menuOpen, setMenuOpen] = useState(false)
-  const title = effectiveTitle ?? locator
+  const title = effectiveTitle ?? "Untitled conversation"
   const resolved = post?.conversation.status === "resolved"
   const { tabbed } = usePanel()
   const closeRef = usePanelCloseFocusLanding()
