@@ -628,7 +628,9 @@ describe("Conversations in a shared channel's copy", () => {
     expect({ host: await pokesFor(world.host.id), copy: await pokesFor(world.partner.id) }).toEqual({
       host: {
         events: ["conversation:updated"],
-        pokes: [{ hostWorkspaceId: world.host.id, connectionId: world.connectionId, partnerWorkspaceId: world.partner.id }],
+        pokes: [
+          { hostWorkspaceId: world.host.id, connectionId: world.connectionId, partnerWorkspaceId: world.partner.id },
+        ],
       },
       copy: { events: ["conversation:created"], pokes: [] },
     })

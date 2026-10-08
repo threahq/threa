@@ -19,7 +19,7 @@
  * Graded with GroupMemBench's own judge prompt, correct or not.
  *
  *   bun run eval -- -s groupmembench
- *   GROUPMEMBENCH_CHANNELS=MonitoringAgent bun run eval -- -s groupmembench -c temporal_1
+ *   GROUPMEMBENCH_CHANNELS=<Channel> bun run eval -- -s groupmembench -c temporal_1
  *
  * `GROUPMEMBENCH_CHANNELS` (comma-separated) seeds only those channels, for a
  * smoke run; questions about the others then have nothing to find.
@@ -38,6 +38,7 @@ import {
   QUESTION_TYPES,
   datasetDir,
   loadChannels,
+  loadJudgePrompt,
   loadQuestions,
   type BenchChannel,
   type BenchMessage,
@@ -394,8 +395,7 @@ const correctnessEvaluator: Evaluator<GroupMemBenchOutput, GroupMemBenchExpected
         messages: [
           {
             role: "system",
-            content:
-              "You are a strict judge evaluating whether an agent's answer matches the gold answer for a question.\nConsider paraphrases correct if they have the same meaning as the gold answer.\nFirst provide a brief reasoning paragraph, then the final judgment.",
+            content: loadJudgePrompt(datasetDir()),
           },
           {
             role: "user",

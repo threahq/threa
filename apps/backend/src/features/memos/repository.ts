@@ -1435,8 +1435,8 @@ export const MemoRepository = {
             AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
             AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
             AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
-            AND (${filters?.before === undefined} OR m.earliest_source_at < ${filters?.before ?? new Date()})
-            AND (${filters?.after === undefined} OR m.latest_source_at >= ${filters?.after ?? new Date(0)})
+            AND (${filters?.before === undefined} OR COALESCE(m.earliest_source_at, m.created_at) < ${filters?.before ?? new Date()})
+            AND (${filters?.after === undefined} OR COALESCE(m.latest_source_at, m.created_at) >= ${filters?.after ?? new Date(0)})
             AND ${audienceVisible}
         )
         SELECT mws.* FROM memo_with_stream mws
@@ -1474,8 +1474,8 @@ export const MemoRepository = {
           AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
           AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
           AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
-          AND (${filters?.before === undefined} OR m.earliest_source_at < ${filters?.before ?? new Date()})
-          AND (${filters?.after === undefined} OR m.latest_source_at >= ${filters?.after ?? new Date(0)})
+          AND (${filters?.before === undefined} OR COALESCE(m.earliest_source_at, m.created_at) < ${filters?.before ?? new Date()})
+          AND (${filters?.after === undefined} OR COALESCE(m.latest_source_at, m.created_at) >= ${filters?.after ?? new Date(0)})
           AND ${audienceVisible}
           AND ${MEMO_TSVECTOR} @@ websearch_to_tsquery(${MEMO_ROW_CONFIG}, ${query})
       )
@@ -1567,8 +1567,8 @@ export const MemoRepository = {
           AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
           AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
           AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
-          AND (${filters?.before === undefined} OR m.earliest_source_at < ${filters?.before ?? new Date()})
-          AND (${filters?.after === undefined} OR m.latest_source_at >= ${filters?.after ?? new Date(0)})
+          AND (${filters?.before === undefined} OR COALESCE(m.earliest_source_at, m.created_at) < ${filters?.before ?? new Date()})
+          AND (${filters?.after === undefined} OR COALESCE(m.latest_source_at, m.created_at) >= ${filters?.after ?? new Date(0)})
           AND ${audienceVisible}
           AND ${MEMO_TSVECTOR} @@ websearch_to_tsquery(${MEMO_ROW_CONFIG}, ${query})
         LIMIT ${internalLimit}
@@ -1593,8 +1593,8 @@ export const MemoRepository = {
           AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
           AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
           AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
-          AND (${filters?.before === undefined} OR m.earliest_source_at < ${filters?.before ?? new Date()})
-          AND (${filters?.after === undefined} OR m.latest_source_at >= ${filters?.after ?? new Date(0)})
+          AND (${filters?.before === undefined} OR COALESCE(m.earliest_source_at, m.created_at) < ${filters?.before ?? new Date()})
+          AND (${filters?.after === undefined} OR COALESCE(m.latest_source_at, m.created_at) >= ${filters?.after ?? new Date(0)})
           AND ${audienceVisible}
         LIMIT ${internalLimit}
       ),
@@ -1666,8 +1666,8 @@ export const MemoRepository = {
           AND (${!hasTagFilter} OR m.tags && ${filters?.tags ?? []})
           AND (${!scopeCond.hasScopeFilter} OR m.scope = ${scopeCond.scope})
           AND (m.scope <> 'user' OR (${scopeCond.hasViewer} AND m.scope_user_id = ${scopeCond.viewerUserId}))
-          AND (${filters?.before === undefined} OR m.earliest_source_at < ${filters?.before ?? new Date()})
-          AND (${filters?.after === undefined} OR m.latest_source_at >= ${filters?.after ?? new Date(0)})
+          AND (${filters?.before === undefined} OR COALESCE(m.earliest_source_at, m.created_at) < ${filters?.before ?? new Date()})
+          AND (${filters?.after === undefined} OR COALESCE(m.latest_source_at, m.created_at) >= ${filters?.after ?? new Date(0)})
           AND ${audienceVisible}
           AND (
             m.title ILIKE '%' || ${escapedQuery} || '%'

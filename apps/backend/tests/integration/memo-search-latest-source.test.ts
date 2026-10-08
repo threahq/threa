@@ -130,4 +130,37 @@ describe("MemoRepository search latestSourceAt", () => {
       hybrid: byMemo(hybrid),
     }).toEqual({ browse: expected, fullText: expected, exact: expected, hybrid: expected })
   })
+
+  test("date filters fall back to the capture time for a memo whose span is not yet backfilled", async () => {
+    await pool.query(
+      `UPDATE memos SET earliest_source_at = NULL, latest_source_at = NULL WHERE workspace_id = $1 AND id = $2`,
+      [testWorkspaceId, anchorOnlyMemoId]
+    )
+    const capturedAt = (await MemoRepository.findById(pool, testWorkspaceId, anchorOnlyMemoId))!.createdAt
+    const filters = {
+      streamIds: [channelId],
+      after: new Date(capturedAt.getTime() - 1000),
+      before: new Date(capturedAt.getTime() + 1000),
+    }
+    const ids = (rows: MemoSearchResult[]) => rows.map((row) => row.memo.id)
+
+    const [browse, fullText, exact, hybrid] = await Promise.all([
+      MemoRepository.fullTextSearch(pool, { workspaceId: testWorkspaceId, query: "", filters }),
+      MemoRepository.fullTextSearch(pool, { workspaceId: testWorkspaceId, query: "deploy order", filters }),
+      MemoRepository.exactSearch(pool, { workspaceId: testWorkspaceId, query: "deploy order", filters }),
+      MemoRepository.hybridSearch(pool, {
+        workspaceId: testWorkspaceId,
+        query: "deploy order",
+        embedding: axis(0),
+        filters,
+      }),
+    ])
+
+    expect({ browse: ids(browse), fullText: ids(fullText), exact: ids(exact), hybrid: ids(hybrid) }).toEqual({
+      browse: [anchorOnlyMemoId],
+      fullText: [anchorOnlyMemoId],
+      exact: [anchorOnlyMemoId],
+      hybrid: [anchorOnlyMemoId],
+    })
+  })
 })

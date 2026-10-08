@@ -1213,7 +1213,7 @@ Respond with:
     return sources
   }
 
-  /** The workspace users `references` name, nearest to the asker first, or none when the resolver could not answer. */
+  /** The workspace users `references` name, nearest to the asker first, each left unresolved when the resolver could not answer. */
   private async resolvePeople(
     pool: Pool,
     input: WorkspaceAgentInput,
@@ -1225,6 +1225,7 @@ Respond with:
   ): Promise<PersonResolution[]> {
     if (!asker || references.length === 0) return []
     const { workspaceId, invokingUserId } = input
+    const unresolved = (): PersonResolution[] => references.map((reference) => ({ reference, status: "unresolved" }))
     try {
       const roster = await UserRepository.listByCircle(pool, workspaceId, {
         askerId: invokingUserId,
@@ -1247,14 +1248,14 @@ Respond with:
       })
       if (!resolutions) {
         logger.info({ workspaceId, references }, "People resolver unavailable; references left unresolved")
-        return []
+        return unresolved()
       }
       return resolutions
     } catch (error) {
       if (error instanceof AISpendDeniedError) throw error
       if (isAbortError(error)) return []
       logger.warn({ error, workspaceId }, "Workspace agent people resolution failed")
-      return []
+      return unresolved()
     }
   }
 

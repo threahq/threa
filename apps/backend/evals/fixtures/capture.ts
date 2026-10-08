@@ -9,14 +9,7 @@ import { DecisionsAvailability } from "@threahq/agent-runtime"
 import { parseMarkdown } from "@threahq/prosemirror"
 import { AuthorTypes, ConversationStatuses } from "@threahq/types"
 import type { EvalContext } from "../framework/types"
-import {
-  DecisionsMemoClassifier,
-  EmbeddingService,
-  MemoClassifier,
-  MemoService,
-  Memorizer,
-  ResidencyRoutedMemoClassifier,
-} from "../../src/features/memos"
+import { EmbeddingService, createMemoService, type MemoService } from "../../src/features/memos"
 import { queueMemoConversations } from "../../src/features/memos/accumulator-outbox-handler"
 import { ConversationRepository } from "../../src/features/conversations"
 import { EventService } from "../../src/features/messaging"
@@ -32,19 +25,15 @@ export interface SeedMessage {
 }
 
 export function createCaptureMemoService(ctx: EvalContext): MemoService {
-  const messageFormatter = new MessageFormatter()
-  return new MemoService({
+  return createMemoService({
     pool: ctx.pool,
-    analyticsReporter: new DisabledAnalyticsReporter(),
-    classifier: new ResidencyRoutedMemoClassifier({
-      residency: new WorkspaceAIResidencyPolicy({ pool: ctx.pool }),
-      decisions: new DecisionsMemoClassifier(ctx.ai),
-      inference: new MemoClassifier(ctx.ai, ctx.configResolver, messageFormatter),
-      availability: new DecisionsAvailability(),
-    }),
-    memorizer: new Memorizer(ctx.ai, ctx.configResolver, messageFormatter),
+    ai: ctx.ai,
+    configResolver: ctx.configResolver,
+    messageFormatter: new MessageFormatter(),
+    aiResidency: new WorkspaceAIResidencyPolicy({ pool: ctx.pool }),
+    decisionsAvailability: new DecisionsAvailability(),
     embeddingService: new EmbeddingService({ ai: ctx.ai }),
-    messageFormatter,
+    analyticsReporter: new DisabledAnalyticsReporter(),
   })
 }
 

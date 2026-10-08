@@ -425,12 +425,7 @@ export class MemoExplorerService {
     const successor =
       memo.status === "superseded" ? await MemoRepository.findActiveSuccessor(this.pool, workspaceId, memo.id) : null
     const visibleSuccessorId =
-      successor &&
-      (await MemoRepository.filterVisibleIds(this.pool, workspaceId, [successor.id], permissions.audiences)).has(
-        successor.id
-      )
-        ? successor.id
-        : null
+      successor && (await this.resolveAccessibleMemo(workspaceId, successor.id, permissions)) ? successor.id : null
     const capturedByPersonaName = await this.resolveCapturedByPersonaName(workspaceId, memo)
 
     return {

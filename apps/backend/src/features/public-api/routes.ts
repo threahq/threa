@@ -1046,7 +1046,7 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     operationId: "searchMemos",
     summary: "Search memos",
     description:
-      "Search preserved workspace memos with semantic, exact, or recent-first retrieval. `before` and `after` filter by when the source messages were posted, not when the memo was captured.",
+      "Search preserved workspace memos with semantic, exact, or recent-first retrieval. `before` and `after` filter by when the source messages were posted, not when the memo was captured. Recent-first results are ordered by that time too, so neither `after` nor recent-first order lists newly captured memos first.",
     tags: ["Memos"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.MEMOS_READ],
     parameters: [workspaceIdParam],

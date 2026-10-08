@@ -299,13 +299,18 @@ const ident = (name: string) => `"${name.replace(/"/g, '""')}"`
  */
 export async function copyDatabaseRows(target: Pool, sourceConnectionString: string): Promise<number> {
   const source = new URL(sourceConnectionString)
+  const sourceName = decodeURIComponent(source.pathname.slice(1))
+  const { rows: targetRows } = await target.query<{ name: string }>("SELECT current_database() AS name")
+  for (const name of [sourceName, targetRows[0]!.name]) {
+    if (!name.startsWith(EVAL_DATABASE_PREFIX)) throw new Error(`Refusing to copy rows with non-eval database ${name}`)
+  }
   const server = `eval_copy_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`
   const client = await target.connect()
   try {
     await client.query("CREATE EXTENSION IF NOT EXISTS postgres_fdw")
     const { rows: portRows } = await client.query<{ port: string }>("SELECT current_setting('port') AS port")
     await client.query(
-      `CREATE SERVER ${server} FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host 'localhost', port '${portRows[0].port}', dbname '${source.pathname.slice(1)}')`
+      `CREATE SERVER ${server} FOREIGN DATA WRAPPER postgres_fdw OPTIONS (host 'localhost', port '${portRows[0].port}', dbname '${sourceName}')`
     )
     await client.query(
       `CREATE USER MAPPING FOR CURRENT_USER SERVER ${server} OPTIONS (user '${decodeURIComponent(source.username)}', password '${decodeURIComponent(source.password)}')`

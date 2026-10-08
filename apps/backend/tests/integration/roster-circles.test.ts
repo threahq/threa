@@ -72,9 +72,9 @@ describe("UserRepository.listByCircle", () => {
     const roster = await list(10)
 
     expect(roster.map(({ id, circle }) => ({ id, circle }))).toEqual([
+      { id: ids.asker, circle: 1 },
       { id: ids.threadAuthor, circle: 1 },
       { id: ids.roomMember, circle: 1 },
-      { id: ids.asker, circle: 1 },
       { id: ids.sharedMate, circle: 2 },
       { id: ids.stranger, circle: 3 },
     ])
@@ -83,7 +83,13 @@ describe("UserRepository.listByCircle", () => {
   test("should cut the farthest circle first when the limit is below the roster size", async () => {
     const roster = await list(4)
 
-    expect(roster.map(({ id }) => id)).toEqual([ids.threadAuthor, ids.roomMember, ids.asker, ids.sharedMate])
+    expect(roster.map(({ id }) => id)).toEqual([ids.asker, ids.threadAuthor, ids.roomMember, ids.sharedMate])
+  })
+
+  test("should keep the asker when the limit cuts into the nearest circle", async () => {
+    const roster = await list(1)
+
+    expect(roster.map(({ id }) => id)).toEqual([ids.asker])
   })
 
   test("should leave out everyone a guest in the room cannot see, the asker's other stream-mates included", async () => {
@@ -101,9 +107,9 @@ describe("UserRepository.listByCircle", () => {
     const roster = await list(10)
 
     expect(roster.map(({ id, circle }) => ({ id, circle }))).toEqual([
+      { id: ids.asker, circle: 1 },
       { id: ids.threadAuthor, circle: 1 },
       { id: ids.roomMember, circle: 1 },
-      { id: ids.asker, circle: 1 },
       { id: guest, circle: 1 },
     ])
   })
