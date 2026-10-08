@@ -3,6 +3,15 @@ import type { ExtractionContext, ExtractionResult } from "./types"
 import type { Message } from "../../messaging"
 
 /**
+ * `text.slice(0, max)` that never ends on half of an emoji: providers reject a
+ * request body carrying a lone surrogate as invalid JSON.
+ */
+export function cutText(text: string, max: number): string {
+  const cut = text.slice(0, max)
+  return /[\ud800-\udbff]$/.test(cut) ? cut.slice(0, -1) : cut
+}
+
+/**
  * Age of `date` relative to `reference` (the new message), rendered for the
  * prompt: "just now", "5m ago", "3h ago", "2d ago". Ages at or after the
  * reference clamp to "just now" — `recentMessages` includes a couple of
@@ -57,5 +66,5 @@ export function truncateAsTopic(message: Message): string {
     return text.slice(0, lastSpace) + "…"
   }
 
-  return text.slice(0, 99) + "…"
+  return cutText(text, 99) + "…"
 }

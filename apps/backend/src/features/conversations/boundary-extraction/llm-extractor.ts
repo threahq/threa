@@ -14,7 +14,7 @@ import type {
   SplitGroup,
 } from "./types"
 import { renderLinkPreviewContext } from "../../link-previews"
-import { coldStartThreadResult, formatRelativeAge, isColdStartThread, truncateAsTopic } from "./shared"
+import { coldStartThreadResult, cutText, formatRelativeAge, isColdStartThread, truncateAsTopic } from "./shared"
 import { logger } from "../../../lib/logger"
 import {
   extractionResponseSchema,
@@ -180,7 +180,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
     const messagesSection = context.messages
       .map(
         (m) =>
-          `[${m.id}] (${formatRelativeAge(m.createdAt, now)}) ${m.authorType}:${m.authorId.slice(-8)}: ${m.contentMarkdown.slice(0, 300)}${m.contentMarkdown.length > 300 ? "…" : ""}`
+          `[${m.id}] (${formatRelativeAge(m.createdAt, now)}) ${m.authorType}:${m.authorId.slice(-8)}: ${cutText(m.contentMarkdown, 300)}${m.contentMarkdown.length > 300 ? "…" : ""}`
       )
       .join("\n")
 
@@ -261,7 +261,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
 
     const recentSection = context.recentMessages
       .map((m) => {
-        const head = `[${m.id}] (${formatRelativeAge(m.createdAt, now)}) ${m.authorType}:${m.authorId.slice(-8)}: ${m.contentMarkdown.slice(0, 200)}${m.contentMarkdown.length > 200 ? "..." : ""}`
+        const head = `[${m.id}] (${formatRelativeAge(m.createdAt, now)}) ${m.authorType}:${m.authorId.slice(-8)}: ${cutText(m.contentMarkdown, 200)}${m.contentMarkdown.length > 200 ? "..." : ""}`
         const atts = attachmentsByMessageId.get(m.id)
         const attBlock = atts && atts.length > 0 ? `\n${this.renderAttachments(atts, RECENT_ATTACHMENT_CHARS)}` : ""
         const previewBlock = renderLinkPreviewContext(linkPreviewsByMessageId.get(m.id) ?? [])
@@ -304,7 +304,7 @@ export class LLMBoundaryExtractor implements BoundaryExtractor {
       // still summary-only (or has no fullText, e.g. image captions).
       const body = (a.fullText ?? a.summary ?? "").trim()
       if (!body) return `  [attachment ${a.filename} (${kind}): no extracted content]`
-      const truncated = body.length > maxChars ? body.slice(0, maxChars) + "…" : body
+      const truncated = body.length > maxChars ? cutText(body, maxChars) + "…" : body
       return `  [attachment ${a.filename} (${kind})]:\n${indent(truncated, "    ")}`
     })
     return lines.join("\n")
