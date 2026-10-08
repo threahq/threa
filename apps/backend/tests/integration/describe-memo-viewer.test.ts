@@ -22,6 +22,10 @@ describe("describe_memo viewer", () => {
   let privateMemoId: string
   let sharedMemoId: string
   let supersededMemoId: string
+  let revisedFirstId: string
+  let revisedSecondId: string
+  let revisedMiddleId: string
+  let currentMemoId: string
   let archivedMemoId: string
   let guestUserId: string
   let guestChannelId: string
@@ -74,6 +78,10 @@ describe("describe_memo viewer", () => {
     privateMemoId = memoId()
     sharedMemoId = memoId()
     supersededMemoId = memoId()
+    revisedFirstId = memoId()
+    revisedSecondId = memoId()
+    revisedMiddleId = memoId()
+    currentMemoId = memoId()
     archivedMemoId = memoId()
     guestChannelId = streamId()
     memberOnlyMemoId = memoId()
@@ -151,7 +159,24 @@ describe("describe_memo viewer", () => {
       })
       await MemoRepository.insert(client, { ...memoBase, id: sharedMemoId, title: "Shared" })
       await MemoRepository.insert(client, { ...memoBase, id: supersededMemoId, title: "Superseded" })
-      await MemoRepository.markSuperseded(client, testWorkspaceId, [supersededMemoId], "revised")
+      await MemoRepository.markSuperseded(client, testWorkspaceId, [supersededMemoId], "source deleted", null)
+      // Two memos one capture retired, then that capture's memo revised again.
+      for (const [id, title] of [
+        [revisedFirstId, "First retired"],
+        [revisedSecondId, "Second retired"],
+        [revisedMiddleId, "Middle"],
+        [currentMemoId, "Current"],
+      ]) {
+        await MemoRepository.insert(client, { ...memoBase, id, title })
+      }
+      await MemoRepository.markSuperseded(
+        client,
+        testWorkspaceId,
+        [revisedFirstId, revisedSecondId],
+        "revised",
+        revisedMiddleId
+      )
+      await MemoRepository.markSuperseded(client, testWorkspaceId, [revisedMiddleId], "revised", currentMemoId)
       await MemoRepository.insert(client, { ...memoBase, id: archivedMemoId, title: "Archived" })
       await MemoRepository.archive(client, testWorkspaceId, archivedMemoId)
 
@@ -235,6 +260,18 @@ describe("describe_memo viewer", () => {
     ]).toEqual([
       { error: "Memo not found, archived, or you don't have access to its source stream", memoId: supersededMemoId },
       { error: "Memo not found, archived, or you don't have access to its source stream", memoId: archivedMemoId },
+    ])
+  })
+
+  test("every memo a revision retired resolves to the end of its chain", async () => {
+    expect([
+      await describeFrom(publicChannelId, revisedFirstId),
+      await describeFrom(publicChannelId, revisedSecondId),
+      await describeFrom(publicChannelId, revisedMiddleId),
+    ]).toEqual([
+      expect.objectContaining({ id: currentMemoId, supersedes: revisedFirstId, title: "Current" }),
+      expect.objectContaining({ id: currentMemoId, supersedes: revisedSecondId, title: "Current" }),
+      expect.objectContaining({ id: currentMemoId, supersedes: revisedMiddleId, title: "Current" }),
     ])
   })
 

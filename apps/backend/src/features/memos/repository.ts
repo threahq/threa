@@ -308,6 +308,9 @@ function scopeConditions(filters: MemoSearchFilters | undefined) {
 
 const DEFAULT_SEARCH_STATUSES: MemoStatus[] = ["active"]
 
+// Bounds the chain walk: a cycle in the links would otherwise recurse forever.
+const MAX_SUPERSESSION_HOPS = 32
+
 export interface FullTextSearchParams {
   workspaceId: string
   query: string
@@ -942,11 +945,18 @@ export const MemoRepository = {
   },
 
   /** Mark memos superseded in one round-trip (INV-56). Workspace-scoped (INV-8). */
-  async markSuperseded(db: Querier, workspaceId: string, ids: string[], revisionReason: string): Promise<void> {
+  async markSuperseded(
+    db: Querier,
+    workspaceId: string,
+    ids: string[],
+    revisionReason: string,
+    supersededByMemoId: string | null
+  ): Promise<void> {
     if (ids.length === 0) return
     await db.query(sql`
       UPDATE memos
-      SET status = 'superseded', revision_reason = ${revisionReason}, updated_at = NOW()
+      SET status = 'superseded', revision_reason = ${revisionReason},
+        superseded_by_memo_id = ${supersededByMemoId}, updated_at = NOW()
       WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}::text[]) AND status = 'active'
     `)
   },
@@ -1309,13 +1319,22 @@ export const MemoRepository = {
     return (result.rowCount ?? 0) > 0
   },
 
-  /** The active memo that superseded `memoId`, if any (reverse of parent_memo_id). */
-  async findSupersededBy(db: Querier, workspaceId: string, memoId: string): Promise<Memo | null> {
+  /** The active memo at the end of `memoId`'s supersession chain, if the chain reaches one. */
+  async findActiveSuccessor(db: Querier, workspaceId: string, memoId: string): Promise<Memo | null> {
     const result = await db.query<MemoRow>(sql`
+      WITH RECURSIVE chain AS (
+        SELECT superseded_by_memo_id AS id, 1 AS depth
+        FROM memos
+        WHERE workspace_id = ${workspaceId} AND id = ${memoId}
+        UNION ALL
+        SELECT m.superseded_by_memo_id, chain.depth + 1
+        FROM chain
+        JOIN memos m ON m.workspace_id = ${workspaceId} AND m.id = chain.id
+        WHERE m.status = 'superseded' AND chain.depth < ${MAX_SUPERSESSION_HOPS}
+      )
       SELECT ${sql.raw(SELECT_FIELDS)}
       FROM memos
-      WHERE workspace_id = ${workspaceId} AND parent_memo_id = ${memoId} AND status = 'active'
-      ORDER BY created_at DESC
+      WHERE workspace_id = ${workspaceId} AND status = 'active' AND id IN (SELECT id FROM chain)
       LIMIT 1
     `)
     if (!result.rows[0]) return null

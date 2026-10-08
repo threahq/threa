@@ -1017,7 +1017,8 @@ export class MemoService implements MemoServiceLike {
               client,
               workspaceId,
               explicitSupersedeIds,
-              `Conclusion reversed; corrected knowledge already captured by ${duplicate.memo.id}`
+              `Conclusion reversed; corrected knowledge already captured by ${duplicate.memo.id}`,
+              duplicate.memo.id
             )
             const retired = await MemoRepository.findByIdsInWorkspace(client, workspaceId, explicitSupersedeIds)
             await publishSharedMemoChanges(client, [...retired.values()])
@@ -1043,7 +1044,8 @@ export class MemoService implements MemoServiceLike {
             client,
             workspaceId,
             explicitSupersedeIds,
-            `Conclusion reversed or replaced by revised capture ${memoData.id}`
+            `Conclusion reversed or replaced by revised capture ${memoData.id}`,
+            memoData.id
           )
           logger.info(
             {
@@ -1080,7 +1082,8 @@ export class MemoService implements MemoServiceLike {
             client,
             workspaceId,
             toSupersede.map((s) => s.memo.id),
-            `Superseded by revised capture ${memoData.id}`
+            `Superseded by revised capture ${memoData.id}`,
+            memoData.id
           )
           logger.info(
             {
