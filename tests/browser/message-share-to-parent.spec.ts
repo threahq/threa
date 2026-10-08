@@ -117,11 +117,15 @@ async function setUpSharedPointer(
   await page.getByLabel("Other share").click()
   const shareEntry = page.getByRole("menuitem", { name: new RegExp(`share to #?${opts.channelName}`, "i") })
   await expect(shareEntry).toBeVisible()
+  const historyBefore = await page.evaluate(() => history.length)
   await shareEntry.click()
 
   const composer = page.getByTestId("main-pane").locator("[contenteditable='true']")
   await expect(composer).toBeVisible()
   await expect(composer.locator("[data-type='shared-message']")).toHaveCount(1)
+  // The channel is already on show, so the share only makes it the current pane.
+  await expect(page).toHaveURL(/\/s\/[^/?]+\?panel=/)
+  expect(await page.evaluate(() => history.length)).toBe(historyBefore)
   await composer.focus()
   await page.keyboard.press("Enter")
 
