@@ -107,6 +107,22 @@ function docText() {
 }
 
 describe("# stream trigger", () => {
+  it("never reopens when the caret merely arrows onto an existing #word", async () => {
+    await type("see #pizza later")
+    await act(async () => {
+      editor!.commands.setTextSelection(3)
+    })
+    await settle()
+    expect(active).toBe(false)
+
+    await act(async () => {
+      editor!.commands.setTextSelection(9)
+    })
+    await settle()
+
+    expect({ active, listbox: screen.queryByRole("listbox") }).toEqual({ active: false, listbox: null })
+  })
+
   it("offers channels and scratchpads for a single sigil", async () => {
     await type("#pi")
 

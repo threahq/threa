@@ -4,7 +4,7 @@ import Suggestion from "@tiptap/suggestion"
 import { PluginKey } from "@tiptap/pm/state"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
 import { currentWordContainsBacktick } from "../markdown-guards"
-import { withKeyboardCorrectionTolerance } from "./keyboard-correction-match"
+import { showOnTypingOnly, withKeyboardCorrectionTolerance } from "./keyboard-correction-match"
 import { withSpacedQuery } from "./spaced-query-match"
 import { currentSuggestionRange } from "./suggestion-range"
 
@@ -212,6 +212,7 @@ export function createTriggerExtension<TItem, TAttrs extends object>(config: Tri
           findSuggestionMatch: spacedQuery
             ? withSpacedQuery(matchSuggestion, (query) => hasItems(items, query))
             : matchSuggestion,
+          shouldShow: showOnTypingOnly(pluginKey, this.editor),
           // Disable suggestions in code contexts (code blocks and inline code)
           allow: ({ state, range }) => {
             const $from = state.doc.resolve(range.from)

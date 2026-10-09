@@ -5,7 +5,7 @@ import { PluginKey } from "@tiptap/pm/state"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
 import type { EmojiEntry } from "@threahq/types"
 import { currentWordContainsBacktick, isInBacktickWord } from "../markdown-guards"
-import { withKeyboardCorrectionTolerance } from "./keyboard-correction-match"
+import { showOnTypingOnly, withKeyboardCorrectionTolerance } from "./keyboard-correction-match"
 import { currentSuggestionRange } from "./suggestion-range"
 
 export const EmojiPluginKey = new PluginKey("emoji")
@@ -146,15 +146,7 @@ export const EmojiExtension = Node.create<EmojiExtensionOptions>({
         allowSpaces: false,
         startOfLine: false,
         findSuggestionMatch: withKeyboardCorrectionTolerance(EmojiPluginKey, editor),
-        // The grid takes the arrow keys once open, so it opens on typing only:
-        // a caret arrowing through "ratio : 5" must not stop at the colon.
-        // Runs during state application, so editor.state still holds the
-        // pre-transaction plugin flag.
-        shouldShow: ({ transaction }) => {
-          if (transaction.docChanged) return true
-          const prev = EmojiPluginKey.getState(editor.state) as { active?: boolean } | undefined
-          return prev?.active === true
-        },
+        shouldShow: showOnTypingOnly(EmojiPluginKey, editor),
         allow: ({ state, range }) => {
           const $from = state.doc.resolve(range.from)
 

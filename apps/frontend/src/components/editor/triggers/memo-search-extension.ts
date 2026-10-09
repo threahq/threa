@@ -20,6 +20,7 @@ import type { ResolvedPos } from "@tiptap/pm/model"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
 import type { Memo } from "@threahq/types"
 import { getParentTextBefore } from "../markdown-guards"
+import { showOnTypingOnly } from "./keyboard-correction-match"
 
 export const MemoSearchPluginKey = new PluginKey("memoSearch")
 
@@ -92,6 +93,7 @@ export const MemoSearchExtension = Extension.create<MemoSearchOptions>({
         allowSpaces: true,
         startOfLine: false,
         findSuggestionMatch: findMemoSearchMatch,
+        shouldShow: showOnTypingOnly(MemoSearchPluginKey, this.editor),
         // Suppress inside code blocks / inline code (mirrors createTriggerExtension).
         // A literal backtick directly before `/memo` (`` `/memo`` ) can't match the
         // trigger anyway — MEMO_TRIGGER requires whitespace or block-start before
