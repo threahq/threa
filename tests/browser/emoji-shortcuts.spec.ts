@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test"
 import { loginAndCreateWorkspace } from "./helpers"
+import { DESKTOP_GRID_COLUMNS } from "../../apps/frontend/src/lib/emoji-picker"
 
 // Emoji is inserted as plain text (the unicode character), not a `[data-type='emoji']`
 // atom node — the composer switched to editable text so mobile browsers can delete it
@@ -161,28 +162,26 @@ test.describe("Emoji Shortcuts", () => {
     await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
   })
 
-  test("should navigate emoji grid with arrow keys", async ({ page }) => {
+  test("Up/Down commit to the grid, then every arrow moves the highlight", async ({ page }) => {
     const editor = await setupWorkspaceWithEditor(page)
 
-    // Type ":" to show all emojis
     await page.keyboard.type(":")
-
-    // Wait for grid
     await expect(page.locator("[data-emoji-grid]")).toBeVisible({ timeout: 2000 })
-
-    // First item should be selected by default
     const buttons = page.locator("[data-emoji-grid] button")
     await expect(buttons.first()).toHaveAttribute("data-selected", "true")
 
-    // Press ArrowRight to move to second item
+    // Down commits to the grid: one row down at the same column
+    await page.keyboard.press("ArrowDown")
+    await expect(buttons.nth(DESKTOP_GRID_COLUMNS)).toHaveAttribute("data-selected", "true")
+
     await page.keyboard.press("ArrowRight")
+    await expect(buttons.nth(DESKTOP_GRID_COLUMNS + 1)).toHaveAttribute("data-selected", "true")
+    const picked = (await buttons.nth(DESKTOP_GRID_COLUMNS + 1).textContent())?.trim() ?? ""
+    expect(picked).toMatch(EMOJI_RE)
 
-    // Second item should now be selected
-    await expect(buttons.nth(1)).toHaveAttribute("data-selected", "true")
-    await expect(buttons.first()).not.toHaveAttribute("data-selected", "true")
-
-    // Press ArrowLeft to go back
     await page.keyboard.press("ArrowLeft")
+    await expect(buttons.nth(DESKTOP_GRID_COLUMNS)).toHaveAttribute("data-selected", "true")
+    await page.keyboard.press("ArrowUp")
     await expect(buttons.first()).toHaveAttribute("data-selected", "true")
 
     // ArrowLeft on the first cell moves the caret off the colon and closes the grid
@@ -190,6 +189,48 @@ test.describe("Emoji Shortcuts", () => {
     await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
     await page.keyboard.type("x")
     await expect(editor).toHaveText("x:")
+  })
+
+  test("Down then Right then Enter inserts the highlighted emoji, not the first", async ({ page }) => {
+    const editor = await setupWorkspaceWithEditor(page)
+
+    await page.keyboard.type(":")
+    await expect(page.locator("[data-emoji-grid]")).toBeVisible({ timeout: 2000 })
+    const buttons = page.locator("[data-emoji-grid] button")
+    const first = (await buttons.first().textContent())?.trim() ?? ""
+
+    await page.keyboard.press("ArrowDown")
+    await page.keyboard.press("ArrowRight")
+    const target = buttons.nth(DESKTOP_GRID_COLUMNS + 1)
+    await expect(target).toHaveAttribute("data-selected", "true")
+    const picked = (await target.textContent())?.trim() ?? ""
+    expect(picked).not.toBe(first)
+
+    await page.keyboard.press("Enter")
+    await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
+    await expect(editor).toHaveText(picked)
+  })
+
+  test("Left moves the caret inside the query to fix a typo, and the grid follows", async ({ page }) => {
+    const editor = await setupWorkspaceWithEditor(page)
+
+    await page.keyboard.type(":smle")
+    await expect(page.locator("[data-emoji-grid]")).toBeVisible({ timeout: 2000 })
+
+    // Two Lefts land the caret between "sm" and "le"; the grid stays up on the shorter query
+    await page.keyboard.press("ArrowLeft")
+    await page.keyboard.press("ArrowLeft")
+    await expect(page.locator("[data-emoji-grid]")).toBeVisible()
+    await page.keyboard.type("i")
+    await expect(editor).toHaveText(":smile")
+    await expect(page.locator("[data-emoji-grid]")).toBeVisible()
+
+    // End is still the caret's: back to the end of the query, then Enter picks
+    await page.keyboard.press("End")
+    await page.keyboard.press("Enter")
+    await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
+    await expect(editor).toContainText(EMOJI_RE)
+    await expect(editor).not.toContainText("smile")
   })
 
   test("arrowing through existing text never opens the grid at a colon", async ({ page }) => {
