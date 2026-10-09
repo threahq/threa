@@ -5,7 +5,7 @@ import { PluginKey } from "@tiptap/pm/state"
 import type { SuggestionProps, SuggestionKeyDownProps } from "@tiptap/suggestion"
 import type { EmojiEntry } from "@threahq/types"
 import { currentWordContainsBacktick, isInBacktickWord } from "../markdown-guards"
-import { withKeyboardCorrectionTolerance } from "./keyboard-correction-match"
+import { showOnTypingOnly, withKeyboardCorrectionTolerance } from "./keyboard-correction-match"
 import { currentSuggestionRange } from "./suggestion-range"
 
 export const EmojiPluginKey = new PluginKey("emoji")
@@ -137,14 +137,16 @@ export const EmojiExtension = Node.create<EmojiExtensionOptions>({
   },
 
   addProseMirrorPlugins() {
+    const editor = this.editor
     return [
       Suggestion({
-        editor: this.editor,
+        editor,
         pluginKey: EmojiPluginKey,
         char: ":",
         allowSpaces: false,
         startOfLine: false,
-        findSuggestionMatch: withKeyboardCorrectionTolerance(EmojiPluginKey, this.editor),
+        findSuggestionMatch: withKeyboardCorrectionTolerance(EmojiPluginKey, editor),
+        shouldShow: showOnTypingOnly(EmojiPluginKey, editor),
         allow: ({ state, range }) => {
           const $from = state.doc.resolve(range.from)
 

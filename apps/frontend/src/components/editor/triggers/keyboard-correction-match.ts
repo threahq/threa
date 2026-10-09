@@ -1,5 +1,5 @@
 import { escapeForRegEx, type Editor } from "@tiptap/core"
-import type { PluginKey } from "@tiptap/pm/state"
+import type { PluginKey, Transaction } from "@tiptap/pm/state"
 import { findSuggestionMatch, type SuggestionMatch, type Trigger } from "@tiptap/suggestion"
 
 /**
@@ -20,9 +20,7 @@ import { findSuggestionMatch, type SuggestionMatch, type Trigger } from "@tiptap
  * too — the corrected state is the one place a single space can't.
  */
 export function withKeyboardCorrectionTolerance(pluginKey: PluginKey, editor: Editor): typeof findSuggestionMatch {
-  // Runs during state application, when editor.state still holds the
-  // pre-transaction state — so this reads the *previous* active flag.
-  const wasActive = () => (pluginKey.getState(editor.state) as { active?: boolean } | undefined)?.active === true
+  const wasActive = previousActive(pluginKey, editor)
 
   return (config: Trigger): SuggestionMatch => {
     const match = findSuggestionMatch(config)
@@ -52,4 +50,22 @@ export function withKeyboardCorrectionTolerance(pluginKey: PluginKey, editor: Ed
       text: corrected[0],
     }
   }
+}
+
+// Runs during state application, when editor.state still holds the
+// pre-transaction state — so this reads the *previous* active flag.
+function previousActive(pluginKey: PluginKey, editor: Editor) {
+  return () => (pluginKey.getState(editor.state) as { active?: boolean } | undefined)?.active === true
+}
+
+/**
+ * A `shouldShow` that opens the popup on typing only. The plugin re-matches on
+ * every transaction, so without it a caret arrowing through "ratio : 5" or
+ * "see #pizza" reopens the popup at the sigil, where it then takes the arrow
+ * keys and Enter away from the editor. Once open it survives caret moves, so
+ * arrowing back inside a live query keeps the list.
+ */
+export function showOnTypingOnly(pluginKey: PluginKey, editor: Editor) {
+  const wasActive = previousActive(pluginKey, editor)
+  return ({ transaction }: { transaction: Transaction }) => transaction.docChanged || wasActive()
 }

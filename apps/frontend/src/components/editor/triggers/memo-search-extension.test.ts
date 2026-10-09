@@ -54,6 +54,19 @@ describe("MemoSearchExtension trigger matching", () => {
     expect(memoState(editor).active).toBe(false)
   })
 
+  it("never reactivates when the caret merely moves back onto a /memo query", () => {
+    const editor = makeEditor()
+    editor.commands.focus()
+    typeText(editor, "hello /memo auth")
+    expect(memoState(editor).active).toBe(true)
+
+    editor.commands.setTextSelection(2)
+    expect(memoState(editor).active).toBe(false)
+
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1)
+    expect(memoState(editor).active).toBe(false)
+  })
+
   it("activates on /memo followed by a query and captures the multi-word query", () => {
     const editor = makeEditor()
     editor.commands.focus()

@@ -184,6 +184,29 @@ test.describe("Emoji Shortcuts", () => {
     // Press ArrowLeft to go back
     await page.keyboard.press("ArrowLeft")
     await expect(buttons.first()).toHaveAttribute("data-selected", "true")
+
+    // ArrowLeft on the first cell moves the caret off the colon and closes the grid
+    await page.keyboard.press("ArrowLeft")
+    await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
+    await page.keyboard.type("x")
+    await expect(editor).toHaveText("x:")
+  })
+
+  test("arrowing through existing text never opens the grid at a colon", async ({ page }) => {
+    const editor = await setupWorkspaceWithEditor(page)
+
+    await page.keyboard.type("ratio : 5")
+    await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
+
+    // Caret walks left over "5" and " " and lands right after the colon
+    await page.keyboard.press("ArrowLeft")
+    await page.keyboard.press("ArrowLeft")
+    await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
+
+    // ...and keeps going: the next ArrowLeft reaches the space before the colon
+    await page.keyboard.press("ArrowLeft")
+    await page.keyboard.type("x")
+    await expect(editor).toHaveText("ratio x: 5")
   })
 
   test("should send message with Enter when emoji query has no matches (e.g. :) smiley)", async ({ page }) => {
