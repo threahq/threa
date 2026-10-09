@@ -158,7 +158,12 @@ describe("Memorizer — supersession targets", () => {
       { resolve: async () => ({ modelId: "test:model", temperature: 0 }) } as unknown as ConfigResolver,
       new MessageFormatter()
     )
-    const streamMemo = { id: "memo_price", title: "Pro costs $12", abstract: "Pro is $12 per user." } as Memo
+    const streamMemo = {
+      id: "memo_price",
+      title: "Pro costs $12",
+      abstract: "Pro is $12 per user.",
+      keyPoints: ["Annual plans get 20% off"],
+    } as Memo
 
     const [memo] = await memorizer.memorizeConversation("<message/>", {
       memoryContext: [streamMemo],
@@ -169,7 +174,9 @@ describe("Memorizer — supersession targets", () => {
 
     expect({
       supersedesMemoIds: memo?.supersedesMemoIds,
-      shownWithId: generateObject.mock.calls[0]?.[0].messages[1]?.content.includes("[memo_price] Pro costs $12"),
+      shownWithId: generateObject.mock.calls[0]?.[0].messages[1]?.content.includes(
+        "[memo_price] Pro costs $12\n   Pro is $12 per user.\n   - Annual plans get 20% off"
+      ),
     }).toEqual({ supersedesMemoIds: ["memo_price"], shownWithId: true })
   })
 })

@@ -314,7 +314,7 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-69)", 
 
     // A paraphrased re-capture: outside the dedup gate (0.15) but inside the
     // supersede band — the prod failure where rewordings stacked forever.
-    const prior = { ...memoContent, id: "memo_prior", sourceConversationId: CONVERSATION_ID } as never
+    const prior = fakeMemoRow("memo_prior", { sourceConversationId: CONVERSATION_ID, sourceMessageIds: ["msg_0"] })
     const findNear = spyOn(MemoRepository, "findSameConversationNear").mockResolvedValue([
       { memo: prior, distance: 0.22 },
     ])
@@ -339,8 +339,11 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-69)", 
       expect.stringContaining("Superseded by revised capture"),
       (insert.mock.calls[0][1] as { id: string }).id
     )
-    // The new memo links back to the memo it replaced.
-    expect(insert).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ parentMemoId: "memo_prior" }))
+    // The new memo links back to the memo it replaced and keeps its sources.
+    expect(insert).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ parentMemoId: "memo_prior", sourceMessageIds: ["msg_0", "msg_1", "msg_2"] })
+    )
   })
 
   it("supersedes every near match but links parentMemoId to the nearest", async () => {
@@ -601,7 +604,13 @@ describe("MemoService.processBatch — explicit supersession (reversed conclusio
 
   it("marks the memos named in supersedesMemoIds superseded and links the new memo to the first", async () => {
     const reversal: MemoContent = { ...memoContent, supersedesMemoIds: ["memo_old_a", "memo_old_b"] }
-    const { service } = setupService({ memoContents: [reversal] })
+    const { service, streamEventInsertMany } = setupService({ memoContents: [reversal] })
+    spyOn(MemoRepository, "findByIdsInWorkspace").mockResolvedValue(
+      new Map([
+        ["memo_old_a", fakeMemoRow("memo_old_a", { sourceMessageIds: ["msg_old_a"] })],
+        ["memo_old_b", fakeMemoRow("memo_old_b", { sourceMessageIds: ["msg_old_b", "msg_1"] })],
+      ])
+    )
     const markSuperseded = spyOn(MemoRepository, "markSuperseded").mockResolvedValue(undefined as never)
     const findNear = spyOn(MemoRepository, "findSameConversationNear").mockResolvedValue([])
     const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
@@ -609,6 +618,13 @@ describe("MemoService.processBatch — explicit supersession (reversed conclusio
     const result = await service.processBatch(WORKSPACE_ID, STREAM_ID)
 
     expect(result.memosCreated).toBe(1)
+    // The row inherits the retired memos' sources; the capture event cites only this conversation's.
+    expect({
+      inserted: (insert.mock.calls[0][1] as { sourceMessageIds: string[] }).sourceMessageIds,
+      captured: (
+        streamEventInsertMany.mock.calls[0][1] as { payload: { memos: { sourceMessageIds: string[] }[] } }[]
+      )[0].payload.memos[0].sourceMessageIds,
+    }).toEqual({ inserted: ["msg_old_a", "msg_old_b", "msg_1", "msg_2"], captured: ["msg_1", "msg_2"] })
     expect(markSuperseded).toHaveBeenCalledWith(
       expect.anything(),
       WORKSPACE_ID,

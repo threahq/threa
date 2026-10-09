@@ -1132,13 +1132,17 @@ export class MemoService implements MemoServiceLike {
         }
 
         const explicitlyRetired = await MemoRepository.findByIdsInWorkspace(client, workspaceId, explicitSupersedeIds)
-        Object.assign(
-          memoData,
-          inheritedReach([...explicitlyRetired.values(), ...toSupersede.map((s) => s.memo)], streamId)
-        )
+        const retired = [...explicitlyRetired.values(), ...toSupersede.map((s) => s.memo)]
+        Object.assign(memoData, inheritedReach(retired, streamId))
 
+        // The row keeps the retired memos' sources, so the messages behind a
+        // claim stay reachable through the memo that restates it. The capture
+        // event and landmark below cite only this conversation's messages.
         const { embedding, ...memoFields } = memoData
-        await MemoRepository.insert(client, memoFields)
+        await MemoRepository.insert(client, {
+          ...memoFields,
+          sourceMessageIds: [...new Set([...retired.flatMap((m) => m.sourceMessageIds), ...memoData.sourceMessageIds])],
+        })
         await MemoRepository.updateEmbedding(client, workspaceId, memoData.id, embedding)
         await OutboxRepository.insert(client, "memo:created", {
           workspaceId,

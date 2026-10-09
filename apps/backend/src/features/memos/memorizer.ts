@@ -21,9 +21,18 @@ import {
  * exchange, which is the wrong-attribution footgun this guards. `messages` order
  * is not guaranteed chronological (findByIds returns a Map), so pick by timestamp.
  */
-// Ids are rendered so a reversal can name the memo it retires (supersedesMemoIds).
-function formatMemoList(memos: Pick<Memo, "id" | "title" | "abstract">[]): string {
-  return memos.map((m, i) => `${i + 1}. [${m.id}] ${m.title}\n   ${m.abstract}`).join("\n")
+// Ids are rendered so a reversal can name the memo it retires (supersedesMemoIds), and
+// key points so the memo replacing it can restate every claim the conversation left standing.
+function formatMemoList(memos: Pick<Memo, "id" | "title" | "abstract" | "keyPoints">[]): string {
+  return memos
+    .map((m, i) =>
+      [
+        `${i + 1}. [${m.id}] ${m.title}`,
+        `   ${m.abstract}`,
+        ...(m.keyPoints ?? []).map((point) => `   - ${point}`),
+      ].join("\n")
+    )
+    .join("\n")
 }
 
 export function resolveSourceMessageIds(citedIds: string[], messages: Pick<Message, "id" | "createdAt">[]): string[] {
@@ -54,7 +63,7 @@ export interface MemoContent {
 
 export interface MemorizerContext {
   /** The stream's active memos: vocabulary context, and what a reversal may retire. */
-  memoryContext: Pick<Memo, "id" | "title" | "abstract">[]
+  memoryContext: Pick<Memo, "id" | "title" | "abstract" | "keyPoints">[]
   content: Message | Message[]
   /** Active memos already attached to this conversation (for the regenerate-on-revision path). */
   existingMemos?: Memo[]
