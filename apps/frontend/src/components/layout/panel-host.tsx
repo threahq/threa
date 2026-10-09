@@ -14,6 +14,7 @@ import {
   usePanel,
   useCurrentPane,
   isConversationPanel,
+  parseAsidePanel,
   parseComposePanel,
   parseConversationsPanel,
   parsePersonaTestPanel,
@@ -76,6 +77,7 @@ import { StreamPanel } from "@/components/thread"
 import { ConversationPanel } from "@/components/conversations/conversation-panel"
 import { ConversationsPane } from "@/components/conversations/conversations-pane"
 import { ComposePanel } from "@/components/composer/compose-panel"
+import { AsidePanel } from "@/components/aside/aside-panel"
 import { StreamContextPane } from "@/components/stream-context"
 import { PersonaTestChatPane } from "@/components/persona-editor/persona-test-chat"
 
@@ -111,7 +113,8 @@ interface PanelHostProps {
 /**
  * Picks the side panel's content by panel kind: a `conv:<id>` panel opens a
  * conversation projection (Mechanism B), a `compose:<id>` panel a stream's
- * draft, a `convs:<id>` panel a stream's conversations list, a `context:<id>`
+ * draft, an `aside:<id>` panel the aside open on a stream, a `convs:<id>` panel
+ * a stream's conversations list, a `context:<id>`
  * panel a stream's overview, a `test:<id>` panel a persona draft's test
  * chat, every other id is a stream/thread/draft handled
  * by {@link StreamPanel}, and a route's `page:` pane what its page provides
@@ -158,6 +161,18 @@ function PaneContent({ workspaceId, panelId, onClose, className }: PanelHostProp
         key={panelId}
         workspaceId={workspaceId}
         streamId={conversationsStreamId}
+        onClose={onClose}
+        className={className}
+      />
+    )
+  }
+  const asideHostId = panelId && parseAsidePanel(panelId)
+  if (asideHostId) {
+    return (
+      <AsidePanel
+        key={panelId}
+        workspaceId={workspaceId}
+        hostStreamId={asideHostId}
         onClose={onClose}
         className={className}
       />
@@ -224,6 +239,8 @@ interface PanelTabStackProps {
   maxRows: number
   /** Show every tab in one section (a phone). */
   stacked: boolean
+  /** The page's arrangement, without the panes a sheet over it holds. */
+  layout: PanelLayout
   /** The tabs on show, from {@link useFittedPanelLayout}, placed on the page's grid by {@link usePanelGrid}. */
   display: PanelLayout
   grid: PanelGridState
@@ -356,13 +373,14 @@ export function PanelTabStack({
   maxColumns,
   maxRows,
   stacked,
+  layout,
   display,
   grid,
   width,
   firstColumnWidth,
   height,
 }: PanelTabStackProps) {
-  const { layout, setCurrentPane, focusTab, closeTab } = usePanel()
+  const { setCurrentPane, focusTab, closeTab } = usePanel()
   const current = useCurrentPane()
   const { sizes, setSizes, areas } = grid
   const panelShares = sizes.columns.slice(1)

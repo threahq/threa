@@ -24,8 +24,6 @@ function panelMaxWidth(containerWidth: number): number {
 interface PanelLayoutOptions {
   /** Measure the page's container instead of one of its own. */
   containerRef?: RefObject<HTMLDivElement | null>
-  /** Width other docked columns in the row already take; the panel clamps against what is left. */
-  reservedWidth?: number
   /** Whether a close animates the column away. One that doesn't never ends a transition, so content goes at once. */
   animates?: boolean
   /** Side-by-side columns the panel's arrangement has. The panel widens for each one that fits. */
@@ -48,8 +46,7 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
   // real measurement so the first pre-measure render doesn't collapse the panel
   // to MIN and flash. Drag and keyboard resize base off this clamped value (not
   // the raw state) so they don't jump on a constrained window.
-  const measuredWidth = useElementWidth(containerRef)
-  const containerWidth = measuredWidth > 0 ? Math.max(1, measuredWidth - (options.reservedWidth ?? 0)) : 0
+  const containerWidth = useElementWidth(containerRef)
   const maxWidth = panelMaxWidth(containerWidth)
   // The stored width is the first column's; each column beside it adds its
   // share of that (a panel opened beside another takes 1 to its 1.4).

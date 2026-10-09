@@ -463,9 +463,9 @@ test.describe("Stream connections", () => {
       await message.getByRole("button", { name: "Message actions" }).click()
       await partnerPage.getByRole("menuitem", { name: "Open an aside here" }).click()
 
-      const column = partnerPage.getByTestId("aside-column")
-      await expect(column).toBeVisible({ timeout: 15_000 })
-      const asideId = await column.getAttribute("data-aside-id")
+      const asidePane = partnerPage.getByTestId("aside-panel")
+      await expect(asidePane).toBeVisible({ timeout: 15_000 })
+      const asideId = await asidePane.getAttribute("data-aside-id")
       expect(asideId).toBeTruthy()
       await expect(
         partnerPage.locator(`[data-stream-scroller="${streamId}"]`).locator("[data-aside-id]").first()
