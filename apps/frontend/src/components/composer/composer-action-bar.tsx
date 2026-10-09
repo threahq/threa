@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useRef, type ReactNode } from "react"
 import { Link } from "react-router-dom"
-import { AtSign, Maximize2, Paperclip, Plus, Slash } from "lucide-react"
+import { AtSign, Maximize2, PanelRight, Paperclip, Plus, Slash } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -28,6 +28,8 @@ interface CollapsibleAction {
   onSelect?: () => void
   /** Where the action navigates; a link rather than a button when set. */
   href?: string
+  /** Expand only: where opening the editor beside the page navigates, offered next to it. */
+  sideHref?: string
   /** Lower folds into the overflow menu first as the bar narrows. */
   collapsePriority: number
 }
@@ -97,6 +99,8 @@ export interface ComposerActionBarProps {
   onExpandClick?: () => void
   /** Where expanding navigates, for hosts whose expanded editor lives at a URL. Wins over `onExpandClick`. */
   expandHref?: string
+  /** Where opening the expanded editor beside the page, not over it, navigates. Shown on hover beside expand. */
+  sideHref?: string
   /**
    * Dictation button. Can't fold into the "+" menu (its live recording overlays
    * — clock, polish toggle, error toast — anchor to the button), so it stays
@@ -135,6 +139,7 @@ export function ComposerActionBar({
   onAttachClick,
   onExpandClick,
   expandHref,
+  sideHref,
   micButton,
   stashedDraftsTrigger,
   scheduledMessagesTrigger,
@@ -154,6 +159,7 @@ export function ComposerActionBar({
         ariaLabel: "Expand editor into a pane",
         icon: <Maximize2 className="h-3.5 w-3.5" />,
         href: expandHref,
+        sideHref,
         collapsePriority: 1,
       })
     } else if (onExpandClick) {
@@ -199,7 +205,7 @@ export function ComposerActionBar({
       })
     }
     return list
-  }, [onInsertEmoji, onInsertMention, onInsertCommand, onAttachClick, onExpandClick, expandHref])
+  }, [onInsertEmoji, onInsertMention, onInsertCommand, onAttachClick, onExpandClick, expandHref, sideHref])
 
   // Un-foldable triggers in keep-priority order (dictation kept longest, schedule
   // dropped first). Each present one stays inline until the bar is squeezed past
@@ -263,18 +269,24 @@ export function ComposerActionBar({
                   flips the whole row, so "+" and its neighbours mirror together
                   and their relative order is preserved. */}
               {[...overflowActions].reverse().map((action) => (
-                <DropdownMenuItem
-                  key={action.key}
-                  className="gap-2 cursor-pointer"
-                  onSelect={action.onSelect}
-                  asChild={action.href !== undefined}
-                >
-                  {action.href !== undefined ? (
-                    <Link to={action.href}>{overflowItemContent(action)}</Link>
-                  ) : (
-                    overflowItemContent(action)
+                <Fragment key={action.key}>
+                  <DropdownMenuItem
+                    className="gap-2 cursor-pointer"
+                    onSelect={action.onSelect}
+                    asChild={action.href !== undefined}
+                  >
+                    {action.href !== undefined ? (
+                      <Link to={action.href}>{overflowItemContent(action)}</Link>
+                    ) : (
+                      overflowItemContent(action)
+                    )}
+                  </DropdownMenuItem>
+                  {action.sideHref !== undefined && (
+                    <DropdownMenuItem className="gap-2 cursor-pointer" asChild>
+                      <Link to={action.sideHref}>{overflowItemContent(SIDE_ACTION)}</Link>
+                    </DropdownMenuItem>
                   )}
-                </DropdownMenuItem>
+                </Fragment>
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
@@ -295,36 +307,69 @@ export function ComposerActionBar({
       )}
 
       {expandAction && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            {expandAction.href !== undefined && !disabled ? (
-              <Button
-                variant="ghost"
-                size="icon"
-                aria-label={expandAction.ariaLabel ?? expandAction.label}
-                className="h-7 w-7 shrink-0"
-                asChild
-              >
-                <Link to={expandAction.href}>{expandAction.icon}</Link>
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={expandAction.ariaLabel ?? expandAction.label}
-                className="h-7 w-7 shrink-0"
-                onClick={expandAction.onSelect}
-                disabled={disabled}
-              >
-                {expandAction.icon}
-              </Button>
-            )}
-          </TooltipTrigger>
-          <TooltipContent side="top" className="text-xs">
-            {expandAction.label}
-          </TooltipContent>
-        </Tooltip>
+        <div className="group/expand relative flex shrink-0">
+          {expandAction.sideHref !== undefined && !disabled && (
+            // Out of flow, over the free space beside expand, so revealing it moves nothing (INV-21).
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    "absolute top-0 h-7 w-7 bg-card opacity-0 pointer-events-none",
+                    "group-hover/expand:opacity-100 group-hover/expand:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto",
+                    "[@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto",
+                    mirrored
+                      ? "left-full rounded-l-none border-l border-border/50"
+                      : "right-full rounded-r-none border-r border-border/50"
+                  )}
+                  asChild
+                >
+                  <Link to={expandAction.sideHref} aria-label={SIDE_ACTION.label}>
+                    {SIDE_ACTION.icon}
+                  </Link>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs">
+                {SIDE_ACTION.label}
+              </TooltipContent>
+            </Tooltip>
+          )}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              {expandAction.href !== undefined && !disabled ? (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={expandAction.ariaLabel ?? expandAction.label}
+                  className={cn(
+                    "h-7 w-7 shrink-0",
+                    expandAction.sideHref !== undefined &&
+                      (mirrored ? "group-hover/expand:rounded-r-none" : "group-hover/expand:rounded-l-none")
+                  )}
+                  asChild
+                >
+                  <Link to={expandAction.href}>{expandAction.icon}</Link>
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={expandAction.ariaLabel ?? expandAction.label}
+                  className="h-7 w-7 shrink-0"
+                  onClick={expandAction.onSelect}
+                  disabled={disabled}
+                >
+                  {expandAction.icon}
+                </Button>
+              )}
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">
+              {expandAction.label}
+            </TooltipContent>
+          </Tooltip>
+        </div>
       )}
 
       <Tooltip>
@@ -388,7 +433,9 @@ export function ComposerActionBar({
   )
 }
 
-function overflowItemContent(action: CollapsibleAction) {
+const SIDE_ACTION = { label: "Open to the side", icon: <PanelRight className="h-3.5 w-3.5" /> }
+
+function overflowItemContent(action: Pick<CollapsibleAction, "label" | "icon">) {
   return (
     <>
       <span className="flex h-4 w-4 items-center justify-center text-muted-foreground">{action.icon}</span>

@@ -45,6 +45,8 @@ const paneEditor = (page: Page, streamId: string) =>
 const floatingPane = (page: Page) => page.locator("[data-focused-pane]")
 const expandLink = (page: Page, within = mainPane(page)) =>
   within.getByRole("link", { name: "Expand editor into a pane" })
+const sideLink = (page: Page) => mainPane(page).getByRole("link", { name: "Open to the side" })
+const composerRoot = (page: Page) => mainPane(page).locator("[data-message-composer-root]")
 
 test("should carry the draft into a floating pane and back, and close it on send", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 })
@@ -54,6 +56,7 @@ test("should carry the draft into a floating pane and back, and close it on send
   await mainComposer(page).click()
   await page.keyboard.type("a long thought")
   const streamBefore = (await mainPane(page).boundingBox())!
+  const composerBefore = (await composerRoot(page).boundingBox())!
   await expandLink(page).click()
 
   await expect.poll(() => panelParam(page)).toBe(`${compose}**`)
@@ -67,9 +70,10 @@ test("should carry the draft into a floating pane and back, and close it on send
   // The caret lands at the end of the draft.
   await page.keyboard.type(", continued")
   await expect(paneEditor(page, streamId)).toHaveText("a long thought, continued")
-  // The inline composer is a bar now, showing the draft it holds the place of.
-  await expect(mainPane(page).getByRole("link", { name: "a long thought, continued" })).toBeVisible()
+  // The inline composer is a placeholder now, the same height so the timeline above it holds still.
+  await expect(mainPane(page).getByText("Writing in a pane", { exact: true })).toBeVisible()
   await expect(mainPane(page).getByRole("textbox")).toHaveCount(0)
+  expect((await composerRoot(page).boundingBox())!.height).toBe(composerBefore.height)
 
   // Escape leaves the editor first, then puts the pane back.
   await page.keyboard.press("Escape")
@@ -101,6 +105,35 @@ test("should carry the draft into a floating pane and back, and close it on send
   await expect.poll(() => panelParam(page)).toBeNull()
   await expect(mainPane(page).getByText("a long thought, continued", { exact: true })).toBeVisible()
   await expect(mainComposer(page)).toHaveText("")
+})
+
+test("should open the draft beside the stream, unfocused, from the button hover reveals next to expand", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { streamId } = await seed(page)
+  const compose = `compose:${streamId}`
+
+  await mainComposer(page).click()
+  await page.keyboard.type("to the side")
+  // Hidden until expand is hovered, and revealing it moves nothing.
+  await expect(sideLink(page)).toHaveCSS("opacity", "0")
+  const expandBefore = (await expandLink(page).boundingBox())!
+  await expandLink(page).hover()
+  await expect(sideLink(page)).toHaveCSS("opacity", "1")
+  expect(await expandLink(page).boundingBox()).toEqual(expandBefore)
+
+  await sideLink(page).click()
+  await expect.poll(() => panelParam(page)).toBe(compose)
+  await expect(paneEditor(page, streamId)).toHaveText("to the side")
+  await expect(floatingPane(page)).toHaveCount(0)
+  await expect
+    .poll(async () => {
+      const [stream, pane] = [await mainPane(page).boundingBox(), await tabPane(page, compose).boundingBox()]
+      return pane!.x >= stream!.x + stream!.width
+    })
+    .toBe(true)
+  await expect(mainPane(page).getByText("Writing in a pane", { exact: true })).toBeVisible()
 })
 
 test("should keep a docked draft pane across a reload and toggle it with Alt+Enter", async ({ page }) => {
