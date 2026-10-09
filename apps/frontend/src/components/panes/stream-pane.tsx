@@ -32,7 +32,8 @@ import { Badge } from "@/components/ui/badge"
 import { SidebarActionMenu, type SidebarActionItem } from "@/components/layout/sidebar/sidebar-actions"
 import { cn } from "@/lib/utils"
 import { useElementWidth } from "@/hooks/use-element-width"
-import { foldHeaderControls } from "@/lib/pane-header-fold"
+import { foldHeaderControls, PANE_TITLE_MIN_WIDTH } from "@/lib/pane-header-fold"
+import { MIN_TAB_WIDTH } from "@/lib/panel-tab-fit"
 import { useStreamOrDraft, isDmDraftId, useActiveBotPresence } from "@/hooks"
 import { useWorkspaceDmPeers, useWorkspaceMetadata } from "@/stores/workspace-store"
 import { createConversationsPanelId, useCurrentPane, usePanel, useSidebar } from "@/contexts"
@@ -106,10 +107,18 @@ export function StreamPane({
   // The route's stream is the page's one main landmark; the conversation overlay belongs to the first column's.
   const routeStreamId = useParams<{ streamId: string }>().streamId
   const isPageStream = routeStreamId === streamId
-  const { inFirstColumn, layout, hasTabs } = usePanel()
+  const { inFirstColumn, layout, hasTabs, section } = usePanel()
   const headerSwipe = usePhoneHeaderSwipe()
   const headerRef = useRef<HTMLElement>(null)
   const headerWidth = useElementWidth(headerRef)
+  const leadingRef = useRef<HTMLDivElement>(null)
+  const leadingWidth = useElementWidth(leadingRef)
+  const chipsRef = useRef<HTMLDivElement>(null)
+  const chipsWidth = useElementWidth(chipsRef)
+  const callRef = useRef<HTMLDivElement>(null)
+  const callWidth = useElementWidth(callRef)
+  const trailingRef = useRef<HTMLDivElement>(null)
+  const trailingWidth = useElementWidth(trailingRef)
   const ownsConversationOverlay = routeStreamId !== undefined && primaryPanelOf(layout) === streamId
   const currentPane = useCurrentPane()
   const isCurrentPane = currentPane === null || currentPane === streamId
@@ -523,6 +532,7 @@ export function StreamPane({
       : []
   // Before the title gives way, desktop drops the Aside label, then folds the view icons into the menu.
   const gap = tabbed ? 0 : 4
+  const leftGap = tabbed ? 0 : 8
   const icon = 32 + gap
   const offersCall = !!stream && !isDraft && (isChannel || isDm) && callsEnabled
   const offersAside = !!stream && !isDraft && !tabbed
@@ -533,19 +543,24 @@ export function StreamPane({
     ? new Set<string>()
     : foldHeaderControls(
         headerWidth,
-        // Padding, then the controls that never fold: call, Aside's icon, the menu, maximize and close.
+        // Padding, then what never folds: the leading controls, the chips beside the title and the chip strip's gap,
+        // the call menu, Aside's icon (its label folds), and the menu, focus and close.
         32 +
           (tabbed ? 0 : 4) +
-          (offersCall ? 48 + gap : 0) +
+          leadingWidth +
+          (chipsWidth > 0 ? chipsWidth + leftGap : 0) +
+          leftGap +
+          (callWidth > 0 ? callWidth + gap : 0) +
           (offersAside ? icon : 0) +
-          2 * icon +
-          (chrome.close ? icon : 0),
+          trailingWidth,
         [
-          ...(offersAside ? [{ id: "aside-label", width: 40 }] : []),
+          ...(offersAside ? [{ id: "aside-label", width: 60 }] : []),
           ...(offersOverlay ? [{ id: "overlay", width: 52 + gap }] : []),
           ...(offersContextIcon ? [{ id: "context", width: icon }] : []),
           ...(offersSearch && !tabbed ? [{ id: "search", width: icon }] : []),
-        ]
+        ],
+        // A tab row keeps room for two tabs, so the view icons fold before the tabs go to "+N".
+        tabbed ? Math.max(PANE_TITLE_MIN_WIDTH, Math.min(section?.ids.length ?? 0, 2) * MIN_TAB_WIDTH) : undefined
       )
   // A tab row needs the room more than search does, which ⌘F and the menu still reach.
   const searchInMenu = !isMobile && offersSearch && (tabbed || folded.has("search"))
@@ -559,7 +574,7 @@ export function StreamPane({
           {
             id: "stream-context",
             label: "In this stream",
-            description: "Links, files & memories",
+            description: isContextOpen ? "On" : "Links, files & memories",
             icon: PanelRight,
             onSelect: toggleContext,
           },
@@ -694,68 +709,69 @@ export function StreamPane({
         {...headerSwipe}
       >
         {/* No gaps while tabbed: the tab fit counts only the labels' own width as the room they free. */}
-        <div
-          className={cn(
-            "flex items-center flex-1 min-w-0",
-            !tabbed && "gap-2",
-            isTouchInput && !isEditing && "select-none"
-          )}
-        >
-          {chrome.leading}
-          {chrome.tabs ?? (
-            <>
-              {headerTitle}
-              {companionModeIndicator}
-            </>
-          )}
-          <AgentActivityHeaderChip workspaceId={workspaceId} streamId={streamId} compact={isMobile || tabbed} />
-          {/* Chip strip. The chips are non-shrinking (`shrink-0` leaves), so on a
+        <div className={cn("flex items-center flex-1 min-w-0", isTouchInput && !isEditing && "select-none")}>
+          {/* The empty span carries the gap after the leading controls into their measured width; a hidden sidebar
+              toggle cancels it. */}
+          <div ref={leadingRef} className={cn("flex shrink-0 items-center", !tabbed && "gap-2")}>
+            {chrome.leading}
+            <span />
+          </div>
+          <div className={cn("flex items-center flex-1 min-w-0", !tabbed && "gap-2")}>
+            {chrome.tabs ?? headerTitle}
+            <div ref={chipsRef} className={cn("flex shrink-0 items-center empty:hidden", !tabbed && "gap-2")}>
+              {!chrome.tabs && companionModeIndicator}
+              <AgentActivityHeaderChip workspaceId={workspaceId} streamId={streamId} compact={isMobile || tabbed} />
+            </div>
+            {/* Chip strip. The chips are non-shrinking (`shrink-0` leaves), so on a
               phone-width header they would otherwise overflow the flex box and
               paint under the search/panel actions — the strip scrolls instead,
               same recipe as PageHeaderTabs' tab strip. On mobile the chips live
               in the stream sheet; the strip only renders when there is no sheet
               to hold them (drafts, archived non-scratchpads). */}
-          {(!isMobile || !canOpenSheet) && !tabbed && (
-            <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-none">
-              {stream && !isDraft && (
-                <LabelStack
-                  workspaceId={workspaceId}
-                  resourceType={LabelableResourceTypes.STREAM}
-                  resourceId={streamId}
-                  className="shrink-0"
-                />
-              )}
-              {isEncryptedScratchpad && !isDraft && (
-                <StreamHeaderEncryptionAction workspaceId={workspaceId} encrypted streamId={streamId} />
-              )}
-              {stream && isScratchpad && !isDraft && (
-                <>
-                  <InviteActorButton workspaceId={workspaceId} stream={stream} kind="enclave" />
-                  <InviteBotButton workspaceId={workspaceId} stream={stream} />
-                </>
-              )}
-              {stream && !isThread && !isScratchpad && !isChannel && !isDraft && (
-                <Badge variant="secondary" className="shrink-0">
-                  {getStreamTypeLabel(stream.type)}
-                </Badge>
-              )}
-              {stream && (isChannel || isThread) && !isDraft && (
-                <SharedWithBadge workspaceId={workspaceId} stream={stream} className="shrink-0" />
-              )}
-              {isArchived && (
-                <Badge variant="secondary" className="gap-1 shrink-0">
-                  <ArchiveX className="h-3 w-3" />
-                  Archived
-                </Badge>
-              )}
-            </div>
-          )}
+            {(!isMobile || !canOpenSheet) && !tabbed && (
+              <div className="flex items-center gap-2 min-w-0 overflow-x-auto scrollbar-none">
+                {stream && !isDraft && (
+                  <LabelStack
+                    workspaceId={workspaceId}
+                    resourceType={LabelableResourceTypes.STREAM}
+                    resourceId={streamId}
+                    className="shrink-0"
+                  />
+                )}
+                {isEncryptedScratchpad && !isDraft && (
+                  <StreamHeaderEncryptionAction workspaceId={workspaceId} encrypted streamId={streamId} />
+                )}
+                {stream && isScratchpad && !isDraft && (
+                  <>
+                    <InviteActorButton workspaceId={workspaceId} stream={stream} kind="enclave" />
+                    <InviteBotButton workspaceId={workspaceId} stream={stream} />
+                  </>
+                )}
+                {stream && !isThread && !isScratchpad && !isChannel && !isDraft && (
+                  <Badge variant="secondary" className="shrink-0">
+                    {getStreamTypeLabel(stream.type)}
+                  </Badge>
+                )}
+                {stream && (isChannel || isThread) && !isDraft && (
+                  <SharedWithBadge workspaceId={workspaceId} stream={stream} className="shrink-0" />
+                )}
+                {isArchived && (
+                  <Badge variant="secondary" className="gap-1 shrink-0">
+                    <ArchiveX className="h-3 w-3" />
+                    Archived
+                  </Badge>
+                )}
+              </div>
+            )}
+          </div>
         </div>
         <div className={cn("flex items-center", !tabbed && "gap-1 ml-1")}>
-          {offersCall && (
-            // A workspace that has switched calls off shows no calls surface at all.
-            <CallStartMenu workspaceId={workspaceId} streamId={streamId} startLabel="Start a call" />
-          )}
+          <div ref={callRef} className="flex items-center empty:hidden">
+            {offersCall && (
+              // A workspace that has switched calls off shows no calls surface at all.
+              <CallStartMenu workspaceId={workspaceId} streamId={streamId} startLabel="Start a call" />
+            )}
+          </div>
           {stream && !isDraft && !tabbed && (
             <AsideHeaderChip
               workspaceId={workspaceId}
@@ -837,47 +853,49 @@ export function StreamPane({
               </DropdownMenu>
             </div>
           )}
-          <PhonePaneSwitcher workspaceId={workspaceId} />
-          {stream && isMobile && canOpenSheet && (
-            <>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8"
-                aria-label="Stream actions"
-                onClick={() => setIsMenuDrawerOpen(true)}
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-              <StreamSheet
-                open={isMenuDrawerOpen}
-                onOpenChange={setIsMenuDrawerOpen}
-                workspaceId={workspaceId}
-                streamId={streamId}
-                stream={stream}
-                streamName={streamName}
-                actions={[
-                  ...sheetViewActions,
-                  ...(offersStreamActions ? streamMenuActions : []).map((action, i) =>
-                    i === 0 && sheetViewActions.length > 0 ? { ...action, separatorBefore: true } : action
-                  ),
-                ]}
-              />
-            </>
-          )}
-          {!isMobile && desktopMenuActions.length > 0 && (
-            <SidebarActionMenu
-              actions={desktopMenuActions}
-              ariaLabel="Stream actions"
-              trigger={
-                <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Stream actions">
+          <div ref={trailingRef} className={cn("flex items-center empty:hidden", !tabbed && "gap-1")}>
+            <PhonePaneSwitcher workspaceId={workspaceId} />
+            {stream && isMobile && canOpenSheet && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  aria-label="Stream actions"
+                  onClick={() => setIsMenuDrawerOpen(true)}
+                >
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
-              }
-            />
-          )}
-          {chrome.focusToggle}
-          {chrome.close}
+                <StreamSheet
+                  open={isMenuDrawerOpen}
+                  onOpenChange={setIsMenuDrawerOpen}
+                  workspaceId={workspaceId}
+                  streamId={streamId}
+                  stream={stream}
+                  streamName={streamName}
+                  actions={[
+                    ...sheetViewActions,
+                    ...(offersStreamActions ? streamMenuActions : []).map((action, i) =>
+                      i === 0 && sheetViewActions.length > 0 ? { ...action, separatorBefore: true } : action
+                    ),
+                  ]}
+                />
+              </>
+            )}
+            {!isMobile && desktopMenuActions.length > 0 && (
+              <SidebarActionMenu
+                actions={desktopMenuActions}
+                ariaLabel="Stream actions"
+                trigger={
+                  <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Stream actions">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                }
+              />
+            )}
+            {chrome.focusToggle}
+            {chrome.close}
+          </div>
         </div>
       </header>
       {(isChannel || isDm) && !isDraft && <RejoinBar workspaceId={workspaceId} streamId={streamId} />}

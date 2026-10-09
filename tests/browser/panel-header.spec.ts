@@ -65,7 +65,7 @@ function settledRow(pane: Locator) {
 }
 const panelParam = (page: Page) => new URL(page.url()).searchParams.get("panel")
 
-test("should fold the labels, then trailing tabs into +N, as the panel narrows without moving its icons", async ({
+test("should fold the labels, then trailing tabs into +N, as the panel narrows without moving its menu", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 2560, height: 900 })
@@ -94,17 +94,14 @@ test("should fold the labels, then trailing tabs into +N, as the panel narrows w
   await expect(labels).toBeVisible()
   await expect(more).toHaveCount(0)
 
-  // The icons' distance from the header's right edge.
-  const iconOffsets = () =>
+  // The menu's distance from the header's right edge.
+  const menuOffset = () =>
     header.evaluate((el) => {
-      const right = el.getBoundingClientRect().right
-      return ["In this stream", "Stream actions"].map((name) => {
-        const icon = el.querySelector(`[aria-label="${name}"]`)
-        return icon ? Math.round(right - icon.getBoundingClientRect().right) : null
-      })
+      const menu = el.querySelector('[aria-label="Stream actions"]')
+      return menu ? Math.round(el.getBoundingClientRect().right - menu.getBoundingClientRect().right) : null
     })
-  const offsets = await iconOffsets()
-  expect(offsets.every((offset) => offset !== null)).toBe(true)
+  const offset = await menuOffset()
+  expect(offset).not.toBeNull()
 
   const seen = new Set<string>()
   let previous = await panelWidth()
@@ -115,15 +112,16 @@ test("should fold the labels, then trailing tabs into +N, as the panel narrows w
     if (width >= previous) break
     previous = width
 
-    // Nothing scrolls, the tab on show is never folded, and the icons hold still.
+    // Nothing scrolls, the tab on show is never folded, and the menu holds still.
     const row = await settledRow(pane)
     expect(row.overflows).toBe(false)
     expect(row.more).toBe(row.shown < 4 ? `+${4 - row.shown}` : null)
     // Labels fold before any tab does.
     if (row.shown < 4) expect(row.labels).toBe(false)
     await expect(strip.locator('[aria-current="page"]')).toBeVisible()
-    await expect(pane.getByRole("button", { name: "In this stream" })).toBeVisible()
-    expect(await iconOffsets()).toEqual(offsets)
+    // The view icon gives way only once the row is down to two tabs.
+    if (row.shown > 2) await expect(pane.getByRole("button", { name: "In this stream" })).toBeVisible()
+    expect(await menuOffset()).toBe(offset)
     seen.add(`${row.labels ? "labels" : "no-labels"}:${row.shown}`)
   }
   expect(seen.has("no-labels:4")).toBe(true)

@@ -14,11 +14,12 @@ export interface FoldableControl<Id extends string> {
 export function foldHeaderControls<Id extends string>(
   headerWidth: number,
   fixedWidth: number,
-  controls: FoldableControl<Id>[]
+  controls: FoldableControl<Id>[],
+  titleMinWidth = PANE_TITLE_MIN_WIDTH
 ): Set<Id> {
   const folded = new Set<Id>()
   if (headerWidth <= 0) return folded
-  let needed = fixedWidth + PANE_TITLE_MIN_WIDTH + controls.reduce((sum, control) => sum + control.width, 0)
+  let needed = fixedWidth + titleMinWidth + controls.reduce((sum, control) => sum + control.width, 0)
   for (const control of controls) {
     if (needed <= headerWidth) break
     folded.add(control.id)
