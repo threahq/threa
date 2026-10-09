@@ -32,8 +32,8 @@ import { Badge } from "@/components/ui/badge"
 import { SidebarActionMenu, type SidebarActionItem } from "@/components/layout/sidebar/sidebar-actions"
 import { cn } from "@/lib/utils"
 import { useElementWidth } from "@/hooks/use-element-width"
-import { foldHeaderControls, PANE_TITLE_MIN_WIDTH } from "@/lib/pane-header-fold"
-import { MIN_TAB_WIDTH } from "@/lib/panel-tab-fit"
+import { foldHeaderControls } from "@/lib/pane-header-fold"
+import { tabRowReserve } from "@/lib/panel-tab-fit"
 import { useStreamOrDraft, isDmDraftId, useActiveBotPresence } from "@/hooks"
 import { useWorkspaceDmPeers, useWorkspaceMetadata } from "@/stores/workspace-store"
 import { createConversationsPanelId, useCurrentPane, usePanel, useSidebar } from "@/contexts"
@@ -546,7 +546,7 @@ export function StreamPane({
         // Padding, then what never folds: the leading controls, the chips beside the title and the chip strip's gap,
         // the call menu, Aside's icon (its label folds), and the menu, focus and close.
         32 +
-          (tabbed ? 0 : 4) +
+          gap +
           leadingWidth +
           (chipsWidth > 0 ? chipsWidth + leftGap : 0) +
           leftGap +
@@ -560,7 +560,7 @@ export function StreamPane({
           ...(offersSearch && !tabbed ? [{ id: "search", width: icon }] : []),
         ],
         // A tab row keeps room for two tabs, so the view icons fold before the tabs go to "+N".
-        tabbed ? Math.max(PANE_TITLE_MIN_WIDTH, Math.min(section?.ids.length ?? 0, 2) * MIN_TAB_WIDTH) : undefined
+        tabbed ? tabRowReserve(section?.ids.length ?? 0) : undefined
       )
   // A tab row needs the room more than search does, which ⌘F and the menu still reach.
   const searchInMenu = !isMobile && offersSearch && (tabbed || folded.has("search"))
