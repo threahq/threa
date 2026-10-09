@@ -9,6 +9,8 @@ This file is the repository contract for every coding agent (Claude, Codex, Pi, 
 3. Task scope — smallest working change
 4. Style and polish
 
+**This repository is public and MIT-licensed.** Committed code, branch names, commit messages, and PR text are world-readable, so write them for strangers: synthetic data in fixtures and screenshots, credentials and production identifiers only in the environment.
+
 Default mode: **minimal patch** — the smallest change that still fully solves the problem, not a half-fix. Order of work: get it working → get it nice → get it fast. Once it works, step back once — smaller? clearer? — then stop. No refactors, renames, or generalization unless a higher rule demands it.
 
 ## Output Conventions
