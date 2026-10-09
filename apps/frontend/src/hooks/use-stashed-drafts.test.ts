@@ -755,7 +755,7 @@ describe("navigate rows (openHref)", () => {
     const { result, unmount } = renderHook(() => useStashedDrafts(pileWorkspaceId, "board:reply:conv_c"))
     await waitFor(() =>
       expect(result.current.originByDraftId.get("draft_branch")?.openHref).toBe(
-        `/w/${pileWorkspaceId}/s/stream_s?panel=${encodeURIComponent("conv:conv_c")}&stash=draft_branch`
+        `/w/${pileWorkspaceId}/s/stream_s?panel=conv:conv_c&stash=draft_branch`
       )
     )
     expect(result.current.originByDraftId.get("draft_conv")?.openHref ?? null).toBeNull()
