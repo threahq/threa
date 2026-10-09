@@ -101,6 +101,8 @@ describe("Aside cross-type anchor sharing (post index drop)", () => {
 
     const threadsByAnchor = await StreamRepository.findThreadsForMessageIds(pool, wsId, channel.id, [anchorId])
     expect(threadsByAnchor.get(anchorId)).toBe(thread.id)
+    const threadsAcrossStreams = await StreamRepository.findThreadsByAnchorIds(pool, wsId, [anchorId, "msg_none"])
+    expect(threadsAcrossStreams.map((s) => s.id)).toEqual([thread.id])
   })
 
   test("an aside opens on a message that already carries a thread", async () => {

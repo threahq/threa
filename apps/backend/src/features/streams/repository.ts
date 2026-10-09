@@ -1335,6 +1335,21 @@ export const StreamRepository = {
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
 
+  async findThreadsByAnchorIds(
+    db: Querier,
+    workspaceId: string,
+    anchorMessageIds: readonly string[]
+  ): Promise<Stream[]> {
+    if (anchorMessageIds.length === 0) return []
+    const result = await db.query<StreamRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)} FROM streams
+      WHERE workspace_id = ${workspaceId}
+        AND parent_anchor_id = ANY(${anchorMessageIds as string[]})
+        AND type = 'thread'
+    `)
+    return result.rows.map(mapRowToStream)
+  },
+
   /**
    * Find threads for a specific set of message IDs within a parent stream.
    * Returns a map of anchorId -> threadStreamId
