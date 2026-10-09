@@ -118,6 +118,11 @@ test("should open the draft beside the stream, unfocused, from the button hover 
   await page.keyboard.type("to the side")
   // Hidden until expand is hovered, and revealing it moves nothing.
   await expect(sideLink(page)).toHaveCSS("opacity", "0")
+  // Keyboard focus on expand reveals it too.
+  await expandLink(page).focus()
+  await expect(sideLink(page)).toHaveCSS("opacity", "1")
+  await mainComposer(page).click()
+  await expect(sideLink(page)).toHaveCSS("opacity", "0")
   const expandBefore = (await expandLink(page).boundingBox())!
   await expandLink(page).hover()
   await expect(sideLink(page)).toHaveCSS("opacity", "1")
