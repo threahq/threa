@@ -60,6 +60,7 @@ import {
   floatingPanelTabs,
   panelSectionOf,
   panelIdsOf,
+  isPanelOnShow,
   type PaneEdge,
   type PanelLayout,
   type PanelSection,
@@ -386,10 +387,9 @@ export function PanelTabStack({
   const drops = usePaneDrop()
   const members = floatingPanelTabs(layout, stacked)
   const floating = members.length > 0
-  const onShow = panelIdsOf(display)
-  // Members the grid holds no cell for float from outside it, so they keep their element across the exit.
+  // Members the grid doesn't show (no cell, or folded under another tab) float from outside it, so they keep their element across the exit.
   const unplaced: PlacedTab[] = members.flatMap((id) => {
-    const section = onShow.includes(id) ? null : panelSectionOf(layout, id)
+    const section = isPanelOnShow(display, id) ? null : panelSectionOf(layout, id)
     if (!section) return []
     const key = panelKeyFor(workspaceId, id)
     return [{ key, id, area: "auto", width: null, inFirstColumn: false, section, splits: NO_SPLITS, edges: NO_EDGES }]
@@ -411,6 +411,7 @@ export function PanelTabStack({
         }))
       })
     )
+    .filter((tab) => !unplaced.some((member) => member.id === tab.id))
     .concat(unplaced)
     .sort((a, b) => (a.key < b.key ? -1 : 1))
 
@@ -436,13 +437,12 @@ export function PanelTabStack({
   const focus = useMemo(() => (stacked ? null : { focused: members, map }), [stacked, members, map])
   const unplacedKey = unplaced.map((tab) => tab.id).join(".")
   // Members floating from outside the grid are on screen too.
-  const screen = useMemo(
-    () =>
-      unplacedKey === ""
-        ? display
-        : { columns: [...display.columns, ...unplacedKey.split(".").map((id) => [{ ids: [id], active: id }])] },
-    [display, unplacedKey]
-  )
+  const screen = useMemo(() => {
+    if (unplacedKey === "") return display
+    const ids = unplacedKey.split(".")
+    const grid = ids.reduce(closePanelTab, display)
+    return { columns: [...grid.columns, ...ids.map((id) => [{ ids: [id], active: id }])] }
+  }, [display, unplacedKey])
   const ghosts = tabs.filter((tab) => tab.area !== "auto" && members.includes(tab.id))
 
   // The first column fills what the rest leave, so only the dividers between the rest share sizes.
