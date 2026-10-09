@@ -7,6 +7,7 @@ import {
   PushActions,
   type PushAction,
 } from "@threahq/types"
+import { readablePanelParam } from "./panel-tabs"
 import { workspaceScopedKey } from "./workspace-scoped-key"
 
 /** A single message entry accumulated by the service worker for grouped notifications. */
@@ -311,7 +312,7 @@ export const NOTIFICATION_ACTION_FAILED_PARAM = "notify_failed"
 export function withNotificationActionFailure(url: string, action: string, reason: string): string {
   const parsed = new URL(url, "https://threa.invalid")
   parsed.searchParams.set(NOTIFICATION_ACTION_FAILED_PARAM, `${action}:${reason}`)
-  return parsed.pathname + parsed.search
+  return readablePanelParam(parsed.pathname + parsed.search)
 }
 
 const ACTION_FAILURE_LABELS: Record<string, string> = {

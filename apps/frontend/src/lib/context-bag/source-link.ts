@@ -1,4 +1,5 @@
 import { createConversationPanelId } from "@/contexts/panel-context"
+import { readablePanelParam } from "@/lib/panel-tabs"
 
 /**
  * Build the deep-link URL for a context-ref source. Used by the composer
@@ -24,7 +25,7 @@ export function buildContextRefSourceHref(args: {
   if (args.conversationId) {
     const params = new URLSearchParams({ panel: createConversationPanelId(args.conversationId) })
     if (args.originMessageId) params.set("m", args.originMessageId)
-    return `/w/${args.workspaceId}/board?${params.toString()}`
+    return readablePanelParam(`/w/${args.workspaceId}/board?${params.toString()}`)
   }
   const base = `/w/${args.workspaceId}/s/${args.sourceStreamId}`
   return args.originMessageId ? `${base}?m=${args.originMessageId}` : base
