@@ -20,7 +20,7 @@
 
 import type { EvalSuite, EvalContext, CaseResult, SuiteResult, PermutationResult } from "./types"
 import type { AI } from "@threahq/agent-runtime"
-import { createSpendGuard, createUsageAccumulator } from "./types"
+import { createSpendGuard, createUsageAccumulator, type SpendGuard } from "./types"
 import { createEvalAI, createUsageTrackingAI, printSummary } from "./runner"
 import type { Pool } from "pg"
 
@@ -68,10 +68,16 @@ function forbiddenPool(): Pool {
 export async function rescoreReport(
   reportPath: string,
   allSuites: EvalSuite<unknown, unknown, unknown>[],
-  options: { judgeModel?: string; ai?: AI; onSuite?: (result: SuiteResult<unknown, unknown>) => void } = {}
+  options: {
+    judgeModel?: string
+    ai?: AI
+    spend?: SpendGuard
+    onSuite?: (result: SuiteResult<unknown, unknown>) => void
+  } = {}
 ): Promise<SuiteResult<unknown, unknown>[]> {
   const report = (await Bun.file(reportPath).json()) as StoredReport
   const ai = options.ai ?? createEvalAI()
+  const spend = options.spend ?? createSpendGuard()
   const reportSink = options.onSuite ?? printSummary
   const results: SuiteResult<unknown, unknown>[] = []
 
@@ -93,7 +99,6 @@ export async function rescoreReport(
       // without this a throttled rescore produces a full set of plausible,
       // invalid scores.
       const credit = { rejections: 0 }
-      const spend = createSpendGuard()
       const trackedAi = createUsageTrackingAI(ai, usage, credit, spend)
       const ctx: EvalContext = {
         pool: forbiddenPool(),
@@ -164,6 +169,8 @@ export async function rescoreReport(
             `catches its own errors, so these would have been reported as quality failures — top up and re-run.`
         )
       }
+      // Evaluators catch the refusals a stopped guard raises, so its scores are failures the judge never made.
+      spend.signal.throwIfAborted()
 
       const total = usage.getTotal()
       permutations.push({

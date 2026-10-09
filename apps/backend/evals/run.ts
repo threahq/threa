@@ -219,7 +219,10 @@ async function main(): Promise<void> {
   // Rescore mode: replay evaluators over a previous run's stored generations.
   if (values.rescore) {
     console.log(`\nRescoring stored generations from: ${values.rescore}`)
-    const results = await rescoreReport(values.rescore, allSuites as any, { judgeModel: options.judgeModel })
+    const results = await rescoreReport(values.rescore, allSuites as any, {
+      judgeModel: options.judgeModel,
+      spend: options.spend,
+    })
     if (options.jsonOutput) {
       await Bun.write(options.jsonOutput, JSON.stringify(toJsonReport(results), null, 2))
       console.log(`\nResults written to ${options.jsonOutput}`)

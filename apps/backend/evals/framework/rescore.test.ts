@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { rescoreReport } from "./rescore"
 import type { AI } from "@threahq/agent-runtime"
-import type { EvalSuite, EvaluatorResult } from "./types"
+import { createSpendGuard, type EvalSuite, type EvaluatorResult } from "./types"
 
 const stubAi = {} as AI
 
@@ -175,6 +175,32 @@ describe("rescore", () => {
     await expect(
       rescoreReport(path, [suiteWith(judged as never) as never], { ai: rejectingAi, onSuite: () => {} })
     ).rejects.toThrow(/rejected for insufficient OpenRouter credit/)
+  })
+
+  test("refuses to report scores once the budget stopped the judge", async () => {
+    const path = await writeReport([
+      {
+        caseId: "c1",
+        caseName: "Case one",
+        expectedOutput: { must: "yes" },
+        outputs: [{ text: "yes" }, { text: "yes" }],
+      },
+    ])
+    const billedAi = {
+      generateObject: async () => ({ object: {}, usage: { promptTokens: 1, cost: 1 } }),
+    } as unknown as AI
+    const judged = async (_o: Out, _e: Expected, ctx?: unknown): Promise<EvaluatorResult> => {
+      await (ctx as any).ai.generateObject({ model: "openrouter:openai/gpt-5.6-luna" })
+      return { name: "judged", score: 1, passed: true }
+    }
+
+    await expect(
+      rescoreReport(path, [suiteWith(judged as never) as never], {
+        ai: billedAi,
+        spend: createSpendGuard(1),
+        onSuite: () => {},
+      })
+    ).rejects.toThrow(/reaching the \$1 budget/)
   })
 
   test("refuses a run whose generation is missing rather than scoring a turn that never happened", async () => {
