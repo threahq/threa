@@ -1631,9 +1631,10 @@ export function MessageComposer({
                   !mobileExpanded && !isMobile ? "bg-card/75 backdrop-blur-md" : "bg-card",
                   // Compact padding when mobile-unfocused (single line), normal otherwise
                   isMobile && !mobileChromeOpen ? "px-3 py-2" : "p-3 gap-2",
-                  // The outer editor viewport stays the sole scroll owner on
-                  // mobile, including before the first drag.
-                  isMobile && mobileChromeOpen && "[&_.tiptap]:max-h-none"
+                  // The outer editor viewport is the sole scroll owner whenever the
+                  // editor is open: the root's height cap squeezes this card, and an
+                  // editor holding its own 200px paints through the action bar.
+                  (!isMobile || mobileChromeOpen) && "[&_.tiptap]:max-h-none"
                 )}
                 onClick={(e) => {
                   if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))
@@ -1704,9 +1705,8 @@ export function MessageComposer({
                   ref={mobileEditorScrollRef}
                   data-testid="composer-editor-scroll"
                   className={cn(
-                    isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0",
-                    isMobile && mobileChromeOpen && "overflow-y-auto",
-                    isMobile && mobileChromeOpen && !mobileExpanded && mobileDragHeight === null && "max-h-[200px]"
+                    isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0 overflow-y-auto",
+                    (!isMobile || (mobileChromeOpen && !mobileExpanded && mobileDragHeight === null)) && "max-h-[200px]"
                   )}
                 >
                   <div className="h-full">{sharedEditor}</div>
