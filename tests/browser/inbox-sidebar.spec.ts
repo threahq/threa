@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Locator } from "@playwright/test"
-import { loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk, openPhoneSidebar } from "./helpers"
 
 /**
  * Inbox sidebar section (step 1.3 of the Inbox feature): a stream with an
@@ -342,23 +342,7 @@ test.describe("Inbox sidebar section", () => {
     const page = await context.newPage()
     await page.goto(setupPage.url())
 
-    // Reveal the (off-canvas on phone) sidebar. Mirrors sidebar-menu-dismissal.spec.ts:
-    // the on-screen "Pin sidebar" toggle opens it as an overlay.
-    const toggles = page.getByRole("button", { name: "Pin sidebar" })
-    await expect(toggles.first()).toBeAttached({ timeout: 20000 })
-    let opened = false
-    for (let i = 0; i < (await toggles.count()); i += 1) {
-      const box = await toggles.nth(i).boundingBox()
-      if (box && box.x >= 0 && box.x + box.width <= PHONE.width) {
-        await toggles.nth(i).click()
-        opened = true
-        break
-      }
-    }
-    expect(opened, "expected an on-screen sidebar toggle on the phone viewport").toBe(true)
-
-    const nav = page.getByRole("navigation", { name: "Sidebar navigation" })
-    await expect(nav.getByRole("button", { name: "Collapse sidebar" })).toBeVisible({ timeout: 15000 })
+    await openPhoneSidebar(page)
 
     const inboxRow = sidebarRow(sectionByHeading(page, "Inbox"), streamId)
     await expect(inboxRow).toBeVisible({ timeout: 10000 })
@@ -400,17 +384,7 @@ test.describe("Inbox sidebar section", () => {
     const page = await context.newPage()
     await page.goto(setupPage.url())
 
-    const toggles = page.getByRole("button", { name: "Pin sidebar" })
-    await expect(toggles.first()).toBeAttached({ timeout: 20000 })
-    for (let i = 0; i < (await toggles.count()); i += 1) {
-      const box = await toggles.nth(i).boundingBox()
-      if (box && box.x >= 0 && box.x + box.width <= PHONE.width) {
-        await toggles.nth(i).click()
-        break
-      }
-    }
-    const nav = page.getByRole("navigation", { name: "Sidebar navigation" })
-    await expect(nav.getByRole("button", { name: "Collapse sidebar" })).toBeVisible({ timeout: 15000 })
+    await openPhoneSidebar(page)
 
     const inboxRow = sidebarRow(sectionByHeading(page, "Inbox"), streamId)
     await expect(inboxRow).toBeVisible({ timeout: 10000 })

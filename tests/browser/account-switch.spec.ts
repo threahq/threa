@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test"
 import { AuthErrorCodes } from "../../packages/types/src/constants"
-import { expectApiOk } from "./helpers"
+import { expectApiOk, openPhoneSidebar } from "./helpers"
 import {
   openAccountPicker,
   pickAccount,
@@ -25,32 +25,6 @@ import {
 test.describe.configure({ timeout: 240_000 })
 
 const PHONE = { width: 390, height: 780 }
-
-/**
- * Open the phone sidebar when it is closed; a no-op once it is showing.
- *
- * Two toggles carry this label — the sidebar's own header and the open page's
- * header — and whichever belongs to an off-screen surface sits outside the
- * viewport and cannot be clicked, so pick the one actually on screen.
- */
-async function ensureSidebarOpen(page: Page): Promise<void> {
-  const nav = page.getByRole("navigation", { name: "Sidebar navigation" })
-  const collapse = nav.getByRole("button", { name: "Collapse sidebar" })
-  if (await collapse.isVisible().catch(() => false)) return
-
-  const toggles = page.getByRole("button", { name: "Pin sidebar" })
-  const viewport = page.viewportSize()
-  const count = await toggles.count()
-  for (let i = 0; i < count; i += 1) {
-    const box = await toggles.nth(i).boundingBox()
-    if (!box || !viewport) continue
-    if (box.x >= 0 && box.x + box.width <= viewport.width) {
-      await toggles.nth(i).click()
-      break
-    }
-  }
-  await expect(collapse).toBeVisible({ timeout: 15_000 })
-}
 
 /**
  * The destination account owns the whole surface: its own identity in the
@@ -274,7 +248,7 @@ test.describe("Account switch — two accounts sharing a workspace", () => {
       await page.setViewportSize(PHONE)
 
       // The phone sidebar is closed until it's asked for.
-      await ensureSidebarOpen(page)
+      await openPhoneSidebar(page)
       await expectAccountOwnsWorkspace(page, b, a)
 
       await openAccountPicker(page, b.profileName)

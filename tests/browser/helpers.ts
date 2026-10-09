@@ -197,6 +197,24 @@ export async function expandCollapsedSidebarSections(page: Page): Promise<void> 
   }
 }
 
+/**
+ * Opens the phone sidebar; a no-op while it shows. The sidebar's own toggle sits
+ * off-canvas inside it, and the page header's toggle mounts a beat after the
+ * page, so this waits for the header's rather than scanning both once.
+ */
+export async function openPhoneSidebar(page: Page): Promise<void> {
+  const collapse = page.getByRole("navigation", { name: "Sidebar navigation" }).getByRole("button", {
+    name: "Collapse sidebar",
+  })
+  if (await collapse.isVisible()) return
+  await page
+    .locator('button[aria-label="Pin sidebar"]:not(aside button)')
+    .filter({ visible: true })
+    .first()
+    .click({ timeout: 20_000 })
+  await expect(collapse).toBeVisible({ timeout: 15_000 })
+}
+
 /** Extract the workspace id from the current `/w/:workspaceId/...` URL. */
 export function workspaceIdFromUrl(page: Page): string {
   const match = page.url().match(/\/w\/([^/?]+)/)
