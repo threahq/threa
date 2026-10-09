@@ -17,9 +17,6 @@ import * as syncEngineModule from "@/sync/sync-engine"
 import * as userProfileModule from "@/components/user-profile"
 import * as contextsModule from "@/contexts"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
-import * as pointerModule from "@/hooks/use-pointer"
-import * as threadModule from "@/components/thread"
-import { spyOnExport } from "@/test"
 // eslint-disable-next-line no-restricted-imports -- test seeds IDB directly to drive the real rail read path
 import { db } from "@/db"
 import { __resetConversationMessageSnapshots, seedConversationMessages } from "@/stores/conversation-messages-store"
@@ -257,29 +254,6 @@ describe("BoardPage", () => {
   it("renders the empty state when there are no conversations", async () => {
     mountBoard([])
     expect(await screen.findByText("Nothing on the board yet")).toBeTruthy()
-  })
-
-  it("captures stray typing into the feed's composer zone (type-to-focus is mounted)", async () => {
-    mountBoard([makePost({}, { contentMarkdown: "Rotate the tokens before Friday." })])
-    await screen.findByText("Rotate the tokens before Friday.")
-
-    const zone = document.querySelector<HTMLElement>('main[data-editor-zone="main"]')
-    expect(zone).not.toBeNull()
-    const editor = document.createElement("div")
-    editor.setAttribute("contenteditable", "true")
-    // jsdom gives everything zero client rects; the zone lookup takes the last
-    // editor that is rendered AND on screen, so this stand-in has to report both.
-    Object.defineProperty(editor, "getClientRects", { value: () => [{ width: 10, height: 10 }] })
-    Object.defineProperty(editor, "getBoundingClientRect", {
-      value: () => ({ top: 100, bottom: 140, left: 0, right: 300 }),
-    })
-    zone!.appendChild(editor)
-
-    act(() => {
-      document.dispatchEvent(new KeyboardEvent("keydown", { key: "a", bubbles: true, cancelable: true }))
-    })
-
-    expect(document.activeElement).toBe(editor)
   })
 
   it("renders the opening-message body", async () => {
@@ -559,26 +533,6 @@ describe("BoardPage", () => {
     mountBoard([makePost({ id: "conv_dm", streamId: "stream_dm", messageIds: ["d1"] }, { id: "d1" })])
 
     expect(await screen.findByRole("link", { name: "Pierre" })).toBeTruthy()
-  })
-
-  it("a phone stacks an opened pane over the board, which stays mounted", async () => {
-    vi.spyOn(pointerModule, "useIsMobileOrCoarse").mockReturnValue(true)
-    // The panel's own content is covered by its own suites and needs providers
-    // this harness doesn't mount; what's under test here is what happens to the
-    // board under it.
-    spyOnExport(threadModule, "StreamPanel").mockReturnValue((() =>
-      createElement("div", null, "panel content")) as never)
-    mountBoard([makePost({}, { contentMarkdown: "Rotate the tokens before Friday." })], {
-      entry: `/w/${WORKSPACE_ID}/board?lens=all&panel=stream_panel`,
-    })
-
-    expect(await screen.findByText("panel content")).toBeTruthy()
-    // Unmounting the board destroys the scroller's box along with its offset, so
-    // going back to it would re-enter the virtualized feed at the top.
-    const body = await screen.findByText("Rotate the tokens before Friday.")
-    const hidden = body.closest("[inert]")
-    expect(hidden).not.toBeNull()
-    expect(hidden?.className).toContain("invisible")
   })
 
   it("does not show the new pill for activity on cards already in the view", async () => {

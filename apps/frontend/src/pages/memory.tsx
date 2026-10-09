@@ -1,6 +1,6 @@
 import { startTransition, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { ArrowLeft, Search, RefreshCw, Check, ChevronsUpDown } from "lucide-react"
+import { Search, RefreshCw, Check, ChevronsUpDown } from "lucide-react"
 import {
   KNOWLEDGE_TYPES,
   MEMO_SCOPES,
@@ -11,7 +11,7 @@ import {
   type MemoStatus,
   type MemoType,
 } from "@threahq/types"
-import { Link, useParams, useSearchParams } from "react-router-dom"
+import { useParams, useSearchParams } from "react-router-dom"
 import { useArchiveMemo, useDeleteMemo, useMemoDetail, useMemoSearch, useUnarchiveMemo, useUpdateMemo } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
@@ -23,7 +23,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Drawer, DrawerContent } from "@/components/ui/drawer"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { SidebarToggle } from "@/components/layout"
+import { PagePaneHeader } from "@/components/panes"
 import { MemoDetailContent, type MemoEditControls } from "@/components/memo/memo-detail"
 import { MemoResultItem } from "@/components/memo/memo-result-item"
 import { cn } from "@/lib/utils"
@@ -356,15 +356,12 @@ export function MemoryPage() {
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-x-hidden bg-background">
-      <header className="border-b bg-card/50">
-        <div className="flex h-12 items-center gap-2 px-4">
-          <SidebarToggle location="page" />
-          <Link to={`/w/${workspaceId}`}>
-            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          </Link>
-
+      <div className="border-b bg-card/50">
+        <PagePaneHeader
+          workspaceId={workspaceId}
+          back={{ to: `/w/${workspaceId}`, label: "Back to workspace" }}
+          className="border-b-0"
+        >
           <div className="flex-1 min-w-0">
             <div className="relative max-w-xl">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
@@ -394,7 +391,7 @@ export function MemoryPage() {
             {refreshConfirmed ? <Check className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}
             <span className="sr-only">Refresh</span>
           </Button>
-        </div>
+        </PagePaneHeader>
 
         <div className="flex items-center gap-2 overflow-x-auto border-t border-border/40 px-4 py-2 scrollbar-none">
           <span className="text-[11px] font-medium text-muted-foreground/50 uppercase tracking-wide mr-1 shrink-0">
@@ -503,7 +500,7 @@ export function MemoryPage() {
             </Button>
           )}
         </div>
-      </header>
+      </div>
 
       {/* Content — relative wrapper for the loading bar overlay */}
       <div className="relative flex min-h-0 flex-1 flex-col lg:flex-row">

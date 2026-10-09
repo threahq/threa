@@ -178,12 +178,41 @@ function TabsProbe() {
 }
 
 function ScopedTab() {
-  const { panelId, closePanel, getNavigateUrl, getPanelUrl, getTabUrl, openPanel, setCurrentPane, ownsCover } =
-    usePanel()
+  const {
+    panelId,
+    closePanel,
+    getNavigateUrl,
+    getPanelUrl,
+    getTabUrl,
+    openPanel,
+    setCurrentPane,
+    ownsCover,
+    navigateIn,
+    pageSearch,
+  } = usePanel()
   const [, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
   return (
     <div onPointerDownCapture={() => panelId !== null && setCurrentPane(panelId)}>
+      <span data-testid={`query ${panelId}`}>{pageSearch}</span>
       <button onClick={closePanel}>{`close ${panelId}`}</button>
+      <button onClick={() => navigateIn({ pathname: "/w/ws/memory", search: "?memo=memo_x" }, false)}>
+        {`${panelId} shows memo_x`}
+      </button>
+      {/* A pane's click capture and its link's click run in one event, before the pressed pane re-renders. */}
+      <button
+        onClick={() => {
+          setCurrentPane(panelId!)
+          navigateIn({ pathname: "/w/ws/activity/unread", search: "" }, false)
+        }}
+      >{`${panelId} filters unread`}</button>
+      {/* As a page pane's navigator does: what the pane can't hold goes to the router. */}
+      <button
+        onClick={() => {
+          const to = { pathname: "/w/ws/s/draft_x", search: "" }
+          if (!navigateIn(to, false)) navigate(to)
+        }}
+      >{`${panelId} opens draft_x`}</button>
       <Link to={getNavigateUrl("stream_x")}>{`${panelId} to x`}</Link>
       <Link to={getPanelUrl("stream_y")}>{`${panelId} opens y`}</Link>
       <Link to={getPanelUrl(`context:${panelId}`)}>{`${panelId} overview`}</Link>
@@ -525,6 +554,13 @@ describe("panel tabs history", () => {
     expect(screen.getByTestId("front").textContent).toBe("stream_a")
   })
 
+  it("should move the route from a draft to the stream worked in beside it", async () => {
+    const { user, loc } = mountTabs(["/w/ws/s/draft_d?panel=stream_a"])
+
+    await user.click(screen.getByRole("button", { name: "work in stream_a" }))
+    expect(loc()).toBe("/w/ws/s/stream_a?panel=draft_d-stream_a")
+  })
+
   it("should keep the route on its stream while working in a pane that isn't one", async () => {
     const { user, loc } = mountTabs([`${PAGE}?panel=conv:c`])
 
@@ -548,9 +584,40 @@ describe("panel tabs history", () => {
     expect(loc()).toBe("/w/ws/board?panel=conv:c")
   })
 
-  it("should drop the board from a panel param that names it", () => {
+  it("should place the board where a panel param names it, as it does a route's stream", () => {
     mountTabs(["/w/ws/board?panel=page:board.stream_x"])
-    expect(screen.getByTestId("layout").textContent).toBe("page:board-stream_x")
+    expect(screen.getByTestId("layout").textContent).toBe("page:board.stream_x")
+  })
+
+  it("should show the query a link names when another pane links to the route's page", async () => {
+    const { user, loc } = mountTabs(["/w/ws/memory?memo=memo_a&panel=page:search"])
+
+    await user.click(screen.getByRole("button", { name: "page:search shows memo_x" }))
+    expect(loc()).toBe("/w/ws/memory?memo=memo_x")
+  })
+
+  it("should keep the route on a page whose filter link moves it, whichever pane was worked in before", async () => {
+    const { user, loc } = mountTabs(["/w/ws/activity?panel=stream_a"])
+
+    await user.click(screen.getByRole("button", { name: "work in stream_a" }))
+    await user.click(screen.getByRole("button", { name: "page:activity filters unread" }))
+    expect(loc()).toBe("/w/ws/activity/unread?panel=stream_a")
+  })
+
+  it("should keep a page's query when the route leaves it and show it again when it reopens", async () => {
+    const { user, loc } = mountTabs(["/w/ws/search?q=hello&panel=stream_a"])
+
+    await user.click(screen.getByRole("button", { name: "close page:search" }))
+    expect(loc()).toBe("/w/ws/s/stream_a")
+    await user.click(screen.getByRole("button", { name: "reopen tab" }))
+    expect(screen.getByTestId("query page:search").textContent).toBe("q=hello")
+  })
+
+  it("should leave a draft a page pane links to to the router, since no pane holds one", async () => {
+    const { user, loc } = mountTabs(["/w/ws/s/stream_a?panel=page:drafts"])
+
+    await user.click(screen.getByRole("button", { name: "page:drafts opens draft_x" }))
+    expect(loc()).toBe("/w/ws/s/draft_x")
   })
 
   it("should keep only the edited persona's test chat when a persona editor opens", () => {

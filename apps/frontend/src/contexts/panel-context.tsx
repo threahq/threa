@@ -21,6 +21,7 @@ import { useCoverHistory, type CoverLanding } from "@/hooks/use-cover-close"
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { PANEL_COVER } from "@/lib/covers"
 import { isPagePane, isServerStreamId } from "@/lib/stream-ids"
+import { isPinnedPagePane, pagePaneAt, pagePathOf } from "@/lib/page-panes"
 import {
   PANEL_PARAM,
   SECTION_SEPARATOR,
@@ -46,7 +47,8 @@ import {
   replacePanelTab,
   splitPanelTab,
   dropPanelTab,
-  streamPaneAfter,
+  routePaneAfter,
+  isRoutePane,
   type PaneDrop,
   type PanelLayout,
   type PanelSection,
@@ -238,7 +240,7 @@ interface PanelContextValue {
   tabbed: boolean
   /** How many sections are on show: as the grid lays them out inside it, as the URL holds them elsewhere. */
   shownPanes: number
-  /** Whether this page lays panels out as tabs beside its route's pane (the stream page, the board, the persona editor). */
+  /** Whether this page lays panels out as tabs beside its route's pane (a stream's, a workspace page's, the persona editor's). */
   hasTabs: boolean
   /** Whether this consumer's pane sits in the stream page's first column, where the page's stream shows. */
   inFirstColumn: boolean
@@ -285,6 +287,10 @@ interface PanelContextValue {
   /** Whether `?m` is this panel's: it belongs to the pane that was in front
    *  when it was set, so a pane beside it doesn't look for it too. */
   ownsCover: boolean
+  /** This consumer's page pane's own query, without the panes'. */
+  pageSearch: string
+  /** Follows a link inside this consumer's page pane: in place, or into its tab. False where the router has to. */
+  navigateIn: (to: { pathname: string; search: string }, replace: boolean) => boolean
 }
 
 interface PanelOps {
@@ -295,8 +301,13 @@ interface PanelOps {
     edit: (layout: PanelLayout) => PanelLayout,
     replace: boolean,
     focus?: string | null,
-    deepLink?: string | null
+    deepLink?: string | null,
+    focusQuery?: string
   ) => void
+  /** The query a page pane shows: the URL's for the route's page, the one it last had for another. */
+  pageQuery: (panelId: string) => string
+  /** Follows a link inside page pane `own`; false where the router has to. */
+  navigatePane: (own: string, to: { pathname: string; search: string }, replace: boolean) => boolean
   /** Whether this page shows tabs beside its route's pane; no other page has panes. */
   tabbed: boolean
   /** A phone, which shows one pane at a time and no tab rows. */
@@ -336,8 +347,10 @@ const PanelContext = createContext<PanelContextValue | null>(null)
 const CurrentPaneContext = createContext<string | null>(null)
 
 /** The `?m=` one tab opened at must not send another tab looking for it. */
+const DEEP_LINK_PARAM = "m"
+
 function dropDeepLink(params: URLSearchParams) {
-  params.delete("m")
+  params.delete(DEEP_LINK_PARAM)
 }
 
 function setLayoutParam(params: URLSearchParams, layout: PanelLayout, path: string | null, keepPath = false) {
@@ -369,11 +382,6 @@ const NO_SPLITS: readonly SplitDirection[] = []
 
 const STREAM_ROUTE = "/w/:workspaceId/s/:streamId"
 
-const BOARD_ROUTE = "/w/:workspaceId/board"
-
-/** The board, as the pane its route pins in the first column. */
-export const BOARD_PANE = "page:board"
-
 const PERSONA_ROUTE = "/w/:workspaceId/settings/personas/:personaId"
 
 /** The persona editor, as the pane its route pins in the first column. */
@@ -388,7 +396,7 @@ function withoutForeignPersonaTests(layout: PanelLayout, keep: string | null): P
 
 /** `layout` without `panelId` and the panes that are its stream's own: its draft, aside, overview and conversations. */
 function closing(layout: PanelLayout, panelId: string): PanelLayout {
-  if (isPagePane(panelId)) return layout
+  if (isPinnedPagePane(panelId)) return layout
   return panesOwnedBy(layout, panelId).reduce(closePanelTab, closePanelTab(layout, panelId))
 }
 
@@ -479,6 +487,8 @@ function buildValue(
     setCurrentPane: ops.setCurrentPane,
     markCurrentPane: ops.markCurrentPane,
     ownsCover: own !== null && own === ops.coverOwner,
+    pageSearch: own === null ? "" : ops.pageQuery(own),
+    navigateIn: (to, replace) => own !== null && ops.navigatePane(own, to, replace),
   }
 }
 
@@ -489,15 +499,68 @@ function phoneLandingOf(layout: PanelLayout, panelValue: string | null, routePan
   return newestPanelOf(layout)
 }
 
-/** The parser drops a page pane, so one is written only as the first column, in front of the others. */
+/** The parser drops a pinned page pane, so one is written only as the first column, in front of the others. */
 function writesRoutePane(panelValue: string | null, routePane: string): boolean {
-  if (isPagePane(routePane)) return panelValue?.split(SECTION_SEPARATOR)[0] === routePane
+  if (isPinnedPagePane(routePane)) return panelValue?.split(SECTION_SEPARATOR)[0] === routePane
   return panelIdsOf(parsePanelLayout(panelValue)).includes(routePane)
 }
 
-function pagePaneAt(pathname: string): string | null {
-  if (matchPath(BOARD_ROUTE, pathname)) return BOARD_PANE
-  return matchPath(PERSONA_ROUTE, pathname) ? PERSONA_PANE : null
+/** The pane `pathname` names: a stream's, a workspace page's, or the persona editor's. */
+function routePaneAt(pathname: string): string | null {
+  const streamId = matchPath(STREAM_ROUTE, pathname)?.params.streamId
+  if (streamId) return streamId
+  return pagePaneAt(pathname) ?? (matchPath(PERSONA_ROUTE, pathname) ? PERSONA_PANE : null)
+}
+
+/** The route that names `panelId`. */
+function routePathOf(workspaceId: string | undefined, panelId: string): string {
+  const page = pagePathOf(panelId)
+  return page === null ? `/w/${workspaceId}/s/${panelId}` : `/w/${workspaceId}${page}`
+}
+
+/** The params that say where the panes go and what they show, rather than what a page shows. */
+const PANE_PARAMS = [PANEL_PARAM, DEEP_LINK_PARAM]
+
+/** A page's own query: the URL's, without the panes'. */
+function pageQueryOf(params: URLSearchParams): string {
+  const own = new URLSearchParams(params)
+  for (const key of PANE_PARAMS) own.delete(key)
+  return own.toString()
+}
+
+/** `query` with the panes' params `params` carries. */
+function withPaneParams(query: string, params: URLSearchParams): URLSearchParams {
+  const next = new URLSearchParams(query)
+  for (const key of PANE_PARAMS) {
+    const value = params.get(key)
+    if (value !== null) next.set(key, value)
+  }
+  return next
+}
+
+/**
+ * The query the route starts from when it moves from `from` to `to`. A page
+ * takes its own query along and finds it again when the route comes back, so
+ * one stream's route moving to another keeps everything, and any move to or
+ * from a page keeps only the panes' params.
+ */
+function routeParamsOf(
+  from: string | null,
+  params: URLSearchParams,
+  to: string | null,
+  pageQuery: (panelId: string) => string
+): URLSearchParams {
+  if (to === from || to === null || from === null) return new URLSearchParams(params)
+  if (pagePathOf(from) === null && pagePathOf(to) === null) return new URLSearchParams(params)
+  return withPaneParams(pagePathOf(to) === null ? "" : pageQuery(to), params)
+}
+
+/** The query each page pane shows: the route's own from the URL, the others' kept here since they left it. */
+interface PageQueries {
+  workspaceId: string | undefined
+  route: string | null
+  query: string
+  kept: ReadonlyMap<string, string>
 }
 
 interface PaneState {
@@ -555,19 +618,13 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const location = useLocation()
   const navigate = useNavigate()
   const restored = useNavigationType() === "POP"
-  // A page whose route pins a pane in the first column shows tabs beside it: the stream page, whose route
-  // names the stream pane worked in, and the board and the persona editor, which stay put. No other page has panes.
+  // A route that names a pane shows tabs beside it: a stream's or a workspace page's, which panes can move the
+  // route between, and the persona editor's, which stays put. No other page has panes.
   const router = useContext(UNSAFE_DataRouterContext)?.router ?? null
-  const match = useMatch(STREAM_ROUTE)
-  const workspaceId = match?.params.workspaceId
-  const path = match?.params.streamId ?? null
-  const board = useMatch(BOARD_ROUTE)
+  const workspaceId = useMatch("/w/:workspaceId/*")?.params.workspaceId
+  const routePane = routePaneAt(location.pathname)
   const personaId = useMatch(PERSONA_ROUTE)?.params.personaId
   const personaTest = personaId ? createPersonaTestPanelId(personaId) : null
-  let pagePane: string | null = null
-  if (board) pagePane = BOARD_PANE
-  else if (personaTest) pagePane = PERSONA_PANE
-  const routePane = path ?? pagePane
   const tabbed = routePane !== null
 
   const panelValue = searchParams.get(PANEL_PARAM)
@@ -576,7 +633,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
     [routePane, panelValue, personaTest]
   )
 
-  const deepLink = searchParams.get("m")
+  const deepLink = searchParams.get(DEEP_LINK_PARAM)
 
   // The panes follow the arrangement in the same render, so a pane just opened
   // is in front on its first paint: a phone shows it, and a narrow window folding
@@ -587,18 +644,25 @@ export function PanelProvider({ children }: PanelProviderProps) {
     // The route names the pane worked in, and a reloaded `?m` goes to the newest pane, as links already written
     // expect. A phone, which shows one pane, lands as {@link phoneLandingOf} says, and so does its `?m`.
     const newest = layout.focused?.at(-1) ?? newestPanelOf(layout)
-    const front = phone
-      ? phoneLandingOf(layout, panelValue, routePane)
-      : (layout.focused?.at(-1) ?? (path === null ? newest : followPanel(layout, layout, path)))
+    let front = layout.focused?.at(-1) ?? newest
+    if (phone) front = phoneLandingOf(layout, panelValue, routePane)
+    else if (layout.focused === undefined && routePane !== null && !isPinnedPagePane(routePane))
+      front = followPanel(layout, layout, routePane)
     const owner = phone ? front : newest
-    return { layout, path, deepLink, front, coverOwner: owner === null ? null : coverPaneOf(layout, owner) }
+    return {
+      layout,
+      path: routePane,
+      deepLink,
+      front,
+      coverOwner: owner === null ? null : coverPaneOf(layout, owner),
+    }
   })
   let panes = paneState
   if (panes.layout !== layout || panes.deepLink !== deepLink) {
     panes = followPanes(
       panes,
       layout,
-      path,
+      routePane,
       deepLink,
       restored,
       phone ? phoneLandingOf(layout, panelValue, routePane) : undefined
@@ -611,45 +675,87 @@ export function PanelProvider({ children }: PanelProviderProps) {
     []
   )
 
-  // Where the page lands with `next`: the stream pane worked in after it (a tab just opened, or the one
-  // taking the current pane's place), else the one taking the route's place when it closes.
+  // A page pane the route leaves keeps the query it had there.
+  const routeQuery = routePane !== null && pagePathOf(routePane) !== null ? pageQueryOf(searchParams) : ""
+  const [pageQueries, setPageQueries] = useState<PageQueries>({
+    workspaceId,
+    route: routePane,
+    query: routeQuery,
+    kept: new Map(),
+  })
+  let queries = pageQueries
+  if (queries.workspaceId !== workspaceId) {
+    queries = { workspaceId, route: routePane, query: routeQuery, kept: new Map() }
+    setPageQueries(queries)
+  } else if (queries.route !== routePane || queries.query !== routeQuery) {
+    const left = queries.route
+    const kept =
+      left !== null && left !== routePane && pagePathOf(left) !== null
+        ? new Map(queries.kept).set(left, queries.query)
+        : queries.kept
+    queries = { workspaceId, route: routePane, query: routeQuery, kept }
+    setPageQueries(queries)
+  }
+  const { kept } = queries
+  const pageQuery = useCallback(
+    (panelId: string) => (panelId === routePane ? routeQuery : (kept.get(panelId) ?? "")),
+    [routePane, routeQuery, kept]
+  )
+  const keepPageQuery = useCallback(
+    (panelId: string, query: string) =>
+      setPageQueries((state) => ({ ...state, kept: new Map(state.kept).set(panelId, query) })),
+    []
+  )
+  // A query given for `to` is the one a link there names, so it wins even where the route stays put.
+  const routeParams = useCallback(
+    (to: string | null, query?: string) =>
+      query !== undefined && to !== null
+        ? withPaneParams(query, searchParams)
+        : routeParamsOf(routePane, searchParams, to, pageQuery),
+    [routePane, searchParams, pageQuery]
+  )
+
+  // Where the page lands with `next`: the pane worked in after it (a stream tab just opened, or the one
+  // taking the current pane's place), else the one taking the route's place when it closes. A page's route
+  // stays put while it is open, and the persona editor's always does.
   const targetOf = useCallback(
     (next: PanelLayout, focus: string | null = null): Target | null => {
       const current = focus ?? followCurrentPanel(layout, next, front)
-      if (path === null)
-        return { pathname: location.pathname, path: pagePane, keepsPath: phone && current === pagePane }
-      const after = streamPaneAfter(layout, next, path, front)
-      const focusable = current !== null && isServerStreamId(current) && panelIdsOf(next).includes(current)
-      const route = phone
-        ? phonePanelRoute(next, current, after)
-        : { path: focusable ? current : after, keepPath: false }
+      if (routePane === null || isPinnedPagePane(routePane))
+        return { pathname: location.pathname, path: routePane, keepsPath: phone && current === routePane }
+      // The pane just navigated into wins over `front`: the click that pressed it hasn't re-rendered yet.
+      const after = routePaneAfter(layout, next, routePane, focus ?? front)
+      const follows =
+        !isPagePane(routePane) && current !== null && isServerStreamId(current) && panelIdsOf(next).includes(current)
+      const route = phone ? phonePanelRoute(next, current, after) : { path: follows ? current : after, keepPath: false }
       if (route.path === null) return null
       return {
-        pathname: route.path === path ? location.pathname : `/w/${workspaceId}/s/${route.path}`,
+        pathname: route.path === routePane ? location.pathname : routePathOf(workspaceId, route.path),
         path: route.path,
         keepsPath: route.keepPath,
       }
     },
-    [path, pagePane, layout, front, location.pathname, workspaceId, phone]
+    [routePane, layout, front, location.pathname, workspaceId, phone]
   )
 
-  // Every stream pane of `next` can be the route's and show the same panes, so closing pops onto any of them.
+  // Every route pane of `next` can be the route and show the same panes, so closing pops onto any of them.
   const landingsOf = useCallback(
     (next: PanelLayout, to: Target, params: URLSearchParams): [CoverLanding, ...CoverLanding[]] => {
       const landing = (pathname: string, path: string | null, keepPath: boolean) => {
-        const landed = new URLSearchParams(params)
+        const landed = routeParamsOf(routePane, params, path, pageQuery)
         setLayoutParam(landed, next, path, keepPath)
         return { pathname, params: landed }
       }
-      const others = path === null ? [] : panelIdsOf(next).filter((id) => id !== to.path && isServerStreamId(id))
+      const movable = routePane !== null && !isPinnedPagePane(routePane)
+      const others = movable ? panelIdsOf(next).filter((id) => id !== to.path && isRoutePane(id)) : []
       return [
         landing(to.pathname, to.path, to.keepsPath),
         ...others.map((id) =>
-          landing(`/w/${workspaceId}/s/${id}`, id, phone && phonePanelRoute(next, id, id).keepPath)
+          landing(routePathOf(workspaceId, id), id, phone && phonePanelRoute(next, id, id).keepPath)
         ),
       ]
     },
-    [path, workspaceId, phone]
+    [routePane, pageQuery, workspaceId, phone]
   )
 
   const setCurrentPane = useCallback(
@@ -660,25 +766,25 @@ export function PanelProvider({ children }: PanelProviderProps) {
       // move commits at once for the same reason: typing straight after it would starve its transition, and
       // anything done to the panes meanwhile would act on the route before it.
       const live = router?.state.location ?? location
-      const livePath = matchPath(STREAM_ROUTE, live.pathname)?.params.streamId ?? null
-      const livePane = livePath ?? pagePaneAt(live.pathname)
+      const livePane = routePaneAt(live.pathname)
       const liveParams = new URLSearchParams(live.search)
       const liveLayout = fullPanelLayout(livePane, parsePanelLayout(liveParams.get(PANEL_PARAM)))
       if (livePane === null || !panelIdsOf(liveLayout).includes(panelId)) return
-      // A phone also writes which pane it is in front of the others, so a reload or Back lands on it.
-      if (!phone && (livePath === null || panelId === livePath || !isServerStreamId(panelId))) return
+      // A desktop route follows the stream worked in, from a stream; a phone also writes which pane it is in
+      // front of the others, so a reload or Back lands on it.
+      if (!phone && (panelId === livePane || !isServerStreamId(panelId) || isPagePane(livePane))) return
       const shown = phone ? activatePanelTab(liveLayout, panelId) : liveLayout
-      // A page's route stays put, writing itself only when it is in front.
       let route: { path: string | null; keepPath: boolean } = { path: livePane, keepPath: panelId === livePane }
-      if (livePath !== null)
-        route = phone ? phonePanelRoute(shown, panelId, livePath) : { path: panelId, keepPath: false }
+      if (!isPinnedPagePane(livePane))
+        route = phone ? phonePanelRoute(shown, panelId, livePane) : { path: panelId, keepPath: false }
       const to = route.path ?? livePane
-      const params = withLayout(liveParams, shown, to, coverOwner, route.keepPath)
-      const href = hrefOf(livePath === null ? live.pathname : `/w/${workspaceId}/s/${to}`, params)
+      const base = routeParamsOf(livePane, liveParams, to, pageQuery)
+      const params = withLayout(base, shown, to, coverOwner, route.keepPath)
+      const href = hrefOf(to === livePane ? live.pathname : routePathOf(workspaceId, to), params)
       if (href === hrefOf(live.pathname, liveParams)) return
       navigate(href, { replace: true, flushSync: true, state: PANE_SWITCH_STATE })
     },
-    [setFront, router, location, coverOwner, navigate, workspaceId, phone]
+    [setFront, router, location, coverOwner, navigate, workspaceId, phone, pageQuery]
   )
 
   const contextual = useCallback(
@@ -692,11 +798,11 @@ export function PanelProvider({ children }: PanelProviderProps) {
       const next = edit(layout)
       const to = targetOf(next, focus)
       if (to === null) return `${location.pathname}${location.search}`
-      const params = withLayout(searchParams, next, to.path, coverOwner, to.keepsPath)
+      const params = withLayout(routeParams(to.path), next, to.path, coverOwner, to.keepsPath)
       if (dropsDeepLink) dropDeepLink(params)
       return hrefOf(to.pathname, params)
     },
-    [searchParams, location.pathname, location.search, layout, coverOwner, targetOf]
+    [routeParams, location.pathname, location.search, layout, coverOwner, targetOf]
   )
 
   // Opening a panel PUSHES: on mobile it takes over the whole screen, so back has
@@ -707,19 +813,53 @@ export function PanelProvider({ children }: PanelProviderProps) {
       edit: (layout: PanelLayout) => PanelLayout,
       replace: boolean,
       focus: string | null = null,
-      deepLink: string | null = null
+      deepLink: string | null = null,
+      /** The query of the page `focus` opens, when the route goes there. */
+      focusQuery?: string
     ) => {
       const next = edit(layout)
       const to = targetOf(next, focus)
       if (to === null) return
       if (focus !== null) setFront(focus)
-      const params = withLayout(searchParams, next, to.path, coverOwner, to.keepsPath)
-      if (deepLink !== null) params.set("m", deepLink)
+      const base = routeParams(to.path, to.path === focus ? focusQuery : undefined)
+      const params = withLayout(base, next, to.path, coverOwner, to.keepsPath)
+      if (deepLink !== null) params.set(DEEP_LINK_PARAM, deepLink)
       const href = hrefOf(to.pathname, params)
       // Opening what is already on show adds no entry for Back to step through.
       navigate(href, { replace: replace || href === hrefOf(location.pathname, searchParams) })
     },
-    [layout, targetOf, setFront, searchParams, coverOwner, navigate, location.pathname]
+    [layout, targetOf, setFront, routeParams, searchParams, coverOwner, navigate, location.pathname]
+  )
+
+  // A link followed inside a page pane: the same page with another query changes it in place, another page
+  // or a stream takes its tab. Anything else, or a URL that says where every pane goes, leaves it to the router.
+  const navigatePane = useCallback(
+    (own: string, to: { pathname: string; search: string }, replace: boolean): boolean => {
+      const params = new URLSearchParams(to.search)
+      if (params.has(PANEL_PARAM) || matchPath("/w/:workspaceId/*", to.pathname)?.params.workspaceId !== workspaceId)
+        return false
+      const target = routePaneAt(to.pathname)
+      if (target === null || !isRoutePane(target)) return false
+      const page = pagePathOf(target) !== null
+      if (target === own && own !== routePane) {
+        keepPageQuery(own, params.toString())
+        return true
+      }
+      if (target === own) {
+        navigate(hrefOf(location.pathname, withPaneParams(to.search, searchParams)), { replace })
+        return true
+      }
+      if (page) keepPageQuery(target, params.toString())
+      open(
+        (current) => replacePanelTab(current, own, target),
+        replace,
+        target,
+        page ? null : params.get(DEEP_LINK_PARAM),
+        page ? params.toString() : undefined
+      )
+      return true
+    },
+    [workspaceId, routePane, keepPageQuery, searchParams, navigate, location.pathname, open]
   )
 
   const closedTabs = useRef<string[]>([])
@@ -733,8 +873,8 @@ export function PanelProvider({ children }: PanelProviderProps) {
   )
   const closeTabs = useCallback(
     (panelIds: readonly string[]) => {
-      // The route's stream goes last, so a close that must leave one stream pane leaves the page's own.
-      const ordered = [...panelIds.filter((id) => id !== path), ...panelIds.filter((id) => id === path)]
+      // The route's pane goes last, so a close that must leave one route pane leaves the page's own.
+      const ordered = [...panelIds.filter((id) => id !== routePane), ...panelIds.filter((id) => id === routePane)]
       let next = layout
       const closed: string[] = []
       for (const panelId of ordered) {
@@ -756,7 +896,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       if (coverOwner !== null && closed.includes(coverOwner)) dropDeepLink(params)
       closeTo(landingsOf(next, to, params))
     },
-    [closeTo, path, targetOf, landingsOf, searchParams, layout, coverOwner]
+    [closeTo, routePane, targetOf, landingsOf, searchParams, layout, coverOwner]
   )
   const closeTab = useCallback((panelId: string) => closeTabs([panelId]), [closeTabs])
 
@@ -808,7 +948,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const focusTab = useCallback(
     (panelId: string | null) => {
       if (panelId !== null) {
-        if (isPagePane(panelId)) return
+        if (isPinnedPagePane(panelId)) return
         // A second press can land before the router commits the first, which already pushed this step.
         if (parsePanelLayout(new URLSearchParams(window.location.search).get(PANEL_PARAM)).focused?.includes(panelId))
           return
@@ -847,6 +987,8 @@ export function PanelProvider({ children }: PanelProviderProps) {
       setCurrentPane,
       markCurrentPane: setFront,
       coverOwner,
+      pageQuery,
+      navigatePane,
       tabFocusHandoff,
       paneShortcutQueue,
       paneFocusLanding,
@@ -869,6 +1011,8 @@ export function PanelProvider({ children }: PanelProviderProps) {
       setCurrentPane,
       setFront,
       coverOwner,
+      pageQuery,
+      navigatePane,
     ]
   )
   const value = useMemo(() => buildValue(ops, null, null), [ops])

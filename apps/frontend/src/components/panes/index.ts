@@ -12,3 +12,5 @@ export {
 } from "./pane-drop"
 export { usePaneSplitActions } from "./panel-tab-menu"
 export { PhonePaneLeading, PhonePaneSwitcher, usePhoneHeaderSwipe } from "./phone-pane-header"
+export { PaneHeader } from "./pane-header"
+export { PagePaneHeader } from "./page-pane-chrome"

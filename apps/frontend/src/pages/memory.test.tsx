@@ -2,7 +2,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { describe, expect, it, vi, beforeEach } from "vitest"
 import { render, screen, userEvent, spyOnExport } from "@/test"
 import { MemoryPage } from "./memory"
-import { SidebarProvider } from "@/contexts"
+import { SidebarProvider, PanelProvider } from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as useMobileModule from "@/hooks/use-mobile"
@@ -21,9 +21,11 @@ function renderPage(initialEntry = "/w/ws_1/memory?memo=memo_1") {
   return render(
     <SidebarProvider>
       <MemoryRouter initialEntries={[initialEntry]}>
-        <Routes>
-          <Route path="/w/:workspaceId/memory" element={<MemoryPage />} />
-        </Routes>
+        <PanelProvider>
+          <Routes>
+            <Route path="/w/:workspaceId/memory" element={<MemoryPage />} />
+          </Routes>
+        </PanelProvider>
       </MemoryRouter>
     </SidebarProvider>
   )
