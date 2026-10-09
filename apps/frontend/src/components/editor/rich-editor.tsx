@@ -1402,7 +1402,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           trailingContent={staticToolbarOpen ? toolbarTrailingContent : undefined}
         />
         {belowToolbarContent}
-        <EditorContent editor={editor} />
+        <EditorContent editor={editor} className="flex min-h-0 flex-1 flex-col" />
         <ComposerPillCopyButton editor={editor} />
         {enableMentions ? renderMentionList() : null}
         {enableChannels ? renderChannelList() : null}

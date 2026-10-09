@@ -1153,6 +1153,7 @@ export function MessageComposer({
       autoFocus={autoFocus}
       scopeId={scopeId}
       staticToolbarOpen={!isMobile && formatOpen}
+      className={isMobile ? undefined : "flex min-h-0 flex-col"}
       disableSelectionToolbar={disableSelectionToolbar}
       onEditLastMessage={onEditLastMessage}
       onEscapeBlur={onEscapeBlur}
@@ -1631,10 +1632,9 @@ export function MessageComposer({
                   !mobileExpanded && !isMobile ? "bg-card/75 backdrop-blur-md" : "bg-card",
                   // Compact padding when mobile-unfocused (single line), normal otherwise
                   isMobile && !mobileChromeOpen ? "px-3 py-2" : "p-3 gap-2",
-                  // The outer editor viewport is the sole scroll owner whenever the
-                  // editor is open: the root's height cap squeezes this card, and an
-                  // editor holding its own 200px paints through the action bar.
-                  (!isMobile || mobileChromeOpen) && "[&_.tiptap]:max-h-none"
+                  // The outer editor viewport stays the sole scroll owner on
+                  // mobile, including before the first drag.
+                  isMobile && mobileChromeOpen && "[&_.tiptap]:max-h-none"
                 )}
                 onClick={(e) => {
                   if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))
@@ -1705,11 +1705,17 @@ export function MessageComposer({
                   ref={mobileEditorScrollRef}
                   data-testid="composer-editor-scroll"
                   className={cn(
-                    isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0 overflow-y-auto",
-                    (!isMobile || (mobileChromeOpen && !mobileExpanded && mobileDragHeight === null)) && "max-h-[200px]"
+                    isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0",
+                    !isMobile && "flex flex-col",
+                    isMobile && mobileChromeOpen && "overflow-y-auto",
+                    isMobile && mobileChromeOpen && !mobileExpanded && mobileDragHeight === null && "max-h-[200px]"
                   )}
                 >
-                  <div className="h-full">{sharedEditor}</div>
+                  {/* Desktop: the editor element keeps its own scroll cap, so the
+                      toolbars above it and the selection bubble stay outside any
+                      scroller; this flex chain lets that cap shrink with the card
+                      when a tall attachment tray squeezes it. */}
+                  <div className={isMobile ? "h-full" : "flex min-h-0 flex-1 flex-col"}>{sharedEditor}</div>
                 </div>
 
                 {/* Bottom action bar — visible on desktop always, on mobile when focused or dictating.
