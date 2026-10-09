@@ -157,6 +157,8 @@ function EmojiGridInner(
         case "ArrowDown":
         case "ArrowLeft":
         case "ArrowRight": {
+          // Left off the first cell is the caret asking to leave the `:`.
+          if (event.key === "ArrowLeft" && selectedIndex === 0) return false
           event.preventDefault()
           const next = moveSelection(selectedIndex, event.key, geometry)
           if (next !== selectedIndex) {

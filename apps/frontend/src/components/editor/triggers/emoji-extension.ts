@@ -137,14 +137,24 @@ export const EmojiExtension = Node.create<EmojiExtensionOptions>({
   },
 
   addProseMirrorPlugins() {
+    const editor = this.editor
     return [
       Suggestion({
-        editor: this.editor,
+        editor,
         pluginKey: EmojiPluginKey,
         char: ":",
         allowSpaces: false,
         startOfLine: false,
-        findSuggestionMatch: withKeyboardCorrectionTolerance(EmojiPluginKey, this.editor),
+        findSuggestionMatch: withKeyboardCorrectionTolerance(EmojiPluginKey, editor),
+        // The grid takes the arrow keys once open, so it opens on typing only:
+        // a caret arrowing through "ratio : 5" must not stop at the colon.
+        // Runs during state application, so editor.state still holds the
+        // pre-transaction plugin flag.
+        shouldShow: ({ transaction }) => {
+          if (transaction.docChanged) return true
+          const prev = EmojiPluginKey.getState(editor.state) as { active?: boolean } | undefined
+          return prev?.active === true
+        },
         allow: ({ state, range }) => {
           const $from = state.doc.resolve(range.from)
 

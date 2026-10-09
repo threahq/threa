@@ -50,8 +50,13 @@ const settle = () =>
     await new Promise((resolve) => setTimeout(resolve, 0))
   })
 
-const pickHighlighted = () =>
-  editor!.view.dom.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }))
+const pressKey = (key: string) => {
+  const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })
+  editor!.view.dom.dispatchEvent(event)
+  return event
+}
+
+const pickHighlighted = () => pressKey("Enter")
 
 async function openPicker() {
   render(<Harness />)
@@ -101,6 +106,39 @@ describe("emoji suggestion lifecycle", () => {
 
     expect(active).toBe(false)
     expect(document.querySelector("[data-emoji-grid]")).toBeNull()
+  })
+
+  it("never opens when the caret merely arrows onto a colon", async () => {
+    render(<Harness />)
+    await act(async () => {
+      editor!.commands.insertContent("a : b")
+    })
+    await settle()
+    expect(active).toBe(false)
+
+    await act(async () => {
+      editor!.commands.setTextSelection(4)
+    })
+    await settle()
+
+    expect(active).toBe(false)
+    expect(document.querySelector("[data-emoji-grid]")).toBeNull()
+  })
+
+  it("hands ArrowLeft back to the editor when the first emoji is highlighted", async () => {
+    await openPicker()
+    const press = async (key: string) => {
+      let event!: KeyboardEvent
+      await act(async () => {
+        event = pressKey(key)
+      })
+      return event.defaultPrevented
+    }
+
+    expect(await press("ArrowLeft")).toBe(false)
+    expect(await press("ArrowRight")).toBe(true)
+    expect(await press("ArrowLeft")).toBe(true)
+    expect(await press("ArrowLeft")).toBe(false)
   })
 
   it("keeps the picker while the suggestion is still running", async () => {
