@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, openPhoneSidebar } from "./helpers"
 
 /**
  * The sidebar's History control: a per-user journal of visited streams that
@@ -40,30 +40,6 @@ async function setUpThreeVisits(page: Page, testId: string) {
   const bravo = await visitChannel(page, names.bravo)
   const charlie = await visitChannel(page, names.charlie)
   return { names, ids: { alpha, bravo, charlie } }
-}
-
-/**
- * Open the phone sidebar when it is closed; a no-op once it is showing.
- * Two toggles carry "Pin sidebar" (sidebar header and page header); the one
- * belonging to the off-screen sidebar cannot be clicked, so pick the on-screen one.
- */
-async function ensureSidebarOpen(page: Page): Promise<void> {
-  const nav = page.getByRole("navigation", { name: "Sidebar navigation" })
-  const collapse = nav.getByRole("button", { name: "Collapse sidebar" })
-  if (await collapse.isVisible().catch(() => false)) return
-
-  const toggles = page.getByRole("button", { name: "Pin sidebar" })
-  const viewport = page.viewportSize()
-  const count = await toggles.count()
-  for (let i = 0; i < count; i += 1) {
-    const box = await toggles.nth(i).boundingBox()
-    if (!box || !viewport) continue
-    if (box.x >= 0 && box.x + box.width <= viewport.width) {
-      await toggles.nth(i).click()
-      break
-    }
-  }
-  await expect(collapse).toBeVisible({ timeout: 15_000 })
 }
 
 test.describe("Navigation history", () => {
@@ -111,7 +87,7 @@ test.describe("Navigation history", () => {
       const { ids } = await setUpThreeVisits(page, testId)
       await page.setViewportSize(PHONE)
 
-      await ensureSidebarOpen(page)
+      await openPhoneSidebar(page)
       const menu = await openHistory(page)
       await menu.getByRole("menuitem", { name: "Back" }).click()
 

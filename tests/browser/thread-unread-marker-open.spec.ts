@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk, openPhoneSidebar } from "./helpers"
 
 /**
  * Opening an unread thread with unreadOpenPosition "marker" paints at the
@@ -54,23 +54,6 @@ async function seedReplies(
     ids.push(...batch)
   }
   return ids
-}
-
-async function ensureSidebarOpen(page: Page): Promise<void> {
-  const nav = page.getByRole("navigation", { name: "Sidebar navigation" })
-  const collapse = nav.getByRole("button", { name: "Collapse sidebar" })
-  if (await collapse.isVisible().catch(() => false)) return
-  // Two toggles carry "Pin sidebar"; only the on-screen one is clickable.
-  const toggles = page.getByRole("button", { name: "Pin sidebar" })
-  const count = await toggles.count()
-  for (let i = 0; i < count; i += 1) {
-    const box = await toggles.nth(i).boundingBox()
-    if (box && box.x >= 0 && box.x + box.width <= PHONE.width) {
-      await toggles.nth(i).click()
-      break
-    }
-  }
-  await expect(collapse).toBeVisible({ timeout: 15_000 })
 }
 
 interface Frame {
@@ -184,7 +167,7 @@ for (const anchoring of [true, false]) {
       await route.continue()
     })
 
-    await ensureSidebarOpen(page)
+    await openPhoneSidebar(page)
     const threadLink = page.getByRole("navigation", { name: "Sidebar navigation" }).locator(`a[href*="${threadId}"]`)
     await expect(threadLink.first()).toBeVisible({ timeout: 15_000 })
 
