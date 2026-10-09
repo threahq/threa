@@ -58,6 +58,15 @@ const pressKey = (key: string) => {
 
 const pickHighlighted = () => pressKey("Enter")
 
+/** Dispatches a key and reports whether the grid consumed it. */
+async function press(key: string) {
+  let event!: KeyboardEvent
+  await act(async () => {
+    event = pressKey(key)
+  })
+  return event.defaultPrevented
+}
+
 async function openPicker() {
   render(<Harness />)
   await act(async () => {
@@ -124,20 +133,38 @@ describe("emoji suggestion lifecycle", () => {
     expect(document.querySelector("[data-emoji-grid]")).toBeNull()
   })
 
-  it("hands ArrowLeft back to the editor when the first emoji is highlighted", async () => {
+  it("leaves Left/Right to the caret until a vertical arrow commits to the grid", async () => {
     await openPicker()
-    const press = async (key: string) => {
-      let event!: KeyboardEvent
-      await act(async () => {
-        event = pressKey(key)
-      })
-      return event.defaultPrevented
-    }
 
-    expect(await press("ArrowLeft")).toBe(false)
-    expect(await press("ArrowRight")).toBe(true)
-    expect(await press("ArrowLeft")).toBe(true)
-    expect(await press("ArrowLeft")).toBe(false)
+    // Left off the first cell still hands the caret back to the editor.
+    const keys = ["ArrowLeft", "ArrowRight", "End", "ArrowDown", "ArrowRight", "ArrowLeft", "ArrowUp", "ArrowLeft"]
+    const consumed: boolean[] = []
+    for (const key of keys) consumed.push(await press(key))
+    expect(consumed).toEqual([false, false, false, true, true, true, true, false])
+  })
+
+  it("hands Left/Right back to the caret once the user types again", async () => {
+    await openPicker()
+    expect(await press("ArrowDown")).toBe(true)
+
+    await act(async () => {
+      editor!.commands.insertContent("i")
+    })
+    await settle()
+
+    expect({ active, consumed: await press("ArrowRight") }).toEqual({ active: true, consumed: false })
+  })
+
+  it("hands Left/Right back to the caret once the caret moves inside the query", async () => {
+    await openPicker()
+    expect(await press("ArrowDown")).toBe(true)
+
+    await act(async () => {
+      editor!.commands.setTextSelection(editor!.state.selection.from - 1)
+    })
+    await settle()
+
+    expect({ active, consumed: await press("ArrowRight") }).toEqual({ active: true, consumed: false })
   })
 
   it("keeps the picker while the suggestion is still running", async () => {
