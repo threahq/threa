@@ -859,7 +859,6 @@ function ConversationPanelBody({
   // The shared coordinated-loading machine (INV-35): blank while the open is
   // young, a skeleton only once it is genuinely slow, content when revealed.
   const ownPhase = useCoordinatedPhase({ isLoading: !revealed, isReady: revealed })
-  useRevealReady(revealed)
   const stillLoadingPhase: CoordinatedPhase = ownPhase === "skeleton" || skeletonAlreadyVisible ? "skeleton" : "loading"
   const phase: CoordinatedPhase = revealed ? "ready" : stillLoadingPhase
 
@@ -1036,6 +1035,8 @@ function ConversationPanelBody({
     // (144px on desktop), and every cold open would land that far off the tail.
     composerHeightVar: FLOATING_COMPOSER_HEIGHT_VAR,
   })
+  // The page reveal waits out the settle mask too, as a stream pane's does, or this pane paints frames after the rest.
+  useRevealReady(revealed && (!isInitialSettling || rows.length === 0))
 
   const { scrollToMessage, scrollAbortRef } = useScrollToMessage({
     findIndex: findRowIndex,
