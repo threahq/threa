@@ -130,11 +130,13 @@ export const MEMO_DEDUP_DISTANCE = 0.15
  * from the SAME conversation, the old memo is superseded and the new one links
  * to it via parentMemoId — a paraphrased re-capture replaces its predecessor
  * instead of stacking next to it. Looser than MEMO_DEDUP_DISTANCE because
- * observed prod re-captures ("framstår som sjuka" vs "helt galna") land in the
- * 0.15–0.35 band; scoping to one conversation keeps the looser cutoff from
- * merging genuinely distinct topics.
+ * observed prod re-captures ("framstår som sjuka" vs "helt galna") land above
+ * 0.15. Prod paraphrases were seen as far out as 0.35, but on GroupMemBench the
+ * 0.25–0.35 band mostly retired distinct claims from one conversation (a tagging
+ * decision retired by a parser-attribution one), so a restatement that far away
+ * now stacks as its own memo unless the revision pass names what it restates.
  */
-export const MEMO_SUPERSEDE_DISTANCE = 0.35
+export const MEMO_SUPERSEDE_DISTANCE = 0.25
 
 /**
  * B2 structural boost. A multiplicative factor on the fused RRF score,
