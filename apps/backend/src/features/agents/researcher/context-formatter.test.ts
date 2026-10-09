@@ -133,6 +133,15 @@ describe("formatRetrievedContext", () => {
     ])
   })
 
+  test("closes with the claim-level rule for what currently holds", () => {
+    const text = formatRetrievedContext([memo()], [], [], WORKSPACE)
+    expect(
+      text?.endsWith(
+        "When the question is what currently holds, settle it claim by claim, not by date: the decision itself, the conditions attached to it, and whether a later message explicitly replaces it. A later message that discusses the topic without changing a condition leaves that condition standing. A proposal or question is not a decision; report it as a proposal. When sources disagree and nothing resolves it, say so with dates instead of merging them into one account."
+      )
+    ).toBe(true)
+  })
+
   test("attachments link to their stream when one is present, and not otherwise", () => {
     const withStream: EnrichedAttachmentResult = {
       id: "att_1",

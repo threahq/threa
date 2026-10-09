@@ -80,7 +80,9 @@ export function formatRetrievedContext(
 
 The following relevant information was found in the workspace:
 
-${memosSection}${messagesSection}${attachmentsSection}Use this knowledge to inform your response. Cite sources when relevant.`
+${memosSection}${messagesSection}${attachmentsSection}Use this knowledge to inform your response. Cite sources when relevant.
+
+When the question is what currently holds, settle it claim by claim, not by date: the decision itself, the conditions attached to it, and whether a later message explicitly replaces it. A later message that discusses the topic without changing a condition leaves that condition standing. A proposal or question is not a decision; report it as a proposal. When sources disagree and nothing resolves it, say so with dates instead of merging them into one account.`
 }
 
 function formatMemosSection(memos: EnrichedMemoResult[], workspaceId: string, timezone: string): string {
