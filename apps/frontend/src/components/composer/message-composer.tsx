@@ -1713,8 +1713,9 @@ export function MessageComposer({
                 >
                   {/* Desktop: the editor element keeps its own scroll cap, so the
                       toolbars above it and the selection bubble stay outside any
-                      scroller; this flex chain lets that cap shrink with the card
-                      when a tall attachment tray squeezes it. */}
+                      scroller. The flex chain slot → this wrapper → RichEditor's
+                      container → EditorContent → .tiptap lets that cap shrink
+                      with the card when a tall attachment tray squeezes it. */}
                   <div className={isMobile ? "h-full" : "flex min-h-0 flex-1 flex-col"}>{sharedEditor}</div>
                 </div>
 

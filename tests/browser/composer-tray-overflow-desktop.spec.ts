@@ -15,7 +15,11 @@ test.describe.configure({ timeout: 120_000 })
 const LINE =
   "The overall theme is lack of polish and inconsistency, but there are also some major design work that needs doing."
 
-test("a tall attachment tray never pushes the editor's text out of the card", async ({ page }) => {
+// Enough chips to fill the tray's capped chip row on any desktop width, so the
+// squeeze does not depend on how many chips fit on one row.
+const FILE_COUNT = 16
+
+test("a tall attachment tray keeps the editor's text and toolbars inside the card", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 })
   const { testId } = await loginAndCreateWorkspace(page, "tray-overflow")
   await createChannel(page, `tray-${testId}`)
@@ -24,22 +28,30 @@ test("a tall attachment tray never pushes the editor's text out of the card", as
   const card = root.locator("[data-composer-card]")
   await expect(card).toBeVisible({ timeout: 30_000 })
   const editor = root.locator(".tiptap")
+  const slot = root.getByTestId("composer-editor-scroll")
   await editor.click()
-  for (let i = 0; i < 10; i++) {
-    await page.keyboard.type(`${i} ${LINE}`)
-    await page.keyboard.press("Shift+Enter")
+  const typeLongDraft = async (tail: string) => {
+    for (let i = 0; i < 10; i++) {
+      await page.keyboard.type(`${i} ${LINE}`)
+      await page.keyboard.press("Shift+Enter")
+    }
+    await page.keyboard.type(tail)
   }
-  await page.keyboard.type("Let's")
+  await typeLongDraft("Let's")
 
   await root.locator('input[type="file"][multiple]').setInputFiles(
-    Array.from({ length: 7 }, (_, i) => ({
+    Array.from({ length: FILE_COUNT }, (_, i) => ({
       name: `pasted-image-${i + 1}.png`,
       mimeType: "image/png",
       buffer: Buffer.alloc(1024, i),
     }))
   )
-  await expect(page.getByTestId("attachment-chip-row")).toBeVisible({ timeout: 20_000 })
-  await expect(page.getByText("7 files")).toBeVisible()
+  await expect(root.getByTestId("attachment-chip-row")).toBeVisible({ timeout: 20_000 })
+  await expect(root.getByText(`${FILE_COUNT} files`)).toBeVisible()
+  // Precondition for everything below: the tray must have squeezed the slot
+  // under the editor's own 200px scroll cap, or nothing here can fail.
+  const slotHeight = async () => (await slot.boundingBox())!.height
+  await expect.poll(slotHeight).toBeLessThan(200)
   // Keep writing: the editor brings the caret line back into view through
   // whichever box scrolls, so the caret line must land inside the editor's
   // slot, above the action bar, not below the card.
@@ -48,12 +60,9 @@ test("a tall attachment tray never pushes the editor's text out of the card", as
   // Pixels by which the caret line escapes the slot or the action bar; 0 = contained.
   const lastLineOverflow = () =>
     page.evaluate(() => {
-      const box = (el: Element) => {
-        const b = el.getBoundingClientRect()
-        return { top: Math.round(b.top), bottom: Math.round(b.bottom) }
-      }
+      const edges = (b: DOMRect) => ({ top: Math.round(b.top), bottom: Math.round(b.bottom) })
       const root = document.querySelector("[data-message-composer-root]")!
-      const slot = box(root.querySelector('[data-testid="composer-editor-scroll"]')!)
+      const slot = edges(root.querySelector('[data-testid="composer-editor-scroll"]')!.getBoundingClientRect())
       // The caret line is the last text line box, not the paragraph block:
       // the editor scrolls the caret into view, and a paragraph's line-height
       // slack hangs a pixel or two past that.
@@ -61,8 +70,8 @@ test("a tall attachment tray never pushes the editor's text out of the card", as
       const range = document.createRange()
       range.selectNodeContents(paragraphs[paragraphs.length - 1])
       const lines = range.getClientRects()
-      const lastLine = box({ getBoundingClientRect: () => lines[lines.length - 1] } as Element)
-      const sendTop = box(root.querySelector('button[aria-label="Send"]')!).top
+      const lastLine = edges(lines[lines.length - 1])
+      const sendTop = edges(root.querySelector('button[aria-label="Send"]')!.getBoundingClientRect()).top
       return Math.max(0, slot.top - lastLine.top, lastLine.bottom - slot.bottom, lastLine.bottom - sendTop)
     })
   await expect.poll(lastLineOverflow).toBe(0)
@@ -88,24 +97,21 @@ test("a tall attachment tray never pushes the editor's text out of the card", as
 
   // The formatting bar opens above the text and stays there while the text scrolls.
   await page.keyboard.press("Control+A")
-  for (let i = 0; i < 10; i++) {
-    await page.keyboard.type(`${i} ${LINE}`)
-    await page.keyboard.press("Shift+Enter")
-  }
-  await page.keyboard.type("Let's go")
+  await typeLongDraft("Let's go")
   await root.getByRole("button", { name: "Formatting" }).click()
-  await editor.click({ position: { x: 5, y: 5 } })
   await page.keyboard.press("Control+End")
   await page.keyboard.type(" on")
+  await expect.poll(slotHeight).toBeLessThan(200)
   await expect.poll(lastLineOverflow).toBe(0)
-  const barAboveText = () =>
+  // Pixels by which the bar leaves the slot's top or overlaps the text; 0 = above the text.
+  const barOverlap = () =>
     page.evaluate(() => {
       const rect = (sel: string) =>
         document.querySelector("[data-message-composer-root]")!.querySelector(sel)!.getBoundingClientRect()
       const bar = rect('button[aria-label="Bold"]')
       const slot = rect('[data-testid="composer-editor-scroll"]')
       const text = rect(".tiptap")
-      return bar.top >= slot.top && bar.bottom <= text.top
+      return Math.max(0, Math.ceil(slot.top - bar.top), Math.ceil(bar.bottom - text.top))
     })
-  await expect.poll(barAboveText).toBe(true)
+  await expect.poll(barOverlap).toBe(0)
 })
