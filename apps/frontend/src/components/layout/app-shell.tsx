@@ -1,4 +1,4 @@
-import { type ReactNode, useCallback, useEffect, useRef } from "react"
+import { type ReactNode, createContext, useCallback, useContext, useEffect, useRef, useState } from "react"
 import { RefreshCw } from "lucide-react"
 import {
   useSidebar,
@@ -71,6 +71,18 @@ function PullIndicator({ distance, progress, pulling, refreshing, mode }: PullIn
   )
 }
 
+const ShellCoverContext = createContext<((covered: boolean) => void) | null>(null)
+
+/** While `covered`, a pane floats over the whole shell, so the sidebar under it leaves the tab order. */
+export function useShellCover(covered: boolean) {
+  const setCovered = useContext(ShellCoverContext)
+  useEffect(() => {
+    if (!covered || !setCovered) return
+    setCovered(true)
+    return () => setCovered(false)
+  }, [covered, setCovered])
+}
+
 interface AppShellProps {
   sidebar: ReactNode
   children: ReactNode
@@ -98,6 +110,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
     stopResizing,
     setWidth,
   } = useSidebar()
+  const [covered, setCovered] = useState(false)
   const showLoadingIndicator = useCoordinatedLoading((loading) => loading.showLoadingIndicator)
   // Pull-to-refresh is a touch gesture — enable it additively wherever a finger
   // could be used (harmless with a mouse). Hover-preview is a mouse affordance,
@@ -317,6 +330,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
             style={{
               width: wrapperWidth,
             }}
+            inert={covered}
           >
             {/* Invisible 30px zone giving the collapsed sidebar a "magnetic" feel — enters preview on hover. */}
             {isCollapsed && !isMobile && (
@@ -423,7 +437,7 @@ export function AppShell({ sidebar, children }: AppShellProps) {
             }}
           >
             <ConnectionStatus />
-            {children}
+            <ShellCoverContext.Provider value={setCovered}>{children}</ShellCoverContext.Provider>
           </main>
         </div>
       </div>
