@@ -76,8 +76,7 @@ describe("emoji suggestion lifecycle", () => {
     })
     await settle()
 
-    expect(active).toBe(false)
-    expect(document.querySelector("[data-emoji-grid]")).toBeNull()
+    expect({ active, grid: document.querySelector("[data-emoji-grid]") }).toEqual({ active: false, grid: null })
   })
 
   it("drops the picker when a suggestion update resolves after the pick", async () => {
