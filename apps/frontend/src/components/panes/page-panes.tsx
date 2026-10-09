@@ -1,20 +1,11 @@
-import { useRef, useMemo, type ReactNode } from "react"
-import { cn } from "@/lib/utils"
+import { useEffect, useRef, useMemo, type ReactNode } from "react"
 import { closePanelTab, floatingPanelTabs, panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
-import { usePanelLayout, MIN_PANEL_WIDTH } from "@/hooks/use-panel-layout"
+import { usePanelLayout } from "@/hooks/use-panel-layout"
 import { useElementWidth } from "@/hooks/use-element-width"
-import { usePanel, useSidebar } from "@/contexts"
+import { createAsidePanelId, parseAsidePanel, usePanel, useSidebar } from "@/contexts"
 import { PanelResizeHandle, usePanelInset } from "@/components/layout"
-import {
-  AsideColumn,
-  AsideCoversPanesContext,
-  AsideMobileSheet,
-  asideColumnFits,
-  useAsideColumnLayout,
-  useAsideHost,
-  useAsideIsSheet,
-} from "@/components/aside"
-import { asidePaneOf, useAsideForHost } from "@/stores/aside-store"
+import { AsideCoversPanesContext, AsideMobileSheet, useAsideHost, useAsideIsSheet } from "@/components/aside"
+import { asidePaneOf, useAsideForHost, withoutAsidePanes, type OpenAsideState } from "@/stores/aside-store"
 import {
   PagePaneContext,
   type PageContent,
@@ -27,7 +18,7 @@ import {
   usePanelGrid,
 } from "@/components/layout/panel-host"
 import { evenPanelColumns, panelColumnWidths } from "@/lib/panel-grid"
-import { PaneHost, Pane } from "./pane-host"
+import { PaneHost } from "./pane-host"
 import { PaneDropContext, usePaneDropState } from "./pane-drop"
 
 interface PagePanesProps {
@@ -40,7 +31,7 @@ interface PagePanesProps {
 
 /**
  * A route's panes: its own in the first column and the panel tabs beside it,
- * the aside as a column or a sheet, and on a phone every pane stacked in one
+ * the aside as a pane or a sheet, and on a phone every pane stacked in one
  * cell with drawers over them.
  */
 export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
@@ -52,24 +43,23 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
   const maxRows = panelMaxRows(containerHeight)
   const panes = useMemo(() => panelIdsOf(layout), [layout])
   const asideHostKey = useAsideHost(panes)
-  // A sheet over the page on a phone, or where the columns leave it no room; anywhere else a column of it.
-  const asideSheetOnly = useAsideIsSheet()
-  const asideIsSheet =
-    asideSheetOnly || !asideColumnFits(containerWidth, layout.columns.length > 1 ? MIN_PANEL_WIDTH : 0)
+  // A sheet over the page on a phone or a coarse pointer, or where no split fits; anywhere else a pane beside its stream.
+  const asideIsSheet = useAsideIsSheet()
   const openAside = useAsideForHost(asideHostKey)
-  const asideColumn = asideIsSheet ? null : openAside
+  useAsidePane(openAside, asideIsSheet, panes)
   const asideSheet = asideIsSheet ? openAside : null
-  // A pane the sheet holds is mounted there and nowhere else (aside-mobile-sheet.tsx).
+  // A pane the sheet holds is mounted there and nowhere else (aside-mobile-sheet.tsx), and the sheet stands in for the aside's own.
   const heldPane = asideSheet !== null ? asidePaneOf(layout, asideSheet.hostStreamId, true) : null
-  const pageLayout = useMemo(() => (heldPane === null ? layout : closePanelTab(layout, heldPane)), [layout, heldPane])
+  const pageLayout = useMemo(() => {
+    const shown = asideIsSheet ? withoutAsidePanes(layout) : layout
+    return heldPane === null ? shown : closePanelTab(shown, heldPane)
+  }, [layout, asideIsSheet, heldPane])
   const gridLayout = useFocusGridLayout(pageLayout, isMobile)
   // Columns beside the first, which fills what they leave.
   const isPanelOpen = gridLayout.columns.length > 1
   // A phone's pages, without the drawers over them, and the one on show.
   const phonePages = useFittedPanelLayout(pageLayout, 1, true)
   const shownPage = primaryPanelOf(phonePages)
-  // The aside clamps against the other columns' minimums.
-  const asideLayout = useAsideColumnLayout(asideColumn, containerWidth, isPanelOpen ? MIN_PANEL_WIDTH : 0)
   const {
     panelWidth,
     maxWidth,
@@ -88,7 +78,6 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
   } = usePanelLayout(isPanelOpen, {
     containerRef,
     columns: gridLayout.columns.length - 1,
-    reservedWidth: asideLayout.width,
     animates: !isMobile,
   })
   const fittedPanels = useFittedPanelLayout(gridLayout, maxColumns + 1, false, maxRows)
@@ -97,23 +86,19 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
   const panelGrid = usePanelGrid(display)
   const paneDrops = usePaneDropState(workspaceId)
 
-  const panelInset = displayWidth + asideLayout.width
-  const panelInsetAnimates = shouldAnimate && !asideLayout.isResizing
   // Above the error return: a stream that turns inaccessible mid-session must not change the hook count.
-  usePanelInset(isMobile || error ? 0 : panelInset, panelInsetAnimates)
+  usePanelInset(isMobile || error ? 0 : displayWidth, shouldAnimate)
 
   if (error) return error
 
   // A tab floating over the page leaves everything else under it out of reach.
-  const floating = floatingPanelTabs(layout, isMobile).length > 0
+  const floating = floatingPanelTabs(pageLayout, isMobile).length > 0
 
   const drops = isMobile || floating || heldPane !== null ? null : paneDrops
   // A track for every column that fits, so opening, closing or resizing one animates from the width it had.
   const columnWidths = displayWidth > 0 ? panelColumnWidths(panelGrid.sizes.columns.slice(1), displayWidth) : []
   const panelTracks = Array.from({ length: maxColumns }, (_, column) => columnWidths[column] ?? 0)
-  const columns = isMobile
-    ? "minmax(0,1fr)"
-    : ["minmax(0,1fr)", ...panelTracks.map((width) => `${width}px`), `${asideLayout.width}px`].join(" ")
+  const columns = isMobile ? "minmax(0,1fr)" : ["minmax(0,1fr)", ...panelTracks.map((width) => `${width}px`)].join(" ")
 
   return (
     <PagePaneContext.Provider value={page ?? null}>
@@ -122,20 +107,21 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
           ref={containerRef}
           columns={columns}
           rows={panelGrid.rows || "minmax(0,1fr)"}
-          animate={shouldAnimate && !isMobile && !asideLayout.isResizing}
+          animate={shouldAnimate && !isMobile}
           onTransitionEnd={handleTransitionEnd}
         >
-          {/* Drops reach the page's own panes only: never the aside's, nor a drawer's. */}
+          {/* Drops reach the page's own panes only: never a drawer's. */}
           <PaneDropContext.Provider value={drops}>
             <PanelTabStack
               workspaceId={workspaceId}
               maxColumns={maxColumns + 1}
               maxRows={maxRows}
               stacked={isMobile}
+              layout={pageLayout}
               display={display}
               grid={panelGrid}
               width={isMobile ? null : panelWidth}
-              firstColumnWidth={Math.max(0, containerWidth - displayWidth - asideLayout.width)}
+              firstColumnWidth={Math.max(0, containerWidth - displayWidth)}
               height={containerHeight}
             />
             {showContent && isPanelOpen && !isMobile && (
@@ -158,11 +144,6 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
               />
             )}
           </PaneDropContext.Provider>
-          {asideColumn && (
-            <Pane area="1 / -2 / -1 / -1" inert={floating} className={cn(floating && "isolate")}>
-              <AsideColumn workspaceId={workspaceId} aside={asideColumn} layout={asideLayout} />
-            </Pane>
-          )}
           {/* One drawer at a time: the aside's sheet holds the page under the overview's. */}
           {isMobile && !asideSheet && <PaneDrawer workspaceId={workspaceId} page={shownPage} />}
           {asideSheet && (
@@ -171,11 +152,37 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
               asideId={asideSheet.asideId}
               hostStreamId={asideSheet.hostStreamId}
               originScope={asideSheet.originScope}
-              historyEntry={asideSheetOnly}
             />
           )}
         </PaneHost>
       </AsideCoversPanesContext.Provider>
     </PagePaneContext.Provider>
   )
+}
+
+/**
+ * Keeps the aside's pane in step with the open aside: opened beside its stream
+ * once per aside, and any `aside:` pane the store holds no aside for (closed,
+ * replaced, or arrived by reload or shared link) dropped.
+ */
+function useAsidePane(aside: OpenAsideState | null, isSheet: boolean, panes: readonly string[]) {
+  const { openPanel, closeTabs } = usePanel()
+  const placed = useRef<string | null>(null)
+  const dropping = useRef<readonly string[]>([])
+  useEffect(() => {
+    const stale = panes.filter((pane) => {
+      const host = parseAsidePanel(pane)
+      return host !== null && host !== aside?.hostStreamId
+    })
+    // A close can pop history, so asking twice before the route catches up would pop two entries.
+    if (stale.length > 0 && stale.join() !== dropping.current.join()) closeTabs(stale)
+    dropping.current = stale
+    if (stale.length > 0) return
+    if (aside === null) placed.current = null
+    // Placed once: a pane the user closes takes the aside with it, so it never reopens itself.
+    if (aside === null || isSheet || placed.current === aside.asideId) return
+    placed.current = aside.asideId
+    const pane = createAsidePanelId(aside.hostStreamId)
+    if (!panes.includes(pane)) openPanel(pane, { beside: aside.hostStreamId })
+  }, [aside, isSheet, panes, openPanel, closeTabs])
 }

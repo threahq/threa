@@ -134,7 +134,7 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly string[] 
   })
 
   const handle = (action: PaneAction) => (event: KeyboardEvent) => {
-    // The aside is no pane, so from inside it the rest would act on one the user isn't working in.
+    // The aside's sheet is no pane, so from inside it the rest would act on one the user isn't working in.
     if (event.target instanceof Element && event.target.closest("[data-aside-surface]")) {
       if (action !== "closePane") return event.repeat
       closeAside()

@@ -64,6 +64,8 @@ export {
   createConversationPanelId,
   parseComposePanel,
   createComposePanelId,
+  parseAsidePanel,
+  createAsidePanelId,
   parseContextPanel,
   presentsAsDrawer,
   coverPaneOf,
