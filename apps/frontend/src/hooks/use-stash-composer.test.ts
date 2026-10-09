@@ -691,7 +691,7 @@ describe("navigate rows — mounted conversation composer (chunk 3's deferred no
     const host = renderHook(() => useAoHarness(aoHostScope, aoHostScope), { wrapper })
     await waitFor(() =>
       expect(host.result.current.stash.originByDraftId.get("draft_conv")?.openHref).toBe(
-        `/w/${aoWorkspaceId}/s/${aoStreamId}?panel=${encodeURIComponent(`conv:${aoConversationId}`)}&stash=draft_conv`
+        `/w/${aoWorkspaceId}/s/${aoStreamId}?panel=conv:${aoConversationId}&stash=draft_conv`
       )
     )
 
