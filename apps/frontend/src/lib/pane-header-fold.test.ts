@@ -21,4 +21,9 @@ describe("foldHeaderControls", () => {
     expect([...foldHeaderControls(100 + PANE_TITLE_MIN_WIDTH + 71, 100, [...controls])]).toEqual(["aside", "context"])
     expect([...foldHeaderControls(150, 100, [...controls])]).toEqual(["aside", "context", "search"])
   })
+
+  it("should keep the given title minimum instead of the default", () => {
+    expect([...foldHeaderControls(100 + 192 + 112, 100, [...controls], 192)]).toEqual([])
+    expect([...foldHeaderControls(100 + 192 + 111, 100, [...controls], 192)]).toEqual(["aside"])
+  })
 })
