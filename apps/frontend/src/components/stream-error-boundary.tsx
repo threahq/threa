@@ -1,5 +1,6 @@
 import type { ReactNode } from "react"
 import { useStreamError } from "@/hooks/use-stream-error"
+import { useRevealReady } from "@/contexts"
 import { StreamErrorView } from "./stream-error-view"
 
 interface StreamErrorBoundaryProps {
@@ -17,6 +18,7 @@ interface StreamErrorBoundaryProps {
  */
 export function StreamErrorBoundary({ streamId, queryError, workspaceId, children }: StreamErrorBoundaryProps) {
   const error = useStreamError(streamId, queryError)
+  useRevealReady(!!error)
 
   if (error) {
     return <StreamErrorView type={error.type} workspaceId={workspaceId} />

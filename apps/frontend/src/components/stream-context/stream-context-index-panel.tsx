@@ -46,6 +46,7 @@ import {
   type StreamContextPanelProps,
 } from "./stream-context-chrome"
 import { StreamContextDerivedPanel } from "./stream-context-derived-panel"
+import { useRevealReady } from "@/contexts"
 
 /**
  * `in:`/`type:`/`status:`/`with:` are meaningless in a single stream's context
@@ -313,13 +314,15 @@ export function StreamContextIndexPanel(props: StreamContextPanelProps) {
   // owns it. Route on the client-known flag, not only on the endpoint's
   // `mode: "client"` — offline or on a failed first page that answer never
   // arrives and the stream would render a permanently empty index.
-  if (rootStream?.e2eEnabled || stream?.e2eEnabled || feed.mode === "client") {
+  const isClientDerived = rootStream?.e2eEnabled || stream?.e2eEnabled || feed.mode === "client"
+  const isLoading = rows === undefined || (feed.isLoading && renderedRows.length === 0)
+  useRevealReady(!isClientDerived && !isLoading)
+  if (isClientDerived) {
     return (
       <StreamContextDerivedPanel {...props} note="This stream is encrypted — its list is built on this device only." />
     )
   }
 
-  const isLoading = rows === undefined || (feed.isLoading && renderedRows.length === 0)
   const itemsByKey = new Map(renderedRows.map((row) => [row.key, row]))
 
   // The cached window ends here and the next page can't be fetched — say so

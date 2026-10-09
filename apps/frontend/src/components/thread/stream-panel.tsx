@@ -24,7 +24,7 @@ import {
   useExternalThreadDraftPromotion,
   useVisibleStreams,
 } from "@/hooks"
-import { useCoordinatedLoading, usePanel, isDraftPanel, parseDraftPanel, useSidebar } from "@/contexts"
+import { useCoordinatedLoading, usePanel, isDraftPanel, parseDraftPanel, useSidebar, useRevealReady } from "@/contexts"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { onDraftPromoted } from "@/lib/draft-promotions"
@@ -163,6 +163,8 @@ function DraftThreadPanel({ workspaceId, panelId, onClose, onPromoted, closeRef,
   const { tabbed, getNavigateUrl } = usePanel()
   const headerSwipe = usePhoneHeaderSwipe()
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
+  // Nothing to load: the parent message streams in from the cache or the parent's bootstrap.
+  useRevealReady(true)
   const draftInfo = parseDraftPanel(panelId)
   const idbStreams = useWorkspaceStreams(workspaceId)
   const currentWorkspaceUserId = useWorkspaceUserId(workspaceId)

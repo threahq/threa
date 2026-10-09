@@ -17,6 +17,7 @@ import {
 import { asidePaneOf, useAsideForHost } from "@/stores/aside-store"
 import {
   PagePaneContext,
+  type PageContent,
   PaneDrawer,
   PanelTabStack,
   panelMaxRows,
@@ -31,7 +32,7 @@ import { PaneDropContext, usePaneDropState } from "./pane-drop"
 interface PagePanesProps {
   workspaceId: string
   /** What the route's own `page:` pane shows, where its route pins one. */
-  page?: ReactNode
+  page?: PageContent
   /** Shown in place of the panes. */
   error?: ReactNode
 }
@@ -41,7 +42,7 @@ interface PagePanesProps {
  * the aside as a column or a sheet, and on a phone every pane stacked in one
  * cell with drawers over them.
  */
-export function PagePanes({ workspaceId, page = null, error = null }: PagePanesProps) {
+export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
   const { isMobile } = useSidebar()
   const { layout } = usePanel()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -113,7 +114,7 @@ export function PagePanes({ workspaceId, page = null, error = null }: PagePanesP
     : ["minmax(0,1fr)", ...panelTracks.map((width) => `${width}px`), `${asideLayout.width}px`].join(" ")
 
   return (
-    <PagePaneContext.Provider value={page}>
+    <PagePaneContext.Provider value={page ?? null}>
       <AsideCoversPanesContext.Provider value={asideSheet !== null}>
         <PaneHost
           ref={containerRef}

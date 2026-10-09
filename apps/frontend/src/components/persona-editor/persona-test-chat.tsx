@@ -20,7 +20,7 @@ import {
   usePhoneHeaderSwipe,
 } from "@/components/panes"
 import { StreamContent } from "@/components/timeline"
-import { usePanel, useSidebar } from "@/contexts"
+import { usePanel, useRevealReady, useSidebar } from "@/contexts"
 import { useArchiveStream } from "@/hooks"
 import { personaKeys, useCreateTestStream } from "@/hooks/use-personas"
 import { syncHintText, type SyncState } from "./persona-form"
@@ -79,8 +79,10 @@ function PersonaTestChatEmptyState({ onStart, isStarting }: { onStart: () => voi
   )
 }
 
-/** What the editor's test pane needs of its draft: its bound test stream and the form's sync state. Null until the persona is editable. */
-export const PersonaSyncContext = createContext<{ testStreamId: string | null; syncState: SyncState } | null>(null)
+/** What the editor's test pane needs of its draft: its bound test stream and the form's sync state. Null when the persona isn't editable, undefined while its config loads. */
+export const PersonaSyncContext = createContext<
+  { testStreamId: string | null; syncState: SyncState } | null | undefined
+>(null)
 
 interface PersonaTestChatPaneProps {
   workspaceId: string
@@ -99,6 +101,8 @@ export function PersonaTestChatPane({ workspaceId, personaId, onClose, className
   const closeRef = usePanelCloseFocusLanding()
   const headerSwipe = usePhoneHeaderSwipe()
   const syncHint = draft ? syncHintText(draft.syncState) : null
+  // A test stream's own StreamContent reports for it.
+  useRevealReady(draft !== undefined && !testStreamId)
 
   return (
     <SidePanel className={className} data-editor-zone="panel" role="region" aria-label="Test chat">

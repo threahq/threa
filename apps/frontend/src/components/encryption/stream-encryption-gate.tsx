@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useE2eSession } from "@/stores/e2e-session-store"
 import { useE2eUnlockOptional } from "./e2e-unlock-provider"
+import { useRevealReady } from "@/contexts"
 
 /**
  * Full-page gate for an encrypted scratchpad. While the viewer's E2E session is
@@ -31,6 +32,8 @@ export function StreamEncryptionGate({
   const unlock = useE2eUnlockOptional()
   const userId = useWorkspaceUserId(workspaceId)
   const session = useE2eSession(workspaceId, userId ?? "")
+  // The unlock or setup panel is this stream's content until the session opens.
+  useRevealReady(encrypted && !!unlock && !!userId && session.status !== "unknown" && session.status !== "unlocked")
 
   if (!encrypted || !unlock) return <>{children}</>
 
@@ -50,20 +53,10 @@ export function StreamEncryptionGate({
   if (session.status === "no-key") {
     return <GatePanel kind="setup" onAction={() => unlock.openSetup()} />
   }
-  return (
-    <GatePanel kind="unlock" pending={session.status === "unlocking"} onAction={() => unlock.openUnlock()} />
-  )
+  return <GatePanel kind="unlock" pending={session.status === "unlocking"} onAction={() => unlock.openUnlock()} />
 }
 
-function GatePanel({
-  kind,
-  pending,
-  onAction,
-}: {
-  kind: "setup" | "unlock"
-  pending?: boolean
-  onAction: () => void
-}) {
+function GatePanel({ kind, pending, onAction }: { kind: "setup" | "unlock"; pending?: boolean; onAction: () => void }) {
   const isSetup = kind === "setup"
   let buttonLabel = "Set up encryption"
   if (!isSetup) buttonLabel = pending ? "Unlocking…" : "Unlock"
@@ -77,9 +70,7 @@ function GatePanel({
         )}
       </div>
       <div className="space-y-1">
-        <h2 className="text-base font-semibold">
-          {isSetup ? "Set up encryption" : "This scratchpad is encrypted"}
-        </h2>
+        <h2 className="text-base font-semibold">{isSetup ? "Set up encryption" : "This scratchpad is encrypted"}</h2>
         <p className="max-w-sm text-sm text-muted-foreground">
           {isSetup
             ? "Create your encryption key to read and write in encrypted scratchpads."
