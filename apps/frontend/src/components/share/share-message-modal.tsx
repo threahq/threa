@@ -16,7 +16,7 @@ import { useStoredStreamSortMode } from "@/lib/stream-sort"
 import { useStreamPickerGroups } from "@/hooks/use-stream-picker-groups"
 import { queueShareHandoff, queuePlaintextShareHandoff } from "@/stores/composer-handoff-store"
 import { navigateAfterShareHandoff } from "@/lib/share-navigation"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { usePanel } from "@/contexts"
 import {
   ResponsiveAlertDialog,
@@ -96,7 +96,7 @@ export function ShareMessageModal({
   const location = useLocation()
   // The Drawer/Dialog split is owned by ResponsiveDialog; isMobile here only
   // governs the post-select navigation contract (mobile strips `?panel=…`).
-  const isMobile = useIsMobile()
+  const isMobile = useIsMobileOrCoarse()
   const panel = usePanel()
 
   // Baseline access filter (public-or-member, not archived, not thread/system) —
