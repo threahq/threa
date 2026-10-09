@@ -1,14 +1,8 @@
 import { useSearchParams } from "react-router-dom"
-import { useContext, useMemo, useCallback, useEffect, useState, useRef, type RefObject } from "react"
+import { useContext, useMemo, useCallback, useEffect, useState, useRef } from "react"
 import { createPortal } from "react-dom"
 import { MessageSquare } from "lucide-react"
-import {
-  SidePanel,
-  SidePanelHeader,
-  SidePanelTitle,
-  SidePanelClose,
-  SidePanelContent,
-} from "@/components/ui/side-panel"
+import { SidePanel, SidePanelTitle, SidePanelContent } from "@/components/ui/side-panel"
 import {
   useStreamBootstrap,
   useThreadAnchorEvent,
@@ -24,11 +18,10 @@ import {
   useExternalThreadDraftPromotion,
   useVisibleStreams,
 } from "@/hooks"
-import { useCoordinatedLoading, usePanel, isDraftPanel, parseDraftPanel, useSidebar, useRevealReady } from "@/contexts"
+import { usePanel, isDraftPanel, parseDraftPanel, useSidebar, useRevealReady } from "@/contexts"
 import { useStreamEvents } from "@/stores/stream-store"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { onDraftPromoted } from "@/lib/draft-promotions"
-import { StreamLoadingIndicator } from "@/components/loading"
 import {
   EventList,
   groupTimelineItems,
@@ -39,48 +32,31 @@ import { AsideCoversPanesContext } from "@/components/aside/aside-presentation"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { FloatingComposerShell, MessageComposer } from "@/components/composer"
 import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
-import { SidebarToggle } from "@/components/layout"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { ThreadParentEvent } from "./thread-parent-event"
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
-import { LabelableResourceTypes, StreamTypes } from "@threahq/types"
+import { StreamTypes } from "@threahq/types"
 import { useMentionStreamContext, type MentionStreamContext } from "@/hooks/use-mentionables"
-import { LabelStack } from "@/components/labels/label-stack"
-import {
-  PaneFocusToggle,
-  PanelTabStrip,
-  PhonePaneLeading,
-  PhonePaneSwitcher,
-  usePaneCovered,
-  usePaneDragHandle,
-  usePanelCloseFocusLanding,
-  usePhoneHeaderSwipe,
-} from "@/components/panes"
+import { PaneHeader, usePaneCovered } from "@/components/panes"
 import { StreamPane } from "@/components/panes/stream-pane"
 import { isServerStreamId } from "@/lib/stream-ids"
 import { cn } from "@/lib/utils"
 
 interface StreamPanelProps {
   workspaceId: string
-  onClose: () => void
   className?: string
 }
 
-/** A stream tab: the stream's own pane with the tab's controls, or a thread not yet started. */
-export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProps) {
+/** A stream tab: the stream's own pane, or a thread not yet started. */
+export function StreamPanel({ workspaceId, className }: StreamPanelProps) {
   const { isMobile } = useSidebar()
   const [searchParams] = useSearchParams()
   const covered = usePaneCovered()
-  const { panelId, tabbed, openPanel, ownsCover, inFirstColumn, canClosePanel } = usePanel()
-  const closeRef = usePanelCloseFocusLanding()
+  const { panelId, openPanel, ownsCover, inFirstColumn } = usePanel()
   // Under an aside, an overview opened from here would land out of sight.
   const offersContext = !useContext(AsideCoversPanesContext)
   useVisibleStreams(workspaceId, !covered && panelId && isServerStreamId(panelId) ? [panelId] : [])
-  // Only a pane beside the first column shows it; the first column's stream would re-render on each load step for nothing.
-  const isLoading = useCoordinatedLoading(
-    (loading) => !inFirstColumn && !!panelId && loading.getStreamState(panelId) === "loading"
-  )
   // Set by a draft thread's own send: the real thread's composer is a different
   // element, so a focused draft composer hands its focus over explicitly — on
   // mobile this is what keeps the keyboard up through the switch. Lives here
@@ -100,14 +76,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
 
   if (isDraftPanel(panelId)) {
     return (
-      <DraftThreadPanel
-        workspaceId={workspaceId}
-        panelId={panelId}
-        onClose={onClose}
-        onPromoted={handlePromoted}
-        closeRef={closeRef}
-        className={className}
-      />
+      <DraftThreadPanel workspaceId={workspaceId} panelId={panelId} onPromoted={handlePromoted} className={className} />
     )
   }
 
@@ -121,30 +90,6 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
       autoFocus={!isMobile || focusPromotedComposer}
       offersContext={offersContext}
       className={cn(!inFirstColumn && "sm:border-l", "bg-background", className)}
-      chrome={{
-        leading: (
-          <>
-            {!inFirstColumn && <StreamLoadingIndicator isLoading={isLoading} />}
-            {isMobile ? (
-              <PhonePaneLeading onBack={onClose} backRef={closeRef} />
-            ) : (
-              inFirstColumn && <SidebarToggle location="page" />
-            )}
-          </>
-        ),
-        tabs: tabbed ? (
-          <PanelTabStrip
-            workspaceId={workspaceId}
-            className="-ml-2"
-            splitsInPaneMenu
-            labels={
-              <LabelStack workspaceId={workspaceId} resourceType={LabelableResourceTypes.STREAM} resourceId={panelId} />
-            }
-          />
-        ) : undefined,
-        focusToggle: <PaneFocusToggle />,
-        close: !isMobile && !tabbed && canClosePanel && <SidePanelClose onClose={onClose} ref={closeRef} />,
-      }}
     />
   )
 }
@@ -152,18 +97,14 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
 interface DraftThreadPanelProps {
   workspaceId: string
   panelId: string
-  onClose: () => void
   onPromoted: (realStreamId: string, focusComposer: boolean) => void
-  closeRef: RefObject<HTMLButtonElement | null>
   className?: string
 }
 
-function DraftThreadPanel({ workspaceId, panelId, onClose, onPromoted, closeRef, className }: DraftThreadPanelProps) {
+function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: DraftThreadPanelProps) {
   const { isMobile } = useSidebar()
   const covered = usePaneCovered()
-  const { tabbed, canClosePanel, getNavigateUrl } = usePanel()
-  const headerSwipe = usePhoneHeaderSwipe()
-  const dragHandle = usePaneDragHandle(workspaceId, "New thread", !tabbed)
+  const { getNavigateUrl } = usePanel()
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   // Nothing to load: the parent message streams in from the cache or the parent's bootstrap.
   useRevealReady(true)
@@ -477,34 +418,25 @@ function DraftThreadPanel({ workspaceId, panelId, onClose, onPromoted, closeRef,
 
   if (!draftInfo) return null
 
-  // With more than one tab open, the tab row stands in for the title and each
-  // tab carries its own close.
-  let headerContent: React.ReactNode
-  if (tabbed) {
-    headerContent = <PanelTabStrip workspaceId={workspaceId} className="-ml-2" />
-  } else if (parentStream) {
-    headerContent = (
-      <div className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden pr-2" {...dragHandle}>
-        <ResponsiveBreadcrumbs ancestors={fullChain} currentLabel="New thread" getNavigationUrl={getNavigateUrl} />
-      </div>
-    )
-  } else {
-    headerContent = (
-      <SidePanelTitle className="flex-1" {...dragHandle}>
-        Stream
-      </SidePanelTitle>
-    )
-  }
-
   return (
     <SidePanel className={className} data-editor-zone="panel">
-      <SidePanelHeader className="relative" {...headerSwipe}>
-        {isMobile && <PhonePaneLeading onBack={onClose} backRef={closeRef} />}
-        {headerContent}
-        <PaneFocusToggle />
-        <PhonePaneSwitcher workspaceId={workspaceId} />
-        {!isMobile && !tabbed && canClosePanel && <SidePanelClose onClose={onClose} ref={closeRef} />}
-      </SidePanelHeader>
+      <PaneHeader
+        workspaceId={workspaceId}
+        name="New thread"
+        title={
+          parentStream ? (
+            <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden pr-2">
+              <ResponsiveBreadcrumbs
+                ancestors={fullChain}
+                currentLabel="New thread"
+                getNavigationUrl={getNavigateUrl}
+              />
+            </div>
+          ) : (
+            <SidePanelTitle className="flex-1">Stream</SidePanelTitle>
+          )
+        }
+      />
 
       <SidePanelContent className="relative flex flex-col" data-editor-zone="panel" ref={setDraftPortalTarget}>
         {/* Expanded overlay — portaled into the SidePanel */}

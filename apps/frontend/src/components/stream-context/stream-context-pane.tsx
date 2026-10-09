@@ -1,12 +1,6 @@
 import { useNavigate } from "react-router-dom"
-import { SidePanel, SidePanelClose, SidePanelHeader, SidePanelTitle } from "@/components/ui/side-panel"
-import {
-  PaneFocusToggle,
-  PanelTabStrip,
-  PanelTabTitle,
-  usePaneDragHandle,
-  usePanelCloseFocusLanding,
-} from "@/components/panes"
+import { SidePanel, SidePanelTitle } from "@/components/ui/side-panel"
+import { PaneHeader, PanelTabTitle } from "@/components/panes"
 import {
   createContextPanelId,
   parseContextPanel,
@@ -14,7 +8,6 @@ import {
   useDisplayedPanelLayout,
   useInPaneDrawer,
   usePanel,
-  useSidebar,
 } from "@/contexts"
 import { memoDeepLink } from "@/lib/memo-url"
 import { ContextCount, parseFilter, type Filter } from "./stream-context-chrome"
@@ -27,7 +20,6 @@ interface StreamContextPaneProps {
   streamId: string
   /** The category filter its id carries, or null for all. */
   filter: string | null
-  onClose: () => void
   className?: string
 }
 
@@ -35,14 +27,10 @@ interface StreamContextPaneProps {
  * A stream's "In this stream" overview as a pane of its own
  * (`context:<streamId>[:<filter>]`), beside the stream it lists.
  */
-export function StreamContextPane({ workspaceId, streamId, filter, onClose, className }: StreamContextPaneProps) {
-  const { panelId, tabbed, canClosePanel, openPanel, openAtMessage } = usePanel()
+export function StreamContextPane({ workspaceId, streamId, filter, className }: StreamContextPaneProps) {
+  const { panelId, openPanel, openAtMessage } = usePanel()
   const navigate = useNavigate()
-  const { isMobile } = useSidebar()
   const inDrawer = useInPaneDrawer()
-  const showTabs = tabbed && !inDrawer
-  const closeRef = usePanelCloseFocusLanding()
-  const dragHandle = usePaneDragHandle(workspaceId, "Overview", !showTabs && !inDrawer)
   const gallery = useStreamGallery()
   const current = useCurrentPane()
   // The gallery opens from the overview worked in, else the first on show, so a reload keeps it open.
@@ -71,20 +59,18 @@ export function StreamContextPane({ workspaceId, streamId, filter, onClose, clas
         filter={active}
         onFilterChange={changeFilter}
         header={(total) => (
-          <SidePanelHeader className="relative">
-            {showTabs ? (
-              <PanelTabStrip workspaceId={workspaceId} className="-ml-2" />
-            ) : (
-              <div className="flex min-w-0 flex-1 items-center gap-2" {...dragHandle}>
+          <PaneHeader
+            workspaceId={workspaceId}
+            name="Overview"
+            title={
+              <>
                 <SidePanelTitle className="min-w-0">
                   <PanelTabTitle workspaceId={workspaceId} panelId={createContextPanelId(streamId)} />
                 </SidePanelTitle>
                 <ContextCount total={total} />
-              </div>
-            )}
-            <PaneFocusToggle />
-            {!isMobile && !showTabs && canClosePanel && <SidePanelClose onClose={onClose} ref={closeRef} />}
-          </SidePanelHeader>
+              </>
+            }
+          />
         )}
         onJumpToMessage={jumpToMessage}
         onOpenThread={(threadId) => openPanel(threadId)}

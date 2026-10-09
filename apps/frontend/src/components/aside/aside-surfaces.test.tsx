@@ -11,7 +11,7 @@ import * as timelineModule from "@/components/timeline"
 import * as boundaryModule from "@/components/stream-error-boundary"
 import * as panelHostModule from "@/components/layout/panel-host"
 import * as contextsModule from "@/contexts"
-import { PanelProvider } from "@/contexts"
+import { PanelProvider, usePanel } from "@/contexts"
 import { useAgentBlock } from "@/components/timeline/agent-block-context"
 import * as draftEditorModule from "./aside-draft-editor"
 import { clearCallState } from "@/stores/call-store"
@@ -59,7 +59,7 @@ function AsideSurface({ hostKey }: { hostKey: string }) {
       originScope={current.originScope}
     />
   ) : (
-    <AsidePanel workspaceId="ws_1" hostStreamId={current.hostStreamId} onClose={() => {}} />
+    <AsidePanel workspaceId="ws_1" hostStreamId={current.hostStreamId} />
   )
 }
 
@@ -97,6 +97,9 @@ beforeEach(() => {
   vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
     preferences: null,
   } as unknown as ReturnType<typeof contextsModule.usePreferences>)
+  vi.spyOn(contextsModule, "useSidebar").mockReturnValue({ isMobile: false } as ReturnType<
+    typeof contextsModule.useSidebar
+  >)
   // The chat pane is the real companion timeline; its data plumbing is out of
   // scope here, so the barrel export renders a marker carrying the stream it
   // was mounted against.
@@ -112,8 +115,8 @@ beforeEach(() => {
   )) as never)
   // The thread panel is the page's own, mounted wholesale; here it is a marker
   // that can be closed.
-  spyOnExport(panelHostModule, "PanelHost").mockReturnValue(((props: { onClose: () => void }) => (
-    <button data-testid="panel-host" onClick={props.onClose}>
+  spyOnExport(panelHostModule, "PanelHost").mockReturnValue((() => (
+    <button data-testid="panel-host" onClick={usePanel().closePanel}>
       Close thread
     </button>
   )) as never)

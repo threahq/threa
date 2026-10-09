@@ -108,7 +108,6 @@ function PagePane() {
 
 interface PanelHostProps {
   workspaceId: string
-  onClose: () => void
   className?: string
 }
 
@@ -127,17 +126,17 @@ interface PanelHostProps {
  * outer `key={panelId}` unmounts the whole host on promotion, before the key
  * below can preserve anything.
  */
-export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
+export function PanelHost({ workspaceId, className }: PanelHostProps) {
   const { panelId } = usePanel()
   // Every kind's content reports through `useRevealReady`; one that never does holds the first reveal to its cap.
   return (
     <RevealParticipant label={panelId ?? "empty pane"} covered={usePaneCovered()}>
-      <PaneContent workspaceId={workspaceId} panelId={panelId} onClose={onClose} className={className} />
+      <PaneContent workspaceId={workspaceId} panelId={panelId} className={className} />
     </RevealParticipant>
   )
 }
 
-function PaneContent({ workspaceId, panelId, onClose, className }: PanelHostProps & { panelId: string | null }) {
+function PaneContent({ workspaceId, panelId, className }: PanelHostProps & { panelId: string | null }) {
   const page = panelId && pagePatternOf(panelId)
   if (page) return <PageRoutes key={panelId} workspaceId={workspaceId} path={pagePathOf(panelId)!} pattern={page} />
   if (panelId && isPagePane(panelId)) return <PagePane />
@@ -147,17 +146,11 @@ function PaneContent({ workspaceId, panelId, onClose, className }: PanelHostProp
   const testedPersonaId = panelId && parsePersonaTestPanel(panelId)
   if (testedPersonaId) {
     return (
-      <PersonaTestChatPane
-        key={panelId}
-        workspaceId={workspaceId}
-        personaId={testedPersonaId}
-        onClose={onClose}
-        className={className}
-      />
+      <PersonaTestChatPane key={panelId} workspaceId={workspaceId} personaId={testedPersonaId} className={className} />
     )
   }
   if (panelId && isConversationPanel(panelId)) {
-    return <ConversationPanel key={panelId} workspaceId={workspaceId} onClose={onClose} className={className} />
+    return <ConversationPanel key={panelId} workspaceId={workspaceId} className={className} />
   }
   if (conversationsStreamId) {
     return (
@@ -165,33 +158,16 @@ function PaneContent({ workspaceId, panelId, onClose, className }: PanelHostProp
         key={panelId}
         workspaceId={workspaceId}
         streamId={conversationsStreamId}
-        onClose={onClose}
         className={className}
       />
     )
   }
   const asideHostId = panelId && parseAsidePanel(panelId)
   if (asideHostId) {
-    return (
-      <AsidePanel
-        key={panelId}
-        workspaceId={workspaceId}
-        hostStreamId={asideHostId}
-        onClose={onClose}
-        className={className}
-      />
-    )
+    return <AsidePanel key={panelId} workspaceId={workspaceId} hostStreamId={asideHostId} className={className} />
   }
   if (composeStreamId) {
-    return (
-      <ComposePanel
-        key={panelId}
-        workspaceId={workspaceId}
-        streamId={composeStreamId}
-        onClose={onClose}
-        className={className}
-      />
-    )
+    return <ComposePanel key={panelId} workspaceId={workspaceId} streamId={composeStreamId} className={className} />
   }
   if (context) {
     return (
@@ -200,7 +176,6 @@ function PaneContent({ workspaceId, panelId, onClose, className }: PanelHostProp
         workspaceId={workspaceId}
         streamId={context.streamId}
         filter={context.filter}
-        onClose={onClose}
         className={className}
       />
     )
@@ -209,7 +184,6 @@ function PaneContent({ workspaceId, panelId, onClose, className }: PanelHostProp
     <StreamPanel
       key={panelId ? panelKeyFor(workspaceId, panelId) : panelId}
       workspaceId={workspaceId}
-      onClose={onClose}
       className={className}
     />
   )
@@ -706,7 +680,4 @@ function SectionResizer({ axis, area, size, span, min, onResize, onReset }: Sect
   )
 }
 
-const ScopedPanelHost = memo(function ScopedPanelHost({ workspaceId }: { workspaceId: string }) {
-  const { closePanel } = usePanel()
-  return <PanelHost workspaceId={workspaceId} onClose={closePanel} />
-})
+const ScopedPanelHost = memo(PanelHost)

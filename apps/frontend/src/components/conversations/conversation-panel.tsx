@@ -15,13 +15,7 @@ import {
   X,
   type LucideIcon,
 } from "lucide-react"
-import {
-  SidePanel,
-  SidePanelHeader,
-  SidePanelTitle,
-  SidePanelClose,
-  SidePanelContent,
-} from "@/components/ui/side-panel"
+import { SidePanel, SidePanelTitle, SidePanelContent } from "@/components/ui/side-panel"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
@@ -101,17 +95,7 @@ import { useScrollToMessage } from "@/hooks/use-scroll-to-message"
 import { VirtualizedScroller, useRenderedContentLatch } from "@/components/timeline/virtualized-scroller"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
-import {
-  PaneFocusToggle,
-  PanelTabStrip,
-  usePaneSplitActions,
-  PhonePaneLeading,
-  PhonePaneSwitcher,
-  usePaneCovered,
-  usePaneDragHandle,
-  usePanelCloseFocusLanding,
-  usePhoneHeaderSwipe,
-} from "@/components/panes"
+import { PaneHeader, usePaneSplitActions, usePaneCovered } from "@/components/panes"
 
 const TYPE_GLYPH: Record<string, LucideIcon> = {
   channel: Hash,
@@ -121,7 +105,6 @@ const TYPE_GLYPH: Record<string, LucideIcon> = {
 
 interface ConversationPanelProps {
   workspaceId: string
-  onClose: () => void
   className?: string
 }
 
@@ -204,7 +187,6 @@ interface ConversationPanelHeaderProps {
   isHidden: boolean
   /** Agent sessions running in this conversation, for the header's chip. */
   runningChipEntries: readonly ActiveAgentSession[]
-  onClose: () => void
 }
 
 /**
@@ -222,7 +204,6 @@ function ConversationPanelHeader({
   locator,
   isHidden,
   runningChipEntries,
-  onClose,
 }: ConversationPanelHeaderProps) {
   const ContextGlyph = (hostStreamType && TYPE_GLYPH[hostStreamType]) || MessageSquareText
   const effectiveTitle = useConversationTitle(workspaceId, post?.conversation ?? { streamId: "", topicSummary: null })
@@ -230,14 +211,9 @@ function ConversationPanelHeader({
   const [menuOpen, setMenuOpen] = useState(false)
   const title = effectiveTitle ?? "Untitled conversation"
   const resolved = post?.conversation.status === "resolved"
-  const { tabbed, canClosePanel } = usePanel()
-  const closeRef = usePanelCloseFocusLanding()
-  const headerSwipe = usePhoneHeaderSwipe()
-  const dragHandle = usePaneDragHandle(workspaceId, title, !tabbed)
+  const { tabbed } = usePanel()
   const splitActions = usePaneSplitActions()
-  // On touch the identity line IS the actions trigger, as the stream header's
-  // name is. The header is `relative` so the press-and-hold name overlay, which
-  // portals into its nearest <header>, can fill the bar here too.
+  // On touch the identity line IS the actions trigger, as the stream header's name is.
   const identity = (
     <>
       <ContextGlyph className="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -252,10 +228,12 @@ function ConversationPanelHeader({
       )}
     </>
   )
+  // Nothing here paints before the column does: the glyph, the topic and the
+  // stream locator all resolve with the rows, and rendering their fallbacks
+  // first made the header show a generic icon over the literal word
+  // "Conversation" and then swap.
   let titleArea: React.ReactNode
-  if (tabbed) {
-    titleArea = <PanelTabStrip workspaceId={workspaceId} className="-ml-2" splitsInPaneMenu />
-  } else if (revealed && isMobile) {
+  if (revealed && isMobile) {
     titleArea = (
       <StreamTitlePreview name={title}>
         <button
@@ -270,63 +248,57 @@ function ConversationPanelHeader({
         </button>
       </StreamTitlePreview>
     )
+  } else if (revealed) {
+    titleArea = (
+      <StreamTitlePreview name={title}>
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">{identity}</span>
+      </StreamTitlePreview>
+    )
   } else {
     titleArea = (
-      <div className="flex min-w-0 flex-1 items-center gap-1.5" {...dragHandle}>
-        {revealed ? (
-          <StreamTitlePreview name={title}>
-            <span className="flex min-w-0 flex-1 items-center gap-1.5">{identity}</span>
-          </StreamTitlePreview>
-        ) : (
-          <>
-            <div className="h-4 w-4 shrink-0" />
-            {phase === "skeleton" && <Skeleton className="h-4 w-40 max-w-full" />}
-          </>
-        )}
-      </div>
+      <>
+        <div className="h-4 w-4 shrink-0" />
+        {phase === "skeleton" && <Skeleton className="h-4 w-40 max-w-full" />}
+      </>
     )
   }
   return (
-    <SidePanelHeader className="relative" {...headerSwipe}>
-      {/* Mobile replaces the X close with a back chevron; desktop keeps the X
-          alone. Both affordances at once was this header's own invention. */}
-      {isMobile && <PhonePaneLeading onBack={onClose} backRef={closeRef} />}
-      {/* Nothing here paints before the column does: the glyph, the topic and the
-          stream locator all resolve with the rows, and rendering their fallbacks
-          first made the header show a generic icon over the literal word
-          "Conversation" and then swap. */}
-      {titleArea}
+    <PaneHeader
+      workspaceId={workspaceId}
+      name={title}
+      splitsInPaneMenu
+      title={titleArea}
+      menu={
+        revealed ? (
+          <ConversationActionsMenu
+            workspaceId={workspaceId}
+            conversationId={post.conversation.id}
+            streamId={post.conversation.streamId}
+            topicSummary={effectiveTitle}
+            topicSummarySource={post.conversation.topicSummarySource}
+            status={post.conversation.status}
+            isHidden={isHidden}
+            contextLabel={locator}
+            open={menuOpen}
+            onOpenChange={setMenuOpen}
+            leadingActions={splitActions}
+            trigger={
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Conversation actions">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            }
+          />
+        ) : (
+          <div className="h-8 w-8 shrink-0" />
+        )
+      }
+    >
       {/* Same live pill as the stream header and the board card, over this
           conversation's own sessions. Compact on mobile so it can't squeeze the
           topic out of the row. Mounted only with entries: the chip reads
           useTrace, so an idle panel must not require a TraceProvider. */}
       {runningChipEntries.length > 0 && <AgentRunningChip entries={runningChipEntries} compact={isMobile || tabbed} />}
-      <PhonePaneSwitcher workspaceId={workspaceId} />
-      {revealed ? (
-        <ConversationActionsMenu
-          workspaceId={workspaceId}
-          conversationId={post.conversation.id}
-          streamId={post.conversation.streamId}
-          topicSummary={effectiveTitle}
-          topicSummarySource={post.conversation.topicSummarySource}
-          status={post.conversation.status}
-          isHidden={isHidden}
-          contextLabel={locator}
-          open={menuOpen}
-          onOpenChange={setMenuOpen}
-          leadingActions={splitActions}
-          trigger={
-            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Conversation actions">
-              <MoreHorizontal className="h-4 w-4" />
-            </Button>
-          }
-        />
-      ) : (
-        <div className="h-8 w-8 shrink-0" />
-      )}
-      <PaneFocusToggle />
-      {!isMobile && !tabbed && canClosePanel && <SidePanelClose onClose={onClose} ref={closeRef} />}
-    </SidePanelHeader>
+    </PaneHeader>
   )
 }
 
@@ -339,13 +311,13 @@ function ConversationPanelHeader({
  * mutated and access is the conversation's single root check (enforced when the
  * by-id post is fetched, INV-62) — the panel adds no per-message gating.
  */
-export function ConversationPanel({ workspaceId, onClose, className }: ConversationPanelProps) {
+export function ConversationPanel({ workspaceId, className }: ConversationPanelProps) {
   const { isMobile } = useSidebar()
   // The composer anchor lives here, above the body, because the body itself
   // reads the anchor context (`useFloatingComposerAnchor`) — it can host the
   // element but not the provider.
   const [floatingAnchorEl, setFloatingAnchorEl] = useState<HTMLElement | null>(null)
-  const { panelId } = usePanel()
+  const { panelId, closePanel } = usePanel()
   // A background tab: it stays live, but isn't on screen and doesn't take keys.
   const covered = usePaneCovered()
   const conversationId = panelId ? parseConversationPanel(panelId) : null
@@ -428,11 +400,11 @@ export function ConversationPanel({ workspaceId, onClose, className }: Conversat
       if (e.key !== "Escape" || e.defaultPrevented) return
       const active = document.activeElement as HTMLElement | null
       if (active?.closest('[contenteditable="true"], input, textarea')) return
-      onClose()
+      closePanel()
     }
     document.addEventListener("keydown", onKeyDown)
     return () => document.removeEventListener("keydown", onKeyDown)
-  }, [covered, onClose])
+  }, [covered, closePanel])
 
   const anchorStreamId = post?.conversation.streamId
   const hostStream = useStreamFromStore(workspaceId, anchorStreamId)
@@ -469,7 +441,6 @@ export function ConversationPanel({ workspaceId, onClose, className }: Conversat
     hostStreamType,
     locator,
     isMobile,
-    onClose,
   }
 
   if (post) {
