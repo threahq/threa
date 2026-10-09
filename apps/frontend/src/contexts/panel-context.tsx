@@ -814,7 +814,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       replace: boolean,
       focus: string | null = null,
       deepLink: string | null = null,
-      /** The query of the page `focus` opens, when the route goes there. */
+      /** The query of the link that opens `focus`, when the route goes there. */
       focusQuery?: string
     ) => {
       const next = edit(layout)
@@ -855,7 +855,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
         replace,
         target,
         page ? null : params.get(DEEP_LINK_PARAM),
-        page ? params.toString() : undefined
+        params.toString()
       )
       return true
     },

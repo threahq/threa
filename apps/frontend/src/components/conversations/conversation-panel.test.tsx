@@ -327,12 +327,18 @@ function mountPanel(opts: {
   const startId = opts.conversationId ?? CONVERSATION_ID
   // Captures the router's navigate so a test can switch the panel to another
   // conversation in place (initialEntries only apply at mount).
-  const nav: { openConversation: (id: string) => void; openMessage: (messageId: string) => void } = {
+  const nav: {
+    openConversation: (id: string) => void
+    openMessage: (messageId: string) => void
+    workIn: (panelId: string) => void
+  } = {
     openConversation: () => {},
     openMessage: () => {},
+    workIn: () => {},
   }
   function Navigator() {
     const navigate = useNavigate()
+    nav.workIn = usePanel().markCurrentPane
     nav.openConversation = (id) => navigate(`/w/${WORKSPACE_ID}/board?panel=conv:${id}`)
     nav.openMessage = (messageId) => navigate(`/w/${WORKSPACE_ID}/board?panel=conv:${startId}&m=${messageId}`)
     return null
@@ -1287,6 +1293,8 @@ describe("ConversationPanel", () => {
       el.scrollTop = 600
       act(() => fireEvent.scroll(el))
 
+      // The board's route names its own pane, so `?m` goes to the conversation once the reader works in it.
+      act(() => nav.workIn(`conv:${CONVERSATION_ID}`))
       act(() => nav.openMessage("msg_1"))
       await waitFor(() => expect(el.scrollTop).toBe(rowCenterScrollTop(0)))
     } finally {
