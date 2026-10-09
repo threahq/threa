@@ -238,6 +238,8 @@ export interface MessageComposerProps {
   onExpandClick?: () => void
   /** Where the expand button navigates instead, when the expanded editor lives at a URL. */
   expandHref?: string
+  /** Where opening the expanded editor beside the page navigates, offered beside expand. */
+  sideHref?: string
 
   /** When true, the composer fills its container with full-height editor and always-visible toolbar */
   expanded?: boolean
@@ -312,6 +314,7 @@ export function MessageComposer({
   onComposerFocus,
   onExpandClick,
   expandHref,
+  sideHref,
   expanded = false,
   onCollapse,
   streamContext,
@@ -1783,6 +1786,7 @@ export function MessageComposer({
                         onAttachClick={handleAttachClick}
                         onExpandClick={onExpandClick}
                         expandHref={expandHref}
+                        sideHref={sideHref}
                         micButton={micButton}
                         stashedDraftsTrigger={stashedDraftsTrigger}
                         scheduledMessagesTrigger={scheduledMessagesTrigger}

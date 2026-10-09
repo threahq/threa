@@ -1,8 +1,7 @@
 import { memo, useState, useCallback, useContext, useEffect, useMemo, useRef, type ComponentProps } from "react"
 import { createPortal } from "react-dom"
 import { toast } from "sonner"
-import { Link, useNavigate } from "react-router-dom"
-import { PenLine } from "lucide-react"
+import { useNavigate } from "react-router-dom"
 import { useStableCallback } from "@/hooks/use-stable-callback"
 import {
   hasDocContent,
@@ -51,7 +50,6 @@ import { AsideCoversPanesContext } from "@/components/aside/aside-presentation"
 import { PaneFocusContext, useComposeSlot } from "@/components/panes"
 import { Button } from "@/components/ui/button"
 import { panelIdsOf } from "@/lib/panel-tabs"
-import { collapsedComposerPreview } from "@/lib/drafts/collapsed-composer-preview"
 import {
   acknowledgeShareHandoffBatch,
   peekShareHandoffBatch,
@@ -492,7 +490,7 @@ function MessageInputComponent({
   // target in one local-first transaction. An empty composer with no row simply
   // opens the destination's existing draft, if any.
   const conversationReplyCtx = useConversationReply()
-  const { openPanel, layout, hasTabs, getFocusedPanelUrl, getTabUrl, closeTab, setCurrentPane } = usePanel()
+  const { openPanel, layout, hasTabs, getPanelUrl, getFocusedPanelUrl, closeTab, setCurrentPane } = usePanel()
   useEffect(() => {
     if (!conversationReplyCtx) return
     return conversationReplyCtx.registerHandler((data: ConversationReplyData) => {
@@ -1118,6 +1116,9 @@ function MessageInputComponent({
     )
   }
 
+  // The draft can open as a pane of its own only where the page lays panes out and nothing covers them.
+  const paneable = hasTabs && !isAsideComposer && !asideCoversPanes
+
   return (
     <>
       {composeSlot &&
@@ -1141,18 +1142,15 @@ function MessageInputComponent({
       <FloatingComposerShell ref={composerHeightRef} data-message-composer-root>
         <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={e2eEnabled} streamId={e2eRootStreamId} />
         {expanded ? (
-          <ComposingInPaneBar
-            href={getTabUrl(composeId)}
-            preview={collapsedComposerPreview(composer.content)}
-            onWriteHere={collapse}
-          />
+          <ComposingInPaneBar onWriteHere={collapse} />
         ) : (
           <>
             {conversationReplyStrip}
             <MemoizedMessageComposer
               {...composerProps}
               autoFocus={autoFocus}
-              expandHref={hasTabs && !isAsideComposer && !asideCoversPanes ? getFocusedPanelUrl(composeId) : undefined}
+              expandHref={paneable ? getFocusedPanelUrl(composeId) : undefined}
+              sideHref={paneable ? getPanelUrl(composeId) : undefined}
             />
           </>
         )}
@@ -1162,33 +1160,19 @@ function MessageInputComponent({
   )
 }
 
-/** Holds the composer's place while its draft is open in a pane: a way to that pane, and a way to bring it back. */
-function ComposingInPaneBar({
-  href,
-  preview,
-  onWriteHere,
-}: {
-  href: string
-  preview: string
-  onWriteHere: () => void
-}) {
+/**
+ * Holds the composer's place while its draft is open in a pane: one line, the
+ * height of an empty composer, so the timeline above it stays where it was.
+ */
+function ComposingInPaneBar({ onWriteHere }: { onWriteHere: () => void }) {
   return (
-    <div className="flex items-center gap-2 rounded-xl border bg-background p-1.5 shadow-sm">
-      <Link to={href} className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted">
-        <PenLine className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <span className={preview ? "truncate" : "truncate text-muted-foreground"}>
-          {preview || "Draft open in a pane"}
-        </span>
-      </Link>
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        title="Close the pane and keep writing here"
-        onClick={onWriteHere}
-      >
-        Write here
-      </Button>
+    <div className="flex h-[123px] flex-col">
+      <div className="flex h-[104px] items-center justify-between gap-2 rounded-[16px] border border-dashed border-input bg-card/75 px-4 backdrop-blur-md">
+        <span className="truncate text-sm text-muted-foreground">Writing in a pane</span>
+        <Button type="button" variant="link" size="sm" className="shrink-0 px-0" onClick={onWriteHere}>
+          Write here
+        </Button>
+      </div>
     </div>
   )
 }
