@@ -526,7 +526,7 @@ export function ConversationPanel({ workspaceId, onClose, className }: Conversat
       <SidePanelContent className="relative flex flex-col">
         {/* The column's padding, so the placeholder rows sit exactly where the
             real ones will. */}
-        <div className="min-h-0 flex-1 overflow-y-auto pt-4">
+        <div className="min-h-0 flex-1 [scrollbar-gutter:stable] overflow-y-auto pt-4">
           <div className="mx-auto w-full min-w-0 max-w-[800px] px-3 sm:px-6">{body}</div>
         </div>
       </SidePanelContent>
@@ -1286,7 +1286,7 @@ function ConversationPanelBody({
                 </div>
               }
               skeleton={
-                <div className="h-full overflow-y-auto pt-4">
+                <div className="h-full [scrollbar-gutter:stable] overflow-y-auto pt-4">
                   <div className={PANEL_ROW_WIDTH_CLASS}>
                     {phase === "skeleton" && <ConversationRowsSkeleton />}
                     {backfillRetry}
