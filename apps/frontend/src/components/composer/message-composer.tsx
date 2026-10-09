@@ -1153,6 +1153,7 @@ export function MessageComposer({
       autoFocus={autoFocus}
       scopeId={scopeId}
       staticToolbarOpen={!isMobile && formatOpen}
+      className={isMobile ? undefined : "flex min-h-0 flex-col"}
       disableSelectionToolbar={disableSelectionToolbar}
       onEditLastMessage={onEditLastMessage}
       onEscapeBlur={onEscapeBlur}
@@ -1705,11 +1706,17 @@ export function MessageComposer({
                   data-testid="composer-editor-scroll"
                   className={cn(
                     isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0",
+                    !isMobile && "flex flex-col",
                     isMobile && mobileChromeOpen && "overflow-y-auto",
                     isMobile && mobileChromeOpen && !mobileExpanded && mobileDragHeight === null && "max-h-[200px]"
                   )}
                 >
-                  <div className="h-full">{sharedEditor}</div>
+                  {/* Desktop: the editor element keeps its own scroll cap, so the
+                      toolbars above it and the selection bubble stay outside any
+                      scroller. The flex chain slot → this wrapper → RichEditor's
+                      container → EditorContent → .tiptap lets that cap shrink
+                      with the card when a tall attachment tray squeezes it. */}
+                  <div className={isMobile ? "h-full" : "flex min-h-0 flex-1 flex-col"}>{sharedEditor}</div>
                 </div>
 
                 {/* Bottom action bar — visible on desktop always, on mobile when focused or dictating.

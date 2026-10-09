@@ -1402,7 +1402,10 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           trailingContent={staticToolbarOpen ? toolbarTrailingContent : undefined}
         />
         {belowToolbarContent}
-        <EditorContent editor={editor} />
+        {/* Desktop message composer: its editor slot makes this container a
+            flex column so the .tiptap scroll cap can shrink with the card; this
+            wrapper is the link between them. Inert for block-flow consumers. */}
+        <EditorContent editor={editor} className="flex min-h-0 flex-1 flex-col" />
         <ComposerPillCopyButton editor={editor} />
         {enableMentions ? renderMentionList() : null}
         {enableChannels ? renderChannelList() : null}
