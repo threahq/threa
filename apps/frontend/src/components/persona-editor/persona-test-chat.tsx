@@ -4,24 +4,10 @@ import { toast } from "sonner"
 import { useQueryClient } from "@tanstack/react-query"
 import type { PersonaConfigResponse } from "@threahq/types"
 import { Button } from "@/components/ui/button"
-import {
-  SidePanel,
-  SidePanelClose,
-  SidePanelContent,
-  SidePanelHeader,
-  SidePanelTitle,
-} from "@/components/ui/side-panel"
-import {
-  PaneFocusToggle,
-  PanelTabStrip,
-  PhonePaneLeading,
-  PhonePaneSwitcher,
-  usePaneDragHandle,
-  usePanelCloseFocusLanding,
-  usePhoneHeaderSwipe,
-} from "@/components/panes"
+import { SidePanel, SidePanelContent, SidePanelTitle } from "@/components/ui/side-panel"
+import { PaneHeader } from "@/components/panes"
 import { StreamContent } from "@/components/timeline"
-import { usePanel, useRevealReady, useSidebar } from "@/contexts"
+import { useRevealReady } from "@/contexts"
 import { useArchiveStream } from "@/hooks"
 import { personaKeys, useCreateTestStream } from "@/hooks/use-personas"
 import { syncHintText, type SyncState } from "./persona-form"
@@ -88,39 +74,21 @@ export const PersonaSyncContext = createContext<
 interface PersonaTestChatPaneProps {
   workspaceId: string
   personaId: string
-  onClose: () => void
   className?: string
 }
 
 /** The draft's test chat, as the `test:<personaId>` pane beside its editor. */
-export function PersonaTestChatPane({ workspaceId, personaId, onClose, className }: PersonaTestChatPaneProps) {
+export function PersonaTestChatPane({ workspaceId, personaId, className }: PersonaTestChatPaneProps) {
   const draft = useContext(PersonaSyncContext)
   const testStreamId = draft?.testStreamId ?? null
   const { start, end, isStarting, isEnding } = usePersonaTestSession(workspaceId, personaId, testStreamId)
-  const { tabbed, canClosePanel } = usePanel()
-  const { isMobile } = useSidebar()
-  const closeRef = usePanelCloseFocusLanding()
-  const dragHandle = usePaneDragHandle(workspaceId, "Test chat", !tabbed)
-  const headerSwipe = usePhoneHeaderSwipe()
   const syncHint = draft ? syncHintText(draft.syncState) : null
   // A test stream's own StreamContent reports for it.
   useRevealReady(draft !== undefined && !testStreamId)
 
   return (
     <SidePanel className={className} data-editor-zone="panel" role="region" aria-label="Test chat">
-      <SidePanelHeader className="relative" {...headerSwipe}>
-        {isMobile && <PhonePaneLeading onBack={onClose} backRef={closeRef} />}
-        {tabbed ? (
-          <PanelTabStrip workspaceId={workspaceId} className="-ml-2" />
-        ) : (
-          <SidePanelTitle className="min-w-0 flex-1 truncate" {...dragHandle}>
-            Test chat
-          </SidePanelTitle>
-        )}
-        <PaneFocusToggle />
-        <PhonePaneSwitcher workspaceId={workspaceId} />
-        {!isMobile && !tabbed && canClosePanel && <SidePanelClose onClose={onClose} ref={closeRef} />}
-      </SidePanelHeader>
+      <PaneHeader workspaceId={workspaceId} name="Test chat" title={<SidePanelTitle>Test chat</SidePanelTitle>} />
       {testStreamId && (
         <div className="flex h-10 shrink-0 items-center gap-2 border-b px-4">
           <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground" aria-live="polite">

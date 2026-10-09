@@ -233,8 +233,12 @@ export function PanelTabStrip({
           </DropdownMenu>
         )}
       </nav>
+      {/* The labels carry the header's gap before them as padding, so folding them frees exactly the width the fit counts. */}
       {labels && (
-        <div ref={labelsRef} className={cn("flex shrink-0 items-center", !fit.labels && "invisible absolute")}>
+        <div
+          ref={labelsRef}
+          className={cn("-ml-2 flex shrink-0 items-center pl-2", !fit.labels && "invisible absolute")}
+        >
           {labels}
         </div>
       )}

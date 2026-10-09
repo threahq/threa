@@ -224,7 +224,7 @@ export function DraftsPage() {
     <>
       <div className="flex h-full flex-col">
         {batchMode ? (
-          <header className="flex h-12 items-center gap-2 border-b px-4">
+          <PagePaneHeader workspaceId={workspaceId}>
             <Button
               variant="ghost"
               size="icon"
@@ -260,7 +260,7 @@ export function DraftsPage() {
                 <span className="hidden sm:inline">Delete</span>
               </Button>
             </div>
-          </header>
+          </PagePaneHeader>
         ) : (
           <PagePaneHeader
             workspaceId={workspaceId}

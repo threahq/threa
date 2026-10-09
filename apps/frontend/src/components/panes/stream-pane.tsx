@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, type ReactNode } from "react"
+import { useState, useRef, useEffect } from "react"
 import { toast } from "sonner"
 import { useParams, useSearchParams } from "react-router-dom"
 import {
@@ -36,7 +36,8 @@ import { foldHeaderControls } from "@/lib/pane-header-fold"
 import { tabRowReserve } from "@/lib/panel-tab-fit"
 import { useStreamOrDraft, isDmDraftId, useActiveBotPresence } from "@/hooks"
 import { useWorkspaceDmPeers, useWorkspaceMetadata } from "@/stores/workspace-store"
-import { createConversationsPanelId, useCurrentPane, usePanel, useSidebar } from "@/contexts"
+import { createConversationsPanelId, useCoordinatedLoading, useCurrentPane, usePanel, useSidebar } from "@/contexts"
+import { StreamLoadingIndicator } from "@/components/loading"
 import { useUserProfile } from "@/components/user-profile"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
@@ -62,23 +63,12 @@ import { InviteActorButton, InviteBotButton } from "@/components/encryption"
 import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes } from "@threahq/types"
 import { getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
-import { PhonePaneSwitcher, usePhoneHeaderSwipe } from "./phone-pane-header"
+import { PaneHeader } from "./pane-header"
 import { usePaneSplitActions } from "./panel-tab-menu"
-import { usePaneDragHandle } from "./pane-drop"
 import { SharedWithBadge } from "@/components/shared-with-badge"
 import { usePaneToggle, useStreamContextToggle } from "@/components/stream-context"
 import { copyStreamLink } from "@/lib/stream-links"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
-
-/** A panel tab's own controls around the stream's header. */
-export interface PaneChrome {
-  /** Stands in for the page's sidebar toggle. */
-  leading: ReactNode
-  /** With several tabs open, the tab row stands in for the title and its chips. */
-  tabs?: ReactNode
-  focusToggle: ReactNode
-  close?: ReactNode
-}
 
 interface StreamPaneProps {
   workspaceId: string
@@ -87,7 +77,6 @@ interface StreamPaneProps {
   autoFocus: boolean
   offersContext?: boolean
   className?: string
-  chrome: PaneChrome
 }
 
 /** One stream's header and timeline, the stream named by `streamId`. */
@@ -98,7 +87,6 @@ export function StreamPane({
   autoFocus,
   offersContext = true,
   className,
-  chrome,
 }: StreamPaneProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const { stream, isDraft, error, rename, canRename, renamePending, renameError, archive, unarchive } =
@@ -108,8 +96,9 @@ export function StreamPane({
   // The route's stream is the page's one main landmark; the conversation overlay belongs to the first column's.
   const routeStreamId = useParams<{ streamId: string }>().streamId
   const isPageStream = routeStreamId === streamId
-  const { inFirstColumn, layout, hasTabs, section } = usePanel()
-  const headerSwipe = usePhoneHeaderSwipe()
+  const { inFirstColumn, layout, hasTabs, section, tabbed } = usePanel()
+  // Only a pane beside the first column shows it; the first column's stream would re-render on each load step for nothing.
+  const isLoading = useCoordinatedLoading((loading) => !inFirstColumn && loading.getStreamState(streamId) === "loading")
   const headerRef = useRef<HTMLElement>(null)
   const headerWidth = useElementWidth(headerRef)
   const leadingRef = useRef<HTMLDivElement>(null)
@@ -125,7 +114,6 @@ export function StreamPane({
   const isCurrentPane = currentPane === null || currentPane === streamId
   // Typing with nothing clicked yet lands in the first column, where the page's stream shows.
   const zone = inFirstColumn ? "main" : "panel"
-  const tabbed = !!chrome.tabs
 
   const listId = createConversationsPanelId(streamId)
   const [, toggleConversationsList] = usePaneToggle(panelIdsOf(layout).includes(listId) ? listId : null, listId)
@@ -208,7 +196,6 @@ export function StreamPane({
   } else if (isDraft) {
     streamName = streamFallbackLabel(isDmDraft ? "dm" : "scratchpad", "sidebar")
   }
-  const dragHandle = usePaneDragHandle(workspaceId, streamName, !tabbed && !isEditing)
 
   // Pre-fill (and no-op-guard) the rename against the name the header actually
   // shows: for an encrypted stream that's the client-decrypted name, which can
@@ -533,9 +520,9 @@ export function StreamPane({
         ]
       : []
   // Before the title gives way, desktop drops the Aside label, then folds the view icons into the menu.
-  const gap = tabbed ? 0 : 4
-  const leftGap = tabbed ? 0 : 8
-  const icon = 32 + gap
+  const gap = 8
+  const iconGap = 4
+  const icon = 32 + iconGap
   const offersCall = !!stream && !isDraft && (isChannel || isDm) && callsEnabled
   const offersAside = !!stream && !isDraft && !tabbed
   const offersSearch = !isDraft
@@ -545,19 +532,21 @@ export function StreamPane({
     ? new Set<string>()
     : foldHeaderControls(
         headerWidth,
-        // Padding, then what never folds: the leading controls, the chips beside the title and the chip strip's gap,
-        // the call menu, Aside's icon (its label folds), and the menu, focus and close.
+        // Padding, then what never folds: the leading controls, the chips beside the title, the label strip's gap
+        // (a tab row's -ml-2 hands one back instead), the call menu, Aside's icon (its label folds), and the
+        // menu, focus and close.
         32 +
-          gap +
-          leadingWidth +
-          (chipsWidth > 0 ? chipsWidth + leftGap : 0) +
-          leftGap +
-          (callWidth > 0 ? callWidth + gap : 0) +
+          (leadingWidth > 0 ? leadingWidth + gap : 0) +
+          (tabbed ? -gap : gap) +
+          (chipsWidth > 0 ? chipsWidth + gap : 0) +
+          gap -
+          iconGap +
+          (callWidth > 0 ? callWidth + iconGap : 0) +
           (offersAside ? icon : 0) +
-          trailingWidth,
+          (trailingWidth > 0 ? trailingWidth + gap : 0),
         [
           ...(offersAside ? [{ id: "aside-label", width: 60 }] : []),
-          ...(offersOverlay ? [{ id: "overlay", width: 52 + gap }] : []),
+          ...(offersOverlay ? [{ id: "overlay", width: 52 + iconGap }] : []),
           ...(offersContextIcon ? [{ id: "context", width: icon }] : []),
           ...(offersSearch && !tabbed ? [{ id: "search", width: icon }] : []),
         ],
@@ -703,27 +692,29 @@ export function StreamPane({
     )
   }
 
+  const chips = (
+    <div ref={chipsRef} className="flex shrink-0 items-center gap-2 empty:hidden">
+      {!tabbed && companionModeIndicator}
+      <AgentActivityHeaderChip workspaceId={workspaceId} streamId={streamId} compact={isMobile || tabbed} />
+    </div>
+  )
+
   return (
     <div className={cn("flex h-full flex-col", className)} data-editor-zone={inFirstColumn ? undefined : "panel"}>
-      <header
-        ref={headerRef}
-        className="relative flex h-12 items-center justify-between border-b px-4"
-        {...headerSwipe}
-      >
-        {/* No gaps while tabbed: the tab fit counts only the labels' own width as the room they free. */}
-        <div className={cn("flex items-center flex-1 min-w-0", isTouchInput && !isEditing && "select-none")}>
-          {/* The empty span carries the gap after the leading controls into their measured width; a hidden sidebar
-              toggle cancels it. */}
-          <div ref={leadingRef} className={cn("flex shrink-0 items-center", !tabbed && "gap-2")}>
-            {chrome.leading}
-            <span />
-          </div>
-          <div className={cn("flex items-center flex-1 min-w-0", !tabbed && "gap-2")} {...dragHandle}>
-            {chrome.tabs ?? headerTitle}
-            <div ref={chipsRef} className={cn("flex shrink-0 items-center empty:hidden", !tabbed && "gap-2")}>
-              {!chrome.tabs && companionModeIndicator}
-              <AgentActivityHeaderChip workspaceId={workspaceId} streamId={streamId} compact={isMobile || tabbed} />
-            </div>
+      <PaneHeader
+        workspaceId={workspaceId}
+        name={streamName}
+        editingTitle={isEditing}
+        className={cn(isTouchInput && !isEditing && "select-none")}
+        measureRefs={{ header: headerRef, leading: leadingRef, trailing: trailingRef }}
+        splitsInPaneMenu
+        tabLabels={
+          <LabelStack workspaceId={workspaceId} resourceType={LabelableResourceTypes.STREAM} resourceId={streamId} />
+        }
+        title={
+          <>
+            {headerTitle}
+            {chips}
             {/* Chip strip. The chips are non-shrinking (`shrink-0` leaves), so on a
               phone-width header they would otherwise overflow the flex box and
               paint under the search/panel actions — the strip scrolls instead,
@@ -765,9 +756,54 @@ export function StreamPane({
                 )}
               </div>
             )}
-          </div>
-        </div>
-        <div className={cn("flex items-center", !tabbed && "gap-1 ml-1")}>
+          </>
+        }
+        menu={
+          <>
+            {stream && isMobile && canOpenSheet && (
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  aria-label="Stream actions"
+                  onClick={() => setIsMenuDrawerOpen(true)}
+                >
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+                <StreamSheet
+                  open={isMenuDrawerOpen}
+                  onOpenChange={setIsMenuDrawerOpen}
+                  workspaceId={workspaceId}
+                  streamId={streamId}
+                  stream={stream}
+                  streamName={streamName}
+                  actions={[
+                    ...sheetViewActions,
+                    ...(offersStreamActions ? streamMenuActions : []).map((action, i) =>
+                      i === 0 && sheetViewActions.length > 0 ? { ...action, separatorBefore: true } : action
+                    ),
+                  ]}
+                />
+              </>
+            )}
+            {!isMobile && desktopMenuActions.length > 0 && (
+              <SidebarActionMenu
+                actions={desktopMenuActions}
+                ariaLabel="Stream actions"
+                trigger={
+                  <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Stream actions">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                }
+              />
+            )}
+          </>
+        }
+      >
+        <StreamLoadingIndicator isLoading={isLoading} />
+        {tabbed && chips}
+        <div className="flex items-center gap-1 empty:hidden">
           <div ref={callRef} className="flex items-center empty:hidden">
             {offersCall && (
               // A workspace that has switched calls off shows no calls surface at all.
@@ -855,51 +891,8 @@ export function StreamPane({
               </DropdownMenu>
             </div>
           )}
-          <div ref={trailingRef} className={cn("flex items-center empty:hidden", !tabbed && "gap-1")}>
-            <PhonePaneSwitcher workspaceId={workspaceId} />
-            {stream && isMobile && canOpenSheet && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8"
-                  aria-label="Stream actions"
-                  onClick={() => setIsMenuDrawerOpen(true)}
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-                <StreamSheet
-                  open={isMenuDrawerOpen}
-                  onOpenChange={setIsMenuDrawerOpen}
-                  workspaceId={workspaceId}
-                  streamId={streamId}
-                  stream={stream}
-                  streamName={streamName}
-                  actions={[
-                    ...sheetViewActions,
-                    ...(offersStreamActions ? streamMenuActions : []).map((action, i) =>
-                      i === 0 && sheetViewActions.length > 0 ? { ...action, separatorBefore: true } : action
-                    ),
-                  ]}
-                />
-              </>
-            )}
-            {!isMobile && desktopMenuActions.length > 0 && (
-              <SidebarActionMenu
-                actions={desktopMenuActions}
-                ariaLabel="Stream actions"
-                trigger={
-                  <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Stream actions">
-                    <MoreHorizontal className="h-4 w-4" />
-                  </Button>
-                }
-              />
-            )}
-            {chrome.focusToggle}
-            {chrome.close}
-          </div>
         </div>
-      </header>
+      </PaneHeader>
       {(isChannel || isDm) && !isDraft && <RejoinBar workspaceId={workspaceId} streamId={streamId} />}
       <div className="relative flex-1 overflow-hidden" role={isPageStream ? "main" : undefined} data-editor-zone={zone}>
         <StreamErrorBoundary streamId={streamId} queryError={error}>
