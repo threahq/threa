@@ -1,17 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from "react"
-import { useParams, useNavigate, Link } from "react-router-dom"
-import {
-  FileText,
-  Hash,
-  MessageSquare,
-  Trash2,
-  FileEdit,
-  ArrowLeft,
-  Bookmark,
-  StickyNote,
-  ListChecks,
-  X,
-} from "lucide-react"
+import { useParams, useNavigate } from "react-router-dom"
+import { FileText, Hash, MessageSquare, Trash2, FileEdit, Bookmark, StickyNote, ListChecks, X } from "lucide-react"
 import { toast } from "sonner"
 import { CompanionModes } from "@threahq/types"
 import { Button } from "@/components/ui/button"
@@ -20,7 +9,7 @@ import { DraftContextMenu } from "@/components/drafts/draft-context-menu"
 import { DraftActionDrawer } from "@/components/drafts/draft-action-drawer"
 import type { DraftActionContext } from "@/components/drafts/draft-actions"
 import { ItemList, type QuickSwitcherItem } from "@/components/quick-switcher"
-import { SidebarToggle } from "@/components/layout"
+import { PagePaneHeader } from "@/components/panes"
 import { cn } from "@/lib/utils"
 import { draftEmptyBodyLabel } from "@/lib/drafts/decryption"
 import { useAllDrafts, type UnifiedDraft, type DraftType } from "@/hooks"
@@ -234,72 +223,59 @@ export function DraftsPage() {
   return (
     <>
       <div className="flex h-full flex-col">
-        <header className="flex h-12 items-center gap-2 border-b px-4">
-          {batchMode ? (
-            <>
+        {batchMode ? (
+          <header className="flex h-12 items-center gap-2 border-b px-4">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              onClick={exitBatchMode}
+              aria-label="Cancel selection"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+            {countPill}
+            {/* Label hidden on phones to keep the control row from overflowing
+                narrow viewports — mirrors the timeline's BatchSelectionBar. */}
+            <span className="hidden text-sm font-medium sm:inline">selected</span>
+            <div className="ml-auto flex items-center gap-1">
               <Button
                 variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0"
-                onClick={exitBatchMode}
-                aria-label="Cancel selection"
+                size="sm"
+                className="shrink-0"
+                onClick={toggleSelectAll}
+                disabled={drafts.length === 0}
               >
-                <X className="h-4 w-4" />
+                {allSelected ? "Deselect all" : "Select all"}
               </Button>
-              {countPill}
-              {/* Label hidden on phones to keep the control row from overflowing
-                  narrow viewports — mirrors the timeline's BatchSelectionBar. */}
-              <span className="hidden text-sm font-medium sm:inline">selected</span>
-              <div className="ml-auto flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="shrink-0"
-                  onClick={toggleSelectAll}
-                  disabled={drafts.length === 0}
-                >
-                  {allSelected ? "Deselect all" : "Select all"}
-                </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  className="shrink-0"
-                  onClick={() => setBulkConfirmOpen(true)}
-                  disabled={selectedCount === 0}
-                  aria-label="Delete selected drafts"
-                >
-                  <Trash2 className="h-4 w-4 sm:mr-1.5" />
-                  <span className="hidden sm:inline">Delete</span>
-                </Button>
-              </div>
-            </>
-          ) : (
-            <>
-              <SidebarToggle location="page" />
-              <Link to={`/w/${workspaceId}`}>
-                <Button variant="ghost" size="icon" className="h-8 w-8">
-                  <ArrowLeft className="h-4 w-4" />
-                </Button>
-              </Link>
-              <div className="flex items-center gap-2">
-                <FileEdit className="h-5 w-5 text-muted-foreground" />
-                <h1 className="font-semibold">Drafts</h1>
-              </div>
-              {!isLoading && drafts.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="ml-auto"
-                  onClick={enterBatchMode}
-                  aria-label="Select drafts"
-                >
-                  <ListChecks className="h-4 w-4 sm:mr-1.5" />
-                  <span className="hidden sm:inline">Select</span>
-                </Button>
-              )}
-            </>
-          )}
-        </header>
+              <Button
+                variant="destructive"
+                size="sm"
+                className="shrink-0"
+                onClick={() => setBulkConfirmOpen(true)}
+                disabled={selectedCount === 0}
+                aria-label="Delete selected drafts"
+              >
+                <Trash2 className="h-4 w-4 sm:mr-1.5" />
+                <span className="hidden sm:inline">Delete</span>
+              </Button>
+            </div>
+          </header>
+        ) : (
+          <PagePaneHeader
+            workspaceId={workspaceId}
+            back={{ to: `/w/${workspaceId}`, label: "Back to workspace" }}
+            icon={<FileEdit className="h-5 w-5 shrink-0 text-muted-foreground" />}
+            title="Drafts"
+          >
+            {!isLoading && drafts.length > 0 && (
+              <Button variant="ghost" size="sm" onClick={enterBatchMode} aria-label="Select drafts">
+                <ListChecks className="h-4 w-4 sm:mr-1.5" />
+                <span className="hidden sm:inline">Select</span>
+              </Button>
+            )}
+          </PagePaneHeader>
+        )}
         <main
           className="flex-1 overflow-hidden"
           onKeyDown={(e) => {

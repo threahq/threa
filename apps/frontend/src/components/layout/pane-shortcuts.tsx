@@ -4,7 +4,7 @@ import { usePanel, useCurrentPane, usePaneFocusLanding, usePaneShortcutQueue } f
 import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
 import { findVisibleZoneEditor, focusAtEnd } from "@/hooks/use-type-to-focus"
 import { activatePanelTab, closePanelTab, followCurrentPanel } from "@/lib/panel-tabs"
-import { isPagePane } from "@/lib/stream-ids"
+import { isPinnedPagePane } from "@/lib/page-panes"
 import { closeAside } from "@/stores/aside-store"
 
 type PaneAction =
@@ -103,7 +103,8 @@ export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly string[] 
     nextPane: layout.focused === undefined && panes.length > 1,
     previousPane: layout.focused === undefined && panes.length > 1,
     // Only a pane beside others can float; whatever floats can always go back.
-    togglePaneFocus: panes.length > 1 && (layout.focused !== undefined || (panelId !== null && !isPagePane(panelId))),
+    togglePaneFocus:
+      panes.length > 1 && (layout.focused !== undefined || (panelId !== null && !isPinnedPagePane(panelId))),
   }
 
   // The router commits a navigation in a transition, so the URL can be a step

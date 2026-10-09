@@ -812,18 +812,19 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
  * Unified hook for working with both draft and real streams.
  *
  * Provides a consistent interface regardless of whether the stream
- * is a local draft (IndexedDB) or a persisted stream (server).
+ * is a local draft (IndexedDB) or a persisted stream (server). `enabled`
+ * false loads nothing, for a page that shows a stream only on some of its routes.
  */
-export function useStreamOrDraft(workspaceId: string, streamId: string): UseStreamOrDraftReturn {
+export function useStreamOrDraft(workspaceId: string, streamId: string, enabled = true): UseStreamOrDraftReturn {
   const isDraft = isDraftId(streamId)
   const isDmDraft = isDmDraftId(streamId)
   const isScratchpadDraft = isDraft && !isDmDraft
 
   // Call both implementations (React hook rules require consistent hook calls)
   // Each implementation no-ops when not enabled
-  const draftResult = useDraftStream(workspaceId, streamId, isScratchpadDraft)
-  const draftDmResult = useDraftDmStream(workspaceId, streamId, isDmDraft)
-  const realResult = useRealStream(workspaceId, streamId, !isDraft)
+  const draftResult = useDraftStream(workspaceId, streamId, enabled && isScratchpadDraft)
+  const draftDmResult = useDraftDmStream(workspaceId, streamId, enabled && isDmDraft)
+  const realResult = useRealStream(workspaceId, streamId, enabled && !isDraft)
 
   if (isDmDraft) return draftDmResult
   if (isScratchpadDraft) return draftResult

@@ -3,11 +3,8 @@ import type { VirtualizerHandle } from "virtua"
 import { AlertCircle, LayoutGrid, PenLine } from "lucide-react"
 import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { SidebarToggle } from "@/components/layout/sidebar-toggle"
-import { PhonePaneSwitcher, usePhoneHeaderSwipe } from "@/components/panes"
-import { PagePanes } from "@/components/panes/page-panes"
-import { usePreferencesOptional } from "@/contexts"
-import { useTypeToFocus } from "@/hooks"
+import { PagePaneHeader } from "@/components/panes"
+import { usePreferencesOptional, useRevealReady } from "@/contexts"
 import { resolveStreamName } from "@/lib/streams"
 import { localStartOfDayMs } from "@/lib/dates"
 import {
@@ -199,7 +196,6 @@ export function BoardPage() {
 }
 
 function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: BoardLens }) {
-  useTypeToFocus()
   // The board's filters live in the URL (INV-59) — six params, three dimensions
   // × include/exclude, parsed here and rewritten by the filter bar's toggles.
   // Id lists are deduped and capped at the shared server limits so a hand-built
@@ -624,8 +620,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // "Show everything" / the own-post-must-surface baseline is **All**, not the
   // viewer's home: only the widest lens guarantees the author's own card appears
   // (design § "your own action always surfaces"). Explicit `?lens=all` — never
-  // the bare entry alias — with the non-filter query state (an open `?panel=`)
-  // riding along.
+  // the bare entry alias — with the non-filter query state riding along.
   const boardEverything = {
     pathname: `/w/${workspaceId}/board`,
     search: clearFiltersSearch(searchParams.toString()),
@@ -896,7 +891,11 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
 
   const boardColumn = (
     <div className="flex h-full flex-col">
-      <BoardHeader workspaceId={workspaceId} />
+      <PagePaneHeader
+        workspaceId={workspaceId}
+        icon={<LayoutGrid className="h-5 w-5 shrink-0 text-muted-foreground" />}
+        title="Board"
+      />
       <span className="sr-only" role="status" aria-live="polite">
         {newCount > 0 ? `${newCount} ${newCount === 1 ? "update" : "updates"} available` : ""}
       </span>
@@ -972,17 +971,6 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     </div>
   )
 
-  return <PagePanes workspaceId={workspaceId} page={{ node: boardColumn, ready: !loading }} />
-}
-
-/** The board's pane header: always first of a phone's panes, so it keeps the sidebar toggle. */
-function BoardHeader({ workspaceId }: { workspaceId: string }) {
-  return (
-    <header className="relative flex h-12 shrink-0 items-center gap-2 border-b px-4" {...usePhoneHeaderSwipe()}>
-      <SidebarToggle location="page" />
-      <LayoutGrid className="h-5 w-5 shrink-0 text-muted-foreground" />
-      <h1 className="min-w-0 flex-1 truncate font-semibold">Board</h1>
-      <PhonePaneSwitcher workspaceId={workspaceId} />
-    </header>
-  )
+  useRevealReady(!loading)
+  return boardColumn
 }

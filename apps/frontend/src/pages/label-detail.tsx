@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react"
 import { Link, useParams } from "react-router-dom"
-import { ArrowLeft, ChevronRight, Pencil, Tag } from "lucide-react"
+import { ChevronRight, Pencil, Tag } from "lucide-react"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
@@ -11,7 +11,7 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
-import { SidebarToggle } from "@/components/layout"
+import { PagePaneHeader } from "@/components/panes"
 import { LabelGlyph } from "@/components/labels/label-chip"
 import { LabelEditForm } from "@/components/labels/label-edit-form"
 import { MessageItem } from "@/components/message/message-item"
@@ -169,24 +169,18 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-12 items-center gap-2 border-b px-4">
-        <SidebarToggle location="page" />
-        <Link
-          to={`/w/${workspaceId}/labels`}
-          className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 shrink-0")}
-          aria-label="Back to labels"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </Link>
-        <div className="flex min-w-0 items-center gap-2">
-          {label ? (
+      <PagePaneHeader
+        workspaceId={workspaceId}
+        back={{ to: `/w/${workspaceId}/labels`, label: "Back to labels" }}
+        icon={
+          label ? (
             <LabelGlyph label={label} className="h-5 w-5 text-sm" fallback="tag" />
           ) : (
             <Tag className="h-5 w-5 shrink-0 text-muted-foreground" />
-          )}
-          <h1 className="truncate font-semibold">{label?.name ?? "Label"}</h1>
-        </div>
-      </header>
+          )
+        }
+        title={label?.name ?? "Label"}
+      />
 
       {/* Force the Radix viewport's display:table wrapper to block/full-width so
           descendant `truncate` clips at the viewport instead of letting a long
