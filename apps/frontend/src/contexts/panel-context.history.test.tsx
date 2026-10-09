@@ -6,7 +6,7 @@ import * as mobile from "@/hooks/use-mobile"
 import * as contexts from "@/contexts"
 import { StreamPickProvider, useStreamPick } from "@/components/layout/sidebar/stream-pick"
 import { navigateAfterShareHandoff } from "@/lib/share-navigation"
-import { formatPanelLayout } from "@/lib/panel-tabs"
+import { formatPanelLayout, keepPanelParamReadable } from "@/lib/panel-tabs"
 import { DisplayedPanelLayoutProvider, PanelProvider, PaneScope, useCurrentPane, usePanel } from "./panel-context"
 
 /**
@@ -41,6 +41,7 @@ function mount(initialEntries: string[], probe = <Probe />) {
     ],
     { initialEntries, initialIndex: initialEntries.length - 1 }
   )
+  keepPanelParamReadable(router)
   render(<RouterProvider router={router} />)
   const back = async () => {
     await act(async () => {
@@ -150,7 +151,7 @@ function TabsProbe() {
   const location = useLocation()
   return (
     <div>
-      <span data-testid="loc">{decodeURIComponent(`${location.pathname}${location.search}`)}</span>
+      <span data-testid="loc">{`${location.pathname}${location.search}`}</span>
       <span data-testid="front">{useCurrentPane()}</span>
       <span data-testid="layout">{formatPanelLayout(layout)}</span>
       <button onClick={() => setCurrentPane("stream_main")}>work in stream_main</button>
