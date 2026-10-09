@@ -147,7 +147,7 @@ describe("panel history", () => {
 /** Each open tab as the stream page renders it: scoped, with its own close, an
  *  in-place breadcrumb, and its strip link. */
 function TabsProbe() {
-  const { layout, getPanelUrl, getTabUrl, setCurrentPane, reopenTab, closeTabs } = usePanel()
+  const { layout, getPanelUrl, getTabUrl, setCurrentPane, reopenTab, closeTabs, openPanel } = usePanel()
   const location = useLocation()
   return (
     <div>
@@ -161,6 +161,7 @@ function TabsProbe() {
       <button onClick={() => setCurrentPane("page:board")}>work in page:board</button>
       <button onClick={() => setCurrentPane("page:persona")}>work in page:persona</button>
       <button onClick={() => reopenTab()}>reopen tab</button>
+      <button onClick={() => openPanel("conv:c")}>open conv:c</button>
       <button onClick={() => closeTabs(["stream_a", "conv:c"])}>close stream_a and conv:c</button>
       <button onClick={() => closeTabs(["stream_main", "stream_a", "conv:c"])}>close every tab</button>
       <Link to={getPanelUrl("stream_b")}>open b</Link>
@@ -652,6 +653,19 @@ describe("panel tabs history on a phone", () => {
     cleanup()
     mountPhone(["/w/ws/board?panel=page:board-conv:c"])
     expect(front()).toBe("page:board")
+  })
+
+  it("should bring a pane that is already open in front when it opens again, adding no entry once it is", async () => {
+    const { user, loc, back } = mountPhone(["/w/ws/board", "/w/ws/board?panel=page:board-conv:c"])
+    expect(front()).toBe("page:board")
+
+    await user.click(screen.getByRole("button", { name: "open conv:c" }))
+    expect({ loc: loc(), front: front() }).toEqual({ loc: "/w/ws/board?panel=conv:c", front: "conv:c" })
+    await user.click(screen.getByRole("button", { name: "open conv:c" }))
+    expect(loc()).toBe("/w/ws/board?panel=conv:c")
+
+    await back()
+    expect(loc()).toBe("/w/ws/board?panel=page:board-conv:c")
   })
 
   it("should stop writing the board when a switch leaves it", async () => {

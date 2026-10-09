@@ -411,7 +411,11 @@ function buildValue(
     openPanel: (panelId, options) =>
       options?.replace
         ? ops.open((current) => supersede(current, panelId), true)
-        : ops.open((current) => ops.contextual(current, panelId, scopeId), false),
+        : ops.open(
+            (current) => ops.contextual(current, panelId, scopeId),
+            false,
+            panelIdsOf(ops.layout).includes(panelId) ? panelId : null
+          ),
     openAtMessage: (streamId, messageId, closeOwn) =>
       ops.open(
         (current) => {
@@ -680,9 +684,11 @@ export function PanelProvider({ children }: PanelProviderProps) {
       if (focus !== null) setFront(focus)
       const params = withLayout(searchParams, next, to.path, coverOwner, to.keepsPath)
       if (deepLink !== null) params.set("m", deepLink)
-      navigate(hrefOf(to.pathname, params), { replace })
+      const href = hrefOf(to.pathname, params)
+      // Opening what is already on show adds no entry for Back to step through.
+      navigate(href, { replace: replace || href === hrefOf(location.pathname, searchParams) })
     },
-    [layout, targetOf, setFront, searchParams, coverOwner, navigate]
+    [layout, targetOf, setFront, searchParams, coverOwner, navigate, location.pathname]
   )
 
   const closedTabs = useRef<string[]>([])
