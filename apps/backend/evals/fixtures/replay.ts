@@ -225,6 +225,7 @@ export async function startReplayPipeline(deps: {
 
   const waitIdle = async (streamId: string | null): Promise<void> => {
     const deadline = Date.now() + DRAIN_TIMEOUT_MS
+    signal.throwIfAborted()
     while (!(await isIdle(streamId))) {
       signal.throwIfAborted()
       if (Date.now() > deadline) {
