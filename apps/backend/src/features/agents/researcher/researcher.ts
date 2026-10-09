@@ -46,6 +46,7 @@ import {
   WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
   WORKSPACE_AGENT_MAX_ROOM_RESULTS_PER_SEARCH,
   WORKSPACE_AGENT_MAX_SOURCES_PER_MEMO,
+  WORKSPACE_AGENT_MAX_THREAD_RESULTS_PER_SEARCH,
   WORKSPACE_AGENT_PLANNER_TIMEOUT_MS,
   WORKSPACE_AGENT_SYSTEM_PROMPT,
 } from "./config"
@@ -1042,7 +1043,34 @@ Respond with:
               )
             : []
 
-        const filteredSearchResults = [...workspaceResults, ...roomResults]
+        const primaryResults = [...workspaceResults, ...roomResults]
+        const hitStreams = await StreamRepository.findByIds(client, workspaceId, [
+          ...new Set(primaryResults.map((result) => result.streamId)),
+        ])
+        // A hit that opens a thread, or sits inside one, points at the discussion the question is about. Ranked
+        // against the whole workspace that thread's own replies rarely surface, so it is searched on its own.
+        const anchoredThreads = await StreamRepository.findThreadsByAnchorIds(
+          client,
+          workspaceId,
+          primaryResults.map((result) => result.id)
+        )
+        const threadIds = [
+          ...new Set(
+            [...hitStreams, ...anchoredThreads]
+              .filter((stream) => stream.type === StreamTypes.THREAD)
+              .map((stream) => stream.id)
+          ),
+        ]
+        const threadResults =
+          threadIds.length > 0
+            ? await search(
+                threadIds,
+                WORKSPACE_AGENT_MAX_THREAD_RESULTS_PER_SEARCH,
+                new Set([...excludedMessageIds, ...primaryResults.map((result) => result.id)])
+              )
+            : []
+
+        const filteredSearchResults = [...primaryResults, ...threadResults]
         const rawResults: RawMessageSearchResult[] = [...filteredSearchResults]
         if (includeSurroundingContext && filteredSearchResults.length > 0) {
           const surroundingBatches = await Promise.all(
@@ -1053,9 +1081,6 @@ Respond with:
           rawResults.push(...surroundingBatches.flat().map(messageAsSearchResult))
 
           // A reply read without the post that opened its thread loses what it is replying to.
-          const hitStreams = await StreamRepository.findByIds(client, workspaceId, [
-            ...new Set(filteredSearchResults.map((result) => result.streamId)),
-          ])
           const rootMessageIds = hitStreams.flatMap((stream) =>
             stream.type === StreamTypes.THREAD && stream.parentAnchorId ? [stream.parentAnchorId] : []
           )

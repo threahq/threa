@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, test, mock, spyOn } from "bun:test"
 import { WorkspaceAgent, type WorkspaceAgentDeps, type WorkspaceAgentInput } from "./researcher"
-import { WORKSPACE_AGENT_MAX_PLANNED_QUERIES } from "./config"
+import {
+  WORKSPACE_AGENT_MAX_PLANNED_QUERIES,
+  WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
+  WORKSPACE_AGENT_MAX_THREAD_RESULTS_PER_SEARCH,
+} from "./config"
 import { buildBaselineQueries, type BaselineQuery } from "./query/baseline-queries"
 import type { Pool } from "pg"
 import { SearchRepository } from "../../search"
@@ -497,5 +501,35 @@ describe("WorkspaceAgent searchMessages workspace scope", () => {
 
     expect(hybridSearch.mock.calls.map(([, params]) => params.workspaceId)).toEqual(["ws_1"])
     expect(fullTextSearch.mock.calls.map(([, params]) => params.workspaceId)).toEqual(["ws_1"])
+  })
+
+  test("searches inside the threads the hits open or sit in, skipping the hits themselves", async () => {
+    const hit = (id: string, streamId: string) => ({
+      id,
+      streamId,
+      content: "launch date moved",
+      authorId: "user_1",
+      authorType: "user" as const,
+      createdAt: new Date("2026-01-01T00:00:00Z"),
+    })
+    const hybridSearch = spyOn(SearchRepository, "hybridSearch")
+      .mockResolvedValueOnce([hit("msg_anchor", "stream_1"), hit("msg_reply", "stream_thread_b")] as never)
+      .mockResolvedValue([])
+    spyOn(StreamRepository, "findByIds").mockResolvedValue([
+      { id: "stream_1", type: "channel", parentAnchorId: null },
+      { id: "stream_thread_b", type: "thread", parentAnchorId: "msg_other" },
+    ] as Stream[])
+    spyOn(StreamRepository, "findThreadsByAnchorIds").mockResolvedValue([
+      { id: "stream_thread_a", type: "thread", parentAnchorId: "msg_anchor" },
+    ] as Stream[])
+
+    await searchMessages([0.1])
+
+    expect(hybridSearch.mock.calls.map(([, params]) => ({ streamIds: params.streamIds, limit: params.limit }))).toEqual(
+      [
+        { streamIds: ["stream_1"], limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH },
+        { streamIds: ["stream_thread_b", "stream_thread_a"], limit: WORKSPACE_AGENT_MAX_THREAD_RESULTS_PER_SEARCH + 2 },
+      ]
+    )
   })
 })
