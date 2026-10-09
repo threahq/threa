@@ -15,7 +15,7 @@ async function post(page: Page, workspaceId: string, streamId: string, content: 
   return ((await response.json()) as { message: { id: string } }).message.id
 }
 
-async function seedThreads(page: Page, count: number) {
+async function seedThreads(page: Page, count: number, title = (index: number) => `parent number ${index + 1}`) {
   await loginAndCreateWorkspace(page, "panel-header")
   await createChannel(page, `header-${Date.now().toString(36)}`)
   const url = page.url()
@@ -23,7 +23,7 @@ async function seedThreads(page: Page, count: number) {
   const streamId = url.match(/\/s\/([^/?]+)/)![1]
   const threads: string[] = []
   for (let index = 0; index < count; index++) {
-    const parentId = await post(page, workspaceId, streamId, `parent number ${index + 1}`)
+    const parentId = await post(page, workspaceId, streamId, title(index))
     const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
       data: { type: "thread", parentStreamId: streamId, parentAnchorId: parentId },
     })
@@ -216,7 +216,9 @@ test("should keep the tab on show, its close and +N in a split section at its na
 
 test("should show as many tabs as fit at their minimum width, whichever is on show", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
-  const { workspaceId, streamId, threads } = await seedThreads(page, 6)
+  const title = (index: number) =>
+    index % 2 === 0 ? `p${index + 1}` : `a much longer parent message, number ${index + 1}`
+  const { workspaceId, streamId, threads } = await seedThreads(page, 6, title)
   await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threads.join(".")}`)
   await expect(tabPane(page, threads[5]).getByText("reply in thread 6")).toBeVisible({ timeout: 30_000 })
   const strip = page.getByRole("navigation", { name: "Panel tabs" })
@@ -230,23 +232,24 @@ test("should show as many tabs as fit at their minimum width, whichever is on sh
         room: el.getBoundingClientRect().width,
         shown: tabs.length,
         narrowest: Math.min(...tabs.map((tab) => tab.getBoundingClientRect().width)),
+        active: el.querySelector('[aria-current="page"]')!.parentElement!.getBoundingClientRect().width,
         overflows: el.scrollWidth > el.clientWidth,
       }
     })
 
   const counts: number[] = []
   for (let index = 0; index < threads.length; index++) {
-    const title = `parent number ${index + 1}`
-    const link = strip.getByRole("link", { name: title })
+    const link = strip.getByRole("link", { name: title(index), exact: true })
     if ((await link.count()) > 0) await link.click()
     else {
       await more.click()
-      await page.getByRole("menuitem", { name: title }).click()
+      await page.getByRole("menuitem", { name: title(index), exact: true }).click()
     }
-    await expect(strip.locator('[aria-current="page"]')).toHaveText(title)
-    const { room, shown, narrowest, overflows } = await row()
+    await expect(strip.locator('[aria-current="page"]')).toHaveText(title(index))
+    const { room, shown, narrowest, active, overflows } = await row()
     expect(overflows).toBe(false)
     expect(narrowest).toBeGreaterThanOrEqual(95.5)
+    expect(active).toBeGreaterThanOrEqual(95.5)
     // As many as fit beside "+N" at 96px each.
     expect(shown).toBe(Math.floor((room - 48) / 96))
     counts.push(shown)

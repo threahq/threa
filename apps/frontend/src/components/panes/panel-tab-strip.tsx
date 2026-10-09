@@ -117,7 +117,9 @@ export function PanelTabStrip({
                 className={cn(
                   "group relative flex items-center",
                   !active && "min-w-24 max-w-48 shrink",
-                  active && "min-w-0 max-w-56 shrink",
+                  active && "max-w-56 shrink",
+                  // The tab on show keeps the others' floor, short of room for it beside "+N".
+                  active && (folded.length > 0 ? "min-w-[min(6rem,calc(100%_-_3rem))]" : "min-w-[min(6rem,100%)]"),
                   active && "after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full",
                   active && (isCurrent ? "after:bg-primary" : "after:bg-muted-foreground/40")
                 )}
@@ -148,7 +150,7 @@ export function PanelTabStrip({
                     !active && "text-muted-foreground hover:text-foreground"
                   )}
                 >
-                  <span className="truncate">
+                  <span data-tab-title className="truncate">
                     <PanelTabTitle workspaceId={workspaceId} panelId={id} />
                   </span>
                 </Link>
@@ -325,7 +327,7 @@ function usePanelTabFit(
 
 /** The tab's width were it not shrunk to fit: its title untruncated, up to its own max width. */
 function naturalTabWidth(tab: HTMLElement): number {
-  const title = tab.querySelector<HTMLElement>(".truncate")
+  const title = tab.querySelector<HTMLElement>("[data-tab-title]")
   const width = tab.getBoundingClientRect().width + (title ? title.scrollWidth - title.clientWidth : 0)
   return Math.min(width, parseFloat(getComputedStyle(tab).maxWidth) || width)
 }
