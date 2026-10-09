@@ -438,6 +438,8 @@ async function runPermutation<TInput, TOutput, TExpected>(
         `measure the models and its numbers must not be compared — top up the key's limit and re-run.`
     )
   }
+  // The guard can stop during the last case, which then scored refused calls rather than the model.
+  spend.signal.throwIfAborted()
 
   // A -m override that never executed is a silently-invalid comparison (the
   // exact bug this guard exists for) — fail loudly (INV-11). Suites whose
@@ -719,6 +721,8 @@ export async function runSuite<TInput, TOutput, TExpected>(
     // Create template DB once with migrations
     console.log(`\n${colors.dim}Setting up template database...${colors.reset}`)
     const template = await setupEvalTemplate(suite.name, { simClock: suite.simClock })
+    const spend = options.spend ?? createSpendGuard()
+    const permutationOptions = { ...options, spend }
 
     try {
       // Run permutations in parallel (limited concurrency)
@@ -733,11 +737,18 @@ export async function runSuite<TInput, TOutput, TExpected>(
       }
 
       for (const chunk of chunks) {
-        const results = await Promise.all(
-          chunk.map((permutation) => runPermutationIsolated(suite, permutation, template, ai, options))
+        // The first failure stops its siblings, and every one settles so each drops its cloned database.
+        const settled = await Promise.allSettled(
+          chunk.map((permutation) =>
+            runPermutationIsolated(suite, permutation, template, ai, permutationOptions).catch((error: unknown) => {
+              spend.stop(error instanceof Error ? error : new Error(String(error)))
+              throw error
+            })
+          )
         )
-
-        permutationResults.push(...results)
+        const failure = settled.find((result) => result.status === "rejected")
+        if (failure) throw failure.reason
+        permutationResults.push(...settled.flatMap((result) => (result.status === "fulfilled" ? [result.value] : [])))
       }
     } finally {
       await template.cleanup()
