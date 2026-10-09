@@ -48,6 +48,8 @@ const scrim = (page: Page) => page.getByTestId("pane-focus-scrim")
 const ghost = (page: Page) => page.getByTestId("pane-focus-ghost")
 const mainPane = (page: Page) => page.locator('[data-editor-zone="main"]')
 const inertMain = (page: Page) => page.locator('[inert]:has([data-editor-zone="main"])')
+const sidebar = (page: Page) => page.getByRole("navigation", { name: "Sidebar navigation" })
+const inertSidebar = (page: Page) => page.locator('[inert]:has([aria-label="Sidebar navigation"])')
 
 async function unreadCount(page: Page, workspaceId: string, streamId: string): Promise<number> {
   const response = await page.request.get(`/api/workspaces/${workspaceId}/bootstrap`)
@@ -79,12 +81,11 @@ test("should float a tab over the page and put it back, keeping its draft", asyn
   await expect.poll(() => route(page)).toEqual({ stream: b, panel: `${streamId}-${a}--${b}**` })
   await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", b)
   await expect(composer(page, b)).toHaveText("half a thought")
-  // It floats over the main view too, inset from the page's edges, below the tab bars along the top.
+  // It floats over the whole shell, sidebar and headers too, inset from the window's edges.
   const floating = (await floatingPane(page).boundingBox())!
-  expect(floating.x).toBeLessThan(main.x + main.width / 2)
+  expect(floating.x).toBeLessThan(main.x)
   expect(floating.x + floating.width).toBeGreaterThan(before.x + before.width - 30)
   expect(floating.y).toBeLessThan(before.y)
-  expect(floating.y).toBeGreaterThanOrEqual(main.y)
   expect(floating.height).toBeGreaterThan(before.height * 1.5)
   await expect(tabPane(page, b).getByText("reply in thread 2", { exact: true })).toBeVisible()
   // A ghost holds its cell, and everything under it is out of reach.
@@ -161,6 +162,42 @@ test("should keep a floating tab across a reload and put it back from the scrim 
   await tabPane(page, a).getByRole("navigation", { name: "Panel tabs" }).locator('[aria-current="page"]').click()
   await expect.poll(() => route(page)).toEqual({ stream: a, panel: `${streamId}-${a}*.${b}` })
   await expect(floatingPane(page)).toHaveCount(0)
+})
+
+test("should float a tab over the sidebar, out of its reach, and follow the tab brought forward", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId, threads } = await seedThreads(page, 2)
+  const [a, b] = threads
+  await openPanels(page, workspaceId, streamId, `${a}**.${b}`, 1)
+  await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", a)
+
+  const sidebarBox = (await sidebar(page).boundingBox())!
+  const floating = (await floatingPane(page).boundingBox())!
+  expect(floating.x).toBeLessThan(sidebarBox.x + sidebarBox.width / 2)
+  const hits = await page.evaluate(
+    ({ x, y }) => {
+      const hit = (px: number) => document.elementFromPoint(px, y)
+      return {
+        overSidebar: hit(x)?.closest("[data-focused-pane]")?.getAttribute("data-panel-tab") ?? null,
+        besideFloat: hit(4)?.getAttribute("data-testid") ?? null,
+      }
+    },
+    { x: sidebarBox.x + sidebarBox.width / 2, y: sidebarBox.y + sidebarBox.height / 2 }
+  )
+  expect(hits).toEqual({ overSidebar: a, besideFloat: "pane-focus-scrim" })
+  await expect(inertSidebar(page)).toHaveCount(1)
+
+  // Bringing the other tab of its section forward keeps the float, now on that tab.
+  await tabPane(page, a).getByRole("navigation", { name: "Panel tabs" }).locator('a:not([aria-current="page"])').click()
+  await expect.poll(() => panelParam(page)).toBe(`${streamId}-${a}.${b}**`)
+  await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", b)
+  await expect(tabPane(page, b).getByText("reply in thread 2", { exact: true })).toBeVisible()
+
+  // The scrim over the sidebar puts it back and hands the sidebar back.
+  await scrim(page).click({ position: { x: 4, y: sidebarBox.y + sidebarBox.height / 2 } })
+  await expect.poll(() => panelParam(page)).toBe(`${streamId}-${a}.${b}`)
+  await expect(floatingPane(page)).toHaveCount(0)
+  await expect(inertSidebar(page)).toHaveCount(0)
 })
 
 test("should toggle focus with Alt+Enter from the composer without sending", async ({ page }) => {
