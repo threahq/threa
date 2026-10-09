@@ -2,6 +2,13 @@ export { PaneHost, Pane, PANE_TRANSITION_MS, usePaneCovered } from "./pane-host"
 export { PanelTabStrip, PanelTabTitle, usePanelCloseFocusLanding } from "./panel-tab-strip"
 export { PaneFocusContext, PaneFocusToggle, usePaneFocusEscape, type PaneFocus, type PaneMapCell } from "./pane-focus"
 export { ComposeSlotsProvider, useComposeSlot, useProvideComposeSlot, type ComposeSlot } from "./compose-slots"
-export { PaneDropContext, PaneDropIndicator, paneDropZone, usePaneDrop, usePaneDropState } from "./pane-drop"
+export {
+  PaneDropContext,
+  PaneDropIndicator,
+  paneDropZone,
+  usePaneDragHandle,
+  usePaneDrop,
+  usePaneDropState,
+} from "./pane-drop"
 export { usePaneSplitActions } from "./panel-tab-menu"
 export { PhonePaneLeading, PhonePaneSwitcher, usePhoneHeaderSwipe } from "./phone-pane-header"

@@ -26,9 +26,9 @@ export const PaneFocusContext = createContext<PaneFocus | null>(null)
 /** Floats this tab's pane over the rest, or, while it floats, puts it back where the map shows. */
 export function PaneFocusToggle() {
   const focus = useContext(PaneFocusContext)
-  const { panelId, focusTab } = usePanel()
+  const { panelId, shownPanes, focusTab } = usePanel()
   const { preferences } = usePreferences()
-  if (!focus || !panelId) return null
+  if (!focus || !panelId || (shownPanes < 2 && focus.focused !== panelId)) return null
   const binding = getEffectiveKeyBinding("togglePaneFocus", preferences?.keyboardShortcuts ?? {})
 
   if (focus.focused !== panelId) {

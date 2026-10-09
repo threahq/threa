@@ -50,6 +50,7 @@ test("should open two cards as two tabs beside the board and land on the bare bo
   await openers(page).first().click()
   await expect.poll(() => panelParam(page)).toMatch(/^conv:[^.]+$/)
   const first = panelParam(page)!
+  await expect(page.locator(`[data-panel-tab="${first}"]`)).toBeVisible()
   await openers(page).nth(1).click()
   await expect.poll(() => panelParam(page)).toMatch(new RegExp(`^${first}\\.conv:[^.]+$`))
   const second = panelParam(page)!.split(".")[1]

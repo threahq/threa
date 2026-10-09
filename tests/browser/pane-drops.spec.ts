@@ -115,9 +115,20 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
     panel: `${streamA}-${streamB}--${streamC}`,
   })
 
-  // C's tab onto B's strip, ahead of B: one section again, C on show.
-  await drag(page, tabLink(page, streamC, streamC), await at(tabLink(page, streamB, streamB), 0.1, 0.5), async () => {
-    await expect(tabPane(page, streamB).getByTestId("strip-drop-caret")).toBeVisible()
+  // C's header onto B's centre: one section, which needs its tab row.
+  await drag(
+    page,
+    tabPane(page, streamC).locator("[data-pane-drag-handle]"),
+    await at(tabPane(page, streamB), 0.5, 0.5),
+    async () => {
+      await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "centre")
+    }
+  )
+  await expect.poll(() => panelParam(page)).toBe(`${streamA}-${streamB}.${streamC}`)
+
+  // C's tab onto B's tab, ahead of it: C on show.
+  await drag(page, tabLink(page, streamC, streamC), await at(tabLink(page, streamC, streamB), 0.1, 0.5), async () => {
+    await expect(tabPane(page, streamC).getByTestId("strip-drop-caret")).toBeVisible()
   })
   await expect.poll(() => panelParam(page)).toBe(`${streamA}-${streamC}*.${streamB}`)
   await expect(tabPane(page, streamC).getByText("said in c")).toBeVisible()

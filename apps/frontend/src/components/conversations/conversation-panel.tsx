@@ -108,6 +108,7 @@ import {
   PhonePaneLeading,
   PhonePaneSwitcher,
   usePaneCovered,
+  usePaneDragHandle,
   usePanelCloseFocusLanding,
   usePhoneHeaderSwipe,
 } from "@/components/panes"
@@ -229,9 +230,10 @@ function ConversationPanelHeader({
   const [menuOpen, setMenuOpen] = useState(false)
   const title = effectiveTitle ?? "Untitled conversation"
   const resolved = post?.conversation.status === "resolved"
-  const { tabbed } = usePanel()
+  const { tabbed, canClosePanel } = usePanel()
   const closeRef = usePanelCloseFocusLanding()
   const headerSwipe = usePhoneHeaderSwipe()
+  const dragHandle = usePaneDragHandle(workspaceId, title, !tabbed)
   const splitActions = usePaneSplitActions()
   // On touch the identity line IS the actions trigger, as the stream header's
   // name is. The header is `relative` so the press-and-hold name overlay, which
@@ -270,7 +272,7 @@ function ConversationPanelHeader({
     )
   } else {
     titleArea = (
-      <div className="flex min-w-0 flex-1 items-center gap-1.5">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5" {...dragHandle}>
         {revealed ? (
           <StreamTitlePreview name={title}>
             <span className="flex min-w-0 flex-1 items-center gap-1.5">{identity}</span>
@@ -323,7 +325,7 @@ function ConversationPanelHeader({
         <div className="h-8 w-8 shrink-0" />
       )}
       <PaneFocusToggle />
-      {!isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />}
+      {!isMobile && !tabbed && canClosePanel && <SidePanelClose onClose={onClose} ref={closeRef} />}
     </SidePanelHeader>
   )
 }
