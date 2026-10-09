@@ -69,9 +69,10 @@ function EmojiGridInner(
 ) {
   const [selectedIndex, setSelectedIndex] = useState(0)
   // Horizontal keys (Left/Right/Home/End) keep moving the caret until a vertical
-  // one commits to the grid; every suggestion update (typing or a caret move)
-  // hands them back to the caret.
-  const [inGrid, setInGrid] = useState(false)
+  // one commits to the grid. Grid mode is pinned to the result set it was entered
+  // on, so every suggestion update (typing or a caret move) hands them back.
+  const [gridFor, setGridFor] = useState<EmojiEntry[] | null>(null)
+  const inGrid = gridFor === all
   const virtuosoRef = useRef<VirtuosoHandle>(null)
   const rangeRef = useRef<{ startIndex: number; endIndex: number } | null>(null)
 
@@ -94,13 +95,9 @@ function EmojiGridInner(
 
   useEffect(() => {
     setSelectedIndex(0)
-    if (total > 0) {
+    if (all.length > 0) {
       virtuosoRef.current?.scrollToIndex({ index: 0 })
     }
-  }, [total])
-
-  useEffect(() => {
-    setInGrid(false)
   }, [all])
 
   const scrollAllRowIfNeeded = (allRow: number) => {
@@ -169,7 +166,7 @@ function EmojiGridInner(
           if (horizontal && !inGrid) return false
           // Left off the first cell is the caret asking to leave the `:`.
           if (event.key === "ArrowLeft" && selectedIndex === 0) return false
-          setInGrid(true)
+          setGridFor(all)
           event.preventDefault()
           const next = moveSelection(selectedIndex, event.key, geometry)
           if (next !== selectedIndex) {
@@ -194,7 +191,7 @@ function EmojiGridInner(
           return true
         }
         case "PageUp": {
-          setInGrid(true)
+          setGridFor(all)
           event.preventDefault()
           const coord = indexToCoord(selectedIndex, geometry)
           if (coord.section === "all") {
@@ -206,7 +203,7 @@ function EmojiGridInner(
           return true
         }
         case "PageDown": {
-          setInGrid(true)
+          setGridFor(all)
           event.preventDefault()
           const coord = indexToCoord(selectedIndex, geometry)
           if (coord.section === "all") {

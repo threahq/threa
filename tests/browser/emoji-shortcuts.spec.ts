@@ -176,8 +176,6 @@ test.describe("Emoji Shortcuts", () => {
 
     await page.keyboard.press("ArrowRight")
     await expect(buttons.nth(DESKTOP_GRID_COLUMNS + 1)).toHaveAttribute("data-selected", "true")
-    const picked = (await buttons.nth(DESKTOP_GRID_COLUMNS + 1).textContent())?.trim() ?? ""
-    expect(picked).toMatch(EMOJI_RE)
 
     await page.keyboard.press("ArrowLeft")
     await expect(buttons.nth(DESKTOP_GRID_COLUMNS)).toHaveAttribute("data-selected", "true")
@@ -225,12 +223,13 @@ test.describe("Emoji Shortcuts", () => {
     await expect(editor).toHaveText(":smile")
     await expect(page.locator("[data-emoji-grid]")).toBeVisible()
 
-    // End is still the caret's: back to the end of the query, then Enter picks
+    // End is still the caret's: back to the end of the query, the grid narrows to it
     await page.keyboard.press("End")
+    await expect(page.locator("[data-emoji-grid]")).toContainText(":smile:")
+    const picked = (await page.locator("[data-emoji-grid] button").first().textContent())?.trim() ?? ""
     await page.keyboard.press("Enter")
     await expect(page.locator("[data-emoji-grid]")).not.toBeVisible()
-    await expect(editor).toContainText(EMOJI_RE)
-    await expect(editor).not.toContainText("smile")
+    await expect(editor).toHaveText(picked)
   })
 
   test("arrowing through existing text never opens the grid at a colon", async ({ page }) => {
