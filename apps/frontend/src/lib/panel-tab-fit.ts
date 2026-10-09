@@ -3,6 +3,11 @@ export const MIN_TAB_WIDTH = 96
 /** The "+N" menu trigger's footprint. */
 export const MORE_TABS_WIDTH = 48
 
+/** The room a row of `tabs` needs to show two of them, beside "+N" when more are folded. */
+export function tabRowReserve(tabs: number): number {
+  return Math.min(tabs, 2) * MIN_TAB_WIDTH + (tabs > 2 ? MORE_TABS_WIDTH : 0)
+}
+
 export interface PanelTabFit {
   labels: boolean
   /** How many tabs show in the row; the rest are in the "+N" menu. */

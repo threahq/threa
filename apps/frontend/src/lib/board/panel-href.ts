@@ -1,5 +1,4 @@
 import { createConversationPanelId } from "@/contexts"
-import { readablePanelParam } from "@/lib/panel-tabs"
 
 /**
  * The one authority for a conversation-panel deep link (INV-35): the anchor
@@ -14,7 +13,7 @@ export function conversationPanelHref(
   anchorStreamId: string | null,
   stashDraftId?: string
 ): string {
-  const panelParam = readablePanelParam(`panel=${encodeURIComponent(createConversationPanelId(conversationId))}`)
+  const panelParam = `panel=${createConversationPanelId(conversationId)}`
   const base = anchorStreamId
     ? `/w/${workspaceId}/s/${anchorStreamId}?${panelParam}`
     : `/w/${workspaceId}/board?${panelParam}`

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { fitPanelTabs, MIN_TAB_WIDTH, MORE_TABS_WIDTH, splitVisibleTabs } from "./panel-tab-fit"
+import { fitPanelTabs, MIN_TAB_WIDTH, MORE_TABS_WIDTH, splitVisibleTabs, tabRowReserve } from "./panel-tab-fit"
 
 describe("fitPanelTabs", () => {
   const active = 180
@@ -53,5 +53,13 @@ describe("splitVisibleTabs", () => {
 
   it("should show every tab when they all fit", () => {
     expect(splitVisibleTabs(ids, "c", 4)).toEqual({ shown: ids, folded: [] })
+  })
+})
+
+describe("tabRowReserve", () => {
+  it("should leave a row of more than two tabs room to show two of them beside +N", () => {
+    for (const tabs of [2, 3, 6]) {
+      expect(fitPanelTabs(tabRowReserve(tabs), tabs, 2 * MIN_TAB_WIDTH, 60).visible).toBe(2)
+    }
   })
 })

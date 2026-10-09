@@ -121,6 +121,7 @@ test("should fold the labels, then trailing tabs into +N, as the panel narrows w
     await expect(strip.locator('[aria-current="page"]')).toBeVisible()
     // The view icon gives way only once the row is down to two tabs.
     if (row.shown > 2) await expect(pane.getByRole("button", { name: "In this stream" })).toBeVisible()
+    if (row.shown < 2) await expect(pane.getByRole("button", { name: "In this stream" })).toBeHidden()
     expect(await menuOffset()).toBe(offset)
     seen.add(`${row.labels ? "labels" : "no-labels"}:${row.shown}`)
   }
@@ -230,7 +231,6 @@ test("should show as many tabs as fit at their minimum width, whichever is on sh
         room: el.getBoundingClientRect().width,
         shown: tabs.length,
         narrowest: Math.min(...tabs.map((tab) => tab.getBoundingClientRect().width)),
-        active: el.querySelector('[aria-current="page"]')!.parentElement!.getBoundingClientRect().width,
         overflows: el.scrollWidth > el.clientWidth,
       }
     })
@@ -244,10 +244,9 @@ test("should show as many tabs as fit at their minimum width, whichever is on sh
       await page.getByRole("menuitem", { name: title(index), exact: true }).click()
     }
     await expect(strip.locator('[aria-current="page"]')).toHaveText(title(index))
-    const { room, shown, narrowest, active, overflows } = await row()
+    const { room, shown, narrowest, overflows } = await row()
     expect(overflows).toBe(false)
     expect(narrowest).toBeGreaterThanOrEqual(95.5)
-    expect(active).toBeGreaterThanOrEqual(95.5)
     // As many as fit beside "+N" at 96px each.
     expect(shown).toBe(Math.floor((room - 48) / 96))
     counts.push(shown)
