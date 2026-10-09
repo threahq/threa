@@ -99,6 +99,7 @@ export function PersonaEditorPage() {
     )
   }
 
+  const configSettled = !!error || (!isLoading && !!config)
   const editor = (
     <div className="flex h-full flex-col">
       <PersonaEditorHeader
@@ -116,8 +117,8 @@ export function PersonaEditorPage() {
   )
 
   return (
-    <PersonaSyncContext.Provider value={draft}>
-      <PagePanes workspaceId={workspaceId} page={editor} />
+    <PersonaSyncContext.Provider value={configSettled ? draft : undefined}>
+      <PagePanes workspaceId={workspaceId} page={{ node: editor, ready: configSettled }} />
     </PersonaSyncContext.Provider>
   )
 }

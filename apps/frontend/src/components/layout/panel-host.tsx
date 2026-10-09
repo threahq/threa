@@ -24,6 +24,8 @@ import {
   InPaneDrawerProvider,
   presentsAsDrawer,
   coverPaneOf,
+  RevealParticipant,
+  useRevealReady,
 } from "@/contexts"
 import { Minimize2 } from "lucide-react"
 import {
@@ -33,6 +35,7 @@ import {
   PanelTabTitle,
   paneDropZone,
   usePaneDrop,
+  usePaneCovered,
   usePaneFocusEscape,
   type PaneMapCell,
 } from "@/components/panes"
@@ -80,12 +83,19 @@ function panelKeyFor(workspaceId: string, panelId: string): string {
   return getDraftPromotionSource(workspaceId, panelId) ?? paneIdentity(panelId)
 }
 
-/** What a route's own `page:` pane shows. */
-export const PagePaneContext = createContext<ReactNode>(null)
+/** A route's own `page:` pane: what it shows, and whether the first reveal can show it yet. */
+export interface PageContent {
+  node: ReactNode
+  ready: boolean
+}
+
+export const PagePaneContext = createContext<PageContent | null>(null)
 
 // Its own component, so a page's re-render reaches only the pane showing it.
 function PagePane() {
-  return useContext(PagePaneContext)
+  const page = useContext(PagePaneContext)
+  useRevealReady(page?.ready ?? true)
+  return page?.node ?? null
 }
 
 interface PanelHostProps {
@@ -110,6 +120,15 @@ interface PanelHostProps {
  */
 export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
   const { panelId } = usePanel()
+  // Every kind's content reports through `useRevealReady`; one that never does holds the first reveal to its cap.
+  return (
+    <RevealParticipant label={panelId ?? "empty pane"} covered={usePaneCovered()}>
+      <PaneContent workspaceId={workspaceId} panelId={panelId} onClose={onClose} className={className} />
+    </RevealParticipant>
+  )
+}
+
+function PaneContent({ workspaceId, panelId, onClose, className }: PanelHostProps & { panelId: string | null }) {
   if (panelId && isPagePane(panelId)) return <PagePane />
   const composeStreamId = panelId && parseComposePanel(panelId)
   const context = panelId && parseContextPanel(panelId)

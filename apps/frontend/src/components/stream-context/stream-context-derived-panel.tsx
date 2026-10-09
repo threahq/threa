@@ -9,6 +9,7 @@ import { deriveStreamContext } from "@/lib/stream-context/derive"
 import { delegationContextItems, withDelegations } from "@/lib/stream-context/delegations"
 import { followUpContextItems, withFollowUps } from "@/lib/stream-context/follow-ups"
 import { StreamContextRow } from "./stream-context-row"
+import { useRevealReady } from "@/contexts"
 import {
   chipsFromCounts,
   ContextChipRow,
@@ -88,6 +89,7 @@ export function StreamContextDerivedPanel({
     return categories ? items.filter((i) => categories.includes(i.category)) : items
   }, [items, effectiveFilter])
   const isLoading = events === undefined || ((delegationsPending || outcomesQuery.isPending) && visible.length === 0)
+  useRevealReady(!isLoading)
 
   const scrollerRef = useRef<HTMLDivElement | null>(null)
   const listRef = useRef<VirtualizerHandle | null>(null)
