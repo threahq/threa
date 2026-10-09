@@ -45,6 +45,7 @@ import {
   WORKSPACE_AGENT_MAX_PLANNED_QUERIES,
   WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH,
   WORKSPACE_AGENT_MAX_ROOM_RESULTS_PER_SEARCH,
+  WORKSPACE_AGENT_MAX_SOURCES_PER_MEMO,
   WORKSPACE_AGENT_PLANNER_TIMEOUT_MS,
   WORKSPACE_AGENT_SYSTEM_PROMPT,
 } from "./config"
@@ -534,6 +535,11 @@ export class WorkspaceAgent {
         people
       )
     }
+
+    allMessages = mergeMessageResults(
+      allMessages,
+      await this.findMemoSources(pool, allMemos, workspaceId, accessibleStreamIds, roomStreamIds, excludedMessageIds)
+    )
 
     logger.info(
       {
@@ -1123,6 +1129,50 @@ Respond with:
       })
     } catch (error) {
       logger.warn({ error, query: query.query }, "Message search failed")
+      return []
+    }
+  }
+
+  /**
+   * A memo's abstract can say more than any of its messages did, so its newest sources go in beside it and the
+   * answer rests on what people actually wrote.
+   */
+  private async findMemoSources(
+    pool: Pool,
+    memos: EnrichedMemoResult[],
+    workspaceId: string,
+    accessibleStreamIds: string[],
+    roomStreamIds: string[],
+    excludedMessageIds: Set<string>
+  ): Promise<EnrichedMessageResult[]> {
+    // Message ids are ULIDs, so the highest ids are the newest messages.
+    const sourceIds = memos.flatMap(({ memo }) =>
+      memo.sourceMessageIds
+        .filter((id) => !excludedMessageIds.has(id))
+        .sort()
+        .slice(-WORKSPACE_AGENT_MAX_SOURCES_PER_MEMO)
+    )
+    if (sourceIds.length === 0) return []
+
+    try {
+      const sources = await MessageRepository.findByIdsInStreams(
+        pool,
+        workspaceId,
+        [...new Set(sourceIds)],
+        accessibleStreamIds
+      )
+      const enriched = await enrichMessageSearchResults(
+        pool,
+        workspaceId,
+        [...sources.values()].map(messageAsSearchResult)
+      )
+      const room = new Set(roomStreamIds)
+      for (const e of enriched) {
+        if (room.has(e.streamId)) e.inCurrentRoom = true
+      }
+      return enriched
+    } catch (error) {
+      logger.warn({ error, memoCount: memos.length }, "Memo source lookup failed")
       return []
     }
   }
