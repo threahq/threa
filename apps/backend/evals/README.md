@@ -252,6 +252,7 @@ Options:
   -r, --runs <n>        Repeat every case n times, report per-case pass rates
   --min-pass-rate <n>   Pass-rate a case must clear when runs > 1 (default: 1.0)
   --json <file>         Write machine-readable results JSON to <file>
+  --budget <usd>        Stop the run once its model calls have cost this much
   --config <file>       Run from YAML config file
   -v, --verbose         Verbose output
 ```

@@ -71,7 +71,6 @@ export interface GroupMemBenchOutput {
   tier: Tier
   retrievalSteps: number
   recalledMemos: number
-  /** Generation spend only: embeddings are not tracked. */
   costUsd: number
   trajectory: CompanionTrajectoryStep[]
 }
@@ -234,6 +233,7 @@ async function replayChannel(
       clock,
       ai: ctx.ai,
       workspaceId: ctx.workspaceId,
+      signal: ctx.signal,
     })
     try {
       const messages = await seedChannel(ctx, new StreamService(db.pool), channel, userIds, variant)
@@ -290,7 +290,7 @@ export function seedWorkspace(variant: Variant) {
         try {
           const counts = await captureCounts(db.pool, ctx.workspaceId)
           console.log(
-            `  ${channel.name}: ${messageCount} messages into ${counts.conversations} conversations and ${counts.memos} memos (${seconds(Date.now() - startedAt)}); ${result.unprocessedMemoItems} memo items pending, ${counts.abandoned} abandoned, ${result.deadLetteredJobs} jobs and ${result.deadLetteredEvents} outbox events dead-lettered`
+            `  ${channel.name}: ${messageCount} messages into ${counts.conversations} conversations and ${counts.memos} memos (${seconds(Date.now() - startedAt)}); ${result.unprocessedMemoItems} memo items pending, ${counts.abandoned} abandoned, ${result.deadLetteredJobs} jobs and ${result.deadLetteredEvents} outbox events dead-lettered; $${ctx.usage.getTotal().totalCost.toFixed(2)} spent so far`
           )
           // One copy at a time, so rows two channels share are compared against what the first copied.
           const copy = merging.then(() => copyDatabaseRows(ctx.pool, db.connectionString))
@@ -308,6 +308,7 @@ export function seedWorkspace(variant: Variant) {
         return messageCount
       })
     )
+    ctx.signal.throwIfAborted()
     const failed = replays.flatMap((replay) => (replay.status === "rejected" ? [replay.reason] : []))
     if (failed.length > 0)
       throw new AggregateError(failed, `${failed.length} of ${channels.length} channel replays failed`)
@@ -316,7 +317,7 @@ export function seedWorkspace(variant: Variant) {
     const messageCount = replays.reduce((sum, replay) => sum + (replay.status === "fulfilled" ? replay.value : 0), 0)
     const counts = await captureCounts(ctx.pool, ctx.workspaceId)
     console.log(
-      `\n  Replayed ${messageCount} messages in ${channels.length} channels into ${counts.conversations} conversations and ${counts.memos} memos (${seconds(Date.now() - startedAt)}, $${ctx.usage.getTotal().totalCost.toFixed(2)} generation)\n`
+      `\n  Replayed ${messageCount} messages in ${channels.length} channels into ${counts.conversations} conversations and ${counts.memos} memos (${seconds(Date.now() - startedAt)}, $${ctx.usage.getTotal().totalCost.toFixed(2)} spent)\n`
     )
 
     const streams = await ctx.pool.query<{ id: string }>(`SELECT id FROM streams WHERE workspace_id = $1`, [

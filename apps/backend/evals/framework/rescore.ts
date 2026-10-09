@@ -20,7 +20,7 @@
 
 import type { EvalSuite, EvalContext, CaseResult, SuiteResult, PermutationResult } from "./types"
 import type { AI } from "@threahq/agent-runtime"
-import { createUsageAccumulator } from "./types"
+import { createSpendGuard, createUsageAccumulator } from "./types"
 import { createEvalAI, createUsageTrackingAI, printSummary } from "./runner"
 import type { Pool } from "pg"
 
@@ -93,7 +93,8 @@ export async function rescoreReport(
       // without this a throttled rescore produces a full set of plausible,
       // invalid scores.
       const credit = { rejections: 0 }
-      const trackedAi = createUsageTrackingAI(ai, usage, credit)
+      const spend = createSpendGuard()
+      const trackedAi = createUsageTrackingAI(ai, usage, credit, spend)
       const ctx: EvalContext = {
         pool: forbiddenPool(),
         ai: trackedAi,
@@ -101,6 +102,7 @@ export async function rescoreReport(
         userId: "rescore",
         permutation: { model: storedPerm.model, temperature: storedPerm.temperature ?? undefined },
         usage,
+        signal: spend.signal,
         credentials: { webSearchEngines: [] },
         judgeModel: options.judgeModel,
         configResolver: { resolve: async () => ({ modelId: storedPerm.model }) as never },

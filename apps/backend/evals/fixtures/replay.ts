@@ -102,8 +102,10 @@ export async function startReplayPipeline(deps: {
   clock: SimClock
   ai: AI
   workspaceId: string
+  /** Every wait checks it, so an aborted run stops replaying instead of waiting on work that can only fail. */
+  signal: AbortSignal
 }): Promise<ReplayPipeline> {
-  const { pool, clock, ai, workspaceId } = deps
+  const { pool, clock, ai, workspaceId, signal } = deps
 
   const configResolver = createStaticConfigResolver()
   const aiResidency = new WorkspaceAIResidencyPolicy({ pool })
@@ -224,6 +226,7 @@ export async function startReplayPipeline(deps: {
   const waitIdle = async (streamId: string | null): Promise<void> => {
     const deadline = Date.now() + DRAIN_TIMEOUT_MS
     while (!(await isIdle(streamId))) {
+      signal.throwIfAborted()
       if (Date.now() > deadline) {
         throw new Error(`Replay pipeline still busy after ${DRAIN_TIMEOUT_MS}ms (stream ${streamId ?? "all"})`)
       }

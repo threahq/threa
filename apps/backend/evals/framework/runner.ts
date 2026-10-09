@@ -20,15 +20,18 @@ import type {
   SuiteResult,
   RunnerOptions,
 } from "./types"
-import { createUsageAccumulator } from "./types"
+import { createSpendGuard, createUsageAccumulator, type SpendGuard } from "./types"
 import { setupEvalDatabase, setupEvalTemplate, type EvalDatabaseResult, type EvalTemplateResult } from "./database"
 import {
   createAI,
   type AI,
+  type EmbedManyOptions,
+  type EmbedOptions,
   type GenerateDecisionsOptions,
   type GenerateObjectOptions,
   type GenerateTextOptions,
   type GenerateTextWithToolsOptions,
+  type UsageWithCost,
 } from "@threahq/agent-runtime"
 import type { UsageAccumulator } from "./types"
 import { createWorkspaceFixture, loadWorkspaceFixture, type WorkspaceFixture } from "../fixtures/workspace"
@@ -135,50 +138,55 @@ export function isCreditRejection(error: unknown): boolean {
 /**
  * Wrap an AI so every call records its model and usage, and so provider credit
  * rejections are counted rather than swallowed. Pass `credit` wherever a
- * rejection must invalidate the run.
+ * rejection must invalidate the run. With `spend`, calls refuse to start once
+ * it has stopped, and a credit rejection stops it: every later call would be
+ * rejected too.
  */
-export function createUsageTrackingAI(ai: AI, accumulator: UsageAccumulator, credit?: { rejections: number }): AI {
-  const watch = async <T>(call: () => Promise<T>): Promise<T> => {
+export function createUsageTrackingAI(
+  ai: AI,
+  accumulator: UsageAccumulator,
+  credit?: { rejections: number },
+  spend?: SpendGuard
+): AI {
+  const track = async <T extends { usage?: UsageWithCost }>(
+    model: string | undefined,
+    call: () => Promise<T>
+  ): Promise<T> => {
+    spend?.signal.throwIfAborted()
+    if (model) accumulator.recordModel(model)
+    let result: T
     try {
-      return await call()
+      result = await call()
     } catch (error) {
-      if (credit && isCreditRejection(error)) credit.rejections++
+      if (credit && isCreditRejection(error)) {
+        credit.rejections++
+        spend?.stop(new Error("OpenRouter rejected a call for insufficient credit: run stopped", { cause: error }))
+      }
       throw error
     }
+    if (result.usage) {
+      accumulator.recordUsage(result.usage)
+      spend?.add(result.usage.cost ?? 0)
+    }
+    return result
   }
 
   return {
     ...ai,
-    async generateText(options: GenerateTextOptions) {
-      accumulator.recordModel(options.model)
-      const result = await watch(() => ai.generateText(options))
-      accumulator.recordUsage(result.usage)
-      return result
-    },
-    async generateObject<T extends import("zod").ZodType>(options: GenerateObjectOptions<T>) {
-      accumulator.recordModel(options.model)
-      const result = await watch(() => ai.generateObject(options))
-      accumulator.recordUsage(result.usage)
-      return result
-    },
-    async generateDecisions(options: GenerateDecisionsOptions) {
-      accumulator.recordModel(options.model)
-      const result = await watch(() => ai.generateDecisions(options))
-      accumulator.recordUsage(result.usage)
-      return result
-    },
+    generateText: (options: GenerateTextOptions) => track(options.model, () => ai.generateText(options)),
+    generateObject: <T extends import("zod").ZodType>(options: GenerateObjectOptions<T>) =>
+      track(options.model, () => ai.generateObject(options)),
+    generateDecisions: (options: GenerateDecisionsOptions) => track(options.model, () => ai.generateDecisions(options)),
     // The agent loop's own call, and the ONLY one that runs the persona's
     // model. Left unwrapped, an Ariadne model comparison reported neither the
     // tokens nor the cost of the model under test — just its sub-agents and
     // judges — and the "override never executed" guard fired on every run
     // because the model genuinely never appeared. `modelString` is the
     // provider:model id (`options.model` here is a resolved LanguageModel).
-    async generateTextWithTools(options: GenerateTextWithToolsOptions) {
-      if (options.modelString) accumulator.recordModel(options.modelString)
-      const result = await watch(() => ai.generateTextWithTools(options))
-      if (result.usage) accumulator.recordUsage(result.usage)
-      return result
-    },
+    generateTextWithTools: (options: GenerateTextWithToolsOptions) =>
+      track(options.modelString, () => ai.generateTextWithTools(options)),
+    embed: (options: EmbedOptions) => track(options.model, () => ai.embed(options)),
+    embedMany: (options: EmbedManyOptions) => track(options.model, () => ai.embedMany(options)),
   }
 }
 
@@ -314,7 +322,8 @@ async function runPermutation<TInput, TOutput, TExpected>(
 
   // Wrap AI to track usage
   const credit = { rejections: 0 }
-  const trackingAI = createUsageTrackingAI(ai, usageAccumulator, credit)
+  const spend = options.spend ?? createSpendGuard()
+  const trackingAI = createUsageTrackingAI(ai, usageAccumulator, credit, spend)
 
   // Create config resolver with eval overrides applied
   // Base resolver has production defaults; eval resolver applies componentOverrides
@@ -343,6 +352,7 @@ async function runPermutation<TInput, TOutput, TExpected>(
     userId: fixture.userId,
     permutation,
     usage: usageAccumulator,
+    signal: spend.signal,
     credentials: {
       webSearchEngines: createWebSearchEngines({
         exa: process.env.EXA_API_KEY || undefined,
@@ -372,6 +382,7 @@ async function runPermutation<TInput, TOutput, TExpected>(
       console.log(`  ${colors.cyan}— run ${run}/${runs} —${colors.reset}`)
     }
     for (let i = 0; i < casesToRun.length; i++) {
+      spend.signal.throwIfAborted()
       const caseItem = casesToRun[i]
       const caseNum = i + 1
 

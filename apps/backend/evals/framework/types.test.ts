@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { createUsageAccumulator } from "./types"
+import { createSpendGuard, createUsageAccumulator } from "./types"
 
 describe("createUsageAccumulator", () => {
   test("aggregates reasoning tokens with the other eval usage totals", () => {
@@ -14,5 +14,26 @@ describe("createUsageAccumulator", () => {
       reasoningTokens: 5,
       totalCost: 0.03,
     })
+  })
+})
+
+describe("createSpendGuard", () => {
+  test("aborts once spend reaches the budget", () => {
+    const spend = createSpendGuard(1)
+
+    spend.add(0.6)
+    expect(spend.signal.aborted).toBe(false)
+    spend.add(0.4)
+
+    expect(spend.signal.aborted).toBe(true)
+    expect((spend.signal.reason as Error).message).toBe("Spent $1.00, reaching the $1 budget: run stopped")
+  })
+
+  test("never aborts on spend without a budget", () => {
+    const spend = createSpendGuard()
+
+    spend.add(10_000)
+
+    expect(spend.signal.aborted).toBe(false)
   })
 })

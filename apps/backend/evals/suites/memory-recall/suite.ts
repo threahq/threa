@@ -55,7 +55,6 @@ export interface MemoryRecallOutput {
   researchedScenarios: string[]
   /** Whether capture produced any memo from the question's relevant scenarios. */
   relevantCaptured: boolean
-  /** Generation spend only: embeddings are not tracked. */
   costUsd: number
   inputTokens: number
 }
