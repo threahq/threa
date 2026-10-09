@@ -317,7 +317,8 @@ export function ComposerActionBar({
                   size="icon"
                   className={cn(
                     "absolute top-0 h-7 w-7 bg-card opacity-0 pointer-events-none",
-                    "group-hover/expand:opacity-100 group-hover/expand:pointer-events-auto focus-visible:opacity-100 focus-visible:pointer-events-auto",
+                    "group-hover/expand:opacity-100 group-hover/expand:pointer-events-auto",
+                    "group-has-[:focus-visible]/expand:opacity-100 group-has-[:focus-visible]/expand:pointer-events-auto",
                     "[@media(hover:none)]:opacity-100 [@media(hover:none)]:pointer-events-auto",
                     mirrored
                       ? "left-full rounded-l-none border-l border-border/50"
@@ -345,7 +346,9 @@ export function ComposerActionBar({
                   className={cn(
                     "h-7 w-7 shrink-0",
                     expandAction.sideHref !== undefined &&
-                      (mirrored ? "group-hover/expand:rounded-r-none" : "group-hover/expand:rounded-l-none")
+                      (mirrored
+                        ? "group-hover/expand:rounded-r-none group-has-[:focus-visible]/expand:rounded-r-none [@media(hover:none)]:rounded-r-none"
+                        : "group-hover/expand:rounded-l-none group-has-[:focus-visible]/expand:rounded-l-none [@media(hover:none)]:rounded-l-none")
                   )}
                   asChild
                 >
