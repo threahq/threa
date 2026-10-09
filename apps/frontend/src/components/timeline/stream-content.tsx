@@ -2878,7 +2878,7 @@ export function StreamContent({
                     {isDraft && (
                       <div
                         ref={draftScrollRef}
-                        className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain"
+                        className="h-full [scrollbar-gutter:stable] overflow-y-auto overflow-x-hidden overscroll-y-contain"
                         style={{ paddingBottom: "var(--composer-height, 0px)" }}
                       >
                         {hasDraftPendingEvents ? (
@@ -2987,7 +2987,7 @@ export function StreamContent({
                       <div
                         ref={plainScrollRef}
                         className={cn(
-                          "h-full overflow-y-auto overflow-x-hidden overscroll-y-contain",
+                          "h-full [scrollbar-gutter:stable] overflow-y-auto overflow-x-hidden overscroll-y-contain",
                           (isSearchOpen || batchMode) && "pt-11",
                           batchMode && "select-none"
                         )}
