@@ -203,13 +203,18 @@ test("should keep the tab on show, its close and +N in a split section at its na
       await page.keyboard.press(`Shift+${key}`)
     }
     const pane = tabPane(page, narrowed)
+    if (narrowed === lone) {
+      // Alone in its section it has no tab row; its own close stays reachable.
+      await expect(pane.getByRole("button", { name: "Close", exact: true })).toBeInViewport({ ratio: 1 })
+      continue
+    }
     const strip = pane.getByRole("navigation", { name: "Panel tabs" })
     const row = await settledRow(pane)
     expect(row.overflows).toBe(false)
-    expect(row.more).toBe(narrowed === lone ? null : `+${3 - row.shown}`)
+    expect(row.more).toBe(`+${3 - row.shown}`)
     await expect(strip.locator('[aria-current="page"]')).toBeInViewport({ ratio: 1 })
     await expect(strip.getByRole("button", { name: "Close tab" }).last()).toBeInViewport({ ratio: 1 })
-    if (row.more) await expect(strip.getByRole("button", { name: /more tabs?$/ })).toBeInViewport({ ratio: 1 })
+    await expect(strip.getByRole("button", { name: /more tabs?$/ })).toBeInViewport({ ratio: 1 })
   }
 })
 
