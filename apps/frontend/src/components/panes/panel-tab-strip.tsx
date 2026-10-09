@@ -139,7 +139,7 @@ export function PanelTabStrip({
                     setCurrentPane(id)
                     if (active) {
                       event.preventDefault()
-                      if (paneFocus?.focused === id) focusTab(null)
+                      if (paneFocus?.focused.includes(id)) focusTab(null)
                     } else handOffFocus(id)
                   }}
                   aria-current={active ? "page" : undefined}
