@@ -278,6 +278,8 @@ interface PanelContextValue {
   focusTab: (panelId: string | null) => void
   /** Put a dragged tab or stream where it was dropped, and work in it there. */
   dropTab: (panelId: string, drop: PaneDrop) => void
+  /** {@link dropTab} for the stream or page a dropped link names; a link naming neither does nothing. */
+  dropLink: (href: string, drop: PaneDrop) => void
   /** The ways this consumer's tab can split off as it is laid out now. */
   splits: readonly SplitDirection[]
   /** Record the pane the user is working in. A stream pane becomes the route's stream. */
@@ -322,6 +324,7 @@ interface PanelOps {
   splitTab: (panelId: string, direction: SplitDirection) => void
   focusTab: (panelId: string | null) => void
   dropTab: (panelId: string, drop: PaneDrop) => void
+  dropLink: (href: string, drop: PaneDrop) => void
   setCurrentPane: (panelId: string) => void
   markCurrentPane: (panelId: string) => void
   coverOwner: string | null
@@ -483,6 +486,7 @@ function buildValue(
     splitTab: ops.splitTab,
     focusTab: ops.focusTab,
     dropTab: ops.dropTab,
+    dropLink: ops.dropLink,
     splits,
     setCurrentPane: ops.setCurrentPane,
     markCurrentPane: ops.markCurrentPane,
@@ -831,16 +835,36 @@ export function PanelProvider({ children }: PanelProviderProps) {
     [layout, targetOf, setFront, routeParams, searchParams, coverOwner, navigate, location.pathname]
   )
 
-  // A link followed inside a page pane: the same page with another query changes it in place, another page
-  // or a stream takes its tab. Anything else, or a URL that says where every pane goes, leaves it to the router.
-  const navigatePane = useCallback(
-    (own: string, to: { pathname: string; search: string }, replace: boolean): boolean => {
+  // The pane a link names, with its query: a stream or a page of this workspace. Null for a URL that says where
+  // every pane goes, or one only the router can follow.
+  const linkedPane = useCallback(
+    (to: { pathname: string; search: string }) => {
       const params = new URLSearchParams(to.search)
       if (params.has(PANEL_PARAM) || matchPath("/w/:workspaceId/*", to.pathname)?.params.workspaceId !== workspaceId)
-        return false
+        return null
       const target = routePaneAt(to.pathname)
-      if (target === null || !isRoutePane(target)) return false
+      return target !== null && isRoutePane(target) ? { target, params } : null
+    },
+    [workspaceId]
+  )
+
+  // Opens a linked pane where `edit` puts it: a page keeps the link's query, a stream jumps to its `?m`.
+  const openLinked = useCallback(
+    (edit: (layout: PanelLayout) => PanelLayout, replace: boolean, target: string, params: URLSearchParams) => {
       const page = pagePathOf(target) !== null
+      if (page) keepPageQuery(target, params.toString())
+      open(edit, replace, target, page ? null : params.get(DEEP_LINK_PARAM), params.toString())
+    },
+    [keepPageQuery, open]
+  )
+
+  // A link followed inside a page pane: the same page with another query changes it in place, another page
+  // or a stream takes its tab. Anything else leaves it to the router.
+  const navigatePane = useCallback(
+    (own: string, to: { pathname: string; search: string }, replace: boolean): boolean => {
+      const link = linkedPane(to)
+      if (link === null) return false
+      const { target, params } = link
       if (target === own && own !== routePane) {
         keepPageQuery(own, params.toString())
         return true
@@ -849,17 +873,10 @@ export function PanelProvider({ children }: PanelProviderProps) {
         navigate(hrefOf(location.pathname, withPaneParams(to.search, searchParams)), { replace })
         return true
       }
-      if (page) keepPageQuery(target, params.toString())
-      open(
-        (current) => replacePanelTab(current, own, target),
-        replace,
-        target,
-        page ? null : params.get(DEEP_LINK_PARAM),
-        params.toString()
-      )
+      openLinked((current) => replacePanelTab(current, own, target), replace, target, params)
       return true
     },
-    [workspaceId, routePane, keepPageQuery, searchParams, navigate, location.pathname, open]
+    [linkedPane, routePane, keepPageQuery, searchParams, navigate, location.pathname, openLinked]
   )
 
   const closedTabs = useRef<string[]>([])
@@ -943,6 +960,26 @@ export function PanelProvider({ children }: PanelProviderProps) {
     [open, layout]
   )
 
+  const dropLink = useCallback(
+    (href: string, drop: PaneDrop) => {
+      let url: URL
+      try {
+        url = new URL(href)
+      } catch {
+        return
+      }
+      const link = url.origin === window.location.origin ? linkedPane(url) : null
+      if (link === null || dropPanelTab(layout, link.target, drop) === layout) return
+      openLinked(
+        (current) => dropPanelTab(current, link.target, drop),
+        panelIdsOf(layout).includes(link.target),
+        link.target,
+        link.params
+      )
+    },
+    [linkedPane, openLinked, layout]
+  )
+
   // Focusing is a step of its own in history, so Back puts the tab back; putting
   // it back by hand pops that step rather than adding one.
   const focusTab = useCallback(
@@ -984,6 +1021,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       splitTab,
       focusTab,
       dropTab,
+      dropLink,
       setCurrentPane,
       markCurrentPane: setFront,
       coverOwner,
@@ -1008,6 +1046,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       splitTab,
       focusTab,
       dropTab,
+      dropLink,
       setCurrentPane,
       setFront,
       coverOwner,
