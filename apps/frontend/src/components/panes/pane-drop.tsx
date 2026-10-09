@@ -1,6 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type DragEvent } from "react"
 import { useCurrentPane, usePanel } from "@/contexts"
-import { STREAM_DRAG_TYPE, readStreamDrag, setMissedDropGuard, writeStreamDrag } from "@/lib/stream-drag"
+import {
+  STREAM_DRAG_TYPE,
+  readDroppedUrl,
+  readStreamDrag,
+  setMissedDropGuard,
+  writeStreamDrag,
+} from "@/lib/stream-drag"
 import { isServerStreamId } from "@/lib/stream-ids"
 import { isPinnedPagePane } from "@/lib/page-panes"
 import type { PaneDrop, PaneEdge } from "@/lib/panel-tabs"
@@ -20,7 +26,16 @@ const PANE_DRAG_TYPE = "application/x-threa-pane+json"
 /** How deep an edge's band reaches into a pane, as a share of its size. */
 const EDGE_BAND = 0.25
 
-const carriesPane = (data: DataTransfer) => data.types.includes(PANE_DRAG_TYPE) || data.types.includes(STREAM_DRAG_TYPE)
+const carriesTab = (data: DataTransfer) => data.types.includes(PANE_DRAG_TYPE) || data.types.includes(STREAM_DRAG_TYPE)
+
+/**
+ * A tab, a sidebar row, or any link, which opens the stream or page it names. Only the types are readable until the
+ * drop, so a link to neither lights a zone and then does nothing.
+ */
+const carriesPane = (data: DataTransfer) => carriesTab(data) || data.types.includes("text/uri-list")
+
+/** A dragged link allows only copy and link, so a move would refuse it. */
+const dropEffectOf = (data: DataTransfer) => (carriesTab(data) ? "move" : "link")
 
 function readPaneDrag(data: DataTransfer, workspaceId: string): string | null {
   try {
@@ -111,7 +126,7 @@ const sameTarget = (a: PaneDropTarget | null, b: PaneDropTarget | null) => JSON.
 
 /** Where a drag over the stream page would land, for {@link PaneDropContext}. */
 export function usePaneDropState(workspaceId: string): PaneDropState {
-  const { dropTab } = usePanel()
+  const { dropTab, dropLink } = usePanel()
   const [target, setTarget] = useState<PaneDropTarget | null>(null)
   const hover = useCallback(
     (next: PaneDropTarget | null) => setTarget((current) => (sameTarget(current, next) ? current : next)),
@@ -121,9 +136,11 @@ export function usePaneDropState(workspaceId: string): PaneDropState {
     (data: DataTransfer, drop: PaneDrop) => {
       setTarget(null)
       const panelId = readPaneDrag(data, workspaceId)
-      if (panelId) dropTab(panelId, drop)
+      if (panelId) return dropTab(panelId, drop)
+      const url = readDroppedUrl(data)
+      if (url) dropLink(url, drop)
     },
-    [workspaceId, dropTab]
+    [workspaceId, dropTab, dropLink]
   )
 
   // A drag cancelled, or dropped where no zone claimed it, never leaves the zone it last crossed.
@@ -145,9 +162,9 @@ export function usePaneDrop(): PaneDropState | null {
   return useContext(PaneDropContext)
 }
 
-/** The composer takes a dropped stream as a link, so a drag over an editor is the editor's. */
-const overEditor = (event: DragEvent<HTMLElement>) =>
-  event.target instanceof Element && event.target.closest('[contenteditable="true"]') !== null
+/** A text field takes a dropped link as text, and the composer a dropped stream as a link, so a drag over one is its own. */
+const overTextField = (event: DragEvent<HTMLElement>) =>
+  event.target instanceof Element && event.target.closest('[contenteditable="true"], input, textarea') !== null
 
 /**
  * Drop handlers for the pane showing `of`, whose `edges` split and whose
@@ -159,7 +176,7 @@ export function paneDropZone(drops: PaneDropState | null, of: string, edges: rea
   const { hover, land } = drops
   const dropAt = (event: DragEvent<HTMLElement>): PaneDrop | null => {
     // A strip inside the pane has already claimed it.
-    if (event.defaultPrevented || !carriesPane(event.dataTransfer) || overEditor(event)) return null
+    if (event.defaultPrevented || !carriesPane(event.dataTransfer) || overTextField(event)) return null
     const zone = paneDropZoneAt(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY, edges)
     if (zone !== "centre") return { kind: "edge", of, side: zone }
     return { kind: "tab", of, before: null }
@@ -172,7 +189,7 @@ export function paneDropZone(drops: PaneDropState | null, of: string, edges: rea
       if (!drop) return
       // Without preventDefault the browser refuses the drop outright.
       event.preventDefault()
-      event.dataTransfer.dropEffect = "move"
+      event.dataTransfer.dropEffect = dropEffectOf(event.dataTransfer)
     },
     onDragLeave: (event: DragEvent<HTMLElement>) => {
       // Crossing between children re-fires leave; only the pane's own boundary ends the hover.
@@ -212,7 +229,7 @@ export function useStripDropZone(of: string | null) {
       const drop = dropAt(event)
       if (!drop) return
       event.preventDefault()
-      event.dataTransfer.dropEffect = "move"
+      event.dataTransfer.dropEffect = dropEffectOf(event.dataTransfer)
       hover({ drop, via: "strip", of })
     },
     onDragLeave: (event: DragEvent<HTMLElement>) => {

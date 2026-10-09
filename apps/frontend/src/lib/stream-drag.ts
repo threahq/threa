@@ -73,3 +73,21 @@ export function writeStreamDrag(data: DataTransfer, workspaceId: string, streamI
   // Rich-text targets (mail, docs, other chat apps) prefer this flavour.
   data.setData("text/html", `<a href="${escapeHtml(link)}">${escapeHtml(label)}</a>`)
 }
+
+/**
+ * The URL a drop carries, if any. `text/uri-list` (RFC 2483) is what a dragged
+ * anchor or a browser tab puts on the clipboard: CRLF-separated URLs with `#`
+ * comment lines. Chrome mirrors it into `text/plain`, Safari sometimes doesn't.
+ */
+export function readDroppedUrl(data: DataTransfer | null | undefined): string | null {
+  if (!data) return null
+  const uriList = data.getData("text/uri-list")
+  const first = uriList.split(/\r?\n/).find((line) => line.trim() && !line.startsWith("#"))
+  const candidate = first?.trim() || data.getData("text/plain").trim()
+  // A dragged text selection lands on `text/plain` too. The URL parser strips
+  // newlines and percent-encodes spaces, so a whole sentence containing a link
+  // would parse as one and the rest of the text would be swallowed into the
+  // chip — a URL has no raw whitespace, so anything that does is not one.
+  if (!candidate || /\s/.test(candidate)) return null
+  return candidate
+}
