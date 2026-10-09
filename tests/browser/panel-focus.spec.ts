@@ -314,3 +314,18 @@ test("should leave a phone showing one pane when the URL marks a floating tab", 
   await expect(scrim(page)).toHaveCount(0)
   await expect(tabPane(page, a).getByRole("button", { name: "Focus pane", exact: true })).toHaveCount(0)
 })
+
+test("should float every member of a group loaded where the window folds one of them", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId, threads } = await seedThreads(page, 2)
+  const [a, b] = threads
+  // Too narrow for both columns, so b's folds under a's.
+  await page.setViewportSize({ width: 900, height: 900 })
+  await openPanels(page, workspaceId, streamId, `${streamId}-${a}**-${b}**`, 1)
+
+  await expect(floatingPane(page)).toHaveCount(2)
+  await expect(tabPane(page, a)).toBeVisible()
+  await expect(tabPane(page, b)).toBeVisible()
+  await expect(tabPane(page, b).getByText("reply in thread 2", { exact: true })).toBeVisible({ timeout: 30_000 })
+  await expect(ghost(page)).toHaveCount(1)
+})
