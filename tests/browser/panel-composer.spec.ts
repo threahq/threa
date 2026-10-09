@@ -53,10 +53,14 @@ test("should carry the draft into a floating pane and back, and close it on send
 
   await mainComposer(page).click()
   await page.keyboard.type("a long thought")
+  const streamBefore = (await mainPane(page).boundingBox())!
   await expandLink(page).click()
 
   await expect.poll(() => panelParam(page)).toBe(`${compose}**`)
   await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", compose)
+  // Opened floating, it takes no cell until it is put back: no ghost, and the stream keeps its width.
+  await expect(page.getByTestId("pane-focus-ghost")).toHaveCount(0)
+  expect(await mainPane(page).boundingBox()).toEqual(streamBefore)
   await expect(paneEditor(page, streamId)).toHaveText("a long thought")
   await expect(paneEditor(page, streamId)).toBeFocused()
   await expect(tabPane(page, compose).getByRole("navigation", { name: "Panel tabs" })).toHaveCount(0)
@@ -75,6 +79,13 @@ test("should carry the draft into a floating pane and back, and close it on send
   await expect.poll(() => panelParam(page)).toBe(compose)
   await expect(floatingPane(page)).toHaveCount(0)
   await expect(paneEditor(page, streamId)).toHaveText("a long thought, continued")
+  // Put back, it lands right of the stream.
+  await expect
+    .poll(async () => {
+      const [stream, pane] = [await mainPane(page).boundingBox(), await tabPane(page, compose).boundingBox()]
+      return stream!.width < streamBefore.width && pane!.x >= stream!.x + stream!.width
+    })
+    .toBe(true)
 
   // Write here closes the pane and brings the draft back inline.
   await mainPane(page).getByRole("button", { name: "Write here" }).click()

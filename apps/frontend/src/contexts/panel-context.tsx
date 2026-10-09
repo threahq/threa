@@ -459,7 +459,7 @@ function buildValue(
 
 /** Where a phone's reload or Back lands: the route's pane when `?panel=` writes it, else the newest pane, as links written before did. */
 function phoneLandingOf(layout: PanelLayout, panelValue: string | null, routePane: string | null): string | null {
-  if (layout.focused !== undefined) return layout.focused
+  if (layout.focused !== undefined) return layout.focused.at(-1)!
   if (routePane !== null && writesRoutePane(panelValue, routePane)) return routePane
   return newestPanelOf(layout)
 }
@@ -495,7 +495,8 @@ function followPanes(
   phoneLanding: string | null | undefined
 ): PaneState {
   const moved = state.layout !== layout
-  const focused = layout.focused !== state.layout.focused ? layout.focused : undefined
+  // A tab that just started floating: focused, opened from inside the group, or brought forward in it.
+  const focused = layout.focused?.find((id) => !state.layout.focused?.includes(id))
   const followed = moved ? followCurrentPanel(state.layout, layout, state.front) : state.front
   // Back and Forward restore the pane the route named; a phone lands where a reload of the URL does. Otherwise a
   // tab just opened is worked in, else a route moved to another stream is, unless a phone's route moved only
@@ -560,10 +561,10 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const [paneState, setPaneState] = useState<PaneState>(() => {
     // The route names the pane worked in, and a reloaded `?m` goes to the newest pane, as links already written
     // expect. A phone, which shows one pane, lands as {@link phoneLandingOf} says, and so does its `?m`.
-    const newest = layout.focused ?? newestPanelOf(layout)
+    const newest = layout.focused?.at(-1) ?? newestPanelOf(layout)
     const front = phone
       ? phoneLandingOf(layout, panelValue, routePane)
-      : (layout.focused ?? (path === null ? newest : followPanel(layout, layout, path)))
+      : (layout.focused?.at(-1) ?? (path === null ? newest : followPanel(layout, layout, path)))
     const owner = phone ? front : newest
     return { layout, path, deepLink, front, coverOwner: owner === null ? null : coverPaneOf(layout, owner) }
   })
@@ -783,7 +784,8 @@ export function PanelProvider({ children }: PanelProviderProps) {
       if (panelId !== null) {
         if (isPagePane(panelId)) return
         // A second press can land before the router commits the first, which already pushed this step.
-        if (parsePanelLayout(new URLSearchParams(window.location.search).get(PANEL_PARAM)).focused === panelId) return
+        if (parsePanelLayout(new URLSearchParams(window.location.search).get(PANEL_PARAM)).focused?.includes(panelId))
+          return
         open((current) => focusPanelTab(current, panelId), false)
         return
       }

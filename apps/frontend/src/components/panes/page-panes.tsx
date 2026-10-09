@@ -1,6 +1,6 @@
 import { useRef, useMemo, type ReactNode } from "react"
 import { cn } from "@/lib/utils"
-import { closePanelTab, floatingPanelTab, panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
+import { closePanelTab, floatingPanelTabs, panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
 import { usePanelLayout, MIN_PANEL_WIDTH } from "@/hooks/use-panel-layout"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { usePanel, useSidebar } from "@/contexts"
@@ -22,6 +22,7 @@ import {
   PanelTabStack,
   panelMaxRows,
   useFittedPanelLayout,
+  useFocusGridLayout,
   useHostHeight,
   usePanelGrid,
 } from "@/components/layout/panel-host"
@@ -61,8 +62,9 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
   // A pane the sheet holds is mounted there and nowhere else (aside-mobile-sheet.tsx).
   const heldPane = asideSheet !== null ? asidePaneOf(layout, asideSheet.hostStreamId, true) : null
   const pageLayout = useMemo(() => (heldPane === null ? layout : closePanelTab(layout, heldPane)), [layout, heldPane])
+  const gridLayout = useFocusGridLayout(pageLayout, isMobile)
   // Columns beside the first, which fills what they leave.
-  const isPanelOpen = pageLayout.columns.length > 1
+  const isPanelOpen = gridLayout.columns.length > 1
   // A phone's pages, without the drawers over them, and the one on show.
   const phonePages = useFittedPanelLayout(pageLayout, 1, true)
   const shownPage = primaryPanelOf(phonePages)
@@ -85,11 +87,11 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
     maxColumns,
   } = usePanelLayout(isPanelOpen, {
     containerRef,
-    columns: pageLayout.columns.length - 1,
+    columns: gridLayout.columns.length - 1,
     reservedWidth: asideLayout.width,
     animates: !isMobile,
   })
-  const fittedPanels = useFittedPanelLayout(pageLayout, maxColumns + 1, false, maxRows)
+  const fittedPanels = useFittedPanelLayout(gridLayout, maxColumns + 1, false, maxRows)
   // A phone stacks every pane in the one cell.
   const display = isMobile ? phonePages : fittedPanels
   const panelGrid = usePanelGrid(display)
@@ -103,7 +105,7 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
   if (error) return error
 
   // A tab floating over the page leaves everything else under it out of reach.
-  const floating = floatingPanelTab(layout, isMobile) !== null
+  const floating = floatingPanelTabs(layout, isMobile).length > 0
 
   const drops = isMobile || floating || heldPane !== null ? null : paneDrops
   // A track for every column that fits, so opening, closing or resizing one animates from the width it had.

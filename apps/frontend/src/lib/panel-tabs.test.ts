@@ -212,7 +212,7 @@ describe("focusPanelTab", () => {
     const values = ["a**", "a**.b", "a.b**-c", "a-b--c.d**"]
     expect([values.map((value) => spell(at(value))), at("a**.b")]).toEqual([
       values,
-      { columns: [[{ ids: ["a", "b"], active: "a" }]], focused: "a" },
+      { columns: [[{ ids: ["a", "b"], active: "a" }]], focused: ["a"] },
     ])
   })
 
@@ -233,8 +233,12 @@ describe("focusPanelTab", () => {
     expect(focusPanelTab(layout, null)).toBe(layout)
   })
 
-  it("should read the first focus mark only when a hand-edited value has two", () => {
-    expect(spell(at("a**-b**.c"))).toBe("a**-b*.c")
+  it("should read every section's focus mark as one group, and only the first in a section", () => {
+    expect([at("a**-b**.c").focused, spell(at("a**-b**.c")), spell(at("a**.b**"))]).toEqual([
+      ["a", "b"],
+      "a**-b**.c",
+      "a**.b",
+    ])
   })
 
   it("should float the tab brought forward in the floating section, and put it back for one elsewhere or opened", () => {
@@ -243,9 +247,8 @@ describe("focusPanelTab", () => {
       spell(activatePanelTab(layout, "a")),
       spell(activatePanelTab(layout, "c")),
       spell(activatePanelTab(layout, "b")),
-      spell(openPanelTabBeside(layout, "b", "x")),
       spell(splitPanelTab(layout, "a", "down")),
-    ]).toEqual(["a**.b-c", "a.b-c", "a.b**-c", "a.b-c.x", "b--a-c"])
+    ]).toEqual(["a**.b-c", "a.b-c", "a.b**-c", "b--a-c"])
   })
 
   it("should keep the focused tab floating when another tab closes or a draft swaps out", () => {
@@ -261,6 +264,41 @@ describe("focusPanelTab", () => {
 
   it("should keep a floating tab floating when a background tab navigates to it", () => {
     expect(spell(replacePanelTab(at("a.b-c**"), "a", "c"))).toBe("c**.b")
+  })
+})
+
+describe("focus group", () => {
+  it("should float a tab opened from inside a floating one where it lands on exit, right of it", () => {
+    expect([
+      spell(openPanelTabBeside(at("a.b**-c"), "b", "x")),
+      spell(openPanelTabBeside(at("a-b**"), "b", "x")),
+      spell(openPanelTabBeside(at("a**"), "a", "x")),
+    ]).toEqual(["a.b**-c.x**", "a-b**-x**", "a**-x**"])
+  })
+
+  it("should give a tab opened in focus a column of its own rather than cover another floating tab", () => {
+    expect(spell(openPanelTabBeside(at("a**-b**"), "a", "x"))).toBe("a**-x**-b**")
+  })
+
+  it("should float an open tab brought forward from inside the group", () => {
+    expect(spell(openPanelTabBeside(at("a**-b.c"), "a", "b"))).toBe("a**-b**.c")
+  })
+
+  it("should keep the rest floating when one closes, swaps out, or gives way to a tab in its section", () => {
+    const layout = at("a**-c.x**")
+    expect([
+      spell(closePanelTab(layout, "x")),
+      spell(closePanelTab(layout, "a")),
+      spell(replacePanelTab(layout, "x", "y")),
+      spell(activatePanelTab(layout, "c")),
+    ]).toEqual(["a**-c", "c.x**", "a**-c.y**", "a**-c**.x"])
+  })
+
+  it("should put the whole group back at once, and float one tab alone when it is focused", () => {
+    const layout = at("a**-x**-b")
+    expect([spell(focusPanelTab(layout, null)), spell(focusPanelTab(layout, "b")), focusPanelTab(layout, "x")]).toEqual(
+      ["a-x-b", "a-x-b**", layout]
+    )
   })
 })
 
