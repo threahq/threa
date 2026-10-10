@@ -82,7 +82,7 @@ function PaneHarness() {
   const { data } = usePersonaConfig(WS, PERSONA)
   return (
     <PersonaSyncContext.Provider value={{ testStreamId: data?.draft?.testStreamId ?? null, syncState: "synced" }}>
-      <PersonaTestChatPane workspaceId={WS} personaId={PERSONA} onClose={() => {}} />
+      <PersonaTestChatPane workspaceId={WS} personaId={PERSONA} />
     </PersonaSyncContext.Provider>
   )
 }

@@ -3,6 +3,7 @@ import { Maximize2, Minimize2 } from "lucide-react"
 import { usePanel, usePreferences } from "@/contexts"
 import { Button } from "@/components/ui/button"
 import { formatKeyBinding, getEffectiveKeyBinding } from "@/lib/keyboard-shortcuts"
+import { isPinnedPagePane } from "@/lib/page-panes"
 import { overlayOwnsEscape } from "@/lib/overlay-escape"
 
 /** A section's place in the arrangement, as fractions of its width and height. */
@@ -29,7 +30,7 @@ export function PaneFocusToggle() {
   const { panelId, shownPanes, focusTab } = usePanel()
   const { preferences } = usePreferences()
   const floating = !!focus && !!panelId && focus.focused.includes(panelId)
-  if (!focus || !panelId || (shownPanes < 2 && !floating)) return null
+  if (!focus || !panelId || ((shownPanes < 2 || isPinnedPagePane(panelId)) && !floating)) return null
   const binding = getEffectiveKeyBinding("togglePaneFocus", preferences?.keyboardShortcuts ?? {})
 
   if (!floating) {

@@ -229,6 +229,8 @@ test.describe("Persona roster + editors", () => {
     await expect(pane.getByRole("button", { name: "End test chat" })).toBeVisible({ timeout: 10000 })
     await page.getByRole("button", { name: "Test draft" }).click()
     await expect.poll(() => panelParam(page)).toBeNull()
+    // The URL moves before the router's transition commits; until then the button still closes.
+    await expect(page.getByRole("button", { name: "Test draft" })).toHaveAttribute("aria-pressed", "false")
     await page.getByRole("button", { name: "Test draft" }).click()
     await expect(pane.getByRole("button", { name: "End test chat" })).toBeVisible({ timeout: 10000 })
   })

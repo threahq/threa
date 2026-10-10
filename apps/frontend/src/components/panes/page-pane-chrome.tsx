@@ -20,7 +20,7 @@ interface PagePaneHeaderProps {
 
 /** A workspace page's way back, icon and title, in its pane's header. */
 export function PagePaneHeader({ workspaceId, back, icon, title, className, children }: PagePaneHeaderProps) {
-  const { panelId, tabbed, inFirstColumn } = usePanel()
+  const { panelId, inFirstColumn } = usePanel()
   const phone = usePhonePanes()
   const first = phone ? phone.order[0] === panelId : inFirstColumn
   const backLink = first && back && (
@@ -39,17 +39,16 @@ export function PagePaneHeader({ workspaceId, back, icon, title, className, chil
       workspaceId={workspaceId}
       name={(panelId && pageTitleOf(panelId)) ?? ""}
       title={
-        title !== undefined ? (
+        title !== undefined || icon !== undefined ? (
           <>
             {backLink}
             {icon}
-            <h1 className="truncate font-semibold">{title}</h1>
+            {title !== undefined && <h1 className="truncate font-semibold">{title}</h1>}
           </>
         ) : undefined
       }
       className={className}
     >
-      {title === undefined && !tabbed && backLink}
       {children}
     </PaneHeader>
   )

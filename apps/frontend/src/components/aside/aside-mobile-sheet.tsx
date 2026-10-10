@@ -118,7 +118,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   // it while the sheet holds it (page-panes.tsx), so this is the
   // thread's only mount; the panel's close hands the sheet back to the aside.
   // A thread is a whole timeline, so the sheet goes to the full detent for it.
-  const { layout, hasTabs, setCurrentPane, closeTab } = usePanel()
+  const { layout, hasTabs, setCurrentPane } = usePanel()
   const held = asidePaneOf(layout, hostStreamId, hasTabs)
   const threadInSheet = held !== null
   // Decided once, at mount. An entry pushed over an open thread's own inherits
@@ -264,7 +264,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
             // The page's panes sit under this sheet, so the thread it holds opens none of its own here.
             <AsideCoversPanesContext.Provider value={true}>
               <PaneScope panelId={held} section={{ ids: [held], active: held }} splits={NO_SPLITS}>
-                <PanelHost workspaceId={workspaceId} onClose={() => closeTab(held)} />
+                <PanelHost workspaceId={workspaceId} />
               </PaneScope>
             </AsideCoversPanesContext.Provider>
           ) : (

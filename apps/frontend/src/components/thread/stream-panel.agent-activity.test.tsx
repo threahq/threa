@@ -87,7 +87,7 @@ function renderPanel(panel: string) {
                                   path="/w/:workspaceId/s/:streamId"
                                   element={
                                     <PaneScope panelId={panel} section={{ ids: [panel], active: panel }} splits={[]}>
-                                      <StreamPanel workspaceId={workspaceId} onClose={() => {}} />
+                                      <StreamPanel workspaceId={workspaceId} />
                                     </PaneScope>
                                   }
                                 />

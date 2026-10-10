@@ -73,7 +73,7 @@ function BoardConversationPane({ workspaceId }: { workspaceId: string }) {
   if (!panelId) return null
   return (
     <PaneScope panelId={panelId} section={{ ids: [panelId], active: panelId }} splits={[]}>
-      <ConversationPanel workspaceId={workspaceId} onClose={vi.fn()} />
+      <ConversationPanel workspaceId={workspaceId} />
     </PaneScope>
   )
 }

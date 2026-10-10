@@ -1,6 +1,6 @@
 import { startTransition, useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
-import { Search, RefreshCw, Check, ChevronsUpDown } from "lucide-react"
+import { Brain, Search, RefreshCw, Check, ChevronsUpDown } from "lucide-react"
 import {
   KNOWLEDGE_TYPES,
   MEMO_SCOPES,
@@ -360,9 +360,10 @@ export function MemoryPage() {
         <PagePaneHeader
           workspaceId={workspaceId}
           back={{ to: `/w/${workspaceId}`, label: "Back to workspace" }}
+          icon={<Brain className="h-5 w-5 shrink-0 text-muted-foreground" />}
           className="border-b-0"
         >
-          <div className="flex-1 min-w-0">
+          <div className="min-w-0 flex-[3]">
             <div className="relative max-w-xl">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
               <Input

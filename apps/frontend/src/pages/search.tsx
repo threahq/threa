@@ -138,9 +138,10 @@ export function SearchPage() {
         <PagePaneHeader
           workspaceId={workspaceId}
           back={{ to: `/w/${workspaceId}`, label: "Back to workspace" }}
+          icon={<SearchIcon className="h-5 w-5 shrink-0 text-muted-foreground" />}
           className="border-b-0"
         >
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-[3]">
             <div className="flex max-w-xl items-center gap-2 rounded-md border border-border/50 bg-background/80 px-3 transition-all focus-within:border-primary/40">
               <SearchIcon className="h-4 w-4 shrink-0 text-muted-foreground/50" />
               <RichInput

@@ -1,10 +1,9 @@
 import { useMemo, useState, type ReactNode } from "react"
-import { Link, Navigate, useParams } from "react-router-dom"
-import { ArrowLeft, MessageSquare } from "lucide-react"
+import { Navigate, useParams } from "react-router-dom"
+import { MessageSquare } from "lucide-react"
 import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { Button } from "@/components/ui/button"
-import { SidebarToggle } from "@/components/layout"
-import { PhonePaneSwitcher, usePhoneHeaderSwipe } from "@/components/panes"
+import { PagePaneHeader } from "@/components/panes"
 import { PagePanes } from "@/components/panes/page-panes"
 import { usePaneToggle } from "@/components/stream-context"
 import { createPersonaTestPanelId, usePanel } from "@/contexts"
@@ -136,20 +135,12 @@ interface PersonaEditorHeaderProps {
   testable: boolean
 }
 
-/** The editor's pane header: always first of a phone's panes, so it keeps the sidebar toggle. */
 function PersonaEditorHeader({ workspaceId, personaId, title, backTo, backLabel, testable }: PersonaEditorHeaderProps) {
   const { layout } = usePanel()
   const testId = createPersonaTestPanelId(personaId)
   const [testOnShow, toggleTest] = usePaneToggle(panelIdsOf(layout).includes(testId) ? testId : null, testId)
   return (
-    <header className="relative flex h-12 shrink-0 items-center gap-2 border-b px-4" {...usePhoneHeaderSwipe()}>
-      <SidebarToggle location="page" />
-      <Button asChild variant="ghost" size="icon" className="h-8 w-8">
-        <Link to={backTo} aria-label={backLabel}>
-          <ArrowLeft className="h-4 w-4" />
-        </Link>
-      </Button>
-      <h1 className="min-w-0 flex-1 truncate font-semibold">{title}</h1>
+    <PagePaneHeader workspaceId={workspaceId} back={{ to: backTo, label: backLabel }} title={title}>
       {testable && (
         <Button
           type="button"
@@ -163,7 +154,6 @@ function PersonaEditorHeader({ workspaceId, personaId, title, backTo, backLabel,
           Test draft
         </Button>
       )}
-      <PhonePaneSwitcher workspaceId={workspaceId} />
-    </header>
+    </PagePaneHeader>
   )
 }
