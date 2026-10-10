@@ -991,6 +991,7 @@ export class MemoService implements MemoServiceLike {
       // A memo several batch-mates retired has no single successor to follow,
       // so the chain stops there.
       const retiredBy = new Map<string, MemoToCreate[]>()
+      const retiredInBatch = new Set<string>()
       const latestOf = (id: string, conversationId: string | undefined): string => {
         let current = id
         for (;;) {
@@ -1072,13 +1073,14 @@ export class MemoService implements MemoServiceLike {
         // unflagged paraphrase re-captures.
         if (explicitSupersedeIds.length > 0) {
           memoData.parentMemoId = explicitSupersedeIds[0]
-          await MemoRepository.markSuperseded(
+          const ids = await MemoRepository.markSuperseded(
             client,
             workspaceId,
             explicitSupersedeIds,
             `Conclusion reversed or replaced by revised capture ${memoData.id}`,
             memoData.id
           )
+          ids.forEach((id) => retiredInBatch.add(id))
           logger.info(
             {
               conversationId: memoData.sourceConversationId,
@@ -1110,13 +1112,14 @@ export class MemoService implements MemoServiceLike {
           : []
         if (toSupersede.length > 0) {
           memoData.parentMemoId = memoData.parentMemoId ?? toSupersede[0].memo.id
-          await MemoRepository.markSuperseded(
+          const ids = await MemoRepository.markSuperseded(
             client,
             workspaceId,
             toSupersede.map((s) => s.memo.id),
             `Superseded by revised capture ${memoData.id}`,
             memoData.id
           )
+          ids.forEach((id) => retiredInBatch.add(id))
           logger.info(
             {
               conversationId: memoData.sourceConversationId,
@@ -1132,13 +1135,25 @@ export class MemoService implements MemoServiceLike {
         }
 
         const explicitlyRetired = await MemoRepository.findByIdsInWorkspace(client, workspaceId, explicitSupersedeIds)
-        Object.assign(
-          memoData,
-          inheritedReach([...explicitlyRetired.values(), ...toSupersede.map((s) => s.memo)], streamId)
-        )
+        const retired = [...explicitlyRetired.values(), ...toSupersede.map((s) => s.memo)]
+        Object.assign(memoData, inheritedReach(retired, streamId))
 
+        // The row keeps the sources of the memos it replaces, after its own,
+        // so the messages behind a claim stay reachable through the memo that
+        // restates it. Only memos this batch retired pass sources on, whichever
+        // of its memos got there first: one a deletion or an archive retired
+        // earlier may have lost its sources. The capture event and landmark
+        // below cite only this conversation's messages.
         const { embedding, ...memoFields } = memoData
-        await MemoRepository.insert(client, memoFields)
+        await MemoRepository.insert(client, {
+          ...memoFields,
+          sourceMessageIds: [
+            ...new Set([
+              ...memoData.sourceMessageIds,
+              ...retired.filter((m) => retiredInBatch.has(m.id)).flatMap((m) => m.sourceMessageIds),
+            ]),
+          ],
+        })
         await MemoRepository.updateEmbedding(client, workspaceId, memoData.id, embedding)
         await OutboxRepository.insert(client, "memo:created", {
           workspaceId,

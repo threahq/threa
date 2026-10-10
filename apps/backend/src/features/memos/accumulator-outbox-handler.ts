@@ -104,17 +104,19 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
     if (await StreamRepository.isSharedCopy(this.db, workspaceId, streamId)) return
 
     await withTransaction(this.db, async (client) => {
-      const retired =
-        event.eventType === "message:deleted"
-          ? await retireMemosCitingDeletedMessage(client, workspaceId, streamId, messageId)
-          : 0
+      // A retirement queues the conversations itself, to be read from the start.
+      if (
+        event.eventType === "message:deleted" &&
+        (await retireMemosCitingDeletedMessage(client, workspaceId, streamId, messageId)) > 0
+      ) {
+        return
+      }
       const conversations = await ConversationRepository.findByMessageId(client, workspaceId, messageId)
       await queueMemoConversations(
         client,
         workspaceId,
         streamId,
-        conversations.map((c) => c.id),
-        { rereadFromStart: retired > 0 }
+        conversations.map((c) => c.id)
       )
     })
   }
@@ -122,7 +124,9 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
 
 /**
  * Archives the active memos citing a deleted message when none of their
- * sources survive, and supersedes the rest. Returns how many memos it retired.
+ * sources survive and supersedes the rest. The message's conversations and
+ * the one each memo was written from are queued to be read again from the
+ * start. Returns how many memos it retired; with none, it queues nothing.
  */
 export async function retireMemosCitingDeletedMessage(
   client: PoolClient,
@@ -136,15 +140,49 @@ export async function retireMemosCitingDeletedMessage(
   if (memoStream) await MemoRepository.lockStreamSaves(client, memoStream.id)
 
   const citing = await MemoRepository.findActiveCitingMessage(client, workspaceId, messageId)
-  const archived = citing.filter((c) => !c.hasLiveSource).map((c) => c.memo.id)
-  const superseded = citing.filter((c) => c.hasLiveSource).map((c) => c.memo.id)
-  await MemoRepository.archiveMany(client, workspaceId, archived)
-  await MemoRepository.markSuperseded(client, workspaceId, superseded, "A source message was deleted", null)
+  if (citing.length === 0) return 0
+
+  // A memo keeps the sources of the memos it retired, so it can be written
+  // from a conversation the deleted message was never part of, in a stream
+  // this save lock does not cover. Queued before the memo rows change: a
+  // batch save takes its stream's state row before its memo rows.
+  const conversations = new Map(
+    [
+      ...(await ConversationRepository.findByMessageId(client, workspaceId, messageId)),
+      ...(await ConversationRepository.findByIds(
+        client,
+        workspaceId,
+        citing.flatMap((c) => c.memo.sourceConversationId ?? [])
+      )),
+    ].map((c) => [c.id, c])
+  )
+  for (const conversationStreamId of new Set([...conversations.values()].map((c) => c.streamId))) {
+    await queueMemoConversations(
+      client,
+      workspaceId,
+      conversationStreamId,
+      [...conversations.values()].filter((c) => c.streamId === conversationStreamId).map((c) => c.id),
+      { rereadFromStart: true }
+    )
+  }
+
+  await MemoRepository.archiveMany(
+    client,
+    workspaceId,
+    citing.filter((c) => !c.hasLiveSource).map((c) => c.memo.id)
+  )
+  await MemoRepository.markSuperseded(
+    client,
+    workspaceId,
+    citing.filter((c) => c.hasLiveSource).map((c) => c.memo.id),
+    "A source message was deleted",
+    null
+  )
   await publishSharedMemoChanges(
     client,
     citing.map((c) => c.memo)
   )
-  return archived.length + superseded.length
+  return citing.length
 }
 
 export async function queueMemoConversations(

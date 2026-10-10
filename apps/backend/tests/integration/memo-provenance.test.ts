@@ -329,8 +329,8 @@ describe("agent memo provenance", () => {
   describe("processBatch shows, dedupes against and retires only memos the room reads", () => {
     const captureEmbedding = unitVector(1400)
     const nearCaptureEmbedding = Array.from({ length: 1536 }, (_, i) => {
-      if (i === 1400) return 0.75
-      return i === 1405 ? Math.sqrt(1 - 0.75 ** 2) : 0
+      if (i === 1400) return 0.8
+      return i === 1405 ? Math.sqrt(1 - 0.8 ** 2) : 0
     })
     let pipeline: MemoService
     let shownToMemorizer: string[][] = []

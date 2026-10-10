@@ -947,21 +947,27 @@ export const MemoRepository = {
     return new Map(result.rows.map((row) => [row.id, row.card_version]))
   },
 
-  /** Mark memos superseded in one round-trip (INV-56). Workspace-scoped (INV-8). */
+  /**
+   * Mark memos superseded in one round-trip (INV-56) and return the ids this
+   * call retired: a memo already retired or archived keeps its state.
+   * Workspace-scoped (INV-8).
+   */
   async markSuperseded(
     db: Querier,
     workspaceId: string,
     ids: string[],
     revisionReason: string,
     supersededByMemoId: string | null
-  ): Promise<void> {
-    if (ids.length === 0) return
-    await db.query(sql`
+  ): Promise<string[]> {
+    if (ids.length === 0) return []
+    const result = await db.query<{ id: string }>(sql`
       UPDATE memos
       SET status = 'superseded', revision_reason = ${revisionReason},
         superseded_by_memo_id = ${supersededByMemoId}, updated_at = NOW()
       WHERE workspace_id = ${workspaceId} AND id = ANY(${ids}::text[]) AND status = 'active'
+      RETURNING id
     `)
+    return result.rows.map((row) => row.id)
   },
 
   /** Archive active memos in one round-trip (INV-56). Workspace-scoped (INV-8). */
