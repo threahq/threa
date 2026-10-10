@@ -4,10 +4,8 @@ import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import { renderHook, act } from "@testing-library/react"
 import {
-  ASIDE_COLUMN_DEFAULT_WIDTH,
   asideOpenDraft,
   asidePendingAgentBlocksForTest,
-  asideColumnWidth,
   closeAside,
   dropAsideForHost,
   getAsideSheetDetent,
@@ -18,7 +16,6 @@ import {
   resetAsideStoreCache,
   setAsideOpenDraft,
   setAsideSheetDetent,
-  setAsideColumnWidth,
   useAsideForHost,
 } from "./aside-store"
 
@@ -53,16 +50,6 @@ describe("aside-store", () => {
     expect(getAsideState()).toBeNull()
   })
 
-  it("should keep the dragged column width for this aside, and hand every other one the default", () => {
-    openAside(open)
-    setAsideColumnWidth(open.asideId, 780)
-
-    closeAside()
-    expect(getAsideState()).toBeNull()
-    expect(asideColumnWidth(open.asideId)).toBe(780)
-    expect(asideColumnWidth("stream_never")).toBe(ASIDE_COLUMN_DEFAULT_WIDTH)
-  })
-
   it("should open a sheet at the peek, whatever the last one was pulled to", () => {
     openAside(open)
     setAsideSheetDetent("full")
@@ -74,7 +61,7 @@ describe("aside-store", () => {
   })
 
   it("should hold the open draft for the aside, not for whichever surface is showing it", () => {
-    // The column and the phone sheet are different components: anything a
+    // The pane and the phone sheet are different components: anything a
     // surface owned outright would be destroyed crossing between them.
     openAside(open)
     setAsideOpenDraft(open.asideId, "aside:stream_aside:draft_1")
@@ -107,11 +94,9 @@ describe("aside-store", () => {
 
   it("should forget everything on an account switch", () => {
     openAside(open)
-    setAsideColumnWidth(open.asideId, 780)
     setAsideOpenDraft(open.asideId, "aside:stream_aside:draft_1")
     resetAsideStoreCache()
     expect(getAsideState()).toBeNull()
-    expect(asideColumnWidth(open.asideId)).toBe(ASIDE_COLUMN_DEFAULT_WIDTH)
     expect(asideOpenDraft(open.asideId)).toBeNull()
   })
 

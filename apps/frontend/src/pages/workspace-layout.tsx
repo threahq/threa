@@ -47,6 +47,7 @@ import {
   isConversationPanel,
   parseConversationPanel,
   parseComposePanel,
+  parseAsidePanel,
   parseConversationsPanel,
   parsePersonaTestPanel,
   parseContextPanel,
@@ -202,6 +203,7 @@ function StreamLinkKeyboardHandler({
           void copyStreamLink(
             workspaceId,
             parseComposePanel(panelId) ??
+              parseAsidePanel(panelId) ??
               parseConversationsPanel(panelId) ??
               parseContextPanel(panelId)?.streamId ??
               panelId

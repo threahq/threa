@@ -133,6 +133,20 @@ export function createComposePanelId(streamId: string): string {
   return `${COMPOSE_PANEL_PREFIX}${streamId}`
 }
 
+/** The aside open on a stream, in a pane beside it. Which aside lives in the
+ *  aside store, never the URL: a reload or a shared link finds none and drops the pane. */
+const ASIDE_PANEL_PREFIX = "aside:"
+
+/** The host stream behind an `aside:<id>` panel, or null when it isn't one. */
+export function parseAsidePanel(panelId: string): string | null {
+  if (!panelId.startsWith(ASIDE_PANEL_PREFIX)) return null
+  return panelId.slice(ASIDE_PANEL_PREFIX.length) || null
+}
+
+export function createAsidePanelId(hostStreamId: string): string {
+  return `${ASIDE_PANEL_PREFIX}${hostStreamId}`
+}
+
 /** A stream's "In this stream" overview, with its category filter when it has one: `context:<streamId>[:<filter>]`. */
 const CONTEXT_PANEL_PREFIX = "context:"
 
@@ -178,21 +192,25 @@ export function presentsAsDrawer(panelId: string): boolean {
   return parseContextPanel(panelId) !== null
 }
 
-/** The pane that shows `?m` set from `panelId`: a draft, an overview or a
- *  conversations list shows no messages of its own, so its stream does while
- *  that stream is open. */
+/** The pane that shows `?m` set from `panelId`: a draft, an aside, an overview
+ *  or a conversations list shows no messages of its own stream, so that stream
+ *  does while it is open. */
 export function coverPaneOf(layout: PanelLayout, panelId: string): string {
   const streamId =
-    parseComposePanel(panelId) ?? parseContextPanel(panelId)?.streamId ?? parseConversationsPanel(panelId)
+    parseComposePanel(panelId) ??
+    parseAsidePanel(panelId) ??
+    parseContextPanel(panelId)?.streamId ??
+    parseConversationsPanel(panelId)
   if (!streamId) return panelId
   return panelIdsOf(layout).includes(streamId) ? streamId : panelId
 }
 
-/** The panes that belong to a stream's own: its draft, its overview and its conversations. */
+/** The panes that belong to a stream's own: its draft, its aside, its overview and its conversations. */
 function panesOwnedBy(layout: PanelLayout, streamId: string): string[] {
   return panelIdsOf(layout).filter(
     (id) =>
       parseComposePanel(id) === streamId ||
+      parseAsidePanel(id) === streamId ||
       parseContextPanel(id)?.streamId === streamId ||
       parseConversationsPanel(id) === streamId
   )
@@ -204,6 +222,8 @@ export interface OpenPanelOptions {
    *  where going back would land on an id that no longer exists. The new id
    *  takes the superseded one's tab. */
   replace?: boolean
+  /** Open beside this pane rather than the consumer's own, where it is open. */
+  beside?: string
 }
 
 interface PanelContextValue {
@@ -366,7 +386,7 @@ function withoutForeignPersonaTests(layout: PanelLayout, keep: string | null): P
     .reduce(closePanelTab, layout)
 }
 
-/** `layout` without `panelId` and the panes that are its stream's own: its draft, overview and conversations. */
+/** `layout` without `panelId` and the panes that are its stream's own: its draft, aside, overview and conversations. */
 function closing(layout: PanelLayout, panelId: string): PanelLayout {
   if (isPagePane(panelId)) return layout
   return panesOwnedBy(layout, panelId).reduce(closePanelTab, closePanelTab(layout, panelId))
@@ -417,7 +437,12 @@ function buildValue(
       options?.replace
         ? ops.open((current) => supersede(current, panelId), true)
         : ops.open(
-            (current) => ops.contextual(current, panelId, scopeId),
+            (current) =>
+              ops.contextual(
+                current,
+                panelId,
+                options?.beside !== undefined && panelIdsOf(current).includes(options.beside) ? options.beside : scopeId
+              ),
             false,
             panelIdsOf(ops.layout).includes(panelId) ? panelId : null
           ),
@@ -720,9 +745,10 @@ export function PanelProvider({ children }: PanelProviderProps) {
       }
       if (closed.length === 0) return
       const to = targetOf(next)!
-      // A draft's tab is gone with its draft, and a compose tab's draft is back
-      // inline, so only real panels are remembered for reopening.
-      const remembered = closed.filter((id) => !isDraftPanel(id) && !isComposePanel(id))
+      // A draft's tab is gone with its draft, a compose tab's draft is back
+      // inline, and a closed aside is reopened from its anchor row, so only real
+      // panels are remembered for reopening.
+      const remembered = closed.filter((id) => !isDraftPanel(id) && !isComposePanel(id) && parseAsidePanel(id) === null)
       closedTabs.current = [...closedTabs.current.filter((id) => !remembered.includes(id)), ...remembered].slice(
         -MAX_CLOSED_TABS
       )

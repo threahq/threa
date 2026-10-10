@@ -2,6 +2,7 @@ import { createContext, useContext, type MouseEvent, type ReactNode } from "reac
 import { useLocation, useMatch, useNavigate, useSearchParams } from "react-router-dom"
 import {
   isConversationPanel,
+  parseAsidePanel,
   parseComposePanel,
   parseConversationsPanel,
   parsePersonaTestPanel,
@@ -39,10 +40,11 @@ export interface StreamPage {
 
 type ParentOf = (streamId: string) => string | null
 
-/** The stream a pane was opened from: a draft's, conversations list's or overview's stream, a new thread's parent, else the stream's parent. */
+/** The stream a pane was opened from: a draft's, aside's, conversations list's or overview's stream, a new thread's parent, else the stream's parent. */
 function openedFrom(id: string, parentOf: ParentOf): string | null {
   return (
     parseComposePanel(id) ??
+    parseAsidePanel(id) ??
     parseConversationsPanel(id) ??
     parseContextPanel(id)?.streamId ??
     parseDraftPanel(id)?.parentStreamId ??
@@ -50,11 +52,12 @@ function openedFrom(id: string, parentOf: ParentOf): string | null {
   )
 }
 
-/** The stream a pane belongs to: a draft's, conversations list's or overview's stream, a new thread's parent, a stream's own; null for a conversation, a page or a persona's test chat. */
+/** The stream a pane belongs to: a draft's, aside's, conversations list's or overview's stream, a new thread's parent, a stream's own; null for a conversation, a page or a persona's test chat. */
 export function streamOfPane(id: string): string | null {
   if (isConversationPanel(id) || isPagePane(id) || parsePersonaTestPanel(id)) return null
   return (
     parseComposePanel(id) ??
+    parseAsidePanel(id) ??
     parseConversationsPanel(id) ??
     parseContextPanel(id)?.streamId ??
     parseDraftPanel(id)?.parentStreamId ??
@@ -62,7 +65,7 @@ export function streamOfPane(id: string): string | null {
   )
 }
 
-/** The pane a pick replaces: a draft's, conversations list's or overview's stream while it is open, else the pane itself. */
+/** The pane a pick replaces: a draft's, aside's, conversations list's or overview's stream while it is open, else the pane itself. */
 function pageOfPane({ current, layout }: StreamPage): string {
   const streamId = streamOfPane(current)
   if (streamId === null || streamId === current) return current
