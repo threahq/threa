@@ -161,9 +161,10 @@ Research cost now follows the turn: a persona pinned to Opus 5 researches at Opu
 **When to use:**
 
 - Default Ariadne persona model since 2026-10-10. A custom persona started from scratch begins on the same model, and the companion eval suites run on it by default (`COMPANION_MODEL_ID`).
+- General research (`general_research`) on an Ariadne turn, since that sub-agent inherits the calling turn's model. Workspace research stays on `gpt-6-luna`.
 - A delegable subagent model, off until an admin enables it.
 
-**On the Ariadne default.** It is Kristoffer's product call to try it in use, and the trial below does not show it ahead of `gpt-6-luna`. Two runs per case on 2026-10-10, same Ariadne prompt, sub-agents left on Luna:
+**On the Ariadne default.** It is Kristoffer's product call to try it in use, and the trial below does not show it ahead of `gpt-6-luna`. Two runs per case on 2026-10-10, same Ariadne prompt, workspace research left on Luna:
 
 - `persona-style`: 14/14 for both. Haiku cost 2.3× as much ($0.017 against $0.007) because it called workspace research on personal questions Luna answered directly.
 - `brief-correction`: Haiku 11/14, Luna 14/14. Haiku wrote a newly stated decision to an empty brief 1 time in 4. It corrected an existing brief 4/4.
