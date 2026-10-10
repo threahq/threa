@@ -41,6 +41,12 @@ You rarely need to look up an id first. Any stream argument takes a `stream_…`
 
 Two things you cannot do this way, by design of the API: an `@user-slug` will not stand in for your DM with that user (DM streams hide their counterpart on the wire), and bots and personas are not queryable by slug. For a DM, find its `stream_…` id with `threa streams list --type dm` and `threa streams read <id> --members`; for a bot or persona, pass its id.
 
+## Archived streams stay readable
+
+If your key could read a stream before it was archived, it still can. `threa streams read`, `threa conversations read`, and `threa search` (tools `read_stream`, `read_conversation`, `search`) work on an archived stream and on any thread under it. A send, edit, or delete there fails with code `STREAM_READ_ONLY`.
+
+By default `threa streams list` leaves out archived streams and their threads, and `threa conversations list` leaves out the conversations in those streams. Pass `--archived` to either command (tools `list_streams` and `list_conversations` with `include_archived: true`) to include those rows, which carry `archived: true` in JSON and print `[archived]` in text output. Refer to an archived channel by its `stream_…` id, which `threa streams list --archived` shows; its `#channel-slug` fails with `UNRESOLVED_REF`.
+
 ## Payloads name their authors
 
 Read results already carry author identity, so you seldom need a second call to name who said what. Message rows carry `author: { id, type, name, slug? }` (a bot or persona author has no slug and its name comes from `authorDisplayName`). Conversations carry a `participants` array parallel to `participantIds` with each participant's name and slug. Stream members carry name and slug. Message search results, attachment rows, and conversations also carry `stream: { id, name?, type? }` — and `rootStream` when the stream is a thread — so you can name the scope without a `streams read`. Use these fields directly instead of listing users or streams per id.

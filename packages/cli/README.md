@@ -64,11 +64,13 @@ threa whoami                                        # authenticated principal, a
 threa streams list --type channel --query eng       # list accessible streams (page with --after)
 threa streams read #eng --members --limit 20        # a stream plus a page of its messages
 threa streams archive stream_abc                     # archive a stream; unarchive reopens it
+threa streams list --archived                       # include archived streams, marked [archived]
 threa users list --query alice                      # workspace users
 threa search "deploy plan" --what messages          # search messages (--semantic, --exact, --type)
 threa search "" --what memos --knowledge-type decision   # browse workspace memory (empty query allowed)
 threa search invoice --what attachments             # search attachments by name or extracted text
 threa conversations list --stream #eng --status active
+threa conversations list --stream stream_abc --archived   # include conversations in archived streams
 threa conversations read conv_123 --limit 50
 threa messages find-by-metadata github.pr=org/repo#42 --stream #eng
 threa memos list --stream #eng                      # browse recent memos, newest first
@@ -112,6 +114,8 @@ threa mcp serve
 ```
 
 Any stream argument (`streams read`, `messages send`, `labels add`, `labels remove`, `search --stream`, `conversations list --stream`, `messages find-by-metadata --stream`) accepts a `stream_…` id or a `#channel-slug`. An `@user-slug` is not resolvable as a stream (a DM hides its counterpart on the wire); pass the DM's `stream_…` id. A ref that matches nothing or is ambiguous fails before any API call with code `UNRESOLVED_REF`.
+
+An archived stream stays readable to any key that could read it before. `streams read`, `conversations read`, and `search` work on it and on any thread under it; a send, edit, or delete there fails with code `STREAM_READ_ONLY`. By default `streams list` leaves out archived streams and their threads, and `conversations list` leaves out the conversations in those streams. With `--archived`, both commands include those rows, which print `[archived]` and carry `archived: true` in JSON. A `#channel-slug` does not resolve an archived channel (the ref fails with `UNRESOLVED_REF`), so pass the `stream_…` id that `streams list --archived` shows.
 
 `messages send` and `messages edit` take content as an argument; `messages send` reads stdin when the content argument is `-`. `delegations finish --result -` also reads the result markdown from stdin.
 
