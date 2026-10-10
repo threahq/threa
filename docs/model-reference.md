@@ -6,7 +6,7 @@ This document provides a comprehensive reference for AI models including capabil
 
 ## Price table
 
-All figures per 1M tokens, verified on 2026-07-30. Temporary OpenRouter discounts are excluded; Luna's listed discounted rates were normalized to its standard rates. **Verify before making a model-choice argument** — this table was wrong about `claude-haiku-4.5` by 4× for months, and five components were pinned to it on the strength of that number:
+All figures per 1M tokens, verified on 2026-07-30 (`claude-haiku-5.5` on 2026-10-10). Temporary OpenRouter discounts are excluded; Luna's listed discounted rates were normalized to its standard rates. **Verify before making a model-choice argument** — this table was wrong about `claude-haiku-4.5` by 4× for months, and five components were pinned to it on the strength of that number:
 
 ```bash
 curl -s https://openrouter.ai/api/v1/models -H "Authorization: Bearer $OPENROUTER_API_KEY" \
