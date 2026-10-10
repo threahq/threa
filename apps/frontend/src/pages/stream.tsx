@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect } from "react"
-import { useParams } from "react-router-dom"
+import { useParams, useSearchParams } from "react-router-dom"
 import { X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { floatingPanelTab, primaryPanelOf, type PaneEdge } from "@/lib/panel-tabs"
 import { useStreamOrDraft, useStreamError, usePanelLayout, useTypeToFocus } from "@/hooks"
-import { usePanel, useSidebar } from "@/contexts"
+import { useMainOwnsCover, usePanel, useSidebar } from "@/contexts"
 import { ResizablePanelFrame, usePanelInset } from "@/components/layout"
 import { PaneHost, Pane, PaneDropContext, PaneDropIndicator, paneDropZone, usePaneDropState } from "@/components/panes"
 import { StreamPane, useConversationViewParam } from "@/components/panes/stream-pane"
@@ -76,6 +76,8 @@ export function StreamPage() {
   })
   const fittedPanels = useFittedPanelLayout(maxColumns, false)
   const paneDrops = usePaneDropState(workspaceId!, streamId!)
+  const [searchParams] = useSearchParams()
+  const highlightMessageId = useMainOwnsCover() ? searchParams.get("m") : null
 
   useTypeToFocus()
 
@@ -193,6 +195,8 @@ export function StreamPage() {
             <StreamPane
               workspaceId={workspaceId}
               streamId={streamId}
+              highlightMessageId={highlightMessageId}
+              autoFocus={!isMobile}
               contextLayout={isMobile ? phonePages : fittedPanels}
             />
           </Pane>

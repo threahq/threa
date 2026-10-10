@@ -601,6 +601,11 @@ export function StreamContent({
   emptyState,
 }: StreamContentProps) {
   const [searchParams, setSearchParams] = useSearchParams()
+  // The page's own stream: the search shortcut, the conversation overlay and the
+  // inbox settle are the page's, never a pane's beside it. A page with no stream
+  // route (the persona editor's test chat) has only this one.
+  const { streamId: routeStreamId } = useParams<{ streamId: string }>()
+  const isRouteStream = routeStreamId === undefined || routeStreamId === streamId
   const location = useLocation()
   const navigationType = useNavigationType()
   const messageService = useMessageService()
@@ -737,7 +742,8 @@ export function StreamContent({
   // threads the overlay context into the timeline rows.
   const supportsConversationOverlay =
     !isDraft && (stream?.type === StreamTypes.CHANNEL || stream?.type === StreamTypes.DM)
-  const conversationOverlayActive = supportsConversationOverlay && searchParams.get("convOverlay") === "on"
+  const conversationOverlayActive =
+    supportsConversationOverlay && isRouteStream && searchParams.get("convOverlay") === "on"
   const { context: conversationOverlay, inViewConversations } = useConversationOverlay({
     workspaceId,
     streamId,
@@ -962,18 +968,23 @@ export function StreamContent({
     {
       searchInStream: openOrFocusSearch,
     },
-    !isThread && !isDraft
+    !isThread && !isDraft && isRouteStream
   )
 
   // Header search button dispatches a custom event so it can share the same open/focus path.
+  // It names its stream; an unnamed one is the page's.
   useEffect(() => {
     if (isThread || isDraft) return
 
-    document.addEventListener("threa:open-stream-search", openOrFocusSearch)
-    return () => {
-      document.removeEventListener("threa:open-stream-search", openOrFocusSearch)
+    const onOpenSearch = (event: Event) => {
+      const target = (event as CustomEvent<{ streamId?: string } | null>).detail?.streamId
+      if (target ? target === streamId : isRouteStream) openOrFocusSearch()
     }
-  }, [isDraft, isThread, openOrFocusSearch])
+    document.addEventListener("threa:open-stream-search", onOpenSearch)
+    return () => {
+      document.removeEventListener("threa:open-stream-search", onOpenSearch)
+    }
+  }, [isDraft, isThread, isRouteStream, streamId, openOrFocusSearch])
 
   const handleSearchClose = useCallback(() => {
     setIsSearchOpen(false)
@@ -2180,10 +2191,8 @@ export function StreamContent({
   const readCommitQueue = useReadCommitQueue()
   const { markAsRead, markUnread, clearInbox } = useUnreadActions(workspaceId)
   const inInbox = useStreamInInbox(workspaceId, streamId)
-  // Only the page's own stream settles on Escape: a thread panel mounts a second
-  // StreamContent, and one keypress must never settle both.
-  const { streamId: routeStreamId } = useParams<{ streamId: string }>()
-  const canSettleOnEscape = routeStreamId === streamId && inInbox
+  // A thread panel mounts a second StreamContent, and one keypress must never settle both.
+  const canSettleOnEscape = isRouteStream && inInbox
   const { panelId } = usePanel()
 
   // The stream's sparse read overlay — message ids read individually above the
