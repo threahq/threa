@@ -1,15 +1,8 @@
-import { lazy, Suspense, useContext, useMemo, useRef, type ComponentType } from "react"
-import {
-  parsePath,
-  Route,
-  Routes,
-  UNSAFE_NavigationContext,
-  UNSAFE_RouteContext,
-  type Navigator,
-  type To,
-} from "react-router-dom"
+import { lazy, Suspense, useMemo, type ComponentType } from "react"
+import { Route, Routes, UNSAFE_RouteContext } from "react-router-dom"
 import { usePanel, useRevealReady } from "@/contexts"
 import type { PagePanePattern } from "@/lib/page-panes"
+import { PaneNavigation } from "./pane-navigation"
 
 interface PageRoute {
   page: ComponentType
@@ -59,22 +52,7 @@ export function PageRoutes({
   path: string
   pattern: PagePanePattern
 }) {
-  const { pageSearch, navigateIn } = usePanel()
-  const navigation = useContext(UNSAFE_NavigationContext)
-  // Pages keep `navigate` in effect deps, so the navigator stays the same while the pane's context changes.
-  const navigateInRef = useRef(navigateIn)
-  navigateInRef.current = navigateIn
-  const paneNavigation = useMemo(() => {
-    const outer = navigation.navigator
-    const go =
-      (replace: boolean): Navigator["push"] =>
-      (to: To, state, options) => {
-        const { pathname = "", search = "", hash } = typeof to === "string" ? parsePath(to) : to
-        if (!hash && navigateInRef.current({ pathname, search }, replace)) return
-        ;(replace ? outer.replace : outer.push)(to, state, options)
-      }
-    return { ...navigation, navigator: { ...outer, push: go(false), replace: go(true) } }
-  }, [navigation])
+  const { pageSearch } = usePanel()
   const { page: Page, reportsReady } = PAGES[pattern]
   // The pane's context changes on every layout change; the page needn't render with it.
   const routes = useMemo(
@@ -86,13 +64,13 @@ export function PageRoutes({
     [workspaceId, path, pageSearch, pattern, Page]
   )
   return (
-    <UNSAFE_RouteContext.Provider value={NO_ROUTE}>
-      <UNSAFE_NavigationContext.Provider value={paneNavigation}>
+    <PaneNavigation>
+      <UNSAFE_RouteContext.Provider value={NO_ROUTE}>
         <Suspense fallback={null}>
           {routes}
           {!reportsReady && <Ready />}
         </Suspense>
-      </UNSAFE_NavigationContext.Provider>
-    </UNSAFE_RouteContext.Provider>
+      </UNSAFE_RouteContext.Provider>
+    </PaneNavigation>
   )
 }

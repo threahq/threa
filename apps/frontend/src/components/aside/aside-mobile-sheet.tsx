@@ -1,14 +1,25 @@
 import {
+  useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  type ReactNode,
   type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react"
-import { HistoryBackClose } from "@/components/ui/history-back-close"
+import {
+  matchPath,
+  parsePath,
+  useLocation,
+  UNSAFE_NavigationContext,
+  UNSAFE_RouteContext,
+  type To,
+} from "react-router-dom"
+import { afterOverlayHistory, HistoryBackClose } from "@/components/ui/history-back-close"
 import { PanelHost } from "@/components/layout/panel-host"
-import { PaneScope, usePanel } from "@/contexts"
+import { createAsidePanelId, PaneScope, usePanel } from "@/contexts"
 import { cn } from "@/lib/utils"
 import type { SplitDirection } from "@/lib/panel-tabs"
 import {
@@ -121,6 +132,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   const { layout, hasTabs, setCurrentPane } = usePanel()
   const held = asidePaneOf(layout, hostStreamId, hasTabs)
   const threadInSheet = held !== null
+  const asidePanelId = createAsidePanelId(hostStreamId)
   // Decided once, at mount. An entry pushed over an open thread's own inherits
   // its close claim (use-cover-close.ts), so the thread's Close and Back would
   // pop the aside instead of the thread.
@@ -268,16 +280,66 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
               </PaneScope>
             </AsideCoversPanesContext.Provider>
           ) : (
-            <AsidePane
-              workspaceId={workspaceId}
-              asideId={asideId}
-              hostStreamId={hostStreamId}
-              originScope={originScope}
-              autoFocus={takeFocus}
-            />
+            <LeaveForHost hostStreamId={hostStreamId}>
+              {/* Scoped as the aside's pane, as beside its stream, so what it opens takes the sheet rather than the page. */}
+              <PaneScope
+                panelId={asidePanelId}
+                section={{ ids: [asidePanelId], active: asidePanelId }}
+                splits={NO_SPLITS}
+              >
+                <AsidePane
+                  workspaceId={workspaceId}
+                  asideId={asideId}
+                  hostStreamId={hostStreamId}
+                  originScope={originScope}
+                  autoFocus={takeFocus}
+                />
+              </PaneScope>
+            </LeaveForHost>
           )}
         </div>
       </div>
     </>
+  )
+}
+
+/**
+ * A link from the aside to the stream under it — the "What you saw in …" context pill, a permalink — closes the
+ * sheet, then shows the stream at the linked message. The sheet's history entry goes first, so the jump's entry
+ * is not the one its close steps back over.
+ */
+function LeaveForHost({ hostStreamId, children }: { hostStreamId: string; children: ReactNode }) {
+  const navigation = useContext(UNSAFE_NavigationContext)
+  const route = useContext(UNSAFE_RouteContext)
+  const { openAtMessage } = usePanel()
+  const openAtMessageRef = useRef(openAtMessage)
+  openAtMessageRef.current = openAtMessage
+  const location = useLocation()
+  const locationRef = useRef(location)
+  locationRef.current = location
+  const value = useMemo(() => {
+    const outer = navigation.navigator
+    const go =
+      (replace: boolean): typeof outer.push =>
+      (to: To, state, options) => {
+        const { pathname = "", search = "" } = typeof to === "string" ? parsePath(to) : to
+        const messageId = new URLSearchParams(search).get("m")
+        // A replace clearing the query of the stream under the sheet is no link to it; a link to the URL on show
+        // replaces too, and has no query to clear.
+        const toHost = messageId !== null || (search === "" && (!replace || locationRef.current.search === ""))
+        if (!toHost || matchPath("/w/:workspaceId/s/:streamId", pathname)?.params.streamId !== hostStreamId) {
+          return (replace ? outer.replace : outer.push)(to, state, options)
+        }
+        closeAside()
+        if (messageId !== null) afterOverlayHistory(() => openAtMessageRef.current(hostStreamId, messageId, false))
+      }
+    return { ...navigation, navigator: { ...outer, push: go(false), replace: go(true) } }
+  }, [navigation, hostStreamId])
+  // Off the data router's navigate, which would bypass the navigator.
+  const offDataRoute = useMemo(() => ({ ...route, isDataRoute: false }), [route])
+  return (
+    <UNSAFE_RouteContext.Provider value={offDataRoute}>
+      <UNSAFE_NavigationContext.Provider value={value}>{children}</UNSAFE_NavigationContext.Provider>
+    </UNSAFE_RouteContext.Provider>
   )
 }

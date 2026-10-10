@@ -340,7 +340,7 @@ function naturalTabWidth(tab: HTMLElement): number {
 
 /**
  * Lands focus handed off by a tab row that closed down to this panel alone on
- * the panel's own close (or phone back) button, which takes the returned ref.
+ * the panel's own close button (on a phone, Up or the sidebar toggle), which takes the returned ref.
  */
 export function usePanelCloseFocusLanding() {
   const { panelId, tabbed } = usePanel()

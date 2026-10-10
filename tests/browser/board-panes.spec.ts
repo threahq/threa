@@ -133,7 +133,7 @@ test.describe("on a phone", () => {
     await expect(board(page)).not.toBeVisible()
     expect(await boardScrollTop(page)).toBe(scrolled)
 
-    await pane.getByRole("button", { name: "Back" }).click()
+    await page.goBack()
     await expect.poll(() => panelParam(page)).toBeNull()
     await expect(board(page)).toBeVisible()
     expect(await boardScrollTop(page)).toBe(scrolled)

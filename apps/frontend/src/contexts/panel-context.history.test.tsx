@@ -802,17 +802,18 @@ describe("panel tabs history on a phone", () => {
     }).toEqual({ front: "stream_main", main: true, t: false })
   })
 
-  it("should pop back to the pane that isn't a stream when a stream tab opened from it closes", async () => {
+  it("should step Back to the pane that isn't a stream when a stream it links to takes its place", async () => {
     const { user, back, loc } = mountPhone([PAGE, `${PAGE}?panel=stream_b-conv:c`])
     expect(front()).toBe("conv:c")
 
     await user.click(screen.getByRole("link", { name: "conv:c opens y" }))
-    expect(front()).toBe("stream_y")
-    await user.click(screen.getByRole("button", { name: "close stream_y" }))
-    expect({ loc: loc(), front: front() }).toEqual({ loc: `${PAGE}?panel=stream_b-conv:c`, front: "conv:c" })
+    expect({ loc: loc(), front: front() }).toEqual({
+      loc: "/w/ws/s/stream_y?panel=stream_main-stream_b-stream_y",
+      front: "stream_y",
+    })
 
     await back()
-    expect(loc()).toBe(PAGE)
+    expect({ loc: loc(), front: front() }).toEqual({ loc: `${PAGE}?panel=stream_b-conv:c`, front: "conv:c" })
   })
 
   it("should leave the entry before a sidebar pick of the route's stream for Back", async () => {

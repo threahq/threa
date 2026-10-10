@@ -301,6 +301,27 @@ test.describe("Aside — mobile surface", () => {
     })
   })
 
+  test("closes for a link to the stream under it, showing that stream", async ({ page }) => {
+    await createChannel(page, `aside-ml-${testId}`)
+    const { workspaceId, streamId } = extractIds(page)
+    await seedMessages(page, workspaceId, streamId, `[${testId}-link]`)
+    await page.setViewportSize(PHONE)
+    await page.goto(`/w/${workspaceId}/s/${streamId}`)
+    await expect(hostScroller(page, streamId)).toBeVisible({ timeout: 20000 })
+
+    await openAsideFromPalette(page)
+    await pane(page).locator("[contenteditable='true']").first().focus()
+    await page.keyboard.type("What is this about?")
+    await page.keyboard.press("Meta+Enter")
+    const pill = pane(page).getByRole("link", { name: /What you saw in/ })
+    await expect(pill).toBeVisible({ timeout: 15000 })
+
+    await pill.click()
+    await expect(sheet(page)).toHaveCount(0)
+    expect(new URL(page.url()).pathname).toBe(`/w/${workspaceId}/s/${streamId}`)
+    await expect(hostScroller(page, streamId)).toBeVisible()
+  })
+
   test("gives an open draft the whole sheet, and comes back to the conversation behind it", async ({ page }) => {
     await createChannel(page, `aside-md-${testId}`)
     const { workspaceId, streamId } = extractIds(page)

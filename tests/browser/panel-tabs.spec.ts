@@ -454,7 +454,7 @@ test("should even the panes along a divider when it is double-clicked", async ({
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 400, height: 800 }, isMobile: true, hasTouch: true })
 
-  test("should close the pane on show with the back control, and keep both mounted through a sheet switch", async ({
+  test("should close the pane on show from the picker, and keep both mounted through a sheet switch", async ({
     page,
   }) => {
     const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
@@ -472,8 +472,12 @@ test.describe("on a phone", () => {
     await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
     expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
 
-    // Back on a phone closes the pane on show, not the page; the other two stay open.
-    await tabPane(page, threadA).getByRole("button", { name: "Back" }).click()
+    // Closing the pane on show from the picker keeps the other two open.
+    await tabPane(page, threadA).getByRole("button", { name: "3 open panes" }).click()
+    await page
+      .getByRole("dialog", { name: "Open panes" })
+      .getByRole("button", { name: /^Close .*first parent/ })
+      .click()
     await expect(tabPane(page, threadA)).toHaveCount(0)
     await expect(tabPane(page, threadB).getByRole("button", { name: "2 open panes" })).toBeVisible()
     await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()

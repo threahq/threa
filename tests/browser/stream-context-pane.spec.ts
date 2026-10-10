@@ -236,7 +236,7 @@ test("should offer the overview from an archived thread's mobile panel sheet", a
 
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadId}`)
-  await page.locator("header", { hasText: "Back" }).getByRole("button", { name: "Stream actions" }).click()
+  await tabPane(page, threadId).locator("header").first().getByRole("button", { name: "Stream actions" }).click()
   await page
     .getByRole("dialog")
     .getByRole("button", { name: /In this stream/ })
@@ -257,7 +257,7 @@ test.describe("on a touch tablet", () => {
     await expect(thread.getByText("thread link")).toBeVisible({ timeout: 30_000 })
     await expect(drawer(page)).toHaveCount(0)
 
-    await page.locator("header", { hasText: "Back" }).getByRole("button", { name: "Stream actions" }).click()
+    await tabPane(page, threadId).locator("header").first().getByRole("button", { name: "Stream actions" }).click()
     await page
       .getByRole("dialog")
       .getByRole("button", { name: /In this stream/ })

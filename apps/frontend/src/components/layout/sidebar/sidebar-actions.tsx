@@ -8,7 +8,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react"
-import { Check, ChevronDown, Compass, MessagesSquare, MoreHorizontal } from "lucide-react"
+import { Check, ChevronDown, Compass, MessagesSquare, MoreHorizontal, SquarePlus } from "lucide-react"
 import { Link } from "react-router-dom"
 import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
@@ -78,6 +78,11 @@ export function browseStreamsAction(
     href: tab === "all" ? `/w/${workspaceId}/streams` : `/w/${workspaceId}/streams/${tab}`,
     onSelect,
   }
+}
+
+/** Opens the stream in a tab of its own, beside the pane on show. */
+export function openInNewTabAction(onSelect: () => void): SidebarActionItem {
+  return { id: "open-in-new-tab", label: "Open in new tab", icon: SquarePlus, onSelect }
 }
 
 /** Opens the explorer's Threads tab narrowed to this stream's threads. */
