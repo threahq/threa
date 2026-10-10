@@ -6,7 +6,7 @@ This document provides a comprehensive reference for AI models including capabil
 
 ## Price table
 
-All figures per 1M tokens, verified on 2026-07-30 (`claude-haiku-5.5` on 2026-10-10). Temporary OpenRouter discounts are excluded; Luna's listed discounted rates were normalized to its standard rates. **Verify before making a model-choice argument** — this table was wrong about `claude-haiku-4.5` by 4× for months, and five components were pinned to it on the strength of that number:
+All figures per 1M tokens, verified on 2026-07-30 (`claude-haiku-5.5`, `claude-sonnet-5.5`, `claude-opus-5.5` and `gpt-6-luna-pro` on 2026-10-10). Temporary OpenRouter discounts are excluded; Luna's listed discounted rates were normalized to its standard rates. **Verify before making a model-choice argument** — this table was wrong about `claude-haiku-4.5` by 4× for months, and five components were pinned to it on the strength of that number:
 
 ```bash
 curl -s https://openrouter.ai/api/v1/models -H "Authorization: Bearer $OPENROUTER_API_KEY" \
@@ -19,12 +19,15 @@ curl -s https://openrouter.ai/api/v1/models -H "Authorization: Bearer $OPENROUTE
 | `openai/gpt-5.4-mini`           | $0.75 | $4.50  | $0.075     | free        | 400K    |
 | `openai/gpt-5.6-luna`           | $0.20 | $1.20  | $0.02      | **$0.25**   | 1.05M   |
 | `openai/gpt-6-luna`             | $0.10 | $0.50  | $0.01      | **$0.125**  | 1.05M   |
+| `openai/gpt-6-luna-pro`         | $0.10 | $0.50  | $0.01      | **$0.125**  | 1.05M   |
 | `openai/gpt-5.6-terra`          | $2.50 | $15.00 | $0.25      | $3.125      | 1.05M   |
 | `openai/gpt-5.6-sol`            | $5.00 | $30.00 | $0.50      | $6.25       | 1.05M   |
 | `anthropic/claude-haiku-5.5`    | $0.10 | $0.50  | $0.01      | $0.125      | 1M      |
 | `anthropic/claude-haiku-4.5`    | $1.00 | $5.00  | $0.10      | $1.25       | 200K    |
+| `anthropic/claude-sonnet-5.5`   | $2.00 | $10.00 | $0.10      | $2.50       | 1M      |
 | `anthropic/claude-sonnet-5`     | $2.00 | $10.00 | $0.20      | $2.50       | 1M      |
 | `anthropic/claude-sonnet-4.6`   | $3.00 | $15.00 | $0.30      | $3.75       | 1M      |
+| `anthropic/claude-opus-5.5`     | $4.00 | $20.00 | $0.20      | $5.00       | 1M      |
 | `anthropic/claude-opus-5`       | $5.00 | $25.00 | $0.50      | $6.25       | 1M      |
 | `google/gemini-2.5-flash-lite`  | $0.10 | $0.40  | $0.01      | $0.083      | 1M      |
 | `google/gemini-3.1-flash-lite`  | $0.25 | $1.50  | $0.025     | $0.083      | 1M      |
@@ -73,6 +76,18 @@ All models use `provider:modelPath` format:
 Everything listed here is also in `models.yaml`, so it is offered in the persona
 model picker. The two lists are meant to stay identical — an entry is an offer.
 
+### openrouter:anthropic/claude-opus-5.5
+
+**Name:** Claude Opus 5.5
+
+**Description:** Anthropic's flagship, successor to Opus 5. 1M context, image and file input, tool calling and structured output.
+
+**Typical cost:** ~$4.00 / ~$20.00 per 1M (cache read $0.20, cache write $5.00), verified 2026-10-10.
+
+**When to use:** explicit selection only. No production component defaults to it. Added 2026-10-10 to keep the registry current; no Threa eval has run against it.
+
+---
+
 ### openrouter:anthropic/claude-opus-5
 
 **Name:** Claude Opus 5
@@ -87,6 +102,18 @@ model picker. The two lists are meant to stay identical — an entry is an offer
 - Offered in the picker as an `escalationModel`. It was Ariadne's default escalation until 2026-08-31, when Terra took that slot — see the Terra entry.
 
 **Use instead of:** any Opus 4.x.
+
+---
+
+### openrouter:anthropic/claude-sonnet-5.5
+
+**Name:** Claude Sonnet 5.5
+
+**Description:** Anthropic's mid tier, successor to Sonnet 5. 1M context, image and file input, tool calling and structured output.
+
+**Typical cost:** ~$2.00 / ~$10.00 per 1M (cache read $0.10, cache write $2.50), verified 2026-10-10.
+
+**When to use:** explicit selection only. No production component defaults to it. Added 2026-10-10 to keep the registry current; no Threa eval has run against it.
 
 ---
 
@@ -188,6 +215,18 @@ This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On 
 **Typical cost:** ~$0.125 / ~$0.50 per 1M on a cache miss, ~$0.01 per 1M on a cache hit. Below the 1024-token cache floor, input costs $0.10 per 1M. Long-context pricing begins at 272K tokens ($0.20/$0.75).
 
 **When to use:** Production defaults formerly pinned to GPT-5.6 Luna, including Ariadne, classification, extraction, summarization, most attachment processing and the no-turn general-research fallback. Image captioning remains on GPT-5.6 Luna after GPT-6 missed OCR text in the image-caption suite. Existing explicit GPT-5.6 Luna selections remain valid. This is a product trial, not a Threa eval result; compare production behavior and task suites before claiming quality parity.
+
+---
+
+### openrouter:openai/gpt-6-luna-pro
+
+**Name:** GPT-6 Luna Pro
+
+**Description:** The same weights as `gpt-6-luna`, served with `reasoning.mode: pro`. 1.05M context.
+
+**Typical cost:** the `gpt-6-luna` price sheet per token, verified 2026-10-10. Pro mode spends more reasoning tokens per call, so a call costs more than the same call on `gpt-6-luna`.
+
+**When to use:** explicit selection only. No production component defaults to it. Added 2026-10-10 to keep the registry current; no Threa eval has run against it.
 
 ---
 
