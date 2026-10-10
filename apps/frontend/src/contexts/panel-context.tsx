@@ -309,6 +309,8 @@ interface PanelContextValue {
   setCurrentPane: (panelId: string) => void
   /** {@link setCurrentPane} without touching the URL, for a caller navigating there itself. */
   markCurrentPane: (panelId: string) => void
+  /** Lays the panes out as `edit` does, as a step in history, and works in `panelId`; flashes it when nothing changes. */
+  showPanes: (edit: (layout: PanelLayout) => PanelLayout, panelId: string) => void
   /** Whether `?m` is this panel's: it belongs to the pane that was in front
    *  when it was set, so a pane beside it doesn't look for it too. */
   ownsCover: boolean
@@ -528,6 +530,7 @@ function buildValue(
     splits,
     setCurrentPane: ops.setCurrentPane,
     markCurrentPane: ops.markCurrentPane,
+    showPanes: (edit, panelId) => ops.open(edit, false, panelId),
     ownsCover: own !== null && own === ops.coverOwner,
     pageSearch: own === null ? "" : ops.pageQuery(own),
     navigateIn: (to, replace) => own !== null && ops.navigatePane(own, to, replace),

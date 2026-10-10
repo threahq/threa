@@ -25,7 +25,7 @@ import {
   type PanelLayout,
 } from "@/lib/panel-tabs"
 import { isPagePane, isServerStreamId } from "@/lib/stream-ids"
-import { pagePathOf } from "@/lib/page-panes"
+import { pagePaneAt, pagePathOf } from "@/lib/page-panes"
 import { flashPane } from "@/lib/pane-flash"
 import { getCachedWorkspaceTables, indexStreams } from "@/stores/workspace-store"
 
@@ -101,16 +101,16 @@ export function pickStream(page: StreamPage, streamId: string, parentOf: ParentO
 }
 
 /**
- * Picks a stream from the sidebar, or on a phone a workspace page: a phone shows it in the pane on show, or brings
- * it forward when open, keeping the other panes. Elsewhere only the stream page picks; false where a row's link
- * goes there on its own.
+ * Picks a stream or a workspace page from the sidebar, keeping the other panes: a phone shows it in the pane on
+ * show, elsewhere it takes the place of the pane worked in; one already open is brought forward. False where a
+ * row's link goes there on its own.
  */
 function useStreamPicker(workspaceId: string): (streamId: string) => boolean {
   const navigate = useNavigate()
   const location = useLocation()
   const path = useMatch("/w/:workspaceId/s/:streamId")?.params.streamId
   const [searchParams] = useSearchParams()
-  const { layout, hasTabs, setCurrentPane, markCurrentPane, openPanel } = usePanel()
+  const { layout, hasTabs, setCurrentPane, markCurrentPane, openPanel, showPanes } = usePanel()
   const { isMobile } = useSidebar()
   const current = useCurrentPane()
   return useStableCallback((streamId: string) => {
@@ -119,10 +119,20 @@ function useStreamPicker(workspaceId: string): (streamId: string) => boolean {
       openPanel(streamId, { inPlace: true })
       return true
     }
-    if (!path || !isServerStreamId(streamId)) return false
     const streams = indexStreams(getCachedWorkspaceTables(workspaceId).streams ?? [])
+    const parentOf = (id: string) => streams.get(id)?.parentStreamId ?? null
+    // A page's route stays put while the page is open, which only the pane system knows.
+    if (!path || !isServerStreamId(streamId)) {
+      const routePage = path ?? pagePaneAt(location.pathname)
+      if (!hasTabs || routePage === null || (!isServerStreamId(streamId) && pagePathOf(streamId) === null)) return false
+      showPanes(
+        (now) => pickStream({ layout: now, current: current ?? routePage }, streamId, parentOf).layout,
+        streamId
+      )
+      return true
+    }
     const page = { layout, current: current ?? path }
-    const next = pickStream(page, streamId, (id) => streams.get(id)?.parentStreamId ?? null)
+    const next = pickStream(page, streamId, parentOf)
     // Moving to a pane already on show changes only which pane is worked in, which is no step in history.
     if (formatPanelLayout(next.layout) === formatPanelLayout(layout) && !searchParams.has("m")) {
       setCurrentPane(next.current)
