@@ -80,9 +80,7 @@ async function resolveMemoSearchScope(
   }
 
   const accessSpec = await computeAgentAccessSpec(pool, { stream: anchorStream, invokingUserId: userId })
-  const scopedStreamIds = await SearchRepository.getAccessibleStreamsForAgent(pool, accessSpec, workspaceId, {
-    archiveStatus: ["active", "archived"],
-  })
+  const scopedStreamIds = await SearchRepository.getAccessibleStreamsForAgent(pool, accessSpec, workspaceId)
 
   // The access spec is derived from stream type/visibility, not membership, so
   // intersect with the user's own access: the scoped result can never exceed

@@ -6,6 +6,7 @@
  * - a captured stream the user cannot read stays unreadable (capture never widens)
  * - a stream the user can read but the turn did not capture stays unreadable
  * - losing access mid-run removes the stream on the next call
+ * - a captured archived channel and the thread sealed under it stay readable
  * - E2EE-rooted streams and their threads are never readable
  * - revoked and expired tokens stop validating
  * - reads are recorded on the token and on its stream's sandbox, and a revoked token or one without a sandbox records none
@@ -125,6 +126,48 @@ describe("sandbox session tokens", () => {
     expect(await isSandboxStreamReadable(pool, validated, uncaptured)).toBe(false)
     expect(await isSandboxStreamReadable(pool, validated, e2eRoot)).toBe(false)
     expect(await isSandboxStreamReadable(pool, validated, e2eThread)).toBe(false)
+  })
+
+  test("should keep a captured archived stream and the thread sealed under it readable", async () => {
+    const archived = streamId()
+    const sealedThread = streamId()
+    await withTransaction(pool, async (client) => {
+      await insertStream(client, archived, StreamTypes.CHANNEL, invokerId)
+      await insertStream(client, sealedThread, StreamTypes.THREAD, otherId, archived)
+      await StreamMemberRepository.insert(client, ws, archived, invokerId)
+    })
+    await pool.query(`UPDATE streams SET archived_at = NOW() WHERE id = $1`, [archived])
+
+    const { value } = await mint([archived, sealedThread])
+    const session = (await service.validate(value)) as SandboxSession
+
+    expect(new Set(await sandboxReadableStreamIds(pool, session))).toEqual(new Set([archived, sealedThread]))
+    expect(await isSandboxStreamReadable(pool, session, archived)).toBe(true)
+    expect(await isSandboxStreamReadable(pool, session, sealedThread)).toBe(true)
+  })
+
+  test("should keep an archived E2E root and its thread unreadable", async () => {
+    const root = streamId()
+    const thread = streamId()
+    await withTransaction(pool, async (client) => {
+      await insertStream(client, root, StreamTypes.CHANNEL, invokerId)
+      await insertStream(client, thread, StreamTypes.THREAD, invokerId, root)
+      await StreamMemberRepository.insert(client, ws, root, invokerId)
+      await E2eStreamsRepository.markStreamE2e(client, {
+        streamId: root,
+        workspaceId: ws,
+        ownerUserId: invokerId,
+        ownerUserKeyId: "e2ek_test",
+      })
+    })
+    await pool.query(`UPDATE streams SET archived_at = NOW() WHERE id = $1`, [root])
+
+    const { value } = await mint([root, thread])
+    const session = (await service.validate(value)) as SandboxSession
+
+    expect(await sandboxReadableStreamIds(pool, session)).toEqual([])
+    expect(await isSandboxStreamReadable(pool, session, root)).toBe(false)
+    expect(await isSandboxStreamReadable(pool, session, thread)).toBe(false)
   })
 
   test("should drop a stream on the next call once the invoker loses access", async () => {

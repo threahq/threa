@@ -537,6 +537,64 @@ describe("Agent Access Scope", () => {
     })
   })
 
+  test("should include an archived channel and the thread sealed under it when resolving an agent's readable set", async () => {
+    await withTestTransaction(pool, async (client) => {
+      const ownerWorkosUserId = userId()
+      const secondWorkosUserId = userId()
+      const testWorkspaceId = workspaceId()
+
+      await WorkspaceRepository.insert(client, {
+        id: testWorkspaceId,
+        name: "Agent Archived Scope Workspace",
+        slug: `agent-archived-scope-${testWorkspaceId}`,
+        createdBy: ownerWorkosUserId,
+      })
+
+      const owner = await addTestMember(client, testWorkspaceId, ownerWorkosUserId)
+      const second = await addTestMember(client, testWorkspaceId, secondWorkosUserId)
+
+      const archivedChannelId = streamId()
+      const sealedThreadId = streamId()
+
+      await StreamRepository.insert(client, {
+        id: archivedChannelId,
+        workspaceId: testWorkspaceId,
+        type: StreamTypes.CHANNEL,
+        visibility: Visibilities.PRIVATE,
+        createdBy: owner.id,
+      })
+      await StreamMemberRepository.insert(client, testWorkspaceId, archivedChannelId, owner.id)
+      await StreamMemberRepository.insert(client, testWorkspaceId, archivedChannelId, second.id)
+      await StreamRepository.insert(client, {
+        id: sealedThreadId,
+        workspaceId: testWorkspaceId,
+        type: StreamTypes.THREAD,
+        visibility: Visibilities.PRIVATE,
+        parentStreamId: archivedChannelId,
+        rootStreamId: archivedChannelId,
+        createdBy: owner.id,
+      })
+      await client.query(`UPDATE streams SET archived_at = NOW() WHERE id = $1`, [archivedChannelId])
+
+      const specs: AgentAccessSpec[] = [
+        { type: "user_full_access", userId: owner.id },
+        { type: "room_readable", roomStreamId: archivedChannelId },
+        { type: "user_intersection", userIds: [owner.id, second.id] },
+      ]
+      const probes = [archivedChannelId, sealedThreadId]
+      const readable: Record<string, string[]> = {}
+      for (const spec of specs) {
+        const ids = await SearchRepository.getAccessibleStreamsForAgent(client, spec, testWorkspaceId)
+        readable[spec.type] = probes.filter((id) => ids.includes(id))
+      }
+      expect(readable).toEqual({
+        user_full_access: probes,
+        room_readable: probes,
+        user_intersection: probes,
+      })
+    })
+  })
+
   test("user_intersection fails closed unless constructed with exactly two distinct users", async () => {
     await withTestTransaction(pool, async (client) => {
       const ownerWorkosUserId = userId()

@@ -773,15 +773,7 @@ export const SearchRepository = {
    * another workspace reads the room (`roomSharedSql`). Used by agent access control: an agent answers to everyone in its room (INV-62: the root's
    * visibility decides).
    */
-  async getRoomReadableStreams(
-    db: Querier,
-    workspaceId: string,
-    roomStreamId: string,
-    options?: { streamTypes?: StreamType[]; archiveStatus?: ArchiveStatus[] }
-  ): Promise<string[]> {
-    const hasTypeFilter = options?.streamTypes && options.streamTypes.length > 0
-    const archiveCondition = sql`${sql.raw(archiveStatusSql("s", options?.archiveStatus, { archivedIncludesSealed: true }))}`
-
+  async getRoomReadableStreams(db: Querier, workspaceId: string, roomStreamId: string): Promise<string[]> {
     const result = await db.query<{ id: string }>(composeSql`
       SELECT s.id FROM streams s
       JOIN streams root ON root.id = COALESCE(s.root_stream_id, s.id) AND root.workspace_id = s.workspace_id
@@ -791,8 +783,6 @@ export const SearchRepository = {
           OR (NOT ${roomSharedSql(workspaceId, roomStreamId)}
             AND ${roomReadableWithoutMembershipSql(workspaceId, roomStreamId, "root")})
         )
-        AND (${!hasTypeFilter} OR s.type = ANY(${options?.streamTypes ?? []}))
-        AND ${archiveCondition}
     `)
 
     return result.rows.map((r) => r.id)
@@ -827,31 +817,23 @@ export const SearchRepository = {
    * - user_full_access: Everything the specified user can access
    * - room_readable: Streams every reader of the room can read
    * - user_intersection: Streams all specified users can access (for DMs)
+   *
+   * The agent set ignores archive state: archiving blocks writes, never reads.
    */
-  async getAccessibleStreamsForAgent(
-    db: Querier,
-    spec: AgentAccessSpec,
-    workspaceId: string,
-    options?: { streamTypes?: StreamType[]; archiveStatus?: ArchiveStatus[] }
-  ): Promise<string[]> {
+  async getAccessibleStreamsForAgent(db: Querier, spec: AgentAccessSpec, workspaceId: string): Promise<string[]> {
     switch (spec.type) {
       case "user_full_access":
         return this.getAccessibleStreamsWithMembers(db, {
           workspaceId,
           userId: spec.userId,
-          streamTypes: options?.streamTypes,
-          archiveStatus: options?.archiveStatus,
+          archiveStatus: ["active", "archived"],
         })
 
       case "room_readable":
-        return this.getRoomReadableStreams(db, workspaceId, spec.roomStreamId, options)
+        return this.getRoomReadableStreams(db, workspaceId, spec.roomStreamId)
 
       case "user_intersection": {
         const [firstUserId, secondUserId] = getValidatedUserIntersectionUserIds(spec.userIds)
-        const hasTypeFilter = options?.streamTypes && options.streamTypes.length > 0
-        const archiveCondition = sql`${sql.raw(
-          archiveStatusSql("s", options?.archiveStatus, { archivedIncludesSealed: true })
-        )}`
 
         const result = await db.query<{ id: string }>(composeSql`
           SELECT s.id
@@ -859,8 +841,6 @@ export const SearchRepository = {
           WHERE s.workspace_id = ${workspaceId}
             AND ${streamAccessPredicateSql(workspaceId, firstUserId, "s.id")}
             AND ${streamAccessPredicateSql(workspaceId, secondUserId, "s.id")}
-            AND (${!hasTypeFilter} OR s.type = ANY(${options?.streamTypes ?? []}))
-            AND ${archiveCondition}
         `)
 
         return result.rows.map((r) => r.id)

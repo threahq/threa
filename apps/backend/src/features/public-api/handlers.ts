@@ -2,7 +2,7 @@ import { z } from "zod"
 import type { Request, Response } from "express"
 import type { Pool, PoolClient } from "pg"
 import type { Server } from "socket.io"
-import type { SearchFilters, SearchService } from "../search"
+import type { SearchService } from "../search"
 import type { FeatureFlagService } from "../feature-flags"
 import { setAuditSubjects } from "../access-log"
 import { serializeSearchResult, resolveUserAccessibleStreamIds, SearchRepository } from "../search"
@@ -829,13 +829,15 @@ export function createPublicApiHandlers({
   const botRuntimeWriteOps =
     providedWriteOps ?? createBotRuntimeWriteOps({ pool, io, botRuntimeService, botChannelService })
   const conversationService = providedConversationService ?? new ConversationService(pool)
-  /** Resolve accessible stream IDs for the current key (user-scoped or bot) */
-  async function getAccessibleStreamIds(req: Request, filters: SearchFilters = {}): Promise<string[]> {
+  /** The streams the current key can read. Archiving blocks writes, so archive state never narrows this. */
+  async function getAccessibleStreamIds(req: Request): Promise<string[]> {
     if (req.sandboxSession) {
-      return sandboxReadableStreamIds(pool, req.sandboxSession, filters)
+      return sandboxReadableStreamIds(pool, req.sandboxSession)
     }
     if (req.userApiKey) {
-      return resolveUserAccessibleStreamIds(pool, req.workspaceId!, req.user!.id, filters)
+      return resolveUserAccessibleStreamIds(pool, req.workspaceId!, req.user!.id, {
+        archiveStatus: ["active", "archived"],
+      })
     }
     if (req.botApiKey) {
       return botChannelService.getAccessibleStreamIdsForBot(req.workspaceId!, req.botApiKey.botId)
@@ -851,10 +853,8 @@ export function createPublicApiHandlers({
 
   /**
    * Resolve the response-level `slots` map for a page of returned messages.
-   * Access resolves against the key principal's active + archived streams (a
-   * shared source in an archived stream still hydrates for a user key; bot
-   * keys use their readable set, which excludes archived). Lazy — no access
-   * query runs when no returned message references a shared source.
+   * Lazy — no access query runs when no returned message references a shared
+   * source.
    */
   async function resolveSlots(
     req: Request,
@@ -863,11 +863,7 @@ export function createPublicApiHandlers({
     const slots = await resolvePublicMessageSlots(
       pool,
       req.workspaceId!,
-      () => {
-        // Bot keys ignore the archive filter (their readable set is fixed); user
-        // keys widen to active + archived so archived-source pointers hydrate.
-        return getAccessibleStreamIds(req, { archiveStatus: ["active", "archived"] })
-      },
+      () => getAccessibleStreamIds(req),
       contentJsons
     )
     await noteSandboxReads(
@@ -877,20 +873,8 @@ export function createPublicApiHandlers({
     return slots
   }
 
-  /**
-   * Check if a single stream is accessible for the current key.
-   *
-   * `allowArchived` is for the id read alone (`getStream`): a bot key's
-   * accessible set excludes archived streams, so without it the one call that
-   * exists to report `archivedAt` is the one call that cannot. User keys are
-   * already archive-blind here. Every other caller leaves it off — an archived
-   * stream stays unreadable and unwritable through them.
-   */
-  async function assertStreamAccessible(
-    req: Request,
-    streamId: string,
-    options: { allowArchived?: boolean } = {}
-  ): Promise<void> {
+  /** Check if a single stream is readable by the current key. */
+  async function assertStreamAccessible(req: Request, streamId: string): Promise<void> {
     if (req.sandboxSession) {
       if (!(await isSandboxStreamReadable(pool, req.sandboxSession, streamId))) {
         throw new HttpError("Stream not accessible", { status: 403, code: "FORBIDDEN" })
@@ -905,9 +889,11 @@ export function createPublicApiHandlers({
       return
     }
     if (req.botApiKey) {
-      const accessible = options.allowArchived
-        ? await botChannelService.isStreamRetrievableForBot(req.workspaceId!, req.botApiKey.botId, streamId)
-        : await botChannelService.isStreamAccessibleForBot(req.workspaceId!, req.botApiKey.botId, streamId)
+      const accessible = await botChannelService.isStreamAccessibleForBot(
+        req.workspaceId!,
+        req.botApiKey.botId,
+        streamId
+      )
       if (!accessible) {
         throw new HttpError("Stream not accessible", { status: 403, code: "FORBIDDEN" })
       }
@@ -931,13 +917,12 @@ export function createPublicApiHandlers({
 
   /**
    * The service flip carries the authority check under lock, so the gate here
-   * only hides streams the key cannot see at all — archived included, or
-   * unarchive could never reach its own target.
+   * only hides streams the key cannot read at all.
    */
   function setStreamArchived(archived: boolean) {
     return async function archiveHandler(req: Request, res: Response) {
       const streamId = req.params.streamId
-      await assertStreamAccessible(req, streamId, { allowArchived: true })
+      await assertStreamAccessible(req, streamId)
       const stream = await streamService.setStreamArchived(
         req.workspaceId!,
         streamId,
@@ -1230,7 +1215,7 @@ export function createPublicApiHandlers({
     req: Request,
     attachmentId: string
   ): Promise<{ attachment: Attachment; viaStreamIds: string[] }> {
-    const accessibleStreamIds = await getAccessibleStreamIds(req, { archiveStatus: ["active", "archived"] })
+    const accessibleStreamIds = await getAccessibleStreamIds(req)
     const access = await attachmentService.getAccessibleVia(attachmentId, {
       workspaceId: req.workspaceId!,
       accessibleStreamIds,
@@ -2941,9 +2926,7 @@ export function createPublicApiHandlers({
         req.body
       )
       const normalized = normalizeMemoSearchMode(query, exact)
-      const accessibleStreamIds = await getAccessibleStreamIds(req, {
-        archiveStatus: ["active", "archived"],
-      })
+      const accessibleStreamIds = await getAccessibleStreamIds(req)
 
       if (accessibleStreamIds.length === 0) {
         return res.json({ data: [] })
@@ -2992,9 +2975,7 @@ export function createPublicApiHandlers({
     async recallMemos(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const { query } = validateRequest(recallMemosSchema, req.body)
-      const accessibleStreamIds = await getAccessibleStreamIds(req, {
-        archiveStatus: ["active", "archived"],
-      })
+      const accessibleStreamIds = await getAccessibleStreamIds(req)
       // Same principal rule as searchMemos: a bot key has no user, so user-scoped
       // memos stay invisible to it.
       const userId = req.userApiKey ? req.user!.id : undefined
@@ -3029,9 +3010,7 @@ export function createPublicApiHandlers({
     async getMemo(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
       const memoId = req.params.memoId
-      const accessibleStreamIds = await getAccessibleStreamIds(req, {
-        archiveStatus: ["active", "archived"],
-      })
+      const accessibleStreamIds = await getAccessibleStreamIds(req)
 
       const memo = await memoExplorerService.getById(workspaceId, memoId, {
         accessibleStreamIds,
@@ -3177,9 +3156,7 @@ export function createPublicApiHandlers({
     async getStream(req: Request, res: Response) {
       const streamId = req.params.streamId
 
-      // Archived streams stay retrievable by id (the app opens them read-only);
-      // the payload's archivedAt tells the caller. Only list hides them.
-      await assertStreamAccessible(req, streamId, { allowArchived: true })
+      await assertStreamAccessible(req, streamId)
 
       const stream = await StreamRepository.findById(pool, req.workspaceId!, streamId)
       if (!stream) {
@@ -3234,7 +3211,7 @@ export function createPublicApiHandlers({
 
     async listStreamE2eKeyWraps(req: Request, res: Response) {
       const streamId = req.params.streamId
-      await assertStreamAccessible(req, streamId, { allowArchived: true })
+      await assertStreamAccessible(req, streamId)
 
       // Threads inherit the root's key and hold no e2e_streams row of their
       // own (INV-62), so a thread id lands on STREAM_NOT_E2E from the service.

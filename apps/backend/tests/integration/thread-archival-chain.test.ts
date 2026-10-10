@@ -23,7 +23,7 @@ import {
 } from "../../src/features/streams"
 import { lockEffectiveStreams } from "../../src/features/streams/write-authority"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { BotChannelAccessRepository } from "../../src/features/api-keys"
+import { BotChannelAccessRepository, BotChannelService } from "../../src/features/api-keys"
 import {
   botApiKeyId,
   botChannelAccessId,
@@ -184,6 +184,26 @@ describe("thread archival chain", () => {
       sealed: [ids.B, ids.C, ids.D, ids.F, ids.G],
       active: [ids.A, ids.E].sort(),
       nearest: { B: null, D: ids.B, E: null, G: ids.F },
+    })
+  })
+
+  test("a granted bot reads the whole chain and acts only on its unsealed part", async () => {
+    await service.archiveStream(ids.B, workspace, author)
+    const bots = new BotChannelService({ pool })
+    const all = [ids.A, ids.B, ids.C, ids.D, ids.E, ids.F, ids.G]
+
+    const accessible = new Set(await bots.getAccessibleStreamIdsForBot(workspace, bot))
+    const actionable = new Set(await bots.getActionableStreamIdsForBot(workspace, bot))
+    const actionableByPoint = await Promise.all(all.map((id) => bots.isStreamActionableForBot(workspace, bot, id)))
+
+    expect({
+      accessible: all.filter((id) => accessible.has(id)),
+      actionable: all.filter((id) => actionable.has(id)),
+      actionableByPoint: all.filter((_, index) => actionableByPoint[index]),
+    }).toEqual({
+      accessible: all,
+      actionable: [ids.A, ids.E],
+      actionableByPoint: [ids.A, ids.E],
     })
   })
 
