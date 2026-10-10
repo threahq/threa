@@ -44,6 +44,7 @@ import {
   SidebarActionDrawer,
   SidebarActionMenu,
   browseStreamsAction,
+  openInNewTabAction,
   streamThreadsAction,
   type SidebarActionItem,
   type SidebarActionPreview,
@@ -65,7 +66,7 @@ import type { StreamItemData } from "./types"
 import { boardScopeStreamId, type SidebarBoardMode } from "./board-sidebar-mode"
 import type { BoardStreamStats } from "@/hooks/use-board-sidebar-stats"
 import { ScratchpadItem } from "./scratchpad-item"
-import { useStreamRowPick } from "./stream-pick"
+import { useStreamRowPick, useStreamTabOpen } from "./stream-pick"
 import { StreamHoverCard, useSidebarHoverIntent } from "./stream-hover-card"
 
 export type BoardTileState = "included" | "excluded" | "neutral"
@@ -563,10 +564,19 @@ export function StreamItem({
     return items
   }, [boardMode, boardScopable, boardIncluded, boardExcluded, boardMuted, boardScopeId, workspaceId, stream.id])
 
+  const openTab = useStreamTabOpen()
   const actions = useMemo<SidebarActionItem[]>(() => {
     const base: SidebarActionItem[] = isVirtualDraft
       ? []
       : [
+          ...(openTab
+            ? [
+                openInNewTabAction(() => {
+                  openTab(stream.id)
+                  collapseOnMobile()
+                }),
+              ]
+            : []),
           {
             id: "settings",
             label: "Settings",
@@ -621,6 +631,7 @@ export function StreamItem({
     return [...boardActions, ...withClear.map((a, i) => (i === 0 ? { ...a, separatorBefore: true } : a)), browse]
   }, [
     isVirtualDraft,
+    openTab,
     openStreamSettings,
     openExplorer,
     openOutcomes,

@@ -5,6 +5,7 @@ import {
   useContext,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type ReactNode,
@@ -70,6 +71,7 @@ import {
 import { isPagePane } from "@/lib/stream-ids"
 import { pagePathOf, pagePatternOf } from "@/lib/page-panes"
 import { PageRoutes } from "@/components/panes/page-routes"
+import { PaneNavigation } from "@/components/panes/pane-navigation"
 import { cn } from "@/lib/utils"
 import { PanelResizeHandle } from "./panel-resize-handle"
 import { PaneShortcuts } from "./pane-shortcuts"
@@ -89,6 +91,41 @@ import { PersonaTestChatPane } from "@/components/persona-editor/persona-test-ch
  */
 function panelKeyFor(workspaceId: string, panelId: string): string {
   return getDraftPromotionSource(workspaceId, panelId) ?? paneIdentity(panelId)
+}
+
+/**
+ * Keys the panes `ids` names as {@link panelKeyFor} does, except a page whose filter or tab changed in place: one
+ * page gone and one of its route come in its stead, it keeps the key the gone one had, so it stays mounted the way
+ * its route keeps it. A page that comes in any other way takes a key no pane on show holds.
+ */
+function usePaneKeys(workspaceId: string, ids: readonly string[]): (panelId: string) => string {
+  const committed = useRef(new Map<string, string>())
+  const idsKey = ids.join(".")
+  const pageKeys = useMemo(() => {
+    const before = committed.current
+    const next = new Map<string, string>()
+    const pages = idsKey.split(".").filter((id) => pagePatternOf(id) !== null)
+    for (const id of pages) if (before.has(id)) next.set(id, before.get(id)!)
+    const gone = [...before].filter(([id]) => !next.has(id))
+    for (const id of pages.filter((id) => !next.has(id))) {
+      const replaced = gone.filter(([was]) => pagePatternOf(was) === pagePatternOf(id))
+      if (replaced.length === 1 && ![...next.values()].includes(replaced[0][1])) {
+        next.set(id, replaced[0][1])
+        continue
+      }
+      let key = id
+      while ([...next.values()].includes(key)) key = `${key}'`
+      next.set(id, key)
+    }
+    return next
+  }, [idsKey])
+  useLayoutEffect(() => {
+    committed.current = pageKeys
+  }, [pageKeys])
+  return useCallback(
+    (panelId: string) => pageKeys.get(panelId) ?? panelKeyFor(workspaceId, panelId),
+    [pageKeys, workspaceId]
+  )
 }
 
 /** A route's own `page:` pane: what it shows, and whether the first reveal can show it yet. */
@@ -128,17 +165,19 @@ interface PanelHostProps {
  */
 export function PanelHost({ workspaceId, className }: PanelHostProps) {
   const { panelId } = usePanel()
+  // A page wraps its own routes; on a phone its links stay in the pane, which a breakpoint mustn't remount.
+  const content = <PaneContent workspaceId={workspaceId} panelId={panelId} className={className} />
   // Every kind's content reports through `useRevealReady`; one that never does holds the first reveal to its cap.
   return (
     <RevealParticipant label={panelId ?? "empty pane"} covered={usePaneCovered()}>
-      <PaneContent workspaceId={workspaceId} panelId={panelId} className={className} />
+      {panelId && pagePatternOf(panelId) ? content : <PaneNavigation>{content}</PaneNavigation>}
     </RevealParticipant>
   )
 }
 
 function PaneContent({ workspaceId, panelId, className }: PanelHostProps & { panelId: string | null }) {
   const page = panelId && pagePatternOf(panelId)
-  if (page) return <PageRoutes key={panelId} workspaceId={workspaceId} path={pagePathOf(panelId)!} pattern={page} />
+  if (page) return <PageRoutes workspaceId={workspaceId} path={pagePathOf(panelId)!} pattern={page} />
   if (panelId && isPagePane(panelId)) return <PagePane />
   const composeStreamId = panelId && parseComposePanel(panelId)
   const context = panelId && parseContextPanel(panelId)
@@ -381,14 +420,25 @@ export function PanelTabStack({
     return belowFits ? EDGES_ROW : NO_EDGES
   }
   const drops = usePaneDrop()
+  const keyOf = usePaneKeys(workspaceId, panelIdsOf(layout))
   const members = floatingPanelTabs(layout, stacked)
   const floating = members.length > 0
   // Members the grid doesn't show (no cell, or folded under another tab) float from outside it, so they keep their element across the exit.
   const unplaced: PlacedTab[] = members.flatMap((id) => {
     const section = isPanelOnShow(display, id) ? null : panelSectionOf(layout, id)
     if (!section) return []
-    const key = panelKeyFor(workspaceId, id)
-    return [{ key, id, area: "auto", width: null, inFirstColumn: false, section, splits: NO_SPLITS, edges: NO_EDGES }]
+    return [
+      {
+        key: keyOf(id),
+        id,
+        area: "auto",
+        width: null,
+        inFirstColumn: false,
+        section,
+        splits: NO_SPLITS,
+        edges: NO_EDGES,
+      },
+    ]
   })
   const tabs: PlacedTab[] = display.columns
     .flatMap((sections, column) =>
@@ -396,7 +446,7 @@ export function PanelTabStack({
         const splits = splitsOf(section, column)
         const edges = edgesOf(column)
         return section.ids.map((id) => ({
-          key: panelKeyFor(workspaceId, id),
+          key: keyOf(id),
           id,
           area: areas[column][row],
           width: column === 0 ? null : (columnWidths?.[column - 1] ?? null),

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { calculateUrgency } from "@/components/layout/sidebar/utils"
+import { useStreamPick } from "@/components/layout/sidebar/stream-pick"
 import { isToleranceMatch, scoreMatch } from "@/lib/match-score"
 import { useGuestDmOpen } from "@/lib/use-guest-dm-open"
 import { compareStreamEntries, scoreStreamMatch } from "@/lib/stream-sort"
@@ -79,6 +80,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
     closeDialog,
   } = context
 
+  const pick = useStreamPick()
   const { getUnreadCount } = useUnreadCounts(workspaceId)
   const { getMentionCount, getActivityCount } = useActivityCounts(workspaceId)
   const unreadState = useWorkspaceUnreadState(workspaceId, pickMutedStreamIds)
@@ -254,7 +256,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
               originScope: draftStreamScope(asideHost),
             })
           }
-          navigate(href)
+          if (!pick(asideHost ?? stream.id)) navigate(href)
         },
         urgency,
         unreadCount,
@@ -328,6 +330,7 @@ export function useStreamItems(context: ModeContext): ModeResult {
     memberStreamIds,
     workspaceId,
     navigate,
+    pick,
     closeDialog,
     getUnreadCount,
     getMentionCount,

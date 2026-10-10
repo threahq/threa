@@ -119,8 +119,18 @@ test.describe("on a phone", () => {
     await expect(board(page).getByRole("button", { name: /sidebar/ })).toBeVisible()
 
     await page.locator("[data-board-scroll-viewport]").evaluate((el) => el.scrollTo({ top: 600 }))
-    await expect.poll(() => boardScrollTop(page)).toBeGreaterThan(0)
-    const scrolled = await boardScrollTop(page)
+    // Cards measured as they virtualize in move the scroll a while after it is set.
+    let scrolled = -1
+    await expect
+      .poll(
+        async () => {
+          const settled = scrolled
+          scrolled = await boardScrollTop(page)
+          return scrolled > 0 && scrolled === settled
+        },
+        { intervals: [300] }
+      )
+      .toBe(true)
 
     // A DOM click: Playwright's own would first scroll a clipped opener into view and move the board.
     await openers(page)
@@ -133,7 +143,7 @@ test.describe("on a phone", () => {
     await expect(board(page)).not.toBeVisible()
     expect(await boardScrollTop(page)).toBe(scrolled)
 
-    await pane.getByRole("button", { name: "Back" }).click()
+    await page.goBack()
     await expect.poll(() => panelParam(page)).toBeNull()
     await expect(board(page)).toBeVisible()
     expect(await boardScrollTop(page)).toBe(scrolled)

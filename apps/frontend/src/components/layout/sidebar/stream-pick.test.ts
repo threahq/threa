@@ -11,8 +11,8 @@ const parents: Record<string, string> = {
 const parentOf = (id: string) => parents[id] ?? null
 
 /** A pick on `/s/stream_a?panel=<panel>`, read back as the route it lands on. */
-function pick(panel: string | null, current: string, streamId: string, stacked = false) {
-  const page = { layout: fullPanelLayout("stream_a", parsePanelLayout(panel)), current, stacked }
+function pick(panel: string | null, current: string, streamId: string) {
+  const page = { layout: fullPanelLayout("stream_a", parsePanelLayout(panel)), current }
   const next = pickStream(page, streamId, parentOf)
   return { path: next.current, panel: formatPanelLayout(canonicalPanelLayout(next.layout, next.current)) }
 }
@@ -65,18 +65,6 @@ describe("pickStream", () => {
     ]).toEqual([
       { path: "stream_c", panel: "stream_a-stream_c**.stream_b" },
       { path: "stream_a", panel: "stream_t1" },
-    ])
-  })
-
-  it("should close every pane over the first page when a pick lands there on a phone", () => {
-    expect([
-      pick("stream_b", "stream_b", "stream_a", true),
-      pick("stream_b-context:stream_a", "context:stream_a", "stream_c", true),
-      pick("stream_b-stream_t1", "stream_t1", "stream_c", true),
-    ]).toEqual([
-      { path: "stream_a", panel: null },
-      { path: "stream_c", panel: null },
-      { path: "stream_c", panel: "stream_a-stream_b-stream_c" },
     ])
   })
 

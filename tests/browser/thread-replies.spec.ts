@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test"
+import { test, expect, type Locator, type Page } from "@playwright/test"
 import {
   clickReplyInThread,
   createChannel,
@@ -6,6 +6,17 @@ import {
   sendPanelReply,
   waitForRealThreadPanel,
 } from "./helpers"
+
+/** A thread's channel crumb names the channel already on show beside it: that pane flashes, and the thread stays.
+ *  Returns the channel's pane, whose timeline holds the parent (the thread's pane shows it too). */
+async function crumbToOpenChannel(page: Page, crumb: Locator) {
+  const channelId = (await crumb.getAttribute("href"))!.match(/\/s\/([^/?]+)/)![1]
+  const threadId = await crumb.locator("xpath=ancestor::*[@data-panel-tab][1]").getAttribute("data-panel-tab")
+  await crumb.click()
+  await expect(page.locator(`[data-panel-tab="${channelId}"]`)).toHaveClass(/pane-flash/)
+  await expect(page.locator(`[data-panel-tab="${threadId}"]`)).toBeVisible()
+  return page.locator(`[data-panel-tab="${channelId}"]`)
+}
 
 /**
  * Tests for thread reply functionality.
@@ -88,17 +99,15 @@ test.describe("Thread Replies", () => {
     await sendPanelReply(page, `Reply one ${testId}`)
     await waitForRealThreadPanel(page)
 
-    // The thread's channel crumb shows the channel in the thread's pane, and the channel's own pane moves there.
     const returnToChannel = page
       .getByTestId("panel")
       .getByRole("navigation", { name: "breadcrumb" })
       .getByRole("link", { name: `#${channelName}` })
     await expect(returnToChannel).toBeVisible({ timeout: 5000 })
-    await returnToChannel.click()
-    await expect(page).not.toHaveURL(/panel=/)
+    const channel = await crumbToOpenChannel(page, returnToChannel)
 
     // Verify thread indicator shows "1 reply" on the parent message
-    const parentInStream = page.getByRole("main").locator(".message-item").filter({ hasText: parentMessage }).first()
+    const parentInStream = channel.locator(".message-item").filter({ hasText: parentMessage }).first()
     await expect(parentInStream).toContainText(parentMessage, { timeout: 10000 })
     await expect(parentInStream.getByRole("link", { name: /1 reply/i })).toBeVisible({ timeout: 45000 })
   })
@@ -106,6 +115,7 @@ test.describe("Thread Replies", () => {
   test("keeps reminder controls above a thread preview", async ({ page }) => {
     const channelName = `thread-reminder-${testId}`
     await createChannel(page, channelName)
+    const channel = page.locator(`[data-panel-tab="${page.url().match(/\/s\/([^/?]+)/)![1]}"]`)
 
     const editor = page.locator("[contenteditable='true']")
     await editor.click()
@@ -113,7 +123,7 @@ test.describe("Thread Replies", () => {
     await page.keyboard.type(parentMessage)
     await page.keyboard.press("Meta+Enter")
 
-    const parentInStream = page.getByRole("main").locator(".message-item").filter({ hasText: parentMessage }).first()
+    const parentInStream = channel.locator(".message-item").filter({ hasText: parentMessage }).first()
     await expect(parentInStream).toBeVisible({ timeout: 5000 })
     await clickReplyInThread(parentInStream)
     await expect(page.getByText(/Start a new thread/)).toBeVisible({ timeout: 3000 })
@@ -125,8 +135,7 @@ test.describe("Thread Replies", () => {
       .getByTestId("panel")
       .getByRole("navigation", { name: "breadcrumb" })
       .getByRole("link", { name: `#${channelName}` })
-    await returnToChannel.click()
-    await expect(page).not.toHaveURL(/panel=/)
+    await crumbToOpenChannel(page, returnToChannel)
     await expect(parentInStream.getByRole("link", { name: /1 reply/i })).toBeVisible({ timeout: 10000 })
 
     await parentInStream.hover()
@@ -215,17 +224,15 @@ test.describe("Thread Replies", () => {
     await waitForRealThreadPanel(page)
     await expect(page.getByTestId("panel").getByText(reply1)).toBeVisible({ timeout: 10000 })
 
-    // The thread's channel crumb shows the channel in the thread's pane, and the channel's own pane moves there.
     const returnToChannel = page
       .getByTestId("panel")
       .getByRole("navigation", { name: "breadcrumb" })
       .getByRole("link", { name: `#${channelName}` })
     await expect(returnToChannel).toBeVisible({ timeout: 5000 })
-    await returnToChannel.click()
-    await expect(page).not.toHaveURL(/panel=/)
+    const channel = await crumbToOpenChannel(page, returnToChannel)
 
     // Reopen the thread by clicking the reply count indicator
-    const parentInStream = page.getByRole("main").locator(".message-item").filter({ hasText: parentMessage }).first()
+    const parentInStream = channel.locator(".message-item").filter({ hasText: parentMessage }).first()
     const threadIndicator = parentInStream.getByText(/1 reply/i)
     await expect(threadIndicator).toBeVisible({ timeout: 3000 })
     await threadIndicator.click()
@@ -243,10 +250,9 @@ test.describe("Thread Replies", () => {
     await expect(page.getByTestId("panel").getByText(reply1)).toBeVisible()
     await expect(page.getByTestId("panel").getByText(reply2)).toBeVisible()
 
-    // Close and verify reply count updated to 2
+    // Back to the channel: its reply count reads 2
     await expect(returnToChannel).toBeVisible({ timeout: 5000 })
-    await returnToChannel.click()
-    await expect(page).not.toHaveURL(/panel=/)
+    await crumbToOpenChannel(page, returnToChannel)
     await expect(parentInStream).toContainText(/2 replies/i, { timeout: 10000 })
   })
 })

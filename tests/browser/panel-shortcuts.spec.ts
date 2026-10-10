@@ -252,3 +252,44 @@ test.describe("installed", () => {
     await expect.poll(() => focusedComposer(page)).toBe(b)
   })
 })
+
+test("should close the pane worked in, the others, and all of them from the command palette", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId, threads } = await seedThreads(page, 3)
+  const [a, b, c] = threads
+  const beside = (panel: string) => `${streamId}-${panel}`
+  const runCommand = async (label: string) => {
+    await page.keyboard.press("Meta+k")
+    await page.keyboard.type(`> ${label}`)
+    await page.getByRole("option", { name: label, exact: true }).click()
+    await expect(page.getByRole("dialog")).toHaveCount(0)
+  }
+  await openPanels(page, workspaceId, streamId, `${a}.${b}.${c}`, 3)
+
+  await tabPane(page, c).locator('[contenteditable="true"]').last().click()
+  await page.keyboard.press("Alt+BracketLeft")
+  await expect.poll(() => focusedComposer(page)).toBe(b)
+
+  await runCommand("Close pane")
+  await expect.poll(() => panelParam(page)).toBe(beside(`${a}.${c}`))
+  await expect.poll(() => focusedComposer(page)).not.toBe(b)
+  await page.goBack()
+  await expect.poll(() => panelParam(page)).toBe(beside(`${a}.${b}*.${c}`))
+
+  await runCommand("Close all panes")
+  await expect.poll(() => panelParam(page)).toBeNull()
+  await expect.poll(() => focusedComposer(page)).toBe("main")
+  await page.goBack()
+  await expect.poll(() => panelParam(page)).toBe(beside(`${a}.${b}*.${c}`))
+
+  // Worked in, b takes the route, so closing the others leaves it alone on the page.
+  await tabPane(page, b).locator('[contenteditable="true"]').last().click()
+  await runCommand("Close other panes")
+  await expect.poll(() => route(page)).toEqual({ stream: b, panel: null })
+  await expect.poll(() => focusedComposer(page)).toBe("main")
+
+  // With nothing left to close, the commands are gone.
+  await page.keyboard.press("Meta+k")
+  await page.keyboard.type("> close")
+  await expect(page.getByRole("option", { name: /panes?$/ })).toHaveCount(0)
+})

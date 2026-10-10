@@ -128,6 +128,7 @@ test.describe("Message share — cross-stream picker modal (Slice 2)", () => {
     await sendChannelMessageViaApi(page, sourceText)
 
     const sourceUrl = page.url()
+    const sourceStreamId = new URL(sourceUrl).pathname.split("/s/")[1]
     // Pre-create the scratchpad target so it shows up in the picker.
     await createScratchpad(page)
     // Hop back to the source channel.
@@ -156,10 +157,14 @@ test.describe("Message share — cross-stream picker modal (Slice 2)", () => {
       await target.click()
     }
 
-    // Modal closes and we navigate to the target. Composer pre-fills with
-    // the share node — send via the normal Enter shortcut.
+    // Modal closes and the target opens beside the source, which stays mounted. Its composer pre-fills with the
+    // share node — send via the normal Enter shortcut.
     await expect(dialog).not.toBeVisible()
-    const composer = page.locator("[contenteditable='true']").first()
+    await expect(page).not.toHaveURL(new RegExp(`/s/${sourceStreamId}`))
+    const targetStreamId = new URL(page.url()).pathname.split("/s/")[1]
+    expect(new URL(page.url()).searchParams.get("panel")).toBe(`${sourceStreamId}-${targetStreamId}`)
+    await expect(page.locator(`[data-panel-tab="${sourceStreamId}"]`).getByText(sourceText)).toBeVisible()
+    const composer = page.locator(`[data-panel-tab="${targetStreamId}"] [contenteditable='true']`)
     await expect(composer).toBeVisible()
     await expect(composer.locator("[data-type='shared-message']")).toHaveCount(1, { timeout: 5000 })
     await composer.focus()

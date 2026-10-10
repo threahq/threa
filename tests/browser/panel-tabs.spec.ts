@@ -113,6 +113,40 @@ test("should open a second thread as a tab that switches, closes on back and sur
   await expect(replyIn(page, threadB, "reply in thread B")).not.toBeVisible()
 })
 
+test("should jump to a stream's permalink to its own message beside its tabs, and again once scrolled away", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  const { workspaceId, streamId, parentA, threadA } = await seedTwoThreads(page)
+  for (let n = 1; n <= 30; n++) await post(page, workspaceId, streamId, `filler ${n}`)
+  const link = `${new URL(page.url()).origin}/w/${workspaceId}/s/${streamId}?m=${parentA}`
+  await post(page, workspaceId, streamId, `see ${link}`)
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}`)
+  await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible({ timeout: 30_000 })
+  const chip = tabPane(page, streamId).locator(`a[href="${link}"]`).first()
+  const linked = tabPane(page, streamId).locator(`[data-message-id="${parentA}"]`).first()
+
+  await chip.click({ timeout: 30_000 })
+  await expect(linked).toBeInViewport({ timeout: 30_000 })
+  await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
+  expect({ ...route(page), m: new URL(page.url()).searchParams.get("m") }).toEqual({
+    stream: streamId,
+    panel: threadA,
+    m: parentA,
+  })
+
+  await chip.evaluate((element) => {
+    for (let node = element.parentElement; node; node = node.parentElement) {
+      if (node.scrollHeight <= node.clientHeight + 1 || getComputedStyle(node).overflowY === "visible") continue
+      node.scrollTop = node.scrollHeight
+      return
+    }
+  })
+  await expect(linked).not.toBeInViewport()
+  await chip.click()
+  await expect(linked).toBeInViewport({ timeout: 30_000 })
+})
+
 test("should pop the history entry when closing the newest tab and replace when closing an older one", async ({
   page,
 }) => {
@@ -454,7 +488,7 @@ test("should even the panes along a divider when it is double-clicked", async ({
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 400, height: 800 }, isMobile: true, hasTouch: true })
 
-  test("should close the pane on show with the back control, and keep both mounted through a sheet switch", async ({
+  test("should close the pane on show from the picker, and keep both mounted through a sheet switch", async ({
     page,
   }) => {
     const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
@@ -472,8 +506,12 @@ test.describe("on a phone", () => {
     await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
     expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
 
-    // Back on a phone closes the pane on show, not the page; the other two stay open.
-    await tabPane(page, threadA).getByRole("button", { name: "Back" }).click()
+    // Closing the pane on show from the picker keeps the other two open.
+    await tabPane(page, threadA).getByRole("button", { name: "3 open panes" }).click()
+    await page
+      .getByRole("dialog", { name: "Open panes" })
+      .getByRole("button", { name: /^Close .*first parent/ })
+      .click()
     await expect(tabPane(page, threadA)).toHaveCount(0)
     await expect(tabPane(page, threadB).getByRole("button", { name: "2 open panes" })).toBeVisible()
     await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()

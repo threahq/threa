@@ -76,3 +76,21 @@ describe("useCommandItems — channel creation", () => {
     expect(renderItems(flags, commandContext, "new channel", [])).not.toContain("new-channel")
   })
 })
+
+describe("useCommandItems — pane commands", () => {
+  const flags = { workspace: {}, user: {} }
+  const paneIds = (context: CommandContext) =>
+    renderItems(flags, context, "close").filter((id) => id.startsWith("pane-"))
+
+  it("should offer no pane command when no pane can close", () => {
+    expect(paneIds(commandContext)).toEqual([])
+  })
+
+  it("should offer only the closes that would close something", () => {
+    const close = () => {}
+    expect(paneIds({ ...commandContext, closePane: close, closeAllPanes: close })).toEqual([
+      "pane-close",
+      "pane-close-all",
+    ])
+  })
+})

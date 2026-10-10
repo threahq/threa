@@ -83,14 +83,14 @@ test.describe("Thread Breadcrumbs", () => {
     await expect(page.getByTestId("panel").getByText(level2Reply)).toBeVisible({ timeout: 10000 })
     await expect(breadcrumbNav.getByText(`#${channelName}`)).toBeVisible({ timeout: 5000 })
 
-    // The channel crumb shows the channel in the nested thread's pane, and the channel's own pane moves there.
+    // The channel crumb names the channel already on show beside the thread: it flashes, and nothing moves.
+    const at = page.url()
     await breadcrumbNav
       .getByRole("link", { name: `#${channelName}` })
       .first()
       .click()
-    await expect(page).toHaveURL(new RegExp(`/s/${channelId}$`))
-
-    // Should be back viewing the channel with the original message visible
+    await expect(page.locator(`[data-panel-tab="${channelId}"]`)).toHaveClass(/pane-flash/)
+    expect(page.url()).toBe(at)
     await expect(page.getByRole("main").getByText(channelMessage).first()).toBeVisible({ timeout: 3000 })
   })
 
