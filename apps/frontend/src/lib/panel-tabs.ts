@@ -1,3 +1,5 @@
+import { isServerStreamId } from "./stream-ids"
+
 /**
  * The panel's arrangement as it lives in `?panel=`: columns of sections, each
  * section a stack of tabs. Tabs are joined by `.` with the one on show marked by
@@ -97,10 +99,20 @@ export function panelIdsOf(layout: PanelLayout): string[] {
   return layout.columns.flatMap((column) => column.flatMap((section) => section.ids))
 }
 
-/** The tab on show in the first section: where the main view opens panels, and
- *  what a consumer outside any one tab means by "the panel". */
+/** The tab on show in the first section: what a consumer outside any one tab means by "the panel". */
 export function primaryPanelOf(layout: PanelLayout): string | null {
   return layout.columns[0]?.[0]?.active ?? null
+}
+
+/** The pane alone in the first column: on the stream page, the route's stream, which keeps the page's header rather than a tab row. */
+export function soleFirstPanelOf(layout: PanelLayout): string | null {
+  const first = layout.columns[0]
+  return first?.length === 1 && first[0].ids.length === 1 ? first[0].active : null
+}
+
+/** Whether `id` is a tab of a section in the first column. */
+export function firstColumnHolds(layout: PanelLayout, id: string): boolean {
+  return !!layout.columns[0]?.some((section) => section.ids.includes(id))
 }
 
 /** The tab on show in the last section: the one most recently opened beside another. */
@@ -166,7 +178,7 @@ function appendTab(layout: PanelLayout, at: PanelLocation, id: string): PanelLay
   return withSection(layout, at, { ids: [...sectionAt(layout, at).ids, id], active: id })
 }
 
-/** Opening from the main view: activates `id` where it is, or adds it as a tab of the first section. */
+/** Opening from outside any tab: activates `id` where it is, or adds it as a tab of the first section. */
 export function openPanelTab(layout: PanelLayout, id: string): PanelLayout {
   if (locate(layout, id)) return activatePanelTab(layout, id)
   if (layout.columns.length === 0) return { columns: [[{ ids: [id], active: id }]] }
@@ -255,32 +267,28 @@ export type PaneEdge = "left" | "right" | "top" | "bottom"
  * Where a dragged tab lands. `tab` joins the section holding `of`, before the
  * tab `before` or at its end when null. `edge` starts a section of its own on
  * that side of `of`'s section: left and right as a new column, top and bottom in
- * `of`'s column. An `of` of null is the main view, whose right edge is a new
- * first column.
+ * `of`'s column.
  */
-export type PaneDrop =
-  | { kind: "tab"; of: string; before: string | null }
-  | { kind: "edge"; of: string | null; side: PaneEdge }
+export type PaneDrop = { kind: "tab"; of: string; before: string | null } | { kind: "edge"; of: string; side: PaneEdge }
 
-function edgeAnchor(layout: PanelLayout, id: string, of: string | null, target: PanelLocation | null): string | null {
+function edgeAnchor(layout: PanelLayout, id: string, of: string, target: PanelLocation): string {
   if (of !== id) return of
-  return sectionAt(layout, target!).ids.find((other) => other !== id) ?? id
+  return sectionAt(layout, target).ids.find((other) => other !== id) ?? id
 }
 
 /** `id` placed where it was dropped, moved there if already open, and on show. */
 export function dropPanelTab(layout: PanelLayout, id: string, drop: PaneDrop): PanelLayout {
   const from = locate(layout, id)
-  const target = drop.of === null ? null : locate(layout, drop.of)
+  const target = locate(layout, drop.of)
   const stay = from ? activatePanelTab(layout, id) : layout
-  if (drop.of !== null && !target) return stay
+  if (!target) return stay
   // The place is named by a tab that stays put while `id` leaves its own: an
   // edge of `id`'s own section is the edge of the rest of that section.
   const anchor = drop.kind === "tab" ? (drop.before ?? drop.of) : edgeAnchor(layout, id, drop.of, target)
-  if (anchor === id || (anchor !== null && !locate(layout, anchor))) return stay
+  if (anchor === id || !locate(layout, anchor)) return stay
   const rest = from ? removeTab(layout, from, id) : layout
   const section: PanelSection = { ids: [id], active: id }
-  const at = anchor === null ? null : locate(rest, anchor)!
-  if (at === null) return keepFocus(layout, insertColumn(rest, 0, section))
+  const at = locate(rest, anchor)!
   if (drop.kind === "tab") {
     const ids = [...sectionAt(rest, at).ids]
     ids.splice(drop.before === null ? ids.length : ids.indexOf(drop.before), 0, id)
@@ -302,28 +310,32 @@ export function dropPanelTab(layout: PanelLayout, id: string, drop: PaneDrop): P
  * one section; otherwise columns past `maxColumns` fold into the last column
  * that fits, as one section. The URL keeps the full arrangement, so a wider
  * window or another device lays it out again. A folded section shows `current`
- * when it is on show in its own section, else the last folded section's.
+ * when it is on show in its own section, else `previous` when it is, else the
+ * last folded section's.
  */
 export function fitPanelLayout(
   layout: PanelLayout,
   maxColumns: number,
   stacked: boolean,
-  current: string | null
+  current: string | null,
+  previous: string | null = null
 ): PanelLayout {
   if (!stacked && layout.columns.length <= maxColumns) return layout
   const keep = stacked ? 0 : Math.max(1, maxColumns) - 1
   const folding = layout.columns.slice(keep).flat()
   if (folding.length < 2) return layout
   const ids = folding.flatMap((section) => section.ids)
-  const shown = folding.find((section) => section.active === current) ?? folding[folding.length - 1]
+  const shown =
+    folding.find((section) => section.active === current) ??
+    folding.find((section) => section.active === previous) ??
+    folding[folding.length - 1]
   return { columns: [...layout.columns.slice(0, keep), [{ ids, active: shown.active }]] }
 }
 
 /**
  * Which pane is current after the arrangement changes from `prev` to `next`: a
- * tab just opened, else wherever {@link followPanel} takes `current`. Null is the
- * main view, and stays null unless a tab opened. A tab swapped for another in
- * place (a draft promoted to its thread) is not an opening.
+ * tab just opened, else wherever {@link followPanel} takes `current`. A tab
+ * swapped for another in place (a draft promoted to its thread) is not an opening.
  */
 export function followCurrentPanel(prev: PanelLayout, next: PanelLayout, current: string | null): string | null {
   const before = new Set(panelIdsOf(prev))
@@ -332,7 +344,7 @@ export function followCurrentPanel(prev: PanelLayout, next: PanelLayout, current
     const opened = after.filter((id) => !before.has(id))
     return opened.find((id) => isPanelOnShow(next, id)) ?? opened[opened.length - 1]
   }
-  return followPanel(prev, next, current)
+  return current === null ? newestPanelOf(next) : followPanel(prev, next, current)
 }
 
 /**
@@ -340,8 +352,8 @@ export function followCurrentPanel(prev: PanelLayout, next: PanelLayout, current
  * `next`: `id` while it stays on show, the tab it was swapped for, else whatever
  * took its place in its section, else the section before its own.
  */
-export function followPanel(prev: PanelLayout, next: PanelLayout, id: string | null): string | null {
-  if (id === null || isPanelOnShow(next, id)) return id
+export function followPanel(prev: PanelLayout, next: PanelLayout, id: string): string | null {
+  if (isPanelOnShow(next, id)) return id
   const at = locate(prev, id)
   if (!at) return newestPanelOf(next)
   const before = new Set(panelIdsOf(prev))
@@ -355,6 +367,46 @@ export function followPanel(prev: PanelLayout, next: PanelLayout, id: string | n
   if (sections.length === 0) return null
   const index = prev.columns.slice(0, at.column).flat().length + at.row
   return sections[Math.max(0, Math.min(index, sections.length) - 1)].active
+}
+
+/**
+ * The page's whole arrangement. The route names one stream pane and `?panel=`
+ * holds the rest, so `path` shows in a first column of its own unless
+ * `?panel=` already places it.
+ */
+export function fullPanelLayout(path: string | null, panels: PanelLayout): PanelLayout {
+  if (path === null || locate(panels, path)) return panels
+  return { ...panels, columns: [[{ ids: [path], active: path }], ...panels.columns] }
+}
+
+/**
+ * What `?panel=` holds of `layout` when the route names `path`: everything but
+ * a first column showing `path` alone, which the route already implies.
+ */
+export function canonicalPanelLayout(layout: PanelLayout, path: string | null): PanelLayout {
+  if (path === null || soleFirstPanelOf(layout) !== path || layout.focused === path) return layout
+  const columns = layout.columns.slice(1)
+  if (columns.length === 0) return NO_PANELS
+  return layout.focused === undefined ? { columns } : { columns, focused: layout.focused }
+}
+
+/**
+ * The stream pane the route names once the arrangement changes from `prev` to
+ * `next`: `path` while it is open, else the pane current after the change when
+ * it is a stream's, else the first stream on show, else the first one covered.
+ * Null when no stream pane is left, which leaves the page nothing to name.
+ */
+export function streamPaneAfter(
+  prev: PanelLayout,
+  next: PanelLayout,
+  path: string,
+  current: string | null
+): string | null {
+  if (locate(next, path)) return path
+  const following = followCurrentPanel(prev, next, current)
+  if (following !== null && isServerStreamId(following)) return following
+  const onShow = next.columns.flat().map((section) => section.active)
+  return onShow.find(isServerStreamId) ?? panelIdsOf(next).find(isServerStreamId) ?? null
 }
 
 /** Whether `id` is the tab its section shows. */

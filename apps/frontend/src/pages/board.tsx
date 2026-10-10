@@ -5,7 +5,7 @@ import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } 
 import { Button, buttonVariants } from "@/components/ui/button"
 import { ThreadPanelSlot, panelTakeoverClasses } from "@/components/layout"
 import { AsideSlot, useAsideHost, useAsideIsSheet } from "@/components/aside"
-import { asideHoldsPanel, useAsideForHost } from "@/stores/aside-store"
+import { asidePaneOf, useAsideForHost } from "@/stores/aside-store"
 import { PaneDrawer, PanelHost } from "@/components/layout/panel-host"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
 import { presentsAsDrawer, usePanel, usePreferencesOptional, useSidebar } from "@/contexts"
@@ -209,13 +209,13 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
   // order, or focus walks into content nobody can see.
   const asideStage = !asideIsSheet && asideOpen !== null
   const { isMobile } = useSidebar()
-  const { panelId, closePanel } = usePanel()
+  const { panelId, layout: panes, closePanel } = usePanel()
   // A drawer opens over the board, its panel slot closed.
   const isPanelOpen = panelId !== null && !presentsAsDrawer(panelId)
   // A thread the aside's surface holds (the stage's host pane, or the phone's
   // sheet) is mounted there and nowhere else: not in the slot, not as the
   // phone's takeover behind the sheet.
-  const panelInAside = asideOpen !== null && asideHoldsPanel(panelId, asideOpen.hostStreamId)
+  const panelInAside = asideOpen !== null && asidePaneOf(panes, asideOpen.hostStreamId, false) !== null
   // The board's filters live in the URL (INV-59) — six params, three dimensions
   // × include/exclude, parsed here and rewritten by the filter bar's toggles.
   // Id lists are deduped and capped at the shared server limits so a hand-built

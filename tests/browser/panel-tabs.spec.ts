@@ -45,6 +45,10 @@ const tabStrip = (page: Page) => page.getByRole("navigation", { name: "Panel tab
 const tabPane = (page: Page, id: string) => page.locator(`[data-panel-tab="${id}"]`)
 const replyIn = (page: Page, id: string, text: string) => tabPane(page, id).getByText(text)
 const panelParam = (page: Page) => new URL(page.url()).searchParams.get("panel")
+const route = (page: Page) => ({
+  stream: new URL(page.url()).pathname.match(/\/s\/([^/]+)/)![1],
+  panel: panelParam(page),
+})
 
 async function openFromTimeline(page: Page, parentId: string) {
   await page
@@ -66,7 +70,7 @@ async function tagOf(target: Locator): Promise<string | null> {
 
 test("should open a second thread as a tab that switches, closes on back and survives reload", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 })
-  const { parentA, parentB, threadA, threadB } = await seedTwoThreads(page)
+  const { streamId, parentA, parentB, threadA, threadB } = await seedTwoThreads(page)
 
   // One thread reads as it always has: a title, no tab row.
   await openFromTimeline(page, parentA)
@@ -74,10 +78,10 @@ test("should open a second thread as a tab that switches, closes on back and sur
   await expect(page.getByRole("navigation", { name: "Panel tabs" })).toHaveCount(0)
   await tag(replyIn(page, threadA, "reply in thread A"), "A")
 
-  // The second opens beside it as a tab and takes the front.
+  // The second opens beside it as a tab and takes the front, and the route with it.
   await openFromTimeline(page, parentB)
   await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
-  expect(panelParam(page)).toBe(`${threadA}.${threadB}`)
+  expect(route(page)).toEqual({ stream: threadB, panel: `${streamId}-${threadA}.${threadB}` })
   // Unnamed threads take their parent message's text, so the tabs tell apart.
   await expect(tabStrip(page).getByRole("link")).toHaveText(["first parent", "second parent"])
   await expect(tabStrip(page).locator(`[aria-current="page"]`)).toHaveCount(1)
@@ -88,20 +92,21 @@ test("should open a second thread as a tab that switches, closes on back and sur
   await tabStrip(page).getByRole("link").first().click()
   await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
   await expect(replyIn(page, threadB, "reply in thread B")).not.toBeVisible()
-  expect(panelParam(page)).toBe(`${threadA}*.${threadB}`)
+  expect(route(page)).toEqual({ stream: threadA, panel: `${streamId}-${threadA}*.${threadB}` })
   expect(await tagOf(replyIn(page, threadA, "reply in thread A"))).toBe("A")
   expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
 
-  // The switch replaced its entry: back closes the tab B opened, A stays mounted.
+  // The switch replaced its entry: back closes the tab B opened, A stays mounted. B opened from the
+  // channel, which the click made the pane worked in.
   await page.goBack()
-  await expect.poll(() => panelParam(page)).toBe(threadA)
+  await expect.poll(() => route(page)).toEqual({ stream: streamId, panel: threadA })
   await expect(tabPane(page, threadB)).toHaveCount(0)
   await expect(page.getByRole("navigation", { name: "Panel tabs" })).toHaveCount(0)
   expect(await tagOf(replyIn(page, threadA, "reply in thread A"))).toBe("A")
 
   // Forward and reload land on the same arrangement.
   await page.goForward()
-  await expect.poll(() => panelParam(page)).toBe(`${threadA}*.${threadB}`)
+  await expect.poll(() => route(page)).toEqual({ stream: threadA, panel: `${streamId}-${threadA}*.${threadB}` })
   await page.reload()
   await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible({ timeout: 30_000 })
   await expect(tabStrip(page).getByRole("link")).toHaveCount(2)
@@ -121,7 +126,7 @@ test("should pop the history entry when closing the newest tab and replace when 
 
   // Closing B leaves exactly the entry before it opened, so back closes A next.
   await tabStrip(page).getByRole("button", { name: "Close tab" }).last().click()
-  await expect.poll(() => panelParam(page)).toBe(threadA)
+  await expect.poll(() => route(page)).toEqual({ stream: streamId, panel: threadA })
   await page.goBack()
   await expect.poll(() => panelParam(page)).toBeNull()
   expect(new URL(page.url()).pathname).toContain(streamId)
@@ -134,10 +139,10 @@ test("should pop the history entry when closing the newest tab and replace when 
   // Inactive tabs show their close on hover.
   await tabStrip(page).getByRole("link").first().hover()
   await tabStrip(page).getByRole("button", { name: "Close tab" }).first().click()
-  await expect.poll(() => panelParam(page)).toBe(threadB)
+  await expect.poll(() => route(page)).toEqual({ stream: threadB, panel: `${streamId}-${threadB}` })
   await expect(page.getByRole("navigation", { name: "Panel tabs" })).toHaveCount(0)
   await page.goBack()
-  await expect.poll(() => panelParam(page)).toBe(threadA)
+  await expect.poll(() => route(page)).toEqual({ stream: streamId, panel: threadA })
 })
 
 test("should leave a background tab unread until it comes to the front", async ({ page, browser }) => {
@@ -229,7 +234,7 @@ test("should split a tab beside its own and keep the split through back, forward
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 900 })
-  const { parentA, parentB, threadA, threadB } = await seedTwoThreads(page)
+  const { streamId, parentA, parentB, threadA, threadB } = await seedTwoThreads(page)
 
   await openFromTimeline(page, parentA)
   await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
@@ -241,7 +246,7 @@ test("should split a tab beside its own and keep the split through back, forward
 
   await tabPane(page, threadB).getByRole("button", { name: "Tab actions" }).click()
   await page.getByRole("menuitem", { name: "Split right" }).click()
-  await expect.poll(() => panelParam(page)).toBe(`${threadA}-${threadB}`)
+  await expect.poll(() => panelParam(page)).toBe(`${streamId}-${threadA}-${threadB}`)
   // Both show side by side without remounting, and the panel widens to hold them.
   await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
   await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
@@ -289,21 +294,21 @@ test("should split a tab beside its own and keep the split through back, forward
 
   // The split replaced the entry B opened with: back returns to A alone.
   await page.goBack()
-  await expect.poll(() => panelParam(page)).toBe(threadA)
+  await expect.poll(() => route(page)).toEqual({ stream: streamId, panel: threadA })
   await page.goForward()
-  await expect.poll(() => panelParam(page)).toBe(`${threadA}-${threadB}`)
+  await expect.poll(() => panelParam(page)).toBe(`${streamId}-${threadA}-${threadB}`)
   await page.reload()
   await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible({ timeout: 30_000 })
   await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
+  expect(route(page)).toEqual({ stream: threadA, panel: `${streamId}-${threadA}-${threadB}` })
 
-  // Too narrow for two columns: they fold into one section's tabs, the URL keeps the split.
+  // Too narrow for two columns: they fold into one section's tabs, showing the pane worked in; the URL keeps the split.
   await page.setViewportSize({ width: 1000, height: 900 })
-  await expect(stripOf(page, threadB).getByRole("link")).toHaveCount(2)
-  await expect(replyIn(page, threadA, "reply in thread A")).not.toBeVisible()
-  expect(panelParam(page)).toBe(`${threadA}-${threadB}`)
-  // Using the main view leaves the folded section showing what it showed, not its last column.
-  await stripOf(page, threadB).getByRole("link", { name: "first parent" }).click()
+  await expect(stripOf(page, threadA).getByRole("link")).toHaveCount(2)
   await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
+  await expect(replyIn(page, threadB, "reply in thread B")).not.toBeVisible()
+  expect(panelParam(page)).toBe(`${streamId}-${threadA}-${threadB}`)
+  // Using the main view leaves the folded section showing what it showed, not its last column.
   await page.locator('[data-editor-zone="main"]').getByText("second parent").click()
   await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
   await expect(replyIn(page, threadB, "reply in thread B")).not.toBeVisible()
@@ -325,7 +330,7 @@ test("should stack a tab split down under its own section", async ({ page }) => 
   await tag(replyIn(page, threadB, "reply in thread B"), "B")
   await tabPane(page, threadA).getByRole("button", { name: "Tab actions" }).click()
   await page.getByRole("menuitem", { name: "Split down" }).click()
-  await expect.poll(() => panelParam(page)).toBe(`${threadB}--${threadA}`)
+  await expect.poll(() => panelParam(page)).toBe(`${streamId}-${threadB}--${threadA}`)
   await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
   await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
   // Neither tab remounts, so each keeps its scroll and draft.
@@ -369,9 +374,9 @@ test.describe("on a phone", () => {
     await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
     expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
 
-    // Back on a phone closes the panel's newest step, not the page.
+    // Back on a phone closes the panel's newest step, not the page; the route moves to the tab left on show.
     await tabPane(page, threadA).getByRole("button", { name: "Back" }).click()
-    await expect.poll(() => panelParam(page)).toBe(threadB)
+    await expect.poll(() => route(page)).toEqual({ stream: threadB, panel: `${streamId}-${threadB}` })
     await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
   })
 

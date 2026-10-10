@@ -4,7 +4,7 @@ import { StreamContent } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { useStreamName } from "@/hooks/use-stream-name"
-import { ASIDE_STAGE_MIN_WIDTH, asideHoldsPanel } from "@/stores/aside-store"
+import { ASIDE_STAGE_MIN_WIDTH, asidePaneOf } from "@/stores/aside-store"
 import { PanelResizeHandle } from "@/components/layout"
 import { PanelHost } from "@/components/layout/panel-host"
 import { usePanel } from "@/contexts"
@@ -61,8 +61,9 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
   // A thread opened from the host pane takes the pane. The page's own slot
   // shows nothing while the stage stands (stream.tsx, board.tsx), so this is
   // the thread's only mount, and the panel's close hands the pane back.
-  const { panelId, closePanel, setCurrentPane } = usePanel()
-  const threadInPane = asideHoldsPanel(panelId, hostStreamId)
+  const { layout, hasTabs, closePanel, setCurrentPane } = usePanel()
+  const held = asidePaneOf(layout, hostStreamId, hasTabs)
+  const threadInPane = held !== null
   // Closing the thread means back to the host, so its composer takes focus on
   // the hand-back (the page does the same for main when a panel closes);
   // otherwise the next keystroke routes to the only other panel zone, the
@@ -119,13 +120,13 @@ export function AsideStage({ workspaceId, asideId, hostStreamId, originScope }: 
           {/* The two panes carry the app's editor zones rather than one of their
             own: type-to-focus and the composer's height observer both route by
             zone, and a zone they do not know is a zone they ignore. */}
-          {threadInPane ? (
+          {held !== null ? (
             <div
               data-testid="aside-host-pane"
               data-view="panel"
               className={cn(ASIDE_PANE, "min-w-0 flex-1")}
-              onPointerDownCapture={() => setCurrentPane(panelId)}
-              onFocusCapture={() => setCurrentPane(panelId)}
+              onPointerDownCapture={() => setCurrentPane(held)}
+              onFocusCapture={() => setCurrentPane(held)}
             >
               <PanelHost workspaceId={workspaceId} onClose={closePanel} className="bg-card sm:border-l-0" />
             </div>

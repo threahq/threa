@@ -1127,7 +1127,7 @@ function MessageInputComponent({
             {/* Its events bubble through this stream's pane, which claims them first; the draft's pane takes them back. */}
             <div
               className="flex min-h-0 flex-1 flex-col"
-              onPointerDownCapture={() => setCurrentPane(composeId)}
+              onClickCapture={() => setCurrentPane(composeId)}
               onFocusCapture={() => setCurrentPane(composeId)}
             >
               {conversationReplyStrip}

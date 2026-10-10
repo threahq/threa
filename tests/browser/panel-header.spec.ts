@@ -173,7 +173,10 @@ test("should land keyboard focus on the panel's close button when closing down t
   await strip.getByRole("button", { name: "Close tab" }).last().focus()
   await page.keyboard.press("Enter")
 
-  await expect.poll(() => panelParam(page)).toBe(first)
+  // Focusing into the tab made it the route's stream, so closing it hands the route to the tab left.
+  await expect
+    .poll(() => ({ stream: new URL(page.url()).pathname.split("/s/")[1], panel: panelParam(page) }))
+    .toEqual({ stream: first, panel: `${streamId}-${first}` })
   await expect(tabPane(page, first).getByRole("button", { name: "Close", exact: true })).toBeFocused()
 })
 

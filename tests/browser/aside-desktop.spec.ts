@@ -262,7 +262,10 @@ test.describe("Aside — desktop surface", () => {
     await expect(panel.locator(".message-item").filter({ hasText: "in the thread" })).toBeVisible({ timeout: 10000 })
     // The first reply turns the draft thread into a real one, and the tab follows it.
     await expect.poll(() => new URL(page.url()).searchParams.get("panel")).toMatch(/^stream_/)
-    const panelParam = new URL(page.url()).searchParams.get("panel")
+    const threadId = new URL(page.url()).searchParams
+      .get("panel")!
+      .split("-")
+      .find((id) => id !== streamId)!
     // Nothing around the columns can scroll, or focus moving into them shifts the whole page: the shell once
     // overflowed sideways by the off-screen sheet it holds, and downward when its height followed its content.
     const scrolledAncestors = await hostScroller(page, streamId).evaluate((element) => {
@@ -280,11 +283,12 @@ test.describe("Aside — desktop surface", () => {
     // The router commits the promotion in a transition, so the page can trail the URL while the thread loads.
     await expect(column(page).getByTestId("aside-anchor-line")).toHaveAttribute(
       "href",
-      new RegExp(`panel=${panelParam}`)
+      new RegExp(`/s/${streamId}\\?panel=${threadId}&`)
     )
     await column(page).getByTestId("aside-anchor-line").click()
     await expect.poll(() => new URL(page.url()).searchParams.get("m")).toBeTruthy()
-    expect(new URL(page.url()).searchParams.get("panel")).toBe(panelParam)
+    expect(new URL(page.url()).pathname).toBe(`/w/${workspaceId}/s/${streamId}`)
+    expect(new URL(page.url()).searchParams.get("panel")).toBe(threadId)
     await expect(panel.locator(".message-item").filter({ hasText: "in the thread" })).toBeVisible()
 
     // ⌥W in the aside closes the aside, not the thread beside it. Its width goes back to the host; the thread
@@ -296,7 +300,7 @@ test.describe("Aside — desktop surface", () => {
       .poll(async () => (await hostScroller(page, streamId).boundingBox())!.width)
       .toBeGreaterThanOrEqual(hostBox!.width + columnBox!.width - 1)
     await expect(panel.locator(".message-item").filter({ hasText: "in the thread" })).toBeVisible()
-    expect(new URL(page.url()).searchParams.get("panel")).toBe(panelParam)
+    expect(new URL(page.url()).searchParams.get("panel")).toBe(threadId)
     await expect(hostKept).toHaveCount(1)
   })
 

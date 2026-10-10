@@ -10,10 +10,10 @@ describe("compilePanelGrid", () => {
     })
   })
 
-  it("should place the columns after the ones the page keeps when it keeps some", () => {
-    expect(compilePanelGrid(defaultPanelGridSizes(parsePanelLayout("a-b")), 1)).toEqual({
+  it("should place each column in its own track when there are several", () => {
+    expect(compilePanelGrid(defaultPanelGridSizes(parsePanelLayout("a-b")))).toEqual({
       rows: "minmax(0,1fr)",
-      areas: [["1 / 2 / 2 / 3"], ["1 / 3 / 2 / 4"]],
+      areas: [["1 / 1 / 2 / 2"], ["1 / 2 / 2 / 3"]],
     })
   })
 
@@ -49,8 +49,10 @@ describe("compilePanelGrid", () => {
 })
 
 describe("panelColumnWidths", () => {
-  it("should give the column being read the larger share when a panel opened beside it", () => {
-    expect(panelColumnWidths(defaultPanelGridSizes(parsePanelLayout("a-b")).columns, 960)).toEqual([560, 400])
+  it("should give the column being read the larger share when a panel opened beside another panel", () => {
+    expect(panelColumnWidths(defaultPanelGridSizes(parsePanelLayout("m-a-b")).columns.slice(1), 960)).toEqual([
+      560, 400,
+    ])
   })
 })
 
