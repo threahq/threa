@@ -151,7 +151,8 @@ function TabsProbe() {
   const location = useLocation()
   return (
     <div>
-      <span data-testid="loc">{`${location.pathname}${location.search}`}</span>
+      <span data-testid="loc">{`${location.pathname}${location.search}${location.hash}`}</span>
+      <span data-testid="key">{location.key}</span>
       <span data-testid="front">{useCurrentPane()}</span>
       <span data-testid="layout">{formatPanelLayout(layout)}</span>
       <button onClick={() => setCurrentPane("stream_main")}>work in stream_main</button>
@@ -213,6 +214,12 @@ function ScopedTab() {
           if (!navigateIn(to, false)) navigate(to)
         }}
       >{`${panelId} opens draft_x`}</button>
+      <button onClick={() => navigateIn({ pathname: `/w/ws/s/${panelId}`, search: "?m=msg_1" }, false)}>
+        {`${panelId} links its msg_1`}
+      </button>
+      <button onClick={() => navigateIn({ pathname: "/w/ws/memory", search: "?memo=memo_x", hash: "#notes" }, false)}>
+        {`${panelId} shows memo_x's notes`}
+      </button>
       <Link to={getNavigateUrl("stream_x")}>{`${panelId} to x`}</Link>
       <Link to={getPanelUrl("stream_y")}>{`${panelId} opens y`}</Link>
       <Link to={getPanelUrl(`context:${panelId}`)}>{`${panelId} overview`}</Link>
@@ -613,6 +620,37 @@ describe("panel tabs history", () => {
     expect(screen.getByTestId("query page:search").textContent).toBe("q=hello")
   })
 
+  it("should jump to a stream's link to its own message in place, keeping the panes, and again once it is there", async () => {
+    const { user, back, loc } = mountTabs([PAGE, `${PAGE}?panel=stream_a`])
+
+    await user.click(screen.getByRole("button", { name: "stream_a links its msg_1" }))
+    const jumped = { loc: loc(), key: screen.getByTestId("key").textContent }
+    expect(jumped.loc).toBe("/w/ws/s/stream_a?m=msg_1&panel=stream_main-stream_a")
+
+    await user.click(screen.getByRole("button", { name: "stream_a links its msg_1" }))
+    expect(loc()).toBe(jumped.loc)
+    expect(screen.getByTestId("key").textContent).not.toBe(jumped.key)
+
+    // Pressing the pane moved the route to it first.
+    await back()
+    expect(loc()).toBe("/w/ws/s/stream_a?panel=stream_main-stream_a")
+  })
+
+  it("should keep the panes and the fragment when a pane links to a page with one", async () => {
+    const { user, loc } = mountTabs(["/w/ws/activity?panel=stream_a"])
+
+    await user.click(screen.getByRole("button", { name: "page:activity shows memo_x's notes" }))
+    expect(loc()).toBe("/w/ws/memory?memo=memo_x&panel=stream_a#notes")
+  })
+
+  it("should flash, not push, an open of a pane already on show behind a fragment", async () => {
+    const { user, loc } = mountTabs([PAGE, `${PAGE}?panel=conv:c#notes`])
+    const before = { loc: loc(), key: screen.getByTestId("key").textContent }
+
+    await user.click(screen.getByRole("button", { name: "open conv:c" }))
+    expect({ loc: loc(), key: screen.getByTestId("key").textContent }).toEqual(before)
+  })
+
   it("should leave a draft a page pane links to to the router, since no pane holds one", async () => {
     const { user, loc } = mountTabs(["/w/ws/s/stream_a?panel=page:drafts"])
 
@@ -814,6 +852,23 @@ describe("panel tabs history on a phone", () => {
 
     await back()
     expect({ loc: loc(), front: front() }).toEqual({ loc: `${PAGE}?panel=stream_b-conv:c`, front: "conv:c" })
+  })
+
+  it("should show a sidebar pick in place of the page on show, with Back to the page", async () => {
+    vi.spyOn(contexts, "useSidebar").mockReturnValue({ isMobile: true } as ReturnType<typeof contexts.useSidebar>)
+    const { user, back, loc } = mountPhone(
+      ["/w/ws/activity"],
+      <StreamPickProvider workspaceId="ws">
+        <TabsProbe />
+        <PickProbe />
+      </StreamPickProvider>
+    )
+
+    await user.click(screen.getByRole("button", { name: "pick stream_a" }))
+    expect({ loc: loc(), front: front() }).toEqual({ loc: "/w/ws/s/stream_a", front: "stream_a" })
+
+    await back()
+    expect(loc()).toBe("/w/ws/activity")
   })
 
   it("should leave the entry before a sidebar pick of the route's stream for Back", async () => {

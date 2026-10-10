@@ -230,6 +230,8 @@ function showInPlaceOf(layout: PanelLayout, from: string, panelId: string): Pane
   return panesOwnedBy(layout, owner).reduce(closePanelTab, replacePanelTab(layout, owner, panelId))
 }
 
+type Placement = "tab" | "place"
+
 export interface OpenPanelOptions {
   /** Overwrite the current history entry instead of adding one. Only for a panel
    *  that SUPERSEDES the open one — a draft thread promoted to its real stream —
@@ -240,6 +242,13 @@ export interface OpenPanelOptions {
   beside?: string
   /** Open as a tab of its own even on a phone, where a pane otherwise takes the place of the one it is opened from. */
   newTab?: boolean
+  /** On a phone, take the place of the pane on show even where it would open beside it: a sidebar pick from a page. */
+  inPlace?: boolean
+}
+
+function placementOf(options?: OpenPanelOptions): Placement | undefined {
+  if (options?.beside !== undefined || options?.newTab === true) return "tab"
+  return options?.inPlace === true ? "place" : undefined
 }
 
 interface PanelContextValue {
@@ -306,7 +315,14 @@ interface PanelContextValue {
   /** This consumer's page pane's own query, without the panes'. */
   pageSearch: string
   /** Follows a link inside this consumer's pane: in place, or into its tab. False where the router has to. */
-  navigateIn: (to: { pathname: string; search: string }, replace: boolean) => boolean
+  navigateIn: (to: PaneLink, replace: boolean) => boolean
+}
+
+/** Where a link inside a pane goes. */
+export interface PaneLink {
+  pathname: string
+  search: string
+  hash?: string
 }
 
 interface PanelOps {
@@ -318,18 +334,20 @@ interface PanelOps {
     replace: boolean,
     focus?: string | null,
     deepLink?: string | null,
-    focusQuery?: string
+    focusQuery?: string,
+    hash?: string
   ) => void
   /** The query a page pane shows: the URL's for the route's page, the one it last had for another. */
   pageQuery: (panelId: string) => string
   /** Follows a link inside pane `own`; false where the router has to. */
-  navigatePane: (own: string, to: { pathname: string; search: string }, replace: boolean) => boolean
+  navigatePane: (own: string, to: PaneLink, replace: boolean) => boolean
   /** Whether this page shows tabs beside its route's pane; no other page has panes. */
   tabbed: boolean
   /** A phone, which shows one pane at a time and no tab rows. */
   phone: boolean
-  /** Opening from `scopeId`'s tab, or from the route's stream when null (a phone's pane in front); `asTab` opens a tab of its own even on a phone. */
-  contextual: (layout: PanelLayout, panelId: string, scopeId: string | null, asTab?: boolean) => PanelLayout
+  /** Opening from `scopeId`'s tab, or from the route's stream when null (a phone's pane in front); on a phone `"tab"`
+   *  opens a tab of its own and `"place"` takes the place of the page or stream it is opened from. */
+  contextual: (layout: PanelLayout, panelId: string, scopeId: string | null, placement?: Placement) => PanelLayout
   closeTab: (panelId: string) => void
   closeTabs: (panelIds: readonly string[]) => void
   canCloseTab: (panelId: string) => boolean
@@ -472,7 +490,7 @@ function buildValue(
                 options?.beside !== undefined && panelIdsOf(current).includes(options.beside)
                   ? options.beside
                   : scopeId,
-                options?.beside !== undefined || options?.newTab === true
+                placementOf(options)
               ),
             false,
             focusOnOpen(panelId)
@@ -817,16 +835,17 @@ export function PanelProvider({ children }: PanelProviderProps) {
   )
 
   // A phone shows one pane, so what opens from it takes its place and Back brings it back. A stream's own panes
-  // (draft, aside, overview, conversations) still open beside it. So does what opens from a page, which stays
-  // mounted under it for Back to land where it was scrolled, and from an aside, whose sheet shows its threads.
+  // (draft, aside, overview, conversations) still open beside it. So does a link from a page, which stays
+  // mounted under it for Back to land where it was scrolled (a sidebar pick takes its place), and what opens from
+  // an aside, whose sheet shows its threads.
   const contextual = useCallback(
-    (current: PanelLayout, panelId: string, scopeId: string | null, asTab = false) => {
+    (current: PanelLayout, panelId: string, scopeId: string | null, placement?: Placement) => {
       const from = scopeId ?? (phone ? front : null) ?? routePane
       if (
         !phone ||
-        asTab ||
+        placement === "tab" ||
         from === null ||
-        isPagePane(from) ||
+        (isPagePane(from) && placement !== "place") ||
         parseAsidePanel(from) !== null ||
         streamOwning(panelId) !== null
       )
@@ -858,7 +877,8 @@ export function PanelProvider({ children }: PanelProviderProps) {
       focus: string | null = null,
       deepLink: string | null = null,
       /** The query of the link that opens `focus`, when the route goes there. */
-      focusQuery?: string
+      focusQuery?: string,
+      hash = ""
     ) => {
       const next = edit(layout)
       const to = targetOf(next, focus)
@@ -867,21 +887,25 @@ export function PanelProvider({ children }: PanelProviderProps) {
       const base = routeParams(to.path, to.path === focus ? focusQuery : undefined)
       const params = withLayout(base, next, to.path, coverOwner, to.keepsPath)
       if (deepLink !== null) params.set(DEEP_LINK_PARAM, deepLink)
-      const href = hrefOf(to.pathname, params)
-      // Opening what is already on show adds no entry for Back to step through, and shows the open registered.
-      if (href === hrefOf(location.pathname, searchParams)) {
-        if (focus !== null) flashPane(focus)
+      const path = hrefOf(to.pathname, params)
+      const href = `${path}${hash}`
+      // Opening what is already on show adds no entry for Back to step through, and shows the open registered; a
+      // link to its message jumps there again, which takes a new location over the same entry. An open without a
+      // fragment leaves the one on show alone.
+      if (path === hrefOf(location.pathname, searchParams) && (!hash || hash === location.hash)) {
+        if (deepLink !== null) navigate(href, { replace: true })
+        else if (focus !== null) flashPane(focus)
         return
       }
       navigate(href, { replace })
     },
-    [layout, targetOf, setFront, routeParams, searchParams, coverOwner, navigate, location.pathname]
+    [layout, targetOf, setFront, routeParams, searchParams, coverOwner, navigate, location.pathname, location.hash]
   )
 
   // The pane a link names, with its query: a stream or a page of this workspace. Null for a URL that says where
   // every pane goes, or one only the router can follow.
   const linkedPane = useCallback(
-    (to: { pathname: string; search: string }) => {
+    (to: PaneLink) => {
       const params = new URLSearchParams(to.search)
       if (params.has(PANEL_PARAM) || matchPath("/w/:workspaceId/*", to.pathname)?.params.workspaceId !== workspaceId)
         return null
@@ -893,10 +917,16 @@ export function PanelProvider({ children }: PanelProviderProps) {
 
   // Opens a linked pane where `edit` puts it: a page keeps the link's query, a stream jumps to its `?m`.
   const openLinked = useCallback(
-    (edit: (layout: PanelLayout) => PanelLayout, replace: boolean, target: string, params: URLSearchParams) => {
+    (
+      edit: (layout: PanelLayout) => PanelLayout,
+      replace: boolean,
+      target: string,
+      params: URLSearchParams,
+      hash?: string
+    ) => {
       const page = pagePathOf(target) !== null
       if (page) keepPageQuery(target, params.toString())
-      open(edit, replace, target, page ? null : params.get(DEEP_LINK_PARAM), params.toString())
+      open(edit, replace, target, page ? null : params.get(DEEP_LINK_PARAM), params.toString(), hash)
     },
     [keepPageQuery, open]
   )
@@ -906,16 +936,18 @@ export function PanelProvider({ children }: PanelProviderProps) {
   // jumps there. A stream pane leaves its own query changes and replaces (covers, promotions) to the router, as
   // it does anything else.
   const navigatePane = useCallback(
-    (own: string, to: { pathname: string; search: string }, replace: boolean): boolean => {
+    (own: string, to: PaneLink, replace: boolean): boolean => {
       const link = linkedPane(to)
       if (link === null) return false
       const { target, params } = link
+      const { hash = "" } = to
       const page = pagePathOf(own) !== null
       // A stream's link to itself, nothing more, has nowhere to go; one clearing the URL's query still goes there.
       if (
         !page &&
         target === own &&
         params.toString() === "" &&
+        !hash &&
         [...searchParams.keys()].every((key) => key === PANEL_PARAM)
       ) {
         flashPane(own)
@@ -940,24 +972,26 @@ export function PanelProvider({ children }: PanelProviderProps) {
           (current) => (shown ? activatePanelTab(current, target) : openPanelTabBeside(current, own, target)),
           false,
           target,
-          params
+          params,
+          hash
         )
         return true
       }
-      if (!page && (!phone || replace || (target === own && !isPermalink(params)))) return false
+      // A stream's permalink or fragment link to itself stays in place, keeping the panes; its other links go to the router.
+      if (!page && (replace || (target === own ? !isPermalink(params) && !hash : !phone))) return false
       if (page && target === own && own !== routePane) {
         keepPageQuery(own, params.toString())
         return true
       }
       if (page && target === own) {
-        navigate(hrefOf(location.pathname, withPaneParams(to.search, searchParams)), { replace })
+        navigate(`${hrefOf(location.pathname, withPaneParams(to.search, searchParams))}${hash}`, { replace })
         return true
       }
       const edit = (current: PanelLayout) => {
         if (target === own) return current
         return phone ? showInPlaceOf(current, own, target) : replacePanelTab(current, own, target)
       }
-      openLinked(edit, replace, target, params)
+      openLinked(edit, replace, target, params, hash)
       return true
     },
     [

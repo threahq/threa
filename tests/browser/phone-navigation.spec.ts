@@ -1,11 +1,12 @@
-import { test, expect, type Page } from "@playwright/test"
+import { test, expect, type Locator, type Page } from "@playwright/test"
 import { loginAndCreateWorkspace, expectApiOk } from "./helpers"
 
 /**
  * On a phone a link shows what it names in place of the pane on show, one step in
  * history, and brings forward a pane already open instead. Tabs are opt in: only
  * "Open in new tab" adds one, and sidebar picks keep the tabs there are. Up goes
- * to the stream a pane was opened from. A link or pick to where the reader already is flashes the pane.
+ * to the stream a pane was opened from. A link or pick to where the reader already is flashes the pane, and a
+ * link to the message on show jumps to it again.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -44,7 +45,7 @@ async function seed(page: Page) {
   await expectApiOk(response, "create thread")
   const thread = ((await response.json()) as { stream: { id: string } }).stream.id
   await post(page, workspaceId, thread, "reply in a's thread")
-  return { workspaceId, names, streamA, streamB, streamC, thread }
+  return { workspaceId, names, streamA, streamB, streamC, thread, parent }
 }
 
 const pane = (page: Page, id: string) => page.locator(`[data-panel-tab="${id}"]`)
@@ -70,6 +71,16 @@ async function openSidebar(page: Page) {
   })
   await expect(sidebar(page).getByLabel("Collapse sidebar")).toBeInViewport()
 }
+
+/** Scrolls the nearest scroller holding `inside` to its end. */
+const scrollToEnd = (inside: Locator) =>
+  inside.evaluate((element) => {
+    for (let node = element.parentElement; node; node = node.parentElement) {
+      if (node.scrollHeight <= node.clientHeight + 1 || getComputedStyle(node).overflowY === "visible") continue
+      node.scrollTop = node.scrollHeight
+      return
+    }
+  })
 
 async function longPress(page: Page, selector: string) {
   const box = (await page.locator(selector).first().boundingBox())!
@@ -136,6 +147,11 @@ test("should jump to a message its link names, in the stream on show or in place
   await expect(linked).toBeInViewport({ timeout: 30_000 })
   expect(new URL(page.url()).searchParams.get("m")).toBe(target)
 
+  await scrollToEnd(linked)
+  await expect(linked).not.toBeInViewport()
+  await chipIn(streamA).click()
+  await expect(linked).toBeInViewport({ timeout: 30_000 })
+
   await page.goto(`/w/${workspaceId}/s/${streamB}`)
   await chipIn(streamB).click({ timeout: 30_000 })
   await expect(linked).toBeInViewport({ timeout: 30_000 })
@@ -145,7 +161,9 @@ test("should jump to a message its link names, in the stream on show or in place
   })
 })
 
-test("should keep the tabs through sidebar picks, and add one only from Open in new tab", async ({ page }) => {
+test("should keep the tabs through sidebar picks, show a pick from a page in its place, and add one only from Open in new tab", async ({
+  page,
+}) => {
   const { workspaceId, names, streamA, streamB, streamC, thread } = await seed(page)
   await page.goto(`/w/${workspaceId}/s/${streamA}?panel=${thread}`)
   await expect(pane(page, thread).getByText("reply in a's thread")).toBeVisible({ timeout: 30_000 })
@@ -175,8 +193,31 @@ test("should keep the tabs through sidebar picks, and add one only from Open in 
   await expect(layers(page)).toHaveAccessibleName("3 open panes")
   await expect(pane(page, streamC)).toHaveCount(0)
 
+  await openSidebar(page)
+  await sidebar(page)
+    .getByRole("link", { name: `#${names.c}` })
+    .click()
+  await expect(pane(page, streamC).getByText("said in c")).toBeVisible({ timeout: 30_000 })
+  await expect(pane(page, "page:activity")).toHaveCount(0)
+  await expect(layers(page)).toHaveAccessibleName("3 open panes")
+
+  await page.goBack()
+  await expect(pane(page, "page:activity")).toBeVisible()
   await page.goBack()
   await expect(pane(page, streamC).getByText("said in c")).toBeVisible()
+})
+
+test("should open a message's thread as a tab of its own from its long-press menu", async ({ page }) => {
+  const { workspaceId, streamA, thread, parent } = await seed(page)
+  await page.goto(`/w/${workspaceId}/s/${streamA}`)
+  const row = `[data-panel-tab="${streamA}"] [data-message-id="${parent}"] .message-content`
+  await expect(page.locator(row)).toBeVisible({ timeout: 30_000 })
+
+  await longPress(page, row)
+  await page.getByRole("button", { name: "Open thread in new tab" }).click()
+  await expect(pane(page, thread).getByText("reply in a's thread")).toBeVisible({ timeout: 30_000 })
+  await expect(layers(page)).toHaveAccessibleName("2 open panes")
+  await expect(pane(page, streamA)).toBeAttached()
 })
 
 test("should flash the pane on show for a link or pick to where the reader already is", async ({ page }) => {

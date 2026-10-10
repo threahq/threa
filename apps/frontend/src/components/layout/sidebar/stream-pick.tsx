@@ -116,7 +116,7 @@ function useStreamPicker(workspaceId: string): (streamId: string) => boolean {
   return useStableCallback((streamId: string) => {
     // A draft stream only opens as a page of its own, as does anything picked where no pane is on show.
     if (isMobile && hasTabs && (isServerStreamId(streamId) || pagePathOf(streamId) !== null)) {
-      openPanel(streamId)
+      openPanel(streamId, { inPlace: true })
       return true
     }
     if (!path || !isServerStreamId(streamId)) return false
