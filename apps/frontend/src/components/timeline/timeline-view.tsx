@@ -1,4 +1,5 @@
 import { useParams, useSearchParams } from "react-router-dom"
+import { useMainOwnsCover } from "@/contexts"
 import { StreamContent } from "./stream-content"
 
 interface TimelineViewProps {
@@ -9,7 +10,7 @@ interface TimelineViewProps {
 export function TimelineView({ isDraft = false, autoFocus }: TimelineViewProps) {
   const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId: string }>()
   const [searchParams] = useSearchParams()
-  const highlightMessageId = searchParams.get("m")
+  const highlightMessageId = useMainOwnsCover() ? searchParams.get("m") : null
 
   if (!workspaceId || !streamId) {
     return null

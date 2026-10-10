@@ -30,8 +30,8 @@ function getRegistry(): VisibleStreamRegistry {
  * Marks the given streams of `workspaceId` as on-screen for push suppression
  * while the calling component is mounted (see lib/visible-streams.ts). Register
  * from surfaces that actually render a stream's messages: the workspace layout
- * (URL stream + bare-stream panels), the conversation panel (its resolved stream
- * ids), and viewport-visible board cards.
+ * (the URL stream), each stream panel pane while it shows, the conversation
+ * panel (its resolved stream ids), and viewport-visible board cards.
  */
 export function useVisibleStreams(workspaceId: string, streamIds: readonly string[]): void {
   // Key on content, not array identity — callers rebuild the array per render.

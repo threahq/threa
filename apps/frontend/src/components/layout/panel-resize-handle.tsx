@@ -1,4 +1,5 @@
-import { GripVertical } from "lucide-react"
+import type { CSSProperties } from "react"
+import { GripHorizontal, GripVertical } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 interface PanelResizeHandleProps {
@@ -11,6 +12,10 @@ interface PanelResizeHandleProps {
   onPointerEnd: (e: React.PointerEvent) => void
   onKeyDown: (e: React.KeyboardEvent) => void
   ariaLabel?: string
+  /** `"y"` divides stacked sections: a horizontal hairline dragged up and down. */
+  axis?: "x" | "y"
+  className?: string
+  style?: CSSProperties
 }
 
 export function PanelResizeHandle({
@@ -23,15 +28,23 @@ export function PanelResizeHandle({
   onPointerEnd,
   onKeyDown,
   ariaLabel = "Resize thread panel",
+  axis = "x",
+  className,
+  style,
 }: PanelResizeHandleProps) {
+  const Grip = axis === "x" ? GripVertical : GripHorizontal
   return (
     <div
+      style={style}
       className={cn(
-        "resize-handle-touch-target relative flex w-px flex-shrink-0 touch-pan-y items-center justify-center bg-border cursor-col-resize",
-        "after:absolute after:left-1/2 after:-translate-x-1/2",
+        "relative flex flex-shrink-0 items-center justify-center bg-border",
+        axis === "x"
+          ? "resize-handle-touch-target w-px touch-pan-y cursor-col-resize after:absolute after:left-1/2 after:-translate-x-1/2"
+          : "resize-handle-touch-target-y h-px touch-pan-x cursor-row-resize after:absolute after:top-1/2 after:-translate-y-1/2",
         "focus-visible:bg-primary/30 focus-visible:outline-none",
         !isResizing && "transition-colors duration-150",
-        isResizing && "bg-primary/30"
+        isResizing && "bg-primary/30",
+        className
       )}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
@@ -41,14 +54,19 @@ export function PanelResizeHandle({
       onKeyDown={onKeyDown}
       tabIndex={0}
       role="separator"
-      aria-orientation="vertical"
+      aria-orientation={axis === "x" ? "vertical" : "horizontal"}
       aria-valuenow={panelWidth}
       aria-valuemin={minWidth}
       aria-valuemax={maxWidth}
       aria-label={ariaLabel}
     >
-      <div className="z-10 flex h-4 w-3 items-center justify-center rounded-sm border bg-border">
-        <GripVertical className="h-2.5 w-2.5" />
+      <div
+        className={cn(
+          "z-10 flex items-center justify-center rounded-sm border bg-border",
+          axis === "x" ? "h-4 w-3" : "h-3 w-4"
+        )}
+      >
+        <Grip className="h-2.5 w-2.5" />
       </div>
     </div>
   )

@@ -570,7 +570,8 @@ function ConversationPanelBody({
   // main-view highlight.
   const [searchParams] = useSearchParams()
   const covered = usePaneCovered()
-  const highlightMessageId = covered ? null : searchParams.get("m")
+  const { ownsCover } = usePanel()
+  const highlightMessageId = ownsCover && !covered ? searchParams.get("m") : null
 
   // The docked footer composer arms to a sub-conversation instead of mounting a
   // mid-flow editor: replying in the panel always happens at the bottom dock
