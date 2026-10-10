@@ -8,6 +8,9 @@ import { AISpendDeniedError, type AI } from "@threahq/agent-runtime"
 import type { ConfigResolver } from "../../../lib/ai/config-resolver"
 import type { EmbeddingServiceLike } from "../../memos"
 import { UserRepository } from "../../workspaces"
+import { MessageRepository, type Message } from "../../messaging"
+import { StreamRepository, type Stream } from "../../streams"
+import type { EnrichedMemoResult } from "./context-formatter"
 import type { PeopleResolverLike } from "./people-resolver"
 import { StubPeopleResolver } from "./people-resolver.stub"
 
@@ -199,6 +202,8 @@ describe("WorkspaceAgent runSearchLoop", () => {
     people: string[]
     peopleResolver?: PeopleResolverLike
     queries?: BaselineQuery[]
+    memos?: EnrichedMemoResult[]
+    conversationHistory?: Array<{ id: string }>
   }) {
     const configResolver = {
       resolve: mock(async () => ({ modelId: "openrouter:anthropic/claude-haiku-4.5", temperature: 0.1 })),
@@ -217,7 +222,7 @@ describe("WorkspaceAgent runSearchLoop", () => {
     }))
     const executeQueries = mock(
       async (_pool: Pool, _queries: Array<{ target: string; type: string; query: string; authorId?: string }>) => ({
-        memos: [],
+        memos: options.memos ?? [],
         messages: [],
         attachments: [],
       })
@@ -243,7 +248,7 @@ describe("WorkspaceAgent runSearchLoop", () => {
         workspaceId: "ws_1",
         streamId: "stream_1",
         query: options.query,
-        conversationHistory: [],
+        conversationHistory: (options.conversationHistory ?? []) as WorkspaceAgentInput["conversationHistory"],
         invokingUserId: "user_1",
         searchFlag: "on",
       },
@@ -274,6 +279,70 @@ describe("WorkspaceAgent runSearchLoop", () => {
     }).toEqual({
       plans: 1,
       plannedRuns: [Array.from({ length: WORKSPACE_AGENT_MAX_PLANNED_QUERIES }, (_, i) => `plan-${i}`)],
+    })
+  })
+
+  test("shows each retrieved memo's newest sources as related messages, skipping the conversation itself", async () => {
+    const sourceIds = Array.from({ length: 7 }, (_, i) => `msg_0${i}`)
+    const memo = {
+      memo: {
+        id: "memo_1",
+        title: "Deploy runbook",
+        abstract: "Deploys ship on Tuesday",
+        keyPoints: [],
+        sourceMessageIds: sourceIds,
+        latestSourceAt: null,
+      },
+      distance: 0.1,
+      sourceStream: { id: "stream_1", type: "channel", name: "General" },
+    } as unknown as EnrichedMemoResult
+    const findByIdsInStreams = spyOn(MessageRepository, "findByIdsInStreams").mockImplementation(
+      async (_db, _workspaceId, ids) =>
+        new Map(
+          ids.map((id) => [
+            id,
+            {
+              id,
+              streamId: "stream_1",
+              contentMarkdown: `${id} says Wednesday`,
+              authorId: "user_1",
+              authorType: "user",
+              createdAt: new Date("2026-07-01T10:00:00Z"),
+            } as unknown as Message,
+          ])
+        )
+    )
+    spyOn(UserRepository, "findByIds").mockResolvedValue([{ id: "user_1", name: "Ada" }] as never)
+    spyOn(StreamRepository, "findByIds").mockResolvedValue([
+      { id: "stream_1", type: "channel", displayName: "General" } as unknown as Stream,
+    ])
+
+    const { result } = runLoop({
+      query: "when do we deploy",
+      people: [],
+      memos: [memo],
+      conversationHistory: [{ id: "msg_06" }],
+    })
+    const { retrievedContext } = await result
+
+    expect({
+      fetched: findByIdsInStreams.mock.calls.map(([, workspaceId, ids, streamIds]) => ({
+        workspaceId,
+        ids,
+        streamIds,
+      })),
+      related: retrievedContext?.match(/msg_0\d says Wednesday/g),
+    }).toEqual({
+      fetched: [
+        { workspaceId: "ws_1", ids: ["msg_01", "msg_02", "msg_03", "msg_04", "msg_05"], streamIds: ["stream_1"] },
+      ],
+      related: [
+        "msg_01 says Wednesday",
+        "msg_02 says Wednesday",
+        "msg_03 says Wednesday",
+        "msg_04 says Wednesday",
+        "msg_05 says Wednesday",
+      ],
     })
   })
 

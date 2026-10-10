@@ -109,7 +109,7 @@ ${keyPointsList}${sourcesLine}${linkLine}`
 
   return `### Memos
 
-Each memo is as of its newest source message. A message posted after that date that explicitly changes or reverses what the memo states overrides it. A question, proposal or passing remark does not.
+A memo condenses the messages on its Sources line. Where those messages appear among the Related Messages below, answer from what they say: anything a memo states beyond them is its own reading, not something anyone said. Each memo is as of its newest source message. A message posted after that date that explicitly changes or reverses what the memo states overrides it. A question, proposal or passing remark does not.
 
 ${memoEntries}
 `

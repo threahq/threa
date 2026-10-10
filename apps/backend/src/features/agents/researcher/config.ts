@@ -30,6 +30,9 @@ export const WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH = 5
 /** Hits per search taken from the room the question was asked in, on top of the workspace-wide ones */
 export const WORKSPACE_AGENT_MAX_ROOM_RESULTS_PER_SEARCH = 3
 
+/** Newest source messages shown beside each retrieved memo; a long conversation's memo cites hundreds. */
+export const WORKSPACE_AGENT_MAX_SOURCES_PER_MEMO = 5
+
 /**
  * Hard wall-clock budget for a single workspace_research tool call in milliseconds.
  *
