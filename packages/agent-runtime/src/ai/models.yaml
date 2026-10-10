@@ -23,8 +23,18 @@
 
 models:
   # Anthropic
+  openrouter:anthropic/claude-opus-5.5:
+    name: Claude Opus 5.5
+    inputModalities: [text, image]
+    outputModalities: [text]
+
   openrouter:anthropic/claude-opus-5:
     name: Claude Opus 5
+    inputModalities: [text, image]
+    outputModalities: [text]
+
+  openrouter:anthropic/claude-sonnet-5.5:
+    name: Claude Sonnet 5.5
     inputModalities: [text, image]
     outputModalities: [text]
 
@@ -35,6 +45,11 @@ models:
 
   openrouter:anthropic/claude-sonnet-4.6:
     name: Claude Sonnet 4.6
+    inputModalities: [text, image]
+    outputModalities: [text]
+
+  openrouter:anthropic/claude-haiku-5.5:
+    name: Claude Haiku 5.5
     inputModalities: [text, image]
     outputModalities: [text]
 
@@ -82,6 +97,11 @@ models:
 
   openrouter:openai/gpt-6-luna:
     name: GPT-6 Luna
+    inputModalities: [text, image]
+    outputModalities: [text]
+
+  openrouter:openai/gpt-6-luna-pro:
+    name: GPT-6 Luna Pro
     inputModalities: [text, image]
     outputModalities: [text]
 
