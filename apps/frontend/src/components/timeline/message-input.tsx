@@ -1,8 +1,7 @@
 import { memo, useState, useCallback, useContext, useEffect, useMemo, useRef, type ComponentProps } from "react"
 import { createPortal } from "react-dom"
 import { toast } from "sonner"
-import { Link, useNavigate } from "react-router-dom"
-import { PenLine } from "lucide-react"
+import { useNavigate } from "react-router-dom"
 import { useStableCallback } from "@/hooks/use-stable-callback"
 import {
   hasDocContent,
@@ -46,12 +45,15 @@ import { useConversationReply, type ConversationReplyData } from "./conversation
 import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { boardPostLastActiveStreamId } from "@/lib/board/reply-plan"
 import { boardReplyDraftKey, parseBoardDraftKey } from "@/lib/board/draft-keys"
-import { usePanel, createConversationPanelId, createComposePanelId } from "@/contexts"
+import { usePanel, usePaneFocusLanding, createConversationPanelId, createComposePanelId } from "@/contexts"
 import { AsideCoversPanesContext } from "@/components/aside/aside-presentation"
 import { PaneFocusContext, useComposeSlot } from "@/components/panes"
 import { Button } from "@/components/ui/button"
-import { panelIdsOf } from "@/lib/panel-tabs"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { landFocus } from "@/components/layout/pane-shortcuts"
 import { collapsedComposerPreview } from "@/lib/drafts/collapsed-composer-preview"
+import { ArrowDownToLine, ArrowRight } from "lucide-react"
+import { panelIdsOf } from "@/lib/panel-tabs"
 import {
   acknowledgeShareHandoffBatch,
   peekShareHandoffBatch,
@@ -492,7 +494,7 @@ function MessageInputComponent({
   // target in one local-first transaction. An empty composer with no row simply
   // opens the destination's existing draft, if any.
   const conversationReplyCtx = useConversationReply()
-  const { openPanel, layout, hasTabs, getFocusedPanelUrl, getTabUrl, closeTab, setCurrentPane } = usePanel()
+  const { openPanel, layout, hasTabs, getPanelUrl, getFocusedPanelUrl, closeTab, setCurrentPane } = usePanel()
   useEffect(() => {
     if (!conversationReplyCtx) return
     return conversationReplyCtx.registerHandler((data: ConversationReplyData) => {
@@ -785,6 +787,11 @@ function MessageInputComponent({
   const composeSlot = useComposeSlot(streamId, expanded && !(disabled && disabledReason))
   const collapse = useStableCallback(() => {
     if (expanded) closeTab(composeId)
+  })
+  const paneLanding = usePaneFocusLanding()
+  const goToPane = useStableCallback(() => {
+    setCurrentPane(composeId)
+    landFocus(paneLanding, composeId)
   })
   const messageSendMode = preferences?.messageSendMode ?? "enter"
   const connectionState = useConnectionState()
@@ -1118,6 +1125,9 @@ function MessageInputComponent({
     )
   }
 
+  // The draft can open as a pane of its own only where the page lays panes out and nothing covers them.
+  const paneable = hasTabs && !isAsideComposer && !asideCoversPanes
+
   return (
     <>
       {composeSlot &&
@@ -1141,18 +1151,15 @@ function MessageInputComponent({
       <FloatingComposerShell ref={composerHeightRef} data-message-composer-root>
         <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={e2eEnabled} streamId={e2eRootStreamId} />
         {expanded ? (
-          <ComposingInPaneBar
-            href={getTabUrl(composeId)}
-            preview={collapsedComposerPreview(composer.content)}
-            onWriteHere={collapse}
-          />
+          <ComposingInPaneBar draft={composer.content} onGoTo={goToPane} onWriteHere={collapse} />
         ) : (
           <>
             {conversationReplyStrip}
             <MemoizedMessageComposer
               {...composerProps}
               autoFocus={autoFocus}
-              expandHref={hasTabs && !isAsideComposer && !asideCoversPanes ? getFocusedPanelUrl(composeId) : undefined}
+              expandHref={paneable ? getFocusedPanelUrl(composeId) : undefined}
+              sideHref={paneable ? getPanelUrl(composeId) : undefined}
             />
           </>
         )}
@@ -1162,33 +1169,46 @@ function MessageInputComponent({
   )
 }
 
-/** Holds the composer's place while its draft is open in a pane: a way to that pane, and a way to bring it back. */
+/** Holds the composer's place while its draft is open in a pane: one line of the draft, leading to it. */
 function ComposingInPaneBar({
-  href,
-  preview,
+  draft,
+  onGoTo,
   onWriteHere,
 }: {
-  href: string
-  preview: string
+  draft: JSONContent
+  onGoTo: () => void
   onWriteHere: () => void
 }) {
+  const preview = useMemo(() => collapsedComposerPreview(draft), [draft])
   return (
-    <div className="flex items-center gap-2 rounded-xl border bg-background p-1.5 shadow-sm">
-      <Link to={href} className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted">
-        <PenLine className="h-4 w-4 shrink-0 text-muted-foreground" />
-        <span className={preview ? "truncate" : "truncate text-muted-foreground"}>
-          {preview || "Draft open in a pane"}
-        </span>
-      </Link>
-      <Button
+    <div className="flex h-10 items-center gap-1 rounded-xl border border-input bg-card/75 pr-1 backdrop-blur-md">
+      <button
         type="button"
-        variant="ghost"
-        size="sm"
-        title="Close the pane and keep writing here"
-        onClick={onWriteHere}
+        aria-label="Go to draft"
+        className="flex min-w-0 flex-1 items-center gap-2 self-stretch rounded-l-xl pl-3 text-left text-sm text-muted-foreground hover:text-foreground"
+        onClick={onGoTo}
       >
-        Write here
-      </Button>
+        <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+        <span className="min-w-0 flex-1 truncate">{preview}</span>
+        <ArrowRight className="h-4 w-4 shrink-0" />
+      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            aria-label="Write here"
+            onClick={onWriteHere}
+          >
+            <ArrowDownToLine className="h-4 w-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">
+          Write here
+        </TooltipContent>
+      </Tooltip>
     </div>
   )
 }
