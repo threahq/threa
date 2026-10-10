@@ -9,6 +9,7 @@ import {
   useSidebar,
   isDraftPanel,
   parseConversationPanel,
+  parseComposePanel,
 } from "@/contexts"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -283,6 +284,14 @@ export function usePanelCloseFocusLanding() {
 
 export function PanelTabTitle({ workspaceId, panelId }: { workspaceId: string; panelId: string }) {
   if (isDraftPanel(panelId)) return <>New thread</>
+  const composeStreamId = parseComposePanel(panelId)
+  if (composeStreamId) {
+    return (
+      <>
+        Draft to <StreamTabTitle workspaceId={workspaceId} streamId={composeStreamId} />
+      </>
+    )
+  }
   const conversationId = parseConversationPanel(panelId)
   if (conversationId) {
     return <ConversationTabTitle workspaceId={workspaceId} conversationId={conversationId} />
