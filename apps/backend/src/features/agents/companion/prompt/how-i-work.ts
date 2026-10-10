@@ -245,7 +245,7 @@ function reachLine(self: SelfKnowledge, toolNames: readonly string[]): string {
   if (!wiresAny(toolNames, WORKSPACE_REACH_TOOLS)) {
     return "None of your tools here read beyond this conversation, so you work from it alone."
   }
-  return REACH[self.access]
+  return `${REACH[self.access]} Archived streams you can reach stay readable and searchable but are read-only: you can't post or react in them.`
 }
 
 /** Tools that find messages again later, memo or not; `general_research` joins them as in `workspaceGranted`. */

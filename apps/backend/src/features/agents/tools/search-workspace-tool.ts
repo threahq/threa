@@ -1,7 +1,15 @@
 import { z } from "zod"
-import { AgentStepTypes, AgentToolNames, TOOL_CATEGORIES_BY_NAME, STREAM_TYPES, StreamTypes } from "@threahq/types"
+import {
+  AgentStepTypes,
+  AgentToolNames,
+  TOOL_CATEGORIES_BY_NAME,
+  STREAM_TYPES,
+  StreamTypes,
+  type StreamType,
+} from "@threahq/types"
 import { logger } from "../../../lib/logger"
-import { searchDmStreamsByParticipant, StreamRepository } from "../../streams"
+import type { ArchiveStatus } from "../../../lib/sql-filters"
+import { listDmDisplayNames, searchDmStreamsByParticipant, StreamRepository, type Stream } from "../../streams"
 import { SearchRepository } from "../../search"
 import { PeoplePurposes, UserRepository } from "../../workspaces"
 import { MessageRepository } from "../../messaging"
@@ -41,17 +49,33 @@ export interface MessageSearchResult {
 }
 
 const SearchStreamsSchema = z.object({
-  query: z.string().describe("The search query to find streams by name or description"),
+  query: z
+    .string()
+    .optional()
+    .describe("Find streams by name, or a DM by its participant's name. Omit to list recent streams"),
   types: z.array(z.enum(STREAM_TYPES)).optional().describe("Filter by stream types"),
+  archived: z
+    .enum(["include", "only", "exclude"])
+    .optional()
+    .describe(
+      '"include" (default) returns archived streams alongside active ones, "only" returns just archived streams, "exclude" leaves them out'
+    ),
 })
 
 export type SearchStreamsInput = z.infer<typeof SearchStreamsSchema>
+
+const ARCHIVE_STATUS_BY_FILTER: Record<NonNullable<SearchStreamsInput["archived"]>, ArchiveStatus[]> = {
+  include: ["active", "archived"],
+  only: ["archived"],
+  exclude: ["active"],
+}
 
 export interface StreamSearchResult {
   id: string
   type: string
   name: string | null
   description: string | null
+  archived: boolean
 }
 
 interface RankedStreamSearchResult {
@@ -260,8 +284,150 @@ Semantic searches are rewritten into alternative phrasings and reranked, so desc
   })
 }
 
-export function createSearchStreamsTool(deps: WorkspaceToolDeps) {
+const BROWSE_STREAM_TYPES: StreamType[] = [StreamTypes.CHANNEL, StreamTypes.SCRATCHPAD, StreamTypes.DM]
+
+function toStreamSearchResult(
+  stream: Stream,
+  { dmName, archived }: { dmName: string | undefined; archived: boolean }
+): StreamSearchResult {
+  return {
+    id: stream.id,
+    type: stream.type,
+    name:
+      stream.type === StreamTypes.DM
+        ? (dmName ?? stream.displayName ?? "(direct message)")
+        : (stream.displayName ?? stream.slug ?? null),
+    description: stream.description ?? null,
+    archived,
+  }
+}
+
+async function listRecentStreams(
+  deps: WorkspaceToolDeps,
+  params: { types: StreamType[] | undefined; archiveStatus: ArchiveStatus[] }
+): Promise<StreamSearchResult[]> {
   const { db, workspaceId, accessibleStreamIds, invokingUserId } = deps
+  const streams = await StreamRepository.listRecentlyActive(db, {
+    workspaceId,
+    streamIds: accessibleStreamIds,
+    types: params.types?.length ? params.types : BROWSE_STREAM_TYPES,
+    archiveStatus: params.archiveStatus,
+    limit: MAX_RESULTS,
+  })
+
+  const [dmNames, archivedIds] = await Promise.all([
+    listDmDisplayNames({
+      db,
+      workspaceId,
+      invokingUserId,
+      streamIds: streams.filter((stream) => stream.type === StreamTypes.DM).map((stream) => stream.id),
+    }),
+    StreamRepository.filterEffectivelyArchivedIds(
+      db,
+      workspaceId,
+      streams.map((stream) => stream.id)
+    ),
+  ])
+  const archived = new Set(archivedIds)
+
+  return streams.map((stream) =>
+    toStreamSearchResult(stream, { dmName: dmNames.get(stream.id), archived: archived.has(stream.id) })
+  )
+}
+
+async function findStreamsByName(
+  deps: WorkspaceToolDeps,
+  params: { query: string; types: StreamType[] | undefined; archiveStatus: ArchiveStatus[] }
+): Promise<StreamSearchResult[]> {
+  const { db, workspaceId, accessibleStreamIds, invokingUserId } = deps
+  const { query, types, archiveStatus } = params
+
+  const [nameMatches, dmSearchResults] = await Promise.all([
+    StreamRepository.searchByName(db, {
+      workspaceId,
+      streamIds: accessibleStreamIds,
+      query,
+      types,
+      archiveStatus,
+      limit: MAX_RESULTS,
+    }),
+    searchDmStreamsByParticipant({
+      db,
+      workspaceId,
+      invokingUserId,
+      accessibleStreamIds,
+      query,
+      types,
+      archiveStatus,
+      limit: MAX_RESULTS,
+    }),
+  ])
+
+  const archived = new Set(
+    await StreamRepository.filterEffectivelyArchivedIds(db, workspaceId, [
+      ...nameMatches.map((stream) => stream.id),
+      ...dmSearchResults.map((result) => result.streamId),
+    ])
+  )
+  const dmDisplayNamesById = new Map(dmSearchResults.map((result) => [result.streamId, result.displayName]))
+
+  const rankedResults: RankedStreamSearchResult[] = [
+    ...nameMatches.map((stream, index): RankedStreamSearchResult => {
+      // Rank DMs against the viewer-resolved name so ranking aligns with what users see.
+      const searchText =
+        stream.type === StreamTypes.DM
+          ? (dmDisplayNamesById.get(stream.id) ?? stream.displayName ?? stream.slug ?? "")
+          : (stream.displayName ?? stream.slug ?? "")
+
+      return {
+        result: toStreamSearchResult(stream, {
+          dmName: dmDisplayNamesById.get(stream.id),
+          archived: archived.has(stream.id),
+        }),
+        score: scoreStreamSearchResultName(searchText, query),
+        sourceOrder: index,
+      }
+    }),
+    ...dmSearchResults.map(
+      (result, index): RankedStreamSearchResult => ({
+        result: {
+          id: result.streamId,
+          type: StreamTypes.DM,
+          name: result.displayName,
+          description: null,
+          archived: archived.has(result.streamId),
+        },
+        score: result.score,
+        sourceOrder: nameMatches.length + index,
+      })
+    ),
+  ]
+
+  const bestResultById = new Map<string, RankedStreamSearchResult>()
+  for (const entry of rankedResults) {
+    const existing = bestResultById.get(entry.result.id)
+    if (
+      !existing ||
+      entry.score < existing.score ||
+      (entry.score === existing.score && entry.sourceOrder < existing.sourceOrder)
+    ) {
+      bestResultById.set(entry.result.id, entry)
+    }
+  }
+
+  return [...bestResultById.values()]
+    .sort((a, b) => {
+      if (a.score !== b.score) return a.score - b.score
+      if (a.result.archived !== b.result.archived) return a.result.archived ? 1 : -1
+      if (a.sourceOrder !== b.sourceOrder) return a.sourceOrder - b.sourceOrder
+      return (a.result.name ?? "").localeCompare(b.result.name ?? "")
+    })
+    .map((entry) => entry.result)
+    .slice(0, MAX_RESULTS)
+}
+
+export function createSearchStreamsTool(deps: WorkspaceToolDeps) {
+  const { workspaceId } = deps
 
   return defineAgentTool({
     name: "search_streams",
@@ -269,99 +435,18 @@ export function createSearchStreamsTool(deps: WorkspaceToolDeps) {
     description: `Search for streams (channels, scratchpads, DMs) in the workspace. Use this to find:
 - Specific channels or conversations
 - Where certain topics are discussed
-- Related discussions in other streams`,
+- Related discussions in other streams
+
+Without a query it lists the most recently active channels, scratchpads and DMs. Threads are listed only if types includes "thread". Archived streams are included and marked archived: true.`,
     inputSchema: SearchStreamsSchema,
 
     execute: async (input): Promise<AgentToolResult> => {
       try {
-        const normalizedQuery = input.query.trim()
-        if (normalizedQuery.length === 0) {
-          return {
-            output: JSON.stringify({
-              query: input.query,
-              types: input.types,
-              results: [],
-              message: "Search query cannot be empty",
-            }),
-          }
-        }
-
-        const [nameMatches, dmSearchResults] = await Promise.all([
-          StreamRepository.searchByName(db, {
-            workspaceId,
-            streamIds: accessibleStreamIds,
-            query: normalizedQuery,
-            types: input.types,
-            limit: MAX_RESULTS,
-          }),
-          searchDmStreamsByParticipant({
-            db,
-            workspaceId,
-            invokingUserId,
-            accessibleStreamIds,
-            query: normalizedQuery,
-            types: input.types,
-            limit: MAX_RESULTS,
-          }),
-        ])
-
-        const dmDisplayNamesById = new Map(dmSearchResults.map((result) => [result.streamId, result.displayName]))
-        const rankedResults: RankedStreamSearchResult[] = [
-          ...nameMatches.map((stream, index): RankedStreamSearchResult => {
-            // Rank DMs against the viewer-resolved name so ranking aligns with what users see.
-            const searchText =
-              stream.type === StreamTypes.DM
-                ? (dmDisplayNamesById.get(stream.id) ?? stream.displayName ?? stream.slug ?? "")
-                : (stream.displayName ?? stream.slug ?? "")
-
-            return {
-              result: {
-                id: stream.id,
-                type: stream.type,
-                name:
-                  stream.type === StreamTypes.DM
-                    ? (dmDisplayNamesById.get(stream.id) ?? stream.displayName ?? "(direct message)")
-                    : (stream.displayName ?? stream.slug ?? null),
-                description: stream.description ?? null,
-              },
-              score: scoreStreamSearchResultName(searchText, normalizedQuery),
-              sourceOrder: index,
-            }
-          }),
-          ...dmSearchResults.map(
-            (result, index): RankedStreamSearchResult => ({
-              result: {
-                id: result.streamId,
-                type: StreamTypes.DM,
-                name: result.displayName,
-                description: null,
-              },
-              score: result.score,
-              sourceOrder: nameMatches.length + index,
-            })
-          ),
-        ]
-
-        const bestResultById = new Map<string, RankedStreamSearchResult>()
-        for (const entry of rankedResults) {
-          const existing = bestResultById.get(entry.result.id)
-          if (
-            !existing ||
-            entry.score < existing.score ||
-            (entry.score === existing.score && entry.sourceOrder < existing.sourceOrder)
-          ) {
-            bestResultById.set(entry.result.id, entry)
-          }
-        }
-
-        const results = [...bestResultById.values()]
-          .sort((a, b) => {
-            if (a.score !== b.score) return a.score - b.score
-            if (a.sourceOrder !== b.sourceOrder) return a.sourceOrder - b.sourceOrder
-            return (a.result.name ?? "").localeCompare(b.result.name ?? "")
-          })
-          .map((entry) => entry.result)
-          .slice(0, MAX_RESULTS)
+        const query = input.query?.trim() ?? ""
+        const archiveStatus = ARCHIVE_STATUS_BY_FILTER[input.archived ?? "include"]
+        const results = query
+          ? await findStreamsByName(deps, { query, types: input.types, archiveStatus })
+          : await listRecentStreams(deps, { types: input.types, archiveStatus })
 
         if (results.length === 0) {
           return {
@@ -386,6 +471,7 @@ export function createSearchStreamsTool(deps: WorkspaceToolDeps) {
               type: r.type,
               name: r.name ?? "(unnamed)",
               description: r.description ? truncate(r.description, 100) : null,
+              ...(r.archived && { archived: true }),
               url: workspaceStreamUrl(workspaceId, r.id),
             })),
           }),

@@ -281,6 +281,9 @@ async function setupTestData(
 
       await StreamMemberRepository.insert(pool, ctx.workspaceId, contextStreamId, ctx.userId)
       await seedConversationHistory(contextStreamId, contextStream.conversationHistory, input.currentTime)
+      if (contextStream.archived) {
+        await StreamRepository.update(pool, ctx.workspaceId, contextStreamId, { archivedAt: new Date() })
+      }
 
       if (contextStream.memos && contextStream.memos.length > 0) {
         const [firstMessage] = await MessageRepository.list(pool, ctx.workspaceId, contextStreamId, { limit: 1 })

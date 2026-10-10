@@ -29,6 +29,8 @@ export interface CompanionInput {
     streamType?: StreamType
     name?: string
     description?: string
+    /** Archived after its history is seeded. */
+    archived?: boolean
     conversationHistory: Array<{ role: "user" | "assistant"; content: string; createdAt?: string }>
     /** Memos already extracted from this stream, each citing one of its seeded messages. */
     memos?: Array<{ title: string; abstract: string; knowledgeType: KnowledgeType }>
@@ -608,6 +610,36 @@ const workspaceMemoryCases: EvalCase<CompanionInput, CompanionExpected>[] = [
         shouldContain: ["Marta"],
       },
       reason: "When workspace history contains the owner explicitly, the response should recall that owner",
+    }
+  ),
+
+  createCase(
+    "workspace-memory-003",
+    "Workspace Memory: Should recall a decision recorded only in an archived channel",
+    {
+      message: "Which vendor did we pick for payments, and when does the contract start?",
+      streamType: "scratchpad",
+      trigger: "companion",
+      workspaceContext: [
+        {
+          streamType: "channel",
+          name: "vendor-migration",
+          archived: true,
+          conversationHistory: [
+            {
+              role: "user",
+              content: "Decision: we picked Northwind as the payments vendor, contract starts in March.",
+            },
+          ],
+        },
+      ],
+    },
+    {
+      shouldRespond: true,
+      responseCharacteristics: {
+        shouldContain: ["Northwind"],
+      },
+      reason: "Archived channels stay readable and searchable, so the decision recorded there should be recalled",
     }
   ),
 ]

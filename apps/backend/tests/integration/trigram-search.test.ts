@@ -185,6 +185,7 @@ describe("Trigram Search", () => {
     test("finds stream by exact name", async () => {
       await withTestTransaction(pool, async (client) => {
         const results = await StreamRepository.searchByName(client, {
+          archiveStatus: ["active"],
           workspaceId: testWorkspaceId,
           streamIds: testStreamIds,
           query: "General Discussion",
@@ -198,6 +199,7 @@ describe("Trigram Search", () => {
     test("finds stream by partial name (ILIKE fallback)", async () => {
       await withTestTransaction(pool, async (client) => {
         const results = await StreamRepository.searchByName(client, {
+          archiveStatus: ["active"],
           workspaceId: testWorkspaceId,
           streamIds: testStreamIds,
           query: "general",
@@ -213,6 +215,7 @@ describe("Trigram Search", () => {
         // "generl" (missing 'a') should match "General" via trigram similarity
         // Note: "genral" has similarity ~0.29 which is below the 0.3 threshold
         const results = await StreamRepository.searchByName(client, {
+          archiveStatus: ["active"],
           workspaceId: testWorkspaceId,
           streamIds: testStreamIds,
           query: "generl discussion",
@@ -226,6 +229,7 @@ describe("Trigram Search", () => {
     test("finds stream with typo - projct matches project", async () => {
       await withTestTransaction(pool, async (client) => {
         const results = await StreamRepository.searchByName(client, {
+          archiveStatus: ["active"],
           workspaceId: testWorkspaceId,
           streamIds: testStreamIds,
           query: "projct",
@@ -239,6 +243,7 @@ describe("Trigram Search", () => {
     test("finds stream by slug", async () => {
       await withTestTransaction(pool, async (client) => {
         const results = await StreamRepository.searchByName(client, {
+          archiveStatus: ["active"],
           workspaceId: testWorkspaceId,
           streamIds: testStreamIds,
           query: "engineering",
@@ -252,6 +257,7 @@ describe("Trigram Search", () => {
     test("respects type filter", async () => {
       await withTestTransaction(pool, async (client) => {
         const results = await StreamRepository.searchByName(client, {
+          archiveStatus: ["active"],
           workspaceId: testWorkspaceId,
           streamIds: testStreamIds,
           query: "general",
@@ -266,6 +272,7 @@ describe("Trigram Search", () => {
       await withTestTransaction(pool, async (client) => {
         // Only pass first stream ID - should not find other streams
         const results = await StreamRepository.searchByName(client, {
+          archiveStatus: ["active"],
           workspaceId: testWorkspaceId,
           streamIds: [testStreamIds[0]],
           query: "Project", // This exists but in testStreamIds[1]
@@ -278,6 +285,7 @@ describe("Trigram Search", () => {
     test("returns empty array for no matches", async () => {
       await withTestTransaction(pool, async (client) => {
         const results = await StreamRepository.searchByName(client, {
+          archiveStatus: ["active"],
           workspaceId: testWorkspaceId,
           streamIds: testStreamIds,
           query: "zzzznotastream",
@@ -290,6 +298,7 @@ describe("Trigram Search", () => {
     test("returns empty array for empty streamIds", async () => {
       await withTestTransaction(pool, async (client) => {
         const results = await StreamRepository.searchByName(client, {
+          archiveStatus: ["active"],
           workspaceId: testWorkspaceId,
           streamIds: [],
           query: "general",
