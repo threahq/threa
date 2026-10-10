@@ -30,6 +30,8 @@ import {
   primaryPanelOf,
   replacePanelTab,
   splitPanelTab,
+  dropPanelTab,
+  type PaneDrop,
   type PanelLayout,
   type PanelSection,
   type SplitDirection,
@@ -200,6 +202,8 @@ interface PanelContextValue {
   splitTab: (panelId: string, direction: SplitDirection) => void
   /** Float a tab over the rest of the page, or put the floating one back with null. */
   focusTab: (panelId: string | null) => void
+  /** Put a dragged tab or stream where it was dropped, and work in it there. */
+  dropTab: (panelId: string, drop: PaneDrop) => void
   /** The ways this consumer's tab can split off as it is laid out now. */
   splits: readonly SplitDirection[]
   /** Record the pane the user is working in: a panel id, or null for the main view. */
@@ -222,6 +226,7 @@ interface PanelOps {
   canReopenTab: () => boolean
   splitTab: (panelId: string, direction: SplitDirection) => void
   focusTab: (panelId: string | null) => void
+  dropTab: (panelId: string, drop: PaneDrop) => void
   setCurrentPane: (panelId: string | null) => void
   coverOwner: string | null
   tabFocusHandoff: MutableRefObject<string | null>
@@ -316,6 +321,7 @@ function buildValue(
     canReopenTab: ops.canReopenTab,
     splitTab: ops.splitTab,
     focusTab: ops.focusTab,
+    dropTab: ops.dropTab,
     splits,
     setCurrentPane: ops.setCurrentPane,
     ownsCover: scopeId === null || scopeId === ops.coverOwner,
@@ -482,6 +488,17 @@ export function PanelProvider({ children }: PanelProviderProps) {
     [open, setCurrentPane]
   )
 
+  // Moving an open tab rearranges, like a split; a stream dropped in opens, so Back closes it.
+  const dropTab = useCallback(
+    (panelId: string, drop: PaneDrop) => {
+      // A target closed mid-drag leaves nothing to drop beside, and nothing for Back to undo.
+      if (dropPanelTab(layout, panelId, drop) === layout) return
+      open((current) => dropPanelTab(current, panelId, drop), panelIdsOf(layout).includes(panelId))
+      setCurrentPane(panelId)
+    },
+    [open, layout, setCurrentPane]
+  )
+
   // Focusing is a step of its own in history, so Back puts the tab back; putting
   // it back by hand pops that step rather than adding one.
   const focusTab = useCallback(
@@ -519,6 +536,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       canReopenTab,
       splitTab,
       focusTab,
+      dropTab,
       setCurrentPane,
       coverOwner,
       tabFocusHandoff,
@@ -536,6 +554,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       canReopenTab,
       splitTab,
       focusTab,
+      dropTab,
       setCurrentPane,
       coverOwner,
     ]

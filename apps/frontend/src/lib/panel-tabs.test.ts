@@ -3,6 +3,7 @@ import {
   NO_PANELS,
   activatePanelTab,
   closePanelTab,
+  dropPanelTab,
   fitPanelLayout,
   focusPanelTab,
   followCurrentPanel,
@@ -240,6 +241,65 @@ describe("splitPanelTab", () => {
   it("should leave a section's only tab where it is", () => {
     const layout = at("a-b")
     expect(splitPanelTab(layout, "b", "right")).toBe(layout)
+  })
+})
+
+describe("dropPanelTab", () => {
+  it("should add a dropped stream as a tab where it was dropped, on show", () => {
+    expect([
+      spell(dropPanelTab(at("a-b"), "x", { kind: "tab", of: "b", before: null })),
+      spell(dropPanelTab(at("a-b.c"), "x", { kind: "tab", of: "c", before: "b" })),
+    ]).toEqual(["a-b.x", "a-x*.b.c"])
+  })
+
+  it("should move an open tab rather than open it twice", () => {
+    expect([
+      spell(dropPanelTab(at("a.b.c"), "c", { kind: "tab", of: "c", before: "a" })),
+      spell(dropPanelTab(at("a.b-c"), "b", { kind: "tab", of: "c", before: null })),
+      spell(dropPanelTab(at("a-b-c"), "a", { kind: "edge", of: "c", side: "bottom" })),
+      spell(dropPanelTab(at("a*.b.c"), "a", { kind: "tab", of: "c", before: null })),
+    ]).toEqual(["c*.a.b", "a-c.b", "b-c--a", "b.c.a"])
+  })
+
+  it("should start a section of its own on the edge it was dropped on", () => {
+    const layout = at("a-b--c")
+    expect(
+      (["left", "right", "top", "bottom"] as const).map((side) =>
+        spell(dropPanelTab(layout, "x", { kind: "edge", of: "b", side }))
+      )
+    ).toEqual(["a-x-b--c", "a-b--c-x", "a-x--b--c", "a-b--x--c"])
+  })
+
+  it("should split a tab off its own section, and leave a section's only tab where it is", () => {
+    const lone = at("a-b")
+    expect([
+      spell(dropPanelTab(at("a.b"), "b", { kind: "edge", of: "b", side: "left" })),
+      spell(dropPanelTab(at("a.b"), "a", { kind: "edge", of: "a", side: "bottom" })),
+      dropPanelTab(lone, "b", { kind: "edge", of: "b", side: "left" }),
+    ]).toEqual(["b-a", "b--a", lone])
+  })
+
+  it("should open a first column on the main view's right edge", () => {
+    const drop = { kind: "edge", of: null, side: "right" } as const
+    expect([
+      spell(dropPanelTab(NO_PANELS, "x", drop)),
+      spell(dropPanelTab(at("a-b"), "x", drop)),
+      spell(dropPanelTab(at("a.b"), "b", drop)),
+    ]).toEqual(["x", "x-a-b", "b-a"])
+  })
+
+  it("should only bring a tab forward when dropped on itself or beside a tab that closed", () => {
+    const layout = at("a.b")
+    expect([
+      spell(dropPanelTab(layout, "a", { kind: "tab", of: "a", before: null })),
+      spell(dropPanelTab(layout, "a", { kind: "tab", of: "b", before: "a" })),
+      dropPanelTab(layout, "x", { kind: "tab", of: "gone", before: null }),
+      dropPanelTab(layout, "x", { kind: "tab", of: "b", before: "gone" }),
+    ]).toEqual(["a*.b", "a*.b", layout, layout])
+  })
+
+  it("should keep the floating tab floating while it stays on show", () => {
+    expect(spell(dropPanelTab(at("a**-b"), "x", { kind: "tab", of: "b", before: null }))).toBe("a**-b.x")
   })
 })
 
