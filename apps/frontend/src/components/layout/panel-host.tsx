@@ -6,6 +6,7 @@ import {
   useLayoutEffect,
   useMemo,
   useState,
+  type CSSProperties,
   type ReactNode,
   type RefObject,
 } from "react"
@@ -56,8 +57,10 @@ import {
   firstColumnHolds,
   fitPanelLayout,
   fitPanelRows,
-  floatingPanelTab,
+  floatingPanelTabs,
+  panelSectionOf,
   panelIdsOf,
+  isPanelOnShow,
   type PaneEdge,
   type PanelLayout,
   type PanelSection,
@@ -267,7 +270,7 @@ export function useFittedPanelLayout(
   return useMemo(() => {
     // A floating tab is always on show, even from a folded column.
     if (!stacked) {
-      const shown = layout.focused ?? current
+      const shown = layout.focused?.[0] ?? current
       return fitPanelRows(fitPanelLayout(layout, maxColumns, false, shown, lastPanel), maxRows, shown, lastPanel)
     }
     // A phone shows a drawer over a page, so the page is on show behind it.
@@ -275,6 +278,21 @@ export function useFittedPanelLayout(
     const shown = current !== null && presentsAsDrawer(current) ? pageUnder(layout, current) : current
     return fitPanelLayout(pages, maxColumns, true, shown)
   }, [layout, maxColumns, maxRows, stacked, current, lastPanel])
+}
+
+/**
+ * `layout` as the grid places it: a pane opened while focus is on floats with the
+ * group and takes no cell until focus ends, so exiting only drops the scrim. A
+ * group loaded from the URL was never laid out without its members, so each keeps its cell.
+ */
+export function useFocusGridLayout(layout: PanelLayout, stacked: boolean): PanelLayout {
+  const [beforeFocus, setBeforeFocus] = useState(layout)
+  if (layout.focused === undefined && beforeFocus !== layout) setBeforeFocus(layout)
+  return useMemo(() => {
+    if (stacked || layout.focused === undefined) return layout
+    const before = panelIdsOf(beforeFocus)
+    return layout.focused.filter((id) => !before.includes(id)).reduce(closePanelTab, layout)
+  }, [layout, stacked, beforeFocus])
 }
 
 /** The page a drawer pane sits over: its stream's, else the first page. */
@@ -367,6 +385,15 @@ export function PanelTabStack({
     return belowFits ? EDGES_ROW : NO_EDGES
   }
   const drops = usePaneDrop()
+  const members = floatingPanelTabs(layout, stacked)
+  const floating = members.length > 0
+  // Members the grid doesn't show (no cell, or folded under another tab) float from outside it, so they keep their element across the exit.
+  const unplaced: PlacedTab[] = members.flatMap((id) => {
+    const section = isPanelOnShow(display, id) ? null : panelSectionOf(layout, id)
+    if (!section) return []
+    const key = panelKeyFor(workspaceId, id)
+    return [{ key, id, area: "auto", width: null, inFirstColumn: false, section, splits: NO_SPLITS, edges: NO_EDGES }]
+  })
   const tabs: PlacedTab[] = display.columns
     .flatMap((sections, column) =>
       sections.flatMap((section, row) => {
@@ -384,6 +411,8 @@ export function PanelTabStack({
         }))
       })
     )
+    .filter((tab) => !unplaced.some((member) => member.id === tab.id))
+    .concat(unplaced)
     .sort((a, b) => (a.key < b.key ? -1 : 1))
 
   const sections = display.columns.flat()
@@ -396,18 +425,25 @@ export function PanelTabStack({
   const shownSection = sections.find((section) => section.active === current) ?? sections[0]
   const panes = stacked ? undefined : sections.map((section) => section.active)
 
-  const focused = floatingPanelTab(layout, stacked)
   const firstShare = firstColumnWidth + (width ?? 0) > 0 ? firstColumnWidth / (firstColumnWidth + (width ?? 0)) : 1
   const restore = useCallback(() => focusTab(null), [focusTab])
-  usePaneFocusEscape(focused, restore)
-  useShellCover(focused !== null)
+  usePaneFocusEscape(floating, restore)
+  useShellCover(floating)
   // Only Restore draws the map, so resizing with nothing floating leaves every pane's header alone.
   const map = useMemo(
-    () => (focused === null ? NO_MAP : paneMap(display, sizes, focused, firstShare)),
-    [focused, display, sizes, firstShare]
+    () => (floating ? paneMap(display, sizes, members, firstShare) : NO_MAP),
+    [floating, display, sizes, members, firstShare]
   )
-  const focus = useMemo(() => (stacked ? null : { focused, map }), [stacked, focused, map])
-  const ghost = tabs.find((tab) => tab.id === focused)
+  const focus = useMemo(() => (stacked ? null : { focused: members, map }), [stacked, members, map])
+  const unplacedKey = unplaced.map((tab) => tab.id).join(".")
+  // Members floating from outside the grid are on screen too.
+  const screen = useMemo(() => {
+    if (unplacedKey === "") return display
+    const ids = unplacedKey.split(".")
+    const grid = ids.reduce(closePanelTab, display)
+    return { columns: [...grid.columns, ...ids.map((id) => [{ ids: [id], active: id }])] }
+  }, [display, unplacedKey])
+  const ghosts = tabs.filter((tab) => tab.area !== "auto" && members.includes(tab.id))
 
   // The first column fills what the rest leave, so only the dividers between the rest share sizes.
   const columnUnit = (width ?? 0) / sum(panelShares)
@@ -451,40 +487,43 @@ export function PanelTabStack({
   return (
     <PhonePanesProvider value={phonePanes}>
       <PaneFocusContext.Provider value={focus}>
-        <DisplayedPanelLayoutProvider value={display}>
-          {tabs.map((tab) => (
-            <Pane
-              key={tab.key}
-              // Out of its cell: fixed in the shell's translated box, it floats over the sidebar and every header.
-              area={tab.id === focused ? "auto" : tab.area}
-              covered={tab.id !== tab.section.active}
-              // Focus mode is a class on the same pane, never a dialog: a portal would remount it and lose its draft and scroll.
-              inert={focused !== null && tab.id !== focused}
-              className={cn(
-                "bg-background",
-                tab.id === focused &&
-                  "fixed inset-5 z-[47] rounded-[10px] border shadow-[0_24px_60px_rgba(0,0,0,0.28)]",
-                focused !== null && tab.id !== focused && "isolate"
-              )}
-              data-testid={tab.inFirstColumn ? "main-pane" : "panel"}
-              data-panel-tab={tab.id}
-              data-front-panel={tab.id === current || undefined}
-              data-focused-pane={tab.id === focused || undefined}
-              // A pressed pane becomes the route's once the click lands: the route's stream shows chrome the
-              // others don't, which would shift a header button or fold a tab out from under the pointer.
-              onClickCapture={() => setCurrentPane(tab.id)}
-              onFocusCapture={(event) => {
-                if (event.target.matches(":focus-visible")) setCurrentPane(tab.id)
-              }}
-              {...paneDropZone(drops, tab.id, tab.edges)}
-            >
-              <div className="h-full" style={{ width: tab.id === focused ? undefined : (tab.width ?? undefined) }}>
-                <PaneScope panelId={tab.id} section={tab.section} splits={tab.splits}>
-                  <ScopedPanelHost workspaceId={workspaceId} />
-                </PaneScope>
-              </div>
-            </Pane>
-          ))}
+        <DisplayedPanelLayoutProvider value={screen}>
+          {tabs.map((tab) => {
+            const member = members.indexOf(tab.id)
+            return (
+              <Pane
+                key={tab.key}
+                // Out of its cell: fixed in the shell's translated box, the group floats as a row over the sidebar and every header.
+                area={member === -1 ? tab.area : "auto"}
+                covered={tab.id !== tab.section.active}
+                // Focus mode is a class on the same pane, never a dialog: a portal would remount it and lose its draft and scroll.
+                inert={floating && member === -1}
+                className={cn(
+                  "bg-background",
+                  member !== -1 && "fixed inset-y-5 z-[47] rounded-[10px] border shadow-[0_24px_60px_rgba(0,0,0,0.28)]",
+                  floating && member === -1 && "isolate"
+                )}
+                style={member === -1 ? undefined : floatingSlot(member, members.length)}
+                data-testid={tab.inFirstColumn ? "main-pane" : "panel"}
+                data-panel-tab={tab.id}
+                data-front-panel={tab.id === current || undefined}
+                data-focused-pane={member !== -1 || undefined}
+                // A pressed pane becomes the route's once the click lands: the route's stream shows chrome the
+                // others don't, which would shift a header button or fold a tab out from under the pointer.
+                onClickCapture={() => setCurrentPane(tab.id)}
+                onFocusCapture={(event) => {
+                  if (event.target.matches(":focus-visible")) setCurrentPane(tab.id)
+                }}
+                {...paneDropZone(drops, tab.id, tab.edges)}
+              >
+                <div className="h-full" style={{ width: member === -1 ? (tab.width ?? undefined) : undefined }}>
+                  <PaneScope panelId={tab.id} section={tab.section} splits={tab.splits}>
+                    <ScopedPanelHost workspaceId={workspaceId} />
+                  </PaneScope>
+                </div>
+              </Pane>
+            )
+          })}
         </DisplayedPanelLayoutProvider>
       </PaneFocusContext.Provider>
       {display.columns.map((sections, column) =>
@@ -492,8 +531,9 @@ export function PanelTabStack({
           <PaneDropIndicator key={`${column}:${row}`} of={section.active} area={areas[column][row]} />
         ))
       )}
-      {ghost && (
+      {ghosts.map((ghost) => (
         <div
+          key={ghost.key}
           aria-hidden
           data-testid="pane-focus-ghost"
           style={{ gridArea: ghost.area }}
@@ -506,8 +546,8 @@ export function PanelTabStack({
             <Minimize2 className="h-4 w-4 shrink-0" />
           </div>
         </div>
-      )}
-      {focused !== null && (
+      ))}
+      {floating && (
         // Over the whole shell, above the sidebar (z-40) and the loading hairline (z-45).
         <div
           data-testid="pane-focus-scrim"
@@ -516,8 +556,8 @@ export function PanelTabStack({
         />
       )}
       {/* Under a floating tab they would still take Tab and the arrow keys. */}
-      {focused === null && columnResizers}
-      {focused === null && rowResizers}
+      {!floating && columnResizers}
+      {!floating && rowResizers}
       {shownSection?.active && (
         <PaneScope panelId={shownSection.active} section={shownSection} splits={NO_SPLITS}>
           <PaneShortcuts panes={panes} />
@@ -529,11 +569,19 @@ export function PanelTabStack({
 
 const sum = (shares: readonly number[]) => shares.reduce((total, share) => total + share, 0)
 
+/** The `index`th of `count` floating panes, sharing the width inside a 20px margin with 12px between them. */
+function floatingSlot(index: number, count: number): CSSProperties {
+  return {
+    left: `calc(20px + (100% - 28px) * ${index} / ${count})`,
+    width: `calc((100% - 28px) / ${count} - 12px)`,
+  }
+}
+
 /** Each section on show: the first column at `firstShare` of the width, the rest by their shares of what is left. */
 function paneMap(
   display: PanelLayout,
   sizes: PanelGridSizes,
-  focused: string | null,
+  focused: readonly string[],
   firstShare: number
 ): PaneMapCell[] {
   const rest = sum(sizes.columns.slice(1))
@@ -548,7 +596,7 @@ function paneMap(
       y: sum(rows.slice(0, row)) / height,
       width,
       height: rows[row] / height,
-      focused: section.active === focused,
+      focused: focused.includes(section.active),
     }))
   })
 }

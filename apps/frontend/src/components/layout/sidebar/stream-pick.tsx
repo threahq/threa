@@ -98,7 +98,8 @@ function pickOnPage(page: StreamPage, streamId: string, parentOf: ParentOf): Str
   if (panelIdsOf(layout).includes(streamId)) {
     const shown = activatePanelTab(layout, streamId)
     // Under another pane floating, it would stay out of reach.
-    const reachable = shown.focused === undefined || shown.focused === streamId ? shown : { columns: shown.columns }
+    const reachable =
+      shown.focused === undefined || shown.focused.includes(streamId) ? shown : { columns: shown.columns }
     return { layout: reachable, current: streamId, stacked }
   }
   const replaced = pageOfPane(page)

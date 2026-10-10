@@ -3,7 +3,8 @@ import { loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk 
 
 /**
  * Focus floats a tab's pane over the page, marked `**` in `?panel=`, while a
- * ghost holds its cell. It is the same pane, so its draft and scroll survive;
+ * ghost holds its cell. A pane opened from inside focus joins it, floating
+ * beside the rest and taking no cell until focus ends. It is the same pane, so its draft and scroll survive;
  * Escape, the scrim, the tab itself or ⌥Enter put it back, and a phone, which
  * shows one pane at a time, ignores the mark.
  */
@@ -140,16 +141,14 @@ test("should keep a floating tab across a reload and put it back from the scrim 
   await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", a, { timeout: 15_000 })
   await expect(tabPane(page, a).getByText("reply in thread 1", { exact: true })).toBeVisible({ timeout: 30_000 })
 
-  // Opening its overview opens a pane beside it, which puts the float back; working in a makes it the route's stream.
+  // Its overview opens floating beside it; working in a makes it the route's stream.
   await tabPane(page, a).getByRole("button", { name: "In this stream" }).click()
-  await expect.poll(() => route(page)).toEqual({ stream: a, panel: `${streamId}-${a}*.${b}-context:${a}` })
-  await expect(floatingPane(page)).toHaveCount(0)
+  await expect.poll(() => route(page)).toEqual({ stream: a, panel: `${streamId}-${a}**.${b}-context:${a}**` })
+  await expect(floatingPane(page)).toHaveCount(2)
   await expect(page.getByRole("region", { name: "In this stream" })).toBeVisible()
   await tabPane(page, a).getByRole("button", { name: "In this stream" }).click()
-  await expect.poll(() => route(page)).toEqual({ stream: a, panel: `${streamId}-${a}*.${b}` })
-  await expect(page.getByRole("region", { name: "In this stream" })).toHaveCount(0)
-  await tabPane(page, a).getByRole("button", { name: "Focus pane", exact: true }).click()
   await expect.poll(() => route(page)).toEqual({ stream: a, panel: `${streamId}-${a}**.${b}` })
+  await expect(page.getByRole("region", { name: "In this stream" })).toHaveCount(0)
   await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", a)
 
   await scrim(page).click({ position: { x: 6, y: 300 } })
@@ -198,6 +197,53 @@ test("should float a tab over the sidebar, out of its reach, and follow the tab 
   await expect.poll(() => panelParam(page)).toBe(`${streamId}-${a}.${b}`)
   await expect(floatingPane(page)).toHaveCount(0)
   await expect(inertSidebar(page)).toHaveCount(0)
+})
+
+test("should float a pane opened from inside focus beside it, out of the grid until focus ends", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId, threads } = await seedThreads(page, 2)
+  const [a, b] = threads
+  const overview = `context:${a}`
+  const overviewButton = tabPane(page, a).getByRole("button", { name: "In this stream" })
+  await openPanels(page, workspaceId, streamId, `${a}-${b}`, 2)
+  const bBefore = (await tabPane(page, b).boundingBox())!
+
+  await tabPane(page, a).getByRole("button", { name: "Focus pane", exact: true }).click()
+  await expect.poll(() => panelParam(page)).toBe(`${streamId}-${a}**-${b}`)
+  // The URL commits before the render does; wait for the float so the click acts on it.
+  await expect(floatingPane(page)).toHaveCount(1)
+  await overviewButton.click()
+
+  // It joins the group: marked in the URL right of a, floating beside it as a row.
+  await expect.poll(() => panelParam(page)).toBe(`${streamId}-${a}**-${b}.${overview}**`)
+  await expect(floatingPane(page)).toHaveCount(2)
+  await expect(page.getByRole("region", { name: "In this stream" })).toBeVisible()
+  const [left, right] = [(await tabPane(page, a).boundingBox())!, (await tabPane(page, overview).boundingBox())!]
+  expect(right.x).toBeGreaterThan(left.x + left.width)
+  expect(right.y).toBe(left.y)
+  expect(Math.abs(right.width - left.width)).toBeLessThan(2)
+  // The grid holds no cell for it: b keeps its cell, on show under the scrim, and only a's cell has a ghost.
+  expect(await tabPane(page, b).boundingBox()).toEqual(bBefore)
+  await expect(tabPane(page, b)).toBeVisible()
+  await expect(tabPane(page, b)).toHaveAttribute("inert", "")
+  await expect(ghost(page)).toHaveCount(1)
+
+  // Closing a member closes it like any pane, and the rest of the group stays up.
+  await overviewButton.click()
+  await expect.poll(() => panelParam(page)).toBe(`${streamId}-${a}**-${b}`)
+  await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", a)
+  await overviewButton.click()
+  await expect.poll(() => panelParam(page)).toBe(`${streamId}-${a}**-${b}.${overview}**`)
+  await expect(floatingPane(page)).toHaveCount(2)
+
+  // Ending focus moves nothing but the scrim: the overview lands where the URL already had it.
+  await tabPane(page, a).getByText("reply in thread 1", { exact: true }).click()
+  await page.keyboard.press("Escape")
+  await expect.poll(() => panelParam(page)).toBe(`${streamId}-${a}-${b}.${overview}`)
+  await expect(floatingPane(page)).toHaveCount(0)
+  await expect(ghost(page)).toHaveCount(0)
+  await expect(page.getByRole("region", { name: "In this stream" })).toBeVisible()
+  await expect.poll(async () => await tabPane(page, overview).boundingBox()).toEqual(bBefore)
 })
 
 test("should toggle focus with Alt+Enter from the composer without sending", async ({ page }) => {
@@ -267,4 +313,19 @@ test("should leave a phone showing one pane when the URL marks a floating tab", 
   await expect(floatingPane(page)).toHaveCount(0)
   await expect(scrim(page)).toHaveCount(0)
   await expect(tabPane(page, a).getByRole("button", { name: "Focus pane", exact: true })).toHaveCount(0)
+})
+
+test("should float every member of a group loaded where the window folds one of them", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId, threads } = await seedThreads(page, 2)
+  const [a, b] = threads
+  // Too narrow for both columns, so b's folds under a's.
+  await page.setViewportSize({ width: 900, height: 900 })
+  await openPanels(page, workspaceId, streamId, `${streamId}-${a}**-${b}**`, 1)
+
+  await expect(floatingPane(page)).toHaveCount(2)
+  await expect(tabPane(page, a)).toBeVisible()
+  await expect(tabPane(page, b)).toBeVisible()
+  await expect(tabPane(page, b).getByText("reply in thread 2", { exact: true })).toBeVisible({ timeout: 30_000 })
+  await expect(ghost(page)).toHaveCount(1)
 })
