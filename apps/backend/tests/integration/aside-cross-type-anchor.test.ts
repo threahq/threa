@@ -101,7 +101,12 @@ describe("Aside cross-type anchor sharing (post index drop)", () => {
 
     const threadsByAnchor = await StreamRepository.findThreadsForMessageIds(pool, wsId, channel.id, [anchorId])
     expect(threadsByAnchor.get(anchorId)).toBe(thread.id)
-    const threadsAcrossStreams = await StreamRepository.findThreadsByAnchorIds(pool, wsId, [anchorId, "msg_none"])
+    const threadsAcrossStreams = await StreamRepository.findThreadsByAnchorIds(
+      pool,
+      wsId,
+      [channel.id, "stream_none"],
+      [anchorId, "msg_none"]
+    )
     expect(threadsAcrossStreams.map((s) => s.id)).toEqual([thread.id])
   })
 

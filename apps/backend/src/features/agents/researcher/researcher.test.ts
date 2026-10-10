@@ -519,7 +519,7 @@ describe("WorkspaceAgent searchMessages workspace scope", () => {
       { id: "stream_1", type: "channel", parentAnchorId: null },
       { id: "stream_thread_b", type: "thread", parentAnchorId: "msg_other" },
     ] as Stream[])
-    spyOn(StreamRepository, "findThreadsByAnchorIds").mockResolvedValue([
+    const findThreadsByAnchorIds = spyOn(StreamRepository, "findThreadsByAnchorIds").mockResolvedValue([
       { id: "stream_thread_a", type: "thread", parentAnchorId: "msg_anchor" },
       { id: "stream_thread_unreadable", type: "thread", parentAnchorId: "msg_anchor" },
     ] as Stream[])
@@ -527,11 +527,15 @@ describe("WorkspaceAgent searchMessages workspace scope", () => {
     const accessibleStreamIds = ["stream_1", "stream_thread_a", "stream_thread_b"]
     await searchMessages([0.1], accessibleStreamIds)
 
-    expect(hybridSearch.mock.calls.map(([, params]) => ({ streamIds: params.streamIds, limit: params.limit }))).toEqual(
-      [
+    expect({
+      anchorLookup: findThreadsByAnchorIds.mock.calls[0].slice(1),
+      searches: hybridSearch.mock.calls.map(([, params]) => ({ streamIds: params.streamIds, limit: params.limit })),
+    }).toEqual({
+      anchorLookup: ["ws_1", ["stream_1", "stream_thread_b"], ["msg_anchor", "msg_reply"]],
+      searches: [
         { streamIds: accessibleStreamIds, limit: WORKSPACE_AGENT_MAX_RESULTS_PER_SEARCH },
         { streamIds: ["stream_thread_b", "stream_thread_a"], limit: WORKSPACE_AGENT_MAX_THREAD_RESULTS_PER_SEARCH + 2 },
-      ]
-    )
+      ],
+    })
   })
 })

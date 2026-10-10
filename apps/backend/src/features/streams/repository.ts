@@ -1335,15 +1335,18 @@ export const StreamRepository = {
     return result.rows[0] ? mapRowToStream(result.rows[0]) : null
   },
 
+  /** Threads opened on any of the messages, which sit in the given parent streams. */
   async findThreadsByAnchorIds(
     db: Querier,
     workspaceId: string,
+    parentStreamIds: readonly string[],
     anchorMessageIds: readonly string[]
   ): Promise<Stream[]> {
     if (anchorMessageIds.length === 0) return []
     const result = await db.query<StreamRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)} FROM streams
       WHERE workspace_id = ${workspaceId}
+        AND parent_stream_id = ANY(${parentStreamIds as string[]})
         AND parent_anchor_id = ANY(${anchorMessageIds as string[]})
         AND type = 'thread'
     `)

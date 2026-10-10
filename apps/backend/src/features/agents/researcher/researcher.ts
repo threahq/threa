@@ -1044,17 +1044,17 @@ Respond with:
             : []
 
         const primaryResults = [...workspaceResults, ...roomResults]
-        const hitStreams = await StreamRepository.findByIds(client, workspaceId, [
-          ...new Set(primaryResults.map((result) => result.streamId)),
-        ])
+        const hitStreamIds = [...new Set(primaryResults.map((result) => result.streamId))]
+        const hitStreams = await StreamRepository.findByIds(client, workspaceId, hitStreamIds)
         // A hit that opens a thread, or sits inside one, points at the discussion the question is about. Ranked
         // against the whole workspace that thread's own replies rarely surface, so it is searched on its own.
         const anchoredThreads = await StreamRepository.findThreadsByAnchorIds(
           client,
           workspaceId,
+          hitStreamIds,
           primaryResults.map((result) => result.id)
         )
-        // The anchor lookup is by message id alone, so a thread it finds is searched only when the agent may read it.
+        // The lookup does not check access, so a thread it finds is searched only when the agent may read it.
         const accessible = new Set(accessibleStreamIds)
         const threadIds = [
           ...new Set(
