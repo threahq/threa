@@ -1,4 +1,14 @@
-import { memo, useCallback, useEffect, useMemo, useState, type RefObject } from "react"
+import {
+  createContext,
+  memo,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react"
 import {
   usePanel,
   useCurrentPane,
@@ -46,6 +56,7 @@ import {
   type PanelSection,
   type SplitDirection,
 } from "@/lib/panel-tabs"
+import { isPagePane } from "@/lib/stream-ids"
 import { cn } from "@/lib/utils"
 import { PanelResizeHandle } from "./panel-resize-handle"
 import { PaneShortcuts } from "./pane-shortcuts"
@@ -64,6 +75,14 @@ function panelKeyFor(workspaceId: string, panelId: string): string {
   return getDraftPromotionSource(workspaceId, panelId) ?? paneIdentity(panelId)
 }
 
+/** What a route's own `page:` pane shows. */
+export const PagePaneContext = createContext<ReactNode>(null)
+
+// Its own component, so a page's re-render reaches only the pane showing it.
+function PagePane() {
+  return useContext(PagePaneContext)
+}
+
 interface PanelHostProps {
   workspaceId: string
   onClose: () => void
@@ -75,8 +94,8 @@ interface PanelHostProps {
  * conversation projection (Mechanism B), a `compose:<id>` panel a stream's
  * draft, a `convs:<id>` panel a stream's conversations list, a `context:<id>`
  * panel a stream's overview, every other id is a stream/thread/draft handled
- * by {@link StreamPanel}. Both stream.tsx and board.tsx host the panel
- * through this, so either surface can open either kind. Keyed on the panel id so
+ * by {@link StreamPanel}, and a route's `page:` pane what its page provides
+ * through {@link PagePaneContext}. Keyed on the panel id so
  * switching targets remounts cleanly — except a draft thread promoted to its real
  * stream, which keeps the draft's key so the panel carries its state across the
  * handoff instead of remounting. Hosts must not key this element themselves: an
@@ -85,6 +104,7 @@ interface PanelHostProps {
  */
 export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
   const { panelId } = usePanel()
+  if (panelId && isPagePane(panelId)) return <PagePane />
   const composeStreamId = panelId && parseComposePanel(panelId)
   const context = panelId && parseContextPanel(panelId)
   const conversationsStreamId = panelId && parseConversationsPanel(panelId)
@@ -212,7 +232,7 @@ function drawerOver(layout: PanelLayout, page: string | null): string | null {
 }
 
 /**
- * A pane that can't sit beside its stream (a phone, the board) as a bottom
+ * A pane that can't sit beside its stream (a phone) as a bottom
  * drawer over the page showing that stream. Its id stays in `?panel=`, so Back
  * closes and reopens it like any pane; the last one shown stays rendered while
  * the drawer animates out.

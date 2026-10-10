@@ -17,15 +17,14 @@ import { clearCallState } from "@/stores/call-store"
 import { __resetCallPrefsForTests } from "@/stores/call-prefs-store"
 import {
   ASIDE_DRAFT_DEFAULT_HEIGHT,
-  ASIDE_STAGE_DEFAULT_WIDTH,
   getAsideSheetDetent,
   getAsideState,
   openAside,
   resetAsideStoreCache,
+  useAsideForHost,
 } from "@/stores/aside-store"
-import { AsideSlot, useAsideHost } from "./index"
+import { AsideColumn, AsideMobileSheet, useAsideColumnLayout, useAsideHost, useAsideIsSheet } from "./index"
 
-// The stage is the board's surface; a stream page lays the aside out as a column of its own.
 const HOST_PATH = "/w/ws_1/board"
 const ASIDE = "stream_aside_1"
 const aside = createMockStream({
@@ -36,36 +35,46 @@ const aside = createMockStream({
   parentAnchorId: "msg_anchor_1",
 })
 
-/**
- * The page's mount point, bound to the route like the board binds it.
- * `takeover` is the phone's panel takeover: the main column is hidden and
- * inert, so only the aside can draw.
- */
-function Page({ takeover = false }: { takeover?: boolean }) {
+/** The aside the way a page's panes lay it out: a column of its own, or a sheet where there is no room for one. */
+function Page() {
   const hostKey = useAsideHost()
   return (
     <PanelProvider>
-      <div className="flex">
-        <main className="relative" inert={takeover || undefined} hidden={takeover}></main>
-        <AsideSlot workspaceId="ws_1" hostKey={hostKey} />
-      </div>
+      <AsideSurface hostKey={hostKey} />
     </PanelProvider>
   )
 }
 
-function routes(path = HOST_PATH, options: { takeover?: boolean } = {}) {
+function AsideSurface({ hostKey }: { hostKey: string }) {
+  const current = useAsideForHost(hostKey)
+  const isSheet = useAsideIsSheet()
+  const layout = useAsideColumnLayout(isSheet ? null : current, 0, 0)
+  if (!current) return null
+  return isSheet ? (
+    <AsideMobileSheet
+      workspaceId="ws_1"
+      asideId={current.asideId}
+      hostStreamId={current.hostStreamId}
+      originScope={current.originScope}
+    />
+  ) : (
+    <AsideColumn workspaceId="ws_1" aside={current} layout={layout} />
+  )
+}
+
+function routes(path = HOST_PATH) {
   return (
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/w/:workspaceId/s/:streamId" element={<Page takeover={options.takeover} />} />
-        <Route path="/w/:workspaceId/board" element={<Page takeover={options.takeover} />} />
+        <Route path="/w/:workspaceId/s/:streamId" element={<Page />} />
+        <Route path="/w/:workspaceId/board" element={<Page />} />
       </Routes>
     </MemoryRouter>
   )
 }
 
-function renderPage(path = HOST_PATH, options: { takeover?: boolean } = {}) {
-  return render(routes(path, options))
+function renderPage(path = HOST_PATH) {
+  return render(routes(path))
 }
 
 function openOnHost() {
@@ -200,24 +209,7 @@ describe("aside surfaces", () => {
 
   it("should render no aside chrome while nothing is open on this page", () => {
     renderPage()
-    expect(screen.queryByTestId("aside-stage")).toBeNull()
-  })
-
-  it("puts the host beside the aside on one stage, both of them live", async () => {
-    renderPage()
-    openOnHost()
-
-    expect(await screen.findByTestId("aside-stage")).toBeInTheDocument()
-    expect(screen.getByRole("heading", { name: "churn number sanity-check" })).toBeInTheDocument()
-    // The host keeps its own composer: a quick line into the channel should not
-    // cost you the aside.
-    expect(screen.getAllByTestId("stream-content").map((node) => node.getAttribute("data-stream-id"))).toEqual([
-      "stream_host",
-      ASIDE,
-    ])
-    // One surface: nothing to pick between, and nothing to park into.
-    expect(screen.queryByRole("group", { name: "Aside surface" })).toBeNull()
-    expect(screen.queryByRole("button", { name: "Minimize aside" })).toBeNull()
+    expect(screen.queryByTestId("aside-column")).toBeNull()
   })
 
   it("names the aside as private and points back at the message it was opened from", async () => {
@@ -234,76 +226,19 @@ describe("aside surfaces", () => {
     expect(jump).toHaveTextContent(/^Anchored in/)
   })
 
-  it("divides the stage between the host and the aside on a drag, keyboard included", async () => {
-    // jsdom reports no layout, so the stage falls back to the viewport for its
-    // cap; a 1024px default would clamp every drag below the default width.
-    Object.defineProperty(window, "innerWidth", { value: 1600, configurable: true })
-    renderPage()
-    openOnHost()
-
-    const handle = await screen.findByRole("separator", { name: "Resize aside" })
-    const column = () => screen.getByTestId("aside-drafts").parentElement as HTMLElement
-    expect(column()).toHaveStyle({ width: `${ASIDE_STAGE_DEFAULT_WIDTH}px` })
-
-    handle.setPointerCapture = vi.fn()
-    handle.releasePointerCapture = vi.fn()
-    fireEvent.pointerDown(handle, { pointerId: 1, clientX: 1000, isPrimary: true, button: 0 })
-    fireEvent.pointerMove(handle, { pointerId: 1, clientX: 900 })
-    fireEvent.pointerUp(handle, { pointerId: 1, clientX: 900 })
-    await waitFor(() => expect(column()).toHaveStyle({ width: `${ASIDE_STAGE_DEFAULT_WIDTH + 100}px` }))
-
-    fireEvent.keyDown(handle, { key: "ArrowLeft", shiftKey: true })
-    await waitFor(() => expect(column()).toHaveStyle({ width: "770px" }))
-    fireEvent.keyDown(handle, { key: "ArrowRight" })
-    await waitFor(() => expect(column()).toHaveStyle({ width: "760px" }))
-  })
-
-  it("gives a thread opened from the host pane the pane itself, and hands it back on close", async () => {
-    renderPage(`${HOST_PATH}?panel=stream_thread_1`)
-    openOnHost()
-
-    const pane = await screen.findByTestId("aside-host-pane")
-    expect(pane).toHaveAttribute("data-view", "panel")
-    expect(within(pane).getByTestId("panel-host")).toBeInTheDocument()
-    // The thread is the pane's only content — the host timeline is not mounted
-    // behind it — and the aside's chat stays live beside it.
-    expect(screen.getAllByTestId("stream-content").map((node) => node.getAttribute("data-stream-id"))).toEqual([ASIDE])
-
-    fireEvent.click(within(pane).getByTestId("panel-host"))
-    await waitFor(() => expect(screen.getByTestId("aside-host-pane")).toHaveAttribute("data-view", "host"))
-    const mounted = screen.getAllByTestId("stream-content")
-    expect(mounted.map((node) => node.getAttribute("data-stream-id"))).toEqual(["stream_host", ASIDE])
-    // Back to the host means typing goes to the host: its composer takes the
-    // focus the thread just gave up, not the aside column's.
-    expect(mounted[0]).toHaveAttribute("data-auto-focus", "true")
-  })
-
-  it("shows the thread an aside was opened from as the host, not as a panel over itself", async () => {
-    renderPage(`${HOST_PATH}?panel=stream_host`)
-    openOnHost()
-
-    const pane = await screen.findByTestId("aside-host-pane")
-    expect(pane).toHaveAttribute("data-view", "host")
-    expect(screen.queryByTestId("panel-host")).toBeNull()
-    expect(screen.getAllByTestId("stream-content").map((node) => node.getAttribute("data-stream-id"))).toEqual([
-      "stream_host",
-      ASIDE,
-    ])
-  })
-
   it("should leave nothing behind on close", async () => {
     renderPage()
     openOnHost()
     fireEvent.click(await screen.findByRole("button", { name: "Close aside" }))
 
     expect(getAsideState()).toBeNull()
-    expect(screen.queryByTestId("aside-stage")).toBeNull()
+    expect(screen.queryByTestId("aside-column")).toBeNull()
   })
 
   it("should drop the aside when its host page goes away", async () => {
     const view = renderPage()
     openOnHost()
-    await screen.findByTestId("aside-stage")
+    await screen.findByTestId("aside-column")
 
     view.unmount()
     expect(getAsideState()).toBeNull()
@@ -312,7 +247,7 @@ describe("aside surfaces", () => {
   it("should not show another page's aside", () => {
     openOnHost()
     renderPage("/w/ws_1/s/stream_host")
-    expect(screen.queryByTestId("aside-stage")).toBeNull()
+    expect(screen.queryByTestId("aside-column")).toBeNull()
   })
 
   it("opens as a sheet in a window too narrow to split, whatever the pointer", () => {
@@ -321,7 +256,7 @@ describe("aside surfaces", () => {
     renderPage()
 
     expect(screen.getByTestId("aside-sheet")).toBeInTheDocument()
-    expect(screen.queryByTestId("aside-stage")).toBeNull()
+    expect(screen.queryByTestId("aside-column")).toBeNull()
   })
 
   describe("on a phone", () => {
@@ -329,7 +264,7 @@ describe("aside surfaces", () => {
       vi.spyOn(pointerModule, "useIsMobileOrCoarse").mockReturnValue(true)
     })
 
-    it("opens as a sheet over the host, with the strip as its handle, and no stage", () => {
+    it("opens as a sheet over the host, with the strip as its handle, and no column", () => {
       openOnHost()
       renderPage()
 
@@ -337,7 +272,7 @@ describe("aside surfaces", () => {
       expect(sheet).toHaveAttribute("data-detent", "peek")
       expect(sheet).toHaveAttribute("data-suppress-pull-refresh", "true")
       expect(screen.getByTestId("aside-sheet-handle")).toBeInTheDocument()
-      expect(screen.queryByTestId("aside-stage")).toBeNull()
+      expect(screen.queryByTestId("aside-column")).toBeNull()
       expect(screen.getByTestId("stream-content")).toHaveAttribute("data-stream-id", ASIDE)
     })
 

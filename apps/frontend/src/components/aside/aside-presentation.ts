@@ -5,8 +5,8 @@ import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 /**
  * Whether the aside shows as a sheet over the page rather than beside what it
  * answers: on a phone or coarse pointer, and in a window too narrow for a split
- * at all. One predicate, read by the slot and by every page that lays the aside
- * out: two derivations drift, and the drift mounts the aside twice.
+ * at all. One predicate, read by every surface that lays the aside out: two
+ * derivations drift, and the drift mounts the aside twice.
  */
 export function useAsideIsSheet(): boolean {
   const coarse = useIsMobileOrCoarse()

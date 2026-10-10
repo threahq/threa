@@ -1,4 +1,4 @@
-import { isServerStreamId } from "./stream-ids"
+import { isPagePane, isServerStreamId } from "./stream-ids"
 
 /**
  * The panel's arrangement as it lives in `?panel=`: columns of sections, each
@@ -67,7 +67,7 @@ function parseSection(token: string, seen: Set<string>, focus: { id: string | nu
   for (const part of token.split(TAB_SEPARATOR)) {
     const mark = [FOCUS_MARK, ACTIVE_MARK].find((candidate) => part.endsWith(candidate)) ?? ""
     const id = part.slice(0, part.length - mark.length)
-    if (!id || seen.has(id)) continue
+    if (!id || seen.has(id) || isPagePane(id)) continue
     seen.add(id)
     ids.push(id)
     if (mark === FOCUS_MARK && focus.id === null) focus.id = focused = id

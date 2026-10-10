@@ -5,8 +5,8 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
  * "In this stream" is a pane of its own (`context:<streamId>[:<filter>]`)
  * beside the stream it lists: the stream stays usable, a jump scrolls it in
  * place with the overview still open, and a thread's overview opens to the
- * right of the thread and closes with it. Where it can't sit beside its stream
- * (a phone, the board) it is a bottom drawer over that stream.
+ * right of the thread and closes with it, on the board as on a stream. Where it
+ * can't sit beside its stream (a phone) it is a bottom drawer over that stream.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -169,20 +169,23 @@ test("phone: the main view's overview opened last is a drawer over the main view
   await expect(tabPane(page, threadId)).not.toBeVisible()
 })
 
-test("board: the overview opens as a drawer over the thread panel", async ({ page }) => {
+test("board: the overview opens as a pane beside the thread panel", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 })
   const { workspaceId, threadId } = await seedChannelWithThread(page, "context-board")
-  await page.goto(`/w/${workspaceId}/board?panel=${threadId}`)
+  await page.goto(`/w/${workspaceId}/board?lens=all&panel=${threadId}`)
 
-  await page.getByRole("button", { name: "In this stream", exact: true }).click()
+  await tabPane(page, threadId).getByRole("button", { name: "In this stream", exact: true }).click()
   await expect.poll(() => panelParam(page)).toBe(`${threadId}-context:${threadId}`)
-  await expect(drawer(page).getByText("example.org", { exact: true })).toBeVisible()
-  await expect(page.getByTestId("panel").getByText("thread link").first()).toBeAttached()
-
-  await page.keyboard.press("Escape")
+  await expect(overview(page).getByText("example.org", { exact: true })).toBeVisible()
   await expect(drawer(page)).toHaveCount(0)
+  const thread = await box(page, `[data-panel-tab="${threadId}"]`)
+  const pane = await box(page, `[data-panel-tab="context:${threadId}"]`)
+  expect(thread.x + thread.width).toBeLessThanOrEqual(pane.x + 1)
+
+  await page.goBack()
   await expect.poll(() => panelParam(page)).toBe(threadId)
-  await expect(page.getByText("thread link").first()).toBeVisible()
+  await expect(overview(page)).toHaveCount(0)
+  await expect(tabPane(page, threadId).getByText("thread link").first()).toBeVisible()
 })
 
 test("should show the toggle off while the overview is folded behind its thread", async ({ page }) => {

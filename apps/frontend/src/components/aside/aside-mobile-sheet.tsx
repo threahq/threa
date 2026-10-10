@@ -122,8 +122,8 @@ export function AsideMobileSheet({
   }, [openDraft])
   // A thread opened while the sheet stands — a subagent's card in the aside,
   // a reply link on the host showing above the peek — takes the sheet, the way
-  // it takes the stage's host pane. The page mounts no takeover panel of its
-  // own while the sheet holds it (stream.tsx, board.tsx), so this is the
+  // it takes a pane beside the column. The page mounts no pane of its own for
+  // it while the sheet holds it (page-panes.tsx), so this is the
   // thread's only mount; the panel's close hands the sheet back to the aside.
   // A thread is a whole timeline, so the sheet goes to the full detent for it.
   const { layout, hasTabs, setCurrentPane, closeTab } = usePanel()

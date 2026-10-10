@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
-import { ASIDE_STAGE_MIN_WIDTH, type OpenAsideState } from "@/stores/aside-store"
+import { ASIDE_COLUMN_MIN_WIDTH, type OpenAsideState } from "@/stores/aside-store"
 import { MIN_MAIN_WIDTH } from "@/hooks/use-panel-layout"
 import { ResizablePanelFrame } from "@/components/layout"
 import { cn } from "@/lib/utils"
@@ -18,7 +18,7 @@ import { useAsideWidth } from "./use-aside-width"
  * Unmeasured (0) counts as fitting, so the first render keeps its layout.
  */
 export function asideColumnFits(containerWidth: number, besideWidth: number): boolean {
-  return containerWidth === 0 || containerWidth >= MIN_MAIN_WIDTH + ASIDE_STAGE_MIN_WIDTH + besideWidth
+  return containerWidth === 0 || containerWidth >= MIN_MAIN_WIDTH + ASIDE_COLUMN_MIN_WIDTH + besideWidth
 }
 
 /**
@@ -30,7 +30,7 @@ export function asideColumnFits(containerWidth: number, besideWidth: number): bo
 export function useAsideColumnLayout(aside: OpenAsideState | null, containerWidth: number, reservedWidth: number) {
   // Unmeasured, the stored width stands — capping at 0 would make the handle inert on the frame it is grabbed.
   const cap =
-    containerWidth > 0 ? Math.max(ASIDE_STAGE_MIN_WIDTH, containerWidth - MIN_MAIN_WIDTH - reservedWidth) : Infinity
+    containerWidth > 0 ? Math.max(ASIDE_COLUMN_MIN_WIDTH, containerWidth - MIN_MAIN_WIDTH - reservedWidth) : Infinity
   const { width, ...resize } = useAsideWidth(aside?.asideId ?? "", cap)
   return { ...resize, width: aside ? width : 0, maxWidth: Number.isFinite(cap) ? cap : width }
 }
@@ -61,7 +61,7 @@ export function AsideColumn({
     <ResizablePanelFrame
       panelWidth={layout.width}
       isResizing={layout.isResizing}
-      minWidth={ASIDE_STAGE_MIN_WIDTH}
+      minWidth={ASIDE_COLUMN_MIN_WIDTH}
       maxWidth={layout.maxWidth}
       onResizeStart={layout.handleResizeStart}
       onResizeMove={layout.handleResizeMove}

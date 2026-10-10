@@ -6,6 +6,7 @@ import * as mobile from "@/hooks/use-mobile"
 import * as contexts from "@/contexts"
 import { StreamPickProvider, useStreamPick } from "@/components/layout/sidebar/stream-pick"
 import { navigateAfterShareHandoff } from "@/lib/share-navigation"
+import { formatPanelLayout } from "@/lib/panel-tabs"
 import { DisplayedPanelLayoutProvider, PanelProvider, PaneScope, useCurrentPane, usePanel } from "./panel-context"
 
 /**
@@ -165,6 +166,7 @@ function TabsProbe() {
     <div>
       <span data-testid="loc">{decodeURIComponent(`${location.pathname}${location.search}`)}</span>
       <span data-testid="front">{useCurrentPane()}</span>
+      <span data-testid="layout">{formatPanelLayout(layout)}</span>
       <button onClick={() => setCurrentPane("stream_main")}>work in stream_main</button>
       <button onClick={() => setCurrentPane("stream_a")}>work in stream_a</button>
       <button onClick={() => setCurrentPane("stream_b")}>work in stream_b</button>
@@ -439,7 +441,7 @@ describe("panel tabs history", () => {
     expect(loc()).toBe("/w/ws/s/stream_x?panel=stream_main-stream_x")
   })
 
-  it("should keep a stream under its overview when the overview opens off the stream page", async () => {
+  it("should keep a stream under its overview when the overview opens on the board", async () => {
     const { user, back, loc } = mountTabs(["/w/ws/board", "/w/ws/board?panel=stream_a"])
 
     await user.click(screen.getByRole("link", { name: "stream_a overview" }))
@@ -511,11 +513,37 @@ describe("panel tabs history", () => {
     expect(screen.getByTestId("front").textContent).toBe("conv:c")
   })
 
-  it("should keep replace-one-panel semantics off the stream page", async () => {
+  it("should open a second panel as a tab beside the board rather than in place of the first", async () => {
     const { user, loc } = mountTabs(["/w/ws/board?panel=stream_a"])
 
     await user.click(screen.getByRole("link", { name: "open b" }))
-    expect(loc()).toBe("/w/ws/board?panel=stream_b")
+    expect(loc()).toBe("/w/ws/board?panel=stream_a.stream_b")
+  })
+
+  it("should pin the board in the first column without writing it in the panel param", async () => {
+    const { user, loc } = mountTabs(["/w/ws/board?panel=conv:c"])
+    expect(screen.getByTestId("layout").textContent).toBe("page:board-conv:c")
+
+    await user.click(screen.getByRole("link", { name: "tab conv:c" }))
+    expect(loc()).toBe("/w/ws/board?panel=conv:c")
+  })
+
+  it("should drop the board from a panel param that names it", () => {
+    mountTabs(["/w/ws/board?panel=page:board.stream_x"])
+    expect(screen.getByTestId("layout").textContent).toBe("page:board-stream_x")
+  })
+
+  it("should land on the bare board when its last pane closes, and never close the board", async () => {
+    const { user, back, loc } = mountTabs(["/w/ws/board", "/w/ws/board?panel=conv:c"])
+
+    await user.click(screen.getByRole("button", { name: "close page:board" }))
+    expect(loc()).toBe("/w/ws/board?panel=conv:c")
+    await user.click(screen.getByRole("button", { name: "close conv:c" }))
+    expect(loc()).toBe("/w/ws/board")
+
+    // The close popped the pane's entry rather than stacking another board.
+    await back()
+    expect(loc()).toBe("/w/ws/board")
   })
 })
 
@@ -677,6 +705,14 @@ describe("panel tabs history on a phone", () => {
 
     await back()
     expect(loc()).toBe(`${PAGE}?panel=stream_t`)
+  })
+
+  it("should work in a pane beside the board without moving the route", async () => {
+    const { user, loc } = mountPhone(["/w/ws/board?panel=conv:c.stream_b"])
+    expect(front()).toBe("stream_b")
+
+    await user.click(screen.getByRole("button", { name: "work in conv:c" }))
+    expect({ loc: loc(), front: front() }).toEqual({ loc: "/w/ws/board?panel=conv:c.stream_b", front: "conv:c" })
   })
 
   it("should keep the route's stream unwritten on a desktop", async () => {

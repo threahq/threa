@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type DragEvent } from "react"
 import { usePanel } from "@/contexts"
 import { STREAM_DRAG_TYPE, readStreamDrag, setMissedDropGuard, writeStreamDrag } from "@/lib/stream-drag"
-import { isServerStreamId } from "@/lib/stream-ids"
+import { isPagePane, isServerStreamId } from "@/lib/stream-ids"
 import type { PaneDrop, PaneEdge } from "@/lib/panel-tabs"
 import { cn } from "@/lib/utils"
 
@@ -129,7 +129,8 @@ const overEditor = (event: DragEvent<HTMLElement>) =>
  * centre adds a tab. Undefined while drops are off.
  */
 export function paneDropZone(drops: PaneDropState | null, of: string, edges: readonly PaneEdge[]) {
-  if (!drops) return undefined
+  // A route's page holds its column alone.
+  if (!drops || isPagePane(of)) return undefined
   const { hover, land } = drops
   const dropAt = (event: DragEvent<HTMLElement>): PaneDrop | null => {
     // A strip inside the pane has already claimed it.
