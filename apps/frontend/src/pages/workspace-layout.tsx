@@ -11,7 +11,7 @@ import {
 } from "react"
 import { Outlet, useParams, useSearchParams, useMatch, useNavigate, Navigate } from "react-router-dom"
 import { AppShell } from "@/components/layout/app-shell"
-import { Sidebar } from "@/components/layout/sidebar"
+import { Sidebar, StreamPickProvider } from "@/components/layout/sidebar"
 import { AppToastHost } from "@/components/app-update-toast"
 import { MentionableMarkdownWrapper } from "@/components/ui/markdown-content"
 import type { MentionType } from "@/lib/markdown/mention-context"
@@ -663,23 +663,25 @@ function WorkspaceLayoutContent() {
                                             <TraceProvider>
                                               <SidebarProvider>
                                                 <SearchPanelProvider workspaceId={workspaceId}>
-                                                  <SidebarKeyboardHandler />
-                                                  <SearchKeyboardHandler />
-                                                  <CoordinatedLoadingGate>
-                                                    <AppShell sidebar={<Sidebar workspaceId={workspaceId} />}>
-                                                      <MainContentGate>
-                                                        <Outlet />
-                                                      </MainContentGate>
-                                                    </AppShell>
-                                                  </CoordinatedLoadingGate>
-                                                  <WorkspaceQuickSwitcher
-                                                    workspaceId={workspaceId}
-                                                    open={switcherOpen}
-                                                    onOpenChange={setSwitcherOpen}
-                                                    initialMode={switcherMode}
-                                                    currentStreamId={streamId}
-                                                  />
-                                                  <ComposeOverlayMount workspaceId={workspaceId} />
+                                                  <StreamPickProvider workspaceId={workspaceId}>
+                                                    <SidebarKeyboardHandler />
+                                                    <SearchKeyboardHandler />
+                                                    <CoordinatedLoadingGate>
+                                                      <AppShell sidebar={<Sidebar workspaceId={workspaceId} />}>
+                                                        <MainContentGate>
+                                                          <Outlet />
+                                                        </MainContentGate>
+                                                      </AppShell>
+                                                    </CoordinatedLoadingGate>
+                                                    <WorkspaceQuickSwitcher
+                                                      workspaceId={workspaceId}
+                                                      open={switcherOpen}
+                                                      onOpenChange={setSwitcherOpen}
+                                                      initialMode={switcherMode}
+                                                      currentStreamId={streamId}
+                                                    />
+                                                    <ComposeOverlayMount workspaceId={workspaceId} />
+                                                  </StreamPickProvider>
                                                 </SearchPanelProvider>
                                               </SidebarProvider>
                                               <SettingsDialog />

@@ -2,9 +2,9 @@ import { test, expect, type Locator, type Page } from "@playwright/test"
 import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
 
 /**
- * A sidebar click on the stream page swaps the pane worked in for the picked
- * stream and closes what was opened from it. Other tabs stay, Back puts the
- * pane back, and the row lit is the pane worked in.
+ * A sidebar click or quick-switcher pick on the stream page swaps the pane
+ * worked in for the picked stream and closes what was opened from it. Other
+ * tabs stay, Back puts the pane back, and the row lit is the pane worked in.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -133,6 +133,33 @@ test("should move main to the picked stream, closing main's thread but keeping a
   await page.goBack()
   await expect.poll(() => streamIdOf(page)).toBe(streamA)
   await expect(tabPane(page, thread).getByText("reply in a's thread")).toBeVisible()
+})
+
+test("should pick a stream from the quick switcher as from the sidebar, keeping main mounted", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  const { names, streamA, streamB, parent, thread } = await seed(page)
+  await tag(mainZone(page).getByText("parent in a"), "main")
+
+  await mainZone(page)
+    .locator(`[data-message-id="${parent}"]`)
+    .first()
+    .getByRole("link", { name: /1 reply/i })
+    .click()
+  await tabPane(page, thread).getByText("reply in a's thread").click()
+
+  await page.keyboard.press("Meta+k")
+  await page.keyboard.type(names.b)
+  await page
+    .getByRole("option", { name: new RegExp(`#${names.b}`) })
+    .first()
+    .click()
+  await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
+  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({
+    stream: streamB,
+    panel: `${streamA}-${streamB}`,
+  })
+  await expect(tabPane(page, thread)).toHaveCount(0)
+  expect(await tagOf(mainZone(page).getByText("parent in a"))).toBe("main")
 })
 
 test("should swap the pane in front for a picked stream on a phone, and bring one already open forward", async ({
