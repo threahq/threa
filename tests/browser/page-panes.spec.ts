@@ -4,7 +4,8 @@ import { expectApiOk, loginAndCreateWorkspace, workspaceIdFromUrl } from "./help
 /**
  * A workspace page opens as a pane (`page:activity`) beside a stream, and a
  * page route keeps the streams beside it. Inside the pane a filter or a search
- * changes it in place, a link to a stream takes its tab, and Back undoes that.
+ * changes it in place without remounting it, a link to a stream takes its tab,
+ * and Back undoes that.
  * Its header is any pane's: one row, the tab row standing in for its title.
  * The route moving between the panes on show remounts none of them.
  */
@@ -43,7 +44,7 @@ async function tagOf(target: Locator): Promise<string | null> {
   return target.evaluate((el) => (el as unknown as Record<string, string>).__paneTag ?? null)
 }
 
-test("should open a page beside a stream, switch its filter in place without remounting the stream, and close it", async ({
+test("should open a page beside a stream, switch its filter in place without remounting it or the stream, and close it", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 })
@@ -54,13 +55,17 @@ test("should open a page beside a stream, switch its filter in place without rem
   await expect(activity.getByRole("heading", { name: "Activity" })).toBeVisible({ timeout: 30_000 })
   await expect(pane(page, streamId)).toBeVisible()
   await tag(composerOf(page, streamId), "stream")
+  await tag(activity.getByRole("tablist"), "page")
 
   await activity.getByRole("tab", { name: "Unread" }).click()
   await expect.poll(() => panelParam(page)).toBe("page:activity/unread")
   expect(pathOf(page)).toBe(`/w/${workspaceId}/s/${streamId}`)
   const unread = pane(page, "page:activity/unread")
   await expect(unread.getByRole("tab", { name: "Unread", selected: true })).toBeVisible()
-  expect(await tagOf(composerOf(page, streamId))).toBe("stream")
+  expect([await tagOf(unread.getByRole("tablist")), await tagOf(composerOf(page, streamId))]).toEqual([
+    "page",
+    "stream",
+  ])
 
   await unread.getByRole("button", { name: "Close" }).click()
   await expect.poll(() => panelParam(page)).toBeNull()
@@ -133,12 +138,16 @@ test("should keep a page route's streams beside it and move the route without re
   await expect(activity.getByRole("heading", { name: "Activity" })).toBeVisible({ timeout: 30_000 })
   await expect(pane(page, streamId)).toBeVisible()
   await tag(composerOf(page, streamId), "stream")
+  await tag(activity.getByRole("tablist"), "page")
 
-  // The route's page changes its own path, and the panes beside it stay.
+  // The route's page changes its own path in place, and the panes beside it stay.
   await activity.getByRole("tab", { name: "Me" }).click()
   await expect.poll(() => pathOf(page)).toBe(`/w/${workspaceId}/activity/me`)
   expect(panelParam(page)).toBe(streamId)
-  expect(await tagOf(composerOf(page, streamId))).toBe("stream")
+  expect([
+    await tagOf(pane(page, "page:activity/me").getByRole("tablist")),
+    await tagOf(composerOf(page, streamId)),
+  ]).toEqual(["page", "stream"])
 
   // Closing the route's page hands the route to the stream left, which stays mounted.
   await pane(page, "page:activity/me").getByRole("button", { name: "Close" }).click()
