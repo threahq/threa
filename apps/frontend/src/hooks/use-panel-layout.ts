@@ -11,7 +11,7 @@ const MAX_PANEL_RATIO = 0.7
 // panel yields to it (caps below 0.7 of the container) until the container is
 // itself so small that MIN_PANEL_WIDTH wins; the composer's own overflow
 // handling covers that degenerate tail.
-const MIN_MAIN_WIDTH = 400
+export const MIN_MAIN_WIDTH = 400
 
 /** Largest the panel may be without crushing the main column below MIN_MAIN_WIDTH. */
 function panelMaxWidth(containerWidth: number): number {

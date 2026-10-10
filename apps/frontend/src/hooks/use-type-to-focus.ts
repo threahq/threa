@@ -71,9 +71,9 @@ type PendingOpen = { scope: HTMLElement; chars: string }
 
 /**
  * The zone's container: the one last clicked while it is still mounted, else
- * the first in the document. The aside stage holds two "panel" zones at once
- * (a thread in its host pane, the aside's own column), so document order alone
- * would hand every keystroke to the thread.
+ * the first in the document. An open aside puts a second "panel" zone beside
+ * a thread (its own column), so document order alone would hand every
+ * keystroke to the thread.
  */
 export function zoneContainer(zone: "main" | "panel", clicked: HTMLElement | null): HTMLElement | null {
   if (clicked?.isConnected && clicked.dataset.editorZone === zone && !clicked.closest("[inert]")) return clicked

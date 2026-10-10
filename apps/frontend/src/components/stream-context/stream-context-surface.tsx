@@ -77,7 +77,7 @@ export function StreamContextSurface(props: StreamContextSurfaceProps) {
         onClose={onClose}
         focusSession={focusSession}
         // A side-docked call takes the window's right edge first.
-        style={{ right: "calc(0.5rem + var(--call-dock-inset-right, 0px))" }}
+        style={{ right: `calc(0.5rem + ${dock.insetRight ?? 0}px + var(--call-dock-inset-right, 0px))` }}
         className="fixed bottom-2 top-14 z-30 w-96 max-w-[calc(100vw-1rem)] overflow-hidden rounded-lg border border-border/60 bg-background shadow-lg animate-in fade-in-0 slide-in-from-top-1"
       >
         {panel}
