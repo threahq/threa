@@ -362,7 +362,7 @@ export function PanelTabStack({
   firstColumnWidth,
   height,
 }: PanelTabStackProps) {
-  const { layout, setCurrentPane, focusTab } = usePanel()
+  const { layout, setCurrentPane, focusTab, closeTab } = usePanel()
   const current = useCurrentPane()
   const { sizes, setSizes, areas } = grid
   const panelShares = sizes.columns.slice(1)
@@ -427,7 +427,10 @@ export function PanelTabStack({
 
   const firstShare = firstColumnWidth + (width ?? 0) > 0 ? firstColumnWidth / (firstColumnWidth + (width ?? 0)) : 1
   const restore = useCallback(() => focusTab(null), [focusTab])
-  usePaneFocusEscape(floating, restore)
+  // Dismissing a floating draft sends it back inline rather than leaving it beside the stream.
+  const draft = members.find((id) => parseComposePanel(id) !== null)
+  const dismiss = useCallback(() => (draft ? closeTab(draft) : restore()), [draft, closeTab, restore])
+  usePaneFocusEscape(floating, dismiss)
   useShellCover(floating)
   // Only Restore draws the map, so resizing with nothing floating leaves every pane's header alone.
   const map = useMemo(
@@ -552,7 +555,7 @@ export function PanelTabStack({
         <div
           data-testid="pane-focus-scrim"
           className="fixed inset-0 z-[46] bg-[rgba(30,20,10,0.22)] dark:bg-black/55"
-          onClick={restore}
+          onClick={dismiss}
         />
       )}
       {/* Under a floating tab they would still take Tab and the arrow keys. */}
