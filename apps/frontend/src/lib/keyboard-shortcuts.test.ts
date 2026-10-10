@@ -20,6 +20,7 @@ import {
   quickJumpSlotFromEvent,
   CLEAR_INBOX_STREAM_ACTION_ID,
   getShortcutsByCategory,
+  defaultKeyOf,
 } from "./keyboard-shortcuts"
 
 beforeEach(() => {
@@ -243,6 +244,11 @@ describe("getEffectiveEditorBindings", () => {
     expect(bindings.formatItalic).toBe("mod+i")
   })
 
+  it("should exclude an editor binding when a global shortcut presses the same chord through ctrl", () => {
+    const bindings = getEffectiveEditorBindings({ toggleSidebar: "ctrl+b" })
+    expect(bindings.formatBold).toBeUndefined()
+  })
+
   it("respects custom editor bindings", () => {
     const bindings = getEffectiveEditorBindings({ formatBold: "mod+shift+b" })
     expect(bindings.formatBold).toBe("mod+shift+b")
@@ -389,5 +395,153 @@ describe("clearInboxStream shortcut", () => {
 
   it("does not collide with any other default binding", () => {
     expect(detectConflicts()).toEqual(new Map())
+  })
+})
+
+describe("pane shortcuts", () => {
+  const PANE_ACTIONS = ["closePane", "reopenPane", "nextPaneTab", "previousPaneTab", "nextPane", "previousPane"]
+  const realPlatform = navigator.platform
+
+  function installed(value: boolean) {
+    vi.spyOn(deviceModule, "isStandaloneApp").mockReturnValue(value)
+  }
+  function platform(value: string) {
+    Object.defineProperty(navigator, "platform", { configurable: true, get: () => value })
+  }
+  const key = (init: KeyboardEventInit) => new KeyboardEvent("keydown", init)
+
+  afterEach(() => {
+    platform(realPlatform)
+  })
+
+  it("should default to keys a browser tab keeps when in a browser, and the app's own once installed", () => {
+    installed(false)
+    expect(PANE_ACTIONS.map((id) => getEffectiveKeyBinding(id))).toEqual([
+      "alt+w",
+      "alt+shift+t",
+      "alt+]",
+      "alt+[",
+      "alt+.",
+      "alt+,",
+    ])
+    installed(true)
+    expect(PANE_ACTIONS.map((id) => getEffectiveKeyBinding(id))).toEqual([
+      "mod+w",
+      "mod+shift+t",
+      "ctrl+tab",
+      "ctrl+shift+tab",
+      "alt+.",
+      "alt+,",
+    ])
+  })
+
+  it("should keep every default free of conflicts whether installed or not", () => {
+    for (const value of [false, true]) {
+      installed(value)
+      expect(detectConflicts()).toEqual(new Map())
+      for (const id of PANE_ACTIONS) expect(isSafeShortcutBinding(defaultKeyOf(getShortcutAction(id)!))).toBe(true)
+    }
+  })
+
+  it("should match Alt bindings by physical key when Alt rewrites the character", () => {
+    platform("MacIntel")
+    // ⌥W types "∑" and ⌥[ types a curly quote on a US Mac.
+    expect(matchesKeyBinding(key({ key: "∑", code: "KeyW", altKey: true }), "alt+w")).toBe(true)
+    expect(matchesKeyBinding(key({ key: "“", code: "BracketLeft", altKey: true }), "alt+[")).toBe(true)
+    expect(matchesKeyBinding(key({ key: "ˇ", code: "KeyT", altKey: true, shiftKey: true }), "alt+shift+t")).toBe(true)
+    expect(matchesKeyBinding(key({ key: "≥", code: "Period", altKey: true }), "alt+.")).toBe(true)
+    // ⌥8 types "[" on a Swedish Mac; that's typing, not Alt+[.
+    expect(matchesKeyBinding(key({ key: "[", code: "Digit8", altKey: true }), "alt+[")).toBe(false)
+    // Without Alt the character decides, so Dvorak and friends keep their letters.
+    expect(matchesKeyBinding(key({ key: "w", code: "Comma", metaKey: true }), "mod+w")).toBe(true)
+  })
+
+  it("should leave characters ⌥ types on a Mac to the composer", () => {
+    platform("MacIntel")
+    // ⌥ on the bracket keys types "[" and "]" on an Italian Mac.
+    expect(matchesKeyBinding(key({ key: "[", code: "BracketLeft", altKey: true }), "alt+[")).toBe(false)
+    expect(matchesKeyBinding(key({ key: "]", code: "BracketRight", altKey: true }), "alt+]")).toBe(false)
+    expect(keyEventToBinding(key({ key: "[", code: "Digit8", altKey: true }))).toBeNull()
+  })
+
+  it("should match Alt bindings by character off a Mac", () => {
+    platform("Win32")
+    // The key printed W on AZERTY sits where a US layout has Z.
+    expect(matchesKeyBinding(key({ key: "w", code: "KeyZ", altKey: true }), "alt+w")).toBe(true)
+    expect(matchesKeyBinding(key({ key: "z", code: "KeyW", altKey: true }), "alt+w")).toBe(false)
+  })
+
+  it("should match Alt bindings by physical key off a Mac when the key prints no ASCII character", () => {
+    for (const name of ["Win32", "Linux x86_64"]) {
+      platform(name)
+      // Swedish has "å" where a US layout has "[", German has "ü".
+      expect(matchesKeyBinding(key({ key: "å", code: "BracketLeft", altKey: true }), "alt+[")).toBe(true)
+      expect(matchesKeyBinding(key({ key: "ü", code: "BracketLeft", altKey: true }), "alt+[")).toBe(true)
+      expect(keyEventToBinding(key({ key: "å", code: "BracketLeft", altKey: true }))).toBe("alt+[")
+    }
+  })
+
+  it("should keep the character under Control, so a rebind sees the chord it takes", () => {
+    for (const [name, modifier] of [
+      ["Win32", { ctrlKey: true }],
+      ["MacIntel", { metaKey: true }],
+    ] as const) {
+      platform(name)
+      // Swedish §, where a US layout has another character.
+      expect(keyEventToBinding(key({ key: "§", code: "Backquote", ...modifier }))).toBe("mod+§")
+      expect(detectConflicts({ nextPane: "mod+§" }).get("mod+§")).toEqual(["toggleSidebar", "nextPane"])
+    }
+    // AltGr reports Control with Alt, and keeps what it types.
+    platform("Win32")
+    const altGrE = key({ key: "€", code: "KeyE", ctrlKey: true, altKey: true })
+    expect(keyEventToBinding(altGrE)).toBe("mod+alt+€")
+    expect(matchesKeyBinding(altGrE, "mod+alt+€")).toBe(true)
+    expect(matchesKeyBinding(altGrE, "mod+alt+e")).toBe(false)
+  })
+
+  it("should see ctrl and mod as one chord, since mod answers to Control on a Mac too", () => {
+    installed(true)
+    for (const name of ["Win32", "MacIntel"]) {
+      platform(name)
+      expect(detectConflicts({ toggleSidebar: "mod+tab" }).get("mod+tab")).toEqual(["toggleSidebar", "nextPaneTab"])
+    }
+  })
+
+  it("should clear the binding a Mac's Control chord takes over when one action is rebound onto it", () => {
+    installed(true)
+    platform("MacIntel")
+    expect(resolveShortcutBindingUpdate({}, "toggleSidebar", "ctrl+tab")).toEqual({
+      nextPaneTab: "none",
+      toggleSidebar: "ctrl+tab",
+    })
+  })
+
+  it("should keep matching ⌥ bindings recorded as the character ⌥ types", () => {
+    platform("MacIntel")
+    expect(matchesKeyBinding(key({ key: "˚", code: "KeyK", altKey: true }), "alt+˚")).toBe(true)
+  })
+
+  it("should match ctrl only to Control, never Command", () => {
+    expect(matchesKeyBinding(key({ key: "Tab", ctrlKey: true }), "ctrl+tab")).toBe(true)
+    expect(matchesKeyBinding(key({ key: "Tab", ctrlKey: true, shiftKey: true }), "ctrl+shift+tab")).toBe(true)
+    expect(matchesKeyBinding(key({ key: "Tab", metaKey: true }), "ctrl+tab")).toBe(false)
+    expect(matchesKeyBinding(key({ key: "Tab", ctrlKey: true, metaKey: true }), "ctrl+tab")).toBe(false)
+    expect(matchesKeyBinding(key({ key: "Tab", ctrlKey: true, shiftKey: true }), "ctrl+tab")).toBe(false)
+  })
+
+  it("should keep vim's ctrl+[ escape off Alt bindings", () => {
+    expect(matchesKeyBinding(key({ key: "[", ctrlKey: true }), "alt+[")).toBe(false)
+    expect(matchesKeyBinding(key({ key: "[", ctrlKey: true }), "mod+[")).toBe(true)
+  })
+
+  it("should capture Control on a Mac as ctrl and as mod elsewhere", () => {
+    platform("MacIntel")
+    expect(keyEventToBinding(key({ key: "Tab", ctrlKey: true }))).toBe("ctrl+tab")
+    expect(keyEventToBinding(key({ key: "w", metaKey: true }))).toBe("mod+w")
+    expect(keyEventToBinding(key({ key: "∑", code: "KeyW", altKey: true }))).toBe("alt+w")
+    expect(formatKeyBinding("ctrl+shift+tab")).toBe("⌃⇧⇥")
+    platform("Win32")
+    expect(keyEventToBinding(key({ key: "Tab", ctrlKey: true }))).toBe("mod+tab")
+    expect(formatKeyBinding("ctrl+shift+tab")).toBe("Ctrl+Shift+Tab")
   })
 })

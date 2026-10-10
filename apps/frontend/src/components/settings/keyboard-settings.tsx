@@ -18,7 +18,10 @@ import {
   formatKeyBindingText,
   detectConflicts,
   occupiedBindings,
+  shortcutChord,
+  conflictingActions,
   captureBindingForAction,
+  defaultKeyOf,
   resolveShortcutBindingUpdate,
   type ShortcutAction,
 } from "@/lib/keyboard-shortcuts"
@@ -71,7 +74,7 @@ function ShortcutRow({
   const [conflictInfo, setConflictInfo] = useState<{ binding: string; conflictIds: string[] } | null>(null)
   const badgeRef = useRef<HTMLButtonElement>(null)
   const binding = getEffectiveKeyBinding(action.id, customBindings)
-  const isCustom = action.id in customBindings && customBindings[action.id] !== action.defaultKey
+  const isCustom = action.id in customBindings && customBindings[action.id] !== defaultKeyOf(action)
   const conflictLabels =
     conflictInfo?.conflictIds
       .map((id) => SHORTCUT_ACTIONS.find((shortcutAction) => shortcutAction.id === id)?.label)
@@ -81,11 +84,7 @@ function ShortcutRow({
 
   const handleCapturedBinding = useCallback(
     (captured: string) => {
-      const testBindings = { ...customBindings, [action.id]: captured }
-      const conflicts = detectConflicts(testBindings)
-      const conflicting = occupiedBindings(action.id, captured)
-        .flatMap((occupied) => conflicts.get(occupied) ?? [])
-        .filter((id) => id !== action.id)
+      const conflicting = conflictingActions(customBindings, action.id, captured)
 
       if (conflicting.length > 0) {
         setPendingBinding(captured)
@@ -357,9 +356,16 @@ export function KeyboardSettings({ onCaptureStateChange }: KeyboardSettingsProps
             <ul className="space-y-2 text-sm">
               {Array.from(conflicts.entries()).map(([key, actionIds]) => (
                 <li key={key}>
-                  <Badge variant="outline" className="font-mono mr-2" title={formatKeyBindingText(key)}>
-                    {formatKeyBinding(key)}
-                  </Badge>
+                  {chordBindings(customBindings, key, actionIds).map((binding) => (
+                    <Badge
+                      key={binding}
+                      variant="outline"
+                      className="font-mono mr-2"
+                      title={formatKeyBindingText(binding)}
+                    >
+                      {formatKeyBinding(binding)}
+                    </Badge>
+                  ))}
                   <span className="text-muted-foreground">
                     {actionIds
                       .map((id) => SHORTCUT_ACTIONS.find((a) => a.id === id)?.label)
@@ -466,4 +472,13 @@ export function KeyboardSettings({ onCaptureStateChange }: KeyboardSettingsProps
       )}
     </div>
   )
+}
+
+/** The bindings, as each action spells it, that press `chord`: ⌃Tab and ⌘Tab are one chord but read differently on a Mac. */
+function chordBindings(customBindings: Record<string, string>, chord: string, actionIds: string[]): string[] {
+  const bindings = actionIds.flatMap((id) => {
+    const binding = getEffectiveKeyBinding(id, customBindings)
+    return binding ? occupiedBindings(id, binding).filter((occupied) => shortcutChord(occupied) === chord) : []
+  })
+  return [...new Set(bindings)]
 }

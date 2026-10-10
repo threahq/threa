@@ -8,6 +8,7 @@ import {
   formatPanelLayout,
   openPanelTab,
   openPanelTabBeside,
+  openPanelTabWith,
   parsePanelLayout,
   primaryPanelOf,
   replacePanelTab,
@@ -102,6 +103,15 @@ describe("opening", () => {
 
   it("should fall back to the first section when the opener is no longer open", () => {
     expect(spell(openPanelTabBeside(at("a"), "gone", "x"))).toBe("a.x")
+  })
+
+  it("should add a tab to the section holding the given tab when it is open", () => {
+    expect(spell(openPanelTabWith(at("a-b*.c--d"), "c", "x"))).toBe("a-b.c.x--d")
+  })
+
+  it("should fall back to the first section when the given tab is not open", () => {
+    expect(spell(openPanelTabWith(at("a-b"), null, "x"))).toBe("a.x-b")
+    expect(spell(openPanelTabWith(NO_PANELS, "gone", "x"))).toBe("x")
   })
 })
 

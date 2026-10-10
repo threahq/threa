@@ -214,6 +214,15 @@ describe("SidebarQuickJumpProvider", () => {
     expect(screen.getByTestId("path").textContent).toBe("/w/ws_1/s/stream_start")
   })
 
+  it("announces a Control binding with its modifier", () => {
+    mockPreferences.keyboardShortcuts = { sidebarQuickJump: "ctrl+1" }
+    renderSidebar(["stream_a"])
+
+    holdModifier()
+    reveal()
+    expect(screen.getByTestId("row-stream_a").dataset.keyshortcuts).toBe("Control+1")
+  })
+
   it("stays inert when the shortcut is disabled", () => {
     mockPreferences.keyboardShortcuts = { sidebarQuickJump: "none" }
     renderSidebar(["stream_a"])
