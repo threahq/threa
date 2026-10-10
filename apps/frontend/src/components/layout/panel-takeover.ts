@@ -2,7 +2,8 @@ import { cn } from "@/lib/utils"
 
 /**
  * Classes for a page whose side panel takes over the whole viewport on mobile
- * (the stream page and the board both do this).
+ * (the board does this). The stream page has moved to `PaneHost`, whose `Pane`
+ * keeps the same visibility-not-display rule; the board follows it there.
  *
  * The main column keeps rendering behind the panel — `invisible` leaves its
  * scroller's box, and therefore its scroll offset, alive. Unmounting the column
