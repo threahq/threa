@@ -22,6 +22,7 @@ import {
   replacePanelTab,
   splitPanelTab,
   streamPaneAfter,
+  tabsBeside,
   type PanelLayout,
 } from "./panel-tabs"
 
@@ -496,5 +497,26 @@ describe("the route's stream pane", () => {
       streamPaneAfter(prev, closePanelTab(prev, "A"), "A", "A"),
       streamPaneAfter(page("A"), closePanelTab(page("A"), "A"), "A", "A"),
     ]).toEqual([null, null])
+  })
+})
+
+describe("tabsBeside", () => {
+  const ids = ["A", "B", "C", "D"]
+
+  it("should take the tabs around, before, after or including a tab, in order", () => {
+    expect({
+      others: tabsBeside(ids, "B", "others"),
+      before: tabsBeside(ids, "B", "before"),
+      after: tabsBeside(ids, "B", "after"),
+      all: tabsBeside(ids, "B", "all"),
+    }).toEqual({ others: ["A", "C", "D"], before: ["A"], after: ["C", "D"], all: ["A", "B", "C", "D"] })
+  })
+
+  it("should take nothing before the first tab or after the last", () => {
+    expect([tabsBeside(ids, "A", "before"), tabsBeside(ids, "D", "after")]).toEqual([[], []])
+  })
+
+  it("should take nothing beside a tab the section doesn't hold", () => {
+    expect([tabsBeside(ids, "X", "others"), tabsBeside(ids, "X", "after")]).toEqual([[], []])
   })
 })

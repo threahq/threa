@@ -244,7 +244,7 @@ test("should split a tab beside its own and keep the split through back, forward
   await tag(replyIn(page, threadB, "reply in thread B"), "B")
   const tabbedWidth = (await tabPane(page, threadB).boundingBox())!.width
 
-  await tabPane(page, threadB).getByRole("button", { name: "Tab actions" }).click()
+  await tabPane(page, threadB).getByRole("button", { name: "Stream actions" }).click()
   await page.getByRole("menuitem", { name: "Split right" }).click()
   await expect.poll(() => panelParam(page)).toBe(`${streamId}-${threadA}-${threadB}`)
   // Both show side by side without remounting, and the panel widens to hold them.
@@ -328,7 +328,7 @@ test("should stack a tab split down under its own section", async ({ page }) => 
   await expect(replyIn(page, threadB, "reply in thread B")).toBeAttached({ timeout: 30_000 })
   await tag(replyIn(page, threadA, "reply in thread A"), "A")
   await tag(replyIn(page, threadB, "reply in thread B"), "B")
-  await tabPane(page, threadA).getByRole("button", { name: "Tab actions" }).click()
+  await tabPane(page, threadA).getByRole("button", { name: "Stream actions" }).click()
   await page.getByRole("menuitem", { name: "Split down" }).click()
   await expect.poll(() => panelParam(page)).toBe(`${streamId}-${threadB}--${threadA}`)
   await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
@@ -339,6 +339,53 @@ test("should stack a tab split down under its own section", async ({ page }) => 
   const [boxA, boxB] = await Promise.all([tabPane(page, threadA).boundingBox(), tabPane(page, threadB).boundingBox()])
   expect(boxB!.y + boxB!.height).toBeLessThanOrEqual(boxA!.y + 1)
   await expect(page.getByRole("separator", { name: "Resize stacked panels" })).toBeVisible()
+})
+
+test("should close tabs beside one from its menu, and reopen them latest first", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
+  const parentC = await post(page, workspaceId, streamId, "third parent")
+  const threadC = await createThread(page, workspaceId, streamId, parentC, "reply in thread C")
+
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}.${threadB}*.${threadC}`)
+  await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
+  await expect(tabStrip(page).getByRole("link")).toHaveText(["first parent", "second parent", "third parent"])
+  // A stream pane's splits sit in its own menu, so its tab row carries no second one.
+  await expect(tabPane(page, threadB).getByRole("button", { name: "Tab actions" })).toHaveCount(0)
+  await tabPane(page, threadB).getByRole("button", { name: "Stream actions" }).click()
+  await expect(page.getByRole("menuitem", { name: "Split right" })).toBeVisible()
+  await page.keyboard.press("Escape")
+
+  const middle = tabStrip(page).getByRole("link", { name: "second parent" })
+  await middle.click({ button: "right" })
+  await expect(page.getByRole("menuitem", { name: "Close to the left" })).toBeEnabled()
+  await page.getByRole("menuitem", { name: "Close to the right" }).click()
+  await expect.poll(() => panelParam(page)).toBe(`${streamId}-${threadA}.${threadB}`)
+  await expect(tabPane(page, threadC)).toHaveCount(0)
+
+  await middle.click({ button: "right" })
+  await expect(page.getByRole("menuitem", { name: "Close to the right" })).toBeDisabled()
+  await page.getByRole("menuitem", { name: "Close others" }).click()
+  await expect.poll(() => panelParam(page)).toBe(`${streamId}-${threadB}`)
+  await expect(page.getByRole("navigation", { name: "Panel tabs" })).toHaveCount(0)
+
+  await page.keyboard.press("Alt+Shift+T")
+  await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
+  await page.keyboard.press("Alt+Shift+T")
+  await expect(replyIn(page, threadC, "reply in thread C")).toBeVisible()
+  await expect(tabStrip(page).getByRole("link")).toHaveCount(3)
+
+  await middle.click({ button: "right" })
+  await page.getByRole("menuitem", { name: "Close all" }).click()
+  await expect.poll(() => panelParam(page)).toBeNull()
+  await page.keyboard.press("Alt+Shift+T")
+  await page.keyboard.press("Alt+Shift+T")
+  await expect(tabStrip(page).getByRole("link")).toHaveCount(2)
+  // A menu dismissed after Close all still hands focus back to its tab.
+  const first = tabStrip(page).getByRole("link", { name: "first parent" })
+  await first.click({ button: "right" })
+  await page.keyboard.press("Escape")
+  await expect(first).toBeFocused()
 })
 
 test("should even the panes along a divider when it is double-clicked", async ({ page }) => {
@@ -407,6 +454,23 @@ test.describe("on a phone", () => {
     await expect(tabPane(page, threadB).getByRole("button", { name: "2 open panes" })).toBeVisible()
     await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
     expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
+  })
+
+  test("should close every other pane from a row's menu in the open panes sheet", async ({ page }) => {
+    const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
+
+    await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}.${threadB}`)
+    await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
+    await tabPane(page, threadB).getByRole("button", { name: "3 open panes" }).click()
+    const sheet = page.getByRole("dialog", { name: "Open panes" })
+    await sheet.getByRole("link", { name: /first parent/ }).click({ button: "right" })
+    await expect(page.getByRole("menuitem", { name: "Close above" })).toBeEnabled()
+    await page.getByRole("menuitem", { name: "Close others" }).click()
+
+    await expect(sheet).toHaveCount(0)
+    await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
+    await expect(tabPane(page, threadB)).toHaveCount(0)
+    await expect(page.getByRole("button", { name: /open panes/ })).toHaveCount(0)
   })
 
   test("should show a split from a wider screen as panes of one stack and keep the URL", async ({ page }) => {

@@ -146,7 +146,7 @@ describe("panel history", () => {
 /** Each open tab as the stream page renders it: scoped, with its own close, an
  *  in-place breadcrumb, and its strip link. */
 function TabsProbe() {
-  const { layout, getPanelUrl, getTabUrl, setCurrentPane, reopenTab } = usePanel()
+  const { layout, getPanelUrl, getTabUrl, setCurrentPane, reopenTab, closeTabs } = usePanel()
   const location = useLocation()
   return (
     <div>
@@ -158,6 +158,8 @@ function TabsProbe() {
       <button onClick={() => setCurrentPane("stream_b")}>work in stream_b</button>
       <button onClick={() => setCurrentPane("conv:c")}>work in conv:c</button>
       <button onClick={() => reopenTab()}>reopen tab</button>
+      <button onClick={() => closeTabs(["stream_a", "conv:c"])}>close stream_a and conv:c</button>
+      <button onClick={() => closeTabs(["stream_main", "stream_a", "conv:c"])}>close every tab</button>
       <Link to={getPanelUrl("stream_b")}>open b</Link>
       {layout.columns.flat().flatMap((section) =>
         section.ids.map((id) => (
@@ -293,6 +295,34 @@ describe("panel tabs history", () => {
     expect(loc()).toBe(PAGE)
     await user.click(screen.getByRole("button", { name: "reopen tab" }))
     expect(loc()).toBe("/w/ws/s/stream_a?panel=stream_main-stream_a")
+  })
+
+  it("should close a batch of tabs in one step, so Back lands where it would after closing one", async () => {
+    const { user, back, loc } = mountTabs([PAGE, `${PAGE}?panel=stream_a.stream_b.conv:c`])
+
+    await user.click(screen.getByRole("button", { name: "close stream_a and conv:c" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_b`)
+
+    await back()
+    expect(loc()).toBe(PAGE)
+  })
+
+  it("should keep the route's stream when a batch closes every tab", async () => {
+    const { user, loc } = mountTabs([`${PAGE}?panel=stream_a.conv:c`])
+
+    await user.click(screen.getByRole("button", { name: "close every tab" }))
+    expect(loc()).toBe(PAGE)
+  })
+
+  it("should reopen a batch's tabs latest closed first", async () => {
+    const { user, loc } = mountTabs([`${PAGE}?panel=stream_a.conv:c`])
+
+    await user.click(screen.getByRole("button", { name: "close stream_a and conv:c" }))
+    expect(loc()).toBe(PAGE)
+    await user.click(screen.getByRole("button", { name: "reopen tab" }))
+    expect(loc()).toBe(`${PAGE}?panel=conv:c`)
+    await user.click(screen.getByRole("button", { name: "reopen tab" }))
+    expect(screen.getByTestId("layout").textContent).toBe("stream_main-conv:c.stream_a")
   })
 
   it("should drop the deep link when the tab it targeted closes", async () => {
