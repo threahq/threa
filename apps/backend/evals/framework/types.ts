@@ -72,6 +72,34 @@ export function createUsageAccumulator(): UsageAccumulator {
   }
 }
 
+/**
+ * Spend across one eval invocation. Its signal aborts once spend reaches
+ * `limitUsd`, or when `stop` is called, so a run that can no longer produce a
+ * valid result stops instead of failing calls for hours.
+ */
+export interface SpendGuard {
+  readonly signal: AbortSignal
+  add(usd: number): void
+  stop(reason: Error): void
+}
+
+export function createSpendGuard(limitUsd?: number): SpendGuard {
+  const controller = new AbortController()
+  let spentUsd = 0
+  return {
+    signal: controller.signal,
+    add(usd) {
+      spentUsd += usd
+      if (limitUsd !== undefined && spentUsd >= limitUsd) {
+        controller.abort(new Error(`Spent $${spentUsd.toFixed(2)}, reaching the $${limitUsd} budget: run stopped`))
+      }
+    },
+    stop(reason) {
+      controller.abort(reason)
+    },
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Context
 // -----------------------------------------------------------------------------
@@ -88,6 +116,8 @@ export interface EvalContext {
   permutation: EvalPermutation
   /** Usage accumulator for tracking AI costs - call recordUsage() after AI calls */
   usage: UsageAccumulator
+  /** Aborts when the run must stop (see SpendGuard); long setups check it between steps. */
+  signal: AbortSignal
   /** Eval credentials sourced by the runner from environment/config */
   credentials: {
     webSearchEngines: WebSearchEngine[]
@@ -343,6 +373,8 @@ export interface RunnerOptions {
   keepDatabase?: boolean
   /** Write machine-readable results JSON to this path. */
   jsonOutput?: string
+  /** Shared by every permutation the invocation runs; each makes its own when absent. */
+  spend?: SpendGuard
   /** Verbose output */
   verbose?: boolean
 }

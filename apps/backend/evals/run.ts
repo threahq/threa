@@ -12,7 +12,7 @@
 import { parseArgs } from "util"
 import { runSuites, runFromConfigFile } from "./framework/runner"
 import { rescoreReport } from "./framework/rescore"
-import type { RunnerOptions } from "./framework/types"
+import { createSpendGuard, type RunnerOptions } from "./framework/types"
 import { companionSuite } from "./suites/companion/suite"
 import { streamNamingSuite } from "./suites/stream-naming/suite"
 import { boundaryExtractionSuite } from "./suites/boundary-extraction/suite"
@@ -76,6 +76,7 @@ Options:
   -r, --runs <n>        Repeat every case n times, report per-case pass rates (default: 1)
   --min-pass-rate <n>   Pass-rate a case must clear when runs > 1 (0.0-1.0, default: 1.0)
   --json <file>         Write machine-readable results JSON to <file>
+  --budget <usd>        Stop the run once its model calls have cost this much
   --keep-db             Keep the run's database afterwards and print its name
   --from-db <name>      Clone a kept database instead of seeding: suites that
                         support it skip setup (groupmembench reuses its captured memos)
@@ -138,6 +139,7 @@ async function main(): Promise<void> {
       runs: { type: "string", short: "r" },
       "min-pass-rate": { type: "string" },
       json: { type: "string" },
+      budget: { type: "string" },
       "from-db": { type: "string" },
       "keep-db": { type: "boolean" },
       config: { type: "string" },
@@ -158,6 +160,12 @@ async function main(): Promise<void> {
     process.exit(1)
   }
 
+  const budgetUsd = values.budget === undefined ? undefined : Number(values.budget)
+  if (budgetUsd !== undefined && !(budgetUsd > 0)) {
+    console.error("Error: --budget must be a positive number of US dollars")
+    process.exit(1)
+  }
+
   // Build runner options
   const options: RunnerOptions = {
     suite: values.suite,
@@ -169,6 +177,7 @@ async function main(): Promise<void> {
     runs: values.runs ? parseInt(values.runs, 10) : undefined,
     minPassRate: values["min-pass-rate"] ? parseFloat(values["min-pass-rate"]) : undefined,
     jsonOutput: values.json,
+    spend: createSpendGuard(budgetUsd),
     fromDatabase: values["from-db"],
     keepDatabase: values["keep-db"],
     verbose: values.verbose,
@@ -210,7 +219,10 @@ async function main(): Promise<void> {
   // Rescore mode: replay evaluators over a previous run's stored generations.
   if (values.rescore) {
     console.log(`\nRescoring stored generations from: ${values.rescore}`)
-    const results = await rescoreReport(values.rescore, allSuites as any, { judgeModel: options.judgeModel })
+    const results = await rescoreReport(values.rescore, allSuites as any, {
+      judgeModel: options.judgeModel,
+      spend: options.spend,
+    })
     if (options.jsonOutput) {
       await Bun.write(options.jsonOutput, JSON.stringify(toJsonReport(results), null, 2))
       console.log(`\nResults written to ${options.jsonOutput}`)
@@ -231,6 +243,7 @@ async function main(): Promise<void> {
         judgeModel: options.judgeModel,
         fromDatabase: options.fromDatabase,
         keepDatabase: options.keepDatabase,
+        spend: options.spend,
         onSuiteResult: options.jsonOutput
           ? async (partial) => {
               await Bun.write(options.jsonOutput!, JSON.stringify(toJsonReport(partial), null, 2))
