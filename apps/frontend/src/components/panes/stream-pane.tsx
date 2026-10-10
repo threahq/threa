@@ -33,7 +33,7 @@ import { SidebarActionMenu, type SidebarActionItem } from "@/components/layout/s
 import { cn } from "@/lib/utils"
 import { useStreamOrDraft, isDmDraftId, useActiveBotPresence } from "@/hooks"
 import { useWorkspaceDmPeers, useWorkspaceMetadata } from "@/stores/workspace-store"
-import { useCurrentPane, usePanel, useSidebar } from "@/contexts"
+import { createConversationsPanelId, useCurrentPane, usePanel, useSidebar } from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
@@ -54,14 +54,14 @@ import { AsideHeaderChip } from "@/components/aside/aside-header-chip"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useCoverClose } from "@/hooks/use-cover-close"
 import { CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
-import { primaryPanelOf } from "@/lib/panel-tabs"
+import { panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
 import { InviteActorButton, InviteBotButton } from "@/components/encryption"
 import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes } from "@threahq/types"
 import { getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
 import { PhonePaneSwitcher, usePhoneHeaderSwipe } from "./phone-pane-header"
 import { SharedWithBadge } from "@/components/shared-with-badge"
-import { useStreamContextToggle } from "@/components/stream-context"
+import { usePaneToggle, useStreamContextToggle } from "@/components/stream-context"
 import { copyStreamLink } from "@/lib/stream-links"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
 
@@ -86,20 +86,6 @@ interface StreamPaneProps {
   chrome: PaneChrome
 }
 
-/** The conversations drawer's open state, kept in `?convView` (INV-59). */
-export function useConversationViewParam() {
-  const [searchParams, setSearchParams] = useSearchParams()
-  const setOpen = (open: boolean) => {
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev)
-      if (open) next.set("convView", "open")
-      else next.delete("convView")
-      return next
-    })
-  }
-  return [searchParams.get("convView") === "open", setOpen] as const
-}
-
 /** One stream's header and timeline, the stream named by `streamId`. */
 export function StreamPane({
   workspaceId,
@@ -115,19 +101,20 @@ export function StreamPane({
     useStreamOrDraft(workspaceId, streamId)
   const { isMobile } = useSidebar()
   const [isContextOpen, toggleContext] = useStreamContextToggle(streamId)
-  // The route's stream is the page's one main landmark; the conversation views are drawn over the first column's.
+  // The route's stream is the page's one main landmark; the conversation overlay belongs to the first column's.
   const routeStreamId = useParams<{ streamId: string }>().streamId
   const isPageStream = routeStreamId === streamId
-  const { inFirstColumn, layout } = usePanel()
+  const { inFirstColumn, layout, hasTabs } = usePanel()
   const headerSwipe = usePhoneHeaderSwipe()
-  const ownsConversationViews = routeStreamId !== undefined && primaryPanelOf(layout) === streamId
+  const ownsConversationOverlay = routeStreamId !== undefined && primaryPanelOf(layout) === streamId
   const currentPane = useCurrentPane()
   const isCurrentPane = currentPane === null || currentPane === streamId
   // Typing with nothing clicked yet lands in the first column, where the page's stream shows.
   const zone = inFirstColumn ? "main" : "panel"
   const tabbed = !!chrome.tabs
 
-  const [isConversationViewOpen, setConversationViewOpen] = useConversationViewParam()
+  const listId = createConversationsPanelId(streamId)
+  const [, toggleConversationsList] = usePaneToggle(panelIdsOf(layout).includes(listId) ? listId : null, listId)
 
   // Conversation overlay: colors timeline rows by conversation membership
   // (rendered by StreamContent, which reads the same param — INV-59).
@@ -173,6 +160,8 @@ export function StreamPane({
   const isThread = stream?.type === StreamTypes.THREAD
   const isChannel = stream?.type === StreamTypes.CHANNEL
   const isDm = stream?.type === StreamTypes.DM
+  // Only the stream page sets a list beside its stream; under an aside it would land out of sight.
+  const offersList = (isChannel || isDm) && hasTabs && offersContext
   const dmPeerUserId = isDm ? dmPeers.find((p) => p.streamId === streamId)?.userId : null
 
   const [isEditing, setIsEditing] = useState(false)
@@ -348,7 +337,7 @@ export function StreamPane({
         onSelect: toggleContext,
       })
     }
-    if ((isChannel || isDm) && ownsConversationViews) {
+    if ((isChannel || isDm) && ownsConversationOverlay) {
       sheetViewActions.push({
         id: "conversation-overlay",
         label: "Conversation overlay",
@@ -356,11 +345,13 @@ export function StreamPane({
         icon: Layers,
         onSelect: () => setConversationOverlayOn(!isConversationOverlayOn),
       })
+    }
+    if (offersList) {
       sheetViewActions.push({
         id: "conversations-list",
         label: "Conversations list",
         icon: MessageCircle,
-        onSelect: () => setConversationViewOpen(true),
+        onSelect: toggleConversationsList,
       })
     }
   }
@@ -699,7 +690,7 @@ export function StreamPane({
               <PanelRight className="h-4 w-4" />
             </Button>
           )}
-          {(isChannel || isDm) && ownsConversationViews && !isMobile && (
+          {(isChannel || isDm) && ownsConversationOverlay && !isMobile && (
             // Split button (the `GroupedItem` pattern from message-context-menu):
             // primary tap toggles the conversation overlay; the chevron lists
             // every conversation view — overlay first (default, font-medium),
@@ -740,10 +731,7 @@ export function StreamPane({
                     <Layers className="h-4 w-4 text-muted-foreground" />
                     Conversation overlay
                   </DropdownMenuItem>
-                  <DropdownMenuItem
-                    className="gap-2 cursor-pointer"
-                    onSelect={() => setConversationViewOpen(!isConversationViewOpen)}
-                  >
+                  <DropdownMenuItem className="gap-2 cursor-pointer" onSelect={toggleConversationsList}>
                     <MessageCircle className="h-4 w-4 text-muted-foreground" />
                     Conversations list
                   </DropdownMenuItem>
@@ -781,7 +769,22 @@ export function StreamPane({
           )}
           {stream && !isMobile && !isDraft && offersStreamActions && (
             <SidebarActionMenu
-              actions={streamMenuActions}
+              actions={
+                // Beside the page's stream the list rides in the menu, so the header keeps its room for tabs.
+                offersList && !ownsConversationOverlay
+                  ? [
+                      {
+                        id: "conversations-list",
+                        label: "Conversations list",
+                        icon: MessageCircle,
+                        onSelect: toggleConversationsList,
+                      },
+                      ...streamMenuActions.map((action, i) =>
+                        i === 0 ? { ...action, separatorBefore: true } : action
+                      ),
+                    ]
+                  : streamMenuActions
+              }
               ariaLabel="Stream actions"
               trigger={
                 <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Stream actions">

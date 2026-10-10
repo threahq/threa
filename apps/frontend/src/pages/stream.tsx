@@ -1,15 +1,11 @@
-import { useState, useRef, useEffect, useMemo } from "react"
+import { useRef, useEffect, useMemo } from "react"
 import { useParams } from "react-router-dom"
-import { X } from "lucide-react"
-import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
-import { isServerStreamId } from "@/lib/stream-ids"
 import { closePanelTab, floatingPanelTab, panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
 import { useStreamOrDraft, useStreamError, usePanelLayout, useTypeToFocus } from "@/hooks"
 import { usePanel, useSidebar } from "@/contexts"
 import { PanelResizeHandle, usePanelInset } from "@/components/layout"
 import { PaneHost, Pane, PaneDropContext, usePaneDropState } from "@/components/panes"
-import { useConversationViewParam } from "@/components/panes/stream-pane"
 import {
   AsideColumn,
   AsideCoversPanesContext,
@@ -21,9 +17,7 @@ import {
 } from "@/components/aside"
 import { asidePaneOf, useAsideForHost } from "@/stores/aside-store"
 import { PaneDrawer, PanelTabStack, useFittedPanelLayout, usePanelGrid } from "@/components/layout/panel-host"
-import { ConversationList } from "@/components/conversations"
 import { StreamErrorView } from "@/components/stream-error-view"
-import { StreamTypes } from "@threahq/types"
 import { getStreamName } from "@/lib/streams"
 import { MIN_PANEL_WIDTH } from "@/hooks/use-panel-layout"
 import { useElementWidth } from "@/hooks/use-element-width"
@@ -94,20 +88,6 @@ export function StreamPage() {
   // must not change this component's hook count.
   usePanelInset(isMobile || pageError ? 0 : panelInset, panelInsetAnimates)
 
-  const [isConversationViewOpen, setConversationViewOpen] = useConversationViewParam()
-  // The closed drawer stays in the DOM for its slide transition, but its list
-  // re-renders on every conversation update, so it mounts only while shown.
-  const [conversationListMounted, setConversationListMounted] = useState(isConversationViewOpen)
-  if (isConversationViewOpen && !conversationListMounted) setConversationListMounted(true)
-
-  // The conversation views stay with the first column's stream, wherever the user is working.
-  const primary = primaryPanelOf(layout)
-  const conversationOwner = primary !== null && isServerStreamId(primary) ? primary : streamId!
-  const { stream: ownerStream } = useStreamOrDraft(workspaceId!, conversationOwner)
-  const ownsViews = conversationOwner === primary
-  const isChannel = ownsViews && ownerStream?.type === StreamTypes.CHANNEL
-  const isDm = ownsViews && ownerStream?.type === StreamTypes.DM
-
   // `stream.displayName` is already viewer-resolved by useStreamOrDraft (DM peer
   // names included), so the page title just reads the shared name off it.
   useEffect(() => {
@@ -127,45 +107,6 @@ export function StreamPage() {
   if (pageError) {
     return <StreamErrorView type={pageError.type} workspaceId={workspaceId} />
   }
-
-  // Conversation side panel - shown for channels and DMs
-  const conversationPanel = (isChannel || isDm) && (
-    <>
-      <div
-        className={cn(
-          "fixed inset-0 z-40 bg-black/80 transition-opacity duration-300",
-          isConversationViewOpen ? "opacity-100" : "opacity-0 pointer-events-none"
-        )}
-        onClick={() => setConversationViewOpen(false)}
-      />
-      <div
-        className={cn(
-          "fixed inset-y-0 right-0 z-50 w-full sm:w-96 bg-background border-l shadow-lg flex flex-col",
-          "transition-transform duration-300 ease-out",
-          isConversationViewOpen ? "translate-x-0" : "translate-x-full"
-        )}
-        onTransitionEnd={(event) => {
-          if (event.target === event.currentTarget && !isConversationViewOpen) setConversationListMounted(false)
-        }}
-      >
-        <div className="flex items-center justify-between p-4 border-b">
-          <h2 className="text-lg font-semibold">Conversations</h2>
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setConversationViewOpen(false)}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-        <div className="flex-1 overflow-y-auto">
-          {conversationListMounted && (
-            <ConversationList
-              workspaceId={workspaceId}
-              streamId={conversationOwner}
-              onMessageClick={() => setConversationViewOpen(false)}
-            />
-          )}
-        </div>
-      </div>
-    </>
-  )
 
   // A tab floating over the page leaves everything else under it out of reach.
   const floating = floatingPanelTab(layout, isMobile) !== null
@@ -232,10 +173,6 @@ export function StreamPage() {
           />
         )}
       </PaneHost>
-      {/* A `fixed` overlay that would paint over another page on a phone, so it
-          stays out of the tree there rather than merely closed. Its `?convView`
-          state survives in the URL and returns with the page's own stream. */}
-      {(!isMobile || page === conversationOwner) && conversationPanel}
     </AsideCoversPanesContext.Provider>
   )
 }
