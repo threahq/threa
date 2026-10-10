@@ -54,6 +54,7 @@ import {
   ConversationSummaryService,
   PreparedRecall,
   PREPARED_RECALL_QUESTION,
+  buildAgentMessageContent,
 } from "../../../src/features/agents"
 import { SearchService, SearchQueryExpander, SearchRefiner } from "../../../src/features/search"
 import { UserPreferencesService } from "../../../src/features/user-preferences"
@@ -338,9 +339,9 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
         streamId: params.streamId,
         authorId: params.authorId,
         authorType: params.authorType,
-        contentJson: parseMarkdown(params.content),
-        contentMarkdown: params.content,
+        ...(await buildAgentMessageContent({ pool: ctx.pool, ...params })),
         sources: params.sources,
+        accessibleStreamIds: params.accessibleStreamIds,
       })
       return { id: message.id }
     }
@@ -350,10 +351,10 @@ async function runVisionTask(input: MultimodalVisionInput, ctx: EvalContext): Pr
         workspaceId: params.workspaceId,
         streamId: params.streamId,
         messageId: params.messageId,
-        contentJson: parseMarkdown(params.content),
-        contentMarkdown: params.content,
+        ...(await buildAgentMessageContent({ pool: ctx.pool, ...params })),
         actorId: params.actorId,
         actorType: "persona",
+        accessibleStreamIds: params.accessibleStreamIds,
       })
       return message ? { id: message.id } : null
     }

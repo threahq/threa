@@ -27,7 +27,7 @@ export {
   withCompanionSession,
   truncateMessages,
   MAX_MESSAGE_CHARS,
-  stripInaccessibleAgentRefs,
+  buildAgentMessageContent,
   PreparedRecall,
 } from "./companion"
 export type {
@@ -37,6 +37,7 @@ export type {
   ToolSetConfig,
   DroppedRef,
   DroppedRefReason,
+  AgentMessageContent,
   RecalledMemo,
 } from "./companion"
 
