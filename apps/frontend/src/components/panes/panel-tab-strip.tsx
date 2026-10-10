@@ -6,7 +6,6 @@ import {
   usePanel,
   useCurrentPane,
   usePanelTabFocusHandoff,
-  useSidebar,
   isDraftPanel,
   parseConversationPanel,
   parseComposePanel,
@@ -43,7 +42,6 @@ export function PanelTabStrip({
 }) {
   const { panelId, layout, section, getTabUrl, closeTab, splitTab, splits, setCurrentPane, focusTab } = usePanel()
   const currentPane = useCurrentPane()
-  const { isMobile } = useSidebar()
   const panelIds = section?.ids ?? []
   const activePanelId = section?.active ?? null
   const isCurrent = currentPane !== null && panelIds.includes(currentPane)
@@ -102,9 +100,9 @@ export function PanelTabStrip({
                 id={linkId}
                 to={getTabUrl(id)}
                 replace
-                draggable={!isMobile}
-                onDragStart={isMobile ? undefined : (event) => startTabDrag(event, workspaceId, id)}
-                onDragEnd={isMobile ? undefined : endTabDrag}
+                draggable
+                onDragStart={(event) => startTabDrag(event, workspaceId, id)}
+                onDragEnd={endTabDrag}
                 onClick={(event) => {
                   // The tab on show is the panel's title: following its link would close its overview.
                   // A floating tab's title puts it back in its place.
@@ -192,7 +190,7 @@ export function PanelTabStrip({
           {labels}
         </div>
       )}
-      {!isMobile && activePanelId && splits.length > 0 && (
+      {activePanelId && splits.length > 0 && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button

@@ -77,6 +77,7 @@ class OverlayHistoryCoordinator {
   // for has closed; `replaced` marks the top entry until the next navigation.
   private entries: { key: string; live: boolean; replaced: boolean }[] = []
   private lastKey: string | null = null
+  private afterHistory: (() => void)[] = []
   private router: DataRouter | null = null
   private unsubscribe: (() => void) | null = null
 
@@ -96,6 +97,15 @@ class OverlayHistoryCoordinator {
   unregister(entry: OverlayEntry): void {
     const index = this.stack.indexOf(entry)
     if (index !== -1) this.stack.splice(index, 1)
+    this.scheduleReconcile()
+  }
+
+  runAfterSettled(callback: () => void): void {
+    if (!this.router) {
+      callback()
+      return
+    }
+    this.afterHistory.push(callback)
     this.scheduleReconcile()
   }
 
@@ -179,10 +189,13 @@ class OverlayHistoryCoordinator {
         }
       }
       this.scheduleReconcile()
+    } else {
+      for (const callback of this.afterHistory.splice(0)) callback()
     }
   }
 
   resetForTests(): void {
+    this.afterHistory = []
     this.stack = []
     this.inFlight = null
     this.entries = []
@@ -205,6 +218,16 @@ const coordinator = new OverlayHistoryCoordinator()
  */
 export function attachOverlayHistoryRouter(router: DataRouter): void {
   coordinator.attachRouter(router)
+}
+
+/**
+ * Runs `callback` once every closed overlay's history entry has been popped, so
+ * a navigation it makes lands on the page's own entry instead of replacing a
+ * sentinel and leaving it behind. Call it from an effect after the overlay
+ * closed; runs at once without a router.
+ */
+export function afterOverlayHistory(callback: () => void): void {
+  coordinator.runAfterSettled(callback)
 }
 
 export function __resetOverlayHistoryForTests(): void {

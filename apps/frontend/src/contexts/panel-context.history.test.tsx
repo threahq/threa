@@ -1,7 +1,11 @@
-import { describe, it, expect } from "vitest"
-import { render, screen, act, fireEvent } from "@testing-library/react"
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest"
+import { render, screen, act, fireEvent, cleanup } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { createMemoryRouter, Link, RouterProvider, useLocation, useSearchParams } from "react-router-dom"
+import { createMemoryRouter, Link, RouterProvider, useLocation, useNavigate, useSearchParams } from "react-router-dom"
+import * as mobile from "@/hooks/use-mobile"
+import * as contexts from "@/contexts"
+import { StreamPickProvider, useStreamPick } from "@/components/layout/sidebar/stream-pick"
+import { navigateAfterShareHandoff } from "@/lib/share-navigation"
 import { DisplayedPanelLayoutProvider, PanelProvider, PaneScope, useCurrentPane, usePanel } from "./panel-context"
 
 /**
@@ -162,6 +166,9 @@ function TabsProbe() {
       <span data-testid="loc">{decodeURIComponent(`${location.pathname}${location.search}`)}</span>
       <span data-testid="front">{useCurrentPane()}</span>
       <button onClick={() => setCurrentPane("stream_main")}>work in stream_main</button>
+      <button onClick={() => setCurrentPane("stream_a")}>work in stream_a</button>
+      <button onClick={() => setCurrentPane("stream_b")}>work in stream_b</button>
+      <button onClick={() => setCurrentPane("conv:c")}>work in conv:c</button>
       <button onClick={() => reopenTab()}>reopen tab</button>
       <Link to={getPanelUrl("stream_b")}>open b</Link>
       {layout.columns.flat().flatMap((section) =>
@@ -201,6 +208,24 @@ function ScopedTab() {
       >{`${panelId} jumps`}</button>
       {ownsCover && <span>{`${panelId} owns the deep link`}</span>}
     </div>
+  )
+}
+
+function PickProbe() {
+  const pick = useStreamPick()
+  return <button onClick={() => pick("stream_a")}>pick stream_a</button>
+}
+
+function ShareProbe({ targetStreamId }: { targetStreamId: string }) {
+  const panel = usePanel()
+  const location = useLocation()
+  const navigate = useNavigate()
+  return (
+    <button
+      onClick={() =>
+        navigateAfterShareHandoff({ workspaceId: "ws", targetStreamId, location, navigate, isMobile: true, panel })
+      }
+    >{`share to ${targetStreamId}`}</button>
   )
 }
 
@@ -491,5 +516,174 @@ describe("panel tabs history", () => {
 
     await user.click(screen.getByRole("link", { name: "open b" }))
     expect(loc()).toBe("/w/ws/board?panel=stream_b")
+  })
+})
+
+describe("panel tabs history on a phone", () => {
+  beforeEach(() => {
+    vi.spyOn(mobile, "useIsMobile").mockReturnValue(true)
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  const mountPhone = (entries: string[], probe = <TabsProbe />) => {
+    const mounted = mount(entries, probe)
+    return { ...mounted, user: userEvent.setup() }
+  }
+  const front = () => screen.getByTestId("front").textContent
+
+  it("should land on the newest pane when the route's stream isn't written in the panel param", () => {
+    mountPhone([`${PAGE}?panel=stream_a.stream_b`])
+    expect(front()).toBe("stream_b")
+  })
+
+  it("should land on the route's stream when the panel param writes it", () => {
+    mountPhone([`${PAGE}?panel=stream_main-stream_a.stream_b`])
+    expect(front()).toBe("stream_main")
+  })
+
+  it("should write the route's stream when a swipe brings it to the front, so a reload lands on it", async () => {
+    const { user, loc } = mountPhone([`${PAGE}?panel=stream_a.stream_b`])
+
+    await user.click(screen.getByRole("button", { name: "work in stream_main" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_main-stream_a.stream_b`)
+    expect(front()).toBe("stream_main")
+  })
+
+  it("should name the pane a swipe leaves the route's stream for, with the stream written out", async () => {
+    const { user, loc } = mountPhone([`${PAGE}?panel=stream_main-stream_a.stream_b`])
+
+    await user.click(screen.getByRole("button", { name: "work in stream_b" }))
+    expect(loc()).toBe("/w/ws/s/stream_b?panel=stream_main-stream_a.stream_b")
+    expect(front()).toBe("stream_b")
+  })
+
+  it("should bring the pane behind in its section on show when a swipe reaches it from a link that doesn't write the route's stream", async () => {
+    const { user, loc } = mountPhone([`${PAGE}?panel=stream_a.stream_b`])
+
+    await user.click(screen.getByRole("button", { name: "work in stream_a" }))
+    expect(loc()).toBe("/w/ws/s/stream_a?panel=stream_main-stream_a*.stream_b")
+    expect(front()).toBe("stream_a")
+  })
+
+  it("should stop writing the route's stream when a swipe leaves it for a pane that isn't a stream", async () => {
+    const { user, loc } = mountPhone([`${PAGE}?panel=stream_main-conv:c`])
+
+    await user.click(screen.getByRole("button", { name: "work in conv:c" }))
+    expect(loc()).toBe(`${PAGE}?panel=conv:c`)
+    expect(front()).toBe("conv:c")
+  })
+
+  it("should put the route's stream in front when Back restores an entry that writes it", async () => {
+    const { back } = mountPhone([`${PAGE}?panel=stream_main-stream_a.stream_b`, `${PAGE}?panel=stream_a.stream_b`])
+    expect(front()).toBe("stream_b")
+
+    await back()
+    expect(front()).toBe("stream_main")
+  })
+
+  it("should land a reload on a pane that isn't a stream when it is the newest, wherever the route's stream sits", async () => {
+    const { user, loc } = mountPhone([`/w/ws/s/stream_b?panel=stream_main-stream_b-conv:c`])
+    expect(front()).toBe("stream_b")
+
+    await user.click(screen.getByRole("button", { name: "work in conv:c" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_b-conv:c`)
+
+    cleanup()
+    mountPhone([`${PAGE}?panel=stream_b-conv:c`])
+    expect(front()).toBe("conv:c")
+  })
+
+  it("should land Back where a reload of the entry lands when the entry doesn't write the route's stream", async () => {
+    const { back } = mountPhone([
+      `${PAGE}?panel=stream_a.stream_b`,
+      `/w/ws/s/stream_a?panel=stream_main-stream_a*.stream_b`,
+    ])
+    expect(front()).toBe("stream_a")
+
+    await back()
+    expect(front()).toBe("stream_b")
+  })
+
+  it("should give a reloaded deep link to the pane a reload lands on", () => {
+    mountPhone([`${PAGE}?panel=stream_main-stream_t&m=msg_1`])
+    expect({
+      front: front(),
+      main: screen.queryByText("stream_main owns the deep link") !== null,
+      t: screen.queryByText("stream_t owns the deep link") !== null,
+    }).toEqual({ front: "stream_main", main: true, t: false })
+  })
+
+  it("should pop back to the pane that isn't a stream when a stream tab opened from it closes", async () => {
+    const { user, back, loc } = mountPhone([PAGE, `${PAGE}?panel=stream_b-conv:c`])
+    expect(front()).toBe("conv:c")
+
+    await user.click(screen.getByRole("link", { name: "conv:c opens y" }))
+    expect(front()).toBe("stream_y")
+    await user.click(screen.getByRole("button", { name: "close stream_y" }))
+    expect({ loc: loc(), front: front() }).toEqual({ loc: `${PAGE}?panel=stream_b-conv:c`, front: "conv:c" })
+
+    await back()
+    expect(loc()).toBe(PAGE)
+  })
+
+  it("should leave the entry before a sidebar pick of the route's stream for Back", async () => {
+    vi.spyOn(contexts, "useSidebar").mockReturnValue({ isMobile: true } as ReturnType<typeof contexts.useSidebar>)
+    const before = "/w/ws/s/stream_a?panel=stream_main-stream_a.stream_b"
+    const { user, back, loc } = mountPhone(
+      ["/w/ws/board", before],
+      <StreamPickProvider workspaceId="ws">
+        <TabsProbe />
+        <PickProbe />
+      </StreamPickProvider>
+    )
+
+    await user.click(screen.getByRole("button", { name: "pick stream_a" }))
+    expect(loc()).toBe("/w/ws/s/stream_a?panel=stream_main-stream_a*.stream_b")
+
+    await back()
+    expect(loc()).toBe(before)
+  })
+
+  it("should bring a share target already among the panes to the front in place", async () => {
+    const { user, back, loc } = mountPhone(
+      [PAGE, `${PAGE}?panel=stream_t`],
+      <>
+        <TabsProbe />
+        <ShareProbe targetStreamId="stream_main" />
+      </>
+    )
+    expect(front()).toBe("stream_t")
+
+    await user.click(screen.getByRole("button", { name: "share to stream_main" }))
+    expect({ loc: loc(), front: front() }).toEqual({ loc: `${PAGE}?panel=stream_main-stream_t`, front: "stream_main" })
+
+    await back()
+    expect(loc()).toBe(PAGE)
+  })
+
+  it("should open a share target outside the panes as a page of its own", async () => {
+    const { user, back, loc } = mountPhone(
+      [PAGE, `${PAGE}?panel=stream_t`],
+      <>
+        <TabsProbe />
+        <ShareProbe targetStreamId="stream_z" />
+      </>
+    )
+
+    await user.click(screen.getByRole("button", { name: "share to stream_z" }))
+    expect(loc()).toBe("/w/ws/s/stream_z")
+
+    await back()
+    expect(loc()).toBe(`${PAGE}?panel=stream_t`)
+  })
+
+  it("should keep the route's stream unwritten on a desktop", async () => {
+    vi.mocked(mobile.useIsMobile).mockReturnValue(false)
+    const { user, loc } = mountPhone([`${PAGE}?panel=stream_a.stream_b`])
+
+    await user.click(screen.getByRole("button", { name: "work in stream_main" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_a.stream_b`)
   })
 })

@@ -97,7 +97,7 @@ function useStreamPicker(workspaceId: string): (streamId: string) => boolean {
   const location = useLocation()
   const path = useMatch("/w/:workspaceId/s/:streamId")?.params.streamId
   const [searchParams] = useSearchParams()
-  const { layout, setCurrentPane } = usePanel()
+  const { layout, setCurrentPane, markCurrentPane } = usePanel()
   const { isMobile } = useSidebar()
   const current = useCurrentPane()
   return useStableCallback((streamId: string) => {
@@ -119,8 +119,9 @@ function useStreamPicker(workspaceId: string): (streamId: string) => boolean {
     else params.delete(PANEL_PARAM)
     const query = params.toString()
     const url = `/w/${workspaceId}/s/${next.current}${query ? `?${query}` : ""}`
-    // The panes follow the route to the stream it names; setting one ahead of the URL would have a second quick pick replace a tab not yet there.
-    if (next.current === path) setCurrentPane(next.current)
+    // The panes follow the route to the stream it names; setting one ahead of the URL would have a second quick pick
+    // replace a tab not yet there. Marked, not set: on a phone, setting also rewrites the entry this push leaves for Back.
+    if (next.current === path) markCurrentPane(next.current)
     if (url !== `${location.pathname}${location.search}`) navigate(url)
     return true
   })

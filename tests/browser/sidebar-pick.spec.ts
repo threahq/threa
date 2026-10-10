@@ -144,8 +144,21 @@ test("should show main when its stream is picked on a phone, and swap the page i
   await page.goto(`/w/${workspaceId}/s/${streamA}?panel=${streamB}`)
   await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible({ timeout: 30_000 })
 
+  // The pane in front is not the first, so its header goes Back; the sidebar opens with a swipe.
   const pickOnPhone = async (name: string) => {
-    await page.getByRole("button", { name: "Pin sidebar" }).filter({ visible: true }).last().click()
+    await page.evaluate(() => {
+      const touch = (type: string, x: number) => {
+        const point = new Touch({ identifier: 1, target: document.body, clientX: x, clientY: 500 })
+        const touches = type === "touchend" ? [] : [point]
+        document.body.dispatchEvent(
+          new TouchEvent(type, { touches, changedTouches: [point], bubbles: true, cancelable: true })
+        )
+      }
+      touch("touchstart", 40)
+      touch("touchmove", 160)
+      touch("touchmove", 320)
+      touch("touchend", 320)
+    })
     await expect(
       page.getByRole("navigation", { name: "Sidebar navigation" }).getByLabel("Collapse sidebar")
     ).toBeInViewport()
