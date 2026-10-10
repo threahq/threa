@@ -38,6 +38,11 @@ models:
     inputModalities: [text, image]
     outputModalities: [text]
 
+  openrouter:anthropic/claude-haiku-5.5:
+    name: Claude Haiku 5.5
+    inputModalities: [text, image]
+    outputModalities: [text]
+
   openrouter:anthropic/claude-haiku-4.5:
     name: Claude Haiku 4.5
     inputModalities: [text, image]

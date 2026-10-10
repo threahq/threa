@@ -1,6 +1,6 @@
 # AI Model Reference
 
-**Last updated:** 2026-09-22
+**Last updated:** 2026-10-10
 
 This document provides a comprehensive reference for AI models including capabilities, pricing, and usage guidelines. Always verify against this file when working with AI integration.
 
@@ -21,6 +21,7 @@ curl -s https://openrouter.ai/api/v1/models -H "Authorization: Bearer $OPENROUTE
 | `openai/gpt-6-luna`             | $0.10 | $0.50  | $0.01      | **$0.125**  | 1.05M   |
 | `openai/gpt-5.6-terra`          | $2.50 | $15.00 | $0.25      | $3.125      | 1.05M   |
 | `openai/gpt-5.6-sol`            | $5.00 | $30.00 | $0.50      | $6.25       | 1.05M   |
+| `anthropic/claude-haiku-5.5`    | $0.10 | $0.50  | $0.01      | $0.125      | 1M      |
 | `anthropic/claude-haiku-4.5`    | $1.00 | $5.00  | $0.10      | $1.25       | 200K    |
 | `anthropic/claude-sonnet-5`     | $2.00 | $10.00 | $0.20      | $2.50       | 1M      |
 | `anthropic/claude-sonnet-4.6`   | $3.00 | $15.00 | $0.30      | $3.75       | 1M      |
@@ -119,6 +120,20 @@ model picker. The two lists are meant to stay identical — an entry is an offer
 The general researcher (`general_research`) pinned 4.6 until 2026-08-31. It now inherits the calling turn's model: on a backend persona turn that is the resolved turn model, escalation included; an enclave turn always forwards the persona's base model, since enclave turns never escalate. `gpt-6-luna` is the fallback where there is no calling turn, and an eval's `general:researcher` override outranks both. No code path selects 4.6 by default any more.
 
 Research cost now follows the turn: a persona pinned to Opus 5 researches at Opus prices, where the same research used to bill at Sonnet 4.6's.
+
+---
+
+### openrouter:anthropic/claude-haiku-5.5
+
+**Name:** Claude Haiku 5.5
+
+**Description:** Anthropic's small tier, successor to Haiku 4.5. 1M context, image and file input, tool calling and structured output. OpenRouter lists EU endpoints (Vertex `europe`, Bedrock `eu-west-1`) at 10% above the global rate. Regional routing has not been verified for Threa.
+
+**Typical cost:** ~$0.10 / ~$0.50 per 1M (cache read $0.01, cache **write** $0.125), verified 2026-10-10. The same price sheet as `gpt-6-luna` up to 100K prompt tokens. Above 100K prompt tokens it bills 5×: $0.50 / $2.50, cache read $0.05, cache write $0.625. Luna's long-context step is 2× and starts at 272K.
+
+**When to use:** explicit selection only, as a persona model or a delegable subagent model. No production component defaults to it. Added 2026-10-10 as a product trial against Luna; no Threa eval has compared the two.
+
+**Use instead of:** `claude-haiku-4.5`
 
 ---
 
