@@ -170,6 +170,7 @@ export interface ListConversationsParams {
   status?: string
   cursor?: string
   limit?: number
+  includeArchived?: boolean
 }
 
 export async function listConversations(
@@ -179,7 +180,13 @@ export async function listConversations(
 ): Promise<unknown> {
   const streamId = p.streamRef ? await resolver.resolveStream(p.streamRef) : undefined
   const response = await client.get<PagedEnvelope<unknown>>(
-    `/conversations${buildQuery({ streamId, status: p.status, after: p.cursor, limit: p.limit })}`
+    `/conversations${buildQuery({
+      streamId,
+      status: p.status,
+      after: p.cursor,
+      limit: p.limit,
+      includeArchived: p.includeArchived ? "true" : undefined,
+    })}`
   )
   const withParticipants = await Promise.all(response.data.map((c) => enrichConversation(c, resolver)))
   return { ...response, data: await enrichStreamContext(withParticipants, resolver) }

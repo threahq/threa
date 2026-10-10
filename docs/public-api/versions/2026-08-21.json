@@ -5858,7 +5858,16 @@
                             "type": "boolean"
                           },
                           "createdAt": { "type": "string", "format": "date-time" },
-                          "archivedAt": { "type": "string", "format": "date-time" }
+                          "archivedAt": {
+                            "description": "When the stream's own archive flag was set.",
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "archived": {
+                            "description": "Present (true) when the stream is read-only because it, or an ancestor, is archived. A thread under an archived channel carries this without `archivedAt`. Writes are refused with STREAM_READ_ONLY.",
+                            "type": "boolean",
+                            "const": true
+                          }
                         },
                         "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
                         "additionalProperties": false
@@ -5963,7 +5972,16 @@
                           "type": "boolean"
                         },
                         "createdAt": { "type": "string", "format": "date-time" },
-                        "archivedAt": { "type": "string", "format": "date-time" }
+                        "archivedAt": {
+                          "description": "When the stream's own archive flag was set.",
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "archived": {
+                          "description": "Present (true) when the stream is read-only because it, or an ancestor, is archived. A thread under an archived channel carries this without `archivedAt`. Writes are refused with STREAM_READ_ONLY.",
+                          "type": "boolean",
+                          "const": true
+                        }
                       },
                       "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
                       "additionalProperties": false
@@ -6079,7 +6097,16 @@
                           "type": "boolean"
                         },
                         "createdAt": { "type": "string", "format": "date-time" },
-                        "archivedAt": { "type": "string", "format": "date-time" }
+                        "archivedAt": {
+                          "description": "When the stream's own archive flag was set.",
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "archived": {
+                          "description": "Present (true) when the stream is read-only because it, or an ancestor, is archived. A thread under an archived channel carries this without `archivedAt`. Writes are refused with STREAM_READ_ONLY.",
+                          "type": "boolean",
+                          "const": true
+                        }
                       },
                       "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
                       "additionalProperties": false
@@ -6183,7 +6210,16 @@
                           "type": "boolean"
                         },
                         "createdAt": { "type": "string", "format": "date-time" },
-                        "archivedAt": { "type": "string", "format": "date-time" }
+                        "archivedAt": {
+                          "description": "When the stream's own archive flag was set.",
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "archived": {
+                          "description": "Present (true) when the stream is read-only because it, or an ancestor, is archived. A thread under an archived channel carries this without `archivedAt`. Writes are refused with STREAM_READ_ONLY.",
+                          "type": "boolean",
+                          "const": true
+                        }
                       },
                       "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
                       "additionalProperties": false
@@ -6287,7 +6323,16 @@
                           "type": "boolean"
                         },
                         "createdAt": { "type": "string", "format": "date-time" },
-                        "archivedAt": { "type": "string", "format": "date-time" }
+                        "archivedAt": {
+                          "description": "When the stream's own archive flag was set.",
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "archived": {
+                          "description": "Present (true) when the stream is read-only because it, or an ancestor, is archived. A thread under an archived channel carries this without `archivedAt`. Writes are refused with STREAM_READ_ONLY.",
+                          "type": "boolean",
+                          "const": true
+                        }
                       },
                       "required": ["id", "type", "displayName", "visibility", "memoryMode", "createdAt"],
                       "additionalProperties": false
@@ -7142,7 +7187,7 @@
         "operationId": "listConversations",
         "summary": "List conversations",
         "tags": ["Conversations"],
-        "description": "Cursor-paginated conversation feed across accessible streams, newest activity first. Filter with `streamId` (scopes to that stream's root and its threads) and `status`.",
+        "description": "Cursor-paginated conversation feed across accessible streams, newest activity first. Filter with `streamId` (scopes to that stream's root and its threads) and `status`. Conversations in archived streams, and in threads sealed under an archived stream, are omitted unless `includeArchived=true`; their rows carry `archived: true`.",
         "security": [{ "apiKey": ["messages:read"] }],
         "parameters": [
           { "$ref": "#/components/parameters/ThreaVersion" },
@@ -7166,6 +7211,12 @@
             "in": "query",
             "required": false,
             "schema": { "default": 50, "type": "integer", "minimum": 1, "maximum": 100 }
+          },
+          {
+            "name": "includeArchived",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string", "enum": ["true", "false"] }
           }
         ],
         "responses": {
@@ -7207,7 +7258,12 @@
                           },
                           "lastActivityAt": { "type": "string", "format": "date-time" },
                           "createdAt": { "type": "string", "format": "date-time" },
-                          "updatedAt": { "type": "string", "format": "date-time" }
+                          "updatedAt": { "type": "string", "format": "date-time" },
+                          "archived": {
+                            "description": "Present (true) when the anchor stream is archived or sealed by an archived ancestor. The conversation is read-only; writes are refused with STREAM_READ_ONLY.",
+                            "type": "boolean",
+                            "const": true
+                          }
                         },
                         "required": [
                           "id",
@@ -7325,7 +7381,12 @@
                         },
                         "lastActivityAt": { "type": "string", "format": "date-time" },
                         "createdAt": { "type": "string", "format": "date-time" },
-                        "updatedAt": { "type": "string", "format": "date-time" }
+                        "updatedAt": { "type": "string", "format": "date-time" },
+                        "archived": {
+                          "description": "Present (true) when the anchor stream is archived or sealed by an archived ancestor. The conversation is read-only; writes are refused with STREAM_READ_ONLY.",
+                          "type": "boolean",
+                          "const": true
+                        }
                       },
                       "required": [
                         "id",

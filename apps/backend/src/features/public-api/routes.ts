@@ -110,7 +110,13 @@ const streamSchema = z.object({
       "True when the stream is end-to-end encrypted. Its message bodies arrive as `sealed` ciphertext with an opaque `content` placeholder, and a plaintext send is rejected with E2E_STREAM_REQUIRES_CIPHERTEXT."
     ),
   createdAt: z.string().datetime(),
-  archivedAt: z.string().datetime().optional(),
+  archivedAt: z.string().datetime().optional().describe("When the stream's own archive flag was set."),
+  archived: z
+    .literal(true)
+    .optional()
+    .describe(
+      "Present (true) when the stream is read-only because it, or an ancestor, is archived. A thread under an archived channel carries this without `archivedAt`. Writes are refused with STREAM_READ_ONLY."
+    ),
 })
 
 const attachmentSummarySchema = z.object({
@@ -188,6 +194,12 @@ const conversationSchema = z.object({
   lastActivityAt: z.string().datetime(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+  archived: z
+    .literal(true)
+    .optional()
+    .describe(
+      "Present (true) when the anchor stream is archived or sealed by an archived ancestor. The conversation is read-only; writes are refused with STREAM_READ_ONLY."
+    ),
 })
 
 // A hydrated slot value in a response-level `slots` map. Discriminated by
@@ -1766,7 +1778,8 @@ export const PUBLIC_API_ROUTES: PublicApiRoute[] = [
     summary: "List conversations",
     description:
       "Cursor-paginated conversation feed across accessible streams, newest activity first. " +
-      "Filter with `streamId` (scopes to that stream's root and its threads) and `status`.",
+      "Filter with `streamId` (scopes to that stream's root and its threads) and `status`. " +
+      "Conversations in archived streams, and in threads sealed under an archived stream, are omitted unless `includeArchived=true`; their rows carry `archived: true`.",
     tags: ["Conversations"],
     scopes: [WORKSPACE_PERMISSION_SCOPES.MESSAGES_READ],
     parameters: [workspaceIdParam],

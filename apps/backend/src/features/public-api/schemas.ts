@@ -553,6 +553,9 @@ export const listConversationsSchema = z.object({
   /** Opaque cursor from a prior page's `cursor`. */
   after: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
+  // Query-string boolean: only the literal "true" opts in (no transform — the
+  // OpenAPI generator cannot derive a schema through effects).
+  includeArchived: z.enum(["true", "false"]).optional(),
 })
 
 export const listConversationMessagesSchema = z.object({

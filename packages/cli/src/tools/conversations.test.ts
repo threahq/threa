@@ -36,6 +36,19 @@ test("list_conversations maps stream_id/cursor to wire params and passes the env
   expect(textPayload(result)).toEqual({ data: [{ id: "conv_1" }], hasMore: true, cursor: "cur_2" })
 })
 
+test("list_conversations sends includeArchived=true when include_archived is set and nothing otherwise", async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(200, { data: [], hasMore: false, cursor: null }))
+  const client = await connectClient()
+
+  await client.callTool({ name: "list_conversations", arguments: { include_archived: true } })
+  await client.callTool({ name: "list_conversations", arguments: {} })
+
+  const [archived, plain] = fetchSpy.mock.calls.map((call) =>
+    new URL(String(call[0])).searchParams.get("includeArchived")
+  )
+  expect({ archived, plain }).toEqual({ archived: "true", plain: null })
+})
+
 test("read_conversation fetches the conversation and its messages concurrently and maps cursor to `after`", async () => {
   fetchSpy.mockImplementation(
     fetchByPath((path) =>

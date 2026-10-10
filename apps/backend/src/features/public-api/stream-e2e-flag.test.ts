@@ -7,7 +7,7 @@
  * being the discovery mechanism.
  */
 
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
 import { createPublicApiHandlers, type PublicApiDeps } from "./handlers"
 import { StreamRepository } from "../streams"
@@ -80,6 +80,9 @@ function userRequest(): Request {
 
 describe("public API getStream and end-to-end encryption", () => {
   afterEach(() => mock.restore())
+  beforeEach(() => {
+    spyOn(StreamRepository, "filterEffectivelyArchivedIds").mockResolvedValue([])
+  })
 
   it("marks an encrypted stream as e2eEnabled", async () => {
     spyOn(StreamRepository, "findById").mockResolvedValue(

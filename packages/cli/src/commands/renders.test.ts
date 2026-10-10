@@ -63,6 +63,82 @@ test("search --what messages renders timestamp, stream scope, author, and a cont
   expect(body).toBe("  WebSocket error across lines")
 })
 
+const ARCHIVED_CHANNEL = { id: "stream_old", type: "channel", displayName: "vendor-migration", archived: true }
+const ARCHIVED_CONVERSATION = {
+  id: "conv_old",
+  streamId: "stream_thread",
+  rootStreamId: "stream_root",
+  status: "resolved",
+  participantIds: [],
+  archived: true,
+}
+
+test("streams list marks archived rows and leaves live rows unmarked", async () => {
+  fetchSpy.mockImplementation(
+    workspaceFetch((path) =>
+      path.endsWith("/streams")
+        ? jsonResponse(200, { data: [STREAMS.stream_root, ARCHIVED_CHANNEL], hasMore: false, cursor: null })
+        : undefined
+    )
+  )
+
+  const result = await run(["streams", "list", "--archived"], { config: TEST_CONFIG })
+
+  expect(result.stdout.trimEnd().split("\n")).toEqual([
+    "stream_root  channel  engineering",
+    "stream_old  channel  vendor-migration  [archived]",
+  ])
+})
+
+test("streams read marks an archived stream in its header", async () => {
+  fetchSpy.mockImplementation(
+    workspaceFetch((path) => {
+      if (path.endsWith("/streams/stream_old")) return jsonResponse(200, { data: ARCHIVED_CHANNEL })
+      if (path.endsWith("/streams/stream_old/messages")) return jsonResponse(200, { data: [], hasMore: false })
+      return undefined
+    })
+  )
+
+  const result = await run(["streams", "read", "stream_old"], { config: TEST_CONFIG })
+
+  expect(result.stdout.split("\n")[0]).toBe("stream: stream_old  vendor-migration  [archived]")
+})
+
+test("streams unarchive reports a stream an archived ancestor still seals", async () => {
+  fetchSpy.mockImplementation(
+    workspaceFetch((path) =>
+      path.endsWith("/streams/stream_thread/unarchive")
+        ? jsonResponse(200, { data: { ...(STREAMS.stream_thread as object), archived: true } })
+        : undefined
+    )
+  )
+
+  const result = await run(["streams", "unarchive", "stream_thread"], { config: TEST_CONFIG })
+
+  expect(result.stdout.trimEnd()).toBe("stream_thread  deploy plan  sealed by an archived ancestor")
+})
+
+test("conversations list and read mark a conversation in an archived stream", async () => {
+  fetchSpy.mockImplementation(
+    workspaceFetch((path) => {
+      if (path.endsWith("/conversations")) {
+        return jsonResponse(200, { data: [ARCHIVED_CONVERSATION], hasMore: false, cursor: null })
+      }
+      if (path.endsWith("/conversations/conv_old")) return jsonResponse(200, { data: ARCHIVED_CONVERSATION })
+      if (path.endsWith("/conversations/conv_old/messages")) return jsonResponse(200, { data: [], hasMore: false })
+      return undefined
+    })
+  )
+
+  const listed = await run(["conversations", "list", "--archived"], { config: TEST_CONFIG })
+  const read = await run(["conversations", "read", "conv_old"], { config: TEST_CONFIG })
+
+  expect({ listed: listed.stdout.split("\n")[0], read: read.stdout.split("\n")[0] }).toEqual({
+    listed: "conv_old  resolved  engineering › deploy plan  [archived]",
+    read: "conv_old  resolved  engineering › deploy plan  [archived]",
+  })
+})
+
 test("conversations list renders status, message count, activity time, and stream scope", async () => {
   fetchSpy.mockImplementation(
     workspaceFetch((path) =>

@@ -21,7 +21,8 @@ export function registerStreamTools(
         "List streams this key can access, newest-ish first. Filter with `type` (one or more of scratchpad, " +
         "channel, dm, thread, system) and `query` (text match on name). Page by passing the previous " +
         "response's `cursor` value back as `after`; `hasMore` tells you when to stop. limit ≤ 200 (default 50). " +
-        "Archived streams (and live threads under an archived root) are omitted unless `include_archived` is true.",
+        "Archived streams and live threads under an archived ancestor are omitted unless `include_archived` is true; " +
+        "both then carry `archived: true`.",
       inputSchema: {
         type: z.array(z.enum(STREAM_TYPES)).optional(),
         query: z.string().optional(),

@@ -125,6 +125,20 @@ test("streams list --archived passes includeArchived=true to the API", async () 
   expect(calledPaths()[0]).not.toContain("includeArchived")
 })
 
+test("conversations list --archived passes includeArchived=true to the API", async () => {
+  fetchSpy.mockResolvedValue(jsonResponse(200, { data: [], hasMore: false, cursor: null }))
+
+  const result = await run(["conversations", "list", "--archived"], { config: TEST_CONFIG })
+
+  expect(result.exitCode).toBe(0)
+  expect(calledPaths()[0]).toContain("includeArchived=true")
+
+  fetchSpy.mockClear()
+  fetchSpy.mockResolvedValue(jsonResponse(200, { data: [], hasMore: false, cursor: null }))
+  await run(["conversations", "list"], { config: TEST_CONFIG })
+  expect(calledPaths()[0]).not.toContain("includeArchived")
+})
+
 test("search rejects a filter the chosen what does not support: exit 1, stderr JSON, no HTTP", async () => {
   const result = await run(["search", "x", "--what", "attachments", "--type", "channel"], {
     config: TEST_CONFIG,

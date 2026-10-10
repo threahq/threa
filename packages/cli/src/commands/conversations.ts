@@ -1,5 +1,6 @@
 import { listConversations, readConversation } from "../ops"
 import {
+  boolFlag,
   enumFlag,
   fmtTimestamp,
   intFlag,
@@ -16,7 +17,7 @@ import { CONVERSATION_STATUSES } from "../tools/constants"
 const listVerb: VerbSpec = {
   name: "list",
   summary: "List conversations, optionally scoped to a stream",
-  usage: "threa conversations list [--stream ref] [--status s] [--cursor c] [--limit n]",
+  usage: "threa conversations list [--stream ref] [--status s] [--cursor c] [--limit n] [--archived]",
   help:
     "threa conversations list [flags]\n\n" +
     "List conversations (grouped runs of messages under a stream's effective root), newest activity first.\n\n" +
@@ -27,6 +28,9 @@ const listVerb: VerbSpec = {
     "\n" +
     "  --cursor c     pagination cursor from a previous response\n" +
     "  --limit n      max results, <= 100 (default 50)\n" +
+    "  --archived     include conversations in archived streams and in threads under archived ancestors.\n" +
+    "                 An archived channel is not resolvable by #slug: pass --stream its stream_ id\n" +
+    "                 (threa streams list --archived shows it)\n" +
     "  --json         force JSON output\n" +
     "  --help         show this help",
   options: {
@@ -34,6 +38,7 @@ const listVerb: VerbSpec = {
     status: { type: "string" },
     cursor: { type: "string" },
     limit: { type: "string" },
+    archived: { type: "boolean" },
   },
   run: (ctx, _positionals, values) =>
     listConversations(ctx.client, ctx.resolver, {
@@ -41,6 +46,7 @@ const listVerb: VerbSpec = {
       status: enumFlag(values, "status", CONVERSATION_STATUSES),
       cursor: stringFlag(values, "cursor"),
       limit: intFlag(values, "limit"),
+      includeArchived: boolFlag(values, "archived"),
     }),
   render: (payload) =>
     renderList<ConversationRow>(payload, renderConversationRow, {
@@ -59,6 +65,7 @@ interface ConversationRow {
   stream?: { id?: string; name?: string }
   rootStream?: { id?: string; name?: string }
   streamId?: string
+  archived?: boolean
 }
 
 function renderConversationRow(c: ConversationRow): string {
@@ -68,6 +75,7 @@ function renderConversationRow(c: ConversationRow): string {
     c.messageCount !== undefined ? `${c.messageCount} msgs` : undefined,
     fmtTimestamp(c.lastActivityAt) || undefined,
     streamLabel(c) || undefined,
+    c.archived ? "[archived]" : undefined,
   ]
     .filter(Boolean)
     .join("  ")
@@ -118,7 +126,9 @@ const readVerb: VerbSpec = {
     const c = p.conversation
     if (c) {
       lines.push(
-        [c.id ?? "?", c.status ?? "?", streamLabel(c) || undefined].filter(Boolean).join("  "),
+        [c.id ?? "?", c.status ?? "?", streamLabel(c) || undefined, c.archived ? "[archived]" : undefined]
+          .filter(Boolean)
+          .join("  "),
         [
           fmtTimestamp(c.createdAt) && `created ${fmtTimestamp(c.createdAt)}`,
           fmtTimestamp(c.lastActivityAt) && `last activity ${fmtTimestamp(c.lastActivityAt)}`,

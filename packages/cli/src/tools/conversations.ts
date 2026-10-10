@@ -14,7 +14,10 @@ export function registerConversationTools(server: McpServer, client: ThreaApiCli
       description:
         "List conversations (grouped runs of messages under a stream's effective root), newest activity first. " +
         "Filter with `stream_id` (accepts a stream_ id or `#channel-slug`; scopes to that stream's root and its " +
-        "threads) and `status` (active, stalled, resolved). Each conversation mirrors its participantIds with a " +
+        "threads) and `status` (active, stalled, resolved). Conversations in an archived stream, or in a thread " +
+        "under an archived ancestor, are omitted unless `include_archived` is true; those rows then carry " +
+        "`archived: true`. An archived channel is not resolvable by `#channel-slug`: pass its stream_ id, which " +
+        "`list_streams` with `include_archived` returns. Each conversation mirrors its participantIds with a " +
         "participants array carrying name/slug. Page by passing the previous response's `cursor` value back as " +
         "`cursor`; `hasMore` tells you when to stop. limit ≤ 100 (default 50).",
       inputSchema: {
@@ -22,10 +25,19 @@ export function registerConversationTools(server: McpServer, client: ThreaApiCli
         status: z.enum(CONVERSATION_STATUSES).optional(),
         cursor: z.string().optional(),
         limit: z.number().int().min(1).max(100).optional(),
+        include_archived: z.boolean().optional(),
       },
     },
-    async ({ stream_id, status, cursor, limit }) =>
-      runTool(() => listConversations(client, resolver, { streamRef: stream_id, status, cursor, limit }))
+    async ({ stream_id, status, cursor, limit, include_archived }) =>
+      runTool(() =>
+        listConversations(client, resolver, {
+          streamRef: stream_id,
+          status,
+          cursor,
+          limit,
+          includeArchived: include_archived,
+        })
+      )
   )
 
   server.registerTool(

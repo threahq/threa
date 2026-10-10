@@ -196,7 +196,7 @@ const E2E_PLACEHOLDER_CONTENT_JSON: JSONContent = {
   content: [{ type: "paragraph", content: [{ type: "text", text: E2E_PLACEHOLDER_CONTENT_MARKDOWN }] }],
 }
 
-function serializeStream(stream: Stream, context?: DisplayNameContext): WireStream {
+function serializeStream(stream: Stream, archived: boolean, context?: DisplayNameContext): WireStream {
   const effective = getEffectiveDisplayName(stream, context)
   const displayName = stream.type === "channel" ? `#${effective.displayName}` : effective.displayName
   const anchorId = stream.parentAnchorId
@@ -215,6 +215,7 @@ function serializeStream(stream: Stream, context?: DisplayNameContext): WireStre
     ...(stream.e2eEnabled === true && { e2eEnabled: true }),
     createdAt: stream.createdAt.toISOString(),
     ...(stream.archivedAt != null && { archivedAt: stream.archivedAt.toISOString() }),
+    ...(archived && { archived: true as const }),
   }
 }
 
@@ -309,7 +310,11 @@ function serializeMessage(
   }
 }
 
-function serializeConversation(conversation: Conversation, stream: Stream | undefined): WireConversation {
+function serializeConversation(
+  conversation: Conversation,
+  stream: Stream | undefined,
+  archived: boolean
+): WireConversation {
   const rootStreamId = stream?.rootStreamId ?? stream?.id ?? conversation.streamId
   let topicSummary = conversation.topicSummary
   if (stream?.type === StreamTypes.SCRATCHPAD) {
@@ -327,6 +332,7 @@ function serializeConversation(conversation: Conversation, stream: Stream | unde
     lastActivityAt: conversation.lastActivityAt.toISOString(),
     createdAt: conversation.createdAt.toISOString(),
     updatedAt: conversation.updatedAt.toISOString(),
+    ...(archived && { archived: true as const }),
   }
 }
 
@@ -908,6 +914,22 @@ export function createPublicApiHandlers({
     throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
   }
 
+  /** Whether `stream` is archived itself or sealed by an archived ancestor. */
+  async function isEffectivelyArchived(stream: Stream): Promise<boolean> {
+    if (stream.archivedAt != null) return true
+    return StreamRepository.isEffectivelyArchived(pool, stream.workspaceId, stream.id)
+  }
+
+  /** The effectively archived ids on one list page. A page listed without archived rows has none to mark. */
+  async function archivedStreamIdsOnPage(
+    workspaceId: string,
+    streamIds: string[],
+    showArchived: boolean
+  ): Promise<Set<string>> {
+    if (!showArchived) return new Set()
+    return new Set(await StreamRepository.filterEffectivelyArchivedIds(pool, workspaceId, streamIds))
+  }
+
   /** A nameless thread borrows its parent's name on the wire, so serializing one needs the parent row. */
   async function displayNameContext(stream: Stream): Promise<DisplayNameContext | undefined> {
     if (stream.type !== StreamTypes.THREAD || stream.displayName !== null || !stream.parentStreamId) return undefined
@@ -930,7 +952,7 @@ export function createPublicApiHandlers({
         archived
       )
       if (!stream) throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
-      res.json({ data: serializeStream(stream, await displayNameContext(stream)) })
+      res.json({ data: serializeStream(stream, await isEffectivelyArchived(stream), await displayNameContext(stream)) })
     }
   }
 
@@ -3118,6 +3140,7 @@ export function createPublicApiHandlers({
 
     async listStreams(req: Request, res: Response) {
       const { type, query, after: afterCursor, limit, includeArchived } = validateRequest(listStreamsSchema, req.query)
+      const showArchived = includeArchived === "true"
       const accessibleStreamIds = await getAccessibleStreamIds(req)
 
       if (accessibleStreamIds.length === 0) {
@@ -3133,7 +3156,7 @@ export function createPublicApiHandlers({
         limit: limit + 1,
         cursorCreatedAt: cursor?.sortKey,
         cursorId: cursor?.id,
-        includeArchived: includeArchived === "true",
+        includeArchived: showArchived,
       })
 
       const hasMore = streams.length > limit
@@ -3142,11 +3165,16 @@ export function createPublicApiHandlers({
       const parentStreamMap = await resolveParentStreams(pool, req.workspaceId!, page)
       await noteSandboxReads(req, [...page.map((s) => s.id), ...parentStreamMap.keys()])
 
+      const archivedIds = await archivedStreamIdsOnPage(
+        req.workspaceId!,
+        page.map((s) => s.id),
+        showArchived
+      )
       const lastStream = page[page.length - 1]
       res.json({
         data: page.map((s) => {
           const parentStream = s.parentStreamId ? parentStreamMap.get(s.parentStreamId) : undefined
-          return serializeStream(s, parentStream ? { parentStream } : undefined)
+          return serializeStream(s, archivedIds.has(s.id), parentStream ? { parentStream } : undefined)
         }),
         hasMore,
         cursor: !query && lastStream ? encodeCursor(lastStream.createdAt, lastStream.id) : null,
@@ -3164,7 +3192,7 @@ export function createPublicApiHandlers({
       }
 
       await noteSandboxReads(req, [stream.id, stream.parentStreamId])
-      res.json({ data: serializeStream(stream, await displayNameContext(stream)) })
+      res.json({ data: serializeStream(stream, await isEffectivelyArchived(stream), await displayNameContext(stream)) })
     },
 
     async updateStream(req: Request, res: Response) {
@@ -3203,7 +3231,8 @@ export function createPublicApiHandlers({
         throw new HttpError("Stream not found", { status: 404, code: "NOT_FOUND" })
       }
 
-      res.json({ data: serializeStream(updated, await displayNameContext(updated)) })
+      // The service refuses the update unless the stream is writable, so the row it returns is never archived.
+      res.json({ data: serializeStream(updated, false, await displayNameContext(updated)) })
     },
 
     archiveStream: setStreamArchived(true),
@@ -3344,7 +3373,8 @@ export function createPublicApiHandlers({
      */
     async listConversations(req: Request, res: Response) {
       const workspaceId = req.workspaceId!
-      const { streamId, status, after, limit } = validateRequest(listConversationsSchema, req.query)
+      const { streamId, status, after, limit, includeArchived } = validateRequest(listConversationsSchema, req.query)
+      const showArchived = includeArchived === "true"
 
       let scopeRootIds: string[] | undefined
       if (streamId) {
@@ -3366,6 +3396,7 @@ export function createPublicApiHandlers({
           scopeStreamIds: scopeRootIds,
           limit: limit + 1,
           cursor,
+          showArchived,
         })
       } else if (req.botApiKey) {
         const rootIds =
@@ -3374,6 +3405,7 @@ export function createPublicApiHandlers({
           status,
           limit: limit + 1,
           cursor,
+          showArchived,
         })
       } else {
         throw new HttpError("No API key context", { status: 401, code: "UNAUTHORIZED" })
@@ -3382,10 +3414,17 @@ export function createPublicApiHandlers({
       const hasMore = rows.length > limit
       const page = hasMore ? rows.slice(0, limit) : rows
       const streamsById = await resolveConversationStreams(pool, req.workspaceId!, page)
+      const archivedIds = await archivedStreamIdsOnPage(workspaceId, [...streamsById.keys()], showArchived)
       const last = page[page.length - 1]
 
       res.json({
-        data: page.map((conversation) => serializeConversation(conversation, streamsById.get(conversation.streamId))),
+        data: page.map((conversation) =>
+          serializeConversation(
+            conversation,
+            streamsById.get(conversation.streamId),
+            archivedIds.has(conversation.streamId)
+          )
+        ),
         hasMore,
         cursor: last ? encodeCursor(last.lastActivityAt, last.id) : null,
       })
@@ -3394,9 +3433,9 @@ export function createPublicApiHandlers({
     async getConversation(req: Request, res: Response) {
       const conversation = await resolveAccessibleConversation(req, req.params.conversationId)
       const streamsById = await resolveConversationStreams(pool, req.workspaceId!, [conversation])
-      res.json({
-        data: serializeConversation(conversation, streamsById.get(conversation.streamId)),
-      })
+      const stream = streamsById.get(conversation.streamId)
+      const archived = stream !== undefined && (await isEffectivelyArchived(stream))
+      res.json({ data: serializeConversation(conversation, stream, archived) })
     },
 
     /**

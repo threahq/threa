@@ -19,10 +19,22 @@ interface StreamRow {
   displayName?: string
   name?: string
   slug?: string
+  archived?: boolean
+  archivedAt?: string | null
 }
 
 function streamLabel(s: StreamRow): string {
   return s.displayName ?? s.name ?? (s.slug ? `#${s.slug}` : (s.id ?? "?"))
+}
+
+function renderStreamRow(s: StreamRow): string {
+  return [s.id ?? "?", s.type ?? "?", streamLabel(s), s.archived ? "[archived]" : undefined].filter(Boolean).join("  ")
+}
+
+function archiveState(s: StreamRow): string {
+  if (s.archivedAt) return `archived ${s.archivedAt}`
+  if (s.archived) return "sealed by an archived ancestor"
+  return "active"
 }
 
 const listVerb: VerbSpec = {
@@ -39,7 +51,7 @@ const listVerb: VerbSpec = {
     "  --query q    text match on stream name\n" +
     "  --after c    pagination cursor from a previous response\n" +
     "  --limit n    max results, <= 200 (default 50)\n" +
-    "  --archived   include archived streams and threads under archived roots\n" +
+    "  --archived   include archived streams and threads under archived ancestors\n" +
     "  --json       force JSON output\n" +
     "  --help       show this help",
   options: {
@@ -57,11 +69,7 @@ const listVerb: VerbSpec = {
       limit: intFlag(values, "limit"),
       includeArchived: boolFlag(values, "archived"),
     }),
-  render: (payload) =>
-    renderList<StreamRow>(payload, (s) => `${s.id ?? "?"}  ${s.type ?? "?"}  ${streamLabel(s)}`, {
-      empty: "(no streams)",
-      cursorFlag: "after",
-    }),
+  render: (payload) => renderList<StreamRow>(payload, renderStreamRow, { empty: "(no streams)", cursorFlag: "after" }),
 }
 
 const readVerb: VerbSpec = {
@@ -120,7 +128,13 @@ const readVerb: VerbSpec = {
       members?: { data?: Array<{ id?: string; name?: string; slug?: string }> }
     }
     const lines: string[] = []
-    if (p.stream) lines.push(`stream: ${p.stream.id ?? "?"}  ${streamLabel(p.stream)}`)
+    if (p.stream) {
+      lines.push(
+        [`stream: ${p.stream.id ?? "?"}`, streamLabel(p.stream), p.stream.archived ? "[archived]" : undefined]
+          .filter(Boolean)
+          .join("  ")
+      )
+    }
     const msgs = p.messages?.data ?? []
     lines.push(`messages: ${msgs.length}${p.messages?.hasMore ? " (more)" : ""}`)
     for (const m of msgs) {
@@ -162,8 +176,8 @@ function archiveVerb(archived: boolean): VerbSpec {
       return setStreamArchived(ctx.client, ctx.resolver, { streamRef: ref, archived })
     },
     render: (payload) => {
-      const stream = (payload as { data: StreamRow & { archivedAt?: string | null } }).data
-      return `${stream.id ?? "?"}  ${streamLabel(stream)}  ${stream.archivedAt ? `archived ${stream.archivedAt}` : "active"}`
+      const stream = (payload as { data: StreamRow }).data
+      return `${stream.id ?? "?"}  ${streamLabel(stream)}  ${archiveState(stream)}`
     },
   }
 }

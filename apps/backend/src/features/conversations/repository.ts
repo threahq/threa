@@ -679,10 +679,11 @@ export const ConversationRepository = {
    * Feed variant for callers whose access is an explicit set of readable ROOT
    * streams rather than a user id (the public API's bot keys: public streams +
    * channel grants). A conversation qualifies when its anchor's effective root
-   * (`COALESCE(root_stream_id, id)`, INV-62) is in the set and that root is not
-   * archived — mirroring `isStreamAccessibleForBot`, which denies archived
-   * streams per-id. Same tombstone exclusion and keyset order as
-   * {@link findByWorkspaceForViewer} (see its cursor-truncation comment).
+   * (`COALESCE(root_stream_id, id)`, INV-62) is in the set. Conversations
+   * anchored in an archived stream (or sealed under an archived ancestor) are
+   * hidden unless `showArchived`, by the same rule as
+   * {@link findByWorkspaceForViewer}, which also owns the cursor-truncation
+   * comment for the shared keyset order.
    */
   async findByWorkspaceForRoots(
     db: Querier,
@@ -692,12 +693,14 @@ export const ConversationRepository = {
       status?: ConversationStatus
       limit?: number
       cursor?: { lastActivityAt: string; id: string }
+      showArchived?: boolean
     }
   ): Promise<Conversation[]> {
     if (rootStreamIds.length === 0) return []
     const limit = options?.limit ?? 50
     const fields = sql`${sql.raw(SELECT_FIELDS)}`
     const statusCond = options?.status ? composeSql`AND status = ${options.status}` : sql``
+    const archivedCond = boardArchivedExcludeSql(options?.showArchived ?? false)
     const cursorCond = options?.cursor
       ? composeSql`AND (date_trunc('milliseconds', last_activity_at), id) < (${options.cursor.lastActivityAt}::timestamptz, ${options.cursor.id})`
       : sql``
@@ -707,6 +710,7 @@ export const ConversationRepository = {
       WHERE workspace_id = ${workspaceId}
         AND cardinality(message_ids) > 0
         ${statusCond}
+        ${archivedCond}
         ${cursorCond}
         AND EXISTS (
           SELECT 1
@@ -716,7 +720,6 @@ export const ConversationRepository = {
             AND eff_s.workspace_id = ${workspaceId}
             AND eff_root.workspace_id = ${workspaceId}
             AND eff_root.id = ANY(${rootStreamIds}::text[])
-            AND NOT ${sql`${sql.raw(effectivelyArchivedSql("eff_s"))}`}
         )
       ORDER BY date_trunc('milliseconds', last_activity_at) DESC, id DESC
       LIMIT ${limit}
