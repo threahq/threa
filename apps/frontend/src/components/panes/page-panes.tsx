@@ -22,7 +22,7 @@ import {
   useFittedPanelLayout,
   usePanelGrid,
 } from "@/components/layout/panel-host"
-import { panelColumnWidths } from "@/lib/panel-grid"
+import { evenPanelColumns, panelColumnWidths } from "@/lib/panel-grid"
 import { PaneHost, Pane } from "./pane-host"
 import { PaneDropContext, usePaneDropState } from "./pane-drop"
 
@@ -75,6 +75,7 @@ export function PagePanes({ workspaceId, page = null, error = null }: PagePanesP
     handleResizeMove,
     handleResizeEnd,
     handleResizeKeyDown,
+    handleResizeReset,
     handleTransitionEnd,
     maxColumns,
   } = usePanelLayout(isPanelOpen, {
@@ -141,6 +142,10 @@ export function PagePanes({ workspaceId, page = null, error = null }: PagePanesP
                 onPointerMove={handleResizeMove}
                 onPointerEnd={handleResizeEnd}
                 onKeyDown={handleResizeKeyDown}
+                onReset={() => {
+                  handleResizeReset()
+                  panelGrid.setSizes(evenPanelColumns(panelGrid.sizes))
+                }}
                 inert={floating}
               />
             )}

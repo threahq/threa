@@ -125,6 +125,12 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
     [effectiveWidth, handleWidthChange]
   )
 
+  // Every column the same width: the panel takes all of them but the main one's share, within its caps.
+  const handleResizeReset = useCallback(
+    () => handleWidthChange((containerWidth * columns) / (columns + 1)),
+    [handleWidthChange, containerWidth, columns]
+  )
+
   return {
     containerRef,
     panelWidth: effectiveWidth,
@@ -140,6 +146,7 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
     handleResizeMove,
     handleResizeEnd,
     handleResizeKeyDown,
+    handleResizeReset,
     handleTransitionEnd,
   }
 }

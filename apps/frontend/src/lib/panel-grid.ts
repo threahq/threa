@@ -28,6 +28,17 @@ export function defaultPanelGridSizes(layout: PanelLayout): PanelGridSizes {
   }
 }
 
+/** `shares` made equal, keeping their total. */
+export function evenShares(shares: readonly number[]): number[] {
+  const share = sum(shares) / shares.length
+  return shares.map(() => share)
+}
+
+/** `sizes` with the panel columns, all but the page's own first one, made equal. */
+export function evenPanelColumns(sizes: PanelGridSizes): PanelGridSizes {
+  return { ...sizes, columns: [sizes.columns[0], ...evenShares(sizes.columns.slice(1))] }
+}
+
 /** `shares` with the one at `index` set to `leading`, taken from or given to the one after it. */
 export function resplit(shares: readonly number[], index: number, leading: number): number[] {
   const pair = shares[index] + shares[index + 1]
