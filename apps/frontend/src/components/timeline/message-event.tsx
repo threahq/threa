@@ -1426,7 +1426,6 @@ function SentMessageEvent({
                 targetStreamId: rootStream.id,
                 location,
                 navigate,
-                isMobile,
                 panel,
               })
             }
@@ -1449,7 +1448,6 @@ function SentMessageEvent({
                 targetStreamId: parentStream.id,
                 location,
                 navigate,
-                isMobile,
                 panel,
               })
             }

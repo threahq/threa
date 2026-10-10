@@ -16,7 +16,6 @@ import { useStoredStreamSortMode } from "@/lib/stream-sort"
 import { useStreamPickerGroups } from "@/hooks/use-stream-picker-groups"
 import { queueShareHandoff, queuePlaintextShareHandoff } from "@/stores/composer-handoff-store"
 import { navigateAfterShareHandoff } from "@/lib/share-navigation"
-import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { usePanel } from "@/contexts"
 import {
   ResponsiveAlertDialog,
@@ -94,9 +93,6 @@ export function ShareMessageModal({
   const [sortMode, setSortMode] = useStoredStreamSortMode()
   const navigate = useNavigate()
   const location = useLocation()
-  // The Drawer/Dialog split is owned by ResponsiveDialog; isMobile here only
-  // governs the post-select navigation contract (mobile strips `?panel=…`).
-  const isMobile = useIsMobileOrCoarse()
   const panel = usePanel()
 
   // Baseline access filter (public-or-member, not archived, not thread/system) —
@@ -114,10 +110,7 @@ export function ShareMessageModal({
 
   const goToTarget = (targetStreamId: string) => {
     handleOpenChange(false)
-    // Same navigation contract as the fast-path entries in
-    // `message-event.tsx` — strip search params on mobile so the panel
-    // doesn't shadow the parent composer, no-op when target === current.
-    navigateAfterShareHandoff({ workspaceId, targetStreamId, location, navigate, isMobile, panel })
+    navigateAfterShareHandoff({ workspaceId, targetStreamId, location, navigate, panel })
   }
 
   const handleSelect = (targetStreamId: string) => {

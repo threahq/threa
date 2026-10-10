@@ -252,9 +252,7 @@ function ShareProbe({ targetStreamId }: { targetStreamId: string }) {
   const navigate = useNavigate()
   return (
     <button
-      onClick={() =>
-        navigateAfterShareHandoff({ workspaceId: "ws", targetStreamId, location, navigate, isMobile: true, panel })
-      }
+      onClick={() => navigateAfterShareHandoff({ workspaceId: "ws", targetStreamId, location, navigate, panel })}
     >{`share to ${targetStreamId}`}</button>
   )
 }
@@ -906,7 +904,7 @@ describe("panel tabs history on a phone", () => {
     expect(loc()).toBe(PAGE)
   })
 
-  it("should open a share target outside the panes as a page of its own", async () => {
+  it("should show a share target outside the panes in place of the pane on show, with Back to it", async () => {
     const { user, back, loc } = mountPhone(
       [PAGE, `${PAGE}?panel=stream_t`],
       <>
@@ -916,7 +914,10 @@ describe("panel tabs history on a phone", () => {
     )
 
     await user.click(screen.getByRole("button", { name: "share to stream_z" }))
-    expect(loc()).toBe("/w/ws/s/stream_z")
+    expect({ loc: loc(), front: front() }).toEqual({
+      loc: "/w/ws/s/stream_z?panel=stream_main-stream_z",
+      front: "stream_z",
+    })
 
     await back()
     expect(loc()).toBe(`${PAGE}?panel=stream_t`)
