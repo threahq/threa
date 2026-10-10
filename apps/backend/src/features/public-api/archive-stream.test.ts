@@ -1,9 +1,9 @@
-import { describe, expect, it, mock } from "bun:test"
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test"
 import type { Request, Response } from "express"
 import { WORKSPACE_PERMISSION_SCOPES } from "@threahq/types"
 import { createPublicApiHandlers, type PublicApiDeps } from "./handlers"
 import { PUBLIC_API_ROUTES } from "./routes"
-import type { StreamService } from "../streams"
+import { StreamRepository, type StreamService } from "../streams"
 
 const ARCHIVED_AT = new Date("2026-09-18T09:00:00.000Z")
 
@@ -81,6 +81,11 @@ function botRequest(): Request {
 }
 
 describe("public API archiveStream / unarchiveStream", () => {
+  afterEach(() => mock.restore())
+  beforeEach(() => {
+    spyOn(StreamRepository, "filterEffectivelyArchivedIds").mockResolvedValue([])
+  })
+
   it("archives as the key owner and returns the archived stream", async () => {
     const setStreamArchived = mock(() => Promise.resolve(fakeStream({ archivedAt: ARCHIVED_AT })))
     const handlers = createHandlers({
@@ -101,6 +106,7 @@ describe("public API archiveStream / unarchiveStream", () => {
         memoryMode: "auto",
         createdAt: "2026-09-18T08:00:00.000Z",
         archivedAt: ARCHIVED_AT.toISOString(),
+        archived: true,
       },
     })
   })
@@ -118,6 +124,29 @@ describe("public API archiveStream / unarchiveStream", () => {
     expect(setStreamArchived).toHaveBeenCalledWith("ws_1", "stream_1", { kind: "user", userId: "usr_1" }, false)
     expect(getBody()).toMatchObject({ data: { id: "stream_1" } })
     expect((getBody() as { data: Record<string, unknown> }).data.archivedAt).toBeUndefined()
+  })
+
+  it("marks an unarchived stream as still archived when an archived ancestor seals it", async () => {
+    spyOn(StreamRepository, "filterEffectivelyArchivedIds").mockResolvedValue(["stream_1"])
+    const handlers = createHandlers({
+      tryAccess: mock(() => Promise.resolve(fakeStream({ archivedAt: ARCHIVED_AT }))),
+      setStreamArchived: mock(() => Promise.resolve(fakeStream({ archivedAt: null }))),
+    } as unknown as StreamService)
+
+    const { res, getBody } = createResponse()
+    await handlers.unarchiveStream(userRequest(), res)
+
+    expect(getBody()).toEqual({
+      data: {
+        id: "stream_1",
+        type: "scratchpad",
+        displayName: "Agent scratchpad",
+        visibility: "private",
+        memoryMode: "auto",
+        createdAt: "2026-09-18T08:00:00.000Z",
+        archived: true,
+      },
+    })
   })
 
   it("acts as the bot behind a workspace-scoped key", async () => {

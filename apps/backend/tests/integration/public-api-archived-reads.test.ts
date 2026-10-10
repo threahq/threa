@@ -14,7 +14,8 @@ import { setupTestDatabase, withTransaction, addTestMember, testMessageContent }
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamMemberRepository, StreamRepository, StreamService } from "../../src/features/streams"
 import { SandboxSessionTokenService, StreamSandboxRepository, type SandboxSession } from "../../src/features/sandboxes"
-import { EventService } from "../../src/features/messaging"
+import { EventService, MessageRepository } from "../../src/features/messaging"
+import { ConversationRepository } from "../../src/features/conversations"
 import { BotChannelAccessRepository, BotChannelService } from "../../src/features/api-keys"
 import { BotRepository, createPublicApiHandlers, type PublicApiDeps } from "../../src/features/public-api"
 import {
@@ -24,6 +25,7 @@ import {
   messageId,
   botId,
   botChannelAccessId,
+  conversationId,
   personaId,
   sessionId,
 } from "../../src/lib/id"
@@ -35,6 +37,11 @@ describe("public API reads on archived streams", () => {
   let readerBotId: string
   let channelId: string
   let threadId: string
+  let activeChannelId: string
+  let channelConversationId: string
+  let channelAnchorMessageId: string
+  let threadConversationId: string
+  let activeConversationId: string
   let sandboxSession: SandboxSession
   const search = mock(async (_params: { permissions: { accessibleStreamIds: string[] } }) => ({ results: [] }))
   let message: Awaited<ReturnType<EventService["createMessage"]>>
@@ -59,11 +66,15 @@ describe("public API reads on archived streams", () => {
   const sandboxReq = (extra: Record<string, unknown>) =>
     ({ workspaceId: ws, sandboxSession, ...extra }) as unknown as Request
 
-  const writers = [
+  const apiKeys = [
     ["user key", userReq],
     ["bot key", botReq],
   ] as const
-  const readers = [...writers, ["sandbox session", sandboxReq]] as const
+  const readers = [...apiKeys, ["sandbox session", sandboxReq]] as const
+
+  // The test server's workers file their own conversations for messages sent through EventService, so
+  // assertions look only at the seeded ones.
+  const isSeeded = (id: string) => [channelConversationId, threadConversationId, activeConversationId].includes(id)
 
   const seen = (ids: string[]) => ({ channel: ids.includes(channelId), thread: ids.includes(threadId) })
 
@@ -90,6 +101,7 @@ describe("public API reads on archived streams", () => {
     ws = workspaceId()
     channelId = streamId()
     threadId = streamId()
+    activeChannelId = streamId()
     readerBotId = botId()
 
     await withTransaction(pool, async (client) => {
@@ -119,7 +131,16 @@ describe("public API reads on archived streams", () => {
         rootStreamId: channelId,
         createdBy: keyOwnerId,
       })
+      await StreamRepository.insert(client, {
+        id: activeChannelId,
+        workspaceId: ws,
+        type: StreamTypes.CHANNEL,
+        visibility: Visibilities.PRIVATE,
+        slug: `s-${activeChannelId.slice(-10)}`,
+        createdBy: keyOwnerId,
+      })
       await StreamMemberRepository.insert(client, ws, channelId, keyOwnerId)
+      await StreamMemberRepository.insert(client, ws, activeChannelId, keyOwnerId)
 
       await BotRepository.create(client, {
         id: readerBotId,
@@ -136,6 +157,13 @@ describe("public API reads on archived streams", () => {
         streamId: channelId,
         grantedBy: keyOwnerId,
       })
+      await BotChannelAccessRepository.grantAccess(client, {
+        id: botChannelAccessId(),
+        workspaceId: ws,
+        botId: readerBotId,
+        streamId: activeChannelId,
+        grantedBy: keyOwnerId,
+      })
     })
 
     const eventService = new EventService(pool)
@@ -146,6 +174,27 @@ describe("public API reads on archived streams", () => {
       authorType: AuthorTypes.USER,
       ...testMessageContent("a message from before the archive"),
     })
+    const seedConversation = async (anchorStreamId: string) => {
+      const id = conversationId()
+      const anchorMessageId = messageId()
+      await MessageRepository.insert(pool, {
+        workspaceId: ws,
+        id: anchorMessageId,
+        streamId: anchorStreamId,
+        sequence: BigInt(2),
+        authorId: keyOwnerId,
+        authorType: AuthorTypes.USER,
+        ...testMessageContent("seeded for a conversation"),
+      })
+      await ConversationRepository.insert(pool, { id, streamId: anchorStreamId, workspaceId: ws })
+      await ConversationRepository.addPrimaryMessage(pool, ws, id, anchorMessageId, keyOwnerId)
+      return { id, anchorMessageId }
+    }
+    const channelSeed = await seedConversation(channelId)
+    channelConversationId = channelSeed.id
+    channelAnchorMessageId = channelSeed.anchorMessageId
+    threadConversationId = (await seedConversation(threadId)).id
+    activeConversationId = (await seedConversation(activeChannelId)).id
     await pool.query(`UPDATE streams SET archived_at = NOW() WHERE id = $1`, [channelId])
 
     await StreamSandboxRepository.insertIfAbsent(pool, {
@@ -190,7 +239,8 @@ describe("public API reads on archived streams", () => {
     test(`should return the messages of an archived channel from listMessages when using a ${label}`, async () => {
       const out = recorder()
       await handlers.listMessages(makeReq({ params: { streamId: channelId }, query: {} }), out.res)
-      expect(out.last<Array<{ id: string }>>().data.map((m) => m.id)).toEqual([message.id])
+      const ids = out.last<Array<{ id: string }>>().data.map((m) => m.id)
+      expect(ids.sort()).toEqual([message.id, channelAnchorMessageId].sort())
     })
 
     test(`should return a sealed thread of an archived channel from getStream when using a ${label}`, async () => {
@@ -206,7 +256,73 @@ describe("public API reads on archived streams", () => {
     })
   }
 
-  for (const [label, makeReq] of writers) {
+  for (const [label, makeReq] of apiKeys) {
+    test(`should list conversations in an archived channel and its sealed thread only when includeArchived is set when using a ${label}`, async () => {
+      const seededIds = async (query: Record<string, string>) => {
+        const out = recorder()
+        await handlers.listConversations(makeReq({ query }), out.res)
+        return out
+          .last<Array<{ id: string }>>()
+          .data.map((c) => c.id)
+          .filter(isSeeded)
+          .sort()
+      }
+      const hidden = await seededIds({})
+      const hiddenInChannel = await seededIds({ streamId: channelId })
+      const shown = await seededIds({ includeArchived: "true" })
+      const shownInChannel = await seededIds({ streamId: channelId, includeArchived: "true" })
+
+      expect({ hidden, hiddenInChannel, shown, shownInChannel }).toEqual({
+        hidden: [activeConversationId],
+        hiddenInChannel: [],
+        shown: [activeConversationId, channelConversationId, threadConversationId].sort(),
+        shownInChannel: [channelConversationId, threadConversationId].sort(),
+      })
+    })
+
+    test(`should mark archived conversations and streams with archived true when using a ${label}`, async () => {
+      const conversations = recorder()
+      await handlers.listConversations(makeReq({ query: { includeArchived: "true" } }), conversations.res)
+      const single = recorder()
+      await handlers.getConversation(makeReq({ params: { conversationId: threadConversationId } }), single.res)
+      const streams = recorder()
+      await handlers.listStreams(makeReq({ query: { includeArchived: "true" } }), streams.res)
+      const channel = recorder()
+      await handlers.getStream(makeReq({ params: { streamId: channelId } }), channel.res)
+      const thread = recorder()
+      await handlers.getStream(makeReq({ params: { streamId: threadId } }), thread.res)
+      const active = recorder()
+      await handlers.getStream(makeReq({ params: { streamId: activeChannelId } }), active.res)
+
+      const flags = (rows: Array<{ id: string; archived?: true }>) =>
+        Object.fromEntries(rows.map((r) => [r.id, r.archived === true]))
+      const stream = (out: ReturnType<typeof recorder>) => {
+        const { archived, archivedAt } = out.last<{ archived?: true; archivedAt?: string }>().data
+        return { archived: archived === true, hasArchivedAt: archivedAt !== undefined }
+      }
+      expect({
+        conversationRows: flags(
+          conversations.last<Array<{ id: string; archived?: true }>>().data.filter((c) => isSeeded(c.id))
+        ),
+        conversation: single.last<{ archived?: true }>().data.archived,
+        streamRows: flags(streams.last<Array<{ id: string; archived?: true }>>().data),
+        channel: stream(channel),
+        thread: stream(thread),
+        active: stream(active),
+      }).toEqual({
+        conversationRows: {
+          [activeConversationId]: false,
+          [channelConversationId]: true,
+          [threadConversationId]: true,
+        },
+        conversation: true,
+        streamRows: { [activeChannelId]: false, [channelId]: true, [threadId]: true },
+        channel: { archived: true, hasArchivedAt: true },
+        thread: { archived: true, hasArchivedAt: false },
+        active: { archived: false, hasArchivedAt: false },
+      })
+    })
+
     test(`should refuse sendMessage into an archived channel with 403 STREAM_READ_ONLY when using a ${label}`, async () => {
       await expect(
         handlers.sendMessage(
