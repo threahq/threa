@@ -158,7 +158,19 @@ Research cost now follows the turn: a persona pinned to Opus 5 researches at Opu
 
 **Typical cost:** ~$0.10 / ~$0.50 per 1M (cache read $0.01, cache **write** $0.125), verified 2026-10-10. The same price sheet as `gpt-6-luna` up to 100K prompt tokens. Above 100K prompt tokens it bills 5×: $0.50 / $2.50, cache read $0.05, cache write $0.625. Luna's long-context step is 2× and starts at 272K.
 
-**When to use:** explicit selection only, as a persona model or a delegable subagent model. No production component defaults to it. Added 2026-10-10 as a product trial against Luna; no Threa eval has compared the two.
+**When to use:**
+
+- Default Ariadne persona model since 2026-10-10. A custom persona started from scratch begins on the same model, and the companion eval suites run on it by default (`COMPANION_MODEL_ID`).
+- A delegable subagent model, off until an admin enables it.
+
+**On the Ariadne default.** It is Kristoffer's product call to try it in use, and the trial below does not show it ahead of `gpt-6-luna`. Two runs per case on 2026-10-10, same Ariadne prompt, sub-agents left on Luna:
+
+- `persona-style`: 14/14 for both. Haiku cost 2.3× as much ($0.017 against $0.007) because it called workspace research on personal questions Luna answered directly.
+- `brief-correction`: Haiku 11/14, Luna 14/14. Haiku wrote a newly stated decision to an empty brief 1 time in 4. It corrected an existing brief 4/4.
+- `memory-recall`: Haiku 79/88, Luna 84/88 as judged. Four of Haiku's misses add true detail the expected string leaves out, and two are sessions the eval harness failed.
+- The `companion` suite has not run against it.
+
+An Ariadne turn above 100K prompt tokens bills at the 5× rate above. The default context window (80K characters, 20 messages) sits well below that; a turn with large tool results can cross it.
 
 **Use instead of:** `claude-haiku-4.5`
 
@@ -214,7 +226,7 @@ This entry read `$0.25/$1.25` until 2026-07-27 — 4× under the real price. On 
 
 **Typical cost:** ~$0.125 / ~$0.50 per 1M on a cache miss, ~$0.01 per 1M on a cache hit. Below the 1024-token cache floor, input costs $0.10 per 1M. Long-context pricing begins at 272K tokens ($0.20/$0.75).
 
-**When to use:** Production defaults formerly pinned to GPT-5.6 Luna, including Ariadne, classification, extraction, summarization, most attachment processing and the no-turn general-research fallback. Image captioning remains on GPT-5.6 Luna after GPT-6 missed OCR text in the image-caption suite. Existing explicit GPT-5.6 Luna selections remain valid. This is a product trial, not a Threa eval result; compare production behavior and task suites before claiming quality parity.
+**When to use:** Production defaults formerly pinned to GPT-5.6 Luna: classification, extraction, summarization, most attachment processing and the no-turn general-research fallback. It was Ariadne's default from 2026-09-22 to 2026-10-10; see the `claude-haiku-5.5` entry. Image captioning remains on GPT-5.6 Luna after GPT-6 missed OCR text in the image-caption suite. Existing explicit GPT-5.6 Luna selections remain valid. This is a product trial, not a Threa eval result; compare production behavior and task suites before claiming quality parity.
 
 ---
 
