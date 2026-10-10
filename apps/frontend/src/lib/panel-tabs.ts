@@ -195,11 +195,15 @@ export function focusPanelTab(layout: PanelLayout, id: string | null): PanelLayo
   return { columns: activatePanelTab(layout, id).columns, focused: id }
 }
 
+/** Brings `id` to the front of its section; a float moves with it when its section is the floating one. */
 export function activatePanelTab(layout: PanelLayout, id: string): PanelLayout {
   const at = locate(layout, id)
   if (!at) return layout
   const section = sectionAt(layout, at)
-  if (section.active !== id) return withSection(layout, at, { ids: section.ids, active: id })
+  if (section.active !== id) {
+    const next = withSection(layout, at, { ids: section.ids, active: id })
+    return section.active === layout.focused ? { ...next, focused: id } : next
+  }
   return layout.focused === undefined || layout.focused === id ? layout : { columns: layout.columns }
 }
 
