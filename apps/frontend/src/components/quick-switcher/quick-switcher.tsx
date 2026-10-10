@@ -6,6 +6,7 @@ import {
   useRef,
   useSyncExternalStore,
   useImperativeHandle,
+  type MutableRefObject,
   type RefObject,
 } from "react"
 import { hashKey, useQueryClient } from "@tanstack/react-query"
@@ -46,7 +47,7 @@ import {
 } from "@/stores/workspace-store"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useInputMode } from "@/hooks/use-input-mode"
-import { useSettings } from "@/contexts"
+import { useCurrentPane, usePaneFocusLanding, usePanel, useSettings } from "@/contexts"
 import { useUser } from "@/auth"
 import { useCreateEncryptedScratchpad } from "@/hooks/use-create-encrypted-scratchpad"
 import { useE2eUnlockOptional } from "@/components/encryption/e2e-unlock-provider"
@@ -66,6 +67,8 @@ import { COMMAND_TRIGGERS, RichInput, type RichInputRef, STREAM_TRIGGERS } from 
 import type { CommandContext, InputRequest } from "./commands"
 import type { QuickSwitcherItem } from "./types"
 import { clamp } from "@/lib/math-utils"
+import { closePanelTab, followCurrentPanel, panelIdsOf } from "@/lib/panel-tabs"
+import { landFocus } from "@/components/layout/pane-shortcuts"
 
 export type QuickSwitcherMode = "stream" | "command"
 
@@ -131,6 +134,7 @@ export function QuickSwitcher({
   const archiveStream = useArchiveStream(workspaceId)
   const dialogRef = useRef<HTMLDivElement>(null)
   const keyHandlersRef = useRef<PaletteKeyHandlers>(null)
+  const closeFocusRef = useRef<(() => void) | null>(null)
 
   // Destructive stream actions confirm before running; the label picker is a
   // standalone dialog opened after the palette closes. Both live here because
@@ -197,6 +201,13 @@ export function QuickSwitcher({
             }
           }}
           onEscapeKeyDown={(e) => keyHandlersRef.current?.onEscapeKeyDown(e)}
+          onCloseAutoFocus={(e) => {
+            const land = closeFocusRef.current
+            closeFocusRef.current = null
+            if (!land) return
+            e.preventDefault()
+            land()
+          }}
           onKeyDown={(e) => keyHandlersRef.current?.onKeyDown(e)}
         >
           <QuickSwitcherBody
@@ -210,6 +221,7 @@ export function QuickSwitcher({
             onOpenLabelPicker={openLabelPicker}
             dialogRef={dialogRef}
             keyHandlersRef={keyHandlersRef}
+            closeFocusRef={closeFocusRef}
           />
         </ResponsiveDialogContent>
       </ResponsiveDialog>
@@ -266,6 +278,8 @@ interface QuickSwitcherBodyProps {
   onOpenLabelPicker: (streamId: string) => void
   dialogRef: RefObject<HTMLDivElement | null>
   keyHandlersRef: RefObject<PaletteKeyHandlers | null>
+  /** Run in place of the dialog handing focus back to where it was opened from. */
+  closeFocusRef: MutableRefObject<(() => void) | null>
 }
 
 // Mounted only while the dialog content is, so its store subscriptions stop
@@ -281,6 +295,7 @@ function QuickSwitcherBody({
   onOpenLabelPicker,
   dialogRef,
   keyHandlersRef,
+  closeFocusRef,
 }: QuickSwitcherBodyProps) {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
@@ -370,6 +385,42 @@ function QuickSwitcherBody({
   // and sees the hints.
   const isTouchInput = useInputMode() === "touch"
   const richInputRef = useRef<RichInputRef>(null)
+
+  const { layout, closeTabs, canCloseTab } = usePanel()
+  const currentPane = useCurrentPane()
+  const paneLanding = usePaneFocusLanding()
+  const { closePane, closeOtherPanes, closeAllPanes } = useMemo(() => {
+    const closer = (ids: readonly string[]) => {
+      const closing = ids.filter(canCloseTab)
+      if (closing.length === 0) return undefined
+      return () => {
+        // A touch keyboard would pop up over the pane left on show.
+        if (!isTouchInput) {
+          const landing =
+            followCurrentPanel(layout, closing.reduce(closePanelTab, layout), currentPane) ?? currentStreamId ?? null
+          closeFocusRef.current = () => landFocus(paneLanding, landing)
+        }
+        handleClose()
+        closeTabs(closing)
+      }
+    }
+    const paneIds = panelIdsOf(layout)
+    return {
+      closePane: currentPane ? closer([currentPane]) : undefined,
+      closeOtherPanes: closer(paneIds.filter((id) => id !== currentPane)),
+      closeAllPanes: closer(paneIds),
+    }
+  }, [
+    layout,
+    currentPane,
+    canCloseTab,
+    closeTabs,
+    handleClose,
+    isTouchInput,
+    paneLanding,
+    closeFocusRef,
+    currentStreamId,
+  ])
 
   const handlePopoverActiveChange = useCallback((active: boolean) => {
     isSuggestionPopoverActiveRef.current = active
@@ -529,8 +580,14 @@ function QuickSwitcherBody({
       createSavedTodo,
       openAside: canOpenAside ? openAside : undefined,
       settleStream: canSettle ? settleStream : undefined,
+      closePane,
+      closeOtherPanes,
+      closeAllPanes,
     }),
     [
+      closePane,
+      closeOtherPanes,
+      closeAllPanes,
       canSettle,
       settleStream,
       canOpenAside,
