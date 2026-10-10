@@ -8,8 +8,9 @@
  *   next call — no snapshot
  * - E2E-rooted streams (and their threads) stay excluded: grant + key-wrap
  *   requirements are the only E2E path
- * - archived streams keep the bot-key denial of both existing arms, except
- *   for the id read, which reports the archive rather than hiding it
+ * - archiving blocks writes, never reads: archived streams (and threads sealed
+ *   under them) stay readable through every arm; the actionable tier stays
+ *   active-only
  * - shared bots and flag-off personal bots behave exactly as before
  */
 
@@ -19,10 +20,19 @@ import { StreamTypes, Visibilities } from "@threahq/types"
 import { setupTestDatabase, withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
 import { StreamRepository, StreamMemberRepository } from "../../src/features/streams"
-import { BotChannelService, BotChannelAccessRepository } from "../../src/features/api-keys"
+import { BotChannelService, BotChannelAccessRepository, isStreamReadableAsOwner } from "../../src/features/api-keys"
 import { E2eStreamsRepository } from "../../src/features/e2e-streams"
 import { BotRepository } from "../../src/features/public-api"
 import { userId, workspaceId, streamId, messageId, botId, botChannelAccessId } from "../../src/lib/id"
+
+const READ_ONLY = {
+  accessible: { point: true, listed: true },
+  actionable: { point: false, listed: false },
+}
+const DENIED = {
+  accessible: { point: false, listed: false },
+  actionable: { point: false, listed: false },
+}
 
 describe("read-as-owner access", () => {
   let pool: Pool
@@ -40,16 +50,18 @@ describe("read-as-owner access", () => {
   let archivedChannelId: string
   let archivedRootThreadId: string
   let publicChannelId: string
+  let archivedPublicChannelId: string
 
   async function insertChannel(
     client: Parameters<typeof StreamRepository.insert>[0],
     id: string,
     visibility: string,
-    createdBy: string
+    createdBy: string,
+    inWorkspaceId = testWorkspaceId
   ) {
     await StreamRepository.insert(client, {
       id,
-      workspaceId: testWorkspaceId,
+      workspaceId: inWorkspaceId,
       type: StreamTypes.CHANNEL,
       visibility,
       slug: `s-${id.slice(-10)}`,
@@ -70,6 +82,19 @@ describe("read-as-owner access", () => {
     })
   }
 
+  async function tiers(botIdToUse: string, targetStreamId: string) {
+    const [accessiblePoint, accessibleIds, actionablePoint, actionableIds] = await Promise.all([
+      service.isStreamAccessibleForBot(testWorkspaceId, botIdToUse, targetStreamId),
+      service.getAccessibleStreamIdsForBot(testWorkspaceId, botIdToUse),
+      service.isStreamActionableForBot(testWorkspaceId, botIdToUse, targetStreamId),
+      service.getActionableStreamIdsForBot(testWorkspaceId, botIdToUse),
+    ])
+    return {
+      accessible: { point: accessiblePoint, listed: accessibleIds.includes(targetStreamId) },
+      actionable: { point: actionablePoint, listed: actionableIds.includes(targetStreamId) },
+    }
+  }
+
   beforeAll(async () => {
     pool = await setupTestDatabase()
     service = new BotChannelService({ pool })
@@ -82,6 +107,7 @@ describe("read-as-owner access", () => {
     archivedChannelId = streamId()
     archivedRootThreadId = streamId()
     publicChannelId = streamId()
+    archivedPublicChannelId = streamId()
     readerBotId = botId()
     plainBotId = botId()
     sharedBotId = botId()
@@ -103,6 +129,7 @@ describe("read-as-owner access", () => {
       await insertChannel(client, archivedChannelId, Visibilities.PRIVATE, ownerId)
       await insertThread(client, archivedRootThreadId, archivedChannelId)
       await insertChannel(client, publicChannelId, Visibilities.PUBLIC, ownerId)
+      await insertChannel(client, archivedPublicChannelId, Visibilities.PUBLIC, ownerId)
       for (const memberOf of [privateChannelId, revocableChannelId, e2eRootId, archivedChannelId]) {
         await StreamMemberRepository.insert(client, testWorkspaceId, memberOf, ownerId)
       }
@@ -140,7 +167,9 @@ describe("read-as-owner access", () => {
         name: "Shared",
       })
     })
-    await pool.query(`UPDATE streams SET archived_at = NOW() WHERE id = $1`, [archivedChannelId])
+    await pool.query(`UPDATE streams SET archived_at = NOW() WHERE id = ANY($1)`, [
+      [archivedChannelId, archivedPublicChannelId],
+    ])
   })
 
   afterAll(async () => {
@@ -193,22 +222,15 @@ describe("read-as-owner access", () => {
     expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, e2eRootId)).toBe(true)
   })
 
-  test("should keep denying archived streams the owner can read — a live thread under the archived root included", async () => {
-    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, archivedChannelId)).toBe(false)
+  test("should let a read-as-owner bot read an archived private channel and its sealed thread without acting on them", async () => {
     // The thread's own row stays unarchived; only the root's archived_at flips.
-    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, archivedRootThreadId)).toBe(false)
-    const ids = await service.getAccessibleStreamIdsForBot(testWorkspaceId, readerBotId)
-    expect(ids).not.toContain(archivedChannelId)
-    expect(ids).not.toContain(archivedRootThreadId)
+    expect({
+      channel: await tiers(readerBotId, archivedChannelId),
+      thread: await tiers(readerBotId, archivedRootThreadId),
+    }).toEqual({ channel: READ_ONLY, thread: READ_ONLY })
   })
 
-  test("should retrieve an archived stream by id through either arm, and still deny one with no claim", async () => {
-    // Owner arm: archiving is a lifecycle change, not a revocation, so the id
-    // read still resolves and reports archivedAt.
-    expect(await service.isStreamRetrievableForBot(testWorkspaceId, readerBotId, archivedChannelId)).toBe(true)
-    expect(await service.isStreamRetrievableForBot(testWorkspaceId, readerBotId, archivedRootThreadId)).toBe(true)
-
-    // Grant arm: a flag-off bot with an explicit grant reaches the same row.
+  test("should let a granted bot and a shared bot read archived streams they have a claim on without acting on them", async () => {
     await BotChannelAccessRepository.grantAccess(pool, {
       id: botChannelAccessId(),
       workspaceId: testWorkspaceId,
@@ -216,16 +238,71 @@ describe("read-as-owner access", () => {
       streamId: archivedChannelId,
       grantedBy: ownerId,
     })
-    expect(await service.isStreamRetrievableForBot(testWorkspaceId, plainBotId, archivedChannelId)).toBe(true)
 
-    // A bot with neither arm gets nothing extra: the option drops the archive
-    // filter, never a permission one.
-    expect(await service.isStreamRetrievableForBot(testWorkspaceId, sharedBotId, archivedChannelId)).toBe(false)
-    expect(await service.isStreamRetrievableForBot(testWorkspaceId, sharedBotId, privateChannelId)).toBe(false)
+    expect({
+      grantedChannel: await tiers(plainBotId, archivedChannelId),
+      grantedSealedThread: await tiers(plainBotId, archivedRootThreadId),
+      sharedPublicChannel: await tiers(sharedBotId, archivedPublicChannelId),
+    }).toEqual({ grantedChannel: READ_ONLY, grantedSealedThread: READ_ONLY, sharedPublicChannel: READ_ONLY })
+  })
 
-    // Everything else keeps denying archived.
-    expect(await service.isStreamAccessibleForBot(testWorkspaceId, plainBotId, archivedChannelId)).toBe(false)
-    expect(await service.isStreamActionableForBot(testWorkspaceId, plainBotId, archivedChannelId)).toBe(false)
+  test("should deny a bot with no claim on an archived private channel", async () => {
+    expect({
+      archivedChannel: await tiers(sharedBotId, archivedChannelId),
+      privateChannel: await tiers(sharedBotId, privateChannelId),
+    }).toEqual({ archivedChannel: DENIED, privateChannel: DENIED })
+  })
+
+  test("should keep an archived E2E root and its thread out of the owner arm", async () => {
+    const root = streamId()
+    const thread = streamId()
+    await withTransaction(pool, async (client) => {
+      await insertChannel(client, root, Visibilities.PRIVATE, ownerId)
+      await insertThread(client, thread, root)
+      await StreamMemberRepository.insert(client, testWorkspaceId, root, ownerId)
+      await E2eStreamsRepository.markStreamE2e(client, {
+        streamId: root,
+        workspaceId: testWorkspaceId,
+        ownerUserId: ownerId,
+        ownerUserKeyId: "e2ek_test",
+      })
+    })
+    await pool.query(`UPDATE streams SET archived_at = NOW() WHERE id = $1`, [root])
+
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, root)).toBe(false)
+    expect(await service.isStreamAccessibleForBot(testWorkspaceId, readerBotId, thread)).toBe(false)
+    const ids = await service.getAccessibleStreamIdsForBot(testWorkspaceId, readerBotId)
+    expect(ids).not.toContain(root)
+    expect(ids).not.toContain(thread)
+  })
+
+  test("should deny a nonexistent stream and a stream in another workspace", async () => {
+    const foreignWorkspaceId = workspaceId()
+    const foreignPublicChannelId = streamId()
+    const nonexistentStreamId = streamId()
+    await withTransaction(pool, async (client) => {
+      await WorkspaceRepository.insert(client, {
+        id: foreignWorkspaceId,
+        name: "Foreign",
+        slug: `foreign-${foreignWorkspaceId.slice(-8)}`,
+        createdBy: "test",
+      })
+      await insertChannel(client, foreignPublicChannelId, Visibilities.PUBLIC, "test", foreignWorkspaceId)
+    })
+
+    expect({
+      nonexistent: {
+        ownerArm: await isStreamReadableAsOwner(pool, testWorkspaceId, readerBotId, nonexistentStreamId),
+        tiers: await tiers(readerBotId, nonexistentStreamId),
+      },
+      foreign: {
+        ownerArm: await isStreamReadableAsOwner(pool, testWorkspaceId, readerBotId, foreignPublicChannelId),
+        tiers: await tiers(readerBotId, foreignPublicChannelId),
+      },
+    }).toEqual({
+      nonexistent: { ownerArm: false, tiers: DENIED },
+      foreign: { ownerArm: false, tiers: DENIED },
+    })
   })
 
   test("should stop reading as owner when the flag is turned off", async () => {

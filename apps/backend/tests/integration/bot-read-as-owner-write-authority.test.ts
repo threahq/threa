@@ -3,7 +3,8 @@
  * is a truthful terminal 403 (READ_ONLY / not_a_member), not the
  * existence-hiding 404 — an agent that just read the stream must not be told
  * "not found". Existence hiding survives everywhere the bot cannot read:
- * flag-off personal bots, shared bots, E2E-rooted roots, archived streams.
+ * flag-off personal bots, shared bots, E2E-rooted roots. A write to an
+ * archived stream (or a thread under one) is a 403 STREAM_READ_ONLY / archived.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test"
@@ -32,15 +33,29 @@ describe("read-as-owner write authority", () => {
   let archivedChannelId: string
   let archivedRootThreadId: string
 
-  async function expectHidden404(promise: Promise<unknown>) {
-    const error = (await promise.then(
+  async function rejectionOf(promise: Promise<unknown>): Promise<HttpError> {
+    return promise.then(
       () => {
         throw new Error("expected the write to be rejected")
       },
-      (err: unknown) => err
-    )) as HttpError
+      (err: unknown) => err as HttpError
+    )
+  }
+
+  async function expectHidden404(promise: Promise<unknown>) {
+    const error = await rejectionOf(promise)
     expect(error).toBeInstanceOf(StreamNotFoundError)
     expect({ status: error.status, code: error.code }).toEqual({ status: 404, code: "STREAM_NOT_FOUND" })
+  }
+
+  async function expectReadOnly(promise: Promise<unknown>, reason: "not_a_member" | "archived") {
+    const error = await rejectionOf(promise)
+    expect(error).toBeInstanceOf(HttpError)
+    expect({ status: error.status, code: error.code, details: error.details }).toEqual({
+      status: 403,
+      code: "STREAM_READ_ONLY",
+      details: { reason },
+    })
   }
 
   function writeAs(botIdToUse: string, targetStreamId: string) {
@@ -145,13 +160,7 @@ describe("read-as-owner write authority", () => {
   })
 
   test("should fail a readable-but-not-added write with a 403 STREAM_READ_ONLY / not_a_member", async () => {
-    const error = (await writeAs(readerBotId, privateChannelId).catch((err: unknown) => err)) as HttpError
-    expect(error).toBeInstanceOf(HttpError)
-    expect({ status: error.status, code: error.code, details: error.details }).toEqual({
-      status: 403,
-      code: "STREAM_READ_ONLY",
-      details: { reason: "not_a_member" },
-    })
+    await expectReadOnly(writeAs(readerBotId, privateChannelId), "not_a_member")
   })
 
   test("should keep the existence-hiding 404 for a flag-off personal bot and a shared bot", async () => {
@@ -164,13 +173,13 @@ describe("read-as-owner write authority", () => {
     await expectHidden404(writeAs(readerBotId, e2eChannelId))
   })
 
-  test("should keep the 404 on an archived stream the owner can read", async () => {
-    await expectHidden404(writeAs(readerBotId, archivedChannelId))
+  test("should fail a write to an archived stream the owner can read with a 403 STREAM_READ_ONLY / archived", async () => {
+    await expectReadOnly(writeAs(readerBotId, archivedChannelId), "archived")
   })
 
-  test("should keep the 404 on a live thread whose root is archived", async () => {
+  test("should fail a write to a live thread whose root is archived with a 403 STREAM_READ_ONLY / archived", async () => {
     // Only the root's archived_at flips on archive; the thread row stays live.
-    await expectHidden404(writeAs(readerBotId, archivedRootThreadId))
+    await expectReadOnly(writeAs(readerBotId, archivedRootThreadId), "archived")
   })
 
   test("should let a granted bot write", async () => {

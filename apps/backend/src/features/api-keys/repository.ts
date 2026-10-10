@@ -1,7 +1,7 @@
 import type { BotProfileStream, StreamType } from "@threahq/types"
 import type { Querier } from "../../db"
 import { sql, composeSql } from "../../db"
-import { effectivelyArchivedSql } from "../../lib/sql-filters"
+import { archiveStatusSql, effectivelyArchivedSql, type ArchiveStatus } from "../../lib/sql-filters"
 import { streamAccessPredicateSql } from "../streams"
 
 export const BotChannelAccessRepository = {
@@ -22,13 +22,19 @@ export const BotChannelAccessRepository = {
     return new Set(result.rows.map((row) => row.stream_id))
   },
 
-  async getGrantedStreamIds(db: Querier, workspaceId: string, botId: string): Promise<string[]> {
+  async getGrantedStreamIds(
+    db: Querier,
+    workspaceId: string,
+    botId: string,
+    options: { archiveStatus?: ArchiveStatus[] } = {}
+  ): Promise<string[]> {
+    const archiveCondition = archiveStatusSql("s", options.archiveStatus, { archivedIncludesSealed: true })
     const result = await db.query<{ stream_id: string }>(sql`
       SELECT a.stream_id FROM bot_channel_access a
       JOIN streams s ON s.id = a.stream_id AND s.workspace_id = a.workspace_id
       WHERE a.workspace_id = ${workspaceId}
         AND a.bot_id = ${botId}
-        AND NOT ${sql.raw(effectivelyArchivedSql("s"))}
+        AND ${sql.raw(archiveCondition)}
     `)
     return result.rows.map((r) => r.stream_id)
   },

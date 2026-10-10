@@ -1,13 +1,13 @@
 import type { Querier } from "../../db"
 import { E2eStreamsRepository } from "../e2e-streams"
-import { StreamRepository, checkStreamAccess } from "../streams"
+import { checkStreamAccess } from "../streams"
 import { BotChannelAccessRepository } from "./repository"
 
 /**
  * The read-as-owner arm as a point check: a personal bot with
  * `bots.reads_as_owner` reads whatever its delegating owner reads (the
- * canonical INV-62 predicate, threads resolved through their root), minus
- * archived streams and E2E-rooted ones — read-as-owner never shortcuts the
+ * canonical INV-62 predicate, threads resolved through their root), archived
+ * streams included, minus E2E-rooted ones — read-as-owner never shortcuts the
  * grant + key-wrap path an E2E stream requires. Evaluated per call, so the
  * owner losing access revokes the bot's in the same moment.
  *
@@ -16,29 +16,15 @@ import { BotChannelAccessRepository } from "./repository"
  * this arm covers, or the write path softens existence hiding for a stream the
  * bot cannot actually read. Takes a `Querier` so the write authority can call
  * it inside its transaction.
- *
- * `allowArchived` drops only the archive filter, never a permission one, and
- * only `getStream` passes it (see `isStreamRetrievableForBot`). The write
- * authority must never pass it: softening the archive check there would let a
- * bot address a stream it cannot write.
  */
 export async function isStreamReadableAsOwner(
   db: Querier,
   workspaceId: string,
   botId: string,
-  streamId: string,
-  options: { allowArchived?: boolean } = {}
+  streamId: string
 ): Promise<boolean> {
   const ownerUserId = await BotChannelAccessRepository.getReadAsOwnerDelegate(db, workspaceId, botId)
   if (!ownerUserId) return false
-
-  const stream = await StreamRepository.findById(db, workspaceId, streamId)
-  if (!stream) return false
-  // Archived anywhere up the parent chain counts: the owner can still read a
-  // sealed thread, this arm must not.
-  if (!options.allowArchived && (await StreamRepository.isEffectivelyArchived(db, workspaceId, stream.id))) {
-    return false
-  }
 
   const readable = await checkStreamAccess(db, streamId, workspaceId, ownerUserId)
   if (!readable) return false

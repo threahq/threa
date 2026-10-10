@@ -1055,11 +1055,9 @@ describe("stream access without membership", () => {
 
     test("should treat public and guest_public roots as open to a bot with no grants", async () => {
       const bots = new BotChannelService({ pool })
-      const actionable: StreamKey[] = []
+      const readable: StreamKey[] = []
       for (const key of everyKey()) {
-        if (await bots.isStreamActionableForBot(wsA, grantlessBot, streamIds[key], { allowArchived: true })) {
-          actionable.push(key)
-        }
+        if (await bots.isStreamAccessibleForBot(wsA, grantlessBot, streamIds[key])) readable.push(key)
       }
 
       expect({
@@ -1067,11 +1065,11 @@ describe("stream access without membership", () => {
         publicStreamsIncludingArchived: keysOfIds(
           await SearchRepository.getPublicStreams(pool, wsA, { archiveStatus: ["active", "archived"] })
         ),
-        actionable: sortedKeys(actionable),
+        readable: sortedKeys(readable),
       }).toEqual({
         publicStreams: sortedKeys(openToBots.filter((key) => !key.startsWith("A"))),
         publicStreamsIncludingArchived: sortedKeys(openToBots),
-        actionable: sortedKeys(openToBots),
+        readable: sortedKeys(openToBots),
       })
     })
   })
@@ -1268,7 +1266,6 @@ describe("agent research scope", () => {
     "publicThread",
   ] as const
   type ScopeKey = (typeof keys)[number]
-  type AgentScopeOptions = Parameters<typeof SearchRepository.getAccessibleStreamsForAgent>[3]
   const ids = {} as Record<ScopeKey, string>
 
   beforeAll(async () => {
@@ -1310,17 +1307,11 @@ describe("agent research scope", () => {
     await pool.end()
   })
 
-  async function readableFor(
-    room: string,
-    {
-      among = [ids.P, ids.G, ids.N, ids.guestPrivateRoomThread],
-      options,
-    }: { among?: string[]; options?: AgentScopeOptions } = {}
-  ) {
+  async function readableFor(room: string, among = [ids.P, ids.G, ids.N, ids.guestPrivateRoomThread]) {
     const stream = await StreamRepository.findById(pool, ws, room)
     if (!stream) throw new Error(`room ${room} was not seeded`)
     const spec = await computeAgentAccessSpec(pool, { stream, invokingUserId: member })
-    const readable = new Set(await SearchRepository.getAccessibleStreamsForAgent(pool, spec, ws, options))
+    const readable = new Set(await SearchRepository.getAccessibleStreamsForAgent(pool, spec, ws))
     const keyById = new Map(Object.entries(ids).map(([key, id]) => [id, key]))
     const probes = [...among, room]
     return probes
@@ -1353,20 +1344,12 @@ describe("agent research scope", () => {
     expect(await readableFor(ids.orphanThread)).toEqual(["G"])
   })
 
-  test("should drop archived and non-channel streams from what an agent reads when it asks for active channels", async () => {
-    const among = [ids.P, ids.archivedChannel, ids.publicThread]
-    const activeChannels: AgentScopeOptions = { archiveStatus: ["active"], streamTypes: [StreamTypes.CHANNEL] }
-    expect({
-      everything: await readableFor(ids.publicRoom, { among, options: { archiveStatus: ["active", "archived"] } }),
-      activeChannels: await readableFor(ids.publicRoom, { among, options: activeChannels }),
-      privateRoomActiveChannels: await readableFor(ids.guestPrivateRoom, {
-        among: [ids.guestPrivateRoomThread],
-        options: activeChannels,
-      }),
-    }).toEqual({
-      everything: ["P", "archivedChannel", "publicRoom", "publicThread"],
-      activeChannels: ["P", "publicRoom"],
-      privateRoomActiveChannels: ["guestPrivateRoom"],
-    })
+  test("should let an agent read an archived channel and a public thread when its public channel has no guest members", async () => {
+    expect(await readableFor(ids.publicRoom, [ids.P, ids.archivedChannel, ids.publicThread])).toEqual([
+      "P",
+      "archivedChannel",
+      "publicRoom",
+      "publicThread",
+    ])
   })
 })

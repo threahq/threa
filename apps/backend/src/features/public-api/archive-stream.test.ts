@@ -42,10 +42,7 @@ function fakeStream(overrides: Record<string, unknown> = {}) {
   }
 }
 
-function createHandlers(
-  streamService: Partial<StreamService>,
-  botAccess: { isStreamRetrievableForBot?: boolean } = {}
-) {
+function createHandlers(streamService: Partial<StreamService>, botAccess: { isStreamAccessibleForBot?: boolean } = {}) {
   const deps: PublicApiDeps = {
     eventService: {} as PublicApiDeps["eventService"],
     streamService: streamService as StreamService,
@@ -55,7 +52,7 @@ function createHandlers(
     preparedRecall: {} as PublicApiDeps["preparedRecall"],
     attachmentService: {} as PublicApiDeps["attachmentService"],
     botChannelService: {
-      isStreamRetrievableForBot: mock(() => Promise.resolve(botAccess.isStreamRetrievableForBot ?? true)),
+      isStreamAccessibleForBot: mock(() => Promise.resolve(botAccess.isStreamAccessibleForBot ?? true)),
     } as unknown as PublicApiDeps["botChannelService"],
     botRuntimeService: {} as PublicApiDeps["botRuntimeService"],
     labelService: {} as PublicApiDeps["labelService"],
@@ -108,7 +105,7 @@ describe("public API archiveStream / unarchiveStream", () => {
     })
   })
 
-  it("unarchives a stream the gate reaches only because archived targets are allowed", async () => {
+  it("unarchives an archived stream the key can read", async () => {
     const setStreamArchived = mock(() => Promise.resolve(fakeStream({ archivedAt: null })))
     const handlers = createHandlers({
       tryAccess: mock(() => Promise.resolve(fakeStream({ archivedAt: ARCHIVED_AT }))),
@@ -149,7 +146,7 @@ describe("public API archiveStream / unarchiveStream", () => {
   it("rejects a bot key with no grant on the stream", async () => {
     const setStreamArchived = mock(() => Promise.resolve(fakeStream()))
     const handlers = createHandlers({ setStreamArchived } as unknown as StreamService, {
-      isStreamRetrievableForBot: false,
+      isStreamAccessibleForBot: false,
     })
 
     await expect(handlers.unarchiveStream(botRequest(), createResponse().res)).rejects.toMatchObject({

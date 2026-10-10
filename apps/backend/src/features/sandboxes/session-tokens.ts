@@ -4,7 +4,6 @@ import type { Querier } from "../../db"
 import { HttpError } from "../../lib/errors"
 import { sandboxSessionTokenId } from "../../lib/id"
 import { listAccessibleStreamIds } from "../streams"
-import { resolveUserAccessibleStreamIds, type SearchFilters } from "../search"
 import { E2eStreamsRepository } from "../e2e-streams"
 import { SandboxSessionTokenRepository, type SandboxSessionTokenRow } from "./session-token-repository"
 
@@ -70,18 +69,14 @@ export class SandboxSessionTokenService {
  * re-runs the canonical access predicate for that user (INV-62), then drops
  * E2EE-rooted streams, whose plaintext the server never holds.
  */
-export async function sandboxReadableStreamIds(
-  db: Querier,
-  session: SandboxSession,
-  filters: SearchFilters = {}
-): Promise<string[]> {
-  const captured = new Set(session.capturedStreamIds)
-  const userReadable = await resolveUserAccessibleStreamIds(db, session.workspaceId, session.invokingUserId, filters)
-  return withoutE2e(
+export async function sandboxReadableStreamIds(db: Querier, session: SandboxSession): Promise<string[]> {
+  const userReadable = await listAccessibleStreamIds(
     db,
     session.workspaceId,
-    userReadable.filter((id) => captured.has(id))
+    session.invokingUserId,
+    session.capturedStreamIds
   )
+  return withoutE2e(db, session.workspaceId, [...userReadable])
 }
 
 export async function isSandboxStreamReadable(
