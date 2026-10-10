@@ -1,6 +1,7 @@
 import { useSearchParams } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useConversations } from "@/hooks"
+import { useRevealReady } from "@/contexts"
 import { ConversationItem } from "./conversation-item"
 import { Skeleton } from "@/components/ui/skeleton"
 
@@ -12,6 +13,7 @@ interface ConversationListProps {
 
 export function ConversationList({ workspaceId, streamId, className }: ConversationListProps) {
   const { conversations, isLoading, error } = useConversations(workspaceId, streamId)
+  useRevealReady(!isLoading || !!error)
   const [searchParams, setSearchParams] = useSearchParams()
 
   const expandedConversationId = searchParams.get("conv")

@@ -38,6 +38,7 @@ import { panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
 import {
   useSocket,
   useCoordinatedLoading,
+  useRevealReady,
   usePreferencesOptional,
   usePanel,
   useCurrentPane,
@@ -2212,7 +2213,9 @@ export function StreamContent({
   // A covered pane (a background tab, the timeline under a phone thread) keeps
   // its geometry, so the scan would read rows nobody can see.
   const paneCovered = usePaneCovered()
-  const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode && settledAtBottom && !paneCovered
+  // Nobody has seen rows the first reveal still hides.
+  const revealed = useCoordinatedLoading((loading) => loading.phase === "ready")
+  const autoMarkEnabled = !isDraft && !isLoading && !isJumpMode && settledAtBottom && !paneCovered && revealed
   const canAutoRead = useAutoReadAttention()
 
   const isMobile = useIsMobile()
@@ -2742,6 +2745,10 @@ export function StreamContent({
     isConfirmedEmpty,
     hasEvents: events.length > 0,
   })
+  // An empty stream renders its empty state, never the scroller, so it has no settle to wait for.
+  useRevealReady(
+    isDraft || !!error || (isResolved && !isLoading && !holdForDeepLink && (settledAtBottom || isConfirmedEmpty))
+  )
 
   // Keyed on the target too: a second ?m= navigation arriving while the first
   // hold is still up must get its own full window, not the remainder of the

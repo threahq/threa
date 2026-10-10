@@ -20,7 +20,7 @@ import {
   usePhoneHeaderSwipe,
   useProvideComposeSlot,
 } from "@/components/panes"
-import { createComposePanelId, usePanel, useSidebar } from "@/contexts"
+import { createComposePanelId, usePanel, useRevealReady, useSidebar } from "@/contexts"
 import { cn } from "@/lib/utils"
 
 interface ComposePanelProps {
@@ -44,6 +44,8 @@ export function ComposePanel({ workspaceId, streamId, onClose, className }: Comp
   const [node, setNode] = useState<HTMLDivElement | null>(null)
   const slot = useMemo(() => (node ? { node, paneFocus } : null), [node, paneFocus])
   const composing = useProvideComposeSlot(streamId, slot)
+  // The composer portals in from its stream's pane, which the reveal already waits on.
+  useRevealReady(true)
 
   return (
     <SidePanel className={className} data-editor-zone="panel">

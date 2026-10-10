@@ -1,4 +1,16 @@
-import { useState, useEffect, useMemo, useRef, type ReactNode } from "react"
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
 import { usePreloadImages } from "@/hooks/use-preload-images"
 import { useCoordinatedStreamQueries } from "@/hooks/use-coordinated-stream-queries"
 import { useSealedNamePendingResolver } from "@/hooks/use-decrypted-stream-name"
@@ -33,6 +45,7 @@ import { markInitialRevealComplete } from "@/sync/reveal-gate"
 import { createSelectorContext } from "@/lib/selector-context"
 import { isServerStreamId } from "@/lib/stream-ids"
 import { getAvatarUrl } from "@threahq/types"
+import { cn } from "@/lib/utils"
 
 /**
  * Global coordinated loading phase - only applies during initial app load.
@@ -72,6 +85,17 @@ interface CoordinatedLoadingContextValue {
 
   /** True when loading indicator should be visible (after delay, same as skeleton) */
   showLoadingIndicator: boolean
+
+  /** True once the workspace data is in: the content mounts, hidden until `phase` is "ready". */
+  contentMounted: boolean
+
+  /** Registers or removes (null) a surface the first reveal waits on. */
+  setRevealParticipant: (key: string, participant: RevealParticipantState | null) => void
+}
+
+interface RevealParticipantState {
+  label: string
+  ready: boolean
 }
 
 const pickUnreadStateId = (state: CachedUnreadState) => state.id
@@ -99,6 +123,9 @@ export const LOADING_DELAY_MS = 300
  * genuinely slow load — still loading past this delay — earns a skeleton.
  */
 export const SKELETON_DELAY_MS = 600
+
+/** The first reveal waits this long for its surfaces, then shows them anyway: a slow pane keeps its own loading state. */
+export const REVEAL_CAP_MS = 3000
 
 /**
  * The coordinated-loading phase machine, on its own so every surface that wants
@@ -135,7 +162,12 @@ export function useCoordinatedPhase({
 
 export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }: CoordinatedLoadingProviderProps) {
   const [showLoadingIndicator, setShowLoadingIndicator] = useState(false)
+  // Two latches: the data is in, so the content mounts hidden; then every
+  // surface on show reports ready (or the cap passes), so it all reveals at once.
+  const [contentMounted, setContentMounted] = useState(false)
   const [isReady, setIsReady] = useState(false)
+  const participantsRef = useRef(new Map<string, RevealParticipantState>())
+  const [participantsVersion, bumpParticipants] = useReducer((version: number) => version + 1, 0)
   // Track which workspace has IDB cache primed. When true, the gate bypasses
   // network checks — IDB has data from a previous session and store hooks
   // return it synchronously via the in-memory cache. The phase system still
@@ -143,7 +175,6 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   const [primedWorkspaceId, setPrimedWorkspaceId] = useState<string | null>(null)
   const [primedDraftWorkspaceId, setPrimedDraftWorkspaceId] = useState<string | null>(null)
   const idbCachePrimed = primedWorkspaceId === workspaceId
-  const initialLoadCompleteRef = useRef(false)
   const loadingIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hideIndicatorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const loggedSuppressedStreamErrorsRef = useRef(new Set<string>())
@@ -301,12 +332,13 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   // (triggered by navigating to a new stream) should not re-trigger the
   // top-bar loading indicator. Individual stream loading is handled by
   // EventList's skeleton/loading state within the stream content area.
-  const isLoading =
+  const dataLoading =
     workspaceLoading ||
-    (!isReady && streamsLoading) ||
+    (!contentMounted && streamsLoading) ||
     draftsLoading ||
-    (!isReady && sealedNamesPending) ||
+    (!contentMounted && sealedNamesPending) ||
     (isReady && hasSettledInitialSyncRef.current && isAnySyncing)
+  const isLoading = dataLoading || (contentMounted && !isReady)
 
   const phase = useCoordinatedPhase({ isLoading, isReady })
 
@@ -343,6 +375,7 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
       sealedNamesPending,
       isAnySyncing,
       isLoading,
+      contentMounted,
       isReady,
       phase,
       showLoadingIndicator,
@@ -364,22 +397,53 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
     }
   }, [suppressedStreamErrors, workspaceId])
 
-  // Mark initial load as complete once data is ready (and, on a cold load,
-  // avatars preloaded — see `revealReady`).
+  // Mount the content once data is ready (and, on a cold load, avatars
+  // preloaded — see `revealReady`).
   useEffect(() => {
-    if (!isLoading && revealReady && !initialLoadCompleteRef.current) {
-      initialLoadCompleteRef.current = true
-      setIsReady(true)
-    }
-  }, [isLoading, revealReady])
+    if (!dataLoading && revealReady) setContentMounted(true)
+  }, [dataLoading, revealReady])
 
-  // Tell the background sync the cached content has painted, so its first
-  // bootstrap can commit to IndexedDB without starving the reads that gate this
-  // reveal (see reveal-gate.ts). Harmless on a cold load — the sync doesn't wait
-  // there — and idempotent across re-renders / StrictMode double-mounts.
+  const setRevealParticipant = useCallback((key: string, participant: RevealParticipantState | null) => {
+    const participants = participantsRef.current
+    if (participant) participants.set(key, participant)
+    else participants.delete(key)
+    bumpParticipants()
+  }, [])
+
+  // Surfaces register in layout effects, and one the grid uncovers in its
+  // measured re-render registers a commit later than the rest: checking a frame
+  // on lets every surface on show join before the reveal.
   useEffect(() => {
-    if (isReady) markInitialRevealComplete(workspaceId)
-  }, [isReady, workspaceId])
+    if (!contentMounted || isReady) return
+    const frame = requestAnimationFrame(() => {
+      if ([...participantsRef.current.values()].every((participant) => participant.ready)) setIsReady(true)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [contentMounted, isReady, participantsVersion])
+
+  useEffect(() => {
+    if (!contentMounted || isReady) return
+    const timer = setTimeout(() => {
+      const waiting = [...participantsRef.current.values()].filter((participant) => !participant.ready)
+      // Empty in a background tab, where the frame check above never runs.
+      if (waiting.length > 0) {
+        console.warn(
+          `[CoordinatedLoading] Revealing without ${waiting.map((participant) => participant.label).join(", ")} after ${REVEAL_CAP_MS}ms`
+        )
+      }
+      setIsReady(true)
+    }, REVEAL_CAP_MS)
+    return () => clearTimeout(timer)
+  }, [contentMounted, isReady])
+
+  // Tell the background sync the cached content has rendered, so its first
+  // bootstrap can commit to IndexedDB without starving the reads that gate it
+  // (see reveal-gate.ts). Not on the reveal: a pane can wait on that commit (an
+  // empty stream is only confirmed empty by its bootstrap), and the reveal would
+  // wait on the pane. Idempotent across re-renders / StrictMode double-mounts.
+  useEffect(() => {
+    if (contentMounted) markInitialRevealComplete(workspaceId)
+  }, [contentMounted, workspaceId])
 
   // Once the content is revealed AND the initial background sync has gone quiet,
   // any future "syncing" is a reconnect resync — that one is worth surfacing on
@@ -492,8 +556,26 @@ export function CoordinatedLoadingProvider({ workspaceId, streamIds, children }:
   const hasErrors = streamErrors.length > 0
 
   const value = useMemo<CoordinatedLoadingContextValue>(
-    () => ({ phase, hasErrors, getStreamState, getStreamError, isLoading, showLoadingIndicator }),
-    [phase, hasErrors, getStreamState, getStreamError, isLoading, showLoadingIndicator]
+    () => ({
+      phase,
+      hasErrors,
+      getStreamState,
+      getStreamError,
+      isLoading,
+      showLoadingIndicator,
+      contentMounted,
+      setRevealParticipant,
+    }),
+    [
+      phase,
+      hasErrors,
+      getStreamState,
+      getStreamError,
+      isLoading,
+      showLoadingIndicator,
+      contentMounted,
+      setRevealParticipant,
+    ]
   )
 
   return <CoordinatedLoadingContext.Provider value={value}>{children}</CoordinatedLoadingContext.Provider>
@@ -536,38 +618,87 @@ export function useCoordinatedLoading<T>(select: (value: CoordinatedLoadingConte
   })
 }
 
+const RevealReadyContext = createContext<((ready: boolean) => void) | null>(null)
+
+/**
+ * A surface the first reveal waits on while it is on show (not `covered`).
+ * Fail-closed: it starts not ready, so content inside that never reports
+ * through {@link useRevealReady} holds the reveal to the cap and is named in
+ * the warning.
+ */
+export function RevealParticipant({
+  label,
+  covered,
+  children,
+}: {
+  label: string
+  covered: boolean
+  children: ReactNode
+}) {
+  const key = useId()
+  const [ready, setReady] = useState(false)
+  // Outside a provider (a component mounted on its own) there is no reveal to wait.
+  const setParticipant = CoordinatedLoadingContext.useSelector((loading) => loading?.setRevealParticipant ?? null)
+  const revealed = CoordinatedLoadingContext.useSelector((loading) => !loading || loading.phase === "ready")
+  useLayoutEffect(() => {
+    if (covered || revealed || !setParticipant) return
+    setParticipant(key, { label, ready })
+    return () => setParticipant(key, null)
+  }, [setParticipant, key, label, ready, covered, revealed])
+  return <RevealReadyContext.Provider value={setReady}>{children}</RevealReadyContext.Provider>
+}
+
+/** Reports the enclosing {@link RevealParticipant} ready once `ready` holds. One-way; a no-op outside one. */
+export function useRevealReady(ready: boolean) {
+  const setReady = useContext(RevealReadyContext)
+  useLayoutEffect(() => {
+    if (ready) setReady?.(true)
+  }, [ready, setReady])
+}
+
+/** Opacity, not visibility: hidden content keeps its layout and can take focus. */
+export const HIDDEN_CHILDREN = "[&>*]:pointer-events-none [&>*]:opacity-0"
+
 interface CoordinatedLoadingGateProps {
   children: ReactNode
 }
 
 /**
- * Gate component that shows nothing during the "loading" phase (first ~300ms),
- * then renders children. Only applies during initial load.
+ * Shows nothing for a young initial load, the shell (with its skeletons) once
+ * the load is slow. Content mounts as soon as the data is in, invisible until
+ * the reveal, so panes settle behind it and the composer can take focus.
  */
 export function CoordinatedLoadingGate({ children }: CoordinatedLoadingGateProps) {
   const phase = useCoordinatedLoading((loading) => loading.phase)
+  const contentMounted = useCoordinatedLoading((loading) => loading.contentMounted)
 
-  if (phase === "loading") {
-    return null
-  }
+  if (phase === "loading" && !contentMounted) return null
 
-  return <>{children}</>
+  return <div className={cn("contents", phase === "loading" && HIDDEN_CHILDREN)}>{children}</div>
 }
 
 /**
- * Gate for the main content area (Outlet).
- * Shows skeleton during initial load, then renders children.
+ * Gate for the main content area (Outlet): a skeleton while the data loads,
+ * then the content mounted hidden under it until the reveal.
  * Individual stream components handle their own loading states after that.
  */
 export function MainContentGate({ children }: CoordinatedLoadingGateProps) {
   const phase = useCoordinatedLoading((loading) => loading.phase)
+  const contentMounted = useCoordinatedLoading((loading) => loading.contentMounted)
   const hasErrors = useCoordinatedLoading((loading) => loading.hasErrors)
 
-  // During initial load, show skeleton
-  // Exception: if there are errors, render children so error pages can display
-  if (phase !== "ready" && !hasErrors) {
-    return <StreamContentSkeleton />
-  }
+  // Errors render the content so error pages can display.
+  if (!contentMounted && !hasErrors) return <StreamContentSkeleton />
 
-  return <>{children}</>
+  const hidden = phase !== "ready" && !hasErrors
+  return (
+    <>
+      <div className={cn("contents", hidden && HIDDEN_CHILDREN)}>{children}</div>
+      {hidden && phase === "skeleton" && (
+        <div className="absolute inset-0 z-10 bg-background">
+          <StreamContentSkeleton />
+        </div>
+      )}
+    </>
+  )
 }

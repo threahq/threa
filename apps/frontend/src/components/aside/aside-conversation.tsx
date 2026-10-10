@@ -1,6 +1,7 @@
 import { StreamContent } from "@/components/timeline"
 import { AgentBlockProvider, type AgentBlockData } from "@/components/timeline/agent-block-context"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
+import { RevealParticipant } from "@/contexts"
 import type { Stream } from "@threahq/types"
 
 interface AsideConversationProps {
@@ -25,25 +26,27 @@ export function AsideConversation({
   onInsertAgentBlock,
 }: AsideConversationProps) {
   return (
-    <StreamErrorBoundary streamId={asideId}>
-      <AgentBlockProvider onInsert={onInsertAgentBlock}>
-        <div data-testid="aside-conversation" className="h-full">
-          <StreamContent
-            workspaceId={workspaceId}
-            streamId={asideId}
-            stream={aside}
-            autoFocus={autoFocus}
-            emptyState={
-              <div className="max-w-[15rem] px-6 text-center">
-                <p className="text-[13px] text-foreground/80">A private page beside this conversation.</p>
-                <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-                  Think out loud with Ariadne, or start a draft — nothing here is sent until you send it.
-                </p>
-              </div>
-            }
-          />
-        </div>
-      </AgentBlockProvider>
-    </StreamErrorBoundary>
+    <RevealParticipant label={`aside:${asideId}`} covered={false}>
+      <StreamErrorBoundary streamId={asideId}>
+        <AgentBlockProvider onInsert={onInsertAgentBlock}>
+          <div data-testid="aside-conversation" className="h-full">
+            <StreamContent
+              workspaceId={workspaceId}
+              streamId={asideId}
+              stream={aside}
+              autoFocus={autoFocus}
+              emptyState={
+                <div className="max-w-[15rem] px-6 text-center">
+                  <p className="text-[13px] text-foreground/80">A private page beside this conversation.</p>
+                  <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+                    Think out loud with Ariadne, or start a draft — nothing here is sent until you send it.
+                  </p>
+                </div>
+              }
+            />
+          </div>
+        </AgentBlockProvider>
+      </StreamErrorBoundary>
+    </RevealParticipant>
   )
 }
