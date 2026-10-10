@@ -10,8 +10,11 @@ import { useLastLocation } from "@/hooks"
 import { useAccountScope } from "@/auth"
 import { accountHomePath, getLastWorkspaceId } from "@/lib/last-workspace"
 import { keepPanelParamReadable } from "@/lib/panel-tabs"
+import { PAGE_PANES } from "@/lib/page-panes"
 import { WS_SETTINGS_PARAM } from "@/components/workspace-settings/tab-config"
 import { APP_LINK_GO_ROUTE, APP_LINK_SCHEME, parseAppLinkHref } from "@threahq/types"
+
+const panesPage = async () => ({ Component: (await import("@/pages/panes")).PanesPage })
 
 // Route-level code splitting: each page lazy-loads its own chunk so heavy
 // dependencies (tiptap/prosemirror, recharts, limax/pinyin-pro, etc.) ride
@@ -104,65 +107,11 @@ export const router = createBrowserRouter([
             index: true,
             element: <WorkspaceHome />,
           },
+          // A pane's route: one parent, so the route moves between the panes on show without remounting any of them.
           {
-            path: "drafts",
             HydrateFallback: FallbackLoader,
-            lazy: async () => ({ Component: (await import("@/pages/drafts")).DraftsPage }),
-          },
-          {
-            path: "saved/:tab?",
-            HydrateFallback: FallbackLoader,
-            lazy: async () => ({ Component: (await import("@/pages/saved")).SavedPage }),
-          },
-          {
-            path: "streams/:tab?",
-            HydrateFallback: FallbackLoader,
-            lazy: async () => ({ Component: (await import("@/pages/streams")).StreamsPage }),
-          },
-          {
-            path: "scheduled/:tab?",
-            HydrateFallback: FallbackLoader,
-            lazy: async () => ({ Component: (await import("@/pages/scheduled")).ScheduledPage }),
-          },
-          {
-            path: "board",
-            HydrateFallback: FallbackLoader,
-            lazy: async () => ({ Component: (await import("@/pages/board")).BoardPage }),
-          },
-          {
-            path: "activity/:filter?",
-            HydrateFallback: FallbackLoader,
-            lazy: async () => ({ Component: (await import("@/pages/activity")).ActivityPage }),
-          },
-          {
-            path: "search",
-            HydrateFallback: FallbackLoader,
-            lazy: async () => ({ Component: (await import("@/pages/search")).SearchPage }),
-          },
-          {
-            path: "memory",
-            HydrateFallback: FallbackLoader,
-            lazy: async () => ({ Component: (await import("@/pages/memory")).MemoryPage }),
-          },
-          {
-            path: "labels",
-            HydrateFallback: FallbackLoader,
-            lazy: async () => ({ Component: (await import("@/pages/labels")).LabelsPage }),
-          },
-          {
-            path: "labels/:labelId",
-            HydrateFallback: FallbackLoader,
-            lazy: async () => ({ Component: (await import("@/pages/label-detail")).LabelDetailPage }),
-          },
-          {
-            path: "files",
-            HydrateFallback: FallbackLoader,
-            lazy: async () => ({ Component: (await import("@/pages/files")).FilesPage }),
-          },
-          {
-            path: "agenda",
-            HydrateFallback: FallbackLoader,
-            lazy: async () => ({ Component: (await import("@/pages/outcomes")).OutcomesPage }),
+            lazy: panesPage,
+            children: [...Object.keys(PAGE_PANES), "/s/:streamId"].map((pattern) => ({ path: pattern.slice(1) })),
           },
           {
             path: "memos/:memoId",
@@ -171,11 +120,6 @@ export const router = createBrowserRouter([
           {
             path: "delegations/:delegationId",
             element: <DelegationRedirect />,
-          },
-          {
-            path: "s/:streamId",
-            HydrateFallback: FallbackLoader,
-            lazy: async () => ({ Component: (await import("@/pages/stream")).StreamPage }),
           },
           {
             path: "share",

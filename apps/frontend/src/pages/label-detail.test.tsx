@@ -3,7 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { describe, expect, it, vi, beforeEach } from "vitest"
 import { render, screen, userEvent } from "@/test"
 import { LabelDetailPage } from "./label-detail"
-import { ServicesProvider, SidebarProvider, type LabelService } from "@/contexts"
+import { ServicesProvider, SidebarProvider, type LabelService, PanelProvider } from "@/contexts"
+import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import type { CachedLabel } from "@/hooks"
@@ -66,9 +67,11 @@ function renderPage() {
       <ServicesProvider services={{ labels: {} as unknown as LabelService }}>
         <SidebarProvider>
           <MemoryRouter initialEntries={[`/w/${WS}/labels/${LABEL_ID}`]}>
-            <Routes>
-              <Route path="/w/:workspaceId/labels/:labelId" element={<LabelDetailPage />} />
-            </Routes>
+            <PanelProvider>
+              <Routes>
+                <Route path="/w/:workspaceId/labels/:labelId" element={<LabelDetailPage />} />
+              </Routes>
+            </PanelProvider>
           </MemoryRouter>
         </SidebarProvider>
       </ServicesProvider>
@@ -80,6 +83,9 @@ describe("LabelDetailPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     // Settled fetch by default — the loading/settling path is exercised explicitly below.
+    vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
+      preferences: null,
+    } as unknown as ReturnType<typeof contextsModule.usePreferences>)
     vi.spyOn(hooksModule, "useLabelsSync").mockReturnValue({ isFetched: true } as unknown as ReturnType<
       typeof hooksModule.useLabelsSync
     >)

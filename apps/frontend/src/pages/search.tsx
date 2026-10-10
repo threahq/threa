@@ -1,12 +1,12 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { SearchRefinement } from "@threahq/types"
 import type { SearchResultItem } from "@/api"
-import { ArrowLeft, Brain, Search as SearchIcon } from "lucide-react"
+import { Brain, Search as SearchIcon } from "lucide-react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
-import { SidebarToggle } from "@/components/layout"
+import { PagePaneHeader } from "@/components/panes"
 import { StreamLoadingIndicator } from "@/components/loading"
 import { RichInput, SEARCH_FILTER_TRIGGERS, type RichInputRef } from "@/components/quick-switcher/rich-input"
 import { useSearchPanel } from "@/components/search/search-panel-context"
@@ -134,15 +134,12 @@ export function SearchPage() {
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-x-hidden bg-background">
-      <header className="relative border-b bg-card/50">
-        <div className="flex h-12 items-center gap-2 px-4">
-          <SidebarToggle location="page" />
-          <Link to={`/w/${workspaceId}`} aria-label="Back to workspace">
-            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          </Link>
-
+      <div className="relative border-b bg-card/50">
+        <PagePaneHeader
+          workspaceId={workspaceId}
+          back={{ to: `/w/${workspaceId}`, label: "Back to workspace" }}
+          className="border-b-0"
+        >
           <div className="min-w-0 flex-1">
             <div className="flex max-w-xl items-center gap-2 rounded-md border border-border/50 bg-background/80 px-3 transition-all focus-within:border-primary/40">
               <SearchIcon className="h-4 w-4 shrink-0 text-muted-foreground/50" />
@@ -164,7 +161,7 @@ export function SearchPage() {
           <span className="hidden shrink-0 text-[11px] tabular-nums text-muted-foreground/50 sm:inline">
             {hasQuery && (hasResults || !isLoading) ? `${resultCount} result${resultCount === 1 ? "" : "s"}` : ""}
           </span>
-        </div>
+        </PagePaneHeader>
 
         <div className="flex flex-wrap items-center gap-1.5 border-t border-border/40 px-4 py-2">
           <SearchFilterChips query={localQuery} parsedFilters={parsedFilters} onQueryChange={handleQueryChange} />
@@ -220,7 +217,7 @@ export function SearchPage() {
           </div>
         )}
         <StreamLoadingIndicator isLoading={isLoading} />
-      </header>
+      </div>
 
       <ScrollArea className="min-h-0 flex-1 [&>div>div]:!block [&>div>div]:!w-full">
         <div

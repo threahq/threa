@@ -4,7 +4,8 @@ import { toast } from "sonner"
 import { act, fireEvent, render, screen, userEvent, within, waitFor } from "@/test"
 import * as touchCapableModule from "@/hooks/use-touch-capable"
 import { DraftsPage } from "./drafts"
-import { SidebarProvider } from "@/contexts"
+import { SidebarProvider, PanelProvider } from "@/contexts"
+import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import type { UnifiedDraft } from "@/hooks"
 
@@ -30,6 +31,9 @@ function draft(overrides: Partial<UnifiedDraft> & { id: string; displayName: str
 const deleteDraft = vi.fn(async (_id: string) => {})
 
 function mockDrafts(drafts: UnifiedDraft[], isLoading = false) {
+  vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
+    preferences: null,
+  } as unknown as ReturnType<typeof contextsModule.usePreferences>)
   vi.spyOn(hooksModule, "useAllDrafts").mockReturnValue({
     drafts,
     draftCount: drafts.length,
@@ -42,12 +46,14 @@ function renderPage() {
   return render(
     <SidebarProvider>
       <MemoryRouter initialEntries={[`/w/${WS}/drafts`]}>
-        <Routes>
-          <Route path="/w/:workspaceId/drafts" element={<DraftsPage />} />
-          {/* Any navigation away renders this, so a test can assert a click did
-              NOT route without reaching for a navigate spy. */}
-          <Route path="*" element={<div data-testid="navigated-away" />} />
-        </Routes>
+        <PanelProvider>
+          <Routes>
+            <Route path="/w/:workspaceId/drafts" element={<DraftsPage />} />
+            {/* Any navigation away renders this, so a test can assert a click did
+                NOT route without reaching for a navigate spy. */}
+            <Route path="*" element={<div data-testid="navigated-away" />} />
+          </Routes>
+        </PanelProvider>
       </MemoryRouter>
     </SidebarProvider>
   )

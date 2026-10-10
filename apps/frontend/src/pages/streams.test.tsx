@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { StreamDirectoryStats, StreamWithPreview } from "@threahq/types"
 import { render, screen, within } from "@/test"
 import * as contextsModule from "@/contexts"
+import { PanelProvider } from "@/contexts"
 import { SidebarProvider } from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as workspaceStoreModule from "@/stores/workspace-store"
@@ -108,9 +109,11 @@ function setup(path: string, streams: StreamWithPreview[] = STREAMS) {
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <SidebarProvider>
         <MemoryRouter initialEntries={[path]}>
-          <Routes>
-            <Route path="/w/:workspaceId/streams/:tab?" element={<StreamsPage />} />
-          </Routes>
+          <PanelProvider>
+            <Routes>
+              <Route path="/w/:workspaceId/streams/:tab?" element={<StreamsPage />} />
+            </Routes>
+          </PanelProvider>
         </MemoryRouter>
       </SidebarProvider>
     </QueryClientProvider>

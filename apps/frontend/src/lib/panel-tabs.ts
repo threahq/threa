@@ -1,5 +1,6 @@
 import type { To, createMemoryRouter } from "react-router-dom"
-import { isPagePane, isServerStreamId } from "./stream-ids"
+import { isPinnedPagePane, pagePathOf } from "./page-panes"
+import { isServerStreamId } from "./stream-ids"
 
 /**
  * The panel's arrangement as it lives in `?panel=`: columns of sections, each
@@ -70,7 +71,7 @@ function parseSection(token: string, seen: Set<string>, group: string[]): PanelS
   for (const part of token.split(TAB_SEPARATOR)) {
     const mark = [FOCUS_MARK, ACTIVE_MARK].find((candidate) => part.endsWith(candidate)) ?? ""
     const id = part.slice(0, part.length - mark.length)
-    if (!id || seen.has(id) || isPagePane(id)) continue
+    if (!id || seen.has(id) || isPinnedPagePane(id)) continue
     seen.add(id)
     ids.push(id)
     if (mark === FOCUS_MARK && focused === null) group.push((focused = id))
@@ -85,13 +86,13 @@ const PANEL_QUERY_VALUE = new RegExp(`(^|[?&])${PANEL_PARAM}=([^&#]*)`)
 /**
  * `url` (a path with its query, or a query with or without its `?`) with
  * `?panel=` in its readable grammar: `URLSearchParams` escapes the `:` of
- * `conv:` and `context:`, which a query may carry as is.
+ * `conv:` and `context:` and the `/` of `page:activity/unread`, which a query may carry as is.
  */
 export function readablePanelParam(url: string): string {
   return url.replace(
     PANEL_QUERY_VALUE,
     (_, lead: string, value: string) =>
-      `${lead}${PANEL_PARAM}=${value.replace(/%(3A|2A|2E|2D)/gi, (escaped) => decodeURIComponent(escaped))}`
+      `${lead}${PANEL_PARAM}=${value.replace(/%(3A|2A|2E|2D|2F)/gi, (escaped) => decodeURIComponent(escaped))}`
   )
 }
 
@@ -494,10 +495,15 @@ export function canonicalPanelLayout(layout: PanelLayout, path: string | null, k
   return layout.focused === undefined ? { columns } : { columns, focused: layout.focused }
 }
 
+/** A pane a route can name: a stream's, or a workspace page's. */
+export function isRoutePane(id: string): boolean {
+  return isServerStreamId(id) || pagePathOf(id) !== null
+}
+
 /**
  * Where a phone's route goes with `front` in front of `layout`, for
- * {@link canonicalPanelLayout}: a stream pane is the route and written out
- * (`keepPath`). Otherwise the route goes to a stream `?panel=` can leave out, so
+ * {@link canonicalPanelLayout}: a route pane is the route and written out
+ * (`keepPath`). Otherwise the route goes to one `?panel=` can leave out, so
  * a reload or Back lands on the newest pane; without one, to `fallback`.
  */
 export function phonePanelRoute(
@@ -505,18 +511,18 @@ export function phonePanelRoute(
   front: string | null,
   fallback: string | null
 ): { path: string | null; keepPath: boolean } {
-  if (front !== null && isServerStreamId(front) && locate(layout, front)) return { path: front, keepPath: true }
+  if (front !== null && isRoutePane(front) && locate(layout, front)) return { path: front, keepPath: true }
   const sole = soleFirstPanelOf(layout)
-  return { path: sole !== null && isServerStreamId(sole) ? sole : fallback, keepPath: false }
+  return { path: sole !== null && isRoutePane(sole) ? sole : fallback, keepPath: false }
 }
 
 /**
- * The stream pane the route names once the arrangement changes from `prev` to
+ * The pane the route names once the arrangement changes from `prev` to
  * `next`: `path` while it is open, else the pane current after the change when
- * it is a stream's, else the first stream on show, else the first one covered.
- * Null when no stream pane is left, which leaves the page nothing to name.
+ * a route can name it, else the first such pane on show, else the first one covered.
+ * Null when none is left, which leaves the page nothing to name.
  */
-export function streamPaneAfter(
+export function routePaneAfter(
   prev: PanelLayout,
   next: PanelLayout,
   path: string,
@@ -524,9 +530,9 @@ export function streamPaneAfter(
 ): string | null {
   if (locate(next, path)) return path
   const following = followCurrentPanel(prev, next, current)
-  if (following !== null && isServerStreamId(following)) return following
+  if (following !== null && isRoutePane(following)) return following
   const onShow = next.columns.flat().map((section) => section.active)
-  return onShow.find(isServerStreamId) ?? panelIdsOf(next).find(isServerStreamId) ?? null
+  return onShow.find(isRoutePane) ?? panelIdsOf(next).find(isRoutePane) ?? null
 }
 
 /** The section holding `id`, or null where none does. */

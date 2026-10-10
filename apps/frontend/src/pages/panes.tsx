@@ -8,9 +8,13 @@ import { StreamErrorView } from "@/components/stream-error-view"
 import { getStreamName } from "@/lib/streams"
 import { setPageStreamName } from "@/lib/page-title"
 
-export function StreamPage() {
-  const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId: string }>()
-  const { stream, error } = useStreamOrDraft(workspaceId!, streamId!)
+/**
+ * Every route that names a pane, a stream's or a workspace page's: one component, so the route moving between
+ * the panes on show keeps every pane mounted.
+ */
+export function PanesPage() {
+  const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId?: string }>()
+  const { stream, error } = useStreamOrDraft(workspaceId!, streamId ?? "", streamId !== undefined)
   const { layout } = usePanel()
 
   useTypeToFocus()
@@ -31,7 +35,7 @@ export function StreamPage() {
     return () => setPageStreamName(null)
   }, [stream])
 
-  if (!workspaceId || !streamId) {
+  if (!workspaceId) {
     return null
   }
 

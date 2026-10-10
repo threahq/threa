@@ -8,7 +8,7 @@ import * as emojiModule from "@/hooks/use-workspace-emoji"
 import * as countsModule from "@/hooks/use-activity-counts"
 import * as workspaceStore from "@/stores/workspace-store"
 import { resetActivitySectionLatch } from "@/hooks/use-activity-sections"
-import { SidebarProvider, PreferencesProvider } from "@/contexts"
+import { SidebarProvider, PreferencesProvider, PanelProvider } from "@/contexts"
 import { ActivityPage } from "./activity"
 import type { Activity } from "@threahq/types"
 
@@ -48,9 +48,11 @@ function page(client: QueryClient): ReactElement {
       <PreferencesProvider workspaceId={WS}>
         <SidebarProvider>
           <MemoryRouter initialEntries={[`/w/${WS}/activity`]}>
-            <Routes>
-              <Route path="/w/:workspaceId/activity/:filter?" element={<ActivityPage />} />
-            </Routes>
+            <PanelProvider>
+              <Routes>
+                <Route path="/w/:workspaceId/activity/:filter?" element={<ActivityPage />} />
+              </Routes>
+            </PanelProvider>
           </MemoryRouter>
         </SidebarProvider>
       </PreferencesProvider>

@@ -20,7 +20,7 @@ import { seedAgentActivity, resetAgentActivityStore } from "@/stores/agent-activ
 import { spyOnExport } from "@/test"
 import * as timelineModule from "@/components/timeline"
 import * as syncEngineModule from "@/sync/sync-engine"
-import { StreamPage } from "./stream"
+import { PanesPage } from "./panes"
 
 const workspaceId = "ws_1"
 const streamId = "stream_open"
@@ -81,7 +81,7 @@ function renderStreamPage() {
                           <PanelProvider>
                             <CoordinatedLoadingProvider workspaceId={workspaceId} streamIds={[streamId]}>
                               <Routes>
-                                <Route path="/w/:workspaceId/s/:streamId" element={<StreamPage />} />
+                                <Route path="/w/:workspaceId/s/:streamId" element={<PanesPage />} />
                               </Routes>
                             </CoordinatedLoadingProvider>
                           </PanelProvider>

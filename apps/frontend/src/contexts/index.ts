@@ -72,7 +72,6 @@ export {
   createContextPanelId,
   paneIdentity,
   contextPanelOf,
-  BOARD_PANE,
   PERSONA_PANE,
   parsePersonaTestPanel,
   createPersonaTestPanelId,
