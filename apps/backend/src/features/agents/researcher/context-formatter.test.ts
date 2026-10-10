@@ -124,7 +124,7 @@ describe("formatRetrievedContext", () => {
     const text = formatRetrievedContext([memo(), memo({}, null)], [], [], WORKSPACE)
     expect(text).toEqual(
       expect.stringContaining(
-        "A memo condenses the messages on its Sources line, and the newest of them are among the Related Messages below. Answer from what those messages say: anything a memo states beyond them is its own reading, not something anyone said. Each memo is as of its newest source message. A message posted after that date that explicitly changes or reverses what the memo states overrides it. A question, proposal or passing remark does not.\n\n**Deploy runbook**"
+        "A memo condenses the messages on its Sources line. Where those messages appear among the Related Messages below, answer from what they say: anything a memo states beyond them is its own reading, not something anyone said. Each memo is as of its newest source message. A message posted after that date that explicitly changes or reverses what the memo states overrides it. A question, proposal or passing remark does not.\n\n**Deploy runbook**"
       )
     )
     expect(text?.match(/^\*\*Deploy runbook\*\* _\([^\n]*$/gm)).toEqual([
