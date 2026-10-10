@@ -1054,10 +1054,12 @@ Respond with:
           workspaceId,
           primaryResults.map((result) => result.id)
         )
+        // The anchor lookup is by message id alone, so a thread it finds is searched only when the agent may read it.
+        const accessible = new Set(accessibleStreamIds)
         const threadIds = [
           ...new Set(
             [...hitStreams, ...anchoredThreads]
-              .filter((stream) => stream.type === StreamTypes.THREAD)
+              .filter((stream) => stream.type === StreamTypes.THREAD && accessible.has(stream.id))
               .map((stream) => stream.id)
           ),
         ]
