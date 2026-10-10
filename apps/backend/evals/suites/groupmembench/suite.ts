@@ -23,6 +23,8 @@
  *
  * `GROUPMEMBENCH_CHANNELS` (comma-separated) seeds only those channels, for a
  * smoke run; questions about the others then have nothing to find.
+ * `GROUPMEMBENCH_THREADS` (comma-separated `Channel/Msg_N`) narrows that to the
+ * named threads, for rebuilding the memos behind a handful of cases.
  *
  * The replay takes hours. `--keep-db` keeps a run's database, and `--from-db <name>`
  * clones it into later runs, which then measure recall over the same memos.
@@ -97,12 +99,45 @@ export function seededWorkspace(workspaceId: string): SeededWorkspace {
 function selectedChannels(): BenchChannel[] {
   const channels = loadChannels(datasetDir())
   const only = process.env.GROUPMEMBENCH_CHANNELS?.split(",").map((name) => name.trim())
-  if (!only) return channels
+  if (!only) return selectedThreads(channels)
   const unknown = only.filter((name) => !channels.some((c) => c.name === name))
   if (unknown.length > 0) {
     throw new Error(`GROUPMEMBENCH_CHANNELS names unknown channels ${unknown.join(", ")}`)
   }
-  return channels.filter((c) => only.includes(c.name))
+  return selectedThreads(channels.filter((c) => only.includes(c.name)))
+}
+
+/**
+ * `GROUPMEMBENCH_THREADS` keeps, per channel, only the named threads and the
+ * posts that root them (`Channel/Msg_12`); `Channel/*` keeps every post of the
+ * channel too. Channels it does not name are dropped. Memo capture then sees
+ * only these threads' memos as context, fewer than a full replay would show.
+ */
+function selectedThreads(channels: BenchChannel[]): BenchChannel[] {
+  const spec = process.env.GROUPMEMBENCH_THREADS?.split(",").map((entry) => entry.trim())
+  if (!spec) return channels
+  const byChannel = Map.groupBy(
+    spec.map((entry) => {
+      const [channel, node] = entry.split("/", 2)
+      if (!channel || !node) throw new Error(`GROUPMEMBENCH_THREADS entry ${entry} is not Channel/Msg_N or Channel/*`)
+      return { channel, node }
+    }),
+    (entry) => entry.channel
+  )
+  const unknown = [...byChannel.keys()].filter((name) => !channels.some((c) => c.name === name))
+  if (unknown.length > 0) throw new Error(`GROUPMEMBENCH_THREADS names unknown channels ${unknown.join(", ")}`)
+  return channels.flatMap((channel) => {
+    const entries = byChannel.get(channel.name)
+    if (!entries) return []
+    const nodes = new Set(entries.map((entry) => entry.node).filter((node) => node !== "*"))
+    const threads = channel.threads.filter((thread) => nodes.has(thread.root.node))
+    if (threads.length !== nodes.size) {
+      const missing = [...nodes].filter((node) => !threads.some((t) => t.root.node === node))
+      throw new Error(`${channel.name} has no thread rooted at ${missing.join(", ")}`)
+    }
+    const everyPost = nodes.size < entries.length
+    return [{ ...channel, posts: everyPost ? channel.posts : threads.map((thread) => thread.root), threads }]
+  })
 }
 
 async function insertUsers(ctx: EvalContext, names: string[]): Promise<Map<string, string>> {
