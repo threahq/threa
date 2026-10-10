@@ -48,6 +48,10 @@ export {
   useCurrentPane,
   useFrontPanel,
   useMainOwnsCover,
+  useDisplayedPanelLayout,
+  DisplayedPanelLayoutProvider,
+  useInPaneDrawer,
+  InPaneDrawerProvider,
   PaneScope,
   isDraftPanel,
   parseDraftPanel,
@@ -57,6 +61,12 @@ export {
   createConversationPanelId,
   parseComposePanel,
   createComposePanelId,
+  parseContextPanel,
+  presentsAsDrawer,
+  coverPaneOf,
+  createContextPanelId,
+  paneIdentity,
+  contextPanelOf,
 } from "./panel-context"
 export { QuickSwitcherProvider, useQuickSwitcher } from "./quick-switcher-context"
 export { PreferencesProvider, usePreferences, usePreferencesOptional, useResolvedTheme } from "./preferences-context"

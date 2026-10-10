@@ -18,6 +18,7 @@ import {
   useAsideSheetDetent,
 } from "@/stores/aside-store"
 import { AsidePane } from "./aside-pane"
+import { AsideCoversPanesContext } from "./aside-presentation"
 import {
   ASIDE_PEEK_FRACTION,
   ASIDE_DISMISS_HEIGHT,
@@ -264,7 +265,10 @@ export function AsideMobileSheet({
           }}
         >
           {threadInSheet ? (
-            <PanelHost workspaceId={workspaceId} onClose={closePanel} />
+            // The page's panes sit under this sheet, so the thread it holds opens none of its own here.
+            <AsideCoversPanesContext.Provider value={true}>
+              <PanelHost workspaceId={workspaceId} onClose={closePanel} />
+            </AsideCoversPanesContext.Provider>
           ) : (
             <AsidePane
               workspaceId={workspaceId}

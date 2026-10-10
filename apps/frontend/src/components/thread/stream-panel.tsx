@@ -1,5 +1,5 @@
 import { useSearchParams, useParams } from "react-router-dom"
-import { useMemo, useCallback, useEffect, useState, useRef } from "react"
+import { useContext, useMemo, useCallback, useEffect, useState, useRef } from "react"
 import { createPortal } from "react-dom"
 import {
   ListChecks,
@@ -59,7 +59,8 @@ import {
   AgentActivityHeaderChip,
 } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
-import { StreamContextOverlay, useStreamContextDock, useStreamContextOpen } from "@/components/stream-context"
+import { useStreamContextToggle } from "@/components/stream-context"
+import { AsideCoversPanesContext } from "@/components/aside/aside-presentation"
 import { cn } from "@/lib/utils"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { FloatingComposerShell, MessageComposer } from "@/components/composer"
@@ -90,20 +91,19 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   const { isMobile } = useSidebar()
   const [searchParams] = useSearchParams()
   const covered = usePaneCovered()
-  const { panelId, tabbed, openPanel, getNavigateUrl, closePanel, ownsCover, claimCover } = usePanel()
+  const { panelId, tabbed, openPanel, getNavigateUrl, closePanel, ownsCover } = usePanel()
   const closeRef = usePanelCloseFocusLanding()
-  // The deep link and the overview are the front pane's: a background tab, or a
-  // pane beside the one that opened them, leaves them be.
-  const showsCover = ownsCover && !covered
-  const highlightMessageId = showsCover ? searchParams.get("m") : null
+  // The deep link is the front pane's: a background tab, or a pane beside the
+  // one that opened it, leaves it be.
+  const highlightMessageId = ownsCover && !covered ? searchParams.get("m") : null
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   const { openStreamSettings } = useStreamSettings()
   const { open: openExplorer } = useExplorerUrlState()
   const { open: openOutcomes } = useOutcomesUrlState()
-  const [isAnyContextOpen, setContextOpen] = useStreamContextOpen()
-  const isContextOpen = isAnyContextOpen && showsCover
+  const [isContextOpen, toggleContext] = useStreamContextToggle(panelId ?? "")
+  // Under an aside, an overview opened from here would land out of sight.
+  const offersContext = !useContext(AsideCoversPanesContext)
   useVisibleStreams(workspaceId, !covered && panelId && isServerStreamId(panelId) ? [panelId] : [])
-  const contextDock = useStreamContextDock()
   const { streamId: mainViewStreamId } = useParams<{ streamId: string }>()
 
   const isMainViewStream = (streamId: string) => {
@@ -278,16 +278,13 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
 
   const panelMenuActions: SidebarActionItem[] = []
   // Desktop shows this as a header icon, as the page header does.
-  if (isMobile) {
+  if (isMobile && offersContext) {
     panelMenuActions.push({
       id: "stream-context",
       label: "In this stream",
       description: "Links, files & memories",
       icon: PanelRight,
-      onSelect: () => {
-        claimCover()
-        setContextOpen(true)
-      },
+      onSelect: toggleContext,
     })
   }
   panelMenuActions.push({
@@ -604,7 +601,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
         )}
         {/* Left of the stream's icons, so folding it away leaves them where they are. */}
         <PaneFocusToggle />
-        {!isDraft && stream && !isMobile && contextDock && (
+        {!isDraft && stream && !isMobile && offersContext && (
           <Button
             variant="ghost"
             size="icon"
@@ -612,14 +609,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
             title="In this stream — links, files & memories"
             aria-label="In this stream"
             aria-pressed={isContextOpen}
-            onClick={() => {
-              if (isContextOpen) {
-                setContextOpen(false)
-                return
-              }
-              claimCover()
-              setContextOpen(true)
-            }}
+            onClick={toggleContext}
           >
             <PanelRight className="h-4 w-4" />
           </Button>
@@ -805,9 +795,6 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
           open={labelPickerOpen}
           onOpenChange={setLabelPickerOpen}
         />
-      )}
-      {showsCover && !isDraft && stream && panelId && (
-        <StreamContextOverlay workspaceId={workspaceId} streamId={panelId} />
       )}
     </SidePanel>
   )

@@ -135,13 +135,16 @@ test("should keep a floating tab across a reload and put it back from the scrim 
   await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", a, { timeout: 15_000 })
   await expect(tabPane(page, a).getByText("reply in thread 1", { exact: true })).toBeVisible({ timeout: 30_000 })
 
-  // The overview it opens floats above it and keeps its own Escape.
+  // Opening its overview opens a pane beside it, which puts the float back.
   await tabPane(page, a).getByRole("button", { name: "In this stream" }).click()
-  const overview = page.getByRole("complementary", { name: "In this stream" })
-  await expect(overview).toHaveCount(1)
-  await page.keyboard.press("Escape")
-  await expect(overview).toHaveCount(0)
-  expect(panelParam(page)).toBe(`${a}**.${b}`)
+  await expect.poll(() => panelParam(page)).toBe(`${a}*.${b}-context:${a}`)
+  await expect(floatingPane(page)).toHaveCount(0)
+  await expect(page.getByRole("region", { name: "In this stream" })).toBeVisible()
+  await tabPane(page, a).getByRole("button", { name: "In this stream" }).click()
+  await expect.poll(() => panelParam(page)).toBe(`${a}*.${b}`)
+  await expect(page.getByRole("region", { name: "In this stream" })).toHaveCount(0)
+  await tabPane(page, a).getByRole("button", { name: "Focus pane", exact: true }).click()
+  await expect.poll(() => panelParam(page)).toBe(`${a}**.${b}`)
   await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", a)
 
   await scrim(page).click({ position: { x: 6, y: 300 } })
