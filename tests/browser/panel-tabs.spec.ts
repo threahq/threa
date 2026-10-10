@@ -261,13 +261,11 @@ test("should split a tab beside its own and keep the split through back, forward
     })
     .toBeGreaterThan(tabbedWidth)
 
-  // The tab split off is current; the other section's underline mutes until it is used.
-  const activeTitle = (id: string) => stripOf(page, id).locator('[aria-current="page"]')
-  await expect(activeTitle(threadB)).toHaveClass(/text-foreground/)
-  await expect(activeTitle(threadA)).toHaveClass(/text-muted-foreground/)
+  // Each section is alone now, so each shows its own header; the tab split off is current until the other is used.
+  await expect(page.getByRole("navigation", { name: "Panel tabs" })).toHaveCount(0)
+  await expect.poll(() => route(page).stream).toBe(threadB)
   await replyIn(page, threadA, "reply in thread A").click()
-  await expect(activeTitle(threadA)).toHaveClass(/text-foreground/)
-  await expect(activeTitle(threadB)).toHaveClass(/text-muted-foreground/)
+  await expect.poll(() => route(page).stream).toBe(threadA)
 
   // The divider moves by drag and by keyboard.
   const divider = page.getByRole("separator", { name: "Resize panels side by side" })

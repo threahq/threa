@@ -131,7 +131,7 @@ export function PanelTabStrip({
                   to={getTabUrl(id)}
                   replace
                   draggable
-                  onDragStart={(event) => startTabDrag(event, workspaceId, id)}
+                  onDragStart={(event) => startTabDrag(event, workspaceId, id, event.currentTarget.textContent ?? "")}
                   onDragEnd={endTabDrag}
                   onClick={(event) => {
                     // The tab on show is the panel's title: following its link would close its overview.
@@ -144,7 +144,7 @@ export function PanelTabStrip({
                   }}
                   aria-current={active ? "page" : undefined}
                   className={cn(
-                    "flex h-full min-w-0 items-center px-2 text-sm whitespace-nowrap",
+                    "flex h-full min-w-0 flex-1 items-center px-2 text-sm whitespace-nowrap",
                     active && isCurrent && "font-semibold text-foreground",
                     active && !isCurrent && "font-semibold text-muted-foreground",
                     !active && "text-muted-foreground hover:text-foreground"

@@ -1,6 +1,12 @@
 import { useNavigate } from "react-router-dom"
 import { SidePanel, SidePanelClose, SidePanelHeader, SidePanelTitle } from "@/components/ui/side-panel"
-import { PaneFocusToggle, PanelTabStrip, PanelTabTitle, usePanelCloseFocusLanding } from "@/components/panes"
+import {
+  PaneFocusToggle,
+  PanelTabStrip,
+  PanelTabTitle,
+  usePaneDragHandle,
+  usePanelCloseFocusLanding,
+} from "@/components/panes"
 import {
   createContextPanelId,
   parseContextPanel,
@@ -30,12 +36,13 @@ interface StreamContextPaneProps {
  * (`context:<streamId>[:<filter>]`), beside the stream it lists.
  */
 export function StreamContextPane({ workspaceId, streamId, filter, onClose, className }: StreamContextPaneProps) {
-  const { panelId, tabbed, openPanel, openAtMessage } = usePanel()
+  const { panelId, tabbed, canClosePanel, openPanel, openAtMessage } = usePanel()
   const navigate = useNavigate()
   const { isMobile } = useSidebar()
   const inDrawer = useInPaneDrawer()
   const showTabs = tabbed && !inDrawer
   const closeRef = usePanelCloseFocusLanding()
+  const dragHandle = usePaneDragHandle(workspaceId, "Overview", !showTabs && !inDrawer)
   const gallery = useStreamGallery()
   const current = useCurrentPane()
   // The gallery opens from the overview worked in, else the first on show, so a reload keeps it open.
@@ -68,7 +75,7 @@ export function StreamContextPane({ workspaceId, streamId, filter, onClose, clas
             {showTabs ? (
               <PanelTabStrip workspaceId={workspaceId} className="-ml-2" />
             ) : (
-              <div className="flex min-w-0 flex-1 items-center gap-2">
+              <div className="flex min-w-0 flex-1 items-center gap-2" {...dragHandle}>
                 <SidePanelTitle className="min-w-0">
                   <PanelTabTitle workspaceId={workspaceId} panelId={createContextPanelId(streamId)} />
                 </SidePanelTitle>
@@ -76,7 +83,7 @@ export function StreamContextPane({ workspaceId, streamId, filter, onClose, clas
               </div>
             )}
             <PaneFocusToggle />
-            {!isMobile && !showTabs && <SidePanelClose onClose={onClose} ref={closeRef} />}
+            {!isMobile && !showTabs && canClosePanel && <SidePanelClose onClose={onClose} ref={closeRef} />}
           </SidePanelHeader>
         )}
         onJumpToMessage={jumpToMessage}

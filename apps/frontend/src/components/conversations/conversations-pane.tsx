@@ -11,6 +11,7 @@ import {
   PanelTabTitle,
   PhonePaneLeading,
   PhonePaneSwitcher,
+  usePaneDragHandle,
   usePanelCloseFocusLanding,
   usePhoneHeaderSwipe,
 } from "@/components/panes"
@@ -26,9 +27,10 @@ interface ConversationsPaneProps {
 
 /** A stream's conversations list as a pane of its own (`convs:<streamId>`), beside the stream it lists. */
 export function ConversationsPane({ workspaceId, streamId, onClose, className }: ConversationsPaneProps) {
-  const { tabbed } = usePanel()
+  const { tabbed, canClosePanel } = usePanel()
   const { isMobile } = useSidebar()
   const closeRef = usePanelCloseFocusLanding()
+  const dragHandle = usePaneDragHandle(workspaceId, "Conversations", !tabbed)
   const headerSwipe = usePhoneHeaderSwipe()
 
   return (
@@ -38,13 +40,13 @@ export function ConversationsPane({ workspaceId, streamId, onClose, className }:
         {tabbed ? (
           <PanelTabStrip workspaceId={workspaceId} className="-ml-2" />
         ) : (
-          <SidePanelTitle className="min-w-0 flex-1 truncate">
+          <SidePanelTitle className="min-w-0 flex-1 truncate" {...dragHandle}>
             <PanelTabTitle workspaceId={workspaceId} panelId={createConversationsPanelId(streamId)} />
           </SidePanelTitle>
         )}
         <PaneFocusToggle />
         <PhonePaneSwitcher workspaceId={workspaceId} />
-        {!isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />}
+        {!isMobile && !tabbed && canClosePanel && <SidePanelClose onClose={onClose} ref={closeRef} />}
       </SidePanelHeader>
       <SidePanelContent>
         <div className="h-full overflow-y-auto">

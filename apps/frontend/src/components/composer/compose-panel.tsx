@@ -19,6 +19,7 @@ import {
   usePanelCloseFocusLanding,
   usePhoneHeaderSwipe,
   useProvideComposeSlot,
+  usePaneDragHandle,
 } from "@/components/panes"
 import { createComposePanelId, usePanel, useRevealReady, useSidebar } from "@/contexts"
 import { cn } from "@/lib/utils"
@@ -36,10 +37,11 @@ interface ComposePanelProps {
  * same attachments and send, as the one it replaces inline.
  */
 export function ComposePanel({ workspaceId, streamId, onClose, className }: ComposePanelProps) {
-  const { tabbed, getPanelUrl } = usePanel()
+  const { tabbed, canClosePanel, getPanelUrl } = usePanel()
   const paneFocus = useContext(PaneFocusContext)
   const { isMobile } = useSidebar()
   const closeRef = usePanelCloseFocusLanding()
+  const dragHandle = usePaneDragHandle(workspaceId, "Draft", !tabbed)
   const headerSwipe = usePhoneHeaderSwipe()
   const [node, setNode] = useState<HTMLDivElement | null>(null)
   const slot = useMemo(() => (node ? { node, paneFocus } : null), [node, paneFocus])
@@ -54,13 +56,13 @@ export function ComposePanel({ workspaceId, streamId, onClose, className }: Comp
         {tabbed ? (
           <PanelTabStrip workspaceId={workspaceId} className="-ml-2" />
         ) : (
-          <SidePanelTitle className="min-w-0 flex-1 truncate">
+          <SidePanelTitle className="min-w-0 flex-1 truncate" {...dragHandle}>
             <PanelTabTitle workspaceId={workspaceId} panelId={createComposePanelId(streamId)} />
           </SidePanelTitle>
         )}
         <PaneFocusToggle />
         <PhonePaneSwitcher workspaceId={workspaceId} />
-        {!isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />}
+        {!isMobile && !tabbed && canClosePanel && <SidePanelClose onClose={onClose} ref={closeRef} />}
       </SidePanelHeader>
       <SidePanelContent className="relative flex flex-col">
         <div ref={setNode} className={cn("flex min-h-0 flex-1 flex-col", !composing && "hidden")} />

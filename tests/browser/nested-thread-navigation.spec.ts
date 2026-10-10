@@ -27,13 +27,9 @@ const openPanelIds = (page: Page) =>
   page.getByTestId("panel").evaluateAll((panes) => panes.map((pane) => pane.getAttribute("data-panel-tab")!))
 
 /** Brings an open thread's pane to the front. A nested thread opens beside its
- *  parent, so the parent is still on show and its own tab title takes it. */
+ *  parent, so the parent is still on show and working in its composer takes it. */
 async function bringToFront(page: Page, threadId: string): Promise<void> {
-  await page
-    .locator(`[data-panel-tab="${threadId}"]`)
-    .getByRole("navigation", { name: "Panel tabs" })
-    .locator('[aria-current="page"]')
-    .click()
+  await page.locator(`[data-panel-tab="${threadId}"] [contenteditable="true"]`).last().click()
   await expect(getActivePanel(page)).toHaveAttribute("data-panel-tab", threadId)
 }
 

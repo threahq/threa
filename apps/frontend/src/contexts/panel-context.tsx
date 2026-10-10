@@ -44,7 +44,6 @@ import {
   parsePanelLayout,
   primaryPanelOf,
   replacePanelTab,
-  soleFirstPanelOf,
   splitPanelTab,
   dropPanelTab,
   streamPaneAfter,
@@ -215,8 +214,10 @@ interface PanelContextValue {
   layout: PanelLayout
   /** The section this consumer's tab shows in, as laid out on screen; elsewhere the first. */
   section: PanelSection | null
-  /** Whether panels show their tab rows: more than one tab open beside the page's own stream, on a page that has tabs. */
+  /** Whether this consumer's section shows a tab row: it holds more than one tab, on a page that has tabs. */
   tabbed: boolean
+  /** How many sections are on show: as the grid lays them out inside it, as the URL holds them elsewhere. */
+  shownPanes: number
   /** Whether this page lays panels out as tabs beside its route's pane (the stream page, the board, the persona editor). */
   hasTabs: boolean
   /** Whether this consumer's pane sits in the stream page's first column, where the page's stream shows. */
@@ -380,16 +381,19 @@ export function isPaneSwitch(state: unknown): boolean {
   return (state as typeof PANE_SWITCH_STATE | null)?.paneSwitch === true
 }
 
+function sectionCount(layout: PanelLayout): number {
+  return layout.columns.reduce((count, column) => count + column.length, 0)
+}
+
 function buildValue(
   ops: PanelOps,
   scopeId: string | null,
   scopeSection: PanelSection | null,
   splits: readonly SplitDirection[] = NO_SPLITS,
-  shownTabs: number = panelIdsOf(ops.layout).length
+  shownPanes: number = sectionCount(ops.layout)
 ): PanelContextValue {
   const { layout } = ops
   const own = scopeId ?? primaryPanelOf(layout)
-  const sole = ops.tabbed ? soleFirstPanelOf(layout) : null
   const supersede = (current: PanelLayout, panelId: string) => {
     if (!own) return openPanelTab(current, panelId)
     // An overview lists its own stream, not whatever took that stream's tab.
@@ -401,7 +405,8 @@ function buildValue(
     panelId: own,
     layout,
     section: scopeSection ?? layout.columns[0]?.[0] ?? null,
-    tabbed: ops.tabbed && !ops.phone && own !== sole && shownTabs - (sole === null ? 0 : 1) > 1,
+    tabbed: ops.tabbed && !ops.phone && (scopeSection?.ids.length ?? 0) > 1,
+    shownPanes,
     hasTabs: ops.tabbed,
     inFirstColumn: ops.tabbed && own !== null && firstColumnHolds(layout, own),
     canClosePanel: own !== null && ops.canCloseTab(own),
@@ -868,9 +873,9 @@ export function PaneScope({
 }) {
   const ops = useContext(PanelOpsContext)
   if (!ops) throw new Error("PaneScope must be used within a PanelProvider")
-  // A phone's drawer is no tab of the page under it, so it doesn't turn that page's header into a tab row.
+  // The grid may fold sections the URL holds; a drawer or the aside sheet sits outside it and counts the URL.
   const displayed = useContext(DisplayedPanelLayoutContext)
-  const shownTabs = panelIdsOf(displayed ?? ops.layout).length
+  const shownPanes = sectionCount(displayed ?? ops.layout)
   // Sections and split lists are rebuilt whenever the arrangement is laid out; only what they hold matters.
   const ids = section.ids.join(".")
   const { active } = section
@@ -882,9 +887,9 @@ export function PaneScope({
         panelId,
         { ids: ids.split("."), active },
         directions ? (directions.split(".") as SplitDirection[]) : NO_SPLITS,
-        shownTabs
+        shownPanes
       ),
-    [ops, panelId, ids, active, directions, shownTabs]
+    [ops, panelId, ids, active, directions, shownPanes]
   )
   return <PanelContext.Provider value={value}>{children}</PanelContext.Provider>
 }

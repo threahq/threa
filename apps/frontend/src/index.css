@@ -1645,3 +1645,9 @@ body > .rt-AlertDialogOverlay {
 [data-sonner-toaster] {
   pointer-events: auto;
 }
+
+/* A pane's title mutes while another pane is the one being worked in, as a tab row's underline does. */
+[data-pane-drag-handle][data-pane-idle],
+[data-pane-drag-handle][data-pane-idle] .text-foreground {
+  color: hsl(var(--muted-foreground));
+}

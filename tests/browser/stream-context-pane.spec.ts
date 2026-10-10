@@ -108,7 +108,7 @@ test("should open a thread's overview beside the thread and close it with the th
     timeout: 30_000,
   })
 
-  await tabPane(page, threadId).getByRole("button", { name: "Close tab" }).first().click()
+  await tabPane(page, threadId).getByRole("button", { name: "Close", exact: true }).click()
   await expect.poll(() => panelParam(page)).toBeNull()
   await expect(overview(page)).toHaveCount(0)
 })
