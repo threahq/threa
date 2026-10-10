@@ -32,6 +32,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { SidebarActionMenu, type SidebarActionItem } from "@/components/layout/sidebar/sidebar-actions"
 import { cn } from "@/lib/utils"
+import { floatingPanelTab } from "@/lib/panel-tabs"
 import {
   useStreamOrDraft,
   useStreamError,
@@ -96,6 +97,7 @@ export function StreamPage() {
   // "In this stream" overview. While a panel is open, `?context` is the panel's.
   const [isContextOpen, setContextOpen] = useStreamContextOpen()
   const containerRef = useRef<HTMLDivElement>(null)
+  const mainPaneRef = useRef<HTMLDivElement>(null)
   const dockFits = fitsDockedColumns(useElementWidth(containerRef), isPanelOpen ? 2 : 1)
   const isDockOpen = isContextOpen && !isMobile && dockFits
   const {
@@ -913,9 +915,12 @@ export function StreamPage() {
   // re-running the opening scroll.
   const mobileTakeover = isMobile && isPanelOpen && !panelInAside
   const tabStackShown = isMobile ? mobileTakeover : showContent && !asideStage && !panelInAside
+  // A tab floating over the page leaves everything else under it out of reach, as the stage does.
+  const floating = tabStackShown && floatingPanelTab(layout, isMobile) !== null
 
   return (
-    <StreamContextDockProvider value={{ target: dock.target, fits: dockFits }}>
+    // A floating tab's overview floats over it too: the dock is under it.
+    <StreamContextDockProvider value={{ target: dock.target, fits: dockFits && !floating }}>
       <PaneHost
         ref={containerRef}
         columns={isMobile ? "minmax(0,1fr)" : `minmax(0,1fr) ${displayWidth}px auto`}
@@ -928,7 +933,9 @@ export function StreamPage() {
           // The stage covers this row: everything under it stays mounted (the
           // page keeps its header and its state) but must leave the tab order,
           // or focus walks into content nobody can see.
-          inert={asideStage}
+          inert={asideStage || floating}
+          className={cn(floating && "isolate")}
+          ref={mainPaneRef}
           onPointerDownCapture={() => setCurrentPane(null)}
           onFocusCapture={() => setCurrentPane(null)}
         >
@@ -955,8 +962,9 @@ export function StreamPage() {
               onResizeMove={handleResizeMove}
               onResizeEnd={handleResizeEnd}
               onResizeKeyDown={handleResizeKeyDown}
+              handleInert={floating}
             >
-              <PanelTabStack workspaceId={workspaceId} maxColumns={maxColumns} stacked={isMobile} />
+              <PanelTabStack workspaceId={workspaceId} maxColumns={maxColumns} stacked={isMobile} main={mainPaneRef} />
             </ResizablePanelFrame>
           )}
         </Pane>
@@ -967,7 +975,7 @@ export function StreamPage() {
             dock={dock}
             insetRight={panelInset}
             insetAnimates={panelInsetAnimates}
-            inert={asideStage}
+            inert={asideStage || floating}
           />
         )}
         <AsideSlot workspaceId={workspaceId} hostKey={asideHostKey} />

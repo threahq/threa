@@ -1,9 +1,16 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react"
 import { usePanel, useFrontPanel, useCurrentPane, isConversationPanel, PaneScope } from "@/contexts"
-import { Pane } from "@/components/panes"
+import { Minimize2 } from "lucide-react"
+import { Pane, PaneFocusContext, PanelTabTitle, usePaneFocusEscape, type PaneMapCell } from "@/components/panes"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 import { compilePanelGrid, defaultPanelGridSizes, panelGridShape, resplit, type PanelGridSizes } from "@/lib/panel-grid"
-import { fitPanelLayout, type PanelLayout, type PanelSection, type SplitDirection } from "@/lib/panel-tabs"
+import {
+  fitPanelLayout,
+  floatingPanelTab,
+  type PanelLayout,
+  type PanelSection,
+  type SplitDirection,
+} from "@/lib/panel-tabs"
 import { cn } from "@/lib/utils"
 import { PanelResizeHandle } from "./panel-resize-handle"
 import { PaneShortcuts } from "./pane-shortcuts"
@@ -52,6 +59,7 @@ const MIN_SECTION_WIDTH = 200
 const MIN_SECTION_HEIGHT = 120
 
 const NO_SPLITS: readonly SplitDirection[] = []
+const NO_MAP: readonly PaneMapCell[] = []
 const SPLIT_DOWN: readonly SplitDirection[] = ["down"]
 const SPLIT_ANY: readonly SplitDirection[] = ["right", "down"]
 
@@ -61,6 +69,8 @@ interface PanelTabStackProps {
   maxColumns: number
   /** Show every tab in one section (a phone). */
   stacked: boolean
+  /** The main view beside the tabs, which a floating tab's map shows too. */
+  main: RefObject<HTMLElement | null>
 }
 
 interface PlacedTab {
@@ -80,12 +90,13 @@ interface PlacedTab {
  * placing them, because moving a mounted element in the DOM resets its scroll;
  * focus order can differ from the visual order as a result.
  */
-export function PanelTabStack({ workspaceId, maxColumns, stacked }: PanelTabStackProps) {
-  const { layout, setCurrentPane } = usePanel()
+export function PanelTabStack({ workspaceId, maxColumns, stacked, main }: PanelTabStackProps) {
+  const { layout, setCurrentPane, focusTab } = usePanel()
   const front = useFrontPanel()
   const current = useCurrentPane()
   const display = useMemo(
-    () => fitPanelLayout(layout, maxColumns, stacked, front),
+    // A floating tab is always on show, even from a folded column.
+    () => fitPanelLayout(layout, maxColumns, stacked, layout.focused ?? front),
     [layout, maxColumns, stacked, front]
   )
   const [sizes, setSizes] = usePanelGridSizes(display)
@@ -119,6 +130,21 @@ export function PanelTabStack({ workspaceId, maxColumns, stacked }: PanelTabStac
   // The pane worked in, else the panel last worked in, else the first on show.
   const shortcutSection = onShow(current) ?? onShow(front) ?? sections[0]
   const panes = stacked ? undefined : [null, ...sections.map((section) => section.active)]
+
+  const focused = floatingPanelTab(layout, stacked)
+  // Measured only while a tab floats, the one time its map shows.
+  const unmeasured = useRef<HTMLElement>(null)
+  const mainWidth = useBoxSize(focused !== null ? main : unmeasured).width
+  const mainShare = mainWidth > 0 ? mainWidth / (mainWidth + box.width) : 0
+  const restore = useCallback(() => focusTab(null), [focusTab])
+  usePaneFocusEscape(focused, restore)
+  // Only Restore draws the map, so resizing with nothing floating leaves every pane's header alone.
+  const map = useMemo(
+    () => (focused === null ? NO_MAP : paneMap(display, sizes, focused, mainShare)),
+    [focused, display, sizes, mainShare]
+  )
+  const focus = useMemo(() => (stacked ? null : { focused, map }), [stacked, focused, map])
+  const ghost = tabs.find((tab) => tab.id === focused)
 
   const columnUnit = box.width / sum(sizes.columns)
   const columnResizers = sizes.columns
@@ -156,23 +182,58 @@ export function PanelTabStack({ workspaceId, maxColumns, stacked }: PanelTabStac
 
   return (
     <div ref={ref} className="grid h-full" style={{ gridTemplateColumns: grid.columns, gridTemplateRows: grid.rows }}>
-      {tabs.map((tab) => (
-        <Pane
-          key={tab.key}
-          area={tab.area}
-          covered={tab.id !== tab.section.active}
-          data-panel-tab={tab.id}
-          data-front-panel={tab.id === front || undefined}
-          onPointerDownCapture={() => setCurrentPane(tab.id)}
-          onFocusCapture={() => setCurrentPane(tab.id)}
+      <PaneFocusContext.Provider value={focus}>
+        {tabs.map((tab) => (
+          <Pane
+            key={tab.key}
+            // Its containing block is the page's grid, which would read its tab-stack area as page lines.
+            area={tab.id === focused ? "auto" : tab.area}
+            covered={tab.id !== tab.section.active}
+            // Focus mode is a class on the same pane, never a dialog: a portal would remount it and lose its draft and scroll.
+            inert={focused !== null && tab.id !== focused}
+            className={cn(
+              tab.id === focused &&
+                "absolute inset-x-5 top-[58px] bottom-5 z-30 rounded-[10px] border bg-background shadow-[0_24px_60px_rgba(0,0,0,0.28)]",
+              focused !== null && tab.id !== focused && "isolate"
+            )}
+            data-panel-tab={tab.id}
+            data-front-panel={tab.id === front || undefined}
+            data-focused-pane={tab.id === focused || undefined}
+            onPointerDownCapture={() => setCurrentPane(tab.id)}
+            onFocusCapture={() => setCurrentPane(tab.id)}
+          >
+            <PaneScope panelId={tab.id} section={tab.section} splits={tab.splits}>
+              <ScopedPanelHost workspaceId={workspaceId} />
+            </PaneScope>
+          </Pane>
+        ))}
+      </PaneFocusContext.Provider>
+      {ghost && (
+        <div
+          aria-hidden
+          data-testid="pane-focus-ghost"
+          style={{ gridArea: ghost.area }}
+          className="grid min-h-0 min-w-0 place-items-center bg-background bg-[repeating-linear-gradient(135deg,transparent_0_10px,hsl(0_0%_50%/0.05)_10px_20px)] text-sm text-muted-foreground"
         >
-          <PaneScope panelId={tab.id} section={tab.section} splits={tab.splits}>
-            <ScopedPanelHost workspaceId={workspaceId} />
-          </PaneScope>
-        </Pane>
-      ))}
-      {columnResizers}
-      {rowResizers}
+          <div className="flex max-w-[80%] items-center gap-2 rounded-lg border border-dashed px-3 py-2">
+            <span className="truncate">
+              <PanelTabTitle workspaceId={workspaceId} panelId={ghost.id} />
+            </span>
+            <Minimize2 className="h-4 w-4 shrink-0" />
+          </div>
+        </div>
+      )}
+      {focused !== null && (
+        // Spans the whole page, top band included: the tab bars along the top stay in sight, and a click on them puts the pane back.
+        <div
+          data-testid="pane-focus-scrim"
+          className="absolute inset-0 z-[29] bg-[rgba(30,20,10,0.22)] bg-clip-content pt-12 dark:bg-black/55"
+          onClick={restore}
+        />
+      )}
+      {/* Under a floating tab they would still take Tab and the arrow keys. */}
+      {focused === null && columnResizers}
+      {focused === null && rowResizers}
       {shortcutSection?.active && (
         <PaneScope panelId={shortcutSection.active} section={shortcutSection} splits={NO_SPLITS}>
           <PaneShortcuts panes={panes} />
@@ -184,6 +245,30 @@ export function PanelTabStack({ workspaceId, maxColumns, stacked }: PanelTabStac
 
 const sum = (shares: readonly number[]) => shares.reduce((total, share) => total + share, 0)
 
+/** The main view's share of the width, then each section on show placed by its share of the rest. */
+function paneMap(
+  display: PanelLayout,
+  sizes: PanelGridSizes,
+  focused: string | null,
+  mainShare: number
+): PaneMapCell[] {
+  const main = mainShare > 0 ? [{ x: 0, y: 0, width: mainShare, height: 1, focused: false }] : []
+  const width = sum(sizes.columns) / (1 - mainShare)
+  const sections = display.columns.flatMap((sections, column) => {
+    const rows = sizes.rows[column]
+    const height = sum(rows)
+    const x = mainShare + sum(sizes.columns.slice(0, column)) / width
+    return sections.map((section, row) => ({
+      x,
+      y: sum(rows.slice(0, row)) / height,
+      width: sizes.columns[column] / width,
+      height: rows[row] / height,
+      focused: section.active === focused,
+    }))
+  })
+  return [...main, ...sections]
+}
+
 /** Section sizes last dragged for this arrangement's shape, so undoing a split finds the old sizes again. */
 function usePanelGridSizes(display: PanelLayout) {
   const [stored, setStored] = useState<Record<string, PanelGridSizes>>({})
@@ -192,7 +277,8 @@ function usePanelGridSizes(display: PanelLayout) {
     (next: PanelGridSizes) => setStored((current) => ({ ...current, [shape]: next })),
     [shape]
   )
-  return [stored[shape] ?? defaultPanelGridSizes(display), setSizes] as const
+  const fallback = useMemo(() => defaultPanelGridSizes(display), [display])
+  return [stored[shape] ?? fallback, setSizes] as const
 }
 
 /** Width and height together: `useElementWidth`'s callers must not re-render as their height changes. */

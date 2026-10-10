@@ -95,7 +95,7 @@ import { useScrollToMessage } from "@/hooks/use-scroll-to-message"
 import { VirtualizedScroller, useRenderedContentLatch } from "@/components/timeline/virtualized-scroller"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
-import { PanelTabStrip, usePaneCovered, usePanelCloseFocusLanding } from "@/components/panes"
+import { PaneFocusToggle, PanelTabStrip, usePaneCovered, usePanelCloseFocusLanding } from "@/components/panes"
 
 const TYPE_GLYPH: Record<string, LucideIcon> = {
   channel: Hash,
@@ -309,6 +309,7 @@ function ConversationPanelHeader({
       ) : (
         <div className="h-8 w-8 shrink-0" />
       )}
+      <PaneFocusToggle />
       {!isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />}
     </SidePanelHeader>
   )

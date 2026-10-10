@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback, useMemo, forwardRef, useImperativeHandle } from "react"
+import { useRef, useState, useEffect, useCallback, useContext, useMemo, forwardRef, useImperativeHandle } from "react"
 import { useEditor, EditorContent } from "@tiptap/react"
 import { GapCursor } from "@tiptap/pm/gapcursor"
 import type { ResolvedPos } from "@tiptap/pm/model"
@@ -56,8 +56,9 @@ import {
 } from "./snippet-paste"
 import type { GiphyGif } from "@threahq/types"
 import { cn } from "@/lib/utils"
+import { PaneFocusContext } from "@/components/panes/pane-focus"
 import { usePreferences } from "@/contexts"
-import { getEffectiveEditorBindings } from "@/lib/keyboard-shortcuts"
+import { getEffectiveEditorBindings, getEffectiveKeyBinding, matchesKeyBinding } from "@/lib/keyboard-shortcuts"
 import type { PendingAttachment, UploadResult } from "@/hooks/use-attachments"
 import type { AttachmentReferenceAttrs } from "./attachment-reference-extension"
 import type {
@@ -490,6 +491,10 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const effectiveEditorBindings = useMemo(() => getEffectiveEditorBindings(customBindings), [customBindings])
   const keyBindingsRef = useRef<Record<string, string>>({})
   keyBindingsRef.current = effectiveEditorBindings
+  const paneFocusBindingRef = useRef<string | undefined>(undefined)
+  // Only a tab pane on a wide screen can float; elsewhere the chord keeps its editing meaning.
+  const paneFocus = useContext(PaneFocusContext)
+  paneFocusBindingRef.current = paneFocus ? getEffectiveKeyBinding("togglePaneFocus", customBindings) : undefined
 
   // Ref to access editor instance from callbacks defined before useEditor returns
   const editorRef = useRef<ReturnType<typeof useEditor>>(null)
@@ -993,6 +998,9 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
           onSubmitRef.current()
           return true
         }
+        // The page's pane-focus shortcut (⌥Enter by default) is neither a new line nor a send here.
+        const paneFocusBinding = paneFocusBindingRef.current
+        if (paneFocusBinding && matchesKeyBinding(event, paneFocusBinding)) return true
         // Enter in "enter" send mode: send unless a suggestion popup is active
         if (event.key === "Enter" && !event.shiftKey && messageSendModeRef.current === "enter") {
           if (currentEditor && isSuggestionActive(currentEditor)) {
