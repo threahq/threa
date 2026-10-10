@@ -1360,6 +1360,10 @@ function SentMessageEvent({
       awaitingServerId,
       sharedCopy,
       replyUrl,
+      onOpenThreadInNewTab:
+        isMobile && panel.hasTabs && effectiveThreadId && !awaitingServerId
+          ? () => openPanel(effectiveThreadId, { newTab: true })
+          : undefined,
       traceUrl:
         isAgentTraceActor(event.actorType) && payload.sessionId
           ? getTraceUrl(payload.sessionId, payload.messageId)
@@ -1530,6 +1534,8 @@ function SentMessageEvent({
       awaitingServerId,
       sharedCopy,
       replyUrl,
+      effectiveThreadId,
+      openPanel,
       getTraceUrl,
       currentUserId,
       workspaceId,

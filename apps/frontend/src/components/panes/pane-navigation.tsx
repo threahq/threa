@@ -18,8 +18,8 @@ export function PaneNavigation({ children }: { children: ReactNode }) {
     const go =
       (replace: boolean): Navigator["push"] =>
       (to: To, state, options) => {
-        const { pathname = "", search = "", hash } = typeof to === "string" ? parsePath(to) : to
-        if (!hash && navigateInRef.current({ pathname, search }, replace)) return
+        const { pathname = "", search = "", hash = "" } = typeof to === "string" ? parsePath(to) : to
+        if (navigateInRef.current({ pathname, search, hash }, replace)) return
         ;(replace ? outer.replace : outer.push)(to, state, options)
       }
     return { ...navigation, navigator: { ...outer, push: go(false), replace: go(true) } }
