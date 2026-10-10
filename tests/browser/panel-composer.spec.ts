@@ -46,7 +46,7 @@ const floatingPane = (page: Page) => page.locator("[data-focused-pane]")
 const expandLink = (page: Page, within = mainPane(page)) =>
   within.getByRole("link", { name: "Expand editor into a pane" })
 const sideLink = (page: Page) => mainPane(page).getByRole("link", { name: "Open to the side" })
-const composerRoot = (page: Page) => mainPane(page).locator("[data-message-composer-root]")
+const tetherTo = (page: Page) => mainPane(page).getByRole("button", { name: "Go to draft" })
 
 test("should carry the draft into a floating pane and back, and close it on send", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 })
@@ -56,7 +56,6 @@ test("should carry the draft into a floating pane and back, and close it on send
   await mainComposer(page).click()
   await page.keyboard.type("a long thought")
   const streamBefore = (await mainPane(page).boundingBox())!
-  const composerBefore = (await composerRoot(page).boundingBox())!
   await expandLink(page).click()
 
   await expect.poll(() => panelParam(page)).toBe(`${compose}**`)
@@ -70,20 +69,25 @@ test("should carry the draft into a floating pane and back, and close it on send
   // The caret lands at the end of the draft.
   await page.keyboard.type(", continued")
   await expect(paneEditor(page, streamId)).toHaveText("a long thought, continued")
-  // The inline composer is a placeholder now, the same height so the timeline above it holds still.
-  await expect(mainPane(page).getByText("Writing in a pane", { exact: true })).toBeVisible()
+  // The inline composer gives way to one line of the draft, leading to it.
+  await expect(tetherTo(page)).toContainText("a long thought, continued")
   await expect(mainPane(page).getByRole("textbox")).toHaveCount(0)
-  expect((await composerRoot(page).boundingBox())!.height).toBe(composerBefore.height)
 
-  // Escape leaves the editor first, then puts the pane back.
+  // Escape leaves the editor first, then sends the draft back inline.
   await page.keyboard.press("Escape")
   await expect(paneEditor(page, streamId)).not.toBeFocused()
   expect(panelParam(page)).toBe(`${compose}**`)
   await page.keyboard.press("Escape")
+  await expect.poll(() => panelParam(page)).toBeNull()
+  await expect(floatingPane(page)).toHaveCount(0)
+  await expect(mainComposer(page)).toHaveText("a long thought, continued")
+
+  // Restore to layout puts the pane back right of the stream.
+  await expandLink(page).click()
+  await expect.poll(() => panelParam(page)).toBe(`${compose}**`)
+  await tabPane(page, compose).getByRole("button", { name: "Restore to layout" }).click()
   await expect.poll(() => panelParam(page)).toBe(compose)
   await expect(floatingPane(page)).toHaveCount(0)
-  await expect(paneEditor(page, streamId)).toHaveText("a long thought, continued")
-  // Put back, it lands right of the stream.
   await expect
     .poll(async () => {
       const [stream, pane] = [await mainPane(page).boundingBox(), await tabPane(page, compose).boundingBox()]
@@ -96,6 +100,13 @@ test("should carry the draft into a floating pane and back, and close it on send
   await expect.poll(() => panelParam(page)).toBeNull()
   await expect(mainComposer(page)).toHaveText("a long thought, continued")
   await expect(mainComposer(page)).toBeFocused()
+
+  // A click outside the floating draft sends it back inline too.
+  await expandLink(page).click()
+  await expect.poll(() => panelParam(page)).toBe(`${compose}**`)
+  await page.getByTestId("pane-focus-scrim").click({ position: { x: 5, y: 5 } })
+  await expect.poll(() => panelParam(page)).toBeNull()
+  await expect(mainComposer(page)).toHaveText("a long thought, continued")
 
   // Sending from the pane clears the draft and closes the pane.
   await expandLink(page).click()
@@ -138,7 +149,9 @@ test("should open the draft beside the stream, unfocused, from the button hover 
       return pane!.x >= stream!.x + stream!.width
     })
     .toBe(true)
-  await expect(mainPane(page).getByText("Writing in a pane", { exact: true })).toBeVisible()
+  await expect(tetherTo(page)).toContainText("to the side")
+  await tetherTo(page).click()
+  await expect(paneEditor(page, streamId)).toBeFocused()
 })
 
 test("should keep a docked draft pane across a reload and toggle it with Alt+Enter", async ({ page }) => {
@@ -187,6 +200,11 @@ test("should open a thread's draft beside it and close it with the thread's tab"
   await expect(paneEditor(page, threadId)).toHaveText("thread draft")
   await page.keyboard.press("Escape")
   await page.keyboard.press("Escape")
+  await expect.poll(() => route(page)).toEqual({ stream: threadId, panel: `${streamId}-${threadId}` })
+  await expect(tabPane(page, threadId).locator('[contenteditable="true"]').last()).toHaveText("thread draft")
+
+  await expandLink(page, tabPane(page, threadId)).click()
+  await tabPane(page, compose).getByRole("button", { name: "Restore to layout" }).click()
   await expect.poll(() => route(page)).toEqual({ stream: threadId, panel: `${streamId}-${threadId}-${compose}` })
   await expect(tabPane(page, compose).locator("header")).toContainText("Draft to")
 

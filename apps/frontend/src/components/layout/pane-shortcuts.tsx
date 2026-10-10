@@ -177,7 +177,7 @@ function findPane(paneId: string): HTMLElement | null {
  * has no composer. A later landing, or
  * the user moving focus first, calls it off.
  */
-function landFocus(landing: MutableRefObject<number>, paneId: string | null) {
+export function landFocus(landing: MutableRefObject<number>, paneId: string | null) {
   if (paneId === null) return
   const run = ++landing.current
   const from = document.activeElement

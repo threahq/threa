@@ -227,6 +227,7 @@ beforeEach(async () => {
     closeTab: vi.fn(),
     setCurrentPane: vi.fn(),
   } as unknown as ReturnType<typeof contextsModule.usePanel>)
+  vi.spyOn(contextsModule, "usePaneFocusLanding").mockReturnValue({ current: 0 })
 
   vi.spyOn(hooksModule, "useStreamOrDraft").mockReturnValue({
     sendMessage: mockSendMessage,

@@ -45,10 +45,14 @@ import { useConversationReply, type ConversationReplyData } from "./conversation
 import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { boardPostLastActiveStreamId } from "@/lib/board/reply-plan"
 import { boardReplyDraftKey, parseBoardDraftKey } from "@/lib/board/draft-keys"
-import { usePanel, createConversationPanelId, createComposePanelId } from "@/contexts"
+import { usePanel, usePaneFocusLanding, createConversationPanelId, createComposePanelId } from "@/contexts"
 import { AsideCoversPanesContext } from "@/components/aside/aside-presentation"
 import { PaneFocusContext, useComposeSlot } from "@/components/panes"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { landFocus } from "@/components/layout/pane-shortcuts"
+import { collapsedComposerPreview } from "@/lib/drafts/collapsed-composer-preview"
+import { ArrowDownToLine, ArrowRight } from "lucide-react"
 import { panelIdsOf } from "@/lib/panel-tabs"
 import {
   acknowledgeShareHandoffBatch,
@@ -784,6 +788,11 @@ function MessageInputComponent({
   const collapse = useStableCallback(() => {
     if (expanded) closeTab(composeId)
   })
+  const paneLanding = usePaneFocusLanding()
+  const goToPane = useStableCallback(() => {
+    setCurrentPane(composeId)
+    landFocus(paneLanding, composeId)
+  })
   const messageSendMode = preferences?.messageSendMode ?? "enter"
   const connectionState = useConnectionState()
   const isOffline = connectionState === "offline"
@@ -1142,7 +1151,7 @@ function MessageInputComponent({
       <FloatingComposerShell ref={composerHeightRef} data-message-composer-root>
         <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={e2eEnabled} streamId={e2eRootStreamId} />
         {expanded ? (
-          <ComposingInPaneBar onWriteHere={collapse} />
+          <ComposingInPaneBar draft={composer.content} onGoTo={goToPane} onWriteHere={collapse} />
         ) : (
           <>
             {conversationReplyStrip}
@@ -1160,19 +1169,46 @@ function MessageInputComponent({
   )
 }
 
-/**
- * Holds the composer's place while its draft is open in a pane: one line, the
- * height of an empty composer, so the timeline above it stays where it was.
- */
-function ComposingInPaneBar({ onWriteHere }: { onWriteHere: () => void }) {
+/** Holds the composer's place while its draft is open in a pane: one line of the draft, leading to it. */
+function ComposingInPaneBar({
+  draft,
+  onGoTo,
+  onWriteHere,
+}: {
+  draft: JSONContent
+  onGoTo: () => void
+  onWriteHere: () => void
+}) {
+  const preview = useMemo(() => collapsedComposerPreview(draft), [draft])
   return (
-    <div className="flex h-[123px] flex-col">
-      <div className="flex h-[104px] items-center justify-between gap-2 rounded-[16px] border border-dashed border-input bg-card/75 px-4 backdrop-blur-md">
-        <span className="truncate text-sm text-muted-foreground">Writing in a pane</span>
-        <Button type="button" variant="link" size="sm" className="shrink-0 px-0" onClick={onWriteHere}>
+    <div className="flex h-10 items-center gap-1 rounded-xl border border-input bg-card/75 pr-1 backdrop-blur-md">
+      <button
+        type="button"
+        aria-label="Go to draft"
+        className="flex min-w-0 flex-1 items-center gap-2 self-stretch rounded-l-xl pl-3 text-left text-sm text-muted-foreground hover:text-foreground"
+        onClick={onGoTo}
+      >
+        <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+        <span className="min-w-0 flex-1 truncate">{preview}</span>
+        <ArrowRight className="h-4 w-4 shrink-0" />
+      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0"
+            aria-label="Write here"
+            onClick={onWriteHere}
+          >
+            <ArrowDownToLine className="h-4 w-4" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">
           Write here
-        </Button>
-      </div>
+        </TooltipContent>
+      </Tooltip>
     </div>
   )
 }
