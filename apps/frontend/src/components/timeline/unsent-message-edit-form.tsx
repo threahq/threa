@@ -6,6 +6,7 @@ import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { RichEditor, EditorToolbar, EditorActionBar, DocumentEditorModal } from "@/components/editor"
 import type { RichEditorHandle } from "@/components/editor"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { usePaneCovered } from "@/components/panes/pane-host"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
 import { usePendingMessages } from "@/contexts"
 import { serializeToMarkdown, parseMarkdown } from "@threahq/prosemirror"
@@ -65,6 +66,7 @@ export function UnsentMessageEditForm({
   const mobileActionBarRef = useRef<HTMLDivElement>(null)
   const [mobileToolbarEditor, setMobileToolbarEditor] = useState<Editor | null>(null)
   const instructionsId = useId()
+  const covered = usePaneCovered()
 
   const handleCancel = useCallback(async () => {
     await cancelEditing(messageId)
@@ -72,7 +74,7 @@ export function UnsentMessageEditForm({
   }, [messageId, cancelEditing, onDone])
 
   useEffect(() => {
-    if (isTouch) return
+    if (isTouch || covered) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault()
@@ -81,7 +83,7 @@ export function UnsentMessageEditForm({
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [isTouch, handleCancel])
+  }, [isTouch, covered, handleCancel])
 
   const setRichEditorHandle = useCallback((handle: RichEditorHandle | null) => {
     richEditorRef.current = handle

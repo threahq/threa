@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useRef } from "react"
+import { useCallback, useContext, useEffect, useMemo, useRef } from "react"
 import {
   UNSAFE_DataRouterContext,
   useLocation,
@@ -42,29 +42,56 @@ import type { Cover, PopsToCloseState } from "@/lib/covers"
  * closes in place. Back still steps through them one at a time.
  */
 export function useCoverClose(cover: Cover): () => void {
+  return useCoverHistory(cover).close
+}
+
+/** A canonical spelling of a URL, so entries compare by what they show. */
+function entryUrl(pathname: string, params: URLSearchParams): string {
+  const sorted = new URLSearchParams(params)
+  sorted.sort()
+  return `${pathname}?${sorted.toString()}`
+}
+
+/**
+ * {@link useCoverClose}, plus `closeTo`: takes part of a cover off (one of the
+ * panel's tabs) and lands on `next`. It pops when the entry beneath shows
+ * exactly `next`, so Back never brings the closed part back; otherwise it
+ * rewrites in place. Each entry's beneath is the one it was pushed over,
+ * inherited by a replace or a same-URL push on top, and the stripped view for
+ * an attested hop.
+ */
+export function useCoverHistory(cover: Cover): { close: () => void; closeTo: (next: URLSearchParams) => void } {
   const location = useLocation()
   const navigate = useNavigate()
   const navigationType = useNavigationType()
   const [, setSearchParams] = useSearchParams()
 
   const claimed = useRef(new Set<string>())
-  const previous = useRef<{ key: string; url: string } | null>(null)
+  const beneathOf = useRef(new Map<string, string>())
+  const previous = useRef<{ key: string; url: string; entry: string } | null>(null)
   const observe = useCallback(
     (at: Location, action: NavigationType) => {
       if (at.key === previous.current?.key) return
       const params = new URLSearchParams(at.search)
       const url = `${at.pathname}?${params.toString()}`
+      const entry = entryUrl(at.pathname, params)
       const open = params.has(cover[0])
       for (const param of cover) params.delete(param)
       const beneath = `${at.pathname}?${params.toString()}`
       const before = previous.current
-      previous.current = { key: at.key, url }
-      if (!open) return
+      previous.current = { key: at.key, url, entry }
       // An attested entry stays attested however it is reached: the rebuild's
       // inner hops are first seen by popping back onto them.
       const attested = (at.state as PopsToCloseState | null)?.popsToClose === cover[0]
+      const onTopOfBefore = before !== null && (action === "REPLACE" || url === before.url)
+      if (attested) beneathOf.current.set(at.key, entryUrl(at.pathname, params))
+      else if (before !== null && action !== "POP") {
+        const inherited = onTopOfBefore ? beneathOf.current.get(before.key) : before.entry
+        if (inherited !== undefined) beneathOf.current.set(at.key, inherited)
+      }
+      if (!open) return
       const pushedOverBeneath = action === "PUSH" && before?.url === beneath
-      const onTop = before !== null && (action === "REPLACE" || url === before.url) && claimed.current.has(before.key)
+      const onTop = onTopOfBefore && claimed.current.has(before.key)
       if (attested || pushedOverBeneath || onTop) claimed.current.add(at.key)
     },
     [cover]
@@ -82,7 +109,7 @@ export function useCoverClose(cover: Cover): () => void {
     observe(location, navigationType)
   }, [location, navigationType, observe, router])
 
-  return useCallback(() => {
+  const close = useCallback(() => {
     if (claimed.current.delete(location.key)) {
       navigate(-1)
       return
@@ -96,4 +123,20 @@ export function useCoverClose(cover: Cover): () => void {
       { replace: true }
     )
   }, [cover, location.key, navigate, setSearchParams])
+
+  const closeTo = useCallback(
+    (next: URLSearchParams) => {
+      const open = new URLSearchParams(location.search).has(cover[0])
+      // Consumed like a claim, so a second close before the pop commits can't pop twice.
+      if (open && beneathOf.current.get(location.key) === entryUrl(location.pathname, next)) {
+        beneathOf.current.delete(location.key)
+        navigate(-1)
+        return
+      }
+      setSearchParams(next, { replace: true })
+    },
+    [cover, location.key, location.pathname, location.search, navigate, setSearchParams]
+  )
+
+  return useMemo(() => ({ close, closeTo }), [close, closeTo])
 }

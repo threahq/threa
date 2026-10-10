@@ -42,6 +42,8 @@ export {
 export {
   PanelProvider,
   usePanel,
+  usePanelTabFocusHandoff,
+  PaneScope,
   isDraftPanel,
   parseDraftPanel,
   createDraftPanelId,

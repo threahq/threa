@@ -1,4 +1,4 @@
-import type { HTMLAttributes, Ref } from "react"
+import { createContext, useContext, type HTMLAttributes, type Ref } from "react"
 import { cn } from "@/lib/utils"
 
 /** How long a pane's track takes to open or close. Edges that track a pane animate over the same time. */
@@ -47,13 +47,27 @@ interface PaneProps extends HTMLAttributes<HTMLDivElement> {
   inert?: boolean
 }
 
+const PaneCoveredContext = createContext(false)
+
+/**
+ * Whether the pane this renders in, or any pane around it, is covered. A covered
+ * pane keeps its geometry, so what reads "on screen" from layout (the read
+ * frontier) has to ask this instead.
+ */
+export function usePaneCovered(): boolean {
+  return useContext(PaneCoveredContext)
+}
+
 export function Pane({ column, covered = false, inert = false, className, style, ...rest }: PaneProps) {
+  const hidden = usePaneCovered() || covered
   return (
-    <div
-      className={cn("min-h-0 min-w-0 overflow-hidden", covered && "invisible", className)}
-      style={{ ...style, gridArea: `1 / ${column}` }}
-      inert={covered || inert || undefined}
-      {...rest}
-    />
+    <PaneCoveredContext.Provider value={hidden}>
+      <div
+        className={cn("min-h-0 min-w-0 overflow-hidden", covered && "invisible", className)}
+        style={{ ...style, gridArea: `1 / ${column}` }}
+        inert={covered || inert || undefined}
+        {...rest}
+      />
+    </PaneCoveredContext.Provider>
   )
 }

@@ -25,7 +25,8 @@ export function focusAtEnd(el: HTMLElement) {
  * the user can't see.
  */
 function isOnScreen(element: HTMLElement): boolean {
-  if (element.getClientRects().length === 0) return false
+  // A pane covered by another (a background panel tab) keeps its box but is inert.
+  if (element.getClientRects().length === 0 || element.closest("[inert]")) return false
   const rect = element.getBoundingClientRect()
   // Layout-viewport bounds, matching the rect: visualViewport shrinks under
   // pinch-zoom / soft keyboard and would judge a visible editor off-screen.
@@ -75,8 +76,12 @@ type PendingOpen = { scope: HTMLElement; chars: string }
  * would hand every keystroke to the thread.
  */
 function zoneContainer(zone: "main" | "panel", clicked: HTMLElement | null): HTMLElement | null {
-  if (clicked?.isConnected && clicked.dataset.editorZone === zone) return clicked
-  return document.querySelector<HTMLElement>(`[data-editor-zone="${zone}"]`)
+  if (clicked?.isConnected && clicked.dataset.editorZone === zone && !clicked.closest("[inert]")) return clicked
+  return (
+    Array.from(document.querySelectorAll<HTMLElement>(`[data-editor-zone="${zone}"]`)).find(
+      (element) => !element.closest("[inert]")
+    ) ?? null
+  )
 }
 
 /**
@@ -181,7 +186,10 @@ export function useTypeToFocus() {
         return
       }
 
-      const inlineEditor = document.querySelector<HTMLElement>("[data-inline-edit] [contenteditable='true']")
+      // A background panel tab keeps its open edit, but behind `inert` it can't take focus.
+      const inlineEditor = Array.from(
+        document.querySelectorAll<HTMLElement>("[data-inline-edit] [contenteditable='true']")
+      ).find((editor) => !editor.closest("[inert]"))
       if (inlineEditor) {
         focusAtEnd(inlineEditor)
         return

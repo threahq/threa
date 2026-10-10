@@ -4,6 +4,7 @@ import {
   createChannel,
   expectApiOk,
   generateTestId,
+  getActivePanel,
   loginAndCreateWorkspace,
   sendPanelReply,
   waitForRealThreadPanel,
@@ -15,9 +16,28 @@ import {
  * These tests verify that when navigating between thread levels,
  * the thread state is properly bootstrapped with correct reply counts.
  *
- * Critical bug: Navigating back to parent threads via breadcrumbs or
- * reopening threads does not properly show nested thread reply counts.
+ * Critical bug: Navigating back to parent threads or reopening threads does
+ * not properly show nested thread reply counts.
+ *
+ * A nested thread opens as a second panel tab beside its parent, so "back" is
+ * the parent's tab, and assertions after that point scope to the tab on show.
  */
+
+const openPanelIds = (page: Page) =>
+  new URL(page.url()).searchParams
+    .get("panel")!
+    .split(".")
+    .map((id) => id.replace("*", ""))
+
+/** Brings an open thread's tab to the front from the tab row and waits for it to show. */
+async function switchToTab(page: Page, threadId: string): Promise<void> {
+  await getActivePanel(page)
+    .getByRole("navigation", { name: "Panel tabs" })
+    .getByRole("link")
+    .nth(openPanelIds(page).indexOf(threadId))
+    .click()
+  await expect(getActivePanel(page)).toHaveAttribute("data-panel-tab", threadId)
+}
 
 test.describe("Nested Thread Navigation", () => {
   async function sendChannelMessageViaApi(page: Page, text: string): Promise<void> {
@@ -42,7 +62,7 @@ test.describe("Nested Thread Navigation", () => {
     await loginAndCreateWorkspace(page, "nested-thread")
   })
 
-  test("should show nested thread reply count when navigating back via breadcrumbs", async ({ page }) => {
+  test("should show nested thread reply count when switching back to the parent thread's tab", async ({ page }) => {
     test.setTimeout(90000)
     const testId = generateTestId()
 
@@ -75,6 +95,7 @@ test.describe("Nested Thread Navigation", () => {
 
     // Wait for thread to be created (draft transitions to real thread)
     await waitForRealThreadPanel(page)
+    const [parentThreadId] = openPanelIds(page)
 
     // Now reply to the first-level thread reply to create a nested (second-level) thread
     const firstReplyContainer = page
@@ -91,24 +112,19 @@ test.describe("Nested Thread Navigation", () => {
     const nestedReply = `Nested thread reply ${testId}`
     await sendPanelReply(page, nestedReply)
 
-    await expect(page.getByTestId("panel").getByText(nestedReply)).toBeVisible({ timeout: 5000 })
+    await expect(getActivePanel(page).getByText(nestedReply)).toBeVisible({ timeout: 5000 })
 
     // Wait for nested thread to be created
     await waitForRealThreadPanel(page)
 
-    // Navigate back to the first-level thread via breadcrumbs
-    // The breadcrumb should show the parent thread (which contains firstReply)
-    // Target the breadcrumb in the thread panel header (not sidebar navigation)
-    const breadcrumb = page.locator("nav[aria-label='breadcrumb'] a").first()
-    await expect(breadcrumb).toBeVisible({ timeout: 2000 })
-    await breadcrumb.click()
+    // Switch back to the first-level thread's tab
+    await switchToTab(page, parentThreadId)
 
     // Verify we're back in the first-level thread by checking for the firstReply message
-    await expect(page.getByTestId("panel").getByText(firstReply).first()).toBeVisible({ timeout: 5000 })
+    await expect(getActivePanel(page).getByText(firstReply).first()).toBeVisible({ timeout: 5000 })
 
     // CRITICAL: The firstReply message should show as having 1 reply (the nested thread)
-    // This is the bug - it doesn't show the reply count after navigating back
-    const firstReplyInPanel = page.getByTestId("panel").locator(".message-item").filter({ hasText: firstReply }).first()
+    const firstReplyInPanel = getActivePanel(page).locator(".message-item").filter({ hasText: firstReply }).first()
     await expect(firstReplyInPanel).toContainText(/1 reply/i, { timeout: 45000 })
   })
 
@@ -157,16 +173,19 @@ test.describe("Nested Thread Navigation", () => {
     const nestedReply = `Nested reply ${testId}`
     await sendPanelReply(page, nestedReply)
 
-    await expect(page.getByTestId("panel").getByText(nestedReply)).toBeVisible({ timeout: 5000 })
+    await expect(getActivePanel(page).getByText(nestedReply)).toBeVisible({ timeout: 5000 })
     await waitForRealThreadPanel(page)
 
-    // Return to the main stream via the breadcrumb. This exercises the same
-    // navigation path as a user re-opening the thread from the parent message,
-    // without depending on the close-button click animation settling first.
-    const returnToChannel = page.getByRole("button", { name: `Return to #${channelName}` })
-    await expect(returnToChannel).toBeVisible({ timeout: 5000 })
-    await returnToChannel.click()
+    // Return to the main stream with no panel open through the channel's
+    // sidebar link (tabbed panels show no channel breadcrumb), without
+    // depending on close-button click animations settling first.
+    await page
+      .getByRole("navigation", { name: "Sidebar navigation" })
+      .getByRole("link", { name: `#${channelName}` })
+      .first()
+      .click()
     await expect(page).not.toHaveURL(/panel=/)
+    await expect(page.locator("[data-panel-tab]")).toHaveCount(0)
 
     // Reopen the first-level thread by clicking on the reply count in the main stream
     const channelMessageInMain = page
@@ -219,6 +238,7 @@ test.describe("Nested Thread Navigation", () => {
     await sendPanelReply(page, level1Message)
     await expect(page.getByTestId("panel").getByText(level1Message)).toBeVisible({ timeout: 10000 })
     await waitForRealThreadPanel(page)
+    const [level1ThreadId] = openPanelIds(page)
 
     // Create nested thread
     const level1Container = page
@@ -232,22 +252,23 @@ test.describe("Nested Thread Navigation", () => {
     const level2Message = `Level 2 ${testId}`
     await sendPanelReply(page, level2Message)
     await waitForRealThreadPanel(page)
-    await expect(page.getByTestId("panel").getByText(level2Message)).toBeVisible({ timeout: 10000 })
+    await expect(getActivePanel(page).getByText(level2Message)).toBeVisible({ timeout: 10000 })
+    const [, level2ThreadId] = openPanelIds(page)
 
-    // Navigate back via breadcrumb — bootstrap refetch delivers updated reply counts
-    const breadcrumb = page.locator("nav[aria-label='breadcrumb'] a").first()
-    await breadcrumb.click()
+    // Switch back to the parent thread's tab
+    await switchToTab(page, level1ThreadId)
 
-    // Verify reply count shows (bootstrap refetch may take a moment in CI)
-    const level1InPanel = page.getByTestId("panel").locator(".message-item").filter({ hasText: level1Message }).first()
+    // Verify reply count shows
+    const level1InPanel = getActivePanel(page).locator(".message-item").filter({ hasText: level1Message }).first()
     await expect(level1InPanel).toContainText(/1 reply/i, { timeout: 20000 })
 
-    // Navigate forward again by clicking the reply count
+    // Navigate forward again by clicking the reply count: brings the nested thread's tab forward
     await level1InPanel.getByText(/1 reply/i).click()
-    await expect(page.getByTestId("panel").getByText(level2Message)).toBeVisible({ timeout: 10000 })
+    await expect(getActivePanel(page)).toHaveAttribute("data-panel-tab", level2ThreadId)
+    await expect(getActivePanel(page).getByText(level2Message)).toBeVisible({ timeout: 10000 })
 
-    // Navigate back again
-    await breadcrumb.click()
+    // Switch back again
+    await switchToTab(page, level1ThreadId)
 
     // Reply count should still show correctly
     await expect(level1InPanel).toContainText(/1 reply/i, { timeout: 20000 })

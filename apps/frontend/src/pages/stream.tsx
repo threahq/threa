@@ -61,7 +61,7 @@ import { PaneHost, Pane } from "@/components/panes"
 import { AsideSlot, useAsideHost, useAsideIsSheet } from "@/components/aside"
 import { AsideHeaderChip } from "@/components/aside/aside-header-chip"
 import { asideHoldsPanel, useAsideForHost } from "@/stores/aside-store"
-import { PanelHost } from "@/components/layout/panel-host"
+import { PanelTabStack } from "@/components/layout/panel-host"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useCoverClose } from "@/hooks/use-cover-close"
 import { CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
@@ -91,7 +91,7 @@ export function StreamPage() {
   const { stream, isDraft, error, rename, canRename, renamePending, renameError, archive, unarchive } =
     useStreamOrDraft(workspaceId!, streamId!)
   const { isMobile } = useSidebar()
-  const { panelId, isPanelOpen, closePanel, setFocusedPane } = usePanel()
+  const { panelId, isPanelOpen, setFocusedPane } = usePanel()
   // "In this stream" overview. While a panel is open, `?context` is the panel's.
   const [isContextOpen, setContextOpen] = useStreamContextOpen()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -952,7 +952,7 @@ export function StreamPage() {
               onResizeEnd={handleResizeEnd}
               onResizeKeyDown={handleResizeKeyDown}
             >
-              <PanelHost workspaceId={workspaceId} onClose={closePanel} />
+              <PanelTabStack workspaceId={workspaceId} />
             </ResizablePanelFrame>
           )}
         </Pane>

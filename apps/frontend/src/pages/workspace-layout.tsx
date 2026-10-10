@@ -99,6 +99,7 @@ import { AnalyticsConsentBanner } from "@/components/analytics-consent-banner"
 import { useResolveOrBounce } from "./use-resolve-or-bounce"
 import { useNotificationAccountSwitch } from "./use-notification-account-switch"
 import { useNotificationActionFailure } from "./use-notification-action-failure"
+import { PANEL_PARAM, parsePanelTabs } from "@/lib/panel-tabs"
 
 /**
  * How long the tab must be backgrounded before a resume triggers the engine's
@@ -555,15 +556,22 @@ function WorkspaceLayoutContent() {
   const streamId = streamMatch?.params.streamId
 
   // Collect all stream IDs: main stream + any open panels
-  const streamIds = useMemo(() => {
-    const panelIds = searchParams.getAll("panel")
-    return [streamId, ...panelIds].filter((id): id is string => Boolean(id))
-  }, [streamId, searchParams])
+  const panelValue = searchParams.get(PANEL_PARAM)
+  const streamIds = useMemo(
+    () => [streamId, ...parsePanelTabs(panelValue).ids].filter((id): id is string => Boolean(id)),
+    [streamId, panelValue]
+  )
+  // Background tabs stay synced but aren't on screen, so they hold back neither
+  // push nor the first reveal.
+  const onScreenStreamIds = useMemo(
+    () => [streamId, parsePanelTabs(panelValue).active].filter((id): id is string => Boolean(id)),
+    [streamId, panelValue]
+  )
   // A `conv:<id>` panel is not a stream: fetching its bootstrap 404s and joining
   // its room is rejected, and both delayed the coordinated reveal on every cold
   // open with a conversation panel in the URL. Same rule the SyncEngine and the
   // presence registration above already apply (INV-35).
-  const coordinatedStreamIds = useMemo(() => streamIds.filter(isServerStreamId), [streamIds])
+  const coordinatedStreamIds = useMemo(() => onScreenStreamIds.filter(isServerStreamId), [onScreenStreamIds])
 
   useCapturePageviews()
 
@@ -604,7 +612,7 @@ function WorkspaceLayoutContent() {
           <WorkspaceSyncHandler workspaceId={workspaceId} visibleStreamIds={streamIds}>
             <UnreadTabIndicator workspaceId={workspaceId} />
             <NotificationSweeper workspaceId={workspaceId} />
-            <VisibleStreamPresence workspaceId={workspaceId} streamIds={streamIds} />
+            <VisibleStreamPresence workspaceId={workspaceId} streamIds={onScreenStreamIds} />
             <AppUpdateChecker />
             <FreshnessWatchers />
             <MessageQueueHandler workspaceId={workspaceId} />

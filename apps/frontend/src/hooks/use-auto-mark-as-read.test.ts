@@ -331,6 +331,21 @@ describe("useAutoMarkAsRead", () => {
     expect(mockMarkAsRead).toHaveBeenCalledTimes(1)
   })
 
+  it("should flush a pending mark when the pane goes behind another tab", () => {
+    const { rerender } = renderHook(
+      ({ covered }) => useAutoMarkAsRead("ws_123", "stream_a", "event_a", { enabled: !covered, covered }),
+      { initialProps: { covered: false } }
+    )
+
+    act(() => {
+      vi.advanceTimersByTime(250)
+    })
+    expect(mockMarkAsRead).not.toHaveBeenCalled()
+
+    rerender({ covered: true })
+    expect(mockMarkAsRead).toHaveBeenCalledWith("stream_a", "event_a", { partial: false })
+  })
+
   it("does NOT flush when attention drops mid-debounce (blur still cancels)", () => {
     renderHook(() => useAutoMarkAsRead("ws_123", "stream_a", "event_a"))
 
