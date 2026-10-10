@@ -340,6 +340,19 @@ describe("memo sources: deleted and edited messages", () => {
     })
   })
 
+  test("deleting a source a memo inherited from an older conversation requeues the memo's own conversation", async () => {
+    const older = await seedConversation()
+    const later = await seedConversation()
+    const memo = await seedMemo(later, [...older.messageIds, ...later.messageIds])
+
+    await deleteMessage(older, older.messageIds[0])
+
+    expect({ status: await memoStatus(memo), queued: await isQueued(later) }).toEqual({
+      status: MemoStatuses.SUPERSEDED,
+      queued: true,
+    })
+  })
+
   test("deleting one of several sources of a saved memo supersedes it", async () => {
     const seeded = await seedConversation()
     const memo = memoId()

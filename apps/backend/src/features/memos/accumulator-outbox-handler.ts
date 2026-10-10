@@ -122,7 +122,8 @@ export class MemoAccumulatorHandler extends DebouncedOutboxHandler {
 
 /**
  * Archives the active memos citing a deleted message when none of their
- * sources survive, and supersedes the rest. Returns how many memos it retired.
+ * sources survive, supersedes the rest, and queues the conversation each was
+ * written from to be read again. Returns how many memos it retired.
  */
 export async function retireMemosCitingDeletedMessage(
   client: PoolClient,
@@ -144,6 +145,23 @@ export async function retireMemosCitingDeletedMessage(
     client,
     citing.map((c) => c.memo)
   )
+
+  // A memo keeps the sources of the memos it retired, so the deleted message
+  // can sit outside the conversation the memo was written from.
+  const conversations = await ConversationRepository.findByIds(
+    client,
+    workspaceId,
+    citing.flatMap((c) => c.memo.sourceConversationId ?? [])
+  )
+  for (const conversationStreamId of new Set(conversations.map((c) => c.streamId))) {
+    await queueMemoConversations(
+      client,
+      workspaceId,
+      conversationStreamId,
+      conversations.filter((c) => c.streamId === conversationStreamId).map((c) => c.id),
+      { rereadFromStart: true }
+    )
+  }
   return archived.length + superseded.length
 }
 
