@@ -194,7 +194,7 @@ import {
   EPISODE_SUMMARY_MODEL_ID,
   EPISODE_SUMMARY_TEMPERATURE,
   EPISODE_SUMMARY_MAX_TOKENS,
-  stripInaccessibleAgentRefs,
+  buildAgentMessageContent,
 } from "./features/agents"
 import { EmojiUsageHandler } from "./features/emoji"
 import { AnalyticsCostRecorder, AnalyticsOutboxHandler } from "./features/analytics"
@@ -288,8 +288,6 @@ import { ulid } from "ulid"
 import { loadConfig } from "./lib/env"
 import { createCorsOriginChecker } from "./lib/cors"
 import type { AuthorType, ConversationDirective } from "@threahq/types"
-import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
-import { normalizeMessage, toEmoji } from "./features/emoji"
 import { logger } from "./lib/logger"
 import {
   createAI,
@@ -582,41 +580,13 @@ export async function startServer(): Promise<ServerInstance> {
     /** Declared conversation for an agent reply (roadmap 3.3); forwarded to event-service's synchronous assigner. */
     conversation?: ConversationDirective
   }) => {
-    const initialMarkdown = normalizeMessage(params.content)
-    const initialJson = parseMarkdown(initialMarkdown, undefined, toEmoji)
-    // For agent-authored messages, pre-validate the structural pointers
-    // (`shared-message:`, `quote:`, `attachment:`, `memo:`) and drop nodes
-    // that wouldn't pass event-service's strict gate or point at a memo the
-    // model invented. Without this, a single bad ref (out-of-scope stream,
-    // deleted message, cross-workspace id) causes the entire message to fail
-    // rather than just losing the pointer. The helper re-serializes the
-    // cleaned tree to keep the wire markdown in sync with `contentJson`.
-    let contentJson = initialJson
-    let contentMarkdown = initialMarkdown
-    if (params.accessibleStreamIds) {
-      const stripped = await stripInaccessibleAgentRefs({
-        pool,
-        workspaceId: params.workspaceId,
-        targetStreamId: params.streamId,
-        accessibleStreamIds: params.accessibleStreamIds,
-        contentJson: initialJson,
-      })
-      contentJson = stripped.contentJson
-      contentMarkdown = stripped.contentMarkdown
-    }
-    // Surface inline `[name](attachment:id)` pointers so step 1 access checks
-    // and step 6b `attachment_references` projection run. Without this, copy-
-    // paste resends and recipients without source-stream access can't resolve
-    // the download URL for an Ariadne resurfacing.
-    const attachmentIds = collectAttachmentReferenceIds(contentJson)
+    const content = await buildAgentMessageContent({ pool, ...params })
     return {
       workspaceId: params.workspaceId,
       streamId: params.streamId,
       authorId: params.authorId,
       authorType: params.authorType,
-      contentJson,
-      contentMarkdown,
-      attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+      ...content,
       sources: params.sources,
       sessionId: params.sessionId,
       clientMessageId: params.clientMessageId,
@@ -642,37 +612,16 @@ export async function startServer(): Promise<ServerInstance> {
     /** Same semantics as `createMessage.accessibleStreamIds`. */
     accessibleStreamIds?: string[]
   }) => {
-    const initialMarkdown = normalizeMessage(params.content)
-    const initialJson = parseMarkdown(initialMarkdown, undefined, toEmoji)
-    let contentJson = initialJson
-    let contentMarkdown = initialMarkdown
-    if (params.accessibleStreamIds) {
-      const stripped = await stripInaccessibleAgentRefs({
-        pool,
-        workspaceId: params.workspaceId,
-        targetStreamId: params.streamId,
-        accessibleStreamIds: params.accessibleStreamIds,
-        contentJson: initialJson,
-      })
-      contentJson = stripped.contentJson
-      contentMarkdown = stripped.contentMarkdown
-    }
-    // Same as createMessage: derive attachmentIds from the cleaned JSON so
-    // event-service can refresh the `attachment_references` projection in
-    // sync with the new content (INV-7). Without this, an agent edit that
-    // adds or removes an `attachment:` link leaves stale rows behind.
-    const attachmentIds = collectAttachmentReferenceIds(contentJson)
+    const content = await buildAgentMessageContent({ pool, ...params })
     return eventService.editGeneratedMessage(
       { kind: "user", userId: params.initiatingUserId },
       {
         workspaceId: params.workspaceId,
         streamId: params.streamId,
         messageId: params.messageId,
-        contentJson,
-        contentMarkdown,
+        ...content,
         actorId: params.actorId,
         actorType: "persona",
-        attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         accessibleStreamIds: params.accessibleStreamIds,
       }
     )

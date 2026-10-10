@@ -65,6 +65,7 @@ import {
   ContextBagRepository,
   PreparedRecall,
   PREPARED_RECALL_QUESTION,
+  buildAgentMessageContent,
 } from "../../../src/features/agents"
 import { AttachmentService, createMalwareScanner } from "../../../src/features/attachments"
 import { SearchService, SearchQueryExpander, SearchRefiner } from "../../../src/features/search"
@@ -453,9 +454,9 @@ export async function runCompanionTask(
         streamId: params.streamId,
         authorId: params.authorId,
         authorType: params.authorType,
-        contentJson: parseMarkdown(params.content),
-        contentMarkdown: params.content,
+        ...(await buildAgentMessageContent({ pool: ctx.pool, ...params })),
         sources: params.sources,
+        accessibleStreamIds: params.accessibleStreamIds,
       })
       return { id: message.id }
     }
@@ -465,10 +466,10 @@ export async function runCompanionTask(
         workspaceId: params.workspaceId,
         streamId: params.streamId,
         messageId: params.messageId,
-        contentJson: parseMarkdown(params.content),
-        contentMarkdown: params.content,
+        ...(await buildAgentMessageContent({ pool: ctx.pool, ...params })),
         actorId: params.actorId,
         actorType: "persona",
+        accessibleStreamIds: params.accessibleStreamIds,
       })
       return message ? { id: message.id } : null
     }
