@@ -1,14 +1,16 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject, type TouchEvent } from "react"
 import { Link } from "react-router-dom"
-import { ChevronLeft, Layers2, X } from "lucide-react"
+import { ArrowUp, ChevronLeft, Layers2, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { afterOverlayHistory } from "@/components/ui/history-back-close"
 import { SidebarToggle } from "@/components/layout"
+import { openedFrom } from "@/components/layout/sidebar/stream-pick"
 import { usePanel, usePanelTabFocusHandoff, usePhonePanes } from "@/contexts"
 import { hasHorizontalScroll, OS_GESTURE_ZONE } from "@/hooks/use-sidebar-swipe"
 import { closePanelTab, followCurrentPanel, soleFirstPanelOf } from "@/lib/panel-tabs"
 import { cn } from "@/lib/utils"
+import { useStreamFromStore } from "@/stores/stream-store"
 import { usePaneCovered } from "./pane-host"
 import { PanelTabTitle } from "./panel-tab-strip"
 import { PanelTabMenu, closeTabItems } from "./panel-tab-menu"
@@ -16,31 +18,44 @@ import { PanelTabMenu, closeTabItems } from "./panel-tab-menu"
 /** Horizontal travel that counts as a swipe (px). */
 const SWIPE_DISTANCE = 40
 
+const pickParent = (row: { parentStreamId?: string | null }) => ({ parentStreamId: row.parentStreamId ?? null })
+
 /**
- * A phone pane's leading controls: the first pane in order keeps the sidebar
- * toggle, every other pane goes back (closes itself). Outside a phone's stacked
- * panes (the board) it keeps both.
+ * A phone pane's leading control: Up to the stream it was opened from (a thread's
+ * parent, a draft's or overview's stream) where there is one, else the sidebar
+ * toggle; the system's Back walks history. Outside a phone's stacked panes (the
+ * board) it keeps the toggle and goes back by closing the pane.
  */
 export function PhonePaneLeading({
+  workspaceId,
   onBack,
   backRef,
 }: {
+  workspaceId: string
   onBack: () => void
   backRef: RefObject<HTMLButtonElement | null>
 }) {
   const phone = usePhonePanes()
-  const { panelId } = usePanel()
-  const first = phone !== null && phone.order[0] === panelId
-  return (
-    <>
-      {(phone === null || first) && <SidebarToggle location="page" />}
-      {!first && (
+  const { panelId, openPanel } = usePanel()
+  const parent = useStreamFromStore(workspaceId, panelId ?? undefined, pickParent)?.parentStreamId ?? null
+  if (phone === null) {
+    return (
+      <>
+        <SidebarToggle location="page" />
         <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onBack} ref={backRef}>
           <ChevronLeft className="h-4 w-4" />
           <span className="sr-only">Back</span>
         </Button>
-      )}
-    </>
+      </>
+    )
+  }
+  const up = panelId === null ? null : openedFrom(panelId, () => parent)
+  if (up === null) return <SidebarToggle location="page" ref={backRef} />
+  return (
+    <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => openPanel(up)} ref={backRef}>
+      <ArrowUp className="h-4 w-4" />
+      <span className="sr-only">Up</span>
+    </Button>
   )
 }
 

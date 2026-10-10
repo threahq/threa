@@ -135,7 +135,7 @@ test("should move main to the picked stream, closing main's thread but keeping a
   await expect(tabPane(page, thread).getByText("reply in a's thread")).toBeVisible()
 })
 
-test("should show main when its stream is picked on a phone, and swap the page in front for any other", async ({
+test("should swap the pane in front for a picked stream on a phone, and bring one already open forward", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 })
@@ -144,7 +144,7 @@ test("should show main when its stream is picked on a phone, and swap the page i
   await page.goto(`/w/${workspaceId}/s/${streamA}?panel=${streamB}`)
   await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible({ timeout: 30_000 })
 
-  // The pane in front is not the first, so its header goes Back; the sidebar opens with a swipe.
+  // The pane in front has no Up, but the sidebar opens with a swipe all the same.
   const pickOnPhone = async (name: string) => {
     await page.evaluate(() => {
       const touch = (type: string, x: number) => {
@@ -165,15 +165,13 @@ test("should show main when its stream is picked on a phone, and swap the page i
     await sidebarRow(page, name).click()
   }
 
-  await pickOnPhone(names.a)
-  await expect(page.getByRole("main").getByText("parent in a")).toBeVisible()
-  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({ stream: streamA, panel: null })
-  await expect(tabPane(page, streamB)).toHaveCount(0)
-
-  await page.goBack()
-  await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
   await pickOnPhone(names.c)
   await expect.poll(() => panelParam(page)).toBe(`${streamA}-${streamC}`)
   expect(streamIdOf(page)).toBe(streamC)
   await expect(tabPane(page, streamB)).toHaveCount(0)
+
+  await pickOnPhone(names.a)
+  await expect(tabPane(page, streamA).getByText("parent in a")).toBeVisible()
+  await expect.poll(() => streamIdOf(page)).toBe(streamA)
+  await expect(tabPane(page, streamC)).toBeAttached()
 })

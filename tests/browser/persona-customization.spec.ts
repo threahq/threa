@@ -758,7 +758,7 @@ async function clearComposer(page: Page): Promise<void> {
 test.describe("Persona editor on a phone", () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
 
-  test("should put the test chat in front and come back to the editor when Back is tapped", async ({ page }) => {
+  test("should put the test chat in front and come back to the editor on Back", async ({ page }) => {
     const { workspaceId, personaId } = await forkedPersona(page, "persona-test-phone")
 
     await page.goto(`/w/${workspaceId}/settings/personas/${personaId}`)
@@ -771,7 +771,7 @@ test.describe("Persona editor on a phone", () => {
     await expect(pane.getByRole("button", { name: "Start test chat" })).toBeVisible({ timeout: 10000 })
     await expect(editorHeading).not.toBeVisible()
 
-    await pane.getByRole("button", { name: "Back" }).click()
+    await page.goBack()
     await expect.poll(() => panelParam(page)).toBeNull()
     await expect(editorHeading).toBeVisible()
   })

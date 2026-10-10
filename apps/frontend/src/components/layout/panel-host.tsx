@@ -70,6 +70,7 @@ import {
 import { isPagePane } from "@/lib/stream-ids"
 import { pagePathOf, pagePatternOf } from "@/lib/page-panes"
 import { PageRoutes } from "@/components/panes/page-routes"
+import { PaneNavigation } from "@/components/panes/pane-navigation"
 import { cn } from "@/lib/utils"
 import { PanelResizeHandle } from "./panel-resize-handle"
 import { PaneShortcuts } from "./pane-shortcuts"
@@ -128,10 +129,12 @@ interface PanelHostProps {
  */
 export function PanelHost({ workspaceId, className }: PanelHostProps) {
   const { panelId } = usePanel()
+  // A page wraps its own routes; on a phone its links stay in the pane, which a breakpoint mustn't remount.
+  const content = <PaneContent workspaceId={workspaceId} panelId={panelId} className={className} />
   // Every kind's content reports through `useRevealReady`; one that never does holds the first reveal to its cap.
   return (
     <RevealParticipant label={panelId ?? "empty pane"} covered={usePaneCovered()}>
-      <PaneContent workspaceId={workspaceId} panelId={panelId} className={className} />
+      {panelId && pagePatternOf(panelId) ? content : <PaneNavigation>{content}</PaneNavigation>}
     </RevealParticipant>
   )
 }

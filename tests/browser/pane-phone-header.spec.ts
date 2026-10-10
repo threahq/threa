@@ -2,8 +2,8 @@ import { test, expect, type Locator, type Page } from "@playwright/test"
 import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
 
 /**
- * A phone shows one pane at a time. Each pane's own 48px header carries the
- * sidebar toggle on the first pane or Back on the others, a layers button that
+ * A phone shows one pane at a time. Each pane's own 48px header carries Up to the
+ * stream the pane was opened from, else the sidebar toggle, a layers button that
  * opens a sheet of the open panes, and segments that mark the position; a swipe
  * along the header steps between panes. No pane remounts on the way.
  */
@@ -153,14 +153,14 @@ test.describe("phone pane header", () => {
     ]).toEqual(["main", "A", "B"])
   }
 
-  test("should lay out the newest pane's header with back, layers, segments and actions", async ({ page }) => {
+  test("should lay out the newest pane's header with up, layers, segments and actions", async ({ page }) => {
     const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
     await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}.${threadB}`)
     await expect(pane(page, threadB).getByText("reply in thread B")).toBeVisible({ timeout: 30_000 })
 
     const header = headerOf(page, threadB)
     expect((await header.boundingBox())!.height).toBe(48)
-    await expect(header.getByRole("button", { name: "Back" })).toBeVisible()
+    await expect(header.getByRole("button", { name: "Up" })).toBeVisible()
     await expect(header.getByRole("button", { name: "Pin sidebar" })).toHaveCount(0)
     await expect(layersOf(page, threadB, 3)).toBeVisible()
     await expect(header.getByRole("button", { name: "Stream actions" })).toBeVisible()
@@ -199,7 +199,7 @@ test.describe("phone pane header", () => {
     expect(await page.evaluate(() => history.length)).toBe(lengthWhileOpen)
     await expectTags(page, seeded)
     await expect(headerOf(page, streamId).getByRole("button", { name: "Pin sidebar" })).toBeVisible()
-    await expect(headerOf(page, streamId).getByRole("button", { name: "Back" })).toHaveCount(0)
+    await expect(headerOf(page, streamId).getByRole("button", { name: "Up" })).toHaveCount(0)
     expect(panelParam(page)).toBe(`${streamId}-${threadA}.${threadB}`)
 
     await page.goBack()
@@ -251,7 +251,7 @@ test.describe("phone pane header", () => {
     const { workspaceId, streamId, threadA, threadB } = seeded
 
     const controls = (id: string) => [
-      headerOf(page, id).getByRole("button", { name: "Back" }),
+      headerOf(page, id).getByRole("button", { name: "Up" }),
       headerOf(page, id).getByRole("navigation", { name: "breadcrumb" }),
       layersOf(page, id, 3),
       headerOf(page, id).getByRole("button", { name: "Stream actions" }),
@@ -317,7 +317,7 @@ test.describe("phone pane header", () => {
     ).toBeVisible()
   })
 
-  test("should give a compose pane the same header: back, layers and segments", async ({ page }) => {
+  test("should give a compose pane the same header: up, layers and segments", async ({ page }) => {
     const { workspaceId, streamId, threadA } = await seedTwoThreads(page)
     const compose = `compose:${threadA}`
     await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}.${compose}`)
@@ -326,7 +326,7 @@ test.describe("phone pane header", () => {
     })
 
     const header = headerOf(page, compose)
-    await expect(header.getByRole("button", { name: "Back" })).toBeVisible()
+    await expect(header.getByRole("button", { name: "Up" })).toBeVisible()
     await expect(header.getByRole("button", { name: "Pin sidebar" })).toHaveCount(0)
     await expect(layersOf(page, compose, 3)).toBeVisible()
     await expect(segmentsOf(page, compose)).toHaveCount(3)
