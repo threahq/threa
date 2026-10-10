@@ -26,11 +26,7 @@ import {
 function formatMemoList(memos: Pick<Memo, "id" | "title" | "abstract" | "keyPoints">[]): string {
   return memos
     .map((m, i) =>
-      [
-        `${i + 1}. [${m.id}] ${m.title}`,
-        `   ${m.abstract}`,
-        ...(m.keyPoints ?? []).map((point) => `   - ${point}`),
-      ].join("\n")
+      [`${i + 1}. [${m.id}] ${m.title}`, `   ${m.abstract}`, ...m.keyPoints.map((point) => `   - ${point}`)].join("\n")
     )
     .join("\n")
 }

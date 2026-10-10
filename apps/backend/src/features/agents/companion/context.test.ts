@@ -150,18 +150,24 @@ describe("buildAgentContext prepared recall", () => {
       ...(await buildStreamContext(...args)),
       conversationHistory: [trigger as never],
     }))
-    const memo = (id: string, sourceMessageId: string) => ({
+    const memo = (id: string, sourceMessageIds: string[], latestSourceAt: Date | null = null) => ({
       id,
       title: id,
       abstract: `${id} abstract`,
       knowledgeType: "context" as const,
-      sourceMessageIds: [sourceMessageId],
+      sourceMessageIds,
+      latestSourceAt,
       createdAt: new Date("2026-09-30T10:00:00Z"),
       score: 1,
     })
     const recall = mock(async (_params: PreparedRecallParams) => ({
       outcome: "recalled" as const,
-      memos: [memo("memo_allergy", "msg_elsewhere"), memo("memo_picnic", "msg_1")],
+      memos: [
+        memo("memo_allergy", ["msg_elsewhere"]),
+        memo("memo_picnic", ["msg_1"], trigger.createdAt),
+        // Written from a later message elsewhere; the window holds only a source it inherited.
+        memo("memo_reversal", ["msg_later", "msg_1"], new Date("2026-10-05T10:00:00Z")),
+      ],
     }))
 
     const context = await buildAgentContext(
@@ -201,7 +207,7 @@ describe("buildAgentContext prepared recall", () => {
         asker: { name: "Alice Ek", askedAt: new Date("2026-10-08T09:00:00Z"), timezone: "America/New_York" },
       }),
       volatile: expect.stringMatching(/## Recalled from memory[\s\S]*<memo id="memo_allergy"/),
-      recalled: ["memo_allergy"],
+      recalled: ["memo_allergy", "memo_reversal"],
     })
   })
 })

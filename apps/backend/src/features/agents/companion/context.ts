@@ -312,9 +312,14 @@ export async function buildAgentContext(deps: ContextDeps, params: ContextParams
   ])
 
   // The window already carries these memos' sources, and an edit may have
-  // corrected them since the memo was captured.
-  const windowMessageIds = new Set(streamContext.conversationHistory.map((m) => m.id))
-  const recalledMemos = recalled.filter((memo) => !memo.sourceMessageIds.some((id) => windowMessageIds.has(id)))
+  // corrected them since the memo was captured. A memo also cites the sources
+  // of the memos it retired, so an older source in the window is not enough:
+  // the memo may say what a later conversation changed.
+  const windowPostedAt = new Map(streamContext.conversationHistory.map((m) => [m.id, m.createdAt.getTime()]))
+  const recalledMemos = recalled.filter((memo) => {
+    const newestSourceAt = memo.latestSourceAt?.getTime() ?? 0
+    return !memo.sourceMessageIds.some((id) => (windowPostedAt.get(id) ?? -1) >= newestSourceAt)
+  })
 
   const streamScopedMessages = streamContext.conversationHistory.filter((m) => m.streamId === stream.id)
   const rollingConversationSummary = await conversationSummaryService.updateForContext({

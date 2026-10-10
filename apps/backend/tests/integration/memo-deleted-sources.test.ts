@@ -353,6 +353,20 @@ describe("memo sources: deleted and edited messages", () => {
     })
   })
 
+  test("superseding memos reports only the ones that were still active", async () => {
+    const seeded = await seedConversation()
+    const active = await seedMemo(seeded, seeded.messageIds)
+    const archived = await seedMemo(seeded, seeded.messageIds)
+    await MemoRepository.archiveMany(pool, testWorkspaceId, [archived])
+
+    const retired = await MemoRepository.markSuperseded(pool, testWorkspaceId, [active, archived], "revised", null)
+
+    expect({ retired, archived: await memoStatus(archived) }).toEqual({
+      retired: [active],
+      archived: MemoStatuses.ARCHIVED,
+    })
+  })
+
   test("deleting one of several sources of a saved memo supersedes it", async () => {
     const seeded = await seedConversation()
     const memo = memoId()

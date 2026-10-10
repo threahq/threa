@@ -1,8 +1,7 @@
 import { composeSql, withTransaction } from "../../db"
 import { chunkIds, registerBackfill, type BackfillContext } from "../../lib/backfill"
-import { ConversationRepository } from "../conversations"
 import { MessageRepository } from "../messaging"
-import { queueMemoConversations, retireMemosCitingDeletedMessage } from "./accumulator-outbox-handler"
+import { retireMemosCitingDeletedMessage } from "./accumulator-outbox-handler"
 
 const MEMO_DELETED_SOURCES_BACKFILL_NAME = "memo-deleted-sources"
 
@@ -40,17 +39,7 @@ export async function processChunk(
   let processed = 0
   for (const message of messages.values()) {
     await withTransaction(ctx.pool, async (client) => {
-      const retired = await retireMemosCitingDeletedMessage(client, workspaceId, message.streamId, message.id)
-      if (retired === 0) return
-      const conversations = await ConversationRepository.findByMessageId(client, workspaceId, message.id)
-      await queueMemoConversations(
-        client,
-        workspaceId,
-        message.streamId,
-        conversations.map((c) => c.id),
-        { rereadFromStart: true }
-      )
-      processed += retired
+      processed += await retireMemosCitingDeletedMessage(client, workspaceId, message.streamId, message.id)
     })
   }
   return { processed }

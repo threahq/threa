@@ -1070,15 +1070,17 @@ export class MemoService implements MemoServiceLike {
         // — "chose X" and "chose Y" embed far apart — so the model's citation
         // is authoritative. The embedding check below still runs for
         // unflagged paraphrase re-captures.
+        const retiredHere = new Set<string>()
         if (explicitSupersedeIds.length > 0) {
           memoData.parentMemoId = explicitSupersedeIds[0]
-          await MemoRepository.markSuperseded(
+          const ids = await MemoRepository.markSuperseded(
             client,
             workspaceId,
             explicitSupersedeIds,
             `Conclusion reversed or replaced by revised capture ${memoData.id}`,
             memoData.id
           )
+          ids.forEach((id) => retiredHere.add(id))
           logger.info(
             {
               conversationId: memoData.sourceConversationId,
@@ -1110,13 +1112,14 @@ export class MemoService implements MemoServiceLike {
           : []
         if (toSupersede.length > 0) {
           memoData.parentMemoId = memoData.parentMemoId ?? toSupersede[0].memo.id
-          await MemoRepository.markSuperseded(
+          const ids = await MemoRepository.markSuperseded(
             client,
             workspaceId,
             toSupersede.map((s) => s.memo.id),
             `Superseded by revised capture ${memoData.id}`,
             memoData.id
           )
+          ids.forEach((id) => retiredHere.add(id))
           logger.info(
             {
               conversationId: memoData.sourceConversationId,
@@ -1135,13 +1138,20 @@ export class MemoService implements MemoServiceLike {
         const retired = [...explicitlyRetired.values(), ...toSupersede.map((s) => s.memo)]
         Object.assign(memoData, inheritedReach(retired, streamId))
 
-        // The row keeps the retired memos' sources, so the messages behind a
-        // claim stay reachable through the memo that restates it. The capture
-        // event and landmark below cite only this conversation's messages.
+        // The row keeps the sources of the memos it retired, after its own,
+        // so the messages behind a claim stay reachable through the memo that
+        // restates it. A cited memo a deletion or archive retired first passes
+        // nothing on: its sources may be gone. The capture event and landmark
+        // below cite only this conversation's messages.
         const { embedding, ...memoFields } = memoData
         await MemoRepository.insert(client, {
           ...memoFields,
-          sourceMessageIds: [...new Set([...retired.flatMap((m) => m.sourceMessageIds), ...memoData.sourceMessageIds])],
+          sourceMessageIds: [
+            ...new Set([
+              ...memoData.sourceMessageIds,
+              ...retired.filter((m) => retiredHere.has(m.id)).flatMap((m) => m.sourceMessageIds),
+            ]),
+          ],
         })
         await MemoRepository.updateEmbedding(client, workspaceId, memoData.id, embedding)
         await OutboxRepository.insert(client, "memo:created", {
