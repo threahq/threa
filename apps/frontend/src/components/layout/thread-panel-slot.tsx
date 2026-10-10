@@ -101,13 +101,6 @@ interface ResizablePanelFrameProps {
   onResizeEnd: (e: React.PointerEvent) => void
   onResizeKeyDown: (e: React.KeyboardEvent) => void
   resizeLabel?: string
-  /**
-   * Take the whole cell with no handle — the phone's takeover. The content keeps
-   * its place in the tree either way, so crossing the breakpoint doesn't remount it.
-   */
-  fill?: boolean
-  /** Keep the handle out of reach, as under a pane floating over the page. */
-  handleInert?: boolean
   children: React.ReactNode
 }
 
@@ -122,26 +115,21 @@ export function ResizablePanelFrame({
   onResizeEnd,
   onResizeKeyDown,
   resizeLabel,
-  fill = false,
-  handleInert,
   children,
 }: ResizablePanelFrameProps) {
   return (
-    <div className="flex h-full" style={fill ? undefined : { width: panelWidth, minWidth: panelWidth }}>
-      {!fill && (
-        <PanelResizeHandle
-          isResizing={isResizing}
-          panelWidth={panelWidth}
-          minWidth={minWidth}
-          maxWidth={maxWidth}
-          onPointerDown={onResizeStart}
-          onPointerMove={onResizeMove}
-          onPointerEnd={onResizeEnd}
-          onKeyDown={onResizeKeyDown}
-          ariaLabel={resizeLabel}
-          inert={handleInert}
-        />
-      )}
+    <div className="flex h-full" style={{ width: panelWidth, minWidth: panelWidth }}>
+      <PanelResizeHandle
+        isResizing={isResizing}
+        panelWidth={panelWidth}
+        minWidth={minWidth}
+        maxWidth={maxWidth}
+        onPointerDown={onResizeStart}
+        onPointerMove={onResizeMove}
+        onPointerEnd={onResizeEnd}
+        onKeyDown={onResizeKeyDown}
+        ariaLabel={resizeLabel}
+      />
       <div className="flex-1 min-w-0 overflow-hidden">{children}</div>
     </div>
   )
