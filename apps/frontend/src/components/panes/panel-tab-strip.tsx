@@ -21,7 +21,7 @@ import { useThreadAnchorSnippet } from "@/hooks/use-thread-anchor-snippet"
 import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { useConversationTitle } from "@/hooks/use-conversation-title"
 import { closePanelTab, followCurrentPanel, soleFirstPanelOf } from "@/lib/panel-tabs"
-import { fitPanelTabs, splitVisibleTabs, FOCUS_TOGGLE_WIDTH, type PanelTabFit } from "@/lib/panel-tab-fit"
+import { fitPanelTabs, splitVisibleTabs, type PanelTabFit } from "@/lib/panel-tab-fit"
 import { cn } from "@/lib/utils"
 import { usePaneCovered } from "./pane-host"
 import { PaneFocusContext } from "./pane-focus"
@@ -33,8 +33,8 @@ import { PanelTabMenu, SPLIT_LABELS, closeTabItems, type PanelTabMenuItem } from
  * while more than one tab is open anywhere. Each tab is a link (switching is
  * navigation, so it's in the URL) and the one on show is underlined and
  * `aria-current`; the underline mutes while another pane is current. The row
- * never scrolls: short of room, the panel's `labels` fold first, then the
- * pane's Focus button, then trailing tabs fold into a "+N" menu.
+ * never scrolls: short of room, the panel's `labels` fold first, then
+ * trailing tabs fold into a "+N" menu.
  */
 export function PanelTabStrip({
   workspaceId,
@@ -48,19 +48,8 @@ export function PanelTabStrip({
   /** The pane's own actions menu offers its splits, so the row drops its "Tab actions" menu. */
   splitsInPaneMenu?: boolean
 }) {
-  const {
-    panelId,
-    layout,
-    section,
-    getTabUrl,
-    closeTab,
-    closeTabs,
-    canCloseTab,
-    splitTab,
-    splits,
-    setCurrentPane,
-    focusTab,
-  } = usePanel()
+  const { layout, section, getTabUrl, closeTab, closeTabs, canCloseTab, splitTab, splits, setCurrentPane, focusTab } =
+    usePanel()
   const currentPane = useCurrentPane()
   const panelIds = section?.ids ?? []
   const activePanelId = section?.active ?? null
@@ -71,9 +60,7 @@ export function PanelTabStrip({
   const linkIdPrefix = useId()
   const focusHandoff = usePanelTabFocusHandoff()
   const paneFocus = useContext(PaneFocusContext)
-  // Only the Focus button folds: a floating pane's Restore button stays put.
-  const focusWidth = paneFocus && panelId && paneFocus.focused !== panelId ? FOCUS_TOGGLE_WIDTH : 0
-  const fit = usePanelTabFit(stripRef, labelsRef, panelIds, activePanelId, focusWidth)
+  const fit = usePanelTabFit(stripRef, labelsRef, panelIds, activePanelId)
   const { shown, folded } = splitVisibleTabs(panelIds, activePanelId, fit.visible)
   const dropZone = useStripDropZone(activePanelId)
   const caret = useStripCaret(activePanelId)
@@ -117,8 +104,7 @@ export function PanelTabStrip({
       <nav
         ref={stripRef}
         aria-label="Panel tabs"
-        data-focus-folded={!fit.focus || undefined}
-        className={cn("peer/tabs relative flex min-w-0 flex-1 self-stretch overflow-hidden", className)}
+        className={cn("relative flex min-w-0 flex-1 self-stretch overflow-hidden", className)}
         {...dropZone}
       >
         {shown.map((id, index) => {
@@ -131,9 +117,9 @@ export function PanelTabStrip({
                 className={cn(
                   "group relative flex items-center",
                   !active && "min-w-24 max-w-48 shrink",
-                  // The tab on show truncates rather than push itself, or "+N", out of a narrow row.
-                  active && "min-w-0 shrink-0",
-                  active && (folded.length > 0 ? "max-w-[min(14rem,calc(100%-3rem))]" : "max-w-[min(14rem,100%)]"),
+                  active && "max-w-56 shrink",
+                  // The tab on show keeps the others' floor, short of room for it beside "+N".
+                  active && (folded.length > 0 ? "min-w-[min(6rem,calc(100%_-_3rem))]" : "min-w-[min(6rem,100%)]"),
                   active && "after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full",
                   active && (isCurrent ? "after:bg-primary" : "after:bg-muted-foreground/40")
                 )}
@@ -164,7 +150,7 @@ export function PanelTabStrip({
                     !active && "text-muted-foreground hover:text-foreground"
                   )}
                 >
-                  <span className="truncate">
+                  <span data-tab-title className="truncate">
                     <PanelTabTitle workspaceId={workspaceId} panelId={id} />
                   </span>
                 </Link>
@@ -302,20 +288,18 @@ function StripCaret({ side }: { side: "left" | "right" }) {
 
 /**
  * Re-fits the row whenever the room, the labels or the tab on show change
- * size. Folded labels stay laid out out of flow, so their width is always known.
+ * size. Folded labels stay laid out out of flow, so their width is always known,
+ * and the tab on show is measured untruncated, so shrinking it never re-shows them.
  */
 function usePanelTabFit(
   stripRef: RefObject<HTMLElement | null>,
   labelsRef: RefObject<HTMLElement | null>,
   panelIds: readonly string[],
-  activePanelId: string | null,
-  focusWidth: number
+  activePanelId: string | null
 ): PanelTabFit {
-  const [fit, setFit] = useState<PanelTabFit>({ labels: true, focus: true, visible: panelIds.length })
+  const [fit, setFit] = useState<PanelTabFit>({ labels: true, visible: panelIds.length })
   const labelsShown = useRef(fit.labels)
   labelsShown.current = fit.labels
-  const focusShown = useRef(fit.focus)
-  focusShown.current = fit.focus
   const tabs = panelIds.length
 
   useLayoutEffect(() => {
@@ -324,17 +308,10 @@ function usePanelTabFit(
     const activeTab = strip.querySelector<HTMLElement>('[aria-current="page"]')?.parentElement
     const measure = () => {
       const labelsWidth = Math.ceil(labelsRef.current?.getBoundingClientRect().width ?? 0)
-      const room =
-        Math.floor(strip.getBoundingClientRect().width) +
-        (labelsShown.current ? labelsWidth : 0) +
-        (focusShown.current ? focusWidth : 0)
-      const activeWidth = Math.ceil(activeTab?.getBoundingClientRect().width ?? 0)
-      const next = fitPanelTabs(room, tabs, activeWidth, labelsWidth, focusWidth)
-      setFit((current) =>
-        current.labels === next.labels && current.focus === next.focus && current.visible === next.visible
-          ? current
-          : next
-      )
+      const room = Math.floor(strip.getBoundingClientRect().width) + (labelsShown.current ? labelsWidth : 0)
+      const activeWidth = activeTab ? Math.ceil(naturalTabWidth(activeTab)) : 0
+      const next = fitPanelTabs(room, tabs, activeWidth, labelsWidth)
+      setFit((current) => (current.labels === next.labels && current.visible === next.visible ? current : next))
     }
     measure()
     // Re-fit before the resized frame paints, so it never shows the old fit clipped.
@@ -343,9 +320,16 @@ function usePanelTabFit(
     if (labelsRef.current) observer.observe(labelsRef.current)
     if (activeTab) observer.observe(activeTab)
     return () => observer.disconnect()
-  }, [stripRef, labelsRef, tabs, activePanelId, focusWidth])
+  }, [stripRef, labelsRef, tabs, activePanelId])
 
   return fit
+}
+
+/** The tab's width were it not shrunk to fit: its title untruncated, up to its own max width. */
+function naturalTabWidth(tab: HTMLElement): number {
+  const title = tab.querySelector<HTMLElement>("[data-tab-title]")
+  const width = tab.getBoundingClientRect().width + (title ? title.scrollWidth - title.clientWidth : 0)
+  return Math.min(width, parseFloat(getComputedStyle(tab).maxWidth) || width)
 }
 
 /**
@@ -409,8 +393,7 @@ function StreamTabTitle({ workspaceId, streamId }: { workspaceId: string; stream
 
 function ConversationTabTitle({ workspaceId, conversationId }: { workspaceId: string; conversationId: string }) {
   const { post } = useConversationBoardPost(workspaceId, conversationId)
-  const streamId = post?.conversation.streamId ?? ""
-  const title = useConversationTitle(workspaceId, post?.conversation ?? { streamId, topicSummary: null })
-  const streamName = useStreamName(workspaceId, streamId, "breadcrumb")
-  return <>{title ?? streamName ?? "Conversation"}</>
+  const title = useConversationTitle(workspaceId, post?.conversation ?? { streamId: "", topicSummary: null })
+  if (!post) return <>Conversation</>
+  return <>{title ?? "Untitled conversation"}</>
 }

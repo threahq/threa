@@ -521,7 +521,7 @@ describe("copy-link action (surface-specific)", () => {
       createContext({ messageId: "msg_1", workspaceId: "ws_1", streamId: "stream_1", conversationId: "conv_1" })
     )
 
-    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/ws_1/board?panel=conv%3Aconv_1&m=msg_1`)
+    expect(writeText).toHaveBeenCalledWith(`${window.location.origin}/w/ws_1/board?panel=conv:conv_1&m=msg_1`)
   })
 
   it("is visible when only conversationId (no streamId) is present", () => {

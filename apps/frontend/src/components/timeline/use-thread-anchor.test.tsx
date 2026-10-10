@@ -33,7 +33,7 @@ describe("useThreadAnchor", () => {
     const { result } = renderHook(() => useThreadAnchor("ws_1", "stream_1", "msg_a", {}), { wrapper })
     expect(result.current.effectiveThreadId).toBeUndefined()
     expect(result.current.threadHref).toBeNull()
-    expect(result.current.draftPanelUrl).toBe("/w/ws_1?panel=draft%3Astream_1%3Amsg_a")
+    expect(result.current.draftPanelUrl).toBe("/w/ws_1?panel=draft:stream_1:msg_a")
     expect(result.current.replyUrl).toBe(result.current.draftPanelUrl)
   })
 
@@ -62,6 +62,6 @@ describe("useThreadAnchor", () => {
 
   it("keys the draft panel on a card (event) anchor too", () => {
     const { result } = renderHook(() => useThreadAnchor("ws_1", "stream_1", "event_c", {}), { wrapper })
-    expect(result.current.draftPanelUrl).toBe("/w/ws_1?panel=draft%3Astream_1%3Aevent_c")
+    expect(result.current.draftPanelUrl).toBe("/w/ws_1?panel=draft:stream_1:event_c")
   })
 })

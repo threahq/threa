@@ -17,6 +17,7 @@ import {
   canonicalPanelLayout,
   closePanelTab,
   formatPanelLayout,
+  readablePanelParam,
   openPanelTab,
   panelIdsOf,
   primaryPanelOf,
@@ -132,7 +133,7 @@ function useStreamPicker(workspaceId: string): (streamId: string) => boolean {
     if (value) params.set(PANEL_PARAM, value)
     else params.delete(PANEL_PARAM)
     const query = params.toString()
-    const url = `/w/${workspaceId}/s/${next.current}${query ? `?${query}` : ""}`
+    const url = `/w/${workspaceId}/s/${next.current}${query ? `?${readablePanelParam(query)}` : ""}`
     // The panes follow the route to the stream it names; setting one ahead of the URL would have a second quick pick
     // replace a tab not yet there. Marked, not set: on a phone, setting also rewrites the entry this push leaves for Back.
     if (next.current === path) markCurrentPane(next.current)

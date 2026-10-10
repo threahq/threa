@@ -1,5 +1,6 @@
 import { toast } from "sonner"
 import { createConversationPanelId } from "@/contexts/panel-context"
+import { readablePanelParam } from "./panel-tabs"
 
 /**
  * Absolute, shareable URL for a stream's main view. The "copy link" affordances
@@ -59,7 +60,7 @@ export function buildConversationLink(workspaceId: string, conversationId: strin
 export function buildConversationPanelPath(workspaceId: string, conversationId: string, messageId?: string): string {
   const params = new URLSearchParams({ panel: createConversationPanelId(conversationId) })
   if (messageId) params.set("m", messageId)
-  return `/w/${workspaceId}/board?${params.toString()}`
+  return `/w/${workspaceId}/board?${readablePanelParam(params.toString())}`
 }
 
 /**

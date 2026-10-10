@@ -47,7 +47,7 @@ describe("MarkdownContent inline message pointers", () => {
 
     const href = screen.getByRole("link", { name: "Ariadne" }).getAttribute("href") ?? ""
     expect(href).toContain("/w/ws_1/board?")
-    expect(href).toContain("panel=conv%3Aconv_xyz")
+    expect(href).toContain("panel=conv:conv_xyz")
     expect(href).toContain("m=msg_abc")
   })
 

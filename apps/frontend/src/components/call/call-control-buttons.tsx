@@ -3,6 +3,7 @@ import { Loader2, MessageSquare, Mic, MicOff, PhoneOff, SwitchCamera, Video, Vid
 import { Button } from "@/components/ui/button"
 import { createDraftPanelId } from "@/contexts"
 import { cn } from "@/lib/utils"
+import { readablePanelParam } from "@/lib/panel-tabs"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { useAsyncAction } from "@/hooks/use-async-action"
 import { useAnchoredThreadId } from "@/hooks/use-anchored-thread"
@@ -123,7 +124,7 @@ export function ChatButton({ className }: { className?: string }) {
   const threadId = useAnchoredThreadId(workspaceId ?? undefined, streamId, chatAnchorId)
   if (!workspaceId || !streamId || !chatAnchorId) return null
   const panel = threadId ?? createDraftPanelId(streamId, chatAnchorId)
-  const search = new URLSearchParams({ panel }).toString()
+  const search = readablePanelParam(new URLSearchParams({ panel }).toString())
   return (
     <Button asChild variant="ghost" size="icon" className={cn("h-9 w-9", className)}>
       <Link
