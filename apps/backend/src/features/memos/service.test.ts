@@ -670,6 +670,28 @@ describe("MemoService.processBatch — explicit supersession (reversed conclusio
     ])
   })
 
+  it("gives every memo of a conversation the sources of a memo they all replace", async () => {
+    const first: MemoContent = { ...memoContent, title: "First", supersedesMemoIds: ["memo_old_a"] }
+    const second: MemoContent = { ...memoContent, title: "Second", supersedesMemoIds: ["memo_old_a"] }
+    const { service } = setupService({ memoContents: [first, second] })
+    spyOn(MemoRepository, "findByIdsInWorkspace").mockResolvedValue(
+      new Map([["memo_old_a", fakeMemoRow("memo_old_a", { sourceMessageIds: ["msg_old_a"] })]])
+    )
+    const stillActive = new Set(["memo_old_a"])
+    spyOn(MemoRepository, "markSuperseded").mockImplementation(async (_db, _workspaceId, ids) =>
+      ids.filter((id) => stillActive.delete(id))
+    )
+    spyOn(MemoRepository, "findSameConversationNear").mockResolvedValue([])
+    const insert = spyOn(MemoRepository, "insert").mockResolvedValue(undefined as never)
+
+    await service.processBatch(WORKSPACE_ID, STREAM_ID)
+
+    expect(insert.mock.calls.map(([, memo]) => (memo as { sourceMessageIds: string[] }).sourceMessageIds)).toEqual([
+      ["msg_1", "msg_2", "msg_old_a"],
+      ["msg_1", "msg_2", "msg_old_a"],
+    ])
+  })
+
   it("inserts a correction even when it embeds as a near-duplicate of the memo it supersedes", async () => {
     // The incident shape: a correction of an inverted conclusion shares nearly
     // all its text with the wrong memo, so dedup sees it as a duplicate. The

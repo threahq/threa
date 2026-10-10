@@ -165,6 +165,7 @@ describe("buildAgentContext prepared recall", () => {
       memos: [
         memo("memo_allergy", ["msg_elsewhere"]),
         memo("memo_picnic", ["msg_1"], trigger.createdAt),
+        memo("memo_undated", ["msg_1"]),
         // Written from a later message elsewhere; the window holds only a source it inherited.
         memo("memo_reversal", ["msg_later", "msg_1"], new Date("2026-10-05T10:00:00Z")),
       ],

@@ -991,6 +991,7 @@ export class MemoService implements MemoServiceLike {
       // A memo several batch-mates retired has no single successor to follow,
       // so the chain stops there.
       const retiredBy = new Map<string, MemoToCreate[]>()
+      const retiredInBatch = new Set<string>()
       const latestOf = (id: string, conversationId: string | undefined): string => {
         let current = id
         for (;;) {
@@ -1070,7 +1071,6 @@ export class MemoService implements MemoServiceLike {
         // — "chose X" and "chose Y" embed far apart — so the model's citation
         // is authoritative. The embedding check below still runs for
         // unflagged paraphrase re-captures.
-        const retiredHere = new Set<string>()
         if (explicitSupersedeIds.length > 0) {
           memoData.parentMemoId = explicitSupersedeIds[0]
           const ids = await MemoRepository.markSuperseded(
@@ -1080,7 +1080,7 @@ export class MemoService implements MemoServiceLike {
             `Conclusion reversed or replaced by revised capture ${memoData.id}`,
             memoData.id
           )
-          ids.forEach((id) => retiredHere.add(id))
+          ids.forEach((id) => retiredInBatch.add(id))
           logger.info(
             {
               conversationId: memoData.sourceConversationId,
@@ -1119,7 +1119,7 @@ export class MemoService implements MemoServiceLike {
             `Superseded by revised capture ${memoData.id}`,
             memoData.id
           )
-          ids.forEach((id) => retiredHere.add(id))
+          ids.forEach((id) => retiredInBatch.add(id))
           logger.info(
             {
               conversationId: memoData.sourceConversationId,
@@ -1138,10 +1138,11 @@ export class MemoService implements MemoServiceLike {
         const retired = [...explicitlyRetired.values(), ...toSupersede.map((s) => s.memo)]
         Object.assign(memoData, inheritedReach(retired, streamId))
 
-        // The row keeps the sources of the memos it retired, after its own,
+        // The row keeps the sources of the memos it replaces, after its own,
         // so the messages behind a claim stay reachable through the memo that
-        // restates it. A cited memo a deletion or archive retired first passes
-        // nothing on: its sources may be gone. The capture event and landmark
+        // restates it. Only memos this batch retired pass sources on, whichever
+        // of its memos got there first: one a deletion or an archive retired
+        // earlier may have lost its sources. The capture event and landmark
         // below cite only this conversation's messages.
         const { embedding, ...memoFields } = memoData
         await MemoRepository.insert(client, {
@@ -1149,7 +1150,7 @@ export class MemoService implements MemoServiceLike {
           sourceMessageIds: [
             ...new Set([
               ...memoData.sourceMessageIds,
-              ...retired.filter((m) => retiredHere.has(m.id)).flatMap((m) => m.sourceMessageIds),
+              ...retired.filter((m) => retiredInBatch.has(m.id)).flatMap((m) => m.sourceMessageIds),
             ]),
           ],
         })
