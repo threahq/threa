@@ -612,7 +612,7 @@ export function StreamContent({
   const [searchParams, setSearchParams] = useSearchParams()
   // The conversation overlay is the first column's stream's; the search shortcut and the
   // inbox settle are the pane worked in's. A page with no stream route (the
-  // persona editor's test chat) has only this one.
+  // board, the persona editor) gives both to every stream pane on it.
   const { streamId: routeStreamId } = useParams<{ streamId: string }>()
   const isPageStream = routeStreamId === undefined || routeStreamId === streamId
   const { layout: panelLayout } = usePanel()
