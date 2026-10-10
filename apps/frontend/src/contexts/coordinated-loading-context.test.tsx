@@ -986,7 +986,7 @@ describe("CoordinatedLoadingProvider store publication", () => {
     for (let attempt = 0; attempt < 20; attempt += 1) {
       const before = renderCount()
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 0))
+        await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)))
       })
       if (renderCount() === before) return
     }

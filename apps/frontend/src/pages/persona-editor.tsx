@@ -110,7 +110,11 @@ export function PersonaEditorPage() {
         backLabel={isPersonalPersona ? "Back to AI settings" : "Back to AI Agents"}
         testable={testable}
       />
-      <main data-pane-landing tabIndex={-1} className="min-w-0 flex-1 overflow-auto outline-none">
+      <main
+        data-pane-landing
+        tabIndex={-1}
+        className="min-w-0 flex-1 [scrollbar-gutter:stable] overflow-auto outline-none"
+      >
         <div className="mx-auto max-w-2xl px-4 py-6 sm:px-6">{body}</div>
       </main>
     </div>

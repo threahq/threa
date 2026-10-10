@@ -544,7 +544,11 @@ function DraftThreadPanel({ workspaceId, panelId, onClose, onPromoted, closeRef,
           )}
         <div
           ref={draftScrollRef}
-          className={draftExpanded ? "hidden flex-1 flex-col overflow-y-auto" : "flex flex-1 flex-col overflow-y-auto"}
+          className={
+            draftExpanded
+              ? "hidden flex-1 flex-col [scrollbar-gutter:stable] overflow-y-auto"
+              : "flex flex-1 flex-col [scrollbar-gutter:stable] overflow-y-auto"
+          }
           style={{ paddingBottom: "var(--composer-height, 0px)" }}
         >
           {anchorEvent && (

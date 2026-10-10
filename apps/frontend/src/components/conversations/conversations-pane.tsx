@@ -49,7 +49,7 @@ export function ConversationsPane({ workspaceId, streamId, onClose, className }:
         {!isMobile && !tabbed && canClosePanel && <SidePanelClose onClose={onClose} ref={closeRef} />}
       </SidePanelHeader>
       <SidePanelContent>
-        <div className="h-full overflow-y-auto">
+        <div className="h-full [scrollbar-gutter:stable] overflow-y-auto">
           <ConversationList workspaceId={workspaceId} streamId={streamId} />
         </div>
       </SidePanelContent>
