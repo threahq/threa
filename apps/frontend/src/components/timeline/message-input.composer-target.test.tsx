@@ -126,6 +126,7 @@ beforeEach(async () => {
     getFocusedPanelUrl: (panelId: string) => `/?panel=${panelId}**`,
     getTabUrl: (panelId: string) => `/?panel=${panelId}`,
   } as unknown as ReturnType<typeof contextsModule.usePanel>)
+  vi.spyOn(contextsModule, "usePaneFocusLanding").mockReturnValue({ current: 0 })
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue(
     [] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>
   )
