@@ -34,7 +34,7 @@ import {
   useWorkspaceMetadata,
   type CachedUnreadState,
 } from "@/stores/workspace-store"
-import { useCoordinatedLoading, useSidebar, usePreferencesOptional, usePanel } from "@/contexts"
+import { useCoordinatedLoading, useCurrentPane, useSidebar, usePreferencesOptional, usePanel } from "@/contexts"
 import { useCreateChannel } from "@/components/create-channel"
 import { Button } from "@/components/ui/button"
 import { SidebarShell } from "./sidebar-shell"
@@ -44,6 +44,7 @@ import { SidebarQuickLinks } from "./quick-links"
 import { BoardModeBlock } from "./board-mode-block"
 import { BoardLinkRow, ChatsLinkRow } from "./board-link-row"
 import { SidebarStreamList } from "./sidebar-stream-list"
+import { StreamPickProvider, streamOfPane } from "./stream-pick"
 import { HeaderSkeleton, QuickLinksSkeleton, StreamListSkeleton } from "./skeletons"
 import { SidebarFooter } from "./sidebar-footer"
 import { GettingStarted, hasWrittenFirstNote, useGettingStarted } from "./getting-started"
@@ -123,11 +124,13 @@ interface SidebarProps {
 export function Sidebar({ workspaceId }: SidebarProps) {
   const { draftCount, isLoading, loadedDraftStreamIdSignature } = useDraftSummary(workspaceId)
   return (
-    <SidebarBody
-      workspaceId={workspaceId}
-      draftCount={isLoading ? 0 : draftCount}
-      loadedDraftStreamIdSignature={loadedDraftStreamIdSignature}
-    />
+    <StreamPickProvider workspaceId={workspaceId}>
+      <SidebarBody
+        workspaceId={workspaceId}
+        draftCount={isLoading ? 0 : draftCount}
+        loadedDraftStreamIdSignature={loadedDraftStreamIdSignature}
+      />
+    </StreamPickProvider>
   )
 }
 
@@ -147,15 +150,19 @@ const SidebarBody = memo(function SidebarBody({
   const { config: sidebarConfig, setConfig: setSidebarConfig } = useSidebarConfig(workspaceId)
   const [isEditorOpen, setIsEditorOpen] = useState(false)
   const openLayoutEditor = useCallback(() => setIsEditorOpen(true), [])
-  const { streamId: activeStreamId, "*": splat } = useParams<{ streamId: string; "*": string }>()
-  const { panelId } = usePanel()
+  const { streamId: routeStreamId, "*": splat } = useParams<{ streamId: string; "*": string }>()
+  const { panelId, hasTabs } = usePanel()
+  // On the stream page the row lit is the pane worked in.
+  const currentPane = useCurrentPane()
+  const activeStreamId = hasTabs && currentPane !== null ? (streamOfPane(currentPane) ?? undefined) : routeStreamId
   const agentActiveStreamIds = useAgentActiveStreamIds(workspaceId)
   const keptThreadIds = useMemo(() => {
     const ids = new Set(agentActiveStreamIds)
+    if (routeStreamId) ids.add(routeStreamId)
     if (activeStreamId) ids.add(activeStreamId)
     if (panelId) ids.add(panelId)
     return ids
-  }, [agentActiveStreamIds, activeStreamId, panelId])
+  }, [agentActiveStreamIds, routeStreamId, activeStreamId, panelId])
   const heldThreadIds = useHeldSidebarThreads(workspaceId)
   const location = useLocation()
   const syncStatus = useSyncStatus(`workspace:${workspaceId}`)
