@@ -6,11 +6,13 @@ import {
   Brain,
   CalendarClock,
   Compass,
+  CopyX,
   FileText,
   Hash,
   LayoutGrid,
   ListTodo,
   ListChecks,
+  ListX,
   Paperclip,
   PenSquare,
   Search,
@@ -20,6 +22,7 @@ import {
   StickyNote,
   Tag,
   UserPlus,
+  X,
 } from "lucide-react"
 import { toast } from "sonner"
 import { openCompose } from "@/stores/compose-overlay-store"
@@ -92,6 +95,12 @@ export interface CommandContext {
   openAside?: (streamId: string) => Promise<void>
   /** Settle the stream in view out of the Inbox. Absent when it isn't in the Inbox. */
   settleStream?: (streamId: string) => void
+  /** Close the pane worked in. Absent when it can't close. */
+  closePane?: () => void
+  /** Close every pane but the one worked in. Absent when none of them can close. */
+  closeOtherPanes?: () => void
+  /** Close every pane the page doesn't keep. Absent when none can close. */
+  closeAllPanes?: () => void
 }
 
 export interface Command {
@@ -396,5 +405,30 @@ export const commands: Command[] = [
       closeDialog()
       openWorkspaceSettings("ai-agents")
     },
+  },
+]
+
+/** Surfaced only while their `CommandContext` closer is set — see `use-command-items`. */
+export const paneCommands: Command[] = [
+  {
+    id: "pane-close",
+    label: "Close pane",
+    icon: X,
+    keywords: ["panel", "tab", "split"],
+    action: ({ closePane }) => closePane?.(),
+  },
+  {
+    id: "pane-close-others",
+    label: "Close other panes",
+    icon: CopyX,
+    keywords: ["panels", "tabs", "split", "only"],
+    action: ({ closeOtherPanes }) => closeOtherPanes?.(),
+  },
+  {
+    id: "pane-close-all",
+    label: "Close all panes",
+    icon: ListX,
+    keywords: ["panels", "tabs", "split"],
+    action: ({ closeAllPanes }) => closeAllPanes?.(),
   },
 ]
