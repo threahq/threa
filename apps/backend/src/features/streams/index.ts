@@ -73,7 +73,7 @@ export type {
   LastMessagePreview,
   DmPeer,
 } from "./repository"
-export { searchDmStreamsByParticipant } from "./dm-search"
+export { listDmDisplayNames, searchDmStreamsByParticipant } from "./dm-search"
 export type { DmStreamSearchMatch } from "./dm-search"
 
 export { StreamEventRepository } from "./event-repository"

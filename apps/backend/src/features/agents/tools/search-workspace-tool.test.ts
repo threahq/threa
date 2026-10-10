@@ -146,6 +146,7 @@ describe("search_streams and get_stream_messages carry URLs", () => {
     const searchByName = spyOn(StreamRepository, "searchByName").mockResolvedValue([
       { id: "stream_2", type: "channel", displayName: "Deploys", slug: "deploys", description: null } as Stream,
     ])
+    const archivedIds = spyOn(StreamRepository, "filterEffectivelyArchivedIds").mockResolvedValue(["stream_2"])
     const dmPeers = spyOn(StreamRepository, "listDmPeersForMember").mockResolvedValue([] as never)
     const tool = createSearchStreamsTool(makeDeps("off"))
     try {
@@ -153,10 +154,12 @@ describe("search_streams and get_stream_messages carry URLs", () => {
       expect(result.provenanceStreamIds).toEqual(["stream_2"])
       expect(JSON.parse(result.output).results[0]).toMatchObject({
         id: "stream_2",
+        archived: true,
         url: "/w/ws_1/s/stream_2",
       })
     } finally {
       searchByName.mockRestore()
+      archivedIds.mockRestore()
       dmPeers.mockRestore()
     }
   })

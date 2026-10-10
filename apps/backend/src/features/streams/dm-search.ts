@@ -1,13 +1,37 @@
 import type { StreamType } from "@threahq/types"
 import { StreamTypes } from "@threahq/types"
 import type { Querier } from "../../db"
-import { UserRepository } from "../workspaces"
+import type { ArchiveStatus } from "../../lib/sql-filters"
+import { UserRepository, type User } from "../workspaces"
 import { StreamRepository } from "./repository"
 
 export interface DmStreamSearchMatch {
   streamId: string
   displayName: string
   score: number
+}
+
+async function listDmPeerUsers(params: {
+  db: Querier
+  workspaceId: string
+  invokingUserId: string
+  streamIds: string[]
+  archiveStatus: ArchiveStatus[]
+}): Promise<Array<{ streamId: string; user: User }>> {
+  const { db, workspaceId, invokingUserId, streamIds, archiveStatus } = params
+  if (streamIds.length === 0) return []
+
+  const dmPeers = await StreamRepository.listDmPeersForMember(db, workspaceId, invokingUserId, {
+    streamIds,
+    archiveStatus,
+  })
+  const peerUsers = await UserRepository.findByIds(db, workspaceId, Array.from(new Set(dmPeers.map((p) => p.userId))))
+  const userById = new Map(peerUsers.map((user) => [user.id, user]))
+
+  return dmPeers.flatMap((peer) => {
+    const user = userById.get(peer.userId)
+    return user ? [{ streamId: peer.streamId, user }] : []
+  })
 }
 
 export async function searchDmStreamsByParticipant(params: {
@@ -17,43 +41,34 @@ export async function searchDmStreamsByParticipant(params: {
   accessibleStreamIds: string[]
   query: string
   types?: StreamType[]
+  archiveStatus: ArchiveStatus[]
   limit: number
 }): Promise<DmStreamSearchMatch[]> {
-  const { db, workspaceId, invokingUserId, accessibleStreamIds, query, types, limit } = params
+  const { db, workspaceId, invokingUserId, accessibleStreamIds, query, types, archiveStatus, limit } = params
   const shouldSearchDms = !types || types.length === 0 || types.includes(StreamTypes.DM)
-  if (!shouldSearchDms || accessibleStreamIds.length === 0) {
+  if (!shouldSearchDms) {
     return []
   }
 
-  const dmPeers = await StreamRepository.listDmPeersForMember(db, workspaceId, invokingUserId, {
+  const peers = await listDmPeerUsers({
+    db,
+    workspaceId,
+    invokingUserId,
     streamIds: accessibleStreamIds,
+    archiveStatus,
   })
-  if (dmPeers.length === 0) {
-    return []
-  }
-
-  const peerIds = Array.from(new Set(dmPeers.map((peer) => peer.userId)))
-  const peerUsers = await UserRepository.findByIds(db, workspaceId, peerIds)
-  const peerById = new Map(peerUsers.map((user) => [user.id, user]))
   const queryTerms = extractSearchTerms(query)
 
   const matches: DmStreamSearchMatch[] = []
-  for (const peer of dmPeers) {
-    const peerUser = peerById.get(peer.userId)
-    if (!peerUser) continue
-
+  for (const { streamId, user } of peers) {
     const score = scoreDmMatch({
       queryTerms,
-      participantName: peerUser.name,
-      participantSlug: peerUser.slug,
+      participantName: user.name,
+      participantSlug: user.slug,
     })
     if (score === Number.POSITIVE_INFINITY) continue
 
-    matches.push({
-      streamId: peer.streamId,
-      displayName: peerUser.name,
-      score,
-    })
+    matches.push({ streamId, displayName: user.name, score })
   }
 
   return matches
@@ -62,6 +77,16 @@ export async function searchDmStreamsByParticipant(params: {
       return a.displayName.localeCompare(b.displayName)
     })
     .slice(0, limit)
+}
+
+export async function listDmDisplayNames(params: {
+  db: Querier
+  workspaceId: string
+  invokingUserId: string
+  streamIds: string[]
+}): Promise<Map<string, string>> {
+  const peers = await listDmPeerUsers({ ...params, archiveStatus: ["active", "archived"] })
+  return new Map(peers.map((p) => [p.streamId, p.user.name]))
 }
 
 function extractSearchTerms(query: string): string[] {

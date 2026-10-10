@@ -17,6 +17,7 @@ import {
   archiveStatusSql,
   effectivelyArchivedSql,
   MAX_STREAM_CHAIN_DEPTH,
+  parseArchiveStatusFilter,
   type ArchiveStatus,
 } from "../../lib/sql-filters"
 import { streamAccessPredicateSql } from "./access"
@@ -822,13 +823,14 @@ export const StreamRepository = {
     db: Querier,
     workspaceId: string,
     userId: string,
-    options?: { streamIds?: string[] }
+    options?: { streamIds?: string[]; archiveStatus?: ArchiveStatus[] }
   ): Promise<DmPeer[]> {
     const scopedStreamIds = options?.streamIds
     const hasStreamScope = scopedStreamIds !== undefined
     if (hasStreamScope && scopedStreamIds.length === 0) {
       return []
     }
+    const { includeActive, includeArchived } = parseArchiveStatusFilter(options?.archiveStatus)
 
     const result = await db.query<{ stream_id: string; member_id: string }>(sql`
       WITH dm_members AS (
@@ -839,7 +841,7 @@ export const StreamRepository = {
         JOIN streams s ON s.id = sm.stream_id AND sm.workspace_id = s.workspace_id
         WHERE s.workspace_id = ${workspaceId}
           AND s.type = 'dm'
-          AND s.archived_at IS NULL
+          AND ((${includeActive} AND s.archived_at IS NULL) OR (${includeArchived} AND s.archived_at IS NOT NULL))
           AND (${!hasStreamScope} OR s.id = ANY(${scopedStreamIds ?? []}))
         GROUP BY sm.stream_id
         HAVING COUNT(DISTINCT sm.member_id) = 2
@@ -1708,7 +1710,9 @@ export const StreamRepository = {
    * Search for streams by display name or slug.
    * Uses pg_trgm trigram similarity for fuzzy matching (handles typos),
    * combined with ILIKE for exact substring matches.
-   * Only searches within the provided stream IDs (for access control).
+   * Only searches within the provided stream IDs (for access control);
+   * `archiveStatus` follows `archiveStatusSql`, with "archived" widened to
+   * streams sealed by an archived ancestor.
    */
   async searchByName(
     db: Querier,
@@ -1717,39 +1721,17 @@ export const StreamRepository = {
       streamIds: string[]
       query: string
       types?: StreamType[]
+      archiveStatus: ArchiveStatus[]
       limit?: number
     }
   ): Promise<Stream[]> {
-    const { workspaceId, streamIds, query, types, limit = 10 } = params
+    const { workspaceId, streamIds, query, types, archiveStatus, limit = 10 } = params
     if (streamIds.length === 0) return []
 
+    const typeFilter = types && types.length > 0 ? types : null
+    const archiveCondition = sql.raw(archiveStatusSql("streams", archiveStatus, { archivedIncludesSealed: true }))
+
     const pattern = `%${query}%`
-
-    // Use separate queries for type-filtered vs unfiltered to avoid nested sql fragments
-    if (types && types.length > 0) {
-      const result = await db.query<StreamRow>(sql`
-        SELECT ${sql.raw(SELECT_FIELDS)},
-          GREATEST(
-            COALESCE(similarity(display_name, ${query}), 0),
-            COALESCE(similarity(slug, ${query}), 0)
-          ) AS sim_score
-        FROM streams
-        WHERE workspace_id = ${workspaceId}
-          AND id = ANY(${streamIds})
-          AND type = ANY(${types})
-          AND ${sql.raw(purposeIsNull())}
-          AND (
-            display_name % ${query}
-            OR slug % ${query}
-            OR display_name ILIKE ${pattern}
-            OR slug ILIKE ${pattern}
-          )
-        ORDER BY sim_score DESC, display_name NULLS LAST
-        LIMIT ${limit}
-      `)
-      return result.rows.map(mapRowToStream)
-    }
-
     const result = await db.query<StreamRow>(sql`
       SELECT ${sql.raw(SELECT_FIELDS)},
         GREATEST(
@@ -1759,7 +1741,9 @@ export const StreamRepository = {
       FROM streams
       WHERE workspace_id = ${workspaceId}
         AND id = ANY(${streamIds})
+        AND (${typeFilter}::text[] IS NULL OR type = ANY(${typeFilter}::text[]))
         AND ${sql.raw(purposeIsNull())}
+        AND ${archiveCondition}
         AND (
           display_name % ${query}
           OR slug % ${query}
@@ -1767,6 +1751,40 @@ export const StreamRepository = {
           OR slug ILIKE ${pattern}
         )
       ORDER BY sim_score DESC, display_name NULLS LAST
+      LIMIT ${limit}
+    `)
+    return result.rows.map(mapRowToStream)
+  },
+
+  /** Newest activity first; same scoping and archive semantics as `searchByName`. */
+  async listRecentlyActive(
+    db: Querier,
+    params: {
+      workspaceId: string
+      streamIds: string[]
+      types: StreamType[]
+      archiveStatus: ArchiveStatus[]
+      limit?: number
+    }
+  ): Promise<Stream[]> {
+    const { workspaceId, streamIds, types, archiveStatus, limit = 10 } = params
+    if (streamIds.length === 0) return []
+
+    const archiveCondition = sql.raw(archiveStatusSql("streams", archiveStatus, { archivedIncludesSealed: true }))
+    const result = await db.query<StreamRow>(sql`
+      SELECT ${sql.raw(SELECT_FIELDS)}
+      FROM streams
+      WHERE workspace_id = ${workspaceId}
+        AND id = ANY(${streamIds})
+        AND type = ANY(${types})
+        AND ${sql.raw(purposeIsNull())}
+        AND ${archiveCondition}
+      ORDER BY COALESCE(
+        (SELECT m.created_at FROM messages m
+          WHERE m.workspace_id = streams.workspace_id AND m.stream_id = streams.id AND m.deleted_at IS NULL
+          ORDER BY m.sequence DESC LIMIT 1),
+        streams.created_at
+      ) DESC, streams.id DESC
       LIMIT ${limit}
     `)
     return result.rows.map(mapRowToStream)
