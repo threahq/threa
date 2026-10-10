@@ -413,8 +413,7 @@ test.describe("Aside — desktop surface", () => {
     await expect(editor).toHaveText("a longer thought")
     await expect(page.locator('[inert]:has([data-testid="aside-column"])')).toHaveCount(1)
 
-    await page.keyboard.press("Escape")
-    await page.keyboard.press("Escape")
+    await page.locator(`[data-panel-tab="${compose}"]`).getByRole("button", { name: "Restore to layout" }).click()
     await expect.poll(() => new URL(page.url()).searchParams.get("panel")).toBe(compose)
     await expect(page.locator('[inert]:has([data-testid="aside-column"])')).toHaveCount(0)
     await expect(editor).toHaveText("a longer thought")
