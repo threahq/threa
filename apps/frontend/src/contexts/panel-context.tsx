@@ -276,10 +276,10 @@ interface PanelContextValue {
   splitTab: (panelId: string, direction: SplitDirection) => void
   /** Float a tab over the rest of the page, or put the floating one back with null. */
   focusTab: (panelId: string | null) => void
-  /** Put a dragged tab or stream where it was dropped, and work in it there. */
-  dropTab: (panelId: string, drop: PaneDrop) => void
+  /** Put a dragged tab or stream where it was dropped, and work in it there. Null where that changes nothing. */
+  dropTab: (panelId: string, drop: PaneDrop) => string | null
   /** {@link dropTab} for the stream or page a dropped link names; a link naming neither does nothing. */
-  dropLink: (href: string, drop: PaneDrop) => void
+  dropLink: (href: string, drop: PaneDrop) => string | null
   /** The ways this consumer's tab can split off as it is laid out now. */
   splits: readonly SplitDirection[]
   /** Record the pane the user is working in. A stream pane becomes the route's stream. */
@@ -323,8 +323,8 @@ interface PanelOps {
   canReopenTab: () => boolean
   splitTab: (panelId: string, direction: SplitDirection) => void
   focusTab: (panelId: string | null) => void
-  dropTab: (panelId: string, drop: PaneDrop) => void
-  dropLink: (href: string, drop: PaneDrop) => void
+  dropTab: (panelId: string, drop: PaneDrop) => string | null
+  dropLink: (href: string, drop: PaneDrop) => string | null
   setCurrentPane: (panelId: string) => void
   markCurrentPane: (panelId: string) => void
   coverOwner: string | null
@@ -954,8 +954,9 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const dropTab = useCallback(
     (panelId: string, drop: PaneDrop) => {
       // A target closed mid-drag leaves nothing to drop beside, and nothing for Back to undo.
-      if (dropPanelTab(layout, panelId, drop) === layout) return
+      if (dropPanelTab(layout, panelId, drop) === layout) return null
       open((current) => dropPanelTab(current, panelId, drop), panelIdsOf(layout).includes(panelId), panelId)
+      return panelId
     },
     [open, layout]
   )
@@ -966,16 +967,17 @@ export function PanelProvider({ children }: PanelProviderProps) {
       try {
         url = new URL(href)
       } catch {
-        return
+        return null
       }
       const link = url.origin === window.location.origin ? linkedPane(url) : null
-      if (link === null || dropPanelTab(layout, link.target, drop) === layout) return
+      if (link === null || dropPanelTab(layout, link.target, drop) === layout) return null
       openLinked(
         (current) => dropPanelTab(current, link.target, drop),
         panelIdsOf(layout).includes(link.target),
         link.target,
         link.params
       )
+      return link.target
     },
     [linkedPane, openLinked, layout]
   )

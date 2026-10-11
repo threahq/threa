@@ -1,5 +1,12 @@
-import { useEffect, useRef, useMemo, type ReactNode } from "react"
-import { closePanelTab, floatingPanelTabs, panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
+import { useCallback, useEffect, useRef, useMemo, useState, type ReactNode } from "react"
+import {
+  closePanelTab,
+  dropPanelTab,
+  floatingPanelTabs,
+  panelIdsOf,
+  primaryPanelOf,
+  type PaneDrop,
+} from "@/lib/panel-tabs"
 import { usePanelLayout } from "@/hooks/use-panel-layout"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { createAsidePanelId, parseAsidePanel, usePanel, useSidebar } from "@/contexts"
@@ -17,7 +24,13 @@ import {
   useHostHeight,
   usePanelGrid,
 } from "@/components/layout/panel-host"
-import { evenPanelColumns, panelColumnWidths } from "@/lib/panel-grid"
+import {
+  droppedPanelSizes,
+  evenPanelColumns,
+  panelColumnWidths,
+  panelGridShape,
+  type PanelGridSizes,
+} from "@/lib/panel-grid"
 import { PaneHost } from "./pane-host"
 import { PaneDropContext, usePaneDropState } from "./pane-drop"
 
@@ -74,6 +87,7 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
     handleResizeKeyDown,
     handleResizeReset,
     handleTransitionEnd,
+    sizePanel,
     maxColumns,
   } = usePanelLayout(isPanelOpen, {
     containerRef,
@@ -83,8 +97,41 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
   const fittedPanels = useFittedPanelLayout(gridLayout, maxColumns + 1, false, maxRows)
   // A phone stacks every pane in the one cell.
   const display = isMobile ? phonePages : fittedPanels
-  const panelGrid = usePanelGrid(display)
-  const paneDrops = usePaneDropState(workspaceId)
+  const panelGrid = usePanelGrid(display, gridLayout)
+  const columnWidths = useMemo(
+    () => (displayWidth > 0 ? panelColumnWidths(panelGrid.sizes.columns.slice(1), displayWidth) : []),
+    [panelGrid.sizes.columns, displayWidth]
+  )
+
+  // A pane dropped on an edge opens at the size its zone showed, once the arrangement it made is on show.
+  const [dropped, setDropped] = useState<{ before: string; after: string; sizes: PanelGridSizes } | null>(null)
+  const arrangement = JSON.stringify(gridLayout.columns)
+  if (dropped !== null && arrangement !== dropped.before) {
+    setDropped(null)
+    if (arrangement === dropped.after) {
+      panelGrid.setSizes(dropped.sizes)
+      sizePanel(sum(dropped.sizes.columns.slice(1)), dropped.sizes.columns.length - 1)
+    }
+  }
+  const sizeDrop = useCallback(
+    (panelId: string, drop: PaneDrop) => {
+      const after = dropPanelTab(gridLayout, panelId, drop)
+      // A folded arrangement shows other panes than the zone measured, or than the drop makes.
+      const folds =
+        panelGridShape(gridLayout) !== panelGridShape(display) ||
+        after.columns.length > maxColumns + 1 ||
+        after.columns.some((sections) => sections.length > maxRows)
+      if (drop.kind !== "edge" || folds) return
+      const widths = [Math.max(0, containerWidth - displayWidth), ...columnWidths]
+      setDropped({
+        before: JSON.stringify(gridLayout.columns),
+        after: JSON.stringify(after.columns),
+        sizes: droppedPanelSizes(display, widths, panelGrid.sizes.rows, after, panelId, drop.side),
+      })
+    },
+    [gridLayout, display, maxColumns, maxRows, containerWidth, displayWidth, columnWidths, panelGrid.sizes.rows]
+  )
+  const paneDrops = usePaneDropState(workspaceId, sizeDrop)
 
   // Above the error return: a stream that turns inaccessible mid-session must not change the hook count.
   usePanelInset(isMobile || error ? 0 : displayWidth, shouldAnimate)
@@ -96,7 +143,6 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
 
   const drops = isMobile || floating || heldPane !== null ? null : paneDrops
   // A track for every column that fits, so opening, closing or resizing one animates from the width it had.
-  const columnWidths = displayWidth > 0 ? panelColumnWidths(panelGrid.sizes.columns.slice(1), displayWidth) : []
   const panelTracks = Array.from({ length: maxColumns }, (_, column) => columnWidths[column] ?? 0)
   const columns = isMobile ? "minmax(0,1fr)" : ["minmax(0,1fr)", ...panelTracks.map((width) => `${width}px`)].join(" ")
 
@@ -186,3 +232,5 @@ function useAsidePane(aside: OpenAsideState | null, isSheet: boolean, panes: rea
     if (!panes.includes(pane)) openPanel(pane, { beside: aside.hostStreamId })
   }, [aside, isSheet, panes, openPanel, closeTabs])
 }
+
+const sum = (values: readonly number[]) => values.reduce((total, value) => total + value, 0)

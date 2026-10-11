@@ -157,12 +157,12 @@ export function newestPanelOf(layout: PanelLayout): string | null {
   return layout.columns.at(-1)?.at(-1)?.active ?? null
 }
 
-interface PanelLocation {
+export interface PanelLocation {
   column: number
   row: number
 }
 
-function locate(layout: PanelLayout, id: string): PanelLocation | null {
+export function locate(layout: PanelLayout, id: string): PanelLocation | null {
   for (const [column, sections] of layout.columns.entries()) {
     const row = sections.findIndex((section) => section.ids.includes(id))
     if (row !== -1) return { column, row }

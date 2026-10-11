@@ -124,8 +124,11 @@ export const PaneDropContext = createContext<PaneDropState | null>(null)
 
 const sameTarget = (a: PaneDropTarget | null, b: PaneDropTarget | null) => JSON.stringify(a) === JSON.stringify(b)
 
-/** Where a drag over the stream page would land, for {@link PaneDropContext}. */
-export function usePaneDropState(workspaceId: string): PaneDropState {
+/** Where a drag over the stream page would land, for {@link PaneDropContext}; `onLand` hears of each pane dropped. */
+export function usePaneDropState(
+  workspaceId: string,
+  onLand: (panelId: string, drop: PaneDrop) => void
+): PaneDropState {
   const { dropTab, dropLink } = usePanel()
   const [target, setTarget] = useState<PaneDropTarget | null>(null)
   const hover = useCallback(
@@ -135,12 +138,14 @@ export function usePaneDropState(workspaceId: string): PaneDropState {
   const land = useCallback(
     (data: DataTransfer, drop: PaneDrop) => {
       setTarget(null)
-      const panelId = readPaneDrag(data, workspaceId)
-      if (panelId) return dropTab(panelId, drop)
-      const url = readDroppedUrl(data)
-      if (url) dropLink(url, drop)
+      const dragged = readPaneDrag(data, workspaceId)
+      const url = dragged ? null : readDroppedUrl(data)
+      let landed: string | null = null
+      if (dragged) landed = dropTab(dragged, drop)
+      else if (url) landed = dropLink(url, drop)
+      if (landed) onLand(landed, drop)
     },
-    [workspaceId, dropTab, dropLink]
+    [workspaceId, dropTab, dropLink, onLand]
   )
 
   // A drag cancelled, or dropped where no zone claimed it, never leaves the zone it last crossed.
