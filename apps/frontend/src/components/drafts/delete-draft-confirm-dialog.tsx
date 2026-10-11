@@ -1,3 +1,4 @@
+import { useRef } from "react"
 import {
   ResponsiveAlertDialog,
   ResponsiveAlertDialogAction,
@@ -22,6 +23,17 @@ interface DeleteDraftConfirmDialogProps {
    * "Delete N drafts?".
    */
   count?: number
+  /**
+   * Open with Delete focused instead of the Radix default Cancel, so Enter
+   * confirms. For a caller whose delete is reached from the keyboard (the stash
+   * picker's Delete key); the explorer's bulk delete keeps Cancel.
+   */
+  focusConfirm?: boolean
+  /**
+   * Runs once the dialog has closed and released its focus trap. Prevent the
+   * default to place focus yourself instead of returning it to the opener.
+   */
+  onCloseAutoFocus?: (event: Event) => void
 }
 
 /**
@@ -32,7 +44,15 @@ interface DeleteDraftConfirmDialogProps {
  * means the surfaces can't drift (INV-35/INV-43). Renders an AlertDialog on
  * desktop and a Drawer on mobile via `ResponsiveAlertDialog`.
  */
-export function DeleteDraftConfirmDialog({ open, onOpenChange, onConfirm, count }: DeleteDraftConfirmDialogProps) {
+export function DeleteDraftConfirmDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+  count,
+  focusConfirm = false,
+  onCloseAutoFocus,
+}: DeleteDraftConfirmDialogProps) {
+  const confirmRef = useRef<HTMLButtonElement>(null)
   const isBulk = count != null && count > 1
   const title = isBulk ? `Delete ${count} drafts?` : "Delete this draft?"
   const description = isBulk
@@ -41,14 +61,23 @@ export function DeleteDraftConfirmDialog({ open, onOpenChange, onConfirm, count 
 
   return (
     <ResponsiveAlertDialog open={open} onOpenChange={onOpenChange}>
-      <ResponsiveAlertDialogContent>
+      <ResponsiveAlertDialogContent
+        onOpenAutoFocus={(event) => {
+          if (!focusConfirm) return
+          event.preventDefault()
+          confirmRef.current?.focus()
+        }}
+        onCloseAutoFocus={onCloseAutoFocus}
+      >
         <ResponsiveAlertDialogHeader>
           <ResponsiveAlertDialogTitle>{title}</ResponsiveAlertDialogTitle>
           <ResponsiveAlertDialogDescription>{description}</ResponsiveAlertDialogDescription>
         </ResponsiveAlertDialogHeader>
         <ResponsiveAlertDialogFooter>
           <ResponsiveAlertDialogCancel>Cancel</ResponsiveAlertDialogCancel>
-          <ResponsiveAlertDialogAction onClick={onConfirm}>Delete</ResponsiveAlertDialogAction>
+          <ResponsiveAlertDialogAction ref={confirmRef} onClick={onConfirm}>
+            Delete
+          </ResponsiveAlertDialogAction>
         </ResponsiveAlertDialogFooter>
       </ResponsiveAlertDialogContent>
     </ResponsiveAlertDialog>
