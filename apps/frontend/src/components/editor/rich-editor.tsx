@@ -156,6 +156,8 @@ interface RichEditorProps {
   disableSelectionToolbar?: boolean
   /** Called when ArrowUp is pressed in an empty editor — triggers edit-last-message */
   onEditLastMessage?: () => void
+  /** Called when ⌘← (-1) or ⌘→ (1) is pressed with no typed text, where the caret has nowhere to go */
+  onHistoryStep?: (delta: -1 | 1) => void
   /** Extra content rendered after the formatting buttons in the inline toolbar */
   toolbarTrailingContent?: React.ReactNode
   /** Content rendered between the toolbar and the editor (e.g. attachment pills) */
@@ -223,6 +225,34 @@ function isEditorCompletelyEmpty(editor: import("@tiptap/react").Editor | null |
     doc.firstChild.type.name === "paragraph" &&
     doc.firstChild.content.size === 0
   )
+}
+
+/**
+ * No text has been typed, though attachments may be present. An inserted
+ * attachment reference brings its own separator space, so whitespace counts
+ * as text only when no reference accounts for it.
+ */
+function hasNoTypedText(editor: import("@tiptap/react").Editor | null | undefined): boolean {
+  if (!editor) {
+    return false
+  }
+
+  const { doc } = editor.state
+  const block = doc.firstChild
+  if (doc.childCount !== 1 || block?.type.name !== "paragraph") {
+    return false
+  }
+
+  let hasReference = false
+  let onlyWhitespace = true
+  block.forEach((node) => {
+    if (node.type.name === "attachmentReference") {
+      hasReference = true
+    } else if (!node.isText || node.text?.trim()) {
+      onlyWhitespace = false
+    }
+  })
+  return onlyWhitespace && (hasReference || block.content.size === 0)
 }
 
 function emojiAtomToEditableText(node: JSONContent, toEmoji?: (shortcode: string) => string | null): JSONContent {
@@ -305,6 +335,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     staticToolbarOpen = false,
     disableSelectionToolbar = false,
     onEditLastMessage,
+    onHistoryStep,
     toolbarTrailingContent,
     belowToolbarContent,
     ariaLabel,
@@ -481,6 +512,8 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   messageSendModeRef.current = messageSendMode
   const onEditLastMessageRef = useRef(onEditLastMessage)
   onEditLastMessageRef.current = onEditLastMessage
+  const onHistoryStepRef = useRef(onHistoryStep)
+  onHistoryStepRef.current = onHistoryStep
   const onEscapeBlurRef = useRef(onEscapeBlur)
   onEscapeBlurRef.current = onEscapeBlur
 
@@ -985,6 +1018,22 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
         ) {
           event.preventDefault()
           onEditLastMessageRef.current()
+          return true
+        }
+        // ⌘←/⌘→ with no typed text: the browser's own Back/Forward keys, which
+        // an editable otherwise spends on a caret move. Meta only — Ctrl+arrow
+        // is word movement off macOS, where Alt+arrow already reaches the browser.
+        if (
+          (event.key === "ArrowLeft" || event.key === "ArrowRight") &&
+          event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey &&
+          !event.shiftKey &&
+          onHistoryStepRef.current &&
+          hasNoTypedText(currentEditor)
+        ) {
+          event.preventDefault()
+          onHistoryStepRef.current(event.key === "ArrowLeft" ? -1 : 1)
           return true
         }
         // Cmd/Ctrl+Enter: always send (regardless of mode or active suggestions)
