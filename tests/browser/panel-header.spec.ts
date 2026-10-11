@@ -225,6 +225,7 @@ test("should show as many tabs as fit at their minimum width, whichever is on sh
   const { workspaceId, streamId, threads } = await seedThreads(page, 6, title)
   await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threads.join(".")}`)
   await expect(tabPane(page, threads[5]).getByText("reply in thread 6")).toBeVisible({ timeout: 30_000 })
+  await page.getByRole("separator", { name: "Resize thread panel" }).dblclick()
   const strip = page.getByRole("navigation", { name: "Panel tabs" })
   const more = strip.getByRole("button", { name: /more tabs?$/ })
 
