@@ -7,7 +7,7 @@ import { BOARD_EVENT_ROW_TYPES, type EventType } from "@threahq/types"
 import type { CachedEvent } from "@/db"
 import * as hooksModule from "@/hooks"
 import * as contextsModule from "@/contexts"
-import { PanelProvider, TraceProvider } from "@/contexts"
+import { PanelProvider, PendingMessagesProvider, TraceProvider } from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { AuthContext } from "@/auth"
 import { resolveBoardEventRows, type BoardEventRow } from "@/lib/board/board-event-rows"
@@ -160,7 +160,9 @@ function renderRow(row: BoardEventRow) {
           <MemoryRouter initialEntries={[`/w/${WS}/board`]}>
             <TraceProvider>
               <PanelProvider>
-                <BoardEventRowItem row={row} workspaceId={WS} />
+                <PendingMessagesProvider>
+                  <BoardEventRowItem row={row} workspaceId={WS} />
+                </PendingMessagesProvider>
               </PanelProvider>
             </TraceProvider>
           </MemoryRouter>

@@ -9,7 +9,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { StreamTypes, type BoardPostMessage } from "@threahq/types"
 import { BoardCard } from "./board-card"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
-import { ServicesProvider, PanelProvider, TraceProvider, MediaGalleryProvider } from "@/contexts"
+import {
+  ServicesProvider,
+  PanelProvider,
+  TraceProvider,
+  MediaGalleryProvider,
+  PendingMessagesProvider,
+} from "@/contexts"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { __clearBoardRailRegistry } from "@/hooks/use-board-card-messages"
 import { __clearConversationGraphRegistry } from "@/hooks/use-conversation-graph"
@@ -97,7 +103,9 @@ function cardTree(post: BoardViewPost, conversations: Record<string, unknown>, q
             <TraceProvider>
               <PanelProvider>
                 <MediaGalleryProvider>
-                  <BoardCard workspaceId={WS} post={post} contextLabel="#general" streamType="channel" />
+                  <PendingMessagesProvider>
+                    <BoardCard workspaceId={WS} post={post} contextLabel="#general" streamType="channel" />
+                  </PendingMessagesProvider>
                 </MediaGalleryProvider>
               </PanelProvider>
             </TraceProvider>
