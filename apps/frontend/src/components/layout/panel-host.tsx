@@ -189,7 +189,8 @@ function PaneContent({ workspaceId, panelId, className }: PanelHostProps & { pan
   )
 }
 
-const MIN_SECTION_WIDTH = 200
+// Room for a tab row's tab on show and "+N" beside the menu, focus and close.
+const MIN_SECTION_WIDTH = 240
 const MIN_SECTION_HEIGHT = 120
 // A stream's header and composer with about 120px of timeline between them.
 const MIN_STACKED_SECTION_HEIGHT = 320

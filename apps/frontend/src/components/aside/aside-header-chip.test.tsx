@@ -7,7 +7,7 @@ import * as openAsideModule from "@/hooks/use-open-aside"
 import { openAside, resetAsideStoreCache } from "@/stores/aside-store"
 import { resetAgentActivityStore, upsertAgentSession } from "@/stores/agent-activity-store"
 import { createMockStream } from "@/test/fixtures"
-import { AsideHeaderChip } from "./aside-header-chip"
+import { AsideHeaderChip, useAsideHeaderAction } from "./aside-header-chip"
 
 const HOST = createMockStream({ id: "stream_host", type: StreamTypes.CHANNEL, rootStreamId: "stream_host" })
 const older = createMockStream({
@@ -25,10 +25,15 @@ const newer = createMockStream({
   createdAt: "2026-08-29T11:00:00.000Z",
 })
 
+function Chip({ stream }: { stream: typeof HOST }) {
+  const action = useAsideHeaderAction("ws_1", stream)
+  return action && <AsideHeaderChip action={action} />
+}
+
 function renderChip(stream = HOST) {
   return render(
     <MemoryRouter initialEntries={["/w/ws_1/s/stream_host"]}>
-      <AsideHeaderChip workspaceId="ws_1" stream={stream as never} />
+      <Chip stream={stream} />
     </MemoryRouter>
   )
 }
@@ -80,7 +85,7 @@ describe("AsideHeaderChip", () => {
     mockUnreadCounts({ stream_aside_new: 1 })
     view.rerender(
       <MemoryRouter initialEntries={["/w/ws_1/s/stream_host"]}>
-        <AsideHeaderChip workspaceId="ws_1" stream={HOST as never} />
+        <Chip stream={HOST} />
       </MemoryRouter>
     )
     expect(chip()).toHaveAttribute("data-attention", "new")
@@ -95,7 +100,7 @@ describe("AsideHeaderChip", () => {
     })
     view.rerender(
       <MemoryRouter initialEntries={["/w/ws_1/s/stream_host"]}>
-        <AsideHeaderChip workspaceId="ws_1" stream={HOST as never} />
+        <Chip stream={HOST} />
       </MemoryRouter>
     )
     expect(chip()).toHaveAttribute("data-attention", "working")
@@ -108,7 +113,7 @@ describe("AsideHeaderChip", () => {
     })
     view.rerender(
       <MemoryRouter initialEntries={["/w/ws_1/s/stream_host"]}>
-        <AsideHeaderChip workspaceId="ws_1" stream={HOST as never} />
+        <Chip stream={HOST} />
       </MemoryRouter>
     )
     expect(chip()).toHaveAttribute("data-attention", "open")

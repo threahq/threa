@@ -21,6 +21,7 @@ import {
   PanelRight,
   ChevronDown,
   UserRound,
+  MessageSquareDashed,
 } from "lucide-react"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { DraftAgentSettings } from "@/components/stream-settings/draft-agent-settings"
@@ -54,7 +55,7 @@ import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { CallStartMenu, RejoinBar } from "@/components/call"
 import { ThreadHeader } from "@/components/thread"
 import { StreamTitlePreview } from "@/components/layout"
-import { AsideHeaderChip } from "@/components/aside/aside-header-chip"
+import { AsideHeaderChip, useAsideHeaderAction } from "@/components/aside/aside-header-chip"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useCoverClose } from "@/hooks/use-cover-close"
 import { CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
@@ -519,12 +520,13 @@ export function StreamPane({
           ),
         ]
       : []
-  // Before the title gives way, desktop drops the Aside label, then folds the view icons into the menu.
+  const asideAction = useAsideHeaderAction(workspaceId, isDraft ? undefined : stream)
+  // Before the title gives way, desktop drops the Aside label, then folds the view icons and Aside into the menu.
   const gap = 8
   const iconGap = 4
   const icon = 32 + iconGap
   const offersCall = !!stream && !isDraft && (isChannel || isDm) && callsEnabled
-  const offersAside = !!stream && !isDraft
+  const offersAside = asideAction !== null
   const offersSearch = !isDraft
   const offersContextIcon = !!stream && !isDraft && offersContext
   const offersOverlay = (isChannel || isDm) && ownsConversationOverlay
@@ -533,8 +535,7 @@ export function StreamPane({
     : foldHeaderControls(
         headerWidth,
         // Padding, then what never folds: the leading controls, the chips beside the title, the label strip's gap
-        // (a tab row's -ml-2 hands one back instead), the call menu, Aside's icon (its label folds), and the
-        // menu, focus and close.
+        // (a tab row's -ml-2 hands one back instead), the call menu, and the menu, focus and close.
         32 +
           (leadingWidth > 0 ? leadingWidth + gap : 0) +
           (tabbed ? -gap : gap) +
@@ -542,13 +543,13 @@ export function StreamPane({
           gap -
           iconGap +
           (callWidth > 0 ? callWidth + iconGap : 0) +
-          (offersAside ? icon : 0) +
           (trailingWidth > 0 ? trailingWidth + gap : 0),
         [
           ...(offersAside ? [{ id: "aside-label", width: 60 }] : []),
           ...(offersOverlay ? [{ id: "overlay", width: 52 + iconGap }] : []),
           ...(offersContextIcon ? [{ id: "context", width: icon }] : []),
           ...(offersSearch ? [{ id: "search", width: icon }] : []),
+          ...(offersAside ? [{ id: "aside", width: icon }] : []),
         ],
         // A tab row keeps room for two tabs, so the view icons fold before the tabs go to "+N".
         tabbed ? tabRowReserve(section?.ids.length ?? 0) : undefined
@@ -558,6 +559,9 @@ export function StreamPane({
     document.dispatchEvent(new CustomEvent("threa:open-stream-search", { detail: { streamId } }))
   }
   const foldedActions: SidebarActionItem[] = [
+    ...(asideAction && folded.has("aside")
+      ? [{ id: "aside", label: asideAction.label, icon: MessageSquareDashed, onSelect: asideAction.run }]
+      : []),
     ...(searchInMenu ? [{ id: "search", label: "Search in conversation", icon: Search, onSelect: openSearch }] : []),
     ...(folded.has("context")
       ? [
@@ -809,12 +813,8 @@ export function StreamPane({
               <CallStartMenu workspaceId={workspaceId} streamId={streamId} startLabel="Start a call" />
             )}
           </div>
-          {stream && !isDraft && (
-            <AsideHeaderChip
-              workspaceId={workspaceId}
-              stream={stream}
-              compact={isMobile || folded.has("aside-label")}
-            />
+          {asideAction && !folded.has("aside") && (
+            <AsideHeaderChip action={asideAction} compact={isMobile || folded.has("aside-label")} />
           )}
           {offersSearch && !searchInMenu && (
             <Button

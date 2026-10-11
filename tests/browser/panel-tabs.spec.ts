@@ -366,7 +366,7 @@ test("should fold sections split down into tabs on a window too short for each",
 })
 
 test("should close tabs beside one from its menu, and reopen them latest first", async ({ page }) => {
-  await page.setViewportSize({ width: 1400, height: 900 })
+  await page.setViewportSize({ width: 1600, height: 900 })
   const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
   const parentC = await post(page, workspaceId, streamId, "third parent")
   const threadC = await createThread(page, workspaceId, streamId, parentC, "reply in thread C")
