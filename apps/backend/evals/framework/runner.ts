@@ -106,8 +106,10 @@ export function createEvalAI(): AI {
     throw new Error("OPENROUTER_API_KEY environment variable is required for evals")
   }
 
+  const anthropicApiKey = process.env.ANTHROPIC_API_KEY
   return createAI({
     openrouter: { apiKey },
+    anthropic: anthropicApiKey ? { apiKey: anthropicApiKey } : undefined,
   })
 }
 

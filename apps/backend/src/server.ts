@@ -405,6 +405,7 @@ export async function startServer(): Promise<ServerInstance> {
 
   const ai = createAI({
     openrouter: { apiKey: config.ai.openRouterApiKey },
+    anthropic: config.ai.anthropicApiKey ? { apiKey: config.ai.anthropicApiKey } : undefined,
     // The enclave reports its own usage straight to `costService`, so wrapping
     // here is what keeps enclave AI calls out of PostHog.
     costRecorder: new AnalyticsCostRecorder(costService, analyticsReporter, modelRegistry),
