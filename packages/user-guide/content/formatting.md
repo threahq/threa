@@ -31,10 +31,9 @@ When the cursor is inside a table, the table button becomes **Edit table**, with
 | Bold          | `Ctrl+B`          | `⌘B`  |
 | Italic        | `Ctrl+I`          | `⌘I`  |
 | Strikethrough | `Ctrl+Shift+S`    | `⌘⇧S` |
-| Inline code   | `Ctrl+E`          | `⌘E`  |
 | Code block    | `Ctrl+Shift+C`    | `⌘⇧C` |
 
-You can rebind these in the **Composer** tab of your [settings](app:settings/keyboard). Tab indents and Shift+Tab dedents. Inside a code block, they indent and dedent the selected lines.
+You can rebind these in the **Composer** tab of your [settings](app:settings/keyboard). Inline code has no default shortcut, and you can set one there. Tab indents and Shift+Tab dedents. Inside a code block, they indent and dedent the selected lines.
 
 ## Typing markdown
 
