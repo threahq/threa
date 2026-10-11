@@ -68,7 +68,7 @@ All models use `provider:modelPath` format:
 
 - `openrouter:anthropic/claude-sonnet-5`
 - `openrouter:openai/gpt-5.4-mini`
-- `anthropic:claude-haiku-5-5` — the Anthropic API directly (`ANTHROPIC_API_KEY`), language models only; embeddings and decisions stay on OpenRouter. Anthropic returns no dollar cost, so `createAI` prices these from `ANTHROPIC_PRICES` (`packages/agent-runtime/src/ai/ai.ts`) and refuses a model that table does not list. Anthropic ids use hyphens where OpenRouter uses dots: `claude-haiku-5-5`, not `claude-haiku-5.5`.
+- `anthropic:claude-haiku-5-5` — the Anthropic API directly, language models only; embeddings and decisions stay on OpenRouter. Optional: `ANTHROPIC_API_KEY` enables it for evals and local runs, prod leaves it unset and offers Claude models as `openrouter:anthropic/...`. These ids never go in `models.yaml` (the picker would offer a model prod cannot run; `model-registry.test.ts` enforces it), so they are reachable only by explicit per-call model id. Anthropic returns no dollar cost, so `createAI` prices these from `ANTHROPIC_PRICES` (`packages/agent-runtime/src/ai/ai.ts`) and refuses a model that table does not list. Anthropic ids use hyphens where OpenRouter uses dots: `claude-haiku-5-5`, not `claude-haiku-5.5`.
 
 **Note:** OpenRouter uses version numbers (e.g., `claude-sonnet-5`), not date-suffixed versions (e.g., `claude-sonnet-4-20250514`). Don't use date suffixes - they don't exist on OpenRouter.
 

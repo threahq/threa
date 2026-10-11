@@ -99,5 +99,13 @@ describe("ModelRegistry", () => {
       expect(modelIds).toContain("openrouter:openai/text-embedding-3-small")
       expect(modelIds.length).toBeGreaterThan(5)
     })
+
+    // The registry is what the product offers (persona picker, subagent
+    // governance). Prod leaves ANTHROPIC_API_KEY unset, so a direct
+    // `anthropic:` entry here would be offered and then fail at call time;
+    // Claude models are offered as `openrouter:anthropic/...`.
+    test("offers no direct anthropic: models", () => {
+      expect(registry.getModelIds().filter((id) => id.startsWith("anthropic:"))).toEqual([])
+    })
   })
 })
