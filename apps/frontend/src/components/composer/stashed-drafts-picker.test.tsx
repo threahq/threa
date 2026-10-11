@@ -316,13 +316,34 @@ describe("StashedDraftsPicker", () => {
       expect(screen.queryByRole("button", { name: /save current/i })).not.toBeInTheDocument()
     })
 
+    it("should not ask to delete a row when the Delete key is auto-repeating", async () => {
+      renderPicker({ drafts: threeDrafts() })
+
+      await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+      fireEvent.keyDown(row("Saved one"), { key: "Delete", repeat: true })
+
+      expect(screen.queryByText("Delete this draft?")).not.toBeInTheDocument()
+      expect(row("Saved one")).toHaveFocus()
+    })
+
+    it("should keep Cancel focused when the confirm is opened from the trash icon", async () => {
+      renderPicker({ drafts: threeDrafts() })
+
+      await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
+      await userEvent.click((await screen.findAllByRole("button", { name: /delete saved draft/i }))[0]!)
+
+      await waitFor(() => expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus())
+    })
+
     it("should leave the pile closed after a delete confirm on touch", async () => {
       isTouchMockValue = true
       const { onDelete, focusComposer } = renderPicker({ drafts: threeDrafts() })
 
       await userEvent.click(screen.getByRole("button", { name: /drafts/i }))
       await userEvent.click((await screen.findAllByRole("button", { name: /delete saved draft/i }))[0]!)
-      await userEvent.click(await screen.findByRole("button", { name: "Delete" }))
+      const confirm = await screen.findByRole("button", { name: "Delete" })
+      expect(confirm).not.toHaveFocus()
+      await userEvent.click(confirm)
 
       expect(onDelete).toHaveBeenCalledWith("draft_1")
       await waitFor(() => expect(screen.queryByText("Delete this draft?")).not.toBeInTheDocument())

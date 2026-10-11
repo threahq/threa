@@ -146,7 +146,8 @@ export function StashedDraftsPicker({
     setOpen(next)
   }, [])
   useEffect(() => onOpenChange?.(open), [open, onOpenChange])
-  const [draftToDelete, setDraftToDelete] = useState<string | null>(null)
+  // `viaKey`: asked for with the Delete key rather than the trash icon.
+  const [deleteRequest, setDeleteRequest] = useState<{ id: string; viaKey: boolean } | null>(null)
   // The row the pile reopens on once the delete confirm closes; null when the
   // pile was emptied and there is nothing to return to.
   const returnRowIdRef = useRef<string | null>(null)
@@ -248,50 +249,54 @@ export function StashedDraftsPicker({
   // surfaces guard a delete the same way). Close the popover first so the modal
   // isn't trapped behind it. No success toast by design: the confirm already
   // makes the delete deliberate.
-  const requestDelete = useCallback((id: string) => {
+  const requestDelete = useCallback((id: string, viaKey: boolean) => {
     // A cancelled confirm returns to the row it was asked about.
     returnRowIdRef.current = id
     setOpen(false)
-    setDraftToDelete(id)
+    setDeleteRequest({ id, viaKey })
   }, [])
 
   const confirmDelete = useCallback(() => {
-    if (!draftToDelete) return
+    if (!deleteRequest) return
     // The neighbour is named by id, not index: the deleted row leaves `drafts`
     // asynchronously, so it can still be rendered when the pile reopens.
-    const index = drafts.findIndex((draft) => draft.id === draftToDelete)
+    const index = drafts.findIndex((draft) => draft.id === deleteRequest.id)
     returnRowIdRef.current = (drafts[index + 1] ?? drafts[index - 1])?.id ?? null
-    onDelete(draftToDelete)
-  }, [draftToDelete, drafts, onDelete])
+    onDelete(deleteRequest.id)
+  }, [deleteRequest, drafts, onDelete])
 
   // The confirm is a detour from the pile, so once it has closed focus lands
   // back in the pile rather than on the page body. Runs from the dialog's
   // close-auto-focus, not its open change: until the dialog has unmounted its
   // focus trap pulls focus back out of a reopened pile. Touch has no row focus
-  // to return to and keeps the pile closed.
+  // to return to and keeps the pile closed. A confirm that is still open only
+  // swapped its presentation (dialog ↔ drawer on a resize) and has not closed.
   const returnFromDeleteConfirm = useCallback(
     (event: Event) => {
-      if (isTouch) {
-        returnRowIdRef.current = null
-        return
-      }
+      if (isTouch || deleteRequest) return
       event.preventDefault()
       if (returnRowIdRef.current) handleOpenChange(true)
       else bridge?.focusComposer?.()
     },
-    [isTouch, handleOpenChange, bridge]
+    [isTouch, deleteRequest, handleOpenChange, bridge]
   )
 
   // Arrow keys walk the draft rows so a keyboard-opened list (Cmd/Ctrl+S on an
   // empty composer) is usable without a mouse; Enter activates the focused row
-  // natively and Delete (Fn+Backspace on a Mac) asks to delete it.
+  // natively and Delete (Fn+Backspace on a Mac) asks to delete it. A key still
+  // held from the confirm must not act on the row the pile reopens on, so
+  // auto-repeat of either is ignored.
   const handleContentKeyDown = useCallback(
     (e: ReactKeyboardEvent<HTMLDivElement>) => {
-      if (e.key === "Delete") {
-        const id = (e.target as HTMLElement).closest<HTMLElement>("[data-draft-row]")?.dataset.draftRow
-        if (!id) return
+      const rowId = (e.target as HTMLElement).closest<HTMLElement>("[data-draft-row]")?.dataset.draftRow
+      if (rowId && e.repeat && (e.key === "Enter" || e.key === "Delete")) {
         e.preventDefault()
-        requestDelete(id)
+        return
+      }
+      if (e.key === "Delete") {
+        if (!rowId) return
+        e.preventDefault()
+        requestDelete(rowId, true)
         return
       }
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return
@@ -370,13 +375,14 @@ export function StashedDraftsPicker({
             // immediately after a keyboard open — the row a delete confirm
             // returns to, else the first; with no rows Radix's default content
             // focus stands.
+            const returnRowId = returnRowIdRef.current
+            returnRowIdRef.current = null
             if (isTouch) {
               e.preventDefault()
               return
             }
             const rows = Array.from(contentRef.current?.querySelectorAll<HTMLButtonElement>("[data-draft-row]") ?? [])
-            const row = rows.find((candidate) => candidate.dataset.draftRow === returnRowIdRef.current) ?? rows[0]
-            returnRowIdRef.current = null
+            const row = rows.find((candidate) => candidate.dataset.draftRow === returnRowId) ?? rows[0]
             if (row) {
               e.preventDefault()
               row.focus()
@@ -530,7 +536,7 @@ export function StashedDraftsPicker({
                           className="h-7 w-7 shrink-0 reveal-actions"
                           onClick={(e) => {
                             e.stopPropagation()
-                            requestDelete(draft.id)
+                            requestDelete(draft.id, false)
                           }}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
@@ -546,11 +552,11 @@ export function StashedDraftsPicker({
       </Popover>
 
       <DeleteDraftConfirmDialog
-        open={draftToDelete !== null}
-        onOpenChange={(o) => !o && setDraftToDelete(null)}
+        open={deleteRequest !== null}
+        onOpenChange={(o) => !o && setDeleteRequest(null)}
         onConfirm={confirmDelete}
         onCloseAutoFocus={returnFromDeleteConfirm}
-        focusConfirm
+        focusConfirm={deleteRequest?.viaKey}
       />
     </>
   )

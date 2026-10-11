@@ -5,9 +5,10 @@ import { createChannel, loginAndCreateWorkspace } from "./helpers"
  * The drafts pile is fully operable without a mouse: the stash shortcut on an
  * empty composer opens it, Delete on a focused row asks to delete that draft,
  * Enter confirms, and focus lands back in the pile on the neighbouring row —
- * or in the composer once the pile is empty. Runs in a real browser because the
- * hand-off between the closing confirm dialog and the reopening popover is
- * Radix focus management, which jsdom does not reproduce.
+ * or in the composer once the pile is empty. Runs in a real browser because
+ * jsdom has no exit animation: there the confirm unmounts at once, while in a
+ * browser its focus trap outlives the close and takes focus back from a pile
+ * reopened too early.
  */
 test("stashed drafts are deleted from the keyboard without losing focus", async ({ page }) => {
   await loginAndCreateWorkspace(page, "draft-keys")
@@ -42,12 +43,17 @@ test("stashed drafts are deleted from the keyboard without losing focus", async 
   await expect(row("middle stashed body")).toBeFocused()
   await expect(page.locator("[data-draft-row]")).toHaveCount(3)
 
-  // Confirming lands on the row that took the deleted one's place.
+  // Confirming lands on the row that took the deleted one's place. Enter held
+  // past the confirm auto-repeats onto that row and must not restore it.
   await page.keyboard.press("Delete")
   await expect(confirm).toBeFocused()
-  await page.keyboard.press("Enter")
+  await page.keyboard.down("Enter")
   await expect(row("middle stashed body")).toHaveCount(0)
   await expect(row("oldest stashed body")).toBeFocused()
+  await page.keyboard.down("Enter")
+  await page.keyboard.up("Enter")
+  await expect(row("oldest stashed body")).toBeFocused()
+  await expect(editor).toHaveText("")
 
   // Deleting the last row falls back to the one above it.
   await page.keyboard.press("Delete")

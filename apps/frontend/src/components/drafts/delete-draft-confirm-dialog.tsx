@@ -25,8 +25,8 @@ interface DeleteDraftConfirmDialogProps {
   count?: number
   /**
    * Open with Delete focused instead of the Radix default Cancel, so Enter
-   * confirms. For a caller whose delete is reached from the keyboard (the stash
-   * picker's Delete key); the explorer's bulk delete keeps Cancel.
+   * confirms. For a delete asked for with the Delete key (the stash picker's
+   * rows); a click or tap on a trash icon keeps Cancel.
    */
   focusConfirm?: boolean
   /**
