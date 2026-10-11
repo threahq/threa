@@ -40,6 +40,13 @@ function renderChip(stream = HOST) {
 
 const chip = () => screen.getByTestId("aside-header-chip")
 
+function mockStreams(streams: (typeof HOST)[]) {
+  vi.spyOn(workspaceStoreModule, "useWorkspaceStreamsSelect").mockImplementation(((
+    _workspaceId: string | undefined,
+    select: (rows: typeof streams) => unknown
+  ) => select(streams)) as never)
+}
+
 function mockUnreadCounts(unreadCounts: Record<string, number>) {
   const state = { unreadCounts }
   vi.spyOn(workspaceStoreModule, "useWorkspaceUnreadState").mockImplementation(((
@@ -59,7 +66,7 @@ beforeEach(() => {
   vi.spyOn(openAsideModule, "useOpenAside").mockReturnValue(openSpy as never)
   vi.spyOn(openAsideModule, "useResumeAside").mockReturnValue(resumeSpy as never)
   mockUnreadCounts({})
-  vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([] as never)
+  mockStreams([])
 })
 
 afterEach(() => vi.restoreAllMocks())
@@ -74,7 +81,7 @@ describe("AsideHeaderChip", () => {
   })
 
   it("resumes the newest aside and carries the row's states", () => {
-    vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([older, newer] as never)
+    mockStreams([older, newer])
     const view = renderChip()
     expect(chip()).toHaveAttribute("data-attention", "quiet")
     expect(chip()).toHaveAccessibleName("Resume aside: second thought")

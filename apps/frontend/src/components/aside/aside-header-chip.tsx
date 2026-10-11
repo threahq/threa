@@ -1,10 +1,15 @@
-import { useCallback, useMemo } from "react"
+import { useCallback } from "react"
 import { Loader2, MessageSquareDashed } from "lucide-react"
 import { isAsideHostType, StreamTypes } from "@threahq/types"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { streamLabel } from "@/lib/streams"
-import { useWorkspaceStreams, useWorkspaceUnreadState, type CachedUnreadState } from "@/stores/workspace-store"
+import {
+  useWorkspaceStreamsSelect,
+  useWorkspaceUnreadState,
+  type CachedStream,
+  type CachedUnreadState,
+} from "@/stores/workspace-store"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { useAgentActivityForStream } from "@/stores/agent-activity-store"
 import { useAsideState } from "@/stores/aside-store"
@@ -33,15 +38,21 @@ export interface AsideHeaderAction {
  * aside cannot be opened.
  */
 export function useAsideHeaderAction(workspaceId: string, stream: AsideHost | undefined): AsideHeaderAction | null {
-  const streams = useWorkspaceStreams(workspaceId)
   const hostId = stream?.id
-  const newest = useMemo(
-    () =>
-      streams
-        .filter((row) => row.type === StreamTypes.ASIDE && row.parentStreamId === hostId && !row.archivedAt)
-        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0],
-    [streams, hostId]
+  // The stream pane reads this, and the list is rewritten on every message in the workspace.
+  const selectNewest = useCallback(
+    (streams: CachedStream[]) => {
+      const row = streams
+        .filter(
+          (candidate) =>
+            candidate.type === StreamTypes.ASIDE && candidate.parentStreamId === hostId && !candidate.archivedAt
+        )
+        .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))[0]
+      return row ? { id: row.id, label: streamLabel(row) } : undefined
+    },
+    [hostId]
   )
+  const newest = useWorkspaceStreamsSelect(workspaceId, selectNewest)
   const root = useStreamFromStore(workspaceId, stream?.rootStreamId ?? undefined)
   const open = useAsideState()
   const openAside = useOpenAside(workspaceId)
@@ -59,7 +70,7 @@ export function useAsideHeaderAction(workspaceId: string, stream: AsideHost | un
   return {
     attention,
     label: newest
-      ? `${attention === "open" ? "Open" : "Resume"} aside: ${streamLabel(newest)}${ATTENTION_LABEL[attention]}`
+      ? `${attention === "open" ? "Open" : "Resume"} aside: ${newest.label}${ATTENTION_LABEL[attention]}`
       : "Open an aside",
     run: () => {
       if (newest) resume({ hostStreamId: stream.id, asideId: newest.id })
