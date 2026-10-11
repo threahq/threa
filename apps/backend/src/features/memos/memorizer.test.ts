@@ -2,7 +2,7 @@ import type { AI } from "@threahq/agent-runtime"
 import { describe, expect, it, mock } from "bun:test"
 import type { ConfigResolver } from "../../lib/ai/config-resolver"
 import { MessageFormatter } from "../../lib/ai/message-formatter"
-import { getMemorizerSystemPrompt, memoSetSchema, MEMO_MAX_PER_CONVERSATION } from "./config"
+import { getMemorizerSystemPrompt, memoSetSchema, MEMO_MAX_PER_CONVERSATION, MEMO_TITLE_MAX_CHARS } from "./config"
 import { Memorizer, resolveSourceMessageIds } from "./memorizer"
 import type { Memo } from "./repository"
 
@@ -178,5 +178,39 @@ describe("Memorizer — supersession targets", () => {
         "[memo_price] Pro costs $12\n   Pro is $12 per user.\n   - Annual plans get 20% off"
       ),
     }).toEqual({ supersedesMemoIds: ["memo_price"], shownWithId: true })
+  })
+})
+
+describe("Memorizer — shape clamps", () => {
+  it("keeps a memo whose title or lists overrun the asked-for size, trimmed to the limits", async () => {
+    const longTitle = "Decision: ".padEnd(MEMO_TITLE_MAX_CHARS + 40, "x")
+    const generated = {
+      title: longTitle,
+      abstract: "A decision with a verbose title.",
+      knowledgeType: "decision",
+      keyPoints: ["one", "two", "three", "four"],
+      tags: ["a", "b", "c", "d", "e", "f"],
+      sourceMessageIds: [],
+      supersedesMemoIds: null,
+    }
+    expect(memoSetSchema.safeParse({ memos: [generated] }).success).toBe(true)
+
+    const memorizer = new Memorizer(
+      { generateObject: async () => ({ value: { memos: [generated] } }) } as unknown as AI,
+      { resolve: async () => ({ modelId: "test:model", temperature: 0 }) } as unknown as ConfigResolver,
+      new MessageFormatter()
+    )
+    const [memo] = await memorizer.memorizeConversation("<message/>", {
+      memoryContext: [],
+      content: [],
+      workspaceId: "ws_1",
+      now: NOW,
+    })
+
+    expect({ title: memo?.title, keyPoints: memo?.keyPoints, tags: memo?.tags }).toEqual({
+      title: longTitle.slice(0, MEMO_TITLE_MAX_CHARS),
+      keyPoints: ["one", "two", "three"],
+      tags: ["a", "b", "c", "d", "e"],
+    })
   })
 })

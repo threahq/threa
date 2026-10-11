@@ -82,6 +82,14 @@ export const MEMO_CONVERSATION_WINDOW_CHARS = 40_000
 export const MEMO_MAX_PER_CONVERSATION = 5
 
 /**
+ * Per-memo list sizes the memorizer asks for: guidance in the schema description,
+ * clamped in code. A hard `.max()` in the generation schema fails the whole set
+ * when the model overruns by one item, dropping every memo of that conversation.
+ */
+export const MEMO_GENERATED_KEY_POINTS_MAX = 3
+export const MEMO_GENERATED_TAGS_MAX = 5
+
+/**
  * Upper bound on memos a single reflective session capture may leave behind
  * (roadmap 6.3). Tighter than {@link MEMO_MAX_PER_CONVERSATION}: a work session's
  * durable residue is usually one finding, occasionally two — more than that and
@@ -282,7 +290,7 @@ export type ConversationClassificationOutput = z.infer<typeof conversationClassi
  * type (a decision and a procedure from the same chat are distinct memos).
  */
 export const memoItemSchema = z.object({
-  title: z.string().max(100).describe("Specific title naming this one topic (max 100 characters)"),
+  title: z.string().describe(`Specific title naming this one topic (max ${MEMO_TITLE_MAX_CHARS} characters)`),
   abstract: z
     .string()
     .describe(
@@ -293,13 +301,13 @@ export const memoItemSchema = z.object({
     .describe(`Type of knowledge this memo captures: ${KNOWLEDGE_TYPES.map((t) => `"${t}"`).join(" | ")}`),
   keyPoints: z
     .array(z.string())
-    .max(3)
-    .describe("Up to 3 supporting facts; leave empty when the abstract already stands alone"),
-  tags: z.array(z.string()).max(5).describe("Up to 5 relevant tags for categorization"),
+    .describe(
+      `Up to ${MEMO_GENERATED_KEY_POINTS_MAX} supporting facts; leave empty when the abstract already stands alone`
+    ),
+  tags: z.array(z.string()).describe(`Up to ${MEMO_GENERATED_TAGS_MAX} relevant tags for categorization`),
   sourceMessageIds: z.array(z.string()).describe("IDs of the messages this specific memo draws from"),
   supersedesMemoIds: z
     .array(z.string())
-    .max(5)
     .nullable()
     .describe(
       "Ids of existing memos (from the Memory Context or Existing Memos list) whose conclusion this memo REPLACES or REVERSES — the retired memos are removed from active memory with every claim they hold, so list one only when this memo restates each of its claims that still holds. Null when this memo retires nothing"

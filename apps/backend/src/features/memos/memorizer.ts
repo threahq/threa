@@ -11,6 +11,9 @@ import {
   MEMORIZER_CONVERSATION_PROMPT,
   MEMORIZER_REVISION_PROMPT,
   MEMORIZER_EXISTING_TAGS_TEMPLATE,
+  MEMO_GENERATED_KEY_POINTS_MAX,
+  MEMO_GENERATED_TAGS_MAX,
+  MEMO_TITLE_MAX_CHARS,
 } from "./config"
 
 /**
@@ -156,11 +159,11 @@ export class Memorizer {
     })
 
     return value.memos.map((memo) => ({
-      title: memo.title,
+      title: memo.title.slice(0, MEMO_TITLE_MAX_CHARS),
       abstract: memo.abstract,
       knowledgeType: memo.knowledgeType,
-      keyPoints: memo.keyPoints,
-      tags: memo.tags,
+      keyPoints: memo.keyPoints.slice(0, MEMO_GENERATED_KEY_POINTS_MAX),
+      tags: memo.tags.slice(0, MEMO_GENERATED_TAGS_MAX),
       sourceMessageIds: resolveSourceMessageIds(memo.sourceMessageIds, messages),
       supersedesMemoIds: (memo.supersedesMemoIds ?? []).filter((id) => validSupersedeIds.has(id)),
     }))
