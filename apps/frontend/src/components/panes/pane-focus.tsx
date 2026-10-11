@@ -56,20 +56,23 @@ export function PaneFocusToggle() {
       title={binding ? `Restore to layout (Esc, ${formatKeyBinding(binding)})` : "Restore to layout (Esc)"}
       onClick={() => focusTab(null)}
     >
-      <svg viewBox="0 0 30 20" className="h-5 w-[30px]" aria-hidden>
-        {focus.map.map((cell, index) => (
-          <rect
-            key={index}
-            x={cell.x * 30 + 0.75}
-            y={cell.y * 20 + 0.75}
-            width={Math.max(cell.width * 30 - 1.5, 1)}
-            height={Math.max(cell.height * 20 - 1.5, 1)}
-            rx={1.5}
-            className={cell.focused ? "fill-primary stroke-primary" : "fill-none stroke-current"}
-            strokeWidth={1}
-          />
-        ))}
-      </svg>
+      {/* A draft floated from inline has no cell to mark; an unmarked map reads as a stray checkbox. */}
+      {focus.map.some((cell) => cell.focused) && (
+        <svg viewBox="0 0 30 20" className="h-5 w-[30px]" aria-hidden>
+          {focus.map.map((cell, index) => (
+            <rect
+              key={index}
+              x={cell.x * 30 + 0.75}
+              y={cell.y * 20 + 0.75}
+              width={Math.max(cell.width * 30 - 1.5, 1)}
+              height={Math.max(cell.height * 20 - 1.5, 1)}
+              rx={1.5}
+              className={cell.focused ? "fill-primary stroke-primary" : "fill-none stroke-current"}
+              strokeWidth={1}
+            />
+          ))}
+        </svg>
+      )}
       <Minimize2 className="h-4 w-4" />
     </Button>
   )

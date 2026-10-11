@@ -50,7 +50,7 @@ export function PaneHeader({
   className,
   children,
 }: PaneHeaderProps) {
-  const { tabbed: inTabbedSection, inFirstColumn, canClosePanel, closePanel } = usePanel()
+  const { tabbed: inTabbedSection, inFirstColumn, canClosePanel, closePanel, shownPanes } = usePanel()
   const { isMobile, state: sidebarState } = useSidebar()
   const inDrawer = useInPaneDrawer()
   const tabbed = inTabbedSection && !inDrawer
@@ -99,9 +99,14 @@ export function PaneHeader({
         <PhonePaneSwitcher workspaceId={workspaceId} />
         {menu}
         <PaneFocusToggle />
-        {!isMobile && !inDrawer && canClosePanel && (
-          <SidePanelClose onClose={closePanel} ref={closeRef} aria-label={closeLabel} />
-        )}
+        {!isMobile &&
+          !inDrawer &&
+          (canClosePanel ? (
+            <SidePanelClose onClose={closePanel} ref={closeRef} aria-label={closeLabel} />
+          ) : (
+            // Holds close's place beside another pane, so a pane opening later doesn't push the controls left.
+            shownPanes > 1 && <span aria-hidden className="h-8 w-8 shrink-0" />
+          ))}
       </div>
     </header>
   )
