@@ -14,6 +14,7 @@ import {
 import { useParams, useSearchParams } from "react-router-dom"
 import { useArchiveMemo, useDeleteMemo, useMemoDetail, useMemoSearch, useUnarchiveMemo, useUpdateMemo } from "@/hooks"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useElementWidth } from "@/hooks/use-element-width"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -160,11 +161,16 @@ function StreamCombobox({
   )
 }
 
+/** The list's 22rem beside a 400px detail; narrower, the detail stacks under the list. */
+const SIDE_BY_SIDE_MIN_WIDTH = 752
+
 export function MemoryPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const streams = useWorkspaceStreams(workspaceId ?? "")
   const isMobile = useIsMobile()
+  const contentRef = useRef<HTMLDivElement>(null)
+  const sideBySide = useElementWidth(contentRef) >= SIDE_BY_SIDE_MIN_WIDTH
 
   // Local filter state — initialized from URL params once, then app-owned.
   // URL params are written as a debounced side effect for bookmarkability.
@@ -504,14 +510,19 @@ export function MemoryPage() {
       </div>
 
       {/* Content — relative wrapper for the loading bar overlay */}
-      <div className="relative flex min-h-0 flex-1 flex-col lg:flex-row">
+      <div ref={contentRef} className={cn("relative flex min-h-0 flex-1", sideBySide ? "flex-row" : "flex-col")}>
         {/* Delayed loading bar — covers the header/content divider */}
         <LoadingBar visible={isRefreshing} />
         {/* Results list — full width on mobile, fixed sidebar on desktop.
             `[&>div>div]:!block [&>div>div]:!w-full` overrides Radix ScrollArea's
             internal `display:table` wrapper so the cards can't be pushed past
             the column by descendant min-content (matches saved/activity/scheduled). */}
-        <ScrollArea className="min-w-0 flex-1 lg:w-[22rem] lg:flex-none lg:border-r border-border/50 [&>div>div]:!block [&>div>div]:!w-full">
+        <ScrollArea
+          className={cn(
+            "min-w-0 flex-1 border-border/50 [&>div>div]:!block [&>div>div]:!w-full",
+            sideBySide && "w-[22rem] flex-none border-r"
+          )}
+        >
           <div className="min-w-0 space-y-1.5 p-2 [overflow-wrap:anywhere]">
             {searchResponse.isLoading && (
               <>
@@ -551,8 +562,8 @@ export function MemoryPage() {
         </ScrollArea>
 
         {/* Desktop detail pane. Uses `flex-1 min-h-0 overflow-y-auto` on a
-            plain div rather than Radix ScrollArea: between the mobile
-            breakpoint (640px) and `lg:flex-row` (1024px) the parent is a
+            plain div rather than Radix ScrollArea: narrower than
+            SIDE_BY_SIDE_MIN_WIDTH the parent is a
             flex-col with TWO flex-1 siblings (list + detail), and Radix
             ScrollArea's `h-full` Viewport height chain is brittle when
             sharing vertical space — the Root relies on `overflow-hidden`

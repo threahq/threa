@@ -78,7 +78,7 @@ function LabelsPageInner({ workspaceId }: { workspaceId: string }) {
               }
             />
           ) : (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,max(16rem,calc((100%_-_1.5rem)/3))),1fr))] gap-3">
               <AddLabelTile onClick={() => setAddOpen(true)} />
               {myLabels.map((label) => (
                 <OwnedLabelCard key={label.id} workspaceId={workspaceId} label={label} />

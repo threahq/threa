@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { ArrowLeft, Search, X } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useElementWidth } from "@/hooks/use-element-width"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 import { useDebouncedUrlText } from "@/hooks/use-debounced-url-text"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
@@ -58,21 +60,32 @@ export function ExplorerShell({ workspaceId, mode, enabled }: ExplorerShellProps
   }, [filters.selectedAttachmentId, search.items])
 
   const containerRef = useRef<HTMLDivElement | null>(null)
+  // A narrow pane stacks like a phone. Unmeasured (0) counts as narrow, so the first commit can't auto-select.
+  const width = useElementWidth(containerRef)
+  const stacked = isMobile || width < MIN_LIST_WIDTH + MIN_PREVIEW_WIDTH
 
-  // Auto-select the first item on desktop so the preview pane has content.
+  // Auto-select the first item beside the list so the preview pane has content.
   // Also reselects when the current selection drops out of the result set
   // (e.g. after a filter change), otherwise the preview pane goes blank.
-  // On mobile we never auto-select — that would hide the list immediately.
+  // Stacked, we never auto-select — that would hide the list immediately.
   useEffect(() => {
-    if (!enabled || isMobile) return
+    if (!enabled || stacked) return
     if (search.items.length === 0) return
     const stillVisible = search.items.some((item) => item.id === filters.selectedAttachmentId)
     if (stillVisible) return
     update({ selectedAttachmentId: search.items[0]!.id })
-  }, [enabled, isMobile, filters.selectedAttachmentId, search.items, update])
+  }, [enabled, stacked, filters.selectedAttachmentId, search.items, update])
+
+  // Narrowing out of side by side drops the selection, often an auto-selected one, so the shell lands on the list.
+  const wasStacked = useRef(stacked)
+  useEffect(() => {
+    if (stacked && !wasStacked.current) update({ selectedAttachmentId: null })
+    wasStacked.current = stacked
+  }, [stacked, update])
 
   useEffect(() => {
-    if (!enabled) return
+    // Stacked, a pick hides the focused row, stranding focus outside the shell.
+    if (!enabled || stacked) return
     const handler = (e: KeyboardEvent) => {
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return
       const target = e.target instanceof HTMLElement ? e.target : null
@@ -96,7 +109,7 @@ export function ExplorerShell({ workspaceId, mode, enabled }: ExplorerShellProps
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [enabled, search.items, filters.selectedAttachmentId, update])
+  }, [enabled, stacked, search.items, filters.selectedAttachmentId, update])
 
   const hasFilters =
     filters.streamIds.length > 0 ||
@@ -120,19 +133,20 @@ export function ExplorerShell({ workspaceId, mode, enabled }: ExplorerShellProps
 
   const widenScope = () => update({ streamIds: [] })
 
-  const showPreviewOnly = isMobile && Boolean(selectedItem)
+  const showPreviewOnly = stacked && Boolean(selectedItem)
 
-  const splitContainerRef = useRef<HTMLDivElement | null>(null)
   const [previewWidth, setPreviewWidth] = useState(DEFAULT_PREVIEW_WIDTH)
 
-  const handlePreviewWidthChange = useCallback((next: number) => {
-    const containerWidth = splitContainerRef.current?.offsetWidth ?? 0
-    const max = Math.max(MIN_PREVIEW_WIDTH, containerWidth - MIN_LIST_WIDTH)
-    setPreviewWidth(Math.max(MIN_PREVIEW_WIDTH, Math.min(max, next)))
-  }, [])
+  const maxPreviewWidth = Math.max(MIN_PREVIEW_WIDTH, width - MIN_LIST_WIDTH)
+  const shownPreviewWidth = Math.min(previewWidth, maxPreviewWidth)
+
+  const handlePreviewWidthChange = useCallback(
+    (next: number) => setPreviewWidth(Math.max(MIN_PREVIEW_WIDTH, Math.min(maxPreviewWidth, next))),
+    [maxPreviewWidth]
+  )
 
   const { isResizing, handleResizeStart, handleResizeMove, handleResizeEnd } = useResizeDrag({
-    width: previewWidth,
+    width: shownPreviewWidth,
     onWidthChange: handlePreviewWidthChange,
     direction: "left",
   })
@@ -142,16 +156,14 @@ export function ExplorerShell({ workspaceId, mode, enabled }: ExplorerShellProps
       const step = e.shiftKey ? 50 : 10
       if (e.key === "ArrowLeft") {
         e.preventDefault()
-        handlePreviewWidthChange(previewWidth + step)
+        handlePreviewWidthChange(shownPreviewWidth + step)
       } else if (e.key === "ArrowRight") {
         e.preventDefault()
-        handlePreviewWidthChange(previewWidth - step)
+        handlePreviewWidthChange(shownPreviewWidth - step)
       }
     },
-    [previewWidth, handlePreviewWidthChange]
+    [shownPreviewWidth, handlePreviewWidthChange]
   )
-
-  const maxPreviewWidth = Math.max(MIN_PREVIEW_WIDTH, (splitContainerRef.current?.offsetWidth ?? 0) - MIN_LIST_WIDTH)
 
   return (
     <div ref={containerRef} className="flex h-full flex-col" data-testid="attachment-explorer">
@@ -160,7 +172,8 @@ export function ExplorerShell({ workspaceId, mode, enabled }: ExplorerShellProps
           <Button
             size="icon"
             variant="ghost"
-            onClick={() => window.history.back()}
+            // Only a phone pushed the selection; a narrow pane's may be the auto-selected one.
+            onClick={() => (isMobile ? window.history.back() : update({ selectedAttachmentId: null }))}
             aria-label="Back to file list"
             className="h-7 w-7"
           >
@@ -196,8 +209,14 @@ export function ExplorerShell({ workspaceId, mode, enabled }: ExplorerShellProps
         />
       )}
 
-      <div ref={splitContainerRef} className="flex flex-1 overflow-hidden border-t">
-        <div className={showPreviewOnly ? "hidden" : "flex w-full min-w-0 flex-1 flex-col overflow-y-auto"}>
+      <div className="flex flex-1 overflow-hidden border-t">
+        <div
+          className={
+            showPreviewOnly
+              ? "hidden"
+              : cn("flex w-full flex-1 flex-col overflow-y-auto", stacked ? "min-w-0" : "min-w-[280px]")
+          }
+        >
           <ExplorerList
             workspaceId={workspaceId}
             items={search.items}
@@ -221,10 +240,10 @@ export function ExplorerShell({ workspaceId, mode, enabled }: ExplorerShellProps
             onWidenScope={widenScope}
           />
         </div>
-        {!showPreviewOnly && !isMobile && (
+        {!stacked && (
           <PanelResizeHandle
             isResizing={isResizing}
-            panelWidth={previewWidth}
+            panelWidth={shownPreviewWidth}
             minWidth={MIN_PREVIEW_WIDTH}
             maxWidth={maxPreviewWidth}
             onPointerDown={handleResizeStart}
@@ -235,8 +254,8 @@ export function ExplorerShell({ workspaceId, mode, enabled }: ExplorerShellProps
           />
         )}
         <div
-          className={showPreviewOnly ? "w-full flex-1" : "hidden flex-shrink-0 sm:block"}
-          style={!showPreviewOnly && !isMobile ? { width: previewWidth } : undefined}
+          className={showPreviewOnly ? "w-full flex-1" : cn("flex-shrink-0", stacked && "hidden")}
+          style={stacked ? undefined : { width: shownPreviewWidth }}
         >
           <ExplorerPreview workspaceId={workspaceId} item={selectedItem} />
         </div>

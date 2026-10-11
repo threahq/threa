@@ -47,6 +47,7 @@ export function PagePaneHeader({ workspaceId, back, icon, title, className, chil
           </>
         ) : undefined
       }
+      fixedTitle={title === undefined}
       className={className}
     >
       {children}

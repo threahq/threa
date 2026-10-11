@@ -301,7 +301,7 @@ function StreamsPageInner({
                 <Flame className="h-3.5 w-3.5" />
                 Most active
               </h2>
-              <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              <ul className="grid grid-cols-[repeat(auto-fill,minmax(max(8rem,calc((100%_-_1.5rem)/4)),1fr))] gap-2">
                 {mostActive.map((row) => (
                   <MostActiveCard
                     key={row.stream.id}

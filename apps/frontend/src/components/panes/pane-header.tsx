@@ -16,6 +16,8 @@ interface PaneHeaderProps {
   title?: ReactNode
   /** The title is an input being edited, so it doesn't drag. */
   editingTitle?: boolean
+  /** The title has no text to truncate, so it never narrows past its icons. */
+  fixedTitle?: boolean
   /** The pane's labels, riding in its tab row and folding first when the row runs short. */
   tabLabels?: ReactNode
   /** The pane's menu carries the split actions, so its tab menu doesn't repeat them. */
@@ -42,6 +44,7 @@ export function PaneHeader({
   name,
   title,
   editingTitle,
+  fixedTitle,
   tabLabels,
   splitsInPaneMenu,
   menu,
@@ -89,7 +92,7 @@ export function PaneHeader({
         />
       ) : (
         title !== undefined && (
-          <div className="flex min-w-0 flex-1 items-center gap-2" {...dragHandle}>
+          <div className={cn("flex flex-1 items-center gap-2", !fixedTitle && "min-w-0")} {...dragHandle}>
             {title}
           </div>
         )
