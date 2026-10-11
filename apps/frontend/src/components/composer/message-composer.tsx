@@ -119,6 +119,10 @@ function prependComposerCommand(content: JSONContent, command: string): JSONCont
   }
 }
 
+function stepBrowserHistory(delta: -1 | 1): void {
+  window.history.go(delta)
+}
+
 /** Platform-appropriate modifier key symbol (⌘ on Mac, Ctrl+ elsewhere) */
 const MOD_SYMBOL = navigator.platform?.toLowerCase().includes("mac") ? "⌘" : "Ctrl+"
 const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Command" : "Control"
@@ -1156,6 +1160,7 @@ export function MessageComposer({
       className={isMobile ? undefined : "flex min-h-0 flex-col"}
       disableSelectionToolbar={disableSelectionToolbar}
       onEditLastMessage={onEditLastMessage}
+      onHistoryStep={stepBrowserHistory}
       onEscapeBlur={onEscapeBlur}
       onFocus={handleComposerFocus}
       ariaLabel="Message input"
@@ -1341,6 +1346,7 @@ export function MessageComposer({
                 staticToolbarOpen={!isMobile}
                 disableSelectionToolbar
                 onEditLastMessage={onEditLastMessage}
+                onHistoryStep={stepBrowserHistory}
                 onFocus={handleComposerFocus}
                 ariaLabel="Fullscreen message editor"
                 ariaDescribedBy={instructionsId}
