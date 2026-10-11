@@ -267,6 +267,7 @@ async function replayChannel(
       connectionString: db.connectionString,
       clock,
       ai: ctx.ai,
+      configResolver: ctx.configResolver,
       workspaceId: ctx.workspaceId,
       signal: ctx.signal,
     })

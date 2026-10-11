@@ -38,8 +38,8 @@ import { LinkPreviewOutboxHandler, LinkPreviewService, createLinkPreviewWorker }
 import { EventService } from "../../src/features/messaging"
 import { StreamService } from "../../src/features/streams"
 import { WorkspaceIntegrationService } from "../../src/features/workspace-integrations"
+import type { ConfigResolver } from "../../src/lib/ai/config-resolver"
 import { MessageFormatter } from "../../src/lib/ai/message-formatter"
-import { createStaticConfigResolver } from "../../src/lib/ai/static-config-resolver"
 import { OutboxDispatcher } from "../../src/lib/outbox"
 import {
   JobQueues,
@@ -101,13 +101,14 @@ export async function startReplayPipeline(deps: {
   connectionString: string
   clock: SimClock
   ai: AI
+  /** The run's resolver, so eval component overrides reach the extractor and memo pipeline (INV-45). */
+  configResolver: ConfigResolver
   workspaceId: string
   /** Every wait checks it, so an aborted run stops replaying instead of waiting on work that can only fail. */
   signal: AbortSignal
 }): Promise<ReplayPipeline> {
-  const { pool, clock, ai, workspaceId, signal } = deps
+  const { pool, clock, ai, configResolver, workspaceId, signal } = deps
 
-  const configResolver = createStaticConfigResolver()
   const aiResidency = new WorkspaceAIResidencyPolicy({ pool })
   const decisionsAvailability = new DecisionsAvailability()
   const embeddingService = new EmbeddingService({ ai })
