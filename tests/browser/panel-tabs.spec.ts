@@ -135,13 +135,9 @@ test("should jump to a stream's permalink to its own message beside its tabs, an
     m: parentA,
   })
 
-  await chip.evaluate((element) => {
-    for (let node = element.parentElement; node; node = node.parentElement) {
-      if (node.scrollHeight <= node.clientHeight + 1 || getComputedStyle(node).overflowY === "visible") continue
-      node.scrollTop = node.scrollHeight
-      return
-    }
-  })
+  // A wheel, not a scrollTop write: the jump holds its message against anything but a gesture.
+  await linked.hover()
+  await page.mouse.wheel(0, 10_000)
   await expect(linked).not.toBeInViewport()
   await chip.click()
   await expect(linked).toBeInViewport({ timeout: 30_000 })
