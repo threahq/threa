@@ -285,17 +285,6 @@ test.describe("Rich Text Editing", () => {
       await expect(editor.locator("em")).toHaveText("text to italicize")
     })
 
-    test("Cmd+E toggles inline code on selection", async ({ page }) => {
-      const editor = page.locator("[contenteditable='true']")
-      await editor.click()
-      await page.keyboard.type("variable_name")
-
-      await selectAllEditorContent(editor)
-      await pressEditorShortcut(editor, "e")
-
-      await expect(editor.locator("code")).toHaveText("variable_name")
-    })
-
     test("Cmd+Shift+S toggles strikethrough", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()

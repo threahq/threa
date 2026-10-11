@@ -4,7 +4,7 @@ export interface ShortcutAction {
   id: string
   label: string
   description: string
-  defaultKey: string
+  defaultKey?: string
   category: "navigation" | "editing" | "view"
   /** If true, shortcut works even when focus is in an input field */
   global?: boolean
@@ -156,8 +156,9 @@ export const SHORTCUT_ACTIONS: ShortcutAction[] = [
   {
     id: "formatCode",
     label: "Inline Code",
+    // No default: mod+e would take Ctrl+E, which moves to the end of the line in
+    // macOS text fields. Rebindable in keyboard settings like the rest.
     description: "Toggle inline code formatting",
-    defaultKey: "mod+e",
     category: "editing",
   },
   {

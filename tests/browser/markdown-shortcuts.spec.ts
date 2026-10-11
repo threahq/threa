@@ -11,7 +11,6 @@ import { loginAndCreateWorkspace, pressEditorShortcut, selectAllEditorContent } 
  * - Cmd+B → bold (visually styled, exports as **text**)
  * - Cmd+I → italic (visually styled, exports as *text*)
  * - Cmd+Shift+S → strikethrough (visually styled, exports as ~~text~~)
- * - Cmd+E → inline code (visually styled, exports as `text`)
  * - Cmd+Shift+C → code block
  */
 
@@ -75,20 +74,6 @@ test.describe("Formatting Shortcuts", () => {
       await expect(editor).toContainText("hello struck world")
     })
 
-    test("Cmd+E should toggle inline code", async ({ page }) => {
-      const editor = page.locator("[contenteditable='true']")
-      await editor.click()
-
-      await page.keyboard.type("run ")
-      await pressEditorShortcut(editor, "e")
-      await page.keyboard.type("npm install")
-      await pressEditorShortcut(editor, "e")
-      await page.keyboard.type(" to install")
-
-      await expect(editor.locator("code")).toContainText("npm install")
-      await expect(editor).toContainText("run npm install to install")
-    })
-
     test("Cmd+Shift+C should create code block", async ({ page }) => {
       const editor = page.locator("[contenteditable='true']")
       await editor.click()
@@ -140,18 +125,6 @@ test.describe("Formatting Shortcuts", () => {
       await pressEditorShortcut(editor, "s", { shift: true })
 
       await expect(editor.locator("s")).toContainText("text")
-    })
-
-    test("Cmd+E should make selected text inline code", async ({ page }) => {
-      const editor = page.locator("[contenteditable='true']")
-      await editor.click()
-
-      await page.keyboard.type("myVar")
-      await selectAllEditorContent(editor)
-
-      await pressEditorShortcut(editor, "e")
-
-      await expect(editor.locator("code")).toContainText("myVar")
     })
   })
 
@@ -226,5 +199,28 @@ test.describe("Formatting Shortcuts", () => {
 
       await expect(editor.locator("code")).toContainText("npm")
     })
+  })
+})
+
+test.describe("Ctrl+A and Ctrl+E on Mac", () => {
+  test("should move the cursor to the start and end of the line", async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "platform", { get: () => "MacIntel" })
+    })
+    await loginAndCreateWorkspace(page, "ctrl-e")
+    await page.getByRole("button", { name: "+ New Scratchpad" }).click()
+
+    const editor = page.locator("[contenteditable='true']")
+    await expect(editor).toBeVisible({ timeout: 5000 })
+    await editor.click()
+
+    await page.keyboard.type("world")
+    await page.keyboard.press("Control+a")
+    await page.keyboard.type("hello ")
+    await page.keyboard.press("Control+e")
+    await page.keyboard.type("!")
+
+    await expect(editor).toContainText("hello world!")
+    await expect(editor.locator("code")).toHaveCount(0)
   })
 })

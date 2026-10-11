@@ -41,11 +41,10 @@ These are the default shortcuts. Each is shown as Ctrl on Windows and Linux with
 | Bold          | Ctrl+B (⌘B on Mac)        | Bold the selection.                                                                                                                                        |
 | Italic        | Ctrl+I (⌘I on Mac)        | Italicize the selection.                                                                                                                                   |
 | Strikethrough | Ctrl+Shift+S (⌘⇧S on Mac) | Strike through the selection.                                                                                                                              |
-| Inline Code   | Ctrl+E (⌘E on Mac)        | Format the selection as inline code.                                                                                                                       |
 | Code Block    | Ctrl+Shift+C (⌘⇧C on Mac) | Insert a code block.                                                                                                                                       |
 | Save Draft    | Ctrl+S (⌘S on Mac)        | Stash the current composer content into your saved drafts and clear the editor. See [Drafts and scheduled messages](/guide/drafts-and-scheduled-messages). |
 
-Editing shortcuts apply when the composer is focused. For formatting, see [Formatting](/guide/formatting).
+Editing shortcuts apply when the composer is focused. Inline Code has no default shortcut. You can set one in the **Composer** tab. For formatting, see [Formatting](/guide/formatting).
 
 ## Change a shortcut
 

@@ -100,16 +100,16 @@ describe("editor formatting shortcuts", () => {
     expect(getShortcutAction("formatBold")?.defaultKey).toBe("mod+b")
     expect(getShortcutAction("formatItalic")?.defaultKey).toBe("mod+i")
     expect(getShortcutAction("formatStrike")?.defaultKey).toBe("mod+shift+s")
-    expect(getShortcutAction("formatCode")?.defaultKey).toBe("mod+e")
+    expect(getShortcutAction("formatCode")?.defaultKey).toBeUndefined()
     expect(getShortcutAction("formatCodeBlock")?.defaultKey).toBe("mod+shift+c")
   })
 
   it("no default editor shortcuts conflict with each other", () => {
     const conflicts = detectConflicts()
     for (const id of EDITOR_SHORTCUT_IDS) {
-      const action = getShortcutAction(id)!
-      const conflicting = conflicts.get(action.defaultKey)
-      expect(conflicting).toBeUndefined()
+      const defaultKey = getShortcutAction(id)!.defaultKey
+      if (!defaultKey) continue
+      expect(conflicts.get(defaultKey)).toBeUndefined()
     }
   })
 })
@@ -230,7 +230,6 @@ describe("getEffectiveEditorBindings", () => {
       formatBold: "mod+b",
       formatItalic: "mod+i",
       formatStrike: "mod+shift+s",
-      formatCode: "mod+e",
       formatCodeBlock: "mod+shift+c",
     })
   })
