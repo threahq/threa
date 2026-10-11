@@ -49,8 +49,6 @@ export {
   isPaneSwitch,
   useDisplayedPanelLayout,
   DisplayedPanelLayoutProvider,
-  PhonePanesProvider,
-  usePhonePanes,
   useInPaneDrawer,
   InPaneDrawerProvider,
   PaneScope,

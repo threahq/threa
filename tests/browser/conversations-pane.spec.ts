@@ -122,7 +122,7 @@ test("phone: the list is a pane of its own, and Back returns to the channel", as
   await page.locator("header").getByRole("button", { name: "Stream actions" }).click()
   await page.getByRole("button", { name: /Conversations list/ }).click()
   await expect(list(page).getByText(topic).first()).toBeVisible({ timeout: 30_000 })
-  await expect(list(page).getByRole("button", { name: "2 open panes" })).toBeVisible()
+  await expect(list(page).getByRole("button", { name: "Back" })).toBeVisible()
   await expect(page.locator('[data-editor-zone="main"]').getByText(topic)).not.toBeVisible()
 
   await page.goBack()

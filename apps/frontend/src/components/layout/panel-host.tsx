@@ -23,7 +23,6 @@ import {
   paneIdentity,
   PaneScope,
   DisplayedPanelLayoutProvider,
-  PhonePanesProvider,
   InPaneDrawerProvider,
   presentsAsDrawer,
   coverPaneOf,
@@ -463,11 +462,6 @@ export function PanelTabStack({
     .sort((a, b) => (a.key < b.key ? -1 : 1))
 
   const sections = display.columns.flat()
-  const orderKey = sections.flatMap((section) => section.ids).join(".")
-  const phonePanes = useMemo(
-    () => (stacked ? { order: orderKey.split("."), current } : null),
-    [stacked, orderKey, current]
-  )
   // The pane worked in, else the first on show.
   const shownSection = sections.find((section) => section.active === current) ?? sections[0]
   const panes = stacked ? undefined : sections.map((section) => section.active)
@@ -535,7 +529,7 @@ export function PanelTabStack({
   })
 
   return (
-    <PhonePanesProvider value={phonePanes}>
+    <>
       <PaneFocusContext.Provider value={focus}>
         <DisplayedPanelLayoutProvider value={screen}>
           {tabs.map((tab) => {
@@ -613,7 +607,7 @@ export function PanelTabStack({
           <PaneShortcuts panes={panes} />
         </PaneScope>
       )}
-    </PhonePanesProvider>
+    </>
   )
 }
 

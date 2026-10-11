@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, type MouseEvent, type ReactNode } from "react"
+import { createContext, useContext, type MouseEvent, type ReactNode } from "react"
 import { useLocation, useMatch, useNavigate, useSearchParams } from "react-router-dom"
 import {
   isConversationPanel,
@@ -10,7 +10,6 @@ import {
   parseDraftPanel,
   useCurrentPane,
   usePanel,
-  useSidebar,
 } from "@/contexts"
 import { useStableCallback } from "@/hooks/use-stable-callback"
 import {
@@ -38,7 +37,7 @@ export interface StreamPage {
 type ParentOf = (streamId: string) => string | null
 
 /** The stream a pane was opened from: a draft's, aside's, conversations list's or overview's stream, a new thread's parent, else the stream's parent. */
-export function openedFrom(id: string, parentOf: ParentOf): string | null {
+function openedFrom(id: string, parentOf: ParentOf): string | null {
   return (
     parseComposePanel(id) ??
     parseAsidePanel(id) ??
@@ -101,24 +100,19 @@ export function pickStream(page: StreamPage, streamId: string, parentOf: ParentO
 }
 
 /**
- * Picks a stream or a workspace page from the sidebar, keeping the other panes: a phone shows it in the pane on
- * show, elsewhere it takes the place of the pane worked in; one already open is brought forward. False where a
- * row's link goes there on its own.
+ * Picks a stream or a workspace page from the sidebar, keeping the other panes: it takes the place of the pane
+ * worked in, and one already open is brought forward. False where a row's link goes there on its own, as on a
+ * phone, whose route goes there and drops its pane.
  */
 function useStreamPicker(workspaceId: string): (streamId: string) => boolean {
   const navigate = useNavigate()
   const location = useLocation()
   const path = useMatch("/w/:workspaceId/s/:streamId")?.params.streamId
   const [searchParams] = useSearchParams()
-  const { layout, hasTabs, setCurrentPane, markCurrentPane, openPanel, showPanes } = usePanel()
-  const { isMobile } = useSidebar()
+  const { layout, hasTabs, phone, setCurrentPane, markCurrentPane, showPanes } = usePanel()
   const current = useCurrentPane()
   return useStableCallback((streamId: string) => {
-    // A draft stream only opens as a page of its own, as does anything picked where no pane is on show.
-    if (isMobile && hasTabs && (isServerStreamId(streamId) || pagePathOf(streamId) !== null)) {
-      openPanel(streamId, { inPlace: true })
-      return true
-    }
+    if (phone) return false
     const streams = indexStreams(getCachedWorkspaceTables(workspaceId).streams ?? [])
     const parentOf = (id: string) => streams.get(id)?.parentStreamId ?? null
     // A page's route stays put while the page is open, which only the pane system knows.
@@ -148,38 +142,23 @@ function useStreamPicker(workspaceId: string): (streamId: string) => boolean {
     const query = params.toString()
     const url = `/w/${workspaceId}/s/${next.current}${query ? `?${readablePanelParam(query)}` : ""}`
     // The panes follow the route to the stream it names; setting one ahead of the URL would have a second quick pick
-    // replace a tab not yet there. Marked, not set: on a phone, setting also rewrites the entry this push leaves for Back.
+    // replace a tab not yet there. Marked, not set: setting also rewrites the entry this push leaves for Back.
     if (next.current === path) markCurrentPane(next.current)
     if (url !== `${location.pathname}${location.search}`) navigate(url)
     return true
   })
 }
 
-interface StreamPicks {
-  pick: (streamId: string) => boolean
-  /** Opens a stream in a tab of its own; only a phone, where a pick shows it in the pane on show. */
-  openTab: ((streamId: string) => void) | null
-}
-
-const StreamPickContext = createContext<StreamPicks | null>(null)
+const StreamPickContext = createContext<((streamId: string) => boolean) | null>(null)
 
 export function StreamPickProvider({ workspaceId, children }: { workspaceId: string; children: ReactNode }) {
   const pick = useStreamPicker(workspaceId)
-  const { openPanel } = usePanel()
-  const { isMobile } = useSidebar()
-  const openTab = useStableCallback((streamId: string) => openPanel(streamId, { newTab: true }))
-  const value = useMemo(() => ({ pick, openTab: isMobile ? openTab : null }), [pick, openTab, isMobile])
-  return <StreamPickContext.Provider value={value}>{children}</StreamPickContext.Provider>
+  return <StreamPickContext.Provider value={pick}>{children}</StreamPickContext.Provider>
 }
 
 /** Picks `streamId` from the sidebar; false outside the provider or off the stream page. */
 export function useStreamPick(): (streamId: string) => boolean {
-  return useContext(StreamPickContext)?.pick ?? noPick
-}
-
-/** Opens a stream in a tab of its own; null off a phone or outside the provider. */
-export function useStreamTabOpen(): ((streamId: string) => void) | null {
-  return useContext(StreamPickContext)?.openTab ?? null
+  return useContext(StreamPickContext) ?? noPick
 }
 
 const noPick = () => false

@@ -1,4 +1,3 @@
-import type { Ref } from "react"
 import { PanelLeft, PanelLeftClose } from "lucide-react"
 import { useSidebar } from "@/contexts"
 import { Button } from "@/components/ui/button"
@@ -17,10 +16,9 @@ interface SidebarToggleProps {
    */
   location: "sidebar" | "page"
   className?: string
-  ref?: Ref<HTMLButtonElement>
 }
 
-export function SidebarToggle({ location, className, ref }: SidebarToggleProps) {
+export function SidebarToggle({ location, className }: SidebarToggleProps) {
   const { state, isMobile, togglePinned } = useSidebar()
   const isPinned = state === "pinned"
   // Icon reflects what clicking will do.
@@ -52,7 +50,6 @@ export function SidebarToggle({ location, className, ref }: SidebarToggleProps) 
             size="icon"
             className="h-8 w-8"
             onClick={togglePinned}
-            ref={ref}
             tabIndex={hidden ? -1 : 0}
             aria-label={willCollapse ? "Collapse sidebar" : "Pin sidebar"}
           >

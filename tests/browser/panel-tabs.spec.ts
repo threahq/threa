@@ -486,60 +486,12 @@ test("should even the panes along a divider when it is double-clicked", async ({
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 400, height: 800 }, isMobile: true, hasTouch: true })
 
-  test("should close the pane on show from the picker, and keep both mounted through a sheet switch", async ({
-    page,
-  }) => {
-    const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
-
-    await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}.${threadB}`)
-    await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
-    await tag(replyIn(page, threadB, "reply in thread B"), "B")
-    await expect(page.getByRole("navigation", { name: "Panel tabs" })).toHaveCount(0)
-
-    await tabPane(page, threadB).getByRole("button", { name: "3 open panes" }).click()
-    await page
-      .getByRole("dialog", { name: "Open panes" })
-      .getByRole("link", { name: /first parent/ })
-      .click()
-    await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
-    expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
-
-    // Closing the pane on show from the picker keeps the other two open.
-    await tabPane(page, threadA).getByRole("button", { name: "3 open panes" }).click()
-    await page
-      .getByRole("dialog", { name: "Open panes" })
-      .getByRole("button", { name: /^Close .*first parent/ })
-      .click()
-    await expect(tabPane(page, threadA)).toHaveCount(0)
-    await expect(tabPane(page, threadB).getByRole("button", { name: "2 open panes" })).toBeVisible()
-    await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
-    expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
-  })
-
-  test("should close every other pane from a row's menu in the open panes sheet", async ({ page }) => {
-    const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
-
-    await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}.${threadB}`)
-    await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
-    await tabPane(page, threadB).getByRole("button", { name: "3 open panes" }).click()
-    const sheet = page.getByRole("dialog", { name: "Open panes" })
-    await sheet.getByRole("link", { name: /first parent/ }).click({ button: "right" })
-    await expect(page.getByRole("menuitem", { name: "Close above" })).toBeEnabled()
-    await page.getByRole("menuitem", { name: "Close others" }).click()
-
-    await expect(sheet).toHaveCount(0)
-    await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
-    await expect(tabPane(page, threadB)).toHaveCount(0)
-    await expect(page.getByRole("button", { name: /open panes/ })).toHaveCount(0)
-  })
-
-  test("should show a split from a wider screen as panes of one stack and keep the URL", async ({ page }) => {
+  test("should show a split from a wider screen as its newest pane and keep the URL", async ({ page }) => {
     const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
 
     await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}-${threadB}`)
     await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
     await expect(replyIn(page, threadA, "reply in thread A")).not.toBeVisible()
-    await expect(tabPane(page, threadB).getByRole("button", { name: "3 open panes" })).toBeVisible()
     await expect(page.getByRole("navigation", { name: "Panel tabs" })).toHaveCount(0)
     expect(panelParam(page)).toBe(`${threadA}-${threadB}`)
   })

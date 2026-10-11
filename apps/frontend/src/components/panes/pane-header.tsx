@@ -1,4 +1,6 @@
 import type { ReactNode, Ref } from "react"
+import { ChevronLeft } from "lucide-react"
+import { Button } from "@/components/ui/button"
 import { SidebarToggle } from "@/components/layout/sidebar-toggle"
 import { SidePanelClose } from "@/components/ui/side-panel"
 import { useInPaneDrawer, usePanel, useSidebar } from "@/contexts"
@@ -6,7 +8,6 @@ import { cn } from "@/lib/utils"
 import { usePaneDragHandle } from "./pane-drop"
 import { PaneFocusToggle } from "./pane-focus"
 import { PanelTabStrip, usePanelCloseFocusLanding } from "./panel-tab-strip"
-import { PhonePaneLeading, PhonePaneSwitcher, usePhoneHeaderSwipe } from "./phone-pane-header"
 
 interface PaneHeaderProps {
   workspaceId: string
@@ -34,10 +35,11 @@ interface PaneHeaderProps {
 
 /**
  * A pane's header. The pane gives its title, controls and menu; the rest is the
- * pane system's: the sidebar toggle in the first column or Up on a phone, the
- * tab row standing in for the title while the section holds several tabs, the
- * drag handle, focus, the phone's pane switcher, and close. A pane in a drawer
- * is the drawer's alone: no tab row, drag or close.
+ * pane system's: the sidebar toggle in the first column, the tab row standing
+ * in for the title while the section holds several tabs, the drag handle,
+ * focus, and close. A phone's pane keeps the toggle, and closes with Back when
+ * it is over the route's. A pane in a drawer is the drawer's alone: no tab row,
+ * drag or close.
  */
 export function PaneHeader({
   workspaceId,
@@ -53,12 +55,11 @@ export function PaneHeader({
   className,
   children,
 }: PaneHeaderProps) {
-  const { tabbed: inTabbedSection, inFirstColumn, canClosePanel, closePanel, shownPanes } = usePanel()
+  const { tabbed: inTabbedSection, inFirstColumn, onRoute, canClosePanel, closePanel, shownPanes } = usePanel()
   const { isMobile, state: sidebarState } = useSidebar()
   const inDrawer = useInPaneDrawer()
   const tabbed = inTabbedSection && !inDrawer
   const closeRef = usePanelCloseFocusLanding()
-  const swipe = usePhoneHeaderSwipe()
   // A phone shows one pane at a time, so a dragged pane has nowhere to land.
   const dragHandle = usePaneDragHandle(workspaceId, name, !tabbed && !inDrawer && !isMobile && !editingTitle)
 
@@ -66,7 +67,6 @@ export function PaneHeader({
     <header
       ref={measureRefs?.header}
       className={cn("relative flex h-12 shrink-0 items-center gap-2 border-b px-4", className)}
-      {...swipe}
     >
       {/* A pinned sidebar hides the toggle at no width, so the wrapper hands back the header's gap after it too. */}
       <div
@@ -76,12 +76,13 @@ export function PaneHeader({
           !isMobile && !inDrawer && inFirstColumn && sidebarState === "pinned" && "-mr-2"
         )}
       >
-        {!inDrawer &&
-          (isMobile ? (
-            <PhonePaneLeading workspaceId={workspaceId} onBack={closePanel} backRef={closeRef} />
-          ) : (
-            inFirstColumn && <SidebarToggle location="page" />
-          ))}
+        {!inDrawer && (isMobile || inFirstColumn) && <SidebarToggle location="page" />}
+        {!inDrawer && isMobile && !onRoute && (
+          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={closePanel} ref={closeRef}>
+            <ChevronLeft className="h-4 w-4" />
+            <span className="sr-only">Back</span>
+          </Button>
+        )}
       </div>
       {tabbed ? (
         <PanelTabStrip
@@ -99,7 +100,6 @@ export function PaneHeader({
       )}
       {children}
       <div ref={measureRefs?.trailing} className="flex shrink-0 items-center gap-1 empty:hidden">
-        <PhonePaneSwitcher workspaceId={workspaceId} />
         {menu}
         <PaneFocusToggle />
         {!isMobile &&

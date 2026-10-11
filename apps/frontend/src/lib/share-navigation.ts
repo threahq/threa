@@ -5,8 +5,9 @@ import { panelIdsOf, type PanelLayout } from "@/lib/panel-tabs"
 /**
  * Brings the share target's composer on show after `queueShareHandoff`, for the message menu's fast paths and the
  * share picker alike. A target among the panes becomes the pane worked in; another opens as a link to it would,
- * beside the pane shared from or, on a phone, in its place. The composer picks the share up from the handoff
- * store wherever it mounts. Waits for the share's overlay to leave history, so Back lands where the share began.
+ * beside the pane shared from. A phone's route goes to the target, dropping the pane over it. The composer picks
+ * the share up from the handoff store wherever it mounts. Waits for the share's overlay to leave history, so Back
+ * lands where the share began.
  */
 export function navigateAfterShareHandoff({
   workspaceId,
@@ -20,6 +21,7 @@ export function navigateAfterShareHandoff({
   location: ReturnType<typeof useLocation>
   navigate: ReturnType<typeof useNavigate>
   panel: {
+    phone: boolean
     hasTabs: boolean
     layout: PanelLayout
     setCurrentPane: (panelId: string) => void
@@ -28,7 +30,9 @@ export function navigateAfterShareHandoff({
 }): void {
   const targetPathname = `/w/${workspaceId}/s/${targetStreamId}`
   afterOverlayHistory(() => {
-    if (!panel.hasTabs) {
+    if (panel.phone) {
+      if (`${location.pathname}${location.search}` !== targetPathname) navigate(targetPathname)
+    } else if (!panel.hasTabs) {
       if (location.pathname !== targetPathname) navigate(targetPathname)
     } else if (panelIdsOf(panel.layout).includes(targetStreamId)) panel.setCurrentPane(targetStreamId)
     else panel.openPanel(targetStreamId)

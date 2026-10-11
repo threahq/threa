@@ -151,8 +151,8 @@ test("phone: a thread's overview is a drawer over the thread, and closing it lea
 
   await page.keyboard.press("Escape")
   await expect(drawer(page)).toHaveCount(0)
-  await expect.poll(() => new URL(page.url()).pathname).toBe(`/w/${workspaceId}/s/${threadId}`)
-  expect(panelParam(page)).toBe(`${streamId}-${threadId}`)
+  await expect.poll(() => panelParam(page)).toBe(threadId)
+  expect(new URL(page.url()).pathname).toBe(`/w/${workspaceId}/s/${streamId}`)
   await expect(tabPane(page, threadId).getByText("thread link")).toBeVisible()
 })
 
