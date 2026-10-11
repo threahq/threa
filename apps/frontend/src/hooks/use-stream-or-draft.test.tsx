@@ -329,6 +329,29 @@ describe("useStreamOrDraft real stream send", () => {
     ).toEqual([trace])
   })
 
+  it("takes the row back and fails the send when its compose trace read rejects", async () => {
+    const { result } = await mountRealStreamSend()
+    const composeTrace = Promise.reject(new Error("idb closed"))
+    composeTrace.catch(() => {})
+
+    let sending: Promise<unknown> = Promise.resolve()
+    act(() => {
+      sending = result.current.sendMessage({
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "untraced" }] }] },
+        composeTrace,
+      })
+    })
+    expect(result.current.published).toMatchObject([{ eventType: "message_created", _status: "pending" }])
+
+    await act(async () => {
+      await expect(sending).rejects.toThrow("idb closed")
+    })
+    expect({
+      published: result.current.published,
+      queued: (await db.pendingMessages.toArray()).filter((message) => message.content === "untraced"),
+    }).toEqual({ published: [], queued: [] })
+  })
+
   it("shows an encrypted send while it is being sealed and carries the sealed attachment refs once it is", async () => {
     let finishSeal: (sealed: sealSendModule.SealOutgoingMessageResult) => void = () => {}
     vi.spyOn(sealSendModule, "sealOutgoingMessage").mockReturnValue(
