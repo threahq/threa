@@ -142,6 +142,8 @@ test("should leave a link dropped on a pane's text field to the field", async ({
   const pane = tabPane(page, "page:streams")
   const field = pane.getByRole("searchbox", { name: "Search streams" })
   await expect(field).toBeVisible({ timeout: 30_000 })
+  // Visible counts the page still masked for its first reveal, which no event reaches.
+  await field.click({ trial: true })
   const link = `${origin}/w/${workspaceId}/s/${streamB}`
 
   // On its way to the field the drag crosses the pane, which offers to split.
