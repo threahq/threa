@@ -253,6 +253,7 @@ test("should stack the file explorer in a pane too narrow for its list and previ
   await back.click()
   await expect(row).toBeVisible()
   await expect(download).toBeHidden()
+  await expect(row.getByRole("button")).toBeFocused()
 
   // Wide, the same page keeps its list and preview side by side, the first file picked.
   await page.setViewportSize({ width: 1400, height: 900 })

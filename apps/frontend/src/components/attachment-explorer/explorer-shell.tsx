@@ -137,6 +137,14 @@ export function ExplorerShell({ workspaceId, mode, enabled }: ExplorerShellProps
 
   const showPreviewOnly = stacked && Boolean(selectedItem)
 
+  // Back unmounts the button holding focus, so focus returns to the row it left.
+  const returnFocusTo = useRef<string | null>(null)
+  useEffect(() => {
+    if (showPreviewOnly || !returnFocusTo.current) return
+    containerRef.current?.querySelector<HTMLElement>(`[data-attachment-id="${returnFocusTo.current}"] button`)?.focus()
+    returnFocusTo.current = null
+  }, [showPreviewOnly])
+
   const [previewWidth, setPreviewWidth] = useState(DEFAULT_PREVIEW_WIDTH)
 
   const maxPreviewWidth = Math.max(MIN_PREVIEW_WIDTH, width - MIN_LIST_WIDTH)
@@ -174,8 +182,12 @@ export function ExplorerShell({ workspaceId, mode, enabled }: ExplorerShellProps
           <Button
             size="icon"
             variant="ghost"
-            // Only a phone pushed the selection; a narrow pane's may be the auto-selected one.
-            onClick={() => (isMobile ? window.history.back() : update({ selectedAttachmentId: null }))}
+            onClick={() => {
+              returnFocusTo.current = filters.selectedAttachmentId
+              // Only a phone pushed the selection; a narrow pane's may be the auto-selected one.
+              if (isMobile) window.history.back()
+              else update({ selectedAttachmentId: null })
+            }}
             aria-label="Back to file list"
             className="h-7 w-7"
           >
