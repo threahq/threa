@@ -53,6 +53,7 @@ describe("workspace_research tool", () => {
       partial: false,
       partialReason: null,
       contextAdded: true,
+      findings: "added to your system prompt under the Retrieved Knowledge heading",
       sourceCount: 1,
       memoCount: 1,
       messageCount: 0,
