@@ -103,21 +103,27 @@ test.describe("Navigation history", () => {
 
   test("desktop: ⌘←/⌘→ step browser history from a composer with nothing typed", async ({ page }) => {
     const { testId } = await loginAndCreateWorkspace(page, "nav-history-composer")
-    const { ids } = await setUpThreeVisits(page, testId)
+    const { names, ids } = await setUpThreeVisits(page, testId)
     const bravoUrl = new RegExp(`/s/${ids.bravo}(\\?|$)`)
     const charlieUrl = new RegExp(`/s/${ids.charlie}(\\?|$)`)
     const composer = page.getByRole("textbox", { name: "Message input" })
+    // The composer survives a stream switch, so each step waits for the stream
+    // itself before the next key is pressed.
+    const landedOn = (name: string) =>
+      expect(page.getByRole("heading", { name: `#${name}`, level: 1 })).toBeVisible({ timeout: 10_000 })
 
     await composer.click()
     await page.keyboard.press("Meta+ArrowLeft")
     await expect(page).toHaveURL(bravoUrl, { timeout: 10_000 })
+    await landedOn(names.bravo)
 
     await composer.click()
     await page.keyboard.press("Meta+ArrowRight")
     await expect(page).toHaveURL(charlieUrl, { timeout: 10_000 })
+    await landedOn(names.charlie)
 
-    // With a draft the keys belong to the caret, so clearing it and going back
-    // lands one step away rather than two.
+    // With a draft the keys belong to the caret. Had that press stepped back
+    // too, the forward step at the end would stop one short of charlie.
     await composer.click()
     await page.keyboard.type("draft")
     await page.keyboard.press("Meta+ArrowLeft")
@@ -126,8 +132,10 @@ test.describe("Navigation history", () => {
     await page.keyboard.press("Backspace")
     await expect(composer).toHaveText("")
     await page.keyboard.press("Meta+ArrowLeft")
-    await expect(page).toHaveURL(bravoUrl, { timeout: 10_000 })
-    await expect(page.getByRole("heading", { level: 1 })).toContainText("bravo")
+    await landedOn(names.bravo)
+    await composer.click()
+    await page.keyboard.press("Meta+ArrowRight")
+    await expect(page).toHaveURL(charlieUrl, { timeout: 10_000 })
   })
 
   test.describe("phone", () => {

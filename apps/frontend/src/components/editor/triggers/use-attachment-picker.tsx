@@ -63,6 +63,8 @@ export interface UseAttachmentPickerResult {
   renderAttachmentPicker: () => React.ReactNode
   /** Keyboard entry point for the host editor; true when the picker consumed the key. */
   handleAttachmentPickerKeyDown: (event: KeyboardEvent) => boolean
+  /** Lets the host hold back shortcuts the open picker does not consume itself. */
+  isAttachmentPickerOpen: boolean
 }
 
 /**
@@ -190,5 +192,5 @@ export function useAttachmentPicker(
     )
   }, [state, items, select, editorRef])
 
-  return { openAttachmentPicker, renderAttachmentPicker, handleAttachmentPickerKeyDown }
+  return { openAttachmentPicker, renderAttachmentPicker, handleAttachmentPickerKeyDown, isAttachmentPickerOpen: isOpen }
 }

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { createRef } from "react"
-import { act, render, cleanup, fireEvent } from "@testing-library/react"
+import { act, render, cleanup, fireEvent, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import type { Editor } from "@tiptap/react"
@@ -60,6 +60,7 @@ function mountEditor(): { handle: RichEditorHandle; editor: Editor; steps: numbe
                   tempId: "temp_1",
                   imageIndex: null,
                 })}
+                onRequestFileUpload={() => undefined}
                 onHistoryStep={(delta) => steps.push(delta)}
                 ariaLabel="Message input"
                 autoFocus
@@ -134,10 +135,38 @@ describe("RichEditor history keys", () => {
 
   it("ignores the arrows under any other modifier", () => {
     const { editor, steps } = mountEditor()
-    for (const modifiers of [{ ctrlKey: true }, { altKey: true }, { metaKey: true, shiftKey: true }, {}]) {
+    const combos = [
+      { ctrlKey: true },
+      { altKey: true },
+      { metaKey: true, shiftKey: true },
+      { metaKey: true, ctrlKey: true },
+      { metaKey: true, altKey: true },
+      {},
+    ]
+    for (const modifiers of combos) {
       fireEvent.keyDown(editor.view.dom, { key: "ArrowLeft", ...modifiers })
     }
 
     expect(steps).toEqual([])
+  })
+
+  it("steps once for a held key", () => {
+    const { editor, steps } = mountEditor()
+    fireEvent.keyDown(editor.view.dom, { key: "ArrowLeft", metaKey: true })
+    fireEvent.keyDown(editor.view.dom, { key: "ArrowLeft", metaKey: true, repeat: true })
+
+    expect(steps).toEqual([-1])
+  })
+
+  it("leaves the keys alone while the attachment picker is open", async () => {
+    const { editor, steps } = mountEditor()
+    typeText(editor, "/attachment")
+    await screen.findByRole("option", { name: /\/attachment/ })
+    fireEvent.keyDown(editor.view.dom, { key: "Enter" })
+    await screen.findByRole("listbox", { name: "Attachment suggestions" })
+    // The command text is gone: only the open picker holds the keys back.
+    expect(editor.state.doc.textContent).toBe("")
+
+    expect({ claimed: pressHistoryKeys(editor), steps }).toEqual({ claimed: [false, false], steps: [] })
   })
 })
