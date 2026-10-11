@@ -20,6 +20,7 @@ import type { Embedding, LanguageModel, EmbeddingModel, ModelMessage, Tool } fro
 import type { z } from "zod"
 import { createOpenRouter } from "@openrouter/ai-sdk-provider"
 import { createOpenAI } from "@ai-sdk/openai"
+import { createAnthropic } from "@ai-sdk/anthropic"
 import { stripMarkdownFences } from "./text-utils"
 import { requestDecisions, type DecisionQuestion, type DecisionsResult } from "./decisions"
 import { logger } from "../logger"
@@ -74,6 +75,8 @@ export interface AccessLogSink {
 
 export interface AIConfig {
   openrouter?: { apiKey: string }
+  /** Direct Anthropic API for `anthropic:claude-*` language models; embeddings and decisions stay on OpenRouter. */
+  anthropic?: { apiKey: string }
   defaults?: {
     repair?: RepairFunction
   }
@@ -403,16 +406,22 @@ export function providerRequiresCacheBreakpoints(modelProvider: string): boolean
   return PROVIDERS_REQUIRING_CACHE_BREAKPOINTS.has(modelProvider)
 }
 
+/** The `providerOptions` key a provider reads its cache breakpoints from. */
+type CacheControlKey = "openrouter" | "anthropic"
+
 /**
  * Merge a cache breakpoint into a message's provider options. Merges *inside*
- * the `openrouter` key rather than replacing it — a message may already carry
+ * the provider key rather than replacing it — a message may already carry
  * sibling options there (reasoning effort, transforms) that a shallow spread
  * would silently drop.
  */
-function withCacheControl(existing?: ModelMessage["providerOptions"]): ModelMessage["providerOptions"] {
+function withCacheControl(
+  key: CacheControlKey,
+  existing?: ModelMessage["providerOptions"]
+): ModelMessage["providerOptions"] {
   return {
     ...existing,
-    openrouter: { ...existing?.openrouter, cacheControl: { type: "ephemeral" } },
+    [key]: { ...existing?.[key], cacheControl: { type: "ephemeral" } },
   }
 }
 
@@ -452,9 +461,10 @@ export function applyCacheBreakpoints(params: {
     return { system: joined || undefined, messages }
   }
 
+  const key: CacheControlKey = parseModelId(modelString).provider === "anthropic" ? "anthropic" : "openrouter"
   const out: ModelMessage[] = []
   if (system) {
-    out.push({ role: "system", content: system, providerOptions: withCacheControl() })
+    out.push({ role: "system", content: system, providerOptions: withCacheControl(key) })
   }
   if (volatileSystem) {
     out.push({ role: "system", content: volatileSystem })
@@ -467,7 +477,7 @@ export function applyCacheBreakpoints(params: {
   // turn, so caching it would pay a write premium for a span nothing can reuse.
   const last = messages.length > 0 ? out.at(-1) : undefined
   if (last) {
-    out[out.length - 1] = markOneCacheBlock(last)
+    out[out.length - 1] = markOneCacheBlock(key, last)
   }
 
   return { system: undefined, messages: out }
@@ -497,15 +507,15 @@ export function applyCacheBreakpoints(params: {
  * last TEXT part only. Marking a part by hand for those roles would either be
  * read by nothing or move the breakpoint off the block the provider chose.
  */
-function markOneCacheBlock(message: ModelMessage): ModelMessage {
+function markOneCacheBlock(key: CacheControlKey, message: ModelMessage): ModelMessage {
   const parts = message.content
   if (message.role !== "tool" || !Array.isArray(parts) || parts.length === 0) {
-    return { ...message, providerOptions: withCacheControl(message.providerOptions) } as ModelMessage
+    return { ...message, providerOptions: withCacheControl(key, message.providerOptions) } as ModelMessage
   }
 
   const results = parts as Array<{ providerOptions?: ModelMessage["providerOptions"] }>
   const marked = results.map((part, index) =>
-    index === results.length - 1 ? { ...part, providerOptions: withCacheControl(part.providerOptions) } : part
+    index === results.length - 1 ? { ...part, providerOptions: withCacheControl(key, part.providerOptions) } : part
   )
   return { ...message, content: marked } as ModelMessage
 }
@@ -604,10 +614,79 @@ export function extractUsageWithCost(response: {
 
 const LUNA = "openrouter:openai/gpt-6-luna"
 
+function reasoningProviderOptions(model: string, effort: ReasoningEffort): ModelMessage["providerOptions"] {
+  if (parseModelId(model).provider === "anthropic") {
+    throw new Error(`reasoningEffort is not supported for direct Anthropic models (${model})`)
+  }
+  return { openrouter: { reasoning: { effort, exclude: true } } }
+}
+
 function generationProviderOptions(model: string, effort?: ReasoningEffort): ModelMessage["providerOptions"] {
   if (model === LUNA && !effort) return { openai: { store: false } }
-  if (effort) return { openrouter: { reasoning: { effort, exclude: true } } }
+  if (effort) return reasoningProviderOptions(model, effort)
   return undefined
+}
+
+/**
+ * USD per 1M tokens: input, output, cache read, cache write. The Anthropic API
+ * returns token counts but no dollar amount, and every cost sink (spend gate,
+ * PostHog, eval `--budget`) reads `cost` — an absent cost reads as $0, so the
+ * price is computed here and an unpriced model is refused at model resolution.
+ */
+const ANTHROPIC_PRICES: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
+  "claude-haiku-5-5": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+  "claude-haiku-4-5": { input: 1, output: 5, cacheRead: 0.1, cacheWrite: 1.25 },
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
+  "claude-sonnet-5": { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+  "claude-sonnet-4-6": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+  "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
+  "claude-opus-5": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
+}
+
+function anthropicPrice(modelId: string) {
+  const price = ANTHROPIC_PRICES[modelId]
+  if (!price) {
+    throw new Error(
+      `No price for Anthropic model "${modelId}". Add it to ANTHROPIC_PRICES (packages/agent-runtime/src/ai/ai.ts) so its usage is costed.`
+    )
+  }
+  return price
+}
+
+function anthropicUsage(
+  modelString: string,
+  response: {
+    usage?: {
+      inputTokens?: number
+      outputTokens?: number
+      totalTokens?: number
+      inputTokenDetails?: { noCacheTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number }
+      outputTokenDetails?: { reasoningTokens?: number }
+    }
+  }
+): UsageWithCost {
+  const usage = response.usage
+  if (typeof usage?.inputTokens !== "number" || typeof usage.outputTokens !== "number") {
+    throw new Error(`Anthropic did not return token usage for ${modelString}`)
+  }
+  const price = anthropicPrice(parseModelId(modelString).modelId)
+  const cacheRead = usage.inputTokenDetails?.cacheReadTokens ?? 0
+  const cacheWrite = usage.inputTokenDetails?.cacheWriteTokens ?? 0
+  const uncached = usage.inputTokenDetails?.noCacheTokens ?? usage.inputTokens - cacheRead - cacheWrite
+  const cost =
+    (uncached * price.input +
+      cacheRead * price.cacheRead +
+      cacheWrite * price.cacheWrite +
+      usage.outputTokens * price.output) /
+    1_000_000
+  return {
+    promptTokens: usage.inputTokens,
+    completionTokens: usage.outputTokens,
+    totalTokens: usage.totalTokens ?? usage.inputTokens + usage.outputTokens,
+    cachedPromptTokens: cacheRead,
+    reasoningTokens: usage.outputTokenDetails?.reasoningTokens,
+    cost,
+  }
 }
 
 function lunaUsage(response: {
@@ -655,6 +734,14 @@ export function createAI(config: AIConfig): AI {
     luna: config.openrouter
       ? createOpenAI({ apiKey: config.openrouter.apiKey, baseURL: "https://openrouter.ai/api/v1" })
       : null,
+    anthropic: config.anthropic ? createAnthropic({ apiKey: config.anthropic.apiKey }) : null,
+  }
+
+  /** Dispatches usage extraction on the provider; Luna is special-cased at its call sites. */
+  function usageFor(modelString: string, response: Parameters<typeof extractUsageWithCost>[0]): UsageWithCost {
+    return parseModelId(modelString).provider === "anthropic"
+      ? anthropicUsage(modelString, response as Parameters<typeof anthropicUsage>[1])
+      : extractUsageWithCost(response)
   }
 
   const defaultRepair = config.defaults?.repair ?? stripMarkdownFences
@@ -671,8 +758,15 @@ export function createAI(config: AIConfig): AI {
         if (modelString === LUNA) return providers.luna!.responses(modelId)
         // Enable usage tracking to get cost from OpenRouter response
         return providers.openrouter.chat(modelId, { usage: { include: true } })
+      case "anthropic":
+        if (!providers.anthropic) {
+          throw new Error("Anthropic not configured. Set ANTHROPIC_API_KEY or provide anthropic.apiKey in config.")
+        }
+        anthropicPrice(modelId)
+        logger.debug({ provider, modelId }, "Creating language model instance")
+        return providers.anthropic(modelId)
       default:
-        throw new Error(`Unsupported provider: "${provider}". Currently supported: openrouter`)
+        throw new Error(`Unsupported provider: "${provider}". Currently supported: openrouter, anthropic`)
     }
   }
 
@@ -825,12 +919,12 @@ export function createAI(config: AIConfig): AI {
         temperature: options.temperature,
         abortSignal: options.abortSignal,
         ...(options.reasoningEffort
-          ? { providerOptions: { openrouter: { reasoning: { effort: options.reasoningEffort, exclude: true } } } }
+          ? { providerOptions: reasoningProviderOptions(options.model, options.reasoningEffort) }
           : {}),
         experimental_telemetry: buildTelemetry(options.telemetry),
       })
 
-      const usage = extractUsageWithCost(response)
+      const usage = usageFor(options.model, response)
       logger.debug({ usage, model: options.model }, "AI generateText completed with usage")
 
       await maybeRecordUsage({
@@ -892,7 +986,7 @@ export function createAI(config: AIConfig): AI {
         experimental_telemetry: buildTelemetry(options.telemetry),
       })
 
-      const usage = options.modelString === LUNA ? lunaUsage(response) : extractUsageWithCost(response)
+      const usage = options.modelString === LUNA ? lunaUsage(response) : usageFor(options.modelString, response)
       logger.debug(
         { usage, model: options.modelString, functionId: options.telemetry?.functionId },
         "AI generateTextWithTools completed with usage"
@@ -950,7 +1044,7 @@ export function createAI(config: AIConfig): AI {
         experimental_telemetry: buildTelemetry(options.telemetry),
       })
 
-      const usage = options.model === LUNA && !lunaChat ? lunaUsage(response) : extractUsageWithCost(response)
+      const usage = options.model === LUNA && !lunaChat ? lunaUsage(response) : usageFor(options.model, response)
       logger.debug({ usage, model: options.model }, "AI generateObject completed with usage")
 
       await maybeRecordUsage({

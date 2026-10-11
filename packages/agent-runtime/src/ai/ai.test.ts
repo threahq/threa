@@ -659,8 +659,149 @@ describe("OpenRouter response fixtures", () => {
   })
 })
 
+describe("direct Anthropic provider", () => {
+  const HAIKU = "anthropic:claude-haiku-5-5"
+
+  function anthropicResponse(text: string) {
+    return new Response(
+      JSON.stringify({
+        id: "msg_test",
+        type: "message",
+        role: "assistant",
+        model: "claude-haiku-5-5",
+        content: [{ type: "text", text }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 500,
+          cache_read_input_tokens: 2000,
+          cache_creation_input_tokens: 3000,
+        },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    )
+  }
+
+  it("refuses anthropic models until a key is configured", () => {
+    const ai = createAI({ openrouter: { apiKey: "test-key" } })
+    expect(() => ai.getLanguageModel(HAIKU)).toThrow(/ANTHROPIC_API_KEY.*anthropic\.apiKey/)
+  })
+
+  it("refuses an anthropic model with no price, so its usage can never read as free", () => {
+    const ai = createAI({ anthropic: { apiKey: "test-key" } })
+    expect(() => ai.getLanguageModel("anthropic:claude-fable-5-1")).toThrow(/No price for Anthropic model/)
+  })
+
+  it("keeps embeddings on OpenRouter", () => {
+    const ai = createAI({ anthropic: { apiKey: "test-key" } })
+    expect(() => ai.getEmbeddingModel("anthropic:voyage")).toThrow(/Unsupported embedding provider/)
+  })
+
+  it("rejects reasoningEffort instead of silently dropping it", async () => {
+    const ai = createAI({ anthropic: { apiKey: "test-key" } })
+    await expect(
+      ai.generateText({
+        model: HAIKU,
+        messages: [{ role: "user", content: "hi" }],
+        context: TEST_COST_CONTEXT,
+        reasoningEffort: "medium",
+      })
+    ).rejects.toThrow(/reasoningEffort is not supported for direct Anthropic models/)
+  })
+
+  it("calls api.anthropic.com and prices the usage from the per-model table", async () => {
+    const urls: string[] = []
+    const recorded: Array<{ provider: string; model: string; usage: { promptTokens?: number } }> = []
+    const recordUsage = mock(async (params: { provider: string; model: string; usage: { promptTokens?: number } }) => {
+      recorded.push(params)
+    })
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: Parameters<typeof fetch>[0]) => {
+      urls.push(String(input instanceof Request ? input.url : input))
+      return anthropicResponse("ok")
+    }) as unknown as typeof globalThis.fetch)
+    try {
+      const ai = createAI({ anthropic: { apiKey: "test-key" }, costRecorder: { recordUsage } })
+      const result = await ai.generateText({
+        model: HAIKU,
+        messages: [{ role: "user", content: "hi" }],
+        context: TEST_COST_CONTEXT,
+      })
+
+      expect(result.value).toBe("ok")
+      expect(urls).toEqual(["https://api.anthropic.com/v1/messages"])
+      // 1000 × $0.10 + 2000 × $0.01 + 3000 × $0.125 + 500 × $0.50, per 1M tokens
+      const usage = {
+        promptTokens: 6000,
+        completionTokens: 500,
+        totalTokens: 6500,
+        cachedPromptTokens: 2000,
+        reasoningTokens: undefined,
+        cost: 0.000745,
+      }
+      expect(result.usage.cost).toBeCloseTo(usage.cost, 9)
+      expect({ ...result.usage, cost: usage.cost }).toEqual(usage)
+      expect(recorded[0]).toMatchObject({
+        provider: "anthropic",
+        model: "claude-haiku-5-5",
+        usage: { promptTokens: 6000 },
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it("places cache breakpoints under the anthropic key so they reach the wire", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      _input: Parameters<typeof fetch>[0],
+      init: Parameters<typeof fetch>[1]
+    ) => {
+      bodies.push(JSON.parse(String(init?.body)))
+      return anthropicResponse("ok")
+    }) as unknown as typeof globalThis.fetch)
+    try {
+      const ai = createAI({ anthropic: { apiKey: "test-key" } })
+      await ai.generateTextWithTools({
+        model: ai.getLanguageModel(HAIKU),
+        modelString: HAIKU,
+        system: "You are Ariadne.",
+        volatileSystem: "## Current Time\n\n10:00",
+        messages: [{ role: "user", content: "hi" }],
+        tools: {},
+        cachePrefix: true,
+        context: TEST_COST_CONTEXT,
+      })
+
+      expect(bodies[0]).toMatchObject({
+        system: [
+          { type: "text", text: "You are Ariadne.", cache_control: { type: "ephemeral" } },
+          { type: "text", text: "## Current Time\n\n10:00" },
+        ],
+        messages: [{ role: "user", content: [{ type: "text", text: "hi", cache_control: { type: "ephemeral" } }] }],
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+})
+
 describe("applyCacheBreakpoints", () => {
   const ANTHROPIC = "openrouter:anthropic/claude-sonnet-5"
+
+  it("keys the breakpoint on the provider that reads it", () => {
+    const result = applyCacheBreakpoints({
+      system: "You are Ariadne.",
+      messages: [{ role: "user", content: "hi" }],
+      modelString: "anthropic:claude-haiku-5-5",
+    })
+
+    const ephemeral = { anthropic: { cacheControl: { type: "ephemeral" } } }
+    expect(result.messages).toEqual([
+      { role: "system", content: "You are Ariadne.", providerOptions: ephemeral },
+      { role: "user", content: "hi", providerOptions: ephemeral },
+    ])
+  })
   const EPHEMERAL = { openrouter: { cacheControl: { type: "ephemeral" } } }
 
   /**
