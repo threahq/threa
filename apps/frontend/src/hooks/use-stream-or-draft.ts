@@ -41,6 +41,7 @@ import type {
   ToolPrivacyPolicy,
 } from "@threahq/types"
 import { StreamTypes, Visibilities, CompanionModes } from "@threahq/types"
+import type { ComposeTraceInput } from "@/lib/compose-trace"
 import { nextOptimisticSequence } from "@/lib/optimistic-sequence"
 import { useRenameStream } from "./use-rename-stream"
 
@@ -180,7 +181,7 @@ export interface SendMessageInput {
    * Omitted when the workspace isn't capturing, and by every send the author
    * didn't compose live (scheduled sends, retries, slash-command dispatch).
    */
-  composeTrace?: ComposeTrace
+  composeTrace?: ComposeTraceInput
 }
 
 export interface UseStreamOrDraftReturn {
@@ -734,42 +735,44 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         }
       }
 
-      // A steered message stays one queue item so replay cannot dispatch the
-      // command before the message reaches the server.
-      const durableWrite = db.transaction("rw", [db.pendingMessages, db.events], async () => {
-        const [anchorSequence, allocatedSequence] = await Promise.all([
-          getLatestPersistedSequence(workspaceId, streamId),
-          nextOptimisticSequence(workspaceId, streamId),
-        ])
-        await db.pendingMessages.add({
-          clientId,
-          workspaceId,
-          streamId,
-          content: contentMarkdown,
-          contentFormat: "markdown",
-          contentJson: input.contentJson,
-          attachmentIds: input.attachmentIds,
-          conversation: input.conversation,
-          composeTrace: input.composeTrace,
-          steer: input.steer,
-          createdAt: Date.now(),
-          retryCount: 0,
-          ...(e2eFields ?? {}),
-        })
-
-        await db.events.add({
-          ...optimisticEvent,
-          workspaceId,
-          sequence: allocatedSequence,
-          _sequenceNum: sequenceToNum(allocatedSequence),
-          ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
-          _clientId: clientId,
-          _status: "pending",
-          _cachedAt: Date.now(),
-        })
-      })
       try {
-        await durableWrite
+        // The trace's own IndexedDB read finishes here, behind the published
+        // row, never ahead of it.
+        const composeTrace = await input.composeTrace
+        // A steered message stays one queue item so replay cannot dispatch the
+        // command before the message reaches the server.
+        await db.transaction("rw", [db.pendingMessages, db.events], async () => {
+          const [anchorSequence, allocatedSequence] = await Promise.all([
+            getLatestPersistedSequence(workspaceId, streamId),
+            nextOptimisticSequence(workspaceId, streamId),
+          ])
+          await db.pendingMessages.add({
+            clientId,
+            workspaceId,
+            streamId,
+            content: contentMarkdown,
+            contentFormat: "markdown",
+            contentJson: input.contentJson,
+            attachmentIds: input.attachmentIds,
+            conversation: input.conversation,
+            composeTrace,
+            steer: input.steer,
+            createdAt: Date.now(),
+            retryCount: 0,
+            ...(e2eFields ?? {}),
+          })
+
+          await db.events.add({
+            ...optimisticEvent,
+            workspaceId,
+            sequence: allocatedSequence,
+            _sequenceNum: sequenceToNum(allocatedSequence),
+            ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
+            _clientId: clientId,
+            _status: "pending",
+            _cachedAt: Date.now(),
+          })
+        })
       } catch (err) {
         revokeOptimisticEvent(clientId)
         throw err

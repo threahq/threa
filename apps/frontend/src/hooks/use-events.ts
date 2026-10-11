@@ -214,8 +214,8 @@ const NO_UNPERSISTED_EVENTS: readonly CachedEvent[] = []
 
 /**
  * The published send rows the persisted read does not carry yet. A row is
- * carried under its own id while it is unsent and under `clientMessageId` once
- * the echo has replaced it.
+ * carried under its own id while it is unsent and under `clientMessageId` or
+ * `clientCommandId` once the echo has replaced it.
  */
 export function getUnpersistedOptimisticEvents(
   optimisticEvents: readonly CachedEvent[],
@@ -225,8 +225,9 @@ export function getUnpersistedOptimisticEvents(
   const carried = new Set<string>()
   for (const event of persistedEvents) {
     if (event.id) carried.add(event.id)
-    const clientMessageId = (event.payload as { clientMessageId?: string } | undefined)?.clientMessageId
-    if (clientMessageId) carried.add(clientMessageId)
+    const payload = event.payload as { clientMessageId?: string; clientCommandId?: string } | undefined
+    if (payload?.clientMessageId) carried.add(payload.clientMessageId)
+    if (payload?.clientCommandId) carried.add(payload.clientCommandId)
   }
   const unpersisted = optimisticEvents.filter((event) => !carried.has(event.id))
   return unpersisted.length > 0 ? unpersisted : NO_UNPERSISTED_EVENTS

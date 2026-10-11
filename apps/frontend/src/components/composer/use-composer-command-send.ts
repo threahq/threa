@@ -43,7 +43,10 @@ export function useComposerCommandSend(
 ) {
   const availableCommands = useStreamCommands(workspaceId, streamId)
   const openAside = useOpenAside(workspaceId)
-  const { queueCommand } = useCommandDispatchQueue(workspaceId, streamId ?? "")
+  // A conversation composer can sit on the board page, where no timeline for
+  // the stream is mounted to take a published row back; its commands reach the
+  // card through the live query alone.
+  const { queueCommand } = useCommandDispatchQueue(workspaceId, streamId ?? "", { publishToTimeline: !conversationId })
   const rememberDispatchedCommand = useCommandFailureRestore(workspaceId, streamId ?? "")
 
   const availableCommandByName = useMemo(() => {

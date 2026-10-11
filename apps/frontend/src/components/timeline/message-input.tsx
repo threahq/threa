@@ -812,8 +812,9 @@ function MessageInputComponent({
     // Ends the compose session for EVERY submit, not just the flat send below:
     // a command dispatch or a hand-off to the panel finishes what the author
     // was writing here, so the next send must start from a fresh horizon
-    // rather than inherit this one's `openedAt`. Not awaited here: nothing may
-    // stand between pressing send and the composer clearing.
+    // rather than inherit this one's `openedAt`. Never awaited here: its
+    // IndexedDB read must stand neither between pressing send and the composer
+    // clearing nor between clearing and the row appearing.
     const composeTrace = takeComposeTrace()
 
     const pendingAttachments = composer.getPendingAttachmentsSnapshot()
@@ -874,7 +875,7 @@ function MessageInputComponent({
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         attachments: attachments.length > 0 ? attachments : undefined,
         ...(steerDirective && { steer: true as const }),
-        composeTrace: await composeTrace,
+        composeTrace,
         // Armed by "Reply in conversation": file this send into the
         // conversation synchronously (Mechanism C). Cleared only on success —
         // a failed send keeps the filing armed alongside the restored content.

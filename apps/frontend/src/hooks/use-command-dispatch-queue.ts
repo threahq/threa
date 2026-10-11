@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useUser } from "@/auth"
+import { usePendingMessages } from "@/contexts"
 import { db, sequenceToNum } from "@/db"
 import { enqueueOperation } from "@/sync/operation-queue"
 import { getLatestPersistedSequence } from "@/sync/stream-sync"
@@ -74,10 +75,14 @@ export function useCommandDispatchCancellation(
   )
   const canCancel =
     localStatus === "failed" || (localStatus === "pending" && operation != null && operation.startedAt == null)
-  const cancel = useCallback(
-    () => cancelCommandDispatch(workspaceId, streamId, commandId),
-    [commandId, streamId, workspaceId]
-  )
+  const { revokeOptimisticEvent } = usePendingMessages()
+  // The timeline only lets go of a published row once the cache carries it;
+  // a cancelled row is deleted before that can happen, so it is taken back here.
+  const cancel = useCallback(async () => {
+    const cancelled = await cancelCommandDispatch(workspaceId, streamId, commandId)
+    if (cancelled) revokeOptimisticEvent(commandId)
+    return cancelled
+  }, [commandId, revokeOptimisticEvent, streamId, workspaceId])
   return { canCancel, cancel }
 }
 
@@ -94,13 +99,22 @@ function parseCommandArgs(commandMarkdown: string): string {
  *
  * @param workspaceId - Workspace receiving the command.
  * @param streamId - Stream receiving the command.
+ * @param options.publishToTimeline - Put the row on the stream's timeline in the
+ *   sending tick. Only for a composer whose stream timeline is on screen: the
+ *   timeline is what takes a published row back, so a composer without one (the
+ *   board page) would leave it on the next open of that stream.
  * @returns A callback that queues a slash command and resolves its optimistic event id.
  * @example
- * const { queueCommand } = useCommandDispatchQueue(workspaceId, streamId)
+ * const { queueCommand } = useCommandDispatchQueue(workspaceId, streamId, { publishToTimeline: true })
  */
-export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
+export function useCommandDispatchQueue(
+  workspaceId: string,
+  streamId: string,
+  { publishToTimeline }: { publishToTimeline: boolean }
+) {
   const user = useUser()
   const syncEngine = useOptionalSyncEngine()
+  const { publishOptimisticEvent, revokeOptimisticEvent } = usePendingMessages()
   const idbUsers = useWorkspaceUsers(workspaceId)
   const currentUserId = useMemo(
     () => idbUsers.find((u) => u.workosUserId === user?.id)?.id ?? null,
@@ -115,49 +129,68 @@ export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
 
       const optimisticEventId = `temp_cmd_${Date.now()}_${Math.random().toString(36).slice(2)}`
       const now = new Date().toISOString()
+      const optimisticEvent: Omit<StreamEvent, "sequence"> = {
+        id: optimisticEventId,
+        streamId,
+        eventType: "command_dispatched",
+        payload: {
+          commandId: optimisticEventId,
+          name: params.commandName,
+          args: parseCommandArgs(params.commandMarkdown),
+          status: "dispatched",
+          ...(params.conversationId && { conversationId: params.conversationId }),
+          executionKind: CommandKinds.BOT_RUNTIME,
+        },
+        actorId: currentUserId,
+        actorType: AuthorTypes.USER,
+        createdAt: now,
+      }
 
-      await db.transaction("rw", [db.events, db.pendingOperations], async () => {
-        const [anchorSequence, optimisticSequence] = await Promise.all([
-          getLatestPersistedSequence(workspaceId, streamId),
-          nextOptimisticSequence(workspaceId, streamId),
-        ])
-        const optimisticEvent: StreamEvent = {
-          id: optimisticEventId,
-          streamId,
-          sequence: optimisticSequence,
-          eventType: "command_dispatched",
-          payload: {
-            commandId: optimisticEventId,
-            name: params.commandName,
-            args: parseCommandArgs(params.commandMarkdown),
-            status: "dispatched",
-            ...(params.conversationId && { conversationId: params.conversationId }),
-            executionKind: CommandKinds.BOT_RUNTIME,
-          },
-          actorId: currentUserId,
-          actorType: AuthorTypes.USER,
-          createdAt: now,
-        }
-        await db.events.add({
+      // Same contract as a message send: the row is on the timeline in this
+      // tick, the durable copy below replaces it once the live query re-reads.
+      const publishedSequence = Date.now().toString()
+      if (publishToTimeline) {
+        publishOptimisticEvent({
           ...optimisticEvent,
           workspaceId,
-          _sequenceNum: sequenceToNum(optimisticSequence),
-          ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
+          sequence: publishedSequence,
+          _sequenceNum: sequenceToNum(publishedSequence),
           _status: "pending",
           _cachedAt: Date.now(),
         })
-        await enqueueOperation(workspaceId, "dispatch_command", {
-          streamId,
-          command: params.commandMarkdown,
-          optimisticEventId,
-          ...(params.conversationId && { conversationId: params.conversationId }),
+      }
+
+      try {
+        await db.transaction("rw", [db.events, db.pendingOperations], async () => {
+          const [anchorSequence, optimisticSequence] = await Promise.all([
+            getLatestPersistedSequence(workspaceId, streamId),
+            nextOptimisticSequence(workspaceId, streamId),
+          ])
+          await db.events.add({
+            ...optimisticEvent,
+            workspaceId,
+            sequence: optimisticSequence,
+            _sequenceNum: sequenceToNum(optimisticSequence),
+            ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
+            _status: "pending",
+            _cachedAt: Date.now(),
+          })
+          await enqueueOperation(workspaceId, "dispatch_command", {
+            streamId,
+            command: params.commandMarkdown,
+            optimisticEventId,
+            ...(params.conversationId && { conversationId: params.conversationId }),
+          })
         })
-      })
+      } catch (err) {
+        revokeOptimisticEvent(optimisticEventId)
+        throw err
+      }
 
       syncEngine?.kickOperationQueue()
       return optimisticEventId
     },
-    [currentUserId, streamId, syncEngine, workspaceId]
+    [currentUserId, publishOptimisticEvent, publishToTimeline, revokeOptimisticEvent, streamId, syncEngine, workspaceId]
   )
 
   return { queueCommand }

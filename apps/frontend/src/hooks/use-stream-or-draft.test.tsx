@@ -21,7 +21,7 @@ import { emitDraftPromoted } from "@/lib/draft-promotions"
 import { deleteDraftScratchpadFromCache } from "@/stores/draft-store"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
 import { seedWorkspaceUser } from "@/test/workspace-rows"
-import type { JSONContent } from "@threahq/types"
+import type { ComposeTrace, JSONContent } from "@threahq/types"
 
 function createWrapper(
   queryClient: QueryClient,
@@ -293,6 +293,63 @@ describe("useStreamOrDraft real stream send", () => {
       await expect(sending).rejects.toThrow("quota")
     })
     expect(result.current.published).toEqual([])
+  })
+
+  it("shows the sent row before its compose trace resolves and stores the trace once it does", async () => {
+    const { result } = await mountRealStreamSend()
+    let finishTrace: (trace: ComposeTrace) => void = () => {}
+    const composeTrace = new Promise<ComposeTrace>((resolve) => {
+      finishTrace = resolve
+    })
+
+    let sending: Promise<unknown> = Promise.resolve()
+    act(() => {
+      sending = result.current.sendMessage({
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "traced" }] }] },
+        composeTrace,
+      })
+    })
+
+    expect(result.current.published).toMatchObject([{ eventType: "message_created", _status: "pending" }])
+    expect((await db.pendingMessages.toArray()).filter((message) => message.content === "traced")).toEqual([])
+
+    const trace: ComposeTrace = {
+      horizonStreamId: "stream_socket_seen",
+      openedAt: "2026-03-31T10:00:00.000Z",
+      openedAtSequence: 1,
+      sentAtSequence: 1,
+      resumedDraft: false,
+    }
+    await act(async () => {
+      finishTrace(trace)
+      await sending
+    })
+    expect(
+      (await db.pendingMessages.toArray()).filter((message) => message.content === "traced").map((m) => m.composeTrace)
+    ).toEqual([trace])
+  })
+
+  it("takes the row back and fails the send when its compose trace read rejects", async () => {
+    const { result } = await mountRealStreamSend()
+    const composeTrace = Promise.reject(new Error("idb closed"))
+    composeTrace.catch(() => {})
+
+    let sending: Promise<unknown> = Promise.resolve()
+    act(() => {
+      sending = result.current.sendMessage({
+        contentJson: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "untraced" }] }] },
+        composeTrace,
+      })
+    })
+    expect(result.current.published).toMatchObject([{ eventType: "message_created", _status: "pending" }])
+
+    await act(async () => {
+      await expect(sending).rejects.toThrow("idb closed")
+    })
+    expect({
+      published: result.current.published,
+      queued: (await db.pendingMessages.toArray()).filter((message) => message.content === "untraced"),
+    }).toEqual({ published: [], queued: [] })
   })
 
   it("shows an encrypted send while it is being sealed and carries the sealed attachment refs once it is", async () => {

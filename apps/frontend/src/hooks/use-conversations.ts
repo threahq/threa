@@ -25,6 +25,7 @@ import type { SplitGroupInput } from "@/api/conversations"
 import { ApiError } from "@/api/client"
 import { planBoardReply, type BoardReplyPlan } from "@/lib/board/reply-plan"
 import { StreamTypes } from "@threahq/types"
+import type { ComposeTraceInput } from "@/lib/compose-trace"
 import type {
   BoardLens,
   BoardPost,
@@ -374,7 +375,7 @@ export interface ReplyToBoardPostInput {
   /** Full attachment info for the optimistic event so files render in place. */
   attachments?: AttachmentSummary[]
   /** Compose-session provenance for this send (see {@link ComposeTrace}). */
-  composeTrace?: ComposeTrace
+  composeTrace?: ComposeTraceInput
   /** Persist first, then dispatch `/steer` in the same server transaction. */
   steer?: true
 }

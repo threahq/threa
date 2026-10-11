@@ -6,6 +6,7 @@ import { MemoryRouter, useSearchParams } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { toast } from "sonner"
 import * as contextsModule from "@/contexts"
+import { PendingMessagesProvider } from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as useAttachmentsModule from "@/hooks/use-attachments"
 import * as currentUserHook from "@/hooks/use-current-workspace-user-id"
@@ -254,10 +255,12 @@ afterEach(() => {
 function mount(initialEntries: string[] = ["/"], mountStreamId: string = streamId, strict = false) {
   const tree = (
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={initialEntries}>
-        <MessageInput workspaceId={workspaceId} streamId={mountStreamId} />
-        <SearchParamsProbe />
-      </MemoryRouter>
+      <PendingMessagesProvider>
+        <MemoryRouter initialEntries={initialEntries}>
+          <MessageInput workspaceId={workspaceId} streamId={mountStreamId} />
+          <SearchParamsProbe />
+        </MemoryRouter>
+      </PendingMessagesProvider>
     </QueryClientProvider>
   )
   return render(strict ? <StrictMode>{tree}</StrictMode> : tree)
@@ -269,10 +272,12 @@ function mount(initialEntries: string[] = ["/"], mountStreamId: string = streamI
 function rerenderAtStream(view: ReturnType<typeof mount>, nextStreamId: string) {
   view.rerender(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/"]}>
-        <MessageInput workspaceId={workspaceId} streamId={nextStreamId} />
-        <SearchParamsProbe />
-      </MemoryRouter>
+      <PendingMessagesProvider>
+        <MemoryRouter initialEntries={["/"]}>
+          <MessageInput workspaceId={workspaceId} streamId={nextStreamId} />
+          <SearchParamsProbe />
+        </MemoryRouter>
+      </PendingMessagesProvider>
     </QueryClientProvider>
   )
 }

@@ -102,16 +102,26 @@ function toSequenceNumber(sequence: string | null): number | null {
   return Number.isFinite(value) ? value : null
 }
 
+/**
+ * What a send carries: the trace, or the still-pending read of it. A send never
+ * waits on that read before putting its row on screen — the queue resolves it
+ * where the row is stored.
+ */
+export type ComposeTraceInput = ComposeTrace | Promise<ComposeTrace | undefined>
+
 export interface UseComposeTraceResult {
   /** Wire to the composer's focus. Cheap and idempotent within a session. */
   onComposerFocus: () => void
-  /** Call at send; spread the result onto the send input. */
-  takeComposeTrace: () => Promise<ComposeTrace | undefined>
+  /**
+   * Call at send and hand the result to the send as is: the pending read when
+   * capturing, nothing otherwise.
+   */
+  takeComposeTrace: () => Promise<ComposeTrace | undefined> | undefined
 }
 
 const NO_CAPTURE: UseComposeTraceResult = {
   onComposerFocus: () => {},
-  takeComposeTrace: async () => undefined,
+  takeComposeTrace: () => undefined,
 }
 
 export interface UseComposeTraceOptions {
@@ -189,7 +199,7 @@ export function useComposeTrace({
     void recorder.open(workspaceId, scopeId, horizonStreamId, hasDraftContentRef.current())
   }, [recorder, workspaceId, scopeId, horizonStreamId, draftReady])
 
-  const takeComposeTrace = useCallback(async () => recorder?.take(), [recorder])
+  const takeComposeTrace = useCallback(() => recorder?.take(), [recorder])
 
   return enabled ? { onComposerFocus, takeComposeTrace } : NO_CAPTURE
 }
