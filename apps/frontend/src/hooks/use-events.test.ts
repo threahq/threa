@@ -242,15 +242,20 @@ describe("getEffectiveEvents", () => {
 describe("getUnpersistedOptimisticEvents", () => {
   const published = (id: string) => ({ id }) as CachedEvent
 
-  it("keeps only the published rows the persisted read carries neither by id nor by clientMessageId", () => {
+  it("keeps only the published rows the persisted read carries neither by id nor by client id", () => {
     const unsent = published("temp_unsent")
     const written = published("temp_written")
     const echoed = published("temp_echoed")
+    const confirmed = published("temp_cmd_confirmed")
 
     expect(
       getUnpersistedOptimisticEvents(
-        [unsent, written, echoed],
-        [{ id: "temp_written" }, { id: "event_real", payload: { clientMessageId: "temp_echoed" } }]
+        [unsent, written, echoed, confirmed],
+        [
+          { id: "temp_written" },
+          { id: "event_real", payload: { clientMessageId: "temp_echoed" } },
+          { id: "event_cmd", payload: { commandId: "cmd_1", clientCommandId: "temp_cmd_confirmed" } },
+        ]
       )
     ).toEqual([unsent])
   })
