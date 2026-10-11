@@ -99,7 +99,7 @@ export function PaneHeader({
         <PhonePaneSwitcher workspaceId={workspaceId} />
         {menu}
         <PaneFocusToggle />
-        {!isMobile && !tabbed && !inDrawer && canClosePanel && (
+        {!isMobile && !inDrawer && canClosePanel && (
           <SidePanelClose onClose={closePanel} ref={closeRef} aria-label={closeLabel} />
         )}
       </div>

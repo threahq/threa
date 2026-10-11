@@ -524,7 +524,7 @@ export function StreamPane({
   const iconGap = 4
   const icon = 32 + iconGap
   const offersCall = !!stream && !isDraft && (isChannel || isDm) && callsEnabled
-  const offersAside = !!stream && !isDraft && !tabbed
+  const offersAside = !!stream && !isDraft
   const offersSearch = !isDraft
   const offersContextIcon = !!stream && !isDraft && offersContext
   const offersOverlay = (isChannel || isDm) && ownsConversationOverlay
@@ -548,13 +548,12 @@ export function StreamPane({
           ...(offersAside ? [{ id: "aside-label", width: 60 }] : []),
           ...(offersOverlay ? [{ id: "overlay", width: 52 + iconGap }] : []),
           ...(offersContextIcon ? [{ id: "context", width: icon }] : []),
-          ...(offersSearch && !tabbed ? [{ id: "search", width: icon }] : []),
+          ...(offersSearch ? [{ id: "search", width: icon }] : []),
         ],
         // A tab row keeps room for two tabs, so the view icons fold before the tabs go to "+N".
         tabbed ? tabRowReserve(section?.ids.length ?? 0) : undefined
       )
-  // A tab row needs the room more than search does, which ⌘F and the menu still reach.
-  const searchInMenu = !isMobile && offersSearch && (tabbed || folded.has("search"))
+  const searchInMenu = !isMobile && offersSearch && folded.has("search")
   const openSearch = () => {
     document.dispatchEvent(new CustomEvent("threa:open-stream-search", { detail: { streamId } }))
   }
@@ -810,7 +809,7 @@ export function StreamPane({
               <CallStartMenu workspaceId={workspaceId} streamId={streamId} startLabel="Start a call" />
             )}
           </div>
-          {stream && !isDraft && !tabbed && (
+          {stream && !isDraft && (
             <AsideHeaderChip
               workspaceId={workspaceId}
               stream={stream}
