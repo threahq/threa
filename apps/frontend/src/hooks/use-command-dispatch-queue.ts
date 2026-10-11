@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react"
 import { useLiveQuery } from "dexie-react-hooks"
 import { useUser } from "@/auth"
+import { usePendingMessages } from "@/contexts"
 import { db, sequenceToNum } from "@/db"
 import { enqueueOperation } from "@/sync/operation-queue"
 import { getLatestPersistedSequence } from "@/sync/stream-sync"
@@ -101,6 +102,7 @@ function parseCommandArgs(commandMarkdown: string): string {
 export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
   const user = useUser()
   const syncEngine = useOptionalSyncEngine()
+  const { publishOptimisticEvent, revokeOptimisticEvent } = usePendingMessages()
   const idbUsers = useWorkspaceUsers(workspaceId)
   const currentUserId = useMemo(
     () => idbUsers.find((u) => u.workosUserId === user?.id)?.id ?? null,
@@ -115,49 +117,66 @@ export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
 
       const optimisticEventId = `temp_cmd_${Date.now()}_${Math.random().toString(36).slice(2)}`
       const now = new Date().toISOString()
-
-      await db.transaction("rw", [db.events, db.pendingOperations], async () => {
-        const [anchorSequence, optimisticSequence] = await Promise.all([
-          getLatestPersistedSequence(workspaceId, streamId),
-          nextOptimisticSequence(workspaceId, streamId),
-        ])
-        const optimisticEvent: StreamEvent = {
-          id: optimisticEventId,
-          streamId,
-          sequence: optimisticSequence,
-          eventType: "command_dispatched",
-          payload: {
-            commandId: optimisticEventId,
-            name: params.commandName,
-            args: parseCommandArgs(params.commandMarkdown),
-            status: "dispatched",
-            ...(params.conversationId && { conversationId: params.conversationId }),
-            executionKind: CommandKinds.BOT_RUNTIME,
-          },
-          actorId: currentUserId,
-          actorType: AuthorTypes.USER,
-          createdAt: now,
-        }
-        await db.events.add({
-          ...optimisticEvent,
-          workspaceId,
-          _sequenceNum: sequenceToNum(optimisticSequence),
-          ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
-          _status: "pending",
-          _cachedAt: Date.now(),
-        })
-        await enqueueOperation(workspaceId, "dispatch_command", {
-          streamId,
-          command: params.commandMarkdown,
-          optimisticEventId,
+      const optimisticEvent: Omit<StreamEvent, "sequence"> = {
+        id: optimisticEventId,
+        streamId,
+        eventType: "command_dispatched",
+        payload: {
+          commandId: optimisticEventId,
+          name: params.commandName,
+          args: parseCommandArgs(params.commandMarkdown),
+          status: "dispatched",
           ...(params.conversationId && { conversationId: params.conversationId }),
-        })
+          executionKind: CommandKinds.BOT_RUNTIME,
+        },
+        actorId: currentUserId,
+        actorType: AuthorTypes.USER,
+        createdAt: now,
+      }
+
+      // Same contract as a message send: the row is on the timeline in this
+      // tick, the durable copy below replaces it once the live query re-reads.
+      const publishedSequence = Date.now().toString()
+      publishOptimisticEvent({
+        ...optimisticEvent,
+        workspaceId,
+        sequence: publishedSequence,
+        _sequenceNum: sequenceToNum(publishedSequence),
+        _status: "pending",
+        _cachedAt: Date.now(),
       })
+
+      try {
+        await db.transaction("rw", [db.events, db.pendingOperations], async () => {
+          const [anchorSequence, optimisticSequence] = await Promise.all([
+            getLatestPersistedSequence(workspaceId, streamId),
+            nextOptimisticSequence(workspaceId, streamId),
+          ])
+          await db.events.add({
+            ...optimisticEvent,
+            workspaceId,
+            sequence: optimisticSequence,
+            _sequenceNum: sequenceToNum(optimisticSequence),
+            ...(anchorSequence != null && { _anchorSequenceNum: sequenceToNum(anchorSequence) }),
+            _status: "pending",
+            _cachedAt: Date.now(),
+          })
+          await enqueueOperation(workspaceId, "dispatch_command", {
+            streamId,
+            command: params.commandMarkdown,
+            optimisticEventId,
+            ...(params.conversationId && { conversationId: params.conversationId }),
+          })
+        })
+      } catch (err) {
+        revokeOptimisticEvent(optimisticEventId)
+        throw err
+      }
 
       syncEngine?.kickOperationQueue()
       return optimisticEventId
     },
-    [currentUserId, streamId, syncEngine, workspaceId]
+    [currentUserId, publishOptimisticEvent, revokeOptimisticEvent, streamId, syncEngine, workspaceId]
   )
 
   return { queueCommand }
