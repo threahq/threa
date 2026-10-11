@@ -26,6 +26,7 @@ import { sealOutgoingMessage, type SealOutgoingMessageResult } from "@/lib/crypt
 import { reviveStaleActorWraps } from "@/lib/crypto/stream-key-cache"
 import { generateClientId } from "./use-stream-or-draft"
 import { publishOptimisticRailEvent, revokeOptimisticRailEvent } from "./use-board-card-messages"
+import type { ComposeTraceInput } from "@/lib/compose-trace"
 import type { AttachmentSummary } from "./create-optimistic-bootstrap"
 
 export interface QueueDraftMessageInput {
@@ -33,7 +34,7 @@ export interface QueueDraftMessageInput {
   attachmentIds?: string[]
   attachments?: AttachmentSummary[]
   /** Compose-session provenance for this send (see {@link ComposeTrace}). */
-  composeTrace?: ComposeTrace
+  composeTrace?: ComposeTraceInput
   /** Persist first, then dispatch `/steer` in the same server transaction. */
   steer?: true
 }
@@ -197,6 +198,9 @@ export function useQueueDraftMessage(workspaceId: string) {
       })
 
       try {
+        // The trace's own IndexedDB read finishes here, behind the published
+        // row, never ahead of it.
+        const composeTrace = await input.composeTrace
         const { database } = account
         await database.transaction("rw", [database.pendingMessages, database.events], async () => {
           // Both helpers read `events`, and both default to the *active*
@@ -218,7 +222,7 @@ export function useQueueDraftMessage(workspaceId: string) {
             contentFormat: "markdown",
             contentJson: input.contentJson,
             attachmentIds: input.attachmentIds,
-            composeTrace: input.composeTrace,
+            composeTrace,
             steer: input.steer,
             createdAt: Date.now(),
             retryCount: 0,

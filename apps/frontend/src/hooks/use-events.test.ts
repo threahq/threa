@@ -545,6 +545,38 @@ describe("useEvents published send rows", () => {
     expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id, "event_real"])
   })
 
+  it("lets a published command go once its confirmed row, carried by clientCommandId, clears the apply window", async () => {
+    const earlier = row("event_earlier", 1)
+    const sent = row("temp_cmd", 5, {
+      eventType: "command_dispatched",
+      payload: { commandId: "temp_cmd", name: "thinking", status: "dispatched" },
+      _status: "pending",
+    })
+    let cached: CachedEvent[] = [earlier]
+    vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation(() => cached)
+
+    const { result, rerender } = renderHook(
+      () => ({ timeline: useEvents(workspaceId, streamId), pending: usePendingMessages() }),
+      { wrapper: wrapper() }
+    )
+    await waitFor(() => expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id]))
+
+    act(() => beginApplyWindow())
+    act(() => result.current.pending.publishOptimisticEvent(sent))
+    cached = [
+      earlier,
+      row("event_cmd", 2, {
+        eventType: "command_dispatched",
+        payload: { commandId: "cmd_real", clientCommandId: "temp_cmd", name: "thinking", status: "dispatched" },
+      }),
+    ]
+    rerender()
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id, sent.id])
+
+    act(() => endApplyWindow())
+    expect(result.current.timeline.events.map((event) => event.id)).toEqual([earlier.id, "event_cmd"])
+  })
+
   it("drops a stream's published rows when its timeline moves to another stream", async () => {
     const sent = row("temp_sent", 5, { _clientId: "temp_sent", _status: "pending" })
     vi.spyOn(streamStoreModule, "useStreamEvents").mockImplementation(() => [])

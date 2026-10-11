@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
 import { useState } from "react"
 import * as contextsModule from "@/contexts"
+import { PendingMessagesProvider } from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as authModule from "@/auth"
@@ -23,6 +24,7 @@ import { queueSnippetRequest, resetSnippetRequestStoreCache } from "@/stores/sni
 import * as composerModule from "@/components/composer"
 import * as streamContextBagModule from "@/hooks/use-stream-context-bag"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
+import * as composeTraceModule from "@/lib/compose-trace"
 import * as openAsideModule from "@/hooks/use-open-aside"
 import { spyOnExport } from "@/test"
 import * as streamStoreModule from "@/stores/stream-store"
@@ -398,13 +400,15 @@ function Wrapper({ children }: { children: React.ReactNode }) {
     // bootstrap query cache, so it needs a client here as it has one everywhere
     // it mounts in the app. Inside `Wrapper` so `rerender(<Wrapper>…)` keeps it.
     <QueryClientProvider client={queryClient}>
-      <Router
-        location={location}
-        navigator={navigator as unknown as Parameters<typeof Router>[0]["navigator"]}
-        navigationType={"POP" as Parameters<typeof Router>[0]["navigationType"]}
-      >
-        {children}
-      </Router>
+      <PendingMessagesProvider>
+        <Router
+          location={location}
+          navigator={navigator as unknown as Parameters<typeof Router>[0]["navigator"]}
+          navigationType={"POP" as Parameters<typeof Router>[0]["navigationType"]}
+        >
+          {children}
+        </Router>
+      </PendingMessagesProvider>
     </QueryClientProvider>
   )
 }
@@ -523,6 +527,22 @@ describe("MessageInput", () => {
         attachmentIds: undefined,
         attachments: undefined,
       })
+    })
+
+    it("hands the send off before the compose trace's IndexedDB read resolves", async () => {
+      const helloContent = makeDoc("Hello world")
+      mockComposerState.canSend = true
+      mockComposerState.content = helloContent
+      const composeTrace = new Promise<undefined>(() => {})
+      spyOnExport(composeTraceModule, "useComposeTrace").mockReturnValue((() => ({
+        onComposerFocus: () => {},
+        takeComposeTrace: () => composeTrace,
+      })) as never)
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ contentJson: helloContent, composeTrace }))
     })
 
     it("sends an inline steer as an unchanged message with its attachments", async () => {

@@ -636,11 +636,25 @@ describe("InlineComposerForm compose trace", () => {
     await userEvent.click(await screen.findByTestId("send"))
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled())
-    expect(onSubmit.mock.calls[0][0].composeTrace).toMatchObject({
+    expect(await onSubmit.mock.calls[0][0].composeTrace).toMatchObject({
       horizonStreamId: "stream_1",
       openedAtSequence: 77,
       sentAtSequence: 77,
     })
+  })
+
+  it("hands the send off before the trace's IndexedDB read resolves", async () => {
+    spyOnExport(streamSyncModule, "getLatestPersistedSequence").mockReturnValue(
+      (() => new Promise<string | null>(() => {})) as never
+    )
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    composerStub.canSend = true
+    render(<Capturing>{form({ onSubmit })}</Capturing>)
+
+    await userEvent.click(await screen.findByTestId("send"))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled())
+    expect(onSubmit.mock.calls[0][0].composeTrace).toBeInstanceOf(Promise)
   })
 
   it("opens the session only after the draft hydrates, so a resumed draft reports as resumed", async () => {
@@ -658,7 +672,7 @@ describe("InlineComposerForm compose trace", () => {
     await userEvent.click(screen.getByTestId("send"))
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalled())
-    const trace = onSubmit.mock.calls[0][0].composeTrace
+    const trace = await onSubmit.mock.calls[0][0].composeTrace
     expect({ resumedDraft: trace.resumedDraft, afterHydration: trace.openedAt >= hydratedAt }).toEqual({
       resumedDraft: true,
       afterHydration: true,

@@ -18,7 +18,7 @@ import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { appendQuoteReplyNode, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
 import { useDraftComposer, useScheduleMessage, useStashComposer, useStashedDraftOrigins, hasDocContent } from "@/hooks"
-import { useComposeTrace } from "@/lib/compose-trace"
+import { useComposeTrace, type ComposeTraceInput } from "@/lib/compose-trace"
 import { relocateLoadedDraft } from "@/hooks/use-draft-message"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { usePreferences } from "@/contexts"
@@ -47,9 +47,10 @@ export interface InlineComposerSubmit {
    * Compose-session provenance for this send (see {@link ComposeTrace}).
    * Captured here rather than per call site so every inline surface this core
    * backs — board card reply, branch tail reply, new sub-topic, panel footer —
-   * reports the same thing. Absent unless the workspace is capturing.
+   * reports the same thing. Absent unless the workspace is capturing. Handed
+   * over still pending: the send must not wait on its IndexedDB read.
    */
-  composeTrace?: ComposeTrace
+  composeTrace?: ComposeTraceInput
   /** Persist the message first, then dispatch `/steer` in the same server
    *  transaction — set when the author embedded `/steer` in the message. */
   steer?: true
@@ -501,20 +502,18 @@ export function InlineComposerForm({
     const attachments = extractUploadedAttachments(messageContent)
     const attachmentIds = attachments.map((a) => a.id)
 
-    // Close the send window and clear BEFORE the trace's IDB read: a second
-    // Enter during that await must see canSend false, and the optimistic clear
-    // must not wait on a Dexie round-trip (#1640's dominant-latency path).
+    // Close the send window before anything is awaited: a second Enter must
+    // see canSend false.
     composer.setIsSending(true)
     // Clear the editor up front so it empties in the same frame the optimistic
     // row appears; restored on failure so nothing typed is lost.
     composer.setContent(EMPTY_DOC)
-    const composeTrace = await takeComposeTrace()
     try {
       await onSubmit({
         contentJson: messageContent,
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         attachments: attachments.length > 0 ? attachments : undefined,
-        composeTrace,
+        composeTrace: takeComposeTrace(),
         ...(steerPlan && { steer: true as const }),
       })
       await composer.resolveDraft()

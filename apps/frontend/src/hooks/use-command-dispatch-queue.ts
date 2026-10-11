@@ -75,10 +75,14 @@ export function useCommandDispatchCancellation(
   )
   const canCancel =
     localStatus === "failed" || (localStatus === "pending" && operation != null && operation.startedAt == null)
-  const cancel = useCallback(
-    () => cancelCommandDispatch(workspaceId, streamId, commandId),
-    [commandId, streamId, workspaceId]
-  )
+  const { revokeOptimisticEvent } = usePendingMessages()
+  // The timeline only lets go of a published row once the cache carries it;
+  // a cancelled row is deleted before that can happen, so it is taken back here.
+  const cancel = useCallback(async () => {
+    const cancelled = await cancelCommandDispatch(workspaceId, streamId, commandId)
+    if (cancelled) revokeOptimisticEvent(commandId)
+    return cancelled
+  }, [commandId, revokeOptimisticEvent, streamId, workspaceId])
   return { canCancel, cancel }
 }
 
@@ -95,11 +99,19 @@ function parseCommandArgs(commandMarkdown: string): string {
  *
  * @param workspaceId - Workspace receiving the command.
  * @param streamId - Stream receiving the command.
+ * @param options.publishToTimeline - Put the row on the stream's timeline in the
+ *   sending tick. Only for a composer whose stream timeline is on screen: the
+ *   timeline is what takes a published row back, so a composer without one (the
+ *   board page) would leave it on the next open of that stream.
  * @returns A callback that queues a slash command and resolves its optimistic event id.
  * @example
- * const { queueCommand } = useCommandDispatchQueue(workspaceId, streamId)
+ * const { queueCommand } = useCommandDispatchQueue(workspaceId, streamId, { publishToTimeline: true })
  */
-export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
+export function useCommandDispatchQueue(
+  workspaceId: string,
+  streamId: string,
+  { publishToTimeline }: { publishToTimeline: boolean }
+) {
   const user = useUser()
   const syncEngine = useOptionalSyncEngine()
   const { publishOptimisticEvent, revokeOptimisticEvent } = usePendingMessages()
@@ -137,14 +149,16 @@ export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
       // Same contract as a message send: the row is on the timeline in this
       // tick, the durable copy below replaces it once the live query re-reads.
       const publishedSequence = Date.now().toString()
-      publishOptimisticEvent({
-        ...optimisticEvent,
-        workspaceId,
-        sequence: publishedSequence,
-        _sequenceNum: sequenceToNum(publishedSequence),
-        _status: "pending",
-        _cachedAt: Date.now(),
-      })
+      if (publishToTimeline) {
+        publishOptimisticEvent({
+          ...optimisticEvent,
+          workspaceId,
+          sequence: publishedSequence,
+          _sequenceNum: sequenceToNum(publishedSequence),
+          _status: "pending",
+          _cachedAt: Date.now(),
+        })
+      }
 
       try {
         await db.transaction("rw", [db.events, db.pendingOperations], async () => {
@@ -176,7 +190,7 @@ export function useCommandDispatchQueue(workspaceId: string, streamId: string) {
       syncEngine?.kickOperationQueue()
       return optimisticEventId
     },
-    [currentUserId, publishOptimisticEvent, revokeOptimisticEvent, streamId, syncEngine, workspaceId]
+    [currentUserId, publishOptimisticEvent, publishToTimeline, revokeOptimisticEvent, streamId, syncEngine, workspaceId]
   )
 
   return { queueCommand }

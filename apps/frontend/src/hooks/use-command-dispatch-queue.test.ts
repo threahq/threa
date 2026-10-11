@@ -6,7 +6,11 @@ import { PendingMessagesProvider, useOptimisticEvents } from "@/contexts"
 import { db, sequenceToNum, type CachedEvent } from "@/db"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import { processOperationQueue } from "@/sync/operation-queue"
-import { cancelCommandDispatch, useCommandDispatchQueue } from "./use-command-dispatch-queue"
+import {
+  cancelCommandDispatch,
+  useCommandDispatchCancellation,
+  useCommandDispatchQueue,
+} from "./use-command-dispatch-queue"
 
 const workspaceId = "ws_1"
 const commandId = "temp_cmd_1"
@@ -221,15 +225,19 @@ describe("useCommandDispatchQueue queueCommand", () => {
     ] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceUsers>)
   })
 
-  function render() {
+  function render(publishToTimeline = true) {
     return renderHook(
-      () => ({ queue: useCommandDispatchQueue(workspaceId, streamId), overlay: useOptimisticEvents(streamId) }),
-      { wrapper: PendingMessagesProvider }
-    ).result
+      ({ commandId }: { commandId: string }) => ({
+        queue: useCommandDispatchQueue(workspaceId, streamId, { publishToTimeline }),
+        overlay: useOptimisticEvents(streamId),
+        cancellation: useCommandDispatchCancellation(workspaceId, streamId, commandId, "pending"),
+      }),
+      { wrapper: PendingMessagesProvider, initialProps: { commandId: "" } }
+    )
   }
 
   it("publishes the command row in the sending tick, ahead of its durable write", async () => {
-    const result = render()
+    const { result } = render()
 
     let queued!: Promise<string>
     act(() => {
@@ -253,7 +261,7 @@ describe("useCommandDispatchQueue queueCommand", () => {
 
   it("takes the published row back when the durable write fails", async () => {
     vi.spyOn(db.events, "add").mockRejectedValue(new Error("quota"))
-    const result = render()
+    const { result } = render()
 
     await act(async () => {
       await expect(
@@ -263,5 +271,50 @@ describe("useCommandDispatchQueue queueCommand", () => {
 
     expect(result.current.overlay).toEqual([])
     expect(await db.pendingOperations.toArray()).toEqual([])
+  })
+
+  it("takes the published row back when the dispatch is cancelled", async () => {
+    const { result, rerender } = render()
+
+    let optimisticEventId = ""
+    await act(async () => {
+      optimisticEventId = await result.current.queue.queueCommand({
+        commandMarkdown: "/thinking low",
+        commandName: "thinking",
+      })
+    })
+    rerender({ commandId: optimisticEventId })
+    expect(result.current.overlay.map((event) => event.id)).toEqual([optimisticEventId])
+
+    let cancelled = false
+    await act(async () => {
+      cancelled = await result.current.cancellation.cancel()
+    })
+
+    expect({
+      cancelled,
+      overlay: result.current.overlay,
+      row: await db.events.get([workspaceId, optimisticEventId]),
+    }).toEqual({ cancelled: true, overlay: [], row: undefined })
+  })
+
+  it("keeps the row off the timeline for a composer whose stream timeline is not on screen", async () => {
+    const { result } = render(false)
+
+    let optimisticEventId = ""
+    await act(async () => {
+      optimisticEventId = await result.current.queue.queueCommand({
+        commandMarkdown: "/thinking low",
+        commandName: "thinking",
+      })
+    })
+
+    expect({
+      overlay: result.current.overlay,
+      row: (await db.events.get([workspaceId, optimisticEventId]))?.eventType,
+    }).toEqual({
+      overlay: [],
+      row: "command_dispatched",
+    })
   })
 })

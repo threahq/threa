@@ -20,6 +20,7 @@ const optimisticId = "temp_cmd_1"
 
 let queueCommand: ReturnType<typeof vi.fn>
 let queuedFor: Array<string | undefined>
+let publishedToTimelineFor: boolean[]
 let openAside: ReturnType<typeof vi.fn>
 
 beforeEach(async () => {
@@ -27,12 +28,15 @@ beforeEach(async () => {
   await db.events.clear()
   queueCommand = vi.fn().mockResolvedValue(optimisticId)
   queuedFor = []
+  publishedToTimelineFor = []
   spyOnExport(streamCommandsModule, "useStreamCommands").mockReturnValue((() => COMMANDS) as never)
   spyOnExport(dispatchQueueModule, "useCommandDispatchQueue").mockReturnValue(((
     _workspaceId: string,
-    streamId: string
+    streamId: string,
+    options: { publishToTimeline: boolean }
   ) => {
     queuedFor.push(streamId)
+    publishedToTimelineFor.push(options.publishToTimeline)
     return { queueCommand }
   }) as never)
   openAside = vi.fn().mockResolvedValue(undefined)
@@ -118,6 +122,16 @@ describe("useComposerCommandSend dispatchCommand", () => {
     expect({ queuedFor: queuedFor[0], call: queueCommand.mock.calls[0][0] }).toEqual({
       queuedFor: "stream_conversation",
       call: { commandMarkdown: "/compact", commandName: "compact" },
+    })
+  })
+
+  it("publishes to the timeline from the stream composer only, never from a conversation composer", () => {
+    hook("stream_conversation")
+    const streamComposer = publishedToTimelineFor.at(-1)
+    hook("stream_conversation", "conv_1")
+    expect({ streamComposer, conversationComposer: publishedToTimelineFor.at(-1) }).toEqual({
+      streamComposer: true,
+      conversationComposer: false,
     })
   })
 

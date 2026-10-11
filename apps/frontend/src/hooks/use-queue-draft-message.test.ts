@@ -118,6 +118,33 @@ describe("useQueueDraftMessage", () => {
     )
   })
 
+  it("stores the compose trace it was handed while still pending", async () => {
+    mockUnlockedSession()
+    const trace = {
+      horizonStreamId: ROOT_STREAM_ID,
+      openedAt: "2026-03-31T10:00:00.000Z",
+      openedAtSequence: 1,
+      sentAtSequence: 2,
+      resumedDraft: false,
+    }
+
+    const { result } = setup()
+    await act(async () => {
+      await result.current.queueDraftMessage(
+        { contentJson: CONTENT, composeTrace: Promise.resolve(trace) },
+        {
+          workspaceId: WORKSPACE_ID,
+          streamId: PANEL_ID,
+          streamCreation: threadCreation,
+          draftId: PANEL_ID,
+          e2e: { rootStreamId: ROOT_STREAM_ID, hasActors: false },
+        }
+      )
+    })
+
+    expect(mockPendingAdd).toHaveBeenCalledWith(expect.objectContaining({ composeTrace: trace }))
+  })
+
   it("heals the encrypted root's actor wraps on send when the root has invited actors", async () => {
     mockUnlockedSession()
     const reviveSpy = vi.spyOn(streamKeyCacheModule, "reviveStaleActorWraps").mockResolvedValue("none-missing")
