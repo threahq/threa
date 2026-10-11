@@ -76,12 +76,14 @@ export function ExplorerShell({ workspaceId, mode, enabled }: ExplorerShellProps
     update({ selectedAttachmentId: search.items[0]!.id })
   }, [enabled, stacked, filters.selectedAttachmentId, search.items, update])
 
-  // Narrowing out of side by side drops the selection, often an auto-selected one, so the shell lands on the list.
-  const wasStacked = useRef(stacked)
+  // Narrowing a step (side by side, stacked pane, phone) drops the selection so the shell lands on the list.
+  // It was auto-selected or made without a history entry, which the phone's Back would step past.
+  const narrowness = Number(stacked) + Number(isMobile)
+  const lastNarrowness = useRef(narrowness)
   useEffect(() => {
-    if (stacked && !wasStacked.current) update({ selectedAttachmentId: null })
-    wasStacked.current = stacked
-  }, [stacked, update])
+    if (narrowness > lastNarrowness.current) update({ selectedAttachmentId: null })
+    lastNarrowness.current = narrowness
+  }, [narrowness, update])
 
   useEffect(() => {
     // Stacked, a pick hides the focused row, stranding focus outside the shell.
