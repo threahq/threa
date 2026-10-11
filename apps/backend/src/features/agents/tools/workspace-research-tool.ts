@@ -80,8 +80,8 @@ What it finds is added to this system prompt under \`## Retrieved Knowledge\`. T
       })
 
       const partial = result.partial === true
-      const systemContext = result.retrievedContext?.trim() || undefined
-      const contextAdded = systemContext !== undefined
+      const attachmentCount = result.attachments?.length ?? 0
+      const found = result.memos.length + result.messages.length + attachmentCount > 0
 
       const sourceItems = result.sources
         .filter((s) => s.title && s.url)
@@ -99,13 +99,13 @@ What it finds is added to this system prompt under \`## Retrieved Knowledge\`. T
         status: partial ? "partial" : "ok",
         partial,
         partialReason: partial ? (result.partialReason ?? null) : null,
-        contextAdded,
-        // Without this the count-only result reads as an empty search and the model answers from recalled memos alone.
-        findings: contextAdded ? "added to your system prompt under the Retrieved Knowledge heading" : null,
+        contextAdded: Boolean(result.retrievedContext?.trim()),
+        // Without this the count-only result reads as an empty search. A people-only result adds context with no such heading.
+        findings: found ? "added to your system prompt under the Retrieved Knowledge heading" : null,
         sourceCount: sourceItems.length,
         memoCount: result.memos.length,
         messageCount: result.messages.length,
-        attachmentCount: result.attachments?.length ?? 0,
+        attachmentCount,
         substeps: result.substeps,
       })
 
@@ -119,7 +119,7 @@ What it finds is added to this system prompt under \`## Retrieved Knowledge\`. T
         output,
         provenanceStreamIds,
         sources: sourceItems,
-        systemContext,
+        systemContext: result.retrievedContext?.trim() || undefined,
       }
     },
 
