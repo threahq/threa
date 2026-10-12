@@ -116,8 +116,29 @@ describe("droppedPanelSizes", () => {
     })
   })
 
-  it("should give a tab moved out of a shared column half of the one it lands beside", () => {
+  it("should let a tab moved out of its own column keep its width on a right edge too", () => {
+    expect(drop("m-a-b-c", [400, 350, 250, 200], [[1], [1], [1], [1]], "c", "a", "right")).toEqual({
+      columns: [400, 350, 200, 250],
+      rows: [[1], [1], [1], [1]],
+    })
+  })
+
+  it("should give the page's own pane half of the one it lands beside, as its column is what the panels leave", () => {
+    expect(drop("m-a-b", [400, 350, 250], [[1], [1], [1]], "m", "b", "right")).toEqual({
+      columns: [350, 125, 125],
+      rows: [[1], [1], [1]],
+    })
+  })
+
+  it("should give a tab moved out of a shared section half of the one it lands beside", () => {
     expect(drop("m-a-b.c", [400, 350, 250], [[1], [1], [1]], "c", "a", "left")).toEqual({
+      columns: [400, 175, 175, 250],
+      rows: [[1], [1], [1], [1]],
+    })
+  })
+
+  it("should give a tab moved out of a column of several rows half of the one it lands beside", () => {
+    expect(drop("m-a-b--c", [400, 350, 250], [[1], [1], [1, 1]], "c", "a", "left")).toEqual({
       columns: [400, 175, 175, 250],
       rows: [[1], [1], [1], [1]],
     })

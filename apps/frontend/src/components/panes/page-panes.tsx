@@ -32,6 +32,7 @@ import {
   type PanelGridSizes,
 } from "@/lib/panel-grid"
 import { PaneHost } from "./pane-host"
+import { prefersReducedMotion } from "./pane-glide"
 import { PaneDropContext, usePaneDropState } from "./pane-drop"
 
 interface PagePanesProps {
@@ -99,12 +100,21 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
   // A pane dropped on an edge opens at the size its zone showed, once the arrangement it made is on show.
   const [dropped, setDropped] = useState<{ before: string; after: string; sizes: PanelGridSizes } | null>(null)
   const arrangement = JSON.stringify(gridLayout.columns)
-  // Panes glide on the render that changes the arrangement; a resize, of a column or the window, snaps.
+  // Panes, and the edges tracking them, glide on the render that changes the arrangement; a resize, of a
+  // column or the window, snaps, and so does a fix-up before the first frame (a reload dropping a pane
+  // the store no longer holds), as the user never saw what it changes.
   const shown = useRef(arrangement)
-  const glides = !isMobile && shown.current !== arrangement
+  const settled = useRef(false)
+  const glides = !isMobile && settled.current && shown.current !== arrangement && !prefersReducedMotion()
   useLayoutEffect(() => {
     shown.current = arrangement
   })
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      settled.current = true
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [])
   if (dropped !== null && arrangement !== dropped.before) {
     setDropped(null)
     if (arrangement === dropped.after) {

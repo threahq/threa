@@ -58,6 +58,18 @@ export function panelColumnWidths(shares: readonly number[], width: number): num
   return shares.map((share) => (width * share) / total)
 }
 /**
+ * The width the tab `id` brings to a side-edge drop: its column's, from
+ * `widths`, where it holds that column alone; else none. The page's own column
+ * is what the panels leave, not a width to bring.
+ */
+export function broughtWidth(layout: PanelLayout, id: string | null, widths: readonly number[]): number | null {
+  const at = id === null ? null : locate(layout, id)
+  if (at === null || at.column === 0) return null
+  const column = layout.columns[at.column]
+  return column.length === 1 && column[0].ids.length === 1 ? (widths[at.column] ?? null) : null
+}
+
+/**
  * Sizes for `after`, the arrangement a drop of `id` on the `side` edge of a pane
  * of `before` made: the dropped pane takes the half of that pane its zone showed,
  * the pane keeps the other half, and every other column and section keeps its
@@ -88,8 +100,7 @@ export function droppedPanelSizes(
   if (side === "left" || side === "right") {
     const added = after.columns.findIndex((sections) => sections.every((section) => origin(section) === null))
     const beside = added + step
-    // Only a pane alone in its column leaves `before` with as many columns as `after` has.
-    const brought = before.columns.length === after.columns.length ? widths[locate(before, id)!.column] : null
+    const brought = broughtWidth(before, id, widths)
     const widthAt = (column: number) => {
       if (column === added) return brought ?? widthOf(beside) / 2
       if (column === beside) return brought === null ? widthOf(beside) / 2 : widthOf(beside)

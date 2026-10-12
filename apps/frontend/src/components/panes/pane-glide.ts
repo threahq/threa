@@ -115,10 +115,10 @@ function fold(
   options: KeyframeAnimationOptions
 ) {
   if (!(pane instanceof HTMLElement)) return
-  // A fold is scenery: nothing finds it by test id, id or tab, reads it, or reaches it.
-  for (const marked of [pane, ...pane.querySelectorAll("[data-testid], [id]")]) {
-    marked.removeAttribute("data-testid")
-    marked.removeAttribute("id")
+  // A fold is scenery: nothing finds it by test id, id, tab, scroller or message, reads it, or reaches it.
+  const marks = ["data-testid", "id", "data-stream-scroller", "data-message-id"]
+  for (const marked of [pane, ...pane.querySelectorAll(marks.map((mark) => `[${mark}]`).join(","))]) {
+    for (const mark of marks) marked.removeAttribute(mark)
   }
   for (const attribute of ["data-panel-tab", "data-front-panel"]) pane.removeAttribute(attribute)
   pane.setAttribute("data-pane-fold", "")
@@ -154,7 +154,8 @@ function fold(
   animation.onfinish = animation.oncancel = () => pane.remove()
 }
 
-const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches
+/** Whether the device asks for motion to be cut; every edge that would glide snaps then. */
+export const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches
 
 /**
  * Glides the host's panes from the boxes they had into the ones a new
@@ -164,7 +165,7 @@ const reducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)"
  * pane the arrangement adds opens from the edge of the pane whose space it
  * takes, one it drops folds shut at the edge of the pane that takes its space,
  * and a pane replacing another in the same box, or joining a stack, just
- * appears. Under reduced motion, or without the API, every change cuts.
+ * appears. Without the API every change cuts.
  */
 export function usePaneGlide(host: RefObject<HTMLDivElement | null>, glide: boolean) {
   const boxes = useRef(new Map<Element, Box>())
@@ -185,10 +186,22 @@ export function usePaneGlide(host: RefObject<HTMLDivElement | null>, glide: bool
   useLayoutEffect(() => {
     const element = host.current
     if (!element || typeof element.animate !== "function") return
+    // A commit that keeps the arrangement (a focus, a store update) within the 240ms leaves the glide
+    // running and the boxes it set out for standing; measuring here would cancel it mid-flight. A
+    // resize among them moves where it ends, so the boxes are read again once it has.
+    const running = element.getAnimations({ subtree: true }).filter((animation) => animation.id === GLIDE)
+    if (!glide && running.length > 0) {
+      void Promise.allSettled(running.map((animation) => animation.finished)).then(() => {
+        if (!element.getAnimations({ subtree: true }).some((animation) => animation.id === GLIDE)) {
+          boxes.current = measure(element)
+        }
+      })
+      return
+    }
     const before = boxes.current
     const now = measure(element)
     boxes.current = now
-    if (!glide || before.size === 0 || reducedMotion()) return
+    if (!glide || before.size === 0) return
 
     const options: KeyframeAnimationOptions = { duration: PANE_TRANSITION_MS, easing: PANE_EASING, id: GLIDE }
     const survivors = [...now]
@@ -200,7 +213,8 @@ export function usePaneGlide(host: RefObject<HTMLDivElement | null>, glide: bool
     for (const [child, box] of now) {
       if (before.has(child)) continue
       if (!isPane(child)) {
-        child.animate([{ opacity: 0 }, { opacity: 1 }], options)
+        // A new divider is laid out where the edge it marks ends up, so it shows once that edge is nearly there.
+        child.animate([{ opacity: 0 }, { opacity: 0, offset: 0.6 }, { opacity: 1 }], options)
         continue
       }
       if ([...before.values()].some((was) => sameBox(was, box))) continue

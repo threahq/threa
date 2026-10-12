@@ -58,6 +58,12 @@ async function at(target: Locator, x: number, y: number) {
 
 /** `at`, once the panes have stopped gliding and `target` holds still. */
 async function settledAt(target: Locator, x: number, y: number) {
+  await settled(target)
+  return at(target, x, y)
+}
+
+/** Resolves once the panes have stopped gliding and `target` holds still. */
+async function settled(target: Locator) {
   await target.page().evaluate(() =>
     Promise.all(
       document
@@ -75,7 +81,6 @@ async function settledAt(target: Locator, x: number, y: number) {
       return still
     })
     .toBe(true)
-  return at(target, x, y)
 }
 
 /** Drags `source` to `to` with the mouse; `hovering` runs while it is held there. */
@@ -126,12 +131,15 @@ test("should open a dropped pane at the size its drop zone showed", async ({ pag
   await drag(page, sidebarRow(page, names.b), await at(mainPane(page), 0.95, 0.4), shows("right"))
   await expectSize(tabPane(page, streamB), "width")
 
+  // Beside a panel: half of it, the panel keeping the other half.
   await drag(page, sidebarRow(page, names.c), await settledAt(tabPane(page, streamB), 0.95, 0.5), shows("right"))
   await expectSize(tabPane(page, streamC), "width")
   await expectSize(tabPane(page, streamB), "width")
 
-  // A pane alone in its column brings its width along; the one it lands beside keeps its own.
+  // A pane alone in its column brings its width along, and the one it lands beside keeps its own;
+  // halving again would leave each a quarter of what B had.
   const widthOf = async (pane: Locator) => (await sizeOf(pane)).width
+  await settled(tabPane(page, streamC))
   const [widthC, widthB] = [await widthOf(tabPane(page, streamC)), await widthOf(tabPane(page, streamB))]
   await drag(
     page,
@@ -140,8 +148,11 @@ test("should open a dropped pane at the size its drop zone showed", async ({ pag
     shows("left")
   )
   await expectSize(tabPane(page, streamC), "width")
-  await expect.poll(() => widthOf(tabPane(page, streamC))).toBe(widthC)
-  await expect.poll(() => widthOf(tabPane(page, streamB))).toBe(widthB)
+  await settled(tabPane(page, streamC))
+  expect({ c: await widthOf(tabPane(page, streamC)), b: await widthOf(tabPane(page, streamB)) }).toEqual({
+    c: widthC,
+    b: widthB,
+  })
   expect(panelParam(page)).toBe(`${streamA}-${streamC}-${streamB}`)
 
   await drag(

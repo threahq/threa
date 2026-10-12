@@ -146,10 +146,12 @@ export function usePaneDropState(
   const land = useCallback(
     (data: DataTransfer, drop: PaneDrop) => {
       setTarget(null)
-      const dragged = readPaneDrag(data, workspaceId)
-      const url = dragged ? null : readDroppedUrl(data)
+      const panelId = readPaneDrag(data, workspaceId)
+      // A drop that unmounts the tab's own handle leaves no node for its dragend to reach.
+      dragged = null
+      const url = panelId ? null : readDroppedUrl(data)
       let landed: string | null = null
-      if (dragged) landed = dropTab(dragged, drop)
+      if (panelId) landed = dropTab(panelId, drop)
       else if (url) landed = dropLink(url, drop)
       if (landed) onLand(landed, drop)
     },
@@ -190,6 +192,8 @@ export function paneDropZone(drops: PaneDropState | null, of: string, edges: rea
   const dropAt = (event: DragEvent<HTMLElement>): PaneDrop | null => {
     // A strip inside the pane has already claimed it.
     if (event.defaultPrevented || !carriesPane(event.dataTransfer) || overTextField(event)) return null
+    // A tab whose handle lost its props mid-drag never fires its dragend; the next drag of anything else clears it.
+    if (!event.dataTransfer.types.includes(PANE_DRAG_TYPE)) dragged = null
     const zone = paneDropZoneAt(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY, edges)
     if (zone !== "centre") return { kind: "edge", of, side: zone }
     return { kind: "tab", of, before: null }
@@ -264,11 +268,12 @@ export function useStripCaret(of: string | null): { before: string | null } | nu
   return { before: target.drop.before }
 }
 
+// An edge drop marks its edge, so one previewing a width that fills the pane still reads as a split, not a tab.
 const EDGE_SHAPES: Record<PaneEdge, string> = {
-  left: "inset-y-0 left-0",
-  right: "inset-y-0 right-0",
-  top: "inset-x-0 top-0 h-1/2",
-  bottom: "inset-x-0 bottom-0 h-1/2",
+  left: "inset-y-0 left-0 border-l-2 border-primary",
+  right: "inset-y-0 right-0 border-r-2 border-primary",
+  top: "inset-x-0 top-0 h-1/2 border-t-2 border-primary",
+  bottom: "inset-x-0 bottom-0 h-1/2 border-b-2 border-primary",
 }
 
 interface PaneDropIndicatorProps {
