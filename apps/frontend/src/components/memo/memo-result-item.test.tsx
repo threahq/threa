@@ -33,3 +33,15 @@ describe("MemoResultItem time", () => {
     expect(screen.queryByTestId("memo-time")).not.toBeInTheDocument()
   })
 })
+
+describe("MemoResultItem standing", () => {
+  it("marks a proposed memo", () => {
+    renderItem({ standing: "proposed" })
+    expect(screen.getByText("Proposed")).toBeInTheDocument()
+  })
+
+  it("adds nothing to a decided memo", () => {
+    renderItem({})
+    expect(screen.queryByText("Proposed")).not.toBeInTheDocument()
+  })
+})

@@ -202,6 +202,26 @@ describe("MemoDetailContent agent provenance (roadmap 6.6)", () => {
   })
 })
 
+describe("MemoDetailContent standing", () => {
+  beforeEach(() => {
+    spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((() => (
+      <span>just now</span>
+    )) as unknown as typeof relativeTimeModule.RelativeTime)
+  })
+
+  it("marks a proposed memo", () => {
+    renderDetail(
+      <MemoDetailContent data={buildDetail({ standing: "proposed" })} workspaceId="ws_1" isLoading={false} />
+    )
+    expect(screen.getByText("Proposed")).toBeInTheDocument()
+  })
+
+  it("adds nothing to a decided memo", () => {
+    renderDetail(<MemoDetailContent data={buildDetail()} workspaceId="ws_1" isLoading={false} />)
+    expect(screen.queryByText("Proposed")).not.toBeInTheDocument()
+  })
+})
+
 describe("MemoDetailContent — user scope (roadmap 6.4)", () => {
   beforeEach(() => {
     spyOnExport(relativeTimeModule, "RelativeTime").mockReturnValue((() => (

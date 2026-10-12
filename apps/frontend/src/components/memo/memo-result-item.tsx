@@ -4,7 +4,7 @@ import { Link } from "react-router-dom"
 import { capture } from "@/lib/analytics/posthog"
 import { RelativeTime } from "@/components/relative-time"
 import { Skeleton } from "@/components/ui/skeleton"
-import { KnowledgeTypeBadge, formatStreamRef } from "@/components/memo/memo-detail"
+import { KnowledgeTypeBadge, MemoStandingBadge, formatStreamRef } from "@/components/memo/memo-detail"
 import { useMemoDetail } from "@/hooks"
 import { getKnowledgeConfig } from "@/lib/memo-display"
 import { stripMarkdownToInline } from "@/lib/markdown/strip"
@@ -74,6 +74,7 @@ export function MemoResultItem({
         {!compact && (
           <div className="mt-2.5 flex min-w-0 items-center gap-2">
             <KnowledgeTypeBadge type={memo.knowledgeType} size="xs" />
+            <MemoStandingBadge standing={memo.standing} className="shrink-0 px-1.5 py-px" />
 
             {memo.tags.length > 0 && (
               <div className="flex min-w-0 items-center gap-1 overflow-hidden">

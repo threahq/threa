@@ -14,7 +14,14 @@ import {
   Trash2,
 } from "lucide-react"
 import { Link } from "react-router-dom"
-import { MEMO_ABSTRACT_MAX_CHARS, MEMO_TITLE_MAX_CHARS, MemoScopes, type StreamType } from "@threahq/types"
+import {
+  MEMO_ABSTRACT_MAX_CHARS,
+  MEMO_TITLE_MAX_CHARS,
+  MemoScopes,
+  MemoStandings,
+  type MemoStanding,
+  type StreamType,
+} from "@threahq/types"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -280,6 +287,15 @@ function MemoStatusBadge({ status }: { status: string }) {
   return null
 }
 
+export function MemoStandingBadge({ standing, className }: { standing: MemoStanding; className?: string }) {
+  if (standing !== MemoStandings.PROPOSED) return null
+  return (
+    <Badge variant="outline" className={cn("border-dashed text-[10px] font-medium", className)}>
+      Proposed
+    </Badge>
+  )
+}
+
 /**
  * Copies the memo's shareable resource URL. Confirms in place by swapping the
  * icon to a checkmark rather than toasting (INV-63) — the label stays fixed so
@@ -401,6 +417,7 @@ export function MemoDetailContent({
         <div className="mb-3 flex flex-wrap items-start justify-between gap-x-2 gap-y-1.5">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <KnowledgeTypeBadge type={data.memo.knowledgeType} size="sm" />
+            <MemoStandingBadge standing={data.memo.standing} />
             <Badge variant="secondary" className="text-[10px] font-medium">
               {memoLabel(data.memo.memoType)}
             </Badge>
