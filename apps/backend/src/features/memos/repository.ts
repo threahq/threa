@@ -685,10 +685,15 @@ export const MemoRepository = {
 
   /**
    * Active saved and reflective memos the batch's audience may see that cite one
-   * of `messageIds` edited after the memo was made: everything but private memos,
-   * plus `scopeUserId`'s own when the batch is that owner's. A conversation
-   * memo is reconsidered through its own conversation, so it is not returned here.
-   * Only memos every audience may read come back.
+   * of `messageIds` edited since the session that wrote the memo began:
+   * everything but private memos, plus `scopeUserId`'s own when the batch is that
+   * owner's. A conversation memo is reconsidered through its own conversation, so
+   * it is not returned here. Only memos every audience may read come back.
+   *
+   * Session start, not the memo's insert: the session reads the message, then
+   * saves, so an edit landing in between predates `memos.created_at` while the
+   * memo still states the old text. A memo no session wrote is measured from
+   * its insert.
    */
   async findActiveMessageMemosCitingEdited(
     db: Querier,
@@ -711,7 +716,14 @@ export const MemoRepository = {
           WHERE messages.workspace_id = memos.workspace_id
             AND messages.id = ANY(memos.source_message_ids)
             AND messages.id = ANY(${messageIds}::text[])
-            AND messages.edited_at > memos.created_at
+            AND messages.edited_at > COALESCE(
+              (
+                SELECT agent_sessions.created_at FROM agent_sessions
+                WHERE agent_sessions.workspace_id = memos.workspace_id
+                  AND agent_sessions.id = memos.source_session_id
+              ),
+              memos.created_at
+            )
         )
         AND ${memoAudienceVisibleSql(workspaceId, audiences, "memos")}
         ${capturedWhileSharedSql(sharedRootStreamId, "memos")}

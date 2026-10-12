@@ -10,13 +10,24 @@ import {
   Visibilities,
   type StreamType,
 } from "@threahq/types"
+import { AgentSessionRepository } from "../../src/features/agents"
 import { ConversationRepository } from "../../src/features/conversations"
 import { MemoRepository, MemoService, PendingItemRepository, type MemoAudience } from "../../src/features/memos"
 import type { ConversationClassification } from "../../src/features/memos/classifier"
 import { MessageRepository } from "../../src/features/messaging"
 import { StreamMemberRepository, StreamRepository } from "../../src/features/streams"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { conversationId, memoId, messageId, pendingItemId, streamId, userId, workspaceId } from "../../src/lib/id"
+import {
+  conversationId,
+  memoId,
+  messageId,
+  pendingItemId,
+  personaId,
+  sessionId,
+  streamId,
+  userId,
+  workspaceId,
+} from "../../src/lib/id"
 import { addTestMember, setupTestDatabase, testMessageContent, withTransaction } from "./setup"
 
 const worthy: ConversationClassification = {
@@ -437,6 +448,7 @@ describe("agent memo provenance", () => {
         cites?: string
         sourceStreamIds?: string[]
         scopeUserId?: string
+        sourceSessionId?: string
       },
       requiresBrowse: boolean,
       embedding: number[]
@@ -456,6 +468,7 @@ describe("agent memo provenance", () => {
         knowledgeType: "decision",
         tags: [],
         status: "active",
+        sourceSessionId: fields.sourceSessionId,
         ...(fields.scopeUserId ? { scope: MemoScopes.USER, scopeUserId: fields.scopeUserId } : {}),
         ...(fields.sourceStreamIds
           ? { authoredByKind: AuthoredByKinds.AGENT, sourceStreamIds: fields.sourceStreamIds, requiresBrowse }
@@ -731,6 +744,50 @@ describe("agent memo provenance", () => {
         const [gated, ungated] = await Promise.all([idsFor([{ kind: "room", roomStreamId: room }]), idsFor([])])
 
         expect({ gated, ungated }).toEqual({ gated: [visible], ungated: [visible, hidden].sort() })
+      })
+    })
+
+    describe("a cited message edited while its memo was being written", () => {
+      test("should return the memo whose session began before the edit, and neither one whose session began after it nor a sessionless one saved after it", async () => {
+        const [raced, settled, sessionless] = await Promise.all([seedRoom(), seedRoom(), seedRoom()])
+        const beginSession = async (room: string, triggerMessageId: string) => {
+          const id = sessionId()
+          await AgentSessionRepository.insert(pool, {
+            id,
+            workspaceId: testWorkspaceId,
+            streamId: room,
+            personaId: personaId(),
+            triggerMessageId,
+          })
+          return id
+        }
+        const edit = async (id: string) => {
+          const { contentJson, contentMarkdown } = testMessageContent("the rollout starts on Tuesday")
+          await MessageRepository.updateContent(pool, testWorkspaceId, id, contentJson, contentMarkdown)
+        }
+
+        const racedSession = await beginSession(raced.room, raced.anchor)
+        await edit(raced.anchor)
+        await edit(settled.anchor)
+        const settledSession = await beginSession(settled.room, settled.anchor)
+        await edit(sessionless.anchor)
+        const racedMemo = await seedMemo(
+          { sourceMessageId: raced.anchor, sourceSessionId: racedSession },
+          false,
+          unitVector(1414)
+        )
+        await seedMemo({ sourceMessageId: settled.anchor, sourceSessionId: settledSession }, false, unitVector(1415))
+        await seedMemo({ sourceMessageId: sessionless.anchor }, false, unitVector(1416))
+
+        const found = await MemoRepository.findActiveMessageMemosCitingEdited(
+          pool,
+          testWorkspaceId,
+          [raced.anchor, settled.anchor, sessionless.anchor],
+          null,
+          []
+        )
+
+        expect(found.map((memo) => memo.id)).toEqual([racedMemo])
       })
     })
   })
