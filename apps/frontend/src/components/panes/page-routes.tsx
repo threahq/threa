@@ -13,15 +13,16 @@ interface PageRoute {
 
 function route(load: () => Promise<ComponentType>, reportsReady?: true): PageRoute {
   let loaded: ComponentType | null = null
-  const fetch = () => load().then((page) => ({ default: (loaded = page) }))
-  const Lazy = lazy(fetch)
+  const fetchPage = () =>
+    loaded ? Promise.resolve({ default: loaded }) : load().then((page) => ({ default: (loaded = page) }))
+  const Lazy = lazy(fetchPage)
   // A page whose chunk already arrived renders at once. A lazy one suspends on its first render even with its
   // chunk cached, and React then holds the boundary's content back for up to 300ms after showing the fallback.
   const Page = () => {
     const [Preloaded] = useState(() => loaded)
     return Preloaded ? <Preloaded /> : <Lazy />
   }
-  return { load: fetch, page: Page, reportsReady }
+  return { load: fetchPage, page: Page, reportsReady }
 }
 
 const PAGES: Record<PagePanePattern, PageRoute> = {
@@ -40,8 +41,9 @@ const PAGES: Record<PagePanePattern, PageRoute> = {
 }
 
 /**
- * Fetches the page `panelId` shows before its pane opens, so a page the pointer is about to open beside the
- * stream shows its content inside the glide rather than after it. A failed fetch is the pane's to report.
+ * Fetches the page `panelId` shows before its pane opens, so a page the pointer or keyboard focus is about to
+ * open beside the stream shows its content inside the glide rather than after it. A failed fetch is the pane's
+ * to report.
  */
 export function preloadPage(panelId: string) {
   const pattern = pagePatternOf(panelId)
