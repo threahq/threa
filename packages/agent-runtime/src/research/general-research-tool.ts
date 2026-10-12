@@ -39,6 +39,8 @@ export interface GeneralResearchCallbacks {
   scope: GeneralResearchScope
 }
 
+const BRIEF_HEADING = "## Research Brief"
+
 const RESEARCH_PROSE_BY_SCOPE: Record<GeneralResearchScope, { description: string; promptBlock: string }> = {
   "workspace-web-integrations": {
     description:
@@ -74,7 +76,7 @@ Do not judge whether the question is "complex enough" or "spans multiple sources
 
 ${simplerToolSentence} Do not reach for general_research for greetings, small talk, or questions you can already answer from your own knowledge.
 
-Pass a fully self-contained \`query\`: the researcher does not see this conversation, only the query you give it. When the brief comes back it is added to your own context for this turn — read it and answer the user directly from it, in your own voice, keeping its cited sources. Never tell the user the brief was "attached to system context" or otherwise narrate the plumbing; just give them the answer. The brief may come back \`partial: true\` if the user stopped it or it ran out of time — answer with what it found and note that the view may be incomplete.`
+Pass a fully self-contained \`query\`: the researcher does not see this conversation, only the query you give it. The brief is added to this system prompt under \`${BRIEF_HEADING}\`. The tool result carries only status. Read the brief and answer the user directly from it, in your own voice, keeping its cited sources. Never tell the user the brief was "attached to system context" or otherwise narrate the plumbing; just give them the answer. The brief may come back \`partial: true\` if the user stopped it or it ran out of time — answer with what it found and note that the view may be incomplete.`
 }
 
 /** Fallback signal for callers that did not wire toolSignalProvider (tests). Never fires. */
@@ -108,6 +110,7 @@ export function createGeneralResearchTool(callbacks: GeneralResearchCallbacks) {
       })
 
       const partial = result.partial === true
+      const brief = result.brief.trim()
       const sourceItems = result.sources.filter((s) => s.title && s.url)
 
       // The LLM gets a compact status summary; the synthesised brief goes into
@@ -118,7 +121,9 @@ export function createGeneralResearchTool(callbacks: GeneralResearchCallbacks) {
         status: partial ? "partial" : "ok",
         partial,
         partialReason: partial ? (result.partialReason ?? null) : null,
-        briefAdded: Boolean(result.brief.trim()),
+        briefAdded: Boolean(brief),
+        // Without this the status-only result reads as research that found nothing.
+        briefLocation: brief ? "your system prompt, under the Research Brief heading" : null,
         sourceCount: sourceItems.length,
         substeps: result.substeps,
       })
@@ -127,7 +132,7 @@ export function createGeneralResearchTool(callbacks: GeneralResearchCallbacks) {
         output,
         provenanceStreamIds: result.provenanceStreamIds,
         sources: sourceItems,
-        systemContext: result.brief.trim() || undefined,
+        systemContext: brief ? `${BRIEF_HEADING}\n\n${brief}` : undefined,
       }
     },
 
@@ -140,7 +145,7 @@ export function createGeneralResearchTool(callbacks: GeneralResearchCallbacks) {
         // brief via systemContext next turn, so we never duplicate it there.
         try {
           const summary = JSON.parse(result.output) as Record<string, unknown>
-          const brief = result.systemContext?.trim()
+          const brief = result.systemContext?.slice(BRIEF_HEADING.length).trim()
           return JSON.stringify(brief ? { ...summary, brief } : summary)
         } catch {
           return result.output

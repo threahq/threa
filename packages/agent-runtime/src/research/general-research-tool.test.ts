@@ -25,7 +25,7 @@ describe("general_research tool", () => {
     const result = await tool.config.execute({ query: "Is the auth PR merged?" }, { toolCallId: "tc_1" })
 
     expect(tool.config.trace.stepType).toBe(AgentStepTypes.RESEARCH)
-    expect(result.systemContext).toBe("Synthesised, cited research brief.")
+    expect(result.systemContext).toBe("## Research Brief\n\nSynthesised, cited research brief.")
     // Only the source with both title and url survives.
     expect(result.sources).toEqual([{ type: "web", title: "Docs", url: "https://example.com/docs", snippet: "…" }])
 
@@ -34,6 +34,7 @@ describe("general_research tool", () => {
       status: "ok",
       partial: false,
       briefAdded: true,
+      briefLocation: "your system prompt, under the Research Brief heading",
       sourceCount: 1,
     })
     expect(output.substeps[0].text).toBe("Searching the web…")
@@ -104,6 +105,7 @@ describe("general_research tool", () => {
       partial: true,
       partialReason: "timeout",
       briefAdded: false,
+      briefLocation: null,
     })
     expect(result.systemContext).toBeUndefined()
   })
