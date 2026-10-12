@@ -730,6 +730,7 @@ describe("Stream connection bridge", () => {
             sourceMessageIds: [message.id],
             participantIds: [message.authorId],
             knowledgeType: "decision",
+            standing: "decided",
             tags: [],
             version: 1,
             cardVersion: 1,
