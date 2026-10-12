@@ -298,6 +298,7 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
       maxMemos: 2,
       conclusionMustState: "They switched session caching to (managed) Redis, replacing the in-process LRU",
       expectSupersedes: "Sessioner cachas i en in-process LRU",
+      expectStanding: "decided",
     },
   },
 
@@ -360,6 +361,7 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
       maxMemos: 2,
       conclusionMustState: "The Pro plan now costs 9 dollars per user, with 20% off annual plans",
       expectSupersedes: "Pro-planen kostar 12 dollar per användare",
+      expectStanding: "decided",
     },
   },
 
@@ -661,6 +663,190 @@ export const memorizerCases: EvalCase<MemorizerInput, MemorizerExpected>[] = [
           minutesAgo: 3 * DAY_MINUTES - 2,
         },
         { ...PIERRE, contentMarkdown: "Perfect", minutesAgo: 3 * DAY_MINUTES - 3 },
+      ],
+    },
+    expectedOutput: {
+      maxMemos: 0,
+    },
+  },
+
+  {
+    id: "open-proposal-proposed-001",
+    name: "Standing: a proposal left open against a settled practice is captured as proposed and retires nothing",
+    input: {
+      category: "extraction",
+      memoryContext: [
+        {
+          title: "Deploys körs på torsdagar",
+          abstract: "Produktionsdeploys körs på torsdagar klockan 10, så att fredagen finns kvar för att rätta fel.",
+          createdDaysAgo: 20,
+        },
+      ],
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown:
+            "torsdagsdeployen krockar med supportens veckomöte varje gång, de sitter i möte när larmen kommer",
+          minutesAgo: 60,
+        },
+        {
+          ...PIERRE,
+          contentMarkdown: "förslag: vi flyttar deployen till tisdagar kl 10 i stället",
+          minutesAgo: 58,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "hmm, kanske. måste kolla med supporten först om tisdagar funkar för dem",
+          minutesAgo: 55,
+        },
+      ],
+    },
+    expectedOutput: {
+      minMemos: 1,
+      maxMemos: 1,
+      mustCoverAny: [["tisdag", "tuesday"]],
+      conclusionMustState: "Moving the deploy to Tuesdays was proposed and is still open, not decided",
+      conclusionMustNotState: "They decided to move the deploy to Tuesdays",
+      expectStanding: "proposed",
+      expectSupersedes: null,
+    },
+  },
+
+  {
+    id: "proposal-adopted-supersedes-001",
+    name: "Standing: adopting a proposal yields a decided memo that retires the proposed memo and the practice it replaces",
+    input: {
+      category: "revision",
+      memoryContext: [
+        {
+          title: "Deploys körs på torsdagar",
+          abstract: "Produktionsdeploys körs på torsdagar klockan 10, så att fredagen finns kvar för att rätta fel.",
+          createdDaysAgo: 20,
+        },
+      ],
+      existingMemos: [
+        {
+          title: "Förslag: flytta deploys till tisdagar",
+          abstract:
+            "Pelle föreslog att flytta produktionsdeployen från torsdagar till tisdagar klockan 10, eftersom torsdagsdeployen krockar med supportens veckomöte. Inte beslutat: Kim ville höra med supporten först.",
+          createdDaysAgo: 1,
+          standing: "proposed",
+        },
+      ],
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown:
+            "torsdagsdeployen krockar med supportens veckomöte varje gång, de sitter i möte när larmen kommer",
+          minutesAgo: 60,
+        },
+        {
+          ...PIERRE,
+          contentMarkdown: "förslag: vi flyttar deployen till tisdagar kl 10 i stället",
+          minutesAgo: 58,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "hmm, kanske. måste kolla med supporten först om tisdagar funkar för dem",
+          minutesAgo: 55,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "pratade med supporten, tisdagar funkar fint för dem",
+          minutesAgo: 10,
+        },
+        { ...PIERRE, contentMarkdown: "då kör vi tisdagar kl 10 från nästa vecka, beslutat", minutesAgo: 8 },
+        { ...KRIS, contentMarkdown: "kör", minutesAgo: 6 },
+      ],
+    },
+    expectedOutput: {
+      minMemos: 1,
+      maxMemos: 1,
+      conclusionMustState: "Production deploys now run on Tuesdays at 10, moved from Thursdays",
+      expectStanding: "decided",
+      expectSupersedes: ["Deploys körs på torsdagar", "Förslag: flytta deploys till tisdagar"],
+    },
+  },
+
+  {
+    id: "proposal-rejected-supersedes-001",
+    name: "Standing: rejecting a proposal retires the proposed memo and leaves the settled practice active",
+    input: {
+      category: "revision",
+      memoryContext: [
+        {
+          title: "Deploys körs på torsdagar",
+          abstract: "Produktionsdeploys körs på torsdagar klockan 10, så att fredagen finns kvar för att rätta fel.",
+          createdDaysAgo: 20,
+        },
+      ],
+      existingMemos: [
+        {
+          title: "Förslag: flytta deploys till tisdagar",
+          abstract:
+            "Pelle föreslog att flytta produktionsdeployen från torsdagar till tisdagar klockan 10, eftersom torsdagsdeployen krockar med supportens veckomöte. Inte beslutat: Kim ville höra med supporten först.",
+          createdDaysAgo: 1,
+          standing: "proposed",
+        },
+      ],
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown:
+            "torsdagsdeployen krockar med supportens veckomöte varje gång, de sitter i möte när larmen kommer",
+          minutesAgo: 60,
+        },
+        {
+          ...PIERRE,
+          contentMarkdown: "förslag: vi flyttar deployen till tisdagar kl 10 i stället",
+          minutesAgo: 58,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "hmm, kanske. måste kolla med supporten först om tisdagar funkar för dem",
+          minutesAgo: 55,
+        },
+        {
+          ...KRIS,
+          contentMarkdown:
+            "pratade med supporten: tisdagar är deras tyngsta dag, då kommer helgens ärenden. de flyttar hellre sitt möte",
+          minutesAgo: 10,
+        },
+        {
+          ...PIERRE,
+          contentMarkdown: "ok, då skippar vi tisdagsidén och behåller torsdagar",
+          minutesAgo: 8,
+        },
+        { ...KRIS, contentMarkdown: "japp", minutesAgo: 6 },
+      ],
+    },
+    expectedOutput: {
+      minMemos: 1,
+      maxMemos: 1,
+      conclusionMustState: "Deploys stay on Thursdays; the proposal to move them to Tuesdays was rejected",
+      conclusionMustNotState: "Deploys moved to Tuesdays",
+      expectStanding: "decided",
+      expectSupersedes: "Förslag: flytta deploys till tisdagar",
+    },
+  },
+
+  {
+    id: "debate-without-proposal-yields-nothing-001",
+    name: "Standing: grumbling about a settled practice with no concrete proposal yields nothing",
+    input: {
+      category: "selectivity",
+      memoryContext: [
+        {
+          title: "Deploys körs på torsdagar",
+          abstract: "Produktionsdeploys körs på torsdagar klockan 10, så att fredagen finns kvar för att rätta fel.",
+          createdDaysAgo: 20,
+        },
+      ],
+      messages: [
+        { ...PIERRE, contentMarkdown: "torsdagsdeployen kändes stressig igen idag", minutesAgo: 30 },
+        { ...KRIS, contentMarkdown: "ja, vet inte om torsdag är bästa dagen egentligen", minutesAgo: 28 },
+        { ...PIERRE, contentMarkdown: "nä. vi får fundera på det någon gång", minutesAgo: 26 },
+        { ...KRIS, contentMarkdown: "mm", minutesAgo: 25 },
       ],
     },
     expectedOutput: {

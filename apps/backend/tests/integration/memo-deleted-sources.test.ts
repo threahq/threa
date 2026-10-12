@@ -599,6 +599,7 @@ describe("memo sources: deleted and edited messages", () => {
               knowledgeType: "decision",
               tags: [],
               supersedesMemoIds: supersedes,
+              standing: "decided",
             },
           ],
         } as never,

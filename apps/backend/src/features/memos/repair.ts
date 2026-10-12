@@ -22,6 +22,10 @@ function addMemoDefaults(obj: Record<string, unknown>): Record<string, unknown> 
     obj.knowledgeType = obj.knowledgeType.toLowerCase()
   }
 
+  if ("standing" in obj && typeof obj.standing === "string") {
+    obj.standing = obj.standing.toLowerCase()
+  }
+
   // For message classification: if isGem is false, knowledgeType should be null
   if ("isGem" in obj && obj.isGem === false) {
     if (!("knowledgeType" in obj)) {

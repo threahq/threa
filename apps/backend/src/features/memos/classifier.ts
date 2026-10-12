@@ -1,4 +1,5 @@
 import type { AI } from "@threahq/agent-runtime"
+import { MemoStandings } from "@threahq/types"
 import type { ConfigResolver } from "../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../lib/ai/config-resolver"
 import { MessageFormatter } from "../../lib/ai/message-formatter"
@@ -69,7 +70,8 @@ export class MemoClassifier {
             existingMemos
               .map((m, i) => {
                 const asOf = m.latestSourceAt ? ` (as of ${formatDate(m.latestSourceAt, tz, "YYYY-MM-DD")})` : ""
-                return `${i + 1}. ${m.title}${asOf}\n   ${m.abstract}`
+                const proposed = m.standing === MemoStandings.PROPOSED ? "(proposed) " : ""
+                return `${i + 1}. ${proposed}${m.title}${asOf}\n   ${m.abstract}`
               })
               .join("\n")
           )

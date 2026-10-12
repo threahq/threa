@@ -3,7 +3,16 @@ import { composeSql, sql, type Querier } from "../../db"
 import { roomReadableWithoutMembershipSql } from "../streams"
 import { memoAudienceVisibleSql, type MemoAudience } from "./audience"
 import { detectSearchConfig } from "../../lib/text-search-config"
-import type { MemoType, KnowledgeType, MemoStatus, AuthoredByKind, MemoScope, MemoEmbedSummary } from "@threahq/types"
+import { MemoStandings } from "@threahq/types"
+import type {
+  MemoType,
+  KnowledgeType,
+  MemoStanding,
+  MemoStatus,
+  AuthoredByKind,
+  MemoScope,
+  MemoEmbedSummary,
+} from "@threahq/types"
 import {
   MEMO_KNOWLEDGE_TYPE_BOOST,
   MEMO_STREAM_TYPE_BOOST,
@@ -103,6 +112,7 @@ interface MemoRow {
   source_message_ids: string[]
   participant_ids: string[]
   knowledge_type: string
+  standing: string
   tags: string[]
   parent_memo_id: string | null
   status: string
@@ -136,6 +146,7 @@ export interface Memo {
   sourceMessageIds: string[]
   participantIds: string[]
   knowledgeType: KnowledgeType
+  standing: MemoStanding
   tags: string[]
   parentMemoId: string | null
   status: MemoStatus
@@ -179,6 +190,7 @@ export interface InsertMemoParams {
   sourceMessageIds: string[]
   participantIds: string[]
   knowledgeType: KnowledgeType
+  standing?: MemoStanding
   tags?: string[]
   parentMemoId?: string
   status?: MemoStatus
@@ -209,6 +221,7 @@ export interface MemoCopy {
   sourceMessageIds: string[]
   participantIds: string[]
   knowledgeType: KnowledgeType
+  standing: MemoStanding
   tags: string[]
   version: number
   cardVersion: number
@@ -353,6 +366,7 @@ function mapRowToMemo(row: MemoRow): Memo {
     sourceMessageIds: row.source_message_ids,
     participantIds: row.participant_ids,
     knowledgeType: row.knowledge_type as KnowledgeType,
+    standing: row.standing as MemoStanding,
     tags: row.tags,
     parentMemoId: row.parent_memo_id,
     status: row.status as MemoStatus,
@@ -378,7 +392,7 @@ function mapRowToMemo(row: MemoRow): Memo {
 const SELECT_FIELDS = `
   id, workspace_id, memo_type, source_message_id, source_conversation_id,
   title, abstract, key_points, source_message_ids, participant_ids,
-  knowledge_type, tags, parent_memo_id, status, version, card_version, revision_reason,
+  knowledge_type, standing, tags, parent_memo_id, status, version, card_version, revision_reason,
   authored_by_kind, source_session_id, source_stream_ids, requires_browse, scope, scope_user_id,
   origin_workspace_id, shared_root_stream_id, created_at, updated_at, archived_at,
   earliest_source_at, latest_source_at
@@ -387,7 +401,7 @@ const SELECT_FIELDS = `
 const SELECT_FIELDS_PREFIXED = `
   m.id, m.workspace_id, m.memo_type, m.source_message_id, m.source_conversation_id,
   m.title, m.abstract, m.key_points, m.source_message_ids, m.participant_ids,
-  m.knowledge_type, m.tags, m.parent_memo_id, m.status, m.version, m.card_version, m.revision_reason,
+  m.knowledge_type, m.standing, m.tags, m.parent_memo_id, m.status, m.version, m.card_version, m.revision_reason,
   m.authored_by_kind, m.source_session_id, m.source_stream_ids, m.requires_browse, m.scope, m.scope_user_id,
   m.origin_workspace_id, m.shared_root_stream_id, m.created_at, m.updated_at, m.archived_at,
   m.earliest_source_at, m.latest_source_at
@@ -781,6 +795,7 @@ export const MemoRepository = {
       audiences: readonly MemoAudience[]
       /** Only memos captured while this channel was shared block the candidate. */
       sharedRootStreamId?: string
+      standing: MemoStanding
     }
   ): Promise<{ memo: Memo; distance: number } | null> {
     const [nearest] = await MemoRepository.findNearestInStream(db, { ...params, limit: 1 })
@@ -800,6 +815,7 @@ export const MemoRepository = {
       audiences: readonly MemoAudience[]
       /** Only memos captured while this channel was shared are returned. */
       sharedRootStreamId?: string
+      standing?: MemoStanding
       limit: number
     }
   ): Promise<{ memo: Memo; distance: number }[]> {
@@ -817,6 +833,7 @@ export const MemoRepository = {
     const audienceVisible = memoAudienceVisibleSql(workspaceId, audiences, "m")
     const sharedOnly = capturedWhileSharedSql(params.sharedRootStreamId, "m")
     const withinDistance = composeSql`(${maxDistance === undefined} OR m.embedding <=> ${embeddingLiteral}::vector < ${maxDistance ?? 0})`
+    const ofStanding = composeSql`(${params.standing === undefined} OR m.standing = ${params.standing ?? MemoStandings.DECIDED})`
 
     const result = await db.query<MemoRow & { distance: number }>(composeSql`
       WITH stream_memos AS (
@@ -832,6 +849,7 @@ export const MemoRepository = {
           ${sharedOnly}
           AND m.embedding IS NOT NULL
           AND ${withinDistance}
+          AND ${ofStanding}
           AND ${audienceVisible}
         UNION
         SELECT ${SELECT_FIELDS_PREFIXED_SQL},
@@ -846,6 +864,7 @@ export const MemoRepository = {
           ${sharedOnly}
           AND m.embedding IS NOT NULL
           AND ${withinDistance}
+          AND ${ofStanding}
           AND ${audienceVisible}
       )
       SELECT * FROM stream_memos
@@ -870,6 +889,7 @@ export const MemoRepository = {
       conversationId: string
       embedding: number[]
       maxDistance: number
+      standing: MemoStanding
       excludeIds?: string[]
     }
   ): Promise<{ memo: Memo; distance: number }[]> {
@@ -881,6 +901,7 @@ export const MemoRepository = {
       WHERE m.workspace_id = ${params.workspaceId}
         AND m.source_conversation_id = ${params.conversationId}
         AND m.status = 'active'
+        AND m.standing = ${params.standing}
         AND m.embedding IS NOT NULL
         AND m.embedding <=> ${embeddingLiteral}::vector < ${params.maxDistance}
         AND m.id <> ALL(${params.excludeIds ?? []}::text[])
@@ -992,7 +1013,7 @@ export const MemoRepository = {
       INSERT INTO memos (
         id, workspace_id, memo_type, source_message_id, source_conversation_id,
         title, abstract, key_points, search_config, source_message_ids, participant_ids,
-        knowledge_type, tags, parent_memo_id, status, version,
+        knowledge_type, standing, tags, parent_memo_id, status, version,
         authored_by_kind, source_session_id, source_stream_ids, requires_browse, scope, scope_user_id,
         shared_root_stream_id, earliest_source_at, latest_source_at
       )
@@ -1009,6 +1030,7 @@ export const MemoRepository = {
         ${params.sourceMessageIds},
         ${params.participantIds},
         ${params.knowledgeType},
+        ${params.standing ?? MemoStandings.DECIDED},
         ${params.tags ?? []},
         ${params.parentMemoId ?? null},
         ${params.status ?? "active"},
@@ -1211,6 +1233,7 @@ export const MemoRepository = {
       source_message_ids: copy.sourceMessageIds,
       participant_ids: copy.participantIds,
       knowledge_type: copy.knowledgeType,
+      standing: copy.standing,
       tags: copy.tags,
       version: copy.version,
       card_version: copy.cardVersion,
@@ -1223,7 +1246,7 @@ export const MemoRepository = {
       INSERT INTO memos (
         id, workspace_id, memo_type, source_conversation_id,
         title, abstract, key_points, search_config, source_message_ids, participant_ids,
-        knowledge_type, tags, status, version, card_version, authored_by_kind, scope,
+        knowledge_type, standing, tags, status, version, card_version, authored_by_kind, scope,
         shared_root_stream_id, origin_workspace_id, embedding, created_at, earliest_source_at, latest_source_at
       )
       SELECT
@@ -1231,12 +1254,12 @@ export const MemoRepository = {
         x.title, x.abstract, ARRAY(SELECT jsonb_array_elements_text(x.key_points)), x.search_config,
         ARRAY(SELECT jsonb_array_elements_text(x.source_message_ids)),
         ARRAY(SELECT jsonb_array_elements_text(x.participant_ids)),
-        x.knowledge_type, ARRAY(SELECT jsonb_array_elements_text(x.tags)), 'active', x.version, x.card_version,
+        x.knowledge_type, x.standing, ARRAY(SELECT jsonb_array_elements_text(x.tags)), 'active', x.version, x.card_version,
         'pipeline', 'workspace', ${sharedRootStreamId}, ${originWorkspaceId}, x.embedding::vector, x.created_at,
         COALESCE(x.earliest_source_at, local_span.earliest), COALESCE(x.latest_source_at, local_span.latest)
       FROM jsonb_to_recordset(${JSON.stringify(rows)}::jsonb) AS x(
         id text, conversation_id text, title text, abstract text, key_points jsonb, search_config text,
-        source_message_ids jsonb, participant_ids jsonb, knowledge_type text, tags jsonb,
+        source_message_ids jsonb, participant_ids jsonb, knowledge_type text, standing text, tags jsonb,
         version int, card_version int, embedding text, created_at timestamptz,
         earliest_source_at timestamptz, latest_source_at timestamptz
       )
@@ -1255,6 +1278,7 @@ export const MemoRepository = {
         source_message_ids = EXCLUDED.source_message_ids,
         participant_ids = EXCLUDED.participant_ids,
         knowledge_type = EXCLUDED.knowledge_type,
+        standing = EXCLUDED.standing,
         tags = EXCLUDED.tags,
         version = EXCLUDED.version,
         card_version = EXCLUDED.card_version,

@@ -2,6 +2,7 @@
  * Memorizer Evaluation Types
  */
 
+import type { MemoStanding } from "@threahq/types"
 import type { EvalClassifierMessage, EvalExistingMemo } from "../memo-classifier/types"
 
 export interface MemorizerInput {
@@ -17,6 +18,7 @@ export interface MemorizerOutputMemo {
   title: string
   abstract: string
   knowledgeType: string
+  standing: MemoStanding
   keyPoints: string[]
   tags: string[]
   /** Titles of the shown memos this memo explicitly retires (reversed/replaced conclusion). */
@@ -49,8 +51,10 @@ export interface MemorizerExpected {
   conclusionMustState?: string
   /** LLM-judged: no memo may assert this conclusion (the abandoned/reversed side). */
   conclusionMustNotState?: string
-  /** A title: memos must retire exactly that shown memo via supersedesMemoIds. null: none may retire anything. */
-  expectSupersedes?: string | null
+  /** Titles: memos must retire exactly those shown memos via supersedesMemoIds. null: none may retire anything. */
+  expectSupersedes?: string | string[] | null
+  /** Every returned memo carries this standing. */
+  expectStanding?: MemoStanding
   /** A shown memo and a claim of it the conversation left standing: retiring that memo requires some memo to restate the claim. */
   survives?: { title: string; claim: string }
 }

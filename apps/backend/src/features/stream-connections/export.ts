@@ -583,6 +583,7 @@ function toBridgeMemo(
     sourceMessageIds: memo.sourceMessageIds,
     participantIds: memo.participantIds.filter((id) => participants.has(id)),
     knowledgeType: memo.knowledgeType,
+    standing: memo.standing,
     tags: memo.tags,
     version: memo.version,
     cardVersion: memo.cardVersion,

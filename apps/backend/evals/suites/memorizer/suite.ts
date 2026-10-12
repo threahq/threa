@@ -29,6 +29,7 @@ import {
   exclusionEvaluator,
   conclusionEvaluator,
   supersessionEvaluator,
+  standingEvaluator,
   survivingClaimEvaluator,
   accuracyEvaluator,
   overCaptureRateEvaluator,
@@ -102,6 +103,7 @@ async function runMemorizerTask(input: MemorizerInput, ctx: EvalContext): Promis
         title: m.title,
         abstract: m.abstract,
         knowledgeType: m.knowledgeType,
+        standing: m.standing,
         keyPoints: m.keyPoints,
         tags: m.tags,
         supersedesTitles: m.supersedesMemoIds.map((id) => titles.get(id) ?? id),
@@ -126,6 +128,7 @@ export const memorizerSuite: EvalSuite<MemorizerInput, MemorizerOutput, Memorize
     exclusionEvaluator,
     conclusionEvaluator,
     supersessionEvaluator,
+    standingEvaluator,
     survivingClaimEvaluator,
   ],
 

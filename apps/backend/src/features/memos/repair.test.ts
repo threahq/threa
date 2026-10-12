@@ -53,4 +53,11 @@ describe("memoRepair", () => {
     const parsed = JSON.parse(result)
     expect(parsed.knowledgeType).toBe("decision")
   })
+
+  test("normalizes standing to lowercase", async () => {
+    const input = '{"title": "x", "standing": "Proposed"}'
+    const result = await memoRepair({ text: input })
+    const parsed = JSON.parse(result)
+    expect(parsed.standing).toBe("proposed")
+  })
 })

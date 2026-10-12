@@ -159,7 +159,7 @@ export const conclusionEvaluator: Evaluator<MemorizerOutput, MemorizerExpected> 
   },
 }
 
-/** A reversal must retire exactly the memo it contradicts via supersedesMemoIds; anything else retires nothing. */
+/** A reversal must retire exactly the memos it replaces via supersedesMemoIds; anything else retires nothing. */
 export const supersessionEvaluator: Evaluator<MemorizerOutput, MemorizerExpected> = {
   name: "supersession",
   evaluate: (output, expected): EvaluatorResult => {
@@ -170,17 +170,37 @@ export const supersessionEvaluator: Evaluator<MemorizerOutput, MemorizerExpected
       return { name: "supersession", score: 0, passed: false, details: `Error: ${output.error}` }
     }
     const retired = [...new Set(output.memos.flatMap((m) => m.supersedesTitles))]
-    const want = expected.expectSupersedes
-    const passed = want === null ? retired.length === 0 : retired.length === 1 && retired[0] === want
+    const want = [expected.expectSupersedes ?? []].flat()
+    const passed = retired.length === want.length && want.every((title) => retired.includes(title))
     if (passed) return { name: "supersession", score: 1, passed: true }
+    const quoted = (titles: string[]) => (titles.length === 0 ? "nothing" : titles.map((t) => `"${t}"`).join(", "))
     return {
       name: "supersession",
       score: 0,
       passed: false,
-      details:
-        retired.length === 0
-          ? `No memo retired "${want}" (reversal left both standing)`
-          : `Retired ${retired.map((t) => `"${t}"`).join(", ")}; expected ${want === null ? "nothing" : `only "${want}"`}`,
+      details: `Retired ${quoted(retired)}; expected ${quoted(want)}`,
+    }
+  },
+}
+
+/** A proposal left open must not read as decided, and a committed outcome must not read as proposed. */
+export const standingEvaluator: Evaluator<MemorizerOutput, MemorizerExpected> = {
+  name: "standing",
+  evaluate: (output, expected): EvaluatorResult => {
+    const want = expected.expectStanding
+    if (want === undefined) {
+      return { name: "standing", score: 1, passed: true, details: "No standing requirements" }
+    }
+    if (output.error) {
+      return { name: "standing", score: 0, passed: false, details: `Error: ${output.error}` }
+    }
+    const wrong = output.memos.filter((m) => m.standing !== want)
+    if (wrong.length === 0) return { name: "standing", score: 1, passed: true }
+    return {
+      name: "standing",
+      score: 0,
+      passed: false,
+      details: `Expected ${want}: ${wrong.map((m) => `"${m.title}" is ${m.standing}`).join(", ")}`,
     }
   },
 }

@@ -1,4 +1,4 @@
-import type { KnowledgeType, MemoRecallOutcome } from "@threahq/types"
+import { MemoStandings, type KnowledgeType, type MemoRecallOutcome, type MemoStanding } from "@threahq/types"
 import type { AnalyticsReporter } from "@threahq/backend-common"
 import type { MemoAudience, MemoExplorerService, RelevanceScorerLike } from "../../memos"
 import { logger } from "../../../lib/logger"
@@ -19,6 +19,7 @@ export interface RecalledMemo {
   title: string
   abstract: string
   knowledgeType: KnowledgeType
+  standing: MemoStanding
   sourceMessageIds: string[]
   createdAt: Date
   earliestSourceAt: Date | null
@@ -171,6 +172,7 @@ export class PreparedRecall {
         title: memo.title,
         abstract: memo.abstract,
         knowledgeType: memo.knowledgeType,
+        standing: memo.standing,
         sourceMessageIds: memo.sourceMessageIds,
         createdAt: memo.createdAt,
         earliestSourceAt: memo.earliestSourceAt,
@@ -190,11 +192,12 @@ export function formatRecalledMemosBlock(memos: RecalledMemo[], timezone = "UTC"
   if (memos.length === 0) return null
   const entries = memos.map((memo) => {
     const asOf = memo.latestSourceAt ? ` as_of="${formatInstant(memo.latestSourceAt, timezone)}"` : ""
-    return `<memo id="${escapeXmlAttr(memo.id)}" title="${escapeXmlAttr(memo.title)}" type="${memo.knowledgeType}"${asOf}>\n${escapeXmlAttr(memo.abstract)}\n</memo>`
+    const standing = memo.standing === MemoStandings.PROPOSED ? ' standing="proposed"' : ""
+    return `<memo id="${escapeXmlAttr(memo.id)}" title="${escapeXmlAttr(memo.title)}" type="${memo.knowledgeType}"${standing}${asOf}>\n${escapeXmlAttr(memo.abstract)}\n</memo>`
   })
   return `## Recalled from memory
 
-Workspace memory retrieved for the latest message before you started. Take what bears on your reply into account without being asked, and say so briefly when it changes your answer. Memos are summaries and can be out of date, so look further when the reply depends on a detail. A memo's as_of is when the newest message it summarizes was posted, and a later message that explicitly changes or reverses what the memo states overrides it. A question, proposal or passing remark does not. Leave out memos that don't bear on the reply.
+Workspace memory retrieved for the latest message before you started. Take what bears on your reply into account without being asked, and say so briefly when it changes your answer. Memos are summaries and can be out of date, so look further when the reply depends on a detail. A memo's as_of is when the newest message it summarizes was posted, and a later message that explicitly changes or reverses what the memo states overrides it. A question, proposal or passing remark does not. A memo marked proposed records a change someone put forward that the conversation had neither adopted nor rejected as of its date: report it as proposed, never as decided. Leave out memos that don't bear on the reply.
 
 ${entries.join("\n")}`
 }

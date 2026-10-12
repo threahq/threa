@@ -109,6 +109,7 @@ const memoContent: MemoContent = {
   tags: ["ids"],
   sourceMessageIds: ["msg_1", "msg_2"],
   supersedesMemoIds: [],
+  standing: "decided",
 }
 
 const classification: ConversationClassification = {
@@ -332,6 +333,7 @@ describe("MemoService.processBatch — memos:captured timeline event (INV-69)", 
       conversationId: CONVERSATION_ID,
       embedding: expect.any(Array),
       maxDistance: expect.any(Number),
+      standing: "decided",
       excludeIds: [],
     })
     expect(markSuperseded).toHaveBeenCalledWith(
@@ -801,6 +803,7 @@ function fakeMemoRow(id: string, overrides: Partial<import("./repository").Memo>
     sourceMessageIds: ["msg_1", "msg_2"],
     participantIds: ["usr_1"],
     knowledgeType: "decision",
+    standing: "decided",
     tags: ["deploys"],
     parentMemoId: null,
     status: "active",

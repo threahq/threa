@@ -55,6 +55,7 @@ function memoHit(id: string, sourceMessageIds: string[]): MemoExplorerResult {
     sourceMessageIds,
     participantIds: [],
     knowledgeType: "decision",
+    standing: "decided",
     tags: [],
     parentMemoId: null,
     status: "active",

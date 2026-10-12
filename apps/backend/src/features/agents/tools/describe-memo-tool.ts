@@ -49,7 +49,9 @@ Use this after \`workspace_research\` surfaces a memo id (look for \`memo:…\` 
 - See the original wording rather than the abstract
 - Resolve the conversation that produced the memo
 
-Returns the source messages with their \`messageId\`, \`streamId\`, and \`authorId\` so you can build \`shared-message:\` / \`quote:\` pointer URLs.`,
+Returns the source messages with their \`messageId\`, \`streamId\`, and \`authorId\` so you can build \`shared-message:\` / \`quote:\` pointer URLs.
+
+A memo whose \`standing\` is "proposed" records a change someone put forward that the conversation had neither adopted nor rejected: report it as proposed, never as decided.`,
     inputSchema: DescribeMemoSchema,
 
     execute: async (input): Promise<AgentToolResult> => {
@@ -85,6 +87,7 @@ Returns the source messages with their \`messageId\`, \`streamId\`, and \`author
             keyPoints: memo.keyPoints,
             tags: memo.tags,
             knowledgeType: memo.knowledgeType,
+            standing: memo.standing,
             memoType: memo.memoType,
             sourceStream: sourceStream
               ? { id: sourceStream.id, type: sourceStream.type, name: sourceStream.name }

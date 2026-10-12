@@ -1,5 +1,5 @@
 import type { AI } from "@threahq/agent-runtime"
-import type { KnowledgeType } from "@threahq/types"
+import { MemoStandings, type KnowledgeType, type MemoStanding } from "@threahq/types"
 import type { ConfigResolver } from "../../lib/ai/config-resolver"
 import { COMPONENT_PATHS } from "../../lib/ai/config-resolver"
 import { MessageFormatter } from "../../lib/ai/message-formatter"
@@ -26,10 +26,14 @@ import {
  */
 // Ids are rendered so a reversal can name the memo it retires (supersedesMemoIds), and
 // key points so the memo replacing it can restate every claim the conversation left standing.
-function formatMemoList(memos: Pick<Memo, "id" | "title" | "abstract" | "keyPoints">[]): string {
+function formatMemoList(memos: Pick<Memo, "id" | "title" | "abstract" | "keyPoints" | "standing">[]): string {
   return memos
     .map((m, i) =>
-      [`${i + 1}. [${m.id}] ${m.title}`, `   ${m.abstract}`, ...m.keyPoints.map((point) => `   - ${point}`)].join("\n")
+      [
+        `${i + 1}. [${m.id}] ${m.standing === MemoStandings.PROPOSED ? "(proposed) " : ""}${m.title}`,
+        `   ${m.abstract}`,
+        ...m.keyPoints.map((point) => `   - ${point}`),
+      ].join("\n")
     )
     .join("\n")
 }
@@ -58,11 +62,12 @@ export interface MemoContent {
    * so the model names the retired memo directly.
    */
   supersedesMemoIds: string[]
+  standing: MemoStanding
 }
 
 export interface MemorizerContext {
   /** The stream's active memos: vocabulary context, and what a reversal may retire. */
-  memoryContext: Pick<Memo, "id" | "title" | "abstract" | "keyPoints">[]
+  memoryContext: Pick<Memo, "id" | "title" | "abstract" | "keyPoints" | "standing">[]
   content: Message | Message[]
   /** Active memos already attached to this conversation (for the regenerate-on-revision path). */
   existingMemos?: Memo[]
@@ -166,6 +171,7 @@ export class Memorizer {
       tags: memo.tags.slice(0, MEMO_GENERATED_TAGS_MAX),
       sourceMessageIds: resolveSourceMessageIds(memo.sourceMessageIds, messages),
       supersedesMemoIds: (memo.supersedesMemoIds ?? []).filter((id) => validSupersedeIds.has(id)),
+      standing: memo.standing,
     }))
   }
 

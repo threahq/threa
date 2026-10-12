@@ -395,4 +395,171 @@ export const memoClassifierCases: EvalCase<MemoClassifierInput, MemoClassifierEx
     },
     expectedOutput: { expectKnowledgeWorthy: false },
   },
+
+  {
+    id: "open-proposal-worthy-001",
+    name: "Proposal: a concrete proposal to change a settled practice, left open, is worth capturing",
+    input: {
+      topicSummary: "Deploydag",
+      category: "knowledge",
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown:
+            "torsdagsdeployen krockar med supportens veckomöte varje gång, de sitter i möte när larmen kommer",
+          minutesAgo: 60,
+        },
+        {
+          ...PIERRE,
+          contentMarkdown: "förslag: vi flyttar deployen till tisdagar kl 10 i stället",
+          minutesAgo: 58,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "hmm, kanske. måste kolla med supporten först om tisdagar funkar för dem",
+          minutesAgo: 55,
+        },
+      ],
+    },
+    expectedOutput: { expectKnowledgeWorthy: true },
+  },
+
+  {
+    id: "proposal-adopted-revise-001",
+    name: "Proposal: adopting what a proposed memo records warrants revision",
+    input: {
+      topicSummary: "Deploydag",
+      category: "revision",
+      existingMemos: [
+        {
+          title: "Förslag: flytta deploys till tisdagar",
+          abstract:
+            "Pelle föreslog att flytta produktionsdeployen från torsdagar till tisdagar klockan 10, eftersom torsdagsdeployen krockar med supportens veckomöte.",
+          createdDaysAgo: 1,
+          standing: "proposed",
+        },
+      ],
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown:
+            "torsdagsdeployen krockar med supportens veckomöte varje gång, de sitter i möte när larmen kommer",
+          minutesAgo: 60,
+        },
+        {
+          ...PIERRE,
+          contentMarkdown: "förslag: vi flyttar deployen till tisdagar kl 10 i stället",
+          minutesAgo: 58,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "hmm, kanske. måste kolla med supporten först om tisdagar funkar för dem",
+          minutesAgo: 55,
+        },
+        { ...KRIS, contentMarkdown: "pratade med supporten, tisdagar funkar fint för dem", minutesAgo: 10 },
+        { ...PIERRE, contentMarkdown: "då kör vi tisdagar kl 10 från nästa vecka, beslutat", minutesAgo: 8 },
+        { ...KRIS, contentMarkdown: "kör", minutesAgo: 6 },
+      ],
+    },
+    expectedOutput: { expectKnowledgeWorthy: true, expectReviseExisting: true },
+  },
+
+  {
+    id: "proposal-rejected-revise-001",
+    name: "Proposal: rejecting what a proposed memo records warrants revision",
+    input: {
+      topicSummary: "Deploydag",
+      category: "revision",
+      existingMemos: [
+        {
+          title: "Förslag: flytta deploys till tisdagar",
+          abstract:
+            "Pelle föreslog att flytta produktionsdeployen från torsdagar till tisdagar klockan 10, eftersom torsdagsdeployen krockar med supportens veckomöte.",
+          createdDaysAgo: 1,
+          standing: "proposed",
+        },
+      ],
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown:
+            "torsdagsdeployen krockar med supportens veckomöte varje gång, de sitter i möte när larmen kommer",
+          minutesAgo: 60,
+        },
+        {
+          ...PIERRE,
+          contentMarkdown: "förslag: vi flyttar deployen till tisdagar kl 10 i stället",
+          minutesAgo: 58,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "hmm, kanske. måste kolla med supporten först om tisdagar funkar för dem",
+          minutesAgo: 55,
+        },
+        {
+          ...KRIS,
+          contentMarkdown:
+            "pratade med supporten: tisdagar är deras tyngsta dag, då kommer helgens ärenden. de flyttar hellre sitt möte",
+          minutesAgo: 10,
+        },
+        { ...PIERRE, contentMarkdown: "ok, då skippar vi tisdagsidén och behåller torsdagar", minutesAgo: 8 },
+        { ...KRIS, contentMarkdown: "japp", minutesAgo: 6 },
+      ],
+    },
+    expectedOutput: { expectKnowledgeWorthy: true, expectReviseExisting: true },
+  },
+
+  {
+    id: "proposal-still-open-no-revise-001",
+    name: "Proposal: more talk that leaves a proposed memo's proposal open is not a revision",
+    input: {
+      topicSummary: "Deploydag",
+      category: "revision",
+      existingMemos: [
+        {
+          title: "Förslag: flytta deploys till tisdagar",
+          abstract:
+            "Pelle föreslog att flytta produktionsdeployen från torsdagar till tisdagar klockan 10, eftersom torsdagsdeployen krockar med supportens veckomöte.",
+          createdDaysAgo: 1,
+          standing: "proposed",
+        },
+      ],
+      messages: [
+        {
+          ...PIERRE,
+          contentMarkdown:
+            "torsdagsdeployen krockar med supportens veckomöte varje gång, de sitter i möte när larmen kommer",
+          minutesAgo: 60,
+        },
+        {
+          ...PIERRE,
+          contentMarkdown: "förslag: vi flyttar deployen till tisdagar kl 10 i stället",
+          minutesAgo: 58,
+        },
+        {
+          ...KRIS,
+          contentMarkdown: "hmm, kanske. måste kolla med supporten först om tisdagar funkar för dem",
+          minutesAgo: 55,
+        },
+        { ...PIERRE, contentMarkdown: "hann du prata med supporten om tisdagarna?", minutesAgo: 10 },
+        { ...KRIS, contentMarkdown: "inte än, tar det på måndag", minutesAgo: 8 },
+      ],
+    },
+    expectedOutput: { expectKnowledgeWorthy: false, expectReviseExisting: false },
+  },
+
+  {
+    id: "vague-change-talk-not-worthy-001",
+    name: "Proposal: loose talk about maybe changing something, with nothing concrete proposed, is not worth capturing",
+    input: {
+      topicSummary: "Deployrutinen",
+      category: "chatter",
+      messages: [
+        { ...PIERRE, contentMarkdown: "borde vi kanske se över deployrutinen någon gång?", minutesAgo: 60 },
+        { ...KRIS, contentMarkdown: "ja kanske, den känns lite gammal", minutesAgo: 58 },
+        { ...PIERRE, contentMarkdown: "mm. vi får ta det nån dag", minutesAgo: 55 },
+      ],
+    },
+    expectedOutput: { expectKnowledgeWorthy: false },
+  },
 ]

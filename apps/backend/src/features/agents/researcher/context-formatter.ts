@@ -1,4 +1,4 @@
-import { StreamTypes, type AuthorType } from "@threahq/types"
+import { MemoStandings, StreamTypes, type AuthorType } from "@threahq/types"
 import type { Querier } from "../../../db"
 import { formatInstant } from "../../../lib/temporal"
 import { formatAttachWithStreamTag, formatMemoTag, formatMsgRefToken, formatRetrievedMessageTag } from "../pointer-tags"
@@ -100,7 +100,9 @@ function formatMemosSection(memos: EnrichedMemoResult[], workspaceId: string, ti
 
       const asOf = memo.latestSourceAt ? `, as of ${formatInstant(memo.latestSourceAt, timezone)}` : ""
 
-      return `**${memo.title}** _(${memoTag})_${asOf}
+      const standing = memo.standing === MemoStandings.PROPOSED ? ", proposed" : ""
+
+      return `**${memo.title}** _(${memoTag}${standing})_${asOf}
 
 ${memo.abstract}
 ${keyPointsList}${sourcesLine}${linkLine}`
@@ -109,7 +111,7 @@ ${keyPointsList}${sourcesLine}${linkLine}`
 
   return `### Memos
 
-A memo condenses the messages on its Sources line. Where those messages appear among the Related Messages below, answer from what they say: anything a memo states beyond them is its own reading, not something anyone said. Each memo is as of its newest source message. A message posted after that date that explicitly changes or reverses what the memo states overrides it. A question, proposal or passing remark does not.
+A memo condenses the messages on its Sources line. Where those messages appear among the Related Messages below, answer from what they say: anything a memo states beyond them is its own reading, not something anyone said. Each memo is as of its newest source message. A message posted after that date that explicitly changes or reverses what the memo states overrides it. A question, proposal or passing remark does not. A memo marked proposed records a change someone put forward that the conversation had neither adopted nor rejected as of its date: report it as proposed, never as decided.
 
 ${memoEntries}
 `

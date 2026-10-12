@@ -61,6 +61,7 @@ export function createMockMemoResult(overrides: Partial<MemoExplorerResult["memo
       sourceMessageIds: ["msg_1"],
       participantIds: ["member_1"],
       knowledgeType: "decision",
+      standing: "decided",
       tags: [],
       parentMemoId: null,
       status: "active",

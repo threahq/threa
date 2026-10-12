@@ -349,6 +349,45 @@ describe("Memos in a shared channel's copy", () => {
     })
   })
 
+  test("should copy a proposed host memo as proposed", async () => {
+    const world = await seedWorld()
+    const message = await hostMessage(world, "we picked postgres")
+    const memo = await hostMemo(world, await hostConversation(world), "Database", [message.id], {
+      standing: "proposed",
+    })
+
+    await world.pull()
+
+    const { rows } = await pool.query(`SELECT standing FROM memos WHERE workspace_id = $1 AND id = $2`, [
+      world.partner.id,
+      memo,
+    ])
+    expect(rows).toEqual([{ standing: "proposed" }])
+  })
+
+  test("should copy a memo as decided when an older host sends no standing", async () => {
+    const world = await seedWorld()
+    const message = await hostMessage(world, "we picked postgres")
+    const memo = await hostMemo(world, await hostConversation(world), "Database", [message.id], {
+      standing: "proposed",
+    })
+    world.bridgeClient.tamper = (memos) =>
+      bridgeMemosSchema.parse({
+        memos: memos.map((m) => {
+          const { standing: _standing, ...older } = m
+          return older
+        }),
+      }).memos
+
+    await world.pull()
+
+    const { rows } = await pool.query(`SELECT standing FROM memos WHERE workspace_id = $1 AND id = $2`, [
+      world.partner.id,
+      memo,
+    ])
+    expect(rows).toEqual([{ standing: "decided" }])
+  })
+
   test("should rewrite a copy without a second capture when the host edits its card, and fetch nothing when the host changed nothing", async () => {
     const world = await seedWorld()
     const message = await hostMessage(world, "we picked postgres")

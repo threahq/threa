@@ -319,6 +319,7 @@ describe("memo source span", () => {
       sourceMessageIds,
       participantIds: [],
       knowledgeType: "decision",
+      standing: "decided",
       tags: [],
       version: 1,
       embedding: axis(0),

@@ -41,6 +41,7 @@ describe("describe_memo tool", () => {
         sourceMessageIds: ["msg_1", "msg_2"],
         participantIds: ["user_alice"],
         knowledgeType: "decision",
+        standing: "decided",
         tags: ["deploy"],
         parentMemoId: null,
         status: "active",
@@ -103,6 +104,7 @@ describe("describe_memo tool", () => {
     expect(parsed.abstract).toContain("Friday")
     expect(parsed.keyPoints).toEqual(["Ship Friday", "Flag default-off"])
     expect(parsed.tags).toEqual(["deploy"])
+    expect(parsed.standing).toBe("decided")
     expect(parsed.sourceStream).toEqual({ id: "stream_1", type: "channel", name: "general" })
     expect(parsed.sources).toHaveLength(2)
     expect(parsed.sources[0]).toMatchObject({
@@ -202,6 +204,7 @@ describe("describe_memo tool", () => {
         sourceMessageIds: ["msg_1"],
         participantIds: [],
         knowledgeType: "decision",
+        standing: "decided",
         tags: [],
         parentMemoId: null,
         status: "active",

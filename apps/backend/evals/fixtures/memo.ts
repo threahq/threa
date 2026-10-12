@@ -7,9 +7,9 @@
 import { ulid } from "ulid"
 import type { Memo } from "../../src/features/memos"
 import type { Conversation } from "../../src/features/conversations"
-import { MemoStatuses, MemoTypes, ConversationStatuses } from "@threahq/types"
+import { MemoStandings, MemoStatuses, MemoTypes, ConversationStatuses } from "@threahq/types"
 import { renderMessagesXml } from "../../src/lib/ai/message-formatter"
-import type { EvalClassifierMessage } from "../suites/memo-classifier/types"
+import type { EvalClassifierMessage, EvalExistingMemo } from "../suites/memo-classifier/types"
 
 /**
  * Render eval-fixture messages through the SAME production renderer the memo
@@ -53,7 +53,7 @@ export function toConversation(input: { topicSummary: string | null; participant
   }
 }
 
-export function toMemo(m: { title: string; abstract: string; createdDaysAgo?: number }, conversationId: string): Memo {
+export function toMemo(m: EvalExistingMemo, conversationId: string): Memo {
   const createdAt = new Date(Date.now() - (m.createdDaysAgo ?? 1) * 24 * 60 * 60 * 1000)
   return {
     id: `memo_${ulid()}`,
@@ -67,6 +67,7 @@ export function toMemo(m: { title: string; abstract: string; createdDaysAgo?: nu
     sourceMessageIds: [],
     participantIds: [],
     knowledgeType: "context",
+    standing: m.standing ?? MemoStandings.DECIDED,
     tags: [],
     parentMemoId: null,
     status: MemoStatuses.ACTIVE,

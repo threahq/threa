@@ -2,6 +2,8 @@
  * Memo Classifier Evaluation Types
  */
 
+import type { MemoStanding } from "@threahq/types"
+
 export interface EvalClassifierMessage {
   /** Stable id rendered in the prompt; generated when omitted. */
   id?: string
@@ -18,6 +20,8 @@ export interface EvalExistingMemo {
   abstract: string
   /** Age of the memo; defaults to 1 day. */
   createdDaysAgo?: number
+  /** Defaults to decided. */
+  standing?: MemoStanding
 }
 
 export interface MemoClassifierInput {

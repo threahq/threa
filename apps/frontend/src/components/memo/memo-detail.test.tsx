@@ -20,6 +20,7 @@ function buildDetail(overrides: Partial<MemoExplorerDetail["memo"]> = {}): MemoE
       sourceMessageIds: [],
       participantIds: [],
       knowledgeType: "decision",
+      standing: "decided",
       tags: ["launch"],
       parentMemoId: null,
       status: "active",

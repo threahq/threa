@@ -124,12 +124,24 @@ describe("formatRetrievedContext", () => {
     const text = formatRetrievedContext([memo(), memo({}, null)], [], [], WORKSPACE)
     expect(text).toEqual(
       expect.stringContaining(
-        "A memo condenses the messages on its Sources line. Where those messages appear among the Related Messages below, answer from what they say: anything a memo states beyond them is its own reading, not something anyone said. Each memo is as of its newest source message. A message posted after that date that explicitly changes or reverses what the memo states overrides it. A question, proposal or passing remark does not.\n\n**Deploy runbook**"
+        "A memo condenses the messages on its Sources line. Where those messages appear among the Related Messages below, answer from what they say: anything a memo states beyond them is its own reading, not something anyone said. Each memo is as of its newest source message. A message posted after that date that explicitly changes or reverses what the memo states overrides it. A question, proposal or passing remark does not. A memo marked proposed records a change someone put forward that the conversation had neither adopted nor rejected as of its date: report it as proposed, never as decided.\n\n**Deploy runbook**"
       )
     )
     expect(text?.match(/^\*\*Deploy runbook\*\* _\([^\n]*$/gm)).toEqual([
       "**Deploy runbook** _(memo:memo_1 from General stream:stream_1)_, as of 2026-07-01 10:00 UTC+0",
       "**Deploy runbook** _(memo:memo_1 from General stream:stream_1)_",
+    ])
+  })
+
+  test("a proposed memo says so in its tag line and a decided one does not", () => {
+    const proposed = memo()
+    proposed.memo.standing = "proposed"
+    const decided = memo()
+    decided.memo.standing = "decided"
+    const text = formatRetrievedContext([proposed, decided], [], [], WORKSPACE)
+    expect(text?.match(/^\*\*Deploy runbook\*\* _\([^\n]*$/gm)).toEqual([
+      "**Deploy runbook** _(memo:memo_1 from General stream:stream_1, proposed)_, as of 2026-07-01 10:00 UTC+0",
+      "**Deploy runbook** _(memo:memo_1 from General stream:stream_1)_, as of 2026-07-01 10:00 UTC+0",
     ])
   })
 

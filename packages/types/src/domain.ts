@@ -36,6 +36,7 @@ import type {
   BoardLens,
   MemoType,
   KnowledgeType,
+  MemoStanding,
   MemoStatus,
   AuthoredByKind,
   MemoScope,
@@ -1030,6 +1031,7 @@ export interface Memo {
   sourceMessageIds: string[]
   participantIds: string[]
   knowledgeType: KnowledgeType
+  standing: MemoStanding
   tags: string[]
   parentMemoId: string | null
   status: MemoStatus

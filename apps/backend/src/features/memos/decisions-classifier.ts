@@ -113,6 +113,7 @@ export class DecisionsMemoClassifier {
       existingMemos: existingMemos.map((memo) => ({
         title: memo.title,
         abstract: memo.abstract,
+        standing: memo.standing,
         asOf: memo.latestSourceAt ? formatDate(memo.latestSourceAt, tz, "YYYY-MM-DD") : null,
       })),
     }

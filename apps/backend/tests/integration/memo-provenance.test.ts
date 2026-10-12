@@ -356,6 +356,7 @@ describe("agent memo provenance", () => {
             knowledgeType: "decision",
             tags: [],
             supersedesMemoIds: supersedes,
+            standing: "decided",
           },
         ]
       }

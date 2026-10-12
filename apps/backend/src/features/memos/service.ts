@@ -37,6 +37,7 @@ import {
   MemoTypes,
   MemoStatuses,
   MemoScopes,
+  MemoStandings,
   StreamTypes,
   Visibilities,
   AuthorTypes,
@@ -44,6 +45,7 @@ import {
   ConversationStatuses,
   type KnowledgeType,
   type MemoScope,
+  type MemoStanding,
   type MemosCapturedEventPayload,
 } from "@threahq/types"
 import {
@@ -170,6 +172,7 @@ interface MemoToCreate {
   sourceMessageIds: string[]
   participantIds: string[]
   knowledgeType: import("@threahq/types").KnowledgeType
+  standing: MemoStanding
   tags: string[]
   status: import("@threahq/types").MemoStatus
   embedding: number[]
@@ -859,13 +862,14 @@ export class MemoService implements MemoServiceLike {
             sourceMessageIds: content.sourceMessageIds,
             participantIds: conversation.participantIds,
             knowledgeType: content.knowledgeType,
+            standing: content.standing,
             tags: content.tags,
             status: MemoStatuses.ACTIVE,
             embedding: embeddings[i],
             scope: fetchedData.memoScope.scope,
             scopeUserId: fetchedData.memoScope.scopeUserId,
             sharedRootStreamId: fetchedData.sharedRootStreamId,
-            supersedesMemoIds: content.supersedesMemoIds,
+            supersedesMemoIds: content.standing === MemoStandings.PROPOSED ? [] : content.supersedesMemoIds,
           })
         }
 
@@ -1039,6 +1043,7 @@ export class MemoService implements MemoServiceLike {
           scopeUserId: memoData.scopeUserId,
           audiences: [fetchedData.readerAudience],
           sharedRootStreamId: memoData.sharedRootStreamId,
+          standing: memoData.standing,
         })
         if (duplicate && !explicitSupersedeIds.includes(duplicate.memo.id)) {
           // The reversed memos still retire even though the correction itself
@@ -1106,6 +1111,7 @@ export class MemoService implements MemoServiceLike {
                 conversationId: memoData.sourceConversationId,
                 embedding: memoData.embedding,
                 maxDistance: MEMO_SUPERSEDE_DISTANCE,
+                standing: memoData.standing,
                 excludeIds: [...createdMemos.map((m) => m.id), ...explicitSupersedeIds],
               })
             ).filter((s) => currentVersions.has(s.memo.id))
@@ -1378,6 +1384,7 @@ export class MemoService implements MemoServiceLike {
         scope: resolvedScope,
         scopeUserId: resolvedScopeUserId,
         audiences: [audience ?? { kind: "room", roomStreamId: natural.rootStreamId }],
+        standing: MemoStandings.DECIDED,
       })
       if (duplicate) {
         logger.info(
@@ -1626,6 +1633,7 @@ export class MemoService implements MemoServiceLike {
           scope: context.memoScope.scope,
           scopeUserId: context.memoScope.scopeUserId,
           audiences: [memorizerAudience(context.memoScope)],
+          standing: content.standing,
         })
         if (duplicate) {
           deduped++
@@ -1648,6 +1656,7 @@ export class MemoService implements MemoServiceLike {
           sourceMessageIds: context.sourceMessageIds,
           participantIds,
           knowledgeType: content.knowledgeType,
+          standing: content.standing,
           tags: content.tags,
           status: MemoStatuses.ACTIVE,
           authoredByKind: AuthoredByKinds.AGENT,

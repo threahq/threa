@@ -671,6 +671,14 @@ export const KnowledgeTypes = {
   REFERENCE: "reference",
 } as const satisfies Record<string, KnowledgeType>
 
+export const MEMO_STANDINGS = ["decided", "proposed"] as const
+export type MemoStanding = (typeof MEMO_STANDINGS)[number]
+
+export const MemoStandings = {
+  DECIDED: "decided",
+  PROPOSED: "proposed",
+} as const satisfies Record<string, MemoStanding>
+
 // Memo statuses (lifecycle)
 export const MEMO_STATUSES = ["draft", "active", "archived", "superseded"] as const
 export type MemoStatus = (typeof MEMO_STATUSES)[number]

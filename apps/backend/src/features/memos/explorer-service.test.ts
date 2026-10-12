@@ -27,6 +27,7 @@ function fakeMemo(overrides: Partial<Memo> = {}): Memo {
     sourceMessageIds: [],
     participantIds: [],
     knowledgeType: "decision",
+    standing: "decided",
     tags: ["a"],
     parentMemoId: null,
     status: "active",

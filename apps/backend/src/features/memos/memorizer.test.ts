@@ -83,6 +83,7 @@ describe("memoSetSchema", () => {
     tags: ["ids"],
     sourceMessageIds: ["msg_1"],
     supersedesMemoIds: null,
+    standing: "decided" as const,
   }
 
   it("accepts a set of single-topic memos", () => {
@@ -149,6 +150,7 @@ describe("Memorizer — supersession targets", () => {
             tags: [],
             sourceMessageIds: [],
             supersedesMemoIds: ["memo_price", "memo_invented"],
+            standing: "decided",
           },
         ],
       },
@@ -163,6 +165,7 @@ describe("Memorizer — supersession targets", () => {
       title: "Pro costs $12",
       abstract: "Pro is $12 per user.",
       keyPoints: ["Annual plans get 20% off"],
+      standing: "decided",
     } as Memo
 
     const [memo] = await memorizer.memorizeConversation("<message/>", {
@@ -181,6 +184,67 @@ describe("Memorizer — supersession targets", () => {
   })
 })
 
+describe("Memorizer — standing", () => {
+  const memorizerReturning = (memos: unknown[]) => {
+    const generateObject = mock(async (_params: { messages: { content: string }[] }) => ({ value: { memos } }))
+    const memorizer = new Memorizer(
+      { generateObject } as unknown as AI,
+      { resolve: async () => ({ modelId: "test:model", temperature: 0 }) } as unknown as ConfigResolver,
+      new MessageFormatter()
+    )
+    return { memorizer, generateObject }
+  }
+
+  it("marks a proposed memo in the prompt and leaves a decided one unmarked", async () => {
+    const { memorizer, generateObject } = memorizerReturning([])
+    await memorizer.memorizeConversation("<message/>", {
+      memoryContext: [
+        {
+          id: "memo_open",
+          title: "Move to weekly releases",
+          abstract: "Floated.",
+          keyPoints: [],
+          standing: "proposed",
+        },
+        { id: "memo_settled", title: "Releases are monthly", abstract: "Settled.", keyPoints: [], standing: "decided" },
+      ],
+      content: [],
+      workspaceId: "ws_1",
+      now: NOW,
+    })
+
+    const prompt = generateObject.mock.calls[0]?.[0].messages[1]?.content ?? ""
+    expect({
+      proposedMarked: prompt.includes("[memo_open] (proposed) Move to weekly releases"),
+      decidedMarked: prompt.includes("[memo_settled] (proposed)"),
+      decidedShown: prompt.includes("[memo_settled] Releases are monthly"),
+    }).toEqual({ proposedMarked: true, decidedMarked: false, decidedShown: true })
+  })
+
+  it("carries the standing the model gave onto the returned memo", async () => {
+    const { memorizer } = memorizerReturning([
+      {
+        title: "Move to weekly releases",
+        abstract: "Proposed, not yet agreed.",
+        knowledgeType: "decision",
+        keyPoints: [],
+        tags: [],
+        sourceMessageIds: [],
+        supersedesMemoIds: null,
+        standing: "proposed",
+      },
+    ])
+    const memos = await memorizer.memorizeConversation("<message/>", {
+      memoryContext: [],
+      content: [],
+      workspaceId: "ws_1",
+      now: NOW,
+    })
+
+    expect(memos.map((m) => m.standing)).toEqual(["proposed"])
+  })
+})
+
 describe("Memorizer — shape clamps", () => {
   it("keeps a memo whose title or lists overrun the asked-for size, trimmed to the limits", async () => {
     const longTitle = "Decision: ".padEnd(MEMO_TITLE_MAX_CHARS + 40, "x")
@@ -192,6 +256,7 @@ describe("Memorizer — shape clamps", () => {
       tags: ["a", "b", "c", "d", "e", "f"],
       sourceMessageIds: [],
       supersedesMemoIds: null,
+      standing: "decided",
     }
     expect(memoSetSchema.safeParse({ memos: [generated] }).success).toBe(true)
 

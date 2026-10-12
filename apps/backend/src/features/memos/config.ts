@@ -8,6 +8,7 @@ import {
   KNOWLEDGE_TYPES,
   MEMO_ABSTRACT_MAX_CHARS,
   MEMO_KEY_POINTS_MAX,
+  MEMO_STANDINGS,
   MEMO_TAGS_MAX,
   MEMO_TITLE_MAX_CHARS,
   type AuthoredByKind,
@@ -306,11 +307,16 @@ export const memoItemSchema = z.object({
     ),
   tags: z.array(z.string()).describe(`Up to ${MEMO_GENERATED_TAGS_MAX} relevant tags for categorization`),
   sourceMessageIds: z.array(z.string()).describe("IDs of the messages this specific memo draws from"),
+  standing: z
+    .enum(MEMO_STANDINGS)
+    .describe(
+      '"decided" when the messages commit to it, or it is a settled fact, procedure or finding. "proposed" when a participant put forward a concrete change to something already settled and the messages shown neither adopt nor reject it'
+    ),
   supersedesMemoIds: z
     .array(z.string())
     .nullable()
     .describe(
-      "Ids of existing memos (from the Memory Context or Existing Memos list) whose conclusion this memo REPLACES or REVERSES — the retired memos are removed from active memory with every claim they hold, so list one only when this memo restates each of its claims that still holds. Null when this memo retires nothing"
+      "Ids of existing memos (from the Memory Context or Existing Memos list) whose conclusion this memo REPLACES or REVERSES — the retired memos are removed from active memory with every claim they hold, so list one only when this memo restates each of its claims that still holds. Null when this memo retires nothing; always null on a proposed memo"
     ),
 })
 
@@ -343,6 +349,7 @@ Knowledge-worthy conversations:
 - Establish durable context about WHY things are the way they are
 - Contain reference information that will be useful later
 - Record a lasting fact about a participant or someone they look after (an allergy, a leave period and who covers it, a standing day off), or a deal or negotiation they are themselves party to
+- Put forward a concrete proposal to change something the team had already settled, even when it is still open where the messages end: the settled thing is now in question
 
 NOT knowledge-worthy:
 - Pure social chat or banter
@@ -350,7 +357,7 @@ NOT knowledge-worthy:
 - Reactions to news, product releases, or announcements — hot takes and impressions about things outside the participants' control that set no direction for their own work ("the new model looks disappointing", "did you see the leak?") fail the agency test. This is topic-neutral: the SAME subject becomes worthy the moment the participants turn it into something they produced — a validated learning about how a tool behaves, or a decision to adopt or drop it.
 - Personal small talk: moods, where someone is today, plans for this evening or weekend
 - Conversations where important information is in external links only
-- Incomplete discussions that trail off without resolution
+- Incomplete discussions that trail off without resolution, a concrete proposal to change something already settled excepted
 
 A conversation is not knowledge-worthy just because it is long or touches technical subjects. Judge what would actually be recalled in six months: if the durable core is "they chatted about X", there is no memo. Message tags carry a relative \`age\` (e.g. \`age="3 days ago"\`) — use it to gauge durability: a passing state described days ago has almost certainly gone stale, while a decision or validated learning stays durable regardless of age.
 
@@ -375,7 +382,7 @@ Message count: {{MESSAGE_COUNT}}
 export const CLASSIFIER_EXISTING_MEMO_TEMPLATE = `## Existing Memos for this conversation
 {{MEMOS}}
 
-Set shouldReviseExisting true ONLY if the conversation now contains substantive knowledge these memos do not capture — a changed conclusion, or a distinctly new topic worth its own memo. Continued chat about what the memos already say, rewordings, and reactions are NOT grounds for revision.`
+Set shouldReviseExisting true ONLY if the conversation now contains substantive knowledge these memos do not capture — a changed conclusion, or a distinctly new topic worth its own memo. Continued chat about what the memos already say, rewordings, and reactions are NOT grounds for revision. A memo marked (proposed) records a change that was still open: messages that adopt or reject it change its conclusion, so they ARE grounds for revision.`
 
 // --- Decision-model path (unpinned workspaces) ---
 
@@ -412,7 +419,7 @@ const WORTHY_CRITERIA: Record<KnowledgeType, string> = {
   reference:
     "A stable look-it-up fact the participants established or pinned down: an id, a value, a name, a location, a durable constraint — including a lasting fact about a participant or someone they look after, such as an allergy, a leave period and who covers it, or a standing day off.",
   context:
-    "Durable background on WHY something is the way it is, or where it now lives — the state of their own setup and what moved it there, or where a deal or negotiation they are party to stands. Reach for this LAST, after the four above: a passing status or a reaction that fits none of them is not context, it is not worth capturing.",
+    "Durable background on WHY something is the way it is, or where it now lives — the state of their own setup and what moved it there, or where a deal or negotiation they are party to stands, or a concrete proposal one of them put forward to change something they had already settled, still open where the messages end. Reach for this LAST, after the four above: a passing status or a reaction that fits none of them is not context, it is not worth capturing.",
 }
 
 const UNWORTHY_CRITERIA = {
@@ -423,7 +430,7 @@ const UNWORTHY_CRITERIA = {
   social:
     "Banter, small talk, moods, and short-lived personal logistics: where someone is today, plans for this evening or weekend, booked or not, however long ago they were made. Nothing was produced and nothing lasts. A personal fact that stays true for months is a reference, not this.",
   unresolved:
-    "A discussion that trails off without landing, or whose substance lives only behind an external link. Something was being worked on; nothing was reached.",
+    "A discussion that trails off without landing, or whose substance lives only behind an external link. Something was being worked on; nothing was reached. A concrete proposal to change something they had already settled is never this, even unanswered: the settled thing is now in question, and that is context.",
 }
 
 export const WORTHINESS_CRITERIA: Record<string, string> = { ...WORTHY_CRITERIA, ...UNWORTHY_CRITERIA }
@@ -437,6 +444,8 @@ Two tests decide it, and an option on the worthy side has to pass BOTH:
 - DURABILITY: would the core still be true and useful in six months?
 - AGENCY: did the participants decide it, work it out, or validate it themselves, rather than voice a reaction to something outside their control? A first-hand fact about their own lives, or a deal they are party to, is theirs.
 
+A concrete proposal one of them put forward to change something they had already settled passes both while it stands open, answered or not: it is theirs, and the settled thing stays in question until they adopt or reject it.
+
 A conversation is not worth capturing just because it is long or technical. If the durable core is "they chatted about X", pick the option on the unworthy side that names why. Message tags carry a relative \`age\` — a passing state described days ago has gone stale, while a decision, a validated learning, or where their own deal or a commitment they plan around stands stays durable regardless of age.`
 
 export const ACTION_ITEMS_INSTRUCTIONS = `Did someone commit to doing something, or get directly asked to? A task, a to-do, a follow-up with an owner.
@@ -445,12 +454,14 @@ This is independent of whether the conversation is worth remembering: "send me t
 
 export const REVISE_INSTRUCTIONS = `The memos listed in the state already cover this conversation. Do these messages now contain substantive durable knowledge those memos do not capture — a conclusion that changed, a decision reversed, a setup replaced, a fact corrected, or a genuinely new topic that deserves its own memo?
 
-More chat around a topic a memo already states is NOT a revision: restatements, agreement, rewordings, and elaboration that leaves the captured conclusion intact are all covered already. When in doubt, it is not a revision.`
+More chat around a topic a memo already states is NOT a revision: restatements, agreement, rewordings, and elaboration that leaves the captured conclusion intact are all covered already. When in doubt, it is not a revision.
+
+A memo whose standing is "proposed" records a change that was still open: messages that adopt or reject it change its conclusion, so that IS a revision.`
 
 const MEMORIZER_SYSTEM_PROMPT_TEMPLATE = `You are a knowledge curator for a team chat application. From a conversation, you pull out only the things genuinely worth remembering later and write each as its own short, self-contained memo.
 
 Before writing anything, gate every candidate through two topic-neutral tests — a candidate that fails EITHER is not a memo. Apply them to what was actually produced, never blanket-ban the subject. A whole conversation can pass zero candidates; returning no memos is correct and common when nothing here lasts or nothing here was produced by the participants:
-- DURABLE? Would the core still be true and useful in six months? A worked-out procedure, a committed decision, a validated finding lasts. A passing state — "it's broken / it works / it's slow right now" — is stale within the hour and yields nothing; the CAUSE or FIX behind it is what's durable, so capture what was produced, not the passing state. A commitment the team plans around for a date ahead — a booked offsite, an agreed deadline — is not a passing state: it holds until it happens or they change it. Tonight's dinner or this weekend's plans are short-lived logistics, booked or not.
+- DURABLE? Would the core still be true and useful in six months? A worked-out procedure, a committed decision, a validated finding lasts. A passing state — "it's broken / it works / it's slow right now" — is stale within the hour and yields nothing; the CAUSE or FIX behind it is what's durable, so capture what was produced, not the passing state. A commitment the team plans around for a date ahead — a booked offsite, an agreed deadline — is not a passing state: it holds until it happens or they change it. Tonight's dinner or this weekend's plans are short-lived logistics, booked or not. A concrete proposal to change something the team already settled lasts for as long as it stands open: the settled thing is now in question, and whoever recalls it later needs to know.
 - PRODUCED BY THEM? Did the participants decide it, work it out, or validate it themselves — or are they relaying or reacting to something outside their control (news, a release, a third-party event, a rumor)? Relay and reaction fail this gate EVEN WHEN the underlying fact is perfectly durable: "Company X shut down its product" or "they don't want to work there because of the CEO" is still true next year, but the participants only passed it along — it is not knowledge they produced, so it is not a memo. Recasting a reaction as a fact about them ("they dislike X", "they found Y impressive") does not rescue it. A first-hand, lasting fact about their own lives (an allergy, a leave period and who covers it, a standing day off) or a deal they are party to (an offer made to them) is theirs and passes. The moment they turn that same subject into something they produced — a decision to adopt or drop it, or a learning they validated about a tool they build with — it passes.
 
 How to write the memos that clear both gates:
@@ -463,15 +474,15 @@ How to write the memos that clear both gates:
 7. Use consistent vocabulary with prior memos when the same concept reappears.
 8. RESOLVE PRONOUNS when possible - If you can determine who "he/she/they" refers to from the conversation, use their actual name. If unclear (e.g., conversation continues from offline), leave the pronoun. When in doubt, preserve the original wording.
 9. ANCHOR DATES when possible - Convert relative dates ("yesterday", "next week") to actual dates using today's date, given under "Today" at the end of these instructions. Message tags also carry a relative \`age\` (e.g. \`age="3 days ago"\`) — use it to anchor dates and to judge durability: a passing state from days ago has gone stale, while a decision or validated learning stays durable regardless of age. If ambiguous, leave as-is.
-10. CAPTURE THE LANDING, NOT THE JOURNEY. When a conversation weighs options or swings back and forth, the memo records where it LANDED — the final position with the winning rationale. A stance the conversation itself later abandoned or reversed is the journey, not the knowledge; never emit a memo for it, and never present an intermediate lean as the decision.
-11. NEVER INVERT A CONCLUSION. State a decision only in the direction the messages actually commit to. Before writing a decision memo, locate the message where the choice is committed ("let's do X", "ok, we'll go with X", agreement right after X was proposed) and make the memo's headline match THAT side — a memo whose supporting rationale argues for X must not conclude Y. If you cannot tell which side was chosen, it is not a decision memo; capture nothing rather than guessing.
+10. CAPTURE THE LANDING, NOT THE JOURNEY. When a conversation weighs options or swings back and forth, the memo records where it LANDED — the final position with the winning rationale. A stance the conversation itself later abandoned or reversed is the journey, not the knowledge; never emit a memo for it, and never present an intermediate lean as the decision. A concrete proposal to change something already settled, put forward by a participant and neither adopted nor rejected where the messages end, IS where the conversation landed: write it with standing "proposed" and knowledgeType "context", stating what is proposed, what it would replace, and what is still open.
+11. NEVER INVERT A CONCLUSION. State a decision only in the direction the messages actually commit to. Before writing a decision memo, locate the message where the choice is committed ("let's do X", "ok, we'll go with X", agreement right after X was proposed) and make the memo's headline match THAT side — a memo whose supporting rationale argues for X must not conclude Y. When no message commits to it, it is not decided: a concrete proposal to change something already settled is written with standing "proposed" (rule 10), and anything else yields nothing. If you cannot tell which side was chosen, capture nothing rather than guessing.
 
 CHOOSING knowledgeType — pick the tightest fit; if nothing fits, the memo probably should not exist:
 - decision: a choice the participants committed to, with its rationale.
 - procedure: a sequence they worked out that reliably achieves something.
 - learning: something they discovered or validated themselves.
 - reference: a stable, look-it-up fact worth pinning (an id, a value, a name, a lasting personal fact).
-- context: durable "why it is this way" background that outlives the moment. Reach for it LAST, not as a catch-all — a transient status, a passing reaction, or an event that fits none of the other types is not context, it is not a memo.
+- context: durable "why it is this way" background that outlives the moment, or a proposal written with standing "proposed". Reach for it LAST, not as a catch-all — a transient status, a passing reaction, or an event that fits none of the other types is not context, it is not a memo.
 
 Output ONLY valid JSON matching the schema.
 
@@ -507,7 +518,7 @@ export function getMemorizerSystemPrompt(
 
 export const MEMORIZER_CONVERSATION_PROMPT = `Extract the memos worth remembering from this conversation.
 
-When the conversation REVERSES or replaces a conclusion a memory-context memo states, emit the corrected memo and list that memo's id in supersedesMemoIds, so the outdated memo is retired instead of standing next to its contradiction. Retiring a memo removes every claim it holds from active memory. When the conversation reverses only part of a memo, the corrected memo restates each of that memo's claims the conversation left standing, so nothing still true is lost. A conversation that only adds detail, a condition, a next step, or a neighbouring decision retires nothing, even when it is on the same topic. Leave supersedesMemoIds null otherwise.
+When the conversation REVERSES or replaces a conclusion a memory-context memo states, emit the corrected memo and list that memo's id in supersedesMemoIds, so the outdated memo is retired instead of standing next to its contradiction. Retiring a memo removes every claim it holds from active memory. When the conversation reverses only part of a memo, the corrected memo restates each of that memo's claims the conversation left standing, so nothing still true is lost. A proposed memo retires nothing: the memo whose conclusion it would change stays in active memory until the conversation commits, and the proposed memo says which settled practice it would change. A memo listed as (proposed) is retired by its outcome: when the conversation adopts or rejects what it proposed, the memo stating that outcome lists the proposed memo's id. A conversation that only adds detail, a condition, a next step, or a neighbouring decision retires nothing, even when it is on the same topic. Leave supersedesMemoIds null otherwise.
 
 ## Memory Context (prior memos in this stream)
 {{MEMORY_CONTEXT}}
@@ -521,9 +532,9 @@ Return one memo per distinct topic worth remembering, each terse and self-contai
 
 export const MEMORIZER_REVISION_PROMPT = `This conversation already has memos. Capture only what is NEW or has CHANGED since them. Do NOT re-create memos for topics the existing memos already cover unchanged.
 
-Treat the existing memos as authoritative coverage: a topic that is restated, rephrased, elaborated with opinions, or met with agreement in the new messages is COVERED — emit nothing for it. Only a changed conclusion (a decision reversed, a setup replaced, a fact corrected) or a genuinely new topic earns a memo. Returning an empty set is the expected common case when a conversation is re-processed after a few new messages.
+Treat the existing memos as authoritative coverage: a topic that is restated, rephrased, elaborated with opinions, or met with agreement in the new messages is COVERED — emit nothing for it. Only a changed conclusion (a decision reversed, a setup replaced, a fact corrected), a standing proposal that reopens one, the adoption or rejection of a (proposed) memo's proposal, or a genuinely new topic earns a memo. Returning an empty set is the expected common case when a conversation is re-processed after a few new messages.
 
-When the conversation has REVERSED or replaced a conclusion an existing memo or a memory-context memo states, emit the corrected memo and list the replaced memo's id(s) in supersedesMemoIds — the retired memo is removed from active memory instead of standing next to its own contradiction. Retiring a memo removes every claim it holds from active memory. When the conversation reverses only part of a memo, the corrected memo restates each of that memo's claims the conversation left standing, so nothing still true is lost. A conversation that only adds detail, a condition, a next step, or a neighbouring decision retires nothing, even when it is on the same topic. A memo on a new topic leaves it null.
+When the conversation has REVERSED or replaced a conclusion an existing memo or a memory-context memo states, emit the corrected memo and list the replaced memo's id(s) in supersedesMemoIds — the retired memo is removed from active memory instead of standing next to its own contradiction. Retiring a memo removes every claim it holds from active memory. When the conversation reverses only part of a memo, the corrected memo restates each of that memo's claims the conversation left standing, so nothing still true is lost. A proposed memo retires nothing: the memo whose conclusion it would change stays in active memory until the conversation commits, and the proposed memo says which settled practice it would change. A memo listed as (proposed) is retired by its outcome: when the conversation adopts or rejects what it proposed, the memo stating that outcome lists the proposed memo's id. A conversation that only adds detail, a condition, a next step, or a neighbouring decision retires nothing, even when it is on the same topic. A memo on a new topic leaves it null.
 
 ## Memory Context (prior memos in this stream)
 {{MEMORY_CONTEXT}}

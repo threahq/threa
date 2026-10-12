@@ -172,6 +172,7 @@ describe("memo capture: the memorizer is shown older stream memos near the conve
               knowledgeType: "decision",
               tags: [],
               supersedesMemoIds: context.memoryContext.some((m) => m.id === target) ? [target] : [],
+              standing: "decided",
             },
           ]
         },

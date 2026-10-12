@@ -10,6 +10,7 @@ function result(id: string, title: string, latestSourceAt: Date | null = null): 
       title,
       abstract: `${title} abstract`,
       knowledgeType: "context",
+      standing: "decided",
       sourceMessageIds: [] as string[],
       createdAt: new Date("2026-09-30T10:00:00Z"),
       latestSourceAt,
@@ -190,5 +191,22 @@ describe("formatRecalledMemosBlock", () => {
       ),
       empty: null,
     })
+  })
+
+  it("marks a proposed memo as proposed and leaves a decided one unmarked", async () => {
+    const proposed = result("memo_proposal", "Move standup", new Date("2026-03-02T09:00:00Z"))
+    proposed.memo.standing = "proposed"
+    const recall = new PreparedRecall({
+      analyticsReporter: new DisabledAnalyticsReporter(),
+      memoExplorerService: { search: async () => [proposed, result("memo_decided", "Keep standup")] },
+      scorer: { score: async () => [1, 0.9] },
+    })
+
+    const block = formatRecalledMemosBlock((await recall.recall(params)).memos)
+
+    expect(block?.match(/^<memo [^>]*>/gm)).toEqual([
+      '<memo id="memo_proposal" title="Move standup" type="context" standing="proposed" as_of="2026-03-02 09:00 UTC+0">',
+      '<memo id="memo_decided" title="Keep standup" type="context">',
+    ])
   })
 })

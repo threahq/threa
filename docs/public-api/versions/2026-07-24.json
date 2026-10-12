@@ -337,6 +337,7 @@
                                 "type": "string",
                                 "enum": ["decision", "learning", "procedure", "context", "reference"]
                               },
+                              "standing": { "type": "string", "enum": ["decided", "proposed"] },
                               "tags": { "type": "array", "items": { "type": "string" } },
                               "parentMemoId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
                               "status": { "type": "string" },
@@ -374,6 +375,7 @@
                               "sourceMessageIds",
                               "participantIds",
                               "knowledgeType",
+                              "standing",
                               "tags",
                               "parentMemoId",
                               "status",
@@ -516,6 +518,7 @@
                             "type": "string",
                             "enum": ["decision", "learning", "procedure", "context", "reference"]
                           },
+                          "standing": { "type": "string", "enum": ["decided", "proposed"] },
                           "sourceMessageIds": { "type": "array", "items": { "type": "string" } },
                           "createdAt": { "type": "string", "format": "date-time" },
                           "earliestSourceAt": {
@@ -531,6 +534,7 @@
                           "title",
                           "abstract",
                           "knowledgeType",
+                          "standing",
                           "sourceMessageIds",
                           "createdAt",
                           "earliestSourceAt",
@@ -634,6 +638,7 @@
                               "type": "string",
                               "enum": ["decision", "learning", "procedure", "context", "reference"]
                             },
+                            "standing": { "type": "string", "enum": ["decided", "proposed"] },
                             "tags": { "type": "array", "items": { "type": "string" } },
                             "parentMemoId": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
                             "status": { "type": "string" },
@@ -667,6 +672,7 @@
                             "sourceMessageIds",
                             "participantIds",
                             "knowledgeType",
+                            "standing",
                             "tags",
                             "parentMemoId",
                             "status",
