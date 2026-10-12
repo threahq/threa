@@ -14,13 +14,6 @@ interface Box {
   height: number
 }
 
-interface Neighbour {
-  /** The neighbour in the arrangement the box is measured in. */
-  beside: Box
-  /** The neighbour in the other arrangement: the box opens from, or shuts at, its edge there. */
-  at: Box
-}
-
 const px = (value: number) => `${value}px`
 const touches = (a: number, b: number) => Math.abs(a - b) <= TOUCH
 const sameBox = (a: Box, b: Box) =>
@@ -35,48 +28,48 @@ function boxOf(element: Element, origin: DOMRect): Box {
   return { left: rect.left - origin.left, top: rect.top - origin.top, width: rect.width, height: rect.height }
 }
 
-/** The host's grid children by their boxes, with any glide still running cancelled so the boxes are laid-out ones. */
+const cut = (child: Element) =>
+  child.getAnimations().forEach((animation) => animation.id === GLIDE && animation.cancel())
+
+/**
+ * The host's grid children on show by their boxes, with any glide still running cut short: its
+ * animations cancelled so the boxes are laid-out ones, and the panes it was folding away removed.
+ */
 function measure(host: HTMLElement): Map<Element, Box> {
   const origin = host.getBoundingClientRect()
   const boxes = new Map<Element, Box>()
-  for (const child of host.children) {
-    // A floating pane is fixed in the shell's box, and a folding one is on its way out.
-    if (child.hasAttribute("data-focused-pane") || child.hasAttribute("data-pane-fold")) continue
-    for (const target of [child, child.firstElementChild]) {
-      target?.getAnimations().forEach((animation) => animation.id === GLIDE && animation.cancel())
+  for (const child of [...host.children]) {
+    if (child.hasAttribute("data-pane-fold")) {
+      child.remove()
+      continue
     }
+    // A floating pane is fixed in the shell's box.
+    if (child.hasAttribute("data-focused-pane")) continue
+    cut(child)
+    // A tab under another in its section is laid out but not on show, so the change that uncovers it adds it.
+    if (getComputedStyle(child).visibility === "hidden") continue
     boxes.set(child, boxOf(child, origin))
   }
   return boxes
 }
 
 /**
- * `box` shut against the neighbour that takes (or gave) its space, at that
- * neighbour's edge in the other arrangement: the two edges stay glued while
- * one grows and the other folds. With no such neighbour it shuts in place.
+ * Where a pane paints while the panes glide: the ones that move over the ones that hold still, so a
+ * shrinking pane uncovers the one added beside it and a growing one covers the one that closed.
  */
-function shut(box: Box, neighbours: readonly Neighbour[]): Box {
-  const into = neighbours
-    .map((neighbour) => ({ ...neighbour, area: overlap(box, neighbour.at) }))
-    .filter((neighbour) => neighbour.area > 0)
-    .sort((a, b) => b.area - a.area)[0]
-  if (!into) return { ...box, width: 0 }
-  const { beside, at } = into
-  if (touches(beside.left + beside.width, box.left)) return { ...box, left: at.left + at.width, width: 0 }
-  if (touches(beside.left, box.left + box.width)) return { ...box, left: at.left, width: 0 }
-  if (touches(beside.top + beside.height, box.top)) return { ...box, top: at.top + at.height, height: 0 }
-  if (touches(beside.top, box.top + box.height)) return { ...box, top: at.top, height: 0 }
-  return { ...box, width: 0 }
-}
+const CLOSED = 0
+const ADDED = 1
+const MOVING = 2
+const LIFTED = 3
 
 const LIFT = "0 12px 32px rgba(0, 0, 0, 0.24)"
 const NO_LIFT = "0 0 0 rgba(0, 0, 0, 0)"
 
-/** Glides `element` from the box `from` to `to`, the box its layout gives it, its content held at the final size throughout. */
+/**
+ * Glides `element` from the box `from` to `to`, the box its layout gives it. A pane's content is sized to
+ * the gliding box on every frame, as on a divider drag, so it moves with its edges and never jumps ahead.
+ */
 function travel(element: Element, from: Box, to: Box, options: KeyframeAnimationOptions) {
-  // Lifted over the others on a move that clears its own old box, so it travels on top and never under a neighbour.
-  const lifted = isPane(element) && overlap(from, to) === 0
-  const appearing = from.width === 0 || from.height === 0
   const start: Keyframe = {
     transform: `translate(${px(from.left - to.left)}, ${px(from.top - to.top)})`,
     width: px(from.width),
@@ -84,33 +77,28 @@ function travel(element: Element, from: Box, to: Box, options: KeyframeAnimation
   }
   const end: Keyframe = { transform: "none", width: px(to.width), height: px(to.height) }
   const frames = [start, end]
-  if (appearing) {
-    start.opacity = 0
-    frames.splice(1, 0, { opacity: 1, offset: 0.5 })
-  }
-  if (lifted) {
-    start.zIndex = end.zIndex = 2
-    start.boxShadow = end.boxShadow = NO_LIFT
-    frames.splice(1, 0, { boxShadow: LIFT, offset: 0.5 })
+  if (isPane(element)) {
+    // Lifted over the others on a move that clears its own old box, so it travels on top and never under a neighbour.
+    const lifted = overlap(from, to) === 0
+    start.zIndex = end.zIndex = lifted ? LIFTED : MOVING
+    if (lifted) {
+      start.boxShadow = end.boxShadow = NO_LIFT
+      frames.splice(1, 0, { boxShadow: LIFT, offset: 0.5 })
+    }
   }
   element.animate(frames, options)
-  if (isPane(element)) {
-    const held: Keyframe = { width: px(to.width), height: px(to.height) }
-    element.firstElementChild?.animate([held, held], options)
-  }
 }
 
 /**
- * Folds the pane React has just unmounted: its own node, put back in the host
- * as an inert absolutely positioned box at `from`, that shuts to `to` and is
- * removed. Its scrollers are set back to where they were, as a box out of the
- * document loses its offsets.
+ * Keeps the pane React has just unmounted on show for the glide: its own node,
+ * put back in the host as an inert absolutely positioned box at `from`, under
+ * the panes growing over it, and removed once they have. Its scrollers are set
+ * back to where they were, as a box out of the document loses its offsets.
  */
 function fold(
   host: HTMLElement,
   pane: Element,
   from: Box,
-  to: Box,
   scrolls: WeakMap<Element, { top: number; left: number }>,
   options: KeyframeAnimationOptions
 ) {
@@ -131,11 +119,9 @@ function fold(
     top: px(from.top),
     width: px(from.width),
     height: px(from.height),
-    zIndex: "1",
+    zIndex: String(CLOSED),
     pointerEvents: "none",
   })
-  const inner = pane.firstElementChild
-  if (inner instanceof HTMLElement) Object.assign(inner.style, { width: px(from.width), height: px(from.height) })
   host.appendChild(pane)
   for (const scroller of pane.querySelectorAll("*")) {
     const offset = scrolls.get(scroller)
@@ -144,14 +130,7 @@ function fold(
       scroller.scrollLeft = offset.left
     }
   }
-  const animation = pane.animate(
-    [
-      { left: px(from.left), top: px(from.top), width: px(from.width), height: px(from.height), opacity: 1 },
-      { left: px(to.left), top: px(to.top), width: px(to.width), height: px(to.height), opacity: 0 },
-    ],
-    options
-  )
-  animation.onfinish = animation.oncancel = () => pane.remove()
+  pane.animate(null, options).onfinish = () => pane.remove()
 }
 
 /** Whether the device asks for motion to be cut; every edge that would glide snaps then. */
@@ -160,12 +139,12 @@ export const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-mo
 /**
  * Glides the host's panes from the boxes they had into the ones a new
  * arrangement gives them (FLIP on the Web Animations API), on the commits
- * `glide` marks. The grid itself jumps to its final tracks, so React, layout
- * and every measurement see the arrangement at once; only the paint lags. A
- * pane the arrangement adds opens from the edge of the pane whose space it
- * takes, one it drops folds shut at the edge of the pane that takes its space,
- * and a pane replacing another in the same box, or joining a stack, just
- * appears. Without the API every change cuts.
+ * `glide` marks. The grid itself jumps to its final tracks, so React sees the
+ * arrangement at once. The panes that were there are the ones that move, each
+ * laid out at its gliding size until it lands: a pane the arrangement adds
+ * holds still where it lands while they uncover it, and one it drops holds
+ * still while they grow over it, unless another pane takes its box. Without
+ * the API every change cuts.
  */
 export function usePaneGlide(host: RefObject<HTMLDivElement | null>, glide: boolean) {
   const boxes = useRef(new Map<Element, Box>())
@@ -189,6 +168,8 @@ export function usePaneGlide(host: RefObject<HTMLDivElement | null>, glide: bool
     // A commit that keeps the arrangement (a focus, a store update) within the 240ms leaves the glide
     // running and the boxes it set out for standing; measuring here would cancel it mid-flight. A
     // resize among them moves where it ends, so the boxes are read again once it has.
+    // A pane floated mid-glide leaves it, or the glide's layer and size hold it under the scrim it floats over.
+    for (const child of element.children) if (child.hasAttribute("data-focused-pane")) cut(child)
     const running = element.getAnimations({ subtree: true }).filter((animation) => animation.id === GLIDE)
     if (!glide && running.length > 0) {
       void Promise.allSettled(running.map((animation) => animation.finished)).then(() => {
@@ -204,44 +185,25 @@ export function usePaneGlide(host: RefObject<HTMLDivElement | null>, glide: bool
     if (!glide || before.size === 0) return
 
     const options: KeyframeAnimationOptions = { duration: PANE_TRANSITION_MS, easing: PANE_EASING, id: GLIDE }
-    const survivors = [...now]
-      .filter(([child]) => before.has(child))
-      .map(([child, box]) => ({ child, was: before.get(child)!, box }))
-    for (const { child, was, box } of survivors) {
-      if (!sameBox(was, box)) travel(child, was, box, options)
-    }
     for (const [child, box] of now) {
-      if (before.has(child)) continue
+      const was = before.get(child)
+      if (was) {
+        if (!sameBox(was, box)) travel(child, was, box, options)
+        continue
+      }
       if (!isPane(child)) {
+        if ([...before].some(([other, stood]) => !other.isConnected && sameBox(stood, box))) continue
         // A new divider is laid out where the edge it marks ends up, so it shows once that edge is nearly there.
         child.animate([{ opacity: 0 }, { opacity: 0, offset: 0.6 }, { opacity: 1 }], options)
         continue
       }
-      if ([...before.values()].some((was) => sameBox(was, box))) continue
-      travel(
-        child,
-        shut(
-          box,
-          survivors.map(({ was, box }) => ({ beside: box, at: was }))
-        ),
-        box,
-        options
-      )
+      // Its own layer for the glide, or what it stacks inside (a load mask, a composer) paints over the panes above it.
+      child.animate([{ zIndex: ADDED }, { zIndex: ADDED }], options)
     }
     for (const [child, was] of before) {
       if (now.has(child) || child.isConnected || !isPane(child)) continue
       if ([...now.values()].some((box) => sameBox(was, box))) continue
-      fold(
-        element,
-        child,
-        was,
-        shut(
-          was,
-          survivors.map(({ was, box }) => ({ beside: was, at: box }))
-        ),
-        scrolls.current,
-        options
-      )
+      fold(element, child, was, scrolls.current, options)
     }
   })
 }

@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, expectApiOk, panesSettled } from "./helpers"
 
 /**
  * The desktop aside surface end to end: open from a message beside the host
@@ -168,6 +168,7 @@ test.describe("Aside — desktop surface", () => {
 
     // The aside is a pane beside the page's own timeline, which stays put.
     await expect(hostScroller(page, streamId)).toHaveCount(1)
+    await panesSettled(page)
     const asideBox = (await asidePane(page).boundingBox())!
     const hostBox = (await hostScroller(page, streamId).boundingBox())!
     expect(hostBox.x + hostBox.width).toBeLessThanOrEqual(asideBox.x + 1)

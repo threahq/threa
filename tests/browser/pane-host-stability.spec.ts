@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk, getPanelEditor } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, expectApiOk, getPanelEditor, panesSettled } from "./helpers"
 
 /**
  * The stream page lays its timeline and thread panel out as flat panes of one
@@ -90,6 +90,7 @@ test("should keep the timeline and thread panel mounted through open, close and 
   // Desktop: the panel docks beside the timeline at its default width.
   await openThread(page, parentId, threadId)
   await expect.poll(async () => Math.round((await page.getByTestId("panel").boundingBox())?.width ?? 0)).toBe(480)
+  await panesSettled(page)
   const main = (await page.locator('[data-editor-zone="main"]').boundingBox())!
   const panel = (await page.getByTestId("panel").boundingBox())!
   expect(Math.round(main.x + main.width)).toBe(Math.round(panel.x))
@@ -113,7 +114,7 @@ test("should keep the timeline and thread panel mounted through open, close and 
   expect(await tagOf(scroller(page, streamId))).toBe("main")
   await expect(getPanelEditor(page)).toContainText("half a thought")
 
-  // Closing animates the column away, then unmounts the thread; the timeline stays.
+  // Closing unmounts the thread at once and the main pane glides over where it was; the timeline stays.
   await page.goBack()
   await expect(threadReply(page, threadId)).toHaveCount(0)
   await expect
@@ -122,7 +123,6 @@ test("should keep the timeline and thread panel mounted through open, close and 
       return Math.round((box?.x ?? 0) + (box?.width ?? 0))
     })
     .toBe(1400)
-  // The column's own transition end is what takes the handle away.
   await expect(panelHandle(page)).toHaveCount(0)
   expect(await tagOf(scroller(page, streamId))).toBe("main")
   await expect(scroller(page, streamId)).toBeVisible()
@@ -165,8 +165,8 @@ test("should return a phone reader to the same mid-stream position after steppin
   })
   expect(mainHit).toBe(true)
 
-  // A phone close has no transition to end, so nothing of the thread is left
-  // for the desktop layout to show in its empty column.
+  // A phone close leaves nothing of the thread for the desktop layout to show
+  // in its empty column.
   await page.setViewportSize({ width: 1400, height: 900 })
   await expect(scroller(page, streamId)).toBeVisible()
   await expect(panelHandle(page)).toHaveCount(0)

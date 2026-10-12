@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, expectApiOk, panesSettled } from "./helpers"
 
 /**
  * A sidebar row or a tab dropped on the stream page lands where it was
@@ -12,7 +12,8 @@ test.describe.configure({ timeout: 120_000 })
 
 declare global {
   interface Window {
-    __glides?: number
+    /** Holds each glide at its midpoint from its first frame. */
+    __holdGlides?: boolean
   }
 }
 
@@ -64,14 +65,7 @@ async function settledAt(target: Locator, x: number, y: number) {
 
 /** Resolves once the panes have stopped gliding and `target` holds still. */
 async function settled(target: Locator) {
-  await target.page().evaluate(() =>
-    Promise.all(
-      document
-        .getAnimations()
-        .filter((animation) => animation.id === "pane-glide")
-        .map((animation) => animation.finished.catch(() => undefined))
-    )
-  )
+  await panesSettled(target.page())
   let last = ""
   await expect
     .poll(async () => {
@@ -173,18 +167,56 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
     const animate = Element.prototype.animate
     Element.prototype.animate = function (this: Element, ...args) {
       const animation = animate.apply(this, args)
-      if (animation.id === "pane-glide") window.__glides = (window.__glides ?? 0) + 1
+      if (animation.id === "pane-glide" && window.__holdGlides) {
+        animation.pause()
+        animation.currentTime = 120
+      }
       return animation
     }
   })
   const { names, streamA, streamB, streamC } = await seed(page)
   await tag(mainPane(page).getByText("said in a"), "main")
+  const boxOf = async (pane: Locator) => {
+    const box = (await pane.boundingBox())!
+    return { x: Math.round(box.x), width: Math.round(box.width) }
+  }
+  const mainBefore = await boxOf(mainPane(page))
+  await page.evaluate(() => {
+    window.__holdGlides = true
+  })
 
   await drag(page, sidebarRow(page, names.b), await at(mainPane(page), 0.95, 0.4), async () => {
     await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "right")
   })
   await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
-  expect(await page.evaluate(() => window.__glides)).toBeGreaterThan(0)
+  // Midway, the pane that was there is the one moving: part shrunk, its content as wide as its box, still
+  // over the edge of the added pane, which is where it ends up.
+  const midway = await page.evaluate((added) => {
+    const main = document.querySelector("[data-testid='main-pane']")!
+    const mainBox = main.getBoundingClientRect()
+    const addedBox = document.querySelector(`[data-panel-tab="${added}"]`)!.getBoundingClientRect()
+    const over = document.elementFromPoint((addedBox.left + mainBox.right) / 2, mainBox.top + mainBox.height / 4)
+    return {
+      main: Math.round(mainBox.width),
+      content: Math.round(main.querySelector("[data-editor-zone='main']")!.getBoundingClientRect().width),
+      over: over?.closest("[data-panel-tab]")?.getAttribute("data-testid"),
+      added: { x: Math.round(addedBox.x), width: Math.round(addedBox.width) },
+    }
+  }, streamB)
+  await page.evaluate(() => {
+    window.__holdGlides = false
+    for (const animation of document.getAnimations()) if (animation.id === "pane-glide") animation.finish()
+  })
+  await settled(tabPane(page, streamB))
+  const mainAfter = await boxOf(mainPane(page))
+  expect(midway.main).toBeGreaterThan(mainAfter.width)
+  expect(midway.main).toBeLessThan(mainBefore.width)
+  expect(midway).toEqual({
+    main: midway.main,
+    content: midway.main,
+    over: "main-pane",
+    added: await boxOf(tabPane(page, streamB)),
+  })
   expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({
     stream: streamB,
     panel: `${streamA}-${streamB}`,
