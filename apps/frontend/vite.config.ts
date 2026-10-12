@@ -54,6 +54,9 @@ const PRECACHE_EXTENSIONS = ["js", "mjs", "css", "html", "ico", "png", "svg", "w
 // It must stay network-served even when the app shell is broken; precaching
 // it would route recovery through the SW it is trying to unregister.
 const PRECACHE_IGNORED_FILE = "recover.html"
+// The deploy build's PostHog plugins add a chunk-id snippet to every chunk
+// (360 bytes measured), which a build without the PostHog secrets never sees.
+const POSTHOG_CHUNK_ID_RESERVE_BYTES = 1024
 
 let buildOutputDir: string
 
@@ -94,9 +97,11 @@ function versionJsonPlugin(): Plugin {
 
 /**
  * E2E builds precache nothing, so workbox never sees an oversized file there and
- * CI passes a build the deploy then refuses. This holds every build to the limit.
+ * CI passes a build the deploy then refuses. This holds every build to the limit,
+ * less `reservedBytes` for what only the deploy build adds.
  */
-function precacheSizeGuardPlugin(): Plugin {
+function precacheSizeGuardPlugin(reservedBytes: number): Plugin {
+  const limitBytes = PRECACHE_FILE_LIMIT_BYTES - reservedBytes
   let outDir: string
   return {
     name: "precache-size-guard",
@@ -112,10 +117,11 @@ function precacheSizeGuardPlugin(): Plugin {
       const sizes = await Promise.all(
         files.map(async (file) => ({ file, bytes: (await stat(path.join(outDir, file))).size }))
       )
-      const oversized = sizes.filter(({ bytes }) => bytes > PRECACHE_FILE_LIMIT_BYTES)
+      const oversized = sizes.filter(({ bytes }) => bytes > limitBytes)
       if (oversized.length === 0) return
+      const reserveNote = reservedBytes > 0 ? ` less the ${reservedBytes} bytes reserved for the deploy build` : ""
       this.error(
-        `${oversized.map(({ file }) => file).join(", ")} exceeds workbox's ${PRECACHE_FILE_LIMIT_BYTES}-byte precache limit`
+        `${oversized.map(({ file }) => file).join(", ")} exceeds workbox's ${PRECACHE_FILE_LIMIT_BYTES}-byte precache limit${reserveNote}`
       )
     },
   }
@@ -181,13 +187,15 @@ function buildProxyConfig() {
   }
 }
 
+const postHogPlugins = postHogSourceMapPlugins()
+
 export default defineConfig({
   plugins: [
     react(),
     versionJsonPlugin(),
     katexWoff2OnlyPlugin(),
-    precacheSizeGuardPlugin(),
-    ...postHogSourceMapPlugins(),
+    precacheSizeGuardPlugin(postHogPlugins.length > 0 ? 0 : POSTHOG_CHUNK_ID_RESERVE_BYTES),
+    ...postHogPlugins,
     VitePWA({
       strategies: "injectManifest",
       srcDir: "src",
