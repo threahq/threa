@@ -45,6 +45,9 @@ function findFreePortSync(): number {
   return port
 }
 
+// The probe releases each port before the next draw, so the OS can hand the same one out twice.
+const allocatedPorts = new Set<number>()
+
 /**
  * Get or allocate a port, caching in environment variables.
  * Playwright re-evaluates config in worker processes - we need stable ports.
@@ -53,7 +56,11 @@ function getOrAllocatePort(envVar: string): number {
   if (process.env[envVar]) {
     return parseInt(process.env[envVar]!, 10)
   }
-  const port = findFreePortSync()
+  let port = findFreePortSync()
+  while (allocatedPorts.has(port)) {
+    port = findFreePortSync()
+  }
+  allocatedPorts.add(port)
   process.env[envVar] = String(port)
   return port
 }
