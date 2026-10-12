@@ -130,6 +130,7 @@ function renderMemoResult(r: Record<string, unknown>): string {
   const header = joinFields([
     String(memo.id ?? "?"),
     typeof memo.knowledgeType === "string" ? memo.knowledgeType : undefined,
+    memo.standing === "proposed" ? "proposed" : undefined,
     fmtTimestamp(memo.latestSourceAt),
     scopeLabel || undefined,
   ])

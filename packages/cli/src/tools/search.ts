@@ -24,7 +24,9 @@ export function registerSearchTools(server: McpServer, client: ThreaApiClient, r
         "the query in double quotes) to match a literal phrase, stream_ids, memo_type (message vs. conversation " +
         "source), knowledge_type, tags, scope (user = private to this key's user, stream, workspace), " +
         "before/after (ISO-8601 datetimes, matched against when the memo's source messages were posted, not " +
-        "when it was captured), limit (≤100, default 20).\n" +
+        "when it was captured), limit (≤100, default 20). A memo whose standing is 'proposed' records a " +
+        "change someone put forward that the conversation had neither adopted nor rejected as of its source " +
+        "date; report it as proposed, never as decided.\n" +
         "- what: 'attachments' — search accessible attachments by filename or extracted content. query is " +
         "OPTIONAL — leave it empty to browse the most recent attachments. Filters: query, stream_ids, " +
         "content_types (chart, table, diagram, screenshot, photo, document, other), limit (≤50, default 20).\n" +

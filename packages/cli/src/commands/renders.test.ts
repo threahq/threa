@@ -245,6 +245,38 @@ test("memo results show the source time, never the capture time, and nothing whe
   expect(result.stdout.split("\n")[0]).not.toMatch(TS_RE)
 })
 
+test("a proposed memo says so in its header; a decided one is unmarked", async () => {
+  const memo = (id: string, standing: string) => ({
+    memo: {
+      id,
+      title: "Deploy day",
+      abstract: "Tuesday instead of Friday.",
+      knowledgeType: "context",
+      standing,
+      createdAt: "2026-07-19T12:02:00.000Z",
+      latestSourceAt: "2026-07-18T09:00:00.000Z",
+    },
+    distance: 0,
+    sourceStream: null,
+    rootStream: null,
+  })
+  fetchSpy.mockImplementation(
+    workspaceFetch((path) =>
+      path.endsWith("/memos/search")
+        ? jsonResponse(200, { data: [memo("memo_open", "proposed"), memo("memo_settled", "decided")] })
+        : undefined
+    )
+  )
+
+  const result = await run(["memos", "list"], { config: TEST_CONFIG })
+
+  const headers = result.stdout.split("\n").filter((line) => line.startsWith("memo_"))
+  expect(headers.map((h) => [h.split(/\s/)[0], h.includes("proposed"), h.includes("decided")])).toEqual([
+    ["memo_open", true, false],
+    ["memo_settled", false, false],
+  ])
+})
+
 test("memos recall posts the message and renders recalled memos", async () => {
   fetchSpy.mockImplementation(
     workspaceFetch((path) =>

@@ -29,7 +29,9 @@ export function registerMemoTools(server: McpServer, client: ThreaApiClient): vo
         "scored for relevance (at most 5). An empty `data` with outcome 'nothing_relevant' or 'no_candidates' " +
         "means memory holds nothing useful for it; 'unscored', 'timeout' or 'failed' mean recall could not " +
         "judge, so fall back to the `search` tool (what: 'memos'). Each call runs a model, so recall once per " +
-        "message rather than per idea; use `search` to explore.",
+        "message rather than per idea; use `search` to explore. A memo whose standing is 'proposed' records " +
+        "a change someone put forward that the conversation had neither adopted nor rejected as of its source " +
+        "date; report it as proposed, never as decided.",
       inputSchema: {
         message: z.string().min(1),
       },
