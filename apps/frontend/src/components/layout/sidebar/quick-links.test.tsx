@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
+import { act } from "react"
 import { MemoryRouter } from "react-router-dom"
 import { render, screen, userEvent } from "@/test"
 import { DEFAULT_QUICK_LINKS } from "@threahq/types"
 import * as Contexts from "@/contexts"
+import * as PageRoutes from "@/components/panes/page-routes"
 import type { CollapseState } from "@/contexts"
 import { SidebarQuickLinks } from "./quick-links"
 
@@ -75,6 +77,18 @@ describe("SidebarQuickLinks", () => {
       href: "/w/workspace_1/streams",
       current: "page",
     })
+  })
+
+  it("should fetch a page's chunk when the pointer reaches or focus lands on its link", async () => {
+    stubSidebar("open")
+    const preload = vi.spyOn(PageRoutes, "preloadPage").mockImplementation(() => undefined)
+    const user = userEvent.setup()
+    renderQuickLinks()
+
+    await user.hover(screen.getByRole("link", { name: "Labels" }))
+    await act(async () => screen.getByRole("link", { name: "Drafts" }).focus())
+
+    expect(preload.mock.calls.map(([panelId]) => panelId)).toEqual(["page:labels", "page:drafts"])
   })
 
   it("does not render a Threads quick link", () => {

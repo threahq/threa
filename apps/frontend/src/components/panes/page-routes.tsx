@@ -1,33 +1,51 @@
-import { lazy, Suspense, useMemo, type ComponentType } from "react"
+import { lazy, Suspense, useMemo, useState, type ComponentType } from "react"
 import { Route, Routes, UNSAFE_RouteContext } from "react-router-dom"
 import { usePanel, useRevealReady } from "@/contexts"
-import type { PagePanePattern } from "@/lib/page-panes"
+import { pagePatternOf, type PagePanePattern } from "@/lib/page-panes"
 import { PaneNavigation } from "./pane-navigation"
 
 interface PageRoute {
+  load: () => Promise<unknown>
   page: ComponentType
   /** Reports its own reveal readiness, rather than being ready once it renders. */
   reportsReady?: true
 }
 
+function route(load: () => Promise<ComponentType>, reportsReady?: true): PageRoute {
+  let loaded: ComponentType | null = null
+  const fetch = () => load().then((page) => ({ default: (loaded = page) }))
+  const Lazy = lazy(fetch)
+  // A page whose chunk already arrived renders at once. A lazy one suspends on its first render even with its
+  // chunk cached, and React then holds the boundary's content back for up to 300ms after showing the fallback.
+  const Page = () => {
+    const [Preloaded] = useState(() => loaded)
+    return Preloaded ? <Preloaded /> : <Lazy />
+  }
+  return { load: fetch, page: Page, reportsReady }
+}
+
 const PAGES: Record<PagePanePattern, PageRoute> = {
-  "/drafts": { page: lazy(() => import("@/pages/drafts").then((m) => ({ default: m.DraftsPage }))) },
-  "/saved/:tab?": { page: lazy(() => import("@/pages/saved").then((m) => ({ default: m.SavedPage }))) },
-  "/streams/:tab?": { page: lazy(() => import("@/pages/streams").then((m) => ({ default: m.StreamsPage }))) },
-  "/scheduled/:tab?": { page: lazy(() => import("@/pages/scheduled").then((m) => ({ default: m.ScheduledPage }))) },
-  "/board": {
-    page: lazy(() => import("@/pages/board").then((m) => ({ default: m.BoardPage }))),
-    reportsReady: true,
-  },
-  "/activity/:filter?": { page: lazy(() => import("@/pages/activity").then((m) => ({ default: m.ActivityPage }))) },
-  "/search": { page: lazy(() => import("@/pages/search").then((m) => ({ default: m.SearchPage }))) },
-  "/memory": { page: lazy(() => import("@/pages/memory").then((m) => ({ default: m.MemoryPage }))) },
-  "/labels": { page: lazy(() => import("@/pages/labels").then((m) => ({ default: m.LabelsPage }))) },
-  "/labels/:labelId": {
-    page: lazy(() => import("@/pages/label-detail").then((m) => ({ default: m.LabelDetailPage }))),
-  },
-  "/files": { page: lazy(() => import("@/pages/files").then((m) => ({ default: m.FilesPage }))) },
-  "/agenda": { page: lazy(() => import("@/pages/outcomes").then((m) => ({ default: m.OutcomesPage }))) },
+  "/drafts": route(() => import("@/pages/drafts").then((m) => m.DraftsPage)),
+  "/saved/:tab?": route(() => import("@/pages/saved").then((m) => m.SavedPage)),
+  "/streams/:tab?": route(() => import("@/pages/streams").then((m) => m.StreamsPage)),
+  "/scheduled/:tab?": route(() => import("@/pages/scheduled").then((m) => m.ScheduledPage)),
+  "/board": route(() => import("@/pages/board").then((m) => m.BoardPage), true),
+  "/activity/:filter?": route(() => import("@/pages/activity").then((m) => m.ActivityPage)),
+  "/search": route(() => import("@/pages/search").then((m) => m.SearchPage)),
+  "/memory": route(() => import("@/pages/memory").then((m) => m.MemoryPage)),
+  "/labels": route(() => import("@/pages/labels").then((m) => m.LabelsPage)),
+  "/labels/:labelId": route(() => import("@/pages/label-detail").then((m) => m.LabelDetailPage)),
+  "/files": route(() => import("@/pages/files").then((m) => m.FilesPage)),
+  "/agenda": route(() => import("@/pages/outcomes").then((m) => m.OutcomesPage)),
+}
+
+/**
+ * Fetches the page `panelId` shows before its pane opens, so a page the pointer is about to open beside the
+ * stream shows its content inside the glide rather than after it. A failed fetch is the pane's to report.
+ */
+export function preloadPage(panelId: string) {
+  const pattern = pagePatternOf(panelId)
+  if (pattern) void PAGES[pattern].load().catch(() => undefined)
 }
 
 /** Outside every route, so the pane's own location needn't sit under the route around it. */
