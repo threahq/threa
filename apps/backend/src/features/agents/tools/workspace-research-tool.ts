@@ -68,7 +68,7 @@ Do NOT use workspace_research for:
 - Simple clarification or rephrasing requests
 - Questions where you clearly already have enough context
 
-When you do call it, incorporate retrieved context naturally into your response. The tool may return \`partial: true\` if it was taking too long or the user clicked stop — handle that gracefully by using whatever context is available and acknowledging that your view might be incomplete.`,
+What it finds is added to this system prompt under \`## Retrieved Knowledge\`. The tool result carries only counts. \`partial: true\` means the search was cut short: answer from what was found and say your view may be incomplete.`,
     inputSchema: WorkspaceResearchSchema,
 
     execute: async (input, { signal, onProgress }): Promise<AgentToolResult> => {
@@ -80,6 +80,8 @@ When you do call it, incorporate retrieved context naturally into your response.
       })
 
       const partial = result.partial === true
+      const attachmentCount = result.attachments?.length ?? 0
+      const found = result.memos.length + result.messages.length + attachmentCount > 0
 
       const sourceItems = result.sources
         .filter((s) => s.title && s.url)
@@ -98,10 +100,12 @@ When you do call it, incorporate retrieved context naturally into your response.
         partial,
         partialReason: partial ? (result.partialReason ?? null) : null,
         contextAdded: Boolean(result.retrievedContext?.trim()),
+        // Without this the count-only result reads as an empty search. A people-only result adds context with no such heading.
+        findings: found ? "added to your system prompt under the Retrieved Knowledge heading" : null,
         sourceCount: sourceItems.length,
         memoCount: result.memos.length,
         messageCount: result.messages.length,
-        attachmentCount: result.attachments?.length ?? 0,
+        attachmentCount,
         substeps: result.substeps,
       })
 

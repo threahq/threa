@@ -53,6 +53,7 @@ describe("workspace_research tool", () => {
       partial: false,
       partialReason: null,
       contextAdded: true,
+      findings: "added to your system prompt under the Retrieved Knowledge heading",
       sourceCount: 1,
       memoCount: 1,
       messageCount: 0,
@@ -71,6 +72,22 @@ describe("workspace_research tool", () => {
     ])
 
     expect(result.systemContext).toBe("## Retrieved Knowledge\nUseful workspace details.")
+  })
+
+  test("should leave findings empty when research resolved people but found nothing", async () => {
+    const runWorkspaceAgent = mock(
+      async (): Promise<WorkspaceAgentResult> => ({
+        ...baseResult,
+        retrievedContext: "## People\n\n- Ada (usr_1)",
+        sources: [],
+        memos: [],
+      })
+    )
+
+    const tool = createWorkspaceResearchTool({ runWorkspaceAgent, searchFlag: "on" })
+    const result = await tool.config.execute({ query: "what did Ada decide?" }, { toolCallId: "test" })
+
+    expect(JSON.parse(result.output)).toMatchObject({ contextAdded: true, findings: null, memoCount: 0 })
   })
 
   test("should report the streams of found memos, messages, quoted sources and attachments as provenance when research completes", async () => {
