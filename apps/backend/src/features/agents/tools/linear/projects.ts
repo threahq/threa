@@ -5,6 +5,7 @@ import type { LinearToolDeps } from "./deps"
 import { isLinearToolError, toToolResult, withLinearClient } from "./client-accessor"
 import { toLinearActor, truncateBytes } from "./format"
 import { toTraceLinearSources } from "./trace"
+import { truncateCodePoints } from "../../../../lib/truncate"
 
 const MAX_PROJECT_DESCRIPTION_BYTES = 8_000
 
@@ -63,7 +64,7 @@ export function createLinearListProjectsTool(deps: LinearToolDeps) {
       const sources: SourceItem[] = result
         .filter((project): project is typeof project & { url: string } => typeof project.url === "string")
         .slice(0, 10)
-        .map((project) => ({ type: "web", title: project.name.slice(0, 200), url: project.url }))
+        .map((project) => ({ type: "web", title: truncateCodePoints(project.name, 200), url: project.url }))
 
       return { output: JSON.stringify({ count: result.length, projects: result }), sources }
     },
@@ -141,7 +142,7 @@ export function createLinearGetProjectTool(deps: LinearToolDeps) {
       if (!result) return toToolResult({ error: "Linear project not found", code: "LINEAR_NOT_FOUND" })
 
       const sources: SourceItem[] = result.url
-        ? [{ type: "web", title: result.name.slice(0, 200), url: result.url }]
+        ? [{ type: "web", title: truncateCodePoints(result.name, 200), url: result.url }]
         : []
       return { output: JSON.stringify({ project: result }), sources }
     },

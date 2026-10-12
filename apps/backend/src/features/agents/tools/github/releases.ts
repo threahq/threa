@@ -5,6 +5,7 @@ import type { GitHubToolDeps } from "./deps"
 import { withGithubClient, isGitHubToolError, toToolResult } from "./client-accessor"
 import { toActor, truncateBytes } from "./format"
 import { toTraceGithubSources } from "./trace"
+import { truncateCodePoints } from "../../../../lib/truncate"
 
 const MAX_RELEASE_BODY_BYTES = 8_000
 
@@ -56,7 +57,7 @@ async function listReleases(deps: GitHubToolDeps, input: ReleasesInput): Promise
     .slice(0, 10)
     .map((r) => ({
       type: "github",
-      title: `${input.owner}/${input.repo} ${r.tagName ?? r.name ?? ""}`.trim().slice(0, 200),
+      title: truncateCodePoints(`${input.owner}/${input.repo} ${r.tagName ?? r.name ?? ""}`.trim(), 200),
       url: r.htmlUrl,
     }))
 
@@ -118,7 +119,7 @@ async function getRelease(deps: GitHubToolDeps, input: ReleasesInput): Promise<A
     ? [
         {
           type: "github",
-          title: `${input.owner}/${input.repo} ${result.tagName ?? result.name ?? ""}`.trim().slice(0, 200),
+          title: truncateCodePoints(`${input.owner}/${input.repo} ${result.tagName ?? result.name ?? ""}`.trim(), 200),
           url: result.htmlUrl,
         },
       ]

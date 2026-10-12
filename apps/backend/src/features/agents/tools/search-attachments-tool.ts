@@ -4,6 +4,7 @@ import { logger } from "../../../lib/logger"
 import { AttachmentRepository } from "../../attachments"
 import { defineAgentTool, type AgentToolResult } from "../runtime"
 import type { WorkspaceToolDeps } from "./tool-deps"
+import { truncateCodePoints } from "../../../lib/truncate"
 
 const SearchAttachmentsSchema = z.object({
   query: z.string().describe("Search query to find attachments by filename or content"),
@@ -97,7 +98,7 @@ The search matches against filenames and extracted content summaries.`,
               filename: r.filename,
               mimeType: r.mimeType,
               contentType: r.contentType,
-              summary: r.summary ? truncate(r.summary, 200) : null,
+              summary: r.summary ? truncateCodePoints(r.summary, 197, "...") : null,
               streamId: r.streamId,
               messageId: r.messageId,
               date: r.createdAt,
@@ -120,9 +121,4 @@ The search matches against filenames and extracted content summaries.`,
       formatContent: (input) => JSON.stringify({ tool: "search_attachments", query: input.query }),
     },
   })
-}
-
-function truncate(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text
-  return text.slice(0, maxLength - 3) + "..."
 }
