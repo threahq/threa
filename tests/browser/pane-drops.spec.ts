@@ -10,6 +10,12 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
 
 test.describe.configure({ timeout: 120_000 })
 
+declare global {
+  interface Window {
+    __glides?: number
+  }
+}
+
 async function post(page: Page, workspaceId: string, streamId: string, content: string) {
   const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, { data: { streamId, content } })
   await expectApiOk(response, `post ${content}`)
@@ -50,8 +56,16 @@ async function at(target: Locator, x: number, y: number) {
   return { x: box.x + box.width * x, y: box.y + box.height * y }
 }
 
-/** `at`, once `target` has stopped moving: a panel slides open. */
+/** `at`, once the panes have stopped gliding and `target` holds still. */
 async function settledAt(target: Locator, x: number, y: number) {
+  await target.page().evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((animation) => animation.id === "pane-glide")
+        .map((animation) => animation.finished.catch(() => undefined))
+    )
+  )
   let last = ""
   await expect
     .poll(async () => {
@@ -91,7 +105,7 @@ async function tagOf(target: Locator): Promise<string | null> {
 
 test("should open a dropped pane at the size its drop zone showed", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1200 })
-  const { names, streamB, streamC } = await seed(page)
+  const { names, streamA, streamB, streamC } = await seed(page)
   const indicator = page.getByTestId("pane-drop-indicator")
   let zone = { width: 0, height: 0 }
   const shows = (side: string) => async () => {
@@ -116,6 +130,20 @@ test("should open a dropped pane at the size its drop zone showed", async ({ pag
   await expectSize(tabPane(page, streamC), "width")
   await expectSize(tabPane(page, streamB), "width")
 
+  // A pane alone in its column brings its width along; the one it lands beside keeps its own.
+  const widthOf = async (pane: Locator) => (await sizeOf(pane)).width
+  const [widthC, widthB] = [await widthOf(tabPane(page, streamC)), await widthOf(tabPane(page, streamB))]
+  await drag(
+    page,
+    tabPane(page, streamC).locator("[data-pane-drag-handle]"),
+    await settledAt(tabPane(page, streamB), 0.05, 0.5),
+    shows("left")
+  )
+  await expectSize(tabPane(page, streamC), "width")
+  await expect.poll(() => widthOf(tabPane(page, streamC))).toBe(widthC)
+  await expect.poll(() => widthOf(tabPane(page, streamB))).toBe(widthB)
+  expect(panelParam(page)).toBe(`${streamA}-${streamC}-${streamB}`)
+
   await drag(
     page,
     tabPane(page, streamC).locator("[data-pane-drag-handle]"),
@@ -130,6 +158,14 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 1200 })
+  await page.addInitScript(() => {
+    const animate = Element.prototype.animate
+    Element.prototype.animate = function (this: Element, ...args) {
+      const animation = animate.apply(this, args)
+      if (animation.id === "pane-glide") window.__glides = (window.__glides ?? 0) + 1
+      return animation
+    }
+  })
   const { names, streamA, streamB, streamC } = await seed(page)
   await tag(mainPane(page).getByText("said in a"), "main")
 
@@ -137,6 +173,7 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
     await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "right")
   })
   await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
+  expect(await page.evaluate(() => window.__glides)).toBeGreaterThan(0)
   expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({
     stream: streamB,
     panel: `${streamA}-${streamB}`,
@@ -156,7 +193,7 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
   await drag(
     page,
     tabPane(page, streamC).locator("[data-pane-drag-handle]"),
-    await at(tabPane(page, streamB), 0.5, 0.5),
+    await settledAt(tabPane(page, streamB), 0.5, 0.5),
     async () => {
       await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "centre")
     }
@@ -164,9 +201,14 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
   await expect.poll(() => panelParam(page)).toBe(`${streamA}-${streamB}.${streamC}`)
 
   // C's tab onto B's tab, ahead of it: C on show.
-  await drag(page, tabLink(page, streamC, streamC), await at(tabLink(page, streamC, streamB), 0.1, 0.5), async () => {
-    await expect(tabPane(page, streamC).getByTestId("strip-drop-caret")).toBeVisible()
-  })
+  await drag(
+    page,
+    tabLink(page, streamC, streamC),
+    await settledAt(tabLink(page, streamC, streamB), 0.1, 0.5),
+    async () => {
+      await expect(tabPane(page, streamC).getByTestId("strip-drop-caret")).toBeVisible()
+    }
+  )
   await expect.poll(() => panelParam(page)).toBe(`${streamA}-${streamC}*.${streamB}`)
   await expect(tabPane(page, streamC).getByText("said in c")).toBeVisible()
   expect(await tagOf(mainPane(page).getByText("said in a"))).toBe("main")
@@ -175,9 +217,14 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
   // the route, and on C they would fold B's tab away, so work in A first.
   await mainPane(page).locator('[contenteditable="true"]').last().click()
   await expect.poll(() => streamIdOf(page)).toBe(streamA)
-  await drag(page, tabLink(page, streamC, streamC), await at(tabLink(page, streamC, streamB), 0.9, 0.5), async () => {
-    await expect(tabPane(page, streamC).getByTestId("strip-drop-caret")).toBeVisible()
-  })
+  await drag(
+    page,
+    tabLink(page, streamC, streamC),
+    await settledAt(tabLink(page, streamC, streamB), 0.9, 0.5),
+    async () => {
+      await expect(tabPane(page, streamC).getByTestId("strip-drop-caret")).toBeVisible()
+    }
+  )
   await expect
     .poll(() => ({ stream: streamIdOf(page), panel: panelParam(page) }))
     .toEqual({

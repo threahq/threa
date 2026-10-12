@@ -1,6 +1,7 @@
 import { useState, type RefObject } from "react"
 import { PanelBottom, PanelRight, Users } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { PANE_EASING } from "@/components/panes"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -89,10 +90,9 @@ export function DesktopCallFullscreen({
       style={{
         left: "var(--app-content-left, 0px)",
         right: "var(--panel-inset-right, 0px)",
-        // cubic-bezier is Tailwind's `ease-out`, which the panel slot animates its
-        // width with. The CSS `ease-out` keyword is a different curve — the two edges
-        // would drift ~70px apart mid-transition and flash the timeline between them.
-        transition: "right var(--panel-inset-duration, 0ms) cubic-bezier(0, 0, 0.2, 1)",
+        // The curve the panes glide with (PANE_EASING): on any other the two edges
+        // would drift apart mid-transition and flash the timeline between them.
+        transition: `right var(--panel-inset-duration, 0ms) ${PANE_EASING}`,
       }}
     >
       {captureError && <CaptureErrorBanner error={captureError} className="mx-3 mt-2" />}

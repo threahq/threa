@@ -109,10 +109,17 @@ describe("droppedPanelSizes", () => {
     })
   })
 
-  it("should let a tab moved out of its own column take half of the one it lands beside", () => {
+  it("should let a tab moved out of its own column keep its width, and the one it lands beside keep its own", () => {
     expect(drop("m-a-b", [400, 350, 250], [[1], [1], [1]], "b", "a", "left")).toEqual({
-      columns: [400, 175, 175],
+      columns: [400, 250, 350],
       rows: [[1], [1], [1]],
+    })
+  })
+
+  it("should give a tab moved out of a shared column half of the one it lands beside", () => {
+    expect(drop("m-a-b.c", [400, 350, 250], [[1], [1], [1]], "c", "a", "left")).toEqual({
+      columns: [400, 175, 175, 250],
+      rows: [[1], [1], [1], [1]],
     })
   })
 

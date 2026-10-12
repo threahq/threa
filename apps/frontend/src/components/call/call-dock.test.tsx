@@ -746,7 +746,7 @@ describe("CallDock — desktop surface routing", () => {
     expect(overlay.className).not.toContain("right-0")
     expect(overlay.getAttribute("style")).toContain("right: var(--panel-inset-right, 0px)")
     expect(overlay.getAttribute("style")).toContain(
-      "transition: right var(--panel-inset-duration, 0ms) cubic-bezier(0, 0, 0.2, 1)"
+      "transition: right var(--panel-inset-duration, 0ms) cubic-bezier(0.2, 0.7, 0.2, 1)"
     )
   })
 

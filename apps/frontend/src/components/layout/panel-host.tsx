@@ -35,6 +35,7 @@ import {
   PaneDropIndicator,
   PaneFocusContext,
   PanelTabTitle,
+  draggedTab,
   paneDropZone,
   usePaneDrop,
   usePaneCovered,
@@ -62,6 +63,7 @@ import {
   panelSectionOf,
   panelIdsOf,
   isPanelOnShow,
+  locate,
   type PaneEdge,
   type PanelLayout,
   type PanelSection,
@@ -488,6 +490,7 @@ export function PanelTabStack({
     return { columns: [...grid.columns, ...ids.map((id) => [{ ids: [id], active: id }])] }
   }, [display, unplacedKey])
   const ghosts = tabs.filter((tab) => tab.area !== "auto" && members.includes(tab.id))
+  const brought = broughtWidth(layout, draggedTab(), [firstColumnWidth, ...(columnWidths ?? [])])
 
   // The first column fills what the rest leave, so only the dividers between the rest share sizes.
   const columnUnit = (width ?? 0) / sum(panelShares)
@@ -572,7 +575,7 @@ export function PanelTabStack({
       </PaneFocusContext.Provider>
       {display.columns.map((sections, column) =>
         sections.map((section, row) => (
-          <PaneDropIndicator key={`${column}:${row}`} of={section.active} area={areas[column][row]} />
+          <PaneDropIndicator key={`${column}:${row}`} of={section.active} area={areas[column][row]} width={brought} />
         ))
       )}
       {ghosts.map((ghost) => (
@@ -612,6 +615,17 @@ export function PanelTabStack({
 }
 
 const sum = (shares: readonly number[]) => shares.reduce((total, share) => total + share, 0)
+
+/**
+ * The width the tab `id` brings to a side-edge drop, matching `droppedPanelSizes`:
+ * its column's, from `widths`, where it holds that column alone; else none.
+ */
+function broughtWidth(layout: PanelLayout, id: string | null, widths: readonly number[]): number | null {
+  const at = id === null ? null : locate(layout, id)
+  if (at === null) return null
+  const column = layout.columns[at.column]
+  return column.length === 1 && column[0].ids.length === 1 ? (widths[at.column] ?? null) : null
+}
 
 /** The `index`th of `count` floating panes, sharing the width inside a 20px margin with 12px between them. */
 function floatingSlot(index: number, count: number): CSSProperties {

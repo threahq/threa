@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useMemo, useState, type ReactNode } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useMemo, useState, type ReactNode } from "react"
 import {
   closePanelTab,
   dropPanelTab,
@@ -78,22 +78,15 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
     maxWidth,
     minWidth,
     displayWidth,
-    shouldAnimate,
     isResizing,
-    showContent,
     handleResizeStart,
     handleResizeMove,
     handleResizeEnd,
     handleResizeKeyDown,
     handleResizeReset,
-    handleTransitionEnd,
     sizePanel,
     maxColumns,
-  } = usePanelLayout(isPanelOpen, {
-    containerRef,
-    columns: gridLayout.columns.length - 1,
-    animates: !isMobile,
-  })
+  } = usePanelLayout(isPanelOpen, { containerRef, columns: gridLayout.columns.length - 1 })
   const fittedPanels = useFittedPanelLayout(gridLayout, maxColumns + 1, false, maxRows)
   // A phone stacks every pane in the one cell.
   const display = isMobile ? phonePages : fittedPanels
@@ -106,6 +99,12 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
   // A pane dropped on an edge opens at the size its zone showed, once the arrangement it made is on show.
   const [dropped, setDropped] = useState<{ before: string; after: string; sizes: PanelGridSizes } | null>(null)
   const arrangement = JSON.stringify(gridLayout.columns)
+  // Panes glide on the render that changes the arrangement; a resize, of a column or the window, snaps.
+  const shown = useRef(arrangement)
+  const glides = !isMobile && shown.current !== arrangement
+  useLayoutEffect(() => {
+    shown.current = arrangement
+  })
   if (dropped !== null && arrangement !== dropped.before) {
     setDropped(null)
     if (arrangement === dropped.after) {
@@ -134,7 +133,7 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
   const paneDrops = usePaneDropState(workspaceId, sizeDrop)
 
   // Above the error return: a stream that turns inaccessible mid-session must not change the hook count.
-  usePanelInset(isMobile || error ? 0 : displayWidth, shouldAnimate)
+  usePanelInset(isMobile || error ? 0 : displayWidth, glides)
 
   if (error) return error
 
@@ -142,20 +141,14 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
   const floating = floatingPanelTabs(pageLayout, isMobile).length > 0
 
   const drops = isMobile || floating || heldPane !== null ? null : paneDrops
-  // A track for every column that fits, so opening, closing or resizing one animates from the width it had.
+  // A track for every column that fits, so a pane's area names the same track whether or not it is open.
   const panelTracks = Array.from({ length: maxColumns }, (_, column) => columnWidths[column] ?? 0)
   const columns = isMobile ? "minmax(0,1fr)" : ["minmax(0,1fr)", ...panelTracks.map((width) => `${width}px`)].join(" ")
 
   return (
     <PagePaneContext.Provider value={page ?? null}>
       <AsideCoversPanesContext.Provider value={asideSheet !== null}>
-        <PaneHost
-          ref={containerRef}
-          columns={columns}
-          rows={panelGrid.rows || "minmax(0,1fr)"}
-          animate={shouldAnimate && !isMobile}
-          onTransitionEnd={handleTransitionEnd}
-        >
+        <PaneHost ref={containerRef} columns={columns} rows={panelGrid.rows || "minmax(0,1fr)"} glide={glides}>
           {/* Drops reach the page's own panes only: never a drawer's. */}
           <PaneDropContext.Provider value={drops}>
             <PanelTabStack
@@ -170,7 +163,7 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
               firstColumnWidth={Math.max(0, containerWidth - displayWidth)}
               height={containerHeight}
             />
-            {showContent && isPanelOpen && !isMobile && (
+            {isPanelOpen && !isMobile && (
               <PanelResizeHandle
                 style={{ gridArea: "1 / 2 / -1 / 3" }}
                 className="z-10 justify-self-start"

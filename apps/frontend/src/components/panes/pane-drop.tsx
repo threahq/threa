@@ -47,8 +47,15 @@ function readPaneDrag(data: DataTransfer, workspaceId: string): string | null {
   return readStreamDrag(data, workspaceId)
 }
 
+// The drag's payload is sealed until the drop, so the tab being dragged is kept beside it.
+let dragged: string | null = null
+
+/** The tab a drag of this page's own is carrying; null for a sidebar row or a link. */
+export const draggedTab = () => dragged
+
 /** Starts dragging the tab `panelId`, named `label`; a stream's tab carries its permalink too. */
 export function startTabDrag(event: DragEvent<HTMLElement>, workspaceId: string, panelId: string, label: string) {
+  dragged = panelId
   const data = event.dataTransfer
   // The link's own flavours name the page URL with this tab brought forward, which means nothing elsewhere.
   data.clearData()
@@ -61,6 +68,7 @@ export function startTabDrag(event: DragEvent<HTMLElement>, workspaceId: string,
 }
 
 export function endTabDrag() {
+  dragged = null
   setMissedDropGuard(false)
 }
 
@@ -257,17 +265,25 @@ export function useStripCaret(of: string | null): { before: string | null } | nu
 }
 
 const EDGE_SHAPES: Record<PaneEdge, string> = {
-  left: "inset-y-0 left-0 w-1/2",
-  right: "inset-y-0 right-0 w-1/2",
+  left: "inset-y-0 left-0",
+  right: "inset-y-0 right-0",
   top: "inset-x-0 top-0 h-1/2",
   bottom: "inset-x-0 bottom-0 h-1/2",
 }
 
+interface PaneDropIndicatorProps {
+  of: string
+  area: string
+  /** What a pane dropped on a side edge opens at: its own width, where it brings one; else half of the pane's. */
+  width: number | null
+}
+
 /** Where a drop over the pane showing `of` would land, drawn over the grid `area` it fills. */
-export function PaneDropIndicator({ of, area }: { of: string; area: string }) {
+export function PaneDropIndicator({ of, area, width }: PaneDropIndicatorProps) {
   const target = usePaneDrop()?.target
   if (target?.via !== "pane" || target.of !== of) return null
   const { drop } = target
+  const beside = drop.kind === "edge" && (drop.side === "left" || drop.side === "right")
   return (
     <div aria-hidden className="pointer-events-none relative z-20 min-h-0 min-w-0" style={{ gridArea: area }}>
       <div
@@ -275,8 +291,10 @@ export function PaneDropIndicator({ of, area }: { of: string; area: string }) {
         data-drop={drop.kind === "edge" ? drop.side : "centre"}
         className={cn(
           "absolute rounded-md bg-primary/10 ring-2 ring-primary/40 ring-inset",
-          drop.kind === "edge" ? EDGE_SHAPES[drop.side] : "inset-0"
+          drop.kind === "edge" ? EDGE_SHAPES[drop.side] : "inset-0",
+          beside && (width === null ? "w-1/2" : "max-w-full")
         )}
+        style={beside && width !== null ? { width } : undefined}
       />
     </div>
   )

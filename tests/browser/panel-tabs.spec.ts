@@ -282,8 +282,13 @@ test("should split a tab beside its own and keep the split through back, forward
   await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
   expect(await tagOf(replyIn(page, threadA, "reply in thread A"))).toBe("A")
   expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
-  const [boxA, boxB] = await Promise.all([tabPane(page, threadA).boundingBox(), tabPane(page, threadB).boundingBox()])
-  expect(boxA!.x + boxA!.width).toBeLessThanOrEqual(boxB!.x + 1)
+  // The panes glide into the split, so their boxes settle a moment after the route does.
+  await expect
+    .poll(async () => {
+      const [a, b] = await Promise.all([tabPane(page, threadA).boundingBox(), tabPane(page, threadB).boundingBox()])
+      return a!.x + a!.width <= b!.x + 1
+    })
+    .toBe(true)
   await expect
     .poll(async () => {
       const [a, b] = await Promise.all([tabPane(page, threadA).boundingBox(), tabPane(page, threadB).boundingBox()])
@@ -364,8 +369,12 @@ test("should stack a tab split down under its own section", async ({ page }) => 
   // Neither tab remounts, so each keeps its scroll and draft.
   expect(await tagOf(replyIn(page, threadA, "reply in thread A"))).toBe("A")
   expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
-  const [boxA, boxB] = await Promise.all([tabPane(page, threadA).boundingBox(), tabPane(page, threadB).boundingBox()])
-  expect(boxB!.y + boxB!.height).toBeLessThanOrEqual(boxA!.y + 1)
+  await expect
+    .poll(async () => {
+      const [a, b] = await Promise.all([tabPane(page, threadA).boundingBox(), tabPane(page, threadB).boundingBox()])
+      return b!.y + b!.height <= a!.y + 1
+    })
+    .toBe(true)
   await expect(page.getByRole("separator", { name: "Resize stacked panels" })).toBeVisible()
 })
 

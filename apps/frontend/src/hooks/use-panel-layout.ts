@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, type RefObject } from "react"
+import { useState, useRef, useCallback, type RefObject } from "react"
 import { useResizeDrag } from "./use-resize-drag"
 import { useElementWidth } from "./use-element-width"
 import { BESIDE_SPLIT_RATIO } from "@/lib/panel-grid"
@@ -24,8 +24,6 @@ function panelMaxWidth(containerWidth: number): number {
 interface PanelLayoutOptions {
   /** Measure the page's container instead of one of its own. */
   containerRef?: RefObject<HTMLDivElement | null>
-  /** Whether a close animates the column away. One that doesn't never ends a transition, so content goes at once. */
-  animates?: boolean
   /** Side-by-side columns the panel's arrangement has. The panel widens for each one that fits. */
   columns?: number
 }
@@ -40,12 +38,8 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
     setWasOpen(isPanelOpen)
     if (isPanelOpen) setPanelWidth(DEFAULT_PANEL_WIDTH)
   }
-  const [enableTransition, setEnableTransition] = useState(false)
-  const [showContent, setShowContent] = useState(isPanelOpen)
   const ownContainerRef = useRef<HTMLDivElement>(null)
   const containerRef = options.containerRef ?? ownContainerRef
-  const closedDuringResizeRef = useRef(false)
-  const animates = options.animates ?? true
 
   // Live-clamped panel width: opening a panel — or a smaller window / sidebar
   // collapse — re-caps the stored width so the default 480 can't crush the main
@@ -67,27 +61,6 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
   const effectiveWidth =
     containerWidth > 0 ? Math.max(minWidth, Math.min(maxWidth, Math.round(panelWidth * scale))) : panelWidth * scale
 
-  // Enable transitions after first paint to prevent animation on page load
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
-      setEnableTransition(true)
-    })
-    return () => cancelAnimationFrame(frame)
-  }, [])
-
-  const handleTransitionEnd = useCallback(
-    (e: React.TransitionEvent) => {
-      // Only respond to our own width transition — a slot's width, or the track
-      // of a pane host's grid — not bubbled child transitions (the resize
-      // handle's transition-colors finishes 50ms earlier).
-      const ownWidth = e.propertyName === "width" || e.propertyName === "grid-template-columns"
-      if (ownWidth && e.target === e.currentTarget && !isPanelOpen) {
-        setShowContent(false)
-      }
-    },
-    [isPanelOpen]
-  )
-
   const handleWidthChange = useCallback(
     (newWidth: number) => {
       // No measurement yet (pre-mount drag is impossible, but stay safe) — skip.
@@ -102,19 +75,6 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
     onWidthChange: handleWidthChange,
     direction: "left",
   })
-
-  // Content mount/unmount lifecycle — keep content mounted during close animation
-  useEffect(() => {
-    if (isPanelOpen) {
-      closedDuringResizeRef.current = false
-      setShowContent(true)
-    } else if (isResizing) {
-      closedDuringResizeRef.current = true
-    } else if (!enableTransition || !animates || closedDuringResizeRef.current) {
-      closedDuringResizeRef.current = false
-      setShowContent(false)
-    }
-  }, [isPanelOpen, enableTransition, isResizing, animates])
 
   const handleResizeKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -147,15 +107,12 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
     /** How many columns fit side by side, whether or not the arrangement has them. */
     maxColumns,
     displayWidth: isPanelOpen ? effectiveWidth : 0,
-    shouldAnimate: enableTransition && !isResizing,
     isResizing,
-    showContent,
     handleResizeStart,
     handleResizeMove,
     handleResizeEnd,
     handleResizeKeyDown,
     handleResizeReset,
-    handleTransitionEnd,
     sizePanel,
   }
 }

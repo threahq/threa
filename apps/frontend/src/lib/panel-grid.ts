@@ -61,8 +61,10 @@ export function panelColumnWidths(shares: readonly number[], width: number): num
  * Sizes for `after`, the arrangement a drop of `id` on the `side` edge of a pane
  * of `before` made: the dropped pane takes the half of that pane its zone showed,
  * the pane keeps the other half, and every other column and section keeps its
- * size. `widths` are `before`'s columns in pixels, the page's own first; the
- * result's columns are pixels too.
+ * size. A pane that held a column of its own brings that column's width along
+ * instead, and the pane it lands beside keeps all of its own. `widths` are
+ * `before`'s columns in pixels, the page's own first; the result's columns are
+ * pixels too.
  */
 export function droppedPanelSizes(
   before: PanelLayout,
@@ -85,9 +87,16 @@ export function droppedPanelSizes(
 
   if (side === "left" || side === "right") {
     const added = after.columns.findIndex((sections) => sections.every((section) => origin(section) === null))
-    const half = widthOf(added + step) / 2
+    const beside = added + step
+    // Only a pane alone in its column leaves `before` with as many columns as `after` has.
+    const brought = before.columns.length === after.columns.length ? widths[locate(before, id)!.column] : null
+    const widthAt = (column: number) => {
+      if (column === added) return brought ?? widthOf(beside) / 2
+      if (column === beside) return brought === null ? widthOf(beside) / 2 : widthOf(beside)
+      return widthOf(column)
+    }
     return {
-      columns: after.columns.map((_, column) => (column === added || column === added + step ? half : widthOf(column))),
+      columns: after.columns.map((_, column) => widthAt(column)),
       rows: after.columns.map((sections, column) => (column === added ? [1] : sections.map(shareOf))),
     }
   }

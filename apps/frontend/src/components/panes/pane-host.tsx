@@ -1,16 +1,15 @@
-import { createContext, useContext, type HTMLAttributes, type Ref } from "react"
+import { createContext, useContext, type HTMLAttributes, type Ref, type RefObject } from "react"
 import { cn } from "@/lib/utils"
-
-/** How long a pane's track takes to open or close. Edges that track a pane animate over the same time. */
-export const PANE_TRANSITION_MS = 200
+import { usePaneGlide } from "./pane-glide"
 
 interface PaneHostProps extends HTMLAttributes<HTMLDivElement> {
   /** `grid-template-columns` for the docked arrangement. */
   columns: string
   /** `grid-template-rows`: the panel sections' row tracks. */
   rows: string
-  animate: boolean
-  ref?: Ref<HTMLDivElement>
+  /** Whether this render changes the arrangement, so the panes glide into it rather than jump. */
+  glide: boolean
+  ref: RefObject<HTMLDivElement | null>
 }
 
 /**
@@ -19,21 +18,13 @@ interface PaneHostProps extends HTMLAttributes<HTMLDivElement> {
  * React would remount it and its scroll offset, draft and focus would go.
  * Overlays a page anchors to this row (`absolute inset-0`) stop at the sidebar.
  */
-export function PaneHost({ columns, rows, animate, className, style, ref, ...rest }: PaneHostProps) {
+export function PaneHost({ columns, rows, glide, className, style, ref, ...rest }: PaneHostProps) {
+  usePaneGlide(ref, glide)
   return (
     <div
       ref={ref}
-      className={cn(
-        "relative grid h-full min-h-0",
-        animate && "transition-[grid-template-columns] ease-out",
-        className
-      )}
-      style={{
-        ...style,
-        gridTemplateColumns: columns,
-        gridTemplateRows: rows,
-        transitionDuration: animate ? `${PANE_TRANSITION_MS}ms` : undefined,
-      }}
+      className={cn("relative grid h-full min-h-0", className)}
+      style={{ ...style, gridTemplateColumns: columns, gridTemplateRows: rows }}
       {...rest}
     />
   )
