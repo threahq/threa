@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import { createElement, Fragment, useRef } from "react"
+import { createElement, Fragment, useState } from "react"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
+import { MemoryRouter, Route, Routes } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { AuthContext } from "@/auth"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -23,6 +23,7 @@ import {
   type ListStreamContextResponse,
   type StreamContextItem,
 } from "@threahq/types"
+import type { Filter } from "./stream-context-chrome"
 import { StreamContextIndexPanel } from "./stream-context-index-panel"
 
 const WS = "ws_1"
@@ -76,17 +77,9 @@ function listResponse(overrides: Partial<ListStreamContextResponse> = {}): ListS
   return { items: [], counts: { ...EMPTY_COUNTS }, nextCursor: null, mode: "index", ...overrides }
 }
 
-/** The panel's filter lives on the route, so history writes are observable. */
-function LocationProbe() {
-  const location = useLocation()
-  const seen = useRef(0)
-  seen.current += 1
-  return <span data-testid="location">{`${location.search}|${seen.current}`}</span>
-}
-
 function renderPanel(
   options: {
-    entry?: string
+    filter?: Filter
     streamId?: string
     memberIds?: string[]
     outcomes?: AgentOutcomeSummary[]
@@ -106,37 +99,44 @@ function renderPanel(
     outstandingCount: options.outcomes?.length ?? 0,
   })
   const onJumpToMessage = vi.fn()
-  const panel = (
-    <>
-      <LocationProbe />
+  const onFilterChange = vi.fn()
+  // The pane keeps the filter in its id; here it is plain state.
+  function Panel() {
+    const [filter, setFilter] = useState<Filter>(options.filter ?? "all")
+    return (
       <StreamContextIndexPanel
         workspaceId={WS}
         streamId={options.streamId ?? STREAM}
-        onClose={vi.fn()}
+        filter={filter}
+        onFilterChange={(next) => {
+          onFilterChange(next)
+          setFilter(next)
+        }}
+        header={() => null}
         onJumpToMessage={onJumpToMessage}
         onOpenThread={vi.fn()}
         onOpenMemo={vi.fn()}
         onOpenGallery={vi.fn()}
       />
-    </>
-  )
+    )
+  }
   render(
     // A `:workspaceId` route segment, not a bare path: the filter menu's user
     // picker reads the workspace off the route (`useMentionables`), so a
     // param-less router silently offers nobody and makes a scoping test vacuous.
-    <MemoryRouter initialEntries={[`/w/${WS}${options.entry ?? "/s"}`]}>
+    <MemoryRouter initialEntries={[`/w/${WS}/s`]}>
       <AuthContext.Provider value={{ user: { id: WORKOS_ME }, loading: false } as never}>
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
             <Routes>
-              <Route path="/w/:workspaceId/*" element={panel} />
+              <Route path="/w/:workspaceId/*" element={<Panel />} />
             </Routes>
           </TooltipProvider>
         </QueryClientProvider>
       </AuthContext.Provider>
     </MemoryRouter>
   )
-  return { onJumpToMessage }
+  return { onJumpToMessage, onFilterChange }
 }
 
 beforeEach(async () => {
@@ -445,7 +445,7 @@ describe("StreamContextPanel", () => {
     expect(screen.getByText("Hers")).toBeInTheDocument()
   })
 
-  it("does not touch the route when the already-active chip is tapped", async () => {
+  it("does not change the filter when the already-active chip is tapped", async () => {
     await db.streamContextItems.put(
       cachedRow(
         serverItem({ category: "link", refId: "https://a.example", detail: { url: "https://a.example", title: "A" } })
@@ -453,15 +453,14 @@ describe("StreamContextPanel", () => {
     )
     vi.spyOn(streamContextApi, "list").mockResolvedValue(listResponse({ counts: { ...EMPTY_COUNTS, link: 1 } }))
 
-    renderPanel({ entry: "/s?context=all" })
+    const { onFilterChange } = renderPanel()
     expect(await screen.findByText("A")).toBeInTheDocument()
-    const before = screen.getByTestId("location").textContent
 
     await userEvent.click(screen.getByRole("button", { name: /^All/ }))
 
-    // The filter is a route param, so writing it back unchanged re-renders the
-    // whole stream page — the timeline and composer included — for nothing.
-    expect(screen.getByTestId("location").textContent).toBe(before)
+    // The filter is in the pane's URL id, so writing it back unchanged re-renders
+    // the whole stream page — the timeline and composer included — for nothing.
+    expect(onFilterChange).not.toHaveBeenCalled()
   })
 
   it("offers from: only this stream's members, plus the viewer", async () => {
@@ -949,7 +948,7 @@ describe("StreamContextPanel", () => {
     ])
   })
 
-  it("falls back to All when a ?context= deep link names a category the server has none of", async () => {
+  it("falls back to All when a deep-linked filter names a category the server has none of", async () => {
     await db.streamContextItems.put(
       cachedRow(
         serverItem({
@@ -963,7 +962,7 @@ describe("StreamContextPanel", () => {
       .spyOn(streamContextApi, "list")
       .mockResolvedValue(listResponse({ counts: { ...EMPTY_COUNTS, link: 1 } }))
 
-    renderPanel({ entry: "/s?context=memo" })
+    renderPanel({ filter: "memo" })
 
     expect(await screen.findByText("Alpha")).toBeInTheDocument()
     expect(screen.getByRole("button", { name: /^All/ })).toHaveAttribute("aria-pressed", "true")
@@ -1141,7 +1140,7 @@ describe("StreamContextPanel — the Agent chip", () => {
     await waitFor(() => expect(list.mock.calls.at(-1)?.[2]).toMatchObject({ categories: ["follow_up", "delegation"] }))
   })
 
-  it("indexed panel: a ?context=follow_up deep link survives the arrival of server counts", async () => {
+  it("indexed panel: a follow_up deep link survives the arrival of server counts", async () => {
     await db.streamContextItems.put(
       cachedRow(
         serverItem({
@@ -1159,7 +1158,7 @@ describe("StreamContextPanel — the Agent chip", () => {
       listResponse({ counts: { ...EMPTY_COUNTS, link: 4, follow_up: 1 } })
     )
 
-    renderPanel({ entry: "/s?context=follow_up" })
+    renderPanel({ filter: "follow_up" })
 
     expect(await screen.findByText("Check the staging deploy")).toBeInTheDocument()
     await waitFor(() =>
@@ -1168,7 +1167,7 @@ describe("StreamContextPanel — the Agent chip", () => {
     expect(screen.getByRole("button", { name: /^All/ })).toHaveAttribute("aria-pressed", "false")
   })
 
-  it("indexed panel: a ?context=agent deep link survives the arrival of server counts", async () => {
+  it("indexed panel: an agent deep link survives the arrival of server counts", async () => {
     await db.streamContextItems.put(
       cachedRow(
         serverItem({
@@ -1186,7 +1185,7 @@ describe("StreamContextPanel — the Agent chip", () => {
       listResponse({ counts: { ...EMPTY_COUNTS, link: 4, follow_up: 1 } })
     )
 
-    renderPanel({ entry: "/s?context=agent" })
+    renderPanel({ filter: "agent" })
 
     expect(await screen.findByText("Check the staging deploy")).toBeInTheDocument()
     await waitFor(() => expect(screen.getByRole("button", { name: /^Agent/ })).toHaveAttribute("aria-pressed", "true"))

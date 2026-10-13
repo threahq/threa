@@ -47,6 +47,7 @@ import {
   isConversationPanel,
   parseConversationPanel,
   parseComposePanel,
+  parseContextPanel,
 } from "@/contexts"
 import {
   useKeyboardShortcuts,
@@ -196,7 +197,10 @@ function StreamLinkKeyboardHandler({
           }
           // Malformed `conv:` id (hand-edited/stale URL) — fall through to the main link.
         } else if (!isDraftPanel(panelId)) {
-          void copyStreamLink(workspaceId, parseComposePanel(panelId) ?? panelId)
+          void copyStreamLink(
+            workspaceId,
+            parseComposePanel(panelId) ?? parseContextPanel(panelId)?.streamId ?? panelId
+          )
           return
         }
       }

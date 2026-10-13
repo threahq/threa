@@ -1,8 +1,6 @@
-import { useMemo, useState } from "react"
+import { useMemo, useState, type ReactNode } from "react"
 import type { VirtualizerHandle } from "virtua"
-import { useSearchParams } from "react-router-dom"
-import { ChevronDown, PanelRight, Sparkles } from "lucide-react"
-import { SidePanelClose, SidePanelHeader, SidePanelTitle } from "@/components/ui/side-panel"
+import { ChevronDown, Sparkles } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { DateJumpMenu } from "@/components/timeline/date-jump-menu"
@@ -43,7 +41,11 @@ export function filterCount(counts: Record<ContextCategory, number>, filter: Fil
 export interface StreamContextPanelProps {
   workspaceId: string
   streamId: string
-  onClose: () => void
+  /** The selected category, which the pane holds in its id so a reload lands on it (INV-59). */
+  filter: Filter
+  onFilterChange: (filter: Filter) => void
+  /** The pane's own chrome, given the scope's item count. */
+  header: (total: number) => ReactNode
   /** `inStreamId` names the thread a root's overview found the message in. */
   onJumpToMessage: (messageId: string, inStreamId?: string) => void
   onOpenThread: (threadId: string) => void
@@ -67,31 +69,6 @@ export function parseFilter(raw: string | null): Filter {
   if (raw === "agent") return "agent"
   if (raw && (CONTEXT_CATEGORIES as string[]).includes(raw)) return raw as ContextCategory
   return "all"
-}
-
-/**
- * The active category filter, held in the URL (`?context=` doubles as the
- * open-state and the selected category), so a refresh or shared link lands on
- * the same view (INV-59). Changing it replaces history — view chrome, not
- * navigation.
- */
-export function useContextFilter(): [Filter, (value: Filter) => void] {
-  const [searchParams, setSearchParams] = useSearchParams()
-  const filter = parseFilter(searchParams.get("context"))
-  const setFilter = (value: Filter) => {
-    // Re-tapping the active chip used to write the same param back, and the
-    // param lives on the route — so a no-op re-rendered the whole stream page.
-    if (value === filter) return
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev)
-        next.set("context", value)
-        return next
-      },
-      { replace: true }
-    )
-  }
-  return [filter, setFilter]
 }
 
 export interface ContextChip {
@@ -132,7 +109,7 @@ export function ContextChipRow({
             key={chip.value}
             type="button"
             aria-pressed={isActive}
-            onClick={() => onSelect(chip.value)}
+            onClick={() => !isActive && onSelect(chip.value)}
             className={cn(
               "shrink-0 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
               isActive
@@ -149,20 +126,13 @@ export function ContextChipRow({
   )
 }
 
-export function ContextPanelHeader({ total, onClose }: { total: number; onClose: () => void }) {
+/** The scope's item count, beside the pane's title. */
+export function ContextCount({ total }: { total: number }) {
+  if (total === 0) return null
   return (
-    <SidePanelHeader className="gap-2">
-      <div className="flex min-w-0 items-center gap-2">
-        <PanelRight className="size-4 shrink-0 text-muted-foreground" />
-        <SidePanelTitle className="text-sm">In this stream</SidePanelTitle>
-        {total > 0 && (
-          <span className="shrink-0 rounded-full bg-muted px-1.5 text-[11px] font-medium tabular-nums text-muted-foreground">
-            {total}
-          </span>
-        )}
-      </div>
-      <SidePanelClose onClose={onClose} />
-    </SidePanelHeader>
+    <span className="shrink-0 rounded-full bg-muted px-1.5 text-[11px] font-medium tabular-nums text-muted-foreground">
+      {total}
+    </span>
   )
 }
 

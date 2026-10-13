@@ -209,12 +209,13 @@ test("should show one overview and hand keyboard focus to the tab brought forwar
   await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}.${threadB}`)
   await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
 
-  // Only the tab on show draws its overview, though both tabs read `?context=`.
+  // The overview opens as one pane beside the tab it lists.
   await tabPane(page, threadB).getByRole("button", { name: "In this stream" }).click()
-  await expect(page.getByRole("complementary", { name: "In this stream" })).toHaveCount(1)
+  await expect(page.getByRole("region", { name: "In this stream" })).toHaveCount(1)
+  await expect.poll(() => panelParam(page)).toContain(`context:${threadB}`)
 
-  const strip = tabStrip(page)
-  await strip.getByRole("link").first().focus()
+  // Panes mount in key order, so the overview's strip can come first in the DOM.
+  await stripOf(page, threadB).getByRole("link").first().focus()
   await page.keyboard.press("Enter")
   await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
   await expect(

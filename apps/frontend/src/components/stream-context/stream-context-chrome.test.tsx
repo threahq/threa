@@ -121,7 +121,7 @@ describe("the Agent chip", () => {
     expect(chipsFromCounts(empty, 3).map((chip) => chip.value)).toEqual(["all", "link"])
   })
 
-  it("is addressable as ?context=agent and narrows to both categories", () => {
+  it("is addressable as the agent filter and narrows to both categories", () => {
     expect({
       parsed: parseFilter("agent"),
       categories: filterCategories("agent"),
