@@ -344,50 +344,40 @@ test("should stack a tab split down under its own section", async ({ page }) => 
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 400, height: 800 }, isMobile: true, hasTouch: true })
 
-  test("should show the tab row with the back control and keep both tabs mounted", async ({ page }) => {
+  test("should close the pane on show with the back control, and keep both mounted through a sheet switch", async ({
+    page,
+  }) => {
     const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
 
     await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}.${threadB}`)
     await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
     await tag(replyIn(page, threadB, "reply in thread B"), "B")
-    const strip = tabPane(page, threadB).getByRole("navigation", { name: "Panel tabs" })
-    await expect(strip.getByRole("link")).toHaveCount(2)
+    await expect(page.getByRole("navigation", { name: "Panel tabs" })).toHaveCount(0)
 
-    // The row sits between Back and the header actions, and the tab on show,
-    // close included, sits fully inside it.
-    const back = tabPane(page, threadB).getByRole("button", { name: "Back" })
-    const actions = tabPane(page, threadB).getByRole("button", { name: "Stream actions" })
-    const [stripBox, backBox, actionsBox, activeCloseBox] = await Promise.all([
-      strip.boundingBox(),
-      back.boundingBox(),
-      actions.boundingBox(),
-      strip.getByRole("button", { name: "Close tab" }).last().boundingBox(),
-    ])
-    expect(backBox!.x + backBox!.width).toBeLessThanOrEqual(stripBox!.x)
-    expect(stripBox!.x + stripBox!.width).toBeLessThanOrEqual(actionsBox!.x)
-    expect(activeCloseBox!.x).toBeGreaterThanOrEqual(stripBox!.x)
-    expect(activeCloseBox!.x + activeCloseBox!.width).toBeLessThanOrEqual(stripBox!.x + stripBox!.width)
-    // No hover on touch, so the tab behind shows its close outright.
-    await expect(strip.getByRole("button", { name: "Close tab" }).first()).toHaveCSS("opacity", "1")
-
-    await strip.getByRole("link").first().click()
+    await tabPane(page, threadB).getByRole("button", { name: "3 open panes" }).click()
+    await page
+      .getByRole("dialog", { name: "Open panes" })
+      .getByRole("link", { name: /first parent/ })
+      .click()
     await expect(replyIn(page, threadA, "reply in thread A")).toBeVisible()
     expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
 
-    // Back on a phone closes the panel's newest step, not the page; the route moves to the tab left on show.
+    // Back on a phone closes the pane on show, not the page; the other two stay open.
     await tabPane(page, threadA).getByRole("button", { name: "Back" }).click()
-    await expect.poll(() => route(page)).toEqual({ stream: threadB, panel: `${streamId}-${threadB}` })
+    await expect(tabPane(page, threadA)).toHaveCount(0)
+    await expect(tabPane(page, threadB).getByRole("button", { name: "2 open panes" })).toBeVisible()
     await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible()
+    expect(await tagOf(replyIn(page, threadB, "reply in thread B"))).toBe("B")
   })
 
-  test("should show a split from a wider screen as tabs of one section and keep the URL", async ({ page }) => {
+  test("should show a split from a wider screen as panes of one stack and keep the URL", async ({ page }) => {
     const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
 
     await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}-${threadB}`)
     await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
     await expect(replyIn(page, threadA, "reply in thread A")).not.toBeVisible()
-    await expect(stripOf(page, threadB).getByRole("link")).toHaveCount(2)
-    await expect(tabPane(page, threadB).getByRole("button", { name: "Tab actions" })).toHaveCount(0)
+    await expect(tabPane(page, threadB).getByRole("button", { name: "3 open panes" })).toBeVisible()
+    await expect(page.getByRole("navigation", { name: "Panel tabs" })).toHaveCount(0)
     expect(panelParam(page)).toBe(`${threadA}-${threadB}`)
   })
 })

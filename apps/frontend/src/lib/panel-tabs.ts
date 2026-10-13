@@ -381,13 +381,32 @@ export function fullPanelLayout(path: string | null, panels: PanelLayout): Panel
 
 /**
  * What `?panel=` holds of `layout` when the route names `path`: everything but
- * a first column showing `path` alone, which the route already implies.
+ * a first column showing `path` alone, which the route already implies. A phone
+ * with `path` in front (`keepPath`) writes that column when other panes are
+ * open, which tells `/s/a?panel=a-b` (a in front) from `/s/a?panel=b` (b in front).
  */
-export function canonicalPanelLayout(layout: PanelLayout, path: string | null): PanelLayout {
+export function canonicalPanelLayout(layout: PanelLayout, path: string | null, keepPath = false): PanelLayout {
   if (path === null || soleFirstPanelOf(layout) !== path || layout.focused === path) return layout
+  if (keepPath && layout.columns.length > 1) return layout
   const columns = layout.columns.slice(1)
   if (columns.length === 0) return NO_PANELS
   return layout.focused === undefined ? { columns } : { columns, focused: layout.focused }
+}
+
+/**
+ * Where a phone's route goes with `front` in front of `layout`, for
+ * {@link canonicalPanelLayout}: a stream pane is the route and written out
+ * (`keepPath`). Otherwise the route goes to a stream `?panel=` can leave out, so
+ * a reload or Back lands on the newest pane; without one, to `fallback`.
+ */
+export function phonePanelRoute(
+  layout: PanelLayout,
+  front: string | null,
+  fallback: string | null
+): { path: string | null; keepPath: boolean } {
+  if (front !== null && isServerStreamId(front) && locate(layout, front)) return { path: front, keepPath: true }
+  const sole = soleFirstPanelOf(layout)
+  return { path: sole !== null && isServerStreamId(sole) ? sole : fallback, keepPath: false }
 }
 
 /**

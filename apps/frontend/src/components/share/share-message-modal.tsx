@@ -17,6 +17,7 @@ import { useStreamPickerGroups } from "@/hooks/use-stream-picker-groups"
 import { queueShareHandoff, queuePlaintextShareHandoff } from "@/stores/composer-handoff-store"
 import { navigateAfterShareHandoff } from "@/lib/share-navigation"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { usePanel } from "@/contexts"
 import {
   ResponsiveAlertDialog,
   ResponsiveAlertDialogAction,
@@ -96,6 +97,7 @@ export function ShareMessageModal({
   // The Drawer/Dialog split is owned by ResponsiveDialog; isMobile here only
   // governs the post-select navigation contract (mobile strips `?panel=…`).
   const isMobile = useIsMobile()
+  const panel = usePanel()
 
   // Baseline access filter (public-or-member, not archived, not thread/system) —
   // includes scratchpads, which you can share into. No extra predicate.
@@ -115,7 +117,7 @@ export function ShareMessageModal({
     // Same navigation contract as the fast-path entries in
     // `message-event.tsx` — strip search params on mobile so the panel
     // doesn't shadow the parent composer, no-op when target === current.
-    navigateAfterShareHandoff({ workspaceId, targetStreamId, location, navigate, isMobile })
+    navigateAfterShareHandoff({ workspaceId, targetStreamId, location, navigate, isMobile, panel })
   }
 
   const handleSelect = (targetStreamId: string) => {

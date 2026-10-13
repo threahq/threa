@@ -213,25 +213,3 @@ test("should keep the tab on show, its close and +N in a split section at its na
     if (row.more) await expect(strip.getByRole("button", { name: /more tabs?$/ })).toBeInViewport({ ratio: 1 })
   }
 })
-
-test.describe("on a phone", () => {
-  test.use({ viewport: { width: 400, height: 800 }, isMobile: true, hasTouch: true })
-
-  test("should fold the tabs that don't fit into +N beside the one on show", async ({ page }) => {
-    const { workspaceId, streamId, threads } = await seedThreads(page, 4)
-    const last = threads[3]
-
-    await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threads.join(".")}`)
-    const pane = tabPane(page, last)
-    await expect(pane.getByText("reply in thread 4")).toBeVisible({ timeout: 30_000 })
-    const strip = pane.getByRole("navigation", { name: "Panel tabs" })
-
-    const row = await settledRow(pane)
-    expect(row.overflows).toBe(false)
-    expect(row.shown).toBeLessThan(4)
-    expect(row.more).toBe(`+${4 - row.shown}`)
-    await expect(strip.locator('[aria-current="page"]')).toHaveText("parent number 4")
-    await expect(pane.getByRole("button", { name: "Back" })).toBeVisible()
-    await expect(pane.getByRole("button", { name: "Stream actions" })).toBeVisible()
-  })
-})
