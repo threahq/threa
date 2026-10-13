@@ -1,0 +1,169 @@
+import { useLayoutEffect, useReducer, type MutableRefObject } from "react"
+import { useLocation, useNavigate } from "react-router-dom"
+import { usePanel, useCurrentPane, usePaneFocusLanding, usePaneShortcutQueue } from "@/contexts"
+import { useKeyboardShortcuts } from "@/hooks/use-keyboard-shortcuts"
+import { findVisibleZoneEditor, focusAtEnd, zoneContainer } from "@/hooks/use-type-to-focus"
+import { activatePanelTab, closePanelTab, followCurrentPanel } from "@/lib/panel-tabs"
+
+type PaneAction = "closePane" | "reopenPane" | "nextPaneTab" | "previousPaneTab" | "nextPane" | "previousPane"
+
+/** How long a pane may take to come out from under the one it was behind. */
+const UNCOVER_WAIT_MS = 2000
+/** How long an uncovered pane may take to mount its composer before its tab takes focus. */
+const EDITOR_WAIT_FRAMES = 10
+/** How long a press waits for the page to catch up with the URL before it is dropped. */
+const CATCH_UP_WAIT_MS = 2000
+
+const NO_PANES: readonly (string | null)[] = []
+
+/**
+ * The pane shortcuts, acting on the tab this is scoped to: the pane worked in,
+ * or the panel last worked in while that is the main view. `panes` is every pane
+ * on screen in order, the main view as null, or empty where panes don't sit side
+ * by side. Unscoped, with no panel open, only reopening has anything to act on.
+ */
+export function PaneShortcuts({ panes = NO_PANES }: { panes?: readonly (string | null)[] }) {
+  const { panelId, layout, section, getTabUrl, closePanel, reopenTab, canReopenTab, setCurrentPane } = usePanel()
+  const current = useCurrentPane()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const landing = usePaneFocusLanding()
+
+  const showTab = (step: number) => {
+    const ids = section?.ids ?? []
+    if (!section?.active || ids.length < 2) return false
+    const next = ids[(ids.indexOf(section.active) + step + ids.length) % ids.length]
+    navigate(getTabUrl(next), { replace: true })
+    setCurrentPane(next)
+    landFocus(landing, next)
+    // A section folded on screen can switch to a tab its own section already shows, which leaves the URL as it was.
+    return activatePanelTab(layout, next) !== layout
+  }
+
+  const showPane = (step: number) => {
+    const at = panes.indexOf(current)
+    const next = panes[((at === -1 ? panes.indexOf(panelId) : at) + step + panes.length) % panes.length]
+    setCurrentPane(next)
+    landFocus(landing, next)
+    return false
+  }
+
+  /** Each action says whether it navigated. */
+  const actions: Record<PaneAction, () => boolean> = {
+    closePane: () => {
+      if (!panelId) return false
+      // Closing a panel from the main view leaves focus where it is.
+      if (current !== null) landFocus(landing, followCurrentPanel(layout, closePanelTab(layout, panelId), panelId))
+      closePanel()
+      return true
+    },
+    reopenPane: () => {
+      const reopened = reopenTab()
+      if (reopened) landFocus(landing, reopened)
+      return reopened !== null
+    },
+    nextPaneTab: () => showTab(1),
+    previousPaneTab: () => showTab(-1),
+    nextPane: () => showPane(1),
+    previousPane: () => showPane(-1),
+  }
+
+  // A shortcut with nothing to act on leaves its key to typing, except a held
+  // key: a held ⌘W must not go on to close the window once the tabs run out.
+  const tabs = section?.ids.length ?? 0
+  const available: Record<PaneAction, boolean> = {
+    closePane: panelId !== null,
+    reopenPane: canReopenTab(),
+    nextPaneTab: tabs > 1,
+    previousPaneTab: tabs > 1,
+    nextPane: panes.length > 1,
+    previousPane: panes.length > 1,
+  }
+
+  // The router commits a navigation in a transition, so the URL can be a step
+  // ahead of what this render saw, and a close that pops history moves the URL
+  // only once the pop lands. A press waits for the render that shows both,
+  // rather than acting on the layout the URL already left behind, and queued
+  // presses act one per render so each sees what the one before it did.
+  const queue = usePaneShortcutQueue()
+  const [, nextRender] = useReducer((n: number) => n + 1, 0)
+  const rendered = panesAt(location.pathname, location.search)
+  const waited = () => performance.now() - queue.current.waitingSince > CATCH_UP_WAIT_MS
+  const caughtUp = () =>
+    (queue.current.navigatedFrom === null || waited()) &&
+    panesAt(window.location.pathname, window.location.search) === rendered
+  const act = (action: PaneAction) => {
+    if (!available[action] || !actions[action]()) return
+    queue.current.navigatedFrom = rendered
+    queue.current.waitingSince = performance.now()
+  }
+  useLayoutEffect(() => {
+    if (queue.current.navigatedFrom !== rendered) queue.current.navigatedFrom = null
+    if (waited()) queue.current.pending = []
+    if (queue.current.pending.length === 0 || !caughtUp()) return
+    act(queue.current.pending.shift() as PaneAction)
+    if (queue.current.pending.length === 0) return
+    queue.current.waitingSince = performance.now()
+    nextRender()
+  })
+
+  const handle = (action: PaneAction) => (event: KeyboardEvent) => {
+    // A held key's repeats outrun the router, and must not go on acting after it is let go.
+    if (queue.current.pending.length > 0 || !caughtUp()) {
+      if (event.repeat) return true
+      if (queue.current.pending.length === 0) queue.current.waitingSince = performance.now()
+      queue.current.pending.push(action)
+    } else if (available[action]) act(action)
+    else return event.repeat
+    return true
+  }
+  useKeyboardShortcuts({
+    closePane: handle("closePane"),
+    reopenPane: handle("reopenPane"),
+    nextPaneTab: handle("nextPaneTab"),
+    previousPaneTab: handle("previousPaneTab"),
+    nextPane: handle("nextPane"),
+    previousPane: handle("previousPane"),
+  })
+
+  return null
+}
+
+/** What a URL says about the panes on show; other params come and go without a navigation. */
+function panesAt(pathname: string, search: string): string {
+  return `${pathname}?${new URLSearchParams(search).get("panel") ?? ""}`
+}
+
+function findPane(paneId: string | null): HTMLElement | null {
+  if (paneId !== null) return document.querySelector<HTMLElement>(`[data-panel-tab="${CSS.escape(paneId)}"]`)
+  return zoneContainer("main", null)
+}
+
+/**
+ * Focus the pane's composer once the pane has come out from under the one it
+ * was behind, or its tab on show when it has no composer. A null pane is the
+ * main view. A later landing, or the user moving focus first, calls it off.
+ */
+function landFocus(landing: MutableRefObject<number>, paneId: string | null) {
+  const run = ++landing.current
+  const from = document.activeElement
+  const deadline = performance.now() + UNCOVER_WAIT_MS
+  let uncoveredFrames = 0
+  const attempt = () => {
+    const active = document.activeElement
+    if (run !== landing.current || (active !== from && active !== document.body && active !== null)) return
+    const pane = findPane(paneId)
+    const uncovered = pane !== null && !pane.closest("[inert]")
+    const editor = uncovered ? findVisibleZoneEditor(pane) : null
+    if (editor) {
+      focusAtEnd(editor)
+      return
+    }
+    if (uncovered && ++uncoveredFrames >= EDITOR_WAIT_FRAMES) {
+      pane.querySelector<HTMLElement>('[aria-current="page"]')?.focus()
+      return
+    }
+    if (performance.now() < deadline) requestAnimationFrame(attempt)
+  }
+  requestAnimationFrame(attempt)
+}

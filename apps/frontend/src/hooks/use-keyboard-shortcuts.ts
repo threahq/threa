@@ -7,7 +7,8 @@ import {
   isSafeShortcutBinding,
 } from "@/lib/keyboard-shortcuts"
 
-type ShortcutHandlers = Partial<Record<string, () => void>>
+/** Returning false leaves the key to whatever else would take it. */
+type ShortcutHandlers = Partial<Record<string, (event: KeyboardEvent) => boolean | void>>
 
 /**
  * Register keyboard shortcut handlers, honoring user preferences for custom
@@ -48,8 +49,8 @@ export function useKeyboardShortcuts(handlers: ShortcutHandlers, enabled = true)
         if (isInput && !action.global) continue
 
         if (matchesKeyBinding(event, binding)) {
+          if (handler(event) === false) return
           event.preventDefault()
-          handler()
           return
         }
       }

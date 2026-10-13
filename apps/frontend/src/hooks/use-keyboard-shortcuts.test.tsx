@@ -11,7 +11,7 @@ function TestShortcutHandler({
   onSearchInStream,
   enabled = true,
 }: {
-  onSearchInStream: () => void
+  onSearchInStream: () => boolean | void
   enabled?: boolean
 }) {
   useKeyboardShortcuts(
@@ -65,5 +65,13 @@ describe("useKeyboardShortcuts", () => {
     fireEvent.keyDown(input, { key: "f", ctrlKey: true })
 
     expect(onSearchInStream).toHaveBeenCalledOnce()
+  })
+
+  it("should leave the key alone when the handler declines it", () => {
+    render(<TestShortcutHandler onSearchInStream={() => false} />)
+
+    const declined = fireEvent.keyDown(document, { key: "f", ctrlKey: true })
+
+    expect(declined).toBe(true)
   })
 })

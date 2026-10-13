@@ -1,11 +1,12 @@
 import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react"
-import { usePanel, useFrontPanel, isConversationPanel, PaneScope } from "@/contexts"
+import { usePanel, useFrontPanel, useCurrentPane, isConversationPanel, PaneScope } from "@/contexts"
 import { Pane } from "@/components/panes"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 import { compilePanelGrid, defaultPanelGridSizes, panelGridShape, resplit, type PanelGridSizes } from "@/lib/panel-grid"
 import { fitPanelLayout, type PanelLayout, type PanelSection, type SplitDirection } from "@/lib/panel-tabs"
 import { cn } from "@/lib/utils"
 import { PanelResizeHandle } from "./panel-resize-handle"
+import { PaneShortcuts } from "./pane-shortcuts"
 import { getDraftPromotionSource } from "@/lib/draft-promotions"
 import { StreamPanel } from "@/components/thread"
 import { ConversationPanel } from "@/components/conversations/conversation-panel"
@@ -82,6 +83,7 @@ interface PlacedTab {
 export function PanelTabStack({ workspaceId, maxColumns, stacked }: PanelTabStackProps) {
   const { layout, setCurrentPane } = usePanel()
   const front = useFrontPanel()
+  const current = useCurrentPane()
   const display = useMemo(
     () => fitPanelLayout(layout, maxColumns, stacked, front),
     [layout, maxColumns, stacked, front]
@@ -111,6 +113,12 @@ export function PanelTabStack({ workspaceId, maxColumns, stacked }: PanelTabStac
       })
     )
     .sort((a, b) => (a.key < b.key ? -1 : 1))
+
+  const sections = display.columns.flat()
+  const onShow = (id: string | null) => sections.find((section) => section.active === id)
+  // The pane worked in, else the panel last worked in, else the first on show.
+  const shortcutSection = onShow(current) ?? onShow(front) ?? sections[0]
+  const panes = stacked ? undefined : [null, ...sections.map((section) => section.active)]
 
   const columnUnit = box.width / sum(sizes.columns)
   const columnResizers = sizes.columns
@@ -165,6 +173,11 @@ export function PanelTabStack({ workspaceId, maxColumns, stacked }: PanelTabStac
       ))}
       {columnResizers}
       {rowResizers}
+      {shortcutSection?.active && (
+        <PaneScope panelId={shortcutSection.active} section={shortcutSection} splits={NO_SPLITS}>
+          <PaneShortcuts panes={panes} />
+        </PaneScope>
+      )}
     </div>
   )
 }

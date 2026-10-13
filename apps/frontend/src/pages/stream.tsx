@@ -62,6 +62,7 @@ import { AsideSlot, useAsideHost, useAsideIsSheet } from "@/components/aside"
 import { AsideHeaderChip } from "@/components/aside/aside-header-chip"
 import { asideHoldsPanel, useAsideForHost } from "@/stores/aside-store"
 import { PanelTabStack } from "@/components/layout/panel-host"
+import { PaneShortcuts } from "@/components/layout/pane-shortcuts"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useCoverClose } from "@/hooks/use-cover-close"
 import { CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
@@ -911,6 +912,7 @@ export function StreamPage() {
   // behind it so closing a thread lands back where the reader was rather than
   // re-running the opening scroll.
   const mobileTakeover = isMobile && isPanelOpen && !panelInAside
+  const tabStackShown = isMobile ? mobileTakeover : showContent && !asideStage && !panelInAside
 
   return (
     <StreamContextDockProvider value={{ target: dock.target, fits: dockFits }}>
@@ -942,7 +944,7 @@ export function StreamPage() {
         >
           {/* The stage mounts the panel in its host pane; this pane keeps its
               width lifecycle but shows nothing under the overlay. */}
-          {(isMobile ? mobileTakeover : showContent && !asideStage && !panelInAside) && (
+          {tabStackShown && (
             <ResizablePanelFrame
               fill={isMobile}
               panelWidth={panelWidth}
@@ -958,6 +960,8 @@ export function StreamPage() {
             </ResizablePanelFrame>
           )}
         </Pane>
+        {/* The tab stack takes the shortcuts over once it mounts, which trails the panel opening. */}
+        {(!isPanelOpen || !(tabStackShown || panelInAside || asideStage)) && <PaneShortcuts />}
         {!isMobile && (
           <StreamContextDockSlot
             dock={dock}
