@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom"
-import { CornerUpLeft } from "lucide-react"
+import { Anchor, CornerUpLeft } from "lucide-react"
 import { usePanel } from "@/contexts"
 import { useAsideAnchor } from "@/hooks/use-aside-anchor"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -33,10 +33,14 @@ export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant =
 
   const label = anchored ? (
     <>
-      Anchored to <span className="font-medium text-foreground/85">{`${anchored.author} · ${anchored.at}`}</span>
+      <span className="sr-only">Anchored to </span>
+      <span className="font-medium text-foreground/85">{`${anchored.author} · ${anchored.at}`}</span>
     </>
   ) : (
-    `Anchored in ${hostName ?? "this conversation"}`
+    <>
+      <span className="sr-only">Anchored in </span>
+      {hostName ?? "this conversation"}
+    </>
   )
 
   const onHostPage = hasTabs && panelIdsOf(layout).includes(hostStreamId)
@@ -67,6 +71,7 @@ export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant =
           chip ? "min-w-0 shrink rounded-full border px-2.5 py-1" : "h-7 shrink-0 border-b bg-primary/[0.025] px-3"
         )}
       >
+        <Anchor className="h-3 w-3 shrink-0" aria-hidden />
         <span className="min-w-0 truncate">{label}</span>
       </div>
     )
@@ -84,6 +89,7 @@ export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant =
           : "h-7 shrink-0 border-b bg-primary/[0.025] px-3 hover:bg-primary/[0.06]"
       )}
     >
+      <Anchor className="h-3 w-3 shrink-0" aria-hidden />
       <span className="min-w-0 truncate">{label}</span>
       <CornerUpLeft
         className="h-3 w-3 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-primary"
