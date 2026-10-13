@@ -22,6 +22,7 @@ import {
 import { planRingCancel, type RingCancelData } from "./calls/call-ring-cancel"
 import { isDevicePresent } from "./lib/sw-presence"
 import { readVisibleStreams } from "./lib/visible-streams"
+import { readablePanelParam } from "./lib/panel-tabs"
 import { workspaceScopedKey } from "./lib/workspace-scoped-key"
 import {
   BOOTSTRAP_SYNC_TAG,
@@ -752,7 +753,7 @@ function resolveNotificationTargetUrl(data: PushData | undefined): string {
   if (data?.workspaceId && data?.conversationId) {
     const params = new URLSearchParams({ panel: `conv:${data.conversationId}` })
     if (data.messageId) params.set("m", data.messageId)
-    return `/w/${data.workspaceId}/board?${params.toString()}`
+    return `/w/${data.workspaceId}/board?${readablePanelParam(params.toString())}`
   }
   if (data?.workspaceId && data?.streamId) {
     return data.messageId

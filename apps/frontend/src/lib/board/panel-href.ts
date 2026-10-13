@@ -13,7 +13,7 @@ export function conversationPanelHref(
   anchorStreamId: string | null,
   stashDraftId?: string
 ): string {
-  const panelParam = `panel=${encodeURIComponent(createConversationPanelId(conversationId))}`
+  const panelParam = `panel=${createConversationPanelId(conversationId)}`
   const base = anchorStreamId
     ? `/w/${workspaceId}/s/${anchorStreamId}?${panelParam}`
     : `/w/${workspaceId}/board?${panelParam}`

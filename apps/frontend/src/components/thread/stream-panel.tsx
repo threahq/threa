@@ -1,7 +1,7 @@
 import { useSearchParams } from "react-router-dom"
 import { useContext, useMemo, useCallback, useEffect, useState, useRef, type RefObject } from "react"
 import { createPortal } from "react-dom"
-import { MessageSquare, ChevronLeft } from "lucide-react"
+import { MessageSquare } from "lucide-react"
 import {
   SidePanel,
   SidePanelHeader,
@@ -9,7 +9,6 @@ import {
   SidePanelClose,
   SidePanelContent,
 } from "@/components/ui/side-panel"
-import { Button } from "@/components/ui/button"
 import {
   useStreamBootstrap,
   useThreadAnchorEvent,
@@ -482,11 +481,6 @@ function DraftThreadPanel({ workspaceId, panelId, onClose, onPromoted, closeRef,
   } else if (parentStream) {
     headerContent = (
       <div className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden pr-2">
-        {!isMobile && (
-          <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0" onClick={onClose}>
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-        )}
         <ResponsiveBreadcrumbs ancestors={fullChain} currentLabel="New thread" getNavigationUrl={getNavigateUrl} />
       </div>
     )

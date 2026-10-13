@@ -1,3 +1,4 @@
+import type { To, createMemoryRouter } from "react-router-dom"
 import { isPagePane, isServerStreamId } from "./stream-ids"
 
 /**
@@ -75,6 +76,39 @@ function parseSection(token: string, seen: Set<string>, focus: { id: string | nu
   }
   if (ids.length === 0) return null
   return { ids, active: focused ?? active ?? ids[ids.length - 1] }
+}
+
+const PANEL_QUERY_VALUE = new RegExp(`(^|[?&])${PANEL_PARAM}=([^&#]*)`)
+
+/**
+ * `url` (a path with its query, or a query with or without its `?`) with
+ * `?panel=` in its readable grammar: `URLSearchParams` escapes the `:` of
+ * `conv:` and `context:`, which a query may carry as is.
+ */
+export function readablePanelParam(url: string): string {
+  return url.replace(
+    PANEL_QUERY_VALUE,
+    (_, lead: string, value: string) =>
+      `${lead}${PANEL_PARAM}=${value.replace(/%(3A|2A|2E|2D)/gi, (escaped) => decodeURIComponent(escaped))}`
+  )
+}
+
+type DataRouter = ReturnType<typeof createMemoryRouter>
+
+/**
+ * Every navigation and link href the router makes spells `?panel=` readably,
+ * whichever code path serialized it, so the address bar and `location.search`
+ * always agree on one spelling.
+ */
+export function keepPanelParamReadable(router: DataRouter): void {
+  const { navigate, createHref } = router
+  const readable = (to: To | null): To | null => {
+    if (typeof to === "string") return readablePanelParam(to)
+    return to?.search ? { ...to, search: readablePanelParam(to.search) } : to
+  }
+  router.navigate = ((to: To | number | null, options?: Parameters<DataRouter["navigate"]>[1]) =>
+    typeof to === "number" ? navigate(to) : navigate(readable(to), options)) as DataRouter["navigate"]
+  router.createHref = (location) => readablePanelParam(createHref(location))
 }
 
 export function formatPanelLayout(layout: PanelLayout): string | null {
@@ -336,12 +370,38 @@ export function fitPanelLayout(
   const keep = stacked ? 0 : Math.max(1, maxColumns) - 1
   const folding = layout.columns.slice(keep).flat()
   if (folding.length < 2) return layout
-  const ids = folding.flatMap((section) => section.ids)
+  return { columns: [...layout.columns.slice(0, keep), [foldSections(folding, current, previous)]] }
+}
+
+/**
+ * The arrangement as a window tall enough for `maxRows` sections down a column
+ * shows it: the sections past that in a column fold into its last one that
+ * fits, showing a tab as {@link fitPanelLayout} picks it.
+ */
+export function fitPanelRows(
+  layout: PanelLayout,
+  maxRows: number,
+  current: string | null,
+  previous: string | null = null
+): PanelLayout {
+  const keep = Math.max(1, maxRows) - 1
+  if (layout.columns.every((sections) => sections.length <= keep + 1)) return layout
+  return {
+    ...layout,
+    columns: layout.columns.map((sections) =>
+      sections.length <= keep + 1
+        ? sections
+        : [...sections.slice(0, keep), foldSections(sections.slice(keep), current, previous)]
+    ),
+  }
+}
+
+function foldSections(folding: readonly PanelSection[], current: string | null, previous: string | null): PanelSection {
   const shown =
     folding.find((section) => section.active === current) ??
     folding.find((section) => section.active === previous) ??
     folding[folding.length - 1]
-  return { columns: [...layout.columns.slice(0, keep), [{ ids, active: shown.active }]] }
+  return { ids: folding.flatMap((section) => section.ids), active: shown.active }
 }
 
 /**

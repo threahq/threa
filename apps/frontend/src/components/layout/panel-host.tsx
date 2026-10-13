@@ -3,7 +3,7 @@ import {
   memo,
   useCallback,
   useContext,
-  useEffect,
+  useLayoutEffect,
   useMemo,
   useState,
   type ReactNode,
@@ -52,6 +52,7 @@ import {
   closePanelTab,
   firstColumnHolds,
   fitPanelLayout,
+  fitPanelRows,
   floatingPanelTab,
   panelIdsOf,
   type PaneEdge,
@@ -174,19 +175,30 @@ export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
 
 const MIN_SECTION_WIDTH = 200
 const MIN_SECTION_HEIGHT = 120
+// A stream's header and composer with about 120px of timeline between them.
+const MIN_STACKED_SECTION_HEIGHT = 320
+
+/** How many sections fit down a column of the page's grid `height` pixels tall. */
+export function panelMaxRows(height: number): number {
+  return height > 0 ? Math.max(1, Math.floor(height / MIN_STACKED_SECTION_HEIGHT)) : Infinity
+}
 
 const NO_SPLITS: readonly SplitDirection[] = []
 const NO_MAP: readonly PaneMapCell[] = []
 const SPLIT_DOWN: readonly SplitDirection[] = ["down"]
+const SPLIT_RIGHT: readonly SplitDirection[] = ["right"]
 const SPLIT_ANY: readonly SplitDirection[] = ["right", "down"]
 const EDGES_ANY: readonly PaneEdge[] = ["left", "right", "top", "bottom"]
 const EDGES_ROW: readonly PaneEdge[] = ["top", "bottom"]
+const EDGES_BESIDE: readonly PaneEdge[] = ["left", "right"]
 const NO_EDGES: readonly PaneEdge[] = []
 
 interface PanelTabStackProps {
   workspaceId: string
   /** How many of the arrangement's columns fit side by side; the rest fold into the last. */
   maxColumns: number
+  /** How many sections fit down a column; the rest fold into the last. */
+  maxRows: number
   /** Show every tab in one section (a phone). */
   stacked: boolean
   /** The tabs on show, from {@link useFittedPanelLayout}, placed on the page's grid by {@link usePanelGrid}. */
@@ -196,8 +208,8 @@ interface PanelTabStackProps {
   width: number | null
   /** Pixels the first column fills, which a floating tab's map shows too. */
   firstColumnWidth: number
-  /** The page's grid, whose height the sections share. */
-  host: RefObject<HTMLElement | null>
+  /** Pixels of the page's grid's height, which the sections share. */
+  height: number
 }
 
 interface PlacedTab {
@@ -209,6 +221,7 @@ interface PlacedTab {
   inFirstColumn: boolean
   section: PanelSection
   splits: readonly SplitDirection[]
+  edges: readonly PaneEdge[]
 }
 
 type PanelGridState = ReturnType<typeof usePanelGrid>
@@ -220,20 +233,28 @@ export function usePanelGrid(display: PanelLayout) {
   return { sizes, setSizes, rows, areas }
 }
 
-/** `layout` as a window `maxColumns` wide arranges it, or a phone when `stacked`. */
-export function useFittedPanelLayout(layout: PanelLayout, maxColumns: number, stacked: boolean): PanelLayout {
+/** `layout` as a window `maxColumns` wide and `maxRows` tall arranges it, or a phone when `stacked`. */
+export function useFittedPanelLayout(
+  layout: PanelLayout,
+  maxColumns: number,
+  stacked: boolean,
+  maxRows = Infinity
+): PanelLayout {
   const current = useCurrentPane()
   // Working in the first column leaves a folded section showing the pane last worked in outside it.
   const [lastPanel, setLastPanel] = useState(current)
   if (current !== null && current !== lastPanel && !firstColumnHolds(layout, current)) setLastPanel(current)
   return useMemo(() => {
     // A floating tab is always on show, even from a folded column.
-    if (!stacked) return fitPanelLayout(layout, maxColumns, false, layout.focused ?? current, lastPanel)
+    if (!stacked) {
+      const shown = layout.focused ?? current
+      return fitPanelRows(fitPanelLayout(layout, maxColumns, false, shown, lastPanel), maxRows, shown, lastPanel)
+    }
     // A phone shows a drawer over a page, so the page is on show behind it.
     const pages = panelIdsOf(layout).filter(presentsAsDrawer).reduce(closePanelTab, layout)
     const shown = current !== null && presentsAsDrawer(current) ? pageUnder(layout, current) : current
     return fitPanelLayout(pages, maxColumns, true, shown)
-  }, [layout, maxColumns, stacked, current, lastPanel])
+  }, [layout, maxColumns, maxRows, stacked, current, lastPanel])
 }
 
 /** The page a drawer pane sits over: its stream's, else the first page. */
@@ -264,7 +285,7 @@ export function PaneDrawer({ workspaceId, page }: { workspaceId: string; page: s
   return (
     // The URL is its history entry: opening pushed `?panel=`, so Back already closes it.
     <Drawer open={id !== null} onOpenChange={(open) => !open && id && closeTab(id)} historyEntry={false}>
-      <DrawerContent className="h-[88dvh] md:mx-auto md:max-w-2xl">
+      <DrawerContent className="h-[88dvh] outline-none md:mx-auto md:max-w-2xl">
         <DrawerTitle className="sr-only">In this stream</DrawerTitle>
         <DrawerDescription className="sr-only">
           Links, files, images, captured memories, and delegated tasks from this conversation.
@@ -295,34 +316,42 @@ export function PaneDrawer({ workspaceId, page }: { workspaceId: string; page: s
 export function PanelTabStack({
   workspaceId,
   maxColumns,
+  maxRows,
   stacked,
   display,
   grid,
   width,
   firstColumnWidth,
-  host,
+  height,
 }: PanelTabStackProps) {
   const { layout, setCurrentPane, focusTab } = usePanel()
   const current = useCurrentPane()
   const { sizes, setSizes, areas } = grid
-  const height = useHostHeight(host)
   const panelShares = sizes.columns.slice(1)
   const columnWidths = width === null ? null : panelColumnWidths(panelShares, width)
 
   // A folded section shows more than its own tabs, so a split from it would move a tab it doesn't hold.
   const folded = display !== layout
-  const splitsOf = (section: PanelSection) => {
+  const besideFits = layout.columns.length < maxColumns
+  const splitsOf = (section: PanelSection, column: number) => {
     if (folded || section.ids.length < 2) return NO_SPLITS
-    return layout.columns.length < maxColumns ? SPLIT_ANY : SPLIT_DOWN
+    const belowFits = layout.columns[column].length < maxRows
+    if (besideFits) return belowFits ? SPLIT_ANY : SPLIT_RIGHT
+    return belowFits ? SPLIT_DOWN : NO_SPLITS
   }
-  const splitEdges = layout.columns.length < maxColumns ? EDGES_ANY : EDGES_ROW
   // Dropped beside a folded section, a tab would land in a column that doesn't show.
-  const edges = folded ? NO_EDGES : splitEdges
+  const edgesOf = (column: number) => {
+    if (folded) return NO_EDGES
+    const belowFits = layout.columns[column].length < maxRows
+    if (besideFits) return belowFits ? EDGES_ANY : EDGES_BESIDE
+    return belowFits ? EDGES_ROW : NO_EDGES
+  }
   const drops = usePaneDrop()
   const tabs: PlacedTab[] = display.columns
     .flatMap((sections, column) =>
       sections.flatMap((section, row) => {
-        const splits = splitsOf(section)
+        const splits = splitsOf(section, column)
+        const edges = edgesOf(column)
         return section.ids.map((id) => ({
           key: panelKeyFor(workspaceId, id),
           id,
@@ -331,6 +360,7 @@ export function PanelTabStack({
           inFirstColumn: firstColumnHolds(layout, id),
           section,
           splits,
+          edges,
         }))
       })
     )
@@ -425,7 +455,7 @@ export function PanelTabStack({
               onFocusCapture={(event) => {
                 if (event.target.matches(":focus-visible")) setCurrentPane(tab.id)
               }}
-              {...paneDropZone(drops, tab.id, edges)}
+              {...paneDropZone(drops, tab.id, tab.edges)}
             >
               <div className="h-full" style={{ width: tab.id === focused ? undefined : (tab.width ?? undefined) }}>
                 <PaneScope panelId={tab.id} section={tab.section} splits={tab.splits}>
@@ -514,13 +544,10 @@ function usePanelGridSizes(display: PanelLayout) {
   return [stored[shape] ?? fallback, setSizes] as const
 }
 
-/**
- * The page grid's height, measured after commit: an ancestor's ref is attached
- * only after this component's layout effects have run.
- */
-function useHostHeight(host: RefObject<HTMLElement | null>) {
+/** The page grid's height, measured before paint so a short window never shows sections it folds. */
+export function useHostHeight(host: RefObject<HTMLElement | null>) {
   const [height, setHeight] = useState(0)
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = host.current
     if (!element) return
     const measure = () => setHeight(element.clientHeight)

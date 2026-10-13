@@ -176,7 +176,7 @@ describe("CallCard", () => {
       startedEvent()
     )
     const chat = screen.getByRole("link", { name: "Start call chat" })
-    expect(chat.getAttribute("href")).toContain("draft%3Astream_1%3Aevt_call")
+    expect(chat.getAttribute("href")).toContain("draft:stream_1:evt_call")
   })
 
   it("keeps call chat in the quick toolbar when the reply chip is present", () => {

@@ -47,7 +47,7 @@ import {
 import { Quote, MessageSquareReply, Check, Layers } from "lucide-react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 import { cn } from "@/lib/utils"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useConversationTitle } from "@/hooks/use-conversation-title"
 import { useTouchCapable } from "@/hooks/use-touch-capable"
@@ -1068,7 +1068,7 @@ function SentMessageEvent({
   // lands in IDB (live socket apply or bootstrap).
   const movedTombstoneEvent = useMovedTombstone(workspaceId, payload.movedFrom?.moveTombstoneId)
 
-  const isMobile = useIsMobile()
+  const isMobile = useIsMobileOrCoarse()
   // Gestures (long-press → action drawer, swipe → quote) are enabled whenever
   // touch is AVAILABLE, not just when it's the primary pointer — a mouse never
   // fires touch events, so this strands no one and covers hybrid devices.

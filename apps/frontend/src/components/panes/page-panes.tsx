@@ -19,7 +19,9 @@ import {
   PagePaneContext,
   PaneDrawer,
   PanelTabStack,
+  panelMaxRows,
   useFittedPanelLayout,
+  useHostHeight,
   usePanelGrid,
 } from "@/components/layout/panel-host"
 import { evenPanelColumns, panelColumnWidths } from "@/lib/panel-grid"
@@ -44,6 +46,8 @@ export function PagePanes({ workspaceId, page = null, error = null }: PagePanesP
   const { layout } = usePanel()
   const containerRef = useRef<HTMLDivElement>(null)
   const containerWidth = useElementWidth(containerRef)
+  const containerHeight = useHostHeight(containerRef)
+  const maxRows = panelMaxRows(containerHeight)
   const panes = useMemo(() => panelIdsOf(layout), [layout])
   const asideHostKey = useAsideHost(panes)
   // A sheet over the page on a phone, or where the columns leave it no room; anywhere else a column of it.
@@ -84,7 +88,7 @@ export function PagePanes({ workspaceId, page = null, error = null }: PagePanesP
     reservedWidth: asideLayout.width,
     animates: !isMobile,
   })
-  const fittedPanels = useFittedPanelLayout(pageLayout, maxColumns + 1, false)
+  const fittedPanels = useFittedPanelLayout(pageLayout, maxColumns + 1, false, maxRows)
   // A phone stacks every pane in the one cell.
   const display = isMobile ? phonePages : fittedPanels
   const panelGrid = usePanelGrid(display)
@@ -123,12 +127,13 @@ export function PagePanes({ workspaceId, page = null, error = null }: PagePanesP
             <PanelTabStack
               workspaceId={workspaceId}
               maxColumns={maxColumns + 1}
+              maxRows={maxRows}
               stacked={isMobile}
               display={display}
               grid={panelGrid}
               width={isMobile ? null : panelWidth}
               firstColumnWidth={Math.max(0, containerWidth - displayWidth - asideLayout.width)}
-              host={containerRef}
+              height={containerHeight}
             />
             {showContent && isPanelOpen && !isMobile && (
               <PanelResizeHandle

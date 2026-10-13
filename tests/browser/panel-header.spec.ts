@@ -15,7 +15,7 @@ async function post(page: Page, workspaceId: string, streamId: string, content: 
   return ((await response.json()) as { message: { id: string } }).message.id
 }
 
-async function seedThreads(page: Page, count: number) {
+async function seedThreads(page: Page, count: number, title = (index: number) => `parent number ${index + 1}`) {
   await loginAndCreateWorkspace(page, "panel-header")
   await createChannel(page, `header-${Date.now().toString(36)}`)
   const url = page.url()
@@ -23,7 +23,7 @@ async function seedThreads(page: Page, count: number) {
   const streamId = url.match(/\/s\/([^/?]+)/)![1]
   const threads: string[] = []
   for (let index = 0; index < count; index++) {
-    const parentId = await post(page, workspaceId, streamId, `parent number ${index + 1}`)
+    const parentId = await post(page, workspaceId, streamId, title(index))
     const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
       data: { type: "thread", parentStreamId: streamId, parentAnchorId: parentId },
     })
@@ -65,7 +65,7 @@ function settledRow(pane: Locator) {
 }
 const panelParam = (page: Page) => new URL(page.url()).searchParams.get("panel")
 
-test("should fold the labels, then trailing tabs into +N, as the panel narrows without moving its icons", async ({
+test("should fold the labels, then trailing tabs into +N, as the panel narrows without moving its menu", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 2560, height: 900 })
@@ -94,17 +94,14 @@ test("should fold the labels, then trailing tabs into +N, as the panel narrows w
   await expect(labels).toBeVisible()
   await expect(more).toHaveCount(0)
 
-  // The icons' distance from the header's right edge.
-  const iconOffsets = () =>
+  // The menu's distance from the header's right edge.
+  const menuOffset = () =>
     header.evaluate((el) => {
-      const right = el.getBoundingClientRect().right
-      return ["In this stream", "Stream actions"].map((name) => {
-        const icon = el.querySelector(`[aria-label="${name}"]`)
-        return icon ? Math.round(right - icon.getBoundingClientRect().right) : null
-      })
+      const menu = el.querySelector('[aria-label="Stream actions"]')
+      return menu ? Math.round(el.getBoundingClientRect().right - menu.getBoundingClientRect().right) : null
     })
-  const offsets = await iconOffsets()
-  expect(offsets.every((offset) => offset !== null)).toBe(true)
+  const offset = await menuOffset()
+  expect(offset).not.toBeNull()
 
   const seen = new Set<string>()
   let previous = await panelWidth()
@@ -115,15 +112,17 @@ test("should fold the labels, then trailing tabs into +N, as the panel narrows w
     if (width >= previous) break
     previous = width
 
-    // Nothing scrolls, the tab on show is never folded, and the icons hold still.
+    // Nothing scrolls, the tab on show is never folded, and the menu holds still.
     const row = await settledRow(pane)
     expect(row.overflows).toBe(false)
     expect(row.more).toBe(row.shown < 4 ? `+${4 - row.shown}` : null)
     // Labels fold before any tab does.
     if (row.shown < 4) expect(row.labels).toBe(false)
     await expect(strip.locator('[aria-current="page"]')).toBeVisible()
-    await expect(pane.getByRole("button", { name: "In this stream" })).toBeVisible()
-    expect(await iconOffsets()).toEqual(offsets)
+    // The view icon gives way only once the row is down to two tabs.
+    if (row.shown > 2) await expect(pane.getByRole("button", { name: "In this stream" })).toBeVisible()
+    if (row.shown < 2) await expect(pane.getByRole("button", { name: "In this stream" })).toBeHidden()
+    expect(await menuOffset()).toBe(offset)
     seen.add(`${row.labels ? "labels" : "no-labels"}:${row.shown}`)
   }
   expect(seen.has("no-labels:4")).toBe(true)
@@ -211,5 +210,128 @@ test("should keep the tab on show, its close and +N in a split section at its na
     await expect(strip.locator('[aria-current="page"]')).toBeInViewport({ ratio: 1 })
     await expect(strip.getByRole("button", { name: "Close tab" }).last()).toBeInViewport({ ratio: 1 })
     if (row.more) await expect(strip.getByRole("button", { name: /more tabs?$/ })).toBeInViewport({ ratio: 1 })
+  }
+})
+
+test("should show as many tabs as fit at their minimum width, whichever is on show", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const title = (index: number) =>
+    index % 2 === 0 ? `p${index + 1}` : `a much longer parent message, number ${index + 1}`
+  const { workspaceId, streamId, threads } = await seedThreads(page, 6, title)
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threads.join(".")}`)
+  await expect(tabPane(page, threads[5]).getByText("reply in thread 6")).toBeVisible({ timeout: 30_000 })
+  const strip = page.getByRole("navigation", { name: "Panel tabs" })
+  const more = strip.getByRole("button", { name: /more tabs?$/ })
+
+  const row = () =>
+    strip.evaluate(async (el) => {
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      const tabs = [...el.querySelectorAll<HTMLElement>("[data-tab-id]")]
+      return {
+        room: el.getBoundingClientRect().width,
+        shown: tabs.length,
+        narrowest: Math.min(...tabs.map((tab) => tab.getBoundingClientRect().width)),
+        overflows: el.scrollWidth > el.clientWidth,
+      }
+    })
+
+  const counts: number[] = []
+  for (let index = 0; index < threads.length; index++) {
+    const link = strip.getByRole("link", { name: title(index), exact: true })
+    if ((await link.count()) > 0) await link.click()
+    else {
+      await more.click()
+      await page.getByRole("menuitem", { name: title(index), exact: true }).click()
+    }
+    await expect(strip.locator('[aria-current="page"]')).toHaveText(title(index))
+    const { room, shown, narrowest, overflows } = await row()
+    expect(overflows).toBe(false)
+    expect(narrowest).toBeGreaterThanOrEqual(95.5)
+    // As many as fit beside "+N" at 96px each.
+    expect(shown).toBe(Math.floor((room - 48) / 96))
+    counts.push(shown)
+  }
+  expect(counts[0]).toBeGreaterThanOrEqual(3)
+  expect(new Set(counts).size).toBe(1)
+})
+
+test("should keep Focus pane in a 900px window's two-tab pane", async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 800 })
+  const { workspaceId, streamId, threads } = await seedThreads(page, 2)
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threads.join(".")}`)
+  const pane = tabPane(page, threads[1])
+  await expect(pane.getByText("reply in thread 2")).toBeVisible({ timeout: 30_000 })
+  await expect(pane.getByRole("button", { name: "Focus pane", exact: true })).toBeInViewport({ ratio: 1 })
+})
+
+test("should keep each pane's title at 900px with a thread open, folding the stream's view icons into its menu", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 900, height: 800 })
+  const { workspaceId, streamId, threads } = await seedThreads(page, 1)
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threads[0]}`)
+  await expect(tabPane(page, threads[0]).getByText("reply in thread 1")).toBeVisible({ timeout: 30_000 })
+
+  const mainHeader = page.locator('div:has(> [data-editor-zone="main"]) > header')
+  const title = mainHeader.getByRole("heading", { level: 1 })
+  await expect(title).toBeInViewport({ ratio: 1 })
+  expect((await title.boundingBox())!.width).toBeGreaterThanOrEqual(80)
+  await expect(tabPane(page, threads[0]).locator("header").getByText("Thread", { exact: true })).toBeInViewport({
+    ratio: 1,
+  })
+
+  // Folded, not gone: "In this stream" rides in the stream's menu.
+  await expect(mainHeader.getByRole("button", { name: "In this stream" })).toHaveCount(0)
+  await mainHeader.getByRole("button", { name: "Stream actions" }).focus()
+  await page.keyboard.press("Enter")
+  await page.getByRole("menuitem", { name: /In this stream/ }).click()
+  await expect(page.getByRole("region", { name: "In this stream" })).toBeVisible()
+})
+
+test("should give every tabbed pane header one actions menu, the strip's or the pane's own", async ({ page }) => {
+  test.setTimeout(240_000)
+  const { workspaceId, streamId, threads } = await seedThreads(page, 2)
+  const conversations: string[] = []
+  for (const topic of ["first topic", "second topic"]) {
+    const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
+      data: { streamId, content: topic, conversation: { intent: "new" } },
+    })
+    await expectApiOk(response, `post ${topic}`)
+    conversations.push(((await response.json()) as { conversationId: string }).conversationId)
+  }
+  const draftParent = await post(page, workspaceId, streamId, "parent of a draft thread")
+  const [conversationA, conversationB] = conversations
+
+  const layouts = [
+    `board?panel=conv:${conversationA}.conv:${conversationB}*`,
+    `board?panel=${threads[0]}.${threads[1]}*`,
+    `s/${streamId}?panel=${threads[0]}.conv:${conversationA}*`,
+    `s/${streamId}?panel=${threads[0]}.context:${streamId}*`,
+    `s/${streamId}?panel=${threads[0]}.draft:${streamId}:${draftParent}*`,
+    `s/${streamId}?panel=${threads[0]}.compose:${streamId}*`,
+    `s/${streamId}?panel=${threads[0]}.convs:${streamId}*`,
+  ]
+  for (const layout of layouts) {
+    await page.goto(`/w/${workspaceId}/${layout}`, { waitUntil: "commit" })
+    const tabbedHeader = page.locator("header", { has: page.getByRole("button", { name: "Close tab" }) })
+    await expect(tabbedHeader.getByRole("button", { name: "Focus pane" })).toBeVisible({ timeout: 30_000 })
+    await expect
+      .poll(
+        () =>
+          page.evaluate(() =>
+            [...document.querySelectorAll("header")]
+              .filter((header) => header.checkVisibility())
+              .map(
+                (header) =>
+                  [...header.querySelectorAll("button")].filter(
+                    (button) => button.checkVisibility() && button.querySelector("svg.lucide-ellipsis") !== null
+                  ).length
+              )
+              .reduce((most, count) => Math.max(most, count), 0)
+          ),
+        { message: layout }
+      )
+      .toBe(1)
+    await expect(tabbedHeader.getByRole("button", { name: /^(Tab|Stream|Conversation) actions$/ })).toHaveCount(1)
   }
 })

@@ -189,7 +189,7 @@ describe("DelegationEvent", () => {
     renderCard()
 
     const discuss = screen.getByRole("link", { name: "Discuss in thread" })
-    expect(discuss).toHaveAttribute("href", "/w/ws_1?panel=draft%3Astream_1%3Aevt_dlg")
+    expect(discuss).toHaveAttribute("href", "/w/ws_1?panel=draft:stream_1:evt_dlg")
   })
 
   it("renders the thread chip from the healed payload (replies land on the card's own event)", () => {
@@ -215,7 +215,7 @@ describe("DelegationEvent", () => {
       renderCard({ delegationId: "dlg_1", status })
 
       const discuss = screen.getByRole("link", { name: "Discuss in thread" })
-      expect(discuss).toHaveAttribute("href", "/w/ws_1?panel=draft%3Astream_1%3Aevt_dlg")
+      expect(discuss).toHaveAttribute("href", "/w/ws_1?panel=draft:stream_1:evt_dlg")
     }
   )
 

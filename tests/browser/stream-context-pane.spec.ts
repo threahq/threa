@@ -197,7 +197,7 @@ test("should show the toggle off while the overview is folded behind its thread"
   // Too narrow for two columns, the two fold into one section, the thread worked in on show.
   await tabPane(page, threadId).getByText("thread link").click()
   await page.setViewportSize({ width: 1000, height: 900 })
-  await expect(tabPane(page, threadId).getByRole("button", { name: "1 more tab" })).toBeVisible()
+  await expect(tabPane(page, threadId).getByRole("link", { name: /^In channel link/ })).toBeVisible()
   const toggle = tabPane(page, threadId).getByRole("button", { name: "In this stream" })
   await expect(toggle).toHaveAttribute("aria-pressed", "false")
   await expect(overview(page)).not.toBeInViewport()
@@ -242,4 +242,28 @@ test("should offer the overview from an archived thread's mobile panel sheet", a
     .getByRole("button", { name: /In this stream/ })
     .click()
   await expect(overview(page).getByText("example.org").first()).toBeVisible()
+})
+
+test.describe("on a touch tablet", () => {
+  test.use({ viewport: { width: 1024, height: 768 }, isMobile: true, hasTouch: true })
+
+  test("should land on the newest pane as a phone does, with the overview a centred drawer once opened", async ({
+    page,
+  }) => {
+    const { workspaceId, streamId, threadId } = await seedChannelWithThread(page, "context-tablet")
+    await page.goto(`/w/${workspaceId}/s/${streamId}?panel=context:${streamId}.${threadId}`)
+
+    const thread = tabPane(page, threadId)
+    await expect(thread.getByText("thread link")).toBeVisible({ timeout: 30_000 })
+    await expect(drawer(page)).toHaveCount(0)
+
+    await page.locator("header", { hasText: "Back" }).getByRole("button", { name: "Stream actions" }).click()
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: /In this stream/ })
+      .click()
+    await expect(drawer(page).getByText("example.com").first()).toBeVisible()
+    const sheet = await drawer(page).boundingBox()
+    expect(Math.abs(sheet!.x + sheet!.width / 2 - 512)).toBeLessThanOrEqual(1)
+  })
 })

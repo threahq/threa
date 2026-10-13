@@ -182,7 +182,7 @@ describe("CallControls — call chat", () => {
     // Absolute host-stream URL (dock is above PanelProvider) + draft panel keyed
     // on the call_started event id.
     expect(href).toContain("/w/ws_1/s/stream_1")
-    expect(href).toContain("draft%3Astream_1%3Aevent_chat_1")
+    expect(href).toContain("panel=draft:stream_1:event_chat_1")
   })
 
   it("targets the real thread once the chat thread exists, so no draft flashes first", () => {
@@ -233,7 +233,7 @@ describe("CallControls — call chat", () => {
     fireEvent.click(chat)
     // The overlay leaves the panel column free (--panel-inset-right), so chat opens
     // beside the video instead of ejecting the user out of fullscreen.
-    expect(chat.getAttribute("href") ?? "").toContain("draft%3Astream_1%3Aevent_chat_1")
+    expect(chat.getAttribute("href") ?? "").toContain("panel=draft:stream_1:event_chat_1")
     expect(getCallState().desktopSurfaceOverride).toBeNull()
     expect(getCallPrefs()).toMatchObject({ desktopCallSurface: pref, lastDesktopSurface: last })
   })

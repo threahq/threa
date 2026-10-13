@@ -241,7 +241,7 @@ describe("useAllDrafts board-composer drafts", () => {
       displayName: "Reply in GPU budget",
       streamId: "stream_9",
       isStashed: true,
-      href: `/w/${workspaceId}/s/stream_9?panel=${encodeURIComponent("conv:conv_1")}&stash=draft_b1`,
+      href: `/w/${workspaceId}/s/stream_9?panel=conv:conv_1&stash=draft_b1`,
     })
   })
 
@@ -257,7 +257,7 @@ describe("useAllDrafts board-composer drafts", () => {
     expect(result.current.drafts[0]).toMatchObject({
       id: "draft_b2",
       displayName: "Reply in Sub topic",
-      href: `/w/${workspaceId}/s/stream_thread_1?panel=${encodeURIComponent("conv:conv_2")}`,
+      href: `/w/${workspaceId}/s/stream_thread_1?panel=conv:conv_2`,
     })
     expect(result.current.drafts[1]).toMatchObject({
       id: "draft_b3",
@@ -276,7 +276,7 @@ describe("useAllDrafts board-composer drafts", () => {
     expect(result.current.drafts[0]).toMatchObject({
       id: "draft_b4",
       displayName: "Conversation reply",
-      href: `/w/${workspaceId}/board?panel=${encodeURIComponent("conv:conv_uncached")}&stash=draft_b4`,
+      href: `/w/${workspaceId}/board?panel=conv:conv_uncached&stash=draft_b4`,
     })
   })
 
@@ -301,7 +301,7 @@ describe("useAllDrafts board-composer drafts", () => {
       expect(result.current.drafts[0]).toMatchObject({
         id: "draft_b6",
         displayName: "Reply in Sub topic",
-        href: `/w/${workspaceId}/s/stream_9?panel=${encodeURIComponent("conv:conv_parent")}&stash=draft_b6`,
+        href: `/w/${workspaceId}/s/stream_9?panel=conv:conv_parent&stash=draft_b6`,
       })
     )
   })
@@ -317,7 +317,7 @@ describe("useAllDrafts board-composer drafts", () => {
       expect(result.current.drafts[0]).toMatchObject({
         id: "draft_b7",
         displayName: "New sub-topic in GPU budget",
-        href: `/w/${workspaceId}/s/stream_9?panel=${encodeURIComponent("conv:conv_host")}&stash=draft_b7`,
+        href: `/w/${workspaceId}/s/stream_9?panel=conv:conv_host&stash=draft_b7`,
       })
     )
   })
