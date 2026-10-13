@@ -14,6 +14,7 @@ import {
   type ComposerControlHandle,
 } from "@/components/composer"
 import { useComposerCommandSend } from "@/components/composer/use-composer-command-send"
+import { useComposerHandoffDrain } from "@/components/composer/use-composer-handoff-drain"
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { appendQuoteReplyNode, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
@@ -25,6 +26,7 @@ import { usePreferences } from "@/contexts"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { useWorkspaceStreams, type CachedStream } from "@/stores/workspace-store"
+import { peekShareHandoffBatch } from "@/stores/composer-handoff-store"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { STREAM_ICONS } from "@/lib/streams"
 import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
@@ -216,11 +218,15 @@ export function InlineComposerForm({
 
   // Check out the advertised stash row once (mount-captured; the guard ref, not
   // the effect deps, enforces once — `stash` is a fresh object every render).
+  // A hand-off waiting for this composer takes the slot instead, and the
+  // advertised row stays in the pile: the restore is a swap, and landing after
+  // the hand-off it would put the handed draft there.
   const restoreOnMountRef = useRef(restoreStashedIdOnMount ?? null)
   useEffect(() => {
     const id = restoreOnMountRef.current
     if (!id || !composer.isLoaded) return
     restoreOnMountRef.current = null
+    if (peekShareHandoffBatch(workspaceId, draftKey)) return
     // A refusal here is rare (only a row deleted mid-open survives take-over),
     // but the user tapped the resting button that advertised this
     // draft — an unexplained empty composer is a silent failure, so it toasts
@@ -234,7 +240,7 @@ export function InlineComposerForm({
       },
       (err) => console.error(`[board] mount restore of ${id} threw`, err)
     )
-  }, [composer.isLoaded, stash])
+  }, [composer.isLoaded, stash, workspaceId, draftKey])
 
   // Focus-on-signal for always-mounted hosts (skip the mount value — focus on
   // mount is `autoFocus`'s job).
@@ -274,6 +280,7 @@ export function InlineComposerForm({
   const composerControlRef = useRef<ComposerControlHandle | null>(null)
   const composerRef = useRef(composer)
   composerRef.current = composer
+  useComposerHandoffDrain({ workspaceId, target: draftKey, draftKey, composer, stash, controlRef: composerControlRef })
   // Append a quote once the composer exists; defer a frame so a saved draft's
   // late hydrate lands first (else our setContent would clobber it), matching the
   // board reply composer's insertion timing.

@@ -67,8 +67,10 @@ export function useAsideDraftSurface(params: {
       const queued = await handoff({ hostStreamId, originScope, content, attachments })
       // Get out of the composer's way once the blocks are on their way to it.
       // The aside closes rather than parking: its anchor row is still in the
-      // timeline, and that is the one way back in.
-      if (queued) closeAside()
+      // timeline, and that is the one way back in. Leaving the page drops the
+      // aside by itself, and closing its pane here would pop history and take
+      // that navigation back.
+      if (queued && !queued.navigated) closeAside()
       return queued
     },
     [handoff, hostStreamId, originScope]

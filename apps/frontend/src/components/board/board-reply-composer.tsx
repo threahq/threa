@@ -7,6 +7,7 @@ import { CollapsedComposerBar } from "@/components/composer/collapsed-composer-b
 import { ComposerDisabledNotice } from "@/components/composer/composer-disabled-notice"
 import { InlineComposerForm, type InlineComposerSubmit } from "@/components/board/board-inline-composer"
 import { boardReplyDraftKey } from "@/lib/board/draft-keys"
+import { subscribeShareHandoffOpener } from "@/stores/composer-handoff-store"
 import { cn } from "@/lib/utils"
 import type { BoardPost } from "@threahq/types"
 
@@ -96,7 +97,8 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
   // The scope's unsent draft, advertised on the resting button and — when it
   // isn't checked out on this device (stashed / roamed) — checked out by the
   // opening form so the click surfaces exactly what the button showed.
-  const scopeDraft = useScopeDraftPreview(props.workspaceId, boardReplyDraftKey(props.post.conversation.id))
+  const replyKey = boardReplyDraftKey(props.post.conversation.id)
+  const scopeDraft = useScopeDraftPreview(props.workspaceId, replyKey)
   const restoreStashedId = scopeDraft && !scopeDraft.isCheckedOut ? scopeDraft.draftId : null
 
   const { openReplySignal } = props
@@ -104,6 +106,14 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
     if (!openReplySignal) return
     setOpen(true)
   }, [openReplySignal])
+
+  // A draft handed to this conversation's reply (an aside's send to composer)
+  // opens the resting field, and the form takes it as it mounts.
+  const takesHandoff = !open && !alwaysDocked && !(disabled && disabledReason)
+  useEffect(() => {
+    if (!takesHandoff) return
+    return subscribeShareHandoffOpener(props.workspaceId, replyKey, () => setOpen(true))
+  }, [takesHandoff, props.workspaceId, replyKey])
 
   // Quote reply from a message row in this conversation lands here. The resting
   // affordance leaves the form unmounted while collapsed, so this always-mounted

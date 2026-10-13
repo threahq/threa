@@ -10,6 +10,8 @@ import {
   peekShareHandoffBatch,
   queueShareHandoff,
   settleShareHandoffBatch,
+  subscribeShareHandoff,
+  subscribeShareHandoffOpener,
 } from "@/stores/composer-handoff-store"
 import { useHostComposerHandoff } from "./use-host-composer-handoff"
 
@@ -81,12 +83,36 @@ describe("useHostComposerHandoff", () => {
       content: CONTENT,
     })
 
-    expect(delivered).not.toBeNull()
+    expect(delivered?.navigated).toBe(true)
     expect(peekShareHandoffBatch("ws_1", "stream_host")?.handoffs).toEqual([
       { kind: "content", content: CONTENT, attachments: [] },
     ])
     await waitFor(() => expect(pathname).toBe("/w/ws_1/s/stream_host"))
   })
+
+  it.each([
+    ["open", subscribeShareHandoff],
+    ["resting", subscribeShareHandoffOpener],
+  ])(
+    "should hand a conversation's draft to its own %s reply composer and stay on the page when one is on it",
+    async (_state, subscribe) => {
+      subscribe("ws_1", "board:reply:conv_1", () => {})
+
+      const queued = await handoff()({
+        hostStreamId: "stream_host",
+        originScope: "board:reply:conv_1",
+        content: CONTENT,
+      })
+
+      expect(queued?.navigated).toBe(false)
+      expect(peekShareHandoffBatch("ws_1", "board:reply:conv_1")?.handoffs).toEqual([
+        { kind: "content", content: CONTENT, attachments: [] },
+      ])
+      expect(peekShareHandoffBatch("ws_1", "stream_host")).toBeNull()
+      expect(await db.composerTarget.get(["ws_1", "stream:stream_host"])).toBeUndefined()
+      expect(pathname).toBe("/w/ws_1/board")
+    }
+  )
 
   it("points the host composer at the conversation the aside was opened on, then queues", async () => {
     const delivered = await handoff()({

@@ -72,6 +72,62 @@ test("should open two cards as two tabs beside the board and land on the bare bo
   await expect(board(page)).toBeVisible()
 })
 
+test("should put an aside's draft in the card's reply field and close the aside when it is sent to the composer", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  const { workspaceId } = await seedConversations(page, 1)
+  await page.goto(`/w/${workspaceId}/board?lens=all`)
+  await expect(openers(page)).toHaveCount(1, { timeout: 30_000 })
+
+  await board(page).getByRole("button", { name: "Conversation actions" }).click()
+  await page.getByRole("menuitem", { name: "Open an aside" }).click()
+  const aside = page.getByTestId("aside-panel")
+  await expect(aside).toBeVisible({ timeout: 15_000 })
+  await expect.poll(() => panelParam(page)).toMatch(/^aside:/)
+
+  await aside.getByRole("button", { name: /drafts?$/i }).click()
+  await aside.getByRole("button", { name: "Start a draft" }).click()
+  await aside.getByTestId("aside-draft-editor").locator("[contenteditable='true']").click()
+  await page.keyboard.type("carried to the card")
+  await aside.getByRole("button", { name: "Send to composer" }).first().click()
+
+  await expect(board(page).locator("[contenteditable='true']")).toContainText("carried to the card")
+  await expect(aside).toHaveCount(0)
+  await expect.poll(() => panelParam(page)).toBeNull()
+  expect(new URL(page.url()).pathname).toBe(`/w/${workspaceId}/board`)
+  await expect(page.getByTestId("panel")).toHaveCount(0)
+})
+
+test("should save the draft a card already holds when an aside's draft is sent to its reply field", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  const { workspaceId } = await seedConversations(page, 1)
+  await page.goto(`/w/${workspaceId}/board?lens=all`)
+  await expect(openers(page)).toHaveCount(1, { timeout: 30_000 })
+  const reply = board(page).locator("[contenteditable='true']")
+  await board(page).getByRole("button", { name: "Write a reply…" }).click()
+  await reply.click()
+  await page.keyboard.type("already in the card")
+
+  await board(page).getByRole("button", { name: "Conversation actions" }).click()
+  await page.getByRole("menuitem", { name: "Open an aside" }).click()
+  const aside = page.getByTestId("aside-panel")
+  await expect(aside).toBeVisible({ timeout: 15_000 })
+  await aside.getByRole("button", { name: /drafts?$/i }).click()
+  await aside.getByRole("button", { name: "Start a draft" }).click()
+  await aside.getByTestId("aside-draft-editor").locator("[contenteditable='true']").click()
+  await page.keyboard.type("carried to the card")
+  await aside.getByRole("button", { name: "Send to composer" }).first().click()
+
+  await expect(reply).toHaveCount(1)
+  await expect(reply).toHaveText("carried to the card")
+  await expect(aside).toHaveCount(0)
+  await board(page).getByRole("button", { name: "Drafts (1 saved)" }).click()
+  await expect(page.getByText("already in the card")).toBeVisible()
+})
+
 test("should move keyboard focus onto the board and float it like any page when the pane shortcuts reach it", async ({
   page,
 }) => {
