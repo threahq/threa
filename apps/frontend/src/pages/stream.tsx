@@ -56,7 +56,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { CallStartMenu, RejoinBar } from "@/components/call"
 import { ThreadHeader } from "@/components/thread"
-import { ThreadPanelSlot, SidebarToggle, StreamTitlePreview, panelTakeoverClasses } from "@/components/layout"
+import { ResizablePanelFrame, SidebarToggle, StreamTitlePreview, usePanelInset } from "@/components/layout"
+import { PaneHost, Pane } from "@/components/panes"
 import { AsideSlot, useAsideHost, useAsideIsSheet } from "@/components/aside"
 import { AsideHeaderChip } from "@/components/aside/aside-header-chip"
 import { asideHoldsPanel, useAsideForHost } from "@/stores/aside-store"
@@ -109,7 +110,11 @@ export function StreamPage() {
     handleResizeEnd,
     handleResizeKeyDown,
     handleTransitionEnd,
-  } = usePanelLayout(isPanelOpen, { containerRef, reservedWidth: isDockOpen ? MIN_PANEL_WIDTH : 0 })
+  } = usePanelLayout(isPanelOpen, {
+    containerRef,
+    reservedWidth: isDockOpen ? MIN_PANEL_WIDTH : 0,
+    animates: !isMobile,
+  })
   const dock = useStreamContextDockLayout(containerRef, isDockOpen, displayWidth)
   const asideHostKey = useAsideHost()
   // The stage replaces this page's timeline; the phone's sheet sits over one
@@ -128,6 +133,12 @@ export function StreamPage() {
 
   // Unified error checking - checks both coordinated loading and direct query errors
   const streamError = useStreamError(streamId, error)
+
+  const panelInset = displayWidth + dock.layout.displayWidth
+  const panelInsetAnimates = shouldAnimate && dock.layout.shouldAnimate
+  // Above the error/early returns: a stream that turns inaccessible mid-session
+  // must not change this component's hook count.
+  usePanelInset(isMobile || streamError ? 0 : panelInset, panelInsetAnimates)
 
   const isConversationViewOpen = searchParams.get("convView") === "open"
   // The closed drawer stays in the DOM for its slide transition, but its list
@@ -896,56 +907,55 @@ export function StreamPage() {
 
   // On mobile the panel takes over the full screen, but the timeline stays mounted
   // behind it so closing a thread lands back where the reader was rather than
-  // re-running the opening scroll. It must keep its position in this tree to do so
-  // — see `panelTakeoverClasses`.
+  // re-running the opening scroll.
   const mobileTakeover = isMobile && isPanelOpen && !panelInAside
-  const layout = panelTakeoverClasses(mobileTakeover)
-
-  const panelInset = displayWidth + dock.layout.displayWidth
-  const panelInsetAnimates = shouldAnimate && dock.layout.shouldAnimate
 
   return (
     <StreamContextDockProvider value={{ target: dock.target, fits: dockFits }}>
-      <div ref={containerRef} className={layout.container}>
-        <div
-          className={layout.main}
+      <PaneHost
+        ref={containerRef}
+        columns={isMobile ? "minmax(0,1fr)" : `minmax(0,1fr) ${displayWidth}px auto`}
+        animate={shouldAnimate && !isMobile}
+        onTransitionEnd={handleTransitionEnd}
+      >
+        <Pane
+          column={1}
+          covered={mobileTakeover}
           // The stage covers this row: everything under it stays mounted (the
           // page keeps its header and its state) but must leave the tab order,
           // or focus walks into content nobody can see.
-          inert={layout.mainInert || asideStage || undefined}
+          inert={asideStage}
           onPointerDownCapture={() => setFocusedPane("main")}
           onFocusCapture={() => setFocusedPane("main")}
         >
           {mainStreamContent}
-        </div>
-
-        {mobileTakeover ? (
-          <div className={layout.panel}>
-            <PanelHost workspaceId={workspaceId} onClose={closePanel} />
-          </div>
-        ) : (
-          <ThreadPanelSlot
-            displayWidth={displayWidth}
-            panelWidth={panelWidth}
-            shouldAnimate={shouldAnimate}
-            // The stage mounts the panel in its host pane; the slot keeps its
-            // width lifecycle but shows nothing under the overlay.
-            showContent={showContent && !asideStage && !panelInAside}
-            isResizing={isResizing}
-            maxWidth={maxWidth}
-            minWidth={minWidth}
-            onTransitionEnd={handleTransitionEnd}
-            onResizeStart={handleResizeStart}
-            onResizeMove={handleResizeMove}
-            onResizeEnd={handleResizeEnd}
-            onResizeKeyDown={handleResizeKeyDown}
-            insetRight={panelInset}
-            insetAnimates={panelInsetAnimates}
-            inert={asideStage}
-          >
-            <PanelHost workspaceId={workspaceId} onClose={closePanel} />
-          </ThreadPanelSlot>
-        )}
+        </Pane>
+        <Pane
+          column={isMobile ? 1 : 2}
+          // An empty pane over the timeline's cell would still take its taps.
+          covered={isMobile && !mobileTakeover}
+          data-testid="panel"
+          inert={asideStage}
+          className="bg-background"
+        >
+          {/* The stage mounts the panel in its host pane; this pane keeps its
+              width lifecycle but shows nothing under the overlay. */}
+          {(isMobile ? mobileTakeover : showContent && !asideStage && !panelInAside) && (
+            <ResizablePanelFrame
+              fill={isMobile}
+              panelWidth={panelWidth}
+              isResizing={isResizing}
+              minWidth={minWidth}
+              maxWidth={maxWidth}
+              onResizeStart={handleResizeStart}
+              onResizeMove={handleResizeMove}
+              onResizeEnd={handleResizeEnd}
+              onResizeKeyDown={handleResizeKeyDown}
+            >
+              <PanelHost workspaceId={workspaceId} onClose={closePanel} />
+            </ResizablePanelFrame>
+          )}
+        </Pane>
         {!isMobile && (
           <StreamContextDockSlot
             dock={dock}
@@ -955,7 +965,7 @@ export function StreamPage() {
           />
         )}
         <AsideSlot workspaceId={workspaceId} hostKey={asideHostKey} />
-      </div>
+      </PaneHost>
       {/* A `fixed` overlay that would paint over a fullscreen panel, so a takeover
           keeps it out of the tree entirely rather than merely closed. Its
           `?convView` state survives in the URL and returns when the panel closes. */}

@@ -33,6 +33,8 @@ interface PanelLayoutOptions {
   containerRef?: RefObject<HTMLDivElement | null>
   /** Width other docked columns in the row already take; the panel clamps against what is left. */
   reservedWidth?: number
+  /** Whether a close animates the column away. One that doesn't never ends a transition, so content goes at once. */
+  animates?: boolean
 }
 
 export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions = {}) {
@@ -42,6 +44,7 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
   const ownContainerRef = useRef<HTMLDivElement>(null)
   const containerRef = options.containerRef ?? ownContainerRef
   const closedDuringResizeRef = useRef(false)
+  const animates = options.animates ?? true
 
   // Live-clamped panel width: opening a panel — or a smaller window / sidebar
   // collapse — re-caps the stored width so the default 480 can't crush the main
@@ -65,9 +68,11 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
 
   const handleTransitionEnd = useCallback(
     (e: React.TransitionEvent) => {
-      // Only respond to our own width transition, not bubbled child transitions
-      // (e.g. resize handle's transition-colors finishes 50ms earlier)
-      if (e.propertyName === "width" && e.target === e.currentTarget && !isPanelOpen) {
+      // Only respond to our own width transition — a slot's width, or the track
+      // of a pane host's grid — not bubbled child transitions (the resize
+      // handle's transition-colors finishes 50ms earlier).
+      const ownWidth = e.propertyName === "width" || e.propertyName === "grid-template-columns"
+      if (ownWidth && e.target === e.currentTarget && !isPanelOpen) {
         setShowContent(false)
       }
     },
@@ -96,11 +101,11 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
       setShowContent(true)
     } else if (isResizing) {
       closedDuringResizeRef.current = true
-    } else if (!enableTransition || closedDuringResizeRef.current) {
+    } else if (!enableTransition || !animates || closedDuringResizeRef.current) {
       closedDuringResizeRef.current = false
       setShowContent(false)
     }
-  }, [isPanelOpen, enableTransition, isResizing])
+  }, [isPanelOpen, enableTransition, isResizing, animates])
 
   const handleResizeKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
