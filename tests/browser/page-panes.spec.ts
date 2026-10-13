@@ -132,9 +132,16 @@ test("should stand a tabbed page pane's tab row in for its title, its chips besi
   // At the width a pane opens at, the tab row keeps the header and the chips take the row under it.
   await expect(header.getByRole("tab", { name: "Unread" })).toHaveCount(0)
 
-  await page.getByRole("separator", { name: "Resize thread panel" }).focus()
-  for (let step = 0; step < 5; step++) await page.keyboard.press("Shift+ArrowLeft")
-  await expect(header.getByRole("tab", { name: "Unread" })).toBeVisible()
+  const resize = page.getByRole("separator", { name: "Resize thread panel" })
+  const unread = header.getByRole("tab", { name: "Unread" })
+  const width = async () => (await activity.boundingBox())!.width
+  for (let step = 0; step < 40 && !(await unread.isVisible()); step++) {
+    const before = await width()
+    await resize.focus()
+    await page.keyboard.press("Shift+ArrowLeft")
+    await expect.poll(width).not.toBe(before)
+  }
+  await expect(unread).toBeVisible()
   await expect(header.getByRole("navigation", { name: "Panel tabs" })).toBeVisible()
 })
 

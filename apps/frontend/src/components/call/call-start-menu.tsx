@@ -6,19 +6,6 @@ import { useActiveCallsForStream } from "@/stores/active-calls-store"
 import { useCallLaunch } from "./call-launch-context"
 import { useCallOnAnotherDevice } from "./use-call-on-another-device"
 
-/**
- * The call-start affordance: a small menu offering "Start voice call" (mic only,
- * opens to the compact bar) and "Start video call" (camera publishing at join, opens
- * to the gallery). The voice/video decision is explicit — like the "Copy as markdown"
- * menu — rather than a hidden default. The launch runs inside the item click's user
- * gesture so iOS honors the AudioContext (INV via CallLaunch). Disabled (and the
- * menu unopenable) while a call is already active.
- *
- * When this stream's live call already has the viewer on ANOTHER device, the menu
- * collapses to a single "Take over" button: the voice/video choice belongs to the
- * call that is already running, and the only thing left to decide is which device
- * carries it. The camera is still a tap away once the call lands here.
- */
 /** The room the start trigger takes in a header, and the wider "Take over" that replaces it. */
 const CALL_START_WIDTH = 48
 const CALL_TAKE_OVER_WIDTH = 92
@@ -45,6 +32,19 @@ export function useCallStart(workspaceId: string, streamId: string, expectedCall
   }
 }
 
+/**
+ * The call-start affordance: a small menu offering "Start voice call" (mic only,
+ * opens to the compact bar) and "Start video call" (camera publishing at join, opens
+ * to the gallery). The voice/video decision is explicit — like the "Copy as markdown"
+ * menu — rather than a hidden default. The launch runs inside the item click's user
+ * gesture so iOS honors the AudioContext (INV via CallLaunch). Disabled (and the
+ * menu unopenable) while a call is already active.
+ *
+ * When this stream's live call already has the viewer on ANOTHER device, the menu
+ * collapses to a single "Take over" button: the voice/video choice belongs to the
+ * call that is already running, and the only thing left to decide is which device
+ * carries it. The camera is still a tap away once the call lands here.
+ */
 export function CallStartMenu({
   workspaceId,
   streamId,

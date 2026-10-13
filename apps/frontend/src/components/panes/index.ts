@@ -13,4 +13,4 @@ export {
 } from "./pane-drop"
 export { usePaneSplitActions } from "./panel-tab-menu"
 export { PaneHeader } from "./pane-header"
-export { PagePaneHeader, PAGE_ICON_WIDTH, PAGE_SEARCH_FIELD_WIDTH, usePageHeaderFit } from "./page-pane-chrome"
+export { PagePaneHeader, PageSearchHeader } from "./page-pane-chrome"

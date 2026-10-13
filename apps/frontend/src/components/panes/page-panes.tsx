@@ -135,10 +135,10 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
       setDropped({
         before: JSON.stringify(gridLayout.columns),
         after: JSON.stringify(after.columns),
-        sizes: droppedPanelSizes(display, widths, panelGrid.sizes.rows, after, panelId, drop.side),
+        sizes: droppedPanelSizes(display, widths, panelGrid.heights, after, panelId, drop.side),
       })
     },
-    [gridLayout, display, maxColumns, maxRows, containerWidth, displayWidth, columnWidths, panelGrid.sizes.rows]
+    [gridLayout, display, maxColumns, maxRows, containerWidth, displayWidth, columnWidths, panelGrid.heights]
   )
   const paneDrops = usePaneDropState(workspaceId, sizeDrop)
 
@@ -171,7 +171,6 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
               grid={panelGrid}
               width={isMobile ? null : panelWidth}
               firstColumnWidth={Math.max(0, containerWidth - displayWidth)}
-              height={containerHeight}
             />
             {isPanelOpen && !isMobile && (
               <PanelResizeHandle

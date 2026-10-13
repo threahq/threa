@@ -16,9 +16,9 @@ const HEADER_PADDING = 32
 const HEADER_GAP = 8
 const BACK_WIDTH = 32
 /** A page with an icon for a title keeps just that. */
-export const PAGE_ICON_WIDTH = 20
+const PAGE_ICON_WIDTH = 20
 /** The room a page's search field takes beside its icon before it gets a row of its own, its count included. */
-export const PAGE_SEARCH_FIELD_WIDTH = 272
+const PAGE_SEARCH_FIELD_WIDTH = 272
 
 /** Whether this pane keeps the page's own way back: the first column's does, and on a phone the route's. */
 function useKeepsBack(): boolean {
@@ -122,5 +122,44 @@ export function PagePaneHeader({
     >
       {children}
     </PaneHeader>
+  )
+}
+
+interface PageSearchHeaderProps {
+  workspaceId: string
+  icon: ReactNode
+  /** The search box and the count after it. */
+  field: ReactNode
+  /** The room `children` take, their gap included. */
+  actionsWidth?: number
+  /** The page's actions after the field. */
+  children?: ReactNode
+}
+
+/**
+ * The header of a page that is a search: its icon, then the field. A tab row
+ * leaves a growing field no fair share of the header, so beside one, or in a
+ * pane too narrow for it, the field takes a row of its own under the header.
+ * It moves there by placement alone, so what is typed in it and its caret stay.
+ * A phone's header keeps the field.
+ */
+export function PageSearchHeader({ workspaceId, icon, field, actionsWidth = 0, children }: PageSearchHeaderProps) {
+  const { isMobile } = useSidebar()
+  const { fits, tabbed, measureRefs } = usePageHeaderFit(PAGE_SEARCH_FIELD_WIDTH + actionsWidth, PAGE_ICON_WIDTH)
+  const stacked = !isMobile && (tabbed || !fits)
+
+  return (
+    <PagePaneHeader
+      workspaceId={workspaceId}
+      back={{ to: `/w/${workspaceId}`, label: "Back to workspace" }}
+      icon={icon}
+      measureRefs={measureRefs}
+      className={cn("border-b-0", stacked && "mb-10")}
+    >
+      <div className={cn("flex items-center gap-2", stacked ? "absolute inset-x-4 top-12 h-8" : "min-w-0 flex-[3]")}>
+        {field}
+      </div>
+      {children}
+    </PagePaneHeader>
   )
 }

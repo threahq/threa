@@ -244,3 +244,54 @@ test("should hold every pane at its least width and height when the window shrin
     search: FLOOR_WIDTH,
   })
 })
+
+test("should keep what a squeezed header gave up within reach, and its search field the same field", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { base, streamId, threadId } = await seedChannel(page)
+  const offered = async (trigger: Locator) => {
+    await trigger.click()
+    const items = page.getByRole("menuitem")
+    await expect(items.first()).toBeVisible()
+    const labels = await items.allTextContents()
+    await page.keyboard.press("Escape")
+    return labels.map((label) => label.trim())
+  }
+
+  await page.goto(`${base}?panel=page:drafts-${streamId}-page:search`)
+  const channel = tabPane(page, streamId)
+  await squeeze(page, channel)
+  const streamActions = await offered(channel.getByRole("button", { name: "Stream actions" }))
+
+  await page.goto(`${base}?panel=${streamId}-${threadId}.page:saved-page:search`)
+  const saved = tabPane(page, "page:saved")
+  await squeeze(page, saved)
+  const moreTabs = await offered(saved.getByRole("button", { name: /more tabs?$/ }))
+
+  await page.goto(`${base}?panel=${streamId}-page:search-page:files`)
+  const field = tabPane(page, "page:search").getByLabel("Search messages", { exact: true })
+  await expect(field).toBeVisible({ timeout: 30_000 })
+  await field.click()
+  await page.keyboard.type("floor")
+  await field.evaluate((el) => el.setAttribute("data-squeezed", ""))
+  const inHeaderRow = () =>
+    field.evaluate((el) => el.getBoundingClientRect().top < el.closest("header")!.getBoundingClientRect().bottom)
+  const wide = await inHeaderRow()
+  await squeeze(page, tabPane(page, "page:search"))
+
+  expect({
+    streamActions,
+    moreTabs,
+    field: {
+      wide,
+      squeezed: await inHeaderRow(),
+      kept: await field.getAttribute("data-squeezed"),
+      text: await field.innerText(),
+    },
+  }).toEqual({
+    streamActions: expect.arrayContaining(["Start voice call", "Start video call", "Search in conversation"]),
+    moreTabs: expect.arrayContaining(["Split right", "Split down"]),
+    field: { wide: true, squeezed: false, kept: "", text: "floor" },
+  })
+})

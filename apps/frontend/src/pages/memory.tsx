@@ -24,7 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Drawer, DrawerContent } from "@/components/ui/drawer"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { PagePaneHeader, PAGE_ICON_WIDTH, PAGE_SEARCH_FIELD_WIDTH, usePageHeaderFit } from "@/components/panes"
+import { PageSearchHeader } from "@/components/panes"
 import { MemoDetailContent, type MemoEditControls } from "@/components/memo/memo-detail"
 import { MemoResultItem } from "@/components/memo/memo-result-item"
 import { cn } from "@/lib/utils"
@@ -358,20 +358,13 @@ export function MemoryPage() {
     }
   }, [isRefreshing])
 
-  // A tab row leaves a growing field no fair share of the header, so the field takes its own row beside one.
-  const { fits, tabbed, measureRefs } = usePageHeaderFit(
-    PAGE_SEARCH_FIELD_WIDTH + MEMORY_REFRESH_WIDTH,
-    PAGE_ICON_WIDTH
-  )
-  const fieldStacked = tabbed || !fits
-
   if (!workspaceId) {
     return null
   }
 
   const field = (
     <>
-      <div className={cn("min-w-0", fieldStacked ? "flex-1" : "flex-[3]")}>
+      <div className="min-w-0 flex-1">
         <div className="relative max-w-xl">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
           <Input
@@ -392,15 +385,12 @@ export function MemoryPage() {
   return (
     <div className="flex h-full min-w-0 flex-col overflow-x-hidden bg-background">
       <div className="border-b bg-card/50">
-        <PagePaneHeader
+        <PageSearchHeader
           workspaceId={workspaceId}
-          back={{ to: `/w/${workspaceId}`, label: "Back to workspace" }}
           icon={<Brain className="h-5 w-5 shrink-0 text-muted-foreground" />}
-          measureRefs={measureRefs}
-          className="border-b-0"
+          field={field}
+          actionsWidth={MEMORY_REFRESH_WIDTH}
         >
-          {!fieldStacked && field}
-
           <Button
             variant="ghost"
             size="icon"
@@ -414,8 +404,7 @@ export function MemoryPage() {
             {refreshConfirmed ? <Check className="h-4 w-4" /> : <RefreshCw className="h-4 w-4" />}
             <span className="sr-only">Refresh</span>
           </Button>
-        </PagePaneHeader>
-        {fieldStacked && <div className="flex items-center gap-2 px-4 pb-2">{field}</div>}
+        </PageSearchHeader>
 
         <div className="flex items-center gap-2 overflow-x-auto border-t border-border/40 px-4 py-2 scrollbar-none">
           <span className="text-[11px] font-medium text-muted-foreground/50 uppercase tracking-wide mr-1 shrink-0">

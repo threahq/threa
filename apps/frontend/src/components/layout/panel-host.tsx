@@ -268,8 +268,6 @@ interface PanelTabStackProps {
   width: number | null
   /** Pixels the first column fills, which a floating tab's map shows too. */
   firstColumnWidth: number
-  /** Pixels of the page's grid's height, which the sections share. */
-  height: number
 }
 
 interface PlacedTab {
@@ -284,19 +282,18 @@ interface PlacedTab {
 
 type PanelGridState = ReturnType<typeof usePanelGrid>
 
-/** The page's grid for `display`, fitted from `layout`: its row tracks, each section's area, and the column shares as last dragged. */
+/**
+ * The page's grid for `display`, fitted from `layout`: its row tracks, each section's area, the sizes as
+ * last dragged, and `heights`, each column's sections as `height` pixels show them, none under its least.
+ */
 export function usePanelGrid(display: PanelLayout, layout: PanelLayout, height: number) {
   const [sizes, setSizes] = usePanelGridSizes(display, layout)
-  const { rows, areas } = useMemo(
-    () =>
-      compilePanelGrid(
-        height > 0
-          ? { ...sizes, rows: sizes.rows.map((shares) => sectionSizes(shares, height, MIN_SECTION_HEIGHT)) }
-          : sizes
-      ),
-    [sizes, height]
+  const heights = useMemo(
+    () => sizes.rows.map((shares) => (height > 0 ? sectionSizes(shares, height, MIN_SECTION_HEIGHT) : shares)),
+    [sizes.rows, height]
   )
-  return { sizes, setSizes, rows, areas }
+  const { rows, areas } = useMemo(() => compilePanelGrid({ ...sizes, rows: heights }), [sizes, heights])
+  return { sizes, setSizes, heights, rows, areas }
 }
 
 /** `layout` as a window `maxColumns` wide and `maxRows` tall arranges it, or a phone when `stacked`. */
@@ -404,11 +401,10 @@ export function PanelTabStack({
   grid,
   width,
   firstColumnWidth,
-  height,
 }: PanelTabStackProps) {
   const { setCurrentPane, focusTab, closeTab } = usePanel()
   const current = useCurrentPane()
-  const { sizes, setSizes, areas } = grid
+  const { sizes, setSizes, heights, areas } = grid
   const panelShares = sizes.columns.slice(1)
   const columnWidths = width === null ? null : panelColumnWidths(panelShares, width)
 
@@ -515,20 +511,19 @@ export function PanelTabStack({
         onReset={() => setSizes(evenPanelColumns(sizes))}
       />
     ))
-  const rowResizers = sizes.rows.flatMap((rows, column) => {
-    const heights = sectionSizes(rows, height, MIN_SECTION_HEIGHT)
-    return heights.slice(1).map((shown, index) => (
+  const rowResizers = heights.flatMap((shownHeights, column) =>
+    shownHeights.slice(1).map((shown, index) => (
       <SectionResizer
         key={`row:${keyOf(display.columns[column][index + 1].ids[0])}`}
         axis="y"
         area={areas[column][index + 1]}
-        size={heights[index]}
-        span={heights[index] + shown}
+        size={shownHeights[index]}
+        span={shownHeights[index] + shown}
         min={MIN_SECTION_HEIGHT}
         onResize={(px) =>
           setSizes({
             ...sizes,
-            rows: sizes.rows.map((shares, at) => (at === column ? resplit(heights, index, px) : shares)),
+            rows: sizes.rows.map((shares, at) => (at === column ? resplit(shownHeights, index, px) : shares)),
           })
         }
         onReset={() =>
@@ -536,7 +531,7 @@ export function PanelTabStack({
         }
       />
     ))
-  })
+  )
 
   return (
     <>

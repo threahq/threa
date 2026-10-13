@@ -15,7 +15,13 @@ import {
   PERSONA_PANE,
   parsePersonaTestPanel,
 } from "@/contexts"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { useAsideState } from "@/stores/aside-store"
 import { useThreadAnchorSnippet } from "@/hooks/use-thread-anchor-snippet"
@@ -101,6 +107,20 @@ export function PanelTabStrip({
       },
     })),
   ]
+  const splitItems =
+    offersTabActions &&
+    splits.map((direction) => (
+      <DropdownMenuItem
+        key={direction}
+        onSelect={() => {
+          // The split-off tab's row takes focus in its new section, as the menu that held it closes.
+          focusHandoff.current = activePanelId
+          splitTab(activePanelId, direction)
+        }}
+      >
+        {SPLIT_LABELS[direction]}
+      </DropdownMenuItem>
+    ))
 
   return (
     <>
@@ -232,6 +252,12 @@ export function PanelTabStrip({
                   </Link>
                 </DropdownMenuItem>
               ))}
+              {fit.compact && splitItems && (
+                <>
+                  <DropdownMenuSeparator />
+                  {splitItems}
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         )}
@@ -262,18 +288,7 @@ export function PanelTabStrip({
               if (focusHandoff.current !== null) event.preventDefault()
             }}
           >
-            {splits.map((direction) => (
-              <DropdownMenuItem
-                key={direction}
-                onSelect={() => {
-                  // The split-off tab's row takes focus in its new section, as the menu that held it closes.
-                  focusHandoff.current = activePanelId
-                  splitTab(activePanelId, direction)
-                }}
-              >
-                {SPLIT_LABELS[direction]}
-              </DropdownMenuItem>
-            ))}
+            {splitItems}
           </DropdownMenuContent>
         </DropdownMenu>
       )}

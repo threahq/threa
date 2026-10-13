@@ -14,7 +14,7 @@ export interface PanelTabFit {
   labels: boolean
   /** How many tabs show in the row; the rest are in the "+N" menu. */
   visible: number
-  /** Too narrow for a whole tab beside "+N": the row drops "Tab actions" and the tab's own close, which the pane's repeat. */
+  /** Too narrow for a whole tab beside "+N": the row drops the tab's own close, which the pane's repeats, and moves "Tab actions" into "+N". */
   compact: boolean
 }
 
