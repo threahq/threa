@@ -51,9 +51,10 @@ export function resplit(shares: readonly number[], index: number, leading: numbe
 
 /**
  * `sizes`, held for `before`, as `after` holds them: every column keeps its
- * share, a section on show in both keeps its own, the sections one split
- * into share its own, and one `after` adds takes the mean of its column's.
- * Null where the two differ in columns, whose widths are then shared anew.
+ * share, a section on show in both keeps its own, one that sections joined in
+ * takes all of theirs, the sections one split into share its own, and one
+ * `after` adds takes the mean of its column's. Null where the two differ in
+ * columns, whose widths are then shared anew.
  */
 export function carriedPanelSizes(
   before: PanelLayout,
@@ -64,12 +65,19 @@ export function carriedPanelSizes(
   return {
     columns: sizes.columns,
     rows: after.columns.map((sections, column) => {
-      const origins = sections.map((section) =>
-        before.columns[column].findIndex((held) => held.ids.some((id) => section.ids.includes(id)))
+      const shares = sizes.rows[column]
+      const heirs = before.columns[column].map((held) =>
+        sections.filter((section) => held.ids.some((id) => section.ids.includes(id)))
       )
-      const kept = origins.map((row) =>
-        row === -1 ? null : sizes.rows[column][row] / origins.filter((origin) => origin === row).length
+      // A section's own are the ones that went to it alone; a tab another lent it is no claim on that one's share.
+      const own = sections.map((section) =>
+        sum(shares.filter((_, row) => heirs[row].length === 1 && heirs[row][0] === section))
       )
+      const split = sections.map((section, at) => (own[at] > 0 ? -1 : heirs.findIndex((to) => to.includes(section))))
+      const kept = sections.map((_, at) => {
+        if (own[at] > 0) return own[at]
+        return split[at] === -1 ? null : shares[split[at]] / split.filter((row) => row === split[at]).length
+      })
       const held = kept.filter((share) => share !== null)
       const added = held.length > 0 ? sum(held) / held.length : 1
       return kept.map((share) => share ?? added)

@@ -125,6 +125,20 @@ describe("carriedPanelSizes", () => {
     })
   })
 
+  it("should give a section the heights of the sections that joined in it", () => {
+    expect(carry("m-a--b--c", { columns: [1, 2], rows: [[1], [1, 2, 3]] }, "m-a.b--c")).toEqual({
+      columns: [1, 2],
+      rows: [[1], [3, 3]],
+    })
+  })
+
+  it("should keep both sections' heights when a tab moves from one to the one under it", () => {
+    expect(carry("m-b.c--a", { columns: [1, 2], rows: [[1], [1, 3]] }, "m-b--a.c")).toEqual({
+      columns: [1, 2],
+      rows: [[1], [1, 3]],
+    })
+  })
+
   it("should carry nothing when a column opens or closes", () => {
     expect(carry("m-a-c", { columns: [1, 0.5, 2], rows: [[1], [1], [1]] }, "m-a")).toBeNull()
   })
