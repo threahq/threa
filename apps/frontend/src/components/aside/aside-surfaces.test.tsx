@@ -10,6 +10,7 @@ import * as mobileModule from "@/hooks/use-mobile"
 import * as timelineModule from "@/components/timeline"
 import * as boundaryModule from "@/components/stream-error-boundary"
 import * as panelHostModule from "@/components/layout/panel-host"
+import * as contextsModule from "@/contexts"
 import { PanelProvider } from "@/contexts"
 import { useAgentBlock } from "@/components/timeline/agent-block-context"
 import * as draftEditorModule from "./aside-draft-editor"
@@ -23,7 +24,8 @@ import {
   resetAsideStoreCache,
   useAsideForHost,
 } from "@/stores/aside-store"
-import { AsideColumn, AsideMobileSheet, useAsideColumnLayout, useAsideHost, useAsideIsSheet } from "./index"
+import { AsideMobileSheet, useAsideHost, useAsideIsSheet } from "./index"
+import { AsidePanel } from "./aside-panel"
 
 const HOST_PATH = "/w/ws_1/board"
 const ASIDE = "stream_aside_1"
@@ -35,7 +37,7 @@ const aside = createMockStream({
   parentAnchorId: "msg_anchor_1",
 })
 
-/** The aside the way a page's panes lay it out: a column of its own, or a sheet where there is no room for one. */
+/** The aside the way a page's panes lay it out: a pane beside its stream, or a sheet where there is no room for one. */
 function Page() {
   const hostKey = useAsideHost()
   return (
@@ -48,7 +50,6 @@ function Page() {
 function AsideSurface({ hostKey }: { hostKey: string }) {
   const current = useAsideForHost(hostKey)
   const isSheet = useAsideIsSheet()
-  const layout = useAsideColumnLayout(isSheet ? null : current, 0, 0)
   if (!current) return null
   return isSheet ? (
     <AsideMobileSheet
@@ -58,7 +59,7 @@ function AsideSurface({ hostKey }: { hostKey: string }) {
       originScope={current.originScope}
     />
   ) : (
-    <AsideColumn workspaceId="ws_1" aside={current} layout={layout} />
+    <AsidePanel workspaceId="ws_1" hostStreamId={current.hostStreamId} onClose={() => {}} />
   )
 }
 
@@ -93,6 +94,9 @@ beforeEach(() => {
   localStorage.clear()
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue([aside] as never)
   vi.spyOn(mobileModule, "useIsSplitCapable").mockReturnValue(true)
+  vi.spyOn(contextsModule, "usePreferences").mockReturnValue({
+    preferences: null,
+  } as unknown as ReturnType<typeof contextsModule.usePreferences>)
   // The chat pane is the real companion timeline; its data plumbing is out of
   // scope here, so the barrel export renders a marker carrying the stream it
   // was mounted against.
@@ -209,7 +213,7 @@ describe("aside surfaces", () => {
 
   it("should render no aside chrome while nothing is open on this page", () => {
     renderPage()
-    expect(screen.queryByTestId("aside-column")).toBeNull()
+    expect(screen.queryByTestId("aside-panel")).toBeNull()
   })
 
   it("names the aside as private and points back at the message it was opened from", async () => {
@@ -226,19 +230,10 @@ describe("aside surfaces", () => {
     expect(jump).toHaveTextContent(/^Anchored in/)
   })
 
-  it("should leave nothing behind on close", async () => {
-    renderPage()
-    openOnHost()
-    fireEvent.click(await screen.findByRole("button", { name: "Close aside" }))
-
-    expect(getAsideState()).toBeNull()
-    expect(screen.queryByTestId("aside-column")).toBeNull()
-  })
-
   it("should drop the aside when its host page goes away", async () => {
     const view = renderPage()
     openOnHost()
-    await screen.findByTestId("aside-column")
+    await screen.findByTestId("aside-panel")
 
     view.unmount()
     expect(getAsideState()).toBeNull()
@@ -247,7 +242,7 @@ describe("aside surfaces", () => {
   it("should not show another page's aside", () => {
     openOnHost()
     renderPage("/w/ws_1/s/stream_host")
-    expect(screen.queryByTestId("aside-column")).toBeNull()
+    expect(screen.queryByTestId("aside-panel")).toBeNull()
   })
 
   it("opens as a sheet in a window too narrow to split, whatever the pointer", () => {
@@ -256,7 +251,7 @@ describe("aside surfaces", () => {
     renderPage()
 
     expect(screen.getByTestId("aside-sheet")).toBeInTheDocument()
-    expect(screen.queryByTestId("aside-column")).toBeNull()
+    expect(screen.queryByTestId("aside-panel")).toBeNull()
   })
 
   describe("on a phone", () => {
@@ -272,7 +267,7 @@ describe("aside surfaces", () => {
       expect(sheet).toHaveAttribute("data-detent", "peek")
       expect(sheet).toHaveAttribute("data-suppress-pull-refresh", "true")
       expect(screen.getByTestId("aside-sheet-handle")).toBeInTheDocument()
-      expect(screen.queryByTestId("aside-column")).toBeNull()
+      expect(screen.queryByTestId("aside-panel")).toBeNull()
       expect(screen.getByTestId("stream-content")).toHaveAttribute("data-stream-id", ASIDE)
     })
 

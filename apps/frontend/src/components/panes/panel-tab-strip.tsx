@@ -8,6 +8,7 @@ import {
   usePanelTabFocusHandoff,
   isDraftPanel,
   parseConversationPanel,
+  parseAsidePanel,
   parseComposePanel,
   parseConversationsPanel,
   parseContextPanel,
@@ -17,6 +18,7 @@ import {
 } from "@/contexts"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { useStreamName } from "@/hooks/use-stream-name"
+import { useAsideState } from "@/stores/aside-store"
 import { useThreadAnchorSnippet } from "@/hooks/use-thread-anchor-snippet"
 import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { useConversationTitle } from "@/hooks/use-conversation-title"
@@ -354,6 +356,7 @@ export function PanelTabTitle({ workspaceId, panelId }: { workspaceId: string; p
   if (panelId === BOARD_PANE) return <>Board</>
   if (panelId === PERSONA_PANE) return <>Edit persona</>
   if (parsePersonaTestPanel(panelId)) return <>Test chat</>
+  if (parseAsidePanel(panelId)) return <AsideTabTitle workspaceId={workspaceId} />
   const composeStreamId = parseComposePanel(panelId)
   if (composeStreamId) {
     return (
@@ -383,6 +386,11 @@ export function PanelTabTitle({ workspaceId, panelId }: { workspaceId: string; p
     return <ConversationTabTitle workspaceId={workspaceId} conversationId={conversationId} />
   }
   return <StreamTabTitle workspaceId={workspaceId} streamId={panelId} />
+}
+
+function AsideTabTitle({ workspaceId }: { workspaceId: string }) {
+  const asideId = useAsideState()?.asideId
+  return <>{useStreamName(workspaceId, asideId ?? "", "breadcrumb") ?? "Aside"}</>
 }
 
 function StreamTabTitle({ workspaceId, streamId }: { workspaceId: string; streamId: string }) {

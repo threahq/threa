@@ -165,6 +165,8 @@ test("should land back, forward and reload on the pane the route names", async (
   await page.goForward()
   await expect.poll(() => page.url()).toBe(threadUrl)
   await expect(pane(page, thread)).toHaveAttribute("data-front-panel", "true")
+  // The pane mounts afresh and its composer takes focus once its editor is up, which would pull focus back out of search.
+  await expect(pane(page, thread).locator('[contenteditable="true"]').last()).toBeFocused()
   await page.keyboard.press("ControlOrMeta+f")
   await expect(searchIn(page, thread)).toBeFocused()
   await page.keyboard.press("Escape")

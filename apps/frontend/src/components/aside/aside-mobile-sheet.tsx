@@ -34,8 +34,6 @@ interface AsideMobileSheetProps {
   asideId: string
   hostStreamId: string
   originScope: string
-  /** Whether the sheet may own a history entry Back closes; not where it only stands in for a column. */
-  historyEntry?: boolean
 }
 
 const REDUCED_MOTION =
@@ -69,13 +67,7 @@ function isEditorTarget(target: EventTarget | null): boolean {
  * conversation is a row of it the reader doesn't get, and the pane's own
  * anchor line already says which stream this sits beside.
  */
-export function AsideMobileSheet({
-  workspaceId,
-  asideId,
-  hostStreamId,
-  originScope,
-  historyEntry = true,
-}: AsideMobileSheetProps) {
+export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originScope }: AsideMobileSheetProps) {
   const detent = useAsideSheetDetent()
   const sheetRef = useRef<HTMLDivElement>(null)
   // An aside opened from a composer (the `/aside` command, mostly) takes the
@@ -132,7 +124,7 @@ export function AsideMobileSheet({
   // Decided once, at mount. An entry pushed over an open thread's own inherits
   // its close claim (use-cover-close.ts), so the thread's Close and Back would
   // pop the aside instead of the thread.
-  const [ownsHistoryEntry] = useState(() => historyEntry && !threadInSheet)
+  const [ownsHistoryEntry] = useState(() => !threadInSheet)
   useEffect(() => {
     if (threadInSheet) setAsideSheetDetent("full")
   }, [threadInSheet])
