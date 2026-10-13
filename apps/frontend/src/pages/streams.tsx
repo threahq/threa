@@ -228,9 +228,9 @@ function StreamsPageInner({
         }
       />
 
-      <div className="border-b px-4 py-2">
-        <div className="mx-auto flex max-w-3xl items-center gap-2">
-          <div className="relative min-w-0 flex-1">
+      <div className="border-b px-4 py-2 [container-type:inline-size]">
+        <div className="mx-auto flex max-w-3xl flex-wrap items-center gap-2">
+          <div className="relative min-w-32 flex-1">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               type="search"
@@ -255,38 +255,40 @@ function StreamsPageInner({
               <X className="h-3.5 w-3.5 shrink-0" />
             </Link>
           )}
-          {(["joined", "not-joined"] as const).map((value) => (
-            <Link
-              key={value}
-              to={hrefWith({ show: membership === value ? null : value })}
-              replace
-              aria-pressed={membership === value}
-              className={cn(
-                buttonVariants({ variant: membership === value ? "secondary" : "ghost", size: "sm" }),
-                "h-9 shrink-0 px-2.5 text-xs"
-              )}
-            >
-              {MEMBERSHIP_LABELS[value]}
-            </Link>
-          ))}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-9 shrink-0 gap-1.5 px-2.5 text-xs" aria-label="Sort">
-                <ArrowDownUp className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">{SORT_LABELS[sort]}</span>
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {DIRECTORY_SORTS.map((value) => (
-                <DropdownMenuItem key={value} asChild>
-                  <Link to={hrefWith({ sort: value === "activity" ? null : value })} replace>
-                    <span className="flex-1">{SORT_LABELS[value]}</span>
-                    {value === sort && <Check className="h-3.5 w-3.5" />}
-                  </Link>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <div className="flex shrink-0 items-center gap-2">
+            {(["joined", "not-joined"] as const).map((value) => (
+              <Link
+                key={value}
+                to={hrefWith({ show: membership === value ? null : value })}
+                replace
+                aria-pressed={membership === value}
+                className={cn(
+                  buttonVariants({ variant: membership === value ? "secondary" : "ghost", size: "sm" }),
+                  "h-9 shrink-0 px-2.5 text-xs"
+                )}
+              >
+                {MEMBERSHIP_LABELS[value]}
+              </Link>
+            ))}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="sm" className="h-9 shrink-0 gap-1.5 px-2.5 text-xs" aria-label="Sort">
+                  <ArrowDownUp className="h-3.5 w-3.5" />
+                  <span className="hidden [@container(min-width:30rem)]:inline">{SORT_LABELS[sort]}</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {DIRECTORY_SORTS.map((value) => (
+                  <DropdownMenuItem key={value} asChild>
+                    <Link to={hrefWith({ sort: value === "activity" ? null : value })} replace>
+                      <span className="flex-1">{SORT_LABELS[value]}</span>
+                      {value === sort && <Check className="h-3.5 w-3.5" />}
+                    </Link>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
       </div>
 

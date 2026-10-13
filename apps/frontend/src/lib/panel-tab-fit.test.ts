@@ -1,27 +1,42 @@
 import { describe, expect, it } from "vitest"
-import { fitPanelTabs, MIN_TAB_WIDTH, MORE_TABS_WIDTH, splitVisibleTabs, tabRowReserve } from "./panel-tab-fit"
+import {
+  fitPanelTabs,
+  MIN_TAB_WIDTH,
+  MORE_TABS_WIDTH,
+  splitVisibleTabs,
+  TAB_ACTIONS_WIDTH,
+  tabRowReserve,
+} from "./panel-tab-fit"
 
 describe("fitPanelTabs", () => {
   const active = 180
   const three = active + 2 * MIN_TAB_WIDTH
 
   it("should show every tab and the labels when they all fit", () => {
-    expect(fitPanelTabs(three + 60, 3, active, 60)).toEqual({ labels: true, visible: 3 })
+    expect(fitPanelTabs(three + 60, 3, active, 60)).toEqual({ labels: true, visible: 3, compact: false })
   })
 
   it("should fold the labels before any tab", () => {
-    expect(fitPanelTabs(three + 59, 3, active, 60)).toEqual({ labels: false, visible: 3 })
-    expect(fitPanelTabs(three, 3, active, 60)).toEqual({ labels: false, visible: 3 })
+    expect(fitPanelTabs(three + 59, 3, active, 60)).toEqual({ labels: false, visible: 3, compact: false })
+    expect(fitPanelTabs(three, 3, active, 60)).toEqual({ labels: false, visible: 3, compact: false })
   })
 
   it("should shrink the tab on show to keep every tab before folding any", () => {
-    expect(fitPanelTabs(3 * MIN_TAB_WIDTH, 3, active, 60)).toEqual({ labels: false, visible: 3 })
+    expect(fitPanelTabs(3 * MIN_TAB_WIDTH, 3, active, 60)).toEqual({ labels: false, visible: 3, compact: false })
   })
 
   it("should fold as many trailing tabs as the room needs once every tab is at its minimum", () => {
-    expect(fitPanelTabs(3 * MIN_TAB_WIDTH - 1, 3, active, 60)).toEqual({ labels: false, visible: 2 })
-    expect(fitPanelTabs(3 * MIN_TAB_WIDTH + MORE_TABS_WIDTH, 6, active, 60)).toEqual({ labels: false, visible: 3 })
-    expect(fitPanelTabs(3 * MIN_TAB_WIDTH + MORE_TABS_WIDTH - 1, 6, active, 60)).toEqual({ labels: false, visible: 2 })
+    expect(fitPanelTabs(3 * MIN_TAB_WIDTH - 1, 3, active, 60)).toEqual({ labels: false, visible: 2, compact: false })
+    expect(fitPanelTabs(3 * MIN_TAB_WIDTH + MORE_TABS_WIDTH, 6, active, 60)).toEqual({
+      labels: false,
+      visible: 3,
+      compact: false,
+    })
+    expect(fitPanelTabs(3 * MIN_TAB_WIDTH + MORE_TABS_WIDTH - 1, 6, active, 60)).toEqual({
+      labels: false,
+      visible: 2,
+      compact: false,
+    })
   })
 
   it("should show as many tabs whichever tab is on show", () => {
@@ -31,12 +46,22 @@ describe("fitPanelTabs", () => {
   })
 
   it("should keep the tab on show however narrow the row gets", () => {
-    expect(fitPanelTabs(40, 5, active, 60)).toEqual({ labels: false, visible: 1 })
+    expect(fitPanelTabs(40, 5, active, 60)).toEqual({ labels: false, visible: 1, compact: true })
+  })
+
+  it("should go compact only when the tab on show can't have the minimum beside +N and the tab actions", () => {
+    const room = MIN_TAB_WIDTH + MORE_TABS_WIDTH + TAB_ACTIONS_WIDTH
+    expect(fitPanelTabs(room, 2, active, 0, TAB_ACTIONS_WIDTH)).toEqual({ labels: false, visible: 1, compact: false })
+    expect(fitPanelTabs(room - 1, 2, active, 0, TAB_ACTIONS_WIDTH)).toEqual({
+      labels: false,
+      visible: 1,
+      compact: true,
+    })
   })
 
   it("should fold the second of two tabs only when both can't have the minimum", () => {
-    expect(fitPanelTabs(2 * MIN_TAB_WIDTH, 2, active, 0)).toEqual({ labels: false, visible: 2 })
-    expect(fitPanelTabs(2 * MIN_TAB_WIDTH - 1, 2, active, 0)).toEqual({ labels: false, visible: 1 })
+    expect(fitPanelTabs(2 * MIN_TAB_WIDTH, 2, active, 0)).toEqual({ labels: false, visible: 2, compact: false })
+    expect(fitPanelTabs(2 * MIN_TAB_WIDTH - 1, 2, active, 0)).toEqual({ labels: false, visible: 1, compact: false })
   })
 })
 

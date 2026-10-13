@@ -14,6 +14,8 @@ interface AsideAnchorLineProps {
   anchorId?: string | null
   /** `chip` rides the column's header; `line` is the phone sheet's own row under it. */
   variant?: "line" | "chip"
+  /** The chip down to its glyph. */
+  compact?: boolean
 }
 
 /**
@@ -26,22 +28,27 @@ interface AsideAnchorLineProps {
  * round-trip (like `use-in-app-link-chip`), and uncached it names the stream
  * instead of inventing an author — but it still goes to the same message.
  */
-export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant = "line" }: AsideAnchorLineProps) {
+export function AsideAnchorLine({
+  workspaceId,
+  hostStreamId,
+  anchorId,
+  variant = "line",
+  compact = false,
+}: AsideAnchorLineProps) {
   const { layout, hasTabs, getTabUrl } = usePanel()
   const hostName = useStreamName(workspaceId, hostStreamId, "breadcrumb")
   const anchored = useAsideAnchor(workspaceId, hostStreamId, anchorId)
 
-  const label = anchored ? (
-    <>
-      <span className="sr-only">Anchored to </span>
-      <span className="font-medium text-foreground/85">{`${anchored.author} · ${anchored.at}`}</span>
-    </>
-  ) : (
-    <>
-      <span className="sr-only">Anchored in </span>
-      {hostName ?? "this conversation"}
-    </>
+  const prefix = anchored ? "Anchored to " : "Anchored in "
+  const where = anchored ? `${anchored.author} · ${anchored.at}` : (hostName ?? "this conversation")
+  const label = (
+    <span className={compact ? "sr-only" : "min-w-0 truncate"}>
+      <span className="sr-only">{prefix}</span>
+      <span className={cn(anchored && "font-medium text-foreground/85")}>{where}</span>
+    </span>
   )
+  const title = compact ? `${prefix}${where}` : undefined
+  const chipSize = compact ? "shrink-0" : "min-w-0 shrink"
 
   const onHostPage = hasTabs && panelIdsOf(layout).includes(hostStreamId)
   const chip = variant === "chip"
@@ -66,13 +73,14 @@ export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant =
     return (
       <div
         data-testid="aside-anchor-line"
+        title={title}
         className={cn(
           "flex items-center gap-1.5 text-[11px] text-muted-foreground",
-          chip ? "min-w-0 shrink rounded-full border px-2.5 py-1" : "h-7 shrink-0 border-b bg-primary/[0.025] px-3"
+          chip ? cn(chipSize, "rounded-full border px-2.5 py-1") : "h-7 shrink-0 border-b bg-primary/[0.025] px-3"
         )}
       >
         <Anchor className="h-3 w-3 shrink-0" aria-hidden />
-        <span className="min-w-0 truncate">{label}</span>
+        {label}
       </div>
     )
   }
@@ -81,20 +89,23 @@ export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant =
     <Link
       to={to}
       data-testid="aside-anchor-line"
+      title={title}
       className={cn(
-        "group flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground transition-colors",
+        "group flex items-center gap-1.5 text-[11px] text-muted-foreground transition-colors",
         "hover:text-primary focus-visible:text-primary focus-visible:outline-none",
         chip
-          ? "shrink rounded-full border px-2.5 py-1 hover:border-primary/40 hover:bg-primary/[0.06]"
-          : "h-7 shrink-0 border-b bg-primary/[0.025] px-3 hover:bg-primary/[0.06]"
+          ? cn(chipSize, "rounded-full border px-2.5 py-1 hover:border-primary/40 hover:bg-primary/[0.06]")
+          : "h-7 min-w-0 shrink-0 border-b bg-primary/[0.025] px-3 hover:bg-primary/[0.06]"
       )}
     >
       <Anchor className="h-3 w-3 shrink-0" aria-hidden />
-      <span className="min-w-0 truncate">{label}</span>
-      <CornerUpLeft
-        className="h-3 w-3 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-primary"
-        aria-hidden
-      />
+      {label}
+      {!compact && (
+        <CornerUpLeft
+          className="h-3 w-3 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-primary"
+          aria-hidden
+        />
+      )}
     </Link>
   )
 }

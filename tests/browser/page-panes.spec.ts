@@ -116,7 +116,9 @@ test("should search in a page pane in place, the stream beside it untouched", as
   expect([await tagOf(field), await tagOf(composerOf(page, streamId))]).toEqual(["field", "stream"])
 })
 
-test("should give a tabbed page pane one header row, its tab row standing in for the title", async ({ page }) => {
+test("should stand a tabbed page pane's tab row in for its title, its chips beside it once both fit", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1400, height: 900 })
   const { workspaceId, streamId } = await seedTwoChannels(page)
 
@@ -126,8 +128,14 @@ test("should give a tabbed page pane one header row, its tab row standing in for
   const header = activity.locator("header")
   await expect(header).toHaveCount(1)
   await expect(header.getByRole("navigation", { name: "Panel tabs" })).toBeVisible()
-  await expect(header.getByRole("tab", { name: "Unread" })).toBeVisible()
   await expect(header.getByRole("heading", { name: "Activity" })).toHaveCount(0)
+  // At the width a pane opens at, the tab row keeps the header and the chips take the row under it.
+  await expect(header.getByRole("tab", { name: "Unread" })).toHaveCount(0)
+
+  await page.getByRole("separator", { name: "Resize thread panel" }).focus()
+  for (let step = 0; step < 5; step++) await page.keyboard.press("Shift+ArrowLeft")
+  await expect(header.getByRole("tab", { name: "Unread" })).toBeVisible()
+  await expect(header.getByRole("navigation", { name: "Panel tabs" })).toBeVisible()
 })
 
 test("should keep a page route's streams beside it and move the route without remounting a pane", async ({ page }) => {

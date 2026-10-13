@@ -9,6 +9,9 @@ import {
   MessageCircle,
   ArchiveX,
   Search,
+  Phone,
+  PhoneForwarded,
+  Video,
   CornerDownRight,
   Paperclip,
   Settings,
@@ -52,7 +55,7 @@ import { StreamEncryptionGate } from "@/components/encryption/stream-encryption-
 import { useDecryptedStreamName, useStreamNameDecrypting } from "@/hooks/use-decrypted-stream-name"
 import { Skeleton } from "@/components/ui/skeleton"
 import { useFeatureFlag } from "@/hooks/use-feature-flags"
-import { CallStartMenu, RejoinBar } from "@/components/call"
+import { CallStartMenu, RejoinBar, useCallStart } from "@/components/call"
 import { ThreadHeader } from "@/components/thread"
 import { StreamTitlePreview } from "@/components/layout"
 import { AsideHeaderChip, useAsideHeaderAction } from "@/components/aside/aside-header-chip"
@@ -106,8 +109,7 @@ export function StreamPane({
   const leadingWidth = useElementWidth(leadingRef)
   const chipsRef = useRef<HTMLDivElement>(null)
   const chipsWidth = useElementWidth(chipsRef)
-  const callRef = useRef<HTMLDivElement>(null)
-  const callWidth = useElementWidth(callRef)
+  const callStart = useCallStart(workspaceId, streamId)
   const trailingRef = useRef<HTMLDivElement>(null)
   const trailingWidth = useElementWidth(trailingRef)
   const ownsConversationOverlay = routeStreamId !== undefined && primaryPanelOf(layout) === streamId
@@ -535,14 +537,13 @@ export function StreamPane({
     : foldHeaderControls(
         headerWidth,
         // Padding, then what never folds: the leading controls, the chips beside the title, the label strip's gap
-        // (a tab row's -ml-2 hands one back instead), the call menu, and the menu, focus and close.
+        // (a tab row's -ml-2 hands one back instead), and the menu, focus and close.
         32 +
           (leadingWidth > 0 ? leadingWidth + gap : 0) +
           (tabbed ? -gap : gap) +
           (chipsWidth > 0 ? chipsWidth + gap : 0) +
           gap -
           iconGap +
-          (callWidth > 0 ? callWidth + iconGap : 0) +
           (trailingWidth > 0 ? trailingWidth + gap : 0),
         [
           ...(offersAside ? [{ id: "aside-label", width: 60 }] : []),
@@ -550,6 +551,7 @@ export function StreamPane({
           ...(offersContextIcon ? [{ id: "context", width: icon }] : []),
           ...(offersSearch ? [{ id: "search", width: icon }] : []),
           ...(offersAside ? [{ id: "aside", width: icon }] : []),
+          ...(offersCall ? [{ id: "call", width: callStart.width + iconGap }] : []),
         ],
         // A tab row keeps room for two tabs, so the view icons fold before the tabs go to "+N".
         tabbed ? tabRowReserve(section?.ids.length ?? 0) : undefined
@@ -558,7 +560,22 @@ export function StreamPane({
   const openSearch = () => {
     document.dispatchEvent(new CustomEvent("threa:open-stream-search", { detail: { streamId } }))
   }
+  const callInMenu = offersCall && folded.has("call")
+  const callActions: SidebarActionItem[] = callStart.takeOver
+    ? [
+        {
+          id: "call-take-over",
+          label: "Take over call on this device",
+          icon: PhoneForwarded,
+          onSelect: callStart.takeOver,
+        },
+      ]
+    : [
+        { id: "call-voice", label: "Start voice call", icon: Phone, onSelect: () => callStart.start(false) },
+        { id: "call-video", label: "Start video call", icon: Video, onSelect: () => callStart.start(true) },
+      ]
   const foldedActions: SidebarActionItem[] = [
+    ...(callInMenu && !callStart.callActive ? callActions : []),
     ...(asideAction && folded.has("aside")
       ? [{ id: "aside", label: asideAction.label, icon: MessageSquareDashed, onSelect: asideAction.run }]
       : []),
@@ -807,12 +824,10 @@ export function StreamPane({
         <StreamLoadingIndicator isLoading={isLoading} />
         {tabbed && chips}
         <div className="flex items-center gap-1 empty:hidden">
-          <div ref={callRef} className="flex items-center empty:hidden">
-            {offersCall && (
-              // A workspace that has switched calls off shows no calls surface at all.
-              <CallStartMenu workspaceId={workspaceId} streamId={streamId} startLabel="Start a call" />
-            )}
-          </div>
+          {offersCall && !callInMenu && (
+            // A workspace that has switched calls off shows no calls surface at all.
+            <CallStartMenu workspaceId={workspaceId} streamId={streamId} startLabel="Start a call" />
+          )}
           {asideAction && !folded.has("aside") && (
             <AsideHeaderChip action={asideAction} compact={isMobile || folded.has("aside-label")} />
           )}

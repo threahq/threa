@@ -51,8 +51,11 @@ import {
   panelColumnWidths,
   panelGridShape,
   resplit,
+  sectionSizes,
   evenPanelColumns,
   evenShares,
+  MIN_SECTION_HEIGHT,
+  MIN_SECTION_WIDTH,
   type PanelGridSizes,
 } from "@/lib/panel-grid"
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer"
@@ -230,9 +233,6 @@ function PaneContent({ workspaceId, panelId, className }: PanelHostProps & { pan
   )
 }
 
-// Room for a tab row's tab on show and "+N" beside the menu, focus and close.
-const MIN_SECTION_WIDTH = 240
-const MIN_SECTION_HEIGHT = 120
 // A stream's header and composer with about 120px of timeline between them.
 const MIN_STACKED_SECTION_HEIGHT = 320
 
@@ -285,9 +285,17 @@ interface PlacedTab {
 type PanelGridState = ReturnType<typeof usePanelGrid>
 
 /** The page's grid for `display`, fitted from `layout`: its row tracks, each section's area, and the column shares as last dragged. */
-export function usePanelGrid(display: PanelLayout, layout: PanelLayout) {
+export function usePanelGrid(display: PanelLayout, layout: PanelLayout, height: number) {
   const [sizes, setSizes] = usePanelGridSizes(display, layout)
-  const { rows, areas } = useMemo(() => compilePanelGrid(sizes), [sizes])
+  const { rows, areas } = useMemo(
+    () =>
+      compilePanelGrid(
+        height > 0
+          ? { ...sizes, rows: sizes.rows.map((shares) => sectionSizes(shares, height, MIN_SECTION_HEIGHT)) }
+          : sizes
+      ),
+    [sizes, height]
+  )
   return { sizes, setSizes, rows, areas }
 }
 
@@ -491,35 +499,36 @@ export function PanelTabStack({
 
   // The first column fills what the rest leave, so only the dividers between the rest share sizes. Each is
   // keyed by the section it leads, so it glides with that section's edge when one before it closes.
-  const columnUnit = (width ?? 0) / sum(panelShares)
-  const columnResizers = panelShares
+  // Dragged in the pixels on show, which a held minimum can set apart from the shares.
+  const shownWidths = columnWidths ?? []
+  const columnResizers = shownWidths
     .slice(1)
-    .map((share, index) => (
+    .map((shown, index) => (
       <SectionResizer
         key={`column:${keyOf(display.columns[index + 2][0].ids[0])}`}
         axis="x"
         area={`1 / ${index + 3} / -1 / ${index + 4}`}
-        size={panelShares[index] * columnUnit}
-        span={(panelShares[index] + share) * columnUnit}
+        size={shownWidths[index]}
+        span={shownWidths[index] + shown}
         min={MIN_SECTION_WIDTH}
-        onResize={(px) => setSizes({ ...sizes, columns: resplit(sizes.columns, index + 1, px / columnUnit) })}
+        onResize={(px) => setSizes({ ...sizes, columns: [sizes.columns[0], ...resplit(shownWidths, index, px)] })}
         onReset={() => setSizes(evenPanelColumns(sizes))}
       />
     ))
   const rowResizers = sizes.rows.flatMap((rows, column) => {
-    const unit = height / sum(rows)
-    return rows.slice(1).map((share, index) => (
+    const heights = sectionSizes(rows, height, MIN_SECTION_HEIGHT)
+    return heights.slice(1).map((shown, index) => (
       <SectionResizer
         key={`row:${keyOf(display.columns[column][index + 1].ids[0])}`}
         axis="y"
         area={areas[column][index + 1]}
-        size={rows[index] * unit}
-        span={(rows[index] + share) * unit}
+        size={heights[index]}
+        span={heights[index] + shown}
         min={MIN_SECTION_HEIGHT}
         onResize={(px) =>
           setSizes({
             ...sizes,
-            rows: sizes.rows.map((shares, at) => (at === column ? resplit(shares, index, px / unit) : shares)),
+            rows: sizes.rows.map((shares, at) => (at === column ? resplit(heights, index, px) : shares)),
           })
         }
         onReset={() =>

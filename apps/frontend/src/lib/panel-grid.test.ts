@@ -9,6 +9,7 @@ import {
   panelColumnWidths,
   panelGridShape,
   resplit,
+  sectionSizes,
 } from "./panel-grid"
 import { dropPanelTab, parsePanelLayout, type PaneEdge } from "./panel-tabs"
 
@@ -63,6 +64,24 @@ describe("panelColumnWidths", () => {
     expect(panelColumnWidths(defaultPanelGridSizes(parsePanelLayout("m-a-b")).columns.slice(1), 960)).toEqual([
       560, 400,
     ])
+  })
+})
+
+describe("sectionSizes", () => {
+  it("should hold a section at the minimum when a smaller window would squeeze it past it", () => {
+    expect(sectionSizes([240, 680], 600, 240)).toEqual([240, 360])
+  })
+
+  it("should share what the held sections leave by the shares of the rest", () => {
+    expect(sectionSizes([1, 6, 6], 900, 240)).toEqual([240, 330, 330])
+  })
+
+  it("should hold a section that holding another squeezes in turn", () => {
+    expect(sectionSizes([1, 6, 3], 900, 240)).toEqual([240, 420, 240])
+  })
+
+  it("should share the room evenly when it is too small for every section's minimum", () => {
+    expect(sectionSizes([1, 3], 300, 240)).toEqual([150, 150])
   })
 })
 

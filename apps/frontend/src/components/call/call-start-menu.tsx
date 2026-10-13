@@ -19,6 +19,32 @@ import { useCallOnAnotherDevice } from "./use-call-on-another-device"
  * call that is already running, and the only thing left to decide is which device
  * carries it. The camera is still a tap away once the call lands here.
  */
+/** The room the start trigger takes in a header, and the wider "Take over" that replaces it. */
+const CALL_START_WIDTH = 48
+const CALL_TAKE_OVER_WIDTH = 92
+
+/**
+ * What a stream offers for starting a call here: `takeOver` when its live call
+ * has the viewer on another device, else `start`. Each launches synchronously,
+ * so calling one from a click keeps the user gesture.
+ */
+export function useCallStart(workspaceId: string, streamId: string, expectedCallId?: string) {
+  const { launch, callActive } = useCallLaunch()
+  // Store-only (no fetch): this menu renders on channels and DMs, which are their
+  // own root, so the stream's live call is the entry filed under it.
+  const liveHere = useActiveCallsForStream(workspaceId, streamId).find((call) => call.streamId === streamId)
+  const liveCallId = expectedCallId ?? liveHere?.callId
+  const onAnotherDevice = useCallOnAnotherDevice(workspaceId, liveCallId)
+  return {
+    callActive,
+    width: onAnotherDevice ? CALL_TAKE_OVER_WIDTH : CALL_START_WIDTH,
+    start: (cameraOn: boolean) => launch({ workspaceId, streamId, mode: "video", expectedCallId, cameraOn }),
+    takeOver: onAnotherDevice
+      ? () => launch({ workspaceId, streamId, mode: "video", expectedCallId: liveCallId, takeover: true })
+      : null,
+  }
+}
+
 export function CallStartMenu({
   workspaceId,
   streamId,
@@ -32,15 +58,9 @@ export function CallStartMenu({
   startLabel?: string
   className?: string
 }) {
-  const { launch, callActive } = useCallLaunch()
-  // Store-only (no fetch): this menu renders on channels and DMs, which are their
-  // own root, so the stream's live call is the entry filed under it.
-  const liveHere = useActiveCallsForStream(workspaceId, streamId).find((call) => call.streamId === streamId)
-  const liveCallId = expectedCallId ?? liveHere?.callId
-  const onAnotherDevice = useCallOnAnotherDevice(workspaceId, liveCallId)
-  const start = (cameraOn: boolean) => launch({ workspaceId, streamId, mode: "video", expectedCallId, cameraOn })
+  const { callActive, start, takeOver } = useCallStart(workspaceId, streamId, expectedCallId)
 
-  if (onAnotherDevice) {
+  if (takeOver) {
     return (
       <Button
         variant="ghost"
@@ -49,7 +69,7 @@ export function CallStartMenu({
         disabled={callActive}
         title={callActive ? "You're already in a call" : "Move this call to this device"}
         aria-label="Take over call on this device"
-        onClick={() => launch({ workspaceId, streamId, mode: "video", expectedCallId: liveCallId, takeover: true })}
+        onClick={takeOver}
       >
         <PhoneForwarded className="h-4 w-4" />
         <span className="text-xs">Take over</span>

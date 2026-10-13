@@ -3,6 +3,10 @@ import { locate, type PaneEdge, type PanelLayout, type PanelSection } from "./pa
 /** How a panel opened beside another panel splits with it: the one being read keeps the larger share. */
 export const BESIDE_SPLIT_RATIO = 1.4
 
+// Room for a tab row's tab on show and "+N" beside the menu, focus and close.
+export const MIN_SECTION_WIDTH = 240
+export const MIN_SECTION_HEIGHT = 120
+
 /** Relative sizes of the columns, and of the sections down each column. */
 export interface PanelGridSizes {
   columns: readonly number[]
@@ -88,10 +92,24 @@ export function carriedPanelSizes(
 const track = (share: number) => `minmax(0,${Number(share.toFixed(4))}fr)`
 const sum = (shares: readonly number[]) => shares.reduce((total, share) => total + share, 0)
 
+/**
+ * Each section's pixels when the sections share `total` by their shares, none under `min`: one a smaller
+ * window would squeeze past it keeps it, and the rest share what is left. Too many for `total` share it evenly.
+ */
+export function sectionSizes(shares: readonly number[], total: number, min: number): number[] {
+  const floor = Math.min(min, total / shares.length)
+  let roomy = shares.map((_, index) => index)
+  for (;;) {
+    const unit = (total - floor * (shares.length - roomy.length)) / sum(roomy.map((index) => shares[index]))
+    const squeezed = roomy.filter((index) => shares[index] * unit < floor)
+    if (squeezed.length === 0) return shares.map((share, index) => (roomy.includes(index) ? share * unit : floor))
+    roomy = roomy.filter((index) => !squeezed.includes(index))
+  }
+}
+
 /** Each column's width when the columns share `width` pixels by their shares. */
 export function panelColumnWidths(shares: readonly number[], width: number): number[] {
-  const total = sum(shares)
-  return shares.map((share) => (width * share) / total)
+  return sectionSizes(shares, width, MIN_SECTION_WIDTH)
 }
 /**
  * The width the tab `id` brings to a side-edge drop: its column's, from

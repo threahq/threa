@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type RefObject } from "react"
+import { useLayoutEffect, useState, type RefCallback, type RefObject } from "react"
 
 /**
  * Observed content width of an element, for container-driven layout decisions.
@@ -32,4 +32,24 @@ export function useElementWidth(ref: RefObject<HTMLElement | null>): number {
   }, [ref])
 
   return width
+}
+
+/**
+ * {@link useElementWidth} for an element that remounts as the layout changes:
+ * the width follows whichever element holds the returned ref.
+ */
+export function useMeasuredWidth<T extends HTMLElement>(): [RefCallback<T>, number] {
+  const [element, setElement] = useState<T | null>(null)
+  const [width, setWidth] = useState(0)
+
+  useLayoutEffect(() => {
+    if (!element) return
+    const measure = () => setWidth(element.clientWidth)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [element])
+
+  return [setElement, width]
 }

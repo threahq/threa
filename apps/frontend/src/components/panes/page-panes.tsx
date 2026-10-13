@@ -91,7 +91,7 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
   const fittedPanels = useFittedPanelLayout(gridLayout, maxColumns + 1, false, maxRows)
   // A phone stacks every pane in the one cell.
   const display = isMobile ? phonePages : fittedPanels
-  const panelGrid = usePanelGrid(display, gridLayout)
+  const panelGrid = usePanelGrid(display, gridLayout, containerHeight)
   const columnWidths = useMemo(
     () => (displayWidth > 0 ? panelColumnWidths(panelGrid.sizes.columns.slice(1), displayWidth) : []),
     [panelGrid.sizes.columns, displayWidth]

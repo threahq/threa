@@ -179,7 +179,7 @@ test("should land keyboard focus on the panel's close button when closing down t
   await expect(tabPane(page, first).getByRole("button", { name: "Close", exact: true })).toBeFocused()
 })
 
-test("should keep the tab on show, its close and +N in a split section at its narrowest", async ({ page }) => {
+test("should keep the tab on show, +N and the pane's close in a split section at its narrowest", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 })
   const { workspaceId, streamId, threads } = await seedThreads(page, 4)
   const [lone, ...stacked] = threads
@@ -213,8 +213,10 @@ test("should keep the tab on show, its close and +N in a split section at its na
     expect(row.overflows).toBe(false)
     expect(row.more).toBe(`+${3 - row.shown}`)
     await expect(strip.locator('[aria-current="page"]')).toBeInViewport({ ratio: 1 })
-    await expect(strip.getByRole("button", { name: "Close tab" }).last()).toBeInViewport({ ratio: 1 })
     await expect(strip.getByRole("button", { name: /more tabs?$/ })).toBeInViewport({ ratio: 1 })
+    // The row gives up each tab's own close for the tab's name; the pane's close shuts the tab on show.
+    await expect(strip.getByRole("button", { name: "Close tab" })).toHaveCount(0)
+    await expect(pane.getByRole("button", { name: "Close", exact: true })).toBeInViewport({ ratio: 1 })
   }
 })
 

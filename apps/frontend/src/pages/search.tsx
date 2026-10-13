@@ -6,7 +6,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Skeleton } from "@/components/ui/skeleton"
-import { PagePaneHeader } from "@/components/panes"
+import { PagePaneHeader, PAGE_ICON_WIDTH, PAGE_SEARCH_FIELD_WIDTH, usePageHeaderFit } from "@/components/panes"
 import { StreamLoadingIndicator } from "@/components/loading"
 import { RichInput, SEARCH_FILTER_TRIGGERS, type RichInputRef } from "@/components/quick-switcher/rich-input"
 import { useSearchPanel } from "@/components/search/search-panel-context"
@@ -128,9 +128,39 @@ export function SearchPage() {
     [setActiveResultId, recordResultClick]
   )
 
+  // A tab row leaves a growing field no fair share of the header, so the field takes its own row beside one.
+  const { fits, tabbed, measureRefs } = usePageHeaderFit(PAGE_SEARCH_FIELD_WIDTH, PAGE_ICON_WIDTH)
+  const fieldStacked = tabbed || !fits
+
   if (!workspaceId) {
     return null
   }
+
+  const field = (
+    <>
+      <div className={cn("min-w-0", fieldStacked ? "flex-1" : "flex-[3]")}>
+        <div className="flex max-w-xl items-center gap-2 rounded-md border border-border/50 bg-background/80 px-3 transition-all focus-within:border-primary/40">
+          <SearchIcon className="h-4 w-4 shrink-0 text-muted-foreground/50" />
+          <RichInput
+            ref={inputRef}
+            value={localQuery}
+            onChange={handleQueryChange}
+            // Results are already live; Enter on a phone just puts the keyboard away.
+            onSubmit={() => isMobile && inputRef.current?.blur()}
+            triggers={SEARCH_FILTER_TRIGGERS}
+            placeholder="Search messages..."
+            ariaLabel="Search messages"
+            editorClassName="h-auto min-h-8 py-1.5"
+            autoFocus={autoFocusSearch}
+          />
+        </div>
+      </div>
+
+      <span className="hidden shrink-0 text-[11px] tabular-nums text-muted-foreground/50 sm:inline">
+        {hasQuery && (hasResults || !isLoading) ? `${resultCount} result${resultCount === 1 ? "" : "s"}` : ""}
+      </span>
+    </>
+  )
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-x-hidden bg-background">
@@ -139,30 +169,12 @@ export function SearchPage() {
           workspaceId={workspaceId}
           back={{ to: `/w/${workspaceId}`, label: "Back to workspace" }}
           icon={<SearchIcon className="h-5 w-5 shrink-0 text-muted-foreground" />}
+          measureRefs={measureRefs}
           className="border-b-0"
         >
-          <div className="min-w-0 flex-[3]">
-            <div className="flex max-w-xl items-center gap-2 rounded-md border border-border/50 bg-background/80 px-3 transition-all focus-within:border-primary/40">
-              <SearchIcon className="h-4 w-4 shrink-0 text-muted-foreground/50" />
-              <RichInput
-                ref={inputRef}
-                value={localQuery}
-                onChange={handleQueryChange}
-                // Results are already live; Enter on a phone just puts the keyboard away.
-                onSubmit={() => isMobile && inputRef.current?.blur()}
-                triggers={SEARCH_FILTER_TRIGGERS}
-                placeholder="Search messages..."
-                ariaLabel="Search messages"
-                editorClassName="h-auto min-h-8 py-1.5"
-                autoFocus={autoFocusSearch}
-              />
-            </div>
-          </div>
-
-          <span className="hidden shrink-0 text-[11px] tabular-nums text-muted-foreground/50 sm:inline">
-            {hasQuery && (hasResults || !isLoading) ? `${resultCount} result${resultCount === 1 ? "" : "s"}` : ""}
-          </span>
+          {!fieldStacked && field}
         </PagePaneHeader>
+        {fieldStacked && <div className="flex items-center gap-2 px-4 pb-2">{field}</div>}
 
         <div className="flex flex-wrap items-center gap-1.5 border-t border-border/40 px-4 py-2">
           <SearchFilterChips query={localQuery} parsedFilters={parsedFilters} onQueryChange={handleQueryChange} />

@@ -24,7 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Drawer, DrawerContent } from "@/components/ui/drawer"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
-import { PagePaneHeader } from "@/components/panes"
+import { PagePaneHeader, PAGE_ICON_WIDTH, PAGE_SEARCH_FIELD_WIDTH, usePageHeaderFit } from "@/components/panes"
 import { MemoDetailContent, type MemoEditControls } from "@/components/memo/memo-detail"
 import { MemoResultItem } from "@/components/memo/memo-result-item"
 import { cn } from "@/lib/utils"
@@ -163,6 +163,8 @@ function StreamCombobox({
 
 /** The list's 22rem beside a 400px detail; narrower, the detail stacks under the list. */
 const SIDE_BY_SIDE_MIN_WIDTH = 752
+/** The refresh button and the header's gap before it. */
+const MEMORY_REFRESH_WIDTH = 40
 
 export function MemoryPage() {
   const { workspaceId } = useParams<{ workspaceId: string }>()
@@ -356,9 +358,36 @@ export function MemoryPage() {
     }
   }, [isRefreshing])
 
+  // A tab row leaves a growing field no fair share of the header, so the field takes its own row beside one.
+  const { fits, tabbed, measureRefs } = usePageHeaderFit(
+    PAGE_SEARCH_FIELD_WIDTH + MEMORY_REFRESH_WIDTH,
+    PAGE_ICON_WIDTH
+  )
+  const fieldStacked = tabbed || !fits
+
   if (!workspaceId) {
     return null
   }
+
+  const field = (
+    <>
+      <div className={cn("min-w-0", fieldStacked ? "flex-1" : "flex-[3]")}>
+        <div className="relative max-w-xl">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
+          <Input
+            value={localQuery}
+            onChange={(event) => handleQueryChange(event.target.value)}
+            placeholder="Search workspace memory..."
+            className="h-8 pl-9 bg-background/80 border-border/50 focus-visible:border-primary/40"
+          />
+        </div>
+      </div>
+
+      <span className="hidden sm:inline shrink-0 text-[11px] tabular-nums text-muted-foreground/50">
+        {searchResponse.isLoading ? "\u2026" : `${results.length} memo${results.length !== 1 ? "s" : ""}`}
+      </span>
+    </>
+  )
 
   return (
     <div className="flex h-full min-w-0 flex-col overflow-x-hidden bg-background">
@@ -367,23 +396,10 @@ export function MemoryPage() {
           workspaceId={workspaceId}
           back={{ to: `/w/${workspaceId}`, label: "Back to workspace" }}
           icon={<Brain className="h-5 w-5 shrink-0 text-muted-foreground" />}
+          measureRefs={measureRefs}
           className="border-b-0"
         >
-          <div className="min-w-0 flex-[3]">
-            <div className="relative max-w-xl">
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/50" />
-              <Input
-                value={localQuery}
-                onChange={(event) => handleQueryChange(event.target.value)}
-                placeholder="Search workspace memory..."
-                className="h-8 pl-9 bg-background/80 border-border/50 focus-visible:border-primary/40"
-              />
-            </div>
-          </div>
-
-          <span className="hidden sm:inline shrink-0 text-[11px] tabular-nums text-muted-foreground/50">
-            {searchResponse.isLoading ? "\u2026" : `${results.length} memo${results.length !== 1 ? "s" : ""}`}
-          </span>
+          {!fieldStacked && field}
 
           <Button
             variant="ghost"
@@ -399,6 +415,7 @@ export function MemoryPage() {
             <span className="sr-only">Refresh</span>
           </Button>
         </PagePaneHeader>
+        {fieldStacked && <div className="flex items-center gap-2 px-4 pb-2">{field}</div>}
 
         <div className="flex items-center gap-2 overflow-x-auto border-t border-border/40 px-4 py-2 scrollbar-none">
           <span className="text-[11px] font-medium text-muted-foreground/50 uppercase tracking-wide mr-1 shrink-0">

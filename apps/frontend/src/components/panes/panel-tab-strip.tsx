@@ -22,7 +22,7 @@ import { useThreadAnchorSnippet } from "@/hooks/use-thread-anchor-snippet"
 import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { useConversationTitle } from "@/hooks/use-conversation-title"
 import { closePanelTab, followCurrentPanel, soleFirstPanelOf } from "@/lib/panel-tabs"
-import { fitPanelTabs, splitVisibleTabs, type PanelTabFit } from "@/lib/panel-tab-fit"
+import { fitPanelTabs, splitVisibleTabs, TAB_ACTIONS_WIDTH, type PanelTabFit } from "@/lib/panel-tab-fit"
 import { cn } from "@/lib/utils"
 import { pageTitleOf } from "@/lib/page-panes"
 import { usePaneCovered } from "./pane-host"
@@ -62,7 +62,8 @@ export function PanelTabStrip({
   const linkIdPrefix = useId()
   const focusHandoff = usePanelTabFocusHandoff()
   const paneFocus = useContext(PaneFocusContext)
-  const fit = usePanelTabFit(stripRef, labelsRef, panelIds, activePanelId)
+  const offersTabActions = activePanelId !== null && splits.length > 0 && !splitsInPaneMenu
+  const fit = usePanelTabFit(stripRef, labelsRef, panelIds, activePanelId, offersTabActions)
   const { shown, folded } = splitVisibleTabs(panelIds, activePanelId, fit.visible)
   const dropZone = useStripDropZone(activePanelId)
   const caret = useStripCaret(activePanelId)
@@ -156,23 +157,25 @@ export function PanelTabStrip({
                     <PanelTabTitle workspaceId={workspaceId} panelId={id} />
                   </span>
                 </Link>
-                <button
-                  type="button"
-                  onClick={() => {
-                    // A tab closing behind the one on show leaves focus with it, even when the
-                    // strip folds several sections; the last tab left takes it on its close button.
-                    handOffFocus(activeAfterClosing([id]))
-                    closeTab(id)
-                  }}
-                  aria-label="Close tab"
-                  aria-describedby={linkId}
-                  className={cn(
-                    "-ml-1 mr-1 grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:opacity-100",
-                    !active && "opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
-                  )}
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
+                {!fit.compact && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // A tab closing behind the one on show leaves focus with it, even when the
+                      // strip folds several sections; the last tab left takes it on its close button.
+                      handOffFocus(activeAfterClosing([id]))
+                      closeTab(id)
+                    }}
+                    aria-label="Close tab"
+                    aria-describedby={linkId}
+                    className={cn(
+                      "-ml-1 mr-1 grid h-6 w-6 shrink-0 place-items-center rounded text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:opacity-100",
+                      !active && "opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                    )}
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                )}
               </div>
             </PanelTabMenu>
           )
@@ -242,7 +245,7 @@ export function PanelTabStrip({
           {labels}
         </div>
       )}
-      {activePanelId && splits.length > 0 && !splitsInPaneMenu && (
+      {offersTabActions && !fit.compact && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <button
@@ -278,6 +281,9 @@ export function PanelTabStrip({
   )
 }
 
+/** What a tab's own close adds to its width. */
+const TAB_CLOSE_WIDTH = 24
+
 /** Where a dragged tab would land in the strip: before a tab, or after the last one shown. */
 function StripCaret({ side }: { side: "left" | "right" }) {
   return (
@@ -301,11 +307,13 @@ function usePanelTabFit(
   stripRef: RefObject<HTMLElement | null>,
   labelsRef: RefObject<HTMLElement | null>,
   panelIds: readonly string[],
-  activePanelId: string | null
+  activePanelId: string | null,
+  offersTabActions: boolean
 ): PanelTabFit {
-  const [fit, setFit] = useState<PanelTabFit>({ labels: true, visible: panelIds.length })
-  const labelsShown = useRef(fit.labels)
-  labelsShown.current = fit.labels
+  const [fit, setFit] = useState<PanelTabFit>({ labels: true, visible: panelIds.length, compact: false })
+  const shown = useRef(fit)
+  shown.current = fit
+  const actionsWidth = offersTabActions ? TAB_ACTIONS_WIDTH : 0
   const tabs = panelIds.length
 
   useLayoutEffect(() => {
@@ -314,10 +322,20 @@ function usePanelTabFit(
     const activeTab = strip.querySelector<HTMLElement>('[aria-current="page"]')?.parentElement
     const measure = () => {
       const labelsWidth = Math.ceil(labelsRef.current?.getBoundingClientRect().width ?? 0)
-      const room = Math.floor(strip.getBoundingClientRect().width) + (labelsShown.current ? labelsWidth : 0)
-      const activeWidth = activeTab ? Math.ceil(naturalTabWidth(activeTab)) : 0
-      const next = fitPanelTabs(room, tabs, activeWidth, labelsWidth)
-      setFit((current) => (current.labels === next.labels && current.visible === next.visible ? current : next))
+      // The room is the row's, whatever the last fit left showing in it.
+      const room =
+        Math.floor(strip.getBoundingClientRect().width) +
+        (shown.current.labels ? labelsWidth : 0) +
+        (shown.current.compact ? 0 : actionsWidth)
+      const activeWidth = activeTab
+        ? Math.ceil(naturalTabWidth(activeTab)) + (shown.current.compact ? TAB_CLOSE_WIDTH : 0)
+        : 0
+      const next = fitPanelTabs(room, tabs, activeWidth, labelsWidth, actionsWidth)
+      setFit((current) =>
+        current.labels === next.labels && current.visible === next.visible && current.compact === next.compact
+          ? current
+          : next
+      )
     }
     measure()
     // Re-fit before the resized frame paints, so it never shows the old fit clipped.
@@ -326,7 +344,7 @@ function usePanelTabFit(
     if (labelsRef.current) observer.observe(labelsRef.current)
     if (activeTab) observer.observe(activeTab)
     return () => observer.disconnect()
-  }, [stripRef, labelsRef, tabs, activePanelId])
+  }, [stripRef, labelsRef, tabs, activePanelId, actionsWidth])
 
   return fit
 }
