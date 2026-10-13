@@ -62,8 +62,8 @@ describe("isJournaledPath", () => {
 })
 
 describe("journalTouchesStream", () => {
-  it("sees the page stream and every panel stream", () => {
-    const path = `/w/${WS}/s/stream_a?panel=stream_b&panel=stream_c`
+  it("sees the page stream and every panel tab", () => {
+    const path = `/w/${WS}/s/stream_a?panel=stream_b.stream_c`
     expect(journalTouchesStream(path, WS, new Set(["stream_a"]))).toBe(true)
     expect(journalTouchesStream(path, WS, new Set(["stream_c"]))).toBe(true)
     expect(journalTouchesStream(path, WS, new Set(["stream_d"]))).toBe(false)
@@ -112,6 +112,25 @@ describe("recordVisit", () => {
       ],
       cursor: 2,
     })
+  })
+
+  it("should rewrite the stop in place when a replace only switches the panel tab on show", () => {
+    const journal = journalOf(["/s/x", "/s/x?panel=a.b"])
+    expect(recordVisit(journal, "/s/x?panel=a*.b", 99, { navigationType: "REPLACE" })).toEqual({
+      entries: [
+        { path: "/s/x", at: 1 },
+        { path: "/s/x?panel=a*.b", at: 99 },
+      ],
+      cursor: 1,
+    })
+  })
+
+  it("should add a stop when a replace changes which panel tabs are open", () => {
+    const journal = journalOf(["/s/x?panel=a.b"])
+    expect(recordVisit(journal, "/s/x?panel=a", 99, { navigationType: "REPLACE" }).entries).toEqual([
+      { path: "/s/x?panel=a.b", at: 1 },
+      { path: "/s/x?panel=a", at: 99 },
+    ])
   })
 
   it("case 4: a fresh visit drops everything after the cursor", () => {

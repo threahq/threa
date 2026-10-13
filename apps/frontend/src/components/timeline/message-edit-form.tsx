@@ -11,6 +11,7 @@ import { RichEditor, EditorToolbar, EditorActionBar, DocumentEditorModal } from 
 import type { RichEditorHandle } from "@/components/editor"
 import { inAppLinkMarksToNodes } from "@/components/editor/in-app-link-marks"
 import { useInputMode } from "@/hooks/use-input-mode"
+import { usePaneCovered } from "@/components/panes/pane-host"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
 import { useMessageService } from "@/contexts"
 import { messageKeys } from "@/api/messages"
@@ -73,9 +74,12 @@ export function MessageEditForm({
   const drawerContentRef = useRef<HTMLDivElement>(null)
   const [mobileToolbarEditor, setMobileToolbarEditor] = useState<Editor | null>(null)
   const instructionsId = useId()
+  const covered = usePaneCovered()
 
   useEffect(() => {
     if (isTouch) return // vaul handles Escape via onOpenChange
+    // A background tab keeps its edit open; Escape belongs to the tab on show.
+    if (covered) return
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault()
@@ -84,7 +88,7 @@ export function MessageEditForm({
     }
     document.addEventListener("keydown", handleKeyDown)
     return () => document.removeEventListener("keydown", handleKeyDown)
-  }, [isTouch, onCancel])
+  }, [isTouch, covered, onCancel])
 
   const setRichEditorHandle = useCallback((handle: RichEditorHandle | null) => {
     richEditorRef.current = handle

@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest"
 import { render, screen, act } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createMemoryRouter, Link, RouterProvider, useLocation } from "react-router-dom"
-import { PanelProvider, usePanel } from "./panel-context"
+import { PanelProvider, PaneScope, usePanel } from "./panel-context"
 
 /**
  * On mobile an open panel takes over the whole screen, so the platform back
@@ -26,16 +26,12 @@ function Probe() {
   )
 }
 
-function mount(initialEntries: string[]) {
+function mount(initialEntries: string[], probe = <Probe />) {
   const router = createMemoryRouter(
     [
       {
         path: "*",
-        element: (
-          <PanelProvider>
-            <Probe />
-          </PanelProvider>
-        ),
+        element: <PanelProvider>{probe}</PanelProvider>,
       },
     ],
     { initialEntries, initialIndex: initialEntries.length - 1 }
@@ -163,5 +159,135 @@ describe("panel history", () => {
 
     await user.click(screen.getByRole("link", { name: "link to c" }))
     expect(loc()).toBe("/s/stream_1?panel=conv%3Ac")
+  })
+})
+
+/** Each open tab as the stream page renders it: scoped, with its own close, an
+ *  in-place breadcrumb, and its strip link. */
+function TabsProbe() {
+  const { panelIds, getPanelUrl, getTabUrl } = usePanel()
+  const location = useLocation()
+  return (
+    <div>
+      <span data-testid="loc">{decodeURIComponent(`${location.pathname}${location.search}`)}</span>
+      <Link to={getPanelUrl("stream_b")}>open b</Link>
+      {panelIds.map((id) => (
+        <PaneScope key={id} panelId={id}>
+          <Link to={getTabUrl(id)} replace>{`tab ${id}`}</Link>
+          <ScopedTab />
+        </PaneScope>
+      ))}
+    </div>
+  )
+}
+
+function ScopedTab() {
+  const { panelId, closePanel, getNavigateUrl } = usePanel()
+  return (
+    <>
+      <button onClick={closePanel}>{`close ${panelId}`}</button>
+      <Link to={getNavigateUrl("stream_x")}>{`${panelId} to x`}</Link>
+    </>
+  )
+}
+
+const PAGE = "/w/ws/s/stream_main"
+
+describe("panel tabs history", () => {
+  const mountTabs = (entries: string[]) => {
+    const mounted = mount(entries, <TabsProbe />)
+    return { ...mounted, user: userEvent.setup() }
+  }
+
+  it("should push a tab and close it on back when a second thread opens", async () => {
+    const { user, back, loc } = mountTabs([PAGE, `${PAGE}?panel=stream_a`])
+
+    await user.click(screen.getByRole("link", { name: "open b" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_a.stream_b`)
+
+    await back()
+    expect(loc()).toBe(`${PAGE}?panel=stream_a`)
+  })
+
+  it("should replace on a tab switch so back skips it", async () => {
+    const { user, back, loc } = mountTabs([PAGE, `${PAGE}?panel=stream_a`])
+
+    await user.click(screen.getByRole("link", { name: "open b" }))
+    await user.click(screen.getByRole("link", { name: "tab stream_a" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_a*.stream_b`)
+
+    await back()
+    expect(loc()).toBe(`${PAGE}?panel=stream_a`)
+  })
+
+  it("should pop when the closed tab is the one the entry beneath lacks", async () => {
+    const { user, back, loc } = mountTabs([PAGE, `${PAGE}?panel=stream_a`])
+
+    await user.click(screen.getByRole("link", { name: "open b" }))
+    await user.click(screen.getByRole("button", { name: "close stream_b" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_a`)
+
+    // One press reaches the bare page: the close consumed the tab's entry.
+    await back()
+    expect(loc()).toBe(PAGE)
+  })
+
+  it("should still pop after a tab switch when the newest tab closes", async () => {
+    const { user, back, loc } = mountTabs([PAGE, `${PAGE}?panel=stream_a`])
+
+    await user.click(screen.getByRole("link", { name: "open b" }))
+    await user.click(screen.getByRole("link", { name: "tab stream_a" }))
+    await user.click(screen.getByRole("button", { name: "close stream_b" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_a`)
+
+    await back()
+    expect(loc()).toBe(PAGE)
+  })
+
+  it("should replace in place when the closed tab isn't the newest", async () => {
+    const { user, back, loc } = mountTabs([PAGE, `${PAGE}?panel=stream_a`])
+
+    await user.click(screen.getByRole("link", { name: "open b" }))
+    await user.click(screen.getByRole("button", { name: "close stream_a" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_b`)
+
+    // Back goes where the user was before b opened, a stays reachable.
+    await back()
+    expect(loc()).toBe(`${PAGE}?panel=stream_a`)
+  })
+
+  it("should drop the deep link when the tab it targeted closes", async () => {
+    const { user, loc } = mountTabs([`${PAGE}?panel=stream_a.stream_b&m=msg_1`])
+
+    await user.click(screen.getByRole("button", { name: "close stream_b" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_a`)
+  })
+
+  it("should keep the deep link when a background tab closes", async () => {
+    const { user, loc } = mountTabs([`${PAGE}?panel=stream_a.stream_b&m=msg_1`])
+
+    await user.click(screen.getByRole("button", { name: "close stream_a" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_b&m=msg_1`)
+  })
+
+  it("should drop the deep link when switching tabs", async () => {
+    const { user, loc } = mountTabs([`${PAGE}?panel=stream_a.stream_b&m=msg_1`])
+
+    await user.click(screen.getByRole("link", { name: "tab stream_a" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_a*.stream_b`)
+  })
+
+  it("should navigate a background tab in place without bringing it forward", async () => {
+    const { user, loc } = mountTabs([`${PAGE}?panel=stream_a.stream_b`])
+
+    await user.click(screen.getByRole("link", { name: "stream_a to x" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_x.stream_b`)
+  })
+
+  it("should keep replace-one-panel semantics off the stream page", async () => {
+    const { user, loc } = mountTabs(["/w/ws/board?panel=stream_a"])
+
+    await user.click(screen.getByRole("link", { name: "open b" }))
+    expect(loc()).toBe("/w/ws/board?panel=stream_b")
   })
 })

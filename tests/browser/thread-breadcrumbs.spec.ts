@@ -4,6 +4,7 @@ import {
   createChannel,
   expandCollapsedSidebarSections,
   generateTestId,
+  getActivePanel,
   loginAndCreateWorkspace,
   sendPanelReply,
   setSmartSidebarPreset,
@@ -14,7 +15,8 @@ import {
  * Tests for thread breadcrumb display, navigation, and sidebar context.
  *
  * Covers:
- * - Breadcrumb ancestor chain renders correctly in thread panels
+ * - Breadcrumb ancestor chain renders correctly in thread panels (a lone
+ *   panel; with two or more tabs the tab row stands in for breadcrumbs)
  * - Navigation via breadcrumb links works (up-chevron was removed)
  * - Sidebar shows thread root context suffix (e.g., "· #general")
  */
@@ -25,6 +27,7 @@ test.describe("Thread Breadcrumbs", () => {
   })
 
   test("should show ancestor chain in breadcrumbs and navigate via breadcrumb click", async ({ page }) => {
+    test.setTimeout(90000)
     const testId = generateTestId()
 
     // Create a channel
@@ -61,20 +64,26 @@ test.describe("Thread Breadcrumbs", () => {
     // After thread creation, breadcrumbs should still show the channel
     await expect(breadcrumbNav.getByText(`#${channelName}`)).toBeVisible({ timeout: 5000 })
 
-    // Create a second-level nested thread
+    // Create a second-level nested thread: it opens as a tab beside its parent
     const level1Container = page.getByTestId("panel").locator(".message-item").filter({ hasText: level1Reply }).first()
     await clickReplyInThread(level1Container)
     await expect(page.getByText(/Start a new thread/)).toBeVisible({ timeout: 3000 })
 
-    // Draft breadcrumbs for nested thread should show channel + parent thread as ancestors
-    await expect(breadcrumbNav.getByText(`#${channelName}`)).toBeVisible({ timeout: 5000 })
-    await expect(breadcrumbNav.getByText("New thread")).toBeVisible({ timeout: 3000 })
-
     // Send nested thread reply
     const level2Reply = `Level 2 reply ${testId}`
     await sendPanelReply(page, level2Reply)
-    await expect(page.getByTestId("panel").getByText(level2Reply)).toBeVisible({ timeout: 5000 })
+    await expect(getActivePanel(page).getByText(level2Reply)).toBeVisible({ timeout: 5000 })
     await expect(page.getByText(/Start a new thread/)).not.toBeVisible({ timeout: 3000 })
+    await waitForRealThreadPanel(page)
+
+    // Open the nested thread as the lone panel: its breadcrumbs lead back to the channel
+    const panelTabs = new URL(page.url()).searchParams.get("panel")!.split(".")
+    const level2Id = panelTabs[panelTabs.length - 1].replace("*", "")
+    const lonePanelUrl = new URL(page.url())
+    lonePanelUrl.searchParams.set("panel", level2Id)
+    await page.goto(lonePanelUrl.toString())
+    await expect(getActivePanel(page).getByText(level2Reply)).toBeVisible({ timeout: 10000 })
+    await expect(breadcrumbNav.getByText(`#${channelName}`)).toBeVisible({ timeout: 5000 })
 
     // Navigate to the channel by clicking its breadcrumb link.
     // Since the channel is the main view, clicking it should close the panel.

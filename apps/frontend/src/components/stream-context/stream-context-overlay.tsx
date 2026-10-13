@@ -16,7 +16,7 @@ export function StreamContextOverlay({ workspaceId, streamId }: { workspaceId: s
   const [isOpen, setOpen] = useStreamContextOpen()
   const [, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
-  const { openPanel } = usePanel()
+  const { openPanel, withPanelOpen } = usePanel()
   const { isMobile } = useSidebar()
   const dock = useStreamContextDock()
   const coversStream = isMobile || dock?.fits === false
@@ -29,11 +29,8 @@ export function StreamContextOverlay({ workspaceId, streamId }: { workspaceId: s
   // StreamContent's `?m=` effect a new location key to act on.
   const jumpToMessage = (messageId: string, inStreamId = streamId) => {
     setSearchParams((prev) => {
-      const next = new URLSearchParams(prev)
-      if (inStreamId !== streamId) {
-        next.delete("context")
-        next.set("panel", inStreamId)
-      } else if (coversStream) next.delete("context")
+      const next = inStreamId !== streamId ? withPanelOpen(prev, inStreamId) : new URLSearchParams(prev)
+      if (coversStream) next.delete("context")
       next.set("m", messageId)
       return next
     })

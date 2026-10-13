@@ -8,6 +8,8 @@ import { useStreamUnreadState } from "@/hooks/use-unread-counts"
 
 interface StreamReadTrackerProps extends UseLastSeenEventOptions {
   workspaceId: string
+  /** The pane went behind another: a pending read mark flushes instead of being dropped. */
+  covered: boolean
   /** Search, batch selection and collapsed chrome hide the jump bar. */
   bannerAllowed: boolean
   onJumpToFirstUnread: () => void
@@ -21,6 +23,7 @@ interface StreamReadTrackerProps extends UseLastSeenEventOptions {
  */
 export const StreamReadTracker = memo(function StreamReadTracker({
   workspaceId,
+  covered,
   bannerAllowed,
   onJumpToFirstUnread,
   onMarkAllRead,
@@ -29,6 +32,7 @@ export const StreamReadTracker = memo(function StreamReadTracker({
   const { lastSeenEventId, atLastRow, tailVisible, unreadAboveViewport } = useLastSeenEvent(scan)
   useAutoMarkAsRead(workspaceId, scan.streamId, lastSeenEventId, {
     enabled: scan.enabled,
+    covered,
     partial: !atLastRow,
     // Raw watermark, not the thread-remapped frontier seed: the heal's anchor
     // must be the id the server already stores so the advance stays a no-op.
