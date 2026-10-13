@@ -16,6 +16,7 @@ import {
   PanelTabStrip,
   PhonePaneLeading,
   PhonePaneSwitcher,
+  usePaneDragHandle,
   usePanelCloseFocusLanding,
   usePhoneHeaderSwipe,
 } from "@/components/panes"
@@ -96,9 +97,10 @@ export function PersonaTestChatPane({ workspaceId, personaId, onClose, className
   const draft = useContext(PersonaSyncContext)
   const testStreamId = draft?.testStreamId ?? null
   const { start, end, isStarting, isEnding } = usePersonaTestSession(workspaceId, personaId, testStreamId)
-  const { tabbed } = usePanel()
+  const { tabbed, canClosePanel } = usePanel()
   const { isMobile } = useSidebar()
   const closeRef = usePanelCloseFocusLanding()
+  const dragHandle = usePaneDragHandle(workspaceId, "Test chat", !tabbed)
   const headerSwipe = usePhoneHeaderSwipe()
   const syncHint = draft ? syncHintText(draft.syncState) : null
   // A test stream's own StreamContent reports for it.
@@ -111,11 +113,13 @@ export function PersonaTestChatPane({ workspaceId, personaId, onClose, className
         {tabbed ? (
           <PanelTabStrip workspaceId={workspaceId} className="-ml-2" />
         ) : (
-          <SidePanelTitle className="min-w-0 flex-1 truncate">Test chat</SidePanelTitle>
+          <SidePanelTitle className="min-w-0 flex-1 truncate" {...dragHandle}>
+            Test chat
+          </SidePanelTitle>
         )}
         <PaneFocusToggle />
         <PhonePaneSwitcher workspaceId={workspaceId} />
-        {!isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />}
+        {!isMobile && !tabbed && canClosePanel && <SidePanelClose onClose={onClose} ref={closeRef} />}
       </SidePanelHeader>
       {testStreamId && (
         <div className="flex h-10 shrink-0 items-center gap-2 border-b px-4">

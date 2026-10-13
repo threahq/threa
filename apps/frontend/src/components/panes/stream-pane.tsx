@@ -64,6 +64,7 @@ import { getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/stre
 import { StreamSheet } from "@/components/stream-sheet"
 import { PhonePaneSwitcher, usePhoneHeaderSwipe } from "./phone-pane-header"
 import { usePaneSplitActions } from "./panel-tab-menu"
+import { usePaneDragHandle } from "./pane-drop"
 import { SharedWithBadge } from "@/components/shared-with-badge"
 import { usePaneToggle, useStreamContextToggle } from "@/components/stream-context"
 import { copyStreamLink } from "@/lib/stream-links"
@@ -207,6 +208,7 @@ export function StreamPane({
   } else if (isDraft) {
     streamName = streamFallbackLabel(isDmDraft ? "dm" : "scratchpad", "sidebar")
   }
+  const dragHandle = usePaneDragHandle(workspaceId, streamName, !tabbed && !isEditing)
 
   // Pre-fill (and no-op-guard) the rename against the name the header actually
   // shows: for an encrypted stream that's the client-decrypted name, which can
@@ -716,7 +718,7 @@ export function StreamPane({
             {chrome.leading}
             <span />
           </div>
-          <div className={cn("flex items-center flex-1 min-w-0", !tabbed && "gap-2")}>
+          <div className={cn("flex items-center flex-1 min-w-0", !tabbed && "gap-2")} {...dragHandle}>
             {chrome.tabs ?? headerTitle}
             <div ref={chipsRef} className={cn("flex shrink-0 items-center empty:hidden", !tabbed && "gap-2")}>
               {!chrome.tabs && companionModeIndicator}

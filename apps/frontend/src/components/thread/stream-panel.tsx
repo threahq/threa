@@ -53,6 +53,7 @@ import {
   PhonePaneLeading,
   PhonePaneSwitcher,
   usePaneCovered,
+  usePaneDragHandle,
   usePanelCloseFocusLanding,
   usePhoneHeaderSwipe,
 } from "@/components/panes"
@@ -160,8 +161,9 @@ interface DraftThreadPanelProps {
 function DraftThreadPanel({ workspaceId, panelId, onClose, onPromoted, closeRef, className }: DraftThreadPanelProps) {
   const { isMobile } = useSidebar()
   const covered = usePaneCovered()
-  const { tabbed, getNavigateUrl } = usePanel()
+  const { tabbed, canClosePanel, getNavigateUrl } = usePanel()
   const headerSwipe = usePhoneHeaderSwipe()
+  const dragHandle = usePaneDragHandle(workspaceId, "New thread", !tabbed)
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   // Nothing to load: the parent message streams in from the cache or the parent's bootstrap.
   useRevealReady(true)
@@ -482,12 +484,16 @@ function DraftThreadPanel({ workspaceId, panelId, onClose, onPromoted, closeRef,
     headerContent = <PanelTabStrip workspaceId={workspaceId} className="-ml-2" />
   } else if (parentStream) {
     headerContent = (
-      <div className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden pr-2">
+      <div className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden pr-2" {...dragHandle}>
         <ResponsiveBreadcrumbs ancestors={fullChain} currentLabel="New thread" getNavigationUrl={getNavigateUrl} />
       </div>
     )
   } else {
-    headerContent = <SidePanelTitle className="flex-1">Stream</SidePanelTitle>
+    headerContent = (
+      <SidePanelTitle className="flex-1" {...dragHandle}>
+        Stream
+      </SidePanelTitle>
+    )
   }
 
   return (
@@ -497,7 +503,7 @@ function DraftThreadPanel({ workspaceId, panelId, onClose, onPromoted, closeRef,
         {headerContent}
         <PaneFocusToggle />
         <PhonePaneSwitcher workspaceId={workspaceId} />
-        {!isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />}
+        {!isMobile && !tabbed && canClosePanel && <SidePanelClose onClose={onClose} ref={closeRef} />}
       </SidePanelHeader>
 
       <SidePanelContent className="relative flex flex-col" data-editor-zone="panel" ref={setDraftPortalTarget}>

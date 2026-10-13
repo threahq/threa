@@ -139,9 +139,9 @@ test("should open a thread's draft beside it and close it with the thread's tab"
   await page.keyboard.press("Escape")
   await page.keyboard.press("Escape")
   await expect.poll(() => route(page)).toEqual({ stream: threadId, panel: `${streamId}-${threadId}-${compose}` })
-  await expect(tabPane(page, compose).getByRole("navigation", { name: "Panel tabs" })).toContainText("Draft to")
+  await expect(tabPane(page, compose).locator("header")).toContainText("Draft to")
 
-  await tabPane(page, threadId).getByRole("button", { name: "Close tab" }).click()
+  await tabPane(page, threadId).getByRole("button", { name: "Close", exact: true }).click()
   await expect.poll(() => route(page)).toEqual({ stream: streamId, panel: null })
   await expect(tabPane(page, compose)).toHaveCount(0)
 })

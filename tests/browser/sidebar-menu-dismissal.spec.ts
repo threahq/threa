@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, openPhoneSidebar } from "./helpers"
 
 /**
  * Sidebar menus render in a portal and outlive the sidebar's DOM, and Radix
@@ -16,21 +16,6 @@ async function openHistory(page: Page) {
   const menu = page.getByRole("menu")
   await expect(menu).toBeVisible({ timeout: 5_000 })
   return menu
-}
-
-/** Two toggles carry "Pin sidebar"; the sidebar's own sits off-screen while closed, so click the one in view. */
-async function openPhoneSidebar(page: Page) {
-  const toggles = page.getByRole("button", { name: "Pin sidebar" })
-  await expect(toggles.first()).toBeAttached({ timeout: 20_000 })
-  const count = await toggles.count()
-  for (let i = 0; i < count; i += 1) {
-    const box = await toggles.nth(i).boundingBox()
-    if (box && box.x >= 0 && box.x + box.width <= PHONE.width) {
-      await toggles.nth(i).click()
-      return
-    }
-  }
-  throw new Error("No on-screen sidebar toggle")
 }
 
 test("desktop: the toggle shortcut closes the sidebar and its open menu together", async ({ page }) => {

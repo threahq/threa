@@ -107,7 +107,7 @@ test("should open the list from a channel pane outside the first column and clos
   await expect(tabPane(page, second.streamId).locator(".animate-highlight-flash")).toBeVisible({ timeout: 30_000 })
   await expect.poll(() => new URL(page.url()).searchParams.get("m"), { timeout: 15_000 }).toBeNull()
 
-  await tabPane(page, second.streamId).getByRole("button", { name: "Close tab" }).first().click()
+  await tabPane(page, second.streamId).getByRole("button", { name: "Close", exact: true }).click()
   await expect.poll(() => panelParam(page)).toBeNull()
   await expect(list(page)).toHaveCount(0)
 })

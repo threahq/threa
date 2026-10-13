@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type DragEvent } from "react"
-import { usePanel } from "@/contexts"
+import { useCurrentPane, usePanel } from "@/contexts"
 import { STREAM_DRAG_TYPE, readStreamDrag, setMissedDropGuard, writeStreamDrag } from "@/lib/stream-drag"
 import { isPagePane, isServerStreamId } from "@/lib/stream-ids"
 import type { PaneDrop, PaneEdge } from "@/lib/panel-tabs"
@@ -31,13 +31,13 @@ function readPaneDrag(data: DataTransfer, workspaceId: string): string | null {
   return readStreamDrag(data, workspaceId)
 }
 
-/** Starts dragging the tab `panelId`; a stream's tab carries its permalink too. */
-export function startTabDrag(event: DragEvent<HTMLElement>, workspaceId: string, panelId: string) {
+/** Starts dragging the tab `panelId`, named `label`; a stream's tab carries its permalink too. */
+export function startTabDrag(event: DragEvent<HTMLElement>, workspaceId: string, panelId: string, label: string) {
   const data = event.dataTransfer
   // The link's own flavours name the page URL with this tab brought forward, which means nothing elsewhere.
   data.clearData()
   if (isServerStreamId(panelId)) {
-    writeStreamDrag(data, workspaceId, panelId, event.currentTarget.textContent ?? "")
+    writeStreamDrag(data, workspaceId, panelId, label)
   }
   data.setData(PANE_DRAG_TYPE, JSON.stringify({ workspaceId, panelId }))
   data.effectAllowed = "all"
@@ -46,6 +46,30 @@ export function startTabDrag(event: DragEvent<HTMLElement>, workspaceId: string,
 
 export function endTabDrag() {
   setMissedDropGuard(false)
+}
+
+/** Props that make a pane's header title drag its tab, while there is another pane to drop it on. */
+export function usePaneDragHandle(workspaceId: string, label: string, enabled = true) {
+  const { panelId, shownPanes } = usePanel()
+  const drops = usePaneDrop()
+  const currentPane = useCurrentPane()
+  // A page pane is pinned to the route's first column, so it has nowhere to go.
+  if (!panelId || isPagePane(panelId) || shownPanes < 2 || !drops || !enabled) return {}
+  return {
+    draggable: true,
+    onDragStart: (event: DragEvent<HTMLElement>) => {
+      // A breadcrumb or other link inside the title drags as itself.
+      if (
+        event.target instanceof Element &&
+        event.target.closest('a[href], [draggable="true"]') !== event.currentTarget
+      )
+        return
+      startTabDrag(event, workspaceId, panelId, label)
+    },
+    onDragEnd: endTabDrag,
+    "data-pane-drag-handle": "",
+    "data-pane-idle": currentPane === panelId ? undefined : "",
+  }
 }
 
 /** The edge band of `box` under the pointer, among `edges`, else the centre. */
