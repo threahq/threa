@@ -121,6 +121,8 @@ interface ResizablePanelFrameProps {
    * its place in the tree either way, so crossing the breakpoint doesn't remount it.
    */
   fill?: boolean
+  /** Keep the handle out of reach, as under a pane floating over the page. */
+  handleInert?: boolean
   children: React.ReactNode
 }
 
@@ -136,6 +138,7 @@ export function ResizablePanelFrame({
   onResizeKeyDown,
   resizeLabel,
   fill = false,
+  handleInert,
   children,
 }: ResizablePanelFrameProps) {
   return (
@@ -151,6 +154,7 @@ export function ResizablePanelFrame({
           onPointerEnd={onResizeEnd}
           onKeyDown={onResizeKeyDown}
           ariaLabel={resizeLabel}
+          inert={handleInert}
         />
       )}
       <div className="flex-1 min-w-0 overflow-hidden">{children}</div>

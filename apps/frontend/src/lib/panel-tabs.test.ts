@@ -4,6 +4,7 @@ import {
   activatePanelTab,
   closePanelTab,
   fitPanelLayout,
+  focusPanelTab,
   followCurrentPanel,
   formatPanelLayout,
   openPanelTab,
@@ -167,6 +168,63 @@ describe("replacePanelTab", () => {
 
   it("should open the target as a new tab when the navigating tab is already gone", () => {
     expect(replacePanelTab(layout, "gone", "x")).toEqual(openPanelTab(layout, "x"))
+  })
+})
+
+describe("focusPanelTab", () => {
+  it("should mark the focused tab wherever it sits and read it back focused and active", () => {
+    const values = ["a**", "a**.b", "a.b**-c", "a-b--c.d**"]
+    expect([values.map((value) => spell(at(value))), at("a**.b")]).toEqual([
+      values,
+      { columns: [[{ ids: ["a", "b"], active: "a" }]], focused: "a" },
+    ])
+  })
+
+  it("should bring a tab to the front of its section when it is focused", () => {
+    expect([spell(focusPanelTab(at("a.b-c"), "a")), spell(focusPanelTab(at("a**.b-c"), null))]).toEqual([
+      "a**.b-c",
+      "a*.b-c",
+    ])
+  })
+
+  it("should leave the layout alone when focusing a tab that isn't open", () => {
+    const layout = at("a.b")
+    expect(focusPanelTab(layout, "z")).toBe(layout)
+  })
+
+  it("should leave the layout alone when putting back with nothing focused", () => {
+    const layout = at("a.b")
+    expect(focusPanelTab(layout, null)).toBe(layout)
+  })
+
+  it("should read the first focus mark only when a hand-edited value has two", () => {
+    expect(spell(at("a**-b**.c"))).toBe("a**-b*.c")
+  })
+
+  it("should put the focused tab back when another tab is brought forward or opened", () => {
+    const layout = at("a.b**-c")
+    expect([
+      spell(activatePanelTab(layout, "a")),
+      spell(activatePanelTab(layout, "c")),
+      spell(activatePanelTab(layout, "b")),
+      spell(openPanelTabBeside(layout, "b", "x")),
+      spell(splitPanelTab(layout, "a", "down")),
+    ]).toEqual(["a*.b-c", "a.b-c", "a.b**-c", "a.b-c.x", "b--a-c"])
+  })
+
+  it("should keep the focused tab floating when another tab closes or a draft swaps out", () => {
+    const layout = at("a.b**-c")
+    expect([
+      spell(closePanelTab(layout, "a")),
+      spell(closePanelTab(layout, "c")),
+      spell(closePanelTab(layout, "b")),
+      spell(replacePanelTab(layout, "b", "x")),
+      spell(replacePanelTab(layout, "c", "x")),
+    ]).toEqual(["b**-c", "a.b**", "a-c", "a.x**-c", "a.b**-x"])
+  })
+
+  it("should keep a floating tab floating when a background tab navigates to it", () => {
+    expect(spell(replacePanelTab(at("a.b-c**"), "a", "c"))).toBe("c**.b")
   })
 })
 

@@ -77,7 +77,7 @@ import { useDecryptedStreamName } from "@/hooks/use-decrypted-stream-name"
 import { copyStreamLink } from "@/lib/stream-links"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { LabelStack } from "@/components/labels/label-stack"
-import { PanelTabStrip, usePaneCovered, usePanelCloseFocusLanding } from "@/components/panes"
+import { PaneFocusToggle, PanelTabStrip, usePaneCovered, usePanelCloseFocusLanding } from "@/components/panes"
 import { isServerStreamId } from "@/lib/stream-ids"
 
 interface StreamPanelProps {
@@ -602,6 +602,8 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
             className="flex-shrink-0"
           />
         )}
+        {/* Left of the stream's icons, so folding it away leaves them where they are. */}
+        <PaneFocusToggle />
         {!isDraft && stream && !isMobile && contextDock && (
           <Button
             variant="ghost"
