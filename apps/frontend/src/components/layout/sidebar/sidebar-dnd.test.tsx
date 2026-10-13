@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
-import { StreamDropZone, DraggableStreamRow, STREAM_DRAG_TYPE } from "./sidebar-dnd"
+import { StreamDropZone, DraggableStreamRow } from "./sidebar-dnd"
+import { STREAM_DRAG_TYPE } from "@/lib/stream-drag"
 
 /** jsdom ships no DataTransfer, so stand one up over a plain map. */
 function stubDataTransfer() {

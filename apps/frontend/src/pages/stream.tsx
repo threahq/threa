@@ -32,7 +32,7 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { SidebarActionMenu, type SidebarActionItem } from "@/components/layout/sidebar/sidebar-actions"
 import { cn } from "@/lib/utils"
-import { floatingPanelTab, primaryPanelOf } from "@/lib/panel-tabs"
+import { floatingPanelTab, primaryPanelOf, type PaneEdge } from "@/lib/panel-tabs"
 import {
   useStreamOrDraft,
   useStreamError,
@@ -58,7 +58,7 @@ import { useFeatureFlag } from "@/hooks/use-feature-flags"
 import { CallStartMenu, RejoinBar } from "@/components/call"
 import { ThreadHeader } from "@/components/thread"
 import { ResizablePanelFrame, SidebarToggle, StreamTitlePreview, usePanelInset } from "@/components/layout"
-import { PaneHost, Pane } from "@/components/panes"
+import { PaneHost, Pane, PaneDropContext, PaneDropIndicator, paneDropZone, usePaneDropState } from "@/components/panes"
 import {
   AsideColumn,
   AsideCoversPanesContext,
@@ -88,6 +88,8 @@ import { useElementWidth } from "@/hooks/use-element-width"
 import { copyStreamLink } from "@/lib/stream-links"
 import { setPageStreamName } from "@/lib/page-title"
 import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
+
+const MAIN_DROP_EDGES: readonly PaneEdge[] = ["right"]
 
 export function StreamPage() {
   const { workspaceId, streamId } = useParams<{ workspaceId: string; streamId: string }>()
@@ -135,6 +137,7 @@ export function StreamPage() {
     animates: !isMobile,
   })
   const fittedPanels = useFittedPanelLayout(maxColumns, false)
+  const paneDrops = usePaneDropState(workspaceId!, streamId!)
   const [isContextOpen, toggleContext] = useStreamContextToggle(streamId!, isMobile ? phonePages : fittedPanels)
 
   useTypeToFocus()
@@ -896,6 +899,11 @@ export function StreamPage() {
   // A tab floating over the page leaves everything else under it out of reach.
   const floating = tabStackShown && floatingPanelTab(layout, isMobile) !== null
 
+  const drops = isMobile || floating || panelInAside ? null : paneDrops
+  // Main's right edge opens a first column; its centre and left edge wait for main to be a pane.
+  const mainDropZone =
+    layout.columns.length < maxColumns ? paneDropZone(drops, null, MAIN_DROP_EDGES, false) : undefined
+
   return (
     <AsideCoversPanesContext.Provider value={asideIsSheet && openAside !== null}>
       <PaneHost
@@ -904,41 +912,52 @@ export function StreamPage() {
         animate={shouldAnimate && !isMobile && !asideLayout.isResizing}
         onTransitionEnd={handleTransitionEnd}
       >
-        <Pane
-          area="1 / 1"
-          covered={mobileTakeover}
-          inert={floating}
-          className={cn(floating && "isolate")}
-          ref={mainPaneRef}
-          onPointerDownCapture={() => setCurrentPane(null)}
-          onFocusCapture={() => setCurrentPane(null)}
-        >
-          {mainStreamContent}
-        </Pane>
-        <Pane
-          area={isMobile ? "1 / 1" : "1 / 2"}
-          // An empty pane over the timeline's cell would still take its taps.
-          covered={isMobile && !mobileTakeover}
-          data-testid="panel"
-          className="bg-background"
-        >
-          {tabStackShown && (
-            <ResizablePanelFrame
-              fill={isMobile}
-              panelWidth={panelWidth}
-              isResizing={isResizing}
-              minWidth={minWidth}
-              maxWidth={maxWidth}
-              onResizeStart={handleResizeStart}
-              onResizeMove={handleResizeMove}
-              onResizeEnd={handleResizeEnd}
-              onResizeKeyDown={handleResizeKeyDown}
-              handleInert={floating}
-            >
-              <PanelTabStack workspaceId={workspaceId} maxColumns={maxColumns} stacked={isMobile} main={mainPaneRef} />
-            </ResizablePanelFrame>
-          )}
-        </Pane>
+        {/* Drops reach the page's own panes only: never the aside's, nor a drawer's. */}
+        <PaneDropContext.Provider value={drops}>
+          <Pane
+            area="1 / 1"
+            covered={mobileTakeover}
+            inert={floating}
+            className={cn(floating && "isolate")}
+            ref={mainPaneRef}
+            data-testid="main-pane"
+            onPointerDownCapture={() => setCurrentPane(null)}
+            onFocusCapture={() => setCurrentPane(null)}
+            {...mainDropZone}
+          >
+            {mainStreamContent}
+          </Pane>
+          <PaneDropIndicator of={null} area="1 / 1" />
+          <Pane
+            area={isMobile ? "1 / 1" : "1 / 2"}
+            // An empty pane over the timeline's cell would still take its taps.
+            covered={isMobile && !mobileTakeover}
+            data-testid="panel"
+            className="bg-background"
+          >
+            {tabStackShown && (
+              <ResizablePanelFrame
+                fill={isMobile}
+                panelWidth={panelWidth}
+                isResizing={isResizing}
+                minWidth={minWidth}
+                maxWidth={maxWidth}
+                onResizeStart={handleResizeStart}
+                onResizeMove={handleResizeMove}
+                onResizeEnd={handleResizeEnd}
+                onResizeKeyDown={handleResizeKeyDown}
+                handleInert={floating}
+              >
+                <PanelTabStack
+                  workspaceId={workspaceId}
+                  maxColumns={maxColumns}
+                  stacked={isMobile}
+                  main={mainPaneRef}
+                />
+              </ResizablePanelFrame>
+            )}
+          </Pane>
+        </PaneDropContext.Provider>
         {/* The tab stack takes the shortcuts over once it mounts, which trails the panel opening. */}
         {(!isPanelOpen || !(tabStackShown || panelInAside)) && <PaneShortcuts />}
         {asideColumn && (

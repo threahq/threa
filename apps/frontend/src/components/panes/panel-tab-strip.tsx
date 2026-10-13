@@ -22,6 +22,7 @@ import { fitPanelTabs, splitVisibleTabs, FOCUS_TOGGLE_WIDTH, type PanelTabFit } 
 import { cn } from "@/lib/utils"
 import { usePaneCovered } from "./pane-host"
 import { PaneFocusContext } from "./pane-focus"
+import { endTabDrag, startTabDrag, useStripCaret, useStripDropZone } from "./pane-drop"
 
 /**
  * A section's open tabs as an underline row, standing in for the panel's title
@@ -56,6 +57,8 @@ export function PanelTabStrip({
   const focusWidth = paneFocus && panelId && paneFocus.focused !== panelId ? FOCUS_TOGGLE_WIDTH : 0
   const fit = usePanelTabFit(stripRef, labelsRef, panelIds, activePanelId, focusWidth)
   const { shown, folded } = splitVisibleTabs(panelIds, activePanelId, fit.visible)
+  const dropZone = useStripDropZone(activePanelId)
+  const caret = useStripCaret(activePanelId)
 
   useLayoutEffect(() => {
     if (covered || focusHandoff.current === null || focusHandoff.current !== activePanelId) return
@@ -74,6 +77,7 @@ export function PanelTabStrip({
         aria-label="Panel tabs"
         data-focus-folded={!fit.focus || undefined}
         className={cn("peer/tabs relative flex min-w-0 flex-1 self-stretch overflow-hidden", className)}
+        {...dropZone}
       >
         {shown.map((id, index) => {
           const active = id === activePanelId
@@ -81,6 +85,7 @@ export function PanelTabStrip({
           return (
             <div
               key={id}
+              data-tab-id={id}
               className={cn(
                 "group relative flex items-center",
                 !active && "min-w-24 max-w-48 shrink",
@@ -91,10 +96,15 @@ export function PanelTabStrip({
                 active && (isCurrent ? "after:bg-primary" : "after:bg-muted-foreground/40")
               )}
             >
+              {caret?.before === id && <StripCaret side="left" />}
+              {caret?.before === null && index === shown.length - 1 && <StripCaret side="right" />}
               <Link
                 id={linkId}
                 to={getTabUrl(id)}
                 replace
+                draggable={!isMobile}
+                onDragStart={isMobile ? undefined : (event) => startTabDrag(event, workspaceId, id)}
+                onDragEnd={isMobile ? undefined : endTabDrag}
                 onClick={(event) => {
                   // The tab on show is the panel's title: following its link would close its overview.
                   // A floating tab's title puts it back in its place.
@@ -215,6 +225,20 @@ export function PanelTabStrip({
         </DropdownMenu>
       )}
     </>
+  )
+}
+
+/** Where a dragged tab would land in the strip: before a tab, or after the last one shown. */
+function StripCaret({ side }: { side: "left" | "right" }) {
+  return (
+    <span
+      aria-hidden
+      data-testid="strip-drop-caret"
+      className={cn(
+        "pointer-events-none absolute inset-y-1.5 z-10 w-0.5 rounded-full bg-primary",
+        side === "left" ? "left-0" : "right-0"
+      )}
+    />
   )
 }
 

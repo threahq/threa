@@ -14,7 +14,16 @@ import {
   coverPaneOf,
 } from "@/contexts"
 import { Minimize2 } from "lucide-react"
-import { Pane, PaneFocusContext, PanelTabTitle, usePaneFocusEscape, type PaneMapCell } from "@/components/panes"
+import {
+  Pane,
+  PaneDropIndicator,
+  PaneFocusContext,
+  PanelTabTitle,
+  paneDropZone,
+  usePaneDrop,
+  usePaneFocusEscape,
+  type PaneMapCell,
+} from "@/components/panes"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 import { compilePanelGrid, defaultPanelGridSizes, panelGridShape, resplit, type PanelGridSizes } from "@/lib/panel-grid"
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer"
@@ -24,6 +33,7 @@ import {
   fitPanelLayout,
   floatingPanelTab,
   panelIdsOf,
+  type PaneEdge,
   type PanelLayout,
   type PanelSection,
   type SplitDirection,
@@ -110,6 +120,9 @@ const NO_SPLITS: readonly SplitDirection[] = []
 const NO_MAP: readonly PaneMapCell[] = []
 const SPLIT_DOWN: readonly SplitDirection[] = ["down"]
 const SPLIT_ANY: readonly SplitDirection[] = ["right", "down"]
+const EDGES_ANY: readonly PaneEdge[] = ["left", "right", "top", "bottom"]
+const EDGES_ROW: readonly PaneEdge[] = ["top", "bottom"]
+const NO_EDGES: readonly PaneEdge[] = []
 
 interface PanelTabStackProps {
   workspaceId: string
@@ -210,6 +223,10 @@ export function PanelTabStack({ workspaceId, maxColumns, stacked, main }: PanelT
     if (folded || section.ids.length < 2) return NO_SPLITS
     return layout.columns.length < maxColumns ? SPLIT_ANY : SPLIT_DOWN
   }
+  const splitEdges = layout.columns.length < maxColumns ? EDGES_ANY : EDGES_ROW
+  // Dropped beside a folded section, a tab would land in a column that doesn't show.
+  const edges = folded ? NO_EDGES : splitEdges
+  const drops = usePaneDrop()
   const tabs: PlacedTab[] = display.columns
     .flatMap((sections, column) =>
       sections.flatMap((section, row) => {
@@ -302,6 +319,7 @@ export function PanelTabStack({ workspaceId, maxColumns, stacked, main }: PanelT
               data-focused-pane={tab.id === focused || undefined}
               onPointerDownCapture={() => setCurrentPane(tab.id)}
               onFocusCapture={() => setCurrentPane(tab.id)}
+              {...paneDropZone(drops, tab.id, edges, true)}
             >
               <PaneScope panelId={tab.id} section={tab.section} splits={tab.splits}>
                 <ScopedPanelHost workspaceId={workspaceId} />
@@ -310,6 +328,11 @@ export function PanelTabStack({ workspaceId, maxColumns, stacked, main }: PanelT
           ))}
         </DisplayedPanelLayoutProvider>
       </PaneFocusContext.Provider>
+      {display.columns.map((sections, column) =>
+        sections.map((section, row) => (
+          <PaneDropIndicator key={`${column}:${row}`} of={section.active} area={grid.areas[column][row]} />
+        ))
+      )}
       {ghost && (
         <div
           aria-hidden
