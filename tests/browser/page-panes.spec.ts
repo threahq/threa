@@ -203,6 +203,74 @@ test("should take the place of the pane worked in for a sidebar pick beside a pa
   expect(await tagOf(composerOf(page, streamId))).toBe("stream")
 })
 
+// A 1×1 PNG, pasted into a composer so the explorer has a file to list.
+const PNG = [
+  0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
+  0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xde, 0x00, 0x00, 0x00, 0x0c, 0x49,
+  0x44, 0x41, 0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00, 0x05, 0xfe, 0xd4,
+  0xef, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+]
+
+async function sendFile(page: Page, workspaceId: string, streamId: string) {
+  await page.goto(`/w/${workspaceId}/s/${streamId}`)
+  const editor = composerOf(page, streamId)
+  await editor.click()
+  await editor.evaluate((el, bytes) => {
+    const data = new DataTransfer()
+    data.items.add(new File([new Uint8Array(bytes)], "dot.png", { type: "image/png" }))
+    el.dispatchEvent(new ClipboardEvent("paste", { bubbles: true, cancelable: true, clipboardData: data }))
+  }, PNG)
+  const reference = editor.locator("span[data-type='attachment-reference']")
+  await expect(reference).toBeVisible({ timeout: 10_000 })
+  // The button, not Enter: Enter races the paste's async insertion and can no-op.
+  await pane(page, streamId).getByRole("button", { name: "Send", exact: true }).click()
+  await expect(reference).toHaveCount(0, { timeout: 15_000 })
+}
+
+test("should stack the file explorer in a pane too narrow for its list and preview side by side", async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 900 })
+  const { workspaceId, streamId } = await seedTwoChannels(page)
+  await sendFile(page, workspaceId, streamId)
+
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=page:files`)
+  const files = pane(page, "page:files")
+  const row = files.getByRole("listitem")
+  const back = files.getByRole("button", { name: "Back to file list" })
+  const resize = files.getByRole("separator", { name: "Resize preview pane" })
+  const download = files.getByRole("link", { name: "Download" })
+  // The search index takes the file a moment after its message lands.
+  await expect(async () => {
+    await page.reload()
+    await expect(row).toBeVisible({ timeout: 15_000 })
+  }).toPass({ timeout: 90_000 })
+  expect((await files.boundingBox())!.width).toBeLessThan(560)
+  await expect(resize).toHaveCount(0)
+  await expect(download).toBeHidden()
+
+  await row.click()
+  await expect(download).toBeVisible()
+  await expect(row).toBeHidden()
+  await back.click()
+  await expect(row).toBeVisible()
+  await expect(download).toBeHidden()
+  await expect(row.getByRole("button")).toBeFocused()
+
+  // Wide, the same page keeps its list and preview side by side, the first file picked.
+  await page.setViewportSize({ width: 1400, height: 900 })
+  await page.goto(`/w/${workspaceId}/files`)
+  await expect(resize).toBeVisible({ timeout: 30_000 })
+  await expect(row).toBeVisible()
+  await expect(download).toBeVisible()
+  await expect(back).toHaveCount(0)
+
+  // Narrowed past side by side, it lands on the list, not the file picked for it.
+  await page.setViewportSize({ width: 760, height: 900 })
+  await expect(resize).toHaveCount(0)
+  expect((await files.boundingBox())!.width).toBeLessThan(560)
+  await expect(row).toBeVisible()
+  await expect(download).toBeHidden()
+})
+
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 390, height: 800 }, isMobile: true, hasTouch: true })
 

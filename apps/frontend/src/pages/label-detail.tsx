@@ -132,9 +132,9 @@ function LabelDetailPageInner({ workspaceId, labelId }: { workspaceId: string; l
             </ResponsiveDialogContent>
           </ResponsiveDialog>
         )}
-        {/* Streams and messages sit side by side on wide screens and stack on
-            narrow ones — two resource sections of the same label. */}
-        <div className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* Streams and messages sit side by side where both fit and stack
+            otherwise — two resource sections of the same label. */}
+        <div className="mt-8 grid grid-cols-[repeat(auto-fill,minmax(min(100%,max(22rem,calc((100%_-_1.5rem)/2))),1fr))] gap-6">
           <section>
             <SectionHeading>Streams</SectionHeading>
             {namedStreams.length === 0 ? (
