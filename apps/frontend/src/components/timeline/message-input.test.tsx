@@ -225,10 +225,11 @@ beforeEach(async () => {
     layout: NO_PANELS,
     hasTabs: true,
     getFocusedPanelUrl: (panelId: string) => `/?panel=${panelId}**`,
-    getTabUrl: (panelId: string) => `/?panel=${panelId}`,
+    getPanelUrl: (panelId: string) => `/?panel=${panelId}`,
     closeTab: vi.fn(),
     setCurrentPane: vi.fn(),
   } as unknown as ReturnType<typeof contextsModule.usePanel>)
+  vi.spyOn(contextsModule, "usePaneFocusLanding").mockReturnValue({ current: 0 })
 
   vi.spyOn(hooksModule, "useStreamOrDraft").mockReturnValue({
     sendMessage: mockSendMessage,
@@ -321,6 +322,7 @@ beforeEach(async () => {
     scheduledMessagesTrigger,
     stashedDrafts,
     expandHref,
+    sideHref,
   }: {
     content: JSONContent
     onContentChange: (v: JSONContent) => void
@@ -335,6 +337,7 @@ beforeEach(async () => {
     scheduledMessagesTrigger?: ReactNode
     stashedDrafts?: unknown
     expandHref?: string
+    sideHref?: string
   }) => {
     if (composerRef) {
       composerRef.current = {
@@ -345,7 +348,12 @@ beforeEach(async () => {
     }
 
     return (
-      <div data-testid="message-composer" data-stash={stashedDrafts ? "yes" : "no"} data-expand={expandHref ?? "no"}>
+      <div
+        data-testid="message-composer"
+        data-stash={stashedDrafts ? "yes" : "no"}
+        data-expand={expandHref ?? "no"}
+        data-side={sideHref ?? "no"}
+      >
         <textarea data-testid="rich-editor" />
         {pendingAttachments.map((a) => (
           <div key={a.id}>
@@ -459,7 +467,8 @@ describe("MessageInput", () => {
         schedule: screen.queryByTestId("scheduled-messages-picker") !== null,
         stash: aside.getAttribute("data-stash"),
         expand: aside.getAttribute("data-expand"),
-      }).toEqual({ schedule: false, stash: "no", expand: "no" })
+        side: aside.getAttribute("data-side"),
+      }).toEqual({ schedule: false, stash: "no", expand: "no", side: "no" })
       unmount()
 
       store.mockReturnValue((() => ({ id: streamId, type: "channel" })) as never)
@@ -469,7 +478,13 @@ describe("MessageInput", () => {
         schedule: screen.queryByTestId("scheduled-messages-picker") !== null,
         stash: channel.getAttribute("data-stash"),
         expand: channel.getAttribute("data-expand"),
-      }).toEqual({ schedule: true, stash: "yes", expand: `/?panel=compose:${streamId}**` })
+        side: channel.getAttribute("data-side"),
+      }).toEqual({
+        schedule: true,
+        stash: "yes",
+        expand: `/?panel=compose:${streamId}**`,
+        side: `/?panel=compose:${streamId}`,
+      })
     })
 
     it("should keep scheduling off the composer when it writes into a shared channel's copy", () => {

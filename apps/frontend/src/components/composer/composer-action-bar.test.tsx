@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { MemoryRouter } from "react-router-dom"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import * as elementWidthModule from "@/hooks/use-element-width"
 import { ComposerActionBar, planActionOverflow, planTriggerVisibility } from "./composer-action-bar"
@@ -228,5 +229,51 @@ describe("action side", () => {
     renderBar("left")
     await userEvent.click(screen.getByRole("button", { name: "More actions" }))
     expect(screen.getByRole("menu")).toHaveAttribute("data-align", "end")
+  })
+})
+
+describe("open to the side", () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function renderBar(sideHref?: string) {
+    render(
+      <MemoryRouter>
+        <TooltipProvider>
+          <ComposerActionBar
+            formatOpen={false}
+            onToggleFormat={() => {}}
+            onInsertEmoji={() => {}}
+            onInsertMention={() => {}}
+            onInsertCommand={() => {}}
+            expandHref="/?panel=compose:stream_1**"
+            sideHref={sideHref}
+            sendButton={<button type="button">Send</button>}
+          />
+        </TooltipProvider>
+      </MemoryRouter>
+    )
+  }
+
+  it("should offer opening the editor beside the page next to expand when the host supplies where", () => {
+    renderBar("/?panel=compose:stream_1")
+    expect(screen.getByRole("link", { name: "Open to the side" })).toHaveAttribute("href", "/?panel=compose:stream_1")
+  })
+
+  it("should offer only expand when the host supplies nowhere to open beside", () => {
+    renderBar()
+    expect(screen.queryByRole("link", { name: "Open to the side" })).not.toBeInTheDocument()
+  })
+
+  it("should list opening to the side under expand once expand folds into the overflow menu", async () => {
+    vi.spyOn(elementWidthModule, "useElementWidth").mockReturnValue(170)
+    renderBar("/?panel=compose:stream_1")
+    await userEvent.click(screen.getByRole("button", { name: "More actions" }))
+    const items = screen.getAllByRole("menuitem").map((item) => item.textContent)
+    expect(items.slice(items.indexOf("Expand editor"), items.indexOf("Expand editor") + 2)).toEqual([
+      "Expand editor",
+      "Open to the side",
+    ])
   })
 })
