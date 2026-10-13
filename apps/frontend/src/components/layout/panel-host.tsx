@@ -67,6 +67,7 @@ import { isPagePane } from "@/lib/stream-ids"
 import { cn } from "@/lib/utils"
 import { PanelResizeHandle } from "./panel-resize-handle"
 import { PaneShortcuts } from "./pane-shortcuts"
+import { useShellCover } from "./app-shell"
 import { getDraftPromotionSource } from "@/lib/draft-promotions"
 import { StreamPanel } from "@/components/thread"
 import { ConversationPanel } from "@/components/conversations/conversation-panel"
@@ -399,6 +400,7 @@ export function PanelTabStack({
   const firstShare = firstColumnWidth + (width ?? 0) > 0 ? firstColumnWidth / (firstColumnWidth + (width ?? 0)) : 1
   const restore = useCallback(() => focusTab(null), [focusTab])
   usePaneFocusEscape(focused, restore)
+  useShellCover(focused !== null)
   // Only Restore draws the map, so resizing with nothing floating leaves every pane's header alone.
   const map = useMemo(
     () => (focused === null ? NO_MAP : paneMap(display, sizes, focused, firstShare)),
@@ -453,7 +455,7 @@ export function PanelTabStack({
           {tabs.map((tab) => (
             <Pane
               key={tab.key}
-              // Out of its cell, so it floats over the whole page: an absolute grid child sits in its own area.
+              // Out of its cell: fixed in the shell's translated box, it floats over the sidebar and every header.
               area={tab.id === focused ? "auto" : tab.area}
               covered={tab.id !== tab.section.active}
               // Focus mode is a class on the same pane, never a dialog: a portal would remount it and lose its draft and scroll.
@@ -461,7 +463,7 @@ export function PanelTabStack({
               className={cn(
                 "bg-background",
                 tab.id === focused &&
-                  "absolute inset-x-5 top-[58px] bottom-5 z-30 rounded-[10px] border shadow-[0_24px_60px_rgba(0,0,0,0.28)]",
+                  "fixed inset-5 z-[47] rounded-[10px] border shadow-[0_24px_60px_rgba(0,0,0,0.28)]",
                 focused !== null && tab.id !== focused && "isolate"
               )}
               data-testid={tab.inFirstColumn ? "main-pane" : "panel"}
@@ -506,10 +508,10 @@ export function PanelTabStack({
         </div>
       )}
       {focused !== null && (
-        // Spans the whole page, top band included: the tab bars along the top stay in sight, and a click on them puts the pane back.
+        // Over the whole shell, above the sidebar (z-40) and the loading hairline (z-45).
         <div
           data-testid="pane-focus-scrim"
-          className="absolute inset-0 z-[29] bg-[rgba(30,20,10,0.22)] bg-clip-content pt-12 dark:bg-black/55"
+          className="fixed inset-0 z-[46] bg-[rgba(30,20,10,0.22)] dark:bg-black/55"
           onClick={restore}
         />
       )}

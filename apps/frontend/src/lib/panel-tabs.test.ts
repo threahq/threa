@@ -237,7 +237,7 @@ describe("focusPanelTab", () => {
     expect(spell(at("a**-b**.c"))).toBe("a**-b*.c")
   })
 
-  it("should put the focused tab back when another tab is brought forward or opened", () => {
+  it("should float the tab brought forward in the floating section, and put it back for one elsewhere or opened", () => {
     const layout = at("a.b**-c")
     expect([
       spell(activatePanelTab(layout, "a")),
@@ -245,7 +245,7 @@ describe("focusPanelTab", () => {
       spell(activatePanelTab(layout, "b")),
       spell(openPanelTabBeside(layout, "b", "x")),
       spell(splitPanelTab(layout, "a", "down")),
-    ]).toEqual(["a*.b-c", "a.b-c", "a.b**-c", "a.b-c.x", "b--a-c"])
+    ]).toEqual(["a**.b-c", "a.b-c", "a.b**-c", "a.b-c.x", "b--a-c"])
   })
 
   it("should keep the focused tab floating when another tab closes or a draft swaps out", () => {
