@@ -91,7 +91,7 @@ export function StreamPage() {
   const { stream, isDraft, error, rename, canRename, renamePending, renameError, archive, unarchive } =
     useStreamOrDraft(workspaceId!, streamId!)
   const { isMobile } = useSidebar()
-  const { panelId, isPanelOpen, setFocusedPane } = usePanel()
+  const { panelId, isPanelOpen, layout, setCurrentPane } = usePanel()
   // "In this stream" overview. While a panel is open, `?context` is the panel's.
   const [isContextOpen, setContextOpen] = useStreamContextOpen()
   const containerRef = useRef<HTMLDivElement>(null)
@@ -110,8 +110,10 @@ export function StreamPage() {
     handleResizeEnd,
     handleResizeKeyDown,
     handleTransitionEnd,
+    maxColumns,
   } = usePanelLayout(isPanelOpen, {
     containerRef,
+    columns: layout.columns.length,
     reservedWidth: isDockOpen ? MIN_PANEL_WIDTH : 0,
     animates: !isMobile,
   })
@@ -919,19 +921,19 @@ export function StreamPage() {
         onTransitionEnd={handleTransitionEnd}
       >
         <Pane
-          column={1}
+          area="1 / 1"
           covered={mobileTakeover}
           // The stage covers this row: everything under it stays mounted (the
           // page keeps its header and its state) but must leave the tab order,
           // or focus walks into content nobody can see.
           inert={asideStage}
-          onPointerDownCapture={() => setFocusedPane("main")}
-          onFocusCapture={() => setFocusedPane("main")}
+          onPointerDownCapture={() => setCurrentPane(null)}
+          onFocusCapture={() => setCurrentPane(null)}
         >
           {mainStreamContent}
         </Pane>
         <Pane
-          column={isMobile ? 1 : 2}
+          area={isMobile ? "1 / 1" : "1 / 2"}
           // An empty pane over the timeline's cell would still take its taps.
           covered={isMobile && !mobileTakeover}
           data-testid="panel"
@@ -952,7 +954,7 @@ export function StreamPage() {
               onResizeEnd={handleResizeEnd}
               onResizeKeyDown={handleResizeKeyDown}
             >
-              <PanelTabStack workspaceId={workspaceId} />
+              <PanelTabStack workspaceId={workspaceId} maxColumns={maxColumns} stacked={isMobile} />
             </ResizablePanelFrame>
           )}
         </Pane>

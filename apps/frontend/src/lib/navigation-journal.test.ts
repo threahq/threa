@@ -125,6 +125,13 @@ describe("recordVisit", () => {
     })
   })
 
+  it("should rewrite the stop in place when a replace moves a panel tab into a split", () => {
+    const journal = journalOf(["/s/x?panel=a.b"])
+    expect(recordVisit(journal, "/s/x?panel=a-b", 99, { navigationType: "REPLACE" }).entries).toEqual([
+      { path: "/s/x?panel=a-b", at: 99 },
+    ])
+  })
+
   it("should add a stop when a replace changes which panel tabs are open", () => {
     const journal = journalOf(["/s/x?panel=a.b"])
     expect(recordVisit(journal, "/s/x?panel=a", 99, { navigationType: "REPLACE" }).entries).toEqual([

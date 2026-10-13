@@ -24,13 +24,13 @@ export function StreamContextOverlay({ workspaceId, streamId }: { workspaceId: s
 
   // The desktop dock sits beside the stream, so it stays open; the phone's
   // drawer and the floating panel cover it and step aside. A message in one of
-  // the root's threads opens that thread, in the same navigation: a second one
+  // the root's threads opens that thread bare, in the same navigation: a second one
   // would start from the stale params and drop the panel. A fresh push gives
   // StreamContent's `?m=` effect a new location key to act on.
   const jumpToMessage = (messageId: string, inStreamId = streamId) => {
     setSearchParams((prev) => {
       const next = inStreamId !== streamId ? withPanelOpen(prev, inStreamId) : new URLSearchParams(prev)
-      if (coversStream) next.delete("context")
+      if (coversStream || inStreamId !== streamId) next.delete("context")
       next.set("m", messageId)
       return next
     })

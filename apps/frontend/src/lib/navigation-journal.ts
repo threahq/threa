@@ -1,5 +1,5 @@
 import { BOARD_FILTER_PARAMS, BOARD_LENS_PARAM } from "@/components/board/board-filter-params"
-import { PANEL_PARAM, formatPanelTabs, parsePanelTabs } from "./panel-tabs"
+import { PANEL_PARAM, panelIdsOf, parsePanelLayout } from "./panel-tabs"
 
 const STORAGE_PREFIX = "threa-navigation-journal"
 
@@ -62,17 +62,16 @@ export function isJournaledPath(pathname: string, workspaceId: string): boolean 
 export function journalTouchesStream(path: string, workspaceId: string, streamIds: ReadonlySet<string>): boolean {
   const pageId = pageStreamId(path, workspaceId)
   if (pageId && streamIds.has(pageId)) return true
-  const tabs = parsePanelTabs(new URLSearchParams(path.split("?")[1]).get(PANEL_PARAM))
-  return tabs.ids.some((panel) => streamIds.has(panel))
+  const layout = parsePanelLayout(new URLSearchParams(path.split("?")[1]).get(PANEL_PARAM))
+  return panelIdsOf(layout).some((panel) => streamIds.has(panel))
 }
 
-/** The path with `?panel=` reduced to which tabs are open, not which one is on show. */
-function tabLayoutOf(path: string): string {
+/** The path with `?panel=` reduced to which tabs are open, not where they sit or which ones are on show. */
+function openTabsOf(path: string): string {
   const [pathname, query] = path.split("?")
   const params = new URLSearchParams(query)
-  const tabs = parsePanelTabs(params.get(PANEL_PARAM))
-  const value = formatPanelTabs({ ids: tabs.ids, active: tabs.ids.at(-1) ?? null })
-  if (value) params.set(PANEL_PARAM, value)
+  const ids = panelIdsOf(parsePanelLayout(params.get(PANEL_PARAM))).sort()
+  if (ids.length > 0) params.set(PANEL_PARAM, ids.join(" "))
   return `${pathname}?${params.toString()}`
 }
 
@@ -102,7 +101,7 @@ export function recordVisit(
 
   // A tab switch replaces its history entry, so it rewrites this stop rather than adding one.
   const current = entries[cursor]
-  if (opts.navigationType === "REPLACE" && current && tabLayoutOf(current.path) === tabLayoutOf(path)) {
+  if (opts.navigationType === "REPLACE" && current && openTabsOf(current.path) === openTabsOf(path)) {
     return { entries: entries.map((entry, i) => (i === cursor ? { path, at: now } : entry)), cursor }
   }
 

@@ -64,7 +64,7 @@ test.describe("Thread Breadcrumbs", () => {
     // After thread creation, breadcrumbs should still show the channel
     await expect(breadcrumbNav.getByText(`#${channelName}`)).toBeVisible({ timeout: 5000 })
 
-    // Create a second-level nested thread: it opens as a tab beside its parent
+    // Create a second-level nested thread: it opens beside its parent
     const level1Container = page.getByTestId("panel").locator(".message-item").filter({ hasText: level1Reply }).first()
     await clickReplyInThread(level1Container)
     await expect(page.getByText(/Start a new thread/)).toBeVisible({ timeout: 3000 })
@@ -77,7 +77,7 @@ test.describe("Thread Breadcrumbs", () => {
     await waitForRealThreadPanel(page)
 
     // Open the nested thread as the lone panel: its breadcrumbs lead back to the channel
-    const panelTabs = new URL(page.url()).searchParams.get("panel")!.split(".")
+    const panelTabs = new URL(page.url()).searchParams.get("panel")!.split(/[.-]+/)
     const level2Id = panelTabs[panelTabs.length - 1].replace("*", "")
     const lonePanelUrl = new URL(page.url())
     lonePanelUrl.searchParams.set("panel", level2Id)

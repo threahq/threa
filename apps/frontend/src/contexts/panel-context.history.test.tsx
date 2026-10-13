@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest"
-import { render, screen, act } from "@testing-library/react"
+import { render, screen, act, fireEvent } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { createMemoryRouter, Link, RouterProvider, useLocation } from "react-router-dom"
-import { PanelProvider, PaneScope, usePanel } from "./panel-context"
+import { useStreamContextOpen } from "@/components/stream-context/use-stream-context-open"
+import { PanelProvider, PaneScope, useFrontPanel, usePanel } from "./panel-context"
 
 /**
  * On mobile an open panel takes over the whole screen, so the platform back
@@ -42,7 +43,12 @@ function mount(initialEntries: string[], probe = <Probe />) {
       await router.navigate(-1)
     })
   }
-  return { back, loc: () => screen.getByTestId("loc").textContent }
+  const replaceWith = async (to: string) => {
+    await act(async () => {
+      await router.navigate(to, { replace: true })
+    })
+  }
+  return { back, replaceWith, loc: () => screen.getByTestId("loc").textContent }
 }
 
 const BOARD = "/board?lens=all"
@@ -165,29 +171,55 @@ describe("panel history", () => {
 /** Each open tab as the stream page renders it: scoped, with its own close, an
  *  in-place breadcrumb, and its strip link. */
 function TabsProbe() {
-  const { panelIds, getPanelUrl, getTabUrl } = usePanel()
+  const { layout, getPanelUrl, getTabUrl, setCurrentPane } = usePanel()
   const location = useLocation()
   return (
     <div>
       <span data-testid="loc">{decodeURIComponent(`${location.pathname}${location.search}`)}</span>
+      <span data-testid="front">{useFrontPanel()}</span>
+      <button onClick={() => setCurrentPane(null)}>work in main</button>
       <Link to={getPanelUrl("stream_b")}>open b</Link>
-      {panelIds.map((id) => (
-        <PaneScope key={id} panelId={id}>
-          <Link to={getTabUrl(id)} replace>{`tab ${id}`}</Link>
-          <ScopedTab />
-        </PaneScope>
-      ))}
+      {layout.columns.flat().flatMap((section) =>
+        section.ids.map((id) => (
+          <PaneScope key={id} panelId={id} section={section} splits={[]}>
+            <Link to={getTabUrl(id)} replace>{`tab ${id}`}</Link>
+            <ScopedTab />
+          </PaneScope>
+        ))
+      )}
     </div>
   )
 }
 
 function ScopedTab() {
-  const { panelId, closePanel, getNavigateUrl } = usePanel()
+  const {
+    panelId,
+    closePanel,
+    getNavigateUrl,
+    getPanelUrl,
+    getTabUrl,
+    openPanel,
+    setCurrentPane,
+    ownsCover,
+    claimCover,
+  } = usePanel()
+  const [, setContextOpen] = useStreamContextOpen()
   return (
-    <>
+    <div onPointerDownCapture={() => setCurrentPane(panelId)}>
       <button onClick={closePanel}>{`close ${panelId}`}</button>
       <Link to={getNavigateUrl("stream_x")}>{`${panelId} to x`}</Link>
-    </>
+      <Link to={getPanelUrl("stream_y")}>{`${panelId} opens y`}</Link>
+      {/* A section folded on screen lists tabs of other URL sections. */}
+      <Link to={getTabUrl("stream_a")} replace>{`${panelId} shows stream_a`}</Link>
+      <button onClick={() => openPanel(`${panelId}_real`, { replace: true })}>{`promote ${panelId}`}</button>
+      <button
+        onClick={() => {
+          claimCover()
+          setContextOpen(true)
+        }}
+      >{`${panelId} overview`}</button>
+      {ownsCover && <span>{`${panelId} owns the overview`}</span>}
+    </div>
   )
 }
 
@@ -282,6 +314,84 @@ describe("panel tabs history", () => {
 
     await user.click(screen.getByRole("link", { name: "stream_a to x" }))
     expect(loc()).toBe(`${PAGE}?panel=stream_x.stream_b`)
+  })
+
+  it("should keep a tab's overview and deep link while tabs open and close beside it", async () => {
+    const { user, loc } = mountTabs([`${PAGE}?panel=stream_b-stream_a&context=all&m=msg_1`])
+
+    await user.click(screen.getByRole("link", { name: "stream_a opens y" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_b-stream_a-stream_y&context=all&m=msg_1`)
+    await user.click(screen.getByRole("button", { name: "close stream_b" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_a-stream_y&context=all&m=msg_1`)
+    expect(screen.queryAllByText(/owns the overview/).map((owner) => owner.textContent)).toEqual([
+      "stream_a owns the overview",
+    ])
+  })
+
+  it("should close a tab's overview when an open covers it", async () => {
+    const { user, loc } = mountTabs([`${PAGE}?panel=stream_a-stream_b&context=all&m=msg_1`])
+
+    await user.click(screen.getByRole("link", { name: "stream_a to x" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_x-stream_b&context=all&m=msg_1`)
+    await user.click(screen.getByRole("link", { name: "stream_b to x" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_x`)
+  })
+
+  it("should keep a tab's deep link when another section switches tabs", async () => {
+    const { user, loc } = mountTabs([`${PAGE}?panel=stream_a.stream_c-stream_b&m=msg_1`])
+
+    await user.click(screen.getByRole("link", { name: "tab stream_a" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_a*.stream_c-stream_b&m=msg_1`)
+  })
+
+  it("should drop the deep link when another pane takes the overview", async () => {
+    const { user, loc } = mountTabs([`${PAGE}?panel=stream_a-stream_b&m=msg_1`])
+
+    await user.click(screen.getByRole("button", { name: "stream_a overview" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_a-stream_b&context=all`)
+    expect(screen.queryAllByText(/owns the overview/).map((owner) => owner.textContent)).toEqual([
+      "stream_a owns the overview",
+    ])
+  })
+
+  it("should keep the overview with its pane when its deep link clears", async () => {
+    const { user, replaceWith } = mountTabs([`${PAGE}?panel=stream_a-stream_b&context=all&m=msg_1`])
+
+    await user.click(screen.getByRole("link", { name: "stream_a to x" }))
+    await replaceWith(`${PAGE}?panel=stream_x-stream_b&context=all`)
+    expect(screen.queryAllByText(/owns the overview/).map((owner) => owner.textContent)).toEqual([
+      "stream_b owns the overview",
+    ])
+  })
+
+  it("should give a restored overview back to the pane it was opened in", async () => {
+    const { user, back, loc } = mountTabs([`${PAGE}?panel=stream_a.stream_c`])
+
+    await user.click(screen.getByRole("button", { name: "stream_c overview" }))
+    await user.click(screen.getByRole("link", { name: "open b" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_a.stream_c.stream_b`)
+    await user.click(screen.getByRole("button", { name: "work in main" }))
+    await back()
+    expect(loc()).toBe(`${PAGE}?panel=stream_a.stream_c&context=all`)
+    expect(screen.queryAllByText(/owns the overview/).map((owner) => owner.textContent)).toEqual([
+      "stream_c owns the overview",
+    ])
+  })
+
+  it("should drop the overview when its pane's row switches to a tab of another section", async () => {
+    const { user, loc } = mountTabs([`${PAGE}?panel=stream_a-stream_b&context=all&m=msg_1`])
+
+    await user.click(screen.getByRole("link", { name: "stream_b shows stream_a" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_a-stream_b`)
+  })
+
+  it("should not bring a tab forward when it is swapped in place", async () => {
+    const { loc } = mountTabs([`${PAGE}?panel=stream_a-stream_b`])
+
+    // A promotion lands on its own, without the user working in that pane.
+    fireEvent.click(screen.getByRole("button", { name: "promote stream_a" }))
+    expect(loc()).toBe(`${PAGE}?panel=stream_a_real-stream_b`)
+    expect(screen.getByTestId("front").textContent).toBe("stream_b")
   })
 
   it("should keep replace-one-panel semantics off the stream page", async () => {

@@ -114,7 +114,7 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
   // own while the sheet holds it (stream.tsx, board.tsx), so this is the
   // thread's only mount; the panel's close hands the sheet back to the aside.
   // A thread is a whole timeline, so the sheet goes to the full detent for it.
-  const { panelId, closePanel } = usePanel()
+  const { panelId, closePanel, setCurrentPane } = usePanel()
   const threadInSheet = asideHoldsPanel(panelId, hostStreamId)
   useEffect(() => {
     if (threadInSheet) setAsideSheetDetent("full")
@@ -241,7 +241,15 @@ export function AsideMobileSheet({ workspaceId, asideId, hostStreamId, originSco
         >
           <span aria-hidden className="h-1 w-9 rounded-full bg-muted-foreground/40" />
         </div>
-        <div className="flex min-h-0 flex-1 flex-col">
+        <div
+          className="flex min-h-0 flex-1 flex-col"
+          onPointerDownCapture={() => {
+            if (threadInSheet) setCurrentPane(panelId)
+          }}
+          onFocusCapture={() => {
+            if (threadInSheet) setCurrentPane(panelId)
+          }}
+        >
           {threadInSheet ? (
             <PanelHost workspaceId={workspaceId} onClose={closePanel} />
           ) : (

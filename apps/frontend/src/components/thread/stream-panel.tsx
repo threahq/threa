@@ -39,6 +39,7 @@ import {
   useStashedDraftOrigins,
   useWorkspaceUserId,
   useExternalThreadDraftPromotion,
+  useVisibleStreams,
 } from "@/hooks"
 import { useCoordinatedLoading, usePanel, isDraftPanel, parseDraftPanel, useSidebar } from "@/contexts"
 import { useStreamEvents } from "@/stores/stream-store"
@@ -77,6 +78,7 @@ import { copyStreamLink } from "@/lib/stream-links"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { LabelStack } from "@/components/labels/label-stack"
 import { PanelTabStrip, usePaneCovered } from "@/components/panes"
+import { isServerStreamId } from "@/lib/stream-ids"
 
 interface StreamPanelProps {
   workspaceId: string
@@ -87,15 +89,19 @@ interface StreamPanelProps {
 export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProps) {
   const { isMobile } = useSidebar()
   const [searchParams] = useSearchParams()
-  // A background tab doesn't chase the deep link the tab on show opened at.
   const covered = usePaneCovered()
-  const highlightMessageId = covered ? null : searchParams.get("m")
-  const { panelId, tabbed, openPanel, getNavigateUrl, closePanel, setFocusedPane } = usePanel()
+  const { panelId, tabbed, openPanel, getNavigateUrl, closePanel, ownsCover, claimCover } = usePanel()
+  // The deep link and the overview are the front pane's: a background tab, or a
+  // pane beside the one that opened them, leaves them be.
+  const showsCover = ownsCover && !covered
+  const highlightMessageId = showsCover ? searchParams.get("m") : null
   const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   const { openStreamSettings } = useStreamSettings()
   const { open: openExplorer } = useExplorerUrlState()
   const { open: openOutcomes } = useOutcomesUrlState()
-  const [isContextOpen, setContextOpen] = useStreamContextOpen()
+  const [isAnyContextOpen, setContextOpen] = useStreamContextOpen()
+  const isContextOpen = isAnyContextOpen && showsCover
+  useVisibleStreams(workspaceId, !covered && panelId && isServerStreamId(panelId) ? [panelId] : [])
   const contextDock = useStreamContextDock()
   const { streamId: mainViewStreamId } = useParams<{ streamId: string }>()
 
@@ -277,7 +283,10 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
       label: "In this stream",
       description: "Links, files & memories",
       icon: PanelRight,
-      onSelect: () => setContextOpen(true),
+      onSelect: () => {
+        claimCover()
+        setContextOpen(true)
+      },
     })
   }
   panelMenuActions.push({
@@ -554,12 +563,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   }
 
   return (
-    <SidePanel
-      className={className}
-      data-editor-zone="panel"
-      onPointerDownCapture={() => setFocusedPane("panel")}
-      onFocusCapture={() => setFocusedPane("panel")}
-    >
+    <SidePanel className={className} data-editor-zone="panel">
       <SidePanelHeader className="relative">
         <StreamLoadingIndicator isLoading={showLoadingIndicator} />
         {/* Mobile: thread view takes over the full screen, so the sidebar
@@ -594,7 +598,14 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
             title="In this stream — links, files & memories"
             aria-label="In this stream"
             aria-pressed={isContextOpen}
-            onClick={() => setContextOpen(!isContextOpen)}
+            onClick={() => {
+              if (isContextOpen) {
+                setContextOpen(false)
+                return
+              }
+              claimCover()
+              setContextOpen(true)
+            }}
           >
             <PanelRight className="h-4 w-4" />
           </Button>
@@ -781,7 +792,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
           onOpenChange={setLabelPickerOpen}
         />
       )}
-      {!covered && !isDraft && stream && panelId && (
+      {showsCover && !isDraft && stream && panelId && (
         <StreamContextOverlay workspaceId={workspaceId} streamId={panelId} />
       )}
     </SidePanel>
