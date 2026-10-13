@@ -28,6 +28,8 @@ interface PaneHeaderProps {
   closeLabel?: string
   /** For a pane that fits its controls to the header's room. */
   measureRefs?: { header: Ref<HTMLElement>; leading: Ref<HTMLDivElement>; trailing: Ref<HTMLDivElement> }
+  /** That pane still has a control to fold, so its tab row keeps its reserve until it has. */
+  canFoldControls?: boolean
   className?: string
   /** The pane's own controls, after its title. */
   children?: ReactNode
@@ -52,6 +54,7 @@ export function PaneHeader({
   menu,
   closeLabel,
   measureRefs,
+  canFoldControls,
   className,
   children,
 }: PaneHeaderProps) {
@@ -90,6 +93,7 @@ export function PaneHeader({
           className="-ml-2"
           labels={tabLabels}
           splitsInPaneMenu={splitsInPaneMenu}
+          canFoldControls={canFoldControls}
         />
       ) : (
         title !== undefined && (

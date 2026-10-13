@@ -28,7 +28,7 @@ import { useThreadAnchorSnippet } from "@/hooks/use-thread-anchor-snippet"
 import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { useConversationTitle } from "@/hooks/use-conversation-title"
 import { closePanelTab, followCurrentPanel, soleFirstPanelOf } from "@/lib/panel-tabs"
-import { fitPanelTabs, splitVisibleTabs, TAB_ACTIONS_WIDTH, type PanelTabFit } from "@/lib/panel-tab-fit"
+import { fitPanelTabs, splitVisibleTabs, TAB_ACTIONS_WIDTH, tabRowReserve, type PanelTabFit } from "@/lib/panel-tab-fit"
 import { cn } from "@/lib/utils"
 import { pageTitleOf } from "@/lib/page-panes"
 import { usePaneCovered } from "./pane-host"
@@ -49,12 +49,15 @@ export function PanelTabStrip({
   labels,
   className,
   splitsInPaneMenu = false,
+  canFoldControls = false,
 }: {
   workspaceId: string
   labels?: ReactNode
   className?: string
   /** The pane's own actions menu offers its splits, so the row drops its "Tab actions" menu. */
   splitsInPaneMenu?: boolean
+  /** The header still has a control to fold, which hands the row its reserve back. */
+  canFoldControls?: boolean
 }) {
   const { layout, section, getTabUrl, closeTab, closeTabs, canCloseTab, splitTab, splits, setCurrentPane, focusTab } =
     usePanel()
@@ -69,7 +72,7 @@ export function PanelTabStrip({
   const focusHandoff = usePanelTabFocusHandoff()
   const paneFocus = useContext(PaneFocusContext)
   const offersTabActions = activePanelId !== null && splits.length > 0 && !splitsInPaneMenu
-  const fit = usePanelTabFit(stripRef, labelsRef, panelIds, activePanelId, offersTabActions)
+  const fit = usePanelTabFit(stripRef, labelsRef, panelIds, activePanelId, offersTabActions, canFoldControls)
   const { shown, folded } = splitVisibleTabs(panelIds, activePanelId, fit.visible)
   const dropZone = useStripDropZone(activePanelId)
   const caret = useStripCaret(activePanelId)
@@ -323,13 +326,18 @@ function usePanelTabFit(
   labelsRef: RefObject<HTMLElement | null>,
   panelIds: readonly string[],
   activePanelId: string | null,
-  offersTabActions: boolean
+  offersTabActions: boolean,
+  canFoldControls: boolean
 ): PanelTabFit {
   const [fit, setFit] = useState<PanelTabFit>({ labels: true, visible: panelIds.length, compact: false })
   const shown = useRef(fit)
-  shown.current = fit
   const actionsWidth = offersTabActions ? TAB_ACTIONS_WIDTH : 0
   const tabs = panelIds.length
+
+  // Stays above the measuring effect: a measure reads the fit that committed, never one still rendering.
+  useLayoutEffect(() => {
+    shown.current = fit
+  }, [fit])
 
   useLayoutEffect(() => {
     const strip = stripRef.current
@@ -337,11 +345,14 @@ function usePanelTabFit(
     const activeTab = strip.querySelector<HTMLElement>('[aria-current="page"]')?.parentElement
     const measure = () => {
       const labelsWidth = Math.ceil(labelsRef.current?.getBoundingClientRect().width ?? 0)
-      // The room is the row's, whatever the last fit left showing in it.
-      const room =
+      // The room is the row's, whatever the last fit left showing in it. A header with a control left to fold
+      // is a commit behind the row, so until it has folded the row fits to no less than its reserve.
+      const room = Math.max(
         Math.floor(strip.getBoundingClientRect().width) +
-        (shown.current.labels ? labelsWidth : 0) +
-        (shown.current.compact ? 0 : actionsWidth)
+          (shown.current.labels ? labelsWidth : 0) +
+          (shown.current.compact ? 0 : actionsWidth),
+        canFoldControls ? tabRowReserve(tabs) + actionsWidth : 0
+      )
       const activeWidth = activeTab
         ? Math.ceil(naturalTabWidth(activeTab)) + (shown.current.compact ? TAB_CLOSE_WIDTH : 0)
         : 0
@@ -359,7 +370,7 @@ function usePanelTabFit(
     if (labelsRef.current) observer.observe(labelsRef.current)
     if (activeTab) observer.observe(activeTab)
     return () => observer.disconnect()
-  }, [stripRef, labelsRef, tabs, activePanelId, actionsWidth])
+  }, [stripRef, labelsRef, tabs, activePanelId, actionsWidth, canFoldControls])
 
   return fit
 }

@@ -260,6 +260,23 @@ test("should show one overview and hand keyboard focus to the tab brought forwar
 
 const stripOf = (page: Page, id: string) => tabPane(page, id).getByRole("navigation", { name: "Panel tabs" })
 
+test("should keep every tab in its row while a pane opening beside it narrows the header", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
+
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}.${threadB}`)
+  await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
+  const tabBehind = await stripOf(page, threadB).getByRole("link").first().elementHandle()
+
+  await tabPane(page, threadB).getByRole("button", { name: "In this stream" }).click()
+  await expect(page.getByRole("region", { name: "In this stream" })).toHaveCount(1)
+  await panesSettled(page)
+  await expect(tabPane(page, threadB).getByRole("button", { name: "In this stream" })).toHaveCount(0)
+
+  // The header folded that button to keep the row's room. A tab that left for "+N" and came back is a new element.
+  expect(await tabBehind?.evaluate((link) => link.isConnected)).toBe(true)
+})
+
 test("should split a tab beside its own and keep the split through back, forward, reload and a narrow window", async ({
   page,
 }) => {

@@ -75,6 +75,8 @@ interface PagePaneHeaderProps {
   icon?: ReactNode
   title?: ReactNode
   measureRefs?: MeasureRefs
+  /** The header holds controls the page would move to a row of their own. */
+  canFoldControls?: boolean
   className?: string
   /** What follows the title: the page's actions, or its search field. */
   children?: ReactNode
@@ -87,6 +89,7 @@ export function PagePaneHeader({
   icon,
   title,
   measureRefs,
+  canFoldControls,
   className,
   children,
 }: PagePaneHeaderProps) {
@@ -118,6 +121,7 @@ export function PagePaneHeader({
       }
       fixedTitle={title === undefined}
       measureRefs={measureRefs}
+      canFoldControls={canFoldControls}
       className={className}
     >
       {children}

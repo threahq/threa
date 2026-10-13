@@ -532,6 +532,14 @@ export function StreamPane({
   const offersSearch = !isDraft
   const offersContextIcon = !!stream && !isDraft && offersContext
   const offersOverlay = (isChannel || isDm) && ownsConversationOverlay
+  const foldable = [
+    ...(offersAside ? [{ id: "aside-label", width: 60 }] : []),
+    ...(offersOverlay ? [{ id: "overlay", width: 52 + iconGap }] : []),
+    ...(offersContextIcon ? [{ id: "context", width: icon }] : []),
+    ...(offersSearch ? [{ id: "search", width: icon }] : []),
+    ...(offersAside ? [{ id: "aside", width: icon }] : []),
+    ...(offersCall ? [{ id: "call", width: callStart.width + iconGap }] : []),
+  ]
   const folded = isMobile
     ? new Set<string>()
     : foldHeaderControls(
@@ -545,14 +553,7 @@ export function StreamPane({
           gap -
           iconGap +
           (trailingWidth > 0 ? trailingWidth + gap : 0),
-        [
-          ...(offersAside ? [{ id: "aside-label", width: 60 }] : []),
-          ...(offersOverlay ? [{ id: "overlay", width: 52 + iconGap }] : []),
-          ...(offersContextIcon ? [{ id: "context", width: icon }] : []),
-          ...(offersSearch ? [{ id: "search", width: icon }] : []),
-          ...(offersAside ? [{ id: "aside", width: icon }] : []),
-          ...(offersCall ? [{ id: "call", width: callStart.width + iconGap }] : []),
-        ],
+        foldable,
         // A tab row keeps room for two tabs, so the view icons fold before the tabs go to "+N".
         tabbed ? tabRowReserve(section?.ids.length ?? 0) : undefined
       )
@@ -727,6 +728,7 @@ export function StreamPane({
         editingTitle={isEditing}
         className={cn(isTouchInput && !isEditing && "select-none")}
         measureRefs={{ header: headerRef, leading: leadingRef, trailing: trailingRef }}
+        canFoldControls={!isMobile && folded.size < foldable.length}
         splitsInPaneMenu
         tabLabels={
           <LabelStack workspaceId={workspaceId} resourceType={LabelableResourceTypes.STREAM} resourceId={streamId} />

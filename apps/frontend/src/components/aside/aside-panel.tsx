@@ -7,7 +7,7 @@ import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { useAsideState } from "@/stores/aside-store"
 import { useElementWidth } from "@/hooks/use-element-width"
 import { foldHeaderControls, type FoldableControl } from "@/lib/pane-header-fold"
-import { tabRowReserve } from "@/lib/panel-tab-fit"
+import { TAB_ACTIONS_WIDTH, tabRowReserve } from "@/lib/panel-tab-fit"
 import { cn } from "@/lib/utils"
 import { AsideAnchorLine } from "./aside-anchor-line"
 import { ASIDE_META, AsideGlyph, AsidePrivateBadge } from "./aside-chrome"
@@ -64,7 +64,7 @@ function AsidePanelContent({
   originScope,
   className,
 }: AsidePanelProps & { asideId: string; originScope: string }) {
-  const { tabbed, section } = usePanel()
+  const { tabbed, section, splits } = usePanel()
   const draftSurface = useAsideDraftSurface({ workspaceId, asideId, hostStreamId, originScope })
   // The pane stacks the drafts, the divider and the conversation with no gutters, so only the divider is furniture.
   const split = useAsideSplit(asideId, { reservedHeight: 1 })
@@ -84,7 +84,12 @@ function AsidePanelContent({
     drafts.length > 0 ? [{ id: "drafts", width: DRAFT_COUNT_WIDTH + HEADER_GAP }] : []
   // What goes first is what the pane repeats: the tray counts the drafts, and a tab row has the anchor on its own line.
   const folded = tabbed
-    ? foldHeaderControls(headerWidth, edges, draftCount, tabRowReserve(section?.ids.length ?? 0))
+    ? foldHeaderControls(
+        headerWidth,
+        edges,
+        draftCount,
+        tabRowReserve(section?.ids.length ?? 0) + (splits.length > 0 ? TAB_ACTIONS_WIDTH : 0)
+      )
     : foldHeaderControls(
         headerWidth,
         edges + PRIVATE_LOCK_WIDTH + ANCHOR_GLYPH_WIDTH + 2 * TITLE_GAP,
@@ -105,6 +110,7 @@ function AsidePanelContent({
           className="gap-2.5"
           closeLabel="Close aside"
           measureRefs={{ header: headerRef, leading: leadingRef, trailing: trailingRef }}
+          canFoldControls={tabbed && folded.size < draftCount.length}
           title={
             <>
               <SidePanelTitle

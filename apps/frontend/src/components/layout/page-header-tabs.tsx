@@ -76,6 +76,7 @@ export function PageHeaderTabs({ backTo, icon: Icon, title, value, tabs, actions
         icon={<Icon className="h-5 w-5 shrink-0 text-muted-foreground" />}
         title={title}
         measureRefs={measureRefs}
+        canFoldControls={!stacked}
         className={cn(stacked && "border-b-0")}
       >
         {!stacked && controls}
