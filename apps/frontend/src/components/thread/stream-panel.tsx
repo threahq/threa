@@ -1,18 +1,7 @@
 import { useSearchParams, useParams } from "react-router-dom"
-import { useContext, useMemo, useCallback, useEffect, useState, useRef } from "react"
+import { useContext, useMemo, useCallback, useEffect, useState, useRef, type RefObject } from "react"
 import { createPortal } from "react-dom"
-import {
-  ListChecks,
-  MessageSquare,
-  ChevronLeft,
-  MoreHorizontal,
-  CornerDownRight,
-  Paperclip,
-  Settings,
-  Tag,
-  Link2,
-  PanelRight,
-} from "lucide-react"
+import { MessageSquare, ChevronLeft } from "lucide-react"
 import {
   SidePanel,
   SidePanelHeader,
@@ -21,11 +10,6 @@ import {
   SidePanelContent,
 } from "@/components/ui/side-panel"
 import { Button } from "@/components/ui/button"
-import {
-  SidebarActionDrawer,
-  SidebarActionMenu,
-  type SidebarActionItem,
-} from "@/components/layout/sidebar/sidebar-actions"
 import {
   useStreamBootstrap,
   useThreadAnchorEvent,
@@ -45,23 +29,14 @@ import { useCoordinatedLoading, usePanel, isDraftPanel, parseDraftPanel, useSide
 import { useStreamEvents } from "@/stores/stream-store"
 import { useWorkspaceStreams } from "@/stores/workspace-store"
 import { onDraftPromoted } from "@/lib/draft-promotions"
-import { dispatchStartBatchSelect } from "@/lib/batch-selection-events"
-import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
-import { useExplorerUrlState } from "@/components/attachment-explorer"
-import { useOutcomesUrlState } from "@/components/agent-outcomes"
 import { StreamLoadingIndicator } from "@/components/loading"
 import {
-  StreamContent,
   EventList,
   groupTimelineItems,
   materializePendingAttachmentReferences,
   extractUploadedAttachments,
-  AgentActivityHeaderChip,
 } from "@/components/timeline"
-import { StreamErrorBoundary } from "@/components/stream-error-boundary"
-import { useStreamContextToggle } from "@/components/stream-context"
 import { AsideCoversPanesContext } from "@/components/aside/aside-presentation"
-import { cn } from "@/lib/utils"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { FloatingComposerShell, MessageComposer } from "@/components/composer"
 import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
@@ -69,17 +44,14 @@ import { SidebarToggle } from "@/components/layout"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { ThreadParentEvent } from "./thread-parent-event"
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
-import { ThreadHeader } from "./thread-header"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
 import { LabelableResourceTypes, StreamTypes } from "@threahq/types"
 import { useMentionStreamContext, type MentionStreamContext } from "@/hooks/use-mentionables"
-import { streamLabel } from "@/lib/streams"
-import { useDecryptedStreamName } from "@/hooks/use-decrypted-stream-name"
-import { copyStreamLink } from "@/lib/stream-links"
-import { LabelPicker } from "@/components/labels/label-picker"
 import { LabelStack } from "@/components/labels/label-stack"
 import { PaneFocusToggle, PanelTabStrip, usePaneCovered, usePanelCloseFocusLanding } from "@/components/panes"
+import { StreamPane } from "@/components/panes/stream-pane"
 import { isServerStreamId } from "@/lib/stream-ids"
+import { cn } from "@/lib/utils"
 
 interface StreamPanelProps {
   workspaceId: string
@@ -87,67 +59,132 @@ interface StreamPanelProps {
   className?: string
 }
 
+/** A stream tab: the stream's own pane with the tab's controls, or a thread not yet started. */
 export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProps) {
   const { isMobile } = useSidebar()
   const [searchParams] = useSearchParams()
   const covered = usePaneCovered()
-  const { panelId, tabbed, openPanel, getNavigateUrl, closePanel, ownsCover } = usePanel()
+  const { panelId, tabbed, openPanel, ownsCover } = usePanel()
   const closeRef = usePanelCloseFocusLanding()
-  // The deep link is the front pane's: a background tab, or a pane beside the
-  // one that opened it, leaves it be.
-  const highlightMessageId = ownsCover && !covered ? searchParams.get("m") : null
-  const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
-  const { openStreamSettings } = useStreamSettings()
-  const { open: openExplorer } = useExplorerUrlState()
-  const { open: openOutcomes } = useOutcomesUrlState()
-  const [isContextOpen, toggleContext] = useStreamContextToggle(panelId ?? "")
   // Under an aside, an overview opened from here would land out of sight.
   const offersContext = !useContext(AsideCoversPanesContext)
   useVisibleStreams(workspaceId, !covered && panelId && isServerStreamId(panelId) ? [panelId] : [])
+  const isLoading = useCoordinatedLoading((loading) => !!panelId && loading.getStreamState(panelId) === "loading")
+  // Set by a draft thread's own send: the real thread's composer is a different
+  // element, so a focused draft composer hands its focus over explicitly — on
+  // mobile this is what keeps the keyboard up through the switch. Lives here
+  // because the promotion keeps this component and swaps what it renders.
+  const [focusPromotedComposer, setFocusPromotedComposer] = useState(false)
+  const handlePromoted = useCallback(
+    (realStreamId: string, focusComposer: boolean) => {
+      setFocusPromotedComposer(focusComposer)
+      // Replaces the draft panel rather than stacking on it — back must not
+      // return to a draft id that no longer resolves.
+      openPanel(realStreamId, { replace: true })
+    },
+    [openPanel]
+  )
+
+  if (!panelId) return null
+
+  if (isDraftPanel(panelId)) {
+    return (
+      <DraftThreadPanel
+        workspaceId={workspaceId}
+        panelId={panelId}
+        onClose={onClose}
+        onPromoted={handlePromoted}
+        closeRef={closeRef}
+        className={className}
+      />
+    )
+  }
+
+  return (
+    <StreamPane
+      workspaceId={workspaceId}
+      streamId={panelId}
+      // The deep link is the front pane's: a background tab, or a pane beside the
+      // one that opened it, leaves it be.
+      highlightMessageId={ownsCover && !covered ? searchParams.get("m") : null}
+      autoFocus={!isMobile || focusPromotedComposer}
+      offersContext={offersContext}
+      className={cn("sm:border-l bg-background", className)}
+      chrome={{
+        leading: (
+          <>
+            <StreamLoadingIndicator isLoading={isLoading} />
+            {isMobile && <PanelBackControls onClose={onClose} closeRef={closeRef} />}
+          </>
+        ),
+        tabs: tabbed ? (
+          <PanelTabStrip
+            workspaceId={workspaceId}
+            className={isMobile ? undefined : "-ml-2"}
+            labels={
+              <LabelStack workspaceId={workspaceId} resourceType={LabelableResourceTypes.STREAM} resourceId={panelId} />
+            }
+          />
+        ) : undefined,
+        focusToggle: <PaneFocusToggle />,
+        close: !isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />,
+      }}
+    />
+  )
+}
+
+/** On a phone the tab takes the screen: the sidebar toggle stays reachable, and back replaces the close. */
+function PanelBackControls({
+  onClose,
+  closeRef,
+}: {
+  onClose: () => void
+  closeRef: RefObject<HTMLButtonElement | null>
+}) {
+  return (
+    <>
+      <SidebarToggle location="page" />
+      <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0" onClick={onClose} ref={closeRef}>
+        <ChevronLeft className="h-4 w-4" />
+        <span className="sr-only">Back</span>
+      </Button>
+    </>
+  )
+}
+
+interface DraftThreadPanelProps {
+  workspaceId: string
+  panelId: string
+  onClose: () => void
+  onPromoted: (realStreamId: string, focusComposer: boolean) => void
+  closeRef: RefObject<HTMLButtonElement | null>
+  className?: string
+}
+
+function DraftThreadPanel({ workspaceId, panelId, onClose, onPromoted, closeRef, className }: DraftThreadPanelProps) {
+  const { isMobile } = useSidebar()
+  const covered = usePaneCovered()
+  const { tabbed, getNavigateUrl, closePanel } = usePanel()
+  const { queueDraftMessage, currentUserId } = useQueueDraftMessage(workspaceId)
   const { streamId: mainViewStreamId } = useParams<{ streamId: string }>()
 
   const isMainViewStream = (streamId: string) => {
     return mainViewStreamId === streamId
   }
 
-  // Check if this is a draft panel
-  const isDraft = panelId ? isDraftPanel(panelId) : false
-  const draftInfo = isDraft ? parseDraftPanel(panelId!) : null
+  const draftInfo = parseDraftPanel(panelId)
   const idbStreams = useWorkspaceStreams(workspaceId)
-  const idbPanelStream = useMemo(
-    () => (!isDraft && panelId ? idbStreams.find((candidate) => candidate.id === panelId) : undefined),
-    [idbStreams, isDraft, panelId]
-  )
-
-  // For real streams, fetch bootstrap
-  const { data: bootstrapStream, error } = useStreamBootstrap(workspaceId, isDraft ? "" : (panelId ?? ""), {
-    enabled: !!panelId && !isDraft && !idbPanelStream,
-    select: (bootstrap) => bootstrap.stream,
-  })
-  const stream = idbPanelStream ?? bootstrapStream
-  const isThread = stream?.type === StreamTypes.THREAD
   const currentWorkspaceUserId = useWorkspaceUserId(workspaceId)
-  // The bootstrap fallback above isn't overlaid by the workspace store, so an
-  // E2E scratchpad opened in a panel before its row lands in the cache would
-  // show the placeholder. Decrypt the resolved stream's sealed name directly
-  // (same cache as the overlay) to keep the panel header consistent.
-  const decryptedPanelName = useDecryptedStreamName(workspaceId, stream)
 
-  // Show loading indicator only for real streams (not drafts) and only when actively loading after initial data
-  const isPanelStreamLoading = useCoordinatedLoading(
-    (loading) => !!panelId && loading.getStreamState(panelId) === "loading"
-  )
-  const showLoadingIndicator = !isDraft && isPanelStreamLoading
-
-  // For draft threads, fetch parent stream to get the parent message
+  // Fetch the parent stream to get the parent message
   const idbParentStream = useMemo(
     () => (draftInfo ? idbStreams.find((candidate) => candidate.id === draftInfo.parentStreamId) : undefined),
     [draftInfo, idbStreams]
   )
   const parentCachedEvents = useStreamEvents(workspaceId, draftInfo?.parentStreamId)
-  // Query pending events for the draft thread panel (uses panelId as synthetic streamId)
-  const draftThreadPendingEvents = useStreamEvents(workspaceId, isDraft ? (panelId ?? undefined) : undefined)
-  const hasDraftThreadPendingEvents = isDraft && draftThreadPendingEvents && draftThreadPendingEvents.length > 0
+  // Pending events for the draft thread (the panel id is its synthetic streamId)
+  const draftThreadPendingEvents = useStreamEvents(workspaceId, panelId)
+  const hasDraftThreadPendingEvents = !!draftThreadPendingEvents && draftThreadPendingEvents.length > 0
   const draftThreadTimelineItems = useMemo(
     () =>
       hasDraftThreadPendingEvents
@@ -163,7 +200,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
     enabled: !!draftInfo && (!idbParentStream || !cachedAnchorEvent),
   })
 
-  // For draft threads, fetch parent stream's ancestors to build full breadcrumb trail
+  // Fetch the parent stream's ancestors to build the full breadcrumb trail
   const parentStream = idbParentStream ?? parentBootstrap?.stream
   const { ancestors } = useThreadAncestors(
     workspaceId,
@@ -203,12 +240,10 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   // Draft composer
   const draftKey = draftInfo ? getDraftMessageKey({ type: "thread", anchorId: draftInfo.anchorId }) : ""
   // A draft thread has no stream row of its own yet — its E2E state is the
-  // parent's (threads inherit the root's SSK server-side, INV-E1). Read the flag
-  // and the encrypted root off the thread stream when it exists, else the parent,
-  // so the composer encrypts attachments before upload and seals the draft body
-  // to the root's key — exactly as it would in the sealed thread.
-  const e2eBase = stream ?? parentStream
-  const e2eRoot = e2eBase?.e2eEnabled ? (e2eBase.rootStreamId ?? e2eBase.id) : undefined
+  // parent's (threads inherit the root's SSK server-side, INV-E1), so the
+  // composer encrypts attachments before upload and seals the draft body to the
+  // root's key — exactly as it would in the sealed thread.
+  const e2eRoot = parentStream?.e2eEnabled ? (parentStream.rootStreamId ?? parentStream.id) : undefined
   const composer = useDraftComposer({
     workspaceId,
     draftKey,
@@ -217,14 +252,12 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   })
   useExternalThreadDraftPromotion({
     workspaceId,
-    isDraft,
+    isDraft: true,
     anchorId: draftInfo?.anchorId,
     externalThreadId,
     flushDraft: composer.flushDraft,
     setIsSending: composer.setIsSending,
-    // Replaces the draft panel rather than stacking on it — back must not return
-    // to a draft id that no longer resolves.
-    onPromoted: (realStreamId: string) => openPanel(realStreamId, { replace: true }),
+    onPromoted: (realStreamId: string) => onPromoted(realStreamId, false),
   })
 
   // Stashed drafts for this thread. `draftKey` is "" until the panel resolves
@@ -264,74 +297,10 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
   if (composer.decryptFailed) replyPlaceholder = "Couldn't decrypt your saved draft"
   else if (composer.isDecrypting) replyPlaceholder = "Decrypting your draft…"
 
-  // Draft thread expand state
   const [draftExpanded, setDraftExpanded] = useState(false)
-  const [isMenuDrawerOpen, setIsMenuDrawerOpen] = useState(false)
-  const [labelPickerOpen, setLabelPickerOpen] = useState(false)
   const draftExpandedRef = useRef<HTMLDivElement>(null)
   const draftPortalTargetRef = useRef<HTMLElement | null>(null)
 
-  const handleSelectMessages = useCallback(() => {
-    if (!panelId) return
-    dispatchStartBatchSelect(panelId, "moveToThread")
-  }, [panelId])
-
-  const panelMenuActions: SidebarActionItem[] = []
-  // Desktop shows this as a header icon, as the page header does.
-  if (isMobile && offersContext) {
-    panelMenuActions.push({
-      id: "stream-context",
-      label: "In this stream",
-      description: "Links, files & memories",
-      icon: PanelRight,
-      onSelect: toggleContext,
-    })
-  }
-  panelMenuActions.push({
-    id: "stream-settings",
-    label: "Settings",
-    icon: Settings,
-    onSelect: () => {
-      if (panelId) openStreamSettings(panelId)
-    },
-  })
-  panelMenuActions.push({
-    id: "labels",
-    label: "Labels…",
-    icon: Tag,
-    onSelect: () => setLabelPickerOpen(true),
-  })
-  panelMenuActions.push({
-    id: "copy-link",
-    label: "Copy link",
-    icon: Link2,
-    onSelect: () => {
-      if (panelId) void copyStreamLink(workspaceId, panelId)
-    },
-  })
-  panelMenuActions.push({
-    id: "move-messages",
-    label: "Move messages…",
-    icon: CornerDownRight,
-    onSelect: handleSelectMessages,
-    separatorBefore: true,
-  })
-  panelMenuActions.push({
-    id: "browse-files",
-    label: "Browse files…",
-    icon: Paperclip,
-    onSelect: () => {
-      if (panelId) openExplorer({ streamIds: [panelId] })
-    },
-  })
-  panelMenuActions.push({
-    id: "view-outcomes",
-    label: "Agent agenda…",
-    icon: ListChecks,
-    onSelect: () => {
-      if (panelId) openOutcomes({ streamIds: [panelId] })
-    },
-  })
   const setDraftPortalTarget = useCallback((el: HTMLElement | null) => {
     draftPortalTargetRef.current = el
   }, [])
@@ -359,14 +328,6 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
     active: !draftExpanded,
     onHeightChange: handleDraftComposerHeightChange,
   })
-
-  // Reset transient panel-local UI when the panel switches to another stream —
-  // otherwise an open label picker would retarget to the new stream and apply
-  // labels to the wrong one.
-  useEffect(() => {
-    setDraftExpanded(false)
-    setLabelPickerOpen(false)
-  }, [panelId])
 
   // Collapse expanded overlay when viewport crosses to mobile (expand is desktop-only)
   useEffect(() => {
@@ -396,7 +357,7 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
 
   const handleDraftExpand = useCallback(() => {
     if (!draftPortalTargetRef.current) {
-      console.warn("StreamPanel: draft portal target not available — expand disabled")
+      console.warn("DraftThreadPanel: draft portal target not available — expand disabled")
       return
     }
     setDraftExpanded(true)
@@ -419,24 +380,17 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
     return { ...parentMentionContext, streamType: StreamTypes.THREAD, rootStreamType: rootType }
   }, [parentStream, ancestors, parentMentionContext])
 
-  // Listen for draft thread promotion and navigate to the real thread panel.
-  // The real stream's composer is a different element, so a focused draft
-  // composer hands its focus over explicitly — on mobile this is what keeps the
-  // keyboard up through the switch.
-  const [focusPromotedComposer, setFocusPromotedComposer] = useState(false)
   useEffect(() => {
-    if (!isDraft || !panelId) return
     return onDraftPromoted((promotion) => {
       if (promotion.draftId === panelId && promotion.workspaceId === workspaceId) {
-        setFocusPromotedComposer(draftPortalTargetRef.current?.contains(document.activeElement) === true)
-        openPanel(promotion.realStreamId, { replace: true })
+        onPromoted(promotion.realStreamId, draftPortalTargetRef.current?.contains(document.activeElement) === true)
       }
     })
-  }, [isDraft, panelId, workspaceId, openPanel])
+  }, [panelId, workspaceId, onPromoted])
 
   // Handle draft thread submission
   const handleSubmit = useCallback(async () => {
-    if (!draftInfo || !composer.canSend || !currentUserId || !panelId) return
+    if (!draftInfo || !composer.canSend || !currentUserId) return
     // Fail closed: until the parent resolves we can't tell whether this thread
     // inherits an encrypted root, and queuing a plaintext reply into a stream
     // the server seals would jam the outbox on INV-E1 (400, retried forever).
@@ -526,25 +480,14 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
     return [...ancestors, parentItem]
   }, [ancestors, draftInfo, parentStream])
 
-  if (!panelId) return null
+  if (!draftInfo) return null
 
   // With more than one tab open, the tab row stands in for the title and each
   // tab carries its own close.
   let headerContent: React.ReactNode
   if (tabbed) {
-    headerContent = (
-      <PanelTabStrip
-        workspaceId={workspaceId}
-        className={isMobile ? undefined : "-ml-2"}
-        labels={
-          !isDraft &&
-          stream && (
-            <LabelStack workspaceId={workspaceId} resourceType={LabelableResourceTypes.STREAM} resourceId={panelId} />
-          )
-        }
-      />
-    )
-  } else if (isDraft && parentStream) {
+    headerContent = <PanelTabStrip workspaceId={workspaceId} className={isMobile ? undefined : "-ml-2"} />
+  } else if (parentStream) {
     headerContent = (
       <div className="flex items-center gap-1 min-w-0 flex-1 overflow-hidden pr-2">
         {!isMobile && (
@@ -561,241 +504,123 @@ export function StreamPanel({ workspaceId, onClose, className }: StreamPanelProp
         />
       </div>
     )
-  } else if (isThread && stream) {
-    headerContent = <ThreadHeader workspaceId={workspaceId} stream={stream} inPanel />
   } else {
-    headerContent = (
-      <SidePanelTitle className="flex-1">
-        {stream ? (decryptedPanelName ?? streamLabel(stream)) : "Stream"}
-      </SidePanelTitle>
-    )
+    headerContent = <SidePanelTitle className="flex-1">Stream</SidePanelTitle>
   }
 
   return (
     <SidePanel className={className} data-editor-zone="panel">
       <SidePanelHeader className="relative">
-        <StreamLoadingIndicator isLoading={showLoadingIndicator} />
-        {/* Mobile: thread view takes over the full screen, so the sidebar
-             toggle needs to be reachable from here too. */}
-        {isMobile && <SidebarToggle location="page" />}
-        {/* Mobile back button — replaces X close on small screens */}
-        {isMobile && (
-          <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0" onClick={onClose} ref={closeRef}>
-            <ChevronLeft className="h-4 w-4" />
-            <span className="sr-only">Back</span>
-          </Button>
-        )}
+        {isMobile && <PanelBackControls onClose={onClose} closeRef={closeRef} />}
         {headerContent}
-        <AgentActivityHeaderChip
-          workspaceId={workspaceId}
-          streamId={isDraft ? undefined : panelId}
-          compact={isMobile || tabbed}
-        />
-        {!tabbed && !isDraft && stream && (
-          <LabelStack
-            workspaceId={workspaceId}
-            resourceType={LabelableResourceTypes.STREAM}
-            resourceId={panelId}
-            className="flex-shrink-0"
-          />
-        )}
-        {/* Left of the stream's icons, so folding it away leaves them where they are. */}
         <PaneFocusToggle />
-        {!isDraft && stream && !isMobile && offersContext && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn("h-8 w-8 flex-shrink-0", isContextOpen && "bg-accent text-accent-foreground")}
-            title="In this stream — links, files & memories"
-            aria-label="In this stream"
-            aria-pressed={isContextOpen}
-            onClick={toggleContext}
-          >
-            <PanelRight className="h-4 w-4" />
-          </Button>
-        )}
-        {!isDraft &&
-          stream &&
-          (isMobile ? (
-            <>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 flex-shrink-0"
-                aria-label="Stream actions"
-                onClick={() => setIsMenuDrawerOpen(true)}
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-              <SidebarActionDrawer
-                open={isMenuDrawerOpen}
-                onOpenChange={setIsMenuDrawerOpen}
-                // An archived stream keeps only the view rows.
-                actions={
-                  stream.archivedAt ? panelMenuActions.filter((a) => a.id === "stream-context") : panelMenuActions
-                }
-                title="Stream actions"
-                description="Choose an action for this stream."
-                header={
-                  <div className="px-4 pt-2 pb-3">
-                    <p className="break-words text-base font-semibold text-foreground">
-                      {decryptedPanelName ?? streamLabel(stream)}
-                    </p>
-                    <p className="mt-0.5 text-xs text-muted-foreground">
-                      {stream.type === StreamTypes.THREAD ? "Thread" : "Stream"} actions
-                    </p>
-                  </div>
-                }
-              />
-            </>
-          ) : (
-            !stream.archivedAt && (
-              <SidebarActionMenu
-                actions={panelMenuActions}
-                ariaLabel="Stream actions"
-                trigger={
-                  <Button variant="ghost" size="icon" className="h-8 w-8 flex-shrink-0" aria-label="Stream actions">
-                    <MoreHorizontal className="h-4 w-4" />
-                  </Button>
-                }
-              />
-            )
-          ))}
-        {/* Hide X close button on mobile (back button used instead) */}
         {!isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />}
       </SidePanelHeader>
 
       <SidePanelContent className="relative flex flex-col" data-editor-zone="panel" ref={setDraftPortalTarget}>
-        {isDraft && draftInfo ? (
-          // Draft thread UI
-          <>
-            {/* Expanded overlay — portaled into the SidePanel */}
-            {draftExpanded &&
-              draftPortalTargetRef.current &&
-              createPortal(
-                <div ref={draftExpandedRef} className="absolute inset-0 z-30 bg-background">
-                  <MessageComposer
-                    content={composer.content}
-                    onContentChange={composer.handleContentChange}
-                    pendingAttachments={composer.pendingAttachments}
-                    onRemoveAttachment={composer.handleRemoveAttachment}
-                    onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
-                    fileInputRef={composer.fileInputRef}
-                    onFileSelect={composer.handleFileSelect}
-                    onFileUpload={composer.uploadFile}
-                    imageCount={composer.imageCount}
-                    onSubmit={handleSubmit}
-                    canSubmit={composer.canSend}
-                    isSubmitting={composer.isSending}
-                    hasFailed={composer.hasFailed}
-                    submitLabel="Reply"
-                    submittingLabel="Creating..."
-                    placeholder={replyPlaceholder}
-                    workspaceId={workspaceId}
-                    scopeId={panelId}
-                    memoAnchorStreamId={draftInfo.parentStreamId}
-                    expanded
-                    onCollapse={handleDraftCollapse}
-                    autoFocus
-                    streamContext={draftStreamContext}
-                    onStashDraft={stash.handleStashDraft}
-                    stashedDrafts={stashedDrafts}
-                  />
-                </div>,
-                draftPortalTargetRef.current
-              )}
-            <div
-              ref={draftScrollRef}
-              className={
-                draftExpanded ? "hidden flex-1 flex-col overflow-y-auto" : "flex flex-1 flex-col overflow-y-auto"
+        {/* Expanded overlay — portaled into the SidePanel */}
+        {draftExpanded &&
+          draftPortalTargetRef.current &&
+          createPortal(
+            <div ref={draftExpandedRef} className="absolute inset-0 z-30 bg-background">
+              <MessageComposer
+                content={composer.content}
+                onContentChange={composer.handleContentChange}
+                pendingAttachments={composer.pendingAttachments}
+                onRemoveAttachment={composer.handleRemoveAttachment}
+                onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
+                fileInputRef={composer.fileInputRef}
+                onFileSelect={composer.handleFileSelect}
+                onFileUpload={composer.uploadFile}
+                imageCount={composer.imageCount}
+                onSubmit={handleSubmit}
+                canSubmit={composer.canSend}
+                isSubmitting={composer.isSending}
+                hasFailed={composer.hasFailed}
+                submitLabel="Reply"
+                submittingLabel="Creating..."
+                placeholder={replyPlaceholder}
+                workspaceId={workspaceId}
+                scopeId={panelId}
+                memoAnchorStreamId={draftInfo.parentStreamId}
+                expanded
+                onCollapse={handleDraftCollapse}
+                autoFocus
+                streamContext={draftStreamContext}
+                onStashDraft={stash.handleStashDraft}
+                stashedDrafts={stashedDrafts}
+              />
+            </div>,
+            draftPortalTargetRef.current
+          )}
+        <div
+          ref={draftScrollRef}
+          className={draftExpanded ? "hidden flex-1 flex-col overflow-y-auto" : "flex flex-1 flex-col overflow-y-auto"}
+          style={{ paddingBottom: "var(--composer-height, 0px)" }}
+        >
+          {anchorEvent && (
+            <ThreadParentEvent
+              event={anchorEvent}
+              workspaceId={workspaceId}
+              streamId={draftInfo.parentStreamId}
+              replyCount={
+                hasDraftThreadPendingEvents
+                  ? draftThreadPendingEvents!.filter((e) => e.eventType === "message_created").length
+                  : 0
               }
-              style={{ paddingBottom: "var(--composer-height, 0px)" }}
-            >
-              {anchorEvent && (
-                <ThreadParentEvent
-                  event={anchorEvent}
-                  workspaceId={workspaceId}
-                  streamId={draftInfo.parentStreamId}
-                  replyCount={
-                    hasDraftThreadPendingEvents
-                      ? draftThreadPendingEvents!.filter((e) => e.eventType === "message_created").length
-                      : 0
-                  }
-                />
-              )}
-              {hasDraftThreadPendingEvents ? (
-                <EventList
-                  timelineItems={draftThreadTimelineItems}
-                  isLoading={false}
-                  workspaceId={workspaceId}
-                  streamId={panelId!}
-                />
-              ) : (
-                <Empty className="min-h-[16rem] flex-none border-0">
-                  <EmptyHeader>
-                    <EmptyMedia variant="icon">
-                      <MessageSquare />
-                    </EmptyMedia>
-                    <EmptyTitle>Start a new thread</EmptyTitle>
-                    <EmptyDescription>Write your reply below to create this thread.</EmptyDescription>
-                  </EmptyHeader>
-                </Empty>
-              )}
-            </div>
-            <FloatingComposerShell ref={draftComposerRef} hidden={draftExpanded}>
-              <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={!!e2eRoot} streamId={e2eRoot} />
-              {!draftExpanded && (
-                <MessageComposer
-                  content={composer.content}
-                  onContentChange={composer.handleContentChange}
-                  pendingAttachments={composer.pendingAttachments}
-                  onRemoveAttachment={composer.handleRemoveAttachment}
-                  onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
-                  fileInputRef={composer.fileInputRef}
-                  onFileSelect={composer.handleFileSelect}
-                  onFileUpload={composer.uploadFile}
-                  imageCount={composer.imageCount}
-                  onSubmit={handleSubmit}
-                  canSubmit={composer.canSend}
-                  isSubmitting={composer.isSending}
-                  hasFailed={composer.hasFailed}
-                  submitLabel="Reply"
-                  submittingLabel="Creating..."
-                  placeholder={replyPlaceholder}
-                  autoFocus={!isMobile}
-                  workspaceId={workspaceId}
-                  scopeId={panelId}
-                  memoAnchorStreamId={draftInfo.parentStreamId}
-                  onExpandClick={handleDraftExpand}
-                  streamContext={draftStreamContext}
-                  onStashDraft={stash.handleStashDraft}
-                  stashedDrafts={stashedDrafts}
-                />
-              )}
-            </FloatingComposerShell>
-          </>
-        ) : (
-          // Regular stream UI
-          <StreamErrorBoundary streamId={panelId} queryError={error}>
-            <StreamContent
+            />
+          )}
+          {hasDraftThreadPendingEvents ? (
+            <EventList
+              timelineItems={draftThreadTimelineItems}
+              isLoading={false}
               workspaceId={workspaceId}
               streamId={panelId}
-              highlightMessageId={highlightMessageId}
-              stream={stream}
-              autoFocus={isThread && (!isMobile || focusPromotedComposer)}
             />
-          </StreamErrorBoundary>
-        )}
+          ) : (
+            <Empty className="min-h-[16rem] flex-none border-0">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <MessageSquare />
+                </EmptyMedia>
+                <EmptyTitle>Start a new thread</EmptyTitle>
+                <EmptyDescription>Write your reply below to create this thread.</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
+        </div>
+        <FloatingComposerShell ref={draftComposerRef} hidden={draftExpanded}>
+          <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={!!e2eRoot} streamId={e2eRoot} />
+          {!draftExpanded && (
+            <MessageComposer
+              content={composer.content}
+              onContentChange={composer.handleContentChange}
+              pendingAttachments={composer.pendingAttachments}
+              onRemoveAttachment={composer.handleRemoveAttachment}
+              onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
+              fileInputRef={composer.fileInputRef}
+              onFileSelect={composer.handleFileSelect}
+              onFileUpload={composer.uploadFile}
+              imageCount={composer.imageCount}
+              onSubmit={handleSubmit}
+              canSubmit={composer.canSend}
+              isSubmitting={composer.isSending}
+              hasFailed={composer.hasFailed}
+              submitLabel="Reply"
+              submittingLabel="Creating..."
+              placeholder={replyPlaceholder}
+              autoFocus={!isMobile}
+              workspaceId={workspaceId}
+              scopeId={panelId}
+              memoAnchorStreamId={draftInfo.parentStreamId}
+              onExpandClick={handleDraftExpand}
+              streamContext={draftStreamContext}
+              onStashDraft={stash.handleStashDraft}
+              stashedDrafts={stashedDrafts}
+            />
+          )}
+        </FloatingComposerShell>
       </SidePanelContent>
-      {!isDraft && stream && !stream.archivedAt && panelId && (
-        <LabelPicker
-          workspaceId={workspaceId}
-          resourceType={LabelableResourceTypes.STREAM}
-          resourceId={panelId}
-          open={labelPickerOpen}
-          onOpenChange={setLabelPickerOpen}
-        />
-      )}
     </SidePanel>
   )
 }
