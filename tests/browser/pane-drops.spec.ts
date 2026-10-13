@@ -3,8 +3,9 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
 
 /**
  * A sidebar row or a tab dropped on the stream page lands where it was
- * dropped: main's right edge opens a first column, a pane's edge splits beside
- * it, a tab strip splices between its tabs. The composer keeps its link drop.
+ * dropped: a pane's edge splits beside it, a tab strip splices between its
+ * tabs, and the stream dropped in is the one the route names. The composer
+ * keeps its link drop.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -99,38 +100,57 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
     await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "right")
   })
   await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
-  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({ stream: streamA, panel: streamB })
+  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({
+    stream: streamB,
+    panel: `${streamA}-${streamB}`,
+  })
   await expect(page.getByTestId("pane-drop-indicator")).toHaveCount(0)
 
   await drag(page, sidebarRow(page, names.c), await settledAt(tabPane(page, streamB), 0.5, 0.8), async () => {
     await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "bottom")
   })
   await expect(tabPane(page, streamC).getByText("said in c")).toBeVisible()
-  expect(panelParam(page)).toBe(`${streamB}--${streamC}`)
+  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({
+    stream: streamC,
+    panel: `${streamA}-${streamB}--${streamC}`,
+  })
 
   // C's tab onto B's strip, ahead of B: one section again, C on show.
   await drag(page, tabLink(page, streamC, streamC), await at(tabLink(page, streamB, streamB), 0.1, 0.5), async () => {
     await expect(tabPane(page, streamB).getByTestId("strip-drop-caret")).toBeVisible()
   })
-  await expect.poll(() => panelParam(page)).toBe(`${streamC}*.${streamB}`)
+  await expect.poll(() => panelParam(page)).toBe(`${streamA}-${streamC}*.${streamB}`)
   await expect(tabPane(page, streamC).getByText("said in c")).toBeVisible()
   expect(await tagOf(mainPane(page).getByText("said in a"))).toBe("main")
 
-  // The tab on show, past the strip's last tab: to the end.
+  // The tab on show, past the strip's last tab: to the end. The page's conversation views follow
+  // the route, and on C they would fold B's tab away, so work in A first.
+  await mainPane(page).locator('[contenteditable="true"]').last().click()
+  await expect.poll(() => streamIdOf(page)).toBe(streamA)
   await drag(page, tabLink(page, streamC, streamC), await at(tabLink(page, streamC, streamB), 0.9, 0.5), async () => {
     await expect(tabPane(page, streamC).getByTestId("strip-drop-caret")).toBeVisible()
   })
-  await expect.poll(() => panelParam(page)).toBe(`${streamB}.${streamC}`)
+  await expect
+    .poll(() => ({ stream: streamIdOf(page), panel: panelParam(page) }))
+    .toEqual({
+      stream: streamC,
+      panel: `${streamA}-${streamB}.${streamC}`,
+    })
 
   // Moving a tab rearranges in place; Back undoes the stream dropped in before it.
   await page.goBack()
-  await expect.poll(() => panelParam(page)).toBe(streamB)
+  await expect
+    .poll(() => ({ stream: streamIdOf(page), panel: panelParam(page) }))
+    .toEqual({
+      stream: streamB,
+      panel: `${streamA}-${streamB}`,
+    })
   expect(await tagOf(mainPane(page).getByText("said in a"))).toBe("main")
 })
 
 test("should leave a stream or its tab dropped on the composer to the composer, as a link", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1200 })
-  const { names, streamB, streamC } = await seed(page)
+  const { names, streamA, streamB, streamC } = await seed(page)
   const editor = mainPane(page).locator("[data-message-composer-root] [contenteditable='true']").first()
 
   await drag(page, sidebarRow(page, names.c), await at(editor, 0.5, 0.5))
@@ -139,12 +159,18 @@ test("should leave a stream or its tab dropped on the composer to the composer, 
 
   // A stream's tab carries its link the same way; a lone panel shows a title, not tabs, so it takes a second.
   await drag(page, sidebarRow(page, names.b), await at(mainPane(page), 0.95, 0.4))
-  await expect.poll(() => panelParam(page)).toBe(streamB)
+  await expect.poll(() => panelParam(page)).toBe(`${streamA}-${streamB}`)
   await drag(page, sidebarRow(page, names.c), await settledAt(tabPane(page, streamB), 0.5, 0.5), async () => {
     await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "centre")
   })
+  await expect.poll(() => panelParam(page)).toBe(`${streamA}-${streamB}.${streamC}`)
+  // Working in A takes the page's conversation views off C, which would fold B's tab away.
+  await editor.click()
   await expect.poll(() => panelParam(page)).toBe(`${streamB}.${streamC}`)
   await drag(page, tabLink(page, streamC, streamB), await at(editor, 0.5, 0.5))
   await expect(editor.locator("[data-type='in-app-link-chip']").filter({ hasText: names.b })).toBeVisible()
-  expect(panelParam(page)).toBe(`${streamB}.${streamC}`)
+  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({
+    stream: streamA,
+    panel: `${streamB}.${streamC}`,
+  })
 })

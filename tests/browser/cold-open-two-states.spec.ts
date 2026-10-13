@@ -78,7 +78,7 @@ function snapshotRegions(): RegionSnapshot {
   // regions cover the open streams' content.
   const openStreams = [
     location.pathname.match(/\/s\/([^/]+)/)?.[1],
-    new URLSearchParams(location.search).get("panel"),
+    ...(new URLSearchParams(location.search).get("panel") ?? "").split(/[-.*]+/),
   ].filter((id): id is string => !!id)
   const sidebar =
     rows.length === 0
@@ -104,7 +104,7 @@ function snapshotRegions(): RegionSnapshot {
   }
   return {
     sidebar,
-    timeline: tailOf(document.querySelector('main[data-editor-zone="main"]')),
+    timeline: tailOf(document.querySelector('[data-testid="main-pane"]')),
     panel: tailOf(document.querySelector('[data-testid="panel"]')),
   }
 }
@@ -360,7 +360,7 @@ async function arrange(page: Page, context: BrowserContext): Promise<Fixture> {
   await sendPanelReply(page, `first reply ${testId}`)
   await expect(page.getByTestId("panel").getByText(`first reply ${testId}`)).toBeVisible({ timeout: 10000 })
   await waitForRealThreadPanel(page)
-  const thread = new URL(page.url()).searchParams.get("panel")!
+  const thread = (await page.getByTestId("panel").getAttribute("data-panel-tab"))!
   expect(thread.startsWith("draft:")).toBe(false)
 
   const nav = page.getByRole("navigation", { name: "Sidebar navigation" })

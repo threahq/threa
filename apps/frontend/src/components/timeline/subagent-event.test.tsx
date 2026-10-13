@@ -301,7 +301,7 @@ describe("SubagentEvent actions", () => {
   it("opens the thread from the whole card and from the state's quick action", async () => {
     renderCard({ patch: statusPatch("active", { lastAgentMessageAt: PATCH_AT }) })
 
-    const href = `/w/${WS}/s/stream_1?panel=${THREAD}`
+    const href = `/w/${WS}/s/${THREAD}?panel=stream_1-${THREAD}`
     expect(screen.getByRole("link", { name: /Second opinion/ })).toHaveAttribute("href", href)
     await userEvent.click(screen.getByRole("button", { name: "Card actions" }))
     expect(screen.getByRole("menuitem", { name: "Answer in thread" })).toHaveAttribute("href", href)

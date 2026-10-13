@@ -15,7 +15,7 @@ interface StreamInfo {
 
 const BREAKPOINTS = {
   /** Below: only current item */
-  MINIMAL: 200,
+  MINIMAL: 160,
   /** Below: root > current */
   COMPACT: 300,
   /** Below: root + 1 ancestor > current */
@@ -27,8 +27,6 @@ const BREAKPOINTS = {
 interface ResponsiveBreadcrumbsProps {
   ancestors: StreamInfo[]
   currentLabel: string
-  isMainViewStream: (streamId: string) => boolean
-  onClosePanel: () => void
   getNavigationUrl: (streamId: string) => string
   /** Show loading placeholder instead of ancestors */
   isLoading?: boolean
@@ -37,8 +35,6 @@ interface ResponsiveBreadcrumbsProps {
 export function ResponsiveBreadcrumbs({
   ancestors,
   currentLabel,
-  isMainViewStream,
-  onClosePanel,
   getNavigationUrl,
   isLoading = false,
 }: ResponsiveBreadcrumbsProps) {
@@ -98,14 +94,7 @@ export function ResponsiveBreadcrumbs({
     if (ancestors.length === 0) return null
 
     if (maxVisibleAncestors === 0) {
-      return (
-        <BreadcrumbEllipsisDropdown
-          items={ancestors}
-          getNavigationUrl={getNavigationUrl}
-          isMainViewStream={isMainViewStream}
-          onClosePanel={onClosePanel}
-        />
-      )
+      return <BreadcrumbEllipsisDropdown items={ancestors} getNavigationUrl={getNavigationUrl} />
     }
 
     if (ancestors.length <= maxVisibleAncestors) {
@@ -113,8 +102,6 @@ export function ResponsiveBreadcrumbs({
         <AncestorBreadcrumbItem
           key={ancestor.id}
           stream={ancestor}
-          isMainViewStream={isMainViewStream(ancestor.id)}
-          onClosePanel={onClosePanel}
           getNavigationUrl={getNavigationUrl}
           maxWidth={ancestorMaxWidth}
         />
@@ -128,27 +115,12 @@ export function ResponsiveBreadcrumbs({
 
     return (
       <>
-        <AncestorBreadcrumbItem
-          stream={first}
-          isMainViewStream={isMainViewStream(first.id)}
-          onClosePanel={onClosePanel}
-          getNavigationUrl={getNavigationUrl}
-          maxWidth={ancestorMaxWidth}
-        />
-        {hidden.length > 0 && (
-          <BreadcrumbEllipsisDropdown
-            items={hidden}
-            getNavigationUrl={getNavigationUrl}
-            isMainViewStream={isMainViewStream}
-            onClosePanel={onClosePanel}
-          />
-        )}
+        <AncestorBreadcrumbItem stream={first} getNavigationUrl={getNavigationUrl} maxWidth={ancestorMaxWidth} />
+        {hidden.length > 0 && <BreadcrumbEllipsisDropdown items={hidden} getNavigationUrl={getNavigationUrl} />}
         {tail.map((ancestor) => (
           <AncestorBreadcrumbItem
             key={ancestor.id}
             stream={ancestor}
-            isMainViewStream={isMainViewStream(ancestor.id)}
-            onClosePanel={onClosePanel}
             getNavigationUrl={getNavigationUrl}
             maxWidth={ancestorMaxWidth}
           />

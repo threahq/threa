@@ -15,52 +15,15 @@ interface StreamInfo {
 
 interface AncestorBreadcrumbItemProps {
   stream: StreamInfo
-  isMainViewStream: boolean
-  onClosePanel: () => void
   getNavigationUrl: (streamId: string) => string
   /** Max width for the item (responsive) */
   maxWidth?: number
 }
 
-/**
- * Breadcrumb item for an ancestor stream. The main-view stream renders a button
- * that closes the panel (INV-40); other streams render a navigation link.
- */
-export function AncestorBreadcrumbItem({
-  stream,
-  isMainViewStream,
-  onClosePanel,
-  getNavigationUrl,
-  maxWidth = 120,
-}: AncestorBreadcrumbItemProps) {
+/** Breadcrumb item for an ancestor stream: a link that shows it in this pane. */
+export function AncestorBreadcrumbItem({ stream, getNavigationUrl, maxWidth = 120 }: AncestorBreadcrumbItemProps) {
   const displayName = streamLabel(stream, "breadcrumb")
   const { anchorProps, overlay } = useStreamTitlePreview(displayName)
-
-  if (isMainViewStream) {
-    return (
-      <div key={stream.id} className="contents">
-        <BreadcrumbItem style={{ maxWidth }}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <BreadcrumbLink asChild>
-                <button
-                  onClick={onClosePanel}
-                  aria-label={`Return to ${displayName}`}
-                  className="truncate block text-left hover:underline cursor-pointer bg-transparent border-0 p-0 font-inherit"
-                  {...anchorProps}
-                >
-                  {displayName}
-                </button>
-              </BreadcrumbLink>
-            </TooltipTrigger>
-            <TooltipContent>{displayName}</TooltipContent>
-          </Tooltip>
-        </BreadcrumbItem>
-        <BreadcrumbSeparator />
-        {overlay}
-      </div>
-    )
-  }
 
   return (
     <div key={stream.id} className="contents">

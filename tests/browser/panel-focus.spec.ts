@@ -39,6 +39,10 @@ async function seedThreads(page: Page, count: number) {
 const tabPane = (page: Page, id: string) => page.locator(`[data-panel-tab="${id}"]`)
 const composer = (page: Page, id: string) => tabPane(page, id).locator('[contenteditable="true"]').last()
 const panelParam = (page: Page) => new URL(page.url()).searchParams.get("panel")
+const route = (page: Page) => ({
+  stream: new URL(page.url()).pathname.match(/\/s\/([^/]+)/)![1],
+  panel: panelParam(page),
+})
 const floatingPane = (page: Page) => page.locator("[data-focused-pane]")
 const scrim = (page: Page) => page.getByTestId("pane-focus-scrim")
 const ghost = (page: Page) => page.getByTestId("pane-focus-ghost")
@@ -72,7 +76,7 @@ test("should float a tab over the page and put it back, keeping its draft", asyn
   await page.keyboard.type("half a thought")
   await tabPane(page, b).getByRole("button", { name: "Focus pane", exact: true }).click()
 
-  await expect.poll(() => panelParam(page)).toBe(`${a}--${b}**`)
+  await expect.poll(() => route(page)).toEqual({ stream: b, panel: `${streamId}-${a}--${b}**` })
   await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", b)
   await expect(composer(page, b)).toHaveText("half a thought")
   // It floats over the main view too, inset from the page's edges, below the tab bars along the top.
@@ -104,11 +108,11 @@ test("should float a tab over the page and put it back, keeping its draft", asyn
   })
   await page.keyboard.press("Escape")
   expect(await page.evaluate(() => (window as unknown as { historyMoves: number }).historyMoves)).toBe(0)
-  expect(panelParam(page)).toBe(`${a}--${b}**`)
+  expect(route(page)).toEqual({ stream: b, panel: `${streamId}-${a}--${b}**` })
   // Out of it, Escape puts the pane back.
   await tabPane(page, b).getByText("reply in thread 2", { exact: true }).click()
   await page.keyboard.press("Escape")
-  await expect.poll(() => panelParam(page)).toBe(`${a}--${b}`)
+  await expect.poll(() => route(page)).toEqual({ stream: b, panel: `${streamId}-${a}--${b}` })
   await expect(floatingPane(page)).toHaveCount(0)
   await expect(scrim(page)).toHaveCount(0)
   await expect(ghost(page)).toHaveCount(0)
@@ -135,27 +139,27 @@ test("should keep a floating tab across a reload and put it back from the scrim 
   await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", a, { timeout: 15_000 })
   await expect(tabPane(page, a).getByText("reply in thread 1", { exact: true })).toBeVisible({ timeout: 30_000 })
 
-  // Opening its overview opens a pane beside it, which puts the float back.
+  // Opening its overview opens a pane beside it, which puts the float back; working in a makes it the route's stream.
   await tabPane(page, a).getByRole("button", { name: "In this stream" }).click()
-  await expect.poll(() => panelParam(page)).toBe(`${a}*.${b}-context:${a}`)
+  await expect.poll(() => route(page)).toEqual({ stream: a, panel: `${streamId}-${a}*.${b}-context:${a}` })
   await expect(floatingPane(page)).toHaveCount(0)
   await expect(page.getByRole("region", { name: "In this stream" })).toBeVisible()
   await tabPane(page, a).getByRole("button", { name: "In this stream" }).click()
-  await expect.poll(() => panelParam(page)).toBe(`${a}*.${b}`)
+  await expect.poll(() => route(page)).toEqual({ stream: a, panel: `${streamId}-${a}*.${b}` })
   await expect(page.getByRole("region", { name: "In this stream" })).toHaveCount(0)
   await tabPane(page, a).getByRole("button", { name: "Focus pane", exact: true }).click()
-  await expect.poll(() => panelParam(page)).toBe(`${a}**.${b}`)
+  await expect.poll(() => route(page)).toEqual({ stream: a, panel: `${streamId}-${a}**.${b}` })
   await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", a)
 
   await scrim(page).click({ position: { x: 6, y: 300 } })
-  await expect.poll(() => panelParam(page)).toBe(`${a}*.${b}`)
+  await expect.poll(() => route(page)).toEqual({ stream: a, panel: `${streamId}-${a}*.${b}` })
   await expect(floatingPane(page)).toHaveCount(0, { timeout: 15_000 })
 
   await tabPane(page, a).getByRole("button", { name: "Focus pane", exact: true }).click()
-  await expect.poll(() => panelParam(page)).toBe(`${a}**.${b}`)
+  await expect.poll(() => route(page)).toEqual({ stream: a, panel: `${streamId}-${a}**.${b}` })
   await expect(floatingPane(page)).toHaveAttribute("data-panel-tab", a)
   await tabPane(page, a).getByRole("navigation", { name: "Panel tabs" }).locator('[aria-current="page"]').click()
-  await expect.poll(() => panelParam(page)).toBe(`${a}*.${b}`)
+  await expect.poll(() => route(page)).toEqual({ stream: a, panel: `${streamId}-${a}*.${b}` })
   await expect(floatingPane(page)).toHaveCount(0)
 })
 
@@ -168,12 +172,12 @@ test("should toggle focus with Alt+Enter from the composer without sending", asy
   await composer(page, a).click()
   await page.keyboard.type("not yet")
   await page.keyboard.press("Alt+Enter")
-  await expect.poll(() => panelParam(page)).toBe(`${a}**-${b}`)
+  await expect.poll(() => route(page)).toEqual({ stream: a, panel: `${streamId}-${a}**-${b}` })
   await expect(composer(page, a)).toHaveText("not yet")
 
   await composer(page, a).click()
   await page.keyboard.press("Alt+Enter")
-  await expect.poll(() => panelParam(page)).toBe(`${a}-${b}`)
+  await expect.poll(() => route(page)).toEqual({ stream: a, panel: `${streamId}-${a}-${b}` })
   // No new line was typed and nothing was sent.
   await expect(composer(page, a).locator("p")).toHaveCount(1)
   await expect(composer(page, a)).toHaveText("not yet")
@@ -212,7 +216,7 @@ test("should leave what arrives under a floating tab unread until it is put back
   expect(await unreadCount(page, workspaceId, streamId)).toBe(1)
 
   await tabPane(page, a).getByRole("button", { name: "Restore to layout" }).click()
-  await expect.poll(() => panelParam(page)).toBe(`${a}-${b}`)
+  await expect.poll(() => route(page)).toEqual({ stream: a, panel: `${streamId}-${a}-${b}` })
   await expect.poll(() => unreadCount(page, workspaceId, streamId), { timeout: 15_000 }).toBe(0)
   await other.context.close()
 })

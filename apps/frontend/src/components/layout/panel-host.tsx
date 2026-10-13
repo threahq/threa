@@ -1,7 +1,6 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react"
+import { memo, useCallback, useEffect, useMemo, useState, type RefObject } from "react"
 import {
   usePanel,
-  useFrontPanel,
   useCurrentPane,
   isConversationPanel,
   parseComposePanel,
@@ -25,7 +24,6 @@ import {
   type PaneMapCell,
 } from "@/components/panes"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
-import { useElementWidth } from "@/hooks/use-element-width"
 import {
   compilePanelGrid,
   defaultPanelGridSizes,
@@ -36,11 +34,12 @@ import {
 } from "@/lib/panel-grid"
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer"
 import {
-  NO_PANELS,
   closePanelTab,
+  firstColumnHolds,
   fitPanelLayout,
   floatingPanelTab,
   panelIdsOf,
+  soleFirstPanelOf,
   type PaneEdge,
   type PanelLayout,
   type PanelSection,
@@ -141,56 +140,69 @@ interface PanelTabStackProps {
   /** The tabs on show, from {@link useFittedPanelLayout}, placed on the page's grid by {@link usePanelGrid}. */
   display: PanelLayout
   grid: PanelGridState
-  /** Pixels the tabs' columns share, or null where they fill the page (a phone). */
+  /** Pixels the columns after the first share, or null where every tab fills the page (a phone). */
   width: number | null
+  /** Pixels the first column fills, which a floating tab's map shows too. */
+  firstColumnWidth: number
   /** The page's grid, whose height the sections share. */
   host: RefObject<HTMLElement | null>
-  /** The main view beside the tabs, which a floating tab's map shows too. */
-  main: RefObject<HTMLElement | null>
 }
 
 interface PlacedTab {
   key: string
   id: string
   area: string
-  /** Its column's width, held while the column's track opens or closes so the tab lays out once. */
+  /** Its column's width, held while the column's track opens or closes so the tab lays out once; the first column fills its track. */
   width: number | null
+  inFirstColumn: boolean
   section: PanelSection
+  /** The tabs its own row lists: {@link section}, less a phone's base page. */
+  row: PanelSection
   splits: readonly SplitDirection[]
 }
 
 type PanelGridState = ReturnType<typeof usePanelGrid>
 
-/**
- * The page's grid for `display`: its row tracks, each section's area, and the
- * column shares as last dragged. The page's own columns come first, so the
- * tabs' start after `firstColumn` of them.
- */
-export function usePanelGrid(display: PanelLayout, firstColumn: number) {
+/** The page's grid for `display`: its row tracks, each section's area, and the column shares as last dragged. */
+export function usePanelGrid(display: PanelLayout) {
   const [sizes, setSizes] = usePanelGridSizes(display)
-  const { rows, areas } = useMemo(() => compilePanelGrid(sizes, firstColumn), [sizes, firstColumn])
-  return { sizes, setSizes, rows, areas, firstColumn }
+  const { rows, areas } = useMemo(() => compilePanelGrid(sizes), [sizes])
+  return { sizes, setSizes, rows, areas }
 }
 
-/** The tabs as a window `maxColumns` wide arranges them, or a phone when `stacked`. */
-export function useFittedPanelLayout(maxColumns: number, stacked: boolean): PanelLayout {
-  const { layout } = usePanel()
-  const front = useFrontPanel()
+/** `layout` as a window `maxColumns` wide arranges it, or a phone when `stacked`. */
+export function useFittedPanelLayout(layout: PanelLayout, maxColumns: number, stacked: boolean): PanelLayout {
+  const current = useCurrentPane()
+  // Working in the first column leaves a folded section showing the pane last worked in outside it.
+  const [lastPanel, setLastPanel] = useState(current)
+  if (current !== null && current !== lastPanel && !firstColumnHolds(layout, current)) setLastPanel(current)
   return useMemo(() => {
     // A floating tab is always on show, even from a folded column.
-    if (!stacked) return fitPanelLayout(layout, maxColumns, false, layout.focused ?? front)
-    // A phone shows a drawer over its stream's page, so the page is on show behind it.
+    if (!stacked) return fitPanelLayout(layout, maxColumns, false, layout.focused ?? current, lastPanel)
+    // A phone shows a drawer over a page, so the page is on show behind it.
     const pages = panelIdsOf(layout).filter(presentsAsDrawer).reduce(closePanelTab, layout)
-    const shown = front !== null && presentsAsDrawer(front) ? coverPaneOf(layout, front) : front
-    // In front over the main view: no page is on show, the main view is.
-    if (front !== null && shown === null) return NO_PANELS
+    const shown = current !== null && presentsAsDrawer(current) ? pageUnder(layout, current) : current
     return fitPanelLayout(pages, maxColumns, true, shown)
-  }, [layout, maxColumns, stacked, front])
+  }, [layout, maxColumns, stacked, current, lastPanel])
 }
 
-/** The drawer pane over `page` (null for the main view), when one is open. */
+function rowOf(section: PanelSection, id: string, base: string | null): PanelSection {
+  if (base === null || !section.ids.includes(base)) return section
+  if (id === base) return { ids: [base], active: base }
+  const ids = section.ids.filter((tab) => tab !== base)
+  return { ids, active: section.active === base ? ids[ids.length - 1] : section.active }
+}
+
+/** The page a drawer pane sits over: its stream's, else the first page. */
+function pageUnder(layout: PanelLayout, drawer: string): string | null {
+  const cover = coverPaneOf(layout, drawer)
+  if (cover !== drawer) return cover
+  return panelIdsOf(layout).find((id) => !presentsAsDrawer(id)) ?? null
+}
+
+/** The drawer pane over `page` (null for none), when one is open. */
 function drawerOver(layout: PanelLayout, page: string | null): string | null {
-  return panelIdsOf(layout).find((id) => presentsAsDrawer(id) && coverPaneOf(layout, id) === page) ?? null
+  return panelIdsOf(layout).find((id) => presentsAsDrawer(id) && pageUnder(layout, id) === page) ?? null
 }
 
 /**
@@ -244,15 +256,17 @@ export function PanelTabStack({
   display,
   grid,
   width,
+  firstColumnWidth,
   host,
-  main,
 }: PanelTabStackProps) {
-  const { layout, setCurrentPane, focusTab } = usePanel()
-  const front = useFrontPanel()
+  const { layout, hasTabs, setCurrentPane, focusTab } = usePanel()
   const current = useCurrentPane()
-  const { sizes, setSizes, areas, firstColumn } = grid
+  const { sizes, setSizes, areas } = grid
+  // A phone stacks the other panes as pages over the route's stream, so that stream is no tab of theirs.
+  const base = stacked && hasTabs ? soleFirstPanelOf(layout) : null
   const height = useHostHeight(host)
-  const columnWidths = width === null ? null : panelColumnWidths(sizes.columns, width)
+  const panelShares = sizes.columns.slice(1)
+  const columnWidths = width === null ? null : panelColumnWidths(panelShares, width)
 
   // A folded section shows more than its own tabs, so a split from it would move a tab it doesn't hold.
   const folded = display !== layout
@@ -272,8 +286,10 @@ export function PanelTabStack({
           key: panelKeyFor(workspaceId, id),
           id,
           area: areas[column][row],
-          width: columnWidths?.[column] ?? null,
+          width: column === 0 ? null : (columnWidths?.[column - 1] ?? null),
+          inFirstColumn: firstColumnHolds(layout, id),
           section,
+          row: rowOf(section, id, base),
           splits,
         }))
       })
@@ -281,38 +297,36 @@ export function PanelTabStack({
     .sort((a, b) => (a.key < b.key ? -1 : 1))
 
   const sections = display.columns.flat()
-  const onShow = (id: string | null) => sections.find((section) => section.active === id)
-  // The pane worked in, else the panel last worked in, else the first on show.
-  const shortcutSection = onShow(current) ?? onShow(front) ?? sections[0]
-  const panes = stacked ? undefined : [null, ...sections.map((section) => section.active)]
+  // The pane worked in, else the first on show.
+  const shownSection = sections.find((section) => section.active === current) ?? sections[0]
+  const shortcutSection = shownSection && rowOf(shownSection, shownSection.active, base)
+  const panes = stacked ? undefined : sections.map((section) => section.active)
 
   const focused = floatingPanelTab(layout, stacked)
-  // Measured only while a tab floats, the one time its map shows.
-  const unmeasured = useRef<HTMLElement>(null)
-  const mainWidth = useElementWidth(focused !== null ? main : unmeasured)
-  const mainShare = mainWidth > 0 ? mainWidth / (mainWidth + (width ?? 0)) : 0
+  const firstShare = firstColumnWidth + (width ?? 0) > 0 ? firstColumnWidth / (firstColumnWidth + (width ?? 0)) : 1
   const restore = useCallback(() => focusTab(null), [focusTab])
   usePaneFocusEscape(focused, restore)
   // Only Restore draws the map, so resizing with nothing floating leaves every pane's header alone.
   const map = useMemo(
-    () => (focused === null ? NO_MAP : paneMap(display, sizes, focused, mainShare)),
-    [focused, display, sizes, mainShare]
+    () => (focused === null ? NO_MAP : paneMap(display, sizes, focused, firstShare)),
+    [focused, display, sizes, firstShare]
   )
   const focus = useMemo(() => (stacked ? null : { focused, map }), [stacked, focused, map])
   const ghost = tabs.find((tab) => tab.id === focused)
 
-  const columnUnit = (width ?? 0) / sum(sizes.columns)
-  const columnResizers = sizes.columns
+  // The first column fills what the rest leave, so only the dividers between the rest share sizes.
+  const columnUnit = (width ?? 0) / sum(panelShares)
+  const columnResizers = panelShares
     .slice(1)
     .map((share, index) => (
       <SectionResizer
         key={`column:${index}`}
         axis="x"
-        area={`1 / ${firstColumn + index + 2} / -1 / ${firstColumn + index + 3}`}
-        size={sizes.columns[index] * columnUnit}
-        span={(sizes.columns[index] + share) * columnUnit}
+        area={`1 / ${index + 3} / -1 / ${index + 4}`}
+        size={panelShares[index] * columnUnit}
+        span={(panelShares[index] + share) * columnUnit}
         min={MIN_SECTION_WIDTH}
-        onResize={(px) => setSizes({ ...sizes, columns: resplit(sizes.columns, index, px / columnUnit) })}
+        onResize={(px) => setSizes({ ...sizes, columns: resplit(sizes.columns, index + 1, px / columnUnit) })}
       />
     ))
   const rowResizers = sizes.rows.flatMap((rows, column) => {
@@ -353,16 +367,20 @@ export function PanelTabStack({
                   "absolute inset-x-5 top-[58px] bottom-5 z-30 rounded-[10px] border shadow-[0_24px_60px_rgba(0,0,0,0.28)]",
                 focused !== null && tab.id !== focused && "isolate"
               )}
-              data-testid="panel"
+              data-testid={tab.inFirstColumn ? "main-pane" : "panel"}
               data-panel-tab={tab.id}
-              data-front-panel={tab.id === front || undefined}
+              data-front-panel={tab.id === current || undefined}
               data-focused-pane={tab.id === focused || undefined}
-              onPointerDownCapture={() => setCurrentPane(tab.id)}
-              onFocusCapture={() => setCurrentPane(tab.id)}
-              {...paneDropZone(drops, tab.id, edges, true)}
+              // A pressed pane becomes the route's once the click lands: the route's stream shows chrome the
+              // others don't, which would shift a header button or fold a tab out from under the pointer.
+              onClickCapture={() => setCurrentPane(tab.id)}
+              onFocusCapture={(event) => {
+                if (event.target.matches(":focus-visible")) setCurrentPane(tab.id)
+              }}
+              {...paneDropZone(drops, tab.id, edges)}
             >
               <div className="h-full" style={{ width: tab.id === focused ? undefined : (tab.width ?? undefined) }}>
-                <PaneScope panelId={tab.id} section={tab.section} splits={tab.splits}>
+                <PaneScope panelId={tab.id} section={tab.row} splits={tab.splits}>
                   <ScopedPanelHost workspaceId={workspaceId} />
                 </PaneScope>
               </div>
@@ -412,28 +430,28 @@ export function PanelTabStack({
 
 const sum = (shares: readonly number[]) => shares.reduce((total, share) => total + share, 0)
 
-/** The main view's share of the width, then each section on show placed by its share of the rest. */
+/** Each section on show: the first column at `firstShare` of the width, the rest by their shares of what is left. */
 function paneMap(
   display: PanelLayout,
   sizes: PanelGridSizes,
   focused: string | null,
-  mainShare: number
+  firstShare: number
 ): PaneMapCell[] {
-  const main = mainShare > 0 ? [{ x: 0, y: 0, width: mainShare, height: 1, focused: false }] : []
-  const width = sum(sizes.columns) / (1 - mainShare)
-  const sections = display.columns.flatMap((sections, column) => {
+  const rest = sum(sizes.columns.slice(1))
+  const left = (column: number) =>
+    column === 0 ? 0 : firstShare + ((1 - firstShare) * sum(sizes.columns.slice(1, column))) / rest
+  return display.columns.flatMap((sections, column) => {
     const rows = sizes.rows[column]
     const height = sum(rows)
-    const x = mainShare + sum(sizes.columns.slice(0, column)) / width
+    const width = column === 0 ? firstShare : ((1 - firstShare) * sizes.columns[column]) / rest
     return sections.map((section, row) => ({
-      x,
+      x: left(column),
       y: sum(rows.slice(0, row)) / height,
-      width: sizes.columns[column] / width,
+      width,
       height: rows[row] / height,
       focused: section.active === focused,
     }))
   })
-  return [...main, ...sections]
 }
 
 /** Section sizes last dragged for this arrangement's shape, so undoing a split finds the old sizes again. */

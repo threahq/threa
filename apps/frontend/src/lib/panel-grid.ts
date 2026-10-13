@@ -1,6 +1,6 @@
 import type { PanelLayout } from "./panel-tabs"
 
-/** How a panel opened beside another splits with it: the one being read keeps the larger share. */
+/** How a panel opened beside another panel splits with it: the one being read keeps the larger share. */
 export const BESIDE_SPLIT_RATIO = 1.4
 
 /** Relative sizes of the columns, and of the sections down each column. */
@@ -23,7 +23,7 @@ export function panelGridShape(layout: PanelLayout): string {
 export function defaultPanelGridSizes(layout: PanelLayout): PanelGridSizes {
   const count = layout.columns.length
   return {
-    columns: layout.columns.map((_, index) => (index === 0 && count > 1 ? BESIDE_SPLIT_RATIO : 1)),
+    columns: layout.columns.map((_, index) => (index === 1 && count > 2 ? BESIDE_SPLIT_RATIO : 1)),
     rows: layout.columns.map((column) => column.map(() => 1)),
   }
 }
@@ -52,10 +52,9 @@ const edgeKey = (edge: number) => edge.toFixed(4)
  * Compiles the arrangement to the page's grid, so every tab can be a flat child
  * of the same parent wherever its section sits. Columns stack their sections
  * independently, so the row tracks are cut at every column's section edges and
- * each section spans the tracks between its own. The arrangement's columns
- * start after `firstColumn` columns the page keeps for itself.
+ * each section spans the tracks between its own.
  */
-export function compilePanelGrid(sizes: PanelGridSizes, firstColumn = 0): PanelGrid {
+export function compilePanelGrid(sizes: PanelGridSizes): PanelGrid {
   const edges = sizes.rows.map((rows) => {
     const total = sum(rows)
     let reached = 0
@@ -73,7 +72,7 @@ export function compilePanelGrid(sizes: PanelGridSizes, firstColumn = 0): PanelG
         .slice(1)
         .map(
           (end, row) =>
-            `${line.get(edgeKey(columnEdges[row]))} / ${firstColumn + column + 1} / ${line.get(edgeKey(end))} / ${firstColumn + column + 2}`
+            `${line.get(edgeKey(columnEdges[row]))} / ${column + 1} / ${line.get(edgeKey(end))} / ${column + 2}`
         )
     ),
   }

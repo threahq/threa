@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from "vitest"
-import { renderHook } from "@testing-library/react"
-import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { act, renderHook } from "@testing-library/react"
+import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom"
 import type { ReactNode } from "react"
 import { spyOnExport } from "@/test"
 import * as streamsModule from "./use-streams"
@@ -43,7 +43,7 @@ describe("useOpenAside", () => {
     resolveCreate({ id: "stream_aside" })
     await opening
 
-    expect(getAsideState()).toMatchObject({ hostKey: HOST_PATH, asideId: "stream_aside" })
+    expect(getAsideState()).toMatchObject({ hostKey: "/w/ws_1/s", asideId: "stream_aside" })
   })
 
   it("drops a create that lands after its host is gone, so it cannot resurface on return", async () => {
@@ -51,6 +51,19 @@ describe("useOpenAside", () => {
 
     const opening = result.current({ kind: "stream", hostStreamId: "stream_host" })
     unmount()
+    resolveCreate({ id: "stream_aside" })
+    await opening
+
+    expect(getAsideState()).toBeNull()
+  })
+
+  it("drops a create that lands after its host stream's pane closed, though the page stays", async () => {
+    const { result } = renderHook(() => ({ open: useOpenAside("ws_1"), navigate: useNavigate() }), {
+      wrapper: ({ children }) => wrapper(children),
+    })
+
+    const opening = result.current.open({ kind: "stream", hostStreamId: "stream_host" })
+    act(() => result.current.navigate("/w/ws_1/s/stream_other"))
     resolveCreate({ id: "stream_aside" })
     await opening
 

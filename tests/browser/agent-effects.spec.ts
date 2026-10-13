@@ -48,6 +48,7 @@ async function runCompanionTurn(page: Page) {
   await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadId}`)
   await expect(page.getByTestId("panel").getByText(/Session complete/)).toBeVisible({ timeout: SESSION_TIMEOUT })
   await expect(effectGrid(page)).toBeVisible({ timeout: SESSION_TIMEOUT })
+  return { workspaceId, streamId, threadId }
 }
 
 /**
@@ -154,8 +155,7 @@ test.describe("agent effect surfaces", () => {
   // explorer — the rule `memo-captured-event.tsx` already follows. Route and
   // stacking are both things only a real browser can settle.
   test("a memo effect opens over the stream instead of navigating away", async ({ page }) => {
-    await runCompanionTurn(page)
-    const before = page.url()
+    const { workspaceId, streamId, threadId } = await runCompanionTurn(page)
 
     await effectGrid(page)
       .getByRole("button", { name: /User test run/ })
@@ -163,7 +163,8 @@ test.describe("agent effect surfaces", () => {
 
     const dialog = page.getByRole("dialog").first()
     await expect(dialog).toBeVisible()
-    expect(page.url()).toBe(before)
+    // Pressing the thread's pane makes it the route's stream; the panes on show stay as they were.
+    expect(page.url()).toBe(new URL(`/w/${workspaceId}/s/${threadId}?panel=${streamId}-${threadId}`, page.url()).href)
 
     // On top of the timeline, not tucked behind it.
     const overTimeline = await dialog.evaluate((el) => {

@@ -7,6 +7,7 @@ import { MessageSquare, ArrowDown, X, Move, Loader2, Check, Plus } from "lucide-
 import { cn } from "@/lib/utils"
 import { useCoverClose } from "@/hooks/use-cover-close"
 import { CONVERSATION_OVERLAY_COVER } from "@/lib/covers"
+import { isServerStreamId } from "@/lib/stream-ids"
 import { resolveSubagentThreadRun, type SubagentThreadRun } from "@/lib/subagent-display"
 import { useQueryClient } from "@tanstack/react-query"
 import {
@@ -33,7 +34,15 @@ import {
 } from "@/hooks"
 import { useSubagentRun } from "@/hooks/use-subagent-run"
 import { useStableCallback } from "@/hooks/use-stable-callback"
-import { useSocket, useCoordinatedLoading, usePreferencesOptional, usePanel } from "@/contexts"
+import { panelIdsOf, primaryPanelOf } from "@/lib/panel-tabs"
+import {
+  useSocket,
+  useCoordinatedLoading,
+  usePreferencesOptional,
+  usePanel,
+  useCurrentPane,
+  isPaneSwitch,
+} from "@/contexts"
 import { useMessageService } from "@/contexts"
 import { orderStreamEvents, useStreamEvents } from "@/stores/stream-store"
 import { getAsideState } from "@/stores/aside-store"
@@ -601,11 +610,17 @@ export function StreamContent({
   emptyState,
 }: StreamContentProps) {
   const [searchParams, setSearchParams] = useSearchParams()
-  // The page's own stream: the search shortcut, the conversation overlay and the
-  // inbox settle are the page's, never a pane's beside it. A page with no stream
-  // route (the persona editor's test chat) has only this one.
+  // The conversation overlay is the first column's stream's; the search shortcut and the
+  // inbox settle are the pane worked in's. A page with no stream route (the
+  // persona editor's test chat) has only this one.
   const { streamId: routeStreamId } = useParams<{ streamId: string }>()
-  const isRouteStream = routeStreamId === undefined || routeStreamId === streamId
+  const isPageStream = routeStreamId === undefined || routeStreamId === streamId
+  const { layout: panelLayout } = usePanel()
+  const ownsConversationViews = routeStreamId === undefined || primaryPanelOf(panelLayout) === streamId
+  const currentPane = useCurrentPane()
+  // A pane with no timeline of its own (a draft, an overview) leaves its keys to the page's stream.
+  const isCurrentPane =
+    currentPane === null || currentPane === streamId || (isPageStream && !isServerStreamId(currentPane))
   const location = useLocation()
   const navigationType = useNavigationType()
   const messageService = useMessageService()
@@ -743,7 +758,7 @@ export function StreamContent({
   const supportsConversationOverlay =
     !isDraft && (stream?.type === StreamTypes.CHANNEL || stream?.type === StreamTypes.DM)
   const conversationOverlayActive =
-    supportsConversationOverlay && isRouteStream && searchParams.get("convOverlay") === "on"
+    supportsConversationOverlay && ownsConversationViews && searchParams.get("convOverlay") === "on"
   const { context: conversationOverlay, inViewConversations } = useConversationOverlay({
     workspaceId,
     streamId,
@@ -968,23 +983,23 @@ export function StreamContent({
     {
       searchInStream: openOrFocusSearch,
     },
-    !isThread && !isDraft && isRouteStream
+    !isDraft && isCurrentPane
   )
 
   // Header search button dispatches a custom event so it can share the same open/focus path.
   // It names its stream; an unnamed one is the page's.
   useEffect(() => {
-    if (isThread || isDraft) return
+    if (isDraft) return
 
     const onOpenSearch = (event: Event) => {
       const target = (event as CustomEvent<{ streamId?: string } | null>).detail?.streamId
-      if (target ? target === streamId : isRouteStream) openOrFocusSearch()
+      if (target ? target === streamId : isCurrentPane) openOrFocusSearch()
     }
     document.addEventListener("threa:open-stream-search", onOpenSearch)
     return () => {
       document.removeEventListener("threa:open-stream-search", onOpenSearch)
     }
-  }, [isDraft, isThread, isRouteStream, streamId, openOrFocusSearch])
+  }, [isDraft, isCurrentPane, streamId, openOrFocusSearch])
 
   const handleSearchClose = useCallback(() => {
     setIsSearchOpen(false)
@@ -2112,6 +2127,8 @@ export function StreamContent({
     const nav = { highlightMessageId, isLoading, isDraft, hasEvents: events.length > 0 }
     if (!canActOnDeepLinkNavigation(nav)) return
     if (jumpTriggeredKeyRef.current === location.key) return
+    // Clicking into another pane keeps `?m` as it was, so a jump already made stays made.
+    if (jumpTriggeredKeyRef.current !== null && navigationType === "REPLACE" && isPaneSwitch(location.state)) return
     const targetMessageId = nav.highlightMessageId
     const navigationKey = location.key
     jumpTriggeredKeyRef.current = navigationKey
@@ -2162,7 +2179,18 @@ export function StreamContent({
         pendingScrollTarget.current = null
         setDeepLinkGaveUp(true)
       })
-  }, [highlightMessageId, location.key, isLoading, isDraft, events, jumpToEvent, disableAutoScroll, scrollToMessage])
+  }, [
+    highlightMessageId,
+    location.key,
+    location.state,
+    navigationType,
+    isLoading,
+    isDraft,
+    events,
+    jumpToEvent,
+    disableAutoScroll,
+    scrollToMessage,
+  ])
 
   // Auto-mark stream as read when viewing. The stream opens at the live bottom;
   // read state advances only through the contiguous run the viewer scrolls
@@ -2192,8 +2220,8 @@ export function StreamContent({
   const { markAsRead, markUnread, clearInbox } = useUnreadActions(workspaceId)
   const inInbox = useStreamInInbox(workspaceId, streamId)
   // A thread panel mounts a second StreamContent, and one keypress must never settle both.
-  const canSettleOnEscape = isRouteStream && inInbox
-  const { panelId } = usePanel()
+  const canSettleOnEscape = isCurrentPane && inInbox
+  const aloneOnPage = panelIdsOf(panelLayout).length <= 1
 
   // The stream's sparse read overlay — message ids read individually above the
   // watermark (from a conversation-surface read). Threads through the read
@@ -2302,7 +2330,7 @@ export function StreamContent({
       if (dividerEventId) escapeUnread()
       // Settle only a stream alone on the page: with a pane, an aside or the
       // conversation list open, Escape belongs to that surface.
-      else if (!panelId && getAsideState() === null && searchParams.get("convView") !== "open")
+      else if (aloneOnPage && getAsideState() === null && searchParams.get("convView") !== "open")
         clearInboxRef.current([streamId])
       else return
       // One step per keypress: the thread panel's StreamContent listens too.
@@ -2321,7 +2349,7 @@ export function StreamContent({
     isSearchOpen,
     escapeUnread,
     streamId,
-    panelId,
+    aloneOnPage,
     searchParams,
   ])
 

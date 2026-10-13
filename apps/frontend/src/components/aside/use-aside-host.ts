@@ -1,15 +1,24 @@
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { useLocation } from "react-router-dom"
-import { dropAsideForHost } from "@/stores/aside-store"
+import { asideHostKey, dropAsideForHost, dropAsideForHostStream } from "@/stores/aside-store"
+
+const NO_PANES: readonly string[] = []
 
 /**
- * Binds the aside surface to the page: the host key is the route pathname, and
- * leaving the page (the key changing, or the page unmounting) drops whatever
- * aside was open on it — so the next stream is clean by construction and the
- * anchor row is the only way back in.
+ * Binds the aside surface to the page: leaving the page (the host key
+ * changing, or the page unmounting) drops whatever aside was open on it, and so
+ * does closing the pane of the stream it was opened on (`panes`, every pane the
+ * page shows) — so the next stream is clean by construction and the anchor row
+ * is the only way back in.
  */
-export function useAsideHost(): string {
-  const { pathname: hostKey } = useLocation()
+export function useAsideHost(panes: readonly string[] = NO_PANES): string {
+  const hostKey = asideHostKey(useLocation().pathname)
   useEffect(() => () => dropAsideForHost(hostKey), [hostKey])
+  // Only a pane that closes: an aside opened for a stream the page is about to show waits for it.
+  const shown = useRef(panes)
+  useEffect(() => {
+    for (const pane of shown.current) if (!panes.includes(pane)) dropAsideForHostStream(hostKey, pane)
+    shown.current = panes
+  }, [hostKey, panes])
   return hostKey
 }

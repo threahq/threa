@@ -1,4 +1,5 @@
-import type { useLocation, useNavigate } from "react-router-dom"
+import { matchPath, type useLocation, type useNavigate } from "react-router-dom"
+import { PANEL_PARAM, fullPanelLayout, panelIdsOf, parsePanelLayout } from "@/lib/panel-tabs"
 
 /**
  * Decide what to do after `queueShareHandoff` for any share affordance —
@@ -9,11 +10,12 @@ import type { useLocation, useNavigate } from "react-router-dom"
  * Behavior diverges by viewport because the meaning of the panel query
  * (`?panel=…`) differs:
  *
- * - **Desktop two-pane:** the panel renders alongside the main view, so
- *   the parent composer is mounted and visible. Preserve `location.search`
- *   so the panel stays open across the navigation. Skip `navigate()` when
- *   pathname + search are unchanged — the existing composer subscribes to
- *   the handoff store and picks the share up in place.
+ * - **Desktop panes:** the target's composer may already be on show in a
+ *   pane. Preserve `location.search` so the panes stay open. A target
+ *   already on show only becomes the current pane, so the path is
+ *   replaced, never pushed. Skip `navigate()` when pathname + search are
+ *   unchanged — the existing composer subscribes to the handoff store and
+ *   picks the share up in place.
  *
  * - **Mobile fullscreen:** the panel TAKES OVER the screen, so the parent
  *   composer is NOT visible even when the URL pathname matches the share
@@ -38,5 +40,7 @@ export function navigateAfterShareHandoff({
   const targetPathname = `/w/${workspaceId}/s/${targetStreamId}`
   const search = isMobile ? "" : location.search
   if (location.pathname === targetPathname && location.search === search) return
-  navigate(`${targetPathname}${search}`)
+  const path = matchPath("/w/:workspaceId/s/:streamId", location.pathname)?.params.streamId ?? null
+  const layout = fullPanelLayout(path, parsePanelLayout(new URLSearchParams(location.search).get(PANEL_PARAM)))
+  navigate(`${targetPathname}${search}`, { replace: !isMobile && panelIdsOf(layout).includes(targetStreamId) })
 }
