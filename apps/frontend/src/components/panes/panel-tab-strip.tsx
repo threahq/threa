@@ -1,6 +1,7 @@
-import { useId, useLayoutEffect, useRef } from "react"
+import { useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react"
+import { flushSync } from "react-dom"
 import { Link } from "react-router-dom"
-import { Ellipsis, X } from "lucide-react"
+import { ChevronDown, Ellipsis, X } from "lucide-react"
 import {
   usePanel,
   useCurrentPane,
@@ -14,7 +15,8 @@ import { useStreamName } from "@/hooks/use-stream-name"
 import { useThreadAnchorSnippet } from "@/hooks/use-thread-anchor-snippet"
 import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { useConversationTitle } from "@/hooks/use-conversation-title"
-import { closePanelTab, followCurrentPanel, panelIdsOf } from "@/lib/panel-tabs"
+import { closePanelTab, followCurrentPanel } from "@/lib/panel-tabs"
+import { fitPanelTabs, splitVisibleTabs, type PanelTabFit } from "@/lib/panel-tab-fit"
 import { cn } from "@/lib/utils"
 import { usePaneCovered } from "./pane-host"
 
@@ -22,9 +24,19 @@ import { usePaneCovered } from "./pane-host"
  * A section's open tabs as an underline row, standing in for the panel's title
  * while more than one tab is open anywhere. Each tab is a link (switching is
  * navigation, so it's in the URL) and the one on show is underlined and
- * `aria-current`; the underline mutes while another pane is current.
+ * `aria-current`; the underline mutes while another pane is current. The row
+ * never scrolls: short of room, the panel's `labels` fold first, then trailing
+ * tabs fold into a "+N" menu.
  */
-export function PanelTabStrip({ workspaceId, className }: { workspaceId: string; className?: string }) {
+export function PanelTabStrip({
+  workspaceId,
+  labels,
+  className,
+}: {
+  workspaceId: string
+  labels?: ReactNode
+  className?: string
+}) {
   const { layout, section, getTabUrl, closeTab, splitTab, splits, setCurrentPane } = usePanel()
   const currentPane = useCurrentPane()
   const { isMobile } = useSidebar()
@@ -32,29 +44,12 @@ export function PanelTabStrip({ workspaceId, className }: { workspaceId: string;
   const activePanelId = section?.active ?? null
   const isCurrent = currentPane !== null && panelIds.includes(currentPane)
   const stripRef = useRef<HTMLElement>(null)
+  const labelsRef = useRef<HTMLDivElement>(null)
   const covered = usePaneCovered()
   const linkIdPrefix = useId()
   const focusHandoff = usePanelTabFocusHandoff()
-
-  // Keep the tab on show in view when the row scrolls (a phone, many tabs),
-  // close button included, and again as titles resolve and widen the tabs.
-  // `scrollLeft` rather than `scrollIntoView`, which would also scroll the
-  // overflow-hidden panes around the strip.
-  useLayoutEffect(() => {
-    const strip = stripRef.current
-    const tab = strip?.querySelector<HTMLElement>('[aria-current="page"]')?.parentElement
-    if (!strip || !tab) return
-    const keepInView = () => {
-      const left = tab.offsetLeft
-      const right = left + tab.offsetWidth
-      if (left < strip.scrollLeft) strip.scrollLeft = left
-      else if (right > strip.scrollLeft + strip.clientWidth) strip.scrollLeft = right - strip.clientWidth
-    }
-    keepInView()
-    const observer = new ResizeObserver(keepInView)
-    for (const child of strip.children) observer.observe(child)
-    return () => observer.disconnect()
-  }, [activePanelId, panelIds])
+  const fit = usePanelTabFit(stripRef, labelsRef, panelIds, activePanelId)
+  const { shown, folded } = splitVisibleTabs(panelIds, activePanelId, fit.visible)
 
   useLayoutEffect(() => {
     if (covered || focusHandoff.current === null || focusHandoff.current !== activePanelId) return
@@ -71,20 +66,20 @@ export function PanelTabStrip({ workspaceId, className }: { workspaceId: string;
       <nav
         ref={stripRef}
         aria-label="Panel tabs"
-        className={cn(
-          "relative flex min-w-0 flex-1 self-stretch overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
-          className
-        )}
+        className={cn("relative flex min-w-0 flex-1 self-stretch overflow-hidden", className)}
       >
-        {panelIds.map((id, index) => {
+        {shown.map((id, index) => {
           const active = id === activePanelId
           const linkId = `${linkIdPrefix}-${index}`
           return (
             <div
               key={id}
               className={cn(
-                "group relative flex min-w-24 items-center",
-                active ? "max-w-56 shrink-0" : "max-w-48 shrink",
+                "group relative flex items-center",
+                !active && "min-w-24 max-w-48 shrink",
+                // The tab on show truncates rather than push itself, or "+N", out of a narrow row.
+                active && "min-w-0 shrink-0",
+                active && (folded.length > 0 ? "max-w-[min(14rem,calc(100%-3rem))]" : "max-w-[min(14rem,100%)]"),
                 active && "after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full",
                 active && (isCurrent ? "after:bg-primary" : "after:bg-muted-foreground/40")
               )}
@@ -114,12 +109,11 @@ export function PanelTabStrip({ workspaceId, className }: { workspaceId: string;
               <button
                 type="button"
                 onClick={() => {
-                  // A row survives only while two tabs stay open. A tab closing behind the
-                  // one on show leaves focus with it, even when the strip folds several sections.
-                  if (panelIdsOf(layout).length > 2)
-                    handOffFocus(
-                      id === activePanelId ? followCurrentPanel(layout, closePanelTab(layout, id), id) : activePanelId
-                    )
+                  // A tab closing behind the one on show leaves focus with it, even when the
+                  // strip folds several sections; the last tab left takes it on its close button.
+                  handOffFocus(
+                    id === activePanelId ? followCurrentPanel(layout, closePanelTab(layout, id), id) : activePanelId
+                  )
                   closeTab(id)
                 }}
                 aria-label="Close tab"
@@ -134,7 +128,50 @@ export function PanelTabStrip({ workspaceId, className }: { workspaceId: string;
             </div>
           )
         })}
+        {folded.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label={`${folded.length} more ${folded.length === 1 ? "tab" : "tabs"}`}
+                className="flex w-12 shrink-0 items-center justify-center gap-0.5 text-sm text-muted-foreground hover:text-foreground"
+              >
+                +{folded.length}
+                <ChevronDown className="h-3.5 w-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="start"
+              onCloseAutoFocus={(event) => {
+                if (focusHandoff.current !== null) event.preventDefault()
+              }}
+            >
+              {folded.map((id) => (
+                <DropdownMenuItem key={id} asChild>
+                  <Link
+                    to={getTabUrl(id)}
+                    replace
+                    onClick={() => {
+                      setCurrentPane(id)
+                      focusHandoff.current = id
+                    }}
+                    className="max-w-64"
+                  >
+                    <span className="truncate">
+                      <PanelTabTitle workspaceId={workspaceId} panelId={id} />
+                    </span>
+                  </Link>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </nav>
+      {labels && (
+        <div ref={labelsRef} className={cn("flex shrink-0 items-center", !fit.labels && "invisible absolute")}>
+          {labels}
+        </div>
+      )}
       {!isMobile && activePanelId && splits.length > 0 && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -169,6 +206,61 @@ export function PanelTabStrip({ workspaceId, className }: { workspaceId: string;
       )}
     </>
   )
+}
+
+/**
+ * Re-fits the row whenever the room, the labels or the tab on show change
+ * size. Folded labels stay laid out out of flow, so their width is always known.
+ */
+function usePanelTabFit(
+  stripRef: RefObject<HTMLElement | null>,
+  labelsRef: RefObject<HTMLElement | null>,
+  panelIds: readonly string[],
+  activePanelId: string | null
+): PanelTabFit {
+  const [fit, setFit] = useState<PanelTabFit>({ labels: true, visible: panelIds.length })
+  const labelsShown = useRef(fit.labels)
+  labelsShown.current = fit.labels
+  const tabs = panelIds.length
+
+  useLayoutEffect(() => {
+    const strip = stripRef.current
+    if (!strip) return
+    const activeTab = strip.querySelector<HTMLElement>('[aria-current="page"]')?.parentElement
+    const measure = () => {
+      const labelsWidth = Math.ceil(labelsRef.current?.getBoundingClientRect().width ?? 0)
+      const room = Math.floor(strip.getBoundingClientRect().width) + (labelsShown.current ? labelsWidth : 0)
+      const activeWidth = Math.ceil(activeTab?.getBoundingClientRect().width ?? 0)
+      const next = fitPanelTabs(room, tabs, activeWidth, labelsWidth)
+      setFit((current) => (current.labels === next.labels && current.visible === next.visible ? current : next))
+    }
+    measure()
+    // Re-fit before the resized frame paints, so it never shows the old fit clipped.
+    const observer = new ResizeObserver(() => flushSync(measure))
+    observer.observe(strip)
+    if (labelsRef.current) observer.observe(labelsRef.current)
+    if (activeTab) observer.observe(activeTab)
+    return () => observer.disconnect()
+  }, [stripRef, labelsRef, tabs, activePanelId])
+
+  return fit
+}
+
+/**
+ * Lands focus handed off by a tab row that closed down to this panel alone on
+ * the panel's own close (or phone back) button, which takes the returned ref.
+ */
+export function usePanelCloseFocusLanding() {
+  const { panelId, tabbed } = usePanel()
+  const covered = usePaneCovered()
+  const focusHandoff = usePanelTabFocusHandoff()
+  const closeRef = useRef<HTMLButtonElement>(null)
+  useLayoutEffect(() => {
+    if (tabbed || covered || focusHandoff.current === null || focusHandoff.current !== panelId) return
+    focusHandoff.current = null
+    closeRef.current?.focus()
+  }, [tabbed, covered, panelId, focusHandoff])
+  return closeRef
 }
 
 function PanelTabTitle({ workspaceId, panelId }: { workspaceId: string; panelId: string }) {

@@ -95,7 +95,7 @@ import { useScrollToMessage } from "@/hooks/use-scroll-to-message"
 import { VirtualizedScroller, useRenderedContentLatch } from "@/components/timeline/virtualized-scroller"
 import { usePanelStreamSubscriptions } from "@/hooks/use-panel-stream-subscriptions"
 import type { BoardViewPost } from "@/hooks/use-stable-board-view"
-import { PanelTabStrip, usePaneCovered } from "@/components/panes"
+import { PanelTabStrip, usePaneCovered, usePanelCloseFocusLanding } from "@/components/panes"
 
 const TYPE_GLYPH: Record<string, LucideIcon> = {
   channel: Hash,
@@ -215,6 +215,7 @@ function ConversationPanelHeader({
   const title = effectiveTitle ?? locator
   const resolved = post?.conversation.status === "resolved"
   const { tabbed } = usePanel()
+  const closeRef = usePanelCloseFocusLanding()
   // On touch the identity line IS the actions trigger, as the stream header's
   // name is. The header is `relative` so the press-and-hold name overlay, which
   // portals into its nearest <header>, can fill the bar here too.
@@ -272,7 +273,7 @@ function ConversationPanelHeader({
       {/* Mobile replaces the X close with a back chevron; desktop keeps the X
           alone. Both affordances at once was this header's own invention. */}
       {isMobile && (
-        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onClose}>
+        <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={onClose} ref={closeRef}>
           <ChevronLeft className="h-4 w-4" />
           <span className="sr-only">Back</span>
         </Button>
@@ -286,7 +287,7 @@ function ConversationPanelHeader({
           conversation's own sessions. Compact on mobile so it can't squeeze the
           topic out of the row. Mounted only with entries: the chip reads
           useTrace, so an idle panel must not require a TraceProvider. */}
-      {runningChipEntries.length > 0 && <AgentRunningChip entries={runningChipEntries} compact={isMobile} />}
+      {runningChipEntries.length > 0 && <AgentRunningChip entries={runningChipEntries} compact={isMobile || tabbed} />}
       {revealed ? (
         <ConversationActionsMenu
           workspaceId={workspaceId}
@@ -308,7 +309,7 @@ function ConversationPanelHeader({
       ) : (
         <div className="h-8 w-8 shrink-0" />
       )}
-      {!isMobile && !tabbed && <SidePanelClose onClose={onClose} />}
+      {!isMobile && !tabbed && <SidePanelClose onClose={onClose} ref={closeRef} />}
     </SidePanelHeader>
   )
 }

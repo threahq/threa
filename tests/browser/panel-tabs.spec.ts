@@ -343,7 +343,7 @@ test.describe("on a phone", () => {
     await expect(strip.getByRole("link")).toHaveCount(2)
 
     // The row sits between Back and the header actions, and the tab on show,
-    // close included, is scrolled fully into it.
+    // close included, sits fully inside it.
     const back = tabPane(page, threadB).getByRole("button", { name: "Back" })
     const actions = tabPane(page, threadB).getByRole("button", { name: "Stream actions" })
     const [stripBox, backBox, actionsBox, activeCloseBox] = await Promise.all([
