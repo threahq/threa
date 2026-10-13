@@ -38,6 +38,8 @@ async function waitForTimelineMessage(page: Page, messageText: string, timeout =
 
 async function openReactionPicker(page: Page, messageContainer: ReturnType<typeof getTimelineMessage>) {
   const searchInput = getReactionSearchInput(page)
+  // An open picker can cover the message, so hovering it again would wait forever.
+  if (await searchInput.isVisible()) return searchInput
 
   for (let attempt = 0; attempt < 3; attempt++) {
     await messageContainer.hover()

@@ -10,7 +10,7 @@ interface AsideAnchorLineProps {
   hostStreamId: string
   /** The message the aside was opened from, when it was opened from one. */
   anchorId?: string | null
-  /** `chip` rides the stage's header; `line` is the phone sheet's own row under it. */
+  /** `chip` rides the column's or the board stage's header; `line` is the phone sheet's own row under it. */
   variant?: "line" | "chip"
 }
 
@@ -44,13 +44,10 @@ export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant =
   // state is keyed by pathname, so the jump never disturbs it (INV-40). Built
   // on top of the page's other params — a conversation overlay, a board's
   // filters — rather than replacing them; a board host has no timeline to
-  // scroll, so the jump goes to the host stream's own page. The chip is the
-  // stage's, where a thread takes the host pane: the jump drops `?panel=` so
-  // the pane is handed back, or it would scroll a timeline nobody sees.
+  // scroll, so the jump goes to the host stream's own page.
   const hostPageSearch = () => {
     const next = new URLSearchParams(searchParams)
     next.set("m", anchorId ?? "")
-    if (chip) next.delete("panel")
     return `?${next.toString()}`
   }
   const to =

@@ -260,9 +260,13 @@ export function AppShell({ sidebar, children }: AppShellProps) {
           />
         </div>
 
-        {/* Main area with sidebar and content — translates down during pull */}
+        {/* Main area with sidebar and content — translates down during pull. The
+             transform makes this the box `fixed` overlays sit in, so one parked
+             off the right edge overflows it: clip, never hidden, or a focus
+             moving into view scrolls the whole page sideways. Clip doesn't
+             zero a flex item's minimum size the way hidden does, hence min-h-0. */}
         <div
-          className="flex flex-1 overflow-hidden"
+          className="flex min-h-0 min-w-0 flex-1 overflow-clip"
           style={{
             transform: `translateY(${pullDistance}px)`,
             transition: pulling ? "none" : "transform 0.3s ease-out",

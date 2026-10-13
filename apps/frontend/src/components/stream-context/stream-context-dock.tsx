@@ -6,6 +6,8 @@ interface StreamContextDockTarget {
   target: HTMLElement | null
   /** False when the column can't fit beside the main column; the overview floats over the stream instead. */
   fits: boolean
+  /** Width a column at the window's right edge already holds; the floating overview sits left of it. */
+  insetRight?: number
 }
 
 const StreamContextDockContext = createContext<StreamContextDockTarget | null>(null)
