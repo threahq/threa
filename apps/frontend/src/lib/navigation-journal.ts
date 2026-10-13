@@ -32,13 +32,7 @@ export interface RecentStream {
 /** Params that identify a page rather than an overlay on it. `m`, `context`,
  *  `media`, `settings`, `convOverlay`, `memo`, … are overlays: they come and go
  *  on the same page and must not each become a journal stop. */
-const JOURNAL_PARAMS: ReadonlySet<string> = new Set([
-  "panel",
-  "trace",
-  "convView",
-  BOARD_LENS_PARAM,
-  ...BOARD_FILTER_PARAMS,
-])
+const JOURNAL_PARAMS: ReadonlySet<string> = new Set(["panel", "trace", BOARD_LENS_PARAM, ...BOARD_FILTER_PARAMS])
 
 export function journalPath(location: { pathname: string; search: string }): string {
   const out = new URLSearchParams()

@@ -103,6 +103,19 @@ export function createConversationPanelId(conversationId: string): string {
   return `${CONVERSATION_PANEL_PREFIX}${conversationId}`
 }
 
+/** A stream's conversations list, in a pane of its own: `convs:<streamId>`. */
+const CONVERSATIONS_PANEL_PREFIX = "convs:"
+
+/** The stream behind a `convs:<id>` panel, or null when it isn't one. */
+export function parseConversationsPanel(panelId: string): string | null {
+  if (!panelId.startsWith(CONVERSATIONS_PANEL_PREFIX)) return null
+  return panelId.slice(CONVERSATIONS_PANEL_PREFIX.length) || null
+}
+
+export function createConversationsPanelId(streamId: string): string {
+  return `${CONVERSATIONS_PANEL_PREFIX}${streamId}`
+}
+
 /** A stream's draft, written in a pane of its own. One per stream: the stream's composer, shown there instead. */
 const COMPOSE_PANEL_PREFIX = "compose:"
 
@@ -152,18 +165,23 @@ export function presentsAsDrawer(panelId: string): boolean {
   return parseContextPanel(panelId) !== null
 }
 
-/** The pane that shows `?m` set from `panelId`: a draft or an overview shows no
- *  messages of its own, so its stream does while that stream is open. */
+/** The pane that shows `?m` set from `panelId`: a draft, an overview or a
+ *  conversations list shows no messages of its own, so its stream does while
+ *  that stream is open. */
 export function coverPaneOf(layout: PanelLayout, panelId: string): string {
-  const streamId = parseComposePanel(panelId) ?? parseContextPanel(panelId)?.streamId
+  const streamId =
+    parseComposePanel(panelId) ?? parseContextPanel(panelId)?.streamId ?? parseConversationsPanel(panelId)
   if (!streamId) return panelId
   return panelIdsOf(layout).includes(streamId) ? streamId : panelId
 }
 
-/** The panes that belong to a stream's own: its draft and its overview. */
+/** The panes that belong to a stream's own: its draft, its overview and its conversations. */
 function panesOwnedBy(layout: PanelLayout, streamId: string): string[] {
   return panelIdsOf(layout).filter(
-    (id) => parseComposePanel(id) === streamId || parseContextPanel(id)?.streamId === streamId
+    (id) =>
+      parseComposePanel(id) === streamId ||
+      parseContextPanel(id)?.streamId === streamId ||
+      parseConversationsPanel(id) === streamId
   )
 }
 

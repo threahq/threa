@@ -91,9 +91,14 @@ describe("pickStream", () => {
 describe("streamOfPane", () => {
   it("should name the stream a pane belongs to, and none for a conversation", () => {
     expect(
-      ["stream_t1", "compose:stream_a", "context:stream_a:files", "draft:stream_a:msg_1", "conv:conv_1"].map(
-        streamOfPane
-      )
-    ).toEqual(["stream_t1", "stream_a", "stream_a", "stream_a", null])
+      [
+        "stream_t1",
+        "compose:stream_a",
+        "convs:stream_a",
+        "context:stream_a:files",
+        "draft:stream_a:msg_1",
+        "conv:conv_1",
+      ].map(streamOfPane)
+    ).toEqual(["stream_t1", "stream_a", "stream_a", "stream_a", "stream_a", null])
   })
 })

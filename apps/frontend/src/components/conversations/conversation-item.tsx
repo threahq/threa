@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { ChevronDown, ChevronRight, PanelRight } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { stripMarkdownToInline, truncateInline } from "@/lib/markdown/strip"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -18,7 +19,6 @@ interface ConversationItemProps {
   conversation: ConversationWithStaleness
   isExpanded: boolean
   onToggle: () => void
-  onMessageClick?: () => void
   className?: string
 }
 
@@ -27,7 +27,6 @@ export function ConversationItem({
   conversation,
   isExpanded,
   onToggle,
-  onMessageClick,
   className,
 }: ConversationItemProps) {
   const { messageIds, lastActivityAt } = conversation
@@ -74,12 +73,7 @@ export function ConversationItem({
                 size="icon"
                 className="m-1 h-8 w-8 shrink-0 self-center text-muted-foreground hover:text-foreground"
                 aria-label="Open conversation in panel"
-                onClick={() => {
-                  openPanel(createConversationPanelId(conversation.id))
-                  // Close the conversation-list overlay (when this item is shown in
-                  // one) so the panel it just opened isn't hidden behind it.
-                  onMessageClick?.()
-                }}
+                onClick={() => openPanel(createConversationPanelId(conversation.id))}
               >
                 <PanelRight className="h-4 w-4" />
               </Button>
@@ -89,11 +83,7 @@ export function ConversationItem({
         </div>
         <CollapsibleContent>
           <div className="border-t px-3 py-2">
-            <ConversationMessages
-              workspaceId={workspaceId}
-              conversationId={conversation.id}
-              onMessageClick={onMessageClick}
-            />
+            <ConversationMessages workspaceId={workspaceId} conversationId={conversation.id} />
           </div>
         </CollapsibleContent>
       </div>
@@ -104,10 +94,9 @@ export function ConversationItem({
 interface ConversationMessagesProps {
   workspaceId: string
   conversationId: string
-  onMessageClick?: () => void
 }
 
-function ConversationMessages({ workspaceId, conversationId, onMessageClick }: ConversationMessagesProps) {
+function ConversationMessages({ workspaceId, conversationId }: ConversationMessagesProps) {
   const conversationService = useConversationService()
   const { getActorName } = useActors(workspaceId)
 
@@ -140,13 +129,7 @@ function ConversationMessages({ workspaceId, conversationId, onMessageClick }: C
   return (
     <div className="space-y-2 py-1 max-h-64 overflow-y-auto">
       {messages.map((message) => (
-        <MessagePreview
-          key={message.id}
-          message={message}
-          workspaceId={workspaceId}
-          getActorName={getActorName}
-          onMessageClick={onMessageClick}
-        />
+        <MessagePreview key={message.id} message={message} workspaceId={workspaceId} getActorName={getActorName} />
       ))}
     </div>
   )
@@ -156,24 +139,24 @@ interface MessagePreviewProps {
   message: Message
   workspaceId: string
   getActorName: (actorId: string | null, actorType: AuthorType | null) => string
-  onMessageClick?: () => void
 }
 
-function MessagePreview({ message, workspaceId, getActorName, onMessageClick }: MessagePreviewProps) {
-  const maxLength = 200
-  const truncatedContent =
-    message.contentMarkdown.length > maxLength
-      ? message.contentMarkdown.slice(0, maxLength) + "..."
-      : message.contentMarkdown
+function MessagePreview({ message, workspaceId, getActorName }: MessagePreviewProps) {
+  const preview = truncateInline(stripMarkdownToInline(message.contentMarkdown), 200)
 
   // Use message's own streamId - thread messages belong to thread streams, not the parent channel
   const messageUrl = `/w/${workspaceId}/s/${message.streamId}?m=${message.id}`
   const authorName = getActorName(message.authorId, message.authorType)
+  const { openAtMessage } = usePanel()
 
   return (
     <Link
       to={messageUrl}
-      onClick={onMessageClick}
+      onClick={(e) => {
+        if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return
+        e.preventDefault()
+        openAtMessage(message.streamId, message.id, false)
+      }}
       className="block text-sm border-l-2 border-muted pl-2 py-1 hover:bg-accent/50 hover:border-primary rounded-r transition-colors"
     >
       <div className="flex items-center gap-2 text-xs text-muted-foreground mb-0.5">
@@ -181,7 +164,7 @@ function MessagePreview({ message, workspaceId, getActorName, onMessageClick }: 
         <span>·</span>
         <RelativeTime date={message.createdAt} />
       </div>
-      <p className="text-foreground/80 whitespace-pre-wrap break-words">{truncatedContent}</p>
+      <p className="text-foreground/80 whitespace-pre-wrap break-words">{preview}</p>
     </Link>
   )
 }

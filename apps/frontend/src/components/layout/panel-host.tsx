@@ -4,6 +4,7 @@ import {
   useCurrentPane,
   isConversationPanel,
   parseComposePanel,
+  parseConversationsPanel,
   parseContextPanel,
   paneIdentity,
   PaneScope,
@@ -51,6 +52,7 @@ import { PaneShortcuts } from "./pane-shortcuts"
 import { getDraftPromotionSource } from "@/lib/draft-promotions"
 import { StreamPanel } from "@/components/thread"
 import { ConversationPanel } from "@/components/conversations/conversation-panel"
+import { ConversationsPane } from "@/components/conversations/conversations-pane"
 import { ComposePanel } from "@/components/composer/compose-panel"
 import { StreamContextPane } from "@/components/stream-context"
 
@@ -71,8 +73,9 @@ interface PanelHostProps {
 /**
  * Picks the side panel's content by panel kind: a `conv:<id>` panel opens a
  * conversation projection (Mechanism B), a `compose:<id>` panel a stream's
- * draft, a `context:<id>` panel a stream's overview, every other id is a stream/thread/draft
- * handled by {@link StreamPanel}. Both stream.tsx and board.tsx host the panel
+ * draft, a `convs:<id>` panel a stream's conversations list, a `context:<id>`
+ * panel a stream's overview, every other id is a stream/thread/draft handled
+ * by {@link StreamPanel}. Both stream.tsx and board.tsx host the panel
  * through this, so either surface can open either kind. Keyed on the panel id so
  * switching targets remounts cleanly — except a draft thread promoted to its real
  * stream, which keeps the draft's key so the panel carries its state across the
@@ -84,8 +87,20 @@ export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
   const { panelId } = usePanel()
   const composeStreamId = panelId && parseComposePanel(panelId)
   const context = panelId && parseContextPanel(panelId)
+  const conversationsStreamId = panelId && parseConversationsPanel(panelId)
   if (panelId && isConversationPanel(panelId)) {
     return <ConversationPanel key={panelId} workspaceId={workspaceId} onClose={onClose} className={className} />
+  }
+  if (conversationsStreamId) {
+    return (
+      <ConversationsPane
+        key={panelId}
+        workspaceId={workspaceId}
+        streamId={conversationsStreamId}
+        onClose={onClose}
+        className={className}
+      />
+    )
   }
   if (composeStreamId) {
     return (
