@@ -12,7 +12,7 @@ interface AsideAnchorLineProps {
   hostStreamId: string
   /** The message the aside was opened from, when it was opened from one. */
   anchorId?: string | null
-  /** `chip` rides the column's or the board stage's header; `line` is the phone sheet's own row under it. */
+  /** `chip` rides the column's header; `line` is the phone sheet's own row under it. */
   variant?: "line" | "chip"
 }
 

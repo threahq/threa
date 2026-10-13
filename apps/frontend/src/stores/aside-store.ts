@@ -48,10 +48,9 @@ export function asideHostKey(pathname: string): string {
 
 /**
  * The pane the aside's surface holds instead of the page: the first one open
- * beside the stream page's own (`tabbed`), or the board's panel, unless it is
- * the aside's own host. An aside opened from inside a thread has that thread
- * as its host, and the host view already shows it — a panel on top would be
- * two chromes for one stream.
+ * beside the page's own (`tabbed`), unless it is the aside's own host. An
+ * aside opened from inside a thread has that thread as its host, and the host
+ * view already shows it — a panel on top would be two chromes for one stream.
  */
 export function asidePaneOf(layout: PanelLayout, hostStreamId: string, tabbed: boolean): string | null {
   const sole = tabbed ? soleFirstPanelOf(layout) : null
@@ -59,11 +58,11 @@ export function asidePaneOf(layout: PanelLayout, hostStreamId: string, tabbed: b
   return pane !== hostStreamId ? pane : null
 }
 
-/** How wide the aside's own column is, on a stream page or the stage. The floor
+/** How wide the aside's own column is. The floor
  *  keeps its chat and composer usable; the ceiling is enforced by the surface,
  *  which knows how much room the columns beside it still need. */
-export const ASIDE_STAGE_MIN_WIDTH = 360
-export const ASIDE_STAGE_DEFAULT_WIDTH = 620
+export const ASIDE_COLUMN_MIN_WIDTH = 360
+export const ASIDE_COLUMN_DEFAULT_WIDTH = 620
 
 /** How tall the drafts half of the aside is, between its own floor and whatever
  *  the surface can spare — the conversation's floor is enforced by the pane. */
@@ -72,15 +71,15 @@ export const ASIDE_DRAFT_DEFAULT_HEIGHT = 320
 
 let state: OpenAsideState | null = null
 const listeners = new Set<() => void>()
-// The stage's vertical divide, per aside. Session-scoped like the aside
+// The column's width, per aside. Session-scoped like the aside
 // itself: a width is a reading preference for this sitting, not something a
 // refresh or a shared link should carry (INV-59 exemption, same rationale as
 // the open aside above).
-const stageWidthByAside = new Map<string, number>()
+const columnWidthByAside = new Map<string, number>()
 // The phone sheet's detent. One aside is open at a time, so one value.
 let sheetDetent: AsideSheetDetent = "peek"
 // The draft open for writing, per aside. Here rather than in the surface
-// component because the stage and the phone sheet are different components:
+// component because the column and the phone sheet are different components:
 // holding it locally would close the draft mid-sentence on the crossover.
 const openDraftByAside = new Map<string, string>()
 // Agent replies queued by "Insert into draft" and not yet appended — the
@@ -89,7 +88,7 @@ const openDraftByAside = new Map<string, string>()
 // lose the block.
 const pendingAgentBlocksByAside = new Map<string, AgentBlockData[]>()
 // How the drafts half is split against the conversation, and whether the tray
-// of pills is unfolded. Session-scoped per aside, like the stage width.
+// of pills is unfolded. Session-scoped per aside, like the column width.
 const draftHeightByAside = new Map<string, number>()
 const trayExpandedByAside = new Map<string, boolean>()
 
@@ -153,7 +152,7 @@ export function dropAsideForHostStream(hostKey: string, hostStreamId: string): v
 }
 
 export function resetAsideStoreCache(): void {
-  stageWidthByAside.clear()
+  columnWidthByAside.clear()
   sheetDetent = "peek"
   openDraftByAside.clear()
   pendingAgentBlocksByAside.clear()
@@ -252,21 +251,21 @@ export function useAsideTrayExpanded(asideId: string): boolean {
 }
 
 /** The width this aside's column was last dragged to, or the default. */
-export function asideStageWidth(asideId: string): number {
-  return stageWidthByAside.get(asideId) ?? ASIDE_STAGE_DEFAULT_WIDTH
+export function asideColumnWidth(asideId: string): number {
+  return columnWidthByAside.get(asideId) ?? ASIDE_COLUMN_DEFAULT_WIDTH
 }
 
-export function setAsideStageWidth(asideId: string, width: number): void {
-  stageWidthByAside.set(asideId, Math.max(ASIDE_STAGE_MIN_WIDTH, Math.round(width)))
+export function setAsideColumnWidth(asideId: string, width: number): void {
+  columnWidthByAside.set(asideId, Math.max(ASIDE_COLUMN_MIN_WIDTH, Math.round(width)))
   emit()
 }
 
-/** The stage width for `asideId`, re-rendering the stage as it is dragged. */
-export function useAsideStageWidth(asideId: string): number {
+/** The column width for `asideId`, re-rendering the column as it is dragged. */
+export function useAsideColumnWidth(asideId: string): number {
   return useSyncExternalStore(
     subscribe,
-    () => asideStageWidth(asideId),
-    () => asideStageWidth(asideId)
+    () => asideColumnWidth(asideId),
+    () => asideColumnWidth(asideId)
   )
 }
 
