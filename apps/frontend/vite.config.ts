@@ -48,7 +48,7 @@ const MARKDOWN_HTML_PACKAGES = [
 const REACT_PACKAGES = ["react", "react-dom", "scheduler"]
 
 /** Workbox's per-file precache limit: a larger file fails the deploy build. */
-const PRECACHE_FILE_LIMIT_BYTES = 2 * 1024 * 1024
+const PRECACHE_FILE_LIMIT_BYTES = 5 * 1024 * 1024
 const PRECACHE_EXTENSIONS = ["js", "mjs", "css", "html", "ico", "png", "svg", "woff", "woff2"]
 // recover.html is the nuclear-option SW-unregister page (public/recover.html).
 // It must stay network-served even when the app shell is broken; precaching
@@ -250,10 +250,9 @@ export default defineConfig({
     sourcemap: "hidden",
     rollupOptions: {
       output: {
-        // KaTeX's 261 kB of JS gets its own chunk: inside the entry chunk, that
-        // chunk crosses workbox's 2 MiB per-file precache limit and the build
-        // fails outright. The chunk is still a static import of the entry, so it
-        // loads before first paint and math never renders twice.
+        // KaTeX's 261 kB of JS gets its own chunk to keep the entry chunk down.
+        // The chunk is still a static import of the entry, so it loads before
+        // first paint and math never renders twice.
         // The HTML parser behind GitHub previews (parse5 via rehype-raw) and
         // React's 560 kB sit in their own chunks for the same reason.
         manualChunks: (id: string) => {
