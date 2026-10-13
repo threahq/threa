@@ -11,6 +11,8 @@ interface PanelResizeHandleProps {
   onPointerMove: (e: React.PointerEvent) => void
   onPointerEnd: (e: React.PointerEvent) => void
   onKeyDown: (e: React.KeyboardEvent) => void
+  /** A double click or double tap: sizes every pane along this divider equally. */
+  onReset?: () => void
   ariaLabel?: string
   /** `"y"` divides stacked sections: a horizontal hairline dragged up and down. */
   axis?: "x" | "y"
@@ -28,6 +30,7 @@ export function PanelResizeHandle({
   onPointerMove,
   onPointerEnd,
   onKeyDown,
+  onReset,
   ariaLabel = "Resize thread panel",
   axis = "x",
   className,
@@ -55,6 +58,7 @@ export function PanelResizeHandle({
       onPointerCancel={onPointerEnd}
       onLostPointerCapture={onPointerEnd}
       onKeyDown={onKeyDown}
+      onDoubleClick={onReset}
       tabIndex={0}
       role="separator"
       aria-orientation={axis === "x" ? "vertical" : "horizontal"}
