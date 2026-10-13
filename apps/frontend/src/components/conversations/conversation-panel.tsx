@@ -83,7 +83,14 @@ import { boardReplyDraftKey, boardBranchReplyDraftKey } from "@/lib/board/draft-
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { useStreamName } from "@/hooks/use-stream-name"
 import { useConversationTitle } from "@/hooks/use-conversation-title"
-import { usePanel, parseConversationPanel, useSidebar, useCoordinatedPhase, type CoordinatedPhase } from "@/contexts"
+import {
+  usePanel,
+  parseConversationPanel,
+  useSidebar,
+  useCoordinatedPhase,
+  useRevealReady,
+  type CoordinatedPhase,
+} from "@/contexts"
 import { useStreamFromStore } from "@/stores/stream-store"
 import { consumeConversationReplyOpen, subscribeConversationReplyOpen } from "@/stores/conversation-reply-open-store"
 import { useConversationBoardPost, useSplitThread } from "@/hooks/use-conversations"
@@ -448,6 +455,7 @@ export function ConversationPanel({ workspaceId, onClose, className }: Conversat
   // otherwise the phase latches at "skeleton" and the header shimmers forever above
   // a resolved empty state.
   const shellPhase = useCoordinatedPhase({ isLoading: !post && !unopenable, isReady: !!post || unopenable })
+  useRevealReady(unopenable)
   const skeletonShownRef = useRef<{ conversationId: string | null; shown: boolean }>({ conversationId, shown: false })
   if (skeletonShownRef.current.conversationId !== conversationId) {
     skeletonShownRef.current = { conversationId, shown: false }
@@ -849,6 +857,7 @@ function ConversationPanelBody({
   // The shared coordinated-loading machine (INV-35): blank while the open is
   // young, a skeleton only once it is genuinely slow, content when revealed.
   const ownPhase = useCoordinatedPhase({ isLoading: !revealed, isReady: revealed })
+  useRevealReady(revealed)
   const stillLoadingPhase: CoordinatedPhase = ownPhase === "skeleton" || skeletonAlreadyVisible ? "skeleton" : "loading"
   const phase: CoordinatedPhase = revealed ? "ready" : stillLoadingPhase
 

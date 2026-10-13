@@ -972,7 +972,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     </div>
   )
 
-  return <PagePanes workspaceId={workspaceId} page={boardColumn} />
+  return <PagePanes workspaceId={workspaceId} page={{ node: boardColumn, ready: !loading }} />
 }
 
 /** The board's pane header: always first of a phone's panes, so it keeps the sidebar toggle. */

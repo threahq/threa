@@ -4,7 +4,10 @@ import {
   CoordinatedLoadingProvider,
   CoordinatedLoadingGate,
   MainContentGate,
+  RevealParticipant,
+  REVEAL_CAP_MS,
   useCoordinatedLoading,
+  useRevealReady,
 } from "./coordinated-loading-context"
 import { QUERY_LOAD_STATE, isQueryLoadStateLoading, type QueryLoadState } from "@/lib/query-load-state"
 import { ApiError } from "@/api/client"
@@ -152,6 +155,12 @@ async function flushEffects() {
   await act(async () => {
     await Promise.resolve()
   })
+  // The reveal latches a frame after the last participant change.
+  if (vi.isFakeTimers()) {
+    act(() => {
+      vi.advanceTimersToNextFrame()
+    })
+  }
 }
 
 function makeReadyWorkspaceState() {
@@ -214,6 +223,7 @@ describe("CoordinatedLoadingProvider", () => {
   })
 
   it("stays blank through a slightly-slow load and only shows the skeleton after 600ms", async () => {
+    const start = Date.now()
     render(
       <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
         <TestConsumer />
@@ -225,7 +235,7 @@ describe("CoordinatedLoadingProvider", () => {
 
     // A slightly-slow load (under 600ms) must not flash a skeleton.
     act(() => {
-      vi.advanceTimersByTime(599)
+      vi.advanceTimersByTime(599 - (Date.now() - start))
     })
     expect(screen.getByTestId("phase").textContent).toBe("loading")
 
@@ -841,6 +851,91 @@ describe("MainContentGate", () => {
 
     expect(screen.queryByTestId("stream-content-skeleton")).not.toBeInTheDocument()
     expect(screen.getByTestId("content")).toBeInTheDocument()
+  })
+})
+
+function PaneContent({ id, ready }: { id: string; ready: boolean }) {
+  useRevealReady(ready)
+  return <div data-testid={id}>{id}</div>
+}
+
+function RevealHarness({ ready, covered = false }: { ready: boolean; covered?: boolean }) {
+  return (
+    <CoordinatedLoadingProvider workspaceId="workspace_1" streamIds={["stream_1"]}>
+      <TestConsumer />
+      <MainContentGate>
+        <RevealParticipant label="stream_1" covered={false}>
+          <PaneContent id="main" ready />
+        </RevealParticipant>
+        <RevealParticipant label="stream_2" covered={covered}>
+          <PaneContent id="beside" ready={ready} />
+        </RevealParticipant>
+      </MainContentGate>
+    </CoordinatedLoadingProvider>
+  )
+}
+
+const isHidden = (testId: string) => !!screen.getByTestId(testId).parentElement?.classList.contains("[&>*]:opacity-0")
+
+describe("first reveal", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.useFakeTimers()
+    mockStreamResults = []
+    mockMemberships = []
+    mockDmPeers = []
+    mockPersonas = []
+    mockBots = []
+    mockSyncStatuses = new Map()
+    mockSyncErrors = new Map()
+    mockE2eSessionStatus = "no-key"
+    makeReadyWorkspaceState()
+    installSpies()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.clearAllMocks()
+  })
+
+  it("should mount every pane hidden and reveal them together when the last one reports ready", async () => {
+    const { rerender } = render(<RevealHarness ready={false} />)
+    await flushEffects()
+
+    expect({
+      phase: screen.getByTestId("phase").textContent,
+      main: isHidden("main"),
+      beside: isHidden("beside"),
+    }).toEqual({ phase: "loading", main: true, beside: true })
+
+    rerender(<RevealHarness ready />)
+    await flushEffects()
+
+    expect({
+      phase: screen.getByTestId("phase").textContent,
+      main: isHidden("main"),
+      beside: isHidden("beside"),
+    }).toEqual({ phase: "ready", main: false, beside: false })
+  })
+
+  it("should not wait on a covered pane", async () => {
+    render(<RevealHarness ready={false} covered />)
+    await flushEffects()
+
+    expect(screen.getByTestId("phase").textContent).toBe("ready")
+  })
+
+  it("should reveal at the cap without a pane that never reports, naming it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {})
+    render(<RevealHarness ready={false} />)
+    await flushEffects()
+
+    act(() => {
+      vi.advanceTimersByTime(REVEAL_CAP_MS)
+    })
+
+    expect(screen.getByTestId("phase").textContent).toBe("ready")
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Revealing without stream_2"))
   })
 })
 
