@@ -23,7 +23,7 @@ export function usePaneToggle(openId: string | null, newId: string): [boolean, (
     openId !== null &&
     host !== null &&
     isPanelOnShow(screen, host) &&
-    (layout.focused === undefined || layout.focused === openId)
+    (layout.focused === undefined || layout.focused.includes(openId))
   const toggle = () => {
     if (onShow) return closeTab(openId)
     // Folded behind another tab its place in the URL is already right; working in it brings it forward.

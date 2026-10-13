@@ -15,8 +15,8 @@ export interface PaneMapCell {
 }
 
 export interface PaneFocus {
-  /** The tab floating over the rest, or null. */
-  focused: string | null
+  /** The tabs floating over the rest, in layout order. */
+  focused: readonly string[]
   map: readonly PaneMapCell[]
 }
 
@@ -28,10 +28,11 @@ export function PaneFocusToggle() {
   const focus = useContext(PaneFocusContext)
   const { panelId, shownPanes, focusTab } = usePanel()
   const { preferences } = usePreferences()
-  if (!focus || !panelId || (shownPanes < 2 && focus.focused !== panelId)) return null
+  const floating = !!focus && !!panelId && focus.focused.includes(panelId)
+  if (!focus || !panelId || (shownPanes < 2 && !floating)) return null
   const binding = getEffectiveKeyBinding("togglePaneFocus", preferences?.keyboardShortcuts ?? {})
 
-  if (focus.focused !== panelId) {
+  if (!floating) {
     return (
       <Button
         variant="ghost"
@@ -79,9 +80,9 @@ export function PaneFocusToggle() {
  * for the next press; a field, an open overlay, or anything outside the pane
  * with focus (the overview floating over it) keeps its Escape.
  */
-export function usePaneFocusEscape(focused: string | null, restore: () => void) {
+export function usePaneFocusEscape(floating: boolean, restore: () => void) {
   useEffect(() => {
-    if (focused === null) return
+    if (!floating) return
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.repeat || event.defaultPrevented) return
       const target = event.target as HTMLElement | null
@@ -94,5 +95,5 @@ export function usePaneFocusEscape(focused: string | null, restore: () => void) 
     }
     window.addEventListener("keydown", handleKeyDown, true)
     return () => window.removeEventListener("keydown", handleKeyDown, true)
-  }, [focused, restore])
+  }, [floating, restore])
 }
