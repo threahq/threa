@@ -130,8 +130,7 @@ let sdk: Promise<AnalyticsRoot> | null = null
 /**
  * The SDK is imported here rather than at module scope for two reasons: nothing
  * may load it before consent is granted, and a static import pulls it into the
- * entry chunk, which then crosses the service worker's 2 MiB precache limit and
- * fails the production build (see apps/frontend/vite.config.ts).
+ * entry chunk.
  */
 function loadSdk(): Promise<AnalyticsRoot> {
   sdk ??= import("posthog-js").then((module) => module.default)

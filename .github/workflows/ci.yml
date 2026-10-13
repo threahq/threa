@@ -313,7 +313,7 @@ jobs:
 
       # The production build, not the E2E one. `build:e2e` sets the PWA plugin's
       # globPatterns to [], so it never builds a precache manifest and never
-      # checks any asset against the 2 MiB per-file limit — a chunk that grows
+      # checks any asset against the per-file precache limit — a chunk that grows
       # past it fails only in deploy-cloudflare.yml, after merge, with the
       # frontend left on the previous release.
       - name: Build frontend

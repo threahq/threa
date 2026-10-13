@@ -478,8 +478,7 @@ async function main() {
   if (remoteMode) {
     console.log("Building frontend for reliable Tailscale delivery...")
     // Force a production build: Bun auto-loads .env, and a dev NODE_ENV there
-    // leaves the bundle unminified, which pushes the entry chunk past
-    // vite-plugin-pwa's 2 MiB precache cap and fails the build.
+    // leaves the bundle unminified.
     const build = await $`bun run --cwd apps/frontend build`.env({ ...process.env, NODE_ENV: "production" }).nothrow()
     if (build.exitCode !== 0) {
       console.error("Frontend build failed")
