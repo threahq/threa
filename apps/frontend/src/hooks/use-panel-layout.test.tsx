@@ -59,6 +59,16 @@ describe("usePanelLayout", () => {
 
     expect(result.current.showContent).toBe(false)
   })
+
+  it("should open at the default width when a panel sized before it closed opens again", () => {
+    const { result, rerender } = renderHook(({ open }) => usePanelLayout(open), { initialProps: { open: true } })
+    act(() => result.current.sizePanel(700, 1))
+    expect(result.current.panelWidth).toBe(700)
+
+    rerender({ open: false })
+    rerender({ open: true })
+    expect(result.current.panelWidth).toBe(480)
+  })
 })
 
 function transitionEnd(propertyName: string, target: object, currentTarget: object): React.TransitionEvent {

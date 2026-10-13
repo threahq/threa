@@ -11,7 +11,8 @@ import * as giphyModule from "@/hooks/use-giphy-enabled"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
 import * as contextsModule from "@/contexts"
 import * as currentUserModule from "@/hooks/use-current-workspace-user-id"
-import { RichEditor, readDroppedUrl, type RichEditorHandle } from "./rich-editor"
+import { readDroppedUrl } from "@/lib/stream-drag"
+import { RichEditor, type RichEditorHandle } from "./rich-editor"
 
 const NO_MENTIONABLES = { mentionables: [], isLoading: false }
 const NO_EMOJI = { emojis: [], emojiWeights: {}, toEmoji: () => null, toShortcode: () => null }

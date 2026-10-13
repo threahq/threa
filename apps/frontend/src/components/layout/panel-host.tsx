@@ -245,9 +245,9 @@ interface PlacedTab {
 
 type PanelGridState = ReturnType<typeof usePanelGrid>
 
-/** The page's grid for `display`: its row tracks, each section's area, and the column shares as last dragged. */
-export function usePanelGrid(display: PanelLayout) {
-  const [sizes, setSizes] = usePanelGridSizes(display)
+/** The page's grid for `display`, fitted from `layout`: its row tracks, each section's area, and the column shares as last dragged. */
+export function usePanelGrid(display: PanelLayout, layout: PanelLayout) {
+  const [sizes, setSizes] = usePanelGridSizes(display, layout)
   const { rows, areas } = useMemo(() => compilePanelGrid(sizes), [sizes])
   return { sizes, setSizes, rows, areas }
 }
@@ -601,16 +601,24 @@ function paneMap(
   })
 }
 
-/** Section sizes last dragged for this arrangement's shape, so undoing a split finds the old sizes again. */
-function usePanelGridSizes(display: PanelLayout) {
-  const [stored, setStored] = useState<Record<string, PanelGridSizes>>({})
+/**
+ * Section sizes last dragged for the shape on show, so a window that folds a
+ * column finds them again when it widens. Opening or closing a section forgets them.
+ */
+function usePanelGridSizes(display: PanelLayout, layout: PanelLayout) {
+  const arrangement = panelGridShape(layout)
+  const [stored, setStored] = useState<{ arrangement: string; byShape: Record<string, PanelGridSizes> }>({
+    arrangement,
+    byShape: {},
+  })
+  if (stored.arrangement !== arrangement) setStored({ arrangement, byShape: {} })
   const shape = panelGridShape(display)
   const setSizes = useCallback(
-    (next: PanelGridSizes) => setStored((current) => ({ ...current, [shape]: next })),
+    (next: PanelGridSizes) => setStored((current) => ({ ...current, byShape: { ...current.byShape, [shape]: next } })),
     [shape]
   )
   const fallback = useMemo(() => defaultPanelGridSizes(display), [display])
-  return [stored[shape] ?? fallback, setSizes] as const
+  return [(stored.arrangement === arrangement && stored.byShape[shape]) || fallback, setSizes] as const
 }
 
 /** The page grid's height, measured before paint so a short window never shows sections it folds. */

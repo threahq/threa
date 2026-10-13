@@ -1,4 +1,4 @@
-import type { PanelLayout } from "./panel-tabs"
+import { locate, type PaneEdge, type PanelLayout, type PanelSection } from "./panel-tabs"
 
 /** How a panel opened beside another panel splits with it: the one being read keeps the larger share. */
 export const BESIDE_SPLIT_RATIO = 1.4
@@ -57,6 +57,51 @@ export function panelColumnWidths(shares: readonly number[], width: number): num
   const total = sum(shares)
   return shares.map((share) => (width * share) / total)
 }
+/**
+ * Sizes for `after`, the arrangement a drop of `id` on the `side` edge of a pane
+ * of `before` made: the dropped pane takes the half of that pane its zone showed,
+ * the pane keeps the other half, and every other column and section keeps its
+ * size. `widths` are `before`'s columns in pixels, the page's own first; the
+ * result's columns are pixels too.
+ */
+export function droppedPanelSizes(
+  before: PanelLayout,
+  widths: readonly number[],
+  rows: readonly (readonly number[])[],
+  after: PanelLayout,
+  id: string,
+  side: PaneEdge
+): PanelGridSizes {
+  const origin = (section: PanelSection) => {
+    const other = section.ids.find((tab) => tab !== id)
+    return other === undefined ? null : locate(before, other)
+  }
+  const shareOf = (section: PanelSection) => {
+    const from = origin(section)
+    return from ? rows[from.column][from.row] : 0
+  }
+  const widthOf = (column: number) => widths[after.columns[column].map(origin).find((from) => from !== null)!.column]
+  const step = side === "right" || side === "bottom" ? -1 : 1
+
+  if (side === "left" || side === "right") {
+    const added = after.columns.findIndex((sections) => sections.every((section) => origin(section) === null))
+    const half = widthOf(added + step) / 2
+    return {
+      columns: after.columns.map((_, column) => (column === added || column === added + step ? half : widthOf(column))),
+      rows: after.columns.map((sections, column) => (column === added ? [1] : sections.map(shareOf))),
+    }
+  }
+  return {
+    columns: after.columns.map((_, column) => widthOf(column)),
+    rows: after.columns.map((sections) => {
+      const added = sections.findIndex((section) => origin(section) === null)
+      if (added === -1) return sections.map(shareOf)
+      const half = shareOf(sections[added + step]) / 2
+      return sections.map((section, row) => (row === added || row === added + step ? half : shareOf(section)))
+    }),
+  }
+}
+
 const edgeKey = (edge: number) => edge.toFixed(4)
 
 /**

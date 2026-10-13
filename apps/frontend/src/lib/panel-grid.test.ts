@@ -2,13 +2,14 @@ import { describe, it, expect } from "vitest"
 import {
   compilePanelGrid,
   defaultPanelGridSizes,
+  droppedPanelSizes,
   evenPanelColumns,
   evenShares,
   panelColumnWidths,
   panelGridShape,
   resplit,
 } from "./panel-grid"
-import { parsePanelLayout } from "./panel-tabs"
+import { dropPanelTab, parsePanelLayout, type PaneEdge } from "./panel-tabs"
 
 describe("compilePanelGrid", () => {
   it("should fill one cell when there is one section", () => {
@@ -87,6 +88,38 @@ describe("evenPanelColumns", () => {
     expect(evenPanelColumns({ columns: [2, 1, 3], rows: [[1], [1, 2], [1]] })).toEqual({
       columns: [2, 2, 2],
       rows: [[1], [1, 2], [1]],
+    })
+  })
+})
+
+describe("droppedPanelSizes", () => {
+  const drop = (layout: string, widths: number[], rows: number[][], id: string, of: string, side: PaneEdge) => {
+    const before = parsePanelLayout(layout)
+    return droppedPanelSizes(before, widths, rows, dropPanelTab(before, id, { kind: "edge", of, side }), id, side)
+  }
+
+  it("should give a pane dropped beside the page alone the half of it its zone showed", () => {
+    expect(drop("m", [1000], [[1]], "x", "m", "right")).toEqual({ columns: [500, 500], rows: [[1], [1]] })
+  })
+
+  it("should halve the panel a pane is dropped beside and keep every other column's width", () => {
+    expect(drop("m-a-b", [400, 350, 250], [[1], [1], [1]], "x", "a", "right")).toEqual({
+      columns: [400, 175, 175, 250],
+      rows: [[1], [1], [1], [1]],
+    })
+  })
+
+  it("should let a tab moved out of its own column take half of the one it lands beside", () => {
+    expect(drop("m-a-b", [400, 350, 250], [[1], [1], [1]], "b", "a", "left")).toEqual({
+      columns: [400, 175, 175],
+      rows: [[1], [1], [1]],
+    })
+  })
+
+  it("should halve the section a pane is dropped under and keep the rest of its column", () => {
+    expect(drop("m-a--c", [500, 500], [[1], [2, 1]], "x", "a", "bottom")).toEqual({
+      columns: [500, 500],
+      rows: [[1], [1, 1, 1]],
     })
   })
 })

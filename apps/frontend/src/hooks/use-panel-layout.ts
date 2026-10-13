@@ -30,8 +30,16 @@ interface PanelLayoutOptions {
   columns?: number
 }
 
+const scaleOf = (columns: number) => 1 + (columns - 1) / BESIDE_SPLIT_RATIO
+
 export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions = {}) {
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH)
+  // A panel opens at the default width, whatever it had when it last closed.
+  const [wasOpen, setWasOpen] = useState(isPanelOpen)
+  if (wasOpen !== isPanelOpen) {
+    setWasOpen(isPanelOpen)
+    if (isPanelOpen) setPanelWidth(DEFAULT_PANEL_WIDTH)
+  }
   const [enableTransition, setEnableTransition] = useState(false)
   const [showContent, setShowContent] = useState(isPanelOpen)
   const ownContainerRef = useRef<HTMLDivElement>(null)
@@ -54,7 +62,7 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
   const maxColumns =
     containerWidth > 0 ? Math.max(1, Math.floor((containerWidth - MIN_MAIN_WIDTH) / MIN_PANEL_WIDTH)) : requestedColumns
   const columns = Math.min(requestedColumns, maxColumns)
-  const scale = 1 + (columns - 1) / BESIDE_SPLIT_RATIO
+  const scale = scaleOf(columns)
   const minWidth = Math.min(MIN_PANEL_WIDTH * columns, Math.max(MIN_PANEL_WIDTH, maxWidth))
   const effectiveWidth =
     containerWidth > 0 ? Math.max(minWidth, Math.min(maxWidth, Math.round(panelWidth * scale))) : panelWidth * scale
@@ -128,6 +136,9 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
     [handleWidthChange, containerWidth, columns]
   )
 
+  /** Sizes the panel to `width` pixels across, for an arrangement of `columns` beside the main one. */
+  const sizePanel = useCallback((width: number, columns: number) => setPanelWidth(width / scaleOf(columns)), [])
+
   return {
     containerRef,
     panelWidth: effectiveWidth,
@@ -145,5 +156,6 @@ export function usePanelLayout(isPanelOpen: boolean, options: PanelLayoutOptions
     handleResizeKeyDown,
     handleResizeReset,
     handleTransitionEnd,
+    sizePanel,
   }
 }

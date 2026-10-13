@@ -89,6 +89,43 @@ async function tagOf(target: Locator): Promise<string | null> {
   return target.first().evaluate((el) => (el as unknown as Record<string, string>).__dropTag ?? null)
 }
 
+test("should open a dropped pane at the size its drop zone showed", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1200 })
+  const { names, streamB, streamC } = await seed(page)
+  const indicator = page.getByTestId("pane-drop-indicator")
+  let zone = { width: 0, height: 0 }
+  const shows = (side: string) => async () => {
+    await expect(indicator).toHaveAttribute("data-drop", side)
+    zone = (await indicator.boundingBox())!
+  }
+  const sizeOf = async (pane: Locator) => {
+    const box = (await pane.boundingBox())!
+    return { width: Math.round(box.width), height: Math.round(box.height) }
+  }
+  const near = (size: number) => ({ size, within: (actual: number) => Math.abs(actual - size) <= 2 })
+  const expectSize = async (pane: Locator, axis: "width" | "height") => {
+    const expected = near(zone[axis])
+    await expect.poll(async () => expected.within((await sizeOf(pane))[axis])).toBe(true)
+  }
+
+  // Beside the page alone: half the page, whatever width a panel last had.
+  await drag(page, sidebarRow(page, names.b), await at(mainPane(page), 0.95, 0.4), shows("right"))
+  await expectSize(tabPane(page, streamB), "width")
+
+  await drag(page, sidebarRow(page, names.c), await settledAt(tabPane(page, streamB), 0.95, 0.5), shows("right"))
+  await expectSize(tabPane(page, streamC), "width")
+  await expectSize(tabPane(page, streamB), "width")
+
+  await drag(
+    page,
+    tabPane(page, streamC).locator("[data-pane-drag-handle]"),
+    await settledAt(tabPane(page, streamB), 0.5, 0.8),
+    shows("bottom")
+  )
+  await expectSize(tabPane(page, streamC), "height")
+  await expectSize(tabPane(page, streamB), "height")
+})
+
 test("should open, split and splice where a sidebar row or a tab is dropped, without remounting main", async ({
   page,
 }) => {
