@@ -39,7 +39,6 @@ import {
   SidebarActionDrawer,
   SidebarActionMenu,
   browseStreamsAction,
-  openInNewTabAction,
   type SidebarActionItem,
   type SidebarActionPreview,
 } from "./sidebar-actions"
@@ -64,7 +63,7 @@ import { StreamHoverCard, useSidebarHoverIntent } from "./stream-hover-card"
 import { truncateContent } from "./utils"
 import type { SidebarBoardMode } from "./board-sidebar-mode"
 import type { StreamItemData } from "./types"
-import { useStreamRowPick, useStreamTabOpen } from "./stream-pick"
+import { useStreamRowPick } from "./stream-pick"
 
 interface ScratchpadItemProps {
   workspaceId: string
@@ -194,7 +193,6 @@ export function ScratchpadItem({
     return items
   }, [boardMode, boardScopable, boardIncluded, boardExcluded, boardMuted, streamWithPreview.id, workspaceId])
 
-  const openTab = useStreamTabOpen()
   const actions = useMemo<SidebarActionItem[]>(() => {
     // Inbox and board mode are mutually exclusive (isInboxRow is forced false
     // whenever boardMode is set), so boardActions is always empty here.
@@ -205,17 +203,6 @@ export function ScratchpadItem({
     return [
       ...clearInbox,
       ...boardActions,
-      ...(!isDraft && openTab
-        ? [
-            {
-              ...openInNewTabAction(() => {
-                openTab(streamWithPreview.id)
-                collapseOnMobile()
-              }),
-              separatorBefore: boardActions.length > 0 || clearInbox.length > 0,
-            },
-          ]
-        : []),
       ...(!isDraft
         ? [
             {
@@ -223,7 +210,7 @@ export function ScratchpadItem({
               label: "Settings",
               icon: Settings,
               onSelect: () => openStreamSettings(streamWithPreview.id),
-              separatorBefore: !openTab && (boardActions.length > 0 || clearInbox.length > 0),
+              separatorBefore: boardActions.length > 0 || clearInbox.length > 0,
             } satisfies SidebarActionItem,
             {
               id: "labels",
@@ -273,7 +260,6 @@ export function ScratchpadItem({
   }, [
     handleArchive,
     isDraft,
-    openTab,
     openStreamSettings,
     openExplorer,
     openOutcomes,

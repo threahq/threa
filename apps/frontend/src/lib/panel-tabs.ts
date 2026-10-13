@@ -483,13 +483,10 @@ export function fullPanelLayout(path: string | null, panels: PanelLayout): Panel
 
 /**
  * What `?panel=` holds of `layout` when the route names `path`: everything but
- * a first column showing `path` alone, which the route already implies. A phone
- * with `path` in front (`keepPath`) writes that column when other panes are
- * open, which tells `/s/a?panel=a-b` (a in front) from `/s/a?panel=b` (b in front).
+ * a first column showing `path` alone, which the route already implies.
  */
-export function canonicalPanelLayout(layout: PanelLayout, path: string | null, keepPath = false): PanelLayout {
+export function canonicalPanelLayout(layout: PanelLayout, path: string | null): PanelLayout {
   if (path === null || soleFirstPanelOf(layout) !== path || layout.focused?.includes(path)) return layout
-  if (keepPath && layout.columns.length > 1) return layout
   const columns = layout.columns.slice(1)
   if (columns.length === 0) return NO_PANELS
   return layout.focused === undefined ? { columns } : { columns, focused: layout.focused }
@@ -498,22 +495,6 @@ export function canonicalPanelLayout(layout: PanelLayout, path: string | null, k
 /** A pane a route can name: a stream's, or a workspace page's. */
 export function isRoutePane(id: string): boolean {
   return isServerStreamId(id) || pagePathOf(id) !== null
-}
-
-/**
- * Where a phone's route goes with `front` in front of `layout`, for
- * {@link canonicalPanelLayout}: a route pane is the route and written out
- * (`keepPath`). Otherwise the route goes to one `?panel=` can leave out, so
- * a reload or Back lands on the newest pane; without one, to `fallback`.
- */
-export function phonePanelRoute(
-  layout: PanelLayout,
-  front: string | null,
-  fallback: string | null
-): { path: string | null; keepPath: boolean } {
-  if (front !== null && isRoutePane(front) && locate(layout, front)) return { path: front, keepPath: true }
-  const sole = soleFirstPanelOf(layout)
-  return { path: sole !== null && isRoutePane(sole) ? sole : fallback, keepPath: false }
 }
 
 /**

@@ -25,14 +25,12 @@ import { isPinnedPagePane, pagePaneAt, pagePathOf } from "@/lib/page-panes"
 import { flashPane } from "@/lib/pane-flash"
 import {
   PANEL_PARAM,
-  SECTION_SEPARATOR,
   activatePanelTab,
   canonicalPanelLayout,
   closePanelTab,
   focusPanelTab,
   followCurrentPanel,
   firstColumnHolds,
-  phonePanelRoute,
   followPanel,
   formatPanelLayout,
   readablePanelParam,
@@ -219,18 +217,13 @@ function panesOwnedBy(layout: PanelLayout, streamId: string): string[] {
   return panelIdsOf(layout).filter((id) => streamOwning(id) === streamId)
 }
 
-/**
- * A phone's open: `panelId` takes the place of the pane it is opened from, or of that pane's stream for one of
- * the stream's own, which close with it. One already open is brought forward instead.
- */
-function showInPlaceOf(layout: PanelLayout, from: string, panelId: string): PanelLayout {
-  if (panelIdsOf(layout).includes(panelId)) return activatePanelTab(layout, panelId)
-  const owner = coverPaneOf(layout, from)
-  if (!panelIdsOf(layout).includes(owner)) return openPanelTabBeside(layout, from, panelId)
-  return panesOwnedBy(layout, owner).reduce(closePanelTab, replacePanelTab(layout, owner, panelId))
+/** A phone's open: `panelId` is the one pane over the route's, so whatever else was over it closes. */
+function showOverRoute(layout: PanelLayout, route: string, panelId: string): PanelLayout {
+  const cleared = panelIdsOf(layout)
+    .filter((id) => id !== route && id !== panelId)
+    .reduce(closePanelTab, layout)
+  return panelIdsOf(cleared).includes(panelId) ? cleared : openPanelTabBeside(cleared, route, panelId)
 }
-
-type Placement = "tab" | "place"
 
 export interface OpenPanelOptions {
   /** Overwrite the current history entry instead of adding one. Only for a panel
@@ -240,15 +233,6 @@ export interface OpenPanelOptions {
   replace?: boolean
   /** Open beside this pane rather than the consumer's own, where it is open. */
   beside?: string
-  /** Open as a tab of its own even on a phone, where a pane otherwise takes the place of the one it is opened from. */
-  newTab?: boolean
-  /** On a phone, take the place of the pane on show even where it would open beside it: a sidebar pick from a page. */
-  inPlace?: boolean
-}
-
-function placementOf(options?: OpenPanelOptions): Placement | undefined {
-  if (options?.beside !== undefined || options?.newTab === true) return "tab"
-  return options?.inPlace === true ? "place" : undefined
 }
 
 interface PanelContextValue {
@@ -267,6 +251,10 @@ interface PanelContextValue {
   hasTabs: boolean
   /** Whether this consumer's pane sits in the stream page's first column, where the page's stream shows. */
   inFirstColumn: boolean
+  /** Whether this consumer's pane is the one the route names. */
+  onRoute: boolean
+  /** A phone, which shows the route's pane or the one pane over it. */
+  phone: boolean
   /** Whether closing this consumer's pane would close it: the last stream pane of the page stays. */
   canClosePanel: boolean
 
@@ -347,9 +335,10 @@ interface PanelOps {
   tabbed: boolean
   /** A phone, which shows one pane at a time and no tab rows. */
   phone: boolean
-  /** Opening from `scopeId`'s tab, or from the route's stream when null (a phone's pane in front); on a phone `"tab"`
-   *  opens a tab of its own and `"place"` takes the place of the page or stream it is opened from. */
-  contextual: (layout: PanelLayout, panelId: string, scopeId: string | null, placement?: Placement) => PanelLayout
+  /** The pane the route names. */
+  routePane: string | null
+  /** Opening from `scopeId`'s tab, or from the route's stream when null (a phone's pane in front). */
+  contextual: (layout: PanelLayout, panelId: string, scopeId: string | null) => PanelLayout
   closeTab: (panelId: string) => void
   closeTabs: (panelIds: readonly string[]) => void
   canCloseTab: (panelId: string) => boolean
@@ -390,8 +379,8 @@ function dropDeepLink(params: URLSearchParams) {
   params.delete(DEEP_LINK_PARAM)
 }
 
-function setLayoutParam(params: URLSearchParams, layout: PanelLayout, path: string | null, keepPath = false) {
-  const value = formatPanelLayout(canonicalPanelLayout(layout, path, keepPath))
+function setLayoutParam(params: URLSearchParams, layout: PanelLayout, path: string | null) {
+  const value = formatPanelLayout(canonicalPanelLayout(layout, path))
   if (value) params.set(PANEL_PARAM, value)
   else params.delete(PANEL_PARAM)
 }
@@ -401,12 +390,11 @@ function withLayout(
   params: URLSearchParams,
   layout: PanelLayout,
   path: string | null,
-  coverOwner: string | null,
-  keepPath = false
+  coverOwner: string | null
 ): URLSearchParams {
   const next = new URLSearchParams(params)
   if (coverOwner !== null && !isPanelOnShow(layout, coverOwner)) dropDeepLink(next)
-  setLayoutParam(next, layout, path, keepPath)
+  setLayoutParam(next, layout, path)
   return next
 }
 
@@ -476,6 +464,8 @@ function buildValue(
     shownPanes,
     hasTabs: ops.tabbed,
     inFirstColumn: ops.tabbed && own !== null && firstColumnHolds(layout, own),
+    onRoute: own !== null && own === ops.routePane,
+    phone: ops.phone,
     canClosePanel: own !== null && ops.canCloseTab(own),
     getPanelUrl: (panelId) =>
       ops.urlFor((current) => ops.contextual(current, panelId, scopeId), false, focusOnOpen(panelId)),
@@ -489,10 +479,7 @@ function buildValue(
               ops.contextual(
                 current,
                 panelId,
-                options?.beside !== undefined && panelIdsOf(current).includes(options.beside)
-                  ? options.beside
-                  : scopeId,
-                placementOf(options)
+                options?.beside !== undefined && panelIdsOf(current).includes(options.beside) ? options.beside : scopeId
               ),
             false,
             focusOnOpen(panelId)
@@ -537,17 +524,9 @@ function buildValue(
   }
 }
 
-/** Where a phone's reload or Back lands: the route's pane when `?panel=` writes it, else the newest pane, as links written before did. */
-function phoneLandingOf(layout: PanelLayout, panelValue: string | null, routePane: string | null): string | null {
-  if (layout.focused !== undefined) return layout.focused.at(-1)!
-  if (routePane !== null && writesRoutePane(panelValue, routePane)) return routePane
-  return newestPanelOf(layout)
-}
-
-/** The parser drops a pinned page pane, so one is written only as the first column, in front of the others. */
-function writesRoutePane(panelValue: string | null, routePane: string): boolean {
-  if (isPinnedPagePane(routePane)) return panelValue?.split(SECTION_SEPARATOR)[0] === routePane
-  return panelIdsOf(parsePanelLayout(panelValue)).includes(routePane)
+/** The one pane a phone shows: the newest, over the route's. */
+function phonePaneOf(layout: PanelLayout): string | null {
+  return layout.focused?.at(-1) ?? newestPanelOf(layout)
 }
 
 /** The pane `pathname` names: a stream's, a workspace page's, or the persona editor's. */
@@ -629,19 +608,18 @@ function followPanes(
   path: string | null,
   deepLink: string | null,
   restored: boolean,
-  /** Where a phone lands on this URL; undefined off a phone. */
-  phoneLanding: string | null | undefined
+  phone: boolean
 ): PaneState {
   const moved = state.layout !== layout
   // A tab that just started floating: focused, opened from inside the group, or brought forward in it.
   const focused = layout.focused?.find((id) => !state.layout.focused?.includes(id))
   const followed = moved ? followCurrentPanel(state.layout, layout, state.front) : state.front
-  // Back and Forward restore the pane the route named; a phone lands where a reload of the URL does. Otherwise a
-  // tab just opened is worked in, else a route moved to another stream is, unless a phone's route moved only
-  // because the pane in front is no stream.
+  // Back and Forward restore the pane the route named. Otherwise a tab just opened is worked in, else a route
+  // moved to another stream is. A phone shows the newest pane however the URL got there.
   const opened = panelIdsOf(layout).length > panelIdsOf(state.layout).length && !restored
-  const named = path !== null && path !== state.path && !opened && (phoneLanding === undefined || phoneLanding === path)
-  const front = focused ?? (restored && phoneLanding !== undefined ? phoneLanding : null) ?? (named ? path : followed)
+  const named = path !== null && path !== state.path && !opened
+  let front = focused ?? (named ? path : followed)
+  if (phone && moved) front = phonePaneOf(layout)
   // Whoever sets `?m` owns it; clearing it hands nothing on, and otherwise it
   // stays with the pane it was set in. Back and Forward set nothing: the pane it
   // was set in is still the one following it.
@@ -659,8 +637,6 @@ interface PanelProviderProps {
 interface Target {
   pathname: string
   path: string | null
-  /** A phone is working in the stream `path` names, which `?panel=` then writes out. */
-  keepsPath: boolean
 }
 
 export function PanelProvider({ children }: PanelProviderProps) {
@@ -692,31 +668,22 @@ export function PanelProvider({ children }: PanelProviderProps) {
   const phone = useIsMobileOrCoarse()
   const [paneState, setPaneState] = useState<PaneState>(() => {
     // The route names the pane worked in, and a reloaded `?m` goes to the newest pane, as links already written
-    // expect. A phone, which shows one pane, lands as {@link phoneLandingOf} says, and so does its `?m`.
-    const newest = layout.focused?.at(-1) ?? newestPanelOf(layout)
-    let front = layout.focused?.at(-1) ?? newest
-    if (phone) front = phoneLandingOf(layout, panelValue, routePane)
-    else if (layout.focused === undefined && routePane !== null && !isPinnedPagePane(routePane))
+    // expect. A phone shows that newest pane.
+    const newest = phonePaneOf(layout)
+    let front = newest
+    if (!phone && layout.focused === undefined && routePane !== null && !isPinnedPagePane(routePane))
       front = followPanel(layout, layout, routePane)
-    const owner = phone ? front : newest
     return {
       layout,
       path: routePane,
       deepLink,
       front,
-      coverOwner: owner === null ? null : coverPaneOf(layout, owner),
+      coverOwner: newest === null ? null : coverPaneOf(layout, newest),
     }
   })
   let panes = paneState
   if (panes.layout !== layout || panes.deepLink !== deepLink) {
-    panes = followPanes(
-      panes,
-      layout,
-      routePane,
-      deepLink,
-      restored,
-      phone ? phoneLandingOf(layout, panelValue, routePane) : undefined
-    )
+    panes = followPanes(panes, layout, routePane, deepLink, restored, phone)
     setPaneState(panes)
   }
   const { coverOwner, front } = panes
@@ -767,23 +734,22 @@ export function PanelProvider({ children }: PanelProviderProps) {
 
   // Where the page lands with `next`: the pane worked in after it (a stream tab just opened, or the one
   // taking the current pane's place), else the one taking the route's place when it closes. A page's route
-  // stays put while it is open, and the persona editor's always does.
+  // stays put while it is open, the persona editor's always does, and so does a phone's, whose pane opens over it.
   const targetOf = useCallback(
     (next: PanelLayout, focus: string | null = null): Target | null => {
+      if (routePane === null || isPinnedPagePane(routePane)) return { pathname: location.pathname, path: routePane }
       const current = focus ?? followCurrentPanel(layout, next, front)
-      if (routePane === null || isPinnedPagePane(routePane))
-        return { pathname: location.pathname, path: routePane, keepsPath: phone && current === routePane }
       // The pane just navigated into wins over `front`: the click that pressed it hasn't re-rendered yet.
       const after = routePaneAfter(layout, next, routePane, focus ?? front)
       const follows =
-        !isPagePane(routePane) && current !== null && isServerStreamId(current) && panelIdsOf(next).includes(current)
-      const route = phone ? phonePanelRoute(next, current, after) : { path: follows ? current : after, keepPath: false }
-      if (route.path === null) return null
-      return {
-        pathname: route.path === routePane ? location.pathname : routePathOf(workspaceId, route.path),
-        path: route.path,
-        keepsPath: route.keepPath,
-      }
+        !phone &&
+        !isPagePane(routePane) &&
+        current !== null &&
+        isServerStreamId(current) &&
+        panelIdsOf(next).includes(current)
+      const path = follows ? current : after
+      if (path === null) return null
+      return { pathname: path === routePane ? location.pathname : routePathOf(workspaceId, path), path }
     },
     [routePane, layout, front, location.pathname, workspaceId, phone]
   )
@@ -791,26 +757,23 @@ export function PanelProvider({ children }: PanelProviderProps) {
   // Every route pane of `next` can be the route and show the same panes, so closing pops onto any of them.
   const landingsOf = useCallback(
     (next: PanelLayout, to: Target, params: URLSearchParams): [CoverLanding, ...CoverLanding[]] => {
-      const landing = (pathname: string, path: string | null, keepPath: boolean) => {
+      const landing = (pathname: string, path: string | null) => {
         const landed = routeParamsOf(routePane, params, path, pageQuery)
-        setLayoutParam(landed, next, path, keepPath)
+        setLayoutParam(landed, next, path)
         return { pathname, params: landed }
       }
       const movable = routePane !== null && !isPinnedPagePane(routePane)
       const others = movable ? panelIdsOf(next).filter((id) => id !== to.path && isRoutePane(id)) : []
-      return [
-        landing(to.pathname, to.path, to.keepsPath),
-        ...others.map((id) =>
-          landing(routePathOf(workspaceId, id), id, phone && phonePanelRoute(next, id, id).keepPath)
-        ),
-      ]
+      return [landing(to.pathname, to.path), ...others.map((id) => landing(routePathOf(workspaceId, id), id))]
     },
-    [routePane, pageQuery, workspaceId, phone]
+    [routePane, pageQuery, workspaceId]
   )
 
   const setCurrentPane = useCallback(
     (panelId: string) => {
       setFront(panelId)
+      // A phone's route stays under the pane it shows.
+      if (phone) return
       // The router commits a navigation in a transition, so a click can land while this render still shows
       // the layout before it; rewriting from that would undo the open, drop or move that just happened. This
       // move commits at once for the same reason: typing straight after it would starve its transition, and
@@ -820,40 +783,30 @@ export function PanelProvider({ children }: PanelProviderProps) {
       const liveParams = new URLSearchParams(live.search)
       const liveLayout = fullPanelLayout(livePane, parsePanelLayout(liveParams.get(PANEL_PARAM)))
       if (livePane === null || !panelIdsOf(liveLayout).includes(panelId)) return
-      // A desktop route follows the stream worked in, from a stream; a phone also writes which pane it is in
-      // front of the others, so a reload or Back lands on it.
-      if (!phone && (panelId === livePane || !isServerStreamId(panelId) || isPagePane(livePane))) return
-      const shown = phone ? activatePanelTab(liveLayout, panelId) : liveLayout
-      let route: { path: string | null; keepPath: boolean } = { path: livePane, keepPath: panelId === livePane }
-      if (!isPinnedPagePane(livePane))
-        route = phone ? phonePanelRoute(shown, panelId, livePane) : { path: panelId, keepPath: false }
-      const to = route.path ?? livePane
-      const base = routeParamsOf(livePane, liveParams, to, pageQuery)
-      const params = withLayout(base, shown, to, coverOwner, route.keepPath)
-      const href = hrefOf(to === livePane ? live.pathname : routePathOf(workspaceId, to), params)
-      if (href === hrefOf(live.pathname, liveParams)) return
-      navigate(href, { replace: true, flushSync: true, state: PANE_SWITCH_STATE })
+      // The route follows the stream worked in, from a stream.
+      if (panelId === livePane || !isServerStreamId(panelId) || isPagePane(livePane)) return
+      const base = routeParamsOf(livePane, liveParams, panelId, pageQuery)
+      const params = withLayout(base, liveLayout, panelId, coverOwner)
+      navigate(hrefOf(routePathOf(workspaceId, panelId), params), {
+        replace: true,
+        flushSync: true,
+        state: PANE_SWITCH_STATE,
+      })
     },
     [setFront, router, location, coverOwner, navigate, workspaceId, phone, pageQuery]
   )
 
-  // A phone shows one pane, so what opens from it takes its place and Back brings it back. A stream's own panes
-  // (draft, aside, overview, conversations) still open beside it. So does a link from a page, which stays
-  // mounted under it for Back to land where it was scrolled (a sidebar pick takes its place), and what opens from
-  // an aside, whose sheet shows its threads.
+  // A phone shows one pane over its route's, so what opens takes the place of the one open there. A stream's own
+  // panes (draft, aside, overview, conversations) open with it, and so does what opens from an aside, whose
+  // sheet shows its threads.
   const contextual = useCallback(
-    (current: PanelLayout, panelId: string, scopeId: string | null, placement?: Placement) => {
-      const from = scopeId ?? (phone ? front : null) ?? routePane
-      if (
-        !phone ||
-        placement === "tab" ||
-        from === null ||
-        (isPagePane(from) && placement !== "place") ||
-        parseAsidePanel(from) !== null ||
-        streamOwning(panelId) !== null
-      )
-        return openPanelTabBeside(current, from, panelId)
-      return showInPlaceOf(current, from, panelId)
+    (current: PanelLayout, panelId: string, scopeId: string | null) => {
+      const from = scopeId ?? (phone ? front : null)
+      const overRoute =
+        phone && routePane !== null && parseAsidePanel(from ?? routePane) === null && streamOwning(panelId) === null
+      return overRoute
+        ? showOverRoute(current, routePane, panelId)
+        : openPanelTabBeside(current, from ?? routePane, panelId)
     },
     [routePane, phone, front]
   )
@@ -863,7 +816,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       const next = edit(layout)
       const to = targetOf(next, focus)
       if (to === null) return `${location.pathname}${location.search}`
-      const params = withLayout(routeParams(to.path), next, to.path, coverOwner, to.keepsPath)
+      const params = withLayout(routeParams(to.path), next, to.path, coverOwner)
       if (dropsDeepLink) dropDeepLink(params)
       return hrefOf(to.pathname, params)
     },
@@ -888,7 +841,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       if (to === null) return
       if (focus !== null) setFront(focus)
       const base = routeParams(to.path, to.path === focus ? focusQuery : undefined)
-      const params = withLayout(base, next, to.path, coverOwner, to.keepsPath)
+      const params = withLayout(base, next, to.path, coverOwner)
       if (deepLink !== null) params.set(DEEP_LINK_PARAM, deepLink)
       const path = hrefOf(to.pathname, params)
       const href = `${path}${hash}`
@@ -935,14 +888,15 @@ export function PanelProvider({ children }: PanelProviderProps) {
   )
 
   // A link followed inside a pane: the same page with another query changes it in place, another page or a
-  // stream takes its tab (a phone brings one already open forward instead), and a stream's permalink to itself
-  // jumps there. A stream pane leaves its own query changes and replaces (covers, promotions) to the router, as
-  // it does anything else.
+  // stream takes its tab, and a stream's permalink to itself jumps there. A stream pane leaves its own query
+  // changes and replaces (covers, promotions) to the router, as it does anything else, and a phone leaves it
+  // every link out of the pane: the route goes there and the pane closes.
   const navigatePane = useCallback(
     (own: string, to: PaneLink, replace: boolean): boolean => {
       const link = linkedPane(to)
       if (link === null) return false
       const { target, params } = link
+      if (phone && target !== own) return false
       const { hash = "" } = to
       const page = pagePathOf(own) !== null
       // A stream's link to itself, nothing more, has nowhere to go; one clearing the URL's query still goes there.
@@ -956,9 +910,9 @@ export function PanelProvider({ children }: PanelProviderProps) {
         flashPane(own)
         return true
       }
-      // Elsewhere than a phone, a link to a stream open in another pane brings that pane forward, and one from an
-      // aside to its stream opens it beside the aside, rather than the page going to that stream alone.
-      if (!page && !phone && !replace && target !== own && pagePathOf(target) === null) {
+      // A link to a stream open in another pane brings that pane forward, and one from an aside to its stream
+      // opens it beside the aside, rather than the page going to that stream alone.
+      if (!page && !replace && target !== own && pagePathOf(target) === null) {
         const shown = panelIdsOf(layout).includes(target)
         if (!shown && parseAsidePanel(own) !== target) return false
         // Moving to a pane already on show changes only which pane is worked in, which is no step in history.
@@ -981,7 +935,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
         return true
       }
       // A stream's permalink or fragment link to itself stays in place, keeping the panes; its other links go to the router.
-      if (!page && (replace || (target === own ? !isPermalink(params) && !hash : !phone))) return false
+      if (!page && (replace || target !== own || (!isPermalink(params) && !hash))) return false
       if (page && target === own && own !== routePane) {
         keepPageQuery(own, params.toString())
         return true
@@ -990,11 +944,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
         navigate(`${hrefOf(location.pathname, withPaneParams(to.search, searchParams))}${hash}`, { replace })
         return true
       }
-      const edit = (current: PanelLayout) => {
-        if (target === own) return current
-        return phone ? showInPlaceOf(current, own, target) : replacePanelTab(current, own, target)
-      }
-      openLinked(edit, replace, target, params, hash)
+      openLinked((current) => replacePanelTab(current, own, target), replace, target, params, hash)
       return true
     },
     [
@@ -1146,6 +1096,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       open,
       tabbed,
       phone,
+      routePane,
       contextual,
       closeTab,
       closeTabs,
@@ -1287,21 +1238,6 @@ export const DisplayedPanelLayoutProvider = DisplayedPanelLayoutContext.Provider
 export function useDisplayedPanelLayout(): PanelLayout {
   const { layout } = usePanel()
   return useContext(DisplayedPanelLayoutContext) ?? layout
-}
-
-interface PhonePanes {
-  /** The panes a phone steps through, in order: one section, less the drawers. */
-  order: readonly string[]
-  current: string | null
-}
-
-const PhonePanesContext = createContext<PhonePanes | null>(null)
-
-/** Provided where a phone stacks its panes; null on every other surface. */
-export const PhonePanesProvider = PhonePanesContext.Provider
-
-export function usePhonePanes(): PhonePanes | null {
-  return useContext(PhonePanesContext)
 }
 
 export function usePanel(): PanelContextValue {

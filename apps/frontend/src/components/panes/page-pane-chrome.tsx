@@ -2,14 +2,14 @@ import type { ReactNode } from "react"
 import { Link } from "react-router-dom"
 import { ArrowLeft } from "lucide-react"
 import { buttonVariants } from "@/components/ui/button"
-import { usePanel, usePhonePanes } from "@/contexts"
+import { usePanel, useSidebar } from "@/contexts"
 import { pageTitleOf } from "@/lib/page-panes"
 import { cn } from "@/lib/utils"
 import { PaneHeader } from "./pane-header"
 
 interface PagePaneHeaderProps {
   workspaceId: string
-  /** The page's own way back, kept by the pane in the first column (a phone's first pane). */
+  /** The page's own way back, kept by the pane in the first column (on a phone, the route's). */
   back?: { to: string; label: string }
   icon?: ReactNode
   title?: ReactNode
@@ -20,9 +20,9 @@ interface PagePaneHeaderProps {
 
 /** A workspace page's way back, icon and title, in its pane's header. */
 export function PagePaneHeader({ workspaceId, back, icon, title, className, children }: PagePaneHeaderProps) {
-  const { panelId, inFirstColumn } = usePanel()
-  const phone = usePhonePanes()
-  const first = phone ? phone.order[0] === panelId : inFirstColumn
+  const { panelId, inFirstColumn, onRoute } = usePanel()
+  const { isMobile } = useSidebar()
+  const first = isMobile ? onRoute : inFirstColumn
   const backLink = first && back && (
     <Link
       to={back.to}

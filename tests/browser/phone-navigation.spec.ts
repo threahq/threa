@@ -2,11 +2,10 @@ import { test, expect, type Locator, type Page } from "@playwright/test"
 import { loginAndCreateWorkspace, expectApiOk } from "./helpers"
 
 /**
- * On a phone a link shows what it names in place of the pane on show, one step in
- * history, and brings forward a pane already open instead. Tabs are opt in: only
- * "Open in new tab" adds one, and sidebar picks keep the tabs there are. Up goes
- * to the stream a pane was opened from. A link or pick to where the reader already is flashes the pane, and a
- * link to the message on show jumps to it again.
+ * A phone has no tabs: it shows the route's stream or page, and at most one pane
+ * over it. A thread opens over its stream, one step in history, and closes from
+ * Back or its chevron. A sidebar pick or a link to another stream takes the route
+ * there and drops the pane. A link to the message on show jumps to it again.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -32,12 +31,10 @@ async function channel(page: Page, workspaceId: string, slug: string): Promise<s
 async function seed(page: Page) {
   const { testId } = await loginAndCreateWorkspace(page, "phone-nav")
   const workspaceId = page.url().match(/\/w\/([^/]+)/)![1]
-  const names = { a: `nav-a-${testId}`, b: `nav-b-${testId}`, c: `nav-c-${testId}` }
-  const streamC = await channel(page, workspaceId, names.c)
+  const names = { a: `nav-a-${testId}`, b: `nav-b-${testId}` }
   const streamB = await channel(page, workspaceId, names.b)
   const streamA = await channel(page, workspaceId, names.a)
   await post(page, workspaceId, streamB, "said in b")
-  await post(page, workspaceId, streamC, "said in c")
   const parent = await post(page, workspaceId, streamA, "parent in a")
   const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
     data: { type: "thread", parentStreamId: streamA, parentAnchorId: parent },
@@ -45,13 +42,12 @@ async function seed(page: Page) {
   await expectApiOk(response, "create thread")
   const thread = ((await response.json()) as { stream: { id: string } }).stream.id
   await post(page, workspaceId, thread, "reply in a's thread")
-  return { workspaceId, names, streamA, streamB, streamC, thread, parent }
+  return { workspaceId, names, streamA, streamB, thread, parent }
 }
 
 const pane = (page: Page, id: string) => page.locator(`[data-panel-tab="${id}"]`)
 const headerOf = (page: Page, id: string) => pane(page, id).locator("header").first()
 const panelParam = (page: Page) => new URL(page.url()).searchParams.get("panel")
-const layers = (page: Page) => page.getByRole("button", { name: /^\d+ open panes$/ }).filter({ visible: true })
 const sidebar = (page: Page) => page.getByRole("navigation", { name: "Sidebar navigation" })
 const replyCard = (page: Page, streamId: string) => pane(page, streamId).getByRole("link", { name: /1 reply/ })
 
@@ -94,44 +90,36 @@ async function longPress(page: Page, selector: string) {
   await page.dispatchEvent(selector, "touchend", { touches: [], changedTouches: [], targetTouches: [] })
 }
 
-test("should show a thread in place of its stream, step Back to the stream, and go Up to it", async ({ page }) => {
+test("should open a thread over its stream, and close it from Back or its chevron", async ({ page }) => {
   const { workspaceId, streamA, thread } = await seed(page)
   await page.goto(`/w/${workspaceId}/s/${streamA}`)
   await expect(headerOf(page, streamA).getByRole("button", { name: "Pin sidebar" })).toBeVisible({ timeout: 30_000 })
-  await expect(headerOf(page, streamA).getByRole("button", { name: "Up" })).toHaveCount(0)
+  await expect(headerOf(page, streamA).getByRole("button", { name: "Back" })).toHaveCount(0)
 
   await replyCard(page, streamA).click()
   await expect(pane(page, thread).getByText("reply in a's thread")).toBeVisible({ timeout: 30_000 })
-  await expect(pane(page, streamA)).toHaveCount(0)
-  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({ stream: thread, panel: null })
+  await expect(headerOf(page, thread).getByRole("button", { name: "Pin sidebar" })).toBeVisible()
+  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({ stream: streamA, panel: thread })
 
   await page.goBack()
   await expect(pane(page, streamA).getByText("parent in a")).toBeVisible()
   await expect(pane(page, thread)).toHaveCount(0)
+  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({ stream: streamA, panel: null })
 
-  await page.goto(`/w/${workspaceId}/s/${thread}`)
-  await headerOf(page, thread).getByRole("button", { name: "Up" }).click()
-  await expect(pane(page, streamA).getByText("parent in a")).toBeVisible({ timeout: 30_000 })
+  await replyCard(page, streamA).click()
+  await headerOf(page, thread).getByRole("button", { name: "Back" }).click()
+  await expect(pane(page, streamA).getByText("parent in a")).toBeVisible()
   await expect(pane(page, thread)).toHaveCount(0)
-  await page.goBack()
-  await expect(pane(page, thread).getByText("reply in a's thread")).toBeVisible()
-})
+  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({ stream: streamA, panel: null })
 
-test("should bring forward a thread already open from its card, without another tab", async ({ page }) => {
-  const { workspaceId, streamA, thread } = await seed(page)
+  // A link that opens on the thread has no entry under it to pop, so its chevron closes in place.
   await page.goto(`/w/${workspaceId}/s/${streamA}?panel=${thread}`)
-  await expect(pane(page, thread).getByText("reply in a's thread")).toBeVisible({ timeout: 30_000 })
-  await layers(page).click()
-  await page.getByRole("dialog", { name: "Open panes" }).getByRole("link").first().click()
+  await headerOf(page, thread).getByRole("button", { name: "Back" }).click({ timeout: 30_000 })
   await expect(pane(page, streamA).getByText("parent in a")).toBeVisible()
-
-  await replyCard(page, streamA).click()
-  await expect(pane(page, thread).getByText("reply in a's thread")).toBeVisible()
-  await expect(layers(page)).toHaveAccessibleName("2 open panes")
-  expect(panelParam(page)).toBe(`${streamA}-${thread}`)
+  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({ stream: streamA, panel: null })
 })
 
-test("should jump to a message its link names, in the stream on show or in place of it", async ({ page }) => {
+test("should jump to a message its link names, in the stream on show or by going to its stream", async ({ page }) => {
   const { workspaceId, streamA, streamB } = await seed(page)
   const origin = new URL(page.url()).origin
   const target = await post(page, workspaceId, streamA, "linked from a and b")
@@ -155,16 +143,16 @@ test("should jump to a message its link names, in the stream on show or in place
   await page.goto(`/w/${workspaceId}/s/${streamB}`)
   await chipIn(streamB).click({ timeout: 30_000 })
   await expect(linked).toBeInViewport({ timeout: 30_000 })
-  expect({ stream: streamIdOf(page), m: new URL(page.url()).searchParams.get("m") }).toEqual({
+  await expect(pane(page, streamB)).toHaveCount(0)
+  expect({ stream: streamIdOf(page), m: new URL(page.url()).searchParams.get("m"), panel: panelParam(page) }).toEqual({
     stream: streamA,
     m: target,
+    panel: null,
   })
 })
 
-test("should keep the tabs through sidebar picks, show a pick from a page in its place, and add one only from Open in new tab", async ({
-  page,
-}) => {
-  const { workspaceId, names, streamA, streamB, streamC, thread } = await seed(page)
+test("should take the route to a sidebar pick and drop the pane", async ({ page }) => {
+  const { workspaceId, names, streamA, streamB, thread } = await seed(page)
   await page.goto(`/w/${workspaceId}/s/${streamA}?panel=${thread}`)
   await expect(pane(page, thread).getByText("reply in a's thread")).toBeVisible({ timeout: 30_000 })
 
@@ -174,54 +162,35 @@ test("should keep the tabs through sidebar picks, show a pick from a page in its
     .click()
   await expect(pane(page, streamB).getByText("said in b")).toBeVisible({ timeout: 30_000 })
   await expect(pane(page, thread)).toHaveCount(0)
-  await expect(layers(page)).toHaveAccessibleName("2 open panes")
-  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({
-    stream: streamB,
-    panel: `${streamA}-${streamB}`,
-  })
-
-  await openSidebar(page)
-  await longPress(page, `[aria-label="Sidebar navigation"] a[href$="/s/${streamC}"]`)
-  await page.getByRole("button", { name: "Open in new tab" }).click()
-  await expect(pane(page, streamC).getByText("said in c")).toBeVisible({ timeout: 30_000 })
-  await expect(layers(page)).toHaveAccessibleName("3 open panes")
-  await expect(pane(page, streamB)).toBeAttached()
+  await expect(pane(page, streamA)).toHaveCount(0)
+  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({ stream: streamB, panel: null })
 
   await openSidebar(page)
   await sidebar(page).getByRole("link", { name: "Activity" }).click()
   await expect(pane(page, "page:activity")).toBeVisible({ timeout: 30_000 })
-  await expect(layers(page)).toHaveAccessibleName("3 open panes")
-  await expect(pane(page, streamC)).toHaveCount(0)
-
-  await openSidebar(page)
-  await sidebar(page)
-    .getByRole("link", { name: `#${names.c}` })
-    .click()
-  await expect(pane(page, streamC).getByText("said in c")).toBeVisible({ timeout: 30_000 })
-  await expect(pane(page, "page:activity")).toHaveCount(0)
-  await expect(layers(page)).toHaveAccessibleName("3 open panes")
+  await expect(pane(page, streamB)).toHaveCount(0)
+  expect(new URL(page.url()).pathname + new URL(page.url()).search).toBe(`/w/${workspaceId}/activity`)
 
   await page.goBack()
-  await expect(pane(page, "page:activity")).toBeVisible()
+  await expect(pane(page, streamB).getByText("said in b")).toBeVisible()
   await page.goBack()
-  await expect(pane(page, streamC).getByText("said in c")).toBeVisible()
+  await expect(pane(page, thread).getByText("reply in a's thread")).toBeVisible()
 })
 
-test("should open a message's thread as a tab of its own from its long-press menu", async ({ page }) => {
+test("should open a message's thread over its stream from the long-press menu", async ({ page }) => {
   const { workspaceId, streamA, thread, parent } = await seed(page)
   await page.goto(`/w/${workspaceId}/s/${streamA}`)
   const row = `[data-panel-tab="${streamA}"] [data-message-id="${parent}"] .message-content`
   await expect(page.locator(row)).toBeVisible({ timeout: 30_000 })
 
   await longPress(page, row)
-  await page.getByRole("button", { name: "Open thread in new tab" }).click()
+  await page.getByRole("link", { name: "Reply in thread" }).click()
   await expect(pane(page, thread).getByText("reply in a's thread")).toBeVisible({ timeout: 30_000 })
-  await expect(layers(page)).toHaveAccessibleName("2 open panes")
-  await expect(pane(page, streamA)).toBeAttached()
+  expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({ stream: streamA, panel: thread })
 })
 
-test("should flash the pane on show for a link or pick to where the reader already is", async ({ page }) => {
-  const { workspaceId, names, streamA } = await seed(page)
+test("should flash the pane on show for a link to where the reader already is", async ({ page }) => {
+  const { workspaceId, streamA } = await seed(page)
   const origin = new URL(page.url()).origin
   await post(page, workspaceId, streamA, `here ${origin}/w/${workspaceId}/s/${streamA}`)
   await page.goto(`/w/${workspaceId}/s/${streamA}`)
@@ -230,12 +199,5 @@ test("should flash the pane on show for a link or pick to where the reader alrea
   await pane(page, streamA).locator(`a[href$="/s/${streamA}"]`).first().click({ timeout: 30_000 })
   await expect(pane(page, streamA)).toHaveClass(/pane-flash/)
   await expect(pane(page, streamA)).not.toHaveClass(/pane-flash/)
-  expect(page.url()).toBe(at)
-
-  await openSidebar(page)
-  await sidebar(page)
-    .getByRole("link", { name: `#${names.a}` })
-    .click()
-  await expect(pane(page, streamA)).toHaveClass(/pane-flash/)
   expect(page.url()).toBe(at)
 })

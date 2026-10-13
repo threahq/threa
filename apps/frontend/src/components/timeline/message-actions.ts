@@ -23,7 +23,6 @@ import {
   Check,
   MessageSquareDashed,
   TextCursorInput,
-  SquarePlus,
 } from "lucide-react"
 import { toast } from "sonner"
 import type { QuoteSelection } from "@/lib/quote-selection"
@@ -64,8 +63,6 @@ export interface MessageActionContext {
   sharedCopy?: boolean
   /** URL for "reply in thread" */
   replyUrl: string
-  /** Opens the message's thread as a tab of its own; only a phone, where "reply in thread" shows it in place. */
-  onOpenThreadInNewTab?: () => void
   /** URL for "show trace" (persona or bot messages sent during a session) */
   traceUrl?: string
   /** Message ID for edit/delete operations */
@@ -323,13 +320,6 @@ export const messageActions: MessageAction[] = [
     groupId: "reply",
     when: (ctx) => !ctx.isThreadParent && !ctx.awaitingServerId && !ctx.sharedCopy,
     getHref: (ctx) => ctx.replyUrl,
-  },
-  {
-    id: "open-thread-in-new-tab",
-    label: "Open thread in new tab",
-    icon: SquarePlus,
-    when: (ctx) => !!ctx.onOpenThreadInNewTab && !ctx.isThreadParent,
-    action: (ctx) => ctx.onOpenThreadInNewTab?.(),
   },
   {
     id: "quote-reply",
