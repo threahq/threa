@@ -1,8 +1,8 @@
 import { useState, type FormEvent } from "react"
 import { Link, useParams } from "react-router-dom"
-import { ArrowLeft, Tag, Plus, Trash2, Pencil } from "lucide-react"
+import { Tag, Plus, Trash2, Pencil } from "lucide-react"
 import { toast } from "sonner"
-import { Button, buttonVariants } from "@/components/ui/button"
+import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -25,9 +25,8 @@ import {
   ResponsiveDialogHeader,
   ResponsiveDialogTitle,
 } from "@/components/ui/responsive-dialog"
-import { SidebarToggle } from "@/components/layout"
+import { PagePaneHeader } from "@/components/panes"
 import { useIsOnline } from "@/components/layout/connection-status"
-import { cn } from "@/lib/utils"
 import { hexToRgba } from "@/lib/labels"
 import { stripMarkdownToInline } from "@/lib/markdown"
 import { useCreateLabel, useDeleteLabel, useLabelsSync, useLabelsView, type CachedLabel } from "@/hooks"
@@ -52,22 +51,12 @@ function LabelsPageInner({ workspaceId }: { workspaceId: string }) {
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex h-12 items-center justify-between gap-2 border-b px-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <SidebarToggle location="page" />
-          <Link
-            to={`/w/${workspaceId}`}
-            className={cn(buttonVariants({ variant: "ghost", size: "icon" }), "h-8 w-8 shrink-0")}
-            aria-label="Back to workspace"
-          >
-            <ArrowLeft className="h-4 w-4" />
-          </Link>
-          <div className="flex min-w-0 items-center gap-2">
-            <Tag className="h-5 w-5 shrink-0 text-muted-foreground" />
-            <h1 className="truncate font-semibold">Labels</h1>
-          </div>
-        </div>
-      </header>
+      <PagePaneHeader
+        workspaceId={workspaceId}
+        back={{ to: `/w/${workspaceId}`, label: "Back to workspace" }}
+        icon={<Tag className="h-5 w-5 shrink-0 text-muted-foreground" />}
+        title="Labels"
+      />
 
       <ScrollArea className="flex-1">
         <main className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">

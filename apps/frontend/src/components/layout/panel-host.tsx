@@ -68,6 +68,8 @@ import {
   type SplitDirection,
 } from "@/lib/panel-tabs"
 import { isPagePane } from "@/lib/stream-ids"
+import { pagePathOf, pagePatternOf } from "@/lib/page-panes"
+import { PageRoutes } from "@/components/panes/page-routes"
 import { cn } from "@/lib/utils"
 import { PanelResizeHandle } from "./panel-resize-handle"
 import { PaneShortcuts } from "./pane-shortcuts"
@@ -136,6 +138,8 @@ export function PanelHost({ workspaceId, onClose, className }: PanelHostProps) {
 }
 
 function PaneContent({ workspaceId, panelId, onClose, className }: PanelHostProps & { panelId: string | null }) {
+  const page = panelId && pagePatternOf(panelId)
+  if (page) return <PageRoutes key={panelId} workspaceId={workspaceId} path={pagePathOf(panelId)!} pattern={page} />
   if (panelId && isPagePane(panelId)) return <PagePane />
   const composeStreamId = panelId && parseComposePanel(panelId)
   const context = panelId && parseContextPanel(panelId)

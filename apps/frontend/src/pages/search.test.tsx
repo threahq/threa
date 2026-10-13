@@ -21,6 +21,7 @@ import * as mobileModule from "@/hooks/use-mobile"
 import * as touchCapableModule from "@/hooks/use-touch-capable"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as contextsModule from "@/contexts"
+import { PanelProvider } from "@/contexts"
 import { SearchPage } from "./search"
 import type { MemoExplorerResult, SearchCluster, SearchResultItem, SearchRefineOutcome } from "@/api"
 import * as apiModule from "@/api"
@@ -58,9 +59,11 @@ function renderPage(initialEntry = "/w/workspace_1/search?q=hello", featureFlags
         <MemoryRouter initialEntries={[initialEntry]}>
           <SidebarProvider>
             <SearchPanelProvider workspaceId="workspace_1">
-              <Routes>
-                <Route path="/w/:workspaceId/search" element={<SearchPage />} />
-              </Routes>
+              <PanelProvider>
+                <Routes>
+                  <Route path="/w/:workspaceId/search" element={<SearchPage />} />
+                </Routes>
+              </PanelProvider>
               <LocationProbe />
             </SearchPanelProvider>
           </SidebarProvider>

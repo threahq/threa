@@ -22,7 +22,8 @@ import {
   primaryPanelOf,
   replacePanelTab,
   splitPanelTab,
-  streamPaneAfter,
+  routePaneAfter,
+  phonePanelRoute,
   tabsBeside,
   type PanelLayout,
 } from "./panel-tabs"
@@ -71,11 +72,18 @@ describe("parsePanelLayout", () => {
     expect([spell(at("a--a-b")), spell(at("a--*-b"))]).toEqual(["a-b", "a-b"])
   })
 
-  it("should drop a route's page when the value names one, since only its route places it", () => {
-    expect([spell(at("page:board.stream_x")), spell(at("page:board-stream_x")), at("page:board")]).toEqual([
+  it("should drop a pinned page when the value names one, since only its route places it", () => {
+    expect([spell(at("page:persona.stream_x")), spell(at("page:persona-stream_x")), at("page:persona")]).toEqual([
       "stream_x",
       "stream_x",
       NO_PANELS,
+    ])
+  })
+
+  it("should keep a page pane the value names, as it does a stream", () => {
+    expect([spell(at("page:board.stream_x")), spell(at("page:activity/unread-stream_x"))]).toEqual([
+      "page:board.stream_x",
+      "page:activity/unread-stream_x",
     ])
   })
 
@@ -531,35 +539,60 @@ describe("the route's stream pane", () => {
   it("should keep the route's stream while it stays open", () => {
     const prev = page("A", "B.C")
     expect([
-      streamPaneAfter(prev, closePanelTab(prev, "C"), "A", "C"),
-      streamPaneAfter(prev, activatePanelTab(prev, "B"), "A", "B"),
+      routePaneAfter(prev, closePanelTab(prev, "C"), "A", "C"),
+      routePaneAfter(prev, activatePanelTab(prev, "B"), "A", "B"),
     ]).toEqual(["A", "A"])
   })
 
   it("should name the pane current after the route's stream closes when it is a stream", () => {
     const prev = page("A", "B-C")
     expect([
-      streamPaneAfter(prev, closePanelTab(prev, "A"), "A", "A"),
-      streamPaneAfter(prev, closePanelTab(prev, "A"), "A", "C"),
+      routePaneAfter(prev, closePanelTab(prev, "A"), "A", "A"),
+      routePaneAfter(prev, closePanelTab(prev, "A"), "A", "C"),
     ]).toEqual(["B", "C"])
   })
 
   it("should name the first stream on show when the pane current after the close is no stream", () => {
     const prev = page("A", "draft:A:msg_1-B")
-    expect(streamPaneAfter(prev, closePanelTab(prev, "A"), "A", "draft:A:msg_1")).toBe("B")
+    expect(routePaneAfter(prev, closePanelTab(prev, "A"), "A", "draft:A:msg_1")).toBe("B")
   })
 
   it("should name a covered stream when no stream is on show", () => {
     const prev = page("A", "B.draft:A:msg_1")
-    expect(streamPaneAfter(prev, closePanelTab(prev, "A"), "A", "A")).toBe("B")
+    expect(routePaneAfter(prev, closePanelTab(prev, "A"), "A", "A")).toBe("B")
   })
 
   it("should name nothing when the last stream pane closes", () => {
     const prev = page("A", "draft:A:msg_1.conv:conv_1")
     expect([
-      streamPaneAfter(prev, closePanelTab(prev, "A"), "A", "A"),
-      streamPaneAfter(page("A"), closePanelTab(page("A"), "A"), "A", "A"),
+      routePaneAfter(prev, closePanelTab(prev, "A"), "A", "A"),
+      routePaneAfter(page("A"), closePanelTab(page("A"), "A"), "A", "A"),
     ]).toEqual([null, null])
+  })
+
+  it("should name a page pane when no stream is left to name", () => {
+    const prev = page("A", "page:activity.draft:A:msg_1")
+    expect(routePaneAfter(prev, closePanelTab(prev, "A"), "A", "A")).toBe("page:activity")
+  })
+})
+
+describe("phonePanelRoute", () => {
+  const page = (path: string, panel: string) => fullPanelLayout(path, at(panel))
+
+  it("should route to the pane in front, and write it out, when a route can name it", () => {
+    const layout = page("A", "page:activity-conv:c")
+    expect([phonePanelRoute(layout, "page:activity", "A"), phonePanelRoute(layout, "A", "A")]).toEqual([
+      { path: "page:activity", keepPath: true },
+      { path: "A", keepPath: true },
+    ])
+  })
+
+  it("should route to a sole first pane a route can name when the pane in front is none", () => {
+    expect(phonePanelRoute(page("A", "conv:c"), "conv:c", "B")).toEqual({ path: "A", keepPath: false })
+  })
+
+  it("should fall back when no pane a route can name sits alone in the first column", () => {
+    expect(phonePanelRoute(page("conv:c", "draft:A:msg_1"), "conv:c", "B")).toEqual({ path: "B", keepPath: false })
   })
 })
 

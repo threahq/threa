@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type DragEvent } from "react"
 import { useCurrentPane, usePanel } from "@/contexts"
 import { STREAM_DRAG_TYPE, readStreamDrag, setMissedDropGuard, writeStreamDrag } from "@/lib/stream-drag"
-import { isPagePane, isServerStreamId } from "@/lib/stream-ids"
+import { isServerStreamId } from "@/lib/stream-ids"
+import { isPinnedPagePane } from "@/lib/page-panes"
 import type { PaneDrop, PaneEdge } from "@/lib/panel-tabs"
 import { cn } from "@/lib/utils"
 
@@ -54,7 +55,7 @@ export function usePaneDragHandle(workspaceId: string, label: string, enabled = 
   const drops = usePaneDrop()
   const currentPane = useCurrentPane()
   // A page pane is pinned to the route's first column, so it has nowhere to go.
-  if (!panelId || isPagePane(panelId) || shownPanes < 2 || !drops || !enabled) return {}
+  if (!panelId || isPinnedPagePane(panelId) || shownPanes < 2 || !drops || !enabled) return {}
   return {
     draggable: true,
     onDragStart: (event: DragEvent<HTMLElement>) => {
@@ -154,7 +155,7 @@ const overEditor = (event: DragEvent<HTMLElement>) =>
  */
 export function paneDropZone(drops: PaneDropState | null, of: string, edges: readonly PaneEdge[]) {
   // A route's page holds its column alone.
-  if (!drops || isPagePane(of)) return undefined
+  if (!drops || isPinnedPagePane(of)) return undefined
   const { hover, land } = drops
   const dropAt = (event: DragEvent<HTMLElement>): PaneDrop | null => {
     // A strip inside the pane has already claimed it.

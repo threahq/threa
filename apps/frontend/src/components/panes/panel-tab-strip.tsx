@@ -12,7 +12,6 @@ import {
   parseComposePanel,
   parseConversationsPanel,
   parseContextPanel,
-  BOARD_PANE,
   PERSONA_PANE,
   parsePersonaTestPanel,
 } from "@/contexts"
@@ -25,6 +24,7 @@ import { useConversationTitle } from "@/hooks/use-conversation-title"
 import { closePanelTab, followCurrentPanel, soleFirstPanelOf } from "@/lib/panel-tabs"
 import { fitPanelTabs, splitVisibleTabs, type PanelTabFit } from "@/lib/panel-tab-fit"
 import { cn } from "@/lib/utils"
+import { pageTitleOf } from "@/lib/page-panes"
 import { usePaneCovered } from "./pane-host"
 import { PaneFocusContext } from "./pane-focus"
 import { endTabDrag, startTabDrag, useStripCaret, useStripDropZone } from "./pane-drop"
@@ -353,7 +353,8 @@ export function usePanelCloseFocusLanding() {
 
 export function PanelTabTitle({ workspaceId, panelId }: { workspaceId: string; panelId: string }) {
   if (isDraftPanel(panelId)) return <>New thread</>
-  if (panelId === BOARD_PANE) return <>Board</>
+  const pageTitle = pageTitleOf(panelId)
+  if (pageTitle !== null) return <>{pageTitle}</>
   if (panelId === PERSONA_PANE) return <>Edit persona</>
   if (parsePersonaTestPanel(panelId)) return <>Test chat</>
   if (parseAsidePanel(panelId)) return <AsideTabTitle workspaceId={workspaceId} />

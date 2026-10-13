@@ -2,10 +2,9 @@ import { test, expect, type Page } from "@playwright/test"
 import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
 
 /**
- * The board is a page pane pinned to its route (`page:board`), never in
- * `?panel=`: a card opens its conversation as a tab beside it, a second card
- * adds a tab, and closing them all leaves the bare board. A phone stacks an
- * opened pane over the board, which stays mounted under it.
+ * The board is a page pane (`page:board`): a card opens its conversation as a
+ * tab beside it, a second card adds a tab, and closing them all leaves the bare
+ * board. A phone stacks an opened pane over the board, which stays mounted under it.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -73,7 +72,7 @@ test("should open two cards as two tabs beside the board and land on the bare bo
   await expect(board(page)).toBeVisible()
 })
 
-test("should move keyboard focus onto the board and leave it unfloatable when the pane shortcuts reach it", async ({
+test("should move keyboard focus onto the board and float it like any page when the pane shortcuts reach it", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 })
@@ -90,9 +89,11 @@ test("should move keyboard focus onto the board and leave it unfloatable when th
   await expect(page.locator("[data-board-scroll-viewport]")).toBeFocused()
 
   await page.keyboard.press("Alt+Enter")
+  await expect.poll(() => panelParam(page)).toContain("page:board**")
+  await page.keyboard.press("Alt+Enter")
+  await expect.poll(() => panelParam(page)).toBe(opened)
   await page.keyboard.press("Alt+.")
   await expect(pane.locator("[contenteditable=true]").first()).toBeFocused()
-  expect(panelParam(page)).toBe(opened)
 })
 
 test("should show no tab for the board named in the URL", async ({ page }) => {
