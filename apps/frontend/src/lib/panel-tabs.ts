@@ -516,6 +516,31 @@ export function routePaneAfter(
   return onShow.find(isRoutePane) ?? panelIdsOf(next).find(isRoutePane) ?? null
 }
 
+/**
+ * The pane following a link brings up, for a link that says where every pane
+ * goes: `next` is the arrangement it names and `path` its route's pane, read
+ * against `current` on the route of `route`. The pane its route moves to, else
+ * the one pane it adds, else the one it brings forward; null where it does
+ * none of these, and for a route whose page no arrangement can hold.
+ */
+export function linkedPanelOf(
+  current: PanelLayout,
+  route: string | null,
+  next: PanelLayout,
+  path: string | null
+): string | null {
+  if (path === null || !isRoutePane(path)) return null
+  if (path !== route) return path
+  const held = panelIdsOf(current)
+  const added = panelIdsOf(next).filter((id) => !held.includes(id))
+  if (added.length > 0) return added.length === 1 ? added[0] : null
+  const forward = next.columns
+    .flat()
+    .map((section) => section.active)
+    .filter((id) => !isPanelOnShow(current, id))
+  return forward.length === 1 ? forward[0] : null
+}
+
 /** The section holding `id`, or null where none does. */
 export function panelSectionOf(layout: PanelLayout, id: string): PanelSection | null {
   const at = locate(layout, id)

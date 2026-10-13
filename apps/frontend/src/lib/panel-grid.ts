@@ -49,6 +49,34 @@ export function resplit(shares: readonly number[], index: number, leading: numbe
   })
 }
 
+/**
+ * `sizes`, held for `before`, as `after` holds them: every column keeps its
+ * share, a section on show in both keeps its own, the sections one split
+ * into share its own, and one `after` adds takes the mean of its column's.
+ * Null where the two differ in columns, whose widths are then shared anew.
+ */
+export function carriedPanelSizes(
+  before: PanelLayout,
+  sizes: PanelGridSizes,
+  after: PanelLayout
+): PanelGridSizes | null {
+  if (before.columns.length !== after.columns.length) return null
+  return {
+    columns: sizes.columns,
+    rows: after.columns.map((sections, column) => {
+      const origins = sections.map((section) =>
+        before.columns[column].findIndex((held) => held.ids.some((id) => section.ids.includes(id)))
+      )
+      const kept = origins.map((row) =>
+        row === -1 ? null : sizes.rows[column][row] / origins.filter((origin) => origin === row).length
+      )
+      const held = kept.filter((share) => share !== null)
+      const added = held.length > 0 ? sum(held) / held.length : 1
+      return kept.map((share) => share ?? added)
+    }),
+  }
+}
+
 const track = (share: number) => `minmax(0,${Number(share.toFixed(4))}fr)`
 const sum = (shares: readonly number[]) => shares.reduce((total, share) => total + share, 0)
 

@@ -36,6 +36,7 @@ import {
   readablePanelParam,
   fullPanelLayout,
   isPanelOnShow,
+  linkedPanelOf,
   newestPanelOf,
   openPanelTab,
   openPanelTabBeside,
@@ -289,8 +290,10 @@ interface PanelContextValue {
   focusTab: (panelId: string | null) => void
   /** Put a dragged tab or stream where it was dropped, and work in it there. Null where that changes nothing. */
   dropTab: (panelId: string, drop: PaneDrop) => string | null
-  /** {@link dropTab} for the stream or page a dropped link names; a link naming neither does nothing. */
+  /** {@link dropTab} for the pane a dropped link brings up; a link bringing up none does nothing. */
   dropLink: (href: string, drop: PaneDrop) => string | null
+  /** The pane {@link dropLink} puts down for `href`; null for a link that brings up none. */
+  linkPane: (href: string) => string | null
   /** The ways this consumer's tab can split off as it is laid out now. */
   splits: readonly SplitDirection[]
   /** Record the pane the user is working in. A stream pane becomes the route's stream. */
@@ -348,6 +351,7 @@ interface PanelOps {
   focusTab: (panelId: string | null) => void
   dropTab: (panelId: string, drop: PaneDrop) => string | null
   dropLink: (href: string, drop: PaneDrop) => string | null
+  linkPane: (href: string) => string | null
   setCurrentPane: (panelId: string) => void
   markCurrentPane: (panelId: string) => void
   coverOwner: string | null
@@ -514,6 +518,7 @@ function buildValue(
     focusTab: ops.focusTab,
     dropTab: ops.dropTab,
     dropLink: ops.dropLink,
+    linkPane: ops.linkPane,
     splits,
     setCurrentPane: ops.setCurrentPane,
     markCurrentPane: ops.markCurrentPane,
@@ -1043,15 +1048,34 @@ export function PanelProvider({ children }: PanelProviderProps) {
     [open, layout]
   )
 
-  const dropLink = useCallback(
-    (href: string, drop: PaneDrop) => {
+  // The pane a dropped link puts down, with its query: the one it names, or for a URL that says where every
+  // pane goes, the one following it brings up.
+  const droppedPane = useCallback(
+    (href: string) => {
       let url: URL
       try {
         url = new URL(href)
       } catch {
         return null
       }
-      const link = url.origin === window.location.origin ? linkedPane(url) : null
+      if (url.origin !== window.location.origin) return null
+      const params = new URLSearchParams(url.search)
+      if (!params.has(PANEL_PARAM)) return linkedPane(url)
+      if (matchPath("/w/:workspaceId/*", url.pathname)?.params.workspaceId !== workspaceId) return null
+      const path = routePaneAt(url.pathname)
+      const next = fullPanelLayout(path, parsePanelLayout(params.get(PANEL_PARAM)))
+      const target = linkedPanelOf(layout, routePane, next, path)
+      params.delete(PANEL_PARAM)
+      return target === null ? null : { target, params }
+    },
+    [linkedPane, workspaceId, layout, routePane]
+  )
+
+  const linkPane = useCallback((href: string) => droppedPane(href)?.target ?? null, [droppedPane])
+
+  const dropLink = useCallback(
+    (href: string, drop: PaneDrop) => {
+      const link = droppedPane(href)
       if (link === null || dropPanelTab(layout, link.target, drop) === layout) return null
       openLinked(
         (current) => dropPanelTab(current, link.target, drop),
@@ -1061,7 +1085,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       )
       return link.target
     },
-    [linkedPane, openLinked, layout]
+    [droppedPane, openLinked, layout]
   )
 
   // Focusing is a step of its own in history, so Back puts the tab back; putting
@@ -1107,6 +1131,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       focusTab,
       dropTab,
       dropLink,
+      linkPane,
       setCurrentPane,
       markCurrentPane: setFront,
       coverOwner,
@@ -1132,6 +1157,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       focusTab,
       dropTab,
       dropLink,
+      linkPane,
       setCurrentPane,
       setFront,
       coverOwner,

@@ -15,6 +15,7 @@ import {
   followCurrentPanel,
   formatPanelLayout,
   fullPanelLayout,
+  linkedPanelOf,
   openPanelTab,
   openPanelTabBeside,
   openPanelTabWith,
@@ -562,6 +563,26 @@ describe("the route's stream pane", () => {
   it("should name a page pane when no stream is left to name", () => {
     const prev = page("A", "page:activity.draft:A:msg_1")
     expect(routePaneAfter(prev, closePanelTab(prev, "A"), "A", "A")).toBe("page:activity")
+  })
+
+  it("should read the pane a whole-arrangement link brings up when its route moves, it adds a pane or it brings one forward", () => {
+    const current = page("A", "B*.C")
+    expect([
+      linkedPanelOf(current, "A", page("T", "A-B*.C-T"), "T"),
+      linkedPanelOf(current, "A", page("A", "B*.C-draft:A:msg_1"), "A"),
+      linkedPanelOf(current, "A", page("A", "B.C"), "A"),
+      linkedPanelOf(current, "A", page("B", "A-B*.C"), "B"),
+    ]).toEqual(["T", "draft:A:msg_1", "C", "B"])
+  })
+
+  it("should read no pane from a whole-arrangement link that changes nothing, opens several or is to a pinned page", () => {
+    const current = page("A", "B")
+    expect([
+      linkedPanelOf(current, "A", page("A", "B"), "A"),
+      linkedPanelOf(current, "A", page("A", "B-C-D"), "A"),
+      linkedPanelOf(current, "A", page("page:persona", "A-B"), "page:persona"),
+      linkedPanelOf(current, "A", fullPanelLayout(null, at("A-B-C")), null),
+    ]).toEqual([null, null, null, null])
   })
 })
 

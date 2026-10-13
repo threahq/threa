@@ -45,6 +45,7 @@ import {
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 import {
   broughtWidth,
+  carriedPanelSizes,
   compilePanelGrid,
   defaultPanelGridSizes,
   panelColumnWidths,
@@ -645,16 +646,26 @@ function paneMap(
 
 /**
  * Section sizes last dragged for the shape on show, so a window that folds a
- * column finds them again when it widens. Opening or closing a section forgets them.
+ * column finds them again when it widens. A section opening or closing leaves
+ * the columns their widths and the sections that stay their heights; a column
+ * opening or closing shares the widths anew.
  */
 function usePanelGridSizes(display: PanelLayout, layout: PanelLayout) {
   const arrangement = panelGridShape(layout)
+  const shape = panelGridShape(display)
   const [stored, setStored] = useState<{ arrangement: string; byShape: Record<string, PanelGridSizes> }>({
     arrangement,
     byShape: {},
   })
-  if (stored.arrangement !== arrangement) setStored({ arrangement, byShape: {} })
-  const shape = panelGridShape(display)
+  const shown = useRef(display)
+  useLayoutEffect(() => {
+    shown.current = display
+  })
+  if (stored.arrangement !== arrangement) {
+    const held = stored.byShape[panelGridShape(shown.current)]
+    const carried = held ? carriedPanelSizes(shown.current, held, display) : null
+    setStored({ arrangement, byShape: carried ? { [shape]: carried } : {} })
+  }
   const setSizes = useCallback(
     (next: PanelGridSizes) => setStored((current) => ({ ...current, byShape: { ...current.byShape, [shape]: next } })),
     [shape]

@@ -226,6 +226,25 @@ test.describe("Aside — desktop surface", () => {
     await expectSilent(page, asideId!)
   })
 
+  test("truncates a long host name in the header short of the pane's controls", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await createChannel(page, `aside-${testId}-`.padEnd(50, "x"))
+    await page.getByTestId("aside-header-chip").click()
+    await expect(asidePane(page)).toBeVisible({ timeout: 15000 })
+    await panesSettled(page)
+
+    const header = await asidePane(page).evaluate((pane) => {
+      const chip = pane.querySelector("[data-testid='aside-anchor-line']")!
+      const label = chip.querySelector("span")!
+      const box = chip.getBoundingClientRect()
+      const covered = [...pane.querySelectorAll("button")]
+        .map((button) => button.getBoundingClientRect())
+        .filter((b) => b.left < box.right && box.left < b.right && b.top < box.bottom && box.top < b.bottom)
+      return { truncated: label.scrollWidth > label.clientWidth, covered: covered.length }
+    })
+    expect(header).toEqual({ truncated: true, covered: 0 })
+  })
+
   test("a thread opens as a tab beside the aside, and neither the host nor the aside remounts", async ({ page }) => {
     await createChannel(page, `aside-${testId}`)
     const { workspaceId, streamId } = extractIds(page)

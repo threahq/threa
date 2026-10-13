@@ -63,8 +63,8 @@ export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant =
       <div
         data-testid="aside-anchor-line"
         className={cn(
-          "flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground",
-          chip ? "rounded-full border px-2.5 py-1" : "h-7 border-b bg-primary/[0.025] px-3"
+          "flex items-center gap-1.5 text-[11px] text-muted-foreground",
+          chip ? "min-w-0 shrink rounded-full border px-2.5 py-1" : "h-7 shrink-0 border-b bg-primary/[0.025] px-3"
         )}
       >
         <span className="min-w-0 truncate">{label}</span>

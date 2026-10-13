@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
 import {
+  carriedPanelSizes,
   compilePanelGrid,
   defaultPanelGridSizes,
   droppedPanelSizes,
@@ -89,6 +90,43 @@ describe("evenPanelColumns", () => {
       columns: [2, 2, 2],
       rows: [[1], [1, 2], [1]],
     })
+  })
+})
+
+describe("carriedPanelSizes", () => {
+  const carry = (before: string, sizes: { columns: number[]; rows: number[][] }, after: string) =>
+    carriedPanelSizes(parsePanelLayout(before), sizes, parsePanelLayout(after))
+
+  it("should keep a column's width when a section in it closes", () => {
+    expect(carry("m-a--b-c", { columns: [1, 0.5, 2], rows: [[1], [1, 3], [1]] }, "m-a-c")).toEqual({
+      columns: [1, 0.5, 2],
+      rows: [[1], [1], [1]],
+    })
+  })
+
+  it("should keep the heights of the sections that stay when one between them closes", () => {
+    expect(carry("m-a--b--c", { columns: [1, 2], rows: [[1], [1, 2, 3]] }, "m-a--c")).toEqual({
+      columns: [1, 2],
+      rows: [[1], [1, 3]],
+    })
+  })
+
+  it("should give a section opened in a column the mean of the shares already there", () => {
+    expect(carry("m-a--b-c", { columns: [1, 0.5, 2], rows: [[1], [1, 3], [1]] }, "m-a--b--d-c")).toEqual({
+      columns: [1, 0.5, 2],
+      rows: [[1], [1, 3, 2], [1]],
+    })
+  })
+
+  it("should share a section's height between the sections it splits into", () => {
+    expect(carry("m-a--b.c", { columns: [1, 2], rows: [[1], [1, 3]] }, "m-a--b--c")).toEqual({
+      columns: [1, 2],
+      rows: [[1], [1, 1.5, 1.5]],
+    })
+  })
+
+  it("should carry nothing when a column opens or closes", () => {
+    expect(carry("m-a-c", { columns: [1, 0.5, 2], rows: [[1], [1], [1]] }, "m-a")).toBeNull()
   })
 })
 

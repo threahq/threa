@@ -68,9 +68,9 @@ function AsidePanelContent({
           closeLabel="Close aside"
           title={
             <>
-              <SidePanelTitle className="flex shrink-0 items-center gap-2.5">
+              <SidePanelTitle className="flex max-w-[50%] shrink-0 items-center gap-2.5">
                 <AsideGlyph className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-                <span className="text-[13px] font-semibold tracking-tight">
+                <span className="min-w-0 truncate text-[13px] font-semibold tracking-tight">
                   <PanelTabTitle workspaceId={workspaceId} panelId={createAsidePanelId(hostStreamId)} />
                 </span>
               </SidePanelTitle>
