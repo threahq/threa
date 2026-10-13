@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type DragEvent } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type DragEvent } from "react"
+import { Ban } from "lucide-react"
 import { useCurrentPane, usePanel } from "@/contexts"
 import {
   STREAM_DRAG_TYPE,
@@ -29,8 +30,8 @@ const EDGE_BAND = 0.25
 const carriesTab = (data: DataTransfer) => data.types.includes(PANE_DRAG_TYPE) || data.types.includes(STREAM_DRAG_TYPE)
 
 /**
- * A tab, a sidebar row, or any link, which opens the stream or page it names. Only the types are readable until the
- * drop, so a link to neither lights a zone and then does nothing.
+ * A tab, a sidebar row, or any link, which opens the pane it brings up. Only the types are readable until the
+ * drop, so a link dragged in from another window lights a zone whatever it names.
  */
 const carriesPane = (data: DataTransfer) => carriesTab(data) || data.types.includes("text/uri-list")
 
@@ -113,8 +114,11 @@ export function paneDropZoneAt(
   return nearest ?? "centre"
 }
 
+/** A link this page knows brings up no pane, which no pane takes. */
+const REFUSED = "refused"
+
 interface PaneDropTarget {
-  drop: PaneDrop
+  drop: PaneDrop | typeof REFUSED
   /** A strip draws its own caret; a pane's zone is drawn over the pane. */
   via: "pane" | "strip"
   /** The pane, or the strip's section, by the tab it shows. */
@@ -124,6 +128,8 @@ interface PaneDropTarget {
 interface PaneDropState {
   target: PaneDropTarget | null
   hover: (target: PaneDropTarget | null) => void
+  /** Whether the drag is of a link begun on this page that brings up no pane. */
+  refuses: (data: DataTransfer) => boolean
   land: (data: DataTransfer, drop: PaneDrop) => void
 }
 
@@ -137,8 +143,32 @@ export function usePaneDropState(
   workspaceId: string,
   onLand: (panelId: string, drop: PaneDrop) => void
 ): PaneDropState {
-  const { dropTab, dropLink } = usePanel()
+  const { dropTab, dropLink, linkPane } = usePanel()
   const [target, setTarget] = useState<PaneDropTarget | null>(null)
+  // What a drag begun on this page carries: the pane its link brings up, null for a link that brings up none
+  // and for anything else. A drag in from another window never starts here, so what it carries stays unread.
+  const carried = useRef<{ from: Element; pane: string | null } | null>(null)
+  useEffect(() => {
+    const start = (event: globalThis.DragEvent) => {
+      const from = event.target instanceof Element ? event.target : null
+      const href = from?.closest<HTMLAnchorElement>("a[href]")?.href
+      carried.current = from && { from, pane: href ? linkPane(href) : null }
+    }
+    const end = () => {
+      carried.current = null
+    }
+    window.addEventListener("dragstart", start)
+    window.addEventListener("dragend", end)
+    return () => {
+      window.removeEventListener("dragstart", start)
+      window.removeEventListener("dragend", end)
+    }
+  }, [linkPane])
+  const refuses = useCallback((data: DataTransfer) => {
+    const drag = carried.current
+    // A source unmounted mid-drag never fires its dragend, and would answer for the next drag in from outside.
+    return !carriesTab(data) && drag !== null && drag.from.isConnected && drag.pane === null
+  }, [])
   const hover = useCallback(
     (next: PaneDropTarget | null) => setTarget((current) => (sameTarget(current, next) ? current : next)),
     []
@@ -170,7 +200,7 @@ export function usePaneDropState(
     }
   }, [target])
 
-  return useMemo(() => ({ target, hover, land }), [target, hover, land])
+  return useMemo(() => ({ target, hover, refuses, land }), [target, hover, refuses, land])
 }
 
 export function usePaneDrop(): PaneDropState | null {
@@ -188,10 +218,11 @@ const overTextField = (event: DragEvent<HTMLElement>) =>
 export function paneDropZone(drops: PaneDropState | null, of: string, edges: readonly PaneEdge[]) {
   // A route's page holds its column alone.
   if (!drops || isPinnedPagePane(of)) return undefined
-  const { hover, land } = drops
-  const dropAt = (event: DragEvent<HTMLElement>): PaneDrop | null => {
+  const { hover, refuses, land } = drops
+  const dropAt = (event: DragEvent<HTMLElement>): PaneDrop | typeof REFUSED | null => {
     // A strip inside the pane has already claimed it.
     if (event.defaultPrevented || !carriesPane(event.dataTransfer) || overTextField(event)) return null
+    if (refuses(event.dataTransfer)) return REFUSED
     // A tab whose handle lost its props mid-drag never fires its dragend; the next drag of anything else clears it.
     if (!event.dataTransfer.types.includes(PANE_DRAG_TYPE)) dragged = null
     const zone = paneDropZoneAt(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY, edges)
@@ -206,7 +237,7 @@ export function paneDropZone(drops: PaneDropState | null, of: string, edges: rea
       if (!drop) return
       // Without preventDefault the browser refuses the drop outright.
       event.preventDefault()
-      event.dataTransfer.dropEffect = dropEffectOf(event.dataTransfer)
+      event.dataTransfer.dropEffect = drop === REFUSED ? "none" : dropEffectOf(event.dataTransfer)
     },
     onDragLeave: (event: DragEvent<HTMLElement>) => {
       // Crossing between children re-fires leave; only the pane's own boundary ends the hover.
@@ -214,7 +245,7 @@ export function paneDropZone(drops: PaneDropState | null, of: string, edges: rea
     },
     onDrop: (event: DragEvent<HTMLElement>) => {
       const drop = dropAt(event)
-      if (!drop) return
+      if (!drop || drop === REFUSED) return
       event.preventDefault()
       land(event.dataTransfer, drop)
     },
@@ -229,9 +260,10 @@ export function paneDropZone(drops: PaneDropState | null, of: string, edges: rea
 export function useStripDropZone(of: string | null) {
   const drops = usePaneDrop()
   if (!drops || of === null) return undefined
-  const { hover, land } = drops
+  const { hover, refuses, land } = drops
   const dropAt = (event: DragEvent<HTMLElement>): PaneDrop | null => {
-    if (!carriesPane(event.dataTransfer)) return null
+    // A refused link is the pane's to refuse, over the whole of it.
+    if (!carriesPane(event.dataTransfer) || refuses(event.dataTransfer)) return null
     const tabs = [...event.currentTarget.querySelectorAll<HTMLElement>("[data-tab-id]")].map((tab) => ({
       id: tab.dataset.tabId!,
       box: tab.getBoundingClientRect(),
@@ -264,7 +296,7 @@ export function useStripDropZone(of: string | null) {
 /** Where a drop on the strip of the section showing `of` would splice, if one is over it. */
 export function useStripCaret(of: string | null): { before: string | null } | null {
   const target = usePaneDrop()?.target
-  if (target?.via !== "strip" || target.of !== of || target.drop.kind !== "tab") return null
+  if (target?.via !== "strip" || target.of !== of || target.drop === REFUSED || target.drop.kind !== "tab") return null
   return { before: target.drop.before }
 }
 
@@ -288,19 +320,29 @@ export function PaneDropIndicator({ of, area, width }: PaneDropIndicatorProps) {
   const target = usePaneDrop()?.target
   if (target?.via !== "pane" || target.of !== of) return null
   const { drop } = target
-  const beside = drop.kind === "edge" && (drop.side === "left" || drop.side === "right")
+  const beside = drop !== REFUSED && drop.kind === "edge" && (drop.side === "left" || drop.side === "right")
   return (
     <div aria-hidden className="pointer-events-none relative z-20 min-h-0 min-w-0" style={{ gridArea: area }}>
-      <div
-        data-testid="pane-drop-indicator"
-        data-drop={drop.kind === "edge" ? drop.side : "centre"}
-        className={cn(
-          "absolute rounded-md bg-primary/10 ring-2 ring-primary/40 ring-inset",
-          drop.kind === "edge" ? EDGE_SHAPES[drop.side] : "inset-0",
-          beside && (width === null ? "w-1/2" : "max-w-full")
-        )}
-        style={beside && width !== null ? { width } : undefined}
-      />
+      {drop === REFUSED ? (
+        <div
+          data-testid="pane-drop-indicator"
+          data-drop={REFUSED}
+          className="absolute inset-0 flex items-center justify-center bg-background/70 text-muted-foreground"
+        >
+          <Ban className="size-8" />
+        </div>
+      ) : (
+        <div
+          data-testid="pane-drop-indicator"
+          data-drop={drop.kind === "edge" ? drop.side : "centre"}
+          className={cn(
+            "absolute rounded-md bg-primary/10 ring-2 ring-primary/40 ring-inset",
+            drop.kind === "edge" ? EDGE_SHAPES[drop.side] : "inset-0",
+            beside && (width === null ? "w-1/2" : "max-w-full")
+          )}
+          style={beside && width !== null ? { width } : undefined}
+        />
+      )}
     </div>
   )
 }

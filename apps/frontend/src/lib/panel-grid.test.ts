@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest"
 import {
+  carriedPanelSizes,
   compilePanelGrid,
   defaultPanelGridSizes,
   droppedPanelSizes,
@@ -8,6 +9,7 @@ import {
   panelColumnWidths,
   panelGridShape,
   resplit,
+  sectionSizes,
 } from "./panel-grid"
 import { dropPanelTab, parsePanelLayout, type PaneEdge } from "./panel-tabs"
 
@@ -65,6 +67,24 @@ describe("panelColumnWidths", () => {
   })
 })
 
+describe("sectionSizes", () => {
+  it("should hold a section at the minimum when a smaller window would squeeze it past it", () => {
+    expect(sectionSizes([240, 680], 600, 240)).toEqual([240, 360])
+  })
+
+  it("should share what the held sections leave by the shares of the rest", () => {
+    expect(sectionSizes([1, 6, 6], 900, 240)).toEqual([240, 330, 330])
+  })
+
+  it("should hold a section that holding another squeezes in turn", () => {
+    expect(sectionSizes([1, 6, 3], 900, 240)).toEqual([240, 420, 240])
+  })
+
+  it("should share the room evenly when it is too small for every section's minimum", () => {
+    expect(sectionSizes([1, 3], 300, 240)).toEqual([150, 150])
+  })
+})
+
 describe("panelGridShape", () => {
   it("should count the sections down each column", () => {
     expect(panelGridShape(parsePanelLayout("a.b--c-d"))).toBe("2,1")
@@ -89,6 +109,57 @@ describe("evenPanelColumns", () => {
       columns: [2, 2, 2],
       rows: [[1], [1, 2], [1]],
     })
+  })
+})
+
+describe("carriedPanelSizes", () => {
+  const carry = (before: string, sizes: { columns: number[]; rows: number[][] }, after: string) =>
+    carriedPanelSizes(parsePanelLayout(before), sizes, parsePanelLayout(after))
+
+  it("should keep a column's width when a section in it closes", () => {
+    expect(carry("m-a--b-c", { columns: [1, 0.5, 2], rows: [[1], [1, 3], [1]] }, "m-a-c")).toEqual({
+      columns: [1, 0.5, 2],
+      rows: [[1], [1], [1]],
+    })
+  })
+
+  it("should keep the heights of the sections that stay when one between them closes", () => {
+    expect(carry("m-a--b--c", { columns: [1, 2], rows: [[1], [1, 2, 3]] }, "m-a--c")).toEqual({
+      columns: [1, 2],
+      rows: [[1], [1, 3]],
+    })
+  })
+
+  it("should give a section opened in a column the mean of the shares already there", () => {
+    expect(carry("m-a--b-c", { columns: [1, 0.5, 2], rows: [[1], [1, 3], [1]] }, "m-a--b--d-c")).toEqual({
+      columns: [1, 0.5, 2],
+      rows: [[1], [1, 3, 2], [1]],
+    })
+  })
+
+  it("should share a section's height between the sections it splits into", () => {
+    expect(carry("m-a--b.c", { columns: [1, 2], rows: [[1], [1, 3]] }, "m-a--b--c")).toEqual({
+      columns: [1, 2],
+      rows: [[1], [1, 1.5, 1.5]],
+    })
+  })
+
+  it("should give a section the heights of the sections that joined in it", () => {
+    expect(carry("m-a--b--c", { columns: [1, 2], rows: [[1], [1, 2, 3]] }, "m-a.b--c")).toEqual({
+      columns: [1, 2],
+      rows: [[1], [3, 3]],
+    })
+  })
+
+  it("should keep both sections' heights when a tab moves from one to the one under it", () => {
+    expect(carry("m-b.c--a", { columns: [1, 2], rows: [[1], [1, 3]] }, "m-b--a.c")).toEqual({
+      columns: [1, 2],
+      rows: [[1], [1, 3]],
+    })
+  })
+
+  it("should carry nothing when a column opens or closes", () => {
+    expect(carry("m-a-c", { columns: [1, 0.5, 2], rows: [[1], [1], [1]] }, "m-a")).toBeNull()
   })
 })
 

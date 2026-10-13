@@ -18,6 +18,7 @@ import { UserProfileProvider } from "@/components/user-profile"
 import { SyncStatusContext, SyncStatusStore } from "@/sync/sync-status"
 import { seedAgentActivity, resetAgentActivityStore } from "@/stores/agent-activity-store"
 import { spyOnExport } from "@/test"
+import * as callModule from "@/components/call"
 import * as timelineModule from "@/components/timeline"
 import * as syncEngineModule from "@/sync/sync-engine"
 import { PanesPage } from "./panes"
@@ -51,6 +52,12 @@ beforeEach(() => {
   } as never)
   // The page body is the whole virtualized timeline; the header is what's under test.
   spyOnExport(timelineModule, "StreamContent").mockReturnValue((() => <div data-testid="timeline" />) as never)
+  spyOnExport(callModule, "useCallStart").mockReturnValue(() => ({
+    callActive: false,
+    width: 0,
+    start: vi.fn(),
+    takeOver: null,
+  }))
 })
 
 function renderStreamPage() {

@@ -2,7 +2,8 @@ import type { ReactNode } from "react"
 import { Link, useParams } from "react-router-dom"
 import type { LucideIcon } from "lucide-react"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { PagePaneHeader } from "@/components/panes/page-pane-chrome"
+import { PagePaneHeader, usePageHeaderFit } from "@/components/panes/page-pane-chrome"
+import { useMeasuredWidth } from "@/hooks/use-element-width"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
 
@@ -32,21 +33,24 @@ interface PageHeaderTabsProps {
  * Shared header for the list pages (Saved, Activity, Scheduled, Streams): the
  * page pane's header with an icon + title and a chip-style tab strip.
  *
- * On desktop the title and the tab strip share one row. On a phone there isn't
- * room for both — the non-shrinking chips would otherwise swallow the title —
- * so the strip gets its own full-width row below. The strip scrolls
- * horizontally rather than wrapping, so adding tabs never pushes the title
- * off-screen.
+ * The title and the tab strip share one row while the pane has room for both.
+ * On a phone, and in a pane too narrow for them — the non-shrinking chips
+ * would otherwise swallow the title — the strip gets its own full-width row
+ * below. The strip scrolls horizontally rather than wrapping, so adding tabs
+ * never pushes the title off-screen.
  */
 export function PageHeaderTabs({ backTo, icon: Icon, title, value, tabs, actions }: PageHeaderTabsProps) {
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const isMobile = useIsMobile()
+  const [listRef, listWidth] = useMeasuredWidth<HTMLDivElement>()
+  const [actionsRef, actionsWidth] = useMeasuredWidth<HTMLDivElement>()
+  const { fits, measureRefs } = usePageHeaderFit(listWidth + (actionsWidth > 0 ? actionsWidth + 8 : 0))
+  const stacked = isMobile || !fits
   const controls = (
-    // In a narrow pane the chips scroll before they push the title, focus and close out.
-    <div className={cn("flex min-w-0 items-center gap-2", isMobile ? "justify-center" : "max-w-[calc(100%-10rem)]")}>
+    <div className={cn("flex min-w-0 items-center gap-2", stacked && "justify-center")}>
       <div className="min-w-0 overflow-x-auto scrollbar-none">
         <Tabs value={value}>
-          <TabsList className="h-8 w-max">
+          <TabsList ref={listRef} className="h-8 w-max">
             {tabs.map((t) => (
               <TabsTrigger key={t.value} value={t.value} asChild>
                 <Link to={t.href} className="text-xs px-2.5 py-1">
@@ -58,7 +62,9 @@ export function PageHeaderTabs({ backTo, icon: Icon, title, value, tabs, actions
           </TabsList>
         </Tabs>
       </div>
-      {actions}
+      <div ref={actionsRef} className="shrink-0 empty:hidden">
+        {actions}
+      </div>
     </div>
   )
 
@@ -69,11 +75,13 @@ export function PageHeaderTabs({ backTo, icon: Icon, title, value, tabs, actions
         back={{ to: backTo, label: "Back to workspace" }}
         icon={<Icon className="h-5 w-5 shrink-0 text-muted-foreground" />}
         title={title}
-        className={cn(isMobile && "border-b-0")}
+        measureRefs={measureRefs}
+        canFoldControls={!stacked}
+        className={cn(stacked && "border-b-0")}
       >
-        {!isMobile && controls}
+        {!stacked && controls}
       </PagePaneHeader>
-      {isMobile && <div className="border-b px-4 pb-2">{controls}</div>}
+      {stacked && <div className="border-b px-4 pb-2">{controls}</div>}
     </>
   )
 }

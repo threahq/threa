@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, loginInNewContext, createChannel, expectApiOk, panesSettled } from "./helpers"
 
 /**
  * Opening a second thread beside the first adds a tab to the panel, kept in
@@ -260,6 +260,23 @@ test("should show one overview and hand keyboard focus to the tab brought forwar
 
 const stripOf = (page: Page, id: string) => tabPane(page, id).getByRole("navigation", { name: "Panel tabs" })
 
+test("should keep every tab in its row while a pane opening beside it narrows the header", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
+
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}.${threadB}`)
+  await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
+  const tabBehind = await stripOf(page, threadB).getByRole("link").first().elementHandle()
+
+  await tabPane(page, threadB).getByRole("button", { name: "In this stream" }).click()
+  await expect(page.getByRole("region", { name: "In this stream" })).toHaveCount(1)
+  await panesSettled(page)
+  await expect(tabPane(page, threadB).getByRole("button", { name: "In this stream" })).toHaveCount(0)
+
+  // The header folded that button to keep the row's room. A tab that left for "+N" and came back is a new element.
+  expect(await tabBehind?.evaluate((link) => link.isConnected)).toBe(true)
+})
+
 test("should split a tab beside its own and keep the split through back, forward, reload and a narrow window", async ({
   page,
 }) => {
@@ -451,6 +468,28 @@ test("should close tabs beside one from its menu, and reopen them latest first",
   await first.click({ button: "right" })
   await page.keyboard.press("Escape")
   await expect(first).toBeFocused()
+})
+
+test("should keep a column at its width when a section inside it closes", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
+  const widthOf = async (id: string) => Math.round((await tabPane(page, id).boundingBox())!.width)
+  await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${streamId}-${threadA}-${threadB}--page:search`)
+  await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
+  await expect(tabPane(page, "page:search")).toBeVisible()
+
+  const split = await widthOf(threadB)
+  // The keyboard, as the row divider's own grip covers this one's where the two meet.
+  await page.getByRole("separator", { name: "Resize panels side by side" }).focus()
+  await page.keyboard.press("Shift+ArrowLeft")
+  await page.keyboard.press("Shift+ArrowLeft")
+  await expect.poll(() => widthOf(threadB)).toBeGreaterThan(split + 80)
+  const widened = await widthOf(threadB)
+
+  await tabPane(page, "page:search").getByRole("button", { name: "Close", exact: true }).click()
+  await expect(tabPane(page, "page:search")).toHaveCount(0)
+  await panesSettled(page)
+  expect(Math.abs((await widthOf(threadB)) - widened)).toBeLessThanOrEqual(2)
 })
 
 test("should even the panes along a divider when it is double-clicked", async ({ page }) => {

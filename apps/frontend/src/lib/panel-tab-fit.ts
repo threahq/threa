@@ -2,6 +2,8 @@
 export const MIN_TAB_WIDTH = 96
 /** The "+N" menu trigger's footprint. */
 export const MORE_TABS_WIDTH = 48
+/** The "Tab actions" trigger's footprint, the header's gap before it included. */
+export const TAB_ACTIONS_WIDTH = 36
 
 /** The room a row of `tabs` needs to show two of them, beside "+N" when more are folded. */
 export function tabRowReserve(tabs: number): number {
@@ -12,20 +14,29 @@ export interface PanelTabFit {
   labels: boolean
   /** How many tabs show in the row; the rest are in the "+N" menu. */
   visible: number
+  /** Too narrow for a whole tab beside "+N": the row drops the tab's own close, which the pane's repeats, and moves "Tab actions" into "+N". */
+  compact: boolean
 }
 
 /**
- * Fits a section's tab row into `room`, the width shared by the tabs and the
- * labels beside them. The labels show only while every tab does, with the tab
+ * Fits a section's tab row into `room`, the width shared by the tabs, the
+ * labels beside them and "Tab actions". The labels show only while every tab does, with the tab
  * on show at its full `activeWidth` and the others at {@link MIN_TAB_WIDTH}.
  * Past that, every tab, the one on show included, may shrink to the minimum
  * and trailing tabs fold, so how many show never depends on which tab is on show.
  */
-export function fitPanelTabs(room: number, tabs: number, activeWidth: number, labelsWidth: number): PanelTabFit {
-  const labels = activeWidth + (tabs - 1) * MIN_TAB_WIDTH + labelsWidth <= room
-  if (labels || tabs * MIN_TAB_WIDTH <= room) return { labels, visible: tabs }
-  const fitting = Math.floor((room - MORE_TABS_WIDTH) / MIN_TAB_WIDTH)
-  return { labels: false, visible: Math.max(1, Math.min(tabs - 1, fitting)) }
+export function fitPanelTabs(
+  room: number,
+  tabs: number,
+  activeWidth: number,
+  labelsWidth: number,
+  actionsWidth = 0
+): PanelTabFit {
+  const tabRoom = room - actionsWidth
+  const labels = activeWidth + (tabs - 1) * MIN_TAB_WIDTH + labelsWidth <= tabRoom
+  if (labels || tabs * MIN_TAB_WIDTH <= tabRoom) return { labels, visible: tabs, compact: false }
+  const fitting = Math.floor((tabRoom - MORE_TABS_WIDTH) / MIN_TAB_WIDTH)
+  return { labels: false, visible: Math.max(1, Math.min(tabs - 1, fitting)), compact: fitting < 1 }
 }
 
 /** The tabs a row of `visible` shows, in order, with the one on show always among them, and the rest. */

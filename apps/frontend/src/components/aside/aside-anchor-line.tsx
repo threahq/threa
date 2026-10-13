@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom"
-import { CornerUpLeft } from "lucide-react"
+import { Anchor, CornerUpLeft } from "lucide-react"
 import { usePanel } from "@/contexts"
 import { useAsideAnchor } from "@/hooks/use-aside-anchor"
 import { useStreamName } from "@/hooks/use-stream-name"
@@ -14,6 +14,8 @@ interface AsideAnchorLineProps {
   anchorId?: string | null
   /** `chip` rides the column's header; `line` is the phone sheet's own row under it. */
   variant?: "line" | "chip"
+  /** The chip down to its glyph. */
+  compact?: boolean
 }
 
 /**
@@ -26,18 +28,27 @@ interface AsideAnchorLineProps {
  * round-trip (like `use-in-app-link-chip`), and uncached it names the stream
  * instead of inventing an author — but it still goes to the same message.
  */
-export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant = "line" }: AsideAnchorLineProps) {
+export function AsideAnchorLine({
+  workspaceId,
+  hostStreamId,
+  anchorId,
+  variant = "line",
+  compact = false,
+}: AsideAnchorLineProps) {
   const { layout, hasTabs, getTabUrl } = usePanel()
   const hostName = useStreamName(workspaceId, hostStreamId, "breadcrumb")
   const anchored = useAsideAnchor(workspaceId, hostStreamId, anchorId)
 
-  const label = anchored ? (
-    <>
-      Anchored to <span className="font-medium text-foreground/85">{`${anchored.author} · ${anchored.at}`}</span>
-    </>
-  ) : (
-    `Anchored in ${hostName ?? "this conversation"}`
+  const prefix = anchored ? "Anchored to " : "Anchored in "
+  const where = anchored ? `${anchored.author} · ${anchored.at}` : (hostName ?? "this conversation")
+  const label = (
+    <span className={compact ? "sr-only" : "min-w-0 truncate"}>
+      <span className="sr-only">{prefix}</span>
+      <span className={cn(anchored && "font-medium text-foreground/85")}>{where}</span>
+    </span>
   )
+  const title = compact ? `${prefix}${where}` : undefined
+  const chipSize = compact ? "shrink-0" : "min-w-0 shrink"
 
   const onHostPage = hasTabs && panelIdsOf(layout).includes(hostStreamId)
   const chip = variant === "chip"
@@ -62,12 +73,14 @@ export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant =
     return (
       <div
         data-testid="aside-anchor-line"
+        title={title}
         className={cn(
-          "flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground",
-          chip ? "rounded-full border px-2.5 py-1" : "h-7 border-b bg-primary/[0.025] px-3"
+          "flex items-center gap-1.5 text-[11px] text-muted-foreground",
+          chip ? cn(chipSize, "rounded-full border px-2.5 py-1") : "h-7 shrink-0 border-b bg-primary/[0.025] px-3"
         )}
       >
-        <span className="min-w-0 truncate">{label}</span>
+        <Anchor className="h-3 w-3 shrink-0" aria-hidden />
+        {label}
       </div>
     )
   }
@@ -76,19 +89,23 @@ export function AsideAnchorLine({ workspaceId, hostStreamId, anchorId, variant =
     <Link
       to={to}
       data-testid="aside-anchor-line"
+      title={title}
       className={cn(
-        "group flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground transition-colors",
+        "group flex items-center gap-1.5 text-[11px] text-muted-foreground transition-colors",
         "hover:text-primary focus-visible:text-primary focus-visible:outline-none",
         chip
-          ? "shrink rounded-full border px-2.5 py-1 hover:border-primary/40 hover:bg-primary/[0.06]"
-          : "h-7 shrink-0 border-b bg-primary/[0.025] px-3 hover:bg-primary/[0.06]"
+          ? cn(chipSize, "rounded-full border px-2.5 py-1 hover:border-primary/40 hover:bg-primary/[0.06]")
+          : "h-7 min-w-0 shrink-0 border-b bg-primary/[0.025] px-3 hover:bg-primary/[0.06]"
       )}
     >
-      <span className="min-w-0 truncate">{label}</span>
-      <CornerUpLeft
-        className="h-3 w-3 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-primary"
-        aria-hidden
-      />
+      <Anchor className="h-3 w-3 shrink-0" aria-hidden />
+      {label}
+      {!compact && (
+        <CornerUpLeft
+          className="h-3 w-3 shrink-0 text-muted-foreground/50 transition-colors group-hover:text-primary"
+          aria-hidden
+        />
+      )}
     </Link>
   )
 }

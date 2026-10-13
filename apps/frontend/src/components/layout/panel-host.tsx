@@ -45,13 +45,17 @@ import {
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 import {
   broughtWidth,
+  carriedPanelSizes,
   compilePanelGrid,
   defaultPanelGridSizes,
   panelColumnWidths,
   panelGridShape,
   resplit,
+  sectionSizes,
   evenPanelColumns,
   evenShares,
+  MIN_SECTION_HEIGHT,
+  MIN_SECTION_WIDTH,
   type PanelGridSizes,
 } from "@/lib/panel-grid"
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer"
@@ -229,9 +233,6 @@ function PaneContent({ workspaceId, panelId, className }: PanelHostProps & { pan
   )
 }
 
-// Room for a tab row's tab on show and "+N" beside the menu, focus and close.
-const MIN_SECTION_WIDTH = 240
-const MIN_SECTION_HEIGHT = 120
 // A stream's header and composer with about 120px of timeline between them.
 const MIN_STACKED_SECTION_HEIGHT = 320
 
@@ -267,8 +268,6 @@ interface PanelTabStackProps {
   width: number | null
   /** Pixels the first column fills, which a floating tab's map shows too. */
   firstColumnWidth: number
-  /** Pixels of the page's grid's height, which the sections share. */
-  height: number
 }
 
 interface PlacedTab {
@@ -283,11 +282,18 @@ interface PlacedTab {
 
 type PanelGridState = ReturnType<typeof usePanelGrid>
 
-/** The page's grid for `display`, fitted from `layout`: its row tracks, each section's area, and the column shares as last dragged. */
-export function usePanelGrid(display: PanelLayout, layout: PanelLayout) {
+/**
+ * The page's grid for `display`, fitted from `layout`: its row tracks, each section's area, the sizes as
+ * last dragged, and `heights`, each column's sections as `height` pixels show them, none under its least.
+ */
+export function usePanelGrid(display: PanelLayout, layout: PanelLayout, height: number) {
   const [sizes, setSizes] = usePanelGridSizes(display, layout)
-  const { rows, areas } = useMemo(() => compilePanelGrid(sizes), [sizes])
-  return { sizes, setSizes, rows, areas }
+  const heights = useMemo(
+    () => sizes.rows.map((shares) => (height > 0 ? sectionSizes(shares, height, MIN_SECTION_HEIGHT) : shares)),
+    [sizes.rows, height]
+  )
+  const { rows, areas } = useMemo(() => compilePanelGrid({ ...sizes, rows: heights }), [sizes, heights])
+  return { sizes, setSizes, heights, rows, areas }
 }
 
 /** `layout` as a window `maxColumns` wide and `maxRows` tall arranges it, or a phone when `stacked`. */
@@ -395,11 +401,10 @@ export function PanelTabStack({
   grid,
   width,
   firstColumnWidth,
-  height,
 }: PanelTabStackProps) {
   const { setCurrentPane, focusTab, closeTab } = usePanel()
   const current = useCurrentPane()
-  const { sizes, setSizes, areas } = grid
+  const { sizes, setSizes, heights, areas } = grid
   const panelShares = sizes.columns.slice(1)
   const columnWidths = width === null ? null : panelColumnWidths(panelShares, width)
 
@@ -490,35 +495,35 @@ export function PanelTabStack({
 
   // The first column fills what the rest leave, so only the dividers between the rest share sizes. Each is
   // keyed by the section it leads, so it glides with that section's edge when one before it closes.
-  const columnUnit = (width ?? 0) / sum(panelShares)
-  const columnResizers = panelShares
+  // Dragged in the pixels on show, which a held minimum can set apart from the shares.
+  const shownWidths = columnWidths ?? []
+  const columnResizers = shownWidths
     .slice(1)
-    .map((share, index) => (
+    .map((shown, index) => (
       <SectionResizer
         key={`column:${keyOf(display.columns[index + 2][0].ids[0])}`}
         axis="x"
         area={`1 / ${index + 3} / -1 / ${index + 4}`}
-        size={panelShares[index] * columnUnit}
-        span={(panelShares[index] + share) * columnUnit}
+        size={shownWidths[index]}
+        span={shownWidths[index] + shown}
         min={MIN_SECTION_WIDTH}
-        onResize={(px) => setSizes({ ...sizes, columns: resplit(sizes.columns, index + 1, px / columnUnit) })}
+        onResize={(px) => setSizes({ ...sizes, columns: [sizes.columns[0], ...resplit(shownWidths, index, px)] })}
         onReset={() => setSizes(evenPanelColumns(sizes))}
       />
     ))
-  const rowResizers = sizes.rows.flatMap((rows, column) => {
-    const unit = height / sum(rows)
-    return rows.slice(1).map((share, index) => (
+  const rowResizers = heights.flatMap((shownHeights, column) =>
+    shownHeights.slice(1).map((shown, index) => (
       <SectionResizer
         key={`row:${keyOf(display.columns[column][index + 1].ids[0])}`}
         axis="y"
         area={areas[column][index + 1]}
-        size={rows[index] * unit}
-        span={(rows[index] + share) * unit}
+        size={shownHeights[index]}
+        span={shownHeights[index] + shown}
         min={MIN_SECTION_HEIGHT}
         onResize={(px) =>
           setSizes({
             ...sizes,
-            rows: sizes.rows.map((shares, at) => (at === column ? resplit(shares, index, px / unit) : shares)),
+            rows: sizes.rows.map((shares, at) => (at === column ? resplit(shownHeights, index, px) : shares)),
           })
         }
         onReset={() =>
@@ -526,7 +531,7 @@ export function PanelTabStack({
         }
       />
     ))
-  })
+  )
 
   return (
     <>
@@ -645,16 +650,26 @@ function paneMap(
 
 /**
  * Section sizes last dragged for the shape on show, so a window that folds a
- * column finds them again when it widens. Opening or closing a section forgets them.
+ * column finds them again when it widens. A section opening or closing leaves
+ * the columns their widths and the sections that stay their heights; a column
+ * opening or closing shares the widths anew.
  */
 function usePanelGridSizes(display: PanelLayout, layout: PanelLayout) {
   const arrangement = panelGridShape(layout)
+  const shape = panelGridShape(display)
   const [stored, setStored] = useState<{ arrangement: string; byShape: Record<string, PanelGridSizes> }>({
     arrangement,
     byShape: {},
   })
-  if (stored.arrangement !== arrangement) setStored({ arrangement, byShape: {} })
-  const shape = panelGridShape(display)
+  const shown = useRef(display)
+  useLayoutEffect(() => {
+    shown.current = display
+  })
+  if (stored.arrangement !== arrangement) {
+    const held = stored.byShape[panelGridShape(shown.current)]
+    const carried = held ? carriedPanelSizes(shown.current, held, display) : null
+    setStored({ arrangement, byShape: carried ? { [shape]: carried } : {} })
+  }
   const setSizes = useCallback(
     (next: PanelGridSizes) => setStored((current) => ({ ...current, byShape: { ...current.byShape, [shape]: next } })),
     [shape]

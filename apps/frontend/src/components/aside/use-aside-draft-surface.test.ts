@@ -3,7 +3,13 @@ import { act, renderHook } from "@testing-library/react"
 import { spyOnExport } from "@/test"
 import * as handoffModule from "@/hooks/use-host-composer-handoff"
 import * as draftsModule from "./use-aside-drafts"
-import { asideOpenDraft, asidePendingAgentBlocksForTest, openAside, resetAsideStoreCache } from "@/stores/aside-store"
+import {
+  asideOpenDraft,
+  asidePendingAgentBlocksForTest,
+  getAsideState,
+  openAside,
+  resetAsideStoreCache,
+} from "@/stores/aside-store"
 import { useAsideDraftSurface } from "./use-aside-draft-surface"
 
 const ASIDE = "stream_aside_1"
@@ -66,6 +72,21 @@ describe("useAsideDraftSurface", () => {
     // The block was meant for the draft that was just thrown away; it must not
     // land in whatever is opened next.
     expect(asidePendingAgentBlocksForTest(ASIDE)).toEqual([])
+  })
+
+  it.each([
+    ["close the aside once its draft is handed to a composer on the page", false, null],
+    ["leave the aside to the navigation when the hand-off left the page", true, ASIDE],
+  ])("should %s", async (_name, navigated, asideId) => {
+    const queued = { delivered: Promise.resolve(true), navigated }
+    spyOnExport(handoffModule, "useHostComposerHandoff").mockReturnValue((() => async () => queued) as never)
+    const { result } = renderHook(() => useAsideDraftSurface(params))
+
+    await act(async () => {
+      expect(await result.current.sendToComposer({ content: [{ type: "paragraph" }], attachments: [] })).toBe(queued)
+    })
+
+    expect(getAsideState()?.asideId ?? null).toBe(asideId)
   })
 
   it("leaves another draft open when a different one is discarded", async () => {

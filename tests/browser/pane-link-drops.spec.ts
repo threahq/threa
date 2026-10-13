@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, expectApiOk, panesSettled } from "./helpers"
 
 /**
  * A link dropped on a pane opens what it names there: a stream, at the message
@@ -12,6 +12,16 @@ async function post(page: Page, workspaceId: string, streamId: string, content: 
   const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, { data: { streamId, content } })
   await expectApiOk(response, `post ${content}`)
   return ((await response.json()) as { message: { id: string } }).message.id
+}
+
+async function createThread(page: Page, workspaceId: string, streamId: string, parentId: string, reply: string) {
+  const response = await page.request.post(`/api/workspaces/${workspaceId}/streams`, {
+    data: { type: "thread", parentStreamId: streamId, parentAnchorId: parentId },
+  })
+  await expectApiOk(response, "create thread")
+  const threadId = ((await response.json()) as { stream: { id: string } }).stream.id
+  await post(page, workspaceId, threadId, reply)
+  return threadId
 }
 
 const streamIdOf = (page: Page) => page.url().match(/\/s\/([^/?]+)/)?.[1] ?? null
@@ -75,6 +85,18 @@ async function dropLink(page: Page, to: { x: number; y: number }, url: string, h
   await fire(page, to, url, ["dragenter", "dragover"])
   await hovering?.()
   await fire(page, to, url, ["dragover", "drop"])
+}
+
+/** Drags `link` itself with the pointer and rests it at `to`, the button still down. */
+async function dragTo(page: Page, link: Locator, to: { x: number; y: number }) {
+  const from = await at(link, 0.5, 0.5)
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(from.x + 12, from.y + 4, { steps: 3 })
+  await page.mouse.move(to.x, to.y, { steps: 12 })
+  // Chromium coalesces emulated dragovers and can drop the last; a nudge lands one where the pointer rests.
+  await page.mouse.move(to.x + 1, to.y)
+  await page.mouse.move(to.x, to.y)
 }
 
 test("should open the stream a dropped permalink names beside the pane, at its message", async ({ page }) => {
@@ -163,16 +185,8 @@ test("should leave a link dropped on a pane's text field to the field", async ({
 test("should open a workspace page beside the pane when its sidebar link is dragged there", async ({ page }) => {
   const { workspaceId, streamA } = await seed(page)
   const activity = page.getByRole("navigation", { name: "Sidebar navigation" }).getByRole("link", { name: "Activity" })
-  const from = await at(activity, 0.5, 0.5)
-  const to = await at(mainPane(page), 0.95, 0.4)
 
-  await page.mouse.move(from.x, from.y)
-  await page.mouse.down()
-  await page.mouse.move(from.x + 12, from.y + 4, { steps: 3 })
-  await page.mouse.move(to.x, to.y, { steps: 12 })
-  // Chromium coalesces emulated dragovers and can drop the last; a nudge lands one where the pointer rests.
-  await page.mouse.move(to.x + 1, to.y)
-  await page.mouse.move(to.x, to.y)
+  await dragTo(page, activity, await at(mainPane(page), 0.95, 0.4))
   await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "right")
   await page.mouse.up()
 
@@ -180,4 +194,50 @@ test("should open a workspace page beside the pane when its sidebar link is drag
   await expect
     .poll(() => params(page))
     .toEqual({ path: `/w/${workspaceId}/s/${streamA}`, panel: "page:activity", m: null })
+})
+
+test("should open the thread and the draft thread a dropped timeline link brings up", async ({ page }) => {
+  const { workspaceId, streamA } = await seed(page)
+  const origin = new URL(page.url()).origin
+  const parent = await post(page, workspaceId, streamA, "has a thread")
+  const bare = await post(page, workspaceId, streamA, "has none")
+  const thread = await createThread(page, workspaceId, streamA, parent, "said in the thread")
+  await page.reload()
+  const row = (id: string) => mainPane(page).locator(`[data-message-id="${id}"]`).first()
+  const hrefOf = async (link: Locator) => `${origin}${await link.getAttribute("href")}`
+  const replies = row(parent).getByRole("link", { name: /1 reply/i })
+  await expect(replies).toBeVisible({ timeout: 30_000 })
+
+  await dragTo(page, replies, await at(mainPane(page), 0.95, 0.4))
+  await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "right")
+  await page.mouse.up()
+  await expect(tabPane(page, thread).getByText("said in the thread")).toBeVisible({ timeout: 30_000 })
+  await expect
+    .poll(() => params(page))
+    .toEqual({ path: `/w/${workspaceId}/s/${thread}`, panel: `${streamA}-${thread}`, m: null })
+
+  const draft = `draft:${streamA}:${bare}`
+  const reply = row(bare).getByRole("link", { name: "Reply in thread" })
+  await expect(reply).toBeAttached()
+  await panesSettled(page)
+  await dropLink(page, await at(tabPane(page, thread), 0.95, 0.4), await hrefOf(reply))
+  await expect(tabPane(page, draft)).toBeVisible({ timeout: 30_000 })
+  await expect
+    .poll(() => params(page))
+    .toEqual({ path: `/w/${workspaceId}/s/${thread}`, panel: `${streamA}-${thread}-${draft}`, m: null })
+})
+
+test("should refuse a dragged link that brings up no pane, over the whole pane", async ({ page }) => {
+  const { workspaceId, streamA } = await seed(page)
+  await post(page, workspaceId, streamA, "see [the docs](https://example.com/docs)")
+  const link = mainPane(page).getByRole("link", { name: "the docs" })
+  await expect(link).toBeVisible({ timeout: 30_000 })
+  const before = params(page)
+
+  await dragTo(page, link, await at(mainPane(page), 0.95, 0.4))
+  await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "refused")
+  await page.mouse.up()
+
+  await expect(page.getByTestId("pane-drop-indicator")).toHaveCount(0)
+  expect(params(page)).toEqual(before)
 })

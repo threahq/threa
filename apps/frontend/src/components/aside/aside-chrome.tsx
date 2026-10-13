@@ -1,6 +1,7 @@
 import { Lock } from "lucide-react"
 import { StreamTypes } from "@threahq/types"
 import { STREAM_ICONS } from "@/lib/streams"
+import { cn } from "@/lib/utils"
 
 export const AsideGlyph = STREAM_ICONS[StreamTypes.ASIDE]
 
@@ -19,11 +20,17 @@ export const ASIDE_LABEL =
  * than only where it was created, because an aside looks like every other
  * stream once it is open.
  */
-export function AsidePrivateBadge() {
+export function AsidePrivateBadge({ compact = false }: { compact?: boolean }) {
   return (
-    <span className="flex shrink-0 items-center gap-1 rounded-full border border-primary/40 bg-primary/[0.07] px-2 py-0.5 text-[10.5px] font-medium text-primary">
+    <span
+      title={compact ? "Private" : undefined}
+      className={cn(
+        "flex shrink-0 items-center gap-1 rounded-full border border-primary/40 bg-primary/[0.07] py-0.5 text-[10.5px] font-medium text-primary",
+        compact ? "px-1.5" : "px-2"
+      )}
+    >
       <Lock className="h-2.5 w-2.5" aria-hidden />
-      Private
+      <span className={cn(compact && "sr-only")}>Private</span>
     </span>
   )
 }

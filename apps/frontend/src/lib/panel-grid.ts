@@ -3,6 +3,10 @@ import { locate, type PaneEdge, type PanelLayout, type PanelSection } from "./pa
 /** How a panel opened beside another panel splits with it: the one being read keeps the larger share. */
 export const BESIDE_SPLIT_RATIO = 1.4
 
+// Room for a tab row's tab on show and "+N" beside the menu, focus and close.
+export const MIN_SECTION_WIDTH = 240
+export const MIN_SECTION_HEIGHT = 120
+
 /** Relative sizes of the columns, and of the sections down each column. */
 export interface PanelGridSizes {
   columns: readonly number[]
@@ -49,13 +53,63 @@ export function resplit(shares: readonly number[], index: number, leading: numbe
   })
 }
 
+/**
+ * `sizes`, held for `before`, as `after` holds them: every column keeps its
+ * share, a section on show in both keeps its own, one that sections joined in
+ * takes all of theirs, the sections one split into share its own, and one
+ * `after` adds takes the mean of its column's. Null where the two differ in
+ * columns, whose widths are then shared anew.
+ */
+export function carriedPanelSizes(
+  before: PanelLayout,
+  sizes: PanelGridSizes,
+  after: PanelLayout
+): PanelGridSizes | null {
+  if (before.columns.length !== after.columns.length) return null
+  return {
+    columns: sizes.columns,
+    rows: after.columns.map((sections, column) => {
+      const shares = sizes.rows[column]
+      const heirs = before.columns[column].map((held) =>
+        sections.filter((section) => held.ids.some((id) => section.ids.includes(id)))
+      )
+      // A section's own are the ones that went to it alone; a tab another lent it is no claim on that one's share.
+      const own = sections.map((section) =>
+        sum(shares.filter((_, row) => heirs[row].length === 1 && heirs[row][0] === section))
+      )
+      const split = sections.map((section, at) => (own[at] > 0 ? -1 : heirs.findIndex((to) => to.includes(section))))
+      const kept = sections.map((_, at) => {
+        if (own[at] > 0) return own[at]
+        return split[at] === -1 ? null : shares[split[at]] / split.filter((row) => row === split[at]).length
+      })
+      const held = kept.filter((share) => share !== null)
+      const added = held.length > 0 ? sum(held) / held.length : 1
+      return kept.map((share) => share ?? added)
+    }),
+  }
+}
+
 const track = (share: number) => `minmax(0,${Number(share.toFixed(4))}fr)`
 const sum = (shares: readonly number[]) => shares.reduce((total, share) => total + share, 0)
 
+/**
+ * Each section's pixels when the sections share `total` by their shares, none under `min`: one a smaller
+ * window would squeeze past it keeps it, and the rest share what is left. Too many for `total` share it evenly.
+ */
+export function sectionSizes(shares: readonly number[], total: number, min: number): number[] {
+  const floor = Math.min(min, total / shares.length)
+  let roomy = shares.map((_, index) => index)
+  for (;;) {
+    const unit = (total - floor * (shares.length - roomy.length)) / sum(roomy.map((index) => shares[index]))
+    const squeezed = roomy.filter((index) => shares[index] * unit < floor)
+    if (squeezed.length === 0) return shares.map((share, index) => (roomy.includes(index) ? share * unit : floor))
+    roomy = roomy.filter((index) => !squeezed.includes(index))
+  }
+}
+
 /** Each column's width when the columns share `width` pixels by their shares. */
 export function panelColumnWidths(shares: readonly number[], width: number): number[] {
-  const total = sum(shares)
-  return shares.map((share) => (width * share) / total)
+  return sectionSizes(shares, width, MIN_SECTION_WIDTH)
 }
 /**
  * The width the tab `id` brings to a side-edge drop: its column's, from

@@ -4,8 +4,10 @@ import type { DraftAttachment } from "@/db"
 import { workspaceScopedKey } from "@/lib/workspace-scoped-key"
 
 /**
- * Ephemeral per-stream "hand-off" of content into a target stream's composer:
- * the Share action's pointer/plaintext nodes, and an aside's send-to-composer.
+ * Ephemeral "hand-off" of content into a composer: the Share action's
+ * pointer/plaintext nodes, and an aside's send-to-composer. A hand-off is
+ * queued under its `target`: a stream id for that stream's own composer, or the
+ * draft scope of a composer that is not a stream's (a conversation's reply).
  * One queue for all of them, so they share the one stash-then-insert path the
  * composer runs (INV-43) — a non-empty destination is always preserved as a
  * stash row, never replaced. Scoped to a single navigation hop with a short TTL
@@ -60,6 +62,8 @@ const HANDOFF_TTL_MS = 5 * 60 * 1000
 let nextQueueId = 0
 const cache = new Map<string, QueuedShareHandoff[]>()
 const listeners = new Map<string, Set<() => void>>()
+const openers = new Map<string, Set<() => void>>()
+const draining = new Set<string>()
 // Content hand-offs move files, so their source waits to hear that the
 // destination persisted them before letting go: one resolver per queued entry,
 // settled true by the destination, false on expiry/reset/rejection.
@@ -70,6 +74,31 @@ function settleDelivery(queueId: number, delivered: boolean): void {
   if (!resolve) return
   deliveryResolvers.delete(queueId)
   resolve(delivered)
+}
+
+function notify(key: string): void {
+  const subs = listeners.get(key)
+  if (subs) {
+    for (const listener of subs) listener()
+    return
+  }
+  const [open] = openers.get(key) ?? []
+  open?.()
+}
+
+function subscribeIn(subscribers: Map<string, Set<() => void>>, key: string, listener: () => void): () => void {
+  let subs = subscribers.get(key)
+  if (!subs) {
+    subs = new Set()
+    subscribers.set(key, subs)
+  }
+  subs.add(listener)
+  return () => {
+    const set = subscribers.get(key)
+    if (!set) return
+    set.delete(listener)
+    if (set.size === 0) subscribers.delete(key)
+  }
 }
 
 function liveQueue(key: string): QueuedShareHandoff[] {
@@ -110,10 +139,7 @@ export function queueShareHandoff(workspaceId: string, targetStreamId: string, a
   const queued = cache.get(key) ?? []
   queued.push({ queueId: ++nextQueueId, kind: "pointer", attrs, expiresAt: Date.now() + HANDOFF_TTL_MS })
   cache.set(key, queued)
-  const subs = listeners.get(key)
-  if (subs) {
-    for (const listener of subs) listener()
-  }
+  notify(key)
 }
 
 /**
@@ -137,33 +163,27 @@ export function queuePlaintextShareHandoff(
     expiresAt: Date.now() + HANDOFF_TTL_MS,
   })
   cache.set(key, queued)
-  const subs = listeners.get(key)
-  if (subs) {
-    for (const listener of subs) listener()
-  }
+  notify(key)
 }
 
 /**
- * Queue composer blocks for the target stream. Same hop + TTL + subscriber
+ * Queue composer blocks for the target. Same hop + TTL + subscriber
  * notification as a share; the composer inserts it through the same path, so a
  * draft already in the destination is stashed rather than overwritten.
  */
 export function queueContentHandoff(
   workspaceId: string,
-  targetStreamId: string,
+  target: string,
   content: JSONContent[],
   attachments: DraftAttachment[] = []
 ): { delivered: Promise<boolean> } {
-  const key = workspaceScopedKey(workspaceId, targetStreamId)
+  const key = workspaceScopedKey(workspaceId, target)
   const queued = cache.get(key) ?? []
   const queueId = ++nextQueueId
   const delivered = new Promise<boolean>((resolve) => deliveryResolvers.set(queueId, resolve))
   queued.push({ queueId, kind: "content", content, attachments, expiresAt: Date.now() + HANDOFF_TTL_MS })
   cache.set(key, queued)
-  const subs = listeners.get(key)
-  if (subs) {
-    for (const listener of subs) listener()
-  }
+  notify(key)
   return { delivered }
 }
 
@@ -198,8 +218,8 @@ export function peekPlaintextShareHandoff(
 }
 
 /** Snapshot every pending handoff in queue order without consuming it. */
-export function peekShareHandoffBatch(workspaceId: string, targetStreamId: string): ShareHandoffBatch | null {
-  const queued = liveQueue(workspaceScopedKey(workspaceId, targetStreamId))
+export function peekShareHandoffBatch(workspaceId: string, target: string): ShareHandoffBatch | null {
+  const queued = liveQueue(workspaceScopedKey(workspaceId, target))
   if (queued.length === 0) return null
   return {
     ids: queued.map((entry) => entry.queueId),
@@ -212,12 +232,8 @@ export function peekShareHandoffBatch(workspaceId: string, targetStreamId: strin
 }
 
 /** Remove only the entries represented by a previously-read batch. */
-export function acknowledgeShareHandoffBatch(
-  workspaceId: string,
-  targetStreamId: string,
-  batch: ShareHandoffBatch
-): void {
-  const key = workspaceScopedKey(workspaceId, targetStreamId)
+export function acknowledgeShareHandoffBatch(workspaceId: string, target: string, batch: ShareHandoffBatch): void {
+  const key = workspaceScopedKey(workspaceId, target)
   const queued = cache.get(key)
   if (!queued) return
   const acknowledged = new Set(batch.ids)
@@ -227,24 +243,47 @@ export function acknowledgeShareHandoffBatch(
 }
 
 /**
- * Subscribe to share-handoff events for a given stream. Composers already
- * mounted call this in addition to the on-mount {@link consumeShareHandoff}
- * read so they pick up shares queued while they were live. Returns an
- * unsubscribe function.
+ * Subscribe to the hand-offs queued for a target. An open composer drains what
+ * is queued as it mounts, and subscribes here for what is queued while it is
+ * live. Returns an unsubscribe function.
  */
-export function subscribeShareHandoff(workspaceId: string, targetStreamId: string, listener: () => void): () => void {
-  const key = workspaceScopedKey(workspaceId, targetStreamId)
-  let subs = listeners.get(key)
-  if (!subs) {
-    subs = new Set()
-    listeners.set(key, subs)
-  }
-  subs.add(listener)
-  return () => {
-    const set = listeners.get(key)
-    if (!set) return
-    set.delete(listener)
-    if (set.size === 0) listeners.delete(key)
+export function subscribeShareHandoff(workspaceId: string, target: string, listener: () => void): () => void {
+  return subscribeIn(listeners, workspaceScopedKey(workspaceId, target), listener)
+}
+
+/**
+ * A composer that has to be opened before it can take a hand-off (a card's
+ * collapsed reply field) subscribes here. `open` runs only while no open
+ * composer listens for the target, and for one resting composer at a time, so
+ * a hand-off never opens a second composer beside the one taking it.
+ */
+export function subscribeShareHandoffOpener(workspaceId: string, target: string, open: () => void): () => void {
+  return subscribeIn(openers, workspaceScopedKey(workspaceId, target), open)
+}
+
+/** Whether a composer on the page takes hand-offs for the target, open or waiting to be opened. */
+export function hasShareHandoffTaker(workspaceId: string, target: string): boolean {
+  const key = workspaceScopedKey(workspaceId, target)
+  return listeners.has(key) || openers.has(key)
+}
+
+/**
+ * Two composers can be open on one target (a card's reply and its conversation
+ * pane's). The one that starts a drain holds the target until it is done, so
+ * the destination draft is stashed once. Returns null while another composer
+ * holds it, else the release. A composer that goes away mid-drain releases with
+ * `passOn`, which hands what is still queued to the composers left.
+ */
+export function claimShareHandoffDrain(workspaceId: string, target: string): ((passOn?: boolean) => void) | null {
+  const key = workspaceScopedKey(workspaceId, target)
+  if (draining.has(key)) return null
+  draining.add(key)
+  let held = true
+  return (passOn = false) => {
+    if (!held) return
+    held = false
+    draining.delete(key)
+    if (passOn && liveQueue(key).length > 0) notify(key)
   }
 }
 
@@ -275,6 +314,8 @@ export function resetShareHandoffStoreCache(): void {
   for (const queueId of [...deliveryResolvers.keys()]) settleDelivery(queueId, false)
   cache.clear()
   listeners.clear()
+  openers.clear()
+  draining.clear()
 }
 
 /** Clears every queued handoff. Test helper. */

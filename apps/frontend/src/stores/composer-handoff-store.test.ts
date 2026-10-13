@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import {
+  claimShareHandoffDrain,
   __resetShareHandoffStoreForTesting,
   acknowledgeShareHandoffBatch,
   consumeShareHandoff,
@@ -11,6 +12,7 @@ import {
   queuePlaintextShareHandoff,
   queueContentHandoff,
   subscribeShareHandoff,
+  subscribeShareHandoffOpener,
 } from "./composer-handoff-store"
 
 const sampleAttrs = {
@@ -129,6 +131,59 @@ describe("share handoff store", () => {
     queueShareHandoff("ws_1", "stream_a", sampleAttrs)
     expect(onA).toHaveBeenCalledTimes(1)
     expect(onB).not.toHaveBeenCalled()
+  })
+
+  it("should open a resting composer only while no open composer listens for the target", () => {
+    const open = vi.fn()
+    subscribeShareHandoffOpener("ws_1", "board:reply:conv_1", open)
+
+    queueContentHandoff("ws_1", "board:reply:conv_1", [{ type: "paragraph" }])
+    expect(open).toHaveBeenCalledTimes(1)
+
+    const listener = vi.fn()
+    const unsubscribe = subscribeShareHandoff("ws_1", "board:reply:conv_1", listener)
+    queueContentHandoff("ws_1", "board:reply:conv_1", [{ type: "paragraph" }])
+    expect(listener).toHaveBeenCalledTimes(1)
+    expect(open).toHaveBeenCalledTimes(1)
+
+    unsubscribe()
+    queueContentHandoff("ws_1", "board:reply:conv_1", [{ type: "paragraph" }])
+    expect(open).toHaveBeenCalledTimes(2)
+  })
+
+  it("should open one resting composer when several wait for the target", () => {
+    const first = vi.fn()
+    const second = vi.fn()
+    subscribeShareHandoffOpener("ws_1", "board:reply:conv_1", first)
+    subscribeShareHandoffOpener("ws_1", "board:reply:conv_1", second)
+
+    queueContentHandoff("ws_1", "board:reply:conv_1", [{ type: "paragraph" }])
+
+    expect([first.mock.calls.length, second.mock.calls.length]).toEqual([1, 0])
+  })
+
+  it("should give a target's drain to one composer at a time", () => {
+    const release = claimShareHandoffDrain("ws_1", "board:reply:conv_1")
+    expect(release).not.toBeNull()
+    expect(claimShareHandoffDrain("ws_1", "board:reply:conv_1")).toBeNull()
+
+    release?.()
+    expect(claimShareHandoffDrain("ws_1", "board:reply:conv_1")).not.toBeNull()
+  })
+
+  it("should hand what is still queued to the composers left when a drain is passed on", () => {
+    const listener = vi.fn()
+    subscribeShareHandoff("ws_1", "board:reply:conv_1", listener)
+    queueContentHandoff("ws_1", "board:reply:conv_1", [{ type: "paragraph" }])
+    listener.mockClear()
+
+    claimShareHandoffDrain("ws_1", "board:reply:conv_1")?.()
+    expect(listener).not.toHaveBeenCalled()
+
+    const release = claimShareHandoffDrain("ws_1", "board:reply:conv_1")
+    release?.(true)
+    release?.(true)
+    expect(listener).toHaveBeenCalledTimes(1)
   })
 
   it("carries an aside hand-off on the same queue, in order, and acknowledges it with the rest", () => {
