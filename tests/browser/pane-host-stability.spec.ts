@@ -46,7 +46,8 @@ async function seedStreamWithThread(page: Page) {
 }
 const parentRow = (page: Page, parentId: string) =>
   page.locator(`[data-editor-zone="main"] [data-message-id="${parentId}"]`).first()
-const threadReply = (page: Page) => page.getByTestId("panel").getByText("a reply in the thread")
+const threadReply = (page: Page, threadId: string) =>
+  page.locator(`[data-panel-tab="${threadId}"]`).getByText("a reply in the thread")
 const panelHandle = (page: Page) => page.getByRole("separator", { name: "Resize thread panel" })
 
 async function tag(target: Locator, name: string) {
@@ -71,28 +72,28 @@ async function revealParent(page: Page, streamId: string, parentId: string) {
   await parentRow(page, parentId).evaluate((el) => el.scrollIntoView({ block: "center" }))
 }
 
-async function openThread(page: Page, parentId: string) {
+async function openThread(page: Page, parentId: string, threadId: string) {
   await parentRow(page, parentId)
     .getByRole("link", { name: /1 reply/i })
     .click()
-  await expect(threadReply(page)).toBeVisible()
+  await expect(threadReply(page, threadId)).toBeVisible()
 }
 
 test("should keep the timeline and thread panel mounted through open, close and the phone breakpoint", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 })
-  const { streamId, parentId } = await seedStreamWithThread(page)
+  const { streamId, threadId, parentId } = await seedStreamWithThread(page)
   await tag(scroller(page, streamId), "main")
   await revealParent(page, streamId, parentId)
 
   // Desktop: the panel docks beside the timeline at its default width.
-  await openThread(page, parentId)
+  await openThread(page, parentId, threadId)
   await expect.poll(async () => Math.round((await page.getByTestId("panel").boundingBox())?.width ?? 0)).toBe(480)
   const main = (await page.locator('[data-editor-zone="main"]').boundingBox())!
   const panel = (await page.getByTestId("panel").boundingBox())!
   expect(Math.round(main.x + main.width)).toBe(Math.round(panel.x))
-  await tag(threadReply(page), "thread")
+  await tag(threadReply(page, threadId), "thread")
   await getPanelEditor(page).click()
   await page.keyboard.type("half a thought")
 
@@ -101,20 +102,20 @@ test("should keep the timeline and thread panel mounted through open, close and 
   await page.setViewportSize({ width: 400, height: 800 })
   await expect.poll(async () => Math.round((await page.getByTestId("panel").boundingBox())?.width ?? 0)).toBe(400)
   await expect(scroller(page, streamId)).not.toBeVisible()
-  expect(await tagOf(threadReply(page))).toBe("thread")
+  expect(await tagOf(threadReply(page, threadId))).toBe("thread")
   expect(await tagOf(scroller(page, streamId))).toBe("main")
   await expect(getPanelEditor(page)).toContainText("half a thought")
 
   // Back to desktop: same nodes, same draft.
   await page.setViewportSize({ width: 1400, height: 900 })
   await expect.poll(async () => Math.round((await page.getByTestId("panel").boundingBox())?.width ?? 0)).toBe(480)
-  expect(await tagOf(threadReply(page))).toBe("thread")
+  expect(await tagOf(threadReply(page, threadId))).toBe("thread")
   expect(await tagOf(scroller(page, streamId))).toBe("main")
   await expect(getPanelEditor(page)).toContainText("half a thought")
 
   // Closing animates the column away, then unmounts the thread; the timeline stays.
   await page.goBack()
-  await expect(threadReply(page)).toHaveCount(0)
+  await expect(threadReply(page, threadId)).toHaveCount(0)
   await expect
     .poll(async () => {
       const box = await page.getByTestId("main-pane").boundingBox()
@@ -127,50 +128,44 @@ test("should keep the timeline and thread panel mounted through open, close and 
   await expect(scroller(page, streamId)).toBeVisible()
 })
 
-test("should return a phone reader to the same mid-stream position after closing a thread", async ({ page }) => {
+test("should return a phone reader to the same mid-stream position after stepping back from a thread", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 400, height: 800 })
-  const { streamId, parentId } = await seedStreamWithThread(page)
-  await tag(scroller(page, streamId), "main")
-  // The offset from the top, not the distance from the bottom: the parent's
-  // reply summary grows once its thread has been opened, below the reader.
-  const offset = () => scroller(page, streamId).evaluate((el) => Math.round(el.scrollTop))
+  const { streamId, threadId, parentId } = await seedStreamWithThread(page)
+  // Where the parent sits in the timeline's viewport: the thread takes the stream's place, so Back remounts it.
+  const parentTop = () =>
+    parentRow(page, parentId).evaluate((el) =>
+      Math.round(el.getBoundingClientRect().top - el.closest("[data-stream-scroller]")!.getBoundingClientRect().top)
+    )
   const fromBottom = () =>
     scroller(page, streamId).evaluate((el) => Math.round(el.scrollHeight - el.scrollTop - el.clientHeight))
-  // Read from mid-stream: a remount, or a stick-to-bottom correction on show,
-  // would land at the tail.
+  // Read from mid-stream: a stick-to-bottom landing on the way back would land at the tail.
   await revealParent(page, streamId, parentId)
   // The load and the jump settle over several frames; sample once it holds still.
   let before = Number.NaN
   await expect
     .poll(async () => {
       const previous = before
-      before = await offset()
+      before = await parentTop()
       return before === previous
     })
     .toBe(true)
   expect(await fromBottom()).toBeGreaterThan(200)
 
-  await openThread(page, parentId)
+  await openThread(page, parentId, threadId)
   await expect(scroller(page, streamId)).not.toBeVisible()
-  // The timeline sits under the panel: a tap in its cell lands on the panel.
-  const hit = await page.evaluate(() => {
-    const el = document.elementFromPoint(200, 400)
-    return el?.closest('[data-testid="panel"]') !== null
-  })
-  expect(hit).toBe(true)
 
   await page.goBack()
   await expect(scroller(page, streamId)).toBeVisible()
-  expect(await tagOf(scroller(page, streamId))).toBe("main")
-  expect(await offset()).toBe(before)
-  // And with the panel closed, the timeline takes taps again.
+  await expect.poll(parentTop).toBe(before)
   const mainHit = await page.evaluate(() => {
     const el = document.elementFromPoint(200, 400)
     return el?.closest('[data-editor-zone="main"]') !== null
   })
   expect(mainHit).toBe(true)
 
-  // A phone close has no transition to end, so nothing of the panel is left
+  // A phone close has no transition to end, so nothing of the thread is left
   // for the desktop layout to show in its empty column.
   await page.setViewportSize({ width: 1400, height: 900 })
   await expect(scroller(page, streamId)).toBeVisible()

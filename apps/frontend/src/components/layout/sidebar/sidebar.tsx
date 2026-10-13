@@ -44,7 +44,7 @@ import { SidebarQuickLinks } from "./quick-links"
 import { BoardModeBlock } from "./board-mode-block"
 import { BoardLinkRow, ChatsLinkRow } from "./board-link-row"
 import { SidebarStreamList } from "./sidebar-stream-list"
-import { StreamPickProvider, streamOfPane } from "./stream-pick"
+import { streamOfPane } from "./stream-pick"
 import { HeaderSkeleton, QuickLinksSkeleton, StreamListSkeleton } from "./skeletons"
 import { SidebarFooter } from "./sidebar-footer"
 import { GettingStarted, hasWrittenFirstNote, useGettingStarted } from "./getting-started"
@@ -124,13 +124,11 @@ interface SidebarProps {
 export function Sidebar({ workspaceId }: SidebarProps) {
   const { draftCount, isLoading, loadedDraftStreamIdSignature } = useDraftSummary(workspaceId)
   return (
-    <StreamPickProvider workspaceId={workspaceId}>
-      <SidebarBody
-        workspaceId={workspaceId}
-        draftCount={isLoading ? 0 : draftCount}
-        loadedDraftStreamIdSignature={loadedDraftStreamIdSignature}
-      />
-    </StreamPickProvider>
+    <SidebarBody
+      workspaceId={workspaceId}
+      draftCount={isLoading ? 0 : draftCount}
+      loadedDraftStreamIdSignature={loadedDraftStreamIdSignature}
+    />
   )
 }
 

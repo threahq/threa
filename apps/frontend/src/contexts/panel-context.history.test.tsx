@@ -151,7 +151,8 @@ function TabsProbe() {
   const location = useLocation()
   return (
     <div>
-      <span data-testid="loc">{`${location.pathname}${location.search}`}</span>
+      <span data-testid="loc">{`${location.pathname}${location.search}${location.hash}`}</span>
+      <span data-testid="key">{location.key}</span>
       <span data-testid="front">{useCurrentPane()}</span>
       <span data-testid="layout">{formatPanelLayout(layout)}</span>
       <button onClick={() => setCurrentPane("stream_main")}>work in stream_main</button>
@@ -213,6 +214,12 @@ function ScopedTab() {
           if (!navigateIn(to, false)) navigate(to)
         }}
       >{`${panelId} opens draft_x`}</button>
+      <button onClick={() => navigateIn({ pathname: `/w/ws/s/${panelId}`, search: "?m=msg_1" }, false)}>
+        {`${panelId} links its msg_1`}
+      </button>
+      <button onClick={() => navigateIn({ pathname: "/w/ws/memory", search: "?memo=memo_x", hash: "#notes" }, false)}>
+        {`${panelId} shows memo_x's notes`}
+      </button>
       <Link to={getNavigateUrl("stream_x")}>{`${panelId} to x`}</Link>
       <Link to={getPanelUrl("stream_y")}>{`${panelId} opens y`}</Link>
       <Link to={getPanelUrl(`context:${panelId}`)}>{`${panelId} overview`}</Link>
@@ -245,9 +252,7 @@ function ShareProbe({ targetStreamId }: { targetStreamId: string }) {
   const navigate = useNavigate()
   return (
     <button
-      onClick={() =>
-        navigateAfterShareHandoff({ workspaceId: "ws", targetStreamId, location, navigate, isMobile: true, panel })
-      }
+      onClick={() => navigateAfterShareHandoff({ workspaceId: "ws", targetStreamId, location, navigate, panel })}
     >{`share to ${targetStreamId}`}</button>
   )
 }
@@ -613,6 +618,37 @@ describe("panel tabs history", () => {
     expect(screen.getByTestId("query page:search").textContent).toBe("q=hello")
   })
 
+  it("should jump to a stream's link to its own message in place, keeping the panes, and again once it is there", async () => {
+    const { user, back, loc } = mountTabs([PAGE, `${PAGE}?panel=stream_a`])
+
+    await user.click(screen.getByRole("button", { name: "stream_a links its msg_1" }))
+    const jumped = { loc: loc(), key: screen.getByTestId("key").textContent }
+    expect(jumped.loc).toBe("/w/ws/s/stream_a?m=msg_1&panel=stream_main-stream_a")
+
+    await user.click(screen.getByRole("button", { name: "stream_a links its msg_1" }))
+    expect(loc()).toBe(jumped.loc)
+    expect(screen.getByTestId("key").textContent).not.toBe(jumped.key)
+
+    // Pressing the pane moved the route to it first.
+    await back()
+    expect(loc()).toBe("/w/ws/s/stream_a?panel=stream_main-stream_a")
+  })
+
+  it("should keep the panes and the fragment when a pane links to a page with one", async () => {
+    const { user, loc } = mountTabs(["/w/ws/activity?panel=stream_a"])
+
+    await user.click(screen.getByRole("button", { name: "page:activity shows memo_x's notes" }))
+    expect(loc()).toBe("/w/ws/memory?memo=memo_x&panel=stream_a#notes")
+  })
+
+  it("should flash, not push, an open of a pane already on show behind a fragment", async () => {
+    const { user, loc } = mountTabs([PAGE, `${PAGE}?panel=conv:c#notes`])
+    const before = { loc: loc(), key: screen.getByTestId("key").textContent }
+
+    await user.click(screen.getByRole("button", { name: "open conv:c" }))
+    expect({ loc: loc(), key: screen.getByTestId("key").textContent }).toEqual(before)
+  })
+
   it("should leave a draft a page pane links to to the router, since no pane holds one", async () => {
     const { user, loc } = mountTabs(["/w/ws/s/stream_a?panel=page:drafts"])
 
@@ -802,17 +838,35 @@ describe("panel tabs history on a phone", () => {
     }).toEqual({ front: "stream_main", main: true, t: false })
   })
 
-  it("should pop back to the pane that isn't a stream when a stream tab opened from it closes", async () => {
+  it("should step Back to the pane that isn't a stream when a stream it links to takes its place", async () => {
     const { user, back, loc } = mountPhone([PAGE, `${PAGE}?panel=stream_b-conv:c`])
     expect(front()).toBe("conv:c")
 
     await user.click(screen.getByRole("link", { name: "conv:c opens y" }))
-    expect(front()).toBe("stream_y")
-    await user.click(screen.getByRole("button", { name: "close stream_y" }))
-    expect({ loc: loc(), front: front() }).toEqual({ loc: `${PAGE}?panel=stream_b-conv:c`, front: "conv:c" })
+    expect({ loc: loc(), front: front() }).toEqual({
+      loc: "/w/ws/s/stream_y?panel=stream_main-stream_b-stream_y",
+      front: "stream_y",
+    })
 
     await back()
-    expect(loc()).toBe(PAGE)
+    expect({ loc: loc(), front: front() }).toEqual({ loc: `${PAGE}?panel=stream_b-conv:c`, front: "conv:c" })
+  })
+
+  it("should show a sidebar pick in place of the page on show, with Back to the page", async () => {
+    vi.spyOn(contexts, "useSidebar").mockReturnValue({ isMobile: true } as ReturnType<typeof contexts.useSidebar>)
+    const { user, back, loc } = mountPhone(
+      ["/w/ws/activity"],
+      <StreamPickProvider workspaceId="ws">
+        <TabsProbe />
+        <PickProbe />
+      </StreamPickProvider>
+    )
+
+    await user.click(screen.getByRole("button", { name: "pick stream_a" }))
+    expect({ loc: loc(), front: front() }).toEqual({ loc: "/w/ws/s/stream_a", front: "stream_a" })
+
+    await back()
+    expect(loc()).toBe("/w/ws/activity")
   })
 
   it("should leave the entry before a sidebar pick of the route's stream for Back", async () => {
@@ -850,7 +904,7 @@ describe("panel tabs history on a phone", () => {
     expect(loc()).toBe(PAGE)
   })
 
-  it("should open a share target outside the panes as a page of its own", async () => {
+  it("should show a share target outside the panes in place of the pane on show, with Back to it", async () => {
     const { user, back, loc } = mountPhone(
       [PAGE, `${PAGE}?panel=stream_t`],
       <>
@@ -860,7 +914,10 @@ describe("panel tabs history on a phone", () => {
     )
 
     await user.click(screen.getByRole("button", { name: "share to stream_z" }))
-    expect(loc()).toBe("/w/ws/s/stream_z")
+    expect({ loc: loc(), front: front() }).toEqual({
+      loc: "/w/ws/s/stream_z?panel=stream_main-stream_z",
+      front: "stream_z",
+    })
 
     await back()
     expect(loc()).toBe(`${PAGE}?panel=stream_t`)

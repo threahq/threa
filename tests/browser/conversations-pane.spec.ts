@@ -125,7 +125,7 @@ test("phone: the list is a pane of its own, and Back returns to the channel", as
   await expect(list(page).getByRole("button", { name: "2 open panes" })).toBeVisible()
   await expect(page.locator('[data-editor-zone="main"]').getByText(topic)).not.toBeVisible()
 
-  await list(page).getByRole("button", { name: "Back" }).click()
+  await page.goBack()
   await expect(list(page)).toHaveCount(0)
   await expect.poll(() => panelParam(page)).toBeNull()
   await expect(page.locator('[data-editor-zone="main"]').getByText(topic)).toBeVisible()

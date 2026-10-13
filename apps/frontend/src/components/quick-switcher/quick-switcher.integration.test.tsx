@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { Router } from "react-router-dom"
 import { QuickSwitcher } from "./quick-switcher"
 import { SidebarProvider } from "@/contexts/sidebar-context"
+import { PanelProvider } from "@/contexts/panel-context"
 import { SearchPanelProvider, useSearchPanel } from "@/components/search/search-panel-context"
 import { StreamTypes, WORKSPACE_PERMISSION_SCOPES, type GuestDmPolicy, type WorkspaceBootstrap } from "@threahq/types"
 import { createMockStream, mockStreamsList } from "@/test/fixtures"
@@ -141,12 +142,14 @@ function SearchPanelProbe() {
 function ProvidersWrapper({ children }: { children: React.ReactNode }) {
   return (
     <RouterWrapper>
-      <SidebarProvider>
-        <SearchPanelProvider workspaceId="workspace_1">
-          {children}
-          <SearchPanelProbe />
-        </SearchPanelProvider>
-      </SidebarProvider>
+      <PanelProvider>
+        <SidebarProvider>
+          <SearchPanelProvider workspaceId="workspace_1">
+            {children}
+            <SearchPanelProbe />
+          </SearchPanelProvider>
+        </SidebarProvider>
+      </PanelProvider>
     </RouterWrapper>
   )
 }

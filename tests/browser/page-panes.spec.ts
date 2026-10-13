@@ -4,9 +4,11 @@ import { expectApiOk, loginAndCreateWorkspace, workspaceIdFromUrl } from "./help
 /**
  * A workspace page opens as a pane (`page:activity`) beside a stream, and a
  * page route keeps the streams beside it. Inside the pane a filter or a search
- * changes it in place, a link to a stream takes its tab, and Back undoes that.
+ * changes it in place without remounting it, a link to a stream takes its tab,
+ * and Back undoes that.
  * Its header is any pane's: one row, the tab row standing in for its title.
- * The route moving between the panes on show remounts none of them.
+ * The route moving between the panes on show remounts none of them, and a sidebar
+ * pick beside a page takes the place of the pane worked in, as on a stream's page.
  */
 
 test.describe.configure({ timeout: 120_000 })
@@ -43,7 +45,7 @@ async function tagOf(target: Locator): Promise<string | null> {
   return target.evaluate((el) => (el as unknown as Record<string, string>).__paneTag ?? null)
 }
 
-test("should open a page beside a stream, switch its filter in place without remounting the stream, and close it", async ({
+test("should open a page beside a stream, switch its filter in place without remounting it or the stream, and close it", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1400, height: 900 })
@@ -54,13 +56,17 @@ test("should open a page beside a stream, switch its filter in place without rem
   await expect(activity.getByRole("heading", { name: "Activity" })).toBeVisible({ timeout: 30_000 })
   await expect(pane(page, streamId)).toBeVisible()
   await tag(composerOf(page, streamId), "stream")
+  await tag(activity.getByRole("tablist"), "page")
 
   await activity.getByRole("tab", { name: "Unread" }).click()
   await expect.poll(() => panelParam(page)).toBe("page:activity/unread")
   expect(pathOf(page)).toBe(`/w/${workspaceId}/s/${streamId}`)
   const unread = pane(page, "page:activity/unread")
   await expect(unread.getByRole("tab", { name: "Unread", selected: true })).toBeVisible()
-  expect(await tagOf(composerOf(page, streamId))).toBe("stream")
+  expect([await tagOf(unread.getByRole("tablist")), await tagOf(composerOf(page, streamId))]).toEqual([
+    "page",
+    "stream",
+  ])
 
   await unread.getByRole("button", { name: "Close" }).click()
   await expect.poll(() => panelParam(page)).toBeNull()
@@ -133,17 +139,67 @@ test("should keep a page route's streams beside it and move the route without re
   await expect(activity.getByRole("heading", { name: "Activity" })).toBeVisible({ timeout: 30_000 })
   await expect(pane(page, streamId)).toBeVisible()
   await tag(composerOf(page, streamId), "stream")
+  await tag(activity.getByRole("tablist"), "page")
 
-  // The route's page changes its own path, and the panes beside it stay.
+  // The route's page changes its own path in place, and the panes beside it stay.
   await activity.getByRole("tab", { name: "Me" }).click()
   await expect.poll(() => pathOf(page)).toBe(`/w/${workspaceId}/activity/me`)
   expect(panelParam(page)).toBe(streamId)
-  expect(await tagOf(composerOf(page, streamId))).toBe("stream")
+  expect([
+    await tagOf(pane(page, "page:activity/me").getByRole("tablist")),
+    await tagOf(composerOf(page, streamId)),
+  ]).toEqual(["page", "stream"])
 
   // Closing the route's page hands the route to the stream left, which stays mounted.
   await pane(page, "page:activity/me").getByRole("button", { name: "Close" }).click()
   await expect.poll(() => pathOf(page)).toBe(`/w/${workspaceId}/s/${streamId}`)
   expect(panelParam(page)).toBeNull()
+  expect(await tagOf(composerOf(page, streamId))).toBe("stream")
+})
+
+test("should take the place of the pane worked in for a sidebar pick beside a page, keeping the others mounted", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  const { workspaceId, streamId, otherId, otherName } = await seedTwoChannels(page)
+  const sidebar = page.getByRole("navigation", { name: "Sidebar navigation" })
+
+  await page.goto(`/w/${workspaceId}/activity?panel=${streamId}`)
+  const activity = pane(page, "page:activity")
+  await expect(activity.getByRole("heading", { name: "Activity" })).toBeVisible({ timeout: 30_000 })
+  await tag(activity.getByRole("tablist"), "page")
+
+  // A stream worked in beside the route's page gives way to the pick; the page stays the route.
+  await composerOf(page, streamId).click()
+  await sidebar.getByRole("link", { name: `#${otherName}` }).click()
+  await expect(composerOf(page, otherId)).toBeVisible()
+  expect({ path: pathOf(page), panel: panelParam(page) }).toEqual({
+    path: `/w/${workspaceId}/activity`,
+    panel: otherId,
+  })
+  await expect(pane(page, streamId)).toHaveCount(0)
+  expect(await tagOf(activity.getByRole("tablist"))).toBe("page")
+  await tag(composerOf(page, otherId), "other")
+
+  // The page worked in gives way to a picked stream, which takes the route.
+  await activity.getByRole("heading", { name: "Activity" }).click()
+  await sidebar.getByRole("link", { name: /^#pages-a-/ }).click()
+  await expect.poll(() => pathOf(page)).toBe(`/w/${workspaceId}/s/${streamId}`)
+  await expect(composerOf(page, streamId)).toBeVisible()
+  await expect(activity).toHaveCount(0)
+  expect(await tagOf(composerOf(page, otherId))).toBe("other")
+  await tag(composerOf(page, streamId), "stream")
+
+  // A quick link picks a page the same way; the route, following the stream worked in, goes with it to the page.
+  await composerOf(page, otherId).click()
+  await expect.poll(() => pathOf(page)).toBe(`/w/${workspaceId}/s/${otherId}`)
+  await sidebar.getByRole("link", { name: "Activity" }).click()
+  await expect(pane(page, "page:activity").getByRole("heading", { name: "Activity" })).toBeVisible()
+  await expect(pane(page, otherId)).toHaveCount(0)
+  expect({ path: pathOf(page), panel: panelParam(page) }).toEqual({
+    path: `/w/${workspaceId}/activity`,
+    panel: `${streamId}-page:activity`,
+  })
   expect(await tagOf(composerOf(page, streamId))).toBe("stream")
 })
 

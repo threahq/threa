@@ -32,7 +32,7 @@ interface PaneHeaderProps {
 
 /**
  * A pane's header. The pane gives its title, controls and menu; the rest is the
- * pane system's: the sidebar toggle in the first column or Back on a phone, the
+ * pane system's: the sidebar toggle in the first column or Up on a phone, the
  * tab row standing in for the title while the section holds several tabs, the
  * drag handle, focus, the phone's pane switcher, and close. A pane in a drawer
  * is the drawer's alone: no tab row, drag or close.
@@ -75,7 +75,7 @@ export function PaneHeader({
       >
         {!inDrawer &&
           (isMobile ? (
-            <PhonePaneLeading onBack={closePanel} backRef={closeRef} />
+            <PhonePaneLeading workspaceId={workspaceId} onBack={closePanel} backRef={closeRef} />
           ) : (
             inFirstColumn && <SidebarToggle location="page" />
           ))}

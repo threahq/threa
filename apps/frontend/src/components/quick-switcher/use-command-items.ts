@@ -5,7 +5,7 @@ import { useViewerPermissions } from "@/hooks/use-workspaces"
 import { hasPermission } from "@/lib/permissions"
 import { useCanManageChannels } from "@/lib/use-can-manage-channels"
 import { isToleranceMatch, rankMatchesScored } from "@/lib/match-score"
-import { commands, type Command, type CommandContext } from "./commands"
+import { commands, paneCommands, type Command, type CommandContext } from "./commands"
 import { draftStreamCommands, streamCommands } from "./stream-commands"
 import type { ModeResult, QuickSwitcherItem } from "./types"
 
@@ -81,6 +81,12 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
       )
     }
     const contextualGroup = currentStreamName ? `This stream — ${currentStreamName}` : "This stream"
+    const shownPaneCommands = paneCommands.filter(
+      (c) =>
+        (c.id !== "pane-close" || !!commandContext.closePane) &&
+        (c.id !== "pane-close-others" || !!commandContext.closeOtherPanes) &&
+        (c.id !== "pane-close-all" || !!commandContext.closeAllPanes)
+    )
     // Groups render in section order, not by score, so they are ranked
     // together (see rankGroups) and only ordered within a section afterwards.
     const globalCommands = commands.filter(
@@ -89,12 +95,17 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
         (c.id !== "new-channel" || canManageChannels) &&
         (c.id !== "settings-diagnostics" || perfDiagnostics === "available")
     )
-    const [rankedContextual, rankedGlobal] = rankGroups(query, [contextualCommands, globalCommands])
+    const [rankedContextual, rankedPanes, rankedGlobal] = rankGroups(query, [
+      contextualCommands,
+      shownPaneCommands,
+      globalCommands,
+    ])
     const contextualItems = rankedContextual.map((c) => toItem(c, contextualGroup))
+    const paneItems = rankedPanes.map((c) => toItem(c, "Panes"))
 
     const globalItems = rankedGlobal.map((c) => toItem(c, "Commands"))
 
-    return [...contextualItems, ...globalItems]
+    return [...contextualItems, ...paneItems, ...globalItems]
   }, [query, commandContext, isAdmin, canManageChannels, perfDiagnostics])
 
   return {

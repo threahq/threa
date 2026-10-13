@@ -192,6 +192,14 @@ test.describe("Aside — desktop surface", () => {
         .locator(".message-item")
         .filter({ hasText: /stub response from the companion/ })
     ).toBeVisible({ timeout: AGENT_REPLY_TIMEOUT })
+    // "What you saw in …" names the host, already on show beside the aside: it flashes, and nothing moves.
+    const at = page.url()
+    await asideChat(page)
+      .getByRole("link", { name: /What you saw in/ })
+      .click()
+    await expect(page.locator(`[data-panel-tab="${streamId}"]`)).toHaveClass(/pane-flash/)
+    expect(page.url()).toBe(at)
+    await expect(asidePane(page)).toBeVisible()
     // The host timeline never receives the aside's turns, and the anchored
     // message never adopts the aside as its thread (no card linking into it).
     await expect(hostScroller(page, streamId).getByText("What is this about?")).toHaveCount(0)

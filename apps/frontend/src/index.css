@@ -662,6 +662,22 @@ html[data-input="mouse"] .message-hover-wash:hover {
   }
 }
 
+/* A link or pick to the pane already on show: a ring inside the pane's edge fades, so the tap reads as
+   registered without anything moving (INV-21). An outline, painted over the pane's content where an inset
+   shadow would sit under it. */
+.pane-flash {
+  outline: 2px solid transparent;
+  outline-offset: -2px;
+  animation: pane-flash 0.7s ease-out;
+}
+@keyframes pane-flash {
+  0% {
+    outline-color: hsl(var(--primary) / 0.8);
+  }
+  100% {
+    outline-color: hsl(var(--primary) / 0);
+  }
+}
 /* Arrival (PopIn). The box grows from zero so its neighbours move aside while
    its content fades in. Each animation starts --pop-in-elapsed in, so a
    remounted box resumes instead of replaying. Only the keyframes carry the
