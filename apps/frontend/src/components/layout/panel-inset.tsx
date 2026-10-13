@@ -1,69 +1,6 @@
 import { useLayoutEffect } from "react"
-import { cn } from "@/lib/utils"
 import { PANE_TRANSITION_MS } from "@/components/panes"
 import { PanelResizeHandle } from "./panel-resize-handle"
-
-interface ThreadPanelSlotProps {
-  displayWidth: number
-  panelWidth: number
-  shouldAnimate: boolean
-  showContent: boolean
-  isResizing: boolean
-  minWidth: number
-  maxWidth: number
-  onTransitionEnd: (e: React.TransitionEvent) => void
-  onResizeStart: (e: React.PointerEvent) => void
-  onResizeMove: (e: React.PointerEvent) => void
-  onResizeEnd: (e: React.PointerEvent) => void
-  onResizeKeyDown: (e: React.KeyboardEvent) => void
-  /** Hold the panel out of the tab order while something covers it. */
-  inert?: boolean
-  children: React.ReactNode
-}
-
-export function ThreadPanelSlot({
-  displayWidth,
-  panelWidth,
-  shouldAnimate,
-  showContent,
-  isResizing,
-  minWidth,
-  maxWidth,
-  onTransitionEnd,
-  onResizeStart,
-  onResizeMove,
-  onResizeEnd,
-  onResizeKeyDown,
-  inert,
-  children,
-}: ThreadPanelSlotProps) {
-  usePanelInset(displayWidth, shouldAnimate)
-
-  return (
-    <div
-      data-testid="panel"
-      inert={inert || undefined}
-      className={cn("flex-shrink-0 overflow-hidden", shouldAnimate && "transition-[width] ease-out")}
-      style={{ width: displayWidth, transitionDuration: shouldAnimate ? `${PANE_TRANSITION_MS}ms` : undefined }}
-      onTransitionEnd={onTransitionEnd}
-    >
-      {showContent && (
-        <ResizablePanelFrame
-          panelWidth={panelWidth}
-          isResizing={isResizing}
-          minWidth={minWidth}
-          maxWidth={maxWidth}
-          onResizeStart={onResizeStart}
-          onResizeMove={onResizeMove}
-          onResizeEnd={onResizeEnd}
-          onResizeKeyDown={onResizeKeyDown}
-        >
-          {children}
-        </ResizablePanelFrame>
-      )}
-    </div>
-  )
-}
 
 /**
  * Publish the width docked at the right edge as `--panel-inset-right`, and
@@ -77,10 +14,10 @@ export function usePanelInset(insetRight: number, insetAnimates: boolean) {
   }, [insetRight, insetAnimates])
 
   // A layout-effect cleanup, not a passive one: routes that each mount their own
-  // slot swap instances within a single commit, and React runs every layout
+  // owner swap instances within a single commit, and React runs every layout
   // teardown before any layout setup — so the outgoing reset lands before the
   // incoming write. As a passive cleanup it would run after paint and blank the
-  // inset the new slot had just published.
+  // inset the new owner had just published.
   useLayoutEffect(
     () => () => {
       const root = document.documentElement

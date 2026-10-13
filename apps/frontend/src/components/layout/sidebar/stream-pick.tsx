@@ -4,6 +4,7 @@ import {
   isConversationPanel,
   parseComposePanel,
   parseConversationsPanel,
+  parsePersonaTestPanel,
   parseContextPanel,
   parseDraftPanel,
   useCurrentPane,
@@ -48,9 +49,9 @@ function openedFrom(id: string, parentOf: ParentOf): string | null {
   )
 }
 
-/** The stream a pane belongs to: a draft's, conversations list's or overview's stream, a new thread's parent, a stream's own; null for a conversation. */
+/** The stream a pane belongs to: a draft's, conversations list's or overview's stream, a new thread's parent, a stream's own; null for a conversation, a page or a persona's test chat. */
 export function streamOfPane(id: string): string | null {
-  if (isConversationPanel(id) || isPagePane(id)) return null
+  if (isConversationPanel(id) || isPagePane(id) || parsePersonaTestPanel(id)) return null
   return (
     parseComposePanel(id) ??
     parseConversationsPanel(id) ??

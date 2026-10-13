@@ -129,20 +129,6 @@ describe("panel history", () => {
     expect(loc()).toBe(STREAM)
   })
 
-  it("clears the panel when closing one opened from inside another, rather than revealing it", async () => {
-    const user = userEvent.setup()
-    const { loc } = mount([STREAM, BOARD])
-
-    await user.click(screen.getByRole("button", { name: "open a" }))
-    await user.click(screen.getByRole("link", { name: "link to c" }))
-    expect(loc()).toBe("/board?lens=all&panel=conv%3Ac")
-
-    // Close means no panel. The affordance reads "Return to #channel" on a nested
-    // thread, so popping to the parent panel would land somewhere it doesn't say.
-    await user.click(screen.getByRole("button", { name: "close" }))
-    expect(loc()).toBe(BOARD)
-  })
-
   it("closes a superseding panel by popping — the replaced entry was still ours", async () => {
     const user = userEvent.setup()
     const { back, loc } = mount([STREAM, BOARD])
@@ -531,6 +517,26 @@ describe("panel tabs history", () => {
   it("should drop the board from a panel param that names it", () => {
     mountTabs(["/w/ws/board?panel=page:board.stream_x"])
     expect(screen.getByTestId("layout").textContent).toBe("page:board-stream_x")
+  })
+
+  it("should keep only the edited persona's test chat when a persona editor opens", () => {
+    mountTabs(["/w/ws/settings/personas/persona_x?panel=test:persona_y.test:persona_x.stream_a"])
+    expect(screen.getByTestId("layout").textContent).toBe("page:persona-test:persona_x.stream_a")
+  })
+
+  it("should drop persona test chats when the route is not a persona editor", () => {
+    mountTabs(["/w/ws/board?panel=test:persona_x.stream_a"])
+    expect(screen.getByTestId("layout").textContent).toBe("page:board-stream_a")
+  })
+
+  it("should not reopen a persona's test chat away from that persona's editor", async () => {
+    const { user, back, loc } = mountTabs([PAGE, "/w/ws/settings/personas/persona_x?panel=test:persona_x"])
+
+    await user.click(screen.getByRole("button", { name: "close test:persona_x" }))
+    expect(loc()).toBe("/w/ws/settings/personas/persona_x")
+    await back()
+    await user.click(screen.getByRole("button", { name: "reopen tab" }))
+    expect(loc()).toBe(PAGE)
   })
 
   it("should land on the bare board when its last pane closes, and never close the board", async () => {

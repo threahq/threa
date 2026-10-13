@@ -202,11 +202,35 @@ test.describe("Persona roster + editors", () => {
     const personaId = ((await forkRes.json()) as { persona: { id: string } }).persona.id
 
     await page.goto(`/w/${workspaceId}/settings/personas/${personaId}`)
+    await page.getByRole("button", { name: "Test draft" }).click()
     await page.getByRole("button", { name: "Start test chat" }).click()
     await expect(page.getByRole("button", { name: "End test chat" })).toBeVisible({ timeout: 10000 })
 
     await page.keyboard.press("ControlOrMeta+f")
     await expect(page.getByPlaceholder("Search in conversation...")).toBeVisible()
+  })
+
+  test("should open the draft's test chat as a pane in the URL when Test draft is clicked", async ({ page }) => {
+    const { workspaceId, personaId } = await forkedPersona(page, "persona-test-pane")
+
+    await page.goto(`/w/${workspaceId}/settings/personas/${personaId}`)
+    await page.getByRole("button", { name: "Test draft" }).click()
+    await expect.poll(() => panelParam(page)).toBe(`test:${personaId}`)
+    const pane = page.getByRole("region", { name: "Test chat" })
+    await expect(pane.getByRole("button", { name: "Start test chat" })).toBeVisible({ timeout: 10000 })
+    await expect(page.getByRole("button", { name: "Test draft" })).toHaveAttribute("aria-pressed", "true")
+
+    await page.reload()
+    await expect(pane.getByRole("button", { name: "Start test chat" })).toBeVisible({ timeout: 10000 })
+    expect(panelParam(page)).toBe(`test:${personaId}`)
+
+    // Closing the pane is not End: the session is there when it opens again.
+    await pane.getByRole("button", { name: "Start test chat" }).click()
+    await expect(pane.getByRole("button", { name: "End test chat" })).toBeVisible({ timeout: 10000 })
+    await page.getByRole("button", { name: "Test draft" }).click()
+    await expect.poll(() => panelParam(page)).toBeNull()
+    await page.getByRole("button", { name: "Test draft" }).click()
+    await expect(pane.getByRole("button", { name: "End test chat" })).toBeVisible({ timeout: 10000 })
   })
 
   test("defaults pin at create: a later default change never switches an existing scratchpad's agent", async ({
@@ -727,4 +751,41 @@ async function clearComposer(page: Page): Promise<void> {
   await composer.click()
   await composer.press("ControlOrMeta+a")
   await page.keyboard.press("Backspace")
+}
+
+test.describe("Persona editor on a phone", () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true })
+
+  test("should put the test chat in front and come back to the editor when Back is tapped", async ({ page }) => {
+    const { workspaceId, personaId } = await forkedPersona(page, "persona-test-phone")
+
+    await page.goto(`/w/${workspaceId}/settings/personas/${personaId}`)
+    const editorHeading = page.getByRole("heading", { name: /^Edit / })
+    await expect(editorHeading).toBeVisible({ timeout: 10000 })
+
+    await page.getByRole("button", { name: "Test draft" }).click()
+    await expect.poll(() => panelParam(page)).toBe(`test:${personaId}`)
+    const pane = page.getByRole("region", { name: "Test chat" })
+    await expect(pane.getByRole("button", { name: "Start test chat" })).toBeVisible({ timeout: 10000 })
+    await expect(editorHeading).not.toBeVisible()
+
+    await pane.getByRole("button", { name: "Back" }).click()
+    await expect.poll(() => panelParam(page)).toBeNull()
+    await expect(editorHeading).toBeVisible()
+  })
+})
+
+async function forkedPersona(page: Page, label: string) {
+  const { testId } = await loginAndCreateWorkspace(page, label)
+  const workspaceId = page.url().match(/\/w\/(ws_[^/]+)/)![1]
+  const forkRes = await page.request.post(`/api/workspaces/${workspaceId}/personas`, {
+    data: { sourcePersonaId: "persona_system_ariadne", name: `Test agent ${testId}` },
+  })
+  await expectApiOk(forkRes, "Persona fork")
+  const personaId = ((await forkRes.json()) as { persona: { id: string } }).persona.id
+  return { workspaceId, personaId }
+}
+
+function panelParam(page: Page) {
+  return new URL(page.url()).searchParams.get("panel")
 }

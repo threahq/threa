@@ -29,9 +29,9 @@ export interface PanelLayout {
 export type SplitDirection = "right" | "down"
 
 export const PANEL_PARAM = "panel"
-const TAB_SEPARATOR = "."
-const SECTION_SEPARATOR = "-"
-const ACTIVE_MARK = "*"
+export const TAB_SEPARATOR = "."
+export const SECTION_SEPARATOR = "-"
+export const ACTIVE_MARK = "*"
 const FOCUS_MARK = "**"
 
 export const NO_PANELS: PanelLayout = { columns: [] }
@@ -190,9 +190,9 @@ export function openPanelTab(layout: PanelLayout, id: string): PanelLayout {
  * the top section of the column to the right of `from`'s, splitting a new
  * column off there when there is none.
  */
-export function openPanelTabBeside(layout: PanelLayout, from: string, id: string): PanelLayout {
+export function openPanelTabBeside(layout: PanelLayout, from: string | null, id: string): PanelLayout {
   if (locate(layout, id)) return activatePanelTab(layout, id)
-  const at = locate(layout, from)
+  const at = from === null ? null : locate(layout, from)
   if (!at) return openPanelTab(layout, id)
   const right = at.column + 1
   if (right < layout.columns.length) return appendTab(layout, { column: right, row: 0 }, id)
