@@ -22,6 +22,7 @@ const overlap = (a: Box, b: Box) =>
   Math.max(0, Math.min(a.left + a.width, b.left + b.width) - Math.max(a.left, b.left)) *
   Math.max(0, Math.min(a.top + a.height, b.top + b.height) - Math.max(a.top, b.top))
 const isPane = (element: Element) => element.hasAttribute("data-panel-tab")
+const isDivider = (element: Element) => element.getAttribute("role") === "separator"
 
 function boxOf(element: Element, origin: DOMRect): Box {
   const rect = element.getBoundingClientRect()
@@ -33,7 +34,7 @@ const cut = (child: Element) =>
 
 /**
  * The host's grid children on show by their boxes, with any glide still running cut short: its
- * animations cancelled so the boxes are laid-out ones, and the panes it was folding away removed.
+ * animations cancelled so the boxes are laid-out ones, and the panes and dividers it kept on show removed.
  */
 function measure(host: HTMLElement): Map<Element, Box> {
   const origin = host.getBoundingClientRect()
@@ -66,10 +67,34 @@ const LIFT = "0 12px 32px rgba(0, 0, 0, 0.24)"
 const NO_LIFT = "0 0 0 rgba(0, 0, 0, 0)"
 
 /**
+ * Where `divider` stands at the other end of the glide. A divider is the edge of the panes either side of it,
+ * so it goes where a pane on show at both ends takes that edge, the pane after it first, and with the whole of
+ * that pane's side where it runs the length of it. `panes` are those panes, each as its box at the divider's
+ * end and at the other. Null where neither pane beside it is on show at both.
+ */
+function across(divider: Box, panes: readonly (readonly [Box, Box])[]): Box | null {
+  const upright = divider.height > divider.width
+  // The divider's place across the panes it parts, and its reach along them.
+  const [place, size, start, length] = upright
+    ? (["left", "width", "top", "height"] as const)
+    : (["top", "height", "left", "width"] as const)
+  for (const trailing of [true, false]) {
+    for (const [here, there] of panes) {
+      if (divider[start] + divider[length] <= here[start] || here[start] + here[length] <= divider[start]) continue
+      if (!touches(divider[place], here[place] + (trailing ? 0 : here[size]))) continue
+      const moved = { ...divider, [place]: there[place] + (trailing ? 0 : there[size]) }
+      const alongside = touches(divider[start], here[start]) && touches(divider[length], here[length])
+      return alongside ? { ...moved, [start]: there[start], [length]: there[length] } : moved
+    }
+  }
+  return null
+}
+
+/**
  * Glides `element` from the box `from` to `to`, the box its layout gives it. A pane's content is sized to
  * the gliding box on every frame, as on a divider drag, so it moves with its edges and never jumps ahead.
  */
-function travel(element: Element, from: Box, to: Box, options: KeyframeAnimationOptions) {
+function travel(element: Element, from: Box, to: Box, options: KeyframeAnimationOptions): Animation {
   const start: Keyframe = {
     transform: `translate(${px(from.left - to.left)}, ${px(from.top - to.top)})`,
     width: px(from.width),
@@ -86,43 +111,48 @@ function travel(element: Element, from: Box, to: Box, options: KeyframeAnimation
       frames.splice(1, 0, { boxShadow: LIFT, offset: 0.5 })
     }
   }
-  element.animate(frames, options)
+  return element.animate(frames, options)
 }
 
 /**
- * Keeps the pane React has just unmounted on show for the glide: its own node,
- * put back in the host as an inert absolutely positioned box at `from`, under
- * the panes growing over it, and removed once they have. Its scrollers are set
- * back to where they were, as a box out of the document loses its offsets.
+ * Keeps the node React has just unmounted on show for the glide: put back in the host as an inert
+ * absolutely positioned box at `at`, and removed by the glide that kept it or the measure that cuts it short.
+ */
+function keep(host: HTMLElement, node: HTMLElement, at: Box) {
+  node.setAttribute("data-pane-fold", "")
+  node.setAttribute("aria-hidden", "true")
+  node.setAttribute("inert", "")
+  Object.assign(node.style, {
+    position: "absolute",
+    gridArea: "auto",
+    left: px(at.left),
+    top: px(at.top),
+    width: px(at.width),
+    height: px(at.height),
+    pointerEvents: "none",
+  })
+  host.appendChild(node)
+}
+
+/**
+ * Holds the pane the arrangement dropped still at `from`, under the panes growing over it, until they
+ * have. Its scrollers are set back to where they were, as a box out of the document loses its offsets.
  */
 function fold(
   host: HTMLElement,
-  pane: Element,
+  pane: HTMLElement,
   from: Box,
   scrolls: WeakMap<Element, { top: number; left: number }>,
   options: KeyframeAnimationOptions
 ) {
-  if (!(pane instanceof HTMLElement)) return
   // A fold is scenery: nothing finds it by test id, id, tab, scroller or message, reads it, or reaches it.
   const marks = ["data-testid", "id", "data-stream-scroller", "data-message-id"]
   for (const marked of [pane, ...pane.querySelectorAll(marks.map((mark) => `[${mark}]`).join(","))]) {
     for (const mark of marks) marked.removeAttribute(mark)
   }
   for (const attribute of ["data-panel-tab", "data-front-panel"]) pane.removeAttribute(attribute)
-  pane.setAttribute("data-pane-fold", "")
-  pane.setAttribute("aria-hidden", "true")
-  pane.setAttribute("inert", "")
-  Object.assign(pane.style, {
-    position: "absolute",
-    gridArea: "auto",
-    left: px(from.left),
-    top: px(from.top),
-    width: px(from.width),
-    height: px(from.height),
-    zIndex: String(CLOSED),
-    pointerEvents: "none",
-  })
-  host.appendChild(pane)
+  pane.style.zIndex = String(CLOSED)
+  keep(host, pane, from)
   for (const scroller of pane.querySelectorAll("*")) {
     const offset = scrolls.get(scroller)
     if (offset) {
@@ -143,8 +173,9 @@ export const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-mo
  * arrangement at once. The panes that were there are the ones that move, each
  * laid out at its gliding size until it lands: a pane the arrangement adds
  * holds still where it lands while they uncover it, and one it drops holds
- * still while they grow over it, unless another pane takes its box. Without
- * the API every change cuts.
+ * still while they grow over it, unless another pane takes its box. A divider
+ * the arrangement adds or drops travels with the edge it marks. Without the
+ * API every change cuts.
  */
 export function usePaneGlide(host: RefObject<HTMLDivElement | null>, glide: boolean) {
   const boxes = useRef(new Map<Element, Box>())
@@ -185,25 +216,37 @@ export function usePaneGlide(host: RefObject<HTMLDivElement | null>, glide: bool
     if (!glide || before.size === 0) return
 
     const options: KeyframeAnimationOptions = { duration: PANE_TRANSITION_MS, easing: PANE_EASING, id: GLIDE }
+    // The panes on show at both ends, each as the box it had and the one it has.
+    const staying = [...now].flatMap(([child, box]) => {
+      const was = before.get(child)
+      return was && isPane(child) ? [[was, box] as const] : []
+    })
     for (const [child, box] of now) {
       const was = before.get(child)
       if (was) {
         if (!sameBox(was, box)) travel(child, was, box, options)
         continue
       }
-      if (!isPane(child)) {
+      if (isDivider(child)) {
         if ([...before].some(([other, stood]) => !other.isConnected && sameBox(stood, box))) continue
-        // A new divider is laid out where the edge it marks ends up, so it shows once that edge is nearly there.
-        child.animate([{ opacity: 0 }, { opacity: 0, offset: 0.6 }, { opacity: 1 }], options)
+        const from = across(
+          box,
+          staying.map(([stood, stands]) => [stands, stood] as const)
+        )
+        if (from && !sameBox(from, box)) travel(child, from, box, options)
         continue
       }
       // Its own layer for the glide, or what it stacks inside (a load mask, a composer) paints over the panes above it.
-      child.animate([{ zIndex: ADDED }, { zIndex: ADDED }], options)
+      if (isPane(child)) child.animate([{ zIndex: ADDED }, { zIndex: ADDED }], options)
     }
     for (const [child, was] of before) {
-      if (now.has(child) || child.isConnected || !isPane(child)) continue
+      if (now.has(child) || child.isConnected || !(child instanceof HTMLElement)) continue
       if ([...now.values()].some((box) => sameBox(was, box))) continue
-      fold(element, child, was, scrolls.current, options)
+      if (isPane(child)) fold(element, child, was, scrolls.current, options)
+      const to = isDivider(child) ? across(was, staying) : null
+      if (!to || sameBox(was, to)) continue
+      keep(element, child, to)
+      travel(child, was, to, options).onfinish = () => child.remove()
     }
   })
 }

@@ -102,6 +102,55 @@ async function tagOf(target: Locator): Promise<string | null> {
   return target.first().evaluate((el) => (el as unknown as Record<string, string>).__dropTag ?? null)
 }
 
+/** Lets a page hold each glide at its midpoint from its first frame, while `__holdGlides` is set. */
+async function holdableGlides(page: Page) {
+  await page.addInitScript(() => {
+    const animate = Element.prototype.animate
+    Element.prototype.animate = function (this: Element, ...args) {
+      const animation = animate.apply(this, args)
+      if (animation.id === "pane-glide" && window.__holdGlides) {
+        animation.pause()
+        animation.currentTime = 120
+      }
+      return animation
+    }
+  })
+}
+
+const holdGlides = (page: Page) =>
+  page.evaluate(() => {
+    window.__holdGlides = true
+  })
+
+const releaseGlides = (page: Page) =>
+  page.evaluate(() => {
+    window.__holdGlides = false
+    for (const animation of document.getAnimations()) if (animation.id === "pane-glide") animation.finish()
+  })
+
+/** Main's width, and how far the divider beside it stands off its right edge. */
+const mainEdge = (page: Page) =>
+  page.evaluate(() => {
+    const main = document.querySelector("[data-testid='main-pane']")!.getBoundingClientRect()
+    const dividers = [...document.querySelectorAll("[data-testid='main-pane'] ~ [role='separator']")]
+    return {
+      main: Math.round(main.width),
+      dividers: dividers.map((divider) => Math.round(Math.abs(divider.getBoundingClientRect().left - main.right))),
+    }
+  })
+
+/** How far down the page `id`'s pane starts, and how far each row divider stands off its top edge. */
+const topEdge = (page: Page, id: string) =>
+  page.evaluate((id) => {
+    const pane = document.querySelector(`[data-panel-tab="${id}"]`)!
+    const top = pane.getBoundingClientRect().top
+    const dividers = [...pane.parentElement!.querySelectorAll(":scope > [aria-orientation='horizontal']")]
+    return {
+      top: Math.round(top - pane.parentElement!.getBoundingClientRect().top),
+      dividers: dividers.map((divider) => Math.round(Math.abs(divider.getBoundingClientRect().top - top))),
+    }
+  }, id)
+
 test("should open a dropped pane at the size its drop zone showed", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1200 })
   const { names, streamA, streamB, streamC } = await seed(page)
@@ -163,17 +212,7 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 1200 })
-  await page.addInitScript(() => {
-    const animate = Element.prototype.animate
-    Element.prototype.animate = function (this: Element, ...args) {
-      const animation = animate.apply(this, args)
-      if (animation.id === "pane-glide" && window.__holdGlides) {
-        animation.pause()
-        animation.currentTime = 120
-      }
-      return animation
-    }
-  })
+  await holdableGlides(page)
   const { names, streamA, streamB, streamC } = await seed(page)
   await tag(mainPane(page).getByText("said in a"), "main")
   const boxOf = async (pane: Locator) => {
@@ -181,9 +220,7 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
     return { x: Math.round(box.x), width: Math.round(box.width) }
   }
   const mainBefore = await boxOf(mainPane(page))
-  await page.evaluate(() => {
-    window.__holdGlides = true
-  })
+  await holdGlides(page)
 
   await drag(page, sidebarRow(page, names.b), await at(mainPane(page), 0.95, 0.4), async () => {
     await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "right")
@@ -203,10 +240,7 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
       added: { x: Math.round(addedBox.x), width: Math.round(addedBox.width) },
     }
   }, streamB)
-  await page.evaluate(() => {
-    window.__holdGlides = false
-    for (const animation of document.getAnimations()) if (animation.id === "pane-glide") animation.finish()
-  })
+  await releaseGlides(page)
   await settled(tabPane(page, streamB))
   const mainAfter = await boxOf(mainPane(page))
   expect(midway.main).toBeGreaterThan(mainAfter.width)
@@ -284,6 +318,47 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
       panel: `${streamA}-${streamB}`,
     })
   expect(await tagOf(mainPane(page).getByText("said in a"))).toBe("main")
+})
+
+test("should slide a divider in and out with the pane edge it marks", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1200 })
+  await holdableGlides(page)
+  const { names, streamB, streamC } = await seed(page)
+  const alone = (await mainEdge(page)).main
+  await holdGlides(page)
+
+  await drag(page, sidebarRow(page, names.b), await at(mainPane(page), 0.95, 0.4))
+  await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
+  const opening = await mainEdge(page)
+  await releaseGlides(page)
+  await settled(tabPane(page, streamB))
+  const beside = (await mainEdge(page)).main
+  expect(opening.main).toBeGreaterThan(beside)
+  expect(opening.main).toBeLessThan(alone)
+  expect(opening.dividers).toEqual([0])
+
+  await holdGlides(page)
+  await tabPane(page, streamB).getByRole("button", { name: "Close", exact: true }).click()
+  await expect(tabPane(page, streamB)).toHaveCount(0)
+  const closing = await mainEdge(page)
+  await releaseGlides(page)
+  expect(closing.main).toBeGreaterThan(beside)
+  expect(closing.main).toBeLessThan(alone)
+  expect(closing.dividers).toEqual([0])
+  await expect.poll(() => mainEdge(page)).toEqual({ main: alone, dividers: [] })
+
+  await drag(page, sidebarRow(page, names.b), await settledAt(mainPane(page), 0.95, 0.4))
+  await drag(page, sidebarRow(page, names.c), await settledAt(tabPane(page, streamB), 0.5, 0.95))
+  await settled(tabPane(page, streamC))
+  const under = (await topEdge(page, streamC)).top
+  await holdGlides(page)
+  await tabPane(page, streamB).getByRole("button", { name: "Close", exact: true }).click()
+  await expect(tabPane(page, streamB)).toHaveCount(0)
+  const rising = await topEdge(page, streamC)
+  await releaseGlides(page)
+  expect(rising.top).toBeGreaterThan(0)
+  expect(rising.top).toBeLessThan(under)
+  expect(rising.dividers).toEqual([0])
 })
 
 test("should leave a stream or its tab dropped on the composer to the composer, as a link", async ({ page }) => {
