@@ -47,8 +47,15 @@ function readPaneDrag(data: DataTransfer, workspaceId: string): string | null {
   return readStreamDrag(data, workspaceId)
 }
 
+// The drag's payload is sealed until the drop, so the tab being dragged is kept beside it.
+let dragged: string | null = null
+
+/** The tab a drag of this page's own is carrying; null for a sidebar row or a link. */
+export const draggedTab = () => dragged
+
 /** Starts dragging the tab `panelId`, named `label`; a stream's tab carries its permalink too. */
 export function startTabDrag(event: DragEvent<HTMLElement>, workspaceId: string, panelId: string, label: string) {
+  dragged = panelId
   const data = event.dataTransfer
   // The link's own flavours name the page URL with this tab brought forward, which means nothing elsewhere.
   data.clearData()
@@ -61,6 +68,7 @@ export function startTabDrag(event: DragEvent<HTMLElement>, workspaceId: string,
 }
 
 export function endTabDrag() {
+  dragged = null
   setMissedDropGuard(false)
 }
 
@@ -138,10 +146,12 @@ export function usePaneDropState(
   const land = useCallback(
     (data: DataTransfer, drop: PaneDrop) => {
       setTarget(null)
-      const dragged = readPaneDrag(data, workspaceId)
-      const url = dragged ? null : readDroppedUrl(data)
+      const panelId = readPaneDrag(data, workspaceId)
+      // A drop that unmounts the tab's own handle leaves no node for its dragend to reach.
+      dragged = null
+      const url = panelId ? null : readDroppedUrl(data)
       let landed: string | null = null
-      if (dragged) landed = dropTab(dragged, drop)
+      if (panelId) landed = dropTab(panelId, drop)
       else if (url) landed = dropLink(url, drop)
       if (landed) onLand(landed, drop)
     },
@@ -182,6 +192,8 @@ export function paneDropZone(drops: PaneDropState | null, of: string, edges: rea
   const dropAt = (event: DragEvent<HTMLElement>): PaneDrop | null => {
     // A strip inside the pane has already claimed it.
     if (event.defaultPrevented || !carriesPane(event.dataTransfer) || overTextField(event)) return null
+    // A tab whose handle lost its props mid-drag never fires its dragend; the next drag of anything else clears it.
+    if (!event.dataTransfer.types.includes(PANE_DRAG_TYPE)) dragged = null
     const zone = paneDropZoneAt(event.currentTarget.getBoundingClientRect(), event.clientX, event.clientY, edges)
     if (zone !== "centre") return { kind: "edge", of, side: zone }
     return { kind: "tab", of, before: null }
@@ -256,18 +268,27 @@ export function useStripCaret(of: string | null): { before: string | null } | nu
   return { before: target.drop.before }
 }
 
+// An edge drop marks its edge, so one previewing a width that fills the pane still reads as a split, not a tab.
 const EDGE_SHAPES: Record<PaneEdge, string> = {
-  left: "inset-y-0 left-0 w-1/2",
-  right: "inset-y-0 right-0 w-1/2",
-  top: "inset-x-0 top-0 h-1/2",
-  bottom: "inset-x-0 bottom-0 h-1/2",
+  left: "inset-y-0 left-0 border-l-2 border-primary",
+  right: "inset-y-0 right-0 border-r-2 border-primary",
+  top: "inset-x-0 top-0 h-1/2 border-t-2 border-primary",
+  bottom: "inset-x-0 bottom-0 h-1/2 border-b-2 border-primary",
+}
+
+interface PaneDropIndicatorProps {
+  of: string
+  area: string
+  /** What a pane dropped on a side edge opens at: its own width, where it brings one; else half of the pane's. */
+  width: number | null
 }
 
 /** Where a drop over the pane showing `of` would land, drawn over the grid `area` it fills. */
-export function PaneDropIndicator({ of, area }: { of: string; area: string }) {
+export function PaneDropIndicator({ of, area, width }: PaneDropIndicatorProps) {
   const target = usePaneDrop()?.target
   if (target?.via !== "pane" || target.of !== of) return null
   const { drop } = target
+  const beside = drop.kind === "edge" && (drop.side === "left" || drop.side === "right")
   return (
     <div aria-hidden className="pointer-events-none relative z-20 min-h-0 min-w-0" style={{ gridArea: area }}>
       <div
@@ -275,8 +296,10 @@ export function PaneDropIndicator({ of, area }: { of: string; area: string }) {
         data-drop={drop.kind === "edge" ? drop.side : "centre"}
         className={cn(
           "absolute rounded-md bg-primary/10 ring-2 ring-primary/40 ring-inset",
-          drop.kind === "edge" ? EDGE_SHAPES[drop.side] : "inset-0"
+          drop.kind === "edge" ? EDGE_SHAPES[drop.side] : "inset-0",
+          beside && (width === null ? "w-1/2" : "max-w-full")
         )}
+        style={beside && width !== null ? { width } : undefined}
       />
     </div>
   )

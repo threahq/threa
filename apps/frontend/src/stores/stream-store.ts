@@ -172,7 +172,18 @@ export async function loadStreamPrefix(
 }
 
 type OrderableStreamEvent = Pick<CachedEvent, "id" | "sequence" | "createdAt"> &
-  Partial<Pick<CachedEvent, "_sequenceNum" | "_anchorSequenceNum" | "_status" | "_preEditStatus">>
+  Partial<Pick<CachedEvent, "_sequenceNum" | "_anchorSequenceNum" | "_status" | "_preEditStatus" | "payload">>
+
+/** The optimistic ids the persisted rows have replaced: an echo names its row under `clientMessageId` or `clientCommandId`. */
+function echoedOptimisticIds(persisted: OrderableStreamEvent[]): Set<string> {
+  const echoed = new Set<string>()
+  for (const event of persisted) {
+    const payload = event.payload as { clientMessageId?: string; clientCommandId?: string } | undefined
+    if (payload?.clientMessageId) echoed.add(payload.clientMessageId)
+    if (payload?.clientCommandId) echoed.add(payload.clientCommandId)
+  }
+  return echoed
+}
 
 function eventSequence(event: OrderableStreamEvent): number {
   return event._sequenceNum ?? sequenceToNum(event.sequence)
@@ -189,7 +200,9 @@ export function isInFlight(event: { _status?: string; _preEditStatus?: string })
  * the tail, where their echo will land: the server sequences them after
  * everything the socket has already delivered, so a row arriving mid-send
  * belongs above them. Failed rows, and failed rows being edited, stay at their
- * persisted anchors.
+ * persisted anchors. An optimistic row whose echo is already persisted is
+ * dropped: a reload that lands inside the echo swap commits its put and never
+ * issues its deletes, leaving both rows until the next bootstrap swaps them.
  *
  * @param events - Persisted and optimistic events to order.
  * @param persistedComparator - Optional chronology for persisted events, such as thread ordering.
@@ -202,13 +215,15 @@ export function orderStreamEvents<T extends OrderableStreamEvent>(
   persistedComparator: (leftEvent: T, rightEvent: T) => number = (leftEvent, rightEvent) =>
     eventSequence(leftEvent) - eventSequence(rightEvent)
 ): T[] {
-  const optimistic: T[] = []
+  const unsent: T[] = []
   const persisted: T[] = []
 
   for (const event of events) {
-    if (event._status != null) optimistic.push(event)
+    if (event._status != null) unsent.push(event)
     else persisted.push(event)
   }
+  const echoed = echoedOptimisticIds(persisted)
+  const optimistic = unsent.filter((event) => !echoed.has(event.id))
 
   const inferredAnchors = new Map<string, number>()
   for (const optimisticEvent of optimistic) {

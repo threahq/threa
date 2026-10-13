@@ -32,7 +32,7 @@ describe("usePanelInset", () => {
 
   it("publishes the open/close animation duration while the panel animates", () => {
     const { rerender } = render(<Inset right={420} animates />)
-    expect(inset()).toEqual({ right: "420px", duration: "200ms" })
+    expect(inset()).toEqual({ right: "420px", duration: "240ms" })
 
     rerender(<Inset right={500} animates={false} />)
     expect(inset()).toEqual({ right: "500px", duration: "0ms" })

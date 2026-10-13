@@ -6,6 +6,7 @@ import { QUICK_LINK_META } from "./quick-link-meta"
 import { QUICK_LINKS_SECTION_ID } from "@threahq/types"
 import { UnreadBadge } from "@/components/unread-badge"
 import { useSidebar } from "@/contexts"
+import { preloadPage } from "@/components/panes/page-routes"
 import { pagePaneAt } from "@/lib/page-panes"
 import { cn } from "@/lib/utils"
 import { MoreDivider, SectionHeader } from "./sections"
@@ -148,6 +149,8 @@ export const SidebarQuickLinks = memo(function SidebarQuickLinks({
           pickRow(event, pagePaneAt(to)!)
           collapseOnMobile()
         }}
+        onPointerEnter={() => preloadPage(pagePaneAt(to)!)}
+        onFocus={() => preloadPage(pagePaneAt(to)!)}
         aria-current={isActive ? "page" : undefined}
         className={cn(
           "flex items-center gap-2.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors",

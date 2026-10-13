@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, expectApiOk, panesSettled } from "./helpers"
 
 /**
  * "In this stream" is a pane of its own (`context:<streamId>[:<filter>]`)
@@ -63,6 +63,7 @@ test("should open beside the stream and jump in place with the pane still open",
   await expect(page.getByRole("dialog")).toHaveCount(0)
 
   // Beside, not over: the timeline ends where the pane begins, and the composer still takes a click.
+  await panesSettled(page)
   const main = await box(page, '[data-editor-zone="main"]')
   const pane = await overview(page).boundingBox()
   expect(main.x + main.width).toBeLessThanOrEqual(pane!.x + 1)
@@ -94,6 +95,7 @@ test("should open a thread's overview beside the thread and close it with the th
   await expect(overview(page).getByText("example.org", { exact: true })).toBeVisible()
   // Exact: the pane's tab title is the thread's name, which quotes the channel's link.
   await expect(overview(page).getByText("example.com", { exact: true })).toHaveCount(0)
+  await panesSettled(page)
   const thread = await tabPane(page, threadId).boundingBox()
   const pane = await overview(page).boundingBox()
   expect(thread!.x + thread!.width).toBeLessThanOrEqual(pane!.x + 1)

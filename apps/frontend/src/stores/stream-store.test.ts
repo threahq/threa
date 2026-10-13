@@ -191,6 +191,28 @@ describe("loadStreamEvents", () => {
     expect(events.map((e) => e.sequence)).toEqual(["1", "2", "3", "4", "5"])
   })
 
+  it("should show a send once when a reload cut its echo swap short and both rows survive", async () => {
+    // The echo transaction puts the real row, then deletes the optimistic row and
+    // its pending row. A reload inside it commits the put alone, so IDB holds
+    // both rows until the next bootstrap swaps them.
+    const streamId = "stream_cut_swap"
+    const pending = makeOptimisticEvent(streamId, "temp_cut", String(Date.now()))
+    const echo = {
+      ...makeRealEvent(streamId, "3"),
+      payload: { messageId: "msg_cut", contentMarkdown: "cut", clientMessageId: "temp_cut" },
+    }
+    await db.events.bulkPut([makeRealEvent(streamId, "1"), makeRealEvent(streamId, "2"), pending, echo])
+
+    const single = await loadStreamEvents(WORKSPACE_ID, streamId, null)
+    const anchored = unionStreamRanges(
+      await loadStreamPrefix(WORKSPACE_ID, streamId, 1, 2),
+      await loadStreamTail(WORKSPACE_ID, streamId, 2)
+    )
+
+    expect(single.map((e) => e.id)).toEqual([`evt_${streamId}_1`, `evt_${streamId}_2`, `evt_${streamId}_3`])
+    expect(anchored).toEqual(single)
+  })
+
   it("preserves order with a mixed pending+real window (channel with history)", async () => {
     // Channel already has messages 1–3 from a prior session (bootstrap floor=1).
     // User sends a new message — optimistic with placeholder seq lands at end.

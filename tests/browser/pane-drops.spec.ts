@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, expectApiOk, panesSettled } from "./helpers"
 
 /**
  * A sidebar row or a tab dropped on the stream page lands where it was
@@ -9,6 +9,13 @@ import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
  */
 
 test.describe.configure({ timeout: 120_000 })
+
+declare global {
+  interface Window {
+    /** Holds each glide at its midpoint from its first frame. */
+    __holdGlides?: boolean
+  }
+}
 
 async function post(page: Page, workspaceId: string, streamId: string, content: string) {
   const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, { data: { streamId, content } })
@@ -50,8 +57,15 @@ async function at(target: Locator, x: number, y: number) {
   return { x: box.x + box.width * x, y: box.y + box.height * y }
 }
 
-/** `at`, once `target` has stopped moving: a panel slides open. */
+/** `at`, once the panes have stopped gliding and `target` holds still. */
 async function settledAt(target: Locator, x: number, y: number) {
+  await settled(target)
+  return at(target, x, y)
+}
+
+/** Resolves once the panes have stopped gliding and `target` holds still. */
+async function settled(target: Locator) {
+  await panesSettled(target.page())
   let last = ""
   await expect
     .poll(async () => {
@@ -61,7 +75,6 @@ async function settledAt(target: Locator, x: number, y: number) {
       return still
     })
     .toBe(true)
-  return at(target, x, y)
 }
 
 /** Drags `source` to `to` with the mouse; `hovering` runs while it is held there. */
@@ -89,9 +102,58 @@ async function tagOf(target: Locator): Promise<string | null> {
   return target.first().evaluate((el) => (el as unknown as Record<string, string>).__dropTag ?? null)
 }
 
+/** Lets a page hold each glide at its midpoint from its first frame, while `__holdGlides` is set. */
+async function holdableGlides(page: Page) {
+  await page.addInitScript(() => {
+    const animate = Element.prototype.animate
+    Element.prototype.animate = function (this: Element, ...args) {
+      const animation = animate.apply(this, args)
+      if (animation.id === "pane-glide" && window.__holdGlides) {
+        animation.pause()
+        animation.currentTime = 120
+      }
+      return animation
+    }
+  })
+}
+
+const holdGlides = (page: Page) =>
+  page.evaluate(() => {
+    window.__holdGlides = true
+  })
+
+const releaseGlides = (page: Page) =>
+  page.evaluate(() => {
+    window.__holdGlides = false
+    for (const animation of document.getAnimations()) if (animation.id === "pane-glide") animation.finish()
+  })
+
+/** Main's width, and how far the divider beside it stands off its right edge. */
+const mainEdge = (page: Page) =>
+  page.evaluate(() => {
+    const main = document.querySelector("[data-testid='main-pane']")!.getBoundingClientRect()
+    const dividers = [...document.querySelectorAll("[data-testid='main-pane'] ~ [role='separator']")]
+    return {
+      main: Math.round(main.width),
+      dividers: dividers.map((divider) => Math.round(Math.abs(divider.getBoundingClientRect().left - main.right))),
+    }
+  })
+
+/** How far down the page `id`'s pane starts, and how far each row divider stands off its top edge. */
+const topEdge = (page: Page, id: string) =>
+  page.evaluate((id) => {
+    const pane = document.querySelector(`[data-panel-tab="${id}"]`)!
+    const top = pane.getBoundingClientRect().top
+    const dividers = [...pane.parentElement!.querySelectorAll(":scope > [aria-orientation='horizontal']")]
+    return {
+      top: Math.round(top - pane.parentElement!.getBoundingClientRect().top),
+      dividers: dividers.map((divider) => Math.round(Math.abs(divider.getBoundingClientRect().top - top))),
+    }
+  }, id)
+
 test("should open a dropped pane at the size its drop zone showed", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1200 })
-  const { names, streamB, streamC } = await seed(page)
+  const { names, streamA, streamB, streamC } = await seed(page)
   const indicator = page.getByTestId("pane-drop-indicator")
   let zone = { width: 0, height: 0 }
   const shows = (side: string) => async () => {
@@ -112,9 +174,29 @@ test("should open a dropped pane at the size its drop zone showed", async ({ pag
   await drag(page, sidebarRow(page, names.b), await at(mainPane(page), 0.95, 0.4), shows("right"))
   await expectSize(tabPane(page, streamB), "width")
 
+  // Beside a panel: half of it, the panel keeping the other half.
   await drag(page, sidebarRow(page, names.c), await settledAt(tabPane(page, streamB), 0.95, 0.5), shows("right"))
   await expectSize(tabPane(page, streamC), "width")
   await expectSize(tabPane(page, streamB), "width")
+
+  // A pane alone in its column brings its width along, and the one it lands beside keeps its own;
+  // halving again would leave each a quarter of what B had.
+  const widthOf = async (pane: Locator) => (await sizeOf(pane)).width
+  await settled(tabPane(page, streamC))
+  const [widthC, widthB] = [await widthOf(tabPane(page, streamC)), await widthOf(tabPane(page, streamB))]
+  await drag(
+    page,
+    tabPane(page, streamC).locator("[data-pane-drag-handle]"),
+    await settledAt(tabPane(page, streamB), 0.05, 0.5),
+    shows("left")
+  )
+  await expectSize(tabPane(page, streamC), "width")
+  await settled(tabPane(page, streamC))
+  expect({ c: await widthOf(tabPane(page, streamC)), b: await widthOf(tabPane(page, streamB)) }).toEqual({
+    c: widthC,
+    b: widthB,
+  })
+  expect(panelParam(page)).toBe(`${streamA}-${streamC}-${streamB}`)
 
   await drag(
     page,
@@ -130,13 +212,45 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
   page,
 }) => {
   await page.setViewportSize({ width: 1600, height: 1200 })
+  await holdableGlides(page)
   const { names, streamA, streamB, streamC } = await seed(page)
   await tag(mainPane(page).getByText("said in a"), "main")
+  const boxOf = async (pane: Locator) => {
+    const box = (await pane.boundingBox())!
+    return { x: Math.round(box.x), width: Math.round(box.width) }
+  }
+  const mainBefore = await boxOf(mainPane(page))
+  await holdGlides(page)
 
   await drag(page, sidebarRow(page, names.b), await at(mainPane(page), 0.95, 0.4), async () => {
     await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "right")
   })
   await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
+  // Midway, the pane that was there is the one moving: part shrunk, its content as wide as its box, still
+  // over the edge of the added pane, which is where it ends up.
+  const midway = await page.evaluate((added) => {
+    const main = document.querySelector("[data-testid='main-pane']")!
+    const mainBox = main.getBoundingClientRect()
+    const addedBox = document.querySelector(`[data-panel-tab="${added}"]`)!.getBoundingClientRect()
+    const over = document.elementFromPoint((addedBox.left + mainBox.right) / 2, mainBox.top + mainBox.height / 4)
+    return {
+      main: Math.round(mainBox.width),
+      content: Math.round(main.querySelector("[data-editor-zone='main']")!.getBoundingClientRect().width),
+      over: over?.closest("[data-panel-tab]")?.getAttribute("data-testid"),
+      added: { x: Math.round(addedBox.x), width: Math.round(addedBox.width) },
+    }
+  }, streamB)
+  await releaseGlides(page)
+  await settled(tabPane(page, streamB))
+  const mainAfter = await boxOf(mainPane(page))
+  expect(midway.main).toBeGreaterThan(mainAfter.width)
+  expect(midway.main).toBeLessThan(mainBefore.width)
+  expect(midway).toEqual({
+    main: midway.main,
+    content: midway.main,
+    over: "main-pane",
+    added: await boxOf(tabPane(page, streamB)),
+  })
   expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({
     stream: streamB,
     panel: `${streamA}-${streamB}`,
@@ -156,7 +270,7 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
   await drag(
     page,
     tabPane(page, streamC).locator("[data-pane-drag-handle]"),
-    await at(tabPane(page, streamB), 0.5, 0.5),
+    await settledAt(tabPane(page, streamB), 0.5, 0.5),
     async () => {
       await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "centre")
     }
@@ -164,9 +278,14 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
   await expect.poll(() => panelParam(page)).toBe(`${streamA}-${streamB}.${streamC}`)
 
   // C's tab onto B's tab, ahead of it: C on show.
-  await drag(page, tabLink(page, streamC, streamC), await at(tabLink(page, streamC, streamB), 0.1, 0.5), async () => {
-    await expect(tabPane(page, streamC).getByTestId("strip-drop-caret")).toBeVisible()
-  })
+  await drag(
+    page,
+    tabLink(page, streamC, streamC),
+    await settledAt(tabLink(page, streamC, streamB), 0.1, 0.5),
+    async () => {
+      await expect(tabPane(page, streamC).getByTestId("strip-drop-caret")).toBeVisible()
+    }
+  )
   await expect.poll(() => panelParam(page)).toBe(`${streamA}-${streamC}*.${streamB}`)
   await expect(tabPane(page, streamC).getByText("said in c")).toBeVisible()
   expect(await tagOf(mainPane(page).getByText("said in a"))).toBe("main")
@@ -175,9 +294,14 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
   // the route, and on C they would fold B's tab away, so work in A first.
   await mainPane(page).locator('[contenteditable="true"]').last().click()
   await expect.poll(() => streamIdOf(page)).toBe(streamA)
-  await drag(page, tabLink(page, streamC, streamC), await at(tabLink(page, streamC, streamB), 0.9, 0.5), async () => {
-    await expect(tabPane(page, streamC).getByTestId("strip-drop-caret")).toBeVisible()
-  })
+  await drag(
+    page,
+    tabLink(page, streamC, streamC),
+    await settledAt(tabLink(page, streamC, streamB), 0.9, 0.5),
+    async () => {
+      await expect(tabPane(page, streamC).getByTestId("strip-drop-caret")).toBeVisible()
+    }
+  )
   await expect
     .poll(() => ({ stream: streamIdOf(page), panel: panelParam(page) }))
     .toEqual({
@@ -194,6 +318,47 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
       panel: `${streamA}-${streamB}`,
     })
   expect(await tagOf(mainPane(page).getByText("said in a"))).toBe("main")
+})
+
+test("should slide a divider in and out with the pane edge it marks", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1200 })
+  await holdableGlides(page)
+  const { names, streamB, streamC } = await seed(page)
+  const alone = (await mainEdge(page)).main
+  await holdGlides(page)
+
+  await drag(page, sidebarRow(page, names.b), await at(mainPane(page), 0.95, 0.4))
+  await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
+  const opening = await mainEdge(page)
+  await releaseGlides(page)
+  await settled(tabPane(page, streamB))
+  const beside = (await mainEdge(page)).main
+  expect(opening.main).toBeGreaterThan(beside)
+  expect(opening.main).toBeLessThan(alone)
+  expect(opening.dividers).toEqual([0])
+
+  await holdGlides(page)
+  await tabPane(page, streamB).getByRole("button", { name: "Close", exact: true }).click()
+  await expect(tabPane(page, streamB)).toHaveCount(0)
+  const closing = await mainEdge(page)
+  await releaseGlides(page)
+  expect(closing.main).toBeGreaterThan(beside)
+  expect(closing.main).toBeLessThan(alone)
+  expect(closing.dividers).toEqual([0])
+  await expect.poll(() => mainEdge(page)).toEqual({ main: alone, dividers: [] })
+
+  await drag(page, sidebarRow(page, names.b), await settledAt(mainPane(page), 0.95, 0.4))
+  await drag(page, sidebarRow(page, names.c), await settledAt(tabPane(page, streamB), 0.5, 0.95))
+  await settled(tabPane(page, streamC))
+  const under = (await topEdge(page, streamC)).top
+  await holdGlides(page)
+  await tabPane(page, streamB).getByRole("button", { name: "Close", exact: true }).click()
+  await expect(tabPane(page, streamB)).toHaveCount(0)
+  const rising = await topEdge(page, streamC)
+  await releaseGlides(page)
+  expect(rising.top).toBeGreaterThan(0)
+  expect(rising.top).toBeLessThan(under)
+  expect(rising.dividers).toEqual([0])
 })
 
 test("should leave a stream or its tab dropped on the composer to the composer, as a link", async ({ page }) => {

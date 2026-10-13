@@ -329,6 +329,21 @@ export async function createChannel(
 }
 
 /**
+ * Resolves once the panes have stopped gliding into a new arrangement. A box
+ * read before then is a pane mid-move, which still overlaps its neighbour.
+ */
+export async function panesSettled(page: Page): Promise<void> {
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((animation) => animation.id === "pane-glide")
+        .map((animation) => animation.finished.catch(() => undefined))
+    )
+  )
+}
+
+/**
  * The panel pane in front: the one last opened or used. Tabs behind it stay
  * mounted but inert, and a split shows panes beside it, so text in those still
  * matches locators scoped only to the panel.

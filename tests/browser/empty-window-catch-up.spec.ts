@@ -55,6 +55,9 @@ test("a catch-up page never hides a message sent into a window that opened empty
     .first()
     .click()
   await expect(page).not.toHaveURL(scratchpadUrl)
+  // The URL moves before React commits the channel (router navigations are transitions). A goBack
+  // before that commit discards it: the sync engine never leaves the scratchpad and has nothing to catch up.
+  await expect(timeline).not.toContainText(MESSAGE)
   const catchUp = page.waitForResponse((response) => response.url().includes(`/streams/${streamId}/bootstrap?after=`))
   await page.goBack()
   const returned = (await (await catchUp).json()) as { data: { events: unknown[] } }

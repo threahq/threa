@@ -35,6 +35,7 @@ import {
   PaneDropIndicator,
   PaneFocusContext,
   PanelTabTitle,
+  draggedTab,
   paneDropZone,
   usePaneDrop,
   usePaneCovered,
@@ -43,6 +44,7 @@ import {
 } from "@/components/panes"
 import { useResizeDrag } from "@/hooks/use-resize-drag"
 import {
+  broughtWidth,
   compilePanelGrid,
   defaultPanelGridSizes,
   panelColumnWidths,
@@ -273,8 +275,6 @@ interface PlacedTab {
   key: string
   id: string
   area: string
-  /** Its column's width, held while the column's track opens or closes so the tab lays out once; the first column fills its track. */
-  width: number | null
   inFirstColumn: boolean
   section: PanelSection
   splits: readonly SplitDirection[]
@@ -432,7 +432,6 @@ export function PanelTabStack({
         key: keyOf(id),
         id,
         area: "auto",
-        width: null,
         inFirstColumn: false,
         section,
         splits: NO_SPLITS,
@@ -449,7 +448,6 @@ export function PanelTabStack({
           key: keyOf(id),
           id,
           area: areas[column][row],
-          width: column === 0 ? null : (columnWidths?.[column - 1] ?? null),
           inFirstColumn: firstColumnHolds(layout, id),
           section,
           splits,
@@ -488,14 +486,16 @@ export function PanelTabStack({
     return { columns: [...grid.columns, ...ids.map((id) => [{ ids: [id], active: id }])] }
   }, [display, unplacedKey])
   const ghosts = tabs.filter((tab) => tab.area !== "auto" && members.includes(tab.id))
+  const brought = broughtWidth(layout, draggedTab(), [firstColumnWidth, ...(columnWidths ?? [])])
 
-  // The first column fills what the rest leave, so only the dividers between the rest share sizes.
+  // The first column fills what the rest leave, so only the dividers between the rest share sizes. Each is
+  // keyed by the section it leads, so it glides with that section's edge when one before it closes.
   const columnUnit = (width ?? 0) / sum(panelShares)
   const columnResizers = panelShares
     .slice(1)
     .map((share, index) => (
       <SectionResizer
-        key={`column:${index}`}
+        key={`column:${keyOf(display.columns[index + 2][0].ids[0])}`}
         axis="x"
         area={`1 / ${index + 3} / -1 / ${index + 4}`}
         size={panelShares[index] * columnUnit}
@@ -509,7 +509,7 @@ export function PanelTabStack({
     const unit = height / sum(rows)
     return rows.slice(1).map((share, index) => (
       <SectionResizer
-        key={`row:${column}:${index}`}
+        key={`row:${keyOf(display.columns[column][index + 1].ids[0])}`}
         axis="y"
         area={areas[column][index + 1]}
         size={rows[index] * unit}
@@ -560,11 +560,9 @@ export function PanelTabStack({
                 }}
                 {...paneDropZone(drops, tab.id, tab.edges)}
               >
-                <div className="h-full" style={{ width: member === -1 ? (tab.width ?? undefined) : undefined }}>
-                  <PaneScope panelId={tab.id} section={tab.section} splits={tab.splits}>
-                    <ScopedPanelHost workspaceId={workspaceId} />
-                  </PaneScope>
-                </div>
+                <PaneScope panelId={tab.id} section={tab.section} splits={tab.splits}>
+                  <ScopedPanelHost workspaceId={workspaceId} />
+                </PaneScope>
               </Pane>
             )
           })}
@@ -572,7 +570,7 @@ export function PanelTabStack({
       </PaneFocusContext.Provider>
       {display.columns.map((sections, column) =>
         sections.map((section, row) => (
-          <PaneDropIndicator key={`${column}:${row}`} of={section.active} area={areas[column][row]} />
+          <PaneDropIndicator key={`${column}:${row}`} of={section.active} area={areas[column][row]} width={brought} />
         ))
       )}
       {ghosts.map((ghost) => (

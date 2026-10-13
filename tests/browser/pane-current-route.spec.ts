@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, expectApiOk, panesSettled } from "./helpers"
 
 /**
  * The route names the stream pane the reader works in and `?panel=` holds the
@@ -200,8 +200,9 @@ async function at(target: Locator, x: number, y: number) {
   return { x: box.x + box.width * x, y: box.y + box.height * y }
 }
 
-/** `at`, once `target` has stopped moving: a pane slides open. */
+/** `at`, once the panes have stopped gliding and `target` holds still. */
 async function settledAt(target: Locator, x: number, y: number) {
+  await panesSettled(target.page())
   let last = ""
   await expect
     .poll(async () => {
