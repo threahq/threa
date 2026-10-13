@@ -42,7 +42,8 @@ export function PageHeaderTabs({ backTo, icon: Icon, title, value, tabs, actions
   const { workspaceId } = useParams<{ workspaceId: string }>()
   const isMobile = useIsMobile()
   const controls = (
-    <div className={cn("flex min-w-0 items-center gap-2", isMobile ? "justify-center" : "shrink-0")}>
+    // In a narrow pane the chips scroll before they push the title, focus and close out.
+    <div className={cn("flex min-w-0 items-center gap-2", isMobile ? "justify-center" : "max-w-[calc(100%-10rem)]")}>
       <div className="min-w-0 overflow-x-auto scrollbar-none">
         <Tabs value={value}>
           <TabsList className="h-8 w-max">

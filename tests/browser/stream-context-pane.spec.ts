@@ -198,8 +198,10 @@ test("should show the toggle off while the overview is folded behind its thread"
   await tabPane(page, threadId).getByText("thread link").click()
   await page.setViewportSize({ width: 1000, height: 900 })
   await expect(tabPane(page, threadId).getByRole("link", { name: /^In channel link/ })).toBeVisible()
-  const toggle = tabPane(page, threadId).getByRole("button", { name: "In this stream" })
-  await expect(toggle).toHaveAttribute("aria-pressed", "false")
+  // A section this narrow folds the toggle into the pane's menu.
+  await tabPane(page, threadId).getByRole("button", { name: "Stream actions" }).click()
+  const toggle = page.getByRole("menuitem", { name: /^In this stream/ })
+  await expect(toggle).toContainText("Links, files & memories")
   await expect(overview(page)).not.toBeInViewport()
 
   // Bringing it forward changes nothing in the URL, so it is no step in history either.

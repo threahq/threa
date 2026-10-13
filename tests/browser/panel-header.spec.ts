@@ -219,12 +219,13 @@ test("should keep the tab on show, its close and +N in a split section at its na
 })
 
 test("should show as many tabs as fit at their minimum width, whichever is on show", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.setViewportSize({ width: 1800, height: 900 })
   const title = (index: number) =>
     index % 2 === 0 ? `p${index + 1}` : `a much longer parent message, number ${index + 1}`
   const { workspaceId, streamId, threads } = await seedThreads(page, 6, title)
   await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threads.join(".")}`)
   await expect(tabPane(page, threads[5]).getByText("reply in thread 6")).toBeVisible({ timeout: 30_000 })
+  await page.getByRole("separator", { name: "Resize thread panel" }).dblclick()
   const strip = page.getByRole("navigation", { name: "Panel tabs" })
   const more = strip.getByRole("button", { name: /more tabs?$/ })
 

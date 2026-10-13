@@ -10,13 +10,6 @@ const SidePanel = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivE
 )
 SidePanel.displayName = "SidePanel"
 
-const SidePanelHeader = React.forwardRef<HTMLElement, React.HTMLAttributes<HTMLElement>>(
-  ({ className, ...props }, ref) => (
-    <header ref={ref} className={cn("flex h-12 items-center justify-between border-b px-4", className)} {...props} />
-  )
-)
-SidePanelHeader.displayName = "SidePanelHeader"
-
 const SidePanelTitle = React.forwardRef<HTMLHeadingElement, React.HTMLAttributes<HTMLHeadingElement>>(
   ({ className, ...props }, ref) => <h2 ref={ref} className={cn("font-semibold truncate", className)} {...props} />
 )
@@ -48,4 +41,4 @@ const SidePanelContent = React.forwardRef<HTMLElement, React.HTMLAttributes<HTML
 )
 SidePanelContent.displayName = "SidePanelContent"
 
-export { SidePanel, SidePanelHeader, SidePanelTitle, SidePanelClose, SidePanelContent }
+export { SidePanel, SidePanelTitle, SidePanelClose, SidePanelContent }

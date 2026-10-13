@@ -366,13 +366,15 @@ test("should fold sections split down into tabs on a window too short for each",
 })
 
 test("should close tabs beside one from its menu, and reopen them latest first", async ({ page }) => {
-  await page.setViewportSize({ width: 1400, height: 900 })
+  await page.setViewportSize({ width: 1600, height: 900 })
   const { workspaceId, streamId, threadA, threadB } = await seedTwoThreads(page)
   const parentC = await post(page, workspaceId, streamId, "third parent")
   const threadC = await createThread(page, workspaceId, streamId, parentC, "reply in thread C")
 
   await page.goto(`/w/${workspaceId}/s/${streamId}?panel=${threadA}.${threadB}*.${threadC}`)
   await expect(replyIn(page, threadB, "reply in thread B")).toBeVisible({ timeout: 30_000 })
+  // Evened with the page, the section has room for all three tabs beside its header's controls.
+  await page.getByRole("separator", { name: "Resize thread panel" }).dblclick()
   await expect(tabStrip(page).getByRole("link")).toHaveText(["first parent", "second parent", "third parent"])
   // A stream pane's splits sit in its own menu, so its tab row carries no second one.
   await expect(tabPane(page, threadB).getByRole("button", { name: "Tab actions" })).toHaveCount(0)
