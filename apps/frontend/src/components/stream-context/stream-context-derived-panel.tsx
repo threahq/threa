@@ -149,7 +149,7 @@ export function StreamContextDerivedPanel({
         // opened the menu is windowed out (Radix would otherwise return focus to
         // a removed node and drop it to <body>).
         tabIndex={-1}
-        className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+        className="min-h-0 flex-1 [scrollbar-gutter:stable] overflow-y-auto overscroll-contain px-2 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
       >
         {body}
       </div>

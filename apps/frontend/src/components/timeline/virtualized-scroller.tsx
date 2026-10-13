@@ -131,7 +131,10 @@ export function VirtualizedScroller({
         {...scrollerProps}
         key={scrollKey}
         ref={registerScroller}
-        className={cn("h-full overflow-y-auto overflow-x-hidden overscroll-y-contain", className)}
+        className={cn(
+          "h-full [scrollbar-gutter:stable] overflow-y-auto overflow-x-hidden overscroll-y-contain",
+          className
+        )}
         style={{ overflowAnchor: "none", ...style }}
         onScroll={onScroll}
         // The app shell owns pull-to-refresh globally; without this a touch drag

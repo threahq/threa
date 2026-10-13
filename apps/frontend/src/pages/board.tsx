@@ -917,7 +917,7 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
             data-board-scroll-viewport
             data-pane-landing
             tabIndex={-1}
-            className="h-full overflow-y-auto overflow-x-hidden overscroll-y-contain outline-none"
+            className="h-full [scrollbar-gutter:stable] overflow-y-auto overflow-x-hidden overscroll-y-contain outline-none"
             style={{ overflowAnchor: "none" }}
           >
             <main
