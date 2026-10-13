@@ -240,6 +240,8 @@ export interface MessageComposerProps {
 
   /** Called when the desktop expand button is clicked — opens fullscreen document editor */
   onExpandClick?: () => void
+  /** Where the expand button navigates instead, when the expanded editor lives at a URL. */
+  expandHref?: string
 
   /** When true, the composer fills its container with full-height editor and always-visible toolbar */
   expanded?: boolean
@@ -313,6 +315,7 @@ export function MessageComposer({
   onEscapeBlur,
   onComposerFocus,
   onExpandClick,
+  expandHref,
   expanded = false,
   onCollapse,
   streamContext,
@@ -934,12 +937,12 @@ export function MessageComposer({
         ? "Press Enter to send and Shift+Enter for a new line."
         : `Press ${MOD_KEY_NAME}+Enter to send.`
 
-    if (expanded) {
+    if (expanded && onCollapse) {
       return `${sendInstructions} Tab and Shift+Tab indent content. Press Escape to leave the editor. Press Escape again to close the fullscreen editor.`
     }
 
     return `${sendInstructions} Tab and Shift+Tab indent content. Press Escape to leave the editor.`
-  }, [effectiveSendMode, expanded])
+  }, [effectiveSendMode, expanded, onCollapse])
 
   // Plain-text first line for the mobile collapsed preview bar
   const previewText = useMemo(() => collapsedComposerPreview(content), [content])
@@ -1348,7 +1351,7 @@ export function MessageComposer({
                 onEditLastMessage={onEditLastMessage}
                 onHistoryStep={stepBrowserHistory}
                 onFocus={handleComposerFocus}
-                ariaLabel="Fullscreen message editor"
+                ariaLabel={onCollapse ? "Fullscreen message editor" : "Expanded message editor"}
                 ariaDescribedBy={instructionsId}
                 blurOnEscape
                 onEscapeBlur={focusExpandedShell}
@@ -1792,6 +1795,7 @@ export function MessageComposer({
                         onInsertCommand={insertSlash}
                         onAttachClick={handleAttachClick}
                         onExpandClick={onExpandClick}
+                        expandHref={expandHref}
                         micButton={micButton}
                         stashedDraftsTrigger={stashedDraftsTrigger}
                         scheduledMessagesTrigger={scheduledMessagesTrigger}

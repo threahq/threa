@@ -46,6 +46,7 @@ import {
   isDraftPanel,
   isConversationPanel,
   parseConversationPanel,
+  parseComposePanel,
 } from "@/contexts"
 import {
   useKeyboardShortcuts,
@@ -85,6 +86,7 @@ import { CreateChannelDialog } from "@/components/create-channel"
 import { AttachmentExplorer, useExplorerUrlState } from "@/components/attachment-explorer"
 import { AgentOutcomesExplorer, useOutcomesUrlState } from "@/components/agent-outcomes"
 import { SearchPanelProvider, useSearchPanel } from "@/components/search"
+import { ComposeSlotsProvider } from "@/components/panes"
 import { E2eUnlockProvider } from "@/components/encryption/e2e-unlock-provider"
 import { CallDock, CallLaunchProvider, IncomingCallOverlay } from "@/components/call"
 import { RewrapNudgeListener } from "@/components/encryption/rewrap-nudge-listener"
@@ -194,7 +196,7 @@ function StreamLinkKeyboardHandler({
           }
           // Malformed `conv:` id (hand-edited/stale URL) — fall through to the main link.
         } else if (!isDraftPanel(panelId)) {
-          void copyStreamLink(workspaceId, panelId)
+          void copyStreamLink(workspaceId, parseComposePanel(panelId) ?? panelId)
           return
         }
       }
@@ -639,48 +641,50 @@ function WorkspaceLayoutContent() {
                                 <E2eUnlockProvider workspaceId={workspaceId}>
                                   <QuickSwitcherProvider openSwitcher={openSwitcher}>
                                     <PanelProvider>
-                                      <PerfCaptureConsentGate workspaceId={workspaceId} />
-                                      <AnalyticsConsentGate workspaceId={workspaceId} />
-                                      <AnalyticsConsentBanner workspaceId={workspaceId} />
-                                      <StreamLinkKeyboardHandler workspaceId={workspaceId} mainStreamId={streamId} />
-                                      <RewrapNudgeListener workspaceId={workspaceId} />
-                                      <MediaGalleryProvider>
-                                        <CodeViewerProvider>
-                                          <TraceProvider>
-                                            <SidebarProvider>
-                                              <SearchPanelProvider workspaceId={workspaceId}>
-                                                <SidebarKeyboardHandler />
-                                                <SearchKeyboardHandler />
-                                                <CoordinatedLoadingGate>
-                                                  <AppShell sidebar={<Sidebar workspaceId={workspaceId} />}>
-                                                    <MainContentGate>
-                                                      <Outlet />
-                                                    </MainContentGate>
-                                                  </AppShell>
-                                                </CoordinatedLoadingGate>
-                                                <WorkspaceQuickSwitcher
-                                                  workspaceId={workspaceId}
-                                                  open={switcherOpen}
-                                                  onOpenChange={setSwitcherOpen}
-                                                  initialMode={switcherMode}
-                                                  currentStreamId={streamId}
-                                                />
-                                                <ComposeOverlayMount workspaceId={workspaceId} />
-                                              </SearchPanelProvider>
-                                            </SidebarProvider>
-                                            <SettingsDialog />
-                                            <WorkspaceSettingsDialog workspaceId={workspaceId} />
-                                            <AccountSwitcherDialog />
-                                            <LogoutScopeDialog />
-                                            <StreamSettingsDialog workspaceId={workspaceId} />
-                                            <CreateChannelDialog workspaceId={workspaceId} />
-                                            <AttachmentExplorer workspaceId={workspaceId} />
-                                            <AgentOutcomesExplorer workspaceId={workspaceId} />
-                                            <TraceDialogContainer />
-                                            <AppToastHost />
-                                          </TraceProvider>
-                                        </CodeViewerProvider>
-                                      </MediaGalleryProvider>
+                                      <ComposeSlotsProvider>
+                                        <PerfCaptureConsentGate workspaceId={workspaceId} />
+                                        <AnalyticsConsentGate workspaceId={workspaceId} />
+                                        <AnalyticsConsentBanner workspaceId={workspaceId} />
+                                        <StreamLinkKeyboardHandler workspaceId={workspaceId} mainStreamId={streamId} />
+                                        <RewrapNudgeListener workspaceId={workspaceId} />
+                                        <MediaGalleryProvider>
+                                          <CodeViewerProvider>
+                                            <TraceProvider>
+                                              <SidebarProvider>
+                                                <SearchPanelProvider workspaceId={workspaceId}>
+                                                  <SidebarKeyboardHandler />
+                                                  <SearchKeyboardHandler />
+                                                  <CoordinatedLoadingGate>
+                                                    <AppShell sidebar={<Sidebar workspaceId={workspaceId} />}>
+                                                      <MainContentGate>
+                                                        <Outlet />
+                                                      </MainContentGate>
+                                                    </AppShell>
+                                                  </CoordinatedLoadingGate>
+                                                  <WorkspaceQuickSwitcher
+                                                    workspaceId={workspaceId}
+                                                    open={switcherOpen}
+                                                    onOpenChange={setSwitcherOpen}
+                                                    initialMode={switcherMode}
+                                                    currentStreamId={streamId}
+                                                  />
+                                                  <ComposeOverlayMount workspaceId={workspaceId} />
+                                                </SearchPanelProvider>
+                                              </SidebarProvider>
+                                              <SettingsDialog />
+                                              <WorkspaceSettingsDialog workspaceId={workspaceId} />
+                                              <AccountSwitcherDialog />
+                                              <LogoutScopeDialog />
+                                              <StreamSettingsDialog workspaceId={workspaceId} />
+                                              <CreateChannelDialog workspaceId={workspaceId} />
+                                              <AttachmentExplorer workspaceId={workspaceId} />
+                                              <AgentOutcomesExplorer workspaceId={workspaceId} />
+                                              <TraceDialogContainer />
+                                              <AppToastHost />
+                                            </TraceProvider>
+                                          </CodeViewerProvider>
+                                        </MediaGalleryProvider>
+                                      </ComposeSlotsProvider>
                                     </PanelProvider>
                                   </QuickSwitcherProvider>
                                 </E2eUnlockProvider>

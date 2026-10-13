@@ -3,6 +3,8 @@ import { StrictMode, type ReactNode } from "react"
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { MemoryRouter, useSearchParams } from "react-router-dom"
+import { ComposeSlotsProvider } from "@/components/panes"
+import { NO_PANELS } from "@/lib/panel-tabs"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { toast } from "sonner"
 import * as contextsModule from "@/contexts"
@@ -121,6 +123,9 @@ beforeEach(async () => {
   )
   vi.spyOn(contextsModule, "usePanel").mockReturnValue({
     openPanel: openPanelSpy,
+    layout: NO_PANELS,
+    getFocusedPanelUrl: (panelId: string) => `/?panel=${panelId}**`,
+    getTabUrl: (panelId: string) => `/?panel=${panelId}`,
   } as unknown as ReturnType<typeof contextsModule.usePanel>)
   vi.spyOn(workspaceStoreModule, "useWorkspaceStreams").mockReturnValue(
     [] as unknown as ReturnType<typeof workspaceStoreModule.useWorkspaceStreams>
@@ -257,7 +262,9 @@ function mount(initialEntries: string[] = ["/"], mountStreamId: string = streamI
     <QueryClientProvider client={queryClient}>
       <PendingMessagesProvider>
         <MemoryRouter initialEntries={initialEntries}>
-          <MessageInput workspaceId={workspaceId} streamId={mountStreamId} />
+          <ComposeSlotsProvider>
+            <MessageInput workspaceId={workspaceId} streamId={mountStreamId} />
+          </ComposeSlotsProvider>
           <SearchParamsProbe />
         </MemoryRouter>
       </PendingMessagesProvider>
@@ -274,7 +281,9 @@ function rerenderAtStream(view: ReturnType<typeof mount>, nextStreamId: string) 
     <QueryClientProvider client={queryClient}>
       <PendingMessagesProvider>
         <MemoryRouter initialEntries={["/"]}>
-          <MessageInput workspaceId={workspaceId} streamId={nextStreamId} />
+          <ComposeSlotsProvider>
+            <MessageInput workspaceId={workspaceId} streamId={nextStreamId} />
+          </ComposeSlotsProvider>
           <SearchParamsProbe />
         </MemoryRouter>
       </PendingMessagesProvider>

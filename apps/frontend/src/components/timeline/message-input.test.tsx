@@ -27,6 +27,8 @@ import * as streamCommandsModule from "@/hooks/use-stream-commands"
 import * as composeTraceModule from "@/lib/compose-trace"
 import * as openAsideModule from "@/hooks/use-open-aside"
 import { spyOnExport } from "@/test"
+import { ComposeSlotsProvider } from "@/components/panes"
+import { NO_PANELS } from "@/lib/panel-tabs"
 import * as streamStoreModule from "@/stores/stream-store"
 import { toast } from "sonner"
 import { ApiError } from "@/api"
@@ -220,6 +222,12 @@ beforeEach(async () => {
 
   vi.spyOn(contextsModule, "usePanel").mockReturnValue({
     openPanel: mockOpenPanel,
+    layout: NO_PANELS,
+    hasTabs: true,
+    getFocusedPanelUrl: (panelId: string) => `/?panel=${panelId}**`,
+    getTabUrl: (panelId: string) => `/?panel=${panelId}`,
+    closeTab: vi.fn(),
+    setCurrentPane: vi.fn(),
   } as unknown as ReturnType<typeof contextsModule.usePanel>)
 
   vi.spyOn(hooksModule, "useStreamOrDraft").mockReturnValue({
@@ -312,7 +320,7 @@ beforeEach(async () => {
     composerRef,
     scheduledMessagesTrigger,
     stashedDrafts,
-    onExpandClick,
+    expandHref,
   }: {
     content: JSONContent
     onContentChange: (v: JSONContent) => void
@@ -326,7 +334,7 @@ beforeEach(async () => {
     }
     scheduledMessagesTrigger?: ReactNode
     stashedDrafts?: unknown
-    onExpandClick?: () => void
+    expandHref?: string
   }) => {
     if (composerRef) {
       composerRef.current = {
@@ -337,11 +345,7 @@ beforeEach(async () => {
     }
 
     return (
-      <div
-        data-testid="message-composer"
-        data-stash={stashedDrafts ? "yes" : "no"}
-        data-expand={onExpandClick ? "yes" : "no"}
-      >
+      <div data-testid="message-composer" data-stash={stashedDrafts ? "yes" : "no"} data-expand={expandHref ?? "no"}>
         <textarea data-testid="rich-editor" />
         {pendingAttachments.map((a) => (
           <div key={a.id}>
@@ -406,7 +410,7 @@ function Wrapper({ children }: { children: React.ReactNode }) {
           navigator={navigator as unknown as Parameters<typeof Router>[0]["navigator"]}
           navigationType={"POP" as Parameters<typeof Router>[0]["navigationType"]}
         >
-          {children}
+          <ComposeSlotsProvider>{children}</ComposeSlotsProvider>
         </Router>
       </PendingMessagesProvider>
     </QueryClientProvider>
@@ -446,7 +450,7 @@ describe("MessageInput", () => {
       expect(screen.getByRole("button", { name: /send/i })).toBeInTheDocument()
     })
 
-    it("keeps schedule, the stash pile and fullscreen off an aside's composer, on for a channel's", () => {
+    it("keeps schedule, the stash pile and expand off an aside's composer, on for a channel's", () => {
       const store = spyOnExport(streamStoreModule, "useStreamFromStore")
       store.mockReturnValue((() => ({ id: streamId, type: "aside" })) as never)
       const { unmount } = render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
@@ -465,7 +469,7 @@ describe("MessageInput", () => {
         schedule: screen.queryByTestId("scheduled-messages-picker") !== null,
         stash: channel.getAttribute("data-stash"),
         expand: channel.getAttribute("data-expand"),
-      }).toEqual({ schedule: true, stash: "yes", expand: "yes" })
+      }).toEqual({ schedule: true, stash: "yes", expand: `/?panel=compose:${streamId}**` })
     })
 
     it("should keep scheduling off the composer when it writes into a shared channel's copy", () => {
