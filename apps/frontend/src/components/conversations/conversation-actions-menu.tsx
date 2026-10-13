@@ -68,6 +68,8 @@ interface ConversationActionsMenuProps {
   /** Controlled open — lets a second affordance (the panel's title) drive the same menu. */
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  /** Actions of the surface the menu sits in, listed first with a separator after. */
+  leadingActions?: readonly SidebarActionItem[]
 }
 
 /**
@@ -93,6 +95,7 @@ export function ConversationActionsMenu({
   trigger,
   open,
   onOpenChange,
+  leadingActions = [],
 }: ConversationActionsMenuProps) {
   const isTouch = useIsMobileOrCoarse()
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
@@ -123,7 +126,8 @@ export function ConversationActionsMenu({
       : { kind: "conversation", conversationId, currentTitle: effectiveTitle ?? "", source: topicSummarySource }
   )
 
-  const actions: SidebarActionItem[] = []
+  const actions: SidebarActionItem[] = [...leadingActions]
+  const firstOwn = actions.length
   if (!renamesScratchpad) {
     actions.push({ id: "rename", label: "Rename topic…", icon: Pencil, onSelect: () => setRenameOpen(true) })
   } else if (renameStream.canRename) {
@@ -183,6 +187,8 @@ export function ConversationActionsMenu({
     separatorBefore: true,
     onSelect: () => (isHidden ? unhide.mutate(conversationId) : hide.mutate(conversationId)),
   })
+
+  if (firstOwn > 0) actions[firstOwn] = { ...actions[firstOwn], separatorBefore: true }
 
   const triggerNode = trigger ?? (
     <Button

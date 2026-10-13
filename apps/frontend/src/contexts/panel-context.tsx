@@ -239,6 +239,8 @@ interface PanelContextValue {
   /** Close this consumer's panel tab. */
   closePanel: () => void
   closeTab: (panelId: string) => void
+  /** Closes each of `panelIds` that can close, in order, as one step in history; the panes a page keeps stay. */
+  closeTabs: (panelIds: readonly string[]) => void
   /** Whether {@link closeTab} would close `panelId`. */
   canCloseTab: (panelId: string) => boolean
   /** Reopen the tab closed most recently and not open since, as a tab of the section worked in. */
@@ -279,6 +281,7 @@ interface PanelOps {
   /** Opening from `scopeId`'s tab, or beside the route's stream when null. */
   contextual: (layout: PanelLayout, panelId: string, scopeId: string | null) => PanelLayout
   closeTab: (panelId: string) => void
+  closeTabs: (panelIds: readonly string[]) => void
   canCloseTab: (panelId: string) => boolean
   reopenTab: (scopeId: string | null) => string | null
   canReopenTab: () => boolean
@@ -360,6 +363,12 @@ function withoutForeignPersonaTests(layout: PanelLayout, keep: string | null): P
     .reduce(closePanelTab, layout)
 }
 
+/** `layout` without `panelId` and the panes that are its stream's own: its draft, overview and conversations. */
+function closing(layout: PanelLayout, panelId: string): PanelLayout {
+  if (isPagePane(panelId)) return layout
+  return panesOwnedBy(layout, panelId).reduce(closePanelTab, closePanelTab(layout, panelId))
+}
+
 const MAX_CLOSED_TABS = 20
 
 const PANE_SWITCH_STATE = { paneSwitch: true }
@@ -423,6 +432,7 @@ function buildValue(
       if (own) ops.closeTab(own)
     },
     closeTab: ops.closeTab,
+    closeTabs: ops.closeTabs,
     canCloseTab: ops.canCloseTab,
     reopenTab: () => ops.reopenTab(scopeId),
     canReopenTab: ops.canReopenTab,
@@ -659,38 +669,40 @@ export function PanelProvider({ children }: PanelProviderProps) {
 
   const closedTabs = useRef<string[]>([])
   const { closeTo } = useCoverHistory(PANEL_COVER)
-  const closing = useCallback(
-    (panelId: string) =>
-      isPagePane(panelId)
-        ? layout
-        : panesOwnedBy(layout, panelId).reduce(closePanelTab, closePanelTab(layout, panelId)),
-    [layout]
-  )
   const canCloseTab = useCallback(
     (panelId: string) => {
-      const next = closing(panelId)
+      const next = closing(layout, panelId)
       return next !== layout && targetOf(next) !== null
     },
-    [closing, layout, targetOf]
+    [layout, targetOf]
   )
-  const closeTab = useCallback(
-    (panelId: string) => {
-      // A stream's draft and overview go with the stream: they are that stream's.
-      const next = closing(panelId)
-      if (next === layout) return
-      const to = targetOf(next)
-      if (to === null) return
+  const closeTabs = useCallback(
+    (panelIds: readonly string[]) => {
+      // The route's stream goes last, so a close that must leave one stream pane leaves the page's own.
+      const ordered = [...panelIds.filter((id) => id !== path), ...panelIds.filter((id) => id === path)]
+      let next = layout
+      const closed: string[] = []
+      for (const panelId of ordered) {
+        const after = closing(next, panelId)
+        if (after === next || targetOf(after) === null) continue
+        next = after
+        closed.push(panelId)
+      }
+      if (closed.length === 0) return
+      const to = targetOf(next)!
       // A draft's tab is gone with its draft, and a compose tab's draft is back
       // inline, so only real panels are remembered for reopening.
-      if (!isDraftPanel(panelId) && !isComposePanel(panelId)) {
-        closedTabs.current = [...closedTabs.current.filter((id) => id !== panelId), panelId].slice(-MAX_CLOSED_TABS)
-      }
+      const remembered = closed.filter((id) => !isDraftPanel(id) && !isComposePanel(id))
+      closedTabs.current = [...closedTabs.current.filter((id) => !remembered.includes(id)), ...remembered].slice(
+        -MAX_CLOSED_TABS
+      )
       const params = new URLSearchParams(searchParams)
-      if (panelId === coverOwner) dropDeepLink(params)
+      if (coverOwner !== null && closed.includes(coverOwner)) dropDeepLink(params)
       closeTo(landingsOf(next, to, params))
     },
-    [closeTo, closing, targetOf, landingsOf, searchParams, layout, coverOwner]
+    [closeTo, path, targetOf, landingsOf, searchParams, layout, coverOwner]
   )
+  const closeTab = useCallback((panelId: string) => closeTabs([panelId]), [closeTabs])
 
   const findReopenable = useCallback(() => {
     const shown = new Set(panelIdsOf(layout).map(paneIdentity))
@@ -768,6 +780,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       phone,
       contextual,
       closeTab,
+      closeTabs,
       canCloseTab,
       reopenTab,
       canReopenTab,
@@ -789,6 +802,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
       phone,
       contextual,
       closeTab,
+      closeTabs,
       canCloseTab,
       reopenTab,
       canReopenTab,

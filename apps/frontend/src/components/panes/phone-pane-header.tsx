@@ -7,9 +7,11 @@ import { afterOverlayHistory } from "@/components/ui/history-back-close"
 import { SidebarToggle } from "@/components/layout"
 import { usePanel, usePanelTabFocusHandoff, usePhonePanes } from "@/contexts"
 import { hasHorizontalScroll, OS_GESTURE_ZONE } from "@/hooks/use-sidebar-swipe"
+import { closePanelTab, followCurrentPanel, soleFirstPanelOf } from "@/lib/panel-tabs"
 import { cn } from "@/lib/utils"
 import { usePaneCovered } from "./pane-host"
 import { PanelTabTitle } from "./panel-tab-strip"
+import { PanelTabMenu, closeTabItems } from "./panel-tab-menu"
 
 /** Horizontal travel that counts as a swipe (px). */
 const SWIPE_DISTANCE = 40
@@ -42,7 +44,7 @@ export function PhonePaneLeading({
   )
 }
 
-type SheetAction = { kind: "switch" | "close"; id: string }
+type SheetAction = { kind: "switch"; id: string } | { kind: "close"; ids: readonly string[] }
 
 /**
  * The layers button, its sheet of open panes, and the position segments along
@@ -50,7 +52,7 @@ type SheetAction = { kind: "switch" | "close"; id: string }
  */
 export function PhonePaneSwitcher({ workspaceId }: { workspaceId: string }) {
   const phone = usePhonePanes()
-  const { panelId, getTabUrl, setCurrentPane, closeTab, canCloseTab } = usePanel()
+  const { panelId, layout, getTabUrl, setCurrentPane, closeTabs, canCloseTab } = usePanel()
   const [open, setOpen] = useState(false)
   const pending = useRef<SheetAction | null>(null)
   const rowId = useId()
@@ -61,10 +63,10 @@ export function PhonePaneSwitcher({ workspaceId }: { workspaceId: string }) {
 
   useEffect(() => {
     if (open || !pending.current) return
-    const { kind, id } = pending.current
+    const action = pending.current
     pending.current = null
-    afterOverlayHistory(() => (kind === "switch" ? setCurrentPane(id) : closeTab(id)))
-  }, [open, setCurrentPane, closeTab])
+    afterOverlayHistory(() => (action.kind === "switch" ? setCurrentPane(action.id) : closeTabs(action.ids)))
+  }, [open, setCurrentPane, closeTabs])
 
   // A switch leaves focus in a pane that goes inert behind the new one, so the new one takes it.
   useLayoutEffect(() => {
@@ -75,27 +77,47 @@ export function PhonePaneSwitcher({ workspaceId }: { workspaceId: string }) {
 
   if (!phone || phone.order.length < 2 || !panelId || !phone.order.includes(panelId)) return null
   const { order, current } = phone
+  const others = order.filter((id) => id !== current)
   const choose = (action: SheetAction) => {
     pending.current = action
     switched.current = action.kind === "switch" && action.id !== current
-    if (switched.current) focusHandoff.current = action.id
+    if (action.kind === "switch" && switched.current) focusHandoff.current = action.id
     setOpen(false)
+  }
+  // The menu holds focus, and closing the current pane unmounts this button, so focus goes to the pane left on show.
+  const closeFromMenu = (ids: readonly string[]) => {
+    const next = ids.reduce(closePanelTab, layout)
+    const after = followCurrentPanel(layout, next, current)
+    focusHandoff.current = after === soleFirstPanelOf(next) ? null : after
+    closeTabs(ids)
   }
 
   return (
     <>
-      <Button
-        variant="ghost"
-        className="h-8 shrink-0 gap-0.5 px-1.5"
-        aria-label={`${order.length} open panes`}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={() => setOpen(true)}
-        ref={layersRef}
+      <PanelTabMenu
+        items={[
+          {
+            id: "others",
+            label: "Close others",
+            disabled: !others.some(canCloseTab),
+            onSelect: () => closeFromMenu(others),
+          },
+          { id: "all", label: "Close all", disabled: !order.some(canCloseTab), onSelect: () => closeFromMenu(order) },
+        ]}
       >
-        <Layers2 className="h-4 w-4" />
-        <span className="text-xs tabular-nums">{order.length}</span>
-      </Button>
+        <Button
+          variant="ghost"
+          className="h-8 shrink-0 gap-0.5 px-1.5"
+          aria-label={`${order.length} open panes`}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          onClick={() => setOpen(true)}
+          ref={layersRef}
+        >
+          <Layers2 className="h-4 w-4" />
+          <span className="text-xs tabular-nums">{order.length}</span>
+        </Button>
+      </PanelTabMenu>
       <Drawer open={open} onOpenChange={setOpen}>
         <DrawerContent
           aria-describedby={undefined}
@@ -107,38 +129,49 @@ export function PhonePaneSwitcher({ workspaceId }: { workspaceId: string }) {
           <DrawerTitle className="sr-only">Open panes</DrawerTitle>
           <ul className="max-h-[60dvh] overflow-y-auto pb-[max(0.5rem,env(safe-area-inset-bottom))]">
             {order.map((id) => (
-              <li key={id} className={cn("flex items-center", id === current && "bg-accent")}>
-                <Link
-                  to={getTabUrl(id)}
-                  replace
-                  aria-current={id === current ? "page" : undefined}
-                  onClick={(event) => {
-                    event.preventDefault()
-                    choose({ kind: "switch", id })
-                  }}
-                  className={cn(
-                    "flex min-h-11 min-w-0 flex-1 items-center pl-4 text-sm",
-                    id === current ? "font-semibold" : "text-muted-foreground"
-                  )}
-                >
-                  <span id={`${rowId}-title-${id}`} className="truncate">
-                    <PanelTabTitle workspaceId={workspaceId} panelId={id} />
-                  </span>
-                </Link>
-                {canCloseTab(id) && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-11 w-11 shrink-0"
-                    onClick={() => choose({ kind: "close", id })}
-                    id={`${rowId}-close-${id}`}
-                    aria-label="Close"
-                    aria-labelledby={`${rowId}-close-${id} ${rowId}-title-${id}`}
+              <PanelTabMenu
+                key={id}
+                items={closeTabItems({
+                  ids: order,
+                  id,
+                  canClose: canCloseTab,
+                  close: (ids) => choose({ kind: "close", ids }),
+                  vertical: true,
+                })}
+              >
+                <li className={cn("flex items-center", id === current && "bg-accent")}>
+                  <Link
+                    to={getTabUrl(id)}
+                    replace
+                    aria-current={id === current ? "page" : undefined}
+                    onClick={(event) => {
+                      event.preventDefault()
+                      choose({ kind: "switch", id })
+                    }}
+                    className={cn(
+                      "flex min-h-11 min-w-0 flex-1 items-center pl-4 text-sm",
+                      id === current ? "font-semibold" : "text-muted-foreground"
+                    )}
                   >
-                    <X className="h-4 w-4" />
-                  </Button>
-                )}
-              </li>
+                    <span id={`${rowId}-title-${id}`} className="truncate">
+                      <PanelTabTitle workspaceId={workspaceId} panelId={id} />
+                    </span>
+                  </Link>
+                  {canCloseTab(id) && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-11 w-11 shrink-0"
+                      onClick={() => choose({ kind: "close", ids: [id] })}
+                      id={`${rowId}-close-${id}`}
+                      aria-label="Close"
+                      aria-labelledby={`${rowId}-close-${id} ${rowId}-title-${id}`}
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  )}
+                </li>
+              </PanelTabMenu>
             ))}
           </ul>
         </DrawerContent>

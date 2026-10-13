@@ -36,6 +36,7 @@ import { Separator } from "@/components/ui/separator"
 import { useOptionalSidebar } from "@/contexts"
 import { groupVisibleActions } from "@/components/actions/action-model"
 import { cn } from "@/lib/utils"
+import { useContextMenuHoldGuard } from "@/hooks/use-context-menu-hold-guard"
 import { streamThreadsHref } from "@/components/stream-directory/directory"
 
 export interface SidebarActionItem {
@@ -427,27 +428,18 @@ export function SidebarActionContextMenu({ actions, children, disabled, focusRef
     setOpen(false)
     setMountKey((key) => key + 1)
   })
-  // Linux and macOS fire contextmenu on mousedown, so the menu mounts under the held button and Radix
-  // would select whichever item the release lands on. The window listener runs after React's handlers.
-  const heldRef = useRef(false)
-  const onContextMenu = (event: MouseEvent) => {
-    if (event.buttons === 0 || heldRef.current) return
-    heldRef.current = true
-    window.addEventListener("pointerup", () => (heldRef.current = false), { once: true })
-  }
+  const holdGuard = useContextMenuHoldGuard()
 
   if (disabled || actions.length === 0) return <>{children}</>
 
   return (
     <ContextMenu key={mountKey} onOpenChange={setOpen}>
-      <ContextMenuTrigger asChild onContextMenu={onContextMenu}>
+      <ContextMenuTrigger asChild onContextMenu={holdGuard.onContextMenu}>
         {children}
       </ContextMenuTrigger>
       <ContextMenuContent
         className="w-40"
-        onPointerUpCapture={(event) => {
-          if (heldRef.current) event.stopPropagation()
-        }}
+        onPointerUpCapture={holdGuard.onPointerUpCapture}
         onCloseAutoFocus={(event) => {
           const target = focusRef?.current
           if (!target) return
