@@ -19,6 +19,7 @@ export type { WorkspaceBootstrap, CreateWorkspaceInput }
 export interface WorkspaceListResult {
   workspaces: Workspace[]
   pendingInvitations: PendingInvitation[]
+  canCreateWorkspace: boolean
 }
 
 export const workspacesApi = {

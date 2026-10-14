@@ -31,11 +31,15 @@ export function createWorkspaceHandlers({ workspaceService, shadowService }: Dep
         throw new HttpError("Not authenticated", { status: 401, code: "NOT_AUTHENTICATED" })
       }
 
-      const [workspaces, pendingInvitations] = await Promise.all([
+      const email = req.authUser?.email
+      const [workspaces, pendingInvitations, canCreateWorkspace] = await Promise.all([
         workspaceService.listForUser(req.workosUserId),
-        req.authUser?.email ? shadowService.listPendingForEmail(req.authUser.email) : [],
+        email ? shadowService.listPendingForEmail(email) : [],
+        // A failed eligibility lookup (logged by the WorkOS client) offers the form rather than
+        // telling an eligible account it needs an invite; `create` enforces the real check.
+        email ? workspaceService.canCreate(email).catch(() => true) : false,
       ])
-      res.json({ workspaces, pendingInvitations })
+      res.json({ workspaces, pendingInvitations, canCreateWorkspace })
     },
 
     async create(req: Request, res: Response) {

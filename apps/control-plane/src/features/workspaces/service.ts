@@ -162,6 +162,11 @@ export class ControlPlaneWorkspaceService {
     }))
   }
 
+  async canCreate(email: string): Promise<boolean> {
+    if (!this.requireInvite) return true
+    return this.workosOrgService.hasAcceptedWorkspaceCreationInvitation(email)
+  }
+
   async create(params: {
     name: string
     region?: string
@@ -177,14 +182,11 @@ export class ControlPlaneWorkspaceService {
     const region = params.region ?? this.defaultRegion()
     this.assertRegion(region)
 
-    if (this.requireInvite) {
-      const hasInvite = await this.workosOrgService.hasAcceptedWorkspaceCreationInvitation(email)
-      if (!hasInvite) {
-        throw new HttpError("Workspace creation requires an accepted invitation", {
-          status: 403,
-          code: "INVITATION_REQUIRED",
-        })
-      }
+    if (!(await this.canCreate(email))) {
+      throw new HttpError("Workspace creation requires an accepted invitation", {
+        status: 403,
+        code: "INVITATION_REQUIRED",
+      })
     }
 
     const id = generateWorkspaceId()

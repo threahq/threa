@@ -45,7 +45,14 @@ function getCreateWorkspaceErrorMessage(error: unknown): string | null {
 
 export function WorkspaceSelectPage() {
   const { user, loading: authLoading } = useAuth()
-  const { workspaces, cachedWorkspaces, pendingInvitations, isLoading: workspacesLoading, error } = useWorkspaces()
+  const {
+    workspaces,
+    cachedWorkspaces,
+    pendingInvitations,
+    canCreateWorkspace,
+    isLoading: workspacesLoading,
+    error,
+  } = useWorkspaces()
   const logout = useLogout()
   // Prefer the freshly fetched list; fall back to the IDB-cached one so a
   // returning user sees their workspaces instantly while the list query
@@ -145,13 +152,22 @@ export function WorkspaceSelectPage() {
     return <Navigate to={`/w/${workspaces[0].id}`} replace />
   }
 
+  const hasNothingToJoin = !displayWorkspaces?.length && pendingInvitations.length === 0
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-8">
         <ThreaLogo size="lg" />
         <div className="text-center">
           <h1 className="text-xl font-medium">Welcome, {user?.name || "User"}</h1>
-          <p className="mt-1 text-muted-foreground text-sm">Select a workspace to continue</p>
+          {hasNothingToJoin && !canCreateWorkspace ? (
+            <p className="mt-1 max-w-64 text-muted-foreground text-sm">
+              {user?.email ?? "This account"} isn&apos;t a member of any workspace. Ask a workspace admin for an invite,
+              or log out and sign in with another account.
+            </p>
+          ) : (
+            <p className="mt-1 text-muted-foreground text-sm">Select a workspace to continue</p>
+          )}
         </div>
 
         {pendingInvitations.length > 0 && (
@@ -186,33 +202,35 @@ export function WorkspaceSelectPage() {
           </div>
         )}
 
-        <form onSubmit={handleCreateWorkspace} className="flex flex-col gap-3 w-64">
-          <Input
-            type="text"
-            placeholder="New workspace name"
-            value={newWorkspaceName}
-            onChange={(e) => setNewWorkspaceName(e.target.value)}
-            disabled={createWorkspace.isPending}
-          />
-          {showRegionPicker && (
-            <Select value={selectedRegion} onValueChange={setSelectedRegion} disabled={createWorkspace.isPending}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select region" />
-              </SelectTrigger>
-              <SelectContent>
-                {regions.map((region) => (
-                  <SelectItem key={region} value={region}>
-                    {formatRegion(region)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
-          <Button type="submit" disabled={!newWorkspaceName.trim() || createWorkspace.isPending}>
-            {createWorkspace.isPending ? "Creating..." : "Create Workspace"}
-          </Button>
-          {createWorkspaceErrorMessage && <p className="text-sm text-destructive">{createWorkspaceErrorMessage}</p>}
-        </form>
+        {canCreateWorkspace && (
+          <form onSubmit={handleCreateWorkspace} className="flex flex-col gap-3 w-64">
+            <Input
+              type="text"
+              placeholder="New workspace name"
+              value={newWorkspaceName}
+              onChange={(e) => setNewWorkspaceName(e.target.value)}
+              disabled={createWorkspace.isPending}
+            />
+            {showRegionPicker && (
+              <Select value={selectedRegion} onValueChange={setSelectedRegion} disabled={createWorkspace.isPending}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select region" />
+                </SelectTrigger>
+                <SelectContent>
+                  {regions.map((region) => (
+                    <SelectItem key={region} value={region}>
+                      {formatRegion(region)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            <Button type="submit" disabled={!newWorkspaceName.trim() || createWorkspace.isPending}>
+              {createWorkspace.isPending ? "Creating..." : "Create Workspace"}
+            </Button>
+            {createWorkspaceErrorMessage && <p className="text-sm text-destructive">{createWorkspaceErrorMessage}</p>}
+          </form>
+        )}
 
         <Button variant="ghost" size="sm" onClick={logout}>
           Log out
