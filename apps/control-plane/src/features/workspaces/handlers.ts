@@ -35,9 +35,9 @@ export function createWorkspaceHandlers({ workspaceService, shadowService }: Dep
       const [workspaces, pendingInvitations, canCreateWorkspace] = await Promise.all([
         workspaceService.listForUser(req.workosUserId),
         email ? shadowService.listPendingForEmail(email) : [],
-        // The eligibility lookup (logged by the WorkOS client on failure) must not take the
-        // workspace list down with it; `create` re-checks, so a false negative only hides the form.
-        email ? workspaceService.canCreate(email).catch(() => false) : false,
+        // A failed eligibility lookup (logged by the WorkOS client) offers the form rather than
+        // telling an eligible account it needs an invite; `create` enforces the real check.
+        email ? workspaceService.canCreate(email).catch(() => true) : false,
       ])
       res.json({ workspaces, pendingInvitations, canCreateWorkspace })
     },

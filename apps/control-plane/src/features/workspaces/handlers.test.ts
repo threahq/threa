@@ -70,11 +70,11 @@ describe("workspace.list", () => {
     expect(res.body).toEqual({ workspaces: [], pendingInvitations: [], canCreateWorkspace: true })
   })
 
-  test("still lists workspaces when the eligibility lookup fails, reporting no creation", async () => {
+  test("still lists workspaces when the eligibility lookup fails, leaving creation to the create check", async () => {
     const res = createResponse()
     await listHandlers(async () => {
       throw new Error("WorkOS unavailable")
     }).list(req, res)
-    expect(res.body).toEqual({ workspaces: [], pendingInvitations: [], canCreateWorkspace: false })
+    expect(res.body).toEqual({ workspaces: [], pendingInvitations: [], canCreateWorkspace: true })
   })
 })
