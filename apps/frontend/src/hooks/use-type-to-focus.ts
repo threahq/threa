@@ -67,7 +67,8 @@ function isMobileOrCoarse(): boolean {
   return window.matchMedia(MOBILE_VIEWPORT_QUERY).matches || window.matchMedia(COARSE_POINTER_QUERY).matches
 }
 
-type PendingOpen = { scope: HTMLElement; chars: string }
+/** Keys held for a composer still to mount: a card scope's, or (no scope) the one a gliding pane lands with. */
+type PendingOpen = { scope: HTMLElement | null; chars: string }
 
 /**
  * The zone's container: the one last clicked while it is still mounted, else
@@ -136,6 +137,56 @@ export function useTypeToFocus() {
       requestAnimationFrame(poll)
     }
 
+    /**
+     * A pane gliding in shows a skeleton until it lands, so the keys typed at it
+     * wait for the composer it lands with: the one that takes focus (a thread's),
+     * else the first composer a landing pane mounts, else the zone rule.
+     */
+    function holdForLanding(char: string) {
+      const landing = Array.from(document.querySelectorAll<HTMLElement>("[data-pane-gliding]")).filter(
+        (pane) => !pane.querySelector('[contenteditable="true"]')
+      )
+      const pending: PendingOpen = { scope: null, chars: char }
+      pendingOpenRef.current = pending
+      let framesLeft = OPENER_POLL_FRAMES
+      const poll = () => {
+        if (pendingOpenRef.current !== pending) return
+        const gliding = document.querySelector("[data-pane-gliding]") !== null
+        const landed = gliding ? null : (activeEditor() ?? landing.map(findVisibleZoneEditor).find(Boolean) ?? null)
+        const editor = landed ?? (!gliding && (landing.length === 0 || --framesLeft <= 0) ? zoneEditor() : null)
+        if (editor) {
+          pendingOpenRef.current = null
+          focusAtEnd(editor)
+          document.execCommand("insertText", false, pending.chars)
+          return
+        }
+        if (gliding || framesLeft > 0) {
+          requestAnimationFrame(poll)
+          return
+        }
+        pendingOpenRef.current = null
+      }
+      requestAnimationFrame(poll)
+    }
+
+    function activeEditor(): HTMLElement | null {
+      const active = document.activeElement
+      return active instanceof HTMLElement && active.isContentEditable ? active : null
+    }
+
+    /** Last-clicked zone first, then the other one — the fallback runs both ways. */
+    function zoneEditor(): HTMLElement | null {
+      const panelPresent = zoneContainer("panel", lastZoneElRef.current) !== null
+      if (lastZoneRef.current === "panel" && panelPresent) {
+        return findVisibleZoneEditor(zoneContainer("panel", lastZoneElRef.current))
+      }
+      const other = lastZoneRef.current === "main" ? "panel" : "main"
+      return (
+        findVisibleZoneEditor(zoneContainer(lastZoneRef.current, lastZoneElRef.current)) ??
+        findVisibleZoneEditor(zoneContainer(other, lastZoneElRef.current))
+      )
+    }
+
     function handleClick(e: MouseEvent) {
       const target = e.target as HTMLElement | null
       pendingOpenRef.current = null
@@ -169,7 +220,7 @@ export function useTypeToFocus() {
       // keep accumulating rather than letting the key reach the zone-wide
       // lookup and land in another card.
       const pending = pendingOpenRef.current
-      if (pending && lastScopeRef.current === pending.scope) {
+      if (pending && (pending.scope === null || lastScopeRef.current === pending.scope)) {
         e.preventDefault()
         pending.chars += e.key
         return
@@ -192,6 +243,12 @@ export function useTypeToFocus() {
       ).find((editor) => !editor.closest("[inert]"))
       if (inlineEditor) {
         focusAtEnd(inlineEditor)
+        return
+      }
+
+      if (document.querySelector("[data-pane-gliding]")) {
+        e.preventDefault()
+        holdForLanding(e.key)
         return
       }
 
@@ -231,25 +288,15 @@ export function useTypeToFocus() {
         return
       }
 
-      // Last-clicked zone first, then the other one — the fallback runs both
-      // ways: opening a conversation from a board card leaves the last click in
-      // main, and the panel that just opened is where typing must land.
+      // Opening a conversation from a board card leaves the last click in main,
+      // and the panel that just opened is where typing must land.
       //
       // Except: a rendered panel with no editor is a decision, not an absence
       // (an archived conversation renders ComposerDisabledNotice). Falling
       // through then appends the keystroke to some board card's open draft and
       // scrolls the feed to it. Main is a feed of zero-or-many card composers,
       // so its emptiness carries no such meaning and still falls through.
-      const panelPresent = zoneContainer("panel", lastZoneElRef.current) !== null
-      if (lastZoneRef.current === "panel" && panelPresent) {
-        const editor = findVisibleZoneEditor(zoneContainer("panel", lastZoneElRef.current))
-        if (editor) focusAtEnd(editor)
-        return
-      }
-      const other = lastZoneRef.current === "main" ? "panel" : "main"
-      const editor =
-        findVisibleZoneEditor(zoneContainer(lastZoneRef.current, lastZoneElRef.current)) ??
-        findVisibleZoneEditor(zoneContainer(other, lastZoneElRef.current))
+      const editor = zoneEditor()
       if (editor) focusAtEnd(editor)
     }
 

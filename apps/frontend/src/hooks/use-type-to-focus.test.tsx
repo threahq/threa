@@ -603,3 +603,72 @@ describe("findVisibleZoneEditor", () => {
     expect(findVisibleZoneEditor(document.querySelector<HTMLElement>('[data-editor-zone="panel"]'))).toBeNull()
   })
 })
+
+describe("useTypeToFocus while a pane glides in", () => {
+  function runFrames(count: number) {
+    for (let i = 0; i < count; i += 1) vi.advanceTimersByTime(16)
+  }
+
+  let execCommand: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    execCommand = vi.fn(() => true)
+    Object.defineProperty(document, "execCommand", { configurable: true, value: execCommand })
+    buildDom(
+      '<main data-editor-zone="main"><div contenteditable="true" id="m"></div></main>' +
+        '<div data-panel-tab="stream_t" data-pane-gliding=""><div data-editor-zone="panel" id="zone"></div></div>'
+    )
+    setVisible(document.getElementById("m")!, true)
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function mountPanelEditor() {
+    const editor = document.createElement("div")
+    editor.setAttribute("contenteditable", "true")
+    editor.id = "t"
+    document.getElementById("zone")!.appendChild(editor)
+    setVisible(editor, true)
+    return editor
+  }
+
+  it("holds the keys until the pane lands and types them into the composer that takes focus", () => {
+    const event = new KeyboardEvent("keydown", { key: "x", bubbles: true, cancelable: true })
+    document.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+    press("y")
+    runFrames(5)
+    expect(document.activeElement).toBe(document.body)
+
+    document.querySelector("[data-pane-gliding]")!.removeAttribute("data-pane-gliding")
+    runFrames(2)
+    const editor = mountPanelEditor()
+    editor.focus()
+    runFrames(2)
+
+    expect(execCommand).toHaveBeenCalledWith("insertText", false, "xy")
+    expect(document.activeElement).toBe(editor)
+  })
+
+  it("types the held keys into the composer a landing pane mounts even when nothing took focus", () => {
+    press("x")
+    document.querySelector("[data-pane-gliding]")!.removeAttribute("data-pane-gliding")
+    const editor = mountPanelEditor()
+    runFrames(2)
+
+    expect(document.activeElement).toBe(editor)
+    expect(execCommand).toHaveBeenCalledWith("insertText", false, "x")
+  })
+
+  it("falls back to the zone rule when the landed pane mounts no composer", () => {
+    press("x")
+    document.querySelector("[data-pane-gliding]")!.removeAttribute("data-pane-gliding")
+    runFrames(25)
+
+    expect(document.activeElement).toBe(document.getElementById("m"))
+    expect(execCommand).toHaveBeenCalledWith("insertText", false, "x")
+  })
+})

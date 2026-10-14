@@ -194,7 +194,8 @@ export function landFocus(landing: MutableRefObject<number>, paneId: string | nu
       focusAtEnd(editor)
       return
     }
-    if (uncovered && ++uncoveredFrames >= EDITOR_WAIT_FRAMES) {
+    // A pane gliding in mounts its composer once the glide lands; the frames count from there.
+    if (uncovered && !pane.hasAttribute("data-pane-gliding") && ++uncoveredFrames >= EDITOR_WAIT_FRAMES) {
       pane.querySelector<HTMLElement>('[aria-current="page"],[data-pane-landing]')?.focus()
       return
     }

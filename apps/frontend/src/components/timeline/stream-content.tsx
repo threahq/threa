@@ -1,6 +1,7 @@
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { getDraftPromotionEvents } from "@/lib/draft-promotions"
 import { memo, useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState, useSyncExternalStore } from "react"
+import { createPortal } from "react-dom"
 import { useLocation, useNavigationType, useParams, useSearchParams } from "react-router-dom"
 import { type VirtualizerHandle } from "virtua"
 import { MessageSquare, ArrowDown, X, Move, Loader2, Check, Plus } from "lucide-react"
@@ -3114,24 +3115,26 @@ export function StreamContent({
                     onJumpToFirstUnread={stableScrollToFirstUnread}
                     onMarkAllRead={escapeUnread}
                   />
-                  {dragGhost && (
-                    <div
-                      className="pointer-events-none fixed z-50 max-w-[280px] rounded-md border bg-popover/95 px-3 py-2 text-sm shadow-lg"
-                      style={{ left: dragGhost.x + 12, top: dragGhost.y + 12 }}
-                    >
-                      <div className="font-medium">{selectedMessageIds.size} selected</div>
-                      <div className="line-clamp-1 text-xs text-muted-foreground">
-                        {Array.from(selectedMessageIds)
-                          .map((messageId) => {
-                            const content = messageEventMeta.get(messageId)?.content
-                            return content ? stripMarkdownToInline(content) : null
-                          })
-                          .filter(Boolean)
-                          .slice(0, 1)
-                          .join("")}
-                      </div>
-                    </div>
-                  )}
+                  {dragGhost &&
+                    createPortal(
+                      <div
+                        className="pointer-events-none fixed z-50 max-w-[280px] rounded-md border bg-popover/95 px-3 py-2 text-sm shadow-lg"
+                        style={{ left: dragGhost.x + 12, top: dragGhost.y + 12 }}
+                      >
+                        <div className="font-medium">{selectedMessageIds.size} selected</div>
+                        <div className="line-clamp-1 text-xs text-muted-foreground">
+                          {Array.from(selectedMessageIds)
+                            .map((messageId) => {
+                              const content = messageEventMeta.get(messageId)?.content
+                              return content ? stripMarkdownToInline(content) : null
+                            })
+                            .filter(Boolean)
+                            .slice(0, 1)
+                            .join("")}
+                        </div>
+                      </div>,
+                      document.body
+                    )}
                   {moveDialogMounted && (
                     <AlertDialog
                       open={moveDialogOpen}
