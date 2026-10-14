@@ -1173,7 +1173,7 @@ export function PanelProvider({ children }: PanelProviderProps) {
   )
   const value = useMemo(() => buildValue(ops, null, null), [ops])
   const latestPanel = useLatest(value)
-  const latestRoute = useLatest(useMemo(() => ({ location, navigate }), [location, navigate]))
+  const latestRoute = useLatest({ location, navigate })
 
   return (
     <PanelOpsContext.Provider value={ops}>
