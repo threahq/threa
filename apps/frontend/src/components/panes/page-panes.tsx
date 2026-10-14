@@ -103,11 +103,12 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
   // Panes, and the edges tracking them, glide on the render that changes the arrangement; a resize, of a
   // column or the window, snaps, and so does a fix-up before the first frame (a reload dropping a pane
   // the store no longer holds), as the user never saw what it changes.
-  const shown = useRef(arrangement)
+  const shape = panelGridShape(gridLayout)
+  const shown = useRef({ arrangement, shape })
   const settled = useRef(false)
-  const glides = !isMobile && settled.current && shown.current !== arrangement && !prefersReducedMotion()
+  const glides = !isMobile && settled.current && shown.current.arrangement !== arrangement && !prefersReducedMotion()
   useLayoutEffect(() => {
-    shown.current = arrangement
+    shown.current = { arrangement, shape }
   })
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -158,7 +159,13 @@ export function PagePanes({ workspaceId, page, error = null }: PagePanesProps) {
   return (
     <PagePaneContext.Provider value={page ?? null}>
       <AsideCoversPanesContext.Provider value={asideSheet !== null}>
-        <PaneHost ref={containerRef} columns={columns} rows={panelGrid.rows || "minmax(0,1fr)"} glide={glides}>
+        <PaneHost
+          ref={containerRef}
+          columns={columns}
+          rows={panelGrid.rows || "minmax(0,1fr)"}
+          glide={glides}
+          reshapes={glides && shown.current.shape !== shape}
+        >
           {/* Drops reach the page's own panes only: never a drawer's. */}
           <PaneDropContext.Provider value={drops}>
             <PanelTabStack

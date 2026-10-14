@@ -1,6 +1,7 @@
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { getDraftPromotionEvents } from "@/lib/draft-promotions"
 import { memo, useMemo, useEffect, useLayoutEffect, useCallback, useRef, useState, useSyncExternalStore } from "react"
+import { createPortal } from "react-dom"
 import { useLocation, useNavigationType, useParams, useSearchParams } from "react-router-dom"
 import { type VirtualizerHandle } from "virtua"
 import { MessageSquare, ArrowDown, X, Move, Loader2, Check, Plus } from "lucide-react"
@@ -599,6 +600,25 @@ interface StreamContentProps {
    * has started.
    */
   emptyState?: React.ReactNode
+}
+
+/**
+ * The one skeleton a timeline shows before its rows: the active-load branch, the cold-boot fallback and a
+ * pane still gliding in share it, so the seam to the first painted rows is invisible.
+ */
+export function TimelineSkeleton() {
+  return (
+    <div className="flex flex-col gap-4 px-4 py-6 sm:px-6">
+      <div className="flex gap-3">
+        <Skeleton className="h-9 w-9 rounded-full" />
+        <div className="flex-1 space-y-2">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-2/3" />
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export function StreamContent({
@@ -3095,24 +3115,26 @@ export function StreamContent({
                     onJumpToFirstUnread={stableScrollToFirstUnread}
                     onMarkAllRead={escapeUnread}
                   />
-                  {dragGhost && (
-                    <div
-                      className="pointer-events-none fixed z-50 max-w-[280px] rounded-md border bg-popover/95 px-3 py-2 text-sm shadow-lg"
-                      style={{ left: dragGhost.x + 12, top: dragGhost.y + 12 }}
-                    >
-                      <div className="font-medium">{selectedMessageIds.size} selected</div>
-                      <div className="line-clamp-1 text-xs text-muted-foreground">
-                        {Array.from(selectedMessageIds)
-                          .map((messageId) => {
-                            const content = messageEventMeta.get(messageId)?.content
-                            return content ? stripMarkdownToInline(content) : null
-                          })
-                          .filter(Boolean)
-                          .slice(0, 1)
-                          .join("")}
-                      </div>
-                    </div>
-                  )}
+                  {dragGhost &&
+                    createPortal(
+                      <div
+                        className="pointer-events-none fixed z-50 max-w-[280px] rounded-md border bg-popover/95 px-3 py-2 text-sm shadow-lg"
+                        style={{ left: dragGhost.x + 12, top: dragGhost.y + 12 }}
+                      >
+                        <div className="font-medium">{selectedMessageIds.size} selected</div>
+                        <div className="line-clamp-1 text-xs text-muted-foreground">
+                          {Array.from(selectedMessageIds)
+                            .map((messageId) => {
+                              const content = messageEventMeta.get(messageId)?.content
+                              return content ? stripMarkdownToInline(content) : null
+                            })
+                            .filter(Boolean)
+                            .slice(0, 1)
+                            .join("")}
+                        </div>
+                      </div>,
+                      document.body
+                    )}
                   {moveDialogMounted && (
                     <AlertDialog
                       open={moveDialogOpen}
@@ -3620,21 +3642,7 @@ const TimelineMessageList = memo(function TimelineMessageList({
   const headerSpacerPx = isNarrowViewport ? STREAM_HEADER_SPACER_PX : STREAM_HEADER_SPACER_SM_PX
   const startMargin = reservedTopSpacer ? BAR_TOP_SPACER_PX : headerSpacerPx
 
-  // Single skeleton shape shared by the active-load branch and the cold-boot
-  // empty fallback so the seam between MainContentGate's skeleton and
-  // StreamContent's first paint is invisible.
-  const skeleton = (
-    <div className="flex flex-col gap-4 px-4 py-6 sm:px-6">
-      <div className="flex gap-3">
-        <Skeleton className="h-9 w-9 rounded-full" />
-        <div className="flex-1 space-y-2">
-          <Skeleton className="h-4 w-32" />
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-2/3" />
-        </div>
-      </div>
-    </div>
-  )
+  const skeleton = <TimelineSkeleton />
 
   // Latched above the early returns: the scroller unmounts on them, so a latch
   // living inside it would answer "nothing rendered yet" on the next empty

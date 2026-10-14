@@ -118,6 +118,19 @@ const mainEdge = (page: Page) =>
     }
   })
 
+/** The glide animations running, each by whether the pane host or one of its children holds it. */
+const glides = (page: Page) =>
+  page.evaluate(() => {
+    const host = document.querySelector("[data-testid='main-pane']")!.parentElement!
+    return document
+      .getAnimations()
+      .filter((animation) => animation.id === "pane-glide")
+      .map((animation) => {
+        const target = (animation.effect as KeyframeEffect).target
+        return target === host ? "host" : host.contains(target) ? "child" : "elsewhere"
+      })
+  })
+
 /** How far down the page `id`'s pane starts, and how far each row divider stands off its top edge. */
 const topEdge = (page: Page, id: string) =>
   page.evaluate((id) => {
@@ -204,31 +217,38 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
   await drag(page, sidebarRow(page, names.b), await at(mainPane(page), 0.95, 0.4), async () => {
     await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "right")
   })
-  await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
-  // Midway, the pane that was there is the one moving: part shrunk, its content as wide as its box, still
-  // over the edge of the added pane, which is where it ends up.
+  // The added pane holds its timeline until the glide lands, so mounting it never delays the glide's frames.
+  await expect(tabPane(page, streamB)).toBeVisible()
+  await expect(tabPane(page, streamB).getByTestId("stream-timeline")).toHaveCount(0)
+  // Midway, both panes move: main part shrunk, its content as wide as its box, and the added pane opening
+  // out of the divider at main's edge to its own final right edge, so neither covers the other.
   const midway = await page.evaluate((added) => {
     const main = document.querySelector("[data-testid='main-pane']")!
     const mainBox = main.getBoundingClientRect()
     const addedBox = document.querySelector(`[data-panel-tab="${added}"]`)!.getBoundingClientRect()
-    const over = document.elementFromPoint((addedBox.left + mainBox.right) / 2, mainBox.top + mainBox.height / 4)
+    const gap = addedBox.left - mainBox.right
+    const beside = document.elementFromPoint(mainBox.right + 4, mainBox.top + mainBox.height / 4)
     return {
       main: Math.round(mainBox.width),
       content: Math.round(main.querySelector("[data-editor-zone='main']")!.getBoundingClientRect().width),
-      over: over?.closest("[data-panel-tab]")?.getAttribute("data-testid"),
-      added: { x: Math.round(addedBox.x), width: Math.round(addedBox.width) },
+      abuts: gap >= 0 && gap <= 1.5,
+      beside: beside?.closest("[data-panel-tab]")?.getAttribute("data-panel-tab"),
+      right: Math.round(addedBox.right),
     }
   }, streamB)
   await releaseGlides(page)
   await settled(tabPane(page, streamB))
+  await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
   const mainAfter = await boxOf(mainPane(page))
+  const addedAfter = await boxOf(tabPane(page, streamB))
   expect(midway.main).toBeGreaterThan(mainAfter.width)
   expect(midway.main).toBeLessThan(mainBefore.width)
   expect(midway).toEqual({
     main: midway.main,
     content: midway.main,
-    over: "main-pane",
-    added: await boxOf(tabPane(page, streamB)),
+    abuts: true,
+    beside: streamB,
+    right: addedAfter.x + addedAfter.width,
   })
   expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({
     stream: streamB,
@@ -307,8 +327,10 @@ test("should slide a divider in and out with the pane edge it marks", async ({ p
   await holdGlides(page)
 
   await drag(page, sidebarRow(page, names.b), await at(mainPane(page), 0.95, 0.4))
-  await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
+  await expect(tabPane(page, streamB)).toBeVisible()
   const opening = await mainEdge(page)
+  // One animation drives the glide, so the divider and the edges it marks cannot run on different clocks.
+  expect(await glides(page)).toEqual(["host"])
   await releaseGlides(page)
   await settled(tabPane(page, streamB))
   const beside = (await mainEdge(page)).main

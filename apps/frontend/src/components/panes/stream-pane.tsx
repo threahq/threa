@@ -46,7 +46,7 @@ import { useUserProfile } from "@/components/user-profile"
 import { useStreamSettings } from "@/components/stream-settings/use-stream-settings"
 import { useExplorerUrlState } from "@/components/attachment-explorer"
 import { useOutcomesUrlState } from "@/components/agent-outcomes"
-import { StreamContent, AgentActivityHeaderChip } from "@/components/timeline"
+import { StreamContent, TimelineSkeleton, AgentActivityHeaderChip } from "@/components/timeline"
 import { StreamErrorBoundary } from "@/components/stream-error-boundary"
 import { LabelPicker } from "@/components/labels/label-picker"
 import { LabelStack } from "@/components/labels/label-stack"
@@ -68,6 +68,7 @@ import { BotRuntimeStatuses, CompanionModes, LabelableResourceTypes, StreamTypes
 import { getStreamTypeLabel, streamFallbackLabel, streamLabel } from "@/lib/streams"
 import { StreamSheet } from "@/components/stream-sheet"
 import { PaneHeader } from "./pane-header"
+import { PaneLanded } from "./pane-host"
 import { usePaneSplitActions } from "./panel-tab-menu"
 import { SharedWithBadge } from "@/components/shared-with-badge"
 import { usePaneToggle, useStreamContextToggle } from "@/components/stream-context"
@@ -910,18 +911,24 @@ export function StreamPane({
         </div>
       </PaneHeader>
       {(isChannel || isDm) && !isDraft && <RejoinBar workspaceId={workspaceId} streamId={streamId} />}
-      <div className="relative flex-1 overflow-hidden" role={isPageStream ? "main" : undefined} data-editor-zone={zone}>
+      <div
+        className="relative isolate flex-1 overflow-hidden"
+        role={isPageStream ? "main" : undefined}
+        data-editor-zone={zone}
+      >
         <StreamErrorBoundary streamId={streamId} queryError={error}>
           <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
-            <StreamContent
-              workspaceId={workspaceId}
-              streamId={streamId}
-              highlightMessageId={highlightMessageId}
-              isDraft={isDraft}
-              // Only the pane worked in takes the focus, which would move the route to it. Beside the page's
-              // stream that is only a thread, the reply it was opened to write.
-              autoFocus={autoFocus && isCurrentPane && (isPageStream || isThread)}
-            />
+            <PaneLanded fallback={<TimelineSkeleton />}>
+              <StreamContent
+                workspaceId={workspaceId}
+                streamId={streamId}
+                highlightMessageId={highlightMessageId}
+                isDraft={isDraft}
+                // Only the pane worked in takes the focus, which would move the route to it. Beside the page's
+                // stream that is only a thread, the reply it was opened to write.
+                autoFocus={autoFocus && isCurrentPane && (isPageStream || isThread)}
+              />
+            </PaneLanded>
           </StreamEncryptionGate>
         </StreamErrorBoundary>
       </div>
