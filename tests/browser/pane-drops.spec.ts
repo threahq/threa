@@ -118,6 +118,19 @@ const mainEdge = (page: Page) =>
     }
   })
 
+/** The glide animations running, each by whether the pane host or one of its children holds it. */
+const glides = (page: Page) =>
+  page.evaluate(() => {
+    const host = document.querySelector("[data-testid='main-pane']")!.parentElement!
+    return document
+      .getAnimations()
+      .filter((animation) => animation.id === "pane-glide")
+      .map((animation) => {
+        const target = (animation.effect as KeyframeEffect).target
+        return target === host ? "host" : host.contains(target) ? "child" : "elsewhere"
+      })
+  })
+
 /** How far down the page `id`'s pane starts, and how far each row divider stands off its top edge. */
 const topEdge = (page: Page, id: string) =>
   page.evaluate((id) => {
@@ -316,6 +329,8 @@ test("should slide a divider in and out with the pane edge it marks", async ({ p
   await drag(page, sidebarRow(page, names.b), await at(mainPane(page), 0.95, 0.4))
   await expect(tabPane(page, streamB)).toBeVisible()
   const opening = await mainEdge(page)
+  // One animation drives the glide, so the divider and the edges it marks cannot run on different clocks.
+  expect(await glides(page)).toEqual(["host"])
   await releaseGlides(page)
   await settled(tabPane(page, streamB))
   const beside = (await mainEdge(page)).main

@@ -79,7 +79,7 @@ describe("Pane landing", () => {
   function host(glide: boolean, ready: boolean, mount = "first") {
     return (
       <PaneHost columns="1fr" rows="1fr" glide={glide} reshapes={glide} ref={createRef<HTMLDivElement>()}>
-        <Pane area="1 / 1" data-panel-tab="stream_a">
+        <Pane area="1 / 1" data-panel-tab="stream_a" data-pane-gliding="">
           <LandedProbe ready={ready} mount={mount} />
         </Pane>
       </PaneHost>

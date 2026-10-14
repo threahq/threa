@@ -74,6 +74,15 @@
   initial-value: 0px;
 }
 
+/* A pane glide's progress, animated on the pane host alone (usePaneGlide) and taken as
+   `inherit` by every box gliding with it, so no edge can run ahead of another. Not
+   inherited, so a glide restyles those boxes and not their subtrees. */
+@property --pane-glide {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
