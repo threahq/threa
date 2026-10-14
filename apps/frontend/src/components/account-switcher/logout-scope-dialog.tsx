@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useCoverClose } from "@/hooks/use-cover-close"
-import { useQuery } from "@tanstack/react-query"
+import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { LogOut, Users } from "lucide-react"
 import { ACCOUNTS_LIST_KEY, accountsApi } from "@/api"
 import { useAuth } from "@/auth"
@@ -21,6 +21,46 @@ import {
 // silently leave the confirm dialog closed and skip the multi-account check.
 export const LOGOUT_CONFIRM_PARAM = "logout-confirm"
 const LOGOUT_CONFIRM_COVER = [LOGOUT_CONFIRM_PARAM] as const
+
+/**
+ * The "Log out" action every surface uses. Single-account: full logout is
+ * unambiguous. Multi-account: defer to `LogoutScopeDialog` (which the surface
+ * must mount) so the user picks current-only vs all. The accounts query is the
+ * same one the switcher uses, so a cached value usually answers instantly; a
+ * cold call still costs one request. Network failure falls back to the
+ * all-accounts path — refusing to log out because we couldn't count accounts
+ * is the worse failure mode.
+ */
+export function useLogout(): () => Promise<void> {
+  const queryClient = useQueryClient()
+  const [, setSearchParams] = useSearchParams()
+  const { logout } = useAuth()
+
+  return useCallback(async () => {
+    try {
+      const data = await queryClient.fetchQuery({
+        queryKey: ACCOUNTS_LIST_KEY,
+        queryFn: () => accountsApi.list(),
+        staleTime: 10_000,
+      })
+      const liveCount = data.accounts.filter((a) => a.state !== "stale").length
+      if (liveCount > 1) {
+        setSearchParams(
+          (prev) => {
+            const next = new URLSearchParams(prev)
+            next.set(LOGOUT_CONFIRM_PARAM, "")
+            return next
+          },
+          { replace: true }
+        )
+        return
+      }
+    } catch {
+      // Fall through to all-accounts logout.
+    }
+    logout()
+  }, [queryClient, setSearchParams, logout])
+}
 
 /**
  * Confirm dialog shown when the user clicks "Log out" with more than one

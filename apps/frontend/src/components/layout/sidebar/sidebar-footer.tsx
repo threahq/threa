@@ -21,11 +21,8 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { useSearchParams } from "react-router-dom"
-import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
-import { ACCOUNTS_LIST_KEY, accountsApi } from "@/api"
-import { useAuth } from "@/auth"
-import { LOGOUT_CONFIRM_PARAM } from "@/components/account-switcher/logout-scope-dialog"
+import { useLogout } from "@/components/account-switcher/logout-scope-dialog"
 import { usePreferences, useSettings, useSidebar } from "@/contexts"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { useCachedWorkspaceBootstrap } from "@/hooks/use-workspaces"
@@ -241,7 +238,6 @@ export const SidebarFooter = memo(function SidebarFooter({
 }: SidebarFooterProps) {
   const [, setSearchParams] = useSearchParams()
   const { openSettings } = useSettings()
-  const { logout } = useAuth()
   const { collapseOnMobile } = useSidebar()
   // Drawer vs. dropdown is a presentation choice — follow the active input so a
   // mouse on a touchscreen laptop gets the dropdown, a finger gets the sheet.
@@ -259,7 +255,6 @@ export const SidebarFooter = memo(function SidebarFooter({
     setStatusOpen(false)
     setPauseOpen(false)
   }, [isTouch])
-  const queryClient = useQueryClient()
   const resumeNotifications = useResumeNotifications(workspaceId)
   const { toEmoji } = useWorkspaceEmoji(workspaceId)
   const { preferences, updatePreference } = usePreferences()
@@ -358,36 +353,7 @@ export const SidebarFooter = memo(function SidebarFooter({
     )
   }, [collapseOnMobile, setSearchParams])
 
-  // Single-account: full logout is unambiguous. Multi-account: defer to the
-  // confirm dialog so the user picks current-only vs all. The accounts query
-  // is the same one the switcher uses, so a cached value usually answers
-  // instantly; a cold call still costs one request before the menu reacts.
-  // Network failure falls back to the all-accounts path — refusing to log out
-  // because we couldn't count accounts is the worse failure mode.
-  const handleLogout = useCallback(async () => {
-    try {
-      const data = await queryClient.fetchQuery({
-        queryKey: ACCOUNTS_LIST_KEY,
-        queryFn: () => accountsApi.list(),
-        staleTime: 10_000,
-      })
-      const liveCount = data.accounts.filter((a) => a.state !== "stale").length
-      if (liveCount > 1) {
-        setSearchParams(
-          (prev) => {
-            const next = new URLSearchParams(prev)
-            next.set(LOGOUT_CONFIRM_PARAM, "")
-            return next
-          },
-          { replace: true }
-        )
-        return
-      }
-    } catch {
-      // Fall through to all-accounts logout.
-    }
-    logout()
-  }, [queryClient, setSearchParams, logout])
+  const handleLogout = useLogout()
 
   // One split row: the row cycles through the three modes, its chevron picks one
   // directly. Grouped entries must stay adjacent for `groupVisibleActions`.

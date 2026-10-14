@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter, Route, Routes, useParams } from "react-router-dom"
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { render, screen, userEvent } from "@/test"
 import { WorkspaceSelectPage } from "./workspace-select"
 import type { Workspace } from "@threahq/types"
 import { ApiError } from "@/api/client"
+import * as accountsModule from "@/api/accounts"
 import * as authModule from "@/auth"
 import * as hooksModule from "@/hooks"
 
@@ -31,14 +33,16 @@ function makeWorkspace(id: string, name: string): Workspace {
 
 function renderPage() {
   return render(
-    <MemoryRouter initialEntries={["/workspaces"]}>
-      <Routes>
-        <Route path="/workspaces" element={<WorkspaceSelectPage />} />
-        <Route path="/w/:workspaceId" element={<WorkspaceRouteProbe />} />
-        <Route path="/w/:workspaceId/setup" element={<div data-testid="setup-route">setup</div>} />
-        <Route path="/login" element={<div data-testid="login-route">login</div>} />
-      </Routes>
-    </MemoryRouter>
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <MemoryRouter initialEntries={["/workspaces"]}>
+        <Routes>
+          <Route path="/workspaces" element={<WorkspaceSelectPage />} />
+          <Route path="/w/:workspaceId" element={<WorkspaceRouteProbe />} />
+          <Route path="/w/:workspaceId/setup" element={<div data-testid="setup-route">setup</div>} />
+          <Route path="/login" element={<div data-testid="login-route">login</div>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
   )
 }
 
@@ -234,6 +238,39 @@ describe("WorkspaceSelectPage", () => {
 
     expect(screen.getByRole("link", { name: "Alpha" })).toBeInTheDocument()
     expect(screen.queryByText("Failed to load workspaces")).not.toBeInTheDocument()
+  })
+
+  it("offers logout when the account has no workspace to open", async () => {
+    const logout = vi.fn()
+    mockUseAuth.mockReturnValue({
+      user: {
+        id: "user_1",
+        email: "kris@wrong.example",
+        name: "Kris",
+        workosUserId: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+      },
+      loading: false,
+      error: null,
+      logout,
+    })
+    vi.spyOn(accountsModule.accountsApi, "list").mockResolvedValue({
+      accounts: [{ id: "workos_1", email: "kris@wrong.example", name: "Kris", state: "active" }],
+      maxAccounts: 3,
+    })
+    mockUseWorkspaces.mockReturnValue({
+      workspaces: [],
+      cachedWorkspaces: [],
+      pendingInvitations: [],
+      isLoading: false,
+      error: null,
+    })
+
+    renderPage()
+
+    await userEvent.click(screen.getByRole("button", { name: "Log out" }))
+    await vi.waitFor(() => expect(logout).toHaveBeenCalledWith())
   })
 
   it("should show invite-only message when invite is required", () => {
