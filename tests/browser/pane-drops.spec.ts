@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk, panesSettled } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, expectApiOk, panesSettled, at, drag } from "./helpers"
 
 /**
  * A sidebar row or a tab dropped on the stream page lands where it was
@@ -51,12 +51,6 @@ const tabLink = (page: Page, pane: string, id: string) =>
 const mainPane = (page: Page) => page.getByTestId("main-pane")
 const panelParam = (page: Page) => new URL(page.url()).searchParams.get("panel")
 
-/** A point inside `target`, as shares of its width and height. */
-async function at(target: Locator, x: number, y: number) {
-  const box = (await target.boundingBox())!
-  return { x: box.x + box.width * x, y: box.y + box.height * y }
-}
-
 /** `at`, once the panes have stopped gliding and `target` holds still. */
 async function settledAt(target: Locator, x: number, y: number) {
   await settled(target)
@@ -75,21 +69,6 @@ async function settled(target: Locator) {
       return still
     })
     .toBe(true)
-}
-
-/** Drags `source` to `to` with the mouse; `hovering` runs while it is held there. */
-async function drag(page: Page, source: Locator, to: { x: number; y: number }, hovering?: () => Promise<void>) {
-  await source.scrollIntoViewIfNeeded()
-  const from = await at(source, 0.5, 0.5)
-  await page.mouse.move(from.x, from.y)
-  await page.mouse.down()
-  await page.mouse.move(from.x + 12, from.y + 4, { steps: 3 })
-  await page.mouse.move(to.x, to.y, { steps: 12 })
-  // Chromium coalesces emulated dragovers and can drop the last; a nudge lands one where the pointer rests.
-  await page.mouse.move(to.x + 1, to.y)
-  await page.mouse.move(to.x, to.y)
-  await hovering?.()
-  await page.mouse.up()
 }
 
 async function tag(target: Locator, name: string) {

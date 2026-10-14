@@ -10,6 +10,8 @@ export const RENDER_BUDGETS = {
   "incoming message in the open stream": { baseline: 599, tolerance: 0.15 },
   "message in another stream": { baseline: 234, tolerance: 0.25 },
   "switch stream (warm)": { baseline: 4144, tolerance: 0.1 },
+  "drop a pane beside the open stream": { baseline: 6802, tolerance: 0.1 },
+  "close the dropped pane": { baseline: 3389, tolerance: 0.15 },
 } as const
 
 export type RenderBudgetAction = keyof typeof RENDER_BUDGETS

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react"
-import { matchPath, useLocation } from "react-router-dom"
+import { matchPath, type Location } from "react-router-dom"
 import { toast } from "sonner"
 import { ContextRefKinds, StreamTypes, draftStreamScope, type ContextRef } from "@threahq/types"
 import { boardReplyDraftKey } from "@/lib/board/draft-keys"
@@ -8,11 +8,13 @@ import { buildAsideBag, buildViewportRef } from "@/lib/aside/snapshot"
 import { asideHostKey, openAside } from "@/stores/aside-store"
 import { capture } from "@/lib/analytics/posthog"
 import { PANEL_PARAM, fullPanelLayout, panelIdsOf, parsePanelLayout } from "@/lib/panel-tabs"
+import { pagePaneAt } from "@/lib/page-panes"
+import { useLatestRoute } from "@/contexts"
 
-/** The panes a stream page shows; null off the stream page. */
-function panesAt(pathname: string, search: string): string[] | null {
-  const path = matchPath("/w/:workspaceId/s/:streamId", pathname)?.params.streamId
-  if (path === undefined) return null
+/** The panes a stream page or a workspace page shows; null elsewhere. */
+function panesAt({ pathname, search }: Location): string[] | null {
+  const path = matchPath("/w/:workspaceId/s/:streamId", pathname)?.params.streamId ?? pagePaneAt(pathname)
+  if (path === null || path === undefined) return null
   return panelIdsOf(fullPanelLayout(path, parsePanelLayout(new URLSearchParams(search).get(PANEL_PARAM))))
 }
 
@@ -61,31 +63,29 @@ function buildOriginRefs(origin: AsideOrigin): ContextRef[] {
  */
 export function useOpenAside(workspaceId: string) {
   const { mutateAsync: createStream } = useCreateStream(workspaceId)
-  const location = useLocation()
-  const hostKey = asideHostKey(location.pathname)
+  // The URL's route, not a page pane's own: the aside surface is keyed on the
+  // page (`useAsideHost`), so an opener in a board or label pane beside a
+  // stream must name the stream page, and no row re-renders for it.
+  const latestRoute = useLatestRoute()
   // The create is a round trip; the page can be left (or the account switched),
   // or the host stream's pane closed, before it lands. Writing the surface then
   // would strand an aside on a host that is gone — `dropAsideForHost` and
   // `dropAsideForHostStream` already ran against an empty store — and it would
-  // reappear on returning to it. The refs are the page's own liveness: the host
-  // key is null once this host is no longer mounted.
-  const mountedHostKey = useRef<string | null>(hostKey)
+  // reappear on returning to it. The route is re-read once the create lands
+  // and compared with the one it started from.
+  const mounted = useRef(true)
   useEffect(() => {
-    mountedHostKey.current = hostKey
+    mounted.current = true
     return () => {
-      mountedHostKey.current = null
+      mounted.current = false
     }
-  }, [hostKey])
-  const panes = panesAt(location.pathname, location.search)
-  const livePanes = useRef(panes)
-  useEffect(() => {
-    livePanes.current = panes
-  })
+  }, [])
 
   return useCallback(
     async (origin: AsideOrigin) => {
       capture("aside_opened", { kind: origin.kind })
-      const hostShown = livePanes.current?.includes(origin.hostStreamId) ?? false
+      const hostKey = asideHostKey(latestRoute().location.pathname)
+      const hostShown = panesAt(latestRoute().location)?.includes(origin.hostStreamId) ?? false
       const refs = buildOriginRefs(origin)
       let aside
       try {
@@ -100,8 +100,8 @@ export function useOpenAside(workspaceId: string) {
         toast.error("Couldn't open an aside. Please try again.")
         throw err
       }
-      if (mountedHostKey.current !== hostKey) return
-      if (hostShown && !livePanes.current?.includes(origin.hostStreamId)) return
+      if (!mounted.current || asideHostKey(latestRoute().location.pathname) !== hostKey) return
+      if (hostShown && !panesAt(latestRoute().location)?.includes(origin.hostStreamId)) return
       openAside({
         hostKey,
         hostStreamId: origin.hostStreamId,
@@ -109,7 +109,7 @@ export function useOpenAside(workspaceId: string) {
         originScope: originScopeOf(origin),
       })
     },
-    [createStream, hostKey]
+    [createStream, latestRoute]
   )
 }
 
@@ -123,11 +123,11 @@ export interface ResumeAsideParams {
 
 /** Re-open an existing aside from its anchor row. */
 export function useResumeAside() {
-  const hostKey = asideHostKey(useLocation().pathname)
+  const latestRoute = useLatestRoute()
   return useCallback(
     (params: ResumeAsideParams) => {
       openAside({
-        hostKey,
+        hostKey: asideHostKey(latestRoute().location.pathname),
         hostStreamId: params.hostStreamId,
         asideId: params.asideId,
         originScope: params.conversationId
@@ -135,6 +135,6 @@ export function useResumeAside() {
           : draftStreamScope(params.hostStreamId),
       })
     },
-    [hostKey]
+    [latestRoute]
   )
 }

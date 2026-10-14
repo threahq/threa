@@ -13,6 +13,7 @@ import { useBoardDraftsReady } from "@/hooks/use-scope-draft-preview"
 import { resetDraftStoreCache } from "@/stores/draft-store"
 import { resetDraftResolutionGuard } from "@/sync/draft-resolution-guard"
 import { useThreadDraft, __clearBoardDraftsRegistry } from "@/hooks/use-scope-draft-preview"
+import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as workspaceEmojiModule from "@/hooks/use-workspace-emoji"
 import * as relativeTimeModule from "@/components/relative-time"
@@ -41,6 +42,9 @@ const summary: ThreadSummary = {
 
 beforeEach(async () => {
   vi.restoreAllMocks()
+  vi.spyOn(contextsModule, "usePanel").mockReturnValue({
+    getPanelUrl: (id: string) => `/panel/${id}`,
+  } as ReturnType<typeof contextsModule.usePanel>)
   vi.spyOn(hooksModule, "useActors").mockReturnValue({
     getActorName: (id: string) => `Name-${id.slice(-4)}`,
     getActorAvatar: (id: string) => ({ fallback: id.slice(0, 2).toUpperCase(), avatarUrl: null }),
@@ -78,11 +82,11 @@ function SendHarness() {
           anchorId={anchorId}
           streamId="stream_1"
           replyCount={replyLanded ? 1 : 0}
-          threadHref={replyLanded ? "/panel/thread_1" : null}
+          threadId={replyLanded ? "thread_1" : null}
           summary={replyLanded ? summary : undefined}
           workspaceId={workspaceId}
           draft={draft}
-          draftHref="/panel/draft:stream_1:msg_1"
+          draftPanelId="draft:stream_1:msg_1"
         />
       </div>
     </>

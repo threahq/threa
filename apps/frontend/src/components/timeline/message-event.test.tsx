@@ -3,10 +3,10 @@ import { spyOnExport } from "@/test/spy"
 import { render, screen, act, waitFor } from "@testing-library/react"
 import * as e2eSessionModule from "@/stores/e2e-session-store"
 import * as decryptCacheModule from "@/lib/crypto/decrypt-cache"
-import { MemoryRouter } from "react-router-dom"
+import { MemoryRouter, useNavigate, type NavigateFunction } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { ServicesProvider, type SavedService } from "@/contexts"
+import { PanelProvider, ServicesProvider, type SavedService } from "@/contexts"
 import { MessageEvent } from "./message-event"
 import { TimelineItemContent, type TimelineItemRenderContext } from "./event-list"
 import { resolveSubagentThreadRun, type SubagentThreadRun } from "@/lib/subagent-display"
@@ -109,13 +109,23 @@ function installDefaultSpies() {
   vi.spyOn(contextsModule, "usePendingMessageStatus").mockImplementation(
     (id) => mockGetStatus(id) as ReturnType<typeof contextsModule.usePendingMessageStatus>
   )
-  vi.spyOn(contextsModule, "usePanel").mockReturnValue({
+  const panel = {
     panelId: null,
     getPanelUrl: (streamId: string) => `/panel/${streamId}`,
-  } as unknown as ReturnType<typeof contextsModule.usePanel>)
-  vi.spyOn(contextsModule, "useTrace").mockReturnValue({
+  } as unknown as ReturnType<typeof contextsModule.usePanel>
+  vi.spyOn(contextsModule, "usePanel").mockReturnValue(panel)
+  vi.spyOn(contextsModule, "usePanelId").mockReturnValue(null)
+  vi.spyOn(contextsModule, "useLatestPanel").mockReturnValue(() => panel)
+  vi.spyOn(contextsModule, "useLatestRoute").mockReturnValue(
+    () =>
+      ({ location: { pathname: "/", search: "" }, navigate: vi.fn() }) as unknown as ReturnType<
+        ReturnType<typeof contextsModule.useLatestRoute>
+      >
+  )
+  const trace = {
     getTraceUrl: (sessionId: string) => `/trace/${sessionId}`,
-  } as unknown as ReturnType<typeof contextsModule.useTrace>)
+  } as unknown as ReturnType<typeof contextsModule.useTrace>
+  vi.spyOn(contextsModule, "useLatestTrace").mockReturnValue(() => trace)
   vi.spyOn(contextsModule, "useMediaGallery").mockReturnValue({
     mediaAttachmentId: null,
     openMedia: vi.fn(),
@@ -203,6 +213,45 @@ describe("MessageEvent", () => {
         "href",
         "/panel/draft:stream_123:msg_123"
       )
+    })
+
+    it("follows the layout as panes open and close, under the real panel provider", () => {
+      for (const hook of ["usePanel", "usePanelId", "useLatestPanel", "useLatestRoute"] as const) {
+        vi.mocked(contextsModule[hook]).mockRestore()
+      }
+      let navigate!: NavigateFunction
+      function Navigator() {
+        navigate = useNavigate()
+        return null
+      }
+      const event = createMessageEvent("msg_123", "Confirmed message")
+
+      render(
+        <MemoryRouter initialEntries={[`/w/${workspaceId}/s/${streamId}`]}>
+          <QueryClientProvider client={queryClient}>
+            <ServicesProvider services={{ saved: noopSavedService }}>
+              <TooltipProvider>
+                <PanelProvider>
+                  <Navigator />
+                  <MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />
+                </PanelProvider>
+              </TooltipProvider>
+            </ServicesProvider>
+          </QueryClientProvider>
+        </MemoryRouter>
+      )
+
+      const link = screen.getByRole("link", { name: "Reply in thread" })
+      expect(link).toHaveAttribute("href", `/w/${workspaceId}/s/${streamId}?panel=draft:${streamId}:msg_123`)
+
+      act(() => navigate(`/w/${workspaceId}/s/${streamId}?panel=stream_other`))
+      expect(link).toHaveAttribute(
+        "href",
+        `/w/${workspaceId}/s/${streamId}?panel=stream_other.draft:${streamId}:msg_123`
+      )
+
+      act(() => navigate(`/w/${workspaceId}/s/${streamId}`))
+      expect(link).toHaveAttribute("href", `/w/${workspaceId}/s/${streamId}?panel=draft:${streamId}:msg_123`)
     })
 
     it("withholds the action while the row still carries its client id", () => {

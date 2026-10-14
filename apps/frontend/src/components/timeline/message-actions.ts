@@ -39,7 +39,7 @@ export { groupVisibleActions, resolveActionLabel } from "@/components/actions/ac
 
 /**
  * Actor types whose messages can carry an agent trace. The single source of
- * truth shared with the `traceUrl` derivation in message-event.tsx so the two
+ * truth shared with the `getTraceUrl` derivation in message-event.tsx so the two
  * gates cannot drift when a new trace-eligible actor is added.
  */
 export function isAgentTraceActor(actorType: string | null | undefined): boolean {
@@ -61,10 +61,11 @@ export interface MessageActionContext {
   awaitingServerId?: boolean
   /** The row sits in a read-only copy of another workspace's shared channel, so no thread can start under it. */
   sharedCopy?: boolean
-  /** URL for "reply in thread" */
-  replyUrl: string
-  /** URL for "show trace" (persona or bot messages sent during a session) */
-  traceUrl?: string
+  /** Resolves the "reply in thread" url on demand (a panel url encodes the
+   *  whole layout, so rows never compute it per render). */
+  getReplyUrl: () => string
+  /** Resolves the "show trace" url on demand (persona or bot messages sent during a session). */
+  getTraceUrl?: () => string
   /** Message ID for edit/delete operations */
   messageId?: string
   /** Workspace ID for reaction API calls */
@@ -287,8 +288,8 @@ export const messageActions: MessageAction[] = [
     id: "show-trace",
     label: "Show trace and sources",
     icon: Sparkles,
-    when: (ctx) => isAgentTraceActor(ctx.actorType) && !!ctx.sessionId && !!ctx.traceUrl,
-    getHref: (ctx) => ctx.traceUrl,
+    when: (ctx) => isAgentTraceActor(ctx.actorType) && !!ctx.sessionId && !!ctx.getTraceUrl,
+    getHref: (ctx) => ctx.getTraceUrl?.(),
   },
   {
     id: "edit-message",
@@ -319,7 +320,7 @@ export const messageActions: MessageAction[] = [
     icon: MessageSquareReply,
     groupId: "reply",
     when: (ctx) => !ctx.isThreadParent && !ctx.awaitingServerId && !ctx.sharedCopy,
-    getHref: (ctx) => ctx.replyUrl,
+    getHref: (ctx) => ctx.getReplyUrl(),
   },
   {
     id: "quote-reply",

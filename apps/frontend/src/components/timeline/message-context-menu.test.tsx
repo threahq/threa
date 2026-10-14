@@ -9,7 +9,7 @@ function createContext(overrides: Partial<MessageActionContext> = {}): MessageAc
   return {
     contentMarkdown: "Hello world",
     actorType: "user",
-    replyUrl: "/panel/draft:stream_1:msg_1",
+    getReplyUrl: () => "/panel/draft:stream_1:msg_1",
     ...overrides,
   }
 }
@@ -37,7 +37,7 @@ describe("MessageContextMenu", () => {
 
   it("should render navigation actions as links", async () => {
     const user = userEvent.setup()
-    renderMenu(<MessageContextMenu context={createContext({ replyUrl: "/panel/thread_123" })} />)
+    renderMenu(<MessageContextMenu context={createContext({ getReplyUrl: () => "/panel/thread_123" })} />)
 
     await user.click(screen.getByRole("button", { name: "Message actions" }))
 
@@ -52,7 +52,7 @@ describe("MessageContextMenu", () => {
         context={createContext({
           actorType: "persona",
           sessionId: "session_123",
-          traceUrl: "/trace/session_123",
+          getTraceUrl: () => "/trace/session_123",
         })}
       />
     )

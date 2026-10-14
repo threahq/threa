@@ -8,6 +8,7 @@ import {
   type MutableRefObject,
   type ReactNode,
 } from "react"
+import { useLatest } from "@/hooks/use-latest"
 import {
   matchPath,
   UNSAFE_DataRouterContext,
@@ -16,6 +17,8 @@ import {
   useMatch,
   useNavigate,
   useNavigationType,
+  type Location,
+  type NavigateFunction,
 } from "react-router-dom"
 import { useCoverHistory, type CoverLanding } from "@/hooks/use-cover-close"
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
@@ -374,6 +377,9 @@ export interface PaneShortcutQueue {
 
 const PanelOpsContext = createContext<PanelOps | null>(null)
 const PanelContext = createContext<PanelContextValue | null>(null)
+const PanelIdContext = createContext<string | null | undefined>(undefined)
+const LatestPanelContext = createContext<(() => PanelContextValue) | null>(null)
+const LatestRouteContext = createContext<(() => { location: Location; navigate: NavigateFunction }) | null>(null)
 const CurrentPaneContext = createContext<string | null>(null)
 
 /** The `?m=` one tab opened at must not send another tab looking for it. */
@@ -1166,11 +1172,19 @@ export function PanelProvider({ children }: PanelProviderProps) {
     ]
   )
   const value = useMemo(() => buildValue(ops, null, null), [ops])
+  const latestPanel = useLatest(value)
+  const latestRoute = useLatest({ location, navigate })
 
   return (
     <PanelOpsContext.Provider value={ops}>
       <PanelContext.Provider value={value}>
-        <CurrentPaneContext.Provider value={front}>{children}</CurrentPaneContext.Provider>
+        <PanelIdContext.Provider value={value.panelId}>
+          <LatestPanelContext.Provider value={latestPanel}>
+            <LatestRouteContext.Provider value={latestRoute}>
+              <CurrentPaneContext.Provider value={front}>{children}</CurrentPaneContext.Provider>
+            </LatestRouteContext.Provider>
+          </LatestPanelContext.Provider>
+        </PanelIdContext.Provider>
       </PanelContext.Provider>
     </PanelOpsContext.Provider>
   )
@@ -1213,7 +1227,14 @@ export function PaneScope({
       ),
     [ops, panelId, ids, active, directions, shownPanes]
   )
-  return <PanelContext.Provider value={value}>{children}</PanelContext.Provider>
+  const latestPanel = useLatest(value)
+  return (
+    <PanelContext.Provider value={value}>
+      <PanelIdContext.Provider value={panelId}>
+        <LatestPanelContext.Provider value={latestPanel}>{children}</LatestPanelContext.Provider>
+      </PanelIdContext.Provider>
+    </PanelContext.Provider>
+  )
 }
 
 /**
@@ -1272,4 +1293,28 @@ export function usePanel(): PanelContextValue {
     throw new Error("usePanel must be used within a PanelProvider")
   }
   return context
+}
+
+/** `usePanel().panelId` alone: re-renders only when the pane worked in changes, not on every layout change. */
+export function usePanelId(): string | null {
+  const panelId = useContext(PanelIdContext)
+  if (panelId === undefined) throw new Error("usePanelId must be used within a PanelProvider")
+  return panelId
+}
+
+/**
+ * The panel value read at call time, for event handlers. A timeline row's handlers open panels and
+ * navigate, but the row must not re-render on every layout change the way a `usePanel()` subscriber does.
+ */
+export function useLatestPanel(): () => PanelContextValue {
+  const latest = useContext(LatestPanelContext)
+  if (!latest) throw new Error("useLatestPanel must be used within a PanelProvider")
+  return latest
+}
+
+/** The route read at call time, for event handlers that must not re-render on every navigation. */
+export function useLatestRoute(): () => { location: Location; navigate: NavigateFunction } {
+  const latest = useContext(LatestRouteContext)
+  if (!latest) throw new Error("useLatestRoute must be used within a PanelProvider")
+  return latest
 }

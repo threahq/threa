@@ -25,7 +25,7 @@ function mountDrawer(context: Partial<MessageActionContext>) {
               workspaceId: "ws_1",
               streamId: "stream_1",
               actorType: "user",
-              replyUrl: "/w/ws_1/s/stream_1?m=msg_1",
+              getReplyUrl: () => "/w/ws_1/s/stream_1?m=msg_1",
               ...context,
             }}
           />

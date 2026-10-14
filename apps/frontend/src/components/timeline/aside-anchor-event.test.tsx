@@ -5,6 +5,7 @@ import { StreamTypes, type StreamEvent } from "@threahq/types"
 import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as eventItemModule from "./event-item"
 import { spyOnExport } from "@/test"
+import { PanelProvider } from "@/contexts"
 import { asideHostKey, getAsideState, openAside, resetAsideStoreCache, closeAside } from "@/stores/aside-store"
 import { resetAgentActivityStore, upsertAgentSession } from "@/stores/agent-activity-store"
 import { createMockStream } from "@/test/fixtures"
@@ -59,11 +60,13 @@ function renderTimeline(events: StreamEvent[], viewerId: string) {
   const items = groupTimelineItems(events, viewerId)
   return render(
     <MemoryRouter initialEntries={[HOST_PATH]}>
-      {items.map((item, index) => (
-        <div key={index} data-testid={`item-${index}`}>
-          <TimelineItemContent item={item} ctx={ctx} deferSecondaryHydration={false} />
-        </div>
-      ))}
+      <PanelProvider>
+        {items.map((item, index) => (
+          <div key={index} data-testid={`item-${index}`}>
+            <TimelineItemContent item={item} ctx={ctx} deferSecondaryHydration={false} />
+          </div>
+        ))}
+      </PanelProvider>
     </MemoryRouter>
   )
 }

@@ -48,6 +48,9 @@ beforeEach(() => {
   vi.spyOn(contextsModule, "useTrace").mockReturnValue({
     getTraceUrl: (id: string) => `/trace/${id}`,
   } as ReturnType<typeof contextsModule.useTrace>)
+  vi.spyOn(contextsModule, "usePanel").mockReturnValue({
+    getPanelUrl: (id: string) => `/panel/${id}`,
+  } as ReturnType<typeof contextsModule.usePanel>)
   vi.spyOn(hooksModule, "useActors").mockReturnValue({
     getActorName: (id: string) => `Name-${id.slice(-4)}`,
     getActorAvatar: (id: string) => ({ fallback: id.slice(0, 2).toUpperCase(), avatarUrl: null }),
@@ -67,7 +70,7 @@ function renderSlot(props: Partial<React.ComponentProps<typeof ThreadSlot>> = {}
         anchorId={anchorId}
         streamId={streamId}
         replyCount={0}
-        threadHref={null}
+        threadId={null}
         summary={undefined}
         workspaceId={workspaceId}
         {...props}
@@ -88,7 +91,7 @@ describe("ThreadSlot reads the anchor store", () => {
   it("keeps the session's row while the thread card shows its replies", () => {
     seedAgentActivity(workspaceId, [session()])
 
-    const { container } = renderSlot({ replyCount: 2, threadHref: "/thread/1", summary })
+    const { container } = renderSlot({ replyCount: 2, threadId: "thread_1", summary })
 
     expect(screen.getByLabelText("Ariadne is searching workspace…")).toBeInTheDocument()
     expect(screen.getByText("2 replies")).toBeInTheDocument()

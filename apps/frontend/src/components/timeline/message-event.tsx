@@ -1,4 +1,4 @@
-import { memo, type ReactNode, useRef, useEffect, useState, useMemo, useCallback } from "react"
+import { memo, type ComponentProps, type ReactNode, useRef, useEffect, useState, useMemo, useCallback } from "react"
 import {
   isAsideHostType,
   StreamTypes,
@@ -24,7 +24,16 @@ import { ActorAvatar } from "@/components/actor-avatar"
 import { actorRowTheme } from "@/components/message/actor-row-theme"
 import { ModelBadge } from "@/components/message/model-badge"
 import { MESSAGE_ROW_CONTINUATION_PADDING, MESSAGE_ROW_HEAD_PADDING } from "@/components/message/message-row-layout"
-import { usePendingMessages, usePendingMessageStatus, usePanel, createConversationPanelId, useTrace } from "@/contexts"
+import {
+  usePendingMessages,
+  usePendingMessageStatus,
+  usePanel,
+  usePanelId,
+  useLatestPanel,
+  useLatestRoute,
+  createConversationPanelId,
+  useLatestTrace,
+} from "@/contexts"
 import { useUserProfile } from "@/components/user-profile"
 import { useDeleteMessage } from "@/hooks/use-delete-message"
 import { useFormattedDate } from "@/hooks/use-formatted-date"
@@ -45,7 +54,7 @@ import {
   useThreadDraft,
 } from "@/hooks"
 import { Quote, MessageSquareReply, Check, Layers } from "lucide-react"
-import { Link, useLocation, useNavigate } from "react-router-dom"
+import { Link } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { useInputMode } from "@/hooks/use-input-mode"
@@ -925,11 +934,24 @@ const QuoteReplyButton = memo(function QuoteReplyButton({ onQuoteReply }: { onQu
   )
 })
 
+/**
+ * The link alone reads the panel value, which changes with every layout change:
+ * the tooltip and button around it keep their props, so a pane drop re-renders
+ * one link per row, not the row's whole affordance.
+ */
+const ReplyInThreadLink = memo(function ReplyInThreadLink({
+  panelId,
+  ...props
+}: { panelId: string } & Omit<ComponentProps<typeof Link>, "to">) {
+  const { getPanelUrl } = usePanel()
+  return <Link to={getPanelUrl(panelId)} {...props} />
+})
+
 const ReplyInThreadButton = memo(function ReplyInThreadButton({
-  replyUrl,
+  panelId,
   disabled,
 }: {
-  replyUrl: string
+  panelId: string
   disabled: boolean
 }) {
   return (
@@ -952,9 +974,9 @@ const ReplyInThreadButton = memo(function ReplyInThreadButton({
             size="icon"
             className="h-6 w-6 text-muted-foreground shrink-0 hover:text-foreground"
           >
-            <Link to={replyUrl} aria-label="Reply in thread">
+            <ReplyInThreadLink panelId={panelId} aria-label="Reply in thread">
               <MessageSquareReply className="h-3.5 w-3.5" />
-            </Link>
+            </ReplyInThreadLink>
           </Button>
         )
       }
@@ -1023,13 +1045,12 @@ function SentMessageEvent({
   e2eDecryptedMarkdown,
   batch,
 }: MessageEventInnerProps) {
-  const panel = usePanel()
-  const { panelId, openPanel } = panel
+  const panelId = usePanelId()
+  const latestPanel = useLatestPanel()
+  const latestRoute = useLatestRoute()
   const currentUserId = useWorkspaceUserId(workspaceId)
-  const { getTraceUrl } = useTrace()
+  const latestTrace = useLatestTrace()
   const quoteReplyCtx = useQuoteReply()
-  const navigate = useNavigate()
-  const location = useLocation()
   const currentStream = useStreamFromStore(workspaceId, streamId, pickRowStreamFields)
   // A shared channel's copy takes reactions, edits and deletes through the host, but no threads, moves or conversations.
   const sharedCopy = !!currentStream?.originWorkspaceId
@@ -1159,7 +1180,7 @@ function SentMessageEvent({
   }, [payload.messageId, registerMessage, startEditing])
 
   // Shared thread affordance wiring, keyed on this message's canonical id.
-  const { threadHref, replyUrl, effectiveThreadId } = useThreadAnchor(workspaceId, streamId, payload.messageId, {
+  const { effectiveThreadId, draftPanelId, replyPanelId } = useThreadAnchor(workspaceId, streamId, payload.messageId, {
     threadId,
   })
   // The viewer's unsent reply in this thread — indicated on the slot whether or
@@ -1182,11 +1203,11 @@ function SentMessageEvent({
       streamId={streamId}
       hideSessionCards={hideSessionCards}
       replyCount={replyCount}
-      threadHref={threadHref}
+      threadId={effectiveThreadId}
       summary={payload.threadSummary}
       workspaceId={workspaceId}
       draft={threadDraft}
-      draftHref={replyUrl}
+      draftPanelId={draftPanelId}
       hostArchived={hostArchived}
     />
   ) : null
@@ -1264,8 +1285,8 @@ function SentMessageEvent({
   // the board/panel's "View in channel". Null when no conversation is known.
   const messageConversationId = useMessageConversationId(payload.messageId)
   const handleShowInConversation = useCallback(
-    () => messageConversationId && openPanel(createConversationPanelId(messageConversationId)),
-    [messageConversationId, openPanel]
+    () => messageConversationId && latestPanel().openPanel(createConversationPanelId(messageConversationId)),
+    [messageConversationId, latestPanel]
   )
 
   // "Reply in conversation" — arm the stream composer to file its next send
@@ -1351,6 +1372,7 @@ function SentMessageEvent({
   )
 
   // Shared action context for both desktop dropdown and mobile drawer
+  const traceSessionId = isAgentTraceActor(event.actorType) ? payload.sessionId : undefined
   const actionContext = useMemo(
     () => ({
       contentMarkdown: payload.contentMarkdown,
@@ -1359,11 +1381,8 @@ function SentMessageEvent({
       isThreadParent: panelId === threadId || isThreadParentProp,
       awaitingServerId,
       sharedCopy,
-      replyUrl,
-      traceUrl:
-        isAgentTraceActor(event.actorType) && payload.sessionId
-          ? getTraceUrl(payload.sessionId, payload.messageId)
-          : undefined,
+      getReplyUrl: () => latestPanel().getPanelUrl(replyPanelId),
+      getTraceUrl: traceSessionId ? () => latestTrace().getTraceUrl(traceSessionId, payload.messageId) : undefined,
       messageId: payload.messageId,
       workspaceId,
       streamId,
@@ -1420,9 +1439,8 @@ function SentMessageEvent({
               navigateAfterShareHandoff({
                 workspaceId,
                 targetStreamId: rootStream.id,
-                location,
-                navigate,
-                panel,
+                ...latestRoute(),
+                panel: latestPanel(),
               })
             }
           : undefined,
@@ -1442,9 +1460,8 @@ function SentMessageEvent({
               navigateAfterShareHandoff({
                 workspaceId,
                 targetStreamId: parentStream.id,
-                location,
-                navigate,
-                panel,
+                ...latestRoute(),
+                panel: latestPanel(),
               })
             }
           : undefined,
@@ -1527,10 +1544,10 @@ function SentMessageEvent({
       isThreadParentProp,
       awaitingServerId,
       sharedCopy,
-      replyUrl,
-      effectiveThreadId,
-      openPanel,
-      getTraceUrl,
+      replyPanelId,
+      latestPanel,
+      traceSessionId,
+      latestTrace,
       currentUserId,
       workspaceId,
       streamId,
@@ -1545,10 +1562,8 @@ function SentMessageEvent({
       parentStream,
       rootStream,
       showParentEntry,
-      navigate,
-      location,
+      latestRoute,
       isMobile,
-      panel,
       canOpenAside,
       handleOpenAside,
       canInsertAgentBlock,
@@ -1652,7 +1667,7 @@ function SentMessageEvent({
                 the thread panel is already open (clicking is a harmless re-nav
                 to the same panel) so the toolbar never shuffles buttons in and
                 out as the user opens/closes the thread. */}
-              {!sharedCopy && <ReplyInThreadButton replyUrl={actionContext.replyUrl} disabled={awaitingServerId} />}
+              {!sharedCopy && <ReplyInThreadButton panelId={replyPanelId} disabled={awaitingServerId} />}
               <MessageContextMenu context={actionContext} saved={savedForMessage ?? null} />
             </>
           )

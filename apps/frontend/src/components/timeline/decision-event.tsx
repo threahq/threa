@@ -103,7 +103,7 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
   // must never walk the card back to an earlier state.
   const highestPatch = useRef<DecisionResolvedEventPayload | null>(null)
 
-  const { threadHref, replyUrl, effectiveThreadId } = useThreadAnchor(workspaceId, streamId, event.id, {
+  const { effectiveThreadId, draftPanelId } = useThreadAnchor(workspaceId, streamId, event.id, {
     threadId: payload?.threadId,
   })
   const threadDraft = useThreadDraft(workspaceId, event.id, effectiveThreadId)
@@ -344,11 +344,11 @@ export function DecisionEvent({ event, workspaceId, streamId, statusPatch, isThr
           anchorId={event.id}
           streamId={streamId}
           replyCount={payload.replyCount ?? 0}
-          threadHref={threadHref}
+          threadId={effectiveThreadId}
           summary={payload.threadSummary}
           workspaceId={workspaceId}
           draft={threadDraft}
-          draftHref={replyUrl}
+          draftPanelId={draftPanelId}
           hostArchived={hostArchived}
         />
       )}
