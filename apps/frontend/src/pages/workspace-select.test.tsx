@@ -240,7 +240,7 @@ describe("WorkspaceSelectPage", () => {
     expect(screen.queryByText("Failed to load workspaces")).not.toBeInTheDocument()
   })
 
-  it("offers logout when the account has no workspace to open", async () => {
+  it("hides workspace creation and offers logout when the account has nothing to join and cannot create", async () => {
     const logout = vi.fn()
     mockUseAuth.mockReturnValue({
       user: {
@@ -263,11 +263,21 @@ describe("WorkspaceSelectPage", () => {
       workspaces: [],
       cachedWorkspaces: [],
       pendingInvitations: [],
+      canCreateWorkspace: false,
       isLoading: false,
       error: null,
     })
 
     renderPage()
+
+    expect({
+      createForm: screen.queryByPlaceholderText("New workspace name"),
+      explanation: screen.getByText(/kris@wrong\.example isn.t a member of any workspace/).textContent,
+    }).toEqual({
+      createForm: null,
+      explanation:
+        "kris@wrong.example isn't a member of any workspace. Ask a workspace admin for an invite, or log out and sign in with another account.",
+    })
 
     await userEvent.click(screen.getByRole("button", { name: "Log out" }))
     await vi.waitFor(() => expect(logout).toHaveBeenCalledWith())
@@ -277,6 +287,7 @@ describe("WorkspaceSelectPage", () => {
     mockUseWorkspaces.mockReturnValue({
       workspaces: [],
       pendingInvitations: [],
+      canCreateWorkspace: true,
       isLoading: false,
       error: null,
     })
@@ -299,6 +310,7 @@ describe("WorkspaceSelectPage", () => {
     mockUseWorkspaces.mockReturnValue({
       workspaces: [],
       pendingInvitations: [],
+      canCreateWorkspace: true,
       isLoading: false,
       error: null,
     })

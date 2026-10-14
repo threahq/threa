@@ -55,3 +55,26 @@ describe("workspace.confirmMembership", () => {
     })
   })
 })
+
+describe("workspace.list", () => {
+  function listHandlers(canCreate: () => Promise<boolean>) {
+    const workspaceService = { listForUser: mock(async () => []), canCreate: mock(canCreate) } as any
+    const shadowService = { listPendingForEmail: mock(async () => []) } as any
+    return createWorkspaceHandlers({ workspaceService, shadowService })
+  }
+  const req = { workosUserId: "workos_user_1", authUser: { email: "user@example.com" } } as unknown as Request
+
+  test("reports whether the account may create a workspace", async () => {
+    const res = createResponse()
+    await listHandlers(async () => true).list(req, res)
+    expect(res.body).toEqual({ workspaces: [], pendingInvitations: [], canCreateWorkspace: true })
+  })
+
+  test("still lists workspaces when the eligibility lookup fails, reporting no creation", async () => {
+    const res = createResponse()
+    await listHandlers(async () => {
+      throw new Error("WorkOS unavailable")
+    }).list(req, res)
+    expect(res.body).toEqual({ workspaces: [], pendingInvitations: [], canCreateWorkspace: false })
+  })
+})

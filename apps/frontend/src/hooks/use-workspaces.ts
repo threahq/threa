@@ -49,6 +49,7 @@ export function useWorkspaces() {
     workspaces: query.data?.workspaces,
     cachedWorkspaces,
     pendingInvitations: query.data?.pendingInvitations ?? [],
+    canCreateWorkspace: query.data?.canCreateWorkspace ?? false,
   }
 }
 
@@ -235,6 +236,7 @@ export function useCreateWorkspace() {
       queryClient.setQueryData<WorkspaceListResult>(workspaceKeys.list(), (old) => ({
         workspaces: old ? [...old.workspaces, newWorkspace] : [newWorkspace],
         pendingInvitations: old?.pendingInvitations ?? [],
+        canCreateWorkspace: old?.canCreateWorkspace ?? true,
       }))
 
       db.workspaces.put({ ...newWorkspace, _cachedAt: Date.now() })
