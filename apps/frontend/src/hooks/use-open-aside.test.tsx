@@ -3,6 +3,7 @@ import { act, renderHook } from "@testing-library/react"
 import { MemoryRouter, Route, Routes, useNavigate } from "react-router-dom"
 import type { ReactNode } from "react"
 import { spyOnExport } from "@/test"
+import { PanelProvider } from "@/contexts"
 import * as streamsModule from "./use-streams"
 import { getAsideState, resetAsideStoreCache } from "@/stores/aside-store"
 import { useOpenAside } from "./use-open-aside"
@@ -13,9 +14,24 @@ const HOST_PATH = "/w/ws_1/s/stream_host"
 function wrapper(children: ReactNode) {
   return (
     <MemoryRouter initialEntries={[HOST_PATH]}>
-      <Routes>
-        <Route path="/w/:workspaceId/s/:streamId" element={<>{children}</>} />
-      </Routes>
+      <PanelProvider>
+        <Routes>
+          <Route path="/w/:workspaceId/s/:streamId" element={<>{children}</>} />
+        </Routes>
+      </PanelProvider>
+    </MemoryRouter>
+  )
+}
+
+/** The hook inside a page pane shown at its own path beside the host stream, the way `PageRoutes` mounts a page. */
+function wrapperInPagePane(children: ReactNode) {
+  return (
+    <MemoryRouter initialEntries={[HOST_PATH]}>
+      <PanelProvider>
+        <Routes location={{ pathname: "/w/ws_1/board", search: "" }}>
+          <Route path="/w/:workspaceId/board" element={<>{children}</>} />
+        </Routes>
+      </PanelProvider>
     </MemoryRouter>
   )
 }
@@ -38,6 +54,18 @@ beforeEach(() => {
 describe("useOpenAside", () => {
   it("shows the surface when the create lands while its host is still mounted", async () => {
     const { result } = renderHook(() => useOpenAside("ws_1"), { wrapper: ({ children }) => wrapper(children) })
+
+    const opening = result.current({ kind: "stream", hostStreamId: "stream_host" })
+    resolveCreate({ id: "stream_aside" })
+    await opening
+
+    expect(getAsideState()).toMatchObject({ hostKey: "/w/ws_1/s", asideId: "stream_aside" })
+  })
+
+  it("keys the aside on the page the URL names, not on a page pane's own path", async () => {
+    const { result } = renderHook(() => useOpenAside("ws_1"), {
+      wrapper: ({ children }) => wrapperInPagePane(children),
+    })
 
     const opening = result.current({ kind: "stream", hostStreamId: "stream_host" })
     resolveCreate({ id: "stream_aside" })

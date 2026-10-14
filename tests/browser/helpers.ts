@@ -634,3 +634,29 @@ export async function hasCachedBootstrapForAccount(page: Page, workspaceId: stri
     { wid: workspaceId, accountId }
   )
 }
+
+/** A point inside `target`, as shares of its width and height. */
+export async function at(target: Locator, x: number, y: number): Promise<{ x: number; y: number }> {
+  const box = (await target.boundingBox())!
+  return { x: box.x + box.width * x, y: box.y + box.height * y }
+}
+
+/** Drags `source` to `to` with the mouse; `hovering` runs while it is held there. */
+export async function drag(
+  page: Page,
+  source: Locator,
+  to: { x: number; y: number },
+  hovering?: () => Promise<void>
+): Promise<void> {
+  await source.scrollIntoViewIfNeeded()
+  const from = await at(source, 0.5, 0.5)
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(from.x + 12, from.y + 4, { steps: 3 })
+  await page.mouse.move(to.x, to.y, { steps: 12 })
+  // Chromium coalesces emulated dragovers and can drop the last; a nudge lands one where the pointer rests.
+  await page.mouse.move(to.x + 1, to.y)
+  await page.mouse.move(to.x, to.y)
+  await hovering?.()
+  await page.mouse.up()
+}

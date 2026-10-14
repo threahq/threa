@@ -3,10 +3,10 @@ import { spyOnExport } from "@/test/spy"
 import { render, screen, act, waitFor } from "@testing-library/react"
 import * as e2eSessionModule from "@/stores/e2e-session-store"
 import * as decryptCacheModule from "@/lib/crypto/decrypt-cache"
-import { MemoryRouter } from "react-router-dom"
+import { MemoryRouter, useNavigate, type NavigateFunction } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { TooltipProvider } from "@/components/ui/tooltip"
-import { ServicesProvider, type SavedService } from "@/contexts"
+import { PanelProvider, ServicesProvider, type SavedService } from "@/contexts"
 import { MessageEvent } from "./message-event"
 import { TimelineItemContent, type TimelineItemRenderContext } from "./event-list"
 import { resolveSubagentThreadRun, type SubagentThreadRun } from "@/lib/subagent-display"
@@ -213,6 +213,45 @@ describe("MessageEvent", () => {
         "href",
         "/panel/draft:stream_123:msg_123"
       )
+    })
+
+    it("follows the layout as panes open and close, under the real panel provider", () => {
+      for (const hook of ["usePanel", "usePanelId", "useLatestPanel", "useLatestRoute"] as const) {
+        vi.mocked(contextsModule[hook]).mockRestore()
+      }
+      let navigate!: NavigateFunction
+      function Navigator() {
+        navigate = useNavigate()
+        return null
+      }
+      const event = createMessageEvent("msg_123", "Confirmed message")
+
+      render(
+        <MemoryRouter initialEntries={[`/w/${workspaceId}/s/${streamId}`]}>
+          <QueryClientProvider client={queryClient}>
+            <ServicesProvider services={{ saved: noopSavedService }}>
+              <TooltipProvider>
+                <PanelProvider>
+                  <Navigator />
+                  <MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />
+                </PanelProvider>
+              </TooltipProvider>
+            </ServicesProvider>
+          </QueryClientProvider>
+        </MemoryRouter>
+      )
+
+      const link = screen.getByRole("link", { name: "Reply in thread" })
+      expect(link).toHaveAttribute("href", `/w/${workspaceId}/s/${streamId}?panel=draft:${streamId}:msg_123`)
+
+      act(() => navigate(`/w/${workspaceId}/s/${streamId}?panel=stream_other`))
+      expect(link).toHaveAttribute(
+        "href",
+        `/w/${workspaceId}/s/${streamId}?panel=stream_other.draft:${streamId}:msg_123`
+      )
+
+      act(() => navigate(`/w/${workspaceId}/s/${streamId}`))
+      expect(link).toHaveAttribute("href", `/w/${workspaceId}/s/${streamId}?panel=draft:${streamId}:msg_123`)
     })
 
     it("withholds the action while the row still carries its client id", () => {

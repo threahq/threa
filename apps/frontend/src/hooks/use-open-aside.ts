@@ -1,5 +1,5 @@
-import { useCallback, useContext, useEffect, useRef } from "react"
-import { UNSAFE_DataRouterContext, UNSAFE_NavigationContext, matchPath, type Location } from "react-router-dom"
+import { useCallback, useEffect, useRef } from "react"
+import { matchPath, type Location } from "react-router-dom"
 import { toast } from "sonner"
 import { ContextRefKinds, StreamTypes, draftStreamScope, type ContextRef } from "@threahq/types"
 import { boardReplyDraftKey } from "@/lib/board/draft-keys"
@@ -8,28 +8,13 @@ import { buildAsideBag, buildViewportRef } from "@/lib/aside/snapshot"
 import { asideHostKey, openAside } from "@/stores/aside-store"
 import { capture } from "@/lib/analytics/posthog"
 import { PANEL_PARAM, fullPanelLayout, panelIdsOf, parsePanelLayout } from "@/lib/panel-tabs"
+import { useLatestRoute } from "@/contexts"
 
 /** The panes a stream page shows; null off the stream page. */
 function panesAt({ pathname, search }: Location): string[] | null {
   const path = matchPath("/w/:workspaceId/s/:streamId", pathname)?.params.streamId
   if (path === undefined) return null
   return panelIdsOf(fullPanelLayout(path, parsePanelLayout(new URLSearchParams(search).get(PANEL_PARAM))))
-}
-
-/**
- * The route as it is when called, with no render subscription: an opener sits
- * in every message row, and `useLocation` would re-render each row on every
- * pane change for a value the row only needs when the user opens an aside.
- */
-function useLatestLocation(): () => Location {
-  const router = useContext(UNSAFE_DataRouterContext)?.router
-  // Outside a data router (`MemoryRouter` in tests) the navigator is the history object, which carries the location.
-  const { navigator } = useContext(UNSAFE_NavigationContext)
-  return useCallback(() => {
-    const location = router ? router.state.location : (navigator as { location?: Location }).location
-    if (!location) throw new Error("useLatestLocation needs a data router or a history navigator")
-    return location
-  }, [router, navigator])
 }
 
 /**
@@ -77,7 +62,10 @@ function buildOriginRefs(origin: AsideOrigin): ContextRef[] {
  */
 export function useOpenAside(workspaceId: string) {
   const { mutateAsync: createStream } = useCreateStream(workspaceId)
-  const latestLocation = useLatestLocation()
+  // The URL's route, not a page pane's own: the aside surface is keyed on the
+  // page (`useAsideHost`), so an opener in a board or label pane beside a
+  // stream must name the stream page, and no row re-renders for it.
+  const latestRoute = useLatestRoute()
   // The create is a round trip; the page can be left (or the account switched),
   // or the host stream's pane closed, before it lands. Writing the surface then
   // would strand an aside on a host that is gone — `dropAsideForHost` and
@@ -95,8 +83,8 @@ export function useOpenAside(workspaceId: string) {
   return useCallback(
     async (origin: AsideOrigin) => {
       capture("aside_opened", { kind: origin.kind })
-      const hostKey = asideHostKey(latestLocation().pathname)
-      const hostShown = panesAt(latestLocation())?.includes(origin.hostStreamId) ?? false
+      const hostKey = asideHostKey(latestRoute().location.pathname)
+      const hostShown = panesAt(latestRoute().location)?.includes(origin.hostStreamId) ?? false
       const refs = buildOriginRefs(origin)
       let aside
       try {
@@ -111,8 +99,8 @@ export function useOpenAside(workspaceId: string) {
         toast.error("Couldn't open an aside. Please try again.")
         throw err
       }
-      if (!mounted.current || asideHostKey(latestLocation().pathname) !== hostKey) return
-      if (hostShown && !panesAt(latestLocation())?.includes(origin.hostStreamId)) return
+      if (!mounted.current || asideHostKey(latestRoute().location.pathname) !== hostKey) return
+      if (hostShown && !panesAt(latestRoute().location)?.includes(origin.hostStreamId)) return
       openAside({
         hostKey,
         hostStreamId: origin.hostStreamId,
@@ -120,7 +108,7 @@ export function useOpenAside(workspaceId: string) {
         originScope: originScopeOf(origin),
       })
     },
-    [createStream, latestLocation]
+    [createStream, latestRoute]
   )
 }
 
@@ -134,11 +122,11 @@ export interface ResumeAsideParams {
 
 /** Re-open an existing aside from its anchor row. */
 export function useResumeAside() {
-  const latestLocation = useLatestLocation()
+  const latestRoute = useLatestRoute()
   return useCallback(
     (params: ResumeAsideParams) => {
       openAside({
-        hostKey: asideHostKey(latestLocation().pathname),
+        hostKey: asideHostKey(latestRoute().location.pathname),
         hostStreamId: params.hostStreamId,
         asideId: params.asideId,
         originScope: params.conversationId
@@ -146,6 +134,6 @@ export function useResumeAside() {
           : draftStreamScope(params.hostStreamId),
       })
     },
-    [latestLocation]
+    [latestRoute]
   )
 }

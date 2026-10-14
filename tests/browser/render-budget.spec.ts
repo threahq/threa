@@ -1,6 +1,8 @@
 import { test, expect, type Locator, type Page } from "@playwright/test"
 import {
+  at,
   createChannel,
+  drag,
   expectApiOk,
   generateTestId,
   loginAndCreateWorkspace,
@@ -31,25 +33,6 @@ async function postMessage(page: Page, workspaceId: string, streamId: string, co
 
 function streamIdFromUrl(page: Page): string {
   return page.url().match(/\/s\/([^/?]+)/)![1]!
-}
-
-async function at(target: Locator, x: number, y: number): Promise<{ x: number; y: number }> {
-  const box = (await target.boundingBox())!
-  return { x: box.x + box.width * x, y: box.y + box.height * y }
-}
-
-/** Drags `source` to `to` with the mouse, the way `pane-drops.spec.ts` does. */
-async function drag(page: Page, source: Locator, to: { x: number; y: number }): Promise<void> {
-  await source.scrollIntoViewIfNeeded()
-  const from = await at(source, 0.5, 0.5)
-  await page.mouse.move(from.x, from.y)
-  await page.mouse.down()
-  await page.mouse.move(from.x + 12, from.y + 4, { steps: 3 })
-  await page.mouse.move(to.x, to.y, { steps: 12 })
-  // Chromium coalesces emulated dragovers and can drop the last; a nudge lands one where the pointer rests.
-  await page.mouse.move(to.x + 1, to.y)
-  await page.mouse.move(to.x, to.y)
-  await page.mouse.up()
 }
 
 function topComponents(sample: RenderSample): string {
@@ -255,7 +238,7 @@ test("component render counts stay within their budgets", async ({ page, browser
     )
     samples["close the dropped pane"].push(
       await measureRenders(page, "close the dropped pane", async () => {
-        await otherPane.getByRole("button", { name: /close/i }).first().click()
+        await otherPane.getByRole("button", { name: "Close", exact: true }).click()
         await expect(otherPane).toHaveCount(0)
         await panesSettled(page)
       })
