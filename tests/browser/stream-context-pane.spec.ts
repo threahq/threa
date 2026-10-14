@@ -180,6 +180,7 @@ test("board: the overview opens as a pane beside the thread panel", async ({ pag
   await expect.poll(() => panelParam(page)).toBe(`${threadId}-context:${threadId}`)
   await expect(overview(page).getByText("example.org", { exact: true })).toBeVisible()
   await expect(drawer(page)).toHaveCount(0)
+  await panesSettled(page)
   const thread = await box(page, `[data-panel-tab="${threadId}"]`)
   const pane = await box(page, `[data-panel-tab="context:${threadId}"]`)
   expect(thread.x + thread.width).toBeLessThanOrEqual(pane.x + 1)

@@ -56,7 +56,7 @@ function measure(host: HTMLElement): Map<Element, Box> {
 
 /**
  * Where a pane paints while the panes glide: the ones that move over the ones that hold still, so a
- * shrinking pane uncovers the one added beside it and a growing one covers the one that closed.
+ * growing pane covers the one that closed. One the arrangement adds opens between its neighbours' edges.
  */
 const CLOSED = 0
 const ADDED = 1
@@ -91,10 +91,37 @@ function across(divider: Box, panes: readonly (readonly [Box, Box])[]): Box | nu
 }
 
 /**
+ * Where the pane laid out at `pane` opens from: each side where the divider along it starts out, so the pane
+ * grows out of the edges that part it from its neighbours and covers none of them. A side with no divider
+ * along it (the host's edge) holds still. `dividers` are each divider's box at the pane's end and at the other.
+ */
+function opening(pane: Box, dividers: readonly (readonly [Box, Box])[]): Box {
+  const sides = { left: pane.left, top: pane.top, right: pane.left + pane.width, bottom: pane.top + pane.height }
+  const from = { ...sides }
+  for (const [here, there] of dividers) {
+    const upright = here.height > here.width
+    const [start, length, place, size] = upright
+      ? (["top", "height", "left", "width"] as const)
+      : (["left", "width", "top", "height"] as const)
+    const [before, after] = upright ? (["left", "right"] as const) : (["top", "bottom"] as const)
+    if (here[start] + here[length] <= pane[start] || pane[start] + pane[length] <= here[start]) continue
+    if (touches(here[place] + here[size], sides[before])) from[before] = there[place] + there[size]
+    else if (touches(here[place], sides[after])) from[after] = there[place]
+  }
+  return {
+    left: Math.min(from.left, from.right),
+    top: Math.min(from.top, from.bottom),
+    width: Math.max(0, from.right - from.left),
+    height: Math.max(0, from.bottom - from.top),
+  }
+}
+
+/**
  * Glides `element` from the box `from` to `to`, the box its layout gives it. A pane's content is sized to
  * the gliding box on every frame, as on a divider drag, so it moves with its edges and never jumps ahead.
+ * A pane takes `layer` when given, or one by how far it moves.
  */
-function travel(element: Element, from: Box, to: Box, options: KeyframeAnimationOptions): Animation {
+function travel(element: Element, from: Box, to: Box, options: KeyframeAnimationOptions, layer?: number): Animation {
   const start: Keyframe = {
     transform: `translate(${px(from.left - to.left)}, ${px(from.top - to.top)})`,
     width: px(from.width),
@@ -104,8 +131,8 @@ function travel(element: Element, from: Box, to: Box, options: KeyframeAnimation
   const frames = [start, end]
   if (isPane(element)) {
     // Lifted over the others on a move that clears its own old box, so it travels on top and never under a neighbour.
-    const lifted = overlap(from, to) === 0
-    start.zIndex = end.zIndex = lifted ? LIFTED : MOVING
+    const lifted = layer === undefined && overlap(from, to) === 0
+    start.zIndex = end.zIndex = layer ?? (lifted ? LIFTED : MOVING)
     if (lifted) {
       start.boxShadow = end.boxShadow = NO_LIFT
       frames.splice(1, 0, { boxShadow: LIFT, offset: 0.5 })
@@ -189,10 +216,10 @@ export const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-mo
  * `glide` marks. The grid itself jumps to its final tracks, so React sees the
  * arrangement at once. The panes that were there are the ones that move, each
  * laid out at its gliding size until it lands: a pane the arrangement adds
- * holds still where it lands while they uncover it, and one it drops holds
- * still while they grow over it, unless another pane takes its box. A divider
- * the arrangement adds or drops travels with the edge it marks. Without the
- * API every change cuts.
+ * opens out of the dividers that part it from them, its edges on theirs, and
+ * one it drops holds still while they grow over it, unless another pane takes
+ * its box. A divider the arrangement adds or drops travels with the edge it
+ * marks. Without the API every change cuts.
  */
 export function usePaneGlide(host: RefObject<HTMLDivElement | null>, glide: boolean) {
   const boxes = useRef(new Map<Element, Box>())
@@ -238,23 +265,29 @@ export function usePaneGlide(host: RefObject<HTMLDivElement | null>, glide: bool
       const was = before.get(child)
       return was && isPane(child) ? [[was, box] as const] : []
     })
-    const added: Element[] = []
+    const added: [Element, Box][] = []
+    // Each divider on show at the arrangement's end, as its box there and the one it glides from.
+    const dividers: (readonly [Box, Box])[] = []
     for (const [child, box] of now) {
       const was = before.get(child)
       if (was) {
+        if (isDivider(child)) dividers.push([box, was])
         if (!sameBox(was, box)) travel(child, was, box, options)
         continue
       }
       if (isDivider(child)) {
-        if ([...before].some(([other, stood]) => !other.isConnected && sameBox(stood, box))) continue
-        const from = across(
-          box,
-          staying.map(([stood, stands]) => [stands, stood] as const)
-        )
+        const replaces = [...before].some(([other, stood]) => !other.isConnected && sameBox(stood, box))
+        const from = replaces
+          ? null
+          : across(
+              box,
+              staying.map(([stood, stands]) => [stands, stood] as const)
+            )
+        dividers.push([box, from ?? box])
         if (from && !sameBox(from, box)) travel(child, from, box, options)
         continue
       }
-      if (isPane(child)) added.push(child)
+      if (isPane(child)) added.push([child, box])
     }
     for (const [child, was] of before) {
       if (now.has(child) || child.isConnected || !(child instanceof HTMLElement)) continue
@@ -267,8 +300,11 @@ export function usePaneGlide(host: RefObject<HTMLDivElement | null>, glide: bool
     }
     // A pane arriving where nothing moves (a stream switch) shows at once; one arriving amid a glide takes its own
     // layer for it, or what it stacks inside (a load mask, a composer) paints over the panes above it.
-    if (element.getAnimations({ subtree: true }).some((animation) => animation.id === GLIDE)) {
-      for (const child of added) child.animate([{ zIndex: ADDED }, { zIndex: ADDED }], options)
+    const gliding = element.getAnimations({ subtree: true }).some((animation) => animation.id === GLIDE)
+    for (const [child, box] of added) {
+      const from = opening(box, dividers)
+      if (!sameBox(from, box)) travel(child, from, box, options, ADDED)
+      else if (gliding) child.animate([{ zIndex: ADDED }, { zIndex: ADDED }], options)
     }
   })
 }

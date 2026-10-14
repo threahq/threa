@@ -207,31 +207,35 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
   // The added pane holds its timeline until the glide lands, so mounting it never delays the glide's frames.
   await expect(tabPane(page, streamB)).toBeVisible()
   await expect(tabPane(page, streamB).getByTestId("stream-timeline")).toHaveCount(0)
-  // Midway, the pane that was there is the one moving: part shrunk, its content as wide as its box, still
-  // over the edge of the added pane, which is where it ends up.
+  // Midway, both panes move: main part shrunk, its content as wide as its box, and the added pane opening
+  // out of the divider at main's edge to its own final right edge, so neither covers the other.
   const midway = await page.evaluate((added) => {
     const main = document.querySelector("[data-testid='main-pane']")!
     const mainBox = main.getBoundingClientRect()
     const addedBox = document.querySelector(`[data-panel-tab="${added}"]`)!.getBoundingClientRect()
-    const over = document.elementFromPoint((addedBox.left + mainBox.right) / 2, mainBox.top + mainBox.height / 4)
+    const gap = addedBox.left - mainBox.right
+    const beside = document.elementFromPoint(mainBox.right + 4, mainBox.top + mainBox.height / 4)
     return {
       main: Math.round(mainBox.width),
       content: Math.round(main.querySelector("[data-editor-zone='main']")!.getBoundingClientRect().width),
-      over: over?.closest("[data-panel-tab]")?.getAttribute("data-testid"),
-      added: { x: Math.round(addedBox.x), width: Math.round(addedBox.width) },
+      abuts: gap >= 0 && gap <= 1.5,
+      beside: beside?.closest("[data-panel-tab]")?.getAttribute("data-panel-tab"),
+      right: Math.round(addedBox.right),
     }
   }, streamB)
   await releaseGlides(page)
   await settled(tabPane(page, streamB))
   await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
   const mainAfter = await boxOf(mainPane(page))
+  const addedAfter = await boxOf(tabPane(page, streamB))
   expect(midway.main).toBeGreaterThan(mainAfter.width)
   expect(midway.main).toBeLessThan(mainBefore.width)
   expect(midway).toEqual({
     main: midway.main,
     content: midway.main,
-    over: "main-pane",
-    added: await boxOf(tabPane(page, streamB)),
+    abuts: true,
+    beside: streamB,
+    right: addedAfter.x + addedAfter.width,
   })
   expect({ stream: streamIdOf(page), panel: panelParam(page) }).toEqual({
     stream: streamB,

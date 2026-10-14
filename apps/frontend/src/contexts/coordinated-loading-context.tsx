@@ -659,6 +659,55 @@ export function useRevealReady(ready: boolean) {
 /** Opacity, not visibility: hidden content keeps its layout and can take focus. */
 export const HIDDEN_CHILDREN = "[&>*]:pointer-events-none [&>*]:opacity-0"
 
+/** `children` laid out but unseen while `hidden`, under `cover` when there is one. */
+function HiddenUnder({ hidden, cover, children }: { hidden: boolean; cover: ReactNode; children: ReactNode }) {
+  return (
+    <>
+      <div className={cn("contents", hidden && HIDDEN_CHILDREN)}>{children}</div>
+      {cover && <div className="absolute inset-0 z-10 bg-background">{cover}</div>}
+    </>
+  )
+}
+
+/**
+ * Mounts `children` hidden under `fallback` until they report ready through {@link useRevealReady}, so what
+ * they lay out at different times (a composer, the rows it sits under) shows in one frame. Reports pass on
+ * to the enclosing {@link RevealParticipant}; past the reveal cap the content shows regardless. The owner
+ * keeps `revealed`, so content remounted after the reveal shows at once.
+ */
+export function RevealOnReady({
+  revealed,
+  onReveal,
+  fallback,
+  children,
+}: {
+  revealed: boolean
+  onReveal: () => void
+  fallback: ReactNode
+  children: ReactNode
+}) {
+  const outer = useContext(RevealReadyContext)
+  const report = useCallback(
+    (value: boolean) => {
+      if (value) onReveal()
+      outer?.(value)
+    },
+    [outer, onReveal]
+  )
+  useEffect(() => {
+    if (revealed) return
+    const timer = setTimeout(onReveal, REVEAL_CAP_MS)
+    return () => clearTimeout(timer)
+  }, [revealed, onReveal])
+  return (
+    <RevealReadyContext.Provider value={report}>
+      <HiddenUnder hidden={!revealed} cover={!revealed && fallback}>
+        {children}
+      </HiddenUnder>
+    </RevealReadyContext.Provider>
+  )
+}
+
 interface CoordinatedLoadingGateProps {
   children: ReactNode
 }
@@ -692,13 +741,8 @@ export function MainContentGate({ children }: CoordinatedLoadingGateProps) {
 
   const hidden = phase !== "ready" && !hasErrors
   return (
-    <>
-      <div className={cn("contents", hidden && HIDDEN_CHILDREN)}>{children}</div>
-      {hidden && phase === "skeleton" && (
-        <div className="absolute inset-0 z-10 bg-background">
-          <StreamContentSkeleton />
-        </div>
-      )}
-    </>
+    <HiddenUnder hidden={hidden} cover={hidden && phase === "skeleton" && <StreamContentSkeleton />}>
+      {children}
+    </HiddenUnder>
   )
 }

@@ -1,18 +1,31 @@
 import { afterEach, describe, it, expect } from "vitest"
 import { act, render, screen } from "@testing-library/react"
 import { createRef } from "react"
+import { useRevealReady } from "@/contexts"
 import { Pane, PaneHost, PaneLanded, usePaneCovered } from "./pane-host"
 
 function CoveredProbe() {
   return <span data-testid="probe">{String(usePaneCovered())}</span>
 }
 
-function LandedProbe() {
+function Content({ ready }: { ready: boolean }) {
+  useRevealReady(ready)
+  return <span data-testid="content">content</span>
+}
+
+function LandedProbe({ ready, mount }: { ready: boolean; mount: string }) {
   return (
-    <span data-testid="landed">
-      <PaneLanded fallback="false">true</PaneLanded>
-    </span>
+    <PaneLanded fallback={<span data-testid="fallback">fallback</span>}>
+      <Content key={mount} ready={ready} />
+    </PaneLanded>
   )
+}
+
+function shown() {
+  return {
+    content: screen.queryByTestId("content")?.parentElement?.className.includes("opacity-0") === false,
+    fallback: screen.queryByTestId("fallback") !== null,
+  }
 }
 
 describe("Pane", () => {
@@ -63,40 +76,66 @@ describe("Pane landing", () => {
     delete (HTMLElement.prototype as Partial<HTMLElement>).getAnimations
   })
 
-  function renderHost(glide: boolean) {
-    return render(
+  function host(glide: boolean, ready: boolean, mount = "first") {
+    return (
       <PaneHost columns="1fr" rows="1fr" glide={glide} reshapes={glide} ref={createRef<HTMLDivElement>()}>
         <Pane area="1 / 1" data-panel-tab="stream_a">
-          <LandedProbe />
+          <LandedProbe ready={ready} mount={mount} />
         </Pane>
       </PaneHost>
     )
   }
 
-  it("should hold a pane's content until the glide that brought it in has landed", async () => {
+  it("should hold a pane's content under the fallback until the glide lands and the content is ready", async () => {
     let land!: () => void
     const finished = new Promise<void>((resolve) => (land = resolve))
     let gliding = true
     HTMLElement.prototype.getAnimations = function () {
       return gliding ? [{ id: "pane-glide", finished } as unknown as Animation] : []
     }
-    renderHost(true)
-    expect(screen.getByTestId("landed").textContent).toBe("false")
+    const { rerender } = render(host(true, false))
+    await act(async () => {})
+    expect({ mounted: screen.queryByTestId("content") !== null, ...shown() }).toEqual({
+      mounted: false,
+      content: false,
+      fallback: true,
+    })
 
     gliding = false
     await act(async () => land())
-    expect(screen.getByTestId("landed").textContent).toBe("true")
+    expect({ mounted: screen.queryByTestId("content") !== null, ...shown() }).toEqual({
+      mounted: true,
+      content: false,
+      fallback: true,
+    })
+
+    rerender(host(true, true))
+    expect(shown()).toEqual({ content: true, fallback: false })
   })
 
-  it("should show a pane's content once the host finds nothing gliding", async () => {
-    HTMLElement.prototype.getAnimations = () => []
-    renderHost(true)
+  it("should show a revealed pane's content at once when it remounts", async () => {
+    let land!: () => void
+    const finished = new Promise<void>((resolve) => (land = resolve))
+    HTMLElement.prototype.getAnimations = () => [{ id: "pane-glide", finished } as unknown as Animation]
+    const { rerender } = render(host(true, false))
     await act(async () => {})
-    expect(screen.getByTestId("landed").textContent).toBe("true")
+    HTMLElement.prototype.getAnimations = () => []
+    await act(async () => land())
+    rerender(host(true, true))
+
+    rerender(host(true, false, "second"))
+    expect(shown()).toEqual({ content: true, fallback: false })
+  })
+
+  it("should show a pane's content at once when the host finds nothing gliding", async () => {
+    HTMLElement.prototype.getAnimations = () => []
+    render(host(true, false))
+    await act(async () => {})
+    expect(shown()).toEqual({ content: true, fallback: false })
   })
 
   it("should show a pane's content at once when its arrangement keeps its shape", () => {
-    renderHost(false)
-    expect(screen.getByTestId("landed").textContent).toBe("true")
+    render(host(false, false))
+    expect(shown()).toEqual({ content: true, fallback: false })
   })
 })

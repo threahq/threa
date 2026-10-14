@@ -1,7 +1,9 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type HTMLAttributes,
@@ -9,6 +11,7 @@ import {
   type RefObject,
 } from "react"
 import { flushSync } from "react-dom"
+import { RevealOnReady } from "@/contexts"
 import { cn } from "@/lib/utils"
 import { paneLanding, usePaneGlide } from "./pane-glide"
 
@@ -57,7 +60,16 @@ interface PaneProps extends HTMLAttributes<HTMLDivElement> {
 
 const PaneGlideContext = createContext(false)
 const PaneCoveredContext = createContext(false)
-const PaneLandedContext = createContext(true)
+/**
+ * `gliding` until the glide that brought the pane in lands, `landed` until its content is ready, then `revealed`;
+ * `shown` when nothing glided it in. `revealed` keeps the reveal's wrapper, so the content stays mounted through it.
+ */
+type Landing = "shown" | "gliding" | "landed" | "revealed"
+
+const PaneLandedContext = createContext<{ landing: Landing; reveal: () => void }>({
+  landing: "shown",
+  reveal: () => {},
+})
 
 /**
  * Whether the pane this renders in, or any pane around it, is covered. A covered
@@ -69,37 +81,47 @@ export function usePaneCovered(): boolean {
 }
 
 /**
- * Shows `fallback` while the glide that brought this pane in is still running, `children` once it lands.
- * Heavy content waits for it: mounting a timeline in the commit that starts the glide delays the glide's first
- * frame by the whole mount. Only this gate re-renders on landing, not the pane around it.
+ * Shows `fallback` while the glide that brought this pane in is still running, then mounts `children` under it
+ * until they report ready, so a pane that glided in shows its content in one step. Heavy content waits for the
+ * landing: mounting a timeline in the commit that starts the glide delays the glide's first frame by the whole
+ * mount. Only this gate re-renders on landing, not the pane around it.
  */
 export function PaneLanded({ fallback, children }: { fallback: ReactNode; children: ReactNode }) {
-  return useContext(PaneLandedContext) ? children : fallback
+  const { landing, reveal } = useContext(PaneLandedContext)
+  if (landing === "gliding") return fallback
+  if (landing === "shown") return children
+  return (
+    <RevealOnReady revealed={landing === "revealed"} onReveal={reveal} fallback={fallback}>
+      {children}
+    </RevealOnReady>
+  )
 }
 
 export function Pane({ area, covered = false, inert = false, className, style, ...rest }: PaneProps) {
   // Out of reach is out of sight: a pane under a floating one shows through the scrim but is not being read.
   const hidden = usePaneCovered() || covered || inert
   const ref = useRef<HTMLDivElement>(null)
-  const [landed, setLanded] = useState(!useContext(PaneGlideContext))
+  const [landing, setLanding] = useState<Landing>(useContext(PaneGlideContext) ? "gliding" : "shown")
   useLayoutEffect(() => {
-    if (landed) return
+    if (landing !== "gliding") return
     let live = true
     // The host starts the glide in its own layout effect, after this one. A microtask runs once it has and
     // still before paint, so a pane nothing glides shows its content in the frame it mounts in.
     queueMicrotask(() => {
-      const landing = live && ref.current ? paneLanding(ref.current) : null
+      const glide = live && ref.current ? paneLanding(ref.current) : null
       if (!live) return
-      if (!landing) flushSync(() => setLanded(true))
+      if (!glide) flushSync(() => setLanding("shown"))
       else
-        void landing.then(() => {
-          if (live) setLanded(true)
+        void glide.then(() => {
+          if (live) setLanding("landed")
         })
     })
     return () => {
       live = false
     }
-  }, [landed])
+  }, [landing])
+  const reveal = useCallback(() => setLanding("revealed"), [])
+  const landed = useMemo(() => ({ landing, reveal }), [landing, reveal])
   return (
     <PaneCoveredContext.Provider value={hidden}>
       <PaneLandedContext.Provider value={landed}>

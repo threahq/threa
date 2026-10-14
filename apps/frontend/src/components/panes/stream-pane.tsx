@@ -911,7 +911,11 @@ export function StreamPane({
         </div>
       </PaneHeader>
       {(isChannel || isDm) && !isDraft && <RejoinBar workspaceId={workspaceId} streamId={streamId} />}
-      <div className="relative flex-1 overflow-hidden" role={isPageStream ? "main" : undefined} data-editor-zone={zone}>
+      <div
+        className="relative isolate flex-1 overflow-hidden"
+        role={isPageStream ? "main" : undefined}
+        data-editor-zone={zone}
+      >
         <StreamErrorBoundary streamId={streamId} queryError={error}>
           <StreamEncryptionGate workspaceId={workspaceId} encrypted={isEncryptedScratchpad && !isDraft}>
             <PaneLanded fallback={<TimelineSkeleton />}>

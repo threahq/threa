@@ -87,6 +87,7 @@ export {
   useCoordinatedLoading,
   useCoordinatedPhase,
   RevealParticipant,
+  RevealOnReady,
   useRevealReady,
   REVEAL_CAP_MS,
   SKELETON_DELAY_MS,
