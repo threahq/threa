@@ -21,6 +21,9 @@ beforeEach(() => {
   vi.spyOn(contextsModule, "useTrace").mockReturnValue({
     getTraceUrl: (id: string) => `/trace/${id}`,
   } as ReturnType<typeof contextsModule.useTrace>)
+  vi.spyOn(contextsModule, "usePanel").mockReturnValue({
+    getPanelUrl: (id: string) => `/panel/${id}`,
+  } as ReturnType<typeof contextsModule.usePanel>)
   vi.spyOn(hooksModule, "useActors").mockReturnValue({
     getActorName: (id: string) => `Name-${id.slice(-4)}`,
     getActorAvatar: (id: string) => ({ fallback: id.slice(0, 2).toUpperCase(), avatarUrl: null }),
@@ -74,7 +77,7 @@ describe("ThreadSlot", () => {
         anchorId={anchorId}
         streamId={streamId}
         replyCount={0}
-        threadHref={null}
+        threadId={null}
         summary={undefined}
         workspaceId={workspaceId}
       />
@@ -89,7 +92,7 @@ describe("ThreadSlot", () => {
         anchorId={anchorId}
         streamId={streamId}
         replyCount={0}
-        threadHref={null}
+        threadId={null}
         summary={undefined}
         workspaceId={workspaceId}
       />
@@ -106,12 +109,12 @@ describe("ThreadSlot", () => {
         anchorId={anchorId}
         streamId={streamId}
         replyCount={0}
-        threadHref="/thread/1"
+        threadId="thread_1"
         summary={undefined}
         workspaceId={workspaceId}
       />
     )
-    expect(screen.getByRole("link")).toHaveAttribute("href", "/thread/1")
+    expect(screen.getByRole("link")).toHaveAttribute("href", "/panel/thread_1")
     expect(screen.getByText("No replies yet")).toBeInTheDocument()
   })
 
@@ -122,7 +125,7 @@ describe("ThreadSlot", () => {
         anchorId={anchorId}
         streamId={streamId}
         replyCount={0}
-        threadHref="/thread/1"
+        threadId="thread_1"
         summary={undefined}
         workspaceId={workspaceId}
       />
@@ -137,7 +140,7 @@ describe("ThreadSlot", () => {
         anchorId={anchorId}
         streamId={streamId}
         replyCount={2}
-        threadHref="/thread/1"
+        threadId="thread_1"
         summary={summary}
         workspaceId={workspaceId}
       />
@@ -152,7 +155,7 @@ describe("ThreadSlot", () => {
         anchorId={anchorId}
         streamId={streamId}
         replyCount={1}
-        threadHref="/thread/1"
+        threadId="thread_1"
         summary={summary}
         workspaceId={workspaceId}
       />
@@ -169,7 +172,7 @@ describe("ThreadSlot", () => {
         anchorId={anchorId}
         streamId={streamId}
         replyCount={2}
-        threadHref="/thread/1"
+        threadId="thread_1"
         summary={summary}
         workspaceId={workspaceId}
       />
@@ -188,11 +191,11 @@ describe("ThreadSlot", () => {
         anchorId={anchorId}
         streamId={streamId}
         replyCount={0}
-        threadHref={null}
+        threadId={null}
         summary={undefined}
         workspaceId={workspaceId}
         draft={{ draftId: "draft_1", preview: "typed but unsent", attachmentCount: 0, isCheckedOut: true }}
-        draftHref="/panel/draft:stream_1:msg_1"
+        draftPanelId="draft:stream_1:msg_1"
       />
     )
     expect(screen.getByRole("link")).toHaveAttribute("href", "/panel/draft:stream_1:msg_1")
@@ -206,11 +209,11 @@ describe("ThreadSlot", () => {
         anchorId={anchorId}
         streamId={streamId}
         replyCount={0}
-        threadHref={null}
+        threadId={null}
         summary={undefined}
         workspaceId={workspaceId}
         draft={{ draftId: "draft_1", preview: "typed but unsent", attachmentCount: 0, isCheckedOut: true }}
-        draftHref={null}
+        draftPanelId={null}
       />
     )
     expect(container.firstChild).toBeNull()
@@ -222,11 +225,11 @@ describe("ThreadSlot", () => {
         anchorId={anchorId}
         streamId={streamId}
         replyCount={0}
-        threadHref={null}
+        threadId={null}
         summary={undefined}
         workspaceId={workspaceId}
         draft={{ draftId: "draft_1", preview: "typed but unsent", attachmentCount: 0, isCheckedOut: true }}
-        draftHref="/panel/draft:stream_1:msg_1"
+        draftPanelId="draft:stream_1:msg_1"
       />
     )
     const slotBeforeSend = container.firstChild
@@ -240,11 +243,11 @@ describe("ThreadSlot", () => {
           anchorId={anchorId}
           streamId={streamId}
           replyCount={1}
-          threadHref="/panel/thread_1"
+          threadId="thread_1"
           summary={summary}
           workspaceId={workspaceId}
           draft={null}
-          draftHref="/panel/draft:stream_1:msg_1"
+          draftPanelId="draft:stream_1:msg_1"
         />
       </MemoryRouter>
     )
@@ -263,7 +266,7 @@ describe("ThreadSlot", () => {
         anchorId={anchorId}
         streamId={streamId}
         replyCount={2}
-        threadHref="/thread/1"
+        threadId="thread_1"
         summary={summary}
         workspaceId={workspaceId}
       />

@@ -3,6 +3,7 @@ import { beforeEach, describe, it, expect, vi } from "vitest"
 import { render, screen } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import type { ThreadSummary } from "@threahq/types"
+import * as contextsModule from "@/contexts"
 import * as hooksModule from "@/hooks"
 import * as workspaceEmojiModule from "@/hooks/use-workspace-emoji"
 import * as relativeTimeModule from "@/components/relative-time"
@@ -10,6 +11,9 @@ import { ThreadCard } from "./thread-card"
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  vi.spyOn(contextsModule, "usePanel").mockReturnValue({
+    getPanelUrl: (id: string) => `/panel/${id}`,
+  } as ReturnType<typeof contextsModule.usePanel>)
   vi.spyOn(hooksModule, "useActors").mockReturnValue({
     getActorName: (id: string) => `Name-${id.slice(-4)}`,
     getActorAvatar: (id: string) => ({ fallback: id.slice(0, 2).toUpperCase(), avatarUrl: null }),
@@ -44,24 +48,24 @@ describe("ThreadCard", () => {
   it("names the empty state when a thread exists with no replies", () => {
     // `/spawn` attaches a session to a thread that holds nothing yet; the card
     // is the anchor's only trace of it between turns.
-    renderCard(<ThreadCard replyCount={0} href="/threads/1" workspaceId="ws_1" summary={undefined} />)
+    renderCard(<ThreadCard replyCount={0} panelId="thread_1" workspaceId="ws_1" summary={undefined} />)
     expect(screen.getByText("No replies yet")).toBeInTheDocument()
-    expect(screen.getByRole("link")).toHaveAttribute("href", "/threads/1")
+    expect(screen.getByRole("link")).toHaveAttribute("href", "/panel/thread_1")
   })
 
   it("renders the singular noun when replyCount is 1", () => {
-    renderCard(<ThreadCard replyCount={1} href="/threads/1" workspaceId="ws_1" summary={baseSummary} />)
+    renderCard(<ThreadCard replyCount={1} panelId="thread_1" workspaceId="ws_1" summary={baseSummary} />)
     expect(screen.getByText("1 reply")).toBeInTheDocument()
     expect(screen.queryByText(/replies$/)).toBeNull()
   })
 
   it("renders the plural noun when replyCount > 1", () => {
-    renderCard(<ThreadCard replyCount={4} href="/threads/1" workspaceId="ws_1" summary={baseSummary} />)
+    renderCard(<ThreadCard replyCount={4} panelId="thread_1" workspaceId="ws_1" summary={baseSummary} />)
     expect(screen.getByText("4 replies")).toBeInTheDocument()
   })
 
   it("renders reply count only (no preview row) when summary is absent", () => {
-    renderCard(<ThreadCard replyCount={2} href="/threads/1" workspaceId="ws_1" summary={undefined} />)
+    renderCard(<ThreadCard replyCount={2} panelId="thread_1" workspaceId="ws_1" summary={undefined} />)
     expect(screen.getByText("2 replies")).toBeInTheDocument()
     // Preview row renders the latest author's name + ": " separator; confirm
     // it's absent. Matches the "author: content" shape used by
@@ -70,7 +74,7 @@ describe("ThreadCard", () => {
   })
 
   it("strips markdown from the preview (INV-60)", () => {
-    renderCard(<ThreadCard replyCount={3} href="/threads/1" workspaceId="ws_1" summary={baseSummary} />)
+    renderCard(<ThreadCard replyCount={3} panelId="thread_1" workspaceId="ws_1" summary={baseSummary} />)
     // `truncateContent` routes `**latest**` through `stripMarkdownToInline`.
     // The rendered preview should contain "latest" as plain text, NOT `**latest**`.
     const preview = screen.getByText(/latest/i)
@@ -81,7 +85,7 @@ describe("ThreadCard", () => {
     renderCard(
       <ThreadCard
         replyCount={0}
-        href="/panel/draft:stream_1:msg_1"
+        panelId="draft:stream_1:msg_1"
         workspaceId="ws_1"
         summary={undefined}
         draft={{ preview: "half-written reply", attachmentCount: 0 }}
@@ -98,7 +102,7 @@ describe("ThreadCard", () => {
     renderCard(
       <ThreadCard
         replyCount={0}
-        href="/panel/draft:stream_1:msg_1"
+        panelId="draft:stream_1:msg_1"
         workspaceId="ws_1"
         summary={undefined}
         draft={{ preview: "", attachmentCount: 0 }}
@@ -112,7 +116,7 @@ describe("ThreadCard", () => {
     renderCard(
       <ThreadCard
         replyCount={0}
-        href="/panel/draft:stream_1:msg_1"
+        panelId="draft:stream_1:msg_1"
         workspaceId="ws_1"
         summary={undefined}
         draft={{ preview: "", attachmentCount: 2 }}
@@ -126,13 +130,13 @@ describe("ThreadCard", () => {
     renderCard(
       <ThreadCard
         replyCount={2}
-        href="/threads/1"
+        panelId="thread_1"
         workspaceId="ws_1"
         summary={{ ...baseSummary, archivedAt: "2026-09-09T10:00:00.000Z" }}
       />
     )
     const link = screen.getByRole("link")
-    expect(link).toHaveAttribute("href", "/threads/1")
+    expect(link).toHaveAttribute("href", "/panel/thread_1")
     expect(link).toHaveAttribute("data-archived", "true")
     expect(screen.getByLabelText("Archived thread")).toHaveTextContent("Archived")
     expect(screen.getByText("2 replies")).toHaveClass("text-muted-foreground")
@@ -141,13 +145,13 @@ describe("ThreadCard", () => {
   })
 
   it("renders sealed when the host timeline is archived even though the thread row is live", () => {
-    renderCard(<ThreadCard replyCount={1} href="/threads/1" workspaceId="ws_1" summary={baseSummary} hostArchived />)
+    renderCard(<ThreadCard replyCount={1} panelId="thread_1" workspaceId="ws_1" summary={baseSummary} hostArchived />)
     expect(screen.getByRole("link")).toHaveAttribute("data-archived", "true")
     expect(screen.getByLabelText("Archived thread")).toBeInTheDocument()
   })
 
   it("renders live with no archived marker when neither the thread nor its host is archived", () => {
-    renderCard(<ThreadCard replyCount={1} href="/threads/1" workspaceId="ws_1" summary={baseSummary} />)
+    renderCard(<ThreadCard replyCount={1} panelId="thread_1" workspaceId="ws_1" summary={baseSummary} />)
     expect(screen.getByRole("link")).not.toHaveAttribute("data-archived")
     expect(screen.queryByLabelText("Archived thread")).toBeNull()
     expect(screen.getByText("1 reply")).toHaveClass("text-primary")
@@ -157,7 +161,7 @@ describe("ThreadCard", () => {
     renderCard(
       <ThreadCard
         replyCount={2}
-        href="/panel/thread_1"
+        panelId="thread_1"
         workspaceId="ws_1"
         summary={baseSummary}
         draft={{ preview: "unsent addition", attachmentCount: 0 }}

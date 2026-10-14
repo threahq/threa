@@ -3,6 +3,7 @@ import { Link2, LogIn, MessageSquareReply, Phone, PhoneForwarded, Video } from "
 import { toast } from "sonner"
 import type { CallEndedEventPayload, CallStartedEventPayload, StreamEvent, ThreadSummary } from "@threahq/types"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import { usePanel } from "@/contexts"
 import { useActors, useThreadDraft } from "@/hooks"
 import { useActiveCall } from "@/stores/active-calls-store"
 import { useCallLaunch } from "@/components/call/call-launch-context"
@@ -119,15 +120,16 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
   const { launch, callActive } = useCallLaunch()
   const callPhase = useCallPhase()
   const inCallStreamId = useCallStreamId()
-  // Shared thread affordance keyed on the card's event id: `replyUrl` opens the
+  // Shared thread affordance keyed on the card's event id: `replyPanelId` is the
   // real thread when one exists, else the draft panel to start the call chat.
-  const { threadHref, replyUrl, effectiveThreadId } = useThreadAnchor(workspaceId, streamId, event.id, {
+  const { effectiveThreadId, draftPanelId, replyPanelId } = useThreadAnchor(workspaceId, streamId, event.id, {
     threadId: payload?.threadId,
   })
   // The viewer's unsent reply on this card's thread — shown on the slot before
   // the thread stream exists too (keyed on the anchor until promotion).
   const threadDraft = useThreadDraft(workspaceId, event.id, effectiveThreadId)
   const hostArchived = useHostArchived()
+  const { getPanelUrl } = usePanel()
   // Known before the click, so the affordance says what will actually happen
   // instead of a Join that 409s and then asks.
   const onAnotherDevice = useCallOnAnotherDevice(workspaceId, payload?.callId)
@@ -181,7 +183,7 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
       id: "thread",
       label: hasThread ? "Open call chat" : "Start call chat",
       icon: MessageSquareReply,
-      href: replyUrl,
+      href: getPanelUrl(replyPanelId),
       quick: true,
     })
   }
@@ -281,11 +283,11 @@ export function CallCard({ event, workspaceId, streamId, endedPatch, isThreadPar
           anchorId={event.id}
           streamId={streamId}
           replyCount={replyCount}
-          threadHref={threadHref}
+          threadId={effectiveThreadId}
           summary={payload.threadSummary}
           workspaceId={workspaceId}
           draft={threadDraft}
-          draftHref={replyUrl}
+          draftPanelId={draftPanelId}
           hostArchived={hostArchived}
         />
       )}

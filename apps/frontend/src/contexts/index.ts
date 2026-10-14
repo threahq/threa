@@ -42,6 +42,9 @@ export {
 export {
   PanelProvider,
   usePanel,
+  usePanelId,
+  useLatestPanel,
+  useLatestRoute,
   usePanelTabFocusHandoff,
   usePaneShortcutQueue,
   usePaneFocusLanding,
@@ -102,7 +105,7 @@ export {
   clampSidebarWidth,
   type CollapseState,
 } from "./sidebar-context"
-export { TraceProvider, useTrace } from "./trace-context"
+export { TraceProvider, useTrace, useLatestTrace } from "./trace-context"
 export { MediaGalleryProvider, useMediaGallery } from "./media-gallery-context"
 export { CodeViewerProvider, useCodeViewerOptional } from "./code-viewer-context"
 export {

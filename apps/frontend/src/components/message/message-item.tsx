@@ -444,7 +444,7 @@ export function MessageItem({
     authorId: message.authorId,
     currentUserId: currentUserId ?? undefined,
     isThreadParent: true,
-    replyUrl: "",
+    getReplyUrl: () => "",
     messageId: message.id,
     workspaceId,
     streamId,

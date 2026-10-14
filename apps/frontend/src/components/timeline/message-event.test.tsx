@@ -109,13 +109,23 @@ function installDefaultSpies() {
   vi.spyOn(contextsModule, "usePendingMessageStatus").mockImplementation(
     (id) => mockGetStatus(id) as ReturnType<typeof contextsModule.usePendingMessageStatus>
   )
-  vi.spyOn(contextsModule, "usePanel").mockReturnValue({
+  const panel = {
     panelId: null,
     getPanelUrl: (streamId: string) => `/panel/${streamId}`,
-  } as unknown as ReturnType<typeof contextsModule.usePanel>)
-  vi.spyOn(contextsModule, "useTrace").mockReturnValue({
+  } as unknown as ReturnType<typeof contextsModule.usePanel>
+  vi.spyOn(contextsModule, "usePanel").mockReturnValue(panel)
+  vi.spyOn(contextsModule, "usePanelId").mockReturnValue(null)
+  vi.spyOn(contextsModule, "useLatestPanel").mockReturnValue(() => panel)
+  vi.spyOn(contextsModule, "useLatestRoute").mockReturnValue(
+    () =>
+      ({ location: { pathname: "/", search: "" }, navigate: vi.fn() }) as unknown as ReturnType<
+        ReturnType<typeof contextsModule.useLatestRoute>
+      >
+  )
+  const trace = {
     getTraceUrl: (sessionId: string) => `/trace/${sessionId}`,
-  } as unknown as ReturnType<typeof contextsModule.useTrace>)
+  } as unknown as ReturnType<typeof contextsModule.useTrace>
+  vi.spyOn(contextsModule, "useLatestTrace").mockReturnValue(() => trace)
   vi.spyOn(contextsModule, "useMediaGallery").mockReturnValue({
     mediaAttachmentId: null,
     openMedia: vi.fn(),

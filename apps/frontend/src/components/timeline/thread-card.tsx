@@ -5,6 +5,7 @@ import type { ReactNode } from "react"
 import type { ThreadSummary } from "@threahq/types"
 import { ActorAvatar } from "@/components/actor-avatar"
 import { RelativeTime } from "@/components/relative-time"
+import { usePanel } from "@/contexts"
 import { useActors } from "@/hooks"
 import { useWorkspaceEmoji } from "@/hooks/use-workspace-emoji"
 import { truncateContent } from "@/components/layout/sidebar/utils"
@@ -41,13 +42,14 @@ function draftSnippet(draft: ThreadCardDraft): string {
 
 interface ThreadCardProps {
   replyCount: number
-  href: string
+  /** The panel the card opens: the thread, or the draft reply panel before one exists. */
+  panelId: string
   workspaceId: string
   summary?: ThreadSummary
   /**
    * The viewer's unsent reply draft in this thread. With replies it appends a
    * muted "Draft" token after the timestamp; at `replyCount === 0` it is the
-   * whole card (there is nothing else to show) and `href` points at the draft
+   * whole card (there is nothing else to show) and `panelId` is the draft
    * reply panel.
    */
   draft?: ThreadCardDraft | null
@@ -85,7 +87,7 @@ interface ThreadCardProps {
  */
 export function ThreadCard({
   replyCount,
-  href,
+  panelId,
   workspaceId,
   summary,
   draft,
@@ -103,12 +105,13 @@ export function ThreadCard({
   const participants = summary?.participants ?? []
   // Sealed threads stay in the timeline, greyed and still openable: the thread
   // is read-only, not gone.
+  const { getPanelUrl } = usePanel()
   const archived = hostArchived || !!summary?.archivedAt
   const labelTone = archived ? "text-muted-foreground" : "text-primary"
 
   return (
     <Link
-      to={href}
+      to={getPanelUrl(panelId)}
       data-archived={archived || undefined}
       className={cn(
         "group/thread relative flex flex-col gap-1 rounded-md py-1.5 pl-3 pr-2",

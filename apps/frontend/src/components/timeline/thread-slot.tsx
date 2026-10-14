@@ -18,14 +18,15 @@ interface ThreadSlotProps {
    *  session then has nowhere else to surface either. */
   hideSessionCards?: boolean
   replyCount: number
-  threadHref: string | null
+  /** The real thread stream id, once one exists (`useThreadAnchor().effectiveThreadId`). */
+  threadId?: string | null
   summary?: ThreadSummary
   workspaceId: string
   /** The viewer's unsent reply draft for this anchor (`useThreadDraft`). */
   draft?: ScopeDraftPreview | null
-  /** Panel url for the not-yet-created thread (`useThreadAnchor().replyUrl`) —
+  /** Panel id of the not-yet-created thread (`useThreadAnchor().draftPanelId`) —
    *  where a draft-only card points until a real thread exists. */
-  draftHref?: string | null
+  draftPanelId?: string | null
   /** The anchor's timeline is archived, so the card renders sealed. */
   hostArchived?: boolean
 }
@@ -59,11 +60,11 @@ export const ThreadSlot = memo(function ThreadSlot({
   streamId,
   hideSessionCards = false,
   replyCount,
-  threadHref,
+  threadId,
   summary,
   workspaceId,
   draft,
-  draftHref,
+  draftPanelId,
   hostArchived = false,
 }: ThreadSlotProps) {
   const sessions = useAgentActivityForAnchor(workspaceId, anchorId)
@@ -72,13 +73,13 @@ export const ThreadSlot = memo(function ThreadSlot({
   // session card — except where those are hidden, and then this is its only home.
   const activity = sessions.find((s) => s.streamId !== streamId) ?? (hideSessionCards ? sessions[0] : undefined)
   const hasActivity = !!activity
-  const hasThread = replyCount > 0 && !!threadHref
+  const hasThread = replyCount > 0 && !!threadId
   // A thread that exists but holds nothing yet — a `/spawn` session attached to
   // its anchor before it has posted. Suppressed while a session is running: an
   // empty "No replies yet" card contradicts the thinking row directly above it.
-  const hasEmptyThread = replyCount === 0 && !!threadHref && !hasActivity
-  const cardHref = threadHref ?? draftHref ?? null
-  const hasDraft = !!draft && !!cardHref
+  const hasEmptyThread = replyCount === 0 && !!threadId && !hasActivity
+  const cardPanelId = threadId ?? draftPanelId ?? null
+  const hasDraft = !!draft && !!cardPanelId
   const showCard = hasThread || hasDraft || hasEmptyThread
   const visible = hasActivity || showCard
 
@@ -146,10 +147,10 @@ export const ThreadSlot = memo(function ThreadSlot({
           Firefox 120+, Safari 17+; older browsers snap without transition. */}
       <CollapsibleRow open={hasActivity}>{activity ? <ThinkingRow activity={activity} /> : null}</CollapsibleRow>
       <CollapsibleRow open={showCard}>
-        {showCard && cardHref ? (
+        {showCard && cardPanelId ? (
           <ThreadCard
             replyCount={hasThread ? replyCount : 0}
-            href={cardHref}
+            panelId={cardPanelId}
             workspaceId={workspaceId}
             summary={summary}
             draft={draft}

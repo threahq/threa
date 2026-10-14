@@ -1,10 +1,11 @@
-import { test, expect, type Page } from "@playwright/test"
+import { test, expect, type Locator, type Page } from "@playwright/test"
 import {
   createChannel,
   expectApiOk,
   generateTestId,
   loginAndCreateWorkspace,
   loginInNewContext,
+  panesSettled,
   workspaceIdFromUrl,
 } from "./helpers"
 import { seedStream } from "./perf-fixtures"
@@ -30,6 +31,25 @@ async function postMessage(page: Page, workspaceId: string, streamId: string, co
 
 function streamIdFromUrl(page: Page): string {
   return page.url().match(/\/s\/([^/?]+)/)![1]!
+}
+
+async function at(target: Locator, x: number, y: number): Promise<{ x: number; y: number }> {
+  const box = (await target.boundingBox())!
+  return { x: box.x + box.width * x, y: box.y + box.height * y }
+}
+
+/** Drags `source` to `to` with the mouse, the way `pane-drops.spec.ts` does. */
+async function drag(page: Page, source: Locator, to: { x: number; y: number }): Promise<void> {
+  await source.scrollIntoViewIfNeeded()
+  const from = await at(source, 0.5, 0.5)
+  await page.mouse.move(from.x, from.y)
+  await page.mouse.down()
+  await page.mouse.move(from.x + 12, from.y + 4, { steps: 3 })
+  await page.mouse.move(to.x, to.y, { steps: 12 })
+  // Chromium coalesces emulated dragovers and can drop the last; a nudge lands one where the pointer rests.
+  await page.mouse.move(to.x + 1, to.y)
+  await page.mouse.move(to.x, to.y)
+  await page.mouse.up()
 }
 
 function topComponents(sample: RenderSample): string {
@@ -145,8 +165,12 @@ test("component render counts stay within their budgets", async ({ page, browser
   const mainLink = page.locator(`a[href*="/s/${mainStreamId}"]`).first()
   const otherLink = page.locator(`a[href*="/s/${otherStreamId}"]`).first()
   const backgroundLink = page.locator(`a[href*="/s/${backgroundStreamId}"]`).first()
-  const lastSeed = (prefix: string) =>
-    timeline.getByText(`${prefix}-${testId} msg-${String(SEED_COUNT).padStart(4, "0")}`)
+  const otherSidebarRow = page
+    .getByRole("navigation", { name: "Sidebar navigation" })
+    .getByRole("link", { name: `#${otherName}` })
+  const otherPane = page.locator(`[data-panel-tab="${otherStreamId}"]`)
+  const lastSeedText = (prefix: string) => `${prefix}-${testId} msg-${String(SEED_COUNT).padStart(4, "0")}`
+  const lastSeed = (prefix: string) => timeline.getByText(lastSeedText(prefix))
 
   const openStream = async (link: typeof mainLink, name: string, prefix: string) => {
     await link.click()
@@ -164,6 +188,8 @@ test("component render counts stay within their budgets", async ({ page, browser
     "incoming message in the open stream": [],
     "message in another stream": [],
     "switch stream (warm)": [],
+    "drop a pane beside the open stream": [],
+    "close the dropped pane": [],
   }
 
   const sendSamples: RenderSample[] = []
@@ -214,6 +240,27 @@ test("component render counts stay within their budgets", async ({ page, browser
       await measureRenders(page, "switch stream (warm)", () => openStream(otherLink, otherName, "other"))
     )
     await openStream(mainLink, mainName, "main")
+
+    // The dropped pane mounts its whole timeline while the panes glide into
+    // the new arrangement, so both are measured against the warm other stream.
+    const beside = await at(page.getByTestId("main-pane"), 0.95, 0.4)
+    samples["drop a pane beside the open stream"].push(
+      await measureRenders(page, "drop a pane beside the open stream", async () => {
+        await drag(page, otherSidebarRow, beside)
+        await expect(otherPane.getByTestId("stream-timeline").getByText(lastSeedText("other"))).toBeVisible({
+          timeout: 15_000,
+        })
+        await panesSettled(page)
+      })
+    )
+    samples["close the dropped pane"].push(
+      await measureRenders(page, "close the dropped pane", async () => {
+        await otherPane.getByRole("button", { name: /close/i }).first().click()
+        await expect(otherPane).toHaveCount(0)
+        await panesSettled(page)
+      })
+    )
+    await expect(page.getByRole("heading", { name: `#${mainName}`, level: 1 })).toBeVisible()
   }
 
   console.log(`render-budget "send a message" (not gated): ${sendSamples.map((s) => s.renders).join(", ")}`)

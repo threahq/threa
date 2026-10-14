@@ -63,8 +63,13 @@ export function argNames(args: readonly CommandArgumentInfo[] | undefined): Comm
  * treated as a command.
  */
 export function CommandListProvider({ commands, children }: CommandListProviderProps) {
+  // Each route stream lists its commands in a list of its own, mostly the same ones: the value
+  // follows what the list holds, so every rendered message doesn't re-render per stream change.
+  const listed = JSON.stringify(commands.map((command) => [command.name, command.args ?? null]))
   const value = useMemo<CommandListContextValue>(() => {
-    const byName = new Map(commands.map((command) => [command.name.toLowerCase(), command]))
+    const byName = new Map(
+      (JSON.parse(listed) as [string, CommandArgumentInfo[] | null][]).map(([name, args]) => [name.toLowerCase(), args])
+    )
     const argsByName = new Map<string, CommandArgNames>()
     return {
       isKnownCommand: (name) => byName.has(name.toLowerCase()),
@@ -72,14 +77,13 @@ export function CommandListProvider({ commands, children }: CommandListProviderP
         const key = name.toLowerCase()
         const cached = argsByName.get(key)
         if (cached) return cached
-        const command = byName.get(key)
-        if (!command) return NO_ARGS
-        const names = argNames(command.args)
+        if (!byName.has(key)) return NO_ARGS
+        const names = argNames(byName.get(key) ?? undefined)
         argsByName.set(key, names)
         return names
       },
     }
-  }, [commands])
+  }, [listed])
 
   return <CommandListContext.Provider value={value}>{children}</CommandListContext.Provider>
 }

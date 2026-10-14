@@ -189,7 +189,7 @@ export function LedgerRow({
     authorId: message.authorId,
     currentUserId: currentUserId ?? undefined,
     isThreadParent: true,
-    replyUrl: "",
+    getReplyUrl: () => "",
     messageId: message.id,
     workspaceId,
     streamId,

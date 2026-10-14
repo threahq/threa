@@ -11,7 +11,7 @@ function createContext(overrides: Partial<MessageActionContext> = {}): MessageAc
   return {
     contentMarkdown: "# Hello\n\nThis is **bold** and `code`.",
     actorType: "user",
-    replyUrl: "/panel/draft:stream_1:msg_1",
+    getReplyUrl: () => "/panel/draft:stream_1:msg_1",
     ...overrides,
   }
 }
@@ -24,12 +24,12 @@ describe("getVisibleActions", () => {
     expect(ids).toEqual(["reply-in-thread", "copy-as-markdown", "copy-as-plain-text"])
   })
 
-  it("should include show-trace for persona messages with sessionId and traceUrl", () => {
+  it("should include show-trace for persona messages with sessionId and getTraceUrl", () => {
     const actions = getVisibleActions(
       createContext({
         actorType: "persona",
         sessionId: "session_123",
-        traceUrl: "/trace/session_123",
+        getTraceUrl: () => "/trace/session_123",
       })
     )
     const ids = actions.map((a) => a.id)
@@ -37,12 +37,12 @@ describe("getVisibleActions", () => {
     expect(ids).toEqual(["show-trace", "reply-in-thread", "copy-as-markdown", "copy-as-plain-text"])
   })
 
-  it("should include show-trace for bot messages with sessionId and traceUrl", () => {
+  it("should include show-trace for bot messages with sessionId and getTraceUrl", () => {
     const actions = getVisibleActions(
       createContext({
         actorType: "bot",
         sessionId: "session_123",
-        traceUrl: "/trace/session_123",
+        getTraceUrl: () => "/trace/session_123",
       })
     )
     const ids = actions.map((a) => a.id)
@@ -51,13 +51,13 @@ describe("getVisibleActions", () => {
   })
 
   it("should not include show-trace for persona messages without sessionId", () => {
-    const actions = getVisibleActions(createContext({ actorType: "persona", traceUrl: "/trace/x" }))
+    const actions = getVisibleActions(createContext({ actorType: "persona", getTraceUrl: () => "/trace/x" }))
     const ids = actions.map((a) => a.id)
 
     expect(ids).not.toContain("show-trace")
   })
 
-  it("should not include show-trace for persona messages without traceUrl", () => {
+  it("should not include show-trace for persona messages without getTraceUrl", () => {
     const actions = getVisibleActions(createContext({ actorType: "persona", sessionId: "session_123" }))
     const ids = actions.map((a) => a.id)
 
@@ -65,7 +65,7 @@ describe("getVisibleActions", () => {
   })
 
   it("should not include show-trace for user messages", () => {
-    const actions = getVisibleActions(createContext({ sessionId: "session_123", traceUrl: "/trace/x" }))
+    const actions = getVisibleActions(createContext({ sessionId: "session_123", getTraceUrl: () => "/trace/x" }))
     const ids = actions.map((a) => a.id)
 
     expect(ids).not.toContain("show-trace")
@@ -231,11 +231,11 @@ describe("getVisibleActions", () => {
 })
 
 describe("message action behaviors", () => {
-  it("show-trace should return traceUrl from getHref", () => {
+  it("show-trace should return getTraceUrl from getHref", () => {
     const ctx = createContext({
       actorType: "persona",
       sessionId: "session_123",
-      traceUrl: "/trace/session_123",
+      getTraceUrl: () => "/trace/session_123",
     })
 
     const traceAction = messageActions.find((a) => a.id === "show-trace")!
@@ -243,8 +243,8 @@ describe("message action behaviors", () => {
     expect(traceAction.getHref!(ctx)).toBe("/trace/session_123")
   })
 
-  it("reply-in-thread should return replyUrl from getHref", () => {
-    const ctx = createContext({ replyUrl: "/panel/thread_456" })
+  it("reply-in-thread should resolve the href from getReplyUrl", () => {
+    const ctx = createContext({ getReplyUrl: () => "/panel/thread_456" })
 
     const replyAction = messageActions.find((a) => a.id === "reply-in-thread")!
 

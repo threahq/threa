@@ -2,6 +2,7 @@ import { createContext, useContext, useCallback, useMemo, type ReactNode } from 
 import { useSearchParams } from "react-router-dom"
 import { useCoverClose } from "@/hooks/use-cover-close"
 import { MEDIA_COVER } from "@/lib/covers"
+import { useLatest } from "@/hooks/use-latest"
 
 interface MediaGalleryContextValue {
   /** Attachment ID from the ?media= search param, or null */
@@ -23,8 +24,14 @@ export function MediaGalleryProvider({ children }: MediaGalleryProviderProps) {
     return searchParams.get("media")
   }, [searchParams])
 
+  const close = useCoverClose(MEDIA_COVER)
+  // The callbacks read the route when called, so the value changes only with
+  // the open item: every rendered message holds an attachment provider on it.
+  const latest = useLatest({ searchParams, setSearchParams, close })
+
   const openMedia = useCallback(
     (attachmentId: string) => {
+      const { searchParams, setSearchParams } = latest()
       // Opening the gallery deepens history (push) so the OS back button
       // closes it; navigating between items replaces so the back stack
       // doesn't fill with every viewed image.
@@ -38,10 +45,10 @@ export function MediaGalleryProvider({ children }: MediaGalleryProviderProps) {
         { replace: isNavigatingItems }
       )
     },
-    [searchParams, setSearchParams]
+    [latest]
   )
 
-  const closeMedia = useCoverClose(MEDIA_COVER)
+  const closeMedia = useCallback(() => latest().close(), [latest])
 
   const value = useMemo<MediaGalleryContextValue>(
     () => ({
