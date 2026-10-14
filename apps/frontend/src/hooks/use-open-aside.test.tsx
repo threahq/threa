@@ -36,6 +36,19 @@ function wrapperInPagePane(children: ReactNode) {
   )
 }
 
+/** The hook on a workspace page with the host stream's pane open beside it. */
+function wrapperBesidePage(children: ReactNode) {
+  return (
+    <MemoryRouter initialEntries={["/w/ws_1/board?panel=stream_host"]}>
+      <PanelProvider>
+        <Routes>
+          <Route path="/w/:workspaceId/board" element={<>{children}</>} />
+        </Routes>
+      </PanelProvider>
+    </MemoryRouter>
+  )
+}
+
 let resolveCreate: (stream: { id: string }) => void
 let mutateAsync: ReturnType<typeof vi.fn>
 
@@ -92,6 +105,19 @@ describe("useOpenAside", () => {
 
     const opening = result.current.open({ kind: "stream", hostStreamId: "stream_host" })
     act(() => result.current.navigate("/w/ws_1/s/stream_other"))
+    resolveCreate({ id: "stream_aside" })
+    await opening
+
+    expect(getAsideState()).toBeNull()
+  })
+
+  it("drops a create that lands after its host stream's pane closed beside a workspace page", async () => {
+    const { result } = renderHook(() => ({ open: useOpenAside("ws_1"), navigate: useNavigate() }), {
+      wrapper: ({ children }) => wrapperBesidePage(children),
+    })
+
+    const opening = result.current.open({ kind: "stream", hostStreamId: "stream_host" })
+    act(() => result.current.navigate("/w/ws_1/board"))
     resolveCreate({ id: "stream_aside" })
     await opening
 

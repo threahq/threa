@@ -8,12 +8,13 @@ import { buildAsideBag, buildViewportRef } from "@/lib/aside/snapshot"
 import { asideHostKey, openAside } from "@/stores/aside-store"
 import { capture } from "@/lib/analytics/posthog"
 import { PANEL_PARAM, fullPanelLayout, panelIdsOf, parsePanelLayout } from "@/lib/panel-tabs"
+import { pagePaneAt } from "@/lib/page-panes"
 import { useLatestRoute } from "@/contexts"
 
-/** The panes a stream page shows; null off the stream page. */
+/** The panes a stream page or a workspace page shows; null elsewhere. */
 function panesAt({ pathname, search }: Location): string[] | null {
-  const path = matchPath("/w/:workspaceId/s/:streamId", pathname)?.params.streamId
-  if (path === undefined) return null
+  const path = matchPath("/w/:workspaceId/s/:streamId", pathname)?.params.streamId ?? pagePaneAt(pathname)
+  if (path === null || path === undefined) return null
   return panelIdsOf(fullPanelLayout(path, parsePanelLayout(new URLSearchParams(search).get(PANEL_PARAM))))
 }
 
