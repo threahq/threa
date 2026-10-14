@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ThreaLogo } from "@/components/threa-logo"
+import { LogoutScopeDialog, useLogout } from "@/components/account-switcher"
 import { ApiError } from "@/api/client"
 import { formatRegion } from "@/lib/regions"
 import { INVITATION_ERROR_CODES, isInvitationErrorCode, type InvitationErrorCode } from "@/api/invitations"
@@ -45,6 +46,7 @@ function getCreateWorkspaceErrorMessage(error: unknown): string | null {
 export function WorkspaceSelectPage() {
   const { user, loading: authLoading } = useAuth()
   const { workspaces, cachedWorkspaces, pendingInvitations, isLoading: workspacesLoading, error } = useWorkspaces()
+  const logout = useLogout()
   // Prefer the freshly fetched list; fall back to the IDB-cached one so a
   // returning user sees their workspaces instantly while the list query
   // revalidates in the background instead of staring at a full-screen spinner
@@ -120,10 +122,16 @@ export function WorkspaceSelectPage() {
   if (error && !displayWorkspaces?.length) {
     return (
       <div className="flex min-h-screen items-center justify-center">
-        <div className="text-center">
-          <p className="text-destructive">Failed to load workspaces</p>
-          <p className="mt-2 text-sm text-muted-foreground">{error.message}</p>
+        <div className="flex flex-col items-center gap-4 text-center">
+          <div>
+            <p className="text-destructive">Failed to load workspaces</p>
+            <p className="mt-2 text-sm text-muted-foreground">{error.message}</p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={logout}>
+            Log out
+          </Button>
         </div>
+        <LogoutScopeDialog />
       </div>
     )
   }
@@ -205,7 +213,12 @@ export function WorkspaceSelectPage() {
           </Button>
           {createWorkspaceErrorMessage && <p className="text-sm text-destructive">{createWorkspaceErrorMessage}</p>}
         </form>
+
+        <Button variant="ghost" size="sm" onClick={logout}>
+          Log out
+        </Button>
       </div>
+      <LogoutScopeDialog />
     </div>
   )
 }
