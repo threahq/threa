@@ -12,11 +12,18 @@ export interface RenderSample {
   byComponent: Record<string, number>
 }
 
+export interface MeasuredSample extends RenderSample {
+  /** What was rendered before a pane glide's first frame; null when no pane glided. */
+  beforeGlide: RenderSample | null
+}
+
 interface CounterState {
   counting: boolean
   lastCommitAt: number
   renders: number
   byComponent: Record<string, number>
+  beforeGlide: RenderSample | null
+  glideSeen: boolean
 }
 
 type CounterWindow = Window & { __renderCounter?: CounterState }
@@ -30,7 +37,16 @@ const QUIET_CAP_MS = 20_000
 function installHook(): void {
   const COMPONENT_TAGS = new Set([0, 1, 11, 14, 15])
   const PERFORMED_WORK = 1
-  const state: CounterState = { counting: false, lastCommitAt: performance.now(), renders: 0, byComponent: {} }
+  // The id the app gives every pane glide animation.
+  const GLIDE = "pane-glide"
+  const state: CounterState = {
+    counting: false,
+    lastCommitAt: performance.now(),
+    renders: 0,
+    byComponent: {},
+    beforeGlide: null,
+    glideSeen: false,
+  }
   ;(window as CounterWindow).__renderCounter = state
 
   const nameOf = (fiber: any): string => {
@@ -74,7 +90,15 @@ function installHook(): void {
     setStrictMode() {},
     onCommitFiberRoot(_id: number, root: any) {
       state.lastCommitAt = performance.now()
-      if (state.counting) walk(root.current, root.current.alternate)
+      if (!state.counting) return
+      walk(root.current, root.current.alternate)
+      if (state.glideSeen || !document.getAnimations().some((animation) => animation.id === GLIDE)) return
+      // The commit that starts a glide is followed by its effects' re-renders, all before the frame that first
+      // paints the glide; that frame's animation callbacks run after them.
+      state.glideSeen = true
+      requestAnimationFrame(() => {
+        state.beforeGlide = { renders: state.renders, byComponent: { ...state.byComponent } }
+      })
     },
   }
 }
@@ -102,12 +126,14 @@ async function waitForQuiet(page: Page, label: string): Promise<void> {
  * QUIET_MS. `action` must await its own visible effect, so the window can never
  * close before the action happened.
  */
-export async function measureRenders(page: Page, label: string, action: () => Promise<void>): Promise<RenderSample> {
+export async function measureRenders(page: Page, label: string, action: () => Promise<void>): Promise<MeasuredSample> {
   await waitForQuiet(page, `${label} (before)`)
   await page.evaluate(() => {
     const state = (window as CounterWindow).__renderCounter!
     state.renders = 0
     state.byComponent = {}
+    state.beforeGlide = null
+    state.glideSeen = false
     state.counting = true
   })
   await action()
@@ -115,7 +141,7 @@ export async function measureRenders(page: Page, label: string, action: () => Pr
   const sample = await page.evaluate(() => {
     const state = (window as CounterWindow).__renderCounter!
     state.counting = false
-    return { renders: state.renders, byComponent: state.byComponent }
+    return { renders: state.renders, byComponent: state.byComponent, beforeGlide: state.beforeGlide }
   })
   // Every gated action renders something, so zero means the counter is broken
   // (React no longer reports commits to the stand-in hook, or its fiber flags

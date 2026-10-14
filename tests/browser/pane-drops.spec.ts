@@ -204,7 +204,9 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
   await drag(page, sidebarRow(page, names.b), await at(mainPane(page), 0.95, 0.4), async () => {
     await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "right")
   })
-  await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
+  // The added pane holds its timeline until the glide lands, so mounting it never delays the glide's frames.
+  await expect(tabPane(page, streamB)).toBeVisible()
+  await expect(tabPane(page, streamB).getByTestId("stream-timeline")).toHaveCount(0)
   // Midway, the pane that was there is the one moving: part shrunk, its content as wide as its box, still
   // over the edge of the added pane, which is where it ends up.
   const midway = await page.evaluate((added) => {
@@ -221,6 +223,7 @@ test("should open, split and splice where a sidebar row or a tab is dropped, wit
   }, streamB)
   await releaseGlides(page)
   await settled(tabPane(page, streamB))
+  await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
   const mainAfter = await boxOf(mainPane(page))
   expect(midway.main).toBeGreaterThan(mainAfter.width)
   expect(midway.main).toBeLessThan(mainBefore.width)
@@ -307,7 +310,7 @@ test("should slide a divider in and out with the pane edge it marks", async ({ p
   await holdGlides(page)
 
   await drag(page, sidebarRow(page, names.b), await at(mainPane(page), 0.95, 0.4))
-  await expect(tabPane(page, streamB).getByText("said in b")).toBeVisible()
+  await expect(tabPane(page, streamB)).toBeVisible()
   const opening = await mainEdge(page)
   await releaseGlides(page)
   await settled(tabPane(page, streamB))

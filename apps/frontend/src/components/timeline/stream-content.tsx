@@ -601,6 +601,25 @@ interface StreamContentProps {
   emptyState?: React.ReactNode
 }
 
+/**
+ * The one skeleton a timeline shows before its rows: the active-load branch, the cold-boot fallback and a
+ * pane still gliding in share it, so the seam to the first painted rows is invisible.
+ */
+export function TimelineSkeleton() {
+  return (
+    <div className="flex flex-col gap-4 px-4 py-6 sm:px-6">
+      <div className="flex gap-3">
+        <Skeleton className="h-9 w-9 rounded-full" />
+        <div className="flex-1 space-y-2">
+          <Skeleton className="h-4 w-32" />
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-2/3" />
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function StreamContent({
   workspaceId,
   streamId,
@@ -3620,21 +3639,7 @@ const TimelineMessageList = memo(function TimelineMessageList({
   const headerSpacerPx = isNarrowViewport ? STREAM_HEADER_SPACER_PX : STREAM_HEADER_SPACER_SM_PX
   const startMargin = reservedTopSpacer ? BAR_TOP_SPACER_PX : headerSpacerPx
 
-  // Single skeleton shape shared by the active-load branch and the cold-boot
-  // empty fallback so the seam between MainContentGate's skeleton and
-  // StreamContent's first paint is invisible.
-  const skeleton = (
-    <div className="flex flex-col gap-4 px-4 py-6 sm:px-6">
-      <div className="flex gap-3">
-        <Skeleton className="h-9 w-9 rounded-full" />
-        <div className="flex-1 space-y-2">
-          <Skeleton className="h-4 w-32" />
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-2/3" />
-        </div>
-      </div>
-    </div>
-  )
+  const skeleton = <TimelineSkeleton />
 
   // Latched above the early returns: the scroller unmounts on them, so a latch
   // living inside it would answer "nothing rendered yet" on the next empty

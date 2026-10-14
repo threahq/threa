@@ -163,6 +163,23 @@ function fold(
   pane.animate(null, options).onfinish = () => pane.remove()
 }
 
+/**
+ * Settles once no glide moves the pane holding `element`, waiting out any glide that starts before the
+ * running one lands; null when none is running.
+ */
+export function paneLanding(element: Element): Promise<void> | null {
+  const pane = element.closest("[data-panel-tab]")
+  if (!pane || typeof pane.getAnimations !== "function") return null
+  const gliding = () => pane.getAnimations().filter((animation) => animation.id === GLIDE)
+  const land = async (running: Animation[]): Promise<void> => {
+    await Promise.allSettled(running.map((animation) => animation.finished))
+    const next = gliding()
+    if (next.length > 0) return land(next)
+  }
+  const running = gliding()
+  return running.length > 0 ? land(running) : null
+}
+
 /** Whether the device asks for motion to be cut; every edge that would glide snaps then. */
 export const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches
 
@@ -221,6 +238,7 @@ export function usePaneGlide(host: RefObject<HTMLDivElement | null>, glide: bool
       const was = before.get(child)
       return was && isPane(child) ? [[was, box] as const] : []
     })
+    const added: Element[] = []
     for (const [child, box] of now) {
       const was = before.get(child)
       if (was) {
@@ -236,8 +254,7 @@ export function usePaneGlide(host: RefObject<HTMLDivElement | null>, glide: bool
         if (from && !sameBox(from, box)) travel(child, from, box, options)
         continue
       }
-      // Its own layer for the glide, or what it stacks inside (a load mask, a composer) paints over the panes above it.
-      if (isPane(child)) child.animate([{ zIndex: ADDED }, { zIndex: ADDED }], options)
+      if (isPane(child)) added.push(child)
     }
     for (const [child, was] of before) {
       if (now.has(child) || child.isConnected || !(child instanceof HTMLElement)) continue
@@ -247,6 +264,11 @@ export function usePaneGlide(host: RefObject<HTMLDivElement | null>, glide: bool
       if (!to || sameBox(was, to)) continue
       keep(element, child, to)
       travel(child, was, to, options).onfinish = () => child.remove()
+    }
+    // A pane arriving where nothing moves (a stream switch) shows at once; one arriving amid a glide takes its own
+    // layer for it, or what it stacks inside (a load mask, a composer) paints over the panes above it.
+    if (element.getAnimations({ subtree: true }).some((animation) => animation.id === GLIDE)) {
+      for (const child of added) child.animate([{ zIndex: ADDED }, { zIndex: ADDED }], options)
     }
   })
 }

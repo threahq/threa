@@ -172,6 +172,7 @@ test("component render counts stay within their budgets", async ({ page, browser
     "message in another stream": [],
     "switch stream (warm)": [],
     "drop a pane beside the open stream": [],
+    "drop a pane: renders before the glide's first frame": [],
     "close the dropped pane": [],
   }
 
@@ -224,18 +225,20 @@ test("component render counts stay within their budgets", async ({ page, browser
     )
     await openStream(mainLink, mainName, "main")
 
-    // The dropped pane mounts its whole timeline while the panes glide into
-    // the new arrangement, so both are measured against the warm other stream.
+    // The dropped pane mounts its timeline once the panes have glided into the new arrangement. Everything
+    // rendered before the glide's first frame holds that frame back, so it is gated on its own.
     const beside = await at(page.getByTestId("main-pane"), 0.95, 0.4)
-    samples["drop a pane beside the open stream"].push(
-      await measureRenders(page, "drop a pane beside the open stream", async () => {
-        await drag(page, otherSidebarRow, beside)
-        await expect(otherPane.getByTestId("stream-timeline").getByText(lastSeedText("other"))).toBeVisible({
-          timeout: 15_000,
-        })
-        await panesSettled(page)
+    const drop = await measureRenders(page, "drop a pane beside the open stream", async () => {
+      await drag(page, otherSidebarRow, beside)
+      await expect(otherPane.getByTestId("stream-timeline").getByText(lastSeedText("other"))).toBeVisible({
+        timeout: 15_000,
       })
-    )
+      await panesSettled(page)
+    })
+    samples["drop a pane beside the open stream"].push(drop)
+    if (!drop.beforeGlide)
+      throw new Error("drop a pane beside the open stream: no pane glided into the new arrangement")
+    samples["drop a pane: renders before the glide's first frame"].push(drop.beforeGlide)
     samples["close the dropped pane"].push(
       await measureRenders(page, "close the dropped pane", async () => {
         await otherPane.getByRole("button", { name: "Close", exact: true }).click()
