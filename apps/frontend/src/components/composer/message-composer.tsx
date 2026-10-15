@@ -1654,7 +1654,7 @@ export function MessageComposer({
                   isMobile && mobileChromeOpen && "[&_.tiptap]:max-h-none"
                 )}
                 onDragOver={(e) => {
-                  if (!dropsBesideText(e)) return
+                  if (disabled || !dropsBesideText(e)) return
                   e.preventDefault()
                   e.dataTransfer.dropEffect = "link"
                 }}

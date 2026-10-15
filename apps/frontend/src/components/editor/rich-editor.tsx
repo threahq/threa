@@ -701,7 +701,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
   const insertDroppedLink = useCallback((data: DataTransfer): boolean => {
     const current = editorRef.current
     const url = readDroppedUrl(data)
-    if (!current || !url) return false
+    if (!current?.isEditable || !url) return false
     const { to, $to } = current.state.selection
     if ($to.parent.type.spec.code || !tryInsertInAppLinkChip(current, url, to)) {
       current.chain().focus(to).insertContent({ type: "text", text: url }).run()
