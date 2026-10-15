@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
 import { createElement, type ReactElement, type ReactNode } from "react"
-import { createDraftPanelId } from "@/contexts"
+import { createDraftPanelId, PanelProvider } from "@/contexts"
 import type { BranchConversationView } from "@/lib/board/branch-grouping"
 import { resetDraftStoreCache } from "@/stores/draft-store"
 import * as queueDraftModule from "@/hooks/use-queue-draft-message"
@@ -41,7 +41,11 @@ function makeGraph(topicSummary?: string): ConversationGraph {
 
 function wrapperWithStash(stashId: string) {
   return ({ children }: { children: ReactNode }) =>
-    createElement(MemoryRouter, { initialEntries: [`/?stash=${stashId}`] }, children)
+    createElement(
+      MemoryRouter,
+      { initialEntries: [`/?stash=${stashId}`] },
+      createElement(PanelProvider, null, children)
+    )
 }
 
 async function seedDraft(scope: string): Promise<string> {

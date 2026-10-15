@@ -22,6 +22,8 @@ export interface BoardFeedListProps {
   /** Height (px) of the composer sitting above the rows in the same scroller, so
    *  virtua's item offsets stay aligned. */
   startMargin: number
+  /** Row indexes kept mounted off-screen. */
+  keepMounted?: readonly number[]
   children: ReactNode
 }
 
@@ -30,9 +32,15 @@ export interface BoardFeedListProps {
 // stays modest — raise only after profiling on a low-end device.
 const BUFFER_SIZE_PX = 800
 
-export function BoardFeedList({ scrollRef, listRef, startMargin, children }: BoardFeedListProps) {
+export function BoardFeedList({ scrollRef, listRef, startMargin, keepMounted, children }: BoardFeedListProps) {
   return (
-    <Virtualizer ref={listRef} scrollRef={scrollRef} startMargin={startMargin} bufferSize={BUFFER_SIZE_PX}>
+    <Virtualizer
+      ref={listRef}
+      scrollRef={scrollRef}
+      startMargin={startMargin}
+      bufferSize={BUFFER_SIZE_PX}
+      keepMounted={keepMounted}
+    >
       {children}
     </Virtualizer>
   )

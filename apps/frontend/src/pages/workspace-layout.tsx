@@ -12,6 +12,7 @@ import {
 import { Outlet, useParams, useSearchParams, useMatch, useNavigate, Navigate } from "react-router-dom"
 import { AppShell } from "@/components/layout/app-shell"
 import { Sidebar, StreamPickProvider } from "@/components/layout/sidebar"
+import { streamOfPane } from "@/components/layout/sidebar/stream-pick"
 import { AppToastHost } from "@/components/app-update-toast"
 import { MentionableMarkdownWrapper } from "@/components/ui/markdown-content"
 import type { MentionType } from "@/lib/markdown/mention-context"
@@ -46,11 +47,6 @@ import {
   isDraftPanel,
   isConversationPanel,
   parseConversationPanel,
-  parseComposePanel,
-  parseAsidePanel,
-  parseConversationsPanel,
-  parsePersonaTestPanel,
-  parseContextPanel,
 } from "@/contexts"
 import {
   useKeyboardShortcuts,
@@ -71,7 +67,7 @@ import { useDecryptStreamNames } from "@/hooks/use-decrypt-stream-names"
 import { usePageResume } from "@/hooks/use-page-resume"
 import { setLastWorkspaceId } from "@/lib/last-workspace"
 import { useCapturePageviews } from "@/lib/analytics/use-capture-pageviews"
-import { isPagePane, isServerStreamId } from "@/lib/stream-ids"
+import { isServerStreamId } from "@/lib/stream-ids"
 import { useAccountScope, useAuth } from "@/auth"
 import { useWorkspaceStreamsSelect, type CachedStream } from "@/stores/workspace-store"
 import { isLinkableStreamType } from "@/lib/streams"
@@ -199,16 +195,12 @@ function StreamLinkKeyboardHandler({
             return
           }
           // Malformed `conv:` id (hand-edited/stale URL) — fall through to the main link.
-        } else if (!isDraftPanel(panelId) && !isPagePane(panelId) && !parsePersonaTestPanel(panelId)) {
-          void copyStreamLink(
-            workspaceId,
-            parseComposePanel(panelId) ??
-              parseAsidePanel(panelId) ??
-              parseConversationsPanel(panelId) ??
-              parseContextPanel(panelId)?.streamId ??
-              panelId
-          )
-          return
+        } else if (!isDraftPanel(panelId)) {
+          const paneStreamId = streamOfPane(panelId)
+          if (paneStreamId) {
+            void copyStreamLink(workspaceId, paneStreamId)
+            return
+          }
         }
       }
       if (mainStreamId) void copyStreamLink(workspaceId, mainStreamId)

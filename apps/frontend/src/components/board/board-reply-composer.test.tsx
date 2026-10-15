@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { act, render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { MemoryRouter } from "react-router-dom"
 import { BoardReplyComposer } from "./board-reply-composer"
+import { PanelProvider } from "@/contexts"
 import { spyOnExport } from "@/test"
 import * as inlineComposerModule from "@/components/board/board-inline-composer"
 import * as useMobileModule from "@/hooks/use-mobile"
@@ -46,7 +48,17 @@ beforeEach(() => {
 
 function mount(props: Partial<Parameters<typeof BoardReplyComposer>[0]> = {}) {
   return render(
-    <BoardReplyComposer workspaceId="ws_1" post={post} hostStreamType="channel" lastActiveStreamId={null} {...props} />
+    <MemoryRouter>
+      <PanelProvider>
+        <BoardReplyComposer
+          workspaceId="ws_1"
+          post={post}
+          hostStreamType="channel"
+          lastActiveStreamId={null}
+          {...props}
+        />
+      </PanelProvider>
+    </MemoryRouter>
   )
 }
 

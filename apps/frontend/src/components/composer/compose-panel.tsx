@@ -4,28 +4,47 @@ import { SidePanel, SidePanelTitle, SidePanelContent } from "@/components/ui/sid
 import { Button } from "@/components/ui/button"
 import { Empty, EmptyContent, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import { PaneFocusContext, PaneHeader, PanelTabTitle, useProvideComposeSlot } from "@/components/panes"
-import { createComposePanelId, usePanel, useRevealReady } from "@/contexts"
+import { createComposePanelId, createConversationPanelId, usePanel, useRevealReady } from "@/contexts"
+import { parseBoardDraftKey } from "@/lib/board/draft-keys"
+import { panelIdsOf } from "@/lib/panel-tabs"
 import { cn } from "@/lib/utils"
 
 interface ComposePanelProps {
   workspaceId: string
-  streamId: string
+  draftKey: string
   className?: string
 }
 
+/** Where the composer owning `draftKey` lives, to open when no composer writes the draft. */
+function draftHome(draftKey: string): { title: string; label: string; panelId: string } {
+  const board = parseBoardDraftKey(draftKey)
+  if (board?.kind === "reply") {
+    return {
+      title: "This draft's conversation isn't open",
+      label: "Open conversation",
+      panelId: createConversationPanelId(board.conversationId),
+    }
+  }
+  if (board) return { title: "This draft's board card isn't open", label: "Open board", panelId: "page:board" }
+  return { title: "This draft's stream isn't open", label: "Open stream", panelId: draftKey }
+}
+
 /**
- * A stream's draft, written in a pane of its own (`compose:<streamId>`). The
- * stream's composer renders into this pane, so it is the same draft, with the
+ * A draft, written in a pane of its own (`compose:<draftKey>`). The composer
+ * owning the draft renders into this pane, so it is the same draft, with the
  * same attachments and send, as the one it replaces inline.
  */
-export function ComposePanel({ workspaceId, streamId, className }: ComposePanelProps) {
-  const { getPanelUrl } = usePanel()
+export function ComposePanel({ workspaceId, draftKey, className }: ComposePanelProps) {
+  const { getPanelUrl, layout, closeTab } = usePanel()
   const paneFocus = useContext(PaneFocusContext)
   const [node, setNode] = useState<HTMLDivElement | null>(null)
   const slot = useMemo(() => (node ? { node, paneFocus } : null), [node, paneFocus])
-  const composing = useProvideComposeSlot(streamId, slot)
-  // The composer portals in from its stream's pane, which the reveal already waits on.
+  const composing = useProvideComposeSlot(draftKey, slot)
+  // The composer portals in from the pane it lives in, which the reveal already waits on.
   useRevealReady(true)
+  const home = draftHome(draftKey)
+  // With its home already open, the card is scrolled away or collapsed: closing the pane puts the draft back on it.
+  const homeOpen = panelIdsOf(layout).includes(home.panelId)
 
   return (
     <SidePanel className={className} data-editor-zone="panel">
@@ -34,7 +53,7 @@ export function ComposePanel({ workspaceId, streamId, className }: ComposePanelP
         name="Draft"
         title={
           <SidePanelTitle>
-            <PanelTabTitle workspaceId={workspaceId} panelId={createComposePanelId(streamId)} />
+            <PanelTabTitle workspaceId={workspaceId} panelId={createComposePanelId(draftKey)} />
           </SidePanelTitle>
         }
       />
@@ -43,12 +62,18 @@ export function ComposePanel({ workspaceId, streamId, className }: ComposePanelP
         {!composing && (
           <Empty>
             <EmptyHeader>
-              <EmptyTitle>This draft's stream isn't open</EmptyTitle>
+              <EmptyTitle>{homeOpen ? "This draft's card isn't on screen" : home.title}</EmptyTitle>
             </EmptyHeader>
             <EmptyContent>
-              <Button variant="outline" size="sm" asChild>
-                <Link to={getPanelUrl(streamId)}>Open stream</Link>
-              </Button>
+              {homeOpen ? (
+                <Button variant="outline" size="sm" onClick={() => closeTab(createComposePanelId(draftKey))}>
+                  Write on its card
+                </Button>
+              ) : (
+                <Button variant="outline" size="sm" asChild>
+                  <Link to={getPanelUrl(home.panelId)}>{home.label}</Link>
+                </Button>
+              )}
             </EmptyContent>
           </Empty>
         )}

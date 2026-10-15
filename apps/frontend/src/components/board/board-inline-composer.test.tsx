@@ -1,10 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react"
-import { render, screen, waitFor } from "@testing-library/react"
+import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { InlineComposerForm } from "./board-inline-composer"
 import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/components/composer"
+import { ComposeSlotsProvider, useProvideComposeSlot } from "@/components/panes"
+import { TooltipProvider } from "@/components/ui/tooltip"
+import { NO_PANELS, openPanelTab, type PanelLayout } from "@/lib/panel-tabs"
 import { spyOnExport } from "@/test"
 import * as composerModule from "@/components/composer"
 import * as commandSendModule from "@/components/composer/use-composer-command-send"
@@ -61,15 +64,12 @@ const EditorStub = (props: MessageComposerProps) => {
     <div
       data-testid="editor-stub"
       data-expanded={String(!!props.expanded)}
+      data-expand={props.expandHref ?? "no"}
+      data-side={props.sideHref ?? "no"}
       data-has-stash={String(!!props.stashedDrafts && !!props.onStashDraft)}
       data-has-schedule={String(!!props.scheduledMessagesTrigger && !!props.scheduledMessagesTriggerFab)}
     >
       {props.placeholder}
-      {props.onExpandClick && (
-        <button type="button" onClick={props.onExpandClick}>
-          Expand
-        </button>
-      )}
       <button type="button" aria-label="Send" onClick={() => props.onSubmit()} />
     </div>
   )
@@ -122,6 +122,22 @@ let composerFocus: ReturnType<typeof vi.fn<(kind: string) => void>>
 beforeEach(() => {
   Element.prototype.scrollIntoView ??= () => {}
   composerFocus = vi.fn<(kind: string) => void>()
+  paneLayout = NO_PANELS
+  closeTab = vi.fn(() => {
+    paneLayout = NO_PANELS
+  })
+  vi.spyOn(contextsModule, "usePanel").mockImplementation(
+    () =>
+      ({
+        layout: paneLayout,
+        hasTabs: true,
+        getFocusedPanelUrl: (panelId: string) => `/?panel=${panelId}**`,
+        getPanelUrl: (panelId: string) => `/?panel=${panelId}`,
+        closeTab,
+        setCurrentPane: vi.fn(),
+      }) as unknown as ReturnType<typeof contextsModule.usePanel>
+  )
+  vi.spyOn(contextsModule, "usePaneFocusLanding").mockReturnValue({ current: 0 } as never)
   editorSpy = vi.fn(EditorStub)
   spyOnExport(composerModule, "MessageComposer").mockReturnValue(editorSpy as never)
   const stub = draftComposerStub()
@@ -160,6 +176,18 @@ beforeEach(() => {
   })) as never)
 })
 
+const DRAFT_PANE = "compose:board:test"
+let paneLayout: PanelLayout
+let closeTab: ReturnType<typeof vi.fn>
+
+/** The draft's pane, standing in for ComposePanel: offers its node while the layout holds it. */
+function PaneSlot() {
+  const [node, setNode] = useState<HTMLDivElement | null>(null)
+  const slot = useMemo(() => (node ? { node, paneFocus: null } : null), [node])
+  useProvideComposeSlot("board:test", slot)
+  return <div data-testid="draft-pane" ref={setNode} />
+}
+
 /** Anchor container + provider, the shape the board page / panel supply. */
 function Anchored({ children }: { children: ReactNode }) {
   const [el, setEl] = useState<HTMLElement | null>(null)
@@ -169,12 +197,17 @@ function Anchored({ children }: { children: ReactNode }) {
   const [queryClient] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false } } }))
   return (
     <QueryClientProvider client={queryClient}>
-      <div>
-        <div data-testid="anchor" ref={setEl} />
-        <div data-testid="in-place">
-          <FloatingComposerAnchorProvider el={el}>{children}</FloatingComposerAnchorProvider>
-        </div>
-      </div>
+      <TooltipProvider>
+        <ComposeSlotsProvider>
+          <div>
+            <div data-testid="anchor" ref={setEl} />
+            <div data-testid="in-place">
+              <FloatingComposerAnchorProvider el={el}>{children}</FloatingComposerAnchorProvider>
+            </div>
+            <PaneSlot />
+          </div>
+        </ComposeSlotsProvider>
+      </TooltipProvider>
     </QueryClientProvider>
   )
 }
@@ -335,26 +368,33 @@ describe("InlineComposerForm armed reply-target strip", () => {
   })
 })
 
-describe("InlineComposerForm fullscreen expand", () => {
-  it("desktop: an expand button opens the same draft in the fullscreen editor", async () => {
+describe("InlineComposerForm draft pane", () => {
+  it("should offer the draft's pane, in focus and to the side, on desktop", () => {
     vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(false)
     render(<Anchored>{form()}</Anchored>)
-
-    expect(screen.getByTestId("editor-stub")).toHaveAttribute("data-expanded", "false")
-
-    await userEvent.click(screen.getByRole("button", { name: "Expand" }))
-
-    // The inline form is replaced by the expanded one — same draft, one editor
-    // mounted at a time, not two competing instances of the same content.
-    const stubs = await screen.findAllByTestId("editor-stub")
-    expect(stubs).toHaveLength(1)
-    expect(stubs[0]).toHaveAttribute("data-expanded", "true")
+    const editor = screen.getByTestId("editor-stub")
+    expect({ expand: editor.getAttribute("data-expand"), side: editor.getAttribute("data-side") }).toEqual({
+      expand: `/?panel=${DRAFT_PANE}**`,
+      side: `/?panel=${DRAFT_PANE}`,
+    })
   })
 
-  it("mobile: no expand affordance — the floating pill has its own height-publish lifecycle", () => {
+  it("should offer no pane from the mobile floating pill", () => {
     vi.spyOn(usePointerModule, "useIsMobileOrCoarse").mockReturnValue(true)
     render(<Anchored>{form()}</Anchored>)
-    expect(screen.queryByRole("button", { name: "Expand" })).toBeNull()
+    expect(screen.getByTestId("editor-stub")).toHaveAttribute("data-expand", "no")
+  })
+
+  it("should write in the pane while it is open, holding its place with a bar that brings the draft back", async () => {
+    paneLayout = openPanelTab(NO_PANELS, DRAFT_PANE)
+    render(<Anchored>{form()}</Anchored>)
+
+    const paneEditor = await within(screen.getByTestId("draft-pane")).findByTestId("editor-stub")
+    expect(paneEditor).toHaveAttribute("data-expanded", "true")
+    expect(within(screen.getByTestId("in-place")).queryByTestId("editor-stub")).toBeNull()
+
+    await userEvent.click(screen.getByRole("button", { name: "Write here" }))
+    expect(closeTab).toHaveBeenCalledWith(DRAFT_PANE)
   })
 })
 
@@ -467,17 +507,16 @@ describe("InlineComposerForm refocus-after-send", () => {
     popover.remove()
   })
 
-  it("keepOpenAfterSend: a send from the fullscreen overlay closes it and lands focus back in the editor", async () => {
+  it("keepOpenAfterSend: a send from the draft's pane closes it and lands focus back in the inline editor", async () => {
+    paneLayout = openPanelTab(NO_PANELS, DRAFT_PANE)
     const onClose = vi.fn()
-    render(<Anchored>{form({ onClose, keepOpenAfterSend: true })}</Anchored>)
-
-    await userEvent.click(screen.getByRole("button", { name: "Expand" }))
-    expect(screen.getByTestId("editor-stub")).toHaveAttribute("data-expanded", "true")
+    const { rerender } = render(<Anchored>{form({ onClose, keepOpenAfterSend: true })}</Anchored>)
+    await within(screen.getByTestId("draft-pane")).findByTestId("editor-stub")
 
     lastComposerProps().onSubmit()
 
-    await waitFor(() => expect(screen.getByTestId("editor-stub")).toHaveAttribute("data-expanded", "false"))
-    // The surviving in-place instance, not the overlay handle that is about to unmount.
+    await waitFor(() => expect(closeTab).toHaveBeenCalledWith(DRAFT_PANE))
+    rerender(<Anchored>{form({ onClose, keepOpenAfterSend: true })}</Anchored>)
     await waitFor(() => expect(composerFocus).toHaveBeenCalledWith("inplace"))
     expect(onClose).not.toHaveBeenCalled()
   })
@@ -612,7 +651,9 @@ describe("InlineComposerForm compose trace", () => {
     })
     return (
       <QueryClientProvider client={queryClient}>
-        <FloatingComposerAnchorProvider el={null}>{children}</FloatingComposerAnchorProvider>
+        <ComposeSlotsProvider>
+          <FloatingComposerAnchorProvider el={null}>{children}</FloatingComposerAnchorProvider>
+        </ComposeSlotsProvider>
       </QueryClientProvider>
     )
   }

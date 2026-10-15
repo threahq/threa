@@ -64,6 +64,7 @@ export {
   createConversationsPanelId,
   createConversationPanelId,
   parseComposePanel,
+  parseComposeDraft,
   createComposePanelId,
   parseAsidePanel,
   createAsidePanelId,

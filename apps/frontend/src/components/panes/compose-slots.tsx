@@ -2,10 +2,11 @@ import { createContext, useContext, useLayoutEffect, useState, useSyncExternalSt
 import type { PaneFocus } from "./pane-focus"
 
 /**
- * Where a `compose:<streamId>` pane takes its stream's composer. The stream's
- * own composer keeps the draft, uploads, quote replies and send, and renders
- * into the pane's node; the pane's floating state rides along, because the
- * composer renders from the stream's place in the tree, not the pane's.
+ * Where a `compose:<draftKey>` pane takes its draft's composer. The composer
+ * that owns the draft (a stream's, a board card's) keeps the draft, uploads,
+ * quote replies and send, and renders into the pane's node; the pane's floating
+ * state rides along, because the composer renders from its own place in the
+ * tree, not the pane's.
  */
 export interface ComposeSlot {
   node: HTMLElement
@@ -13,11 +14,11 @@ export interface ComposeSlot {
 }
 
 interface ComposeSlots {
-  slot: (streamId: string) => ComposeSlot | null
-  setSlot: (streamId: string, slot: ComposeSlot | null) => void
-  /** The composer writing into `streamId`'s slot. A stream on show twice writes from one of them. */
-  owner: (streamId: string) => symbol | null
-  claim: (streamId: string, token: symbol) => () => void
+  slot: (draftKey: string) => ComposeSlot | null
+  setSlot: (draftKey: string, slot: ComposeSlot | null) => void
+  /** The composer writing into `draftKey`'s slot. A draft on show twice writes from one of them. */
+  owner: (draftKey: string) => symbol | null
+  claim: (draftKey: string, token: symbol) => () => void
   subscribe: (listener: () => void) => () => void
 }
 
@@ -29,20 +30,20 @@ function createComposeSlots(): ComposeSlots {
     for (const listener of listeners) listener()
   }
   return {
-    slot: (streamId) => slots.get(streamId) ?? null,
-    setSlot: (streamId, slot) => {
-      if (slot) slots.set(streamId, slot)
-      else slots.delete(streamId)
+    slot: (draftKey) => slots.get(draftKey) ?? null,
+    setSlot: (draftKey, slot) => {
+      if (slot) slots.set(draftKey, slot)
+      else slots.delete(draftKey)
       emit()
     },
-    owner: (streamId) => owners.get(streamId)?.[0] ?? null,
-    claim: (streamId, token) => {
-      owners.set(streamId, [...(owners.get(streamId) ?? []), token])
+    owner: (draftKey) => owners.get(draftKey)?.[0] ?? null,
+    claim: (draftKey, token) => {
+      owners.set(draftKey, [...(owners.get(draftKey) ?? []), token])
       emit()
       return () => {
-        const rest = (owners.get(streamId) ?? []).filter((claimed) => claimed !== token)
-        if (rest.length > 0) owners.set(streamId, rest)
-        else owners.delete(streamId)
+        const rest = (owners.get(draftKey) ?? []).filter((claimed) => claimed !== token)
+        if (rest.length > 0) owners.set(draftKey, rest)
+        else owners.delete(draftKey)
         emit()
       }
     },
@@ -66,23 +67,23 @@ function useComposeSlots(): ComposeSlots {
   return slots
 }
 
-/** The slot this composer renders into while `streamId`'s compose pane is open, or null. */
-export function useComposeSlot(streamId: string, active: boolean): ComposeSlot | null {
+/** The slot this composer renders into while `draftKey`'s compose pane is open, or null. */
+export function useComposeSlot(draftKey: string, active: boolean): ComposeSlot | null {
   const slots = useComposeSlots()
-  const [token] = useState(() => Symbol(streamId))
-  useLayoutEffect(() => (active ? slots.claim(streamId, token) : undefined), [slots, streamId, token, active])
-  const owner = useSyncExternalStore(slots.subscribe, () => slots.owner(streamId))
-  const slot = useSyncExternalStore(slots.subscribe, () => slots.slot(streamId))
+  const [token] = useState(() => Symbol(draftKey))
+  useLayoutEffect(() => (active ? slots.claim(draftKey, token) : undefined), [slots, draftKey, token, active])
+  const owner = useSyncExternalStore(slots.subscribe, () => slots.owner(draftKey))
+  const slot = useSyncExternalStore(slots.subscribe, () => slots.slot(draftKey))
   return active && owner === token ? slot : null
 }
 
-/** Offers `node` to `streamId`'s composer, and whether a composer for it is mounted. */
-export function useProvideComposeSlot(streamId: string, slot: ComposeSlot | null): boolean {
+/** Offers `node` to `draftKey`'s composer, and whether a composer for it is mounted. */
+export function useProvideComposeSlot(draftKey: string, slot: ComposeSlot | null): boolean {
   const slots = useComposeSlots()
   useLayoutEffect(() => {
     if (!slot) return
-    slots.setSlot(streamId, slot)
-    return () => slots.setSlot(streamId, null)
-  }, [slots, streamId, slot])
-  return useSyncExternalStore(slots.subscribe, () => slots.owner(streamId)) !== null
+    slots.setSlot(draftKey, slot)
+    return () => slots.setSlot(draftKey, null)
+  }, [slots, draftKey, slot])
+  return useSyncExternalStore(slots.subscribe, () => slots.owner(draftKey)) !== null
 }

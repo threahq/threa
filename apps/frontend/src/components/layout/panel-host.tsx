@@ -16,7 +16,7 @@ import {
   useCurrentPane,
   isConversationPanel,
   parseAsidePanel,
-  parseComposePanel,
+  parseComposeDraft,
   parseConversationsPanel,
   parsePersonaTestPanel,
   parseContextPanel,
@@ -155,7 +155,7 @@ interface PanelHostProps {
 
 /**
  * Picks the side panel's content by panel kind: a `conv:<id>` panel opens a
- * conversation projection (Mechanism B), a `compose:<id>` panel a stream's
+ * conversation projection (Mechanism B), a `compose:<draftKey>` panel a
  * draft, an `aside:<id>` panel the aside open on a stream, a `convs:<id>` panel
  * a stream's conversations list, a `context:<id>`
  * panel a stream's overview, a `test:<id>` panel a persona draft's test
@@ -184,7 +184,7 @@ function PaneContent({ workspaceId, panelId, className }: PanelHostProps & { pan
   const page = panelId && pagePatternOf(panelId)
   if (page) return <PageRoutes workspaceId={workspaceId} path={pagePathOf(panelId)!} pattern={page} />
   if (panelId && isPagePane(panelId)) return <PagePane />
-  const composeStreamId = panelId && parseComposePanel(panelId)
+  const composeDraftKey = panelId && parseComposeDraft(panelId)
   const context = panelId && parseContextPanel(panelId)
   const conversationsStreamId = panelId && parseConversationsPanel(panelId)
   const testedPersonaId = panelId && parsePersonaTestPanel(panelId)
@@ -210,8 +210,8 @@ function PaneContent({ workspaceId, panelId, className }: PanelHostProps & { pan
   if (asideHostId) {
     return <AsidePanel key={panelId} workspaceId={workspaceId} hostStreamId={asideHostId} className={className} />
   }
-  if (composeStreamId) {
-    return <ComposePanel key={panelId} workspaceId={workspaceId} streamId={composeStreamId} className={className} />
+  if (composeDraftKey) {
+    return <ComposePanel key={panelId} workspaceId={workspaceId} draftKey={composeDraftKey} className={className} />
   }
   if (context) {
     return (
@@ -472,7 +472,7 @@ export function PanelTabStack({
   const firstShare = firstColumnWidth + (width ?? 0) > 0 ? firstColumnWidth / (firstColumnWidth + (width ?? 0)) : 1
   const restore = useCallback(() => focusTab(null), [focusTab])
   // Dismissing a floating draft sends it back inline rather than leaving it beside the stream.
-  const draft = members.find((id) => parseComposePanel(id) !== null)
+  const draft = members.find((id) => parseComposeDraft(id) !== null)
   const dismiss = useCallback(() => (draft ? closeTab(draft) : restore()), [draft, closeTab, restore])
   usePaneFocusEscape(floating, dismiss)
   useShellCover(floating)
