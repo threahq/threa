@@ -43,8 +43,8 @@ export function ComposePanel({ workspaceId, draftKey, className }: ComposePanelP
   // The composer portals in from the pane it lives in, which the reveal already waits on.
   useRevealReady(true)
   const home = draftHome(draftKey)
-  // With its home already open, the card is scrolled away or collapsed: closing the pane puts the draft back on it.
-  const homeOpen = panelIdsOf(layout).includes(home.panelId)
+  // A board draft whose home is already open has its card scrolled away or collapsed: closing the pane puts the draft back on it.
+  const homeOpen = parseBoardDraftKey(draftKey) !== null && panelIdsOf(layout).includes(home.panelId)
 
   return (
     <SidePanel className={className} data-editor-zone="panel">
