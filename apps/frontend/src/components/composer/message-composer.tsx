@@ -124,9 +124,11 @@ function stepBrowserHistory(delta: -1 | 1): void {
   window.history.go(delta)
 }
 
-/** A link dragged over the card's padding or toolbar; the text itself takes its own drops at the pointer. */
+/** A link, not a file, dragged over the card's padding or toolbar; the text itself takes its own drops at the pointer. */
 const dropsBesideText = (event: DragEvent<HTMLElement>) =>
-  event.dataTransfer.types.includes("text/uri-list") && !(event.target as Element).closest('[contenteditable="true"]')
+  event.dataTransfer.types.includes("text/uri-list") &&
+  !event.dataTransfer.types.includes("Files") &&
+  !(event.target as Element).closest('[contenteditable="true"]')
 
 /** Platform-appropriate modifier key symbol (⌘ on Mac, Ctrl+ elsewhere) */
 const MOD_SYMBOL = navigator.platform?.toLowerCase().includes("mac") ? "⌘" : "Ctrl+"
@@ -1659,7 +1661,9 @@ export function MessageComposer({
                   e.dataTransfer.dropEffect = "link"
                 }}
                 onDrop={(e) => {
-                  if (dropsBesideText(e) && richEditorRef.current?.insertDroppedLink(e.dataTransfer)) e.preventDefault()
+                  if (disabled || !dropsBesideText(e)) return
+                  e.preventDefault()
+                  richEditorRef.current?.insertDroppedLink(e.dataTransfer)
                 }}
                 onClick={(e) => {
                   if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))

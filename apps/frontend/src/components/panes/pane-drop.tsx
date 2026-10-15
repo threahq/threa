@@ -207,10 +207,9 @@ export function usePaneDrop(): PaneDropState | null {
   return useContext(PaneDropContext)
 }
 
-/** A text field takes a dropped link as text, and the composer's card a dropped stream as a link, so a drag over one is its own. */
+/** A text field takes a dropped link as text, and the composer a dropped stream as a link, so a drag over one is its own. */
 const overTextField = (event: DragEvent<HTMLElement>) =>
-  event.target instanceof Element &&
-  event.target.closest('[contenteditable="true"], input, textarea, [data-composer-card]') !== null
+  event.target instanceof Element && event.target.closest('[contenteditable="true"], input, textarea') !== null
 
 /**
  * Drop handlers for the pane showing `of`, whose `edges` split and whose
@@ -232,8 +231,11 @@ export function paneDropZone(drops: PaneDropState | null, of: string, edges: rea
   }
   return {
     onDragOver: (event: DragEvent<HTMLElement>) => {
-      // The composer's card claims its drags first, so the zone its drag crossed on the way in is cleared here.
-      if (event.defaultPrevented && !overTextField(event)) return
+      if (event.defaultPrevented) {
+        // The editor or the composer's card claimed it, not a strip, so the zone the drag crossed on the way in clears.
+        if ((event.target as Element).closest('[contenteditable="true"], [data-composer-card]')) hover(null)
+        return
+      }
       const drop = dropAt(event)
       hover(drop && { drop, via: "pane", of })
       if (!drop) return
