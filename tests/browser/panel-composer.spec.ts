@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, expectApiOk, panesSettled } from "./helpers"
 
 /**
  * Expand opens a stream's draft as a pane of its own, `compose:<streamId>` in
@@ -184,6 +184,7 @@ test("should open the draft where the side button is dragged to", async ({ page 
 
   await expect(paneEditor(page, streamId)).toHaveText("dragged")
   expect(panelParam(page)).toContain(compose)
+  await panesSettled(page)
   const [stream, pane] = [await mainPane(page).boundingBox(), await tabPane(page, compose).boundingBox()]
   expect(pane!.y + pane!.height).toBeLessThanOrEqual(stream!.y + 1)
 })
