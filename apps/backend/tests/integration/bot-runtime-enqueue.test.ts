@@ -2,7 +2,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import type { Pool } from "pg"
 import {
   BotInvocationCapabilities,
-  BotInvocationTriggers,
   CommandKinds,
   MessageErrorCodes,
   type BotInvocationCapability,
@@ -17,7 +16,7 @@ import {
 } from "./setup"
 import { BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes"
 import { EnqueuedMessageService, MessageRepository } from "../../src/features/messaging"
-import { commandId, messageId, streamId } from "../../src/lib/id"
+import { messageId, streamId } from "../../src/lib/id"
 
 const { QUEUED_MESSAGE, ACTIVE_SCRATCHPAD, MENTIONABLE } = BotInvocationCapabilities
 
@@ -137,21 +136,11 @@ describe("enqueued messages", () => {
         trigger: string
         status: string
         response_stream_id: string
-      }>("SELECT required_capability, trigger, status, response_stream_id FROM bot_invocations WHERE source_message_id = $1", [sourceMessageId])
-      .then((result) => result.rows)
-
-  const states = () =>
-    pool
-      .query<{
-        source_message_id: string
-        status: string
-        target_runtime_session_id: string
-      }>("SELECT source_message_id, status, target_runtime_session_id FROM bot_invocations WHERE workspace_id = $1", [workspace])
-      .then((result) =>
-        Object.fromEntries(
-          result.rows.map((row) => [row.source_message_id, [row.status, row.target_runtime_session_id]])
-        )
+      }>(
+        "SELECT required_capability, trigger, status, response_stream_id FROM bot_invocations WHERE source_message_id = $1",
+        [sourceMessageId]
       )
+      .then((result) => result.rows)
 
   /** Runs the outbox reconcile for the message, then a busy and an idle claim. */
   async function deliver(source: { id: string }, instanceId: string, runtimeSessionId: string) {
@@ -228,105 +217,12 @@ describe("enqueued messages", () => {
     expect(await rowsFor(source.id)).toEqual([])
   })
 
-  test("ending a session keeps its pending messages and cancels its session-control rows; the next session on that stream adopts the messages", async () => {
-    await link("old-instance", "old-session")
-    const queued = await message("queued for later")
-    await enqueue(queued)
-    const plain = await message("plain message")
-    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: plain.id })
-    const control = await service().createInvocation({
-      workspaceId: workspace,
-      rootStreamId: root,
-      activeStreamId: root,
-      sourceMessageId: commandId(),
-      responseStreamId: root,
-      actorId: bot,
-      trigger: BotInvocationTriggers.SESSION_CONTROL,
-      requiredCapability: BotInvocationCapabilities.SESSION_CONTROL,
-      promptMarkdown: "/kick",
-      authorUserId: author,
-      targetInstanceId: "old-instance",
-      targetRuntimeSessionId: "old-session",
-    })
-    // A message for another stream whose session already died: no new link covers it.
-    const elsewhere = await message("elsewhere", otherStream)
-    await service().createInvocation({
-      workspaceId: workspace,
-      rootStreamId: root,
-      activeStreamId: otherStream,
-      sourceMessageId: elsewhere.id,
-      responseStreamId: otherStream,
-      actorId: bot,
-      trigger: BotInvocationTriggers.ACTIVE_SCRATCHPAD,
-      requiredCapability: ACTIVE_SCRATCHPAD,
-      promptMarkdown: "elsewhere",
-      authorUserId: author,
-      targetInstanceId: "dead-instance",
-      targetRuntimeSessionId: "dead-session",
-    })
-
-    await service().endRuntimeSession({
-      workspaceId: workspace,
-      botId: bot,
-      instanceId: "old-instance",
-      runtimeSessionId: "old-session",
-    })
-    const afterEnd = await states()
-    await link("new-instance", "new-session")
-    const afterRelink = await states()
-    const claimed = await claim("new-instance", "new-session", [QUEUED_MESSAGE, ACTIVE_SCRATCHPAD])
-    const announced = await pool.query<{ sourceMessageId: string }>(
-      `SELECT i.source_message_id AS "sourceMessageId"
-       FROM outbox o JOIN bot_invocations i ON i.id = o.payload->>'invocationId'
-       WHERE o.event_type = 'bot_invocation:available' AND o.payload->>'targetRuntimeSessionId' = 'new-session'`
-    )
-
-    expect({
-      afterEnd,
-      afterRelink,
-      claimedSource: claimed?.sourceMessageId,
-      announced: announced.rows.map((row) => row.sourceMessageId).sort(),
-    }).toEqual({
-      afterEnd: {
-        [queued.id]: ["pending", "old-session"],
-        [plain.id]: ["pending", "old-session"],
-        [elsewhere.id]: ["pending", "dead-session"],
-        [control.invocation.sourceMessageId]: ["cancelled", "old-session"],
-      },
-      afterRelink: {
-        [queued.id]: ["pending", "new-session"],
-        [plain.id]: ["pending", "new-session"],
-        [elsewhere.id]: ["pending", "dead-session"],
-        [control.invocation.sourceMessageId]: ["cancelled", "old-session"],
-      },
-      claimedSource: queued.id,
-      announced: [queued.id, plain.id].sort(),
-    })
-  })
-
-  test("a session linked to another stream never receives the dead session's messages", async () => {
-    await link("old-instance", "old-session")
-    const queued = await message("queued for later")
-    await enqueue(queued)
-    await service().endRuntimeSession({
-      workspaceId: workspace,
-      botId: bot,
-      instanceId: "old-instance",
-      runtimeSessionId: "old-session",
-    })
-
-    await link("thread-instance", "thread-session", otherStream)
-
-    expect({
-      claimed: await claim("thread-instance", "thread-session", [QUEUED_MESSAGE, ACTIVE_SCRATCHPAD]),
-      states: await states(),
-    }).toEqual({ claimed: null, states: { [queued.id]: ["pending", "old-session"] } })
-  })
-
-  test("a session moving to another instance keeps its queue, by relink or by rebind", async () => {
+  test("a session moving to another instance keeps its queue, threads included, by relink or by rebind", async () => {
     await link("first-instance", "kept-session")
     const relinked = await message("queued before relink")
     await enqueue(relinked)
+    const inThread = await message("queued in a thread", otherStream)
+    await enqueue(inThread)
     const moved = await link("second-instance", "kept-session")
     const rebound = await message("queued before rebind")
     await enqueue(rebound)
@@ -339,32 +235,10 @@ describe("enqueued messages", () => {
       runtimeSessionId: "kept-session",
       newInstanceId: "third-instance",
     })
-    const first = await claim("third-instance", "kept-session", [QUEUED_MESSAGE])
-    const second = await claim("third-instance", "kept-session", [QUEUED_MESSAGE])
+    const claimed = []
+    for (let i = 0; i < 3; i++)
+      claimed.push((await claim("third-instance", "kept-session", [QUEUED_MESSAGE]))?.sourceMessageId)
 
-    expect([first?.sourceMessageId, second?.sourceMessageId].sort()).toEqual([relinked.id, rebound.id].sort())
-  })
-
-  test("a session that still holds a link elsewhere keeps the rows aimed at it", async () => {
-    await link("busy-instance", "busy-session", otherStream)
-    const source = await message("for the busy session")
-    await service().createInvocation({
-      workspaceId: workspace,
-      rootStreamId: root,
-      activeStreamId: root,
-      sourceMessageId: source.id,
-      responseStreamId: root,
-      actorId: bot,
-      trigger: BotInvocationTriggers.ACTIVE_SCRATCHPAD,
-      requiredCapability: QUEUED_MESSAGE,
-      promptMarkdown: "for the busy session",
-      authorUserId: author,
-      targetInstanceId: "busy-instance",
-      targetRuntimeSessionId: "busy-session",
-    })
-
-    await link("root-instance", "root-session")
-
-    expect(await states()).toEqual({ [source.id]: ["pending", "busy-session"] })
+    expect(claimed.sort()).toEqual([relinked.id, inThread.id, rebound.id].sort())
   })
 })

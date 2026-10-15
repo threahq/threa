@@ -598,7 +598,6 @@ export class BotRuntimeService {
           code: "THREAD_SESSION_EXISTS",
         })
       }
-      await this.adoptPendingMessagesInTransaction(client, link)
       return { link, stream: thread }
     })
   }
@@ -655,19 +654,20 @@ export class BotRuntimeService {
       linkedBy: params.linkedBy,
       metadata: params.metadata,
     })
-    await this.adoptPendingMessagesInTransaction(db, link)
+    await this.moveSessionToInstanceInTransaction(db, link)
     return link
   }
 
-  private async adoptPendingMessagesInTransaction(db: Querier, link: BotRuntimeSessionLink): Promise<void> {
-    const adopted = await BotInvocationRepository.retargetPendingMessagesToLink(db, {
+  private async moveSessionToInstanceInTransaction(db: Querier, link: BotRuntimeSessionLink): Promise<void> {
+    const moved = await BotInvocationRepository.retargetSessionInstance(db, {
       workspaceId: link.workspaceId,
       botId: link.botId,
-      activeStreamId: link.activeStreamId,
-      instanceId: link.instanceId,
       runtimeSessionId: link.runtimeSessionId,
+      instanceId: link.instanceId,
     })
-    for (const invocation of adopted) await this.emitAvailabilityHint(db, invocation)
+    for (const invocation of moved) {
+      if (invocation.status === "pending") await this.emitAvailabilityHint(db, invocation)
+    }
   }
 
   async rebindPiRemoteSessionInstance(params: {
@@ -698,7 +698,7 @@ export class BotRuntimeService {
         // before rebinding; merge the bootstrap set instead of replacing it.
         mergeCapabilities: true,
       })
-      await this.adoptPendingMessagesInTransaction(db, link)
+      await this.moveSessionToInstanceInTransaction(db, link)
       return link
     })
   }
