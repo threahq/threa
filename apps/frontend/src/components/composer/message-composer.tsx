@@ -1,5 +1,6 @@
 import {
   type ChangeEvent,
+  type DragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
   type RefObject,
@@ -122,6 +123,12 @@ function prependComposerCommand(content: JSONContent, command: string): JSONCont
 function stepBrowserHistory(delta: -1 | 1): void {
   window.history.go(delta)
 }
+
+/** A link, not a file, dragged over the card's padding or toolbar; the text itself takes its own drops at the pointer. */
+const dropsBesideText = (event: DragEvent<HTMLElement>) =>
+  event.dataTransfer.types.includes("text/uri-list") &&
+  !event.dataTransfer.types.includes("Files") &&
+  !(event.target as Element).closest('[contenteditable="true"]')
 
 /** Platform-appropriate modifier key symbol (⌘ on Mac, Ctrl+ elsewhere) */
 const MOD_SYMBOL = navigator.platform?.toLowerCase().includes("mac") ? "⌘" : "Ctrl+"
@@ -1648,6 +1655,16 @@ export function MessageComposer({
                   // mobile, including before the first drag.
                   isMobile && mobileChromeOpen && "[&_.tiptap]:max-h-none"
                 )}
+                onDragOver={(e) => {
+                  if (disabled || !dropsBesideText(e)) return
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = "link"
+                }}
+                onDrop={(e) => {
+                  if (disabled || !dropsBesideText(e)) return
+                  e.preventDefault()
+                  richEditorRef.current?.insertDroppedLink(e.dataTransfer)
+                }}
                 onClick={(e) => {
                   if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))
                     return

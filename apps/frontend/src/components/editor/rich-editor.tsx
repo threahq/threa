@@ -80,6 +80,8 @@ export interface RichEditorHandle {
   openSnippetEditor(): void
   /** Upload files and insert their reference chips at the current selection. */
   insertFiles(files: File[]): boolean
+  /** Insert a link dropped beside the text, not on it, at the caret: an in-app link as its chip. */
+  insertDroppedLink(data: DataTransfer): void
   /** Drop the `/attachment` upload anchor so an abandoned pick can't hijack the next one. */
   cancelPendingInlineUpload(): void
   /** Delete every inline reference to one attachment (the delete cascade). */
@@ -695,6 +697,16 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
     },
     [handleFilesInsert]
   )
+
+  const insertDroppedLink = useCallback((data: DataTransfer) => {
+    const current = editorRef.current
+    const url = readDroppedUrl(data)
+    if (!current?.isEditable || !url) return
+    const { to, $to } = current.state.selection
+    if ($to.parent.type.spec.code || !tryInsertInAppLinkChip(current, url, to)) {
+      current.chain().focus(to).insertContent({ type: "text", text: url }).run()
+    }
+  }, [])
 
   const cancelPendingInlineUpload = useCallback(() => {
     pendingUploadInsertPosRef.current = null
@@ -1402,6 +1414,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       insertEmoji: handleEmojiClick,
       openSnippetEditor,
       insertFiles,
+      insertDroppedLink,
       cancelPendingInlineUpload,
       removeAttachmentReferences,
       insertTranscribedText,
@@ -1422,6 +1435,7 @@ export const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(function
       handleEmojiClick,
       openSnippetEditor,
       insertFiles,
+      insertDroppedLink,
       cancelPendingInlineUpload,
       removeAttachmentReferences,
       insertTranscribedText,

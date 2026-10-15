@@ -231,7 +231,11 @@ export function paneDropZone(drops: PaneDropState | null, of: string, edges: rea
   }
   return {
     onDragOver: (event: DragEvent<HTMLElement>) => {
-      if (event.defaultPrevented) return
+      if (event.defaultPrevented) {
+        // The editor or the composer's card claimed it, not a strip, so the zone the drag crossed on the way in clears.
+        if ((event.target as Element).closest('[contenteditable="true"], [data-composer-card]')) hover(null)
+        return
+      }
       const drop = dropAt(event)
       hover(drop && { drop, via: "pane", of })
       if (!drop) return
