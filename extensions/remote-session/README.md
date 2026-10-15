@@ -3,7 +3,7 @@
 SDK for connecting an agent runtime to a Threa scratchpad. A connector
 implements one hook, `deliverTurn`, and optionally a session-control actuator.
 The SDK links the scratchpad, claims work, keeps presence and claim leases
-alive, routes `/steer` and `/stop`, moves attachments in both directions, and
+alive, routes `/stop` and `/enqueue`, moves attachments in both directions, and
 posts interim and final replies. Claude Code and Pi connect to Threa through
 this package.
 
@@ -32,7 +32,7 @@ Available to every runtime kind, including `custom`. This is `ThreaClient`
 plus the transport; see [`examples/mention-bot.ts`](examples/mention-bot.ts).
 
 Scratchpad-linked. The runtime owns a scratchpad: every message in it is a
-turn for the runtime, the composer offers `/steer`, `/stop`, and whatever
+turn for the runtime, the composer offers `/stop`, `/enqueue`, and whatever
 commands the runtime advertises, and the runtime replies in place. This is
 `RemoteSession`, registering as runtime kind `custom`. See
 [`examples/echo-connector.ts`](examples/echo-connector.ts).
@@ -67,7 +67,7 @@ if ("error" in result) throw new Error(result.error)
 // Only when the connector can drive its runtime; omit it and Threa never
 // offers the commands.
 const sessionControl: SessionControlActuator = {
-  commands: ["stop", "steer", "model"],
+  commands: ["stop", "model"],
   interrupt: () => myRuntime.interrupt(),
   runCommand: async (name, args) => ({ ok: true, message: await myRuntime.run(name, args) }),
 }
@@ -137,14 +137,22 @@ with `E2E_STREAM_PLAINTEXT_UNSUPPORTED`.
 ## What the SDK decides for you
 
 - One normal turn at a time. While a turn is in flight the session claims
-  session-control invocations only, so `/stop` and `/steer` reach the runtime
-  while the next message waits.
+  session-control invocations only, plus, when the actuator has `steer`, plain
+  messages for the streams with a running turn.
 - `/stop` calls `actuator.interrupt()`, closes the in-flight turn (with a
-  "Stopped by /stop." note unless the turn had already posted an interim), and
-  does not pull the next queued message.
-- `/steer` folds the text into the running turn through `actuator.steer` when
-  the actuator has it, otherwise interrupts and redelivers the steer text plus
-  any queued messages as one combined turn.
+  "Stopped by /stop." note unless the turn had already posted an interim),
+  leaves messages waiting for that stream's next turn until a later claim
+  pass, and does not pull the next queued message.
+- With `actuator.steer`, a plain message sent to a running turn is offered to
+  it. When `steer` returns true, a `steer` step lands on the turn's trace and
+  the message closes with that turn. When it returns false, or the turn ended
+  first, the message waits and starts the stream's next turn once the current
+  one has closed. A throw fails the message. Without `steer`, every message
+  waits for the next turn.
+- `/enqueue <text>` is claimed only when no turn is in flight for its stream
+  and the actuator is not `isHeld()` (a quota hold), then runs as a normal
+  turn. The SDK advertises `enqueue` for every connector with an actuator; it
+  is never delivered as a command.
 - Every other advertised command goes to `actuator.runCommand`, and its
   returned `message` is posted as the acknowledgement.
 - Claims are renewed every 40s on a 120s lease; a claim the server no longer

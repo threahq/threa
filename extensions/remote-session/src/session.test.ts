@@ -225,12 +225,12 @@ describe("parseSessionControlCommand", () => {
   test("reads name + args from structured command metadata", () => {
     const inv = makeInvocation({
       trigger: "session-control",
-      promptMarkdown: "/steer focus on the failing test",
+      promptMarkdown: "/model claude-opus-4-1",
       metadata: {
-        command: { executionKind: "bot-runtime", id: "cmd_1", name: "steer", args: "focus on the failing test" },
+        command: { executionKind: "bot-runtime", id: "cmd_1", name: "model", args: "claude-opus-4-1" },
       },
     })
-    expect(parseSessionControlCommand(inv)).toEqual({ name: "steer", args: "focus on the failing test" })
+    expect(parseSessionControlCommand(inv)).toEqual({ name: "model", args: "claude-opus-4-1" })
   })
 
   test("falls back to parsing the prompt for a session-control invocation without metadata", () => {
@@ -256,15 +256,15 @@ describe("buildSteerContent", () => {
   })
 
   test("combines multiple parts most-recent-last under one header", () => {
-    const combined = buildSteerContent(["first queued", "second queued", "the steer"])
+    const combined = buildSteerContent(["first queued", "second queued", "latest"])
     expect(combined).toContain("Handle all of the following together (most recent last):")
-    expect(combined.indexOf("first queued")).toBeLessThan(combined.indexOf("the steer"))
+    expect(combined.indexOf("first queued")).toBeLessThan(combined.indexOf("latest"))
   })
 })
 
 describe("capability selection", () => {
   const actuator: SessionControlActuator = {
-    commands: ["stop", "steer", "model"],
+    commands: ["stop", "model"],
     modelSuggestions: [{ value: "opus", label: "Opus" }],
     thinkingLevels: ["low", "high"],
     spawnRuntimes: [
@@ -286,19 +286,26 @@ describe("capability selection", () => {
     expect(supportedCapabilitiesFor(false)).not.toContain("session-control")
   })
 
-  test("claims everything when idle but session-control only when busy", () => {
-    expect(claimCapabilitiesFor(false, true)).toEqual(["active-scratchpad", "mentionable", "session-control"])
-    expect(claimCapabilitiesFor(true, true)).toEqual(["session-control"])
-  })
-
-  test("claims nothing while busy without runtime control (caller must not claim)", () => {
-    expect(claimCapabilitiesFor(true, false)).toEqual([])
+  test("claims per mode: everything idle, queued-message withheld while held, control only when busy, plain messages for a running turn", () => {
+    expect({
+      idle: claimCapabilitiesFor("idle", true),
+      held: claimCapabilitiesFor("idle", true, true),
+      busy: claimCapabilitiesFor("busy", true),
+      busyWithoutControl: claimCapabilitiesFor("busy", false),
+      runningTurn: claimCapabilitiesFor("running-turn", true, true),
+    }).toEqual({
+      idle: ["active-scratchpad", "mentionable", "queued-message", "session-control"],
+      held: ["active-scratchpad", "mentionable", "session-control"],
+      busy: ["session-control"],
+      busyWithoutControl: [],
+      runningTurn: ["active-scratchpad", "mentionable"],
+    })
   })
 
   test("publishes the actuator's commands, model suggestions, thinking levels, and spawn runtimes", () => {
     const enabled = runtimeCapabilitiesFor("rts_1", actuator)
     expect(enabled.supportsSessionControlCommands).toBe(true)
-    expect(enabled.sessionControlCommands).toEqual(["stop", "steer", "model"])
+    expect(enabled.sessionControlCommands).toEqual(["stop", "model", "enqueue"])
     expect(enabled.modelSuggestions).toEqual([{ value: "opus", label: "Opus" }])
     expect(enabled.thinkingLevels).toEqual(["low", "high"])
     expect(enabled.spawnRuntimes).toEqual([
@@ -2136,7 +2143,7 @@ describe("session control via the actuator", () => {
     const ran: Array<{ name: string; args: string; rootStreamId: string }> = []
     const session = makeSession(client, transport, {
       sessionControl: {
-        commands: ["stop", "steer", "model"],
+        commands: ["stop", "model"],
         interrupt: () => true,
         runCommand: async (name, args, context) => {
           ran.push({ name, args, rootStreamId: context.rootStreamId })
@@ -2173,7 +2180,7 @@ describe("session control via the actuator", () => {
     const { transport } = makeFakeTransport()
     const session = makeSession(client, transport, {
       sessionControl: {
-        commands: ["stop", "steer", "status"],
+        commands: ["stop", "status"],
         interrupt: () => true,
         runCommand: async () => ({ ok: true, message: "**Session**\n\n- model: opus\n- idle: 4m" }),
       },
@@ -2204,7 +2211,7 @@ describe("session control via the actuator", () => {
     const { transport } = makeFakeTransport()
     const session = makeSession(client, transport, {
       sessionControl: {
-        commands: ["stop", "steer", "spawn"],
+        commands: ["stop", "spawn"],
         interrupt: () => true,
         runCommand: async () => ({ ok: true }),
       },
@@ -2237,7 +2244,7 @@ describe("session control via the actuator", () => {
     const { transport } = makeFakeTransport()
     const session = makeSession(client, transport, {
       sessionControl: {
-        commands: ["stop", "steer", "spawn"],
+        commands: ["stop", "spawn"],
         interrupt: () => true,
         runCommand: async () => ({ ok: false, message: "Usage: `/spawn <name>`." }),
       },
@@ -2847,426 +2854,533 @@ describe("session control via the actuator", () => {
       },
     ])
   })
-
-  test("steer without native steer support interrupts and closes the superseded turn silently", async () => {
-    const { client, calls } = makeFakeClient()
-    const { transport } = makeFakeTransport()
-    const delivered: string[] = []
-    const session = makeSession(client, transport, {
-      deliverTurn: async (turn) => {
-        delivered.push(turn.content)
-      },
-      sessionControl: {
-        commands: ["stop", "steer"],
-        interrupt: () => true,
-        runCommand: async () => ({ ok: true, message: "ok" }),
-      },
-    })
-    seedInflight(session, makeInvocation({ id: "binv_running", responseStreamId: "stream_turn" }), 3)
-    ;(client as unknown as { claim: () => Promise<null> }).claim = async () => null
-
-    const steer = makeInvocation({
-      id: "binv_steer",
-      trigger: "session-control",
-      promptMarkdown: "/steer look at the tests instead",
-      metadata: {
-        command: { executionKind: "bot-runtime", id: "cmd_2", name: "steer", args: "look at the tests instead" },
-      },
-    })
-    await (
-      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
-    ).handleSessionControl(steer)
-
-    const interruptedClose = calls.complete.find((entry) => entry.id === "binv_running")
-    expect(interruptedClose?.body).toMatchObject({ noResponse: true })
-    expect(interruptedClose?.body.finalMessageMarkdown).toBeUndefined()
-    expect(delivered).toEqual(["look at the tests instead"])
-  })
 })
 
-describe("steer into the running turn (native steer support)", () => {
-  function makeSteerInvocation(args: string): ClaimedInvocation {
-    return makeInvocation({
-      id: "binv_steer",
-      trigger: "session-control",
-      promptMarkdown: args ? `/steer ${args}` : "/steer",
-      metadata: { command: { executionKind: "bot-runtime", id: "cmd_2", name: "steer", args } },
+const claimDrain = (session: RemoteSession) =>
+  (session as unknown as { claimDrain: () => Promise<boolean> }).claimDrain()
+const plainMessage = (id: string, streamId: string, promptMarkdown = id) =>
+  makeInvocation({ id, responseStreamId: streamId, sourceMessageId: `src_${id}`, promptMarkdown })
+const enqueuedMessage = (id: string, streamId: string) =>
+  makeInvocation({
+    id,
+    responseStreamId: streamId,
+    sourceMessageId: `src_${id}`,
+    promptMarkdown: id,
+    requiredCapability: "queued-message",
+  })
+const controlCommand = (id: string, streamId: string, name: string, args = "") =>
+  makeInvocation({
+    id,
+    responseStreamId: streamId,
+    sourceMessageId: `src_${id}`,
+    trigger: "session-control",
+    requiredCapability: "session-control",
+    promptMarkdown: `/${name} ${args}`.trim(),
+    metadata: { command: { executionKind: "bot-runtime", id: `cmd_${id}`, name, args } },
+  })
+const steerOk = () => true
+
+/**
+ * A session over a fake server queue that honours capabilities, stream scope
+ * and exclusion (session control bypasses exclusion, as on the server).
+ */
+function makeQueuedSession(
+  queue: ClaimedInvocation[],
+  options: {
+    maxConcurrentTurns?: number
+    serverIgnoresExclusion?: boolean
+    steer?: (text: string, streamId: string) => boolean | Promise<boolean>
+  } = {}
+) {
+  const delivered: string[] = []
+  const contents: string[] = []
+  const claims: Array<Record<string, unknown>> = []
+  const interrupts: Array<string | undefined> = []
+  const steers: Array<{ text: string; streamId: string }> = []
+  const held = { value: false }
+  const { client, calls } = makeFakeClient()
+  Object.assign(client as unknown as Record<string, unknown>, {
+    claim: async (body: Record<string, unknown>) => {
+      claims.push(body)
+      const scope = body.responseStreamId
+      const caps = (body.supportedCapabilities ?? []) as string[]
+      const exclude = options.serverIgnoresExclusion ? [] : ((body.excludeResponseStreamIds ?? []) as string[])
+      const index = queue.findIndex(
+        (item) =>
+          caps.includes(item.requiredCapability) &&
+          (!scope || item.responseStreamId === scope) &&
+          (item.trigger === "session-control" || !exclude.includes(item.responseStreamId))
+      )
+      return index === -1 ? null : queue.splice(index, 1)[0]
+    },
+  })
+  const fake = makeFakeTransport()
+  const steer = options.steer
+  const session = new RemoteSession({
+    config: makeConfig(),
+    client,
+    delegate: {
+      deliverTurn: async (turn) => {
+        delivered.push(turn.invocationId)
+        contents.push(turn.content)
+      },
+      sessionControl: {
+        commands: ["stop"],
+        interrupt: (streamId) => {
+          interrupts.push(streamId)
+          return true
+        },
+        ...(steer
+          ? {
+              steer: (text: string, streamId: string) => {
+                steers.push({ text, streamId })
+                return steer(text, streamId)
+              },
+            }
+          : {}),
+        isHeld: () => held.value,
+        runCommand: async () => ({ ok: true, message: "ok" }),
+      },
+    },
+    runtime: { ...RUNTIME, maxConcurrentTurns: options.maxConcurrentTurns ?? 1 },
+    transport: fake.transport,
+  })
+  const drainClaims = () =>
+    claims
+      .filter((body) => body.responseStreamId === undefined)
+      .map((body) => ({ caps: body.supportedCapabilities, exclude: body.excludeResponseStreamIds }))
+  return { session, client, queue, delivered, contents, claims, drainClaims, interrupts, steers, calls, fake, held }
+}
+
+describe("messages to a running turn (steer by default, /enqueue waits)", () => {
+  const steerSteps = (h: ReturnType<typeof makeQueuedSession>) =>
+    h.fake.steps.filter((step) => step.frames[0]?.stepType === "steer")
+
+  for (const maxConcurrentTurns of [1, 2]) {
+    test(`injects a plain message into the running turn, bound to it, and closes with it (capacity ${maxConcurrentTurns})`, async () => {
+      const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], { steer: steerOk, maxConcurrentTurns })
+      await claimDrain(h.session)
+      h.queue.push(plainMessage("binv_b", "stream_a", "also do b"))
+
+      await claimDrain(h.session)
+      const closedBefore = h.calls.complete.map((call) => call.id)
+      await h.session.reply("binv_a", "done")
+      await waitUntil(() => h.calls.complete.some((call) => call.id === "binv_b"))
+
+      expect({
+        delivered: h.delivered,
+        steers: h.steers,
+        steps: steerSteps(h),
+        scopedClaim: h.claims.findLast((body) => body.responseStreamId === "stream_a"),
+        closedBefore,
+        owner: h.calls.complete.find((call) => call.id === "binv_a")?.body.finalMessageMarkdown,
+        contributor: h.calls.complete.find((call) => call.id === "binv_b")?.body.noResponse,
+      }).toMatchObject({
+        delivered: ["binv_a"],
+        steers: [{ text: "also do b", streamId: "stream_a" }],
+        steps: [{ invocationId: "binv_a", frames: [{ stepType: "steer", content: "also do b" }] }],
+        scopedClaim: { supportedCapabilities: ["active-scratchpad", "mentionable"], responseStreamId: "stream_a" },
+        closedBefore: [],
+        owner: "done",
+        contributor: true,
+      })
     })
   }
 
-  test("folds into the running turn: steer step on its trace, no interrupt, command closes immediately", async () => {
-    const { client, calls } = makeFakeClient()
-    const { transport, steps } = makeFakeTransport()
-    const steered: string[] = []
-    let interrupted = false
-    const session = makeSession(client, transport, {
-      deliverTurn: async () => {
-        throw new Error("steer must not deliver a new turn")
-      },
-      sessionControl: {
-        commands: ["stop", "steer"],
-        interrupt: () => {
-          interrupted = true
-          return true
-        },
-        steer: (text) => {
-          steered.push(text)
-          return true
-        },
-        runCommand: async () => ({ ok: true, message: "ok" }),
-      },
-    })
-    seedInflight(session, makeInvocation({ id: "binv_running", responseStreamId: "stream_turn" }))
-    ;(client as unknown as { claim: () => Promise<null> }).claim = async () => null
-
-    await (
-      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
-    ).handleSessionControl(makeSteerInvocation("look at the tests instead"))
-
-    expect(interrupted).toBe(false)
-    expect(steered).toEqual(["look at the tests instead"])
-    // The running turn keeps its claim — it will answer the steer with its own reply.
-    expect((session as unknown as { inflight: Map<string, unknown> }).inflight.has("binv_running")).toBe(true)
-    expect(calls.complete.find((entry) => entry.id === "binv_running")).toBeUndefined()
-    // The steer is recorded on the RUNNING invocation's trace.
-    expect(steps).toEqual([
-      { invocationId: "binv_running", frames: [{ stepType: "steer", content: "look at the tests instead" }] },
-    ])
-    // The /steer command itself closes right away, silently (the step is the signal).
-    const steerClose = calls.complete.find((entry) => entry.id === "binv_steer")
-    expect(steerClose?.body.noResponse).toBe(true)
-    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
-  })
-
-  test("folds queued messages into the injected steer and closes them no-response", async () => {
-    const { client, calls } = makeFakeClient()
-    const { transport } = makeFakeTransport()
-    const steered: string[] = []
-    const queued = [
-      makeInvocation({ id: "binv_q1", promptMarkdown: "also bump the deps" }),
-      makeInvocation({ id: "binv_q2", promptMarkdown: "and update the docs" }),
-    ]
-    const session = makeSession(client, transport, {
-      sessionControl: {
-        commands: ["stop", "steer"],
-        interrupt: () => true,
-        steer: (text) => {
-          steered.push(text)
-          return true
-        },
-        runCommand: async () => ({ ok: true, message: "ok" }),
-      },
-    })
-    seedInflight(session, makeInvocation({ id: "binv_running" }))
-    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
-      queued.shift() ?? null
-
-    await (
-      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
-    ).handleSessionControl(makeSteerInvocation("the steer text"))
-
-    expect(steered).toHaveLength(1)
-    const combined = steered[0]!
-    expect(combined.indexOf("also bump the deps")).toBeLessThan(combined.indexOf("and update the docs"))
-    expect(combined.indexOf("and update the docs")).toBeLessThan(combined.indexOf("the steer text"))
-    expect(calls.complete.filter((entry) => entry.id === "binv_q1" || entry.id === "binv_q2")).toEqual([])
-    expect(await session.reply("binv_running", "done")).toEqual({ ok: true, message: "sent", closedTurn: true })
-    const sweptCloses = calls.complete.filter((entry) => entry.id === "binv_q1" || entry.id === "binv_q2")
-    expect(sweptCloses).toHaveLength(2)
-    for (const close of sweptCloses) expect(close.body.noResponse).toBe(true)
-  })
-
-  test("folds a queued message's attachments into the injected steer, not just its text", async () => {
+  test("a steered message carries the manifest of its own attachments, not its history's", async () => {
     const dir = mkdtempSync(join(tmpdir(), "remote-steer-attach-"))
-    const { client, calls } = makeFakeClient()
-    const { transport } = makeFakeTransport()
-    const steered: string[] = []
-    const queued = [
-      makeInvocation({
-        id: "binv_q_img",
-        sourceMessageId: "src_img",
-        promptMarkdown: "see this",
-        context: {
-          kind: "inline",
-          messages: [
-            {
-              messageId: "src_earlier",
-              role: "user",
-              authorId: "u",
-              authorType: "user",
-              authorDisplayName: "Alice",
-              contentMarkdown: "earlier",
-              createdAt: "t1",
-            },
-          ],
-        },
-      }),
-    ]
-    const session = makeSession(client, transport, {
-      sessionControl: {
-        commands: ["stop", "steer"],
-        interrupt: () => true,
-        steer: (text) => {
-          steered.push(text)
-          return true
-        },
-        runCommand: async () => ({ ok: true, message: "ok" }),
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], { steer: steerOk })
+    await claimDrain(h.session)
+    h.queue.push({
+      ...plainMessage("binv_b", "stream_a", "look at this"),
+      context: {
+        kind: "inline",
+        messages: [
+          {
+            messageId: "msg_old",
+            role: "user",
+            authorId: "user_1",
+            authorType: "user",
+            contentMarkdown: "earlier",
+            createdAt: "",
+          },
+        ],
       },
     })
-    seedInflight(session, makeInvocation({ id: "binv_running" }))
-    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
-      queued.shift() ?? null
-    ;(client as unknown as { listStreamMessages: () => Promise<unknown[]> }).listStreamMessages = async () => [
-      { id: "src_img", attachments: [{ id: "att_img", filename: "shot.png", mimeType: "image/png", sizeBytes: 4 }] },
-      {
-        id: "src_earlier",
-        attachments: [{ id: "att_old", filename: "old.txt", mimeType: "text/plain", sizeBytes: 3 }],
-      },
-    ]
-    ;(client as unknown as { getAttachmentDownloadUrl: (id: string) => Promise<string> }).getAttachmentDownloadUrl =
-      async (id) => `https://signed.example/${id}`
+    Object.assign(h.client as unknown as Record<string, unknown>, {
+      listStreamMessages: async () => [
+        {
+          id: "src_binv_b",
+          attachments: [{ id: "att_img", filename: "shot.png", mimeType: "image/png", sizeBytes: 4 }],
+        },
+        {
+          id: "msg_old",
+          attachments: [{ id: "att_old", filename: "old.txt", mimeType: "text/plain", sizeBytes: 3 }],
+        },
+      ],
+      getAttachmentDownloadUrl: async (id: string) => `https://signed.example/${id}`,
+    })
     const cwdSpy = spyOn(process, "cwd").mockReturnValue(dir)
     const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
       (async () => new Response("png!")) as unknown as typeof fetch
     )
-    try {
-      await (
-        session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
-      ).handleSessionControl(makeSteerInvocation("the steer text"))
 
-      expect(steered).toHaveLength(1)
-      const combined = steered[0]!
-      expect(combined).toContain("see this")
-      expect(combined).toContain("[attached to the message you just received]")
-      expect(combined).toContain(join(".threa-attachments", "binv_q_img", "att_img", "shot.png"))
-      expect(combined.indexOf("shot.png")).toBeLessThan(combined.indexOf("the steer text"))
-      // The running turn already holds the history and its attachments.
-      expect(combined).not.toContain("old.txt")
-      expect(calls.complete.find((entry) => entry.id === "binv_q_img")).toBeUndefined()
+    try {
+      await claimDrain(h.session)
     } finally {
-      ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
-      await session.shutdown()
       cwdSpy.mockRestore()
       fetchSpy.mockRestore()
       rmSync(dir, { recursive: true, force: true })
     }
+
+    const text = [
+      "look at this",
+      "",
+      "Attachments saved into this session's working directory — read them from these paths:",
+      `- shot.png (image/png, 4 bytes) → ${join(dir, ".threa-attachments", "binv_b", "att_img", "shot.png")} [attached to the message you just received]`,
+    ].join("\n")
+    expect({ steers: h.steers, steps: steerSteps(h) }).toMatchObject({
+      steers: [{ text, streamId: "stream_a" }],
+      steps: [{ invocationId: "binv_a", frames: [{ stepType: "steer", content: text }] }],
+    })
   })
 
-  test("acks without steering when there is no text and nothing queued", async () => {
-    const { client, calls } = makeFakeClient()
-    const { transport } = makeFakeTransport()
-    const steered: string[] = []
-    const session = makeSession(client, transport, {
-      sessionControl: {
-        commands: ["stop", "steer"],
-        interrupt: () => true,
-        steer: (text) => {
-          steered.push(text)
-          return true
-        },
-        runCommand: async () => ({ ok: true, message: "ok" }),
-      },
+  test("a plain message for another stream is not claimed while the serial slot is busy", async () => {
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], { steer: steerOk })
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_b", "stream_b"))
+
+    await claimDrain(h.session)
+
+    expect({ delivered: h.delivered, steers: h.steers, left: h.queue.map((item) => item.id) }).toEqual({
+      delivered: ["binv_a"],
+      steers: [],
+      left: ["binv_b"],
     })
-    seedInflight(session, makeInvocation({ id: "binv_running" }))
-    ;(client as unknown as { claim: () => Promise<null> }).claim = async () => null
-
-    await (
-      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
-    ).handleSessionControl(makeSteerInvocation(""))
-
-    expect(steered).toEqual([])
-    expect((session as unknown as { inflight: Map<string, unknown> }).inflight.has("binv_running")).toBe(true)
-    const ack = calls.complete.find((entry) => entry.id === "binv_steer")
-    expect(ack?.body.summary).toContain("Nothing to steer with")
-    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
   })
 
-  test("an empty composite steer closes silently when its message is already running", async () => {
-    const { client, calls } = makeFakeClient()
-    const { transport } = makeFakeTransport()
-    const steered: string[] = []
-    const session = makeSession(client, transport, {
-      sessionControl: {
-        commands: ["stop", "steer"],
-        interrupt: () => true,
-        steer: (text) => {
-          steered.push(text)
-          return true
-        },
-        runCommand: async () => ({ ok: true, message: "ok" }),
-      },
-    })
-    seedInflight(session, makeInvocation({ id: "binv_message", sourceMessageId: "msg_composite" }))
-    ;(client as unknown as { claim: () => Promise<null> }).claim = async () => null
-    const composite = makeSteerInvocation("")
-    composite.sourceMessageId = "msg_composite"
-    composite.metadata = { ...composite.metadata, steeredMessage: true }
+  test("without a steer actuator a busy runtime claims nothing for its running stream", async () => {
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")])
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_b", "stream_a"))
+    const claimsBefore = h.claims.length
 
-    await (
-      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
-    ).handleSessionControl(composite)
-
-    expect(steered).toEqual([])
-    const close = calls.complete.find((entry) => entry.id === "binv_steer")
-    expect(close?.body.noResponse).toBe(true)
-    expect(close?.body.finalMessageMarkdown).toBeUndefined()
-    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_message")
-  })
-
-  test("empty steer still closes a swept foldless control command instead of stranding its claim", async () => {
-    const { client, calls } = makeFakeClient()
-    const { transport } = makeFakeTransport()
-    const steered: string[] = []
-    // A queued non-steer control command (double-command race): swept, contributes
-    // no foldable part, and must still be closed on the empty-parts return.
-    const queued = [
-      makeInvocation({
-        id: "binv_q_model",
-        trigger: "session-control",
-        promptMarkdown: "/model opus",
-        metadata: { command: { executionKind: "bot-runtime", id: "cmd_q", name: "model", args: "opus" } },
-      }),
-    ]
-    const session = makeSession(client, transport, {
-      sessionControl: {
-        commands: ["stop", "steer", "model"],
-        interrupt: () => true,
-        steer: (text) => {
-          steered.push(text)
-          return true
-        },
-        runCommand: async () => ({ ok: true, message: "ok" }),
-      },
-    })
-    seedInflight(session, makeInvocation({ id: "binv_running" }))
-    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
-      queued.shift() ?? null
-
-    await (
-      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
-    ).handleSessionControl(makeSteerInvocation(""))
-
-    expect(steered).toEqual([])
-    const sweptClose = calls.complete.find((entry) => entry.id === "binv_q_model")
-    expect(sweptClose?.body.noResponse).toBe(true)
-    const ack = calls.complete.find((entry) => entry.id === "binv_steer")
-    expect(ack?.body.summary).toContain("Nothing to steer with")
-    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
-  })
-
-  test("a swept message cancelled during the steer step closes the remaining foldless command instead of steering empty text", async () => {
-    const { client, calls } = makeFakeClient()
-    const { transport } = makeFakeTransport()
-    const steered: string[] = []
-    const message = makeInvocation({ id: "binv_q_msg", promptMarkdown: "fold me" })
-    const queued = [
-      makeInvocation({
-        id: "binv_q_model",
-        trigger: "session-control",
-        promptMarkdown: "/model opus",
-        metadata: { command: { executionKind: "bot-runtime", id: "cmd_q", name: "model", args: "opus" } },
-      }),
-      message,
-    ]
-    const session = makeSession(client, transport, {
-      sessionControl: {
-        commands: ["stop", "steer", "model"],
-        interrupt: () => true,
-        steer: (text) => {
-          steered.push(text)
-          return true
-        },
-        runCommand: async () => ({ ok: true, message: "ok" }),
-      },
-    })
-    // The only foldable part is cancelled while the steer step is being recorded,
-    // after the sweep already filtered parts once.
-    ;(transport as unknown as { recordSteps: () => Promise<void> }).recordSteps = async () => {
-      ;(session as unknown as { cancelledInvocations: WeakSet<ClaimedInvocation> }).cancelledInvocations.add(message)
-    }
-    seedInflight(session, makeInvocation({ id: "binv_running" }))
-    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
-      queued.shift() ?? null
-
-    await (
-      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
-    ).handleSessionControl(makeSteerInvocation(""))
+    await claimDrain(h.session)
 
     expect({
-      steered,
-      sweptClose: calls.complete.find((entry) => entry.id === "binv_q_model")?.body.noResponse,
-      ack: calls.complete.find((entry) => entry.id === "binv_steer")?.body.summary,
-    }).toEqual({ steered: [], sweptClose: true, ack: expect.stringContaining("Nothing to steer with") })
-    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
+      delivered: h.delivered,
+      left: h.queue.map((item) => item.id),
+      claimed: h.claims.slice(claimsBefore),
+    }).toMatchObject({
+      delivered: ["binv_a"],
+      left: ["binv_b"],
+      claimed: [{ supportedCapabilities: ["session-control"] }],
+    })
   })
 
-  test("failed actuation leaves the running turn alone and reports the failure", async () => {
-    const { client, calls } = makeFakeClient()
-    const { transport } = makeFakeTransport()
-    const failed: string[] = []
-    ;(client as unknown as { fail: (id: string) => Promise<void> }).fail = async (id: string) => {
-      failed.push(id)
-    }
-    const queued = [makeInvocation({ id: "binv_q1", promptMarkdown: "queued while busy" })]
-    const session = makeSession(client, transport, {
-      sessionControl: {
-        commands: ["stop", "steer"],
-        interrupt: () => true,
-        steer: () => false,
-        runCommand: async () => ({ ok: true, message: "ok" }),
-      },
+  test("queued-message is not claimed while a turn runs and is claimed once idle", async () => {
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], { steer: steerOk })
+    await claimDrain(h.session)
+    h.queue.push(enqueuedMessage("binv_q", "stream_a"))
+
+    await claimDrain(h.session)
+    const whileBusy = { delivered: [...h.delivered], steers: [...h.steers], left: h.queue.map((item) => item.id) }
+    await h.session.reply("binv_a", "done")
+    await waitUntil(() => h.delivered.length === 2)
+
+    expect({ whileBusy, delivered: h.delivered }).toEqual({
+      whileBusy: { delivered: ["binv_a"], steers: [], left: ["binv_q"] },
+      delivered: ["binv_a", "binv_q"],
     })
-    seedInflight(session, makeInvocation({ id: "binv_running" }))
-    ;(client as unknown as { claim: () => Promise<ClaimedInvocation | null> }).claim = async () =>
-      queued.shift() ?? null
-
-    await (
-      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
-    ).handleSessionControl(makeSteerInvocation("go left"))
-
-    expect((session as unknown as { inflight: Map<string, unknown> }).inflight.has("binv_running")).toBe(true)
-    expect(calls.complete.find((entry) => entry.id === "binv_running")).toBeUndefined()
-    // The swept message was claimed but never delivered — failed loudly, not silently closed.
-    expect(failed).toEqual(["binv_q1"])
-    const ack = calls.complete.find((entry) => entry.id === "binv_steer")
-    expect(ack?.body.summary).toContain("Could not steer")
-    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_running")
   })
 
-  test("steer with native support but no running turn delivers a fresh turn (interrupt path)", async () => {
-    const { client } = makeFakeClient()
-    const { transport } = makeFakeTransport()
-    const delivered: string[] = []
-    const steered: string[] = []
-    let interrupted = false
-    const session = makeSession(client, transport, {
-      deliverTurn: async (turn) => {
-        delivered.push(turn.content)
-      },
-      sessionControl: {
-        commands: ["stop", "steer"],
-        interrupt: () => {
-          interrupted = true
-          return true
-        },
-        steer: (text) => {
-          steered.push(text)
-          return true
-        },
-        runCommand: async () => ({ ok: true, message: "ok" }),
+  test("a held idle runtime claims queued-message as soon as the hold ends", async () => {
+    const h = makeQueuedSession([enqueuedMessage("binv_q", "stream_a")], { steer: steerOk })
+    h.held.value = true
+
+    await claimDrain(h.session)
+    const whileHeld = { delivered: [...h.delivered], left: h.queue.map((item) => item.id) }
+    h.held.value = false
+    h.session.claimWaiting()
+    await waitUntil(() => h.delivered.length > 0)
+
+    expect({ whileHeld, delivered: h.delivered }).toEqual({
+      whileHeld: { delivered: [], left: ["binv_q"] },
+      delivered: ["binv_q"],
+    })
+  })
+
+  test("a held runtime does not inject a plain message into its running turn", async () => {
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], { steer: steerOk })
+    await claimDrain(h.session)
+    h.held.value = true
+    h.queue.push(plainMessage("binv_b", "stream_a"))
+
+    await claimDrain(h.session)
+
+    expect({ delivered: h.delivered, steers: h.steers, left: h.queue.map((item) => item.id) }).toEqual({
+      delivered: ["binv_a"],
+      steers: [],
+      left: ["binv_b"],
+    })
+  })
+
+  test("a thrown steer fails the message visibly and leaves the turn running", async () => {
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], {
+      steer: () => {
+        throw new Error("pane gone")
       },
     })
-    ;(client as unknown as { claim: () => Promise<null> }).claim = async () => null
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_b", "stream_a"))
 
-    await (
-      session as unknown as { handleSessionControl: (inv: ClaimedInvocation) => Promise<void> }
-    ).handleSessionControl(makeSteerInvocation("start with the readme"))
+    await claimDrain(h.session)
 
-    // Idle session: nothing to fold into — the steer arrives as a normal turn.
-    expect(steered).toEqual([])
-    expect(interrupted).toBe(true)
-    expect(delivered).toEqual(["start with the readme"])
-    ;(session as unknown as { clearInflight: (id: string) => void }).clearInflight("binv_steer")
+    expect({
+      fail: h.calls.fail.map((call) => ({ id: call.id, error: call.body.errorMessage })),
+      steps: steerSteps(h),
+      inflight: h.session.isInflight("binv_a"),
+    }).toEqual({
+      fail: [{ id: "binv_b", error: "Steer failed: pane gone" }],
+      steps: [],
+      inflight: true,
+    })
+  })
+
+  for (const maxConcurrentTurns of [1, 2]) {
+    test(`a refused steer waits and becomes the next turn only once the owner has fully closed (capacity ${maxConcurrentTurns})`, async () => {
+      const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], { steer: () => false, maxConcurrentTurns })
+      await claimDrain(h.session)
+      h.queue.push(plainMessage("binv_b", "stream_a", "also do b"))
+      let releaseComplete!: () => void
+      const completeGate = new Promise<void>((resolve) => {
+        releaseComplete = resolve
+      })
+      const complete = (h.client as unknown as { complete: (...args: unknown[]) => Promise<void> }).complete
+      Object.assign(h.client as unknown as Record<string, unknown>, {
+        complete: async (...args: unknown[]) => {
+          await completeGate
+          await complete(...args)
+        },
+      })
+
+      await claimDrain(h.session)
+      const afterRefusal = { delivered: [...h.delivered], steps: steerSteps(h), fail: [...h.calls.fail] }
+      const reply = h.session.reply("binv_a", "done")
+      await claimDrain(h.session)
+      const whileClosing = [...h.delivered]
+      releaseComplete()
+      await reply
+      await waitUntil(() => h.delivered.length === 2)
+
+      expect({
+        afterRefusal,
+        whileClosing,
+        delivered: h.delivered,
+        content: h.contents[1],
+        inflight: h.session.isInflight("binv_b"),
+        fail: h.calls.fail,
+      }).toEqual({
+        afterRefusal: { delivered: ["binv_a"], steps: [], fail: [] },
+        whileClosing: ["binv_a"],
+        delivered: ["binv_a", "binv_b"],
+        content: "also do b",
+        inflight: true,
+        fail: [],
+      })
+    })
+  }
+
+  test("a message the runtime took after its turn closed is not delivered again", async () => {
+    let h!: ReturnType<typeof makeQueuedSession>
+    h = makeQueuedSession([plainMessage("binv_a", "stream_a")], {
+      steer: async () => {
+        await h.session.reply("binv_a", "done")
+        return true
+      },
+    })
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_b", "stream_a"))
+
+    await claimDrain(h.session)
+    await waitUntil(() => h.calls.complete.length === 2)
+
+    expect({
+      delivered: h.delivered,
+      completed: h.calls.complete.map((call) => call.id),
+      steps: steerSteps(h),
+    }).toEqual({ delivered: ["binv_a"], completed: ["binv_a", "binv_b"], steps: [] })
+  })
+
+  test("a waiting message runs its edited text, folded with what was sent after it", async () => {
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], { steer: () => false })
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_b", "stream_a"))
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_c", "stream_a"))
+    await claimDrain(h.session)
+
+    const edit = await h.fake.observations.get("binv_b")!.update(plaintextUpdate({ promptMarkdown: "b edited" }))
+    await h.session.reply("binv_a", "done")
+    await waitUntil(() => h.delivered.length === 2)
+
+    expect({
+      edit,
+      steers: h.steers.map((steer) => steer.text),
+      delivered: h.delivered,
+      content: h.contents[1],
+    }).toEqual({
+      edit: "applied",
+      steers: ["binv_b"],
+      delivered: ["binv_a", "binv_b"],
+      content: buildSteerContent(["b edited", "binv_c"]),
+    })
+  })
+
+  test("a waiting message that is deleted never runs", async () => {
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], { steer: () => false })
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_b", "stream_a"))
+    await claimDrain(h.session)
+
+    await h.fake.observations.get("binv_b")!.cancel()
+    await h.session.reply("binv_a", "done")
+    await claimDrain(h.session)
+
+    expect({ delivered: h.delivered, fail: h.calls.fail }).toEqual({ delivered: ["binv_a"], fail: [] })
+  })
+
+  test("a deleted waiting message no longer holds back steering for its stream", async () => {
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], { steer: (text) => text !== "binv_b" })
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_b", "stream_a"))
+    await claimDrain(h.session)
+    await h.fake.observations.get("binv_b")!.cancel()
+
+    h.queue.push(plainMessage("binv_c", "stream_a"))
+    await claimDrain(h.session)
+
+    expect({
+      steers: h.steers.map((steer) => steer.text),
+      steps: steerSteps(h).map((step) => ({ invocationId: step.invocationId, content: step.frames[0]?.content })),
+      delivered: h.delivered,
+      left: h.queue.map((item) => item.id),
+      disposed: h.fake.observations.get("binv_b")!.disposed,
+    }).toEqual({
+      steers: ["binv_b", "binv_c"],
+      steps: [{ invocationId: "binv_a", content: "binv_c" }],
+      delivered: ["binv_a"],
+      left: [],
+      disposed: true,
+    })
+  })
+
+  test("/stop keeps the messages waiting for the stopped turn's successor for a later drain", async () => {
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], { steer: () => false })
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_b", "stream_a"))
+    await claimDrain(h.session)
+    h.queue.push(controlCommand("binv_stop", "stream_a", "stop"))
+
+    await claimDrain(h.session)
+    const afterStop = [...h.delivered]
+    await claimDrain(h.session)
+
+    expect({ afterStop, delivered: h.delivered, fail: h.calls.fail }).toEqual({
+      afterStop: ["binv_a"],
+      delivered: ["binv_a", "binv_b"],
+      fail: [],
+    })
+  })
+
+  test("editing a steered message steers the correction into the owner, which keeps running", async () => {
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], { steer: steerOk })
+    await claimDrain(h.session)
+    h.queue.push({
+      ...plainMessage("binv_b", "stream_a", "do b"),
+      context: {
+        kind: "inline",
+        messages: [
+          {
+            messageId: "msg_old",
+            role: "user",
+            authorId: "user_1",
+            authorType: "user",
+            contentMarkdown: "earlier context",
+            createdAt: "",
+          },
+        ],
+      },
+    })
+    await claimDrain(h.session)
+    Object.assign(h.client as unknown as Record<string, unknown>, { listStreamMessages: async () => [] })
+
+    const outcome = await h.fake.observations.get("binv_b")!.update(plaintextUpdate({ promptMarkdown: "do b2" }))
+    const ownerRunning = h.session.isInflight("binv_a")
+    await h.session.reply("binv_a", "done")
+
+    expect({
+      outcome,
+      ownerRunning,
+      steers: h.steers.map((steer) => steer.text),
+      steps: steerSteps(h).map((step) => ({ invocationId: step.invocationId, content: step.frames[0]?.content })),
+      interrupts: h.interrupts,
+      completed: h.calls.complete.map((call) => call.id),
+      fail: h.calls.fail,
+    }).toEqual({
+      outcome: "applied",
+      ownerRunning: true,
+      steers: ["do b", "do b2"],
+      steps: [
+        { invocationId: "binv_a", content: "do b" },
+        { invocationId: "binv_a", content: "do b2" },
+      ],
+      interrupts: [],
+      completed: ["binv_a", "binv_b"],
+      fail: [],
+    })
+  })
+
+  test("a message deleted while the runtime is taking it is dropped; the owner keeps running", async () => {
+    const blocked = blockedSteer()
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], { steer: blocked.actuator.steer! })
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_b", "stream_a"))
+
+    const draining = claimDrain(h.session)
+    await waitUntil(blocked.started)
+    await h.fake.observations.get("binv_b")!.cancel()
+    blocked.release()
+    await draining
+    const ownerRunning = h.session.isInflight("binv_a")
+    await h.session.reply("binv_a", "done")
+
+    expect({
+      ownerRunning,
+      steps: steerSteps(h),
+      failed: h.calls.fail.map((call) => call.id),
+      completed: h.calls.complete.map((call) => call.id),
+      disposed: h.fake.observations.get("binv_b")!.disposed,
+    }).toEqual({ ownerRunning: true, steps: [], failed: [], completed: ["binv_a"], disposed: true })
+  })
+
+  test("deleting a steered message fences only it; the owner keeps running", async () => {
+    const h = makeQueuedSession([plainMessage("binv_a", "stream_a")], { steer: steerOk })
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_b", "stream_a"))
+    await claimDrain(h.session)
+
+    await h.fake.observations.get("binv_b")!.cancel()
+    const ownerRunning = h.session.isInflight("binv_a")
+    await h.session.reply("binv_a", "done")
+
+    expect({
+      ownerRunning,
+      interrupts: h.interrupts,
+      disposed: h.fake.observations.get("binv_b")!.disposed,
+      completed: h.calls.complete.map((call) => call.id),
+      fail: h.calls.fail,
+    }).toEqual({ ownerRunning: true, interrupts: [], disposed: true, completed: ["binv_a"], fail: [] })
   })
 })
 
@@ -3689,7 +3803,7 @@ describe("folding queued messages into one turn", () => {
           delivered.push({ invocationId: turn.invocationId, content: turn.content })
         }),
       sessionControl: {
-        commands: ["stop", "steer"],
+        commands: ["stop"],
         interrupt: () => {
           interrupts.push(Date.now())
           return true
@@ -3937,7 +4051,7 @@ function plaintextUpdate(overrides: Partial<InvocationInputUpdate> = {}): Invoca
 }
 
 /** A native steer that parks until released, with the flag its callers wait on. */
-function blockedSteer(interrupts: string[] = [], commands: string[] = ["steer"]) {
+function blockedSteer(interrupts: string[] = [], commands: string[] = []) {
   let release!: () => void
   const state = { started: false }
   const actuator: SessionControlActuator = {
@@ -3988,7 +4102,7 @@ function makeObservedControlSession(
   const steered: string[] = []
   const interrupts: string[] = []
   const actuator: SessionControlActuator = {
-    commands: ["stop", "steer"],
+    commands: ["stop"],
     interrupt: () => {
       interrupts.push("interrupt")
       return true
@@ -4242,7 +4356,7 @@ describe("invocation source controls", () => {
 
   test("pauses interim, final, and trace output while an authoritative update is being steered", async () => {
     const queue = [makeInvocation({ id: "binv_output_fence", sourceRevision: 1 })]
-    const blocked = blockedSteer([], ["stop", "steer"])
+    const blocked = blockedSteer([], ["stop"])
     const { session, fake, calls } = makeObservedControlSession(queue, { sessionControl: blocked.actuator })
     await claimDrain(session)
     const updating = fake.observations.get("binv_output_fence")!.update(plaintextUpdate())
@@ -4407,81 +4521,6 @@ describe("invocation source controls", () => {
     await session.shutdown()
   })
 
-  test("a swept dependency cancelled while native steer is blocked fences the running owner and siblings", async () => {
-    const queue = [makeInvocation({ id: "binv_native_owner", promptMarkdown: "owner" })]
-    const interrupts: string[] = []
-    const blocked = blockedSteer(interrupts)
-    const { session, fake, calls } = makeObservedControlSession(queue, { sessionControl: blocked.actuator })
-    await claimDrain(session)
-    queue.push(
-      makeInvocation({ id: "binv_native_dependency", promptMarkdown: "dependency" }),
-      makeInvocation({ id: "binv_native_sibling", promptMarkdown: "sibling" })
-    )
-    const steering = (session as any).handleSessionControl(
-      makeInvocation({
-        id: "binv_native_command",
-        trigger: "session-control",
-        requiredCapability: "session-control",
-        promptMarkdown: "/steer continue",
-        metadata: { command: { executionKind: "bot-runtime", id: "cmd_native", name: "steer", args: "continue" } },
-      })
-    )
-    await waitUntil(blocked.started)
-    await fake.observations.get("binv_native_dependency")!.cancel()
-    expect(session.isInflight("binv_native_owner")).toBe(false)
-    blocked.release()
-    await steering
-    await waitUntil(() => calls.fail.length === 3)
-
-    expect({
-      failed: calls.fail.map((call) => call.id).sort(),
-      siblingDisposed: fake.observations.get("binv_native_sibling")?.disposed,
-      interrupts,
-    }).toEqual({
-      failed: ["binv_native_command", "binv_native_owner", "binv_native_sibling"],
-      siblingDisposed: true,
-      interrupts: ["interrupt"],
-    })
-    await session.shutdown()
-  })
-
-  test("interrupt/redelivery steer retains swept ownership until the combined reply", async () => {
-    const queue = [makeInvocation({ id: "binv_interrupt_owner", promptMarkdown: "owner" })]
-    const { session, calls, fake } = makeObservedControlSession(queue, {
-      sessionControl: {
-        commands: ["steer"],
-        interrupt: () => true,
-        runCommand: async () => ({ ok: true, message: "ok" }),
-      },
-    })
-    await claimDrain(session)
-    queue.push(makeInvocation({ id: "binv_interrupt_dependency", promptMarkdown: "dependency" }))
-    const command = makeInvocation({
-      id: "binv_interrupt_command",
-      trigger: "session-control",
-      requiredCapability: "session-control",
-      promptMarkdown: "/steer continue",
-      metadata: { command: { executionKind: "bot-runtime", id: "cmd_interrupt", name: "steer", args: "continue" } },
-    })
-
-    await (session as any).handleSessionControl(command)
-
-    expect(calls.complete.map((call) => call.id)).toEqual(["binv_interrupt_owner"])
-    expect(fake.observations.get("binv_interrupt_dependency")?.unregistered).toBe(false)
-    expect(await session.reply("binv_interrupt_command", "combined answer")).toEqual({
-      ok: true,
-      message: "sent",
-      closedTurn: true,
-    })
-    expect(calls.complete.map((call) => call.id)).toEqual([
-      "binv_interrupt_owner",
-      "binv_interrupt_command",
-      "binv_interrupt_dependency",
-    ])
-    expect(fake.observations.get("binv_interrupt_dependency")?.unregistered).toBe(true)
-    await session.shutdown()
-  })
-
   test("cancellation interrupts without terminal writes and drains a fresh replacement after callback return", async () => {
     const queue = [makeInvocation({ id: "binv_old", promptMarkdown: "old" })]
     const { session, fake, delivered, interrupts, calls } = makeObservedControlSession(queue)
@@ -4538,7 +4577,7 @@ describe("invocation source controls", () => {
     const queue = [makeInvocation({ id: "binv_restart", promptMarkdown: "old", sourceRevision: 1 })]
     const { session, fake, calls, interrupts } = makeObservedControlSession(queue, {
       sessionControl: {
-        commands: ["stop", "steer"],
+        commands: ["stop"],
         interrupt: () => {
           interrupts.push("interrupt")
           return true
@@ -5096,84 +5135,10 @@ describe("RemoteSession step lifecycle frames", () => {
 })
 
 describe("parallel turns across streams", () => {
-  const drain = (session: RemoteSession) => (session as unknown as { claimDrain: () => Promise<boolean> }).claimDrain()
-  const settle = async (predicate: () => boolean) => {
-    for (let i = 0; i < 50 && !predicate(); i++) await new Promise((resolve) => setTimeout(resolve, 5))
-  }
+  const makeParallelSession = (queue: ClaimedInvocation[], options: Parameters<typeof makeQueuedSession>[1] = {}) =>
+    makeQueuedSession(queue, { maxConcurrentTurns: 2, ...options })
 
-  const message = (id: string, streamId: string, promptMarkdown = id) =>
-    makeInvocation({ id, responseStreamId: streamId, sourceMessageId: `src_${id}`, promptMarkdown })
-  const command = (id: string, streamId: string, name: string, args = "") =>
-    makeInvocation({
-      id,
-      responseStreamId: streamId,
-      sourceMessageId: `src_${id}`,
-      trigger: "session-control",
-      requiredCapability: "session-control",
-      promptMarkdown: `/${name} ${args}`.trim(),
-      metadata: { command: { executionKind: "bot-runtime", id: `cmd_${id}`, name, args } },
-    })
-
-  function makeParallelSession(
-    queue: ClaimedInvocation[],
-    options: { maxConcurrentTurns?: number; serverIgnoresExclusion?: boolean; steer?: boolean } = {}
-  ) {
-    const delivered: string[] = []
-    const claims: Array<Record<string, unknown>> = []
-    const interrupts: Array<string | undefined> = []
-    const steers: Array<{ text: string; streamId: string | undefined }> = []
-    const { client, calls } = makeFakeClient()
-    Object.assign(client as unknown as Record<string, unknown>, {
-      claim: async (body: Record<string, unknown>) => {
-        claims.push(body)
-        const scope = body.responseStreamId
-        const caps = (body.supportedCapabilities ?? []) as string[]
-        const exclude = options.serverIgnoresExclusion ? [] : ((body.excludeResponseStreamIds ?? []) as string[])
-        const index = queue.findIndex(
-          (item) =>
-            caps.includes(item.requiredCapability) &&
-            (!scope || item.responseStreamId === scope) &&
-            (item.trigger === "session-control" || !exclude.includes(item.responseStreamId))
-        )
-        return index === -1 ? null : queue.splice(index, 1)[0]
-      },
-    })
-    const fake = makeFakeTransport()
-    const session = new RemoteSession({
-      config: makeConfig(),
-      client,
-      delegate: {
-        deliverTurn: async (turn) => {
-          delivered.push(turn.invocationId)
-        },
-        sessionControl: {
-          commands: ["stop", "steer"],
-          interrupt: (streamId) => {
-            interrupts.push(streamId)
-            return true
-          },
-          ...(options.steer
-            ? {
-                steer: (text: string, streamId?: string) => {
-                  steers.push({ text, streamId })
-                  return true
-                },
-              }
-            : {}),
-          runCommand: async () => ({ ok: true, message: "ok" }),
-        },
-      },
-      runtime: { ...RUNTIME, maxConcurrentTurns: options.maxConcurrentTurns ?? 2 },
-      transport: fake.transport,
-    })
-    const drainClaims = () =>
-      claims
-        .filter((body) => body.responseStreamId === undefined)
-        .map((body) => ({ caps: body.supportedCapabilities, exclude: body.excludeResponseStreamIds }))
-    return { session, queue, delivered, claims, drainClaims, interrupts, steers, calls, fake }
-  }
-
-  const FULL_CAPS = claimCapabilitiesFor(false, true)
+  const FULL_CAPS = claimCapabilitiesFor("idle", true)
 
   test("rejects a maxConcurrentTurns that is not a positive integer", () => {
     const { client } = makeFakeClient()
@@ -5194,16 +5159,16 @@ describe("parallel turns across streams", () => {
 
   test("the serial capability table is unchanged", () => {
     expect([
-      claimCapabilitiesFor(false, true),
-      claimCapabilitiesFor(true, true),
-      claimCapabilitiesFor(true, false),
+      claimCapabilitiesFor("idle", true),
+      claimCapabilitiesFor("busy", true),
+      claimCapabilitiesFor("busy", false),
     ]).toEqual([supportedCapabilitiesFor(true), ["session-control"], []])
   })
 
   test("messages in two streams are both claimed and delivered, the second claim excluding the first stream", async () => {
-    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
+    const h = makeParallelSession([plainMessage("binv_a", "stream_a"), plainMessage("binv_b", "stream_b")])
 
-    await drain(h.session)
+    await claimDrain(h.session)
 
     expect({
       delivered: h.delivered,
@@ -5221,14 +5186,14 @@ describe("parallel turns across streams", () => {
   })
 
   test("a second message in a running stream waits until that stream's turn settles", async () => {
-    const h = makeParallelSession([message("binv_a1", "stream_a")])
-    await drain(h.session)
-    h.queue.push(message("binv_a2", "stream_a"))
+    const h = makeParallelSession([plainMessage("binv_a1", "stream_a")])
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_a2", "stream_a"))
 
-    await drain(h.session)
+    await claimDrain(h.session)
     const whileRunning = [...h.delivered]
     await h.session.reply("binv_a1", "done")
-    await settle(() => h.delivered.length === 2)
+    await waitUntil(() => h.delivered.length === 2)
 
     expect({ whileRunning, delivered: h.delivered, exclusion: h.drainClaims()[2] }).toEqual({
       whileRunning: ["binv_a1"],
@@ -5238,17 +5203,17 @@ describe("parallel turns across streams", () => {
   })
 
   test("/stop in one stream stops only that stream and the drain continues for other streams", async () => {
-    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")], {
+    const h = makeParallelSession([plainMessage("binv_a", "stream_a"), plainMessage("binv_b", "stream_b")], {
       maxConcurrentTurns: 3,
     })
-    await drain(h.session)
+    await claimDrain(h.session)
     h.queue.push(
-      command("binv_stop", "stream_a", "stop"),
-      message("binv_a2", "stream_a"),
-      message("binv_c", "stream_c")
+      controlCommand("binv_stop", "stream_a", "stop"),
+      plainMessage("binv_a2", "stream_a"),
+      plainMessage("binv_c", "stream_c")
     )
 
-    await drain(h.session)
+    await claimDrain(h.session)
 
     expect({
       interrupts: h.interrupts,
@@ -5266,11 +5231,11 @@ describe("parallel turns across streams", () => {
   })
 
   test("/stop in a stream with no turn acks without interrupting", async () => {
-    const h = makeParallelSession([message("binv_b", "stream_b")])
-    await drain(h.session)
-    h.queue.push(command("binv_stop", "stream_a", "stop"))
+    const h = makeParallelSession([plainMessage("binv_b", "stream_b")])
+    await claimDrain(h.session)
+    h.queue.push(controlCommand("binv_stop", "stream_a", "stop"))
 
-    await drain(h.session)
+    await claimDrain(h.session)
 
     expect({
       interrupts: h.interrupts,
@@ -5287,15 +5252,15 @@ describe("parallel turns across streams", () => {
     const h = makeParallelSession(
       [
         makeInvocation({ id: "binv_ch", rootStreamId: "stream_channel", responseStreamId: "stream_channel" }),
-        message("binv_thread", "stream_thread"),
+        plainMessage("binv_thread", "stream_thread"),
       ],
       { maxConcurrentTurns: 3 }
     )
     ;(h.session as unknown as { link: { rootStreamId: string } }).link = { rootStreamId: "stream_root" }
-    await drain(h.session)
-    h.queue.push(command("binv_stop", "stream_root", "stop"))
+    await claimDrain(h.session)
+    h.queue.push(controlCommand("binv_stop", "stream_root", "stop"))
 
-    await drain(h.session)
+    await claimDrain(h.session)
 
     expect({
       interrupts: h.interrupts,
@@ -5308,37 +5273,38 @@ describe("parallel turns across streams", () => {
     })
   })
 
-  test("/steer in one stream steers only that stream and sweeps only its queued messages", async () => {
-    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")], { steer: true })
-    await drain(h.session)
-    h.queue.push(
-      command("binv_steer", "stream_a", "steer", "go left"),
-      message("binv_b2", "stream_b", "b follow-up"),
-      message("binv_a2", "stream_a", "a follow-up")
-    )
+  test("a plain message steers only the turn in its own stream", async () => {
+    const h = makeParallelSession([plainMessage("binv_a", "stream_a"), plainMessage("binv_b", "stream_b")], {
+      steer: steerOk,
+    })
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_b2", "stream_b", "b follow-up"), plainMessage("binv_a2", "stream_a", "a follow-up"))
 
-    await drain(h.session)
+    await claimDrain(h.session)
 
     expect({
       steers: h.steers,
-      steppedOn: [...new Set(h.fake.steps.filter((s) => s.frames[0]?.stepType === "steer").map((s) => s.invocationId))],
+      steppedOn: h.fake.steps.filter((s) => s.frames[0]?.stepType === "steer").map((s) => s.invocationId),
       pending: h.queue.map((item) => item.id),
       interrupts: h.interrupts,
     }).toEqual({
-      steers: [{ text: buildSteerContent(["a follow-up", "go left"]), streamId: "stream_a" }],
-      steppedOn: ["binv_a"],
-      pending: ["binv_b2"],
+      steers: [
+        { text: "a follow-up", streamId: "stream_a" },
+        { text: "b follow-up", streamId: "stream_b" },
+      ],
+      steppedOn: ["binv_a", "binv_b"],
+      pending: [],
       interrupts: [],
     })
   })
 
   test("at capacity claims only session control and goes busy; one settle restores full caps", async () => {
-    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
-    await drain(h.session)
+    const h = makeParallelSession([plainMessage("binv_a", "stream_a"), plainMessage("binv_b", "stream_b")])
+    await claimDrain(h.session)
     const busyPresence = h.fake.presence.at(-1)?.status
 
     await h.session.reply("binv_a", "done")
-    await settle(() => h.drainClaims().length === 4)
+    await waitUntil(() => h.drainClaims().length === 4)
 
     expect({ busyPresence, afterSettle: h.drainClaims()[3], presence: h.fake.presence.at(-1)?.status }).toEqual({
       busyPresence: "busy",
@@ -5348,11 +5314,11 @@ describe("parallel turns across streams", () => {
   })
 
   test("shutdown fails both in-flight turns; a gone host fails neither", async () => {
-    const ordinary = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
-    await drain(ordinary.session)
+    const ordinary = makeParallelSession([plainMessage("binv_a", "stream_a"), plainMessage("binv_b", "stream_b")])
+    await claimDrain(ordinary.session)
     await ordinary.session.shutdown()
-    const gone = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
-    await drain(gone.session)
+    const gone = makeParallelSession([plainMessage("binv_a", "stream_a"), plainMessage("binv_b", "stream_b")])
+    await claimDrain(gone.session)
     await gone.session.shutdown({ hostGone: true })
 
     expect({
@@ -5368,8 +5334,8 @@ describe("parallel turns across streams", () => {
   })
 
   test("a lost claim fences only its own stream's turn", async () => {
-    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
-    await drain(h.session)
+    const h = makeParallelSession([plainMessage("binv_a", "stream_a"), plainMessage("binv_b", "stream_b")])
+    await claimDrain(h.session)
 
     await h.fake.observations.get("binv_a")!.lose()
 
@@ -5381,11 +5347,11 @@ describe("parallel turns across streams", () => {
   })
 
   test("a server that ignores the exclusion gets the duplicate failed, never a second turn in the stream", async () => {
-    const h = makeParallelSession([message("binv_a", "stream_a")], { serverIgnoresExclusion: true })
-    await drain(h.session)
-    h.queue.push(message("binv_a2", "stream_a"))
+    const h = makeParallelSession([plainMessage("binv_a", "stream_a")], { serverIgnoresExclusion: true })
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_a2", "stream_a"))
 
-    await drain(h.session)
+    await claimDrain(h.session)
 
     expect({
       delivered: h.delivered,
@@ -5397,8 +5363,8 @@ describe("parallel turns across streams", () => {
   })
 
   test("a pending decision keeps alive only its own stream's turn", async () => {
-    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
-    await drain(h.session)
+    const h = makeParallelSession([plainMessage("binv_a", "stream_a"), plainMessage("binv_b", "stream_b")])
+    await claimDrain(h.session)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const internals = h.session as any
     internals.pendingDecisions.set("dreq_b", {
@@ -5415,8 +5381,8 @@ describe("parallel turns across streams", () => {
   })
 
   test("requestDecision without a stream throws while several streams run", async () => {
-    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
-    await drain(h.session)
+    const h = makeParallelSession([plainMessage("binv_a", "stream_a"), plainMessage("binv_b", "stream_b")])
+    await claimDrain(h.session)
 
     await expect(
       h.session.requestDecision({ title: "Allow?", options: [{ id: "allow", label: "Allow", tone: "primary" }] })
@@ -5424,8 +5390,10 @@ describe("parallel turns across streams", () => {
   })
 
   test("an input update on a running turn steers only that turn's stream", async () => {
-    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")], { steer: true })
-    await drain(h.session)
+    const h = makeParallelSession([plainMessage("binv_a", "stream_a"), plainMessage("binv_b", "stream_b")], {
+      steer: steerOk,
+    })
+    await claimDrain(h.session)
     ;(h.session as unknown as { client: { listStreamMessages: () => Promise<unknown[]> } }).client.listStreamMessages =
       async () => []
 
@@ -5436,27 +5404,25 @@ describe("parallel turns across streams", () => {
     expect(h.steers).toEqual([{ text: "a edited", streamId: "stream_a" }])
   })
 
-  test("/steer in an idle stream at capacity acks without starting a turn past the cap", async () => {
-    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")], { steer: true })
-    await drain(h.session)
-    h.queue.push(command("binv_steer", "stream_c", "steer", "go left"))
+  test("a plain message for an idle stream at capacity stays queued rather than steering another stream", async () => {
+    const h = makeParallelSession([plainMessage("binv_a", "stream_a"), plainMessage("binv_b", "stream_b")], {
+      steer: steerOk,
+    })
+    await claimDrain(h.session)
+    h.queue.push(plainMessage("binv_c", "stream_c"))
 
-    await drain(h.session)
+    await claimDrain(h.session)
 
-    expect({
-      delivered: h.delivered,
-      interrupts: h.interrupts,
-      ack: h.calls.complete.find((call) => call.id === "binv_steer")?.body.summary,
-    }).toEqual({
+    expect({ delivered: h.delivered, steers: h.steers, pending: h.queue.map((item) => item.id) }).toEqual({
       delivered: ["binv_a", "binv_b"],
-      interrupts: [],
-      ack: "Every turn slot is busy; resend the steer when a turn finishes.",
+      steers: [],
+      pending: ["binv_c"],
     })
   })
 
   test("requestDecision without a stream opens in the one running stream", async () => {
-    const h = makeParallelSession([message("binv_a", "stream_a"), message("binv_b", "stream_b")])
-    await drain(h.session)
+    const h = makeParallelSession([plainMessage("binv_a", "stream_a"), plainMessage("binv_b", "stream_b")])
+    await claimDrain(h.session)
     await h.session.reply("binv_b", "done")
     const opened: string[] = []
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

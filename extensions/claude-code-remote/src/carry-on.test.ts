@@ -21,10 +21,10 @@ const FAST: Partial<CarryOnTiming> = {
 
 interface HostLog {
   holds: Array<{ invocationId: string; content: string; statusText: string }>
-  notices: Array<{ streamId: string; text: string }>
   closes: Array<{ invocationId: string; text: string }>
   injects: string[]
   keepAlives: number
+  holdEnds: number
 }
 
 function makeHost(options: { injectOk?: boolean; failCloses?: number } = {}): {
@@ -32,7 +32,7 @@ function makeHost(options: { injectOk?: boolean; failCloses?: number } = {}): {
   log: HostLog
   inflight: Set<string>
 } {
-  const log: HostLog = { holds: [], notices: [], closes: [], injects: [], keepAlives: 0 }
+  const log: HostLog = { holds: [], closes: [], injects: [], keepAlives: 0, holdEnds: 0 }
   const inflight = new Set<string>()
   let closesToFail = options.failCloses ?? 0
   const host: CarryOnHost = {
@@ -42,9 +42,6 @@ function makeHost(options: { injectOk?: boolean; failCloses?: number } = {}): {
     },
     reportHold: async (invocationId, content, statusText) => {
       log.holds.push({ invocationId, content, statusText })
-    },
-    postNotice: async (streamId, text) => {
-      log.notices.push({ streamId, text })
     },
     closeTurn: async (invocationId, text) => {
       if (closesToFail > 0) {
@@ -57,6 +54,9 @@ function makeHost(options: { injectOk?: boolean; failCloses?: number } = {}): {
     inject: async (text) => {
       log.injects.push(text)
       return options.injectOk ?? true
+    },
+    holdEnded: () => {
+      log.holdEnds += 1
     },
     log: () => undefined,
     // Pinned clock: delays are computed as (resumeAt - now()) with both sides
@@ -75,7 +75,7 @@ function startTurn(controller: CarryOnController, inflight: Set<string>, id = "b
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 describe("CarryOnController", () => {
-  it("holds a turn on a session-limit error: the wait lands on the turn's trace, /carry-on queues, steer absorbs", () => {
+  it("holds a turn on a session-limit error: the wait lands on the turn's trace and the session reports held", () => {
     const { host, log, inflight } = makeHost()
     const controller = new CarryOnController(host, FAST)
     const id = startTurn(controller, inflight)
@@ -86,23 +86,17 @@ describe("CarryOnController", () => {
       holds: log.holds.length,
       invocationId: log.holds[0]?.invocationId,
       mentionsLimit: log.holds[0]?.content.includes("session limit"),
-      mentionsCarryOn: log.holds[0]?.content.includes("/carry-on"),
+      mentionsStop: log.holds[0]?.content.includes("/stop"),
       // The reset time renders in the machine's own zone, so only the parts
       // that do not move with it are pinned.
       statusText: log.holds[0]?.statusText.replace(/~\d\d:\d\d/, "~HH:MM"),
-      notices: log.notices.length,
     }).toEqual({
       holds: 1,
       invocationId: id,
       mentionsLimit: true,
-      mentionsCarryOn: true,
+      mentionsStop: true,
       statusText: "Rate limited — resuming ~HH:MM (in ~2h 20m)",
-      notices: 0,
     })
-
-    expect(controller.enqueue("also bump the version").ok).toBe(true)
-    expect(controller.enqueue("").summary).toContain("1 message(s) queued")
-    expect(controller.absorbSteer("and fix the tests")).toContain("queued the steer")
     controller.stop()
   })
 
@@ -116,7 +110,7 @@ describe("CarryOnController", () => {
     inflight.delete(id)
     controller.onApiError(id, SESSION_LIMIT)
     expect(controller.holding).toBe(false)
-    expect({ holds: log.holds.length, notices: log.notices.length }).toEqual({ holds: 0, notices: 0 })
+    expect(log.holds).toHaveLength(0)
   })
 
   it("does not hold on non-retryable errors", () => {
@@ -127,28 +121,73 @@ describe("CarryOnController", () => {
     expect(controller.holding).toBe(false)
   })
 
-  it("answers /carry-on with guidance when nothing is blocked", () => {
-    const { host } = makeHost()
-    const controller = new CarryOnController(host, FAST)
-    const ack = controller.enqueue("do the thing")
-    expect(ack.ok).toBe(false)
-    expect(ack.message).toContain("normal message")
-  })
-
-  it("resumes a transient failure by injecting the continuation with queued texts", async () => {
+  it("resumes a transient failure by injecting the continuation", async () => {
     const { host, log, inflight } = makeHost()
     const controller = new CarryOnController(host, FAST)
     const id = startTurn(controller, inflight)
 
     controller.onApiError(id, OVERLOADED)
-    expect(controller.enqueue("remember the changelog").ok).toBe(true)
     await wait(40)
 
     expect(log.injects).toHaveLength(1)
     expect(log.injects[0]).toContain(id)
-    expect(log.injects[0]).toContain("remember the changelog")
     expect(log.closes).toHaveLength(0)
     controller.stop()
+  })
+
+  it("stays awaiting the resume until the continuation has been typed", async () => {
+    const { host, inflight } = makeHost()
+    let landInject: (ok: boolean) => void = () => undefined
+    const controller = new CarryOnController(
+      { ...host, inject: () => new Promise<boolean>((resolve) => (landInject = resolve)) },
+      FAST
+    )
+    const id = startTurn(controller, inflight)
+
+    controller.onApiError(id, OVERLOADED)
+    await wait(40)
+    const typing = controller.awaitingResume
+    landInject(true)
+    await wait(0)
+    const landed = controller.awaitingResume
+    controller.stop()
+
+    expect({ typing, landed }).toEqual({ typing: true, landed: false })
+  })
+
+  it("reports the hold ended once, whether the resume lands or the hold drops first", async () => {
+    const resumed = makeHost()
+    const resumedController = new CarryOnController(resumed.host, FAST)
+    const resumedId = startTurn(resumedController, resumed.inflight)
+    resumedController.onApiError(resumedId, OVERLOADED)
+    await wait(40)
+    resumedController.onTurnClosed(resumedId)
+
+    const dropped = makeHost()
+    const droppedController = new CarryOnController(dropped.host, FAST)
+    startTurn(droppedController, dropped.inflight)
+    droppedController.onApiError("binv_1", SESSION_LIMIT)
+    droppedController.onInterrupt()
+
+    expect({ resumed: resumed.log.holdEnds, dropped: dropped.log.holdEnds }).toEqual({ resumed: 1, dropped: 1 })
+  })
+
+  it("leaves a turn stopped during the resume inject alone, even when the inject fails", async () => {
+    const { host, log, inflight } = makeHost()
+    let landInject: (ok: boolean) => void = () => undefined
+    const controller = new CarryOnController(
+      { ...host, inject: () => new Promise<boolean>((resolve) => (landInject = resolve)) },
+      FAST
+    )
+    const id = startTurn(controller, inflight)
+
+    controller.onApiError(id, OVERLOADED)
+    await wait(40)
+    controller.onInterrupt()
+    landInject(false)
+    await wait(0)
+
+    expect({ closes: log.closes, holding: controller.holding }).toEqual({ closes: [], holding: false })
   })
 
   it("keeps the held turn alive while waiting", async () => {
@@ -161,7 +200,7 @@ describe("CarryOnController", () => {
     controller.stop()
   })
 
-  it("gives up after the resume-attempt cap, carrying queued texts in the close", async () => {
+  it("gives up after the resume-attempt cap", async () => {
     const { host, log, inflight } = makeHost()
     const controller = new CarryOnController(host, { ...FAST, maxResumeAttempts: 2 })
     const id = startTurn(controller, inflight)
@@ -172,12 +211,10 @@ describe("CarryOnController", () => {
     await wait(60) // resume 2 fires (backoff doubles), still blocked
     expect(log.injects).toHaveLength(2)
 
-    controller.enqueue("queued while blocked")
     controller.onApiError(id, OVERLOADED) // third failure exceeds the cap
     await wait(10)
     expect(log.closes).toHaveLength(1)
     expect(log.closes[0]!.text).toContain("still blocked after 2 resume attempts")
-    expect(log.closes[0]!.text).toContain("queued while blocked")
     expect(controller.holding).toBe(false)
   })
 
@@ -213,28 +250,15 @@ describe("CarryOnController", () => {
     expect(log.closes[0]!.text).toContain("tmux control unavailable")
   })
 
-  it("skips the resume when the turn already closed, surfacing queued texts", async () => {
+  it("skips the resume when the turn already closed", async () => {
     const { host, log, inflight } = makeHost()
     const controller = new CarryOnController(host, FAST)
     const id = startTurn(controller, inflight)
     controller.onApiError(id, OVERLOADED)
-    controller.enqueue("orphaned instruction")
     inflight.delete(id) // reply landed elsewhere / claim lost
     await wait(40)
     expect(log.injects).toHaveLength(0)
-    expect(log.notices.map((n) => n.text).join("\n")).toContain("orphaned instruction")
     expect(controller.holding).toBe(false)
-  })
-
-  it("surfaces queued texts when shutdown drops the hold", () => {
-    const { host, log, inflight } = makeHost()
-    const controller = new CarryOnController(host, FAST)
-    const id = startTurn(controller, inflight)
-    controller.onApiError(id, SESSION_LIMIT)
-    controller.enqueue("survive the restart")
-    controller.stop()
-    expect(controller.holding).toBe(false)
-    expect(log.notices.map((n) => n.text).join("\n")).toContain("survive the restart")
   })
 
   it("drops the hold on /stop and on turn close", () => {
@@ -254,14 +278,7 @@ describe("CarryOnController", () => {
 })
 
 describe("buildResumePrompt", () => {
-  it("references the invocation and lists queued instructions", () => {
-    const prompt = buildResumePrompt("binv_9", ["first", "second"])
-    expect(prompt).toContain("binv_9")
-    expect(prompt).toContain("1. first")
-    expect(prompt).toContain("2. second")
-  })
-
-  it("omits the queue section when empty", () => {
-    expect(buildResumePrompt("binv_9", [])).not.toContain("queued")
+  it("references the invocation", () => {
+    expect(buildResumePrompt("binv_9")).toContain("binv_9")
   })
 })

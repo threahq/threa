@@ -91,7 +91,6 @@ describe("createHermesSessionControl", () => {
     const { runner } = makeRunner()
     expect(createHermesSessionControl(runner, makeClient().client).commands).toEqual([
       "stop",
-      "steer",
       "status",
       "model",
       "clear",

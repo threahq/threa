@@ -13,6 +13,10 @@ arrive sealed: the extension decrypts the trigger + history locally, runs the
 turn, and seals every reply and trace step back under the stream key — the
 server only ever stores ciphertext.
 
+## Messages while Pi is busy
+
+A plain message sent while a turn runs is delivered into that turn as steering input (`deliverAs: "steer"`). `/enqueue <message>` waits instead: Pi claims it only when idle, with no turn pending and no rate-limit retry scheduled.
+
 ## Invocation edits and deletion
 
 The extension applies source-message edits to an active Pi turn as steering input. It rebuilds plaintext context and attachments from Threa; sealed turns decrypt updated attachment references locally. Completions carry the exact applied source revision, so stale output cannot replace a newer edit.

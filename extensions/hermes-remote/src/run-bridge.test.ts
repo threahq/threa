@@ -480,6 +480,7 @@ function makeGatedClient() {
   const stops: string[] = []
   const approvals: Array<{ runId: string; choice: string; requestId?: string }> = []
   const steerErrors: Error[] = []
+  let steerDeclines = 0
   const queue: HermesRunEvent[] = []
   const forks: Array<{ sourceId: string; forkId: string }> = []
   const admissionErrors: Error[] = []
@@ -501,6 +502,10 @@ function makeGatedClient() {
     steerRun: async (runId: string, input: string) => {
       const failure = steerErrors.shift()
       if (failure) throw failure
+      if (steerDeclines > 0) {
+        steerDeclines -= 1
+        return { runId, accepted: false }
+      }
       steers.push({ runId, input })
       return { runId, accepted: true }
     },
@@ -538,6 +543,10 @@ function makeGatedClient() {
       closed = true
     },
     failNextSteer: (error: Error) => steerErrors.push(error),
+    /** The next steer is acknowledged with `accepted: false`. */
+    declineNextSteer: () => {
+      steerDeclines += 1
+    },
     failNextAdmission: (error: Error) => admissionErrors.push(error),
     /** Park the next createRun until `release` is called. */
     holdAdmission: () => {
@@ -667,7 +676,7 @@ describe("HermesTurnRunner control", () => {
     const runner = makeRunner(gate.client, session)
     await runner.deliverTurn(TURN)
 
-    expect(await runner.steer("go left")).toBe(true)
+    expect(await runner.steer("go left", "stream_thread")).toBe(true)
     expect(gate.steers).toEqual([{ runId: "run_1", input: "go left" }])
     gate.close()
     runner.shutdown()
@@ -676,32 +685,53 @@ describe("HermesTurnRunner control", () => {
   test("with no open run there is nothing to steer", async () => {
     const { session } = makeSession()
     const gate = makeGatedClient()
-    expect(await makeRunner(gate.client, session).steer("go left")).toBe(false)
+    expect(await makeRunner(gate.client, session).steer("go left", "stream_thread")).toBe(false)
   })
 
-  test("a steer Hermes rejects is held and folded into the next turn on that stream", async () => {
+  test("a steer Hermes will not take right now is refused and holds nothing for the next turn", async () => {
     const { session } = makeSession()
     const gate = makeGatedClient()
     const runner = makeRunner(gate.client, session)
     await runner.deliverTurn(TURN)
     gate.failNextSteer(steerRejected())
 
-    expect(await runner.steer("go left")).toBe(true)
-    expect(gate.steers).toEqual([])
-
+    const steered = await runner.steer("go left", "stream_thread")
     gate.push({ event: "run.completed", run_id: "run_1", output: "ok" })
     await settle()
     await runner.deliverTurn({ ...TURN, invocationId: "binv_2", content: "Next" })
     gate.close()
 
-    const second = gate.created[1]
-    expect({
-      input: second?.input,
-      differentKey: second?.idempotencyKey !== idempotencyKeyFor("binv_2", "Next"),
-    }).toEqual({
-      input: "Next\n\n[Steer that arrived between turns]\ngo left",
-      differentKey: true,
+    expect({ steered, steers: gate.steers, nextInput: gate.created[1]?.input }).toEqual({
+      steered: false,
+      steers: [],
+      nextInput: "Next",
     })
+    runner.shutdown()
+  })
+
+  test("a steer Hermes acknowledges without accepting is refused", async () => {
+    const { session } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    gate.declineNextSteer()
+
+    const steered = await runner.steer("go left", "stream_thread")
+    gate.close()
+
+    expect({ steered, steers: gate.steers }).toEqual({ steered: false, steers: [] })
+    runner.shutdown()
+  })
+
+  test("a steer that fails for another reason throws", async () => {
+    const { session } = makeSession()
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    gate.failNextSteer(new Error("gateway down"))
+
+    await expect(runner.steer("go left", "stream_thread")).rejects.toThrow("gateway down")
+    gate.close()
     runner.shutdown()
   })
 
@@ -765,14 +795,12 @@ describe("HermesTurnRunner control", () => {
     expect({ during, after: runner.hasOpenTurns() }).toEqual({ during: { open: true, runs: 0 }, after: false })
   })
 
-  test("a held steer survives a failed admission and rides the retry", async () => {
+  test("steer text held for the next turn survives a failed admission and rides the retry", async () => {
     const { session } = makeSession()
     const gate = makeGatedClient()
     const runner = makeRunner(gate.client, session)
     await runner.deliverTurn(TURN)
-    gate.failNextSteer(steerRejected())
-    await runner.steer("go left")
-    gate.push({ event: "run.completed", run_id: "run_1", output: "ok" })
+    gate.push({ event: "run.completed", run_id: "run_1", output: "ok", pending_steer: "go left" })
     await settle()
 
     gate.failNextAdmission(new Error("gateway restarting"))
@@ -904,15 +932,35 @@ describe("HermesTurnRunner control", () => {
     runner.shutdown()
   })
 
-  test("a steer that lands while an approval is parked is sent once the approval is answered", async () => {
+  test("a steer behind a held denial note is refused, and the note is sent once the run resumes", async () => {
     const { session, setOutcome } = makeSession()
-    setOutcome(resolvedWith("once"))
+    setOutcome(resolvedWith("deny", "no"))
     const gate = makeGatedClient()
     const runner = makeRunner(gate.client, session)
     await runner.deliverTurn(TURN)
     gate.failNextSteer(steerRejected())
-    expect(await runner.steer("go left")).toBe(true)
+    gate.push(APPROVAL_EVENT)
+    await settle()
 
+    const steered = await runner.steer("go left", "stream_thread")
+    gate.push({ event: "tool.started", run_id: "run_1", tool: "Bash", preview: "ls" })
+    await settle()
+    gate.close()
+
+    expect({ steered, steers: gate.steers }).toEqual({
+      steered: false,
+      steers: [{ runId: "run_1", input: "The user denied this and said: no" }],
+    })
+    runner.shutdown()
+  })
+
+  test("a denial note Hermes acknowledges without accepting is held for the next turn", async () => {
+    const { session, setOutcome } = makeSession()
+    setOutcome(resolvedWith("deny", "no"))
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    gate.declineNextSteer()
     gate.push(APPROVAL_EVENT)
     await settle()
     gate.push({ event: "run.completed", run_id: "run_1", output: "ok" })
@@ -920,9 +968,30 @@ describe("HermesTurnRunner control", () => {
     await runner.deliverTurn({ ...TURN, invocationId: "binv_2", content: "Next" })
     gate.close()
 
+    expect(gate.created[1]?.input).toBe("Next\n\n[Steer that arrived between turns]\nThe user denied this and said: no")
+    runner.shutdown()
+  })
+
+  test("a held denial note the resumed run does not accept stays held for the next turn", async () => {
+    const { session, setOutcome } = makeSession()
+    setOutcome(resolvedWith("deny", "no"))
+    const gate = makeGatedClient()
+    const runner = makeRunner(gate.client, session)
+    await runner.deliverTurn(TURN)
+    gate.failNextSteer(steerRejected())
+    gate.push(APPROVAL_EVENT)
+    await settle()
+    gate.declineNextSteer()
+    gate.push({ event: "tool.started", run_id: "run_1", tool: "Bash", preview: "ls" })
+    await settle()
+    gate.push({ event: "run.completed", run_id: "run_1", output: "ok" })
+    await settle()
+    await runner.deliverTurn({ ...TURN, invocationId: "binv_2", content: "Next" })
+    gate.close()
+
     expect({ steers: gate.steers, nextInput: gate.created[1]?.input }).toEqual({
-      steers: [{ runId: "run_1", input: "go left" }],
-      nextInput: "Next",
+      steers: [],
+      nextInput: "Next\n\n[Steer that arrived between turns]\nThe user denied this and said: no",
     })
     runner.shutdown()
   })
@@ -941,8 +1010,9 @@ describe("HermesTurnRunner control", () => {
     runner.shutdown()
   })
 
-  test("a held steer whose send is still out when the run completes is folded into the next turn", async () => {
-    const { session } = makeSession()
+  test("a held denial note whose send is still out when the run completes is folded into the next turn", async () => {
+    const { session, setOutcome } = makeSession()
+    setOutcome(resolvedWith("deny", "no"))
     const gate = makeGatedClient()
     let answerSteer: ((error: Error) => void) | undefined
     const sends: string[] = []
@@ -956,11 +1026,12 @@ describe("HermesTurnRunner control", () => {
     } as unknown as HermesRunsClient
     const runner = makeRunner(client, session)
     await runner.deliverTurn(TURN)
-    await runner.steer("go left")
+    gate.push(APPROVAL_EVENT)
+    await settle()
 
     gate.push({ event: "tool.started", run_id: "run_1", tool: "Bash", preview: "ls" })
     await settle()
-    await runner.steer("then right")
+    const midFlush = await runner.steer("then right", "stream_thread")
     gate.push({ event: "run.completed", run_id: "run_1", output: "ok" })
     await settle()
     answerSteer?.(steerRejected())
@@ -968,9 +1039,11 @@ describe("HermesTurnRunner control", () => {
     await runner.deliverTurn({ ...TURN, invocationId: "binv_2", content: "Next" })
     gate.close()
 
-    expect({ sends, nextInput: gate.created[1]?.input }).toEqual({
-      sends: ["go left", "go left"],
-      nextInput: "Next\n\n[Steer that arrived between turns]\ngo left\nthen right",
+    const note = "The user denied this and said: no"
+    expect({ sends, midFlush, nextInput: gate.created[1]?.input }).toEqual({
+      sends: [note, note],
+      midFlush: false,
+      nextInput: `Next\n\n[Steer that arrived between turns]\n${note}`,
     })
     runner.shutdown()
   })

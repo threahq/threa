@@ -52,13 +52,16 @@ import {
 } from "./client"
 import { RouteRevokedError, TurnRoute, type CloseRequest, type PostIntent, type PreparedClose } from "./turn-route"
 
-export const SUPPORTED_CAPABILITIES = ["active-scratchpad", "mentionable"] as const
+/** Plain messages: what a running turn may take in, and the base of every idle claim. */
+const MESSAGE_CAPABILITIES = ["active-scratchpad", "mentionable"] as const
+export const QUEUED_MESSAGE_CAPABILITY = "queued-message"
+export const SUPPORTED_CAPABILITIES = [...MESSAGE_CAPABILITIES, QUEUED_MESSAGE_CAPABILITY] as const
 export const SESSION_CONTROL_CAPABILITY = "session-control"
-// Mirror Pi's STEER_DRAIN_LIMIT: how many queued messages a single /steer folds
-// into one combined turn before stopping (a backstop, not an expected count).
-const STEER_DRAIN_LIMIT = 10
-/** Milliseconds to wait after an interrupt before delivering the steer turn, so the runtime has returned to idle. */
-export const STEER_SETTLE_MS = 250
+/** Advertised by every runtime with an actuator, because every one claims `queued-message` when idle. */
+const ENQUEUE_COMMAND = "enqueue"
+// Mirror Pi's STEER_DRAIN_LIMIT: how many queued messages one idle fold takes
+// into a combined turn before stopping (a backstop, not an expected count).
+const FOLD_LIMIT = 10
 
 const CLAIM_TTL_SECONDS = 120
 // With NO socket, the poll is the only delivery path, but a fast fixed cadence
@@ -124,10 +127,10 @@ export interface DeliveredTurn {
 }
 
 /**
- * How a connector drives its runtime for session control. `stop` and `steer`
- * are actuated by the SDK itself (they manipulate SDK-owned turn state) using
- * `interrupt()`/`steer()`; every other advertised command is routed to
- * `runCommand`, which returns the user-facing ack markdown.
+ * How a connector drives its runtime for session control. `stop` is actuated by
+ * the SDK itself (it manipulates SDK-owned turn state) using `interrupt()`;
+ * every other advertised command is routed to `runCommand`, which returns the
+ * user-facing ack markdown. `steer()` is how a plain message reaches a running turn.
  */
 export interface SessionControlInvocationContext {
   rootStreamId: string
@@ -136,7 +139,7 @@ export interface SessionControlInvocationContext {
 }
 
 export interface SessionControlActuator {
-  /** Command names to advertise (must be Threa catalog names, e.g. "model", "thinking", "compact", "run", "reload", "steer", "stop"). */
+  /** Command names to advertise (must be Threa catalog names, e.g. "model", "thinking", "compact", "run", "reload", "stop"). The SDK adds "enqueue" itself. */
   commands: readonly string[]
   /** Model options for the composer's arg picker. */
   modelSuggestions?: readonly ModelSuggestionInfo[]
@@ -156,13 +159,24 @@ export interface SessionControlActuator {
   /**
    * Fold text into the RUNNING turn without interrupting it — the runtime's
    * native mid-turn steering (typing into Claude Code while it works). When
-   * present and a turn is in flight, /steer steers in place: the running
-   * invocation keeps its trace and its reply. Absent, /steer falls back to
-   * interrupt + redeliver. False = control lost. The SDK always passes the
-   * target stream; a serial runtime may ignore it, but a runtime declaring
-   * `maxConcurrentTurns > 1` must steer only that stream's turn.
+   * present, a plain message for a stream with a running turn is offered to
+   * that turn at once. Return true only when the text joined the running turn:
+   * the message then closes with it and the running invocation keeps its trace
+   * and reply. False means the turn cannot take it now; the message waits for
+   * the next turn in its stream. A throw fails the message. Absent, every
+   * message waits for the next turn. A serial runtime may ignore `streamId`,
+   * but a runtime declaring `maxConcurrentTurns > 1` must steer only that
+   * stream's turn.
    */
-  steer?(text: string, streamId?: string): Promise<boolean> | boolean
+  steer?(text: string, streamId: string): Promise<boolean> | boolean
+  /**
+   * A provider quota hold is on and the turn in flight will resume by itself.
+   * While true, nothing is steered into a running turn and no `/enqueue`d
+   * message is claimed. Plain messages wait for the resumed or next turn;
+   * `/enqueue`d ones wait until the hold ends and no turn is in flight for
+   * their stream.
+   */
+  isHeld?(): boolean
   runCommand(
     name: string,
     args: string,
@@ -332,7 +346,7 @@ export function withInboundAttachments(content: string, manifest: string): strin
   return manifest ? `${content}\n\n${manifest}` : content
 }
 
-/** Fold the steer text + any swept queued messages into one prompt (most recent last). */
+/** One prompt for several messages answered by one turn (most recent last). */
 export function buildSteerContent(parts: string[]): string {
   if (parts.length === 1) return parts[0]!
   return ["Handle all of the following together (most recent last):", "", parts.join("\n\n---\n\n")].join("\n")
@@ -353,15 +367,22 @@ export function effectiveRuntimeManifest(
   }
 }
 
+/** Which capabilities a claim asks for: everything (idle), session control (busy), or plain messages for a running turn. */
+export type ClaimMode = "idle" | "busy" | "running-turn"
+
 /**
- * Capabilities to claim with. Idle: everything we support. Busy (a turn in
- * flight): session-control ONLY, so /stop and /steer jump the queue while a
- * normal active-scratchpad follow-up waits. Empty when busy without runtime
- * control (callers must not claim in that state).
+ * Capabilities to claim with. Idle: everything we support, minus `/enqueue`d
+ * messages while a quota hold is on. Busy (a turn in flight): session-control
+ * ONLY, so /stop jumps the queue while a normal follow-up waits (or is steered
+ * in through its own scoped claim). Empty when busy without runtime control
+ * (callers must not claim in that state). Running-turn: plain messages only,
+ * never `/enqueue`d ones, which wait for idle.
  */
-export function claimCapabilitiesFor(busy: boolean, sessionControlEnabled: boolean): string[] {
-  if (!busy) return supportedCapabilitiesFor(sessionControlEnabled)
-  return sessionControlEnabled ? [SESSION_CONTROL_CAPABILITY] : []
+export function claimCapabilitiesFor(mode: ClaimMode, sessionControlEnabled: boolean, held = false): string[] {
+  if (mode === "running-turn") return [...MESSAGE_CAPABILITIES]
+  if (mode === "busy") return sessionControlEnabled ? [SESSION_CONTROL_CAPABILITY] : []
+  const supported = supportedCapabilitiesFor(sessionControlEnabled)
+  return held ? supported.filter((capability) => capability !== QUEUED_MESSAGE_CAPABILITY) : supported
 }
 
 export function runtimeCapabilitiesFor(
@@ -375,7 +396,7 @@ export function runtimeCapabilitiesFor(
     ...(actuator
       ? {
           supportsSessionControlCommands: true,
-          sessionControlCommands: [...actuator.commands],
+          sessionControlCommands: [...new Set([...actuator.commands, ENQUEUE_COMMAND])],
           ...(actuator.modelSuggestions ? { modelSuggestions: [...actuator.modelSuggestions] } : {}),
           ...(actuator.thinkingLevels ? { thinkingLevels: [...actuator.thinkingLevels] } : {}),
           ...(actuator.spawnRuntimes ? { spawnRuntimes: [...actuator.spawnRuntimes] } : {}),
@@ -396,6 +417,11 @@ interface ObservedClaim {
   lifecycle: AbortController
   /** Running turn whose input incorporated this folded/swept claim. */
   runningOwnerInvocationId?: string
+  /**
+   * Joined its owner mid-turn rather than being folded in at its start: an edit
+   * steers the correction into the owner, a cancel unbinds only this claim.
+   */
+  steered?: true
 }
 
 /** The turn's source moved on between preparing a post and putting it on the wire. */
@@ -532,6 +558,13 @@ export class RemoteSession {
   private lifecycle = 0
   private presenceTail: Promise<void> = Promise.resolve()
   private readonly observedClaims = new Map<string, ObservedClaim>()
+  /**
+   * The plain message a running turn could not take, per stream. Still claimed
+   * and observed; the drain starts the stream's next turn with it once no route
+   * (open or closing) remains for it. One per stream: `claimForRunningTurn`
+   * skips a stream that already has one.
+   */
+  private readonly nextTurnBacklog = new Map<string, ClaimedInvocation>()
   // Weak ownership avoids retaining every unique cancelled invocation id for
   // the lifetime of a long-running connector while still fencing references
   // held by an interceptor/fold/command that outlive map removal.
@@ -622,6 +655,10 @@ export class RemoteSession {
 
   private get sessionControlEnabled(): boolean {
     return Boolean(this.delegate.sessionControl)
+  }
+
+  private get held(): boolean {
+    return this.delegate.sessionControl?.isHeld?.() ?? false
   }
 
   private get parallel(): boolean {
@@ -815,6 +852,7 @@ export class RemoteSession {
     for (const route of inflight) route.revoke()
     for (const route of this.completed.values()) route.revoke()
     for (const context of this.observedClaims.values()) this.fenceObservedClaim(context.invocation)
+    this.nextTurnBacklog.clear()
     this.inflight.clear()
     this.completed.clear()
     this.terminalReplies.clear()
@@ -985,16 +1023,20 @@ export class RemoteSession {
     try {
       for (let i = 0; i < MAX_CLAIMS_PER_DRAIN; i++) {
         // One normal turn at a time: once a turn is in flight we claim with
-        // session-control caps ONLY (claimBody(busy)), so /stop and /steer still
-        // reach us mid-turn while a normal active-scratchpad follow-up stays
-        // queued. Without runtime control there's nothing to claim while busy:
-        // strict one-at-a-time. With `maxConcurrentTurns > 1` "busy" means at
-        // capacity; under it we claim everything except streams already running.
+        // session-control caps ONLY, so /stop still reaches us mid-turn. Without
+        // runtime control there's nothing to claim while busy: strict
+        // one-at-a-time. With `maxConcurrentTurns > 1` "busy" means at capacity;
+        // under it we claim everything except streams already running. A
+        // steer-capable runtime then takes plain messages for the streams that
+        // are running (`claimForRunningTurn`) and injects them into those turns.
         if (this.reconnectHandoff || this.stopped || this.archive.detached) break
         const busy = this.atCapacity
         if (busy && !this.sessionControlEnabled) break
         const exclude = busy ? [] : [...new Set([...this.inflightStreams(), ...stoppedStreams])]
-        const invocation = await this.claimNext(busy, undefined, exclude)
+        const waiting = busy ? undefined : this.takeNextTurnBacklog(stoppedStreams)
+        const fresh = waiting ? null : await this.claimNext(busy ? "busy" : "idle", undefined, exclude)
+        const steering = !waiting && !fresh
+        const invocation = waiting ?? fresh ?? (await this.claimForRunningTurn())
         if (!invocation) break
         claimedAny = true
         this.markClaimProcessing(invocation)
@@ -1015,11 +1057,15 @@ export class RemoteSession {
           }
           continue
         }
-        if (this.routeForStream(invocation.responseStreamId)) {
+        if (!steering && this.routeForStream(invocation.responseStreamId)) {
           this.log(
             `claimed ${invocation.id} for busy stream ${invocation.responseStreamId}: server ignored excludeResponseStreamIds`
           )
           await this.failInvocation(invocation, "Threa server ignored excludeResponseStreamIds; resend the message")
+          continue
+        }
+        if (steering) {
+          await this.steerRunningTurn(invocation)
           continue
         }
         const deferred = await this.startFoldedTurn(invocation)
@@ -1061,7 +1107,7 @@ export class RemoteSession {
    * the drain into a TTL-recycle loop.
    */
   private async claimAndHydrate(
-    busy: boolean,
+    mode: ClaimMode,
     responseStreamId?: string,
     excludeResponseStreamIds: string[] = []
   ): Promise<ClaimedInvocation | null> {
@@ -1069,7 +1115,7 @@ export class RemoteSession {
     let invocation: ClaimedInvocation | null
     try {
       invocation = await this.client.claim({
-        ...this.claimBody(busy, excludeResponseStreamIds),
+        ...this.claimBody(mode, excludeResponseStreamIds),
         ...(responseStreamId ? { responseStreamId } : {}),
       })
       this.claimFailures = 0
@@ -1132,18 +1178,17 @@ export class RemoteSession {
     // claim independently, and don't let new pushes bypass the cooldown.
     this.claimRetryTimer = setTimeout(() => {
       this.claimRetryTimer = undefined
-      this.claimDrainRequested = true
-      this.scheduleRequestedClaimDrain()
+      this.requestClaimDrain()
     }, delay)
   }
 
   private async claimNext(
-    busy: boolean,
+    mode: ClaimMode,
     responseStreamId?: string,
     excludeResponseStreamIds: string[] = []
   ): Promise<ClaimedInvocation | null> {
     const lifecycle = this.lifecycle
-    const invocation = await this.claimAndHydrate(busy, responseStreamId, excludeResponseStreamIds)
+    const invocation = await this.claimAndHydrate(mode, responseStreamId, excludeResponseStreamIds)
     if (!invocation || this.stopped || this.archive.detached || lifecycle !== this.lifecycle) return null
     const identities = invocation.sealing ? this.bik.identities : []
     const handle = this.transport.observeClaim({
@@ -1213,6 +1258,10 @@ export class RemoteSession {
 
   private abortRunningTurnForContext(context: ObservedClaim, ownerFailure: string): void {
     const ownerId = context.runningOwnerInvocationId
+    if (context.steered && ownerId) {
+      this.unbindRunningOwner(ownerId, [context.invocation])
+      return
+    }
     const running = this.inflight.get(context.invocation.id) ?? (ownerId ? this.inflight.get(ownerId) : undefined)
     if (!running) return
     try {
@@ -1260,8 +1309,9 @@ export class RemoteSession {
     // reply() removes the entry before its first await. If renewal wins during
     // reply preparation, do not steer a turn that is already closing; fence its
     // pending output and let the backend perform the restart instead.
-    const route = this.inflight.get(invocationId)
-    if (!steer || !route || route.state !== "open" || route.revoked) {
+    const ownerId = context.steered ? context.runningOwnerInvocationId : invocationId
+    const route = ownerId ? this.inflight.get(ownerId) : undefined
+    if (!steer || !route || !this.isOpen(route)) {
       this.abortForInputRestart(context)
       return "restart-required"
     }
@@ -1274,7 +1324,9 @@ export class RemoteSession {
     this.installInputUpdate(context, update)
     try {
       if (signal.aborted) throw signal.reason
-      const content = await this.buildTurnContent(context.invocation, { strictAttachments: true, signal })
+      const content = context.steered
+        ? await this.steerContent(context.invocation, { strictAttachments: true, signal })
+        : await this.buildTurnContent(context.invocation, { strictAttachments: true, signal })
       if (signal.aborted || this.isClaimCancelled(context.invocation)) throw signal.reason
       const interruptOnAbort = () => this.abortForInputRestart(context)
       signal.addEventListener("abort", interruptOnAbort, { once: true })
@@ -1291,6 +1343,7 @@ export class RemoteSession {
       }
       context.updateInProgress = false
       route.touchIdleTimeout()
+      if (context.steered) void this.recordSteps(route.invocation.id, [{ stepType: "steer", content }])
       return "applied"
     } catch {
       this.abortForInputRestart(context)
@@ -1304,6 +1357,10 @@ export class RemoteSession {
     this.fenceObservedClaim(context.invocation)
     this.abortRunningTurnForContext(context, ownerFailure)
     if (!this.stopped && !this.archive.detached) void this.syncPresence()
+    this.requestClaimDrain()
+  }
+
+  private requestClaimDrain(): void {
     this.claimDrainRequested = true
     this.scheduleRequestedClaimDrain()
   }
@@ -1369,19 +1426,15 @@ export class RemoteSession {
   }
 
   /**
-   * Start one turn that sees every ordinary message already queued behind this
-   * one, and return any session-control commands the sweep pulled up with them.
-   *
-   * Without this, N messages sent while the session was busy became N
-   * sequential turns, each answering a question the user had already moved
-   * past — the reply to message 1 arriving after they had sent 4 more. `/steer`
-   * has always folded the backlog (`sweepQueuedForSteer`); an ordinary message
-   * got no such treatment, and that asymmetry is the whole of the lag.
+   * Start one turn that answers this message together with every ordinary
+   * message still queued behind it, so one reply answers them all rather than
+   * one turn per message. Return any session-control commands the sweep pulled
+   * up with them.
    *
    * The primary invocation keeps the reply; the folded ones close without a
-   * response of their own, exactly as the steer sweep closes what it folds.
-   * Session control is never folded as text — a queued `/stop` has to stop the
-   * turn, not become a line in its prompt — so it is handed back to the caller.
+   * response of their own. Session control is never folded as text — a queued
+   * `/stop` has to stop the turn, not become a line in its prompt — so it is
+   * handed back to the caller.
    */
   private async startFoldedTurn(invocation: ClaimedInvocation): Promise<ClaimedInvocation[]> {
     const primary = await this.buildTurnContent(invocation)
@@ -1389,13 +1442,13 @@ export class RemoteSession {
     const folded: ClaimedInvocation[] = []
     const control: ClaimedInvocation[] = []
     try {
-      for (let i = 1; i < STEER_DRAIN_LIMIT; i++) {
+      for (let i = 1; i < FOLD_LIMIT; i++) {
         // Scoped to the primary's response stream, server-side. Folding across
         // streams would answer one stream's question in another and close the
         // rest unanswered, and a claim taken by mistake cannot be released —
         // so the filter has to keep it from being claimed at all. Sealing rides
         // along: a stream is uniformly sealed or uniformly plaintext.
-        const extra = await this.claimNext(false, invocation.responseStreamId).catch(() => null)
+        const extra = await this.claimNext("idle", invocation.responseStreamId).catch(() => null)
         if (!extra) break
         this.markClaimProcessing(extra)
         if (this.isClaimCancelled(extra)) continue
@@ -1603,8 +1656,6 @@ export class RemoteSession {
     this.releaseObservation(invocation.id)
   }
 
-  // --- Session control (steer / stop / delegated commands) -------------------
-
   private async handleSessionControl(invocation: ClaimedInvocation): Promise<void> {
     if (this.isClaimCancelled(invocation)) return
     const command = parseSessionControlCommand(invocation)
@@ -1622,8 +1673,6 @@ export class RemoteSession {
       switch (command.name) {
         case "stop":
           return await this.runStop(invocation, actuator)
-        case "steer":
-          return await this.runSteer(invocation, actuator, command.args)
         default: {
           if (!actuator.commands.includes(command.name)) {
             await this.failInvocation(invocation, `Unsupported session-control command: ${command.name}`)
@@ -1749,190 +1798,74 @@ export class RemoteSession {
   }
 
   /**
-   * Route /steer. With a turn in flight and a steer-capable actuator, fold the
-   * text into the RUNNING turn (the running invocation keeps its trace and its
-   * reply). Otherwise fall back to interrupt + redeliver — the only option for
-   * an idle session (there is no turn to fold into) or a runtime without
-   * native mid-turn steering.
+   * Claim one plain message for a stream whose turn is running, so a
+   * steer-capable runtime takes it into that turn at once. Scoped by response
+   * stream, server-side, to the running ones only: an unscoped plain claim
+   * while busy would start a second turn. Nothing while a quota hold is on,
+   * never `/enqueue`d messages, and nothing for a stream whose earlier messages
+   * already wait for its next turn, so none overtakes them.
    */
-  private async runSteer(invocation: ClaimedInvocation, actuator: SessionControlActuator, text: string): Promise<void> {
-    const steer = actuator.steer?.bind(actuator)
-    const running = this.parallel
-      ? this.routeForStream(invocation.responseStreamId) !== undefined
-      : this.inflight.size > 0
-    if (running && steer) {
-      return await this.steerRunningTurn(invocation, steer, text)
+  private async claimForRunningTurn(): Promise<ClaimedInvocation | null> {
+    if (!this.delegate.sessionControl?.steer || this.held) return null
+    for (const streamId of this.inflightStreams()) {
+      const waiting = this.nextTurnBacklog.get(streamId)
+      // A cancelled claim was fenced when it was cancelled; it holds no place in line.
+      if ((waiting && !this.isClaimCancelled(waiting)) || !this.openRouteForStream(streamId)) continue
+      const invocation = await this.claimNext("running-turn", streamId).catch(() => null)
+      if (invocation) return invocation
     }
-    // Redelivering would start a turn past the cap.
-    if (this.parallel && !running && this.atCapacity) {
-      await this.completeAck(invocation, "Every turn slot is busy; resend the steer when a turn finishes.")
-      return
-    }
-    return await this.steerByInterrupt(invocation, actuator, text)
+    return null
   }
 
   /**
-   * Steer in place: sweep any messages queued while busy, record a `steer`
-   * step on the running turn's trace (the visible record of what was folded
-   * in), and inject the combined text via the runtime's native mid-turn
-   * steering. The running invocation stays the primary — its eventual reply
-   * answers the steer — so the /steer command itself closes immediately
-   * (command_completed resolves the card) instead of spinning until the turn
-   * ends.
+   * Inject a claimed plain message into the turn running in its stream. Only a
+   * confirmed injection binds it to that turn (it then closes with it) and puts
+   * a `steer` step on the turn's trace. A runtime that cannot take it now leaves
+   * it for the stream's next turn; a thrown steer fails it. An injection the
+   * runtime took after the turn closed is the runtime's to run: delivering it
+   * again would run it twice, so it closes like the turn it joined.
    */
-  private async steerRunningTurn(
-    invocation: ClaimedInvocation,
-    steer: (text: string, streamId?: string) => Promise<boolean> | boolean,
-    text: string
-  ): Promise<void> {
+  private async steerRunningTurn(invocation: ClaimedInvocation): Promise<void> {
+    const content = await this.steerContent(invocation)
+    if (this.isClaimCancelled(invocation)) return
+    const route = this.openRouteForStream(invocation.responseStreamId)
+    if (!route) return this.deferToNextTurn(invocation)
+    let steered: boolean
+    try {
+      steered = (await this.delegate.sessionControl?.steer?.(content, invocation.responseStreamId)) === true
+    } catch (error) {
+      await this.failInvocation(invocation, `Steer failed: ${this.summarize(error)}`)
+      return
+    }
+    if (this.isClaimCancelled(invocation)) return
+    if (!steered) return this.deferToNextTurn(invocation)
+    if (!this.isOpen(route)) return this.completeNoResponse(invocation)
+    this.bindRunningOwner(route.invocation.id, [invocation])
+    const context = this.observedClaims.get(invocation.id)
+    if (context?.invocation === invocation) context.steered = true
+    route.touchIdleTimeout()
+    await this.recordSteps(route.invocation.id, [{ stepType: "steer", content }])
+  }
+
+  /** Hold a claimed plain message for its stream's next turn; its edits install in place until then. */
+  private deferToNextTurn(invocation: ClaimedInvocation): void {
     const streamId = invocation.responseStreamId
-    const { parts, swept, contents } = await this.sweepQueuedForSteer(text, streamId)
-    if (this.isClaimCancelled(invocation)) return
-    if (parts.length === 0) {
-      // The sweep can still have claimed foldless invocations (a queued control
-      // command in the double-command race) — close them or they hang to TTL.
-      await Promise.all(swept.map((item) => this.completeNoResponse(item)))
-      if (invocation.metadata?.steeredMessage === true) {
-        // An embedded-steer pair carries its text on the normal message. If
-        // that companion is already running, the empty control half is only a
-        // barrier — do not post a false "nothing to steer" acknowledgement.
-        await this.completeTurn(invocation, {
-          noResponse: true,
-          metadata: {
-            "remote.invocationId": invocation.id,
-            "remote.sessionControl": "true",
-            "remote.steered": "true",
-          },
-        })
-        return
-      }
-      await this.completeAck(invocation, "Nothing to steer with (no text, no queued messages); the turn continues.")
-      return
-    }
-    let combined = buildSteerContent(parts)
-    // Step before actuation so it sits ahead of the continuation's frames in
-    // the trace; a steer is also a sign of life for the turn it redirects.
-    for (const route of this.controlRoutes(streamId)) {
-      await this.recordSteps(route.invocation.id, [{ stepType: "steer", content: combined }])
-      route.touchIdleTimeout()
-    }
-    if (this.isClaimCancelled(invocation)) return
-    const liveSwept = swept.filter((item) => !this.isClaimCancelled(item))
-    const currentParts = this.steerParts(liveSwept, text, contents)
-    if (currentParts.length === 0) {
-      await Promise.all(liveSwept.map((item) => this.completeNoResponse(item)))
-      await this.completeAck(invocation, "Nothing to steer with; the turn continues.")
-      return
-    }
-    combined = buildSteerContent(currentParts)
-    const owner = [...this.inflight.values()].find(
-      (entry) => entry.invocation.responseStreamId === invocation.responseStreamId
-    )?.invocation
-    if (owner) this.bindRunningOwner(owner.id, [invocation, ...liveSwept])
-    if (!(await steer(combined, streamId))) {
-      // Nothing was injected: the swept messages were claimed but not
-      // delivered — fail them loudly so they don't vanish into a silent close.
-      if (owner) this.unbindRunningOwner(owner.id, [invocation, ...liveSwept])
-      await Promise.all(
-        liveSwept.map((item) => this.failInvocation(item, "Steer not delivered (runtime control unavailable); resend."))
-      )
-      await this.completeAck(invocation, "Could not steer the session (runtime control unavailable).")
-      return
-    }
-    if (this.isClaimCancelled(invocation) || (owner && !this.inflight.has(owner.id))) return
-    if (owner) this.unbindRunningOwner(owner.id, [invocation])
-    await this.completeTurn(invocation, {
-      noResponse: true,
-      metadata: {
-        "remote.invocationId": invocation.id,
-        "remote.sessionControl": "true",
-        "remote.steered": "true",
-      },
-    }).catch((error) => this.failAfterTerminalWrite(invocation, error, "steer completion"))
+    const context = this.observedClaims.get(invocation.id)
+    if (context?.invocation === invocation) context.phase = "unstarted"
+    this.nextTurnBacklog.set(streamId, invocation)
+    // A route still in flight requests the drain when it closes.
+    if (this.routeForStream(streamId)) return
+    this.requestClaimDrain()
   }
 
-  /**
-   * Interrupt the running turn, then fold the steer text + any messages queued
-   * while the runtime was busy into ONE combined turn (mirrors Pi: N messages →
-   * 1 response). The interrupt is the only actuation; the combined content
-   * round-trips through the normal delivery path so the runtime replies to it.
-   */
-  private async steerByInterrupt(
-    invocation: ClaimedInvocation,
-    actuator: SessionControlActuator,
-    text: string
-  ): Promise<void> {
-    // If the interrupt can't be sent, bail before any destructive side-effect —
-    // don't close the running turn or deliver the steer as a second concurrent
-    // turn against a runtime we couldn't actually interrupt.
-    const streamId = invocation.responseStreamId
-    if (!actuator.interrupt(streamId)) {
-      await this.completeAck(
-        invocation,
-        "Could not interrupt the session (runtime control unavailable); steer not delivered."
-      )
-      return
+  /** The waiting message of one stream whose turn has fully closed. */
+  private takeNextTurnBacklog(stoppedStreams: Set<string>): ClaimedInvocation | undefined {
+    for (const [streamId, waiting] of this.nextTurnBacklog) {
+      if (stoppedStreams.has(streamId) || this.routeForStream(streamId)) continue
+      this.nextTurnBacklog.delete(streamId)
+      return waiting
     }
-    await new Promise((resolve) => setTimeout(resolve, STEER_SETTLE_MS))
-    if (this.isClaimCancelled(invocation)) return
-    await this.completeInterruptedTurns(this.controlStream(streamId))
-
-    const { parts, swept } = await this.sweepQueuedForSteer(text, streamId)
-    if (this.isClaimCancelled(invocation)) return
-
-    if (parts.length === 0) {
-      await this.completeAck(invocation, "Interrupted the session; nothing pending to steer with.")
-      await this.syncPresence()
-      return
-    }
-
-    this.bindRunningOwner(invocation.id, swept)
-    await this.deliverTurn(invocation, buildSteerContent(parts), swept)
-  }
-
-  /**
-   * Claim messages queued while the runtime was busy and fold their text in
-   * (steer text last).
-   *
-   * Scoped to the stream the steered turn answers into, for the same reason the
-   * fold's sweep is: a message belonging to another stream would be folded
-   * here, closed unanswered where it was asked, and answered somewhere else.
-   * Unscoped when nothing is in flight — there is no turn whose stream to
-   * inherit, and the steer itself is then the only thing being folded into.
-   */
-  private async sweepQueuedForSteer(
-    text: string,
-    streamId: string
-  ): Promise<{
-    parts: string[]
-    swept: ClaimedInvocation[]
-    contents: Map<string, string>
-  }> {
-    const swept: ClaimedInvocation[] = []
-    const running = this.parallel ? streamId : [...this.inflight.values()][0]?.invocation.responseStreamId
-    for (let i = 0; i < STEER_DRAIN_LIMIT; i++) {
-      const extra = await this.claimNext(false, running).catch(() => null)
-      if (!extra) break
-      this.markClaimProcessing(extra)
-      if (this.isClaimCancelled(extra)) continue
-      // The canonical text is derived after the sweep so a claim cancelled by an
-      // update while a later claim awaited is omitted rather than injected stale.
-      swept.push(extra)
-    }
-    const contents = new Map<string, string>()
-    for (const item of swept) {
-      if (this.isClaimCancelled(item)) continue
-      contents.set(item.id, await this.foldedSteerContent(item))
-    }
-    const liveSwept = swept.filter((item) => !this.isClaimCancelled(item))
-    return { parts: this.steerParts(liveSwept, text, contents), swept: liveSwept, contents }
-  }
-
-  /** Fold the swept messages' prepared content (steer text last); a claim cancelled since its download contributes nothing. */
-  private steerParts(liveSwept: ClaimedInvocation[], text: string, contents: Map<string, string>): string[] {
-    const parts = liveSwept.map((item) => contents.get(item.id) ?? "")
-    if (text) parts.push(text)
-    return parts.filter(Boolean)
+    return undefined
   }
 
   /**
@@ -2092,7 +2025,7 @@ export class RemoteSession {
 
   /**
    * Close every in-flight turn that an interrupt just aborted, so none
-   * idle-hangs for an hour. Nothing is posted: the /stop or /steer that caused
+   * idle-hangs for an hour. Nothing is posted: the /stop that caused
    * the interrupt closes with its own account of it, on its own entry.
    */
   private async completeInterruptedTurns(streamId?: string): Promise<void> {
@@ -2142,18 +2075,19 @@ export class RemoteSession {
   }
 
   /**
-   * The text a message folded into a running turn contributes: its prompt and
+   * The text a message steered into a running turn contributes: its prompt and
    * the manifest of its own attachments — no history and no history
-   * attachments, the running turn already has them. A control command
-   * contributes its /steer args, or nothing.
+   * attachments, the running turn already has them.
    */
-  private async foldedSteerContent(invocation: ClaimedInvocation): Promise<string> {
-    if (isSessionControlInvocation(invocation)) {
-      const queued = parseSessionControlCommand(invocation)
-      return queued?.name === "steer" ? queued.args : ""
-    }
+  private async steerContent(
+    invocation: ClaimedInvocation,
+    options: { strictAttachments?: boolean; signal?: AbortSignal } = {}
+  ): Promise<string> {
     const prompt = invocation.promptMarkdown.trim() || "(empty message)"
-    return withInboundAttachments(prompt, await this.inboundAttachmentManifest(invocation, { sourceOnly: true }))
+    return withInboundAttachments(
+      prompt,
+      await this.inboundAttachmentManifest(invocation, { ...options, sourceOnly: true })
+    )
   }
 
   /**
@@ -2432,8 +2366,7 @@ export class RemoteSession {
     }
     if (this.activeTurnStream === route.invocation.responseStreamId) this.activeTurnStream = undefined
     await this.syncPresence()
-    this.claimDrainRequested = true
-    this.scheduleRequestedClaimDrain()
+    this.requestClaimDrain()
   }
 
   private async reopenAfterFailedCompletion(route: TurnRoute, prepared: PreparedClose | undefined): Promise<void> {
@@ -2510,6 +2443,7 @@ export class RemoteSession {
       this.terminalReplies.delete(oldest)
     }
     await this.syncPresence()
+    this.requestClaimDrain()
   }
 
   private async postThroughClosed(route: TurnRoute, kind: "send" | "reply", intent: PostIntent): Promise<SendResult> {
@@ -2693,6 +2627,7 @@ export class RemoteSession {
     if (this.inflight.get(route.invocation.id) === route) this.inflight.delete(route.invocation.id)
     if (this.activeTurnStream === route.invocation.responseStreamId) this.activeTurnStream = undefined
     await this.syncPresence()
+    this.requestClaimDrain()
     return { ok: false, message: `Request ${route.invocation.id} is closed; its source changed.` }
   }
 
@@ -2719,8 +2654,7 @@ export class RemoteSession {
           this.clearInflight(invocationId)
           if (this.activeTurnStream === route.invocation.responseStreamId) this.activeTurnStream = undefined
           await this.syncPresence()
-          this.claimDrainRequested = true
-          this.scheduleRequestedClaimDrain()
+          this.requestClaimDrain()
           return true
         })()
       )
@@ -2854,14 +2788,30 @@ export class RemoteSession {
     return closing
   }
 
+  private openRouteForStream(streamId: string): TurnRoute | undefined {
+    for (const route of this.inflight.values()) {
+      if (route.invocation.responseStreamId === streamId && this.isOpen(route)) return route
+    }
+    return undefined
+  }
+
   private openRoute(invocationId: string): TurnRoute | undefined {
     const route = this.inflight.get(invocationId)
-    return route?.state === "open" && !route.revoked ? route : undefined
+    return route && this.isOpen(route) ? route : undefined
+  }
+
+  private isOpen(route: TurnRoute): boolean {
+    return route.state === "open" && !route.revoked
   }
 
   /** Whether this session still holds the invocation open (not yet replied, timed out, or superseded). */
   isInflight(invocationId: string): boolean {
     return this.openRoute(invocationId) !== undefined
+  }
+
+  /** A runtime hold (`sessionControl.isHeld`) ended: claim the messages it kept waiting instead of waiting for the next poll. */
+  claimWaiting(): void {
+    this.requestClaimDrain()
   }
 
   /** Reset idle timeouts for every in-flight turn in a stream (a pending approval is a sign of life). */
@@ -3393,14 +3343,14 @@ export class RemoteSession {
     }
   }
 
-  private claimBody(busy: boolean, excludeResponseStreamIds: string[] = []): Record<string, unknown> {
+  private claimBody(mode: ClaimMode, excludeResponseStreamIds: string[] = []): Record<string, unknown> {
     return {
       runtimeKind: this.runtime.kind,
       instanceId: this.config.instanceId,
       runtimeSessionId: this.config.runtimeSessionId,
-      supportedCapabilities: claimCapabilitiesFor(busy, this.sessionControlEnabled),
+      supportedCapabilities: claimCapabilitiesFor(mode, this.sessionControlEnabled, this.held),
       claimTtlSeconds: CLAIM_TTL_SECONDS,
-      ...(!busy && excludeResponseStreamIds.length > 0 ? { excludeResponseStreamIds } : {}),
+      ...(mode === "idle" && excludeResponseStreamIds.length > 0 ? { excludeResponseStreamIds } : {}),
     }
   }
 

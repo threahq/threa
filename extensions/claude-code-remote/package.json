@@ -1,6 +1,6 @@
 {
   "name": "@threahq/claude-code-remote",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A Claude Code channel that bridges a running Claude Code session to a Threa scratchpad, so you can drive Claude Code remotely from Threa the same way you drive Pi.",
   "keywords": [
     "threa",

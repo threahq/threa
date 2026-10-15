@@ -40,11 +40,11 @@ export interface LocalCommandResult {
   stderr: string
 }
 
-export type LocalCommandRunner = (command: string[]) => LocalCommandResult
+export type LocalCommandRunner = (command: string[], input?: string) => LocalCommandResult
 
-function runLocalCommand(command: string[]): LocalCommandResult {
+function runLocalCommand(command: string[], input?: string): LocalCommandResult {
   const [file, ...args] = command
-  const result = spawnSync(file!, args, { encoding: "utf8" })
+  const result = spawnSync(file!, args, { encoding: "utf8", input })
   return {
     exitCode: result.status ?? 1,
     stdout: result.stdout ?? "",
@@ -90,7 +90,7 @@ export function captureTmuxPaneSnapshot(run: LocalCommandRunner = runLocalComman
     throw new Error(`tmux returned invalid pane details for ${target}`)
   }
 
-  const captured = run(["tmux", "capture-pane", "-p", "-t", paneId])
+  const captured = capturePane(paneId, run)
   if (captured.exitCode !== 0) {
     throw new Error(captured.stderr.trim() || `tmux could not capture ${paneId}`)
   }
@@ -157,6 +157,8 @@ export async function submitLine(
   return sendKeys(["Enter"], run)
 }
 
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
 // `/model <name>` sets directly only in a fresh session; any session with
 // history (i.e. every linked session in practice, v2.1.226) confirms behind a
 // "Switch model?" cache-invalidation dialog with no Enter-hint line — invisible
@@ -193,10 +195,10 @@ export async function submitModelChange(
   const pollMs = opts.pollMs ?? MODEL_CONFIRM_POLL_MS
   // Alias-specific so an older attempt's error line in the transcript cannot
   // fail a later, valid switch.
-  const notFound = new RegExp(`Model '${alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}' not found`)
+  const notFound = new RegExp(`Model '${escapeRegExp(alias)}' not found`)
   for (let i = 0; i < MODEL_CONFIRM_POLLS; i++) {
     if (pollMs > 0) await sleep(pollMs)
-    const captured = run(["tmux", "capture-pane", "-p", "-t", target])
+    const captured = capturePane(target, run)
     if (captured.exitCode !== 0) break
     if (notFound.test(captured.stdout)) return { ok: false, confirmed: false, unknownAlias: true }
     if (MODEL_SWITCH_DIALOG_RE.test(captured.stdout)) {
@@ -206,6 +208,48 @@ export async function submitModelChange(
   return { ok: true, confirmed: false }
 }
 
+// Ported from harness-daemon's claude-boot.ts (published separately).
+// Line-anchored to a dialog's own chrome (its hint line or highlighted option),
+// never to prose: transcript text on screen must not read as a dialog.
+const IDLE_PROMPT_RE = /^❯\s*$/m
+const BOOT_DIALOG_RE = /^\s*(Press )?Enter to (confirm|continue)/m
+const MENU_PROMPT_RE = /^\s*❯\s*\d+\./m
+
+/**
+ * A modal (permission prompt, AskUserQuestion, boot dialog) hides the
+ * composer, so an empty composer line proves none is up and wins first.
+ */
+export function claudePaneShowsModal(text: string): boolean {
+  if (IDLE_PROMPT_RE.test(text)) return false
+  return BOOT_DIALOG_RE.test(text) || MENU_PROMPT_RE.test(text)
+}
+
+function capturePane(target: string, run: LocalCommandRunner) {
+  return run(["tmux", "capture-pane", "-p", "-t", target])
+}
+
+function readPane(target: string, run: LocalCommandRunner): string | undefined {
+  try {
+    const captured = capturePane(target, run)
+    return captured.exitCode === 0 ? captured.stdout : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// Claude Code shows a short paste inline after `❯` and collapses a long one
+// into `[Pasted text #N …]`. Only the last `❯` line counts: a modal menu
+// below the transcript hides the composer and owns that line.
+function composerShowsPaste(screen: string, text: string): boolean {
+  const composer = screen
+    .split("\n")
+    .map((line) => line.trimStart())
+    .findLast((line) => line.startsWith("❯"))
+  if (composer === undefined) return false
+  const head = text.trimStart().split("\n")[0]!.slice(0, 20)
+  return new RegExp(`^❯\\s*(${escapeRegExp(head)}|\\[Pasted text)`).test(composer)
+}
+
 /**
  * Fold text into the RUNNING turn without interrupting it — Claude Code's
  * native steering: a message submitted while it works is injected into the
@@ -213,23 +257,38 @@ export async function submitModelChange(
  * rather than typed with `-l`, so newlines in the text don't submit
  * mid-message and a leading `/` can't open the slash menu. Clears the input
  * line first (Ctrl-U) so residue doesn't concatenate into the steer.
+ *
+ * Returns false instead of typing when the pane shows a modal or cannot be
+ * read: the paste and its Enter would answer the modal. Enter is pressed only
+ * once the composer shows the paste, since a modal can open during the settle.
+ * A refusal after the paste clears the composer unless a modal is showing.
  */
-export async function steerText(text: string, opts: { settleMs?: number } = {}): Promise<boolean> {
+export async function steerText(
+  text: string,
+  opts: { settleMs?: number; run?: LocalCommandRunner } = {}
+): Promise<boolean> {
   const target = paneTarget()
   if (!target) return false
+  const run = opts.run ?? runLocalCommand
   const settleMs = opts.settleMs ?? 150
-  if (!sendKeys(["C-u"])) return false
-  if (!pasteText(target, text)) return false
+  const before = readPane(target, run)
+  if (before === undefined || claudePaneShowsModal(before)) return false
+  if (!sendKeys(["C-u"], run)) return false
+  if (!pasteText(target, text, run)) return false
   if (settleMs > 0) await sleep(settleMs)
-  return sendKeys(["Enter"])
+  const after = readPane(target, run)
+  if (after === undefined) return false
+  if (composerShowsPaste(after, text)) return sendKeys(["Enter"], run)
+  // A refused steer is delivered with the next turn; text left in the composer
+  // would submit it a second time. Keys sent into a modal would answer it.
+  if (!claudePaneShowsModal(after)) sendKeys(["C-u"], run)
+  return false
 }
 
-function pasteText(target: string, text: string): boolean {
+function pasteText(target: string, text: string, run: LocalCommandRunner): boolean {
   try {
-    const load = spawnSync("tmux", ["load-buffer", "-b", "threa-steer", "-"], { input: text })
-    if (load.status !== 0) return false
-    const paste = spawnSync("tmux", ["paste-buffer", "-d", "-p", "-b", "threa-steer", "-t", target])
-    return paste.status === 0
+    if (run(["tmux", "load-buffer", "-b", "threa-steer", "-"], text).exitCode !== 0) return false
+    return run(["tmux", "paste-buffer", "-d", "-p", "-b", "threa-steer", "-t", target]).exitCode === 0
   } catch {
     return false
   }

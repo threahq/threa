@@ -44,8 +44,9 @@ an output of exactly `THREA_NO_RESPONSE` closes the turn silently.
 
 The scratchpad offers five session-control commands:
 
-`/stop` stops every open run and closes its turn. `/steer` folds text into the running run; if Hermes will not take it
-right now (the run is queued or already finishing) the text is held and prepended to the next turn instead. `/status`
+`/stop` stops every open run and closes its turn. A plain message sent to a running turn is folded into the running run;
+if Hermes will not take it right now (the run is queued, waiting on an approval, or already finishing) the message waits
+and starts the next turn instead. `/enqueue <text>` waits until no turn is running and then runs as its own turn. `/status`
 reports the conversation id, every open run with its status, the model this process locked, and the gateway URL.
 `/model` locks the conversation to one of the gateway's models, given as `provider::model`, a model id, or any
 substring that matches exactly one of them. `/clear` starts a fresh conversation on the scratchpad, which is refused

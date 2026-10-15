@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test"
-import { captureTmuxPaneSnapshot, submitModelChange, tmuxAvailable, type LocalCommandRunner } from "./tmux-control"
+import {
+  captureTmuxPaneSnapshot,
+  claudePaneShowsModal,
+  steerText,
+  submitModelChange,
+  tmuxAvailable,
+  type LocalCommandRunner,
+} from "./tmux-control"
 
 describe("tmuxAvailable", () => {
   const saved = {
@@ -157,4 +164,149 @@ describe("tmuxAvailable", () => {
     expect(calls.filter((command) => command.includes("Enter"))).toEqual([["tmux", "send-keys", "-t", "%5", "Enter"]])
     expect(calls.filter((command) => command[1] === "capture-pane")).toHaveLength(8)
   })
+
+  const WORKING_WITH_COMPOSER = [
+    "⏺ Reading the auth module",
+    "  ⎿  Read 120 lines",
+    "✻ Thinking… (12s · esc to interrupt)",
+    "────────────────────────────────",
+    "❯ ",
+    "────────────────────────────────",
+  ].join("\n")
+  const PERMISSION_PROMPT = [
+    "⏺ Bash(rm -rf build)",
+    "────────────────────────────────",
+    " Bash command",
+    "   rm -rf build",
+    " Do you want to proceed?",
+    " ❯ 1. Yes",
+    "   2. Yes, and don't ask again for rm commands",
+    "   3. No, and tell Claude what to do differently (esc)",
+  ].join("\n")
+  const ASK_USER_QUESTION = [
+    "☐ Approach",
+    "Which storage should the cache use?",
+    "❯ 1. Redis",
+    "     Shared across replicas",
+    "  2. In-memory",
+    "  3. Type something.",
+    "Enter to select · ↑/↓ to navigate · Esc to cancel",
+  ].join("\n")
+  const WORKING_NO_COMPOSER = [
+    "⏺ Here is the plan:",
+    "  1. Split the module",
+    '  ⎿  "❯ 1. Yes" is the permission prompt fixture',
+    "✻ Thinking… (3s · esc to interrupt)",
+  ].join("\n")
+
+  // Real Claude Code panes put a no-break space after ❯.
+  const withNbsp = (screen: string) => screen.replace(/❯ /g, "❯\u00a0")
+
+  it("reads a modal from dialog chrome, never from transcript text", () => {
+    const read = (screen: string) => ({
+      ascii: claudePaneShowsModal(screen),
+      nbsp: claudePaneShowsModal(withNbsp(screen)),
+    })
+    expect({
+      composer: read(WORKING_WITH_COMPOSER),
+      permission: read(PERMISSION_PROMPT),
+      askUserQuestion: read(ASK_USER_QUESTION),
+      working: read(WORKING_NO_COMPOSER),
+    }).toEqual({
+      composer: { ascii: false, nbsp: false },
+      permission: { ascii: true, nbsp: true },
+      askUserQuestion: { ascii: true, nbsp: true },
+      working: { ascii: false, nbsp: false },
+    })
+  })
+
+  function steerRunner(captures: Array<{ exitCode: number; stdout: string }>) {
+    const calls: Array<{ command: string[]; input?: string }> = []
+    const run: LocalCommandRunner = (command, input) => {
+      calls.push(input === undefined ? { command } : { command, input })
+      if (command[1] === "capture-pane") return { ...captures.shift()!, stderr: "" }
+      return { exitCode: 0, stdout: "", stderr: "" }
+    }
+    return { calls, run }
+  }
+
+  const composerShowing = (line: string) => withNbsp(WORKING_WITH_COMPOSER.replace(/^❯ $/m, line))
+
+  it("steers over a composer: clears, pastes, then presses Enter once the paste shows", async () => {
+    process.env.TMUX = "/tmp/tmux-501/default,1234,0"
+    process.env.TMUX_PANE = "%5"
+    const { calls, run } = steerRunner([
+      { exitCode: 0, stdout: withNbsp(WORKING_WITH_COMPOSER) },
+      { exitCode: 0, stdout: composerShowing("❯ go left") },
+    ])
+    expect(await steerText("go left", { settleMs: 0, run })).toBe(true)
+    expect(calls).toEqual([
+      { command: ["tmux", "capture-pane", "-p", "-t", "%5"] },
+      { command: ["tmux", "send-keys", "-t", "%5", "C-u"] },
+      { command: ["tmux", "load-buffer", "-b", "threa-steer", "-"], input: "go left" },
+      { command: ["tmux", "paste-buffer", "-d", "-p", "-b", "threa-steer", "-t", "%5"] },
+      { command: ["tmux", "capture-pane", "-p", "-t", "%5"] },
+      { command: ["tmux", "send-keys", "-t", "%5", "Enter"] },
+    ])
+  })
+
+  for (const [name, text, composer] of [
+    ["dialog chrome in its own text", "pick one\nEnter to continue with B", "❯ pick one\n  Enter to continue with B"],
+    ["a long paste collapsed by Claude Code", "go left\n".repeat(13), "❯ [Pasted text #1 +12 lines]"],
+  ] as const) {
+    it(`steers a message with ${name}`, async () => {
+      process.env.TMUX = "/tmp/tmux-501/default,1234,0"
+      process.env.TMUX_PANE = "%5"
+      const { calls, run } = steerRunner([
+        { exitCode: 0, stdout: WORKING_WITH_COMPOSER },
+        { exitCode: 0, stdout: composerShowing(composer) },
+      ])
+      expect(await steerText(text, { settleMs: 0, run })).toBe(true)
+      expect(calls.at(-1)).toEqual({ command: ["tmux", "send-keys", "-t", "%5", "Enter"] })
+    })
+  }
+
+  for (const [name, capture] of [
+    ["a permission prompt", { exitCode: 0, stdout: PERMISSION_PROMPT }],
+    ["an AskUserQuestion menu", { exitCode: 0, stdout: withNbsp(ASK_USER_QUESTION) }],
+    ["an unreadable pane", { exitCode: 1, stdout: "" }],
+  ] as const) {
+    it(`refuses to steer over ${name} without typing anything`, async () => {
+      process.env.TMUX = "/tmp/tmux-501/default,1234,0"
+      process.env.TMUX_PANE = "%5"
+      const { calls, run } = steerRunner([capture])
+      expect(await steerText("go left", { settleMs: 0, run })).toBe(false)
+      expect(calls).toEqual([{ command: ["tmux", "capture-pane", "-p", "-t", "%5"] }])
+    })
+  }
+
+  it("clears the composer when the paste does not show up in it", async () => {
+    process.env.TMUX = "/tmp/tmux-501/default,1234,0"
+    process.env.TMUX_PANE = "%5"
+    const { calls, run } = steerRunner([
+      { exitCode: 0, stdout: WORKING_WITH_COMPOSER },
+      { exitCode: 0, stdout: composerShowing("go ri") },
+    ])
+    expect(await steerText("go left", { settleMs: 0, run })).toBe(false)
+    expect(calls.slice(-2)).toEqual([
+      { command: ["tmux", "capture-pane", "-p", "-t", "%5"] },
+      { command: ["tmux", "send-keys", "-t", "%5", "C-u"] },
+    ])
+  })
+
+  for (const [name, screen] of [
+    ["a permission prompt", PERMISSION_PROMPT],
+    ["an AskUserQuestion menu", ASK_USER_QUESTION],
+  ] as const) {
+    it(`withholds the Enter when ${name} opened while the paste settled`, async () => {
+      process.env.TMUX = "/tmp/tmux-501/default,1234,0"
+      process.env.TMUX_PANE = "%5"
+      const { calls, run } = steerRunner([
+        { exitCode: 0, stdout: WORKING_WITH_COMPOSER },
+        { exitCode: 0, stdout: `❯ go left\n${withNbsp(screen)}` },
+      ])
+      expect(await steerText("go left", { settleMs: 0, run })).toBe(false)
+      expect(calls.filter(({ command }) => command.includes("Enter"))).toEqual([])
+    })
+  }
 })

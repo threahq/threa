@@ -3,7 +3,7 @@ import { HermesApiError, type HermesRunsClient, type ModelChoice, type ModelOpti
 import type { HermesTurnRunner } from "./run-bridge"
 
 /** Threa catalog names only; the plan's "new conversation" is the catalog's `clear`. */
-export const HERMES_SESSION_CONTROL_COMMANDS = ["stop", "steer", "status", "model", "clear"] as const
+export const HERMES_SESSION_CONTROL_COMMANDS = ["stop", "status", "model", "clear"] as const
 
 const MAX_AMBIGUOUS_CANDIDATES = 8
 
