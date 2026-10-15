@@ -1242,11 +1242,13 @@ export const BotInvocationRepository = {
   },
 
   /**
-   * Claimed rows are cancelled here too, unlike a routing change: the session
-   * this invocation names is ending, so its turn will never complete and the
-   * target filter on the claim query means no other session may take it over.
-   * Rows merely claimed BY that session with no target are left alone — those
-   * fall back to any claimer once the claim expires.
+   * Cancels what dies with the ending session: its pending unrouted rows
+   * (session-control, brief), and any row it had claimed — that turn will
+   * never complete, and the target filter on the claim query means no other
+   * session may take it over. Pending message rows survive; the next link on
+   * their stream adopts them. Rows merely claimed BY that session with no
+   * target are left alone — those fall back to any claimer once the claim
+   * expires.
    */
   async cancelActiveByTargetRuntimeSession(
     db: Querier,
@@ -1258,10 +1260,40 @@ export const BotInvocationRepository = {
       SET status = 'cancelled', cancellation_reason = 'routing_changed', updated_at = NOW()
       WHERE workspace_id = ${params.workspaceId}
         AND actor_type = 'bot' AND actor_id = ${params.botId}
-        AND status IN ('pending', 'claimed')
+        AND (status = 'claimed' OR (status = 'pending' AND trigger = ANY(${UNROUTED_BOT_INVOCATION_TRIGGERS})))
         AND target_runtime_session_id = ${params.runtimeSessionId}
         AND (${exceptInvocationId}::text IS NULL OR id <> ${exceptInvocationId}::text)
       RETURNING *
+    `)
+    return result.rows.map(mapInvocation)
+  },
+
+  /**
+   * Points pending message rows for one stream at the session that now owns
+   * it. Only rows whose target no active link still holds — an ended or
+   * superseded session, or one rebound to another instance — are moved.
+   * Untargeted rows stay untargeted: any session of the bot may claim them.
+   */
+  async retargetPendingMessagesToLink(
+    db: Querier,
+    params: { workspaceId: string; botId: string; activeStreamId: string; instanceId: string; runtimeSessionId: string }
+  ): Promise<BotInvocation[]> {
+    const result = await db.query<BotInvocationRow>(sql`
+      UPDATE bot_invocations i
+      SET target_instance_id = ${params.instanceId}, target_runtime_session_id = ${params.runtimeSessionId}, updated_at = NOW()
+      WHERE i.workspace_id = ${params.workspaceId}
+        AND i.actor_type = 'bot' AND i.actor_id = ${params.botId}
+        AND i.active_stream_id = ${params.activeStreamId}
+        AND i.status = 'pending'
+        AND i.trigger <> ALL(${UNROUTED_BOT_INVOCATION_TRIGGERS})
+        AND i.target_runtime_session_id IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM bot_runtime_session_links l
+          WHERE l.workspace_id = i.workspace_id AND l.bot_id = i.actor_id AND l.status = 'active'
+            AND l.runtime_session_id = i.target_runtime_session_id
+            AND (i.target_instance_id IS NULL OR l.instance_id = i.target_instance_id)
+        )
+      RETURNING i.*
     `)
     return result.rows.map(mapInvocation)
   },
@@ -1531,8 +1563,7 @@ export const BotInvocationRepository = {
       invocationId?: string
     }
   ): Promise<BotInvocation | null> {
-    // A composite message + steer shares one transaction timestamp; put the
-    // message invocation first when both capabilities are claimable.
+    // Rows sharing a transaction timestamp: messages before session-control.
     const result = await db.query<BotInvocationRow>(composeSql`WITH candidate AS (
         SELECT i.id FROM bot_invocations i
         WHERE i.workspace_id = ${params.workspaceId}
@@ -1905,7 +1936,7 @@ export const BotInvocationRepository = {
     ownedClaims: BotInvocation[]
     recentCancellations: BotInvocationCancellation[]
   }> {
-    // Bootstrap order must match claimOne for same-timestamp message + steer rows.
+    // Bootstrap order must match claimOne.
     const availableResult = await db.query<BotInvocationRow>(composeSql`SELECT i.* FROM bot_invocations i
         WHERE i.workspace_id = ${params.workspaceId}
           AND i.actor_type = 'bot'

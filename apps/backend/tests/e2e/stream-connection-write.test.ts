@@ -410,7 +410,7 @@ describe("Stream connection partner writes", () => {
 
     const refused = {
       noClientMessageId: await refusal(send(partnerClient, partner.id, channel.id, { content: "no key" })),
-      steer: await attempt({ content: "steering", steer: true }),
+      enqueue: await attempt({ content: "queued", enqueue: true }),
       files: await attempt({ content: "with a file", attachmentIds: ["attach_unknown"] }),
       metadata: await attempt({ content: "tagged", metadata: { ticket: "T-1" } }),
       conversation: await attempt({ content: "grouped", conversation: { intent: "new" } }),
@@ -426,7 +426,7 @@ describe("Stream connection partner writes", () => {
     expect({ refused, hostCount: await messageCount(host.id, channel.id) }).toEqual({
       refused: {
         noClientMessageId: unsupported,
-        steer: unsupported,
+        enqueue: unsupported,
         files: unsupported,
         metadata: unsupported,
         conversation: unsupported,

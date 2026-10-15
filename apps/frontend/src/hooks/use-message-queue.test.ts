@@ -13,12 +13,7 @@ import * as diagnosticsModule from "@/lib/connectivity-diagnostics/facade"
 import * as sharePrivacyToastModule from "@/lib/share-privacy-toast"
 import * as useDraftMessageModule from "./use-draft-message"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import {
-  MessageErrorCodes,
-  MessageReferenceErrorCodes,
-  ShareErrorCodes,
-  StreamConnectionErrorCodes,
-} from "@threahq/types"
+import { MessageReferenceErrorCodes, ShareErrorCodes, StreamConnectionErrorCodes } from "@threahq/types"
 import { toast } from "sonner"
 import { ApiError } from "@/api/client"
 import { retireAccountWork } from "@/sync/account-fence"
@@ -640,36 +635,6 @@ describe("useMessageQueue", () => {
     await surfaced.mock.calls[0]![1].deleteMessage("temp_privacy_other_workspace")
 
     expect(deleteMessage.mock.calls).toEqual([["ws_2", "temp_privacy_other_workspace"]])
-  })
-
-  it("parks a message when its atomic steer is no longer available", async () => {
-    mockCreate.mockRejectedValue(
-      new ApiError(409, MessageErrorCodes.STEER_UNAVAILABLE, "Steer is not available in this stream")
-    )
-    mockPendingMessages = [
-      {
-        clientId: "temp_steer_gone",
-        workspaceId: "ws_1",
-        streamId: "stream_1",
-        content: "Please handle this /steer",
-        contentFormat: "markdown",
-        steer: true,
-        createdAt: 1000,
-        retryCount: 0,
-      },
-    ]
-
-    renderHook(() => useMessageQueue(), { wrapper: createWrapper() })
-    await act(async () => {
-      await new Promise((r) => setTimeout(r, 10))
-    })
-
-    expect(mockUpdate).toHaveBeenCalledWith("temp_steer_gone", {
-      terminalFailure: true,
-      retryAfter: undefined,
-    })
-    expect(mockEventsUpdate).toHaveBeenCalledWith(["ws_1", "temp_steer_gone"], { _status: "failed" })
-    expect(mockMarkFailed).toHaveBeenCalledWith("temp_steer_gone")
   })
 
   it.each([

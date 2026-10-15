@@ -211,7 +211,7 @@ async function createLinkedPiSession(
       supportsActiveScratchpad: true,
       supportsPersistentSessions: true,
       supportsSessionControlCommands: true,
-      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "steer", "stop", "kick", "spawn"],
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "enqueue", "stop", "kick", "spawn"],
       thinkingLevels: ["off", "minimal", "low", "medium", "high"],
       modelSuggestions: [
         { value: "anthropic/claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
@@ -260,15 +260,23 @@ describe("Stream-scoped Pi session-control commands", () => {
     const linkedBootstrap = await getBootstrap(client, workspace.id, linked.streamId)
     const linkedCommands = linkedBootstrap.commands ?? []
     const linkedNames = linkedCommands.map((c) => c.name)
-    expect(linkedNames).toContain("compact")
-    expect(linkedNames).toContain("model")
-    expect(linkedNames).toContain("thinking")
-    expect(linkedNames).toContain("skill")
-    expect(linkedNames).toContain("reload")
-    expect(linkedNames).toContain("steer")
-    expect(linkedNames).toContain("stop")
-    expect(linkedNames).toContain("kick")
-    expect(linkedNames).toContain("spawn")
+    expect({
+      linked: linkedNames,
+      retired: linkedNames.filter((name) => name === "steer" || name === "carry-on"),
+    }).toEqual({
+      linked: expect.arrayContaining([
+        "compact",
+        "model",
+        "thinking",
+        "skill",
+        "reload",
+        "enqueue",
+        "stop",
+        "kick",
+        "spawn",
+      ]),
+      retired: [],
+    })
 
     // /thinking suggestions reflect the runtime's advertised levels, not a backend-hardcoded list.
     const thinkingCommand = linkedCommands.find((c) => c.name === "thinking")

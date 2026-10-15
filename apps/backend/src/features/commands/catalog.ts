@@ -1,4 +1,4 @@
-import { ASIDE_COMMAND, CommandKinds, CommandScopes, type CommandInfo } from "@threahq/types"
+import { ASIDE_COMMAND, CommandKinds, ENQUEUE_COMMAND, CommandScopes, type CommandInfo } from "@threahq/types"
 import type { CommandRegistry } from "./registry"
 
 // Canonical session-control command names, shared across runtimes that drive a
@@ -13,12 +13,11 @@ export const SESSION_CONTROL_COMMAND_NAMES = [
   "skill",
   "reload",
   "shell",
-  "steer",
+  ENQUEUE_COMMAND,
   "stop",
   "kick",
   "status",
   "run",
-  "carry-on",
   "reconnect",
   "clear",
   "key",
@@ -108,11 +107,11 @@ export function listSessionControlCommandInfos(): CommandInfo[] {
       args: [{ name: "command", required: true, description: "Shell command to run (passed to `$SHELL -c`)" }],
     },
     {
-      name: "steer",
-      description: "Steer the linked session with an immediate follow-up",
+      name: ENQUEUE_COMMAND,
+      description: "Queue a message for the linked session to pick up when it's idle",
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
-      args: [{ name: "message", required: false, description: "Optional instruction to inject immediately" }],
+      args: [{ name: "message", required: true, description: "Message to deliver once the session is idle" }],
     },
     {
       name: "stop",
@@ -138,13 +137,6 @@ export function listSessionControlCommandInfos(): CommandInfo[] {
       kind: CommandKinds.BOT_RUNTIME,
       scope: CommandScopes.STREAM,
       args: [{ name: "command", required: true, description: "Slash command to run, e.g. /compact" }],
-    },
-    {
-      name: "carry-on",
-      description: "Queue a message for when the session's provider quota resets",
-      kind: CommandKinds.BOT_RUNTIME,
-      scope: CommandScopes.STREAM,
-      args: [{ name: "message", required: false, description: "Instruction to deliver when the session resumes" }],
     },
     {
       name: "reconnect",

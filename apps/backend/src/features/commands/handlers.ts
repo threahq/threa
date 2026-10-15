@@ -9,6 +9,7 @@ import {
   BotInvocationTriggers,
   BotRuntimeKinds,
   CommandKinds,
+  ENQUEUE_COMMAND,
 } from "@threahq/types"
 import type { BotRuntimeKind, CommandDispatchedPayload } from "@threahq/types"
 import { withClient, withTransaction, type Querier } from "../../db"
@@ -50,10 +51,8 @@ export function resolveRuntimeInvocationRouting(
   requiredCapability: (typeof BotInvocationCapabilities)[keyof typeof BotInvocationCapabilities]
 } {
   if (
-    commandName === "steer" ||
     commandName === "stop" ||
     commandName === "kick" ||
-    commandName === "carry-on" ||
     ((commandName === "reconnect" || commandName === "clear" || commandName === "key") &&
       runtimeKind === BotRuntimeKinds.PI_LOCAL)
   ) {
@@ -166,6 +165,9 @@ export function createCommandHandlers({
           success: false,
           error: "Invalid command format. Commands must start with / followed by a name.",
         })
+      }
+      if (parsed.name === ENQUEUE_COMMAND) {
+        return res.status(400).json({ success: false, error: "Enqueue is a send mode, not a command" })
       }
 
       if (clientCommandId) {

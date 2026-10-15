@@ -26,7 +26,7 @@ import {
   StreamBriefService,
   StreamReadService,
 } from "./features/streams"
-import { createMessageHandlers, SteeredMessageService } from "./features/messaging"
+import { createMessageHandlers, EnqueuedMessageService } from "./features/messaging"
 import { createAttachmentHandlers } from "./features/attachments"
 import { createSearchHandlers } from "./features/search"
 import { createMemoHandlers } from "./features/memos"
@@ -358,7 +358,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
   const authHandlers = createAuthHandlers()
   const avatarUpload = createAvatarUploadMiddleware()
   const commandAvailabilityService = new CommandAvailabilityService({ pool, commandRegistry })
-  const steeredMessageService = new SteeredMessageService({ commandAvailabilityService, botRuntimeService })
+  const enqueuedMessageService = new EnqueuedMessageService({ commandAvailabilityService, botRuntimeService })
   const boardViewService = new BoardViewService(pool)
   const streamReadService = new StreamReadService({ pool, streamService, activityService })
   const workspace = createWorkspaceHandlers({
@@ -404,7 +404,7 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     eventService,
     streamService,
     commandRegistry,
-    steeredMessageService,
+    enqueuedMessageService,
     streamConnectionForwardService,
   })
   const attachment = createAttachmentHandlers({ attachmentService, streamService, storage, pool })

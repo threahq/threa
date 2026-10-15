@@ -81,7 +81,7 @@ describe("command dispatch idempotency", () => {
     const req = {
       user: { id: "usr_1" },
       workspaceId: "ws_1",
-      body: { streamId: "stream_1", command: "/stop", clientCommandId: "temp_cmd_1" },
+      body: { streamId: "stream_1", command: "/compact", clientCommandId: "temp_cmd_1" },
     } as Request
     const res = makeResponse()
 
@@ -115,7 +115,7 @@ describe("command dispatch idempotency", () => {
     const req = {
       user: { id: "usr_1" },
       workspaceId: "ws_1",
-      body: { streamId: "stream_1", command: "/stop", clientCommandId: "temp_cmd_1" },
+      body: { streamId: "stream_1", command: "/compact", clientCommandId: "temp_cmd_1" },
     } as Request
     const res = makeResponse()
 
@@ -127,7 +127,7 @@ describe("command dispatch idempotency", () => {
     it(`replays a committed work command under final locked read-only state for ${executionKind}`, async () => {
       const workEvent = {
         ...event,
-        payload: { ...event.payload, name: "steer", executionKind },
+        payload: { ...event.payload, name: "compact", executionKind },
       }
       spyOn(streamsModule, "resolveLockedStreamAuthorities").mockResolvedValue([
         { state: { readOnly: true, readOnlyReason: "archived" } } as never,
@@ -153,7 +153,7 @@ describe("command dispatch idempotency", () => {
       const req = {
         user: { id: "usr_1" },
         workspaceId: "ws_1",
-        body: { streamId: "stream_1", command: "/steer continue", clientCommandId: "temp_cmd_1" },
+        body: { streamId: "stream_1", command: "/compact", clientCommandId: "temp_cmd_1" },
       } as Request
       const res = makeResponse()
 
@@ -196,7 +196,7 @@ describe("command dispatch idempotency", () => {
     const req = {
       user: { id: "usr_1" },
       workspaceId: "ws_1",
-      body: { streamId: "stream_1", command: "/stop", clientCommandId: "temp_cmd_1" },
+      body: { streamId: "stream_1", command: "/compact", clientCommandId: "temp_cmd_1" },
     } as Request
     const res = makeResponse()
 
@@ -284,10 +284,11 @@ describe("runtime command dispatch source", () => {
       created: true,
     }))
     const createInvocation = mock(async (_client: unknown, _params: unknown) => undefined)
+    const resolveCommand = mock(async () => ({ executionKind: CommandKinds.BOT_RUNTIME, info: {}, runtime }))
     const handlers = createCommandHandlers({
       pool: makePool(),
       commandAvailabilityService: {
-        resolveCommandForDispatch: mock(async () => ({ executionKind: CommandKinds.BOT_RUNTIME, info: {}, runtime })),
+        resolveCommandForDispatch: resolveCommand,
         resolveCommandInTransaction: mock(async () => ({
           executionKind: CommandKinds.BOT_RUNTIME,
           info: {},
@@ -304,7 +305,7 @@ describe("runtime command dispatch source", () => {
       { user: { id: "usr_1" }, workspaceId: "ws_1", body: { streamId: "stream_root", command } } as Request,
       res
     )
-    return { createMessage, createInvocation }
+    return { createMessage, createInvocation, resolveCommand, res }
   }
 
   it("persists the typed `/spawn` as a message and sources the invocation from it", async () => {
@@ -380,11 +381,29 @@ describe("runtime command dispatch source", () => {
   })
 
   it("leaves every other runtime command a command-sourced invocation with no message", async () => {
-    const { createMessage, createInvocation } = await dispatchRuntimeCommand("/steer continue")
+    const { createMessage, createInvocation } = await dispatchRuntimeCommand("/stop")
 
     expect({
       messages: createMessage.mock.calls.length,
       sourceMessageId: (createInvocation.mock.calls[0][1] as { sourceMessageId: string }).sourceMessageId,
     }).toEqual({ messages: 0, sourceMessageId: expect.stringMatching(/^cmd_/) })
+  })
+
+  it("rejects a dispatched `/enqueue`, which only exists as a send mode", async () => {
+    const { createMessage, createInvocation, resolveCommand, res } = await dispatchRuntimeCommand("/enqueue later")
+
+    expect({
+      status: res.statusCode,
+      body: res.body,
+      resolutions: resolveCommand.mock.calls.length,
+      messages: createMessage.mock.calls.length,
+      invocations: createInvocation.mock.calls.length,
+    }).toEqual({
+      status: 400,
+      body: { success: false, error: "Enqueue is a send mode, not a command" },
+      resolutions: 0,
+      messages: 0,
+      invocations: 0,
+    })
   })
 })

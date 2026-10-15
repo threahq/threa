@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Pool } from "pg"
 import { seedBotRuntimeFixture, testContentJson, type BotRuntimeFixture, botRuntimeServiceFor } from "./setup"
-import { StreamTypes, Visibilities } from "@threahq/types"
+import { BotInvocationCapabilities, BotInvocationTriggers, StreamTypes, Visibilities } from "@threahq/types"
 import { BotRuntimeSessionLinkRepository } from "../../src/features/bot-runtimes"
 import { MessageRepository } from "../../src/features/messaging"
 import { StreamEventRepository, StreamRepository } from "../../src/features/streams"
@@ -270,38 +270,35 @@ describe("ending a bot runtime session", () => {
     expect(untouched.rows.map((row) => row.archived_at)).toEqual([null, null])
   })
 
-  test("cancels pending invocations targeted at the ended session and leaves other pending rows alone", async () => {
-    const link = (instanceId: string, runtimeSessionId: string, activeStreamId: string) =>
-      BotRuntimeSessionLinkRepository.upsert(pool, {
-        id: botRuntimeSessionLinkId(),
-        workspaceId: workspace,
-        botId: bot,
-        runtimeKind: "openclaw",
-        instanceId,
-        runtimeSessionId,
-        rootStreamId: root,
-        activeStreamId,
-        linkedBy: author,
-      })
-
-    // Distinct activeStreamIds: `upsert`'s conflict target is (workspace, bot,
-    // rootStreamId, activeStreamId), so two identities sharing the root as their
-    // active stream would collide and overwrite each other's row.
-    const rootAnchor = await anchorMessage("root anchor")
-    const otherStreamId = streamId()
-    await pool.query(
-      `INSERT INTO streams (id, workspace_id, type, visibility, created_by, parent_stream_id, parent_anchor_id, root_stream_id)
-       VALUES ($1, $2, 'thread', 'private', $3, $4, $5, $4)`,
-      [otherStreamId, workspace, author, root, rootAnchor.id]
-    )
-
-    await link("target-instance", "target-session", root)
-    const sourceA = await anchorMessage("message A")
-    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: sourceA.id })
-
-    await link("other-instance", "other-session", otherStreamId)
-    const sourceB = await anchorMessage("message B", otherStreamId)
-    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: sourceB.id })
+  test("keeps its pending messages for the next session and cancels its pending brief", async () => {
+    await BotRuntimeSessionLinkRepository.upsert(pool, {
+      id: botRuntimeSessionLinkId(),
+      workspaceId: workspace,
+      botId: bot,
+      runtimeKind: "openclaw",
+      instanceId: "target-instance",
+      runtimeSessionId: "target-session",
+      rootStreamId: root,
+      activeStreamId: root,
+      linkedBy: author,
+    })
+    const message = await anchorMessage("message")
+    await service().reconcileInvocationSource({ workspaceId: workspace, sourceMessageId: message.id })
+    const briefAnchor = await anchorMessage("brief anchor")
+    await service().createInvocation({
+      workspaceId: workspace,
+      rootStreamId: root,
+      activeStreamId: root,
+      sourceMessageId: briefAnchor.id,
+      responseStreamId: root,
+      actorId: bot,
+      trigger: BotInvocationTriggers.BRIEF,
+      requiredCapability: BotInvocationCapabilities.ACTIVE_SCRATCHPAD,
+      promptMarkdown: "brief",
+      authorUserId: author,
+      targetInstanceId: "target-instance",
+      targetRuntimeSessionId: "target-session",
+    })
 
     await service().endRuntimeSession({
       workspaceId: workspace,
@@ -310,29 +307,16 @@ describe("ending a bot runtime session", () => {
       runtimeSessionId: "target-session",
     })
 
-    const rows = await pool.query<{
-      source_message_id: string
-      status: string
-      cancellation_reason: string | null
-      target_runtime_session_id: string
-    }>(
-      `SELECT source_message_id, status, cancellation_reason, target_runtime_session_id
-       FROM bot_invocations WHERE workspace_id = $1 ORDER BY source_message_id`,
+    const rows = await pool.query<{ source_message_id: string; status: string; cancellation_reason: string | null }>(
+      "SELECT source_message_id, status, cancellation_reason FROM bot_invocations WHERE workspace_id = $1",
       [workspace]
     )
-    const bySource = Object.fromEntries(rows.rows.map((row) => [row.source_message_id, row]))
-    expect(bySource).toEqual({
-      [sourceA.id]: {
-        source_message_id: sourceA.id,
+    expect(Object.fromEntries(rows.rows.map((row) => [row.source_message_id, row]))).toEqual({
+      [message.id]: { source_message_id: message.id, status: "pending", cancellation_reason: null },
+      [briefAnchor.id]: {
+        source_message_id: briefAnchor.id,
         status: "cancelled",
         cancellation_reason: "routing_changed",
-        target_runtime_session_id: "target-session",
-      },
-      [sourceB.id]: {
-        source_message_id: sourceB.id,
-        status: "pending",
-        cancellation_reason: null,
-        target_runtime_session_id: "other-session",
       },
     })
   })
@@ -381,7 +365,7 @@ describe("ending a bot runtime session", () => {
     expect(row.rows[0]).toEqual({ status: "cancelled", cancellation_reason: "routing_changed" })
   })
 
-  test("spares the invocation that is ending the link so it can still report its outcome", async () => {
+  test("spares the invocation that is ending the link so it can still report its outcome, and keeps the message queued behind it", async () => {
     await BotRuntimeSessionLinkRepository.upsert(pool, {
       id: botRuntimeSessionLinkId(),
       workspaceId: workspace,
@@ -423,7 +407,7 @@ describe("ending a bot runtime session", () => {
     )
     expect(Object.fromEntries(rows.rows.map((row) => [row.source_message_id, row.status]))).toEqual({
       [doneSource.id]: "claimed",
-      [queued.id]: "cancelled",
+      [queued.id]: "pending",
     })
   })
 

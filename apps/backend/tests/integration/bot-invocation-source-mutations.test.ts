@@ -87,9 +87,9 @@ describe("bot invocation canonical source mutations", () => {
     })
   }
 
-  test("embedded steer edit reconciles only its companion and deletion cancels both", async () => {
+  test("an edit reconciles the routed row and leaves the session-control row alone; deletion cancels both", async () => {
     const message = await source("before")
-    const companion = await invocation(message.id, message.revision)
+    const routed = await invocation(message.id, message.revision)
     const control = await invocation(message.id, 0, undefined, "session-control")
 
     await MessageRepository.updateContent(pool, workspace, message.id, testContentJson("after"), "after")
@@ -107,7 +107,7 @@ describe("bot invocation canonical source mutations", () => {
     )
     expect(afterEdit.rows).toEqual([
       {
-        id: companion.invocation.id,
+        id: routed.invocation.id,
         trigger: "active-scratchpad",
         status: "pending",
         source_message_revision: 2,

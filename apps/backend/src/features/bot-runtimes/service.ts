@@ -598,6 +598,7 @@ export class BotRuntimeService {
           code: "THREAD_SESSION_EXISTS",
         })
       }
+      await this.adoptPendingMessagesInTransaction(client, link)
       return { link, stream: thread }
     })
   }
@@ -642,7 +643,7 @@ export class BotRuntimeService {
         createdBy: params.linkedBy,
       })
     }
-    return BotRuntimeSessionLinkRepository.upsert(db, {
+    const link = await BotRuntimeSessionLinkRepository.upsert(db, {
       id: botRuntimeSessionLinkId(),
       workspaceId: params.workspaceId,
       botId: params.botId,
@@ -654,6 +655,19 @@ export class BotRuntimeService {
       linkedBy: params.linkedBy,
       metadata: params.metadata,
     })
+    await this.adoptPendingMessagesInTransaction(db, link)
+    return link
+  }
+
+  private async adoptPendingMessagesInTransaction(db: Querier, link: BotRuntimeSessionLink): Promise<void> {
+    const adopted = await BotInvocationRepository.retargetPendingMessagesToLink(db, {
+      workspaceId: link.workspaceId,
+      botId: link.botId,
+      activeStreamId: link.activeStreamId,
+      instanceId: link.instanceId,
+      runtimeSessionId: link.runtimeSessionId,
+    })
+    for (const invocation of adopted) await this.emitAvailabilityHint(db, invocation)
   }
 
   async rebindPiRemoteSessionInstance(params: {
@@ -684,6 +698,7 @@ export class BotRuntimeService {
         // before rebinding; merge the bootstrap set instead of replacing it.
         mergeCapabilities: true,
       })
+      await this.adoptPendingMessagesInTransaction(db, link)
       return link
     })
   }
@@ -720,17 +735,7 @@ export class BotRuntimeService {
         ...(params.runtimeKind === "pi-local"
           ? {
               supportsSessionControlCommands: true,
-              sessionControlCommands: [
-                "compact",
-                "model",
-                "thinking",
-                "skill",
-                "reload",
-                "shell",
-                "steer",
-                "stop",
-                "kick",
-              ],
+              sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell", "stop", "kick"],
             }
           : {}),
       },
@@ -1320,6 +1325,34 @@ export class BotRuntimeService {
     metadata?: Record<string, unknown>
   }): Promise<{ invocation: BotInvocation; wasNewlyInserted: boolean }> {
     return withTransaction(this.pool, (db) => this.createInvocationInTransaction(db, params))
+  }
+
+  /**
+   * Inserts this bot's canonical route for a just-sent message as a queued
+   * message. Reconcile computes the same route for the message, so its insert
+   * hits this row's idempotency key and the claim-time route check matches.
+   * Returns false when the router would not deliver the message to this bot.
+   */
+  async enqueueMessageInTransaction(
+    db: Querier,
+    params: { workspaceId: string; sourceMessageId: string; botId: string }
+  ): Promise<boolean> {
+    await BotInvocationRepository.lockSource(db, params)
+    const source = await MessageRepository.findInvocationSourceStateForShare(db, {
+      workspaceId: params.workspaceId,
+      messageId: params.sourceMessageId,
+    })
+    if (!source || source.deleted) return false
+    const route = (await resolveCanonicalInvocationRoutes(db, source)).find(
+      (candidate) => candidate.actorId === params.botId && !candidate.missingLinkNotice
+    )
+    if (!route) return false
+    const [routed] = await this.createReplyThreads(db, params.workspaceId, [route])
+    await this.insertCanonicalRoute(db, source, params.sourceMessageId, {
+      ...routed,
+      requiredCapability: BotInvocationCapabilities.QUEUED_MESSAGE,
+    })
+    return true
   }
 
   /**
