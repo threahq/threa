@@ -152,6 +152,13 @@ test("should open the draft beside the stream, unfocused, from the button hover 
   await expect(tetherTo(page)).toContainText("to the side")
   await tetherTo(page).click()
   await expect(paneEditor(page, streamId)).toBeFocused()
+
+  // Docked beside the stream, Escape closes it the same two-step way as floating.
+  await page.keyboard.press("Escape")
+  await expect.poll(() => panelParam(page)).toBe(compose)
+  await page.keyboard.press("Escape")
+  await expect.poll(() => panelParam(page)).toBeNull()
+  await expect(mainComposer(page)).toHaveText("to the side")
 })
 
 test("should keep a docked draft pane across a reload and toggle it with Alt+Enter", async ({ page }) => {

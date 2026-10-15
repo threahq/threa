@@ -941,7 +941,7 @@ export function MessageComposer({
         : `Press ${MOD_KEY_NAME}+Enter to send.`
 
     if (expanded && onCollapse) {
-      return `${sendInstructions} Tab and Shift+Tab indent content. Press Escape to leave the editor. Press Escape again to close the fullscreen editor.`
+      return `${sendInstructions} Tab and Shift+Tab indent content. Press Escape to leave the editor. Press Escape again to close the expanded editor.`
     }
 
     return `${sendInstructions} Tab and Shift+Tab indent content. Press Escape to leave the editor.`
@@ -1354,7 +1354,7 @@ export function MessageComposer({
                 onEditLastMessage={onEditLastMessage}
                 onHistoryStep={stepBrowserHistory}
                 onFocus={handleComposerFocus}
-                ariaLabel={onCollapse ? "Fullscreen message editor" : "Expanded message editor"}
+                ariaLabel="Expanded message editor"
                 ariaDescribedBy={instructionsId}
                 blurOnEscape
                 onEscapeBlur={focusExpandedShell}

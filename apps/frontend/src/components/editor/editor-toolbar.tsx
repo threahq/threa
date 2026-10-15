@@ -345,7 +345,10 @@ export function EditorToolbar({
             className={cn(
               "flex items-center gap-0.5",
               inlinePosition === "above" && "py-1",
-              inlinePosition === "below" && "pt-1"
+              inlinePosition === "below" && "pt-1",
+              !trailingContent &&
+                !isMobileInlineToolbar &&
+                "[-webkit-mask-image:linear-gradient(to_left,transparent,#000_2rem)] [mask-image:linear-gradient(to_left,transparent,#000_2rem)]"
             )}
           >
             <div
@@ -364,9 +367,6 @@ export function EditorToolbar({
             </div>
             {trailingContent}
           </div>
-          {!trailingContent && !isMobileInlineToolbar && (
-            <div className="pointer-events-none absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-card to-transparent" />
-          )}
         </div>
       </TooltipProvider>
     )

@@ -990,7 +990,7 @@ function MessageInputComponent({
             >
               {conversationReplyStrip}
               <div className="min-h-0 flex-1">
-                <MemoizedMessageComposer {...composerProps} expanded autoFocus />
+                <MemoizedMessageComposer {...composerProps} expanded autoFocus onCollapse={collapse} />
               </div>
             </div>
           </PaneFocusContext.Provider>,
