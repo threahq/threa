@@ -146,7 +146,7 @@ export function BoardCard({
   const flash = useBoardFlash(conversation.id)
   const { getActorName, getActorAvatar } = useActors(workspaceId)
   const currentUserId = useWorkspaceUserId(workspaceId)
-  const { openPanel, getPanelUrl } = usePanel()
+  const { getPanelUrl } = usePanel()
   // A running session's Redirect bumps this nonce to expand + focus the card's
   // reply composer in place (its editor is collapsed until opened, so there's no
   // DOM zone to walk to). A counter, not a boolean, so a repeat Redirect re-opens
@@ -1045,9 +1045,11 @@ export function BoardCard({
             size="icon"
             className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
             aria-label="Open conversation"
-            onClick={() => openPanel(createConversationPanelId(conversation.id))}
+            asChild
           >
-            <PanelRight className="h-3.5 w-3.5" />
+            <Link to={getPanelUrl(createConversationPanelId(conversation.id))}>
+              <PanelRight className="h-3.5 w-3.5" />
+            </Link>
           </Button>
         </TooltipTrigger>
         <TooltipContent side="bottom">Open conversation</TooltipContent>
