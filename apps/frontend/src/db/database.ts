@@ -377,8 +377,8 @@ export interface PendingMessage {
   contentJson?: JSONContent
   /** Attachment IDs to include with the message */
   attachmentIds?: string[]
-  /** Persist this message and dispatch `/steer` atomically on the server. */
-  steer?: true
+  /** Queue for the linked session's next turn instead of delivering now (`/enqueue`). */
+  enqueue?: true
   createdAt: number // timestamp for ordering
   retryCount: number
   /** Timestamp before which this message should not be retried (exponential backoff) */

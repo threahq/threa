@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from "react"
 import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { toast } from "sonner"
 import { InlineComposerForm } from "./board-inline-composer"
 import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/components/composer"
 import { ComposeSlotsProvider, useProvideComposeSlot } from "@/components/panes"
@@ -11,6 +12,10 @@ import { NO_PANELS, openPanelTab, type PanelLayout } from "@/lib/panel-tabs"
 import { spyOnExport } from "@/test"
 import * as composerModule from "@/components/composer"
 import * as commandSendModule from "@/components/composer/use-composer-command-send"
+import * as streamCommandsModule from "@/hooks/use-stream-commands"
+import * as openAsideModule from "@/hooks/use-open-aside"
+import * as commandDispatchQueueModule from "@/hooks/use-command-dispatch-queue"
+import * as commandFailureRestoreModule from "@/hooks/use-command-failure-restore"
 import * as usePointerModule from "@/hooks/use-pointer"
 import * as inputModeModule from "@/hooks/use-input-mode"
 import * as hooksModule from "@/hooks"
@@ -20,7 +25,7 @@ import * as workspaceStoreModule from "@/stores/workspace-store"
 import * as streamStoreModule from "@/stores/stream-store"
 import * as draftMessageModule from "@/hooks/use-draft-message"
 import type { MessageComposerProps } from "@/components/composer"
-import type { FeatureFlagLayers, JSONContent, WorkspaceBootstrap } from "@threahq/types"
+import { ENQUEUE_COMMAND, type FeatureFlagLayers, type JSONContent, type WorkspaceBootstrap } from "@threahq/types"
 import * as streamSyncModule from "@/sync/stream-sync"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 
@@ -768,25 +773,6 @@ describe("InlineComposerForm slash-command dispatch", () => {
     }).toEqual({ dispatched: "compact", againstStream: "stream_conversation", sentAsText: 0 })
   })
 
-  it("embedded /steer sends as a flagged message with the directive node stripped", async () => {
-    const steeredContent = {
-      type: "doc",
-      content: [{ type: "paragraph", content: [{ type: "text", text: "go left" }] }],
-    }
-    planSend.mockReturnValue({ kind: "steer-message", content: steeredContent })
-    const onSubmit = vi.fn().mockResolvedValue(undefined)
-    render(<Anchored>{form({ onSubmit, streamId: "stream_conversation" })}</Anchored>)
-
-    await userEvent.click(screen.getByTestId("send"))
-
-    await waitFor(() => expect(onSubmit).toHaveBeenCalled())
-    expect({
-      steer: onSubmit.mock.calls[0][0].steer,
-      contentJson: onSubmit.mock.calls[0][0].contentJson,
-      dispatched: dispatchCommand.mock.calls.length,
-    }).toEqual({ steer: true, contentJson: steeredContent, dispatched: 0 })
-  })
-
   it("still sends plain text through the surface's own routing", async () => {
     const onSubmit = vi.fn().mockResolvedValue(undefined)
     render(<Anchored>{form({ onSubmit })}</Anchored>)
@@ -805,5 +791,86 @@ describe("InlineComposerForm slash-command dispatch", () => {
   it("claims scoping even when the stream is unresolved, so the route can't stand in", () => {
     render(<Anchored>{form({ streamId: undefined })}</Anchored>)
     expect(editorSpy.mock.calls[0][0].commandStreamId).toBeNull()
+  })
+})
+
+describe("InlineComposerForm /enqueue", () => {
+  const SendingEditorStub = (props: MessageComposerProps) => (
+    <button type="button" data-testid="send" onClick={() => void props.onSubmit()}>
+      send
+    </button>
+  )
+  const doc = (text: string): JSONContent => ({
+    type: "doc",
+    content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+  })
+
+  const lastComposerProps = (): MessageComposerProps => editorSpy.mock.calls.at(-1)![0] as MessageComposerProps
+
+  beforeEach(() => {
+    // The real planner, so the directive strip is what's under test.
+    spyOnExport(commandSendModule, "useComposerCommandSend").mockRestore()
+    spyOnExport(openAsideModule, "useOpenAside").mockReturnValue((async () => {}) as never)
+    spyOnExport(commandDispatchQueueModule, "useCommandDispatchQueue").mockReturnValue((() => ({
+      queueCommand: vi.fn(),
+    })) as never)
+    spyOnExport(commandFailureRestoreModule, "useCommandFailureRestore").mockReturnValue((() => vi.fn()) as never)
+    editorSpy = vi.fn(SendingEditorStub)
+    spyOnExport(composerModule, "MessageComposer").mockReturnValue(editorSpy as never)
+    spyOnExport(streamCommandsModule, "useStreamCommands").mockReturnValue((() => [
+      { name: ENQUEUE_COMMAND, description: "Enqueue", kind: "bot-runtime", scope: "stream" },
+    ]) as never)
+    composerStub.canSend = true
+  })
+
+  it("should send an enqueued message without the directive", async () => {
+    composerStub.content = doc("/enqueue go left")
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    render(<Anchored>{form({ onSubmit, streamId: "stream_conversation" })}</Anchored>)
+
+    await userEvent.click(screen.getByTestId("send"))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled())
+    expect({
+      enqueue: onSubmit.mock.calls[0][0].enqueue,
+      contentJson: onSubmit.mock.calls[0][0].contentJson,
+    }).toEqual({ enqueue: true, contentJson: doc("go left") })
+  })
+
+  it("should send nothing and say what's missing when /enqueue has no message", async () => {
+    const errorToast = vi.spyOn(toast, "error").mockReturnValue("t1")
+    composerStub.content = doc("/enqueue")
+    const onSubmit = vi.fn().mockResolvedValue(undefined)
+    render(<Anchored>{form({ onSubmit, streamId: "stream_conversation" })}</Anchored>)
+
+    await userEvent.click(screen.getByTestId("send"))
+
+    expect({ toasts: errorToast.mock.calls, sent: onSubmit.mock.calls.length }).toEqual({
+      toasts: [[commandSendModule.EMPTY_ENQUEUE_ERROR]],
+      sent: 0,
+    })
+    errorToast.mockRestore()
+  })
+
+  it("should refuse to schedule an /enqueue and keep the draft", async () => {
+    const errorToast = vi.spyOn(toast, "error").mockReturnValue("t1")
+    composerStub.content = doc("/enqueue after this")
+    render(
+      <Anchored>
+        {form({ streamId: "stream_1", scheduleTarget: { streamId: "stream_1", conversationId: "conv_1" } })}
+      </Anchored>
+    )
+
+    const trigger = lastComposerProps().scheduledMessagesTrigger as ReactElement<{
+      onSchedule: (when: Date) => Promise<void>
+    }>
+    await trigger.props.onSchedule(new Date("2030-01-02T10:00:00.000Z"))
+
+    expect({
+      toasts: errorToast.mock.calls,
+      scheduled: scheduleMutateAsync.mock.calls.length,
+      cleared: composerStub.setContent.mock.calls.length,
+    }).toEqual({ toasts: [[commandSendModule.SCHEDULED_ENQUEUE_ERROR]], scheduled: 0, cleared: 0 })
+    errorToast.mockRestore()
   })
 })

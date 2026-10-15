@@ -61,7 +61,6 @@ import {
 } from "@threahq/types"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
 import type { Editor } from "@tiptap/react"
-import { consumeComposerCommandRequest, subscribeComposerCommandRequest } from "@/stores/composer-command-request-store"
 
 const MOBILE_COMPOSER_DEFAULT_MAX_PX = 380
 const MOBILE_COMPOSER_KEYBOARD_MAX_RATIO = 0.5
@@ -94,30 +93,6 @@ function orientationAngle(): OrientationAngle {
   if (typeof legacyAngle === "number") return legacyAngle
   if (window.innerWidth <= 0 || window.innerHeight <= 0) return undefined
   return window.innerWidth > window.innerHeight ? "landscape" : "portrait"
-}
-
-function prependComposerCommand(content: JSONContent, command: string): JSONContent {
-  const first = content.content?.[0]
-  if (first?.type === "paragraph") {
-    const firstInline = first.content?.[0]
-    const commandName = command.trim()
-    const alreadyPrefixed =
-      (typeof firstInline?.text === "string" &&
-        (firstInline.text === commandName || firstInline.text.startsWith(`${commandName} `))) ||
-      (firstInline?.type === "slashCommand" && firstInline.attrs?.name === commandName.slice(1))
-    if (alreadyPrefixed) return content
-    return {
-      ...content,
-      content: [
-        { ...first, content: [{ type: "text", text: command }, ...(first.content ?? [])] },
-        ...(content.content ?? []).slice(1),
-      ],
-    }
-  }
-  return {
-    ...content,
-    content: [{ type: "paragraph", content: [{ type: "text", text: command }] }, ...(content.content ?? [])],
-  }
 }
 
 function stepBrowserHistory(delta: -1 | 1): void {
@@ -353,17 +328,6 @@ export function MessageComposer({
     onComposerFocus?.()
   }, [onComposerFocus])
 
-  useEffect(() => {
-    if (!workspaceId || !streamId) return
-    const consumeRequest = () => {
-      const command = consumeComposerCommandRequest(workspaceId, streamId)
-      if (!command) return
-      onContentChange(prependComposerCommand(content, command))
-      requestAnimationFrame(() => richEditorRef.current?.focus())
-    }
-    consumeRequest()
-    return subscribeComposerCommandRequest(workspaceId, streamId, consumeRequest)
-  }, [content, onContentChange, workspaceId, streamId])
   const mobileRootRef = useRef<HTMLDivElement>(null)
   const mobileEditorScrollRef = useRef<HTMLDivElement>(null)
   const mobileEditorBottomOffsetRef = useRef(0)

@@ -65,8 +65,8 @@ export const STEP_DISPLAY_CONFIG: Record<AgentStepType, StepDisplayConfig> = {
     lightness: 55,
   },
   steer: {
-    label: "Steer",
-    inlineLabel: "Steering...",
+    label: "Message folded in",
+    inlineLabel: "Folding in a message...",
     icon: Navigation,
     hue: 260,
     saturation: 70,

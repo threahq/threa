@@ -15,7 +15,6 @@ import * as editorModule from "@/components/editor"
 import * as micButtonModule from "./mic-button"
 import * as pendingAttachmentsModule from "@/components/timeline/pending-attachments"
 import * as analyticsModule from "@/lib/analytics/posthog"
-import { queueComposerCommandRequest } from "@/stores/composer-command-request-store"
 import { useReportScheduledCount } from "./stashed-drafts-open-context"
 
 let isMobileMockValue = false
@@ -348,51 +347,6 @@ describe("MessageComposer", () => {
       expect(screen.getByTestId("rich-editor")).toBeInTheDocument()
     })
 
-    it("prepends a queued runtime command without dropping the existing draft", async () => {
-      const MockMicButton = forwardRef(function MockMicButton(
-        _props: unknown,
-        ref: ForwardedRef<{ abort: () => void; prepareSendAsIs: () => void }>
-      ) {
-        useImperativeHandle(ref, () => ({ abort: vi.fn(), prepareSendAsIs: vi.fn() }))
-        return null
-      })
-      spyOnExport(micButtonModule, "MicButton").mockReturnValue(
-        MockMicButton as unknown as typeof micButtonModule.MicButton
-      )
-      const onContentChange = vi.fn()
-      const content: JSONContent = {
-        type: "doc",
-        content: [{ type: "paragraph", content: [{ type: "text", text: "focus on tests" }] }],
-      }
-      render(
-        <MessageComposer
-          {...defaultProps}
-          workspaceId="ws_1"
-          streamId="stream_steer"
-          content={content}
-          onContentChange={onContentChange}
-        />
-      )
-
-      act(() => queueComposerCommandRequest("ws_1", "stream_steer", "/steer "))
-
-      await waitFor(() =>
-        expect(onContentChange).toHaveBeenCalledWith({
-          type: "doc",
-          content: [
-            {
-              type: "paragraph",
-              content: [
-                { type: "text", text: "/steer " },
-                { type: "text", text: "focus on tests" },
-              ],
-            },
-          ],
-        })
-      )
-      await waitFor(() => expect(mockRichEditorFocus).toHaveBeenCalledTimes(1))
-    })
-
     it("should render the upload button", () => {
       render(<MessageComposer {...defaultProps} />)
 
@@ -720,7 +674,7 @@ describe("MessageComposer", () => {
               {
                 type: "paragraph",
                 content: [
-                  { type: "slashCommand", attrs: { name: "steer", clientActionId: null } },
+                  { type: "slashCommand", attrs: { name: "compact", clientActionId: null } },
                   { type: "text", text: " focus on tests" },
                 ],
               },
@@ -729,7 +683,7 @@ describe("MessageComposer", () => {
         />
       )
 
-      expect(screen.getByText("/steer focus on tests")).toBeInTheDocument()
+      expect(screen.getByText("/compact focus on tests")).toBeInTheDocument()
     })
 
     it("reports chrome closure after focus leaves", () => {

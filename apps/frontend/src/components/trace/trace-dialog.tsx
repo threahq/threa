@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useMemo, useRef } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import {
   ResponsiveDialog,
@@ -10,45 +10,22 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { RelativeTime } from "@/components/relative-time"
 import { useTrace, useSocket } from "@/contexts"
-import { findVisibleZoneEditor, focusAtEnd, useAbortSession } from "@/hooks"
+import { findVisibleZoneEditor, focusAtEnd, useAbortSession, useStopAgentSession } from "@/hooks"
 import { useAgentTrace } from "@/hooks/use-agent-trace"
 import { useWorkspaceUserId } from "@/hooks/use-workspaces"
 import { TraceStepList } from "./trace-step-list"
-import { commandsApi } from "@/api"
-import { queueComposerCommandRequest } from "@/stores/composer-command-request-store"
 import { X } from "lucide-react"
-import { toast } from "sonner"
 import { formatDuration } from "@/lib/dates"
-import { CommandKinds, type AgentSession, type AgentSessionRerunContext, type AgentSessionStatus } from "@threahq/types"
+import type { AgentSession, AgentSessionRerunContext, AgentSessionStatus } from "@threahq/types"
 
-type SessionControlCommand = "steer" | "stop"
-
-function collectRuntimeSessionControlCommands(commands: Awaited<ReturnType<typeof commandsApi.listForStream>>) {
-  const advertised = new Set<SessionControlCommand>()
-  for (const command of commands) {
-    if (command.kind !== CommandKinds.BOT_RUNTIME) continue
-    if (command.name === "steer" || command.name === "stop") advertised.add(command.name)
+function focusFirstVisibleComposer(): boolean {
+  for (const zone of document.querySelectorAll<HTMLElement>("[data-editor-zone]")) {
+    const editor = findVisibleZoneEditor(zone)
+    if (!editor) continue
+    focusAtEnd(editor)
+    return true
   }
-  return advertised
-}
-
-async function resolveRuntimeCommands({
-  workspaceId,
-  streamId,
-  runtimeCommands,
-}: {
-  workspaceId: string
-  streamId: string
-  runtimeCommands: ReadonlySet<SessionControlCommand> | null
-}): Promise<ReadonlySet<SessionControlCommand>> {
-  if (runtimeCommands) return runtimeCommands
-  return commandsApi
-    .listForStream(workspaceId, streamId)
-    .then(collectRuntimeSessionControlCommands)
-    .catch((error: unknown) => {
-      console.warn("[TraceDialog] failed to resolve runtime session-control commands", error)
-      return new Set<SessionControlCommand>()
-    })
+  return false
 }
 
 const STATUS_TEXT: Record<AgentSessionStatus, string> = {
@@ -66,7 +43,6 @@ export function TraceDialog() {
   const { sessionId, highlightMessageId, getTraceUrl, closeTraceModal } = useTrace()
   const socket = useSocket()
   const abortSession = useAbortSession(socket)
-  const [runtimeCommands, setRuntimeCommands] = useState<ReadonlySet<SessionControlCommand> | null>(null)
   // Resolved once and threaded into the step list so each step can decrypt
   // sealed (enclave) content via the viewer's E2E session.
   const userId = useWorkspaceUserId(workspaceId!)
@@ -75,73 +51,22 @@ export function TraceDialog() {
     workspaceId!,
     sessionId!
   )
-
-  useEffect(() => {
-    if (!workspaceId || !session?.streamId || status !== "running") {
-      setRuntimeCommands(null)
-      return
-    }
-
-    let cancelled = false
-    void commandsApi
-      .listForStream(workspaceId, session.streamId)
-      .then((commands) => {
-        if (cancelled) return
-        setRuntimeCommands(collectRuntimeSessionControlCommands(commands))
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return
-        console.warn("[TraceDialog] failed to load runtime session-control commands", error)
-        setRuntimeCommands(new Set())
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [workspaceId, session?.streamId, status])
+  const stopAgentSession = useStopAgentSession(socket, workspaceId!, session?.streamId ?? "")
 
   // Bind workspace + session once here so the in-flight step card can invoke
   // session-control without needing either identifier in its own scope.
   const handleStopSession = useCallback(() => {
     if (!sessionId || !workspaceId) return
-    void (async () => {
-      if (session?.streamId) {
-        const advertised = await resolveRuntimeCommands({ workspaceId, streamId: session.streamId, runtimeCommands })
-        if (advertised.has("stop")) {
-          try {
-            await commandsApi.dispatch(workspaceId, { streamId: session.streamId, command: "/stop" })
-            return
-          } catch (error) {
-            console.warn("[TraceDialog] /stop dispatch failed, falling back to abort", error)
-            toast.error("Runtime stop failed — using local stop instead")
-          }
-        }
-      }
-      abortSession({ sessionId, workspaceId })
-    })().catch((error: unknown) => {
-      console.warn("[TraceDialog] failed to stop session", error)
-      toast.error("Failed to stop session")
-    })
-  }, [abortSession, runtimeCommands, session?.streamId, sessionId, workspaceId])
+    if (session?.streamId) stopAgentSession(sessionId)
+    else abortSession({ sessionId, workspaceId })
+  }, [abortSession, session?.streamId, sessionId, stopAgentSession, workspaceId])
 
-  const handleSteerSession = useCallback(() => {
-    void (async () => {
-      if (workspaceId && session?.streamId) {
-        const advertised = await resolveRuntimeCommands({ workspaceId, streamId: session.streamId, runtimeCommands })
-        if (advertised.has("steer")) queueComposerCommandRequest(workspaceId, session.streamId, "/steer ")
-      }
-
-      for (const zone of document.querySelectorAll<HTMLElement>("[data-editor-zone]")) {
-        const editor = findVisibleZoneEditor(zone)
-        if (!editor) continue
-        focusAtEnd(editor)
-        return
-      }
-    })().catch((error: unknown) => {
-      console.warn("[TraceDialog] failed to dispatch /steer", error)
-      toast.error("Failed to redirect session")
-    })
-  }, [runtimeCommands, session?.streamId, workspaceId])
+  // The composer sits behind the dialog, so Redirect closes it and takes the focus the close would restore.
+  const redirectOnClose = useRef(false)
+  const handleRedirectSession = useCallback(() => {
+    redirectOnClose.current = true
+    closeTraceModal()
+  }, [closeTraceModal])
 
   if (!sessionId) return null
 
@@ -180,6 +105,11 @@ export function TraceDialog() {
         desktopClassName="max-w-4xl max-h-[90vh] sm:flex flex-col p-0 gap-0 [&>button:last-child]:hidden"
         drawerClassName="flex flex-col p-0"
         hideCloseButton
+        onCloseAutoFocus={(event) => {
+          if (!redirectOnClose.current) return
+          redirectOnClose.current = false
+          if (focusFirstVisibleComposer()) event.preventDefault()
+        }}
       >
         <TraceHeader
           isLoading={isLoading}
@@ -208,7 +138,7 @@ export function TraceDialog() {
           userId={userId}
           isSessionRunning={status === "running"}
           onStopSession={status === "running" ? handleStopSession : undefined}
-          onSteerSession={status === "running" ? handleSteerSession : undefined}
+          onRedirectSession={status === "running" ? handleRedirectSession : undefined}
         />
 
         {status && <TraceFooter status={status} stepCount={steps.length} messageCount={messageCount} />}
@@ -346,7 +276,7 @@ function TraceBody({
   userId,
   isSessionRunning,
   onStopSession,
-  onSteerSession,
+  onRedirectSession,
 }: {
   isLoading: boolean
   error: Error | null
@@ -358,7 +288,7 @@ function TraceBody({
   userId: string | null
   isSessionRunning: boolean
   onStopSession?: () => void
-  onSteerSession?: () => void
+  onRedirectSession?: () => void
 }) {
   let content = (
     <TraceStepList
@@ -370,7 +300,7 @@ function TraceBody({
       streamingSubsteps={streamingSubsteps}
       isSessionRunning={isSessionRunning}
       onStopSession={onStopSession}
-      onSteerSession={onSteerSession}
+      onRedirectSession={onRedirectSession}
     />
   )
   if (isLoading) {

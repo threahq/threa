@@ -37,7 +37,7 @@ interface TraceStepListProps {
   streamingSubsteps?: Partial<Record<AgentStepType, StreamingSubstep[]>>
   isSessionRunning?: boolean
   onStopSession?: () => void
-  onSteerSession?: () => void
+  onRedirectSession?: () => void
 }
 
 type TraceStepDisplayItem =
@@ -53,7 +53,7 @@ export function TraceStepList({
   streamingSubsteps,
   isSessionRunning = false,
   onStopSession,
-  onSteerSession,
+  onRedirectSession,
 }: TraceStepListProps) {
   const highlightRef = useRef<HTMLDivElement>(null)
   // Grouping and the collapsed-row chips read a sealed step's plaintext out of
@@ -107,7 +107,7 @@ export function TraceStepList({
           userId={userId}
           liveSubsteps={liveSubsteps}
           onStopSession={onStopSession}
-          onSteerSession={onSteerSession}
+          onRedirectSession={onRedirectSession}
         />
       </div>
     )

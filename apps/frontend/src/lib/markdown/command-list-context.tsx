@@ -27,7 +27,7 @@ interface CommandListProviderProps {
  * Every flag a command answers to, including the ones a positional value carries
  * (`/spawn`'s runtimes each declare their own `/model`), plus the values its
  * positional arguments advertise. Only advertised values are collected: a
- * command's free text (a session name, a steer) is prose, not an argument.
+ * command's free text (a session name, a message) is prose, not an argument.
  */
 export function argNames(args: readonly CommandArgumentInfo[] | undefined): CommandArgNames {
   const flags = new Map<string, Set<string>>()

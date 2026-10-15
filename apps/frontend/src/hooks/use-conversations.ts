@@ -376,8 +376,8 @@ export interface ReplyToBoardPostInput {
   attachments?: AttachmentSummary[]
   /** Compose-session provenance for this send (see {@link ComposeTrace}). */
   composeTrace?: ComposeTraceInput
-  /** Persist first, then dispatch `/steer` in the same server transaction. */
-  steer?: true
+  /** Queue for the linked session's next turn instead of delivering now (`/enqueue`). */
+  enqueue?: true
 }
 
 /**
@@ -407,14 +407,14 @@ export function useReplyToBoardPost(workspaceId: string) {
       attachmentIds,
       attachments,
       composeTrace,
-      steer,
+      enqueue,
     }: ReplyToBoardPostInput): Promise<{ plan: BoardReplyPlan }> => {
       const input = {
         contentJson,
         attachmentIds: attachmentIds && attachmentIds.length > 0 ? attachmentIds : undefined,
         attachments: attachments && attachments.length > 0 ? attachments : undefined,
         composeTrace,
-        steer,
+        enqueue,
       }
 
       const plan = planBoardReply({ hostStreamType, messageCount, openingMessageId })

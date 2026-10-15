@@ -123,8 +123,8 @@ const NODE_CASES: Record<string, { content: JSONContent; expected: string }> = {
     expected: "#general",
   },
   slashCommand: {
-    content: doc(paragraph({ type: "slashCommand", attrs: { name: "steer", clientActionId: null } }, text(" focus"))),
-    expected: "/steer focus",
+    content: doc(paragraph({ type: "slashCommand", attrs: { name: "compact", clientActionId: null } }, text(" focus"))),
+    expected: "/compact focus",
   },
   emoji: {
     content: doc(paragraph({ type: "emoji", attrs: { shortcode: "rocket", emoji: "🚀" } })),
@@ -159,9 +159,13 @@ describe("collapsedComposerPreview", () => {
   it("skips empty leading lines without hiding later content", () => {
     expect(
       collapsedComposerPreview(
-        doc(paragraph(text("  ")), paragraph({ type: "slashCommand", attrs: { name: "steer" } }), paragraph(text(" ")))
+        doc(
+          paragraph(text("  ")),
+          paragraph({ type: "slashCommand", attrs: { name: "compact" } }),
+          paragraph(text(" "))
+        )
       )
-    ).toBe("/steer")
+    ).toBe("/compact")
     expect(collapsedComposerPreview(doc(paragraph({ type: "hardBreak" }, text("After"))))).toBe("After…")
     expect(collapsedComposerPreview(doc({ type: "codeBlock", content: [text("\nconst after = true")] }))).toBe(
       "const after = true…"

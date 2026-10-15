@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react"
 import { toast } from "sonner"
-import { ASIDE_COMMAND, type CommandInfo, type JSONContent } from "@threahq/types"
+import { ASIDE_COMMAND, ENQUEUE_COMMAND, type CommandInfo, type JSONContent } from "@threahq/types"
 import { spyOnExport } from "@/test"
 import * as streamCommandsModule from "@/hooks/use-stream-commands"
 import * as dispatchQueueModule from "@/hooks/use-command-dispatch-queue"
@@ -13,7 +13,7 @@ import { useComposerCommandSend } from "./use-composer-command-send"
 
 const COMMANDS: CommandInfo[] = [
   { name: "compact", description: "Compact the session" },
-  { name: "steer", description: "Steer the agent" },
+  { name: ENQUEUE_COMMAND, description: "Queue a message for the next turn" },
 ]
 
 const optimisticId = "temp_cmd_1"
@@ -97,13 +97,24 @@ describe("useComposerCommandSend planSend", () => {
     expect(hook().current.planSend(doc({ type: "text", text: "/nope please" }))).toBeNull()
   })
 
-  it("keeps embedded steer on the message path and bare steer on the command path", () => {
-    const embedded = hook().current.planSend(doc({ type: "text", text: "look here /steer" }))
-    const bare = hook().current.planSend(doc({ type: "text", text: "/steer" }))
-    expect({ embedded: embedded?.kind, bare }).toEqual({
-      embedded: "steer-message",
-      bare: { kind: "command", commandName: "steer", clientActionId: null, commandMarkdown: "/steer" },
-    })
+  it("should send the message without the directive when /enqueue sits anywhere in it", () => {
+    const plan = hook().current.planSend(doc({ type: "text", text: "look here /enqueue" }))
+    expect(plan).toEqual({ kind: "enqueue-message", content: doc({ type: "text", text: "look here" }) })
+  })
+
+  it("should refuse to send when /enqueue carries no message", () => {
+    const typed = hook().current.planSend(doc({ type: "text", text: "/enqueue " }))
+    const picked = hook().current.planSend(doc({ type: "slashCommand", attrs: { name: ENQUEUE_COMMAND } }))
+    expect({ typed, picked }).toEqual({ typed: { kind: "empty-enqueue" }, picked: { kind: "empty-enqueue" } })
+  })
+
+  it("should leave typed /enqueue as text but still never dispatch a picked one when the stream offers no enqueue", () => {
+    spyOnExport(streamCommandsModule, "useStreamCommands").mockReturnValue((() => [COMMANDS[0]]) as never)
+    const { planSend } = hook().current
+    expect({
+      typed: planSend(doc({ type: "text", text: "look here /enqueue" })),
+      picked: planSend(doc({ type: "slashCommand", attrs: { name: ENQUEUE_COMMAND } }, { type: "text", text: " hi" })),
+    }).toEqual({ typed: null, picked: { kind: "enqueue-message", content: doc({ type: "text", text: "hi" }) } })
   })
 })
 

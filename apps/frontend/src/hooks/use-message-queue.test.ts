@@ -13,7 +13,12 @@ import * as diagnosticsModule from "@/lib/connectivity-diagnostics/facade"
 import * as sharePrivacyToastModule from "@/lib/share-privacy-toast"
 import * as useDraftMessageModule from "./use-draft-message"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { MessageReferenceErrorCodes, ShareErrorCodes, StreamConnectionErrorCodes } from "@threahq/types"
+import {
+  MessageErrorCodes,
+  MessageReferenceErrorCodes,
+  ShareErrorCodes,
+  StreamConnectionErrorCodes,
+} from "@threahq/types"
 import { toast } from "sonner"
 import { ApiError } from "@/api/client"
 import { retireAccountWork } from "@/sync/account-fence"
@@ -48,6 +53,8 @@ interface MockPendingMessage {
   contentFormat: string
   contentJson?: MockNode
   attachmentIds?: string[]
+  enqueue?: true
+  /** Written by builds before `/enqueue`; no longer read. */
   steer?: true
   status?: "editing" | "blocked-privacy"
   terminalFailure?: boolean
@@ -463,16 +470,26 @@ describe("useMessageQueue", () => {
     })
   })
 
-  it("forwards atomic steer on the message request", async () => {
+  it("should flag an enqueued row and send a legacy steer row as a plain message", async () => {
     mockPendingMessages = [
       {
-        clientId: "temp_steer",
+        clientId: "temp_enqueue",
         workspaceId: "ws_1",
         streamId: "stream_1",
         content: "I want option 2",
         contentFormat: "markdown",
-        steer: true,
+        enqueue: true,
         createdAt: 1000,
+        retryCount: 0,
+      },
+      {
+        clientId: "temp_legacy_steer",
+        workspaceId: "ws_1",
+        streamId: "stream_1",
+        content: "Look at this",
+        contentFormat: "markdown",
+        steer: true,
+        createdAt: 2000,
         retryCount: 0,
       },
     ]
@@ -482,11 +499,15 @@ describe("useMessageQueue", () => {
       await new Promise((r) => setTimeout(r, 10))
     })
 
-    expect(mockCreate).toHaveBeenCalledWith(
-      "ws_1",
-      "stream_1",
-      expect.objectContaining({ clientMessageId: "temp_steer", steer: true })
-    )
+    const sends = mockCreate.mock.calls.map(([, , body]) => ({
+      clientMessageId: body.clientMessageId,
+      enqueue: body.enqueue,
+      steer: body.steer,
+    }))
+    expect(sends).toEqual([
+      { clientMessageId: "temp_enqueue", enqueue: true, steer: undefined },
+      { clientMessageId: "temp_legacy_steer", enqueue: undefined, steer: undefined },
+    ])
   })
 
   it("should mark message as failed and increment retryCount when API call fails", async () => {
@@ -638,24 +659,41 @@ describe("useMessageQueue", () => {
   })
 
   it.each([
-    [StreamConnectionErrorCodes.WRITE_REFUSED, 403, "The shared channel's host workspace didn't accept that message."],
-    [
-      StreamConnectionErrorCodes.COPY_WRITE_UNSUPPORTED,
-      400,
-      "That kind of message can't be sent in a shared channel yet.",
-    ],
+    {
+      code: StreamConnectionErrorCodes.WRITE_REFUSED,
+      status: 403,
+      message: "The shared channel's host workspace didn't accept that message.",
+    },
+    {
+      code: StreamConnectionErrorCodes.COPY_WRITE_UNSUPPORTED,
+      status: 400,
+      message: "That kind of message can't be sent in a shared channel yet.",
+    },
+    {
+      code: MessageErrorCodes.ENQUEUE_UNAVAILABLE,
+      status: 409,
+      message: "Couldn't queue that message for the session's next turn. Edit it to send it now.",
+      enqueue: true as const,
+    },
+    {
+      code: MessageErrorCodes.COMMAND_NOT_ENQUEUEABLE,
+      status: 400,
+      message: "A command can't wait for the next turn. Send it on its own.",
+      enqueue: true as const,
+    },
   ])(
-    "should park a message and say why once when a shared channel refuses it with %s",
-    async (code, status, message) => {
+    "should park a message and say why once when the server refuses it with $code",
+    async ({ code, status, message, enqueue }) => {
       const errorToast = vi.spyOn(toast, "error").mockReturnValue("t3")
       mockCreate.mockRejectedValue(new ApiError(status, code, "Refused"))
       mockPendingMessages = [
         {
-          clientId: "temp_shared_refused",
+          clientId: "temp_refused",
           workspaceId: "ws_1",
           streamId: "stream_1",
           content: "Hello host",
           contentFormat: "markdown",
+          enqueue,
           createdAt: 1000,
           retryCount: 0,
         },
@@ -667,13 +705,15 @@ describe("useMessageQueue", () => {
       })
 
       expect({
+        sentEnqueue: mockCreate.mock.calls.map(([, , body]) => body.enqueue),
         toasts: errorToast.mock.calls,
         update: mockUpdate.mock.calls,
         failed: mockMarkFailed.mock.calls,
       }).toEqual({
-        toasts: [[message, { id: "shared-channel-refusal-temp_shared_refused" }]],
-        update: [["temp_shared_refused", { terminalFailure: true, retryAfter: undefined }]],
-        failed: [["temp_shared_refused"]],
+        sentEnqueue: [enqueue],
+        toasts: [[message, { id: "send-refused-temp_refused" }]],
+        update: [["temp_refused", { terminalFailure: true, retryAfter: undefined }]],
+        failed: [["temp_refused"]],
       })
     }
   )
@@ -788,9 +828,9 @@ describe("useMessageQueue", () => {
         clientId: "temp_permanent",
         workspaceId: "ws_1",
         streamId: "stream_1",
-        content: "Please handle this /steer",
+        content: "Please handle this",
         contentFormat: "markdown",
-        steer: true,
+        enqueue: true,
         terminalFailure: true,
         createdAt: 1000,
         retryCount: 0,

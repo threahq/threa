@@ -328,7 +328,7 @@ describe("useQueueDraftMessage", () => {
           contentJson: CONTENT,
           attachmentIds: undefined,
           composeTrace: undefined,
-          steer: undefined,
+          enqueue: undefined,
           createdAt: expect.any(Number),
           retryCount: 0,
           streamCreation: threadCreation,

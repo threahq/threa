@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest"
 import type { JSONContent } from "@threahq/types"
-import { extractCommandNode, extractCommandFromRawText, extractSteerDirective, commandDoc } from "./commands"
+import {
+  extractCommandNode,
+  extractCommandFromRawText,
+  extractEnqueueDirective,
+  withEnqueueDirective,
+  commandDoc,
+} from "./commands"
 
 describe("extractCommandNode", () => {
   it("extracts name + clientActionId from the first slashCommand node", () => {
@@ -129,179 +135,145 @@ describe("extractCommandNode", () => {
   })
 })
 
-describe("extractSteerDirective", () => {
-  it("detects a structural steer command at the start of a message without changing it", () => {
-    const doc: JSONContent = {
-      type: "doc",
-      content: [
-        {
-          type: "paragraph",
-          content: [
-            { type: "slashCommand", attrs: { name: "steer", clientActionId: null } },
-            { type: "text", text: " I want option 2" },
-          ],
-        },
-      ],
-    }
+const paragraph = (...content: JSONContent[]): JSONContent => ({ type: "paragraph", content })
+const text = (value: string, marks?: JSONContent["marks"]): JSONContent => ({ type: "text", text: value, marks })
+const enqueueNode: JSONContent = { type: "slashCommand", attrs: { name: "enqueue", clientActionId: null } }
+const docOf = (...content: JSONContent[]): JSONContent => ({ type: "doc", content })
 
-    expect(extractSteerDirective(doc)).toEqual({ content: doc, hasMessageContent: true })
+describe("extractEnqueueDirective", () => {
+  const typed = { typed: true }
+
+  it.each([
+    {
+      name: "a picked command node at the start",
+      input: docOf(paragraph(enqueueNode, text(" fix the tests"))),
+      expected: docOf(paragraph(text("fix the tests"))),
+    },
+    {
+      name: "a picked command node mid-sentence",
+      input: docOf(paragraph(text("fix the tests "), enqueueNode, text(" after this"))),
+      expected: docOf(paragraph(text("fix the tests "), text("after this"))),
+    },
+    {
+      name: "a picked command node at the end",
+      input: docOf(paragraph(text("fix the tests "), enqueueNode)),
+      expected: docOf(paragraph(text("fix the tests"))),
+    },
+    {
+      name: "typed tokens at the end, the middle, and in a later paragraph",
+      input: docOf(paragraph(text("I want option 2 /enqueue")), paragraph(text("Yes. /ENQUEUE and also pizza"))),
+      expected: docOf(paragraph(text("I want option 2")), paragraph(text("Yes. and also pizza"))),
+    },
+    {
+      name: "repeated typed tokens",
+      input: docOf(paragraph(text("/enqueue /enqueue fix it /enqueue /enqueue"))),
+      expected: docOf(paragraph(text("fix it"))),
+    },
+    {
+      name: "a formatted token between spaces",
+      input: docOf(paragraph(text("fix "), text("/enqueue", [{ type: "italic" }]), text(" later"))),
+      expected: docOf(paragraph(text("fix "), text("later"))),
+    },
+    {
+      name: "a paragraph holding only the directive",
+      input: docOf(paragraph(text("/enqueue")), paragraph(text("fix the tests"))),
+      expected: docOf(paragraph(text("fix the tests"))),
+    },
+    {
+      name: "a typed token inside a list item",
+      input: docOf({
+        type: "bulletList",
+        content: [{ type: "listItem", content: [paragraph(text("/enqueue start with tests"))] }],
+      }),
+      expected: docOf({
+        type: "bulletList",
+        content: [{ type: "listItem", content: [paragraph(text("start with tests"))] }],
+      }),
+    },
+    {
+      name: "a list item holding only the directive",
+      input: docOf({
+        type: "bulletList",
+        content: [
+          { type: "listItem", content: [paragraph(enqueueNode)] },
+          { type: "listItem", content: [paragraph(text("start with tests"))] },
+        ],
+      }),
+      expected: docOf({
+        type: "bulletList",
+        content: [{ type: "listItem", content: [paragraph(text("start with tests"))] }],
+      }),
+    },
+    {
+      name: "a quote holding only the directive",
+      input: docOf({ type: "blockquote", content: [paragraph(text("/enqueue"))] }, paragraph(text("fix the tests"))),
+      expected: docOf(paragraph(text("fix the tests"))),
+    },
+    {
+      name: "a picked command node glued between two words",
+      input: docOf(paragraph(text("fix"), enqueueNode, text("later"))),
+      expected: docOf(paragraph(text("fix"), text(" later"))),
+    },
+  ])("should strip $name and keep the message", ({ input, expected }) => {
+    expect(extractEnqueueDirective(input, typed)).toEqual({ kind: "enqueue-message", content: expected })
   })
 
-  it("finds standalone raw steer tokens at the end, middle, and across paragraphs", () => {
-    const doc: JSONContent = {
-      type: "doc",
-      content: [
-        { type: "paragraph", content: [{ type: "text", text: "I want option 2 /steer" }] },
-        { type: "paragraph", content: [{ type: "text", text: "Yes. /steer and also pizza" }] },
-      ],
-    }
-
-    expect(extractSteerDirective(doc)).toEqual({ content: doc, hasMessageContent: true })
+  it("should report no message when the directive is all there is", () => {
+    const emptyList = docOf({ type: "bulletList", content: [{ type: "listItem", content: [paragraph(enqueueNode)] }] })
+    expect({
+      typed: extractEnqueueDirective(docOf(paragraph(text("/enqueue")), { type: "paragraph" }), typed),
+      picked: extractEnqueueDirective(docOf(paragraph(enqueueNode, text(" "))), typed),
+      list: extractEnqueueDirective(emptyList, typed),
+    }).toEqual({ typed: { kind: "empty-enqueue" }, picked: { kind: "empty-enqueue" }, list: { kind: "empty-enqueue" } })
   })
 
-  it("detects steer in later list items and nested block paragraphs", () => {
-    const listDoc: JSONContent = {
-      type: "doc",
-      content: [
-        {
-          type: "bulletList",
-          content: [
-            {
-              type: "listItem",
-              content: [{ type: "paragraph", content: [{ type: "text", text: "prep the release" }] }],
-            },
-            {
-              type: "listItem",
-              content: [{ type: "paragraph", content: [{ type: "text", text: "/steer start with tests" }] }],
-            },
-          ],
-        },
-      ],
-    }
-    const quoteDoc: JSONContent = {
-      type: "doc",
-      content: [
-        {
-          type: "blockquote",
-          content: [
-            { type: "paragraph", content: [{ type: "text", text: "context" }] },
-            { type: "paragraph", content: [{ type: "text", text: "/steer use this" }] },
-          ],
-        },
-      ],
-    }
-
-    expect(extractSteerDirective(listDoc)).toEqual({ content: listDoc, hasMessageContent: true })
-    expect(extractSteerDirective(quoteDoc)).toEqual({ content: quoteDoc, hasMessageContent: true })
+  it("should keep an attachment as message content", () => {
+    const attachment: JSONContent = { type: "attachmentReference", attrs: { id: "att_1", filename: "image.png" } }
+    expect(extractEnqueueDirective(docOf(paragraph(attachment, text(" /enqueue"))), typed)).toEqual({
+      kind: "enqueue-message",
+      content: docOf(paragraph(attachment)),
+    })
   })
 
-  it("detects a structural steer node inside a list item", () => {
-    const doc: JSONContent = {
-      type: "doc",
-      content: [
-        {
-          type: "bulletList",
-          content: [
-            {
-              type: "listItem",
-              content: [{ type: "paragraph", content: [{ type: "text", text: "context" }] }],
-            },
-            {
-              type: "listItem",
-              content: [
-                {
-                  type: "paragraph",
-                  content: [{ type: "slashCommand", attrs: { name: "steer", clientActionId: null } }],
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    }
-
-    expect(extractSteerDirective(doc)).toEqual({ content: doc, hasMessageContent: true })
+  it("should take only a picked node when typed tokens are off", () => {
+    expect({
+      picked: extractEnqueueDirective(docOf(paragraph(enqueueNode, text(" fix /enqueue it"))), { typed: false }),
+      typed: extractEnqueueDirective(docOf(paragraph(text("/enqueue fix it"))), { typed: false }),
+    }).toEqual({
+      picked: { kind: "enqueue-message", content: docOf(paragraph(text("fix /enqueue it"))) },
+      typed: null,
+    })
   })
 
-  it("detects a steer token split across formatting marks", () => {
-    const doc: JSONContent = {
-      type: "doc",
-      content: [
-        {
-          type: "paragraph",
-          content: [
-            { type: "text", text: "/ste", marks: [{ type: "bold" }] },
-            { type: "text", text: "er" },
-            { type: "text", text: " keep the attachment" },
-          ],
-        },
-      ],
-    }
-
-    expect(extractSteerDirective(doc)).toEqual({ content: doc, hasMessageContent: true })
+  it("should leave paths, URLs, longer names, glued tokens, and code alone", () => {
+    const mention: JSONContent = { type: "mention", attrs: { id: "usr_1", slug: "bob" } }
+    const doc = docOf(
+      paragraph(text("https://example.com/enqueue /enqueue-more foo/enqueue Yes./enqueue (/enqueue) /enqueue.")),
+      paragraph(mention, text("/enqueue")),
+      paragraph(text("/enq", [{ type: "bold" }]), text("ueue later")),
+      paragraph(text("type "), text("/enqueue", [{ type: "code" }]), text(" to wait")),
+      { type: "codeBlock", content: [text("/enqueue")] }
+    )
+    expect(extractEnqueueDirective(doc, typed)).toBeNull()
   })
+})
 
-  it("treats a trailing-newline steer as a command with no message", () => {
-    const doc: JSONContent = {
-      type: "doc",
-      content: [{ type: "paragraph", content: [{ type: "text", text: "/steer" }] }, { type: "paragraph" }],
-    }
-
-    expect(extractSteerDirective(doc)?.hasMessageContent).toBe(false)
-  })
-
-  it("keeps attachments as normal message content", () => {
-    const doc: JSONContent = {
-      type: "doc",
-      content: [
-        {
-          type: "paragraph",
-          content: [
-            { type: "attachmentReference", attrs: { id: "att_1", filename: "image.png" } },
-            { type: "text", text: " /steer" },
-          ],
-        },
-      ],
-    }
-
-    const extracted = extractSteerDirective(doc)
-    expect(extracted?.hasMessageContent).toBe(true)
-    expect(extracted?.content.content?.[0].content?.[0].type).toBe("attachmentReference")
-  })
-
-  it("does not match paths, URLs, or longer command names", () => {
-    const doc: JSONContent = {
-      type: "doc",
-      content: [
-        {
-          type: "paragraph",
-          content: [
-            { type: "text", text: "https://example.com/steer /steer-more foo/steer Yes./steer (/steer) /steer." },
-          ],
-        },
-      ],
-    }
-
-    expect(extractSteerDirective(doc)).toBeNull()
-  })
-
-  it("does not dispatch a steer quoted as code", () => {
-    const doc: JSONContent = {
-      type: "doc",
-      content: [
-        {
-          type: "paragraph",
-          content: [
-            { type: "text", text: "type " },
-            { type: "text", text: "/steer", marks: [{ type: "code" }] },
-            { type: "text", text: " to redirect" },
-          ],
-        },
-        { type: "codeBlock", content: [{ type: "text", text: "/steer" }] },
-      ],
-    }
-
-    expect(extractSteerDirective(doc)).toBeNull()
+describe("withEnqueueDirective", () => {
+  it.each([
+    { name: "a paragraph", input: docOf(paragraph(text("fix it")), paragraph(text("then this"))) },
+    {
+      name: "a list",
+      input: docOf({ type: "bulletList", content: [{ type: "listItem", content: [paragraph(text("a"))] }] }),
+    },
+  ])("should lead $name with a picked /enqueue that extraction takes back out", ({ input }) => {
+    const seeded = withEnqueueDirective(input)
+    expect({
+      first: seeded.content?.[0]?.content?.[0],
+      extracted: extractEnqueueDirective(seeded, { typed: false }),
+    }).toEqual({
+      first: { type: "slashCommand", attrs: { name: "enqueue" } },
+      extracted: { kind: "enqueue-message", content: input },
+    })
   })
 })
 

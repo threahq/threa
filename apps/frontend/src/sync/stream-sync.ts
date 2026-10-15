@@ -2092,7 +2092,7 @@ function bindStreamSocketHandlers(
   }) => {
     if (payload.streamId !== streamId) return
     // The stream's effective command set follows runtime liveness: a runtime
-    // coming online adds its session-control commands (/steer, /stop, /model…),
+    // coming online adds its session-control commands (/stop, /model…),
     // one going away removes them. `commands` was computed server-side at
     // bootstrap time, so on a liveness edge refresh it — otherwise a scratchpad
     // opened before its agent connected keeps an empty slash menu until the

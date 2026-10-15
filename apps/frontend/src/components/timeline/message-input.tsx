@@ -47,7 +47,11 @@ import { usePanel, createConversationPanelId } from "@/contexts"
 import { ComposePanePortal, ComposingInPaneBar, useComposePane } from "@/components/composer/compose-pane"
 import { consumeSnippetRequest, subscribeSnippetRequest } from "@/stores/snippet-request-store"
 import { requestConversationReplyOpen } from "@/stores/conversation-reply-open-store"
-import { useComposerCommandSend } from "@/components/composer/use-composer-command-send"
+import {
+  EMPTY_ENQUEUE_ERROR,
+  SCHEDULED_ENQUEUE_ERROR,
+  useComposerCommandSend,
+} from "@/components/composer/use-composer-command-send"
 import { useComposerHandoffDrain } from "@/components/composer/use-composer-handoff-drain"
 import { StreamTypes, type JSONContent } from "@threahq/types"
 import { useStreamFromStore } from "@/stores/stream-store"
@@ -639,26 +643,29 @@ function MessageInputComponent({
   const handleSubmit = useStableCallback(async (editorContent?: JSONContent) => {
     if (!composer.canSend) return
 
-    composer.setIsSending(true)
-    setError(null)
-
-    // Ends the compose session for EVERY submit, not just the flat send below:
-    // a command dispatch or a hand-off to the panel finishes what the author
-    // was writing here, so the next send must start from a fresh horizon
-    // rather than inherit this one's `openedAt`. Never awaited here: its
-    // IndexedDB read must stand neither between pressing send and the composer
-    // clearing nor between clearing and the row appearing.
-    const composeTrace = takeComposeTrace()
-
     const pendingAttachments = composer.getPendingAttachmentsSnapshot()
     const liveContent = editorContent ?? composer.content
     const normalizedContent = materializePendingAttachmentReferences(liveContent, pendingAttachments)
 
-    // A bare `/steer`, a slashCommand node, or raw text matching an available
-    // command dispatches instead of sending. Embedded steer (message content
-    // around the directive) stays a normal message carrying `steer: true`;
-    // the backend writes the message and follow-up command in one transaction.
+    // A slashCommand node or raw text matching an available command dispatches
+    // instead of sending. `/enqueue` stays a message, sent without the
+    // directive and flagged to wait for the session's next turn.
     const sendPlan = planSend(normalizedContent)
+    if (sendPlan?.kind === "empty-enqueue") {
+      setError(EMPTY_ENQUEUE_ERROR)
+      return
+    }
+
+    composer.setIsSending(true)
+    setError(null)
+
+    // Ends the compose session for every submit that leaves the composer, not
+    // just the flat send below: a command dispatch or a hand-off to the panel
+    // finishes what the author was writing here, so the next send must start
+    // from a fresh horizon rather than inherit this one's `openedAt`. Never
+    // awaited here: its IndexedDB read must stand neither between pressing
+    // send and the composer clearing nor between clearing and the row appearing.
+    const composeTrace = takeComposeTrace()
     if (sendPlan?.kind === "command") {
       // Clear input immediately for responsiveness — same reset the server
       // path does. The dispatch consumes the command, so the user shouldn't
@@ -675,7 +682,7 @@ function MessageInputComponent({
       }
       return
     }
-    const steerDirective = sendPlan?.kind === "steer-message" ? sendPlan : null
+    const enqueuePlan = sendPlan?.kind === "enqueue-message" ? sendPlan : null
 
     // Armed for "Reply in conversation" but not confirmed live in THIS stream
     // (thread-live, or the board-post projection hasn't resolved yet): filing
@@ -693,7 +700,7 @@ function MessageInputComponent({
       return
     }
 
-    const messageContent = steerDirective?.content ?? normalizedContent
+    const messageContent = enqueuePlan?.content ?? normalizedContent
     const attachments = extractUploadedAttachments(messageContent)
     const attachmentIds = attachments.map((attachment) => attachment.id)
 
@@ -707,7 +714,7 @@ function MessageInputComponent({
         contentJson: messageContent,
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         attachments: attachments.length > 0 ? attachments : undefined,
-        ...(steerDirective && { steer: true as const }),
+        ...(enqueuePlan && { enqueue: true as const }),
         composeTrace,
         // Armed by "Reply in conversation": file this send into the
         // conversation synchronously (Mechanism C). Cleared only on success —
@@ -744,6 +751,12 @@ function MessageInputComponent({
    */
   const handleSchedule = useStableCallback(async (when: Date) => {
     if (!composer.canSend) return
+    // A scheduled row carries no enqueue intent; firing it would steer, the opposite of what /enqueue asked for.
+    const plan = planSend(composer.content)
+    if (plan && plan.kind !== "command") {
+      setError(SCHEDULED_ENQUEUE_ERROR)
+      return
+    }
 
     composer.setIsSending(true)
     setError(null)

@@ -4,12 +4,16 @@ import { serializeToMarkdown } from "@threahq/prosemirror"
 import { ConversationIntents, type JSONContent } from "@threahq/types"
 import { deleteOptimisticBoardPost } from "@/stores/board-store"
 import { revokeOptimisticRailEvent } from "@/hooks/use-board-card-messages"
-import { extractSteerDirective } from "@/lib/commands"
 import { createSelectorContext } from "@/lib/selector-context"
 
 type MessageStatus = "pending" | "failed" | "editing"
 /** Status the message had before the user entered editing mode */
 type PreEditStatus = "pending" | "failed"
+
+interface EditSession {
+  preEditStatus: PreEditStatus
+  enqueue: boolean
+}
 
 interface PendingMessagesContextValue {
   markPending: (id: string) => void
@@ -34,8 +38,10 @@ interface PendingMessagesContextValue {
   markSent: (id: string) => void
   /** Put a pending/failed message into editing mode so the queue skips it */
   markEditing: (id: string) => Promise<void>
+  /** Whether the message being edited was queued with `/enqueue`. */
+  isEditingEnqueued: (id: string) => boolean
   /** Save edits to an unsent message, return it to pending, and kick the queue */
-  saveEditedMessage: (id: string, contentJson: JSONContent, options?: { steerAvailable?: boolean }) => Promise<void>
+  saveEditedMessage: (id: string, contentJson: JSONContent, options: { enqueue: boolean }) => Promise<void>
   /** Cancel editing and return message to its previous queue state */
   cancelEditing: (id: string) => Promise<void>
   /**
@@ -79,8 +85,7 @@ interface PendingMessagesProviderProps {
 export function PendingMessagesProvider({ children }: PendingMessagesProviderProps) {
   const [pendingIds, setPendingIds] = useState<Set<string>>(new Set())
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set())
-  // Maps editing message ID → status it had before entering edit mode
-  const [editingIds, setEditingIds] = useState<Map<string, PreEditStatus>>(new Map())
+  const [editingIds, setEditingIds] = useState<Map<string, EditSession>>(new Map())
   const [optimisticEvents, setOptimisticEvents] = useState<OptimisticEventsByStream>(new Map())
   const queueNotifyRef = useRef<(() => void) | null>(null)
 
@@ -254,7 +259,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
       return status
     })
 
-    setEditingIds((prev) => new Map(prev).set(id, preEditStatus))
+    setEditingIds((prev) => new Map(prev).set(id, { preEditStatus, enqueue: existing.enqueue === true }))
     setPendingIds((prev) => {
       const next = new Set(prev)
       next.delete(id)
@@ -267,11 +272,11 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
     })
   }, [])
 
+  const isEditingEnqueued = useCallback((id: string) => editingIds.get(id)?.enqueue === true, [editingIds])
+
   const saveEditedMessage = useCallback(
-    async (id: string, contentJson: JSONContent, options?: { steerAvailable?: boolean }) => {
+    async (id: string, contentJson: JSONContent, { enqueue }: { enqueue: boolean }) => {
       const contentMarkdown = serializeToMarkdown(contentJson).trim()
-      const steerDirective = options?.steerAvailable ? extractSteerDirective(contentJson) : null
-      const steer = steerDirective?.hasMessageContent === true ? true : undefined
 
       const updated = await db.transaction("rw", db.pendingMessages, db.events, async () => {
         const existing = await db.pendingMessages.get(id)
@@ -286,7 +291,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
           retryCount: 0,
           retryAfter: 0,
           terminalFailure: undefined,
-          steer,
+          enqueue: enqueue || undefined,
         })
 
         // Update the optimistic event's payload so the timeline reflects the edit
@@ -317,7 +322,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
 
   const cancelEditing = useCallback(
     async (id: string) => {
-      const preEditStatus: PreEditStatus = editingIds.get(id) ?? "pending"
+      const preEditStatus: PreEditStatus = editingIds.get(id)?.preEditStatus ?? "pending"
 
       const restored = await db.transaction("rw", db.pendingMessages, db.events, async () => {
         const existing = await db.pendingMessages.get(id)
@@ -414,6 +419,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
       markFailed,
       markSent,
       markEditing,
+      isEditingEnqueued,
       saveEditedMessage,
       cancelEditing,
       retryMessage,
@@ -430,6 +436,7 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
       markFailed,
       markSent,
       markEditing,
+      isEditingEnqueued,
       saveEditedMessage,
       cancelEditing,
       retryMessage,

@@ -12,7 +12,11 @@ import {
   useFloatingComposerHeight,
   type ComposerControlHandle,
 } from "@/components/composer"
-import { useComposerCommandSend } from "@/components/composer/use-composer-command-send"
+import {
+  EMPTY_ENQUEUE_ERROR,
+  SCHEDULED_ENQUEUE_ERROR,
+  useComposerCommandSend,
+} from "@/components/composer/use-composer-command-send"
 import { useComposerHandoffDrain } from "@/components/composer/use-composer-handoff-drain"
 import { ComposePanePortal, ComposingInPaneBar, useComposePane } from "@/components/composer/compose-pane"
 import { useHoldFeedRow } from "@/components/board/feed-row-hold"
@@ -52,9 +56,8 @@ export interface InlineComposerSubmit {
    * over still pending: the send must not wait on its IndexedDB read.
    */
   composeTrace?: ComposeTraceInput
-  /** Persist the message first, then dispatch `/steer` in the same server
-   *  transaction — set when the author embedded `/steer` in the message. */
-  steer?: true
+  /** Queue for the linked session's next turn — set when the author wrote `/enqueue`. */
+  enqueue?: true
 }
 
 interface InlineComposerFormProps {
@@ -481,6 +484,10 @@ export function InlineComposerForm({
     // stream instead of posting as text (timeline parity). Unknown `/text` is
     // not a command and falls through to the normal send.
     const sendPlan = planSend(normalizedContent)
+    if (sendPlan?.kind === "empty-enqueue") {
+      toast.error(EMPTY_ENQUEUE_ERROR)
+      return
+    }
     if (sendPlan?.kind === "command") {
       // A dispatch finishes the composition like a send does — end the session
       // so the next one can't inherit this one's openedAt/horizon.
@@ -500,11 +507,8 @@ export function InlineComposerForm({
       return
     }
 
-    // Embedded `/steer` stays a message (timeline parity, message-input.tsx):
-    // the directive node is stripped from the content and the send carries
-    // `steer: true` so the server interrupts the agent in the same transaction.
-    const steerPlan = sendPlan?.kind === "steer-message" ? sendPlan : null
-    const messageContent = steerPlan?.content ?? normalizedContent
+    const enqueuePlan = sendPlan?.kind === "enqueue-message" ? sendPlan : null
+    const messageContent = enqueuePlan?.content ?? normalizedContent
     const attachments = extractUploadedAttachments(messageContent)
     const attachmentIds = attachments.map((a) => a.id)
 
@@ -520,7 +524,7 @@ export function InlineComposerForm({
         attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
         attachments: attachments.length > 0 ? attachments : undefined,
         composeTrace: takeComposeTrace(),
-        ...(steerPlan && { steer: true as const }),
+        ...(enqueuePlan && { enqueue: true as const }),
       })
       await composer.resolveDraft()
       composer.clearAttachments()
@@ -545,6 +549,12 @@ export function InlineComposerForm({
 
     if (rejectE2e && hostIsE2e) {
       toast.error(rejectE2e)
+      return
+    }
+    // A scheduled row carries no enqueue intent; firing it would steer, the opposite of what /enqueue asked for.
+    const plan = planSend(composer.content)
+    if (plan && plan.kind !== "command") {
+      toast.error(SCHEDULED_ENQUEUE_ERROR)
       return
     }
 

@@ -2283,8 +2283,8 @@ describe("registerStreamSocketHandlers — bot_runtime:presence cache patching",
       const queryClient = new QueryClient()
       const streamId = "stream_cmd_online"
       seedBootstrap(queryClient, streamId, { bot_1: null })
-      const steer = { name: "steer", description: "Steer the linked session" }
-      const listForStream = vi.spyOn(commandsApi, "listForStream").mockResolvedValue([steer])
+      const compact = { name: "compact", description: "Compact the linked session" }
+      const listForStream = vi.spyOn(commandsApi, "listForStream").mockResolvedValue([compact])
 
       const { socket, emit } = createTestSocket()
       const cleanup = registerStreamSocketHandlers(socket, "ws_1", streamId, queryClient)
@@ -2299,7 +2299,7 @@ describe("registerStreamSocketHandlers — bot_runtime:presence cache patching",
 
       expect(listForStream).toHaveBeenCalledWith("ws_1", streamId)
       const after = queryClient.getQueryData<CachedStreamBootstrap>(streamKeys.bootstrap("ws_1", streamId))
-      expect(after?.commands).toEqual([steer])
+      expect(after?.commands).toEqual([compact])
 
       listForStream.mockRestore()
       cleanup()

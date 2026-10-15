@@ -15,7 +15,7 @@
  * context.
  */
 
-import type { JSONContent } from "@threahq/types"
+import { ENQUEUE_COMMAND, type JSONContent } from "@threahq/types"
 
 export interface ExtractedCommand {
   name: string
@@ -34,50 +34,132 @@ export interface RawTextCommand {
   args: string
 }
 
-export interface ExtractedSteerDirective {
-  content: JSONContent
-  hasMessageContent: boolean
+/**
+ * `/enqueue` found in a message: the message without it, to wait for the
+ * session's next turn, or nothing left to send.
+ */
+export type EnqueueDirective = { kind: "enqueue-message"; content: JSONContent } | { kind: "empty-enqueue" }
+
+// Group 1 is the whitespace before the token, group 2 the whitespace after it,
+// so a token mid-sentence collapses to one space and one at either edge leaves none.
+const ENQUEUE_TOKEN = new RegExp(`(^|\\s+)/${ENQUEUE_COMMAND}(?=\\s|$)(\\s*)`, "giu")
+// Stands in for a neighbour that isn't whitespace, so a token glued to it
+// (a mention, inline code, a formatting-split word) is not matched.
+const NOT_A_BOUNDARY = "\uFFFC"
+
+const isCode = (node: JSONContent) => node.marks?.some((mark) => mark.type === "code") === true
+const isEnqueueNode = (node: JSONContent) =>
+  node.type === "slashCommand" && String(node.attrs?.name ?? "").toLowerCase() === ENQUEUE_COMMAND
+// Blocks that hold nothing once the directive is gone are dropped with it. Table
+// parts are not: removing a cell or row would reshape the table.
+const PRUNABLE_WHEN_EMPTIED = new Set(["paragraph", "heading", "listItem", "bulletList", "orderedList", "blockquote"])
+
+function hasBoundaryAt(node: JSONContent | undefined, edge: "start" | "end"): boolean {
+  if (!node || node.type === "hardBreak") return true
+  if (node.type !== "text" || isCode(node)) return false
+  return (edge === "end" ? /\s$/u : /^\s/u).test(node.text ?? "")
 }
 
-/**
- * `/steer` wherever it sits in a message — the one command that dispatches from
- * anywhere rather than from the front (see {@link extractSteerDirective}).
- * Group 1 is the character before the token, group 2 the token as authored, so
- * the message renderer can chip exactly what dispatches here.
- */
-export const STEER_DIRECTIVE_PATTERN = /(^|\s)(\/steer)(?=$|\s)/iu
-const STEER_DIRECTIVE_PATTERN_GLOBAL = new RegExp(STEER_DIRECTIVE_PATTERN.source, "giu")
-const INLINE_CONTENT_PLACEHOLDER = "\uFFFC"
-const INLINE_CONTENT_CONTAINERS = new Set(["paragraph", "heading", "codeBlock"])
-
-function steerDetectionText(node: JSONContent): string {
-  // Code is quoted text, never a dispatch: it stands in as one opaque
-  // character, so a `/steer` beside it isn't whitespace-bounded either.
-  if (node.type === "codeBlock" || node.marks?.some((mark) => mark.type === "code")) return INLINE_CONTENT_PLACEHOLDER
-  if (node.type === "text") return node.text ?? ""
-  if (node.type === "slashCommand") return `/${String(node.attrs?.name ?? "")}`
-  if (node.type === "hardBreak") return "\n"
-  if (node.content) {
-    // Keep adjacent inline nodes contiguous so formatting-split tokens still
-    // match, but separate every block container so list/quote boundaries do
-    // not glue the preceding word to a following `/steer`.
-    const separator = INLINE_CONTENT_CONTAINERS.has(node.type ?? "") ? "" : "\n"
-    return node.content.map(steerDetectionText).join(separator)
+function stripTextTokens(text: string, before: JSONContent | undefined, after: JSONContent | undefined): string {
+  const lead = hasBoundaryAt(before, "end") ? "" : NOT_A_BOUNDARY
+  const trail = hasBoundaryAt(after, "start") ? "" : NOT_A_BOUNDARY
+  let source = `${lead}${text}${trail}`
+  // Adjacent tokens share the whitespace between them, so one pass leaves every other one.
+  for (;;) {
+    const stripped = source.replace(ENQUEUE_TOKEN, (_, pre: string, post: string) => (pre && post ? " " : ""))
+    if (stripped === source) return stripped.slice(lead.length, stripped.length - trail.length)
+    source = stripped
   }
-  return ["doc", "paragraph"].includes(node.type ?? "") ? "" : INLINE_CONTENT_PLACEHOLDER
+}
+
+/** Returns `node` itself when it holds no directive, so identity says whether anything was removed. */
+function stripEnqueueTokens(node: JSONContent, typed: boolean): JSONContent {
+  const children = node.content
+  if (!children || node.type === "codeBlock") return node
+  let changed = false
+  let afterRemovedNode = false
+  const kept: JSONContent[] = []
+  children.forEach((child, index) => {
+    if (isEnqueueNode(child)) {
+      changed = true
+      afterRemovedNode = true
+      return
+    }
+    let next = child
+    if (child.type === "text" && !isCode(child)) {
+      if (typed) {
+        const text = stripTextTokens(child.text ?? "", children[index - 1], children[index + 1])
+        if (text !== child.text) next = { ...child, text }
+      }
+    } else if (child.content) {
+      next = stripEnqueueTokens(child, typed)
+      if (next !== child && !next.content?.length && PRUNABLE_WHEN_EMPTIED.has(next.type ?? "")) {
+        changed = true
+        return
+      }
+    }
+    changed ||= next !== child
+    // A formatted text node that was only the token goes like a picked node.
+    if (next.type === "text" && !next.text) {
+      afterRemovedNode = true
+      return
+    }
+    // A removed node sat between two spaces (or an edge): keep one. Between two words, keep them apart.
+    if (afterRemovedNode && next.type === "text") {
+      const text = next.text ?? ""
+      if (hasBoundaryAt(kept.at(-1), "end")) next = { ...next, text: text.replace(/^\s+/u, "") }
+      else if (!isCode(next) && !/^\s/u.test(text)) next = { ...next, text: ` ${text}` }
+    }
+    afterRemovedNode = false
+    if (next.type !== "text" || next.text) kept.push(next)
+  })
+  const last = kept.at(-1)
+  if (afterRemovedNode && last?.type === "text") {
+    const text = (last.text ?? "").replace(/\s+$/u, "")
+    if (text) kept[kept.length - 1] = { ...last, text }
+    else kept.pop()
+  }
+  return changed ? { ...node, content: kept } : node
+}
+
+function hasContent(node: JSONContent): boolean {
+  if (node.type === "text") return (node.text ?? "").trim().length > 0
+  if (node.type === "hardBreak") return false
+  if (!node.content?.length) return !["doc", "paragraph", "heading"].includes(node.type ?? "")
+  return node.content.some(hasContent)
+}
+
+/** Whether a typed `/enqueue` counts: only where the stream advertises it. */
+export function offersEnqueue(commands: readonly { name: string }[]): boolean {
+  return commands.some((command) => command.name.toLowerCase() === ENQUEUE_COMMAND)
 }
 
 /**
- * Detect `/steer` wherever it appears in a message. The authored document is
- * preserved as the normal message; a separate steer command follows it. A
- * plain-text projection is used only to distinguish a bare command from a
- * message and to match tokens split across formatting marks.
+ * Find `/enqueue` wherever it sits in a message: a picked command node, or,
+ * when `typed` is set, the token typed standing alone between whitespace
+ * (never in code). Enqueue is a send mode, not a command, so every occurrence
+ * is removed from the content the session receives and the send carries the
+ * flag instead. A picked node always counts: dispatched as a command it could
+ * only be refused.
  */
-export function extractSteerDirective(content: JSONContent): ExtractedSteerDirective | null {
-  const text = steerDetectionText(content)
-  if (!STEER_DIRECTIVE_PATTERN.test(text)) return null
-  const withoutSteer = text.replace(STEER_DIRECTIVE_PATTERN_GLOBAL, "$1")
-  return { content, hasMessageContent: withoutSteer.trim().length > 0 }
+export function extractEnqueueDirective(content: JSONContent, { typed }: { typed: boolean }): EnqueueDirective | null {
+  const stripped = stripEnqueueTokens(content, typed)
+  if (stripped === content) return null
+  return hasContent(stripped) ? { kind: "enqueue-message", content: stripped } : { kind: "empty-enqueue" }
+}
+
+/**
+ * The inverse of {@link extractEnqueueDirective}: the message with a picked
+ * `/enqueue` leading it, so editing a queued message shows how it was sent.
+ */
+export function withEnqueueDirective(content: JSONContent): JSONContent {
+  const directive: JSONContent = { type: "slashCommand", attrs: { name: ENQUEUE_COMMAND } }
+  const [first, ...rest] = content.content ?? []
+  if (first?.type === "paragraph") {
+    const lead = first.content?.length ? [directive, { type: "text", text: " " }] : [directive]
+    return { ...content, content: [{ ...first, content: [...lead, ...(first.content ?? [])] }, ...rest] }
+  }
+  return { ...content, content: [{ type: "paragraph", content: [directive] }, ...(content.content ?? [])] }
 }
 
 /**

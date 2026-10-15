@@ -32,7 +32,7 @@ export function useStopAgentSession(socket: Socket | null, workspaceId: string, 
         })
         .catch((error: unknown) => {
           console.warn("[useStopAgentSession] failed to resolve runtime stop command", error)
-          toast.error("Failed to stop session")
+          toast.error("Runtime stop failed — using local stop instead")
           abortSession({ sessionId, workspaceId })
         })
     },

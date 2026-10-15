@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useId, useMemo } from "react"
 import { Expand } from "lucide-react"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
@@ -13,8 +14,9 @@ import { serializeToMarkdown, parseMarkdown } from "@threahq/prosemirror"
 import type { JSONContent } from "@threahq/types"
 import type { Editor } from "@tiptap/react"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
-import { useStreamBootstrap } from "@/hooks/use-streams"
-import { useWorkspaceMetadata } from "@/stores/workspace-store"
+import { extractEnqueueDirective, offersEnqueue, withEnqueueDirective } from "@/lib/commands"
+import { EMPTY_ENQUEUE_ERROR } from "@/components/composer/use-composer-command-send"
+import { useStreamCommands } from "@/hooks/use-stream-commands"
 import { useStreamFromStore } from "@/stores/stream-store"
 
 const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Command" : "Control"
@@ -37,27 +39,25 @@ export function UnsentMessageEditForm({
   onDone,
   authorName,
 }: UnsentMessageEditFormProps) {
-  const { saveEditedMessage, cancelEditing, deleteMessage } = usePendingMessages()
-  const metadata = useWorkspaceMetadata(workspaceId)
+  const { saveEditedMessage, cancelEditing, deleteMessage, isEditingEnqueued } = usePendingMessages()
   const streamContext = useMentionStreamContext(workspaceId, useStreamFromStore(workspaceId, streamId))
-  const { data: streamCommands } = useStreamBootstrap(workspaceId, streamId, {
-    enabled: false,
-    select: (bootstrap) => bootstrap.commands,
-  })
-  const steerAvailable = useMemo(
-    () => (streamCommands ?? metadata?.commands ?? []).some((command) => command.name === "steer"),
-    [streamCommands, metadata?.commands]
-  )
+  const streamCommands = useStreamCommands(workspaceId, streamId)
+  const enqueueAvailable = offersEnqueue(streamCommands)
   // Latch the surface at mount: input mode is live, so reading it directly would
   // flip drawer<->inline mid-edit and remount the editor, dropping unsaved text.
   const [isTouch] = useState(useInputMode() === "touch")
   // The `data-inline-edit` wrapper below drives the mobile composer visibility
   // through the body-level inline-edit presence attribute.
 
-  const [contentJson, setContentJson] = useState<JSONContent>(initialContentJson ?? EMPTY_DOC)
+  // A queued message opens with its `/enqueue`, so removing it sends the edit at once.
+  const [initialContent] = useState(() => {
+    const content = initialContentJson ?? EMPTY_DOC
+    return isEditingEnqueued(messageId) ? withEnqueueDirective(content) : content
+  })
+  const [contentJson, setContentJson] = useState<JSONContent>(initialContent)
   const [isSaving, setIsSaving] = useState(false)
   const [docEditorOpen, setDocEditorOpen] = useState(false)
-  const [initialMarkdown] = useState(() => serializeToMarkdown(initialContentJson ?? EMPTY_DOC).trim())
+  const [initialMarkdown] = useState(() => serializeToMarkdown(initialContent).trim())
 
   const [formatOpen, setFormatOpen] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
@@ -91,26 +91,33 @@ export function UnsentMessageEditForm({
     setMobileToolbarEditor((currentEditor) => (currentEditor === nextEditor ? currentEditor : nextEditor))
   }, [])
 
+  const saveEdit = useCallback(
+    async (edited: JSONContent) => {
+      const directive = extractEnqueueDirective(edited, { typed: enqueueAvailable })
+      if (directive?.kind === "empty-enqueue") {
+        toast.error(EMPTY_ENQUEUE_ERROR)
+        return
+      }
+      setIsSaving(true)
+      try {
+        await saveEditedMessage(messageId, directive?.content ?? edited, { enqueue: directive !== null })
+        onDone()
+      } finally {
+        setIsSaving(false)
+      }
+    },
+    [enqueueAvailable, messageId, saveEditedMessage, onDone]
+  )
+
   const handleSave = useCallback(async () => {
     const contentMarkdown = serializeToMarkdown(contentJson).trim()
-    if (!contentMarkdown) {
+    if (!contentMarkdown || contentMarkdown === initialMarkdown) {
       await cancelEditing(messageId)
       onDone()
       return
     }
-    if (contentMarkdown === initialMarkdown) {
-      await cancelEditing(messageId)
-      onDone()
-      return
-    }
-    setIsSaving(true)
-    try {
-      await saveEditedMessage(messageId, contentJson, { steerAvailable })
-      onDone()
-    } finally {
-      setIsSaving(false)
-    }
-  }, [contentJson, initialMarkdown, messageId, saveEditedMessage, cancelEditing, onDone, steerAvailable])
+    await saveEdit(contentJson)
+  }, [contentJson, initialMarkdown, messageId, saveEdit, cancelEditing, onDone])
 
   const handleDelete = useCallback(async () => {
     await deleteMessage(workspaceId, messageId)
@@ -128,15 +135,9 @@ export function UnsentMessageEditForm({
         return
       }
       setDocEditorOpen(false)
-      setIsSaving(true)
-      try {
-        await saveEditedMessage(messageId, parseMarkdown(trimmed), { steerAvailable })
-        onDone()
-      } finally {
-        setIsSaving(false)
-      }
+      await saveEdit(parseMarkdown(trimmed))
     },
-    [initialMarkdown, messageId, saveEditedMessage, cancelEditing, onDone, steerAvailable]
+    [initialMarkdown, messageId, saveEdit, cancelEditing, onDone]
   )
 
   const handleDocEditorDismiss = useCallback((markdown: string) => {
