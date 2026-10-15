@@ -26,6 +26,15 @@ export function isChannelLaunch(parentCommand: string, serverKey: string): boole
   })
 }
 
+/**
+ * Whether Claude was launched with `--settings <settingsPath>` — the file that declares
+ * the stop hooks. It cannot tell whether Claude honours them (`disableAllHooks` wins).
+ * `ps` prints arguments space-joined, so a path containing spaces is matched whole.
+ */
+export function launchedWithSettings(parentCommand: string, settingsPath: string): boolean {
+  return ` ${parentCommand} `.includes(` --settings ${settingsPath} `)
+}
+
 export type ChannelActivation = { active: true } | { active: false; reason: "no-server-key" | "flag-missing" }
 
 /**

@@ -31,6 +31,7 @@ export interface ClaudeLaunch {
   resumeSessionId?: string
   channel: string
   mcpConfig?: string
+  settings?: string
   autocompact?: string
   skipPermissions: boolean
   choice: RuntimeModelChoice
@@ -240,6 +241,11 @@ export function parsePiLaunch(command: string): PiLaunch | undefined {
   return { executable, sessionId, choice, environment }
 }
 
+/** A launch flag's file argument: a path, not another flag or inline JSON (which reconnect cannot revalidate). */
+function isLaunchFilePath(value: string | undefined): value is string {
+  return !!value && !value.startsWith("-") && !/^[{[]/.test(value.trim())
+}
+
 export function parseClaudeLaunch(command: string): ClaudeLaunch | undefined {
   const words = strictLaunchWords(command)
   if (!words?.length) return undefined
@@ -270,6 +276,7 @@ export function parseClaudeLaunch(command: string): ClaudeLaunch | undefined {
   let resumeSessionId: string | undefined
   let channel: string | undefined
   let mcpConfig: string | undefined
+  let settings: string | undefined
   let autocompact: string | undefined
   let skipPermissions = false
   const choice: RuntimeModelChoice = {}
@@ -293,8 +300,12 @@ export function parseClaudeLaunch(command: string): ClaudeLaunch | undefined {
       skipPermissions = true
     } else if (option === "--mcp-config") {
       const value = words[index++]
-      if (mcpConfig || !value || value.startsWith("-") || /^[{[]/.test(value.trim())) return undefined
+      if (mcpConfig || !isLaunchFilePath(value)) return undefined
       mcpConfig = value
+    } else if (option === "--settings") {
+      const value = words[index++]
+      if (settings || !isLaunchFilePath(value)) return undefined
+      settings = value
     } else if (option === "--autocompact") {
       const value = words[index++]
       if (autocompact || !value?.match(/^(auto|\d+[km]?)$/i)) return undefined
@@ -310,7 +321,18 @@ export function parseClaudeLaunch(command: string): ClaudeLaunch | undefined {
     } else return undefined
   }
   return channel
-    ? { executable, name, resumeSessionId, channel, mcpConfig, autocompact, skipPermissions, choice, environment }
+    ? {
+        executable,
+        name,
+        resumeSessionId,
+        channel,
+        mcpConfig,
+        settings,
+        autocompact,
+        skipPermissions,
+        choice,
+        environment,
+      }
     : undefined
 }
 

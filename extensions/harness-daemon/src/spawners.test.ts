@@ -18,6 +18,7 @@ import {
   sessionThreaCredentials,
   cliConfigPath,
   normalizeChannelMcpConfig,
+  stopHookPaths,
   writeChannelMcpConfig,
   writeSessionCliConfig,
 } from "./spawners"
@@ -528,14 +529,55 @@ function threaServerEntry(): Record<string, unknown> {
   }
 }
 
-function channelServerEntry(entry: string): Record<string, unknown> {
+function channelServerEntry(entry: string, sessionId: string): Record<string, unknown> {
   return {
     type: "stdio",
     command: "bun",
     args: [entry],
-    env: { THREA_CHANNEL_SERVER_KEY: "threa-channel" },
+    env: {
+      THREA_CHANNEL_SERVER_KEY: "threa-channel",
+      THREA_CHANNEL_HOOK_SOCKET: join(root, "mcp", `${sessionId}.sock`),
+      THREA_CHANNEL_HOOK_SETTINGS: join(root, "mcp", `${sessionId}.settings.json`),
+    },
   }
 }
+
+test("a channel config installs Stop and StopFailure hooks that forward to the session's socket", () => {
+  guardDir()
+  const path = writeChannelMcpConfig("ccs-hooks", "threa-channel", "/entry/src/index.ts")
+  const hook = {
+    hooks: [
+      {
+        type: "command",
+        command: `'bun' '/entry/src/stop-hook-forwarder.ts' '${join(root, "mcp", "ccs-hooks.sock")}'`,
+        timeout: 5,
+      },
+    ],
+  }
+
+  expect({
+    paths: stopHookPaths(path),
+    settings: JSON.parse(readFileSync(stopHookPaths(path).settings, "utf8")),
+    launch: claudeLaunchArgs({ claudeBin: "claude", name: "a", channel: "threa-channel", mcpConfig: path }),
+  }).toEqual({
+    paths: { settings: join(root, "mcp", "ccs-hooks.settings.json"), socket: join(root, "mcp", "ccs-hooks.sock") },
+    settings: { hooks: { Stop: [hook], StopFailure: [hook] } },
+    launch: [
+      "claude",
+      "--name",
+      "threa.a",
+      "--autocompact",
+      "200k",
+      "--mcp-config",
+      path,
+      "--settings",
+      join(root, "mcp", "ccs-hooks.settings.json"),
+      "--dangerously-load-development-channels",
+      "server:threa-channel",
+      "--dangerously-skip-permissions",
+    ],
+  })
+})
 
 test("a session registers its own threa server alongside the channel, and only when asked", () => {
   guardDir()
@@ -543,10 +585,10 @@ test("a session registers its own threa server alongside the channel, and only w
   const withoutCli = writeChannelMcpConfig("ccs-nocli", "threa-channel", "/entry/one.ts")
 
   expect(JSON.parse(readFileSync(withCli, "utf8"))).toEqual({
-    mcpServers: { "threa-channel": channelServerEntry("/entry/one.ts"), threa: threaServerEntry() },
+    mcpServers: { "threa-channel": channelServerEntry("/entry/one.ts", "ccs-cli"), threa: threaServerEntry() },
   })
   expect(JSON.parse(readFileSync(withoutCli, "utf8"))).toEqual({
-    mcpServers: { "threa-channel": channelServerEntry("/entry/one.ts") },
+    mcpServers: { "threa-channel": channelServerEntry("/entry/one.ts", "ccs-nocli") },
   })
 })
 
@@ -557,14 +599,22 @@ test("normalizing keeps the threa server current and drops it when a session has
     configPath: "/stale/config.json",
   })
 
+  rmSync(stopHookPaths(path).settings)
+
   normalizeChannelMcpConfig(path, "threa-channel", "/new/entry.ts", THREA_CLI)
-  expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
-    mcpServers: { "threa-channel": channelServerEntry("/new/entry.ts"), threa: threaServerEntry() },
+  expect({
+    config: JSON.parse(readFileSync(path, "utf8")),
+    stopHook: JSON.parse(readFileSync(stopHookPaths(path).settings, "utf8")).hooks.Stop[0].hooks[0].command,
+  }).toEqual({
+    config: {
+      mcpServers: { "threa-channel": channelServerEntry("/new/entry.ts", "ccs-normalize"), threa: threaServerEntry() },
+    },
+    stopHook: `'bun' '/new/stop-hook-forwarder.ts' '${join(root, "mcp", "ccs-normalize.sock")}'`,
   })
 
   normalizeChannelMcpConfig(path, "threa-channel", "/new/entry.ts")
   expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
-    mcpServers: { "threa-channel": channelServerEntry("/new/entry.ts") },
+    mcpServers: { "threa-channel": channelServerEntry("/new/entry.ts", "ccs-normalize") },
   })
 })
 

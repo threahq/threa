@@ -87,6 +87,7 @@ export function buildResumePrompt(invocationId: string): string {
 export class CarryOnController {
   private turn: { invocationId: string; streamId: string } | undefined
   private hold: Hold | undefined
+  private gaveUpOn: string | undefined
   private readonly timing: CarryOnTiming
 
   constructor(
@@ -128,20 +129,24 @@ export class CarryOnController {
     if (this.hold) this.dropHold("interrupted by /stop")
   }
 
-  /** A synthetic API-error line landed for an in-flight turn. */
-  onApiError(invocationId: string, text: string): void {
-    if (this.turn?.invocationId !== invocationId || !this.host.isInflight(invocationId)) return
+  /** A provider error landed for an in-flight turn. True when carry-on owns it (held, given up, or already held). */
+  onApiError(invocationId: string, text: string): boolean {
+    // The transcript tail and Claude's StopFailure hook can both report the same failure.
+    if (this.gaveUpOn === invocationId) return true
+    if (this.turn?.invocationId !== invocationId || !this.host.isInflight(invocationId)) return false
+    const heldTurn = this.hold?.invocationId === invocationId ? this.hold : undefined
+    if (heldTurn && !heldTurn.resumed) return true
     const signal = classifyApiErrorText(text, this.now())
-    if (signal.kind === "other") return
-    const attempts = this.hold?.invocationId === invocationId ? this.hold.attempts : 0
+    if (signal.kind === "other") return false
+    const attempts = heldTurn?.attempts ?? 0
     if (attempts >= this.timing.maxResumeAttempts) {
       void this.giveUp(invocationId, `still blocked after ${attempts} resume attempts`, signal)
-      return
+      return true
     }
     const now = this.now()
     if (signal.kind === "quota-no-reset") {
       void this.giveUp(invocationId, "the provider gave no reset time to wait for", signal)
-      return
+      return true
     }
     const resumeAt =
       signal.kind === "quota-reset"
@@ -149,9 +154,10 @@ export class CarryOnController {
         : now + this.timing.transientResumeDelayMs * (attempts + 1)
     if (resumeAt - now > this.timing.maxHoldMs) {
       void this.giveUp(invocationId, `the quota reset is too far away (~${formatDuration(resumeAt - now)})`, signal)
-      return
+      return true
     }
     this.beginHold(invocationId, this.turn.streamId, resumeAt, attempts, signal)
+    return true
   }
 
   stop(): void {
@@ -229,6 +235,7 @@ export class CarryOnController {
   /** Close the turn loudly. Works with or without an active hold — the unschedulable paths (no reset time, reset too far away) give up before one exists. */
   private async giveUp(invocationId: string, reason: string, signal: QuotaSignal | undefined): Promise<void> {
     this.dropHold(`giving up: ${reason}`)
+    this.gaveUpOn = invocationId
     if (this.turn?.invocationId === invocationId) this.turn = undefined
     const lines = [`⚠️ Quota carry-on gave up: ${reason}.`]
     if (signal) lines.push("", `Provider said: ${signal.summary}`)

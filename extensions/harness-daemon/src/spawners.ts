@@ -39,6 +39,43 @@ export function mcpConfigPath(runtimeSessionId: string): string {
   return join(mcpConfigDir(), `${runtimeSessionId}.json`)
 }
 
+/**
+ * Claude's Stop/StopFailure hooks reach the channel over a per-session socket.
+ * Both paths derive from the session's MCP config so the hook settings and the
+ * channel's listener can never name different sessions.
+ */
+export function stopHookPaths(mcpConfig: string) {
+  const stem = mcpConfig.replace(/\.json$/, "")
+  return { settings: `${stem}.settings.json`, socket: `${stem}.sock` }
+}
+
+const STOP_HOOK_TIMEOUT_SECONDS = 5
+
+type StopHookPaths = ReturnType<typeof stopHookPaths>
+
+function writeStopHookSettings(mcpConfig: string, channelEntry: string): StopHookPaths {
+  const paths = stopHookPaths(mcpConfig)
+  const hook = {
+    hooks: [
+      {
+        type: "command",
+        command: ["bun", join(dirname(channelEntry), "stop-hook-forwarder.ts"), paths.socket].map(shellQuote).join(" "),
+        timeout: STOP_HOOK_TIMEOUT_SECONDS,
+      },
+    ],
+  }
+  writeFileSync(paths.settings, JSON.stringify({ hooks: { Stop: [hook], StopFailure: [hook] } }, null, 2))
+  return paths
+}
+
+function channelEnvironment(channel: string, hooks: StopHookPaths): Record<string, string> {
+  return {
+    THREA_CHANNEL_SERVER_KEY: channel,
+    THREA_CHANNEL_HOOK_SOCKET: hooks.socket,
+    THREA_CHANNEL_HOOK_SETTINGS: hooks.settings,
+  }
+}
+
 export function cliConfigPath(runtimeSessionId: string): string {
   return join(mcpConfigDir(), "..", "cli", `${runtimeSessionId}.json`)
 }
@@ -253,7 +290,14 @@ export function claudeLaunchArgs(params: {
   args.push("--name", `threa.${params.name}`, "--autocompact", CLAUDE_AUTOCOMPACT_WINDOW)
   args.push(...claudeModelArgs(params.choice))
   if (params.mcpConfig) {
-    args.push("--mcp-config", params.mcpConfig, "--dangerously-load-development-channels", `server:${params.channel}`)
+    args.push(
+      "--mcp-config",
+      params.mcpConfig,
+      "--settings",
+      stopHookPaths(params.mcpConfig).settings,
+      "--dangerously-load-development-channels",
+      `server:${params.channel}`
+    )
   }
   if (!params.noYolo) args.push("--dangerously-skip-permissions")
   return args
@@ -278,6 +322,7 @@ export function writeChannelMcpConfig(
   if (threa) assertChannelKeyFree(channel)
   const path = mcpConfigPath(runtimeSessionId)
   mkdirSync(dirname(path), { recursive: true })
+  const hooks = writeStopHookSettings(path, channelEntry)
   writeFileSync(
     path,
     JSON.stringify(
@@ -287,7 +332,7 @@ export function writeChannelMcpConfig(
             type: "stdio",
             command: "bun",
             args: [channelEntry],
-            env: { THREA_CHANNEL_SERVER_KEY: channel },
+            env: channelEnvironment(channel, hooks),
           },
           ...(threa ? { [THREA_CLI_SERVER_KEY]: threaCliServerEntry(threa) } : {}),
         },
@@ -316,13 +361,14 @@ export function normalizeChannelMcpConfig(
     die(`MCP config must contain exactly one channel server: ${path}`)
   }
   const [, server] = channelEntries[0] as [string, Record<string, unknown>]
+  const hooks = writeStopHookSettings(path, channelEntry)
   parsed.mcpServers = {
     [channel]: {
       ...server,
       type: "stdio",
       command: "bun",
       args: [channelEntry],
-      env: { ...((server.env as Record<string, unknown> | undefined) ?? {}), THREA_CHANNEL_SERVER_KEY: channel },
+      env: { ...((server.env as Record<string, unknown> | undefined) ?? {}), ...channelEnvironment(channel, hooks) },
     },
     ...(threa ? { [THREA_CLI_SERVER_KEY]: threaCliServerEntry(threa) } : {}),
   }

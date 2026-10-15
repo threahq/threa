@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { BotRuntimeTransport } from "@threahq/bot-runtime-client"
@@ -16,37 +16,49 @@ import {
   type RemoteSessionConfig,
 } from "@threahq/remote-session"
 import {
-  CHANNEL_TOOLS,
   ChannelServer,
   buildInstructions,
+  channelTools,
   formatDelegationContent,
   permissionPreviewBlock,
   runClaudeCommand,
 } from "./channel-server"
+import type { CarryOnController } from "./carry-on"
+import { StopHookListener } from "./stop-hook-listener"
 
 describe("buildInstructions", () => {
   test("always tells Claude to reply with the invocation_id", () => {
-    const text = buildInstructions(false)
+    const text = buildInstructions({ permissionRelay: false })
     expect(text).toContain("reply")
     expect(text).toContain("invocation_id")
   })
 
   test("documents both the send and reply tools", () => {
-    const text = buildInstructions(false)
+    const text = buildInstructions({ permissionRelay: false })
     expect(text).toContain("`send`")
     expect(text).toContain("`reply`")
     expect(text).toContain("invocation_id")
   })
 
   test("mentions permission forwarding only when relay is enabled", () => {
-    expect(buildInstructions(true).toLowerCase()).toContain("approv")
-    expect(buildInstructions(false).toLowerCase()).not.toContain("approv")
+    expect(buildInstructions({ permissionRelay: true }).toLowerCase()).toContain("approv")
+    expect(buildInstructions({ permissionRelay: false }).toLowerCase()).not.toContain("approv")
   })
 
   test("in plain-MCP mode says the channel is inactive instead of claiming a scratchpad link", () => {
-    const text = buildInstructions(false, false)
+    const text = buildInstructions({ permissionRelay: false, channelActive: false })
     expect(text).not.toContain("You are linked")
     expect(text.toLowerCase()).toContain("inactive")
+  })
+
+  test("in hook mode says the request closes when the turn ends, not on reply", () => {
+    const text = buildInstructions({ permissionRelay: false, hookMode: true })
+    const replyTool = channelTools(true).find((tool) => tool.name === "reply")!
+    expect({
+      closesByItself: text.includes("closes by itself when you finish your turn"),
+      replyCloses: text.includes("`reply` posts the message AND closes"),
+      toolDoesNotClose: replyTool.description.includes("does not close the request"),
+    }).toEqual({ closesByItself: true, replyCloses: false, toolDoesNotClose: true })
   })
 })
 
@@ -293,9 +305,9 @@ describe("ChannelServer delegations", () => {
 })
 
 /** A relay-enabled server with the MCP wire and Threa session stubbed for direct permission-path calls. */
-function permissionServer(decision?: { outcome?: DecisionOutcome; error?: Error }) {
-  const config = { ...makeConfig(), permissionRelay: true }
-  const server = new ChannelServer(config, new ThreaClient(config), makeFakeTransport())
+/** A channel server whose session is stubbed to hold delivered turns in flight until a closing call. */
+function stubbedTurnServer(config: RemoteSessionConfig, stopHooks?: StopHookListener) {
+  const server = new ChannelServer(config, new ThreaClient(config), makeFakeTransport(), true, undefined, stopHooks)
   const internals = server as unknown as {
     mcp: { notification: (msg: { method: string; params: Record<string, unknown> }) => Promise<void> }
     deliverToClaude: (turn: DeliveredTurn) => Promise<void>
@@ -305,9 +317,33 @@ function permissionServer(decision?: { outcome?: DecisionOutcome; error?: Error 
       description: string
       input_preview: string
     }) => Promise<void>
+    tracer: { endTurn: (invocationId: string) => void }
+    carryOn: Pick<CarryOnController, "onApiError" | "onTurnClosed" | "stop"> | undefined
   }
   const notifications: Array<{ method: string; params: Record<string, unknown> }> = []
   spyOn(internals.mcp, "notification").mockImplementation(async (msg) => void notifications.push(msg))
+  const inflight = new Set<string>()
+  spyOn(server.session, "isInflight").mockImplementation((invocationId: string) => inflight.has(invocationId))
+  const deliver = async (invocationId: string, sealed = false) => {
+    await internals.deliverToClaude({
+      invocationId,
+      streamId: "stream_turn",
+      rootStreamId: "stream_root",
+      sourceMessageId: `msg_${invocationId}`,
+      content: "Do the thing",
+      sealed,
+    })
+    inflight.add(invocationId)
+    notifications.length = 0
+  }
+  return { server, internals, notifications, inflight, deliver }
+}
+
+function permissionServer(decision?: { outcome?: DecisionOutcome; error?: Error }) {
+  const { server, internals, notifications, inflight, deliver } = stubbedTurnServer({
+    ...makeConfig(),
+    permissionRelay: true,
+  })
   const invocationPosts: Array<{
     invocationId: string
     body: { content: string; metadata?: Record<string, unknown> }
@@ -322,8 +358,6 @@ function permissionServer(decision?: { outcome?: DecisionOutcome; error?: Error 
       void streamPosts.push({ streamId, body })
   )
   spyOn(server.session, "keepAlive").mockImplementation(() => {})
-  const inflight = new Set<string>()
-  spyOn(server.session, "isInflight").mockImplementation((invocationId: string) => inflight.has(invocationId))
   spyOn(server.session, "reply").mockImplementation(async (invocationId: string) => {
     inflight.delete(invocationId)
     return { ok: true, message: "posted", closedTurn: true }
@@ -337,18 +371,6 @@ function permissionServer(decision?: { outcome?: DecisionOutcome; error?: Error 
     }
   )
   ;(server.session as unknown as { link?: { rootStreamId: string } }).link = { rootStreamId: "stream_root" }
-  const deliver = async (invocationId: string, sealed = false) => {
-    await internals.deliverToClaude({
-      invocationId,
-      streamId: "stream_turn",
-      rootStreamId: "stream_root",
-      sourceMessageId: `msg_${invocationId}`,
-      content: "Do the thing",
-      sealed,
-    })
-    inflight.add(invocationId)
-    notifications.length = 0
-  }
   return {
     server,
     internals,
@@ -524,5 +546,227 @@ describe("permissionPreviewBlock", () => {
     expect(permissionPreviewBlock("plain text")).toBe("```\nplain text\n```")
     const long = "x".repeat(2000)
     expect(permissionPreviewBlock(long)).toBe(`\`\`\`\n${"x".repeat(1500)}…\n\`\`\``)
+  })
+})
+
+describe("stop hooks", () => {
+  let dir: string
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "threa-stop-hooks-"))
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const turnLine = (invocationId: string) =>
+    `{"type":"user","message":{"content":"<channel invocation_id=\\"${invocationId}\\">Do the thing</channel>"}}`
+  const queueLine = (operation: string, content?: string) =>
+    JSON.stringify({ type: "queue-operation", operation, timestamp: "2026-10-15T08:00:00.000Z", content })
+
+  async function hookServer() {
+    const socketPath = join(dir, "session.sock")
+    const listener = await StopHookListener.listen(socketPath, () => {})
+    const { server, internals, inflight, deliver: deliverTurn } = stubbedTurnServer(makeConfig(), listener)
+    const calls: Array<{ method: string; invocationId: string; text?: string }> = []
+    spyOn(server.session, "sendInterim").mockImplementation(async (invocationId: string, text: string) => {
+      calls.push({ method: "sendInterim", invocationId, text })
+      return { ok: true, message: "sent" }
+    })
+    for (const method of ["reply", "endTurn"] as const) {
+      spyOn(server.session, method).mockImplementation(async (invocationId: string, text?: string) => {
+        calls.push({ method, invocationId, text })
+        inflight.delete(invocationId)
+        return { ok: true, message: "sent", closedTurn: true as const }
+      })
+    }
+    const tracerEnds: string[] = []
+    spyOn(internals.tracer, "endTurn").mockImplementation((invocationId: string) => void tracerEnds.push(invocationId))
+    const transcript = join(dir, "transcript.jsonl")
+    const deliver = async (invocationId: string) => {
+      await deliverTurn(invocationId)
+      writeFileSync(transcript, `${turnLine(invocationId)}\n`)
+    }
+    return { server, internals, socketPath, calls, tracerEnds, inflight, transcript, deliver }
+  }
+
+  test("a forwarded Stop closes the turn with Claude's last message and ends its trace", async () => {
+    const { server, socketPath, calls, tracerEnds, transcript, deliver } = await hookServer()
+    await deliver("binv_turn")
+
+    const hook = Bun.spawn(["bun", join(import.meta.dir, "stop-hook-forwarder.ts"), socketPath], {
+      stdin: new Blob([
+        JSON.stringify({ hook_event_name: "Stop", transcript_path: transcript, last_assistant_message: "Done." }),
+      ]),
+      stdout: "pipe",
+    })
+    const exitCode = await hook.exited
+    for (let i = 0; i < 100 && calls.length === 0; i++) await flush()
+
+    expect({ exitCode, stdout: await new Response(hook.stdout).text(), calls, tracerEnds }).toEqual({
+      exitCode: 0,
+      stdout: "",
+      calls: [{ method: "endTurn", invocationId: "binv_turn", text: "Done." }],
+      tracerEnds: ["binv_turn"],
+    })
+    await server.shutdown()
+  })
+
+  test("reply posts without closing the turn", async () => {
+    const { server, calls, inflight, deliver } = await hookServer()
+    await deliver("binv_turn")
+
+    const result = await server.handleToolCall("reply", "binv_turn", "Here is the answer.")
+
+    expect({ result, calls, open: inflight.has("binv_turn") }).toEqual({
+      result: { ok: true, message: "sent" },
+      calls: [{ method: "sendInterim", invocationId: "binv_turn", text: "Here is the answer." }],
+      open: true,
+    })
+    await server.shutdown()
+  })
+
+  test("a Stop from a turn that never saw the invocation leaves it open", async () => {
+    const { server, calls, transcript, deliver } = await hookServer()
+    await deliver("binv_turn")
+    writeFileSync(transcript, '{"type":"user","content":"a terminal prompt"}\n')
+
+    await server.handleStopSignal({ event: "Stop", transcriptPath: transcript, lastAssistantMessage: "Unrelated." })
+
+    expect(calls).toEqual([])
+    await server.shutdown()
+  })
+
+  test("a StopFailure closes the turn with the error", async () => {
+    const { server, calls, transcript, deliver } = await hookServer()
+    await deliver("binv_turn")
+
+    await server.handleStopSignal({
+      event: "StopFailure",
+      transcriptPath: transcript,
+      error: "invalid_request",
+      message: "Prompt is too long",
+    })
+
+    expect(calls).toEqual([
+      {
+        method: "reply",
+        invocationId: "binv_turn",
+        text: "⚠️ Claude Code stopped with an error before finishing this turn: invalid_request: Prompt is too long",
+      },
+    ])
+    await server.shutdown()
+  })
+
+  test("a quota StopFailure goes to carry-on instead of closing the turn", async () => {
+    const { server, internals, calls, transcript, deliver } = await hookServer()
+    const apiErrors: Array<{ invocationId: string; text: string }> = []
+    await deliver("binv_turn")
+    internals.carryOn = {
+      onApiError: (invocationId, text) => (apiErrors.push({ invocationId, text }), true),
+      onTurnClosed: () => {},
+      stop: () => {},
+    }
+
+    await server.handleStopSignal({
+      event: "StopFailure",
+      transcriptPath: transcript,
+      error: "rate_limit",
+      message: "You've hit your limit · resets 3pm",
+    })
+
+    expect({ calls, apiErrors }).toEqual({
+      calls: [],
+      apiErrors: [{ invocationId: "binv_turn", text: "You've hit your limit · resets 3pm" }],
+    })
+    await server.shutdown()
+  })
+
+  test("a Stop while Claude holds queued input leaves the turn open for the turn that takes it", async () => {
+    const { server, calls, transcript, deliver } = await hookServer()
+    await deliver("binv_turn")
+    writeFileSync(
+      transcript,
+      [
+        queueLine("enqueue", '<channel invocation_id="binv_turn">'),
+        queueLine("dequeue"),
+        turnLine("binv_turn"),
+        queueLine("enqueue", "[Steer from the Threa scratchpad — fold into the current work]\nalso check the docs"),
+      ].join("\n") + "\n"
+    )
+
+    await server.handleStopSignal({ event: "Stop", transcriptPath: transcript, lastAssistantMessage: "Done." })
+
+    expect(calls).toEqual([])
+    await server.shutdown()
+  })
+
+  test("a Stop after queued input was taken mid-turn closes the turn", async () => {
+    const { server, calls, transcript, deliver } = await hookServer()
+    await deliver("binv_turn")
+    const steer = "[Steer from the Threa scratchpad — fold into the current work]\nalso check the docs"
+    writeFileSync(
+      transcript,
+      [turnLine("binv_turn"), queueLine("enqueue", steer), queueLine("remove", steer)].join("\n") + "\n"
+    )
+
+    await server.handleStopSignal({ event: "Stop", transcriptPath: transcript, lastAssistantMessage: "Done." })
+
+    expect(calls).toEqual([{ method: "endTurn", invocationId: "binv_turn", text: "Done." }])
+    await server.shutdown()
+  })
+
+  test("a Stop whose transcript cannot be read still closes the turn", async () => {
+    const { server, calls, deliver } = await hookServer()
+    await deliver("binv_turn")
+
+    await server.handleStopSignal({
+      event: "Stop",
+      transcriptPath: join(dir, "missing.jsonl"),
+      lastAssistantMessage: "Done.",
+    })
+
+    expect(calls).toEqual([{ method: "endTurn", invocationId: "binv_turn", text: "Done." }])
+    await server.shutdown()
+  })
+
+  test("a Stop from another turn while the invocation is only queued leaves it open", async () => {
+    const { server, calls, transcript, deliver } = await hookServer()
+    await deliver("binv_turn")
+    writeFileSync(
+      transcript,
+      [
+        '{"type":"user","message":{"content":"a terminal prompt"}}',
+        queueLine("enqueue", '<channel invocation_id="binv_turn">'),
+      ].join("\n") + "\n"
+    )
+
+    await server.handleStopSignal({ event: "Stop", transcriptPath: transcript, lastAssistantMessage: "Unrelated." })
+
+    expect(calls).toEqual([])
+    await server.shutdown()
+  })
+
+  test("a StopFailure carry-on declines closes the turn with the error", async () => {
+    const { server, internals, calls, transcript, deliver } = await hookServer()
+    await deliver("binv_turn")
+    internals.carryOn = { onApiError: () => false, onTurnClosed: () => {}, stop: () => {} }
+
+    await server.handleStopSignal({
+      event: "StopFailure",
+      transcriptPath: transcript,
+      error: "rate_limit",
+      message: "You've hit your limit · resets 3pm",
+    })
+
+    expect(calls).toEqual([
+      {
+        method: "reply",
+        invocationId: "binv_turn",
+        text: "⚠️ Claude Code stopped with an error before finishing this turn: rate_limit: You've hit your limit · resets 3pm",
+      },
+    ])
+    await server.shutdown()
   })
 })

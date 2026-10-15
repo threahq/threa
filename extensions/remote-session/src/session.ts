@@ -2632,6 +2632,40 @@ export class RemoteSession {
   }
 
   /**
+   * Close an in-flight turn because the runtime finished it, without the agent
+   * calling `reply`:
+   *
+   * | turn posted | `finalText` | close                                  |
+   * | ----------- | ----------- | -------------------------------------- |
+   * | nothing     | non-blank   | `finalText` becomes the reply          |
+   * | nothing     | blank       | the no-reply note                      |
+   * | something   | any         | silent; the posted messages stand      |
+   */
+  async endTurn(invocationId: string, finalText?: string): Promise<SendResult> {
+    const route = this.route(invocationId)
+    if (!route) {
+      return { ok: false, retryable: false, message: `No open request with invocation_id ${invocationId}.` }
+    }
+    return route.enqueue(() => this.runEndTurn(route, finalText))
+  }
+
+  private async runEndTurn(route: TurnRoute, finalText: string | undefined): Promise<SendResult> {
+    if (route.terminal || !this.isOpen(route)) {
+      return { ok: false, retryable: false, message: `Request ${route.invocation.id} is already closed.` }
+    }
+    if (this.observedClaims.get(route.invocation.id)?.updateInProgress) {
+      return { ok: false, message: "Input update is still in progress; the turn stays open.", retryable: true }
+    }
+    if (finalText?.trim() && route.sentCount === 0) return this.runReply(route, route.snapshotIntent(finalText))
+    return this.closeUnanswered(route)
+  }
+
+  /** Close a turn the agent never answered: a pending prepared close wins, else the no-reply close. */
+  private closeUnanswered(route: TurnRoute): Promise<SendResult> {
+    return this.closeWith(route, route.prepared ?? { kind: "timeout" })
+  }
+
+  /**
    * Close an in-flight turn as failed: the runtime reported the work itself
    * failed, so nothing is posted and the invocation carries the reason. Mirrors
    * what the delivery catch path does after `registerTurn` — the route dies,
@@ -3076,7 +3110,7 @@ export class RemoteSession {
 
   private async runIdleTimeout(route: TurnRoute, generation: number): Promise<void> {
     if (!route.isCurrentDeadline(generation) || route.state !== "open" || route.revoked) return
-    const result = await this.closeWith(route, route.prepared ?? { kind: "timeout" })
+    const result = await this.closeUnanswered(route)
     if (!result.ok) this.log(`timeout close failed: ${result.message}`)
   }
 

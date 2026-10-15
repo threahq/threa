@@ -1,18 +1,42 @@
 import { hostname } from "node:os"
 import { ThreaClient, readConfigFile, wireLifecycle } from "@threahq/remote-session"
-import { channelActivation, readParentCommand } from "./channel-detect"
+import { channelActivation, launchedWithSettings, readParentCommand } from "./channel-detect"
 import { ChannelServer } from "./channel-server"
 import { CONFIG_PATH, loadChannelConfig } from "./config"
+import { StopHookListener } from "./stop-hook-listener"
+
+function logStderr(message: string): void {
+  process.stderr.write(`[threa-channel] ${message}\n`)
+}
+
+/** Listen for Claude's Stop hook when harnessd launched Claude with the hook settings; otherwise `reply` closes turns. */
+async function openStopHooks(parentCommand: string): Promise<StopHookListener | undefined> {
+  const socket = process.env.THREA_CHANNEL_HOOK_SOCKET
+  const settings = process.env.THREA_CHANNEL_HOOK_SETTINGS
+  if (!socket) return undefined
+  if (!settings || !launchedWithSettings(parentCommand, settings)) {
+    logStderr(`Claude was not launched with the stop-hook settings (${settings ?? "<unset>"}) — turns close on reply`)
+    return undefined
+  }
+  try {
+    return await StopHookListener.listen(socket, logStderr)
+  } catch (error) {
+    logStderr(
+      `stop hook: cannot listen on ${socket} (${error instanceof Error ? error.message : String(error)}) — turns close on reply`
+    )
+    return undefined
+  }
+}
 
 async function main(): Promise<void> {
   const result = loadChannelConfig({
     env: process.env,
     cwd: process.cwd(),
     hostname: hostname(),
-    file: readConfigFile(CONFIG_PATH, (message) => process.stderr.write(`[threa-channel] ${message}\n`)),
+    file: readConfigFile(CONFIG_PATH, logStderr),
   })
   if ("error" in result) {
-    process.stderr.write(`[threa-channel] ${result.error}\n`)
+    logStderr(result.error)
     process.exit(1)
   }
 
@@ -27,7 +51,9 @@ async function main(): Promise<void> {
   const activation = channelActivation(parentCommand, serverKey)
 
   const client = new ThreaClient(result.config)
-  const server = new ChannelServer(result.config, client, undefined, activation.active)
+  // MCP instructions are fixed when stdio connects, so hook mode is settled before the server exists.
+  const stopHooks = activation.active ? await openStopHooks(parentCommand) : undefined
+  const server = new ChannelServer(result.config, client, undefined, activation.active, undefined, stopHooks)
 
   // Connect stdio first so Claude Code registers the channel and discovers the
   // reply tool even while the Threa bridge is still spinning up. This also puts
