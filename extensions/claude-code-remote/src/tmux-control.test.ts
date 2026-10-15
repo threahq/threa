@@ -294,6 +294,20 @@ describe("tmuxAvailable", () => {
     ])
   })
 
+  it("clears the paste instead of pressing Enter when the steer is refused during the settle", async () => {
+    process.env.TMUX = "/tmp/tmux-501/default,1234,0"
+    process.env.TMUX_PANE = "%5"
+    const { calls, run } = steerRunner([
+      { exitCode: 0, stdout: WORKING_WITH_COMPOSER },
+      { exitCode: 0, stdout: composerShowing("go left") },
+    ])
+    expect(await steerText("go left", { settleMs: 0, run, refused: () => true })).toBe(false)
+    expect(calls.slice(-2)).toEqual([
+      { command: ["tmux", "capture-pane", "-p", "-t", "%5"] },
+      { command: ["tmux", "send-keys", "-t", "%5", "C-u"] },
+    ])
+  })
+
   for (const [name, screen] of [
     ["a permission prompt", PERMISSION_PROMPT],
     ["an AskUserQuestion menu", ASK_USER_QUESTION],

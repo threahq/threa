@@ -191,6 +191,16 @@ describe("CarryOnController", () => {
     expect({ resumed: resumed.log.holdEnds, dropped: dropped.log.holdEnds }).toEqual({ resumed: 1, dropped: 1 })
   })
 
+  it("leaves the claim to the closing turn when it gives up on a hold", async () => {
+    const { host, log, inflight } = makeHost({ injectOk: false })
+    const controller = new CarryOnController(host, FAST)
+    const id = startTurn(controller, inflight)
+    controller.onApiError(id, OVERLOADED)
+    await wait(40)
+
+    expect({ closes: log.closes.length, holdEnds: log.holdEnds }).toEqual({ closes: 1, holdEnds: 0 })
+  })
+
   it("leaves a turn stopped during the resume inject alone, even when the inject fails", async () => {
     const { host, log, inflight } = makeHost()
     let landInject: (ok: boolean) => void = () => undefined

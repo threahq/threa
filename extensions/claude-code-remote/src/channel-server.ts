@@ -565,9 +565,10 @@ export function createClaudeSessionControl(
   reconnectReady?: () => boolean,
   activeStreamId?: () => string | undefined,
   spawnRuntimes: () => readonly SpawnRuntimeOption[] = defaultSpawnRuntimes,
-  steerRefused: () => boolean = () => false
+  steerRefused?: () => boolean
 ): SessionControlActuator | undefined {
   if (!tmuxAvailable()) return undefined
+  const refused = steerRefused && (() => steerRefused() || (carryOn()?.awaitingResume ?? false))
   return {
     get commands() {
       return runtimeSessionId
@@ -607,11 +608,14 @@ export function createClaudeSessionControl(
     // The prefix tells the model mid-turn text came from the scratchpad, so it
     // folds it into the open invocation's work rather than treating it as a
     // side conversation at the terminal. A held session sits at a quota-dead
-    // prompt, so the message waits for the next turn.
-    steer: (text) =>
-      steerRefused() || carryOn()?.awaitingResume
-        ? false
-        : steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`),
+    // prompt, so the message waits for the next turn. No `steerRefused` means
+    // the session cannot steer at all: messages wait and edits restart the turn.
+    ...(refused && {
+      steer: (text: string) =>
+        refused()
+          ? false
+          : steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`, { refused }),
+    }),
     isHeld: () => carryOn()?.awaitingResume ?? false,
     runCommand: (name, args, context) =>
       runClaudeCommand(
@@ -675,8 +679,8 @@ export class ChannelServer {
   private readonly hookMode: boolean
   /** Stop signals still being handled: the turn they end is closing, so a steer would land in the next one. */
   private stopsInFlight = 0
-  /** Invocations that got a `send`/`reply` since the last Stop of their turn: that Stop's final text is already posted. */
-  private readonly postedSinceStop = new Set<string>()
+  /** The in-flight invocation got a `send`/`reply` since its turn's last Stop: that Stop's final text is already posted. */
+  private postedSinceStop: string | undefined
 
   constructor(
     private readonly config: RemoteSessionConfig,
@@ -775,7 +779,9 @@ export class ChannelServer {
           // Without the Stop hook, `reply` closes the turn, so a steer Claude takes
           // after it lands in a turn with no invocation. An open permission dialog
           // or menu would take the paste and its Enter as the answer.
-          () => !this.hookMode || this.stopsInFlight > 0 || this.session.statusSnapshot.pendingDecisionCount > 0
+          this.hookMode
+            ? () => this.stopsInFlight > 0 || this.session.statusSnapshot.pendingDecisionCount > 0
+            : undefined
         ),
         // Record what this window owns so harnessd can reap it later: an archive
         // that lands while this process is dead has nothing else to go on.
@@ -969,6 +975,7 @@ export class ChannelServer {
   private async deliverToClaude(turn: DeliveredTurn): Promise<void> {
     this.currentRuntimeInvocationId = turn.invocationId
     this.currentTurnSealed = turn.sealed
+    this.postedSinceStop = undefined
     // Window the transcript tail BEFORE the content is pushed, so the tracer's
     // start offset precedes the prompt echo it binds on.
     // A sealed turn's steps are ciphertext to the server, so the tracer may
@@ -1041,7 +1048,8 @@ export class ChannelServer {
     const result = closesTurn
       ? await this.session.reply(invocationId, text)
       : await this.session.sendInterim(invocationId, text)
-    if (this.hookMode && result.ok) this.postedSinceStop.add(invocationId)
+    if (this.hookMode && result.ok && invocationId === this.inflightRuntimeInvocationId())
+      this.postedSinceStop = invocationId
     this.applyTurnClose(invocationId, result)
     return result
   }
@@ -1059,9 +1067,13 @@ export class ChannelServer {
     // still queued posts it now, or the turn that closes the invocation would
     // replace it.
     const finalText = signal.event === "Stop" ? signal.lastAssistantMessage : undefined
-    const unposted = this.postedSinceStop.delete(invocationId) ? undefined : finalText
+    const unposted = this.postedSinceStop === invocationId ? undefined : finalText
+    this.postedSinceStop = undefined
     if (turn?.pendingInput) {
-      if (unposted?.trim()) await this.session.sendInterim(invocationId, unposted)
+      if (unposted?.trim()) {
+        const posted = await this.session.sendInterim(invocationId, unposted)
+        if (!posted.ok) log(`stop hook: posting the answer of a turn on ${invocationId} failed: ${posted.message}`)
+      }
       log(`stop hook: Claude still has queued input; ${invocationId} stays open for the turn that takes it`)
       return
     }

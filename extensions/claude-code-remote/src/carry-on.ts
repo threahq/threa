@@ -234,7 +234,8 @@ export class CarryOnController {
 
   /** Close the turn loudly. Works with or without an active hold — the unschedulable paths (no reset time, reset too far away) give up before one exists. */
   private async giveUp(invocationId: string, reason: string, signal: QuotaSignal | undefined): Promise<void> {
-    this.dropHold(`giving up: ${reason}`)
+    // Closing the turn claims what waited; claiming first would steer into the quota-dead prompt.
+    this.dropHold(`giving up: ${reason}`, false)
     this.gaveUpOn = invocationId
     if (this.turn?.invocationId === invocationId) this.turn = undefined
     const lines = [`⚠️ Quota carry-on gave up: ${reason}.`]
@@ -252,13 +253,13 @@ export class CarryOnController {
     })
   }
 
-  private dropHold(reason: string): void {
+  private dropHold(reason: string, claimWaiting = true): void {
     const hold = this.hold
     if (!hold) return
     this.host.log(`quota carry-on: dropping hold on ${hold.invocationId} — ${reason}`)
     this.clearTimers()
     this.hold = undefined
-    if (!hold.resumed) this.host.holdEnded()
+    if (claimWaiting && !hold.resumed) this.host.holdEnded()
   }
 
   private clearTimers(): void {

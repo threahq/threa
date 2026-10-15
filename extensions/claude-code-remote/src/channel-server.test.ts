@@ -827,23 +827,15 @@ describe("ChannelServer steering", () => {
   const steerOf = (server: ChannelServer) =>
     (
       server.session as unknown as {
-        delegate: { sessionControl: { steer: (text: string, streamId: string) => Promise<boolean> } }
+        delegate: { sessionControl: { steer?: (text: string, streamId: string) => Promise<boolean> } }
       }
     ).delegate.sessionControl.steer
 
-  test("a session launched without the Stop hook does not steer; the message waits for the next turn", async () => {
-    const pasted = spyOn(tmuxControl, "steerText").mockResolvedValue(true)
+  test("a session launched without the Stop hook offers no steer; messages wait for the next turn", async () => {
     const { server } = stubbedTurnServer(makeConfig())
     try {
-      expect({
-        steered: await steerOf(server)("also check the docs", "stream_turn"),
-        pastes: pasted.mock.calls.length,
-      }).toEqual({
-        steered: false,
-        pastes: 0,
-      })
+      expect(steerOf(server)).toBeUndefined()
     } finally {
-      pasted.mockRestore()
       await server.shutdown()
     }
   })
@@ -868,10 +860,10 @@ describe("ChannelServer steering", () => {
       })
       await hook.exited
       for (let i = 0; i < 100 && !closeStarted; i++) await flush()
-      const whileClosing = await steerOf(server)("also check the docs", "stream_turn")
+      const whileClosing = await steerOf(server)!("also check the docs", "stream_turn")
       finishClose()
       await flush()
-      const afterClose = await steerOf(server)("also check the docs", "stream_turn")
+      const afterClose = await steerOf(server)!("also check the docs", "stream_turn")
 
       expect({ whileClosing, afterClose, pastes: pasted.mock.calls.length }).toEqual({
         whileClosing: false,
