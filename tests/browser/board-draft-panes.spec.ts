@@ -50,7 +50,7 @@ test("should write a card's reply in a focused pane, keep the card mounted while
   await page.setViewportSize({ width: 1400, height: 900 })
   const { workspaceId } = await seedConversations(page, 6)
   await page.goto(`/w/${workspaceId}/board?lens=all`)
-  await expect(board(page).getByRole("button", { name: "Open conversation" }).first()).toBeVisible({
+  await expect(board(page).getByRole("link", { name: "Open conversation" }).first()).toBeVisible({
     timeout: 30_000,
   })
 
@@ -89,7 +89,7 @@ test("should open a card's reply beside the board and bring it back inline with 
   await page.setViewportSize({ width: 1400, height: 900 })
   const { workspaceId } = await seedConversations(page, 1)
   await page.goto(`/w/${workspaceId}/board?lens=all`)
-  await expect(board(page).getByRole("button", { name: "Open conversation" })).toHaveCount(1, { timeout: 30_000 })
+  await expect(board(page).getByRole("link", { name: "Open conversation" })).toHaveCount(1, { timeout: 30_000 })
 
   await startReply(page, "beside the board")
   await board(page).getByRole("link", { name: "Expand editor into a pane" }).hover()

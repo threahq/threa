@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test"
-import { loginAndCreateWorkspace, createChannel, expectApiOk } from "./helpers"
+import { loginAndCreateWorkspace, createChannel, expectApiOk, panesSettled } from "./helpers"
 
 /**
  * Expand opens a stream's draft as a pane of its own, `compose:<streamId>` in
@@ -159,6 +159,34 @@ test("should open the draft beside the stream, unfocused, from the button hover 
   await page.keyboard.press("Escape")
   await expect.poll(() => panelParam(page)).toBeNull()
   await expect(mainComposer(page)).toHaveText("to the side")
+})
+
+test("should open the draft where the side button is dragged to", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  const { streamId } = await seed(page)
+  const compose = `compose:${streamId}`
+
+  await mainComposer(page).click()
+  await page.keyboard.type("dragged")
+  await expandLink(page).hover()
+  const from = (await sideLink(page).boundingBox())!
+  const box = (await mainPane(page).boundingBox())!
+  const to = { x: box.x + box.width / 2, y: box.y + box.height * 0.05 }
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(from.x - 12, from.y - 4, { steps: 3 })
+  await page.mouse.move(to.x, to.y, { steps: 12 })
+  // Chromium coalesces emulated dragovers and can drop the last; a nudge lands one where the pointer rests.
+  await page.mouse.move(to.x + 1, to.y)
+  await page.mouse.move(to.x, to.y)
+  await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "top")
+  await page.mouse.up()
+
+  await expect(paneEditor(page, streamId)).toHaveText("dragged")
+  expect(panelParam(page)).toContain(compose)
+  await panesSettled(page)
+  const [stream, pane] = [await mainPane(page).boundingBox(), await tabPane(page, compose).boundingBox()]
+  expect(pane!.y + pane!.height).toBeLessThanOrEqual(stream!.y + 1)
 })
 
 test("should keep a docked draft pane across a reload and toggle it with Alt+Enter", async ({ page }) => {

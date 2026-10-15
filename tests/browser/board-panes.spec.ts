@@ -33,7 +33,7 @@ async function seedConversations(page: Page, count: number) {
 }
 
 const board = (page: Page) => page.locator('[data-panel-tab="page:board"]')
-const openers = (page: Page) => board(page).getByRole("button", { name: "Open conversation" })
+const openers = (page: Page) => board(page).getByRole("link", { name: "Open conversation" })
 const panelParam = (page: Page) => new URL(page.url()).searchParams.get("panel")
 const boardScrollTop = (page: Page) =>
   page.locator("[data-board-scroll-viewport]").evaluate((el) => Math.round(el.scrollTop))
@@ -70,6 +70,33 @@ test("should open two cards as two tabs beside the board and land on the bare bo
   expect(new URL(page.url()).pathname).toBe(`/w/${workspaceId}/board`)
   await expect(page.getByTestId("panel")).toHaveCount(0)
   await expect(board(page)).toBeVisible()
+})
+
+test("should open a card's conversation where its opener is dragged to", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 })
+  const { workspaceId } = await seedConversations(page, 1)
+  await page.goto(`/w/${workspaceId}/board?lens=all`)
+  await expect(openers(page)).toHaveCount(1, { timeout: 30_000 })
+
+  const from = (await openers(page).boundingBox())!
+  const box = (await board(page).boundingBox())!
+  const to = { x: box.x + box.width / 2, y: box.y + box.height * 0.95 }
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(from.x + 12, from.y + 4, { steps: 3 })
+  await page.mouse.move(to.x, to.y, { steps: 12 })
+  // Chromium coalesces emulated dragovers and can drop the last; a nudge lands one where the pointer rests.
+  await page.mouse.move(to.x + 1, to.y)
+  await page.mouse.move(to.x, to.y)
+  await expect(page.getByTestId("pane-drop-indicator")).toHaveAttribute("data-drop", "bottom")
+  await page.mouse.up()
+
+  // Below the board, in its column.
+  await expect.poll(() => panelParam(page)).toMatch(/^page:board--conv:[^.-]+$/)
+  const pane = page.locator(`[data-panel-tab="${panelParam(page)!.split("--")[1]}"]`)
+  await expect(pane).toBeVisible()
+  const [boardBox, paneBox] = [await board(page).boundingBox(), await pane.boundingBox()]
+  expect(paneBox!.y).toBeGreaterThanOrEqual(boardBox!.y + boardBox!.height - 1)
 })
 
 test("should put an aside's draft in the card's reply field and close the aside when it is sent to the composer", async ({

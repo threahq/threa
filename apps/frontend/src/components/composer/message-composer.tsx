@@ -1749,6 +1749,8 @@ export function MessageComposer({
                     ref={actionBarWrapperRef}
                     onMouseDown={(e) => {
                       if (!actionBarWrapperRef.current?.contains(e.target as Node)) return
+                      // Cancelling mousedown also cancels a drag, and a link here drags out as a pane.
+                      if (!isMobile && e.target instanceof Element && e.target.closest("a[href]")) return
                       e.preventDefault()
                     }}
                   >
