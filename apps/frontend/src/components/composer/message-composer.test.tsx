@@ -428,16 +428,15 @@ describe("MessageComposer", () => {
       expect(instructions).toHaveTextContent("Press Escape to leave the editor.")
     })
 
-    it("should announce fullscreen escape instructions when expanded with a way to collapse", () => {
+    it("should announce the close-on-escape instruction when expanded with a way to collapse", () => {
       const { rerender } = render(<MessageComposer {...defaultProps} expanded onCollapse={vi.fn()} />)
 
-      expect(screen.getByRole("textbox", { name: "Fullscreen message editor" })).toBeInTheDocument()
-      expect(screen.getByText(/Press Escape again to close the fullscreen editor\./)).toBeInTheDocument()
+      expect(screen.getByRole("textbox", { name: "Expanded message editor" })).toBeInTheDocument()
+      expect(screen.getByText(/Press Escape again to close the expanded editor\./)).toBeInTheDocument()
 
-      // Expanded in a pane, the pane owns closing.
       rerender(<MessageComposer {...defaultProps} expanded />)
       expect(screen.getByRole("textbox", { name: "Expanded message editor" })).toBeInTheDocument()
-      expect(screen.queryByText(/close the fullscreen editor/)).not.toBeInTheDocument()
+      expect(screen.queryByText(/close the expanded editor/)).not.toBeInTheDocument()
     })
 
     it("on touch, the expanded shell puts the action bar at the foot and opens the format toolbar on Aa", async () => {

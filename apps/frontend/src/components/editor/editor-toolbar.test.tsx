@@ -302,14 +302,12 @@ describe("EditorToolbar", () => {
     expect(editorBehaviors.dedentSelection).not.toHaveBeenCalled()
   })
 
-  it("uses a dedicated scroll container for the mobile inline toolbar without the edge fade overlay", () => {
+  it("uses a dedicated scroll container for the mobile inline toolbar without the edge fade", () => {
     const editor = createEditorStub()
-    const { container } = render(
-      <EditorToolbar editor={editor} isVisible inline inlinePosition="below" showSpecialInputControls />
-    )
+    render(<EditorToolbar editor={editor} isVisible inline inlinePosition="below" showSpecialInputControls />)
 
-    expect(screen.getByTestId("mobile-inline-toolbar-scroll")).toBeInTheDocument()
-    expect(container.querySelector(".bg-gradient-to-l")).toBeNull()
+    const scroller = screen.getByTestId("mobile-inline-toolbar-scroll")
+    expect(scroller.parentElement!.className).not.toContain("mask-image")
   })
 
   it("neutralizes ghost hover and uses active:bg-muted for mobile toolbar buttons", () => {
