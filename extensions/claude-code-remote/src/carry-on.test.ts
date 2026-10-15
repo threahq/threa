@@ -24,6 +24,7 @@ interface HostLog {
   closes: Array<{ invocationId: string; text: string }>
   injects: string[]
   keepAlives: number
+  holdEnds: number
 }
 
 function makeHost(options: { injectOk?: boolean; failCloses?: number } = {}): {
@@ -31,7 +32,7 @@ function makeHost(options: { injectOk?: boolean; failCloses?: number } = {}): {
   log: HostLog
   inflight: Set<string>
 } {
-  const log: HostLog = { holds: [], closes: [], injects: [], keepAlives: 0 }
+  const log: HostLog = { holds: [], closes: [], injects: [], keepAlives: 0, holdEnds: 0 }
   const inflight = new Set<string>()
   let closesToFail = options.failCloses ?? 0
   const host: CarryOnHost = {
@@ -53,6 +54,9 @@ function makeHost(options: { injectOk?: boolean; failCloses?: number } = {}): {
     inject: async (text) => {
       log.injects.push(text)
       return options.injectOk ?? true
+    },
+    holdEnded: () => {
+      log.holdEnds += 1
     },
     log: () => undefined,
     // Pinned clock: delays are computed as (resumeAt - now()) with both sides
@@ -149,6 +153,23 @@ describe("CarryOnController", () => {
     controller.stop()
 
     expect({ typing, landed }).toEqual({ typing: true, landed: false })
+  })
+
+  it("reports the hold ended once, whether the resume lands or the hold drops first", async () => {
+    const resumed = makeHost()
+    const resumedController = new CarryOnController(resumed.host, FAST)
+    const resumedId = startTurn(resumedController, resumed.inflight)
+    resumedController.onApiError(resumedId, OVERLOADED)
+    await wait(40)
+    resumedController.onTurnClosed(resumedId)
+
+    const dropped = makeHost()
+    const droppedController = new CarryOnController(dropped.host, FAST)
+    startTurn(droppedController, dropped.inflight)
+    droppedController.onApiError("binv_1", SESSION_LIMIT)
+    droppedController.onInterrupt()
+
+    expect({ resumed: resumed.log.holdEnds, dropped: dropped.log.holdEnds }).toEqual({ resumed: 1, dropped: 1 })
   })
 
   it("leaves a turn stopped during the resume inject alone, even when the inject fails", async () => {

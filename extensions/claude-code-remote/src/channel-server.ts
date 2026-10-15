@@ -748,6 +748,7 @@ export class ChannelServer {
             if (!result.ok) throw new Error(result.message)
           },
           inject: (text) => steerText(text),
+          holdEnded: () => this.session.claimWaiting(),
           log,
         })
       : undefined

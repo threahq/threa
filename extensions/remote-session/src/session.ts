@@ -1820,9 +1820,10 @@ export class RemoteSession {
   /**
    * Inject a claimed plain message into the turn running in its stream. Only a
    * confirmed injection binds it to that turn (it then closes with it) and puts
-   * a `steer` step on the turn's trace. A runtime that cannot take it now, or a
-   * turn that stopped being open meanwhile, leaves it for the stream's next
-   * turn; a thrown steer fails it.
+   * a `steer` step on the turn's trace. A runtime that cannot take it now leaves
+   * it for the stream's next turn; a thrown steer fails it. An injection the
+   * runtime took after the turn closed is the runtime's to run: delivering it
+   * again would run it twice, so it closes like the turn it joined.
    */
   private async steerRunningTurn(invocation: ClaimedInvocation): Promise<void> {
     const content = await this.steerContent(invocation)
@@ -1837,7 +1838,8 @@ export class RemoteSession {
       return
     }
     if (this.isClaimCancelled(invocation)) return
-    if (!steered || !this.isOpen(route)) return this.deferToNextTurn(invocation)
+    if (!steered) return this.deferToNextTurn(invocation)
+    if (!this.isOpen(route)) return this.completeNoResponse(invocation)
     this.bindRunningOwner(route.invocation.id, [invocation])
     const context = this.observedClaims.get(invocation.id)
     if (context?.invocation === invocation) context.steered = true
@@ -2805,6 +2807,11 @@ export class RemoteSession {
   /** Whether this session still holds the invocation open (not yet replied, timed out, or superseded). */
   isInflight(invocationId: string): boolean {
     return this.openRoute(invocationId) !== undefined
+  }
+
+  /** A runtime hold (`sessionControl.isHeld`) ended: claim the messages it kept waiting instead of waiting for the next poll. */
+  claimWaiting(): void {
+    this.requestClaimDrain()
   }
 
   /** Reset idle timeouts for every in-flight turn in a stream (a pending approval is a sign of life). */

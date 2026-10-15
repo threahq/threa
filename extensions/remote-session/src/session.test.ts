@@ -3094,14 +3094,15 @@ describe("messages to a running turn (steer by default, /enqueue waits)", () => 
     })
   })
 
-  test("a held idle runtime claims queued-message only once the hold ends", async () => {
+  test("a held idle runtime claims queued-message as soon as the hold ends", async () => {
     const h = makeQueuedSession([enqueuedMessage("binv_q", "stream_a")], { steer: steerOk })
     h.held.value = true
 
     await claimDrain(h.session)
     const whileHeld = { delivered: [...h.delivered], left: h.queue.map((item) => item.id) }
     h.held.value = false
-    await claimDrain(h.session)
+    h.session.claimWaiting()
+    await waitUntil(() => h.delivered.length > 0)
 
     expect({ whileHeld, delivered: h.delivered }).toEqual({
       whileHeld: { delivered: [], left: ["binv_q"] },
@@ -3190,7 +3191,7 @@ describe("messages to a running turn (steer by default, /enqueue waits)", () => 
     })
   }
 
-  test("a turn that closed during the injection leaves the message to the next turn", async () => {
+  test("a message the runtime took after its turn closed is not delivered again", async () => {
     let h!: ReturnType<typeof makeQueuedSession>
     h = makeQueuedSession([plainMessage("binv_a", "stream_a")], {
       steer: async () => {
@@ -3202,13 +3203,13 @@ describe("messages to a running turn (steer by default, /enqueue waits)", () => 
     h.queue.push(plainMessage("binv_b", "stream_a"))
 
     await claimDrain(h.session)
-    await waitUntil(() => h.delivered.length === 2)
+    await waitUntil(() => h.calls.complete.length === 2)
 
     expect({
       delivered: h.delivered,
       completed: h.calls.complete.map((call) => call.id),
       steps: steerSteps(h),
-    }).toEqual({ delivered: ["binv_a", "binv_b"], completed: ["binv_a"], steps: [] })
+    }).toEqual({ delivered: ["binv_a"], completed: ["binv_a", "binv_b"], steps: [] })
   })
 
   test("a waiting message runs its edited text, folded with what was sent after it", async () => {

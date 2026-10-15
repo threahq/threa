@@ -88,6 +88,7 @@ describe("createClaudeSessionControl", () => {
         reportHold: async () => undefined,
         closeTurn: async () => undefined,
         inject: async () => true,
+        holdEnded: () => undefined,
         log: () => undefined,
       },
       { transientResumeDelayMs: 10, minResumeDelayMs: 1, resumeJitterMs: 0 }
@@ -152,6 +153,7 @@ describe("createClaudeSessionControl", () => {
         reportHold: async () => undefined,
         closeTurn: async () => undefined,
         inject: async () => true,
+        holdEnded: () => undefined,
         log: () => undefined,
       },
       { transientResumeDelayMs: 60_000, minResumeDelayMs: 1, resumeJitterMs: 0 }

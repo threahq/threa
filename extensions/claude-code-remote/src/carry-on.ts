@@ -59,6 +59,8 @@ export interface CarryOnHost {
   closeTurn(invocationId: string, text: string): Promise<void>
   /** Submit a fresh prompt into the idle runtime. False = control lost. */
   inject(text: string): Promise<boolean>
+  /** The hold that kept messages unclaimed ended; claim what waited behind it. */
+  holdEnded(): void
   log(message: string): void
   now?(): number
 }
@@ -218,6 +220,7 @@ export class CarryOnController {
       return
     }
     hold.resumed = true
+    this.host.holdEnded()
     // The hold stays (minus its resume timer): keep-alives continue while the
     // resumed turn works, onTurnClosed clears everything when the reply lands,
     // and a fresh quota error re-enters onApiError with the attempt count.
@@ -248,6 +251,7 @@ export class CarryOnController {
     this.host.log(`quota carry-on: dropping hold on ${hold.invocationId} — ${reason}`)
     this.clearTimers()
     this.hold = undefined
+    if (!hold.resumed) this.host.holdEnded()
   }
 
   private clearTimers(): void {

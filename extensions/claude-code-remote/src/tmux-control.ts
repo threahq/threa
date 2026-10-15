@@ -261,7 +261,7 @@ function composerShowsPaste(screen: string, text: string): boolean {
  * Returns false instead of typing when the pane shows a modal or cannot be
  * read: the paste and its Enter would answer the modal. Enter is pressed only
  * once the composer shows the paste, since a modal can open during the settle.
- * A refusal after the paste leaves the text in the composer.
+ * A refusal after the paste clears the composer unless a modal is showing.
  */
 export async function steerText(
   text: string,
@@ -277,8 +277,12 @@ export async function steerText(
   if (!pasteText(target, text, run)) return false
   if (settleMs > 0) await sleep(settleMs)
   const after = readPane(target, run)
-  if (after === undefined || !composerShowsPaste(after, text)) return false
-  return sendKeys(["Enter"], run)
+  if (after === undefined) return false
+  if (composerShowsPaste(after, text)) return sendKeys(["Enter"], run)
+  // A refused steer is delivered with the next turn; text left in the composer
+  // would submit it a second time. Keys sent into a modal would answer it.
+  if (!claudePaneShowsModal(after)) sendKeys(["C-u"], run)
+  return false
 }
 
 function pasteText(target: string, text: string, run: LocalCommandRunner): boolean {
