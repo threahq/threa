@@ -595,8 +595,18 @@ describe("RemoteSession.endTurn", () => {
     })
   })
 
-  test("closes silently when the turn already posted", async () => {
-    expect(await ended({ sentCount: 1, finalText: "Recap that would duplicate the posts." })).toEqual({
+  test("posts the final text after earlier posts in the turn", async () => {
+    expect(await ended({ sentCount: 1, finalText: "Answer to the steered message." })).toEqual({
+      result: { ok: true, message: "sent", closedTurn: true },
+      finalMessageMarkdown: "Answer to the steered message.",
+      noResponse: undefined,
+      completions: 1,
+      inflight: false,
+    })
+  })
+
+  test("closes silently when the turn already posted and no final text is left", async () => {
+    expect(await ended({ sentCount: 1 })).toEqual({
       result: { ok: true, message: "sent", closedTurn: true },
       finalMessageMarkdown: undefined,
       noResponse: true,

@@ -24,6 +24,7 @@ import {
   runClaudeCommand,
 } from "./channel-server"
 import type { CarryOnController } from "./carry-on"
+import * as tmuxControl from "./tmux-control"
 import { StopHookListener } from "./stop-hook-listener"
 
 describe("buildInstructions", () => {
@@ -683,7 +684,7 @@ describe("stop hooks", () => {
     await server.shutdown()
   })
 
-  test("a Stop while Claude holds queued input leaves the turn open for the turn that takes it", async () => {
+  test("a Stop while Claude holds queued input posts that turn's answer and leaves the invocation open", async () => {
     const { server, calls, transcript, deliver } = await hookServer()
     await deliver("binv_turn")
     writeFileSync(
@@ -698,7 +699,41 @@ describe("stop hooks", () => {
 
     await server.handleStopSignal({ event: "Stop", transcriptPath: transcript, lastAssistantMessage: "Done." })
 
-    expect(calls).toEqual([])
+    expect(calls).toEqual([{ method: "sendInterim", invocationId: "binv_turn", text: "Done." }])
+    await server.shutdown()
+  })
+
+  test("the turn that takes queued input posts its own answer when it closes the invocation", async () => {
+    const { server, calls, transcript, deliver } = await hookServer()
+    await deliver("binv_turn")
+    const steer = "[Steer from the Threa scratchpad — fold into the current work]\nalso check the docs"
+    writeFileSync(transcript, [turnLine("binv_turn"), queueLine("enqueue", steer)].join("\n") + "\n")
+    await server.handleStopSignal({ event: "Stop", transcriptPath: transcript, lastAssistantMessage: "Code fixed." })
+    writeFileSync(
+      transcript,
+      [turnLine("binv_turn"), queueLine("enqueue", steer), queueLine("dequeue")].join("\n") + "\n"
+    )
+
+    await server.handleStopSignal({ event: "Stop", transcriptPath: transcript, lastAssistantMessage: "Docs checked." })
+
+    expect(calls).toEqual([
+      { method: "sendInterim", invocationId: "binv_turn", text: "Code fixed." },
+      { method: "endTurn", invocationId: "binv_turn", text: "Docs checked." },
+    ])
+    await server.shutdown()
+  })
+
+  test("a Stop after the turn posted with reply closes without posting its final text again", async () => {
+    const { server, calls, transcript, deliver } = await hookServer()
+    await deliver("binv_turn")
+    await server.handleToolCall("reply", "binv_turn", "Here is the answer.")
+
+    await server.handleStopSignal({ event: "Stop", transcriptPath: transcript, lastAssistantMessage: "Recap." })
+
+    expect(calls).toEqual([
+      { method: "sendInterim", invocationId: "binv_turn", text: "Here is the answer." },
+      { method: "endTurn", invocationId: "binv_turn", text: undefined },
+    ])
     await server.shutdown()
   })
 
@@ -768,5 +803,84 @@ describe("stop hooks", () => {
       },
     ])
     await server.shutdown()
+  })
+})
+
+describe("ChannelServer steering", () => {
+  let dir: string
+  const saved = { TMUX: process.env.TMUX, TMUX_PANE: process.env.TMUX_PANE }
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "threa-steer-"))
+    process.env.TMUX = "/tmp/tmux-1/default,1,0"
+    process.env.TMUX_PANE = "%1"
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  })
+
+  const steerOf = (server: ChannelServer) =>
+    (
+      server.session as unknown as {
+        delegate: { sessionControl: { steer: (text: string, streamId: string) => Promise<boolean> } }
+      }
+    ).delegate.sessionControl.steer
+
+  test("a session launched without the Stop hook does not steer; the message waits for the next turn", async () => {
+    const pasted = spyOn(tmuxControl, "steerText").mockResolvedValue(true)
+    const { server } = stubbedTurnServer(makeConfig())
+    try {
+      expect({
+        steered: await steerOf(server)("also check the docs", "stream_turn"),
+        pastes: pasted.mock.calls.length,
+      }).toEqual({
+        steered: false,
+        pastes: 0,
+      })
+    } finally {
+      pasted.mockRestore()
+      await server.shutdown()
+    }
+  })
+
+  test("a steer waits while a Stop is closing the turn", async () => {
+    const pasted = spyOn(tmuxControl, "steerText").mockResolvedValue(true)
+    const socketPath = join(dir, "session.sock")
+    const listener = await StopHookListener.listen(socketPath, () => {})
+    const { server, deliver } = stubbedTurnServer(makeConfig(), listener)
+    let finishClose: () => void = () => {}
+    const closing = new Promise<void>((resolve) => (finishClose = resolve))
+    let closeStarted = false
+    spyOn(server.session, "endTurn").mockImplementation(async () => {
+      closeStarted = true
+      await closing
+      return { ok: true, message: "sent", closedTurn: true as const }
+    })
+    try {
+      await deliver("binv_turn")
+      const hook = Bun.spawn(["bun", join(import.meta.dir, "stop-hook-forwarder.ts"), socketPath], {
+        stdin: new Blob([JSON.stringify({ hook_event_name: "Stop", last_assistant_message: "Done." })]),
+      })
+      await hook.exited
+      for (let i = 0; i < 100 && !closeStarted; i++) await flush()
+      const whileClosing = await steerOf(server)("also check the docs", "stream_turn")
+      finishClose()
+      await flush()
+      const afterClose = await steerOf(server)("also check the docs", "stream_turn")
+
+      expect({ whileClosing, afterClose, pastes: pasted.mock.calls.length }).toEqual({
+        whileClosing: false,
+        afterClose: true,
+        pastes: 1,
+      })
+    } finally {
+      pasted.mockRestore()
+      await server.shutdown()
+    }
   })
 })

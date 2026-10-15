@@ -804,7 +804,7 @@ describe("sealed output paths", () => {
     const { session, calls } = await startSealedTurn()
     await session.sendInterim("binv_sealed", "Progress.")
 
-    const result = await session.endTurn("binv_sealed", "Recap.")
+    const result = await session.endTurn("binv_sealed")
 
     expect({ ok: result.ok, plaintext: calls.complete.length, body: calls.completeSealed[0]?.body }).toEqual({
       ok: true,

@@ -109,10 +109,10 @@ describe("createClaudeSessionControl", () => {
     })
   })
 
-  it("does not steer into the pane while a permission decision is open", async () => {
+  it("does not steer into the pane while the server refuses steers", async () => {
     const pasted = spyOn(tmuxControl, "steerText").mockResolvedValue(true)
     try {
-      let pending = 1
+      let refused = true
       const actuator = withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () =>
         createClaudeSessionControl(
           undefined,
@@ -126,16 +126,16 @@ describe("createClaudeSessionControl", () => {
           undefined,
           undefined,
           undefined,
-          () => pending
+          () => refused
         )
       )!
-      const duringDecision = await actuator.steer!("go left", "stream_1")
-      pending = 0
-      const afterDecision = await actuator.steer!("go right", "stream_1")
+      const whileRefused = await actuator.steer!("go left", "stream_1")
+      refused = false
+      const afterRefusal = await actuator.steer!("go right", "stream_1")
 
-      expect({ duringDecision, afterDecision, pastes: pasted.mock.calls }).toEqual({
-        duringDecision: false,
-        afterDecision: true,
+      expect({ whileRefused, afterRefusal, pastes: pasted.mock.calls }).toEqual({
+        whileRefused: false,
+        afterRefusal: true,
         pastes: [["[Steer from the Threa scratchpad — fold into the current work]\ngo right"]],
       })
     } finally {

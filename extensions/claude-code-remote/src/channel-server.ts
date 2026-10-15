@@ -244,6 +244,7 @@ export function buildInstructions({
       ? [
           "- Post to the scratchpad with the `send` or `reply` tool (passing the same `invocation_id`); both only post. Use them for your answer, partial results, or status on a long task — on a long task, post something periodically so the user stays informed.",
           "- The request closes by itself when you finish your turn. If you posted nothing, your final response text is posted as the answer, so end with the answer itself rather than a summary of messages you already posted.",
+          "- If work continues after your turn ends (background tasks or agents), post its result with `reply` and the same `invocation_id` when it finishes; the request has already closed by then.",
           "- If several events arrive together, post to each by its own id.",
         ]
       : [
@@ -564,7 +565,7 @@ export function createClaudeSessionControl(
   reconnectReady?: () => boolean,
   activeStreamId?: () => string | undefined,
   spawnRuntimes: () => readonly SpawnRuntimeOption[] = defaultSpawnRuntimes,
-  pendingDecisionCount: () => number = () => 0
+  steerRefused: () => boolean = () => false
 ): SessionControlActuator | undefined {
   if (!tmuxAvailable()) return undefined
   return {
@@ -605,11 +606,10 @@ export function createClaudeSessionControl(
     },
     // The prefix tells the model mid-turn text came from the scratchpad, so it
     // folds it into the open invocation's work rather than treating it as a
-    // side conversation at the terminal. An open permission dialog or menu
-    // would take the paste and its Enter as the answer, and a held session
-    // sits at a quota-dead prompt, so in either case the message waits.
+    // side conversation at the terminal. A held session sits at a quota-dead
+    // prompt, so the message waits for the next turn.
     steer: (text) =>
-      pendingDecisionCount() > 0 || carryOn()?.awaitingResume
+      steerRefused() || carryOn()?.awaitingResume
         ? false
         : steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`),
     isHeld: () => carryOn()?.awaitingResume ?? false,
@@ -673,6 +673,10 @@ export class ChannelServer {
   private wakeBrief: WakeBrief | undefined
   /** Claude's Stop hook closes runtime turns, so `reply` only posts. */
   private readonly hookMode: boolean
+  /** Stop signals still being handled: the turn they end is closing, so a steer would land in the next one. */
+  private stopsInFlight = 0
+  /** Invocations that got a `send`/`reply` since the last Stop of their turn: that Stop's final text is already posted. */
+  private readonly postedSinceStop = new Set<string>()
 
   constructor(
     private readonly config: RemoteSessionConfig,
@@ -768,7 +772,10 @@ export class ChannelServer {
           () => !this.shuttingDown,
           () => this.session?.statusSnapshot.activeStreamId,
           undefined,
-          () => this.session.statusSnapshot.pendingDecisionCount
+          // Without the Stop hook, `reply` closes the turn, so a steer Claude takes
+          // after it lands in a turn with no invocation. An open permission dialog
+          // or menu would take the paste and its Enter as the answer.
+          () => !this.hookMode || this.stopsInFlight > 0 || this.session.statusSnapshot.pendingDecisionCount > 0
         ),
         // Record what this window owns so harnessd can reap it later: an archive
         // that lands while this process is dead has nothing else to go on.
@@ -811,9 +818,12 @@ export class ChannelServer {
     })
     this.wakeBrief = takeWakeBrief(config.runtimeSessionId)
     stopHooks?.onSignal((signal) => {
-      this.handleStopSignal(signal).catch((error) =>
-        log(`stop hook: handling ${signal.event} failed: ${error instanceof Error ? error.message : String(error)}`)
-      )
+      this.stopsInFlight++
+      this.handleStopSignal(signal)
+        .catch((error) =>
+          log(`stop hook: handling ${signal.event} failed: ${error instanceof Error ? error.message : String(error)}`)
+        )
+        .finally(() => this.stopsInFlight--)
     })
     this.registerHandlers()
   }
@@ -1031,6 +1041,7 @@ export class ChannelServer {
     const result = closesTurn
       ? await this.session.reply(invocationId, text)
       : await this.session.sendInterim(invocationId, text)
+    if (this.hookMode && result.ok) this.postedSinceStop.add(invocationId)
     this.applyTurnClose(invocationId, result)
     return result
   }
@@ -1039,16 +1050,20 @@ export class ChannelServer {
   async handleStopSignal(signal: StopHookSignal): Promise<void> {
     const invocationId = this.inflightRuntimeInvocationId()
     if (!invocationId) return
-    if (signal.transcriptPath) {
-      const turn = await this.readTurn(signal.transcriptPath, invocationId)
-      if (!turn.seen) {
-        log(`stop hook: ${signal.event} ended a turn that never saw ${invocationId}; leaving it open`)
-        return
-      }
-      if (turn.pendingInput) {
-        log(`stop hook: Claude still has queued input; ${invocationId} stays open for the turn that takes it`)
-        return
-      }
+    const turn = signal.transcriptPath ? await this.readTurn(signal.transcriptPath, invocationId) : undefined
+    if (turn && !turn.seen) {
+      log(`stop hook: ${signal.event} ended a turn that never saw ${invocationId}; leaving it open`)
+      return
+    }
+    // Each Claude turn's final text is an answer: a turn that ends with input
+    // still queued posts it now, or the turn that closes the invocation would
+    // replace it.
+    const finalText = signal.event === "Stop" ? signal.lastAssistantMessage : undefined
+    const unposted = this.postedSinceStop.delete(invocationId) ? undefined : finalText
+    if (turn?.pendingInput) {
+      if (unposted?.trim()) await this.session.sendInterim(invocationId, unposted)
+      log(`stop hook: Claude still has queued input; ${invocationId} stays open for the turn that takes it`)
+      return
     }
     if (signal.event === "StopFailure" && this.carryOn) {
       const providerText = signal.message ?? signal.error
@@ -1056,7 +1071,7 @@ export class ChannelServer {
     }
     const result =
       signal.event === "Stop"
-        ? await this.session.endTurn(invocationId, signal.lastAssistantMessage)
+        ? await this.session.endTurn(invocationId, unposted)
         : await this.session.reply(invocationId, stopFailureNotice(signal))
     this.applyTurnClose(invocationId, result)
     if (!result.ok) log(`stop hook: closing ${invocationId} failed: ${result.message}`)

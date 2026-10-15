@@ -2633,13 +2633,14 @@ export class RemoteSession {
 
   /**
    * Close an in-flight turn because the runtime finished it, without the agent
-   * calling `reply`:
+   * calling `reply`. The caller passes `finalText` only when no post already
+   * carries it:
    *
-   * | turn posted | `finalText` | close                                  |
+   * | `finalText` | turn posted | close                                  |
    * | ----------- | ----------- | -------------------------------------- |
-   * | nothing     | non-blank   | `finalText` becomes the reply          |
-   * | nothing     | blank       | the no-reply note                      |
-   * | something   | any         | silent; the posted messages stand      |
+   * | non-blank   | any         | `finalText` becomes the reply          |
+   * | blank       | nothing     | the no-reply note                      |
+   * | blank       | something   | silent; the posted messages stand      |
    */
   async endTurn(invocationId: string, finalText?: string): Promise<SendResult> {
     const route = this.route(invocationId)
@@ -2656,7 +2657,7 @@ export class RemoteSession {
     if (this.observedClaims.get(route.invocation.id)?.updateInProgress) {
       return { ok: false, message: "Input update is still in progress; the turn stays open.", retryable: true }
     }
-    if (finalText?.trim() && route.sentCount === 0) return this.runReply(route, route.snapshotIntent(finalText))
+    if (finalText?.trim()) return this.runReply(route, route.snapshotIntent(finalText))
     return this.closeUnanswered(route)
   }
 

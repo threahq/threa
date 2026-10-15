@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs"
 import { homedir, hostname } from "node:os"
-import { basename, dirname, join } from "node:path"
+import { basename, dirname, join, resolve } from "node:path"
 import { acceptClaudeBootPrompts, warnIfBlocked } from "./claude-boot"
 import { defaultClaudeDiskDeps, resumableClaudeTranscript } from "./claude-registry"
 import { die } from "./errors"
@@ -32,7 +32,7 @@ import { runtimeIdentityFor, type ResolvedRuntimeIdentity } from "./discovery"
  * launch command still names one, and `reconnect` validates that it exists.
  */
 export function mcpConfigDir(): string {
-  return process.env.THREA_HARNESSD_MCP_DIR || join(homedir(), ".threa", "harnessd", "mcp")
+  return resolve(process.env.THREA_HARNESSD_MCP_DIR || join(homedir(), ".threa", "harnessd", "mcp"))
 }
 
 export function mcpConfigPath(runtimeSessionId: string): string {
