@@ -12,14 +12,13 @@ import { classifyApiErrorText, type QuotaSignal } from "./quota-signal"
  *
  *  1. holds the claim open (periodic keep-alive beats the idle reaper),
  *  2. records the wait, and when it resumes, on the held turn's own trace,
- *  3. queues any `/carry-on <text>` (and `/steer`) messages the user sends
- *     while blocked, and
- *  4. at reset time pastes a continuation prompt into the idle TUI — the same
+ *  3. at reset time pastes a continuation prompt into the idle TUI — the same
  *     invocation answers, so its trace shows the wait and the resume.
  *
- * Give-up paths (attempt cap, unschedulable reset, lost tmux control) close
- * the turn with a message that carries the queued texts verbatim, so nothing
- * is ever dropped silently.
+ * While held, nothing is injected into the running turn and /enqueue'd
+ * messages are not claimed (`awaitingResume`): the TUI sits at a quota-dead
+ * prompt. Give-up paths (attempt cap, unschedulable reset, lost tmux control)
+ * close the turn with a message.
  */
 
 export interface CarryOnTiming {
@@ -30,7 +29,7 @@ export interface CarryOnTiming {
   maxHoldMs: number
   maxResumeAttempts: number
   minResumeDelayMs: number
-  /** One delayed re-attempt when posting the give-up close fails (a transient API error there would strand the turn on the idle reaper and eat the queued texts). */
+  /** One delayed re-attempt when posting the give-up close fails (a transient API error there would strand the turn on the idle reaper). */
   giveUpRetryDelayMs: number
 }
 
@@ -56,8 +55,6 @@ export interface CarryOnHost {
    * what it is doing belongs in its activity — not in a message written about it.
    */
   reportHold(invocationId: string, content: string, statusText: string): Promise<unknown>
-  /** For texts that outlived the turn they were queued for: there is no invocation left to record them against. */
-  postNotice(streamId: string, text: string): Promise<void>
   /** Close the held invocation with a final message (the SDK reply path). */
   closeTurn(invocationId: string, text: string): Promise<void>
   /** Submit a fresh prompt into the idle runtime. False = control lost. */
@@ -73,28 +70,21 @@ interface Hold {
   /** Resumes already fired for this blocked turn (caps re-detection loops). */
   attempts: number
   resumeTimer?: ReturnType<typeof setTimeout>
+  /** The resume prompt landed; the turn is running again. */
+  resumed: boolean
   keepAliveTimer: ReturnType<typeof setInterval>
 }
 
-function quoteQueued(queue: readonly string[]): string {
-  return queue.map((text, i) => `${i + 1}. ${text}`).join("\n")
-}
-
-export function buildResumePrompt(invocationId: string, queued: readonly string[]): string {
-  const lines = [
+export function buildResumePrompt(invocationId: string): string {
+  return (
     "[Quota carry-on] The provider quota should be available again. Continue the work for invocation " +
-      `${invocationId} exactly where it left off. When finished, call the reply tool with that invocation_id as usual.`,
-  ]
-  if (queued.length > 0) {
-    lines.push("", "Instructions the user queued while the session was blocked (oldest first):", quoteQueued(queued))
-  }
-  return lines.join("\n")
+    `${invocationId} exactly where it left off. When finished, call the reply tool with that invocation_id as usual.`
+  )
 }
 
 export class CarryOnController {
   private turn: { invocationId: string; streamId: string } | undefined
   private hold: Hold | undefined
-  private queue: string[] = []
   private readonly timing: CarryOnTiming
 
   constructor(
@@ -110,6 +100,11 @@ export class CarryOnController {
 
   get holding(): boolean {
     return this.hold !== undefined
+  }
+
+  /** Held and the resume prompt has not landed yet; once it has, the resumed turn is running again. */
+  get awaitingResume(): boolean {
+    return this.hold !== undefined && !this.hold.resumed
   }
 
   /** A turn was pushed to the runtime. A hold for any other invocation is stale — that turn was closed under us. */
@@ -129,37 +124,6 @@ export class CarryOnController {
   /** /stop actuation: the interrupt is about to close every in-flight turn. */
   onInterrupt(): void {
     if (this.hold) this.dropHold("interrupted by /stop")
-  }
-
-  /**
-   * /steer while blocked folds into the carry-on queue instead of poking a
-   * quota-dead session (the paste would submit a prompt that immediately dies).
-   * Returns the ack when absorbed; undefined when no hold is active.
-   */
-  absorbSteer(text: string): string | undefined {
-    if (!this.hold || !text.trim()) return undefined
-    this.queue.push(text.trim())
-    return `Session is blocked on provider quota — queued the steer for the resume ~${formatLocalTime(this.hold.resumeAt)}.`
-  }
-
-  /** The /carry-on command. `summary` is the account of what it did; `message` the reason when it is rejected. */
-  enqueue(text: string): { ok: boolean; summary?: string; message?: string } {
-    const trimmed = text.trim()
-    if (!this.hold) {
-      return {
-        ok: false,
-        message: trimmed
-          ? "No quota block is active — send this as a normal message and the session will pick it up."
-          : "No quota block is active; nothing to carry on from.",
-      }
-    }
-    const eta = `~${formatLocalTime(this.hold.resumeAt)} (in ~${formatDuration(this.hold.resumeAt - this.now())})`
-    if (!trimmed) {
-      const queuedNote = this.queue.length > 0 ? ` ${this.queue.length} message(s) queued.` : ""
-      return { ok: true, summary: `Waiting for the provider quota — resuming ${eta}.${queuedNote}` }
-    }
-    this.queue.push(trimmed)
-    return { ok: true, summary: `Queued — the session folds it in when it resumes ${eta}.` }
   }
 
   /** A synthetic API-error line landed for an in-flight turn. */
@@ -188,10 +152,8 @@ export class CarryOnController {
     this.beginHold(invocationId, this.turn.streamId, resumeAt, attempts, signal)
   }
 
-  /** Channel shutdown. dropHold's best-effort orphan notice is the only shot at surfacing queued texts before the process dies. */
   stop(): void {
     this.dropHold("channel shutting down")
-    this.queue = []
   }
 
   private beginHold(
@@ -207,6 +169,7 @@ export class CarryOnController {
       streamId,
       resumeAt,
       attempts,
+      resumed: false,
       resumeTimer: setTimeout(() => void this.resume(), Math.max(resumeAt - this.now(), this.timing.minResumeDelayMs)),
       keepAliveTimer: setInterval(() => this.keepAliveTick(), this.timing.keepAliveIntervalMs),
     }
@@ -215,7 +178,7 @@ export class CarryOnController {
     const held =
       signal.kind === "quota-reset"
         ? {
-            content: `${signal.summary}\n\nHolding this turn — resuming automatically ${eta}. Use \`/carry-on <message>\` to queue instructions for the resume, or \`/stop\` to drop the turn.`,
+            content: `${signal.summary}\n\nHolding this turn — resuming automatically ${eta}. Use \`/stop\` to drop the turn.`,
             statusText: `Rate limited — resuming ${eta}`,
           }
         : {
@@ -246,42 +209,30 @@ export class CarryOnController {
       return
     }
     hold.attempts += 1
-    const queued = this.queue
-    this.queue = []
     this.host.log(`quota carry-on: resuming ${hold.invocationId} (attempt ${hold.attempts})`)
-    if (!(await this.host.inject(buildResumePrompt(hold.invocationId, queued)))) {
-      // Re-queue so the give-up message carries them.
-      this.queue = queued
+    const injected = await this.host.inject(buildResumePrompt(hold.invocationId))
+    // /stop, a superseding turn or a fresh hold replaced this one during the inject.
+    if (this.hold !== hold) return
+    if (!injected) {
       await this.giveUp(hold.invocationId, "could not type into the session (tmux control unavailable)", undefined)
       return
     }
+    hold.resumed = true
     // The hold stays (minus its resume timer): keep-alives continue while the
     // resumed turn works, onTurnClosed clears everything when the reply lands,
     // and a fresh quota error re-enters onApiError with the attempt count.
   }
 
-  /**
-   * Close the turn loudly, carrying any queued texts so nothing is lost in a
-   * silent drop. Works with or without an active hold — the unschedulable
-   * paths (no reset time, reset too far away) give up before one exists.
-   */
+  /** Close the turn loudly. Works with or without an active hold — the unschedulable paths (no reset time, reset too far away) give up before one exists. */
   private async giveUp(invocationId: string, reason: string, signal: QuotaSignal | undefined): Promise<void> {
-    // Take the queue before dropping the hold so its texts ride the close
-    // message instead of double-posting via dropHold's orphan notice.
-    const queued = this.queue
-    this.queue = []
     this.dropHold(`giving up: ${reason}`)
     if (this.turn?.invocationId === invocationId) this.turn = undefined
     const lines = [`⚠️ Quota carry-on gave up: ${reason}.`]
     if (signal) lines.push("", `Provider said: ${signal.summary}`)
-    if (queued.length > 0) {
-      lines.push("", "Dropped queued instructions (resend when the session is available):", quoteQueued(queued))
-    }
     const message = lines.join("\n")
     await this.host.closeTurn(invocationId, message).catch((error) => {
       // The SDK re-arms a failed reply for retry, but nothing here tracks the
-      // turn anymore — one delayed re-attempt beats stranding it (and the
-      // queued texts named in the message) on the idle reaper.
+      // turn anymore — one delayed re-attempt beats stranding it on the idle reaper.
       this.host.log(`carry-on give-up close failed (retrying once): ${String(error)}`)
       setTimeout(() => {
         void this.host
@@ -297,17 +248,6 @@ export class CarryOnController {
     this.host.log(`quota carry-on: dropping hold on ${hold.invocationId} — ${reason}`)
     this.clearTimers()
     this.hold = undefined
-    if (this.queue.length > 0) {
-      const dropped = this.queue
-      this.queue = []
-      // The turn these were queued for is gone; surface them instead of losing them.
-      void this.host
-        .postNotice(
-          hold.streamId,
-          `Dropped ${dropped.length} queued carry-on message(s) with the held turn:\n${quoteQueued(dropped)}`
-        )
-        .catch((error) => this.host.log(`carry-on drop notice failed: ${String(error)}`))
-    }
   }
 
   private clearTimers(): void {

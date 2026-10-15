@@ -218,6 +218,14 @@ describe("Pi remote trace safety", () => {
     ).toMatchObject({
       supportedCapabilities: ["active-scratchpad", "mentionable", "session-control"],
     })
+    expect(
+      __testing.buildClaimInvocationPayload("pi-host-123", "pi-session-abc", {
+        includeSessionControl: true,
+        includeQueuedMessage: true,
+      })
+    ).toMatchObject({
+      supportedCapabilities: ["active-scratchpad", "mentionable", "queued-message", "session-control"],
+    })
   })
 
   test("advertises session-control command capabilities", () => {
@@ -225,7 +233,7 @@ describe("Pi remote trace safety", () => {
     // withheld. What remains is everything Pi actuates in-process.
     expect(__testing.buildRuntimeCapabilities(undefined, undefined, () => PI_ONLY)).toMatchObject({
       supportsSessionControlCommands: true,
-      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell", "steer", "stop", "carry-on"],
+      sessionControlCommands: ["compact", "model", "thinking", "skill", "reload", "shell", "stop", "enqueue"],
       spawnRuntimes: [{ value: "pi", label: "Pi", description: "/usr/local/bin/pi" }],
     })
   })
@@ -252,10 +260,6 @@ describe("Pi remote trace safety", () => {
     })
     expect(__testing.parseSessionControlCommand("  /thinking high  ")).toEqual({ name: "thinking", args: "high" })
     expect(__testing.parseSessionControlCommand("/shell echo hello")).toEqual({ name: "shell", args: "echo hello" })
-    expect(__testing.parseSessionControlCommand("/steer check the failing test first")).toEqual({
-      name: "steer",
-      args: "check the failing test first",
-    })
     expect(__testing.parseSessionControlCommand("/stop")).toEqual({ name: "stop", args: "" })
     expect(__testing.parseSessionControlCommand("/kick")).toEqual({ name: "kick", args: "" })
   })
@@ -286,20 +290,7 @@ describe("Pi remote trace safety", () => {
     })
   })
 
-  test("does not mistake an active-scratchpad message for a session-control command", () => {
-    const invocation = {
-      id: "binv_1",
-      activeStreamId: "stream_1",
-      sourceMessageId: "msg_1",
-      promptMarkdown: "/steer I want option 2",
-      claimToken: "claim",
-      claimExpiresAt: null,
-      requiredCapability: "active-scratchpad",
-    }
-    expect(__testing.resolveSessionControlCommand(invocation)).toBeNull()
-  })
-
-  test("preserves non-steer command fallback for active-scratchpad messages", () => {
+  test("preserves bare-command fallback for active-scratchpad messages", () => {
     const invocation = {
       id: "binv_1",
       activeStreamId: "stream_1",
@@ -642,14 +633,6 @@ describe("Pi remote trace safety", () => {
   test("formatRetryNotice mentions the attempt number once past the first try", () => {
     expect(__testing.formatRetryNotice(60_000, 1)).not.toContain("attempt")
     expect(__testing.formatRetryNotice(60_000, 2)).toContain(`attempt 2 of ${__testing.MAX_RETRY_ATTEMPTS}`)
-  })
-
-  test("buildRetryPrompt folds queued carry-on texts into the retry (oldest first)", () => {
-    expect(__testing.buildRetryPrompt("original prompt", [])).toBe("original prompt")
-    const folded = __testing.buildRetryPrompt("original prompt", ["first", "second"])
-    expect(folded).toContain("original prompt")
-    expect(folded).toContain("queued while the session was rate-limited")
-    expect(folded.indexOf("1. first")).toBeLessThan(folded.indexOf("2. second"))
   })
 
   test("formatDuration rounds reasonably across minute/hour boundaries", () => {
@@ -1444,7 +1427,7 @@ describe("Pi reconnect session control", () => {
 
     // The in-process commands stay available throughout — this gate must not
     // take the whole session-control surface down with it.
-    expect(commands(false)).toEqual(expect.arrayContaining(["stop", "steer", "compact", "model", "thinking"]))
+    expect(commands(false)).toEqual(expect.arrayContaining(["stop", "enqueue", "compact", "model", "thinking"]))
   })
 
   test("advertises and sends an allowed key only for the exact link using Pi's PID", async () => {
@@ -2488,6 +2471,196 @@ describe("claim drain serialization", () => {
     try {
       expect(await __testing.claimIfIdle({} as never, ctx)).toBe(true)
       expect(claimRequests).toBe(1)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("claims queued-message only when idle, with no turn pending and no retry wait", async () => {
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: { runtime: { enabled: true, instanceId: "pi-instance", runtimeSessionId: "runtime" } },
+    })
+    let capabilities: string[] = []
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      capabilities = JSON.parse(String(init?.body)).supportedCapabilities
+      return new Response(JSON.stringify({ data: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    })
+    const ctx = (idle: boolean) =>
+      ({
+        sessionManager: { getSessionId: () => "runtime" },
+        isIdle: () => idle,
+        cwd: "/tmp",
+        modelRegistry: { getAvailable: () => [] },
+        ui: { notify: () => {}, setStatus: () => {}, theme: { fg: (_tone: string, text: string) => text } },
+      }) as never
+    const claimedWith = async (idle: boolean) => {
+      await __testing.claimNextInvocation(ctx(idle))
+      return capabilities
+    }
+
+    try {
+      const idle = await claimedWith(true)
+      const busy = await claimedWith(false)
+      __testing.setRateLimitWaitForTesting(true)
+      const retryWait = await claimedWith(true)
+      __testing.setRateLimitWaitForTesting(false)
+      __testing.beginPendingInvocation({ id: "binv_pending", activeStreamId: "stream_1" } as never)
+      const turnPending = await claimedWith(true)
+
+      expect({ idle, busy, retryWait, turnPending }).toEqual({
+        idle: ["active-scratchpad", "mentionable", "queued-message", "session-control"],
+        busy: ["active-scratchpad", "mentionable"],
+        retryWait: ["active-scratchpad", "mentionable", "session-control"],
+        turnPending: ["active-scratchpad", "mentionable"],
+      })
+    } finally {
+      fetchSpy.mockRestore()
+      __testing.setRateLimitWaitForTesting(false)
+      __testing.clearPendingForTesting()
+    }
+  })
+
+  test("a /stop that ends a rate-limit wait reruns the claim loop, so a queued message is claimed at once", async () => {
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: { runtime: { enabled: true, instanceId: "pi-instance", runtimeSessionId: "runtime" } },
+    })
+    __testing.beginPendingInvocation({ id: "binv_primary", activeStreamId: "stream_1" } as never)
+    __testing.setRateLimitWaitForTesting(true)
+    const served = { stop: false, queued: false }
+    const deliveries: Array<{ text: string; options?: { deliverAs: string } }> = []
+    const json = (data: unknown) =>
+      new Response(JSON.stringify(data), { status: 200, headers: { "content-type": "application/json" } })
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      const url = String(input)
+      if (url.endsWith("/bot-invocations/claim")) {
+        const capabilities = JSON.parse(String(init?.body)).supportedCapabilities as string[]
+        if (!served.stop) {
+          served.stop = true
+          return json({
+            data: {
+              id: "binv_stop",
+              activeStreamId: "stream_1",
+              sourceMessageId: "msg_stop",
+              promptMarkdown: "/stop",
+              requiredCapability: "session-control",
+              claimToken: "claim_stop",
+              claimExpiresAt: null,
+            },
+          })
+        }
+        if (!served.queued && capabilities.includes("queued-message")) {
+          served.queued = true
+          return json({
+            data: {
+              id: "binv_queued",
+              activeStreamId: "stream_1",
+              sourceMessageId: "msg_queued",
+              promptMarkdown: "later",
+              requiredCapability: "queued-message",
+              claimToken: "claim_queued",
+              claimExpiresAt: null,
+            },
+          })
+        }
+        return json({ data: null })
+      }
+      if (url.includes("/streams/stream_1/messages?")) return json({ data: [] })
+      return json({ data: {} })
+    }) as typeof fetch)
+    const ctx = {
+      sessionManager: { getSessionId: () => "runtime", getBranch: () => [] },
+      isIdle: () => true,
+      cwd: "/tmp",
+      modelRegistry: { getAvailable: () => [] },
+      ui: { notify: () => {}, setStatus: () => {}, theme: { fg: (_tone: string, text: string) => text } },
+    } as never
+    const pi = {
+      sendUserMessage: (text: string, options?: { deliverAs: string }) => deliveries.push({ text, options }),
+    } as never
+
+    try {
+      await __testing.claimIfIdle(pi, ctx)
+      expect({
+        served,
+        deliveries: deliveries.map(({ text, options }) => ({ endsWithPrompt: text.endsWith("\nlater"), options })),
+      }).toEqual({
+        served: { stop: true, queued: true },
+        deliveries: [{ endsWithPrompt: true, options: undefined }],
+      })
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  test("a queued message that reads like a command is injected as a fresh turn, never run", async () => {
+    __testing.setConfigForTesting({
+      baseUrl: "https://app.threa.io",
+      workspaceId: "ws_123",
+      apiKey: "threa_bk_test",
+      linkedSessions: { runtime: { enabled: true, instanceId: "pi-instance", runtimeSessionId: "runtime" } },
+    })
+    let served = false
+    const deliveries: Array<{ text: string; options?: { deliverAs: string } }> = []
+    const json = (data: unknown) =>
+      new Response(JSON.stringify(data), { status: 200, headers: { "content-type": "application/json" } })
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation((async (input: string | URL | Request) => {
+      const url = String(input)
+      if (url.endsWith("/bot-invocations/claim")) {
+        if (served) return json({ data: null })
+        served = true
+        return json({
+          data: {
+            id: "binv_queued_model",
+            activeStreamId: "stream_1",
+            sourceMessageId: "msg_queued_model",
+            promptMarkdown: "/model foo",
+            requiredCapability: "queued-message",
+            claimToken: "claim_queued_model",
+            claimExpiresAt: null,
+          },
+        })
+      }
+      if (url.includes("/streams/stream_1/messages?")) return json({ data: [] })
+      return json({ data: {} })
+    }) as typeof fetch)
+    let modelChanges = 0
+    const setModel = async () => {
+      modelChanges++
+      return true
+    }
+    const ctx = {
+      sessionManager: { getSessionId: () => "runtime", getBranch: () => [] },
+      isIdle: () => true,
+      cwd: "/tmp",
+      modelRegistry: { getAvailable: () => [] },
+      ui: { notify: () => {}, setStatus: () => {}, theme: { fg: (_tone: string, text: string) => text } },
+    } as never
+    const pi = {
+      setModel,
+      sendUserMessage: (text: string, options?: { deliverAs: string }) => deliveries.push({ text, options }),
+    } as never
+
+    try {
+      await __testing.claimIfIdle(pi, ctx)
+      expect({
+        deliveries: deliveries.map(({ text, options }) => ({ endsWithPrompt: text.endsWith("\n/model foo"), options })),
+        modelChanges,
+      }).toEqual({
+        deliveries: [{ endsWithPrompt: true, options: undefined }],
+        modelChanges: 0,
+      })
     } finally {
       fetchSpy.mockRestore()
     }
@@ -3766,39 +3939,6 @@ describe("invocation edit regressions", () => {
     }
   })
 
-  test("running structured steer update sends canonical args rather than stale command markdown", async () => {
-    configure()
-    const claim = {
-      ...invocation("binv_command_steer", 1, "/steer old direction"),
-      requiredCapability: "session-control",
-      metadata: {
-        command: { id: "cmd_steer", name: "steer", args: "old direction", executionKind: "bot-runtime" },
-      },
-    }
-    const ctx = context({ idle: false })
-    const sends: string[] = []
-    __testing.beginPendingInvocation(claim as never)
-    __testing.setPendingRuntimeForTesting({ invocationPrompt: "old direction" })
-    const observation = await observe(claim, { sendUserMessage: (text: string) => sends.push(text) }, ctx, {
-      initialState: "running",
-    })
-    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
-      if (String(input).includes("/streams/stream_1/messages?"))
-        return sourceMessages(sourceMessage(claim, "/steer new direction"))
-      return json({ data: {} })
-    })
-    try {
-      expect(await observation.callbacks.onInputUpdated(plaintextUpdate(claim, 2, "/steer new direction"))).toBe(
-        "applied"
-      )
-      expect(sends).toEqual([expect.stringContaining("new direction")])
-      expect(sends[0]).not.toContain("/steer")
-      expect(sends[0]).not.toContain("old direction")
-    } finally {
-      fetchSpy.mockRestore()
-    }
-  })
-
   test("combined reload synchronizes every contributor before a missed edit requests restart", async () => {
     configure(true)
     const primary = invocation("binv_reload_primary", 1, "primary old")
@@ -4824,7 +4964,6 @@ describe("invocation edit regressions", () => {
       waitingForRetry: true,
       retryAt: Date.now() + 60_000,
       retryAttempts: 2,
-      carryOns: ["keep this carry-on"],
     })
     const primaryObservation = await observe(primary, {}, ctx, { initialState: "running" })
     const traceGate = deferred<void>()

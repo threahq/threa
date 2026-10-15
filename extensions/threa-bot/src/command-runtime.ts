@@ -25,11 +25,11 @@ export interface CommandRuntimeOptions {
 /**
  * Runs one command per turn. The turn's text goes to stdin, stdout is
  * collected as the reply, stderr streams out line by line. `interrupt()`
- * kills the running command, which is how `/stop` (and the interrupt half of
- * `/steer`) reach it. One command at a time: the SDK delivers one normal turn
- * at a time, so a second `run` while one is active is a caller bug — except
- * right after an interrupt, when the next turn is delivered before the killed
- * process has finished dying; that `run` waits for the exit instead.
+ * kills the running command, which is how `/stop` reaches it. One command at
+ * a time: the SDK delivers one normal turn at a time, so a second `run` while
+ * one is active is a caller bug — except right after an interrupt, when the
+ * next turn is delivered before the killed process has finished dying; that
+ * `run` waits for the exit instead.
  */
 export class CommandRuntime {
   private active: { child: ChildProcess; interrupted: boolean; closed: Promise<void> } | undefined

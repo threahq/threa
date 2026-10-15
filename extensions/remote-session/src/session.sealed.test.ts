@@ -416,6 +416,60 @@ describe("sealed claim hydration + delivery", () => {
     expect(new TextDecoder().decode(readFileSync(localPath))).toBe("the secret spec")
   })
 
+  test("a sealed message for the running stream is steered in decrypted, with its own attachment", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "sealed-steer-"))
+    tempDirs.push(cwd)
+    const plaintext = new TextEncoder().encode("the secret spec")
+    const encrypted = await encryptAttachmentBytes(plaintext)
+    const ref: AttachmentRef = {
+      attachmentId: "att_in_1",
+      key: encrypted.key,
+      iv: encrypted.iv,
+      filename: "spec.md",
+      mimeType: "text/markdown",
+      sizeBytes: plaintext.length,
+    }
+    const steered: string[] = []
+    const cwdSpy = spyOn(process, "cwd").mockReturnValue(cwd)
+    const fetchSpy = spyOn(globalThis, "fetch").mockImplementation(
+      (async () => new Response(encrypted.ciphertext)) as unknown as typeof fetch
+    )
+    try {
+      const made = await startSealedTurn({
+        sessionControl: {
+          commands: ["stop"],
+          interrupt: () => true,
+          steer: async (text) => {
+            steered.push(text)
+            return true
+          },
+          runCommand: async () => ({ ok: true, message: "ok" }),
+        },
+      })
+      const { invocation } = await ownerBuildsSealedClaim(
+        made.session,
+        { id: "binv_sealed_2" },
+        { attachmentRefs: [ref] }
+      )
+      // The busy session-control claim finds nothing; the running-turn claim takes the message.
+      made.queue.push(null, invocation)
+      await drain(made.session)
+
+      expect(steered).toEqual([
+        [
+          "Please refactor the auth module",
+          "",
+          "Attachments saved into this session's working directory — read them from these paths:",
+          `- spec.md (text/markdown, 15 bytes) → ${join(cwd, ".threa-attachments", "binv_sealed_2", "att_in_1", "spec.md")} [attached to the message you just received]`,
+        ].join("\n"),
+      ])
+      await made.session.shutdown()
+    } finally {
+      cwdSpy.mockRestore()
+      fetchSpy.mockRestore()
+    }
+  })
+
   test("keeps initial sealed attachment hydration best-effort", async () => {
     const encrypted = await encryptAttachmentBytes(new TextEncoder().encode("ciphertext"))
     const wrong = await encryptAttachmentBytes(new TextEncoder().encode("wrong key"))
@@ -466,7 +520,7 @@ describe("sealed claim hydration + delivery", () => {
     try {
       const made = await startSealedTurn({
         sessionControl: {
-          commands: ["steer"],
+          commands: [],
           interrupt: () => {
             interrupts.push("interrupt")
             return true
@@ -517,7 +571,7 @@ describe("sealed claim hydration + delivery", () => {
     try {
       const made = await startSealedTurn({
         sessionControl: {
-          commands: ["stop", "steer"],
+          commands: ["stop"],
           interrupt: () => true,
           steer: async (text) => {
             steered.push(text)

@@ -75,7 +75,7 @@ The channel reports `runtimeKind: "claude-code-channel"`. Originally only `pi-lo
 
 A claim holds a lease (`claimTtlSeconds`, max 300) that expires if not renewed, so the channel renews every in-flight claim on a timer for as long as Claude is still working.
 
-The channel handles one turn at a time. A message you send while Claude is still working waits in Threa until the current turn completes, then gets claimed and pushed.
+The channel handles one turn at a time. Inside tmux, a message you send while Claude is still working is pasted into the running turn (mid-turn steering) and closes with it; without tmux it waits in Threa until the current turn completes, then gets claimed and pushed. A message that arrives while a permission dialog is open, or that the turn closes before taking, starts the next turn instead. `/enqueue <message>` always waits until the session is idle. While a quota hold waits for its resume, nothing is pasted and `/enqueue`d messages wait.
 
 ## Outbound: send for progress, reply to finish
 

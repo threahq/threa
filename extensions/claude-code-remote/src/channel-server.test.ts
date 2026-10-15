@@ -8,7 +8,6 @@ import {
   DecisionAbandonedError,
   ThreaClient,
   type ClaimedDelegation,
-  type ClaimedInvocation,
   type DecisionOutcome,
   type DecisionRequest,
   type DecisionRequestInput,
@@ -237,7 +236,6 @@ describe("ChannelServer delegations", () => {
     const outcome = await runClaudeCommand(
       "reconnect",
       "--force",
-      undefined,
       "runtime",
       undefined,
       () => "root",
@@ -293,38 +291,6 @@ describe("ChannelServer delegations", () => {
     expect(sessionReply).toHaveBeenCalled()
   })
 })
-
-function makeInvocation(partial: Partial<ClaimedInvocation>): ClaimedInvocation {
-  return {
-    id: "binv_1",
-    workspaceId: "ws_1",
-    rootStreamId: "stream_root",
-    activeStreamId: "stream_root",
-    sourceMessageId: "src",
-    sourceRevision: 1,
-    responseStreamId: "stream_root",
-    actor: { type: "bot", id: "bot_1", slug: "claude" },
-    trigger: "active-scratchpad",
-    requiredCapability: "active-scratchpad",
-    promptMarkdown: "Do the thing",
-    authorUserId: "user_1",
-    mentionedActorSlugs: [],
-    claimToken: "tok",
-    claimExpiresAt: "2026-07-18T00:00:00.000Z",
-    runtimeSessionId: "rts_1",
-    metadata: {},
-    ...partial,
-  }
-}
-
-function makeSteerInvocation(args: string): ClaimedInvocation {
-  return makeInvocation({
-    id: "binv_steer",
-    trigger: "session-control",
-    promptMarkdown: args ? `/steer ${args}` : "/steer",
-    metadata: { command: { executionKind: "bot-runtime", id: "cmd_1", name: "steer", args } },
-  })
-}
 
 /** A relay-enabled server with the MCP wire and Threa session stubbed for direct permission-path calls. */
 function permissionServer(decision?: { outcome?: DecisionOutcome; error?: Error }) {

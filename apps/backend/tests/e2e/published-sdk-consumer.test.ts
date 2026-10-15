@@ -6,9 +6,10 @@
  * temporary project that has no path to this checkout, typechecked under
  * `node16` resolution, and then run from that project against the test server:
  * the shipped `echo-connector` example links a scratchpad, answers a message
- * with an interim and a final reply, and takes a `/stop`; the `threa-bot` CLI
- * does the same with a shell script as the agent. Everything the READMEs
- * promise an external connector rides on this path.
+ * with an interim and a final reply, folds a message sent mid-turn into the
+ * running turn, and takes a `/stop`; the `threa-bot` CLI does the same with a
+ * shell script as the agent. Everything the READMEs promise an external
+ * connector rides on this path.
  */
 
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test"
@@ -40,7 +41,7 @@ const PACKAGE_NAMES: Record<(typeof packages)[number], string> = {
   "threa-bot": "@threahq/bot",
 }
 const testRunId = Math.random().toString(36).substring(7)
-// Longer than any claim → deliver → interim round trip, so a /stop
+// Longer than any claim → deliver → interim round trip, so a message or /stop
 // dispatched after the interim lands always finds the turn still running.
 const ECHO_DELAY_MS = 4_000
 
@@ -196,7 +197,7 @@ describe("published bot-runtime packages", () => {
     expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/)
   })
 
-  test("the echo connector links a scratchpad and serves turns and a /stop", async () => {
+  test("the echo connector links a scratchpad and serves a turn, a mid-turn message, and a /stop", async () => {
     const client = new TestClient()
     await loginAs(client, `sdk-consumer-${testRunId}@test.com`, "SDK Consumer")
     const workspace = await createWorkspace(client, `SDK Consumer WS ${testRunId}`)
@@ -266,8 +267,12 @@ describe("published bot-runtime packages", () => {
     expect(interims(afterFirst).map((p) => p.contentMarkdown)).toEqual(["Working on it."])
 
     await sendMessage(client, workspace.id, streamId, "second")
-    const afterSecond = await whenCount("replies", replies, 2)
-    expect(replies(afterSecond)[1]!.contentMarkdown).toStartWith("Echo: second")
+    await whenCount("interims", interims, 2)
+    await sendMessage(client, workspace.id, streamId, "and more")
+    const afterSteer = await whenCount("replies", replies, 2)
+    const steered = replies(afterSteer)[1]!.contentMarkdown ?? ""
+    expect(steered).toStartWith("Echo: second")
+    expect(steered).toEndWith("and more")
 
     await sendMessage(client, workspace.id, streamId, "third")
     await whenCount("interims", interims, 3)
@@ -279,7 +284,7 @@ describe("published bot-runtime packages", () => {
     const final = await posted()
     expect(replies(final).map((p) => p.contentMarkdown)).toEqual([
       expect.stringMatching(/^Echo: hello there/),
-      expect.stringMatching(/^Echo: second/),
+      expect.stringMatching(/^Echo: second[\s\S]*and more$/),
     ])
     expect(final.some((p) => p.contentMarkdown?.includes("Stopped by /stop."))).toBe(false)
 

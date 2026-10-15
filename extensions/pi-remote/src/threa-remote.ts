@@ -149,6 +149,9 @@ const CONTRIBUTOR_FAIL_RETRY_BATCH_DELAY_MS = 100
 const CONTRIBUTOR_FAIL_RETRY_COOLDOWN_MS = 30_000
 const PI_TOOL_TRACE_FORMAT = "pi_tool_trace"
 const SESSION_CONTROL_CAPABILITY = "session-control"
+const QUEUED_MESSAGE_CAPABILITY = "queued-message"
+/** Composer-only: its messages arrive as queued-message claims, never as commands. */
+const ENQUEUE_COMMAND = "enqueue"
 const RELOAD_HANDOFF_COMMAND = "threa-remote-reload"
 /** How long a queued reload handoff may sit undispatched before the latch is released. */
 let reloadWatchdogMs = 15_000
@@ -159,10 +162,8 @@ const SESSION_CONTROL_COMMANDS = [
   "skill",
   "reload",
   "shell",
-  "steer",
   "stop",
   "kick",
-  "carry-on",
   "reconnect",
   "clear",
   "spawn",
@@ -372,7 +373,6 @@ type PendingOutputState = {
   retryAfterMs?: number
 }
 let activeOutputState: PendingOutputState | undefined
-let carryOnTexts: string[] = []
 let lastTraceHeartbeat: { text: string; at: number } | undefined
 type ObservedInvocationState = "unstarted" | "processing" | "running" | "recovery" | "terminalizing" | "terminal"
 type ObservedInvocationContext = {
@@ -1022,7 +1022,7 @@ function buildRuntimeCapabilities(
     supportsPersistentSessions: true,
     supportsMentionInvocations: true,
     supportsSessionControlCommands: true,
-    sessionControlCommands: SESSION_CONTROL_COMMANDS.filter((command) => {
+    sessionControlCommands: [...SESSION_CONTROL_COMMANDS, ENQUEUE_COMMAND].filter((command) => {
       // Commands routed through the harnessd entrypoint need this session's tmux
       // pane and an installed daemon; the rest actuates in-process through the
       // extension API and needs no tmux at all.
@@ -1109,7 +1109,7 @@ function ensureTransport(pi: ExtensionAPI, ctx: ExtensionContext): BotRuntimeTra
   if (transport) return transport
   const hello: BotRuntimeHello = {
     ...presenceBody(reconnectPending || pending || !ctx.isIdle() ? "busy" : "available", undefined, ctx),
-    supportedCapabilities: ["active-scratchpad", "mentionable", SESSION_CONTROL_CAPABILITY],
+    supportedCapabilities: claimCapabilities({ includeSessionControl: true, includeQueuedMessage: true }),
     ...(getCurrentSessionLink(ctx)?.wsCursor ? { sinceCursor: getCurrentSessionLink(ctx)?.wsCursor } : {}),
   }
   transport = new BotRuntimeTransport({
@@ -1849,7 +1849,6 @@ function clearTurnState(ctx?: ExtensionContext): void {
   pendingInvocationPrompt = undefined
   clearPendingRetry()
   isWaitingForRetry = false
-  carryOnTexts = []
   lastTraceHeartbeat = undefined
   clearRecoveredCompletionTimer()
   awaitingTurnStart = false
@@ -1922,7 +1921,7 @@ function abortForInputRestart(observed: ObservedInvocationContext, reason: strin
   // A claim being prepared (notably a standalone session-control command
   // claimed during a provider retry wait) has not contributed input to the Pi
   // turn yet. Restart only that claim; clearing the combined turn here would
-  // discard unrelated canonical retry/carry-on state.
+  // discard unrelated canonical retry state.
   if (!contributors.includes(invocation)) return
   const otherContributors = contributors.filter((contributor) => contributor !== invocation)
   for (const contributor of otherContributors) releaseObservation(contributor)
@@ -2001,14 +2000,7 @@ async function applyInvocationUpdate(
     throwIfAborted(signal)
     if (cancelledInvocations.has(invocation) || observedInvocations.get(invocation) !== observed)
       return "restart-required"
-    const updatedCommand = getRuntimeCommand(invocation)
-    const rebuilt = await buildInvocationPrompt(
-      invocation,
-      observed.ctx,
-      true,
-      updatedCommand?.name === "steer" ? updatedCommand.args : undefined,
-      signal
-    )
+    const rebuilt = await buildInvocationPrompt(invocation, observed.ctx, true, signal)
     throwIfAborted(signal)
     if (
       cancelledInvocations.has(invocation) ||
@@ -2096,7 +2088,7 @@ type PendingTurnSnapshot = {
   contextCursor?: string
   invocationPrompt?: string
   primaryCompleted?: boolean
-  waitingForRetry?: { retryAt: number; attempts: number; carryOnTexts: string[] }
+  waitingForRetry?: { retryAt: number; attempts: number }
 }
 
 function pendingSnapshotPath(runtimeSessionId: string): string {
@@ -2178,7 +2170,6 @@ function savePendingSnapshot(ctx: ExtensionContext): void {
           waitingForRetry: {
             retryAt: pendingRetry.retryAt,
             attempts: pendingRetry.attempts,
-            carryOnTexts: [...carryOnTexts],
           },
         }
       : {}),
@@ -2355,9 +2346,6 @@ async function restorePendingAfterReload(pi: ExtensionAPI, ctx: ExtensionContext
   const waiting = snapshot.waitingForRetry
   if (waiting && typeof waiting.retryAt === "number") {
     isWaitingForRetry = true
-    carryOnTexts = Array.isArray(waiting.carryOnTexts)
-      ? waiting.carryOnTexts.filter((text): text is string => typeof text === "string")
-      : []
   }
   // A combined turn is recovered conservatively: no contributor may steer
   // before every sibling has synchronized. Any missed edit requests a clean
@@ -2984,28 +2972,40 @@ async function fetchInvocationContext(
   }
 }
 
+interface ClaimCapabilityOptions {
+  includeSessionControl?: boolean
+  includeQueuedMessage?: boolean
+}
+
+function claimCapabilities(options?: ClaimCapabilityOptions): string[] {
+  const capabilities = ["active-scratchpad", "mentionable"]
+  if (options?.includeQueuedMessage) capabilities.push(QUEUED_MESSAGE_CAPABILITY)
+  if (options?.includeSessionControl) capabilities.push(SESSION_CONTROL_CAPABILITY)
+  return capabilities
+}
+
 function buildClaimInvocationPayload(
   instanceId: string,
   runtimeSessionId: string,
-  options?: { includeSessionControl?: boolean }
+  options?: ClaimCapabilityOptions
 ): Record<string, unknown> {
-  const supportedCapabilities = ["active-scratchpad", "mentionable"]
-  if (options?.includeSessionControl) supportedCapabilities.push(SESSION_CONTROL_CAPABILITY)
   return {
     runtimeKind: "pi-local",
     instanceId,
     runtimeSessionId,
-    supportedCapabilities,
+    supportedCapabilities: claimCapabilities(options),
     claimTtlSeconds: CLAIM_TTL_SECONDS,
   }
 }
 
 function buildClaimInvocationBody(ctx: ExtensionContext): Record<string, unknown> {
+  const idle = !pending && ctx.isIdle()
   return buildClaimInvocationPayload(getSessionInstanceId(ctx), getRuntimeSessionId(ctx), {
     // During a rate-limit wait Pi is idle at the prompt, so session-control
-    // commands are safe — and /model is the escape hatch from a throttled
-    // provider, /carry-on the way to queue work for the retry.
-    includeSessionControl: (!pending && ctx.isIdle()) || isWaitingForRetry,
+    // commands are safe — /model is the escape hatch from a throttled
+    // provider. /enqueue messages wait for a truly idle session.
+    includeSessionControl: idle || isWaitingForRetry,
+    includeQueuedMessage: idle && !isWaitingForRetry,
   })
 }
 
@@ -3177,10 +3177,8 @@ function resolveSessionControlCommand(invocation: ClaimedInvocation): RuntimeCom
   if (!parsed) return null
   if (invocation.requiredCapability !== SESSION_CONTROL_CAPABILITY) {
     // Legacy/API clients can still post bare session commands as normal
-    // scratchpad messages. Preserve that fallback for every command except
-    // steer: embedded steer deliberately creates a normal `/steer …` message
-    // plus a separate structured session-control invocation.
-    if (invocation.requiredCapability !== "active-scratchpad" || parsed.name === "steer") return null
+    // scratchpad messages.
+    if (invocation.requiredCapability !== "active-scratchpad") return null
   }
   return {
     id: invocation.sourceMessageId,
@@ -3369,7 +3367,6 @@ async function buildInvocationPrompt(
   invocation: ClaimedInvocation,
   ctx: ExtensionContext,
   strict = false,
-  promptMarkdown = invocation.promptMarkdown,
   signal?: AbortSignal
 ): Promise<{ prompt: string; steerPrompt: string; cursor?: string; context: string }> {
   // A sealed turn never touches the plaintext messages API — its context is
@@ -3395,7 +3392,7 @@ async function buildInvocationPrompt(
   return {
     context,
     cursor,
-    steerPrompt: formatSteerPrompt(promptMarkdown, steerContext),
+    steerPrompt: formatSteerPrompt(invocation.promptMarkdown, steerContext),
     prompt: [
       `Remote Threa invocation ${invocation.id}.`,
       `Source message: ${invocation.sourceMessageId}`,
@@ -3405,7 +3402,7 @@ async function buildInvocationPrompt(
         : "To attach a local file to your reply, add a line exactly like `THREA_ATTACH: path/to/file`; the extension will upload it and replace it with an attachment link.",
       context ? `\n${context}` : "",
       "\nSource message prompt:",
-      promptMarkdown,
+      invocation.promptMarkdown,
     ].join("\n"),
   }
 }
@@ -3418,7 +3415,6 @@ function beginPendingInvocation(invocation: ClaimedInvocation, cursor?: string):
   pendingInvocationPrompt = undefined
   clearPendingRetry()
   isWaitingForRetry = false
-  carryOnTexts = []
   lastTraceHeartbeat = undefined
 }
 
@@ -3861,74 +3857,6 @@ async function runShellCommand(
   await completeInvocationWithMarkdown(invocation, formatShellResult(command, result), ctx)
 }
 
-async function runSteerCommand(
-  pi: ExtensionAPI,
-  invocation: ClaimedInvocation,
-  args: string,
-  ctx: ExtensionContext,
-  isCurrent: InvocationGuard = () => true
-): Promise<void> {
-  const steerText = args.trim()
-  if (!steerText) {
-    if (pending) {
-      await recordTraceStep("steer", "Steer requested; checking for pending Threa messages.", "Steering…")
-    }
-    if (isCurrent()) await completeInvocationNoResponse(invocation)
-    return
-  }
-
-  const steeredInvocation = { ...invocation, promptMarkdown: steerText }
-  const { prompt, steerPrompt, cursor, context } = await buildInvocationPrompt(steeredInvocation, ctx)
-  if (!isCurrent()) return
-  const shouldSteer = pending !== undefined || !ctx.isIdle()
-  const deliveredPrompt = shouldSteer ? steerPrompt : prompt
-  if (!pending) {
-    beginPendingInvocation(invocation, cursor)
-    pendingInvocationPrompt = deliveredPrompt
-    await recordTraceStep("context_received", formatInvocationTrace(steeredInvocation, context), "Loaded context…")
-  } else {
-    steeredInvocations.push({ invocation, cursor, retryPrompt: deliveredPrompt })
-    await recordTraceStep("steer", formatInvocationTrace(steeredInvocation, context), "Steering…")
-  }
-  if (!isCurrent()) return
-  setRemoteStatus(ctx, `Threa remote: running ${pending?.id ?? invocation.id}`)
-  armPendingOutput()
-  pi.sendUserMessage(deliveredPrompt, shouldSteer ? { deliverAs: "steer" } : undefined)
-  const observed = observedInvocations.get(invocation)
-  if (observed) observed.state = "running"
-}
-
-/**
- * /carry-on: queue text for the rate-limit retry. Only meaningful while a
- * retry wait is active — Pi's quota state is the pending retry, so outside a
- * wait a normal message is the right vehicle and we say so.
- */
-async function runCarryOnCommand(
-  invocation: ClaimedInvocation,
-  args: string,
-  ctx: ExtensionContext,
-  isCurrent: InvocationGuard = () => true
-): Promise<void> {
-  const text = args.trim()
-  if (!isWaitingForRetry) {
-    await failInvocation(
-      invocation,
-      text
-        ? "No rate-limit wait is active — send this as a normal message and the session will pick it up."
-        : "No rate-limit wait is active; nothing to carry on from."
-    )
-    return
-  }
-  const retryAt = pendingRetry ? ` around ${formatLocalTime(new Date(pendingRetry.retryAt))}` : " soon"
-  if (!text) {
-    const queuedNote = carryOnTexts.length > 0 ? ` ${carryOnTexts.length} message(s) queued.` : ""
-    await completeInvocationWithSummary(invocation, `Rate limited — retrying${retryAt}.${queuedNote}`, ctx)
-    return
-  }
-  carryOnTexts.push(text)
-  await completeInvocationWithSummary(invocation, `Queued — the retry${retryAt} folds it in.`, ctx)
-}
-
 async function runKickCommand(
   invocation: ClaimedInvocation,
   ctx: ExtensionContext,
@@ -4313,10 +4241,8 @@ async function runStopCommand(
 ): Promise<void> {
   const hadPendingRemoteInvocation = pending !== undefined
   const wasBusy = !ctx.isIdle()
-  // completePending clears the carry-on queue with the rest of the retry
-  // state — count first so the ack can say what the stop threw away.
+  // completePending clears the retry state — read it first so the ack can say what the stop threw away.
   const droppedRetry = isWaitingForRetry
-  const droppedCarryOns = carryOnTexts.length
   if (wasBusy) ctx.abort()
   if (hadPendingRemoteInvocation) {
     await completePending(NO_RESPONSE_MARKER, ctx)
@@ -4325,11 +4251,9 @@ async function runStopCommand(
   const stoppedNote = droppedRetry
     ? "Stopped the current Pi turn and dropped its scheduled rate-limit retry."
     : "Stopped the current Pi turn."
-  const carryOnNote =
-    droppedCarryOns > 0 ? ` Dropped ${droppedCarryOns} queued carry-on message(s); resend if still wanted.` : ""
   await completeInvocationWithSummary(
     invocation,
-    wasBusy || hadPendingRemoteInvocation ? `${stoppedNote}${carryOnNote}` : "No Pi turn is running.",
+    wasBusy || hadPendingRemoteInvocation ? stoppedNote : "No Pi turn is running.",
     ctx
   )
 }
@@ -4424,23 +4348,11 @@ async function handleSessionControlInvocation(
       case "shell":
         await runShellCommand(invocation, command.args, ctx, isCurrent)
         return
-      case "steer":
-        // Steering a rate-limited session would submit a prompt that dies the
-        // same way — fold the text into the retry instead.
-        if (isWaitingForRetry && command.args.trim()) {
-          await runCarryOnCommand(invocation, command.args, ctx, isCurrent)
-          return
-        }
-        await runSteerCommand(pi, invocation, command.args, ctx, isCurrent)
-        return
       case "stop":
         await runStopCommand(invocation, ctx, isCurrent)
         return
       case "kick":
         await runKickCommand(invocation, ctx, isCurrent)
-        return
-      case "carry-on":
-        await runCarryOnCommand(invocation, command.args, ctx, isCurrent)
         return
       case "reconnect":
         await runReconnectCommand(invocation, command.args, ctx, undefined, isCurrent)
@@ -4563,15 +4475,13 @@ async function executeProviderRetry(
   if (deferWhileUpdating()) return
   const primaryPrompt = pendingInvocationPrompt
   if (!primaryPrompt) return
-  const queued = [...carryOnTexts]
   const contributorPrompts = steeredInvocations.flatMap((item) =>
     observedInvocations.get(item.invocation)?.state === "processing" ? [] : [item.retryPrompt]
   )
   pendingRetry = undefined
   isWaitingForRetry = false
-  carryOnTexts = []
   armPendingOutput()
-  pi.sendUserMessage(buildRetryPrompt([primaryPrompt, ...contributorPrompts].join("\n\n"), queued))
+  pi.sendUserMessage([primaryPrompt, ...contributorPrompts].join("\n\n"))
 }
 
 async function prepareRetryWaitContributor(
@@ -4665,10 +4575,9 @@ async function claimIfIdlePass(pi: ExtensionAPI, ctx: ExtensionContext, lifecycl
   if (isWaitingForRetry) {
     const retryAt = pendingRetry ? formatLocalTime(new Date(pendingRetry.retryAt)) : "soon"
     await heartbeatBusyIfStale(`Rate limited; retrying around ${retryAt}`, ctx)
-    // Keep draining claims during the wait: /stop must still cancel the retry,
-    // /carry-on and /steer queue text for it, and plain messages fold in like
-    // a steer sweep (N messages → the one retried response). Without this the
-    // session is deaf until the retry fires.
+    // Keep draining claims during the wait: /stop must still cancel the retry
+    // and plain messages fold in like a steer sweep (N messages → the one
+    // retried response). Without this the session is deaf until the retry fires.
     for (
       let claimedCount = 0;
       claimedCount < STEER_DRAIN_LIMIT && !sessionTearingDown && lifecycleGeneration === sessionLifecycleGeneration;
@@ -4701,9 +4610,7 @@ async function claimIfIdlePass(pi: ExtensionAPI, ctx: ExtensionContext, lifecycl
         if (!isWaitingForRetry) break
       }
     }
-    if (isWaitingForRetry && !sessionTearingDown && lifecycleGeneration === sessionLifecycleGeneration) {
-      claimIfIdleRerunRequested = true
-    }
+    if (!sessionTearingDown && lifecycleGeneration === sessionLifecycleGeneration) claimIfIdleRerunRequested = true
     return true
   }
 
@@ -4900,17 +4807,6 @@ function formatRetryNotice(retryAfterMs: number, attempt: number, now: number = 
   const retryAt = new Date(now + retryAfterMs)
   const attemptNote = attempt > 1 ? ` (attempt ${attempt} of ${MAX_RETRY_ATTEMPTS})` : ""
   return `Rate limited by model provider. Will retry around ${formatLocalTime(retryAt)} (in ~${formatDuration(retryAfterMs)})${attemptNote}.`
-}
-
-/** The retry prompt with any texts the user queued (via /carry-on or messages swept mid-wait) folded in. */
-function buildRetryPrompt(prompt: string, queued: readonly string[]): string {
-  if (queued.length === 0) return prompt
-  return [
-    prompt,
-    "",
-    "Instructions the user queued while the session was rate-limited (oldest first):",
-    ...queued.map((text, i) => `${i + 1}. ${text}`),
-  ].join("\n")
 }
 
 function extractAgentEndError(event: unknown): string | undefined {
@@ -5424,13 +5320,6 @@ async function failPending(error: unknown, ctx?: ExtensionContext): Promise<void
   if (!config || !pending) return
   const invocation = pending
   const steered = steeredInvocations
-  // Queued carry-on texts die with the turn — say so instead of a silent drop.
-  const droppedNote =
-    carryOnTexts.length > 0
-      ? ` Dropped ${carryOnTexts.length} queued carry-on message(s); resend when the session is available.`
-      : ""
-  carryOnTexts = []
-  if (droppedNote) error = `${String(error)}${droppedNote}`
   await failInvocation(invocation, error)
   await Promise.all(steered.map((item) => failInvocation(item.invocation, error)))
   releaseObservation(invocation)
@@ -5483,7 +5372,6 @@ async function resetRuntimeForTesting(): Promise<void> {
   promptEpoch = 0
   awaitingTurnStart = false
   activeOutputState = undefined
-  carryOnTexts = []
   lastTraceHeartbeat = undefined
   consecutivePollFailures = 0
   consecutiveQuietPolls = 0
@@ -5498,7 +5386,6 @@ async function resetRuntimeForTesting(): Promise<void> {
 export const __testing = {
   piManifest: PI_MANIFEST,
   presenceBody,
-  buildRetryPrompt,
   describeToolCall,
   formatToolCallTrace,
   formatToolResultTrace,
@@ -5584,7 +5471,6 @@ export const __testing = {
     waitingForRetry?: boolean
     retryAt?: number
     retryAttempts?: number
-    carryOns?: string[]
   }) => {
     if ("invocationPrompt" in value) pendingInvocationPrompt = value.invocationPrompt
     if (value.steered) steeredInvocations = value.steered
@@ -5598,7 +5484,6 @@ export const __testing = {
         attempts: value.retryAttempts ?? 1,
       }
     }
-    if (value.carryOns) carryOnTexts = [...value.carryOns]
   },
   pendingRuntimeState: () => ({
     invocationPrompt: pendingInvocationPrompt,

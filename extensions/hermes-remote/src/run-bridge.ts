@@ -237,8 +237,8 @@ export class HermesTurnRunner {
   private readonly forked: Set<string>
   private models: Record<string, ModelChoice>
   private readonly pendingSteers = new Map<string, string[]>()
-  // Steer text for an open run that was not `running` when it arrived (queued,
-  // parked on an approval): sent once the run resumes, else carried to the next turn.
+  // A denial note for an open run that was not `running` when it was answered:
+  // sent once the run resumes, else carried to the next turn.
   private readonly runSteers = new Map<string, string[]>()
   private readonly steerFlushes = new Map<string, Promise<void>>()
   // Turns inside createRun: an interrupt or shutdown that lands during admission
@@ -308,22 +308,25 @@ export class HermesTurnRunner {
   }
 
   /**
-   * Fold text into every open run, or only the given stream's. A run Hermes will not steer right now
-   * (queued, or parked on an approval) is not a failure: the text waits for the
-   * run to resume, and if it settles first it is prepended to the next turn.
+   * Fold text into the stream's open run. True only when the run took it. False when there is none, or
+   * Hermes will not steer it right now (queued, parked on an approval, finishing): the caller then delivers
+   * the text with the next turn. Any other failure throws.
    */
-  async steer(text: string, streamId?: string): Promise<boolean> {
-    const open = this.openRuns().filter((run) => streamId === undefined || run.streamId === streamId)
-    if (open.length === 0) return false
-    for (const run of open) {
-      try {
-        await this.steerOrHold(run.runId, text)
-      } catch (error) {
-        this.log(`run ${run.runId} steer failed: ${this.summarize(error)}`)
-        return false
-      }
+  async steer(text: string, streamId: string): Promise<boolean> {
+    const run = this.openRuns().find((open) => open.streamId === streamId)
+    // A denial note still waiting for the run to resume goes first.
+    if (!run || this.runSteers.has(run.runId)) return false
+    return this.trySteer(run.runId, text)
+  }
+
+  /** False when Hermes will not take steer into the run right now; throws for any other failure. */
+  private async trySteer(runId: string, text: string): Promise<boolean> {
+    try {
+      return (await this.client.steerRun(runId, text)).accepted
+    } catch (error) {
+      if (error instanceof HermesApiError && error.code === STEER_REJECTED_CODE) return false
+      throw error
     }
-    return true
   }
 
   /** Throws only for a failure other than the run not accepting steer yet. */
@@ -333,19 +336,15 @@ export class HermesTurnRunner {
       held.push(text)
       return
     }
-    try {
-      await this.client.steerRun(runId, text)
-    } catch (error) {
-      if (!(error instanceof HermesApiError && error.code === STEER_REJECTED_CODE)) throw error
-      const waiting = this.runSteers.get(runId)
-      if (waiting) waiting.push(text)
-      else this.runSteers.set(runId, [text])
-    }
+    if (await this.trySteer(runId, text)) return
+    const waiting = this.runSteers.get(runId)
+    if (waiting) waiting.push(text)
+    else this.runSteers.set(runId, [text])
   }
 
   /**
-   * Send the steer text a run held while it was not `running`, in arrival order.
-   * One send at a time per run: text stays held until Hermes takes it, so a steer
+   * Send the denial notes a run held while it was not `running`, in arrival order.
+   * One send at a time per run: text stays held until Hermes takes it, so a note
    * arriving mid-flush queues behind it and a run that ends mid-flush keeps the rest.
    */
   private flushRunSteers(runId: string): Promise<void> {
@@ -361,9 +360,8 @@ export class HermesTurnRunner {
     if (!held) return
     while (held.length > 0) {
       try {
-        await this.client.steerRun(runId, held[0]!)
+        if (!(await this.trySteer(runId, held[0]!))) return
       } catch (error) {
-        if (error instanceof HermesApiError && error.code === STEER_REJECTED_CODE) return
         this.log(`run ${runId} held steer failed: ${this.summarize(error)}`)
       }
       held.shift()

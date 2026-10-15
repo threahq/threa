@@ -1,7 +1,9 @@
-import { describe, expect, it } from "bun:test"
+import { describe, expect, it, spyOn } from "bun:test"
 import { existsSync, readFileSync, unlinkSync } from "node:fs"
 import { readCommandClaim, type HarnessSpawnSpec, type SpawnRuntimeOption } from "@threahq/harness-client"
+import { CarryOnController } from "./carry-on"
 import { createClaudeSessionControl, runClaudeCommand } from "./channel-server"
+import * as tmuxControl from "./tmux-control"
 
 const SPAWN_RUNTIMES: SpawnRuntimeOption[] = [
   {
@@ -69,24 +71,110 @@ describe("createClaudeSessionControl", () => {
     withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
       const actuator = createClaudeSessionControl(undefined, "ccs-one")
       expect(actuator).toBeDefined()
-      expect(actuator!.commands).toEqual([
-        "stop",
-        "steer",
-        "kick",
-        "status",
-        "model",
-        "thinking",
-        "compact",
-        "run",
-        "reload",
-        "carry-on",
-      ])
+      expect(actuator!.commands).toEqual(["stop", "kick", "status", "model", "thinking", "compact", "run", "reload"])
       expect(actuator!.thinkingLevels).toEqual(["low", "medium", "high", "xhigh", "max", "ultracode"])
       expect(actuator!.modelSuggestions!.map((suggestion) => suggestion.value)).toContain("opus")
       expect(actuator!.modelSuggestions!.every((suggestion) => suggestion.label)).toBe(true)
-      // Native mid-turn steering: without this the SDK falls back to interrupt+redeliver.
       expect(typeof actuator!.steer).toBe("function")
     })
+  })
+
+  it("is held only until the quota resume fires", async () => {
+    const inflight = new Set(["binv_1"])
+    const carryOn = new CarryOnController(
+      {
+        isInflight: (invocationId) => inflight.has(invocationId),
+        keepAlive: () => undefined,
+        reportHold: async () => undefined,
+        closeTurn: async () => undefined,
+        inject: async () => true,
+        log: () => undefined,
+      },
+      { transientResumeDelayMs: 10, minResumeDelayMs: 1, resumeJitterMs: 0 }
+    )
+    const actuator = withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () =>
+      createClaudeSessionControl(() => carryOn)
+    )!
+    carryOn.onTurnStarted("binv_1", "stream_1")
+    carryOn.onApiError("binv_1", "API Error: Overloaded")
+    const waiting = { held: actuator.isHeld!(), holding: carryOn.holding }
+    await new Promise((resolve) => setTimeout(resolve, 40))
+    const resumed = { held: actuator.isHeld!(), holding: carryOn.holding }
+    carryOn.stop()
+
+    expect({ waiting, resumed }).toEqual({
+      waiting: { held: true, holding: true },
+      resumed: { held: false, holding: true },
+    })
+  })
+
+  it("does not steer into the pane while a permission decision is open", async () => {
+    const pasted = spyOn(tmuxControl, "steerText").mockResolvedValue(true)
+    try {
+      let pending = 1
+      const actuator = withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () =>
+        createClaudeSessionControl(
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          () => pending
+        )
+      )!
+      const duringDecision = await actuator.steer!("go left", "stream_1")
+      pending = 0
+      const afterDecision = await actuator.steer!("go right", "stream_1")
+
+      expect({ duringDecision, afterDecision, pastes: pasted.mock.calls }).toEqual({
+        duringDecision: false,
+        afterDecision: true,
+        pastes: [["[Steer from the Threa scratchpad — fold into the current work]\ngo right"]],
+      })
+    } finally {
+      pasted.mockRestore()
+    }
+  })
+
+  it("does not steer into a session held on quota; the message waits", async () => {
+    const pasted = spyOn(tmuxControl, "steerText").mockResolvedValue(true)
+    const inflight = new Set(["binv_1"])
+    const carryOn = new CarryOnController(
+      {
+        isInflight: (invocationId) => inflight.has(invocationId),
+        keepAlive: () => undefined,
+        reportHold: async () => undefined,
+        closeTurn: async () => undefined,
+        inject: async () => true,
+        log: () => undefined,
+      },
+      { transientResumeDelayMs: 60_000, minResumeDelayMs: 1, resumeJitterMs: 0 }
+    )
+    try {
+      const actuator = withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () =>
+        createClaudeSessionControl(() => carryOn)
+      )!
+      carryOn.onTurnStarted("binv_1", "stream_1")
+      carryOn.onApiError("binv_1", "API Error: Overloaded")
+      const whileHeld = await actuator.steer!("edited text", "stream_1")
+      carryOn.onInterrupt()
+      const afterRelease = await actuator.steer!("edited text", "stream_1")
+
+      expect({ whileHeld, afterRelease, pastes: pasted.mock.calls.length }).toEqual({
+        whileHeld: false,
+        afterRelease: true,
+        pastes: 1,
+      })
+    } finally {
+      carryOn.stop()
+      pasted.mockRestore()
+    }
   })
 
   it("advertises reconnect only with exact runtime, root, and harness entrypoint", () => {
@@ -124,7 +212,7 @@ describe("createClaudeSessionControl", () => {
       expect(commands).not.toContain("kick")
       // The pane-driven commands are unaffected — this gate is about harnessd,
       // not about tmux.
-      expect(commands).toEqual(expect.arrayContaining(["stop", "steer", "status", "model"]))
+      expect(commands).toEqual(expect.arrayContaining(["stop", "status", "model"]))
     })
   })
 
@@ -226,14 +314,12 @@ describe("createClaudeSessionControl", () => {
     withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () => {
       expect(createClaudeSessionControl()!.commands).toEqual([
         "stop",
-        "steer",
         "status",
         "model",
         "thinking",
         "compact",
         "run",
         "reload",
-        "carry-on",
       ])
     })
   })
@@ -242,13 +328,13 @@ describe("createClaudeSessionControl", () => {
 describe("runClaudeCommand validation (paths that never touch tmux)", () => {
   it("accepts only empty or exact --force reconnect args", async () => {
     for (const args of ["--FORCE", "force", "--force=true", "--force --force", "extra"]) {
-      expect(await runClaudeCommand("reconnect", args, undefined, "runtime", undefined, () => "root")).toEqual({
+      expect(await runClaudeCommand("reconnect", args, "runtime", undefined, () => "root")).toEqual({
         ok: false,
         message: "Usage: `/reconnect [--force]`.",
       })
     }
     for (const args of ["", "--force"]) {
-      const outcome = await runClaudeCommand("reconnect", args, undefined, "runtime", undefined, () => "root")
+      const outcome = await runClaudeCommand("reconnect", args, "runtime", undefined, () => "root")
       expect(outcome.ok).toBe(true)
       expect(outcome.summary).toBe("Reconnect accepted; resuming the linked Claude session.")
       expect(typeof outcome.afterAck).toBe("function")
@@ -259,7 +345,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     const busy = await runClaudeCommand(
       "reconnect",
       "",
-      undefined,
       "runtime",
       undefined,
       () => "root",
@@ -271,7 +356,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
         await runClaudeCommand(
           "reconnect",
           "--force",
-          undefined,
           "runtime",
           undefined,
           () => "root",
@@ -286,7 +370,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     const outcome = await runClaudeCommand(
       "reconnect",
       "",
-      undefined,
       "runtime",
       undefined,
       () => "root",
@@ -313,7 +396,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       const outcome = await runClaudeCommand(
         "reconnect",
         "--force",
-        undefined,
         "runtime",
         undefined,
         () => "root",
@@ -342,7 +424,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     const outcome = await runClaudeCommand(
       "reconnect",
       "--force",
-      undefined,
       "runtime",
       undefined,
       () => "root",
@@ -362,13 +443,13 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
 
   it("accepts only empty or exact --force clear args", async () => {
     for (const args of ["--FORCE", "force", "--force=true", "--force --force", "extra"]) {
-      expect(await runClaudeCommand("clear", args, undefined, "runtime", undefined, () => "root")).toEqual({
+      expect(await runClaudeCommand("clear", args, "runtime", undefined, () => "root")).toEqual({
         ok: false,
         message: "Usage: `/clear [--force]`.",
       })
     }
     for (const args of ["", "--force"]) {
-      const outcome = await runClaudeCommand("clear", args, undefined, "runtime", undefined, () => "root")
+      const outcome = await runClaudeCommand("clear", args, "runtime", undefined, () => "root")
       expect(outcome.ok).toBe(true)
       expect(outcome.summary).toBe(
         "Clear accepted; killing this session and starting a fresh conversation on the same scratchpad."
@@ -381,7 +462,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     const busy = await runClaudeCommand(
       "clear",
       "",
-      undefined,
       "runtime",
       undefined,
       () => "root",
@@ -393,7 +473,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
         await runClaudeCommand(
           "clear",
           "--force",
-          undefined,
           "runtime",
           undefined,
           () => "root",
@@ -408,7 +487,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     const outcome = await runClaudeCommand(
       "clear",
       "",
-      undefined,
       "runtime",
       undefined,
       () => "root",
@@ -435,7 +513,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       const outcome = await runClaudeCommand(
         "clear",
         "--force",
-        undefined,
         "runtime",
         undefined,
         () => "root",
@@ -464,7 +541,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     const outcome = await runClaudeCommand(
       "clear",
       "--force",
-      undefined,
       "runtime",
       undefined,
       () => "root",
@@ -483,7 +559,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
   })
 
   it("fails loudly when /clear has no harness-managed runtime identity", async () => {
-    expect(runClaudeCommand("clear", "", undefined, undefined, undefined, () => "root")).rejects.toThrow(
+    expect(runClaudeCommand("clear", "", undefined, undefined, () => "root")).rejects.toThrow(
       "Harness clear is unavailable for this session."
     )
   })
@@ -499,7 +575,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     const outcome = await runClaudeCommand(
       "spawn",
       args,
-      undefined,
       "runtime",
       undefined,
       () => "root",
@@ -625,7 +700,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     const outcome = await runClaudeCommand(
       "spawn",
       "pi broken\nfix the thing",
-      undefined,
       "runtime",
       undefined,
       () => "root",
@@ -668,7 +742,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     runClaudeCommand(
       "done",
       args,
-      undefined,
       "runtime",
       undefined,
       () => "root",
@@ -739,7 +812,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     const outcome = await runClaudeCommand(
       "done",
       "",
-      undefined,
       "runtime",
       undefined,
       () => "root",
@@ -771,7 +843,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     const outcome = await runClaudeCommand(
       "key",
       "ctrl-d",
-      undefined,
       "runtime",
       undefined,
       () => "root",
@@ -795,7 +866,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       runClaudeCommand(
         "key",
         "enter",
-        undefined,
         "runtime",
         undefined,
         () => "root-b",
@@ -816,7 +886,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
       runClaudeCommand(
         "key",
         "enter",
-        undefined,
         "runtime",
         undefined,
         () => "root",
@@ -831,7 +900,7 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
         { rootStreamId: "root", sourceMessageId: "msg_slash_spawn" }
       )
     ).rejects.toThrow("pane inspection failed")
-    await expect(runClaudeCommand("key", "enter", undefined, undefined, undefined, () => "root")).rejects.toThrow(
+    await expect(runClaudeCommand("key", "enter", undefined, undefined, () => "root")).rejects.toThrow(
       "Key control is unavailable"
     )
   })
@@ -841,7 +910,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     const outcome = await runClaudeCommand(
       "key",
       "Enter",
-      undefined,
       "runtime",
       undefined,
       () => "root",
@@ -866,7 +934,6 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
         await runClaudeCommand(
           "key",
           args,
-          undefined,
           "runtime",
           undefined,
           () => "root",
@@ -890,12 +957,12 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
   })
 
   it("returns the injected read-only status report", async () => {
-    const outcome = await runClaudeCommand("status", "", undefined, "ccs-one", () => "pane status")
+    const outcome = await runClaudeCommand("status", "", "ccs-one", () => "pane status")
     expect(outcome).toEqual({ ok: true, message: "pane status" })
   })
 
   it("reports status capture failures without throwing out of command handling", async () => {
-    const outcome = await runClaudeCommand("status", "", undefined, "ccs-one", () => {
+    const outcome = await runClaudeCommand("status", "", "ccs-one", () => {
       throw new Error("pane disappeared")
     })
     expect(outcome).toEqual({ ok: false, message: "Could not inspect the session: pane disappeared" })
@@ -923,11 +990,5 @@ describe("runClaudeCommand validation (paths that never touch tmux)", () => {
     const outcome = await runClaudeCommand("skill", "whatever")
     expect(outcome.ok).toBe(false)
     expect(outcome.message).toContain("Unsupported")
-  })
-
-  it("reports /carry-on as unavailable when no controller is wired (no tmux)", async () => {
-    const outcome = await runClaudeCommand("carry-on", "later please")
-    expect(outcome.ok).toBe(false)
-    expect(outcome.message).toContain("unavailable")
   })
 })

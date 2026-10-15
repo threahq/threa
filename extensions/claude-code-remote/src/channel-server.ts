@@ -60,7 +60,6 @@ export const CHANNEL_SOURCE = "threa-channel"
 // to Claude Code's `/reload-skills` (pick up skills + custom commands added on
 // disk this session — `/reload-plugins` is reachable via `run` for the plugin
 // case); Threa's canonical `thinking` maps to Claude Code's `/effort`;
-// `carry-on` queues text for the quota carry-on resume (see carry-on.ts);
 // `kick` asks harnessd to press Enter in this session's pane; `status` reads
 // connection/activity state and captures the visible pane without sending keys;
 // `clear` asks harnessd to restart this session with a fresh conversation;
@@ -68,7 +67,6 @@ export const CHANNEL_SOURCE = "threa-channel"
 // scratchpad; `done` winds this thread's own session down through harnessd.
 const SESSION_CONTROL_COMMANDS = [
   "stop",
-  "steer",
   "kick",
   "status",
   "model",
@@ -76,7 +74,6 @@ const SESSION_CONTROL_COMMANDS = [
   "compact",
   "run",
   "reload",
-  "carry-on",
   "reconnect",
   "clear",
   "key",
@@ -230,15 +227,14 @@ export function buildInstructions(permissionRelay: boolean, channelActive = true
 
 /**
  * Execute an advertised session-control command by typing its Claude Code
- * slash-command equivalent into the tmux pane. `stop`/`steer` never reach this
- * — the SDK actuates those itself via `interrupt`/`steer`.
+ * slash-command equivalent into the tmux pane. `stop` never reaches this — the
+ * SDK actuates it itself via `interrupt`.
  */
 type ReconnectTarget = Pick<RemoteSessionStatusSnapshot, "stopped" | "linkGeneration" | "linkState" | "rootStreamId">
 
 export async function runClaudeCommand(
   name: string,
   args: string,
-  carryOn?: CarryOnController,
   runtimeSessionId?: string,
   statusReport?: () => string,
   rootStreamId?: () => string | undefined,
@@ -448,10 +444,6 @@ export async function runClaudeCommand(
         onHandoffReset: restartDelegationsAfterReset,
       }
     }
-    case "carry-on": {
-      if (!carryOn) return { ok: false, message: "Quota carry-on is unavailable for this session." }
-      return carryOn.enqueue(args)
-    }
     case "kick": {
       if (!runtimeSessionId) throw new Error("Harness kick is unavailable for this session.")
       const result = runHarnessKick(runtimeSessionId)
@@ -533,7 +525,8 @@ export function createClaudeSessionControl(
   reconnectTarget?: () => ReconnectTarget,
   reconnectReady?: () => boolean,
   activeStreamId?: () => string | undefined,
-  spawnRuntimes: () => readonly SpawnRuntimeOption[] = defaultSpawnRuntimes
+  spawnRuntimes: () => readonly SpawnRuntimeOption[] = defaultSpawnRuntimes,
+  pendingDecisionCount: () => number = () => 0
 ): SessionControlActuator | undefined {
   if (!tmuxAvailable()) return undefined
   return {
@@ -567,26 +560,25 @@ export function createClaudeSessionControl(
     },
     spawnDefaultRuntime: SPAWN_DEFAULT_RUNTIME,
     interrupt: () => {
-      // A /stop is about to close the held turn — drop the hold (and surface
-      // any queued carry-on texts) before the interrupt lands.
+      // A /stop is about to close the held turn — drop the hold before the
+      // interrupt lands.
       carryOn()?.onInterrupt()
       return interrupt()
     },
     // The prefix tells the model mid-turn text came from the scratchpad, so it
     // folds it into the open invocation's work rather than treating it as a
-    // side conversation at the terminal.
-    steer: (text) => {
-      // While blocked on quota the session is idle at a dead prompt — pasting
-      // would submit a fresh turn that dies the same way. Queue it instead.
-      const absorbed = carryOn()?.absorbSteer(text)
-      if (absorbed !== undefined) return true
-      return steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`)
-    },
+    // side conversation at the terminal. An open permission dialog or menu
+    // would take the paste and its Enter as the answer, and a held session
+    // sits at a quota-dead prompt, so in either case the message waits.
+    steer: (text) =>
+      pendingDecisionCount() > 0 || carryOn()?.awaitingResume
+        ? false
+        : steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`),
+    isHeld: () => carryOn()?.awaitingResume ?? false,
     runCommand: (name, args, context) =>
       runClaudeCommand(
         name,
         args,
-        carryOn(),
         runtimeSessionId,
         statusReport,
         rootStreamId,
@@ -725,7 +717,9 @@ export class ChannelServer {
             return { ...remote, rootStreamId: this.session.rootStreamId }
           },
           () => !this.shuttingDown,
-          () => this.session?.statusSnapshot.activeStreamId
+          () => this.session?.statusSnapshot.activeStreamId,
+          undefined,
+          () => this.session.statusSnapshot.pendingDecisionCount
         ),
         // Record what this window owns so harnessd can reap it later: an archive
         // that lands while this process is dead has nothing else to go on.
@@ -748,7 +742,6 @@ export class ChannelServer {
           keepAlive: (streamId) => this.session.keepAlive(streamId),
           reportHold: (invocationId, content, statusText) =>
             this.session.recordSteps(invocationId, [{ stepType: "rate_limited", content }], statusText),
-          postNotice: (streamId, text) => this.session.postToStream(streamId, { content: text }),
           closeTurn: async (invocationId, text) => {
             const result = await this.session.reply(invocationId, text)
             this.applyTurnClose(invocationId, result)

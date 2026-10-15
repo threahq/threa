@@ -1,5 +1,5 @@
 // A scratchpad-linked connector: the runtime owns a scratchpad, every message
-// in it is a turn, and /steer and /stop work from the composer.
+// in it is a turn, and /stop and /enqueue work from the composer.
 //
 //   THREA_WORKSPACE_ID=ws_… THREA_API_KEY=threa_bk_… bun examples/echo-connector.ts
 //
@@ -59,7 +59,7 @@ const session = new RemoteSession({
   delegate: {
     deliverTurn: async (turn) => runtime.prompt(turn.invocationId, turn.content),
     sessionControl: {
-      commands: ["stop", "steer"],
+      commands: ["stop"],
       interrupt: () => runtime.interrupt(),
       steer: (text) => runtime.steer(text),
       runCommand: async (name) => ({ ok: false, message: `Unsupported command: /${name}` }),

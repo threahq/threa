@@ -30,9 +30,11 @@ the file `connect` writes.
 
 `threa-bot run -- <command>` links a scratchpad for the directory you run it in
 and prints its URL. `--session <name>` runs several side by side in one
-directory, each with its own scratchpad; the same name resumes the same one. Every message in that scratchpad is a turn; `/stop` kills
-the running command, `/steer <text>` kills it and starts a new turn with the
-steer text. Restarting in the same directory returns to the same scratchpad.
+directory, each with its own scratchpad; the same name resumes the same one.
+Every message in that scratchpad is a turn; `/stop` kills the running command;
+a message sent meanwhile waits for it to finish, and `/enqueue <text>` does the
+same explicitly. Restarting in the same directory returns to the same
+scratchpad.
 
 `threa-bot run --mention -- <command>` owns nothing. Whenever someone
 `@mentions` the bot in any stream, the command runs with that message and the

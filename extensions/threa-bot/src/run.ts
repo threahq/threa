@@ -173,7 +173,7 @@ function agentEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return Object.fromEntries(Object.entries(env).filter(([key]) => key !== "THREA_API_KEY"))
 }
 
-/** Own a scratchpad: every message there is a turn for the command; /stop kills it, /steer restarts it with the steer text. */
+/** Own a scratchpad: every message there is a turn for the command; /stop kills it, and a message sent meanwhile waits for it to finish. */
 export async function runScratchpad(args: RunArgs, deps: RunDeps): Promise<void> {
   const config = resolveConfig(args, deps)
   const runtime = new CommandRuntime({
@@ -210,7 +210,7 @@ export async function runScratchpad(args: RunArgs, deps: RunDeps): Promise<void>
         )
       },
       sessionControl: {
-        commands: ["stop", "steer"],
+        commands: ["stop"],
         interrupt: () => runtime.interrupt(),
         runCommand: async (command) => ({ ok: false, message: `Unsupported command: /${command}` }),
       },

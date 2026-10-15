@@ -63,7 +63,7 @@ describe("CommandRuntime", () => {
     const pending = runtime.run("x")
     await new Promise((resolve) => setTimeout(resolve, 100))
     runtime.interrupt()
-    // A /steer replacement parked behind the dying child must not spawn after shutdown.
+    // A replacement turn parked behind the dying child must not spawn after shutdown.
     const replacement = runtime.run("y")
     const started = Date.now()
     await runtime.shutdown()

@@ -7,7 +7,7 @@ const log = (line: string) => process.stderr.write(`[threa-bot] ${line}\n`)
 
 export async function main(argv: readonly string[]): Promise<number> {
   if (process.platform === "win32") {
-    // Stop, steer, timeout and shutdown kill the agent's process group with
+    // Stop, timeout and shutdown kill the agent's process group with
     // POSIX signals; without that the command would outlive every one of them.
     process.stderr.write("threa-bot runs on macOS and Linux; Windows is not supported yet.\n")
     return 1
