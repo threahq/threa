@@ -959,12 +959,14 @@ function MessageInputComponent({
 
   return (
     <>
-      <ComposePanePortal pane={composePane}>
-        {conversationReplyStrip}
-        <div className="min-h-0 flex-1">
-          <MemoizedMessageComposer {...composerProps} expanded autoFocus onCollapse={collapse} />
-        </div>
-      </ComposePanePortal>
+      {composePane.slot && (
+        <ComposePanePortal id={composePane.id} slot={composePane.slot}>
+          {conversationReplyStrip}
+          <div className="min-h-0 flex-1">
+            <MemoizedMessageComposer {...composerProps} expanded autoFocus onCollapse={collapse} />
+          </div>
+        </ComposePanePortal>
+      )}
       <FloatingComposerShell ref={composerHeightRef} data-message-composer-root>
         <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={e2eEnabled} streamId={e2eRootStreamId} />
         {expanded ? (

@@ -724,18 +724,20 @@ export function InlineComposerForm({
 
   return (
     <div ref={containerRef} className={docked ? undefined : "mt-3"} onBlur={handleBlur}>
-      <ComposePanePortal pane={pane}>
-        {headerNode}
-        <div className="min-h-0 flex-1">
-          <MessageComposer
-            {...sharedComposerProps}
-            composerRef={composerControlRef}
-            expanded
-            autoFocus
-            onCollapse={pane.close}
-          />
-        </div>
-      </ComposePanePortal>
+      {pane.slot && (
+        <ComposePanePortal id={pane.id} slot={pane.slot}>
+          {headerNode}
+          <div className="min-h-0 flex-1">
+            <MessageComposer
+              {...sharedComposerProps}
+              composerRef={composerControlRef}
+              expanded
+              autoFocus
+              onCollapse={pane.close}
+            />
+          </div>
+        </ComposePanePortal>
+      )}
       {pane.open ? (
         <ComposingInPaneBar draft={composer.content} onGoTo={pane.goTo} onWriteHere={pane.close} />
       ) : (

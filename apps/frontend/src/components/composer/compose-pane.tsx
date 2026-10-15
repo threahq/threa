@@ -67,21 +67,20 @@ export function useComposePane(draftKey: string, { claim, offer }: { claim: bool
 }
 
 /** Renders the composer into its draft's pane, reading pane state from there rather than from where it is mounted. */
-export function ComposePanePortal({ pane, children }: { pane: ComposePane; children: ReactNode }) {
+export function ComposePanePortal({ id, slot, children }: { id: string; slot: ComposeSlot; children: ReactNode }) {
   const { setCurrentPane } = usePanel()
-  if (!pane.slot) return null
   return createPortal(
-    <PaneFocusContext.Provider value={pane.slot.paneFocus}>
+    <PaneFocusContext.Provider value={slot.paneFocus}>
       {/* Its events bubble through the pane it is mounted in, which claims them first; the draft's pane takes them back. */}
       <div
         className="flex min-h-0 flex-1 flex-col"
-        onClickCapture={() => setCurrentPane(pane.id)}
-        onFocusCapture={() => setCurrentPane(pane.id)}
+        onClickCapture={() => setCurrentPane(id)}
+        onFocusCapture={() => setCurrentPane(id)}
       >
         {children}
       </div>
     </PaneFocusContext.Provider>,
-    pane.slot.node
+    slot.node
   )
 }
 
