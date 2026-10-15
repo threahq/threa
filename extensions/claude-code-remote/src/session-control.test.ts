@@ -60,6 +60,25 @@ function withTmuxEnv<T>(env: { TMUX?: string; TMUX_PANE?: string }, fn: () => T)
   }
 }
 
+function steeringControl(carryOn?: () => CarryOnController, refused: () => boolean = () => false) {
+  return withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () =>
+    createClaudeSessionControl(
+      carryOn,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      refused
+    )
+  )!
+}
+
 describe("createClaudeSessionControl", () => {
   it("returns no actuator outside tmux (fail-safe: no control → no commands offered)", () => {
     withTmuxEnv({}, () => {
@@ -75,7 +94,6 @@ describe("createClaudeSessionControl", () => {
       expect(actuator!.thinkingLevels).toEqual(["low", "medium", "high", "xhigh", "max", "ultracode"])
       expect(actuator!.modelSuggestions!.map((suggestion) => suggestion.value)).toContain("opus")
       expect(actuator!.modelSuggestions!.every((suggestion) => suggestion.label)).toBe(true)
-      expect(typeof actuator!.steer).toBe("function")
     })
   })
 
@@ -109,34 +127,26 @@ describe("createClaudeSessionControl", () => {
     })
   })
 
-  it("does not steer into the pane while a permission decision is open", async () => {
+  it("offers no steer when the server gives no refusal check", () => {
+    const actuator = withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () =>
+      createClaudeSessionControl(undefined, "ccs-one")
+    )
+    expect(actuator!.steer).toBeUndefined()
+  })
+
+  it("does not steer into the pane while the server refuses steers", async () => {
     const pasted = spyOn(tmuxControl, "steerText").mockResolvedValue(true)
     try {
-      let pending = 1
-      const actuator = withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () =>
-        createClaudeSessionControl(
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          () => pending
-        )
-      )!
-      const duringDecision = await actuator.steer!("go left", "stream_1")
-      pending = 0
-      const afterDecision = await actuator.steer!("go right", "stream_1")
+      let refused = true
+      const actuator = steeringControl(undefined, () => refused)
+      const whileRefused = await actuator.steer!("go left", "stream_1")
+      refused = false
+      const afterRefusal = await actuator.steer!("go right", "stream_1")
 
-      expect({ duringDecision, afterDecision, pastes: pasted.mock.calls }).toEqual({
-        duringDecision: false,
-        afterDecision: true,
-        pastes: [["[Steer from the Threa scratchpad — fold into the current work]\ngo right"]],
+      expect({ whileRefused, afterRefusal, pastes: pasted.mock.calls.map(([text]) => text) }).toEqual({
+        whileRefused: false,
+        afterRefusal: true,
+        pastes: ["[Steer from the Threa scratchpad — fold into the current work]\ngo right"],
       })
     } finally {
       pasted.mockRestore()
@@ -159,9 +169,7 @@ describe("createClaudeSessionControl", () => {
       { transientResumeDelayMs: 60_000, minResumeDelayMs: 1, resumeJitterMs: 0 }
     )
     try {
-      const actuator = withTmuxEnv({ TMUX: "/tmp/tmux-1/default,1,0", TMUX_PANE: "%1" }, () =>
-        createClaudeSessionControl(() => carryOn)
-      )!
+      const actuator = steeringControl(() => carryOn)
       carryOn.onTurnStarted("binv_1", "stream_1")
       carryOn.onApiError("binv_1", "API Error: Overloaded")
       const whileHeld = await actuator.steer!("edited text", "stream_1")

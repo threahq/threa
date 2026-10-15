@@ -569,6 +569,94 @@ describe("RemoteSession.onReplyTimeout", () => {
   })
 })
 
+describe("RemoteSession.endTurn", () => {
+  const ended = async ({ sentCount, finalText }: { sentCount: number; finalText?: string }) => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    seedInflight(session, makeInvocation({ id: "binv_end" }), sentCount)
+    const result = await session.endTurn("binv_end", finalText)
+    return {
+      result,
+      finalMessageMarkdown: calls.complete[0]?.body.finalMessageMarkdown as string | undefined,
+      noResponse: calls.complete[0]?.body.noResponse,
+      completions: calls.complete.length,
+      inflight: session.isInflight("binv_end"),
+    }
+  }
+
+  test("posts the final assistant text as the reply when the turn sent nothing", async () => {
+    expect(await ended({ sentCount: 0, finalText: "All done." })).toEqual({
+      result: { ok: true, message: "sent", closedTurn: true },
+      finalMessageMarkdown: "All done.",
+      noResponse: undefined,
+      completions: 1,
+      inflight: false,
+    })
+  })
+
+  test("posts the final text after earlier posts in the turn", async () => {
+    expect(await ended({ sentCount: 1, finalText: "Answer to the steered message." })).toEqual({
+      result: { ok: true, message: "sent", closedTurn: true },
+      finalMessageMarkdown: "Answer to the steered message.",
+      noResponse: undefined,
+      completions: 1,
+      inflight: false,
+    })
+  })
+
+  test("closes silently when the turn already posted and no final text is left", async () => {
+    expect(await ended({ sentCount: 1 })).toEqual({
+      result: { ok: true, message: "sent", closedTurn: true },
+      finalMessageMarkdown: undefined,
+      noResponse: true,
+      completions: 1,
+      inflight: false,
+    })
+  })
+
+  test("posts the no-reply note when there is neither a post nor final text", async () => {
+    expect(await ended({ sentCount: 0, finalText: "   " })).toEqual({
+      result: { ok: true, message: "sent", closedTurn: true },
+      finalMessageMarkdown: expect.stringContaining("without sending a reply"),
+      noResponse: undefined,
+      completions: 1,
+      inflight: false,
+    })
+  })
+
+  test("is a no-op once the turn has closed", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    seedInflight(session, makeInvocation({ id: "binv_twice" }))
+    await session.reply("binv_twice", "Answer.")
+
+    const result = await session.endTurn("binv_twice", "Answer.")
+
+    expect({ ok: result.ok, completions: calls.complete.length }).toEqual({ ok: false, completions: 1 })
+  })
+
+  test("leaves the turn open while its input is being updated", async () => {
+    const { client, calls } = makeFakeClient()
+    const { transport } = makeFakeTransport()
+    const session = makeSession(client, transport)
+    seedInflight(session, makeInvocation({ id: "binv_updating" }))
+    ;(session as unknown as { observedClaims: Map<string, { updateInProgress: boolean }> }).observedClaims.set(
+      "binv_updating",
+      { updateInProgress: true }
+    )
+
+    const result = await session.endTurn("binv_updating", "Done.")
+
+    expect({ result, completions: calls.complete.length, inflight: session.isInflight("binv_updating") }).toEqual({
+      result: { ok: false, message: "Input update is still in progress; the turn stays open.", retryable: true },
+      completions: 0,
+      inflight: true,
+    })
+  })
+})
+
 describe("RemoteSession empty output", () => {
   test("closes a reply that carried no words and no attachments as noResponse", async () => {
     const { client, calls } = makeFakeClient()

@@ -262,10 +262,12 @@ function composerShowsPaste(screen: string, text: string): boolean {
  * read: the paste and its Enter would answer the modal. Enter is pressed only
  * once the composer shows the paste, since a modal can open during the settle.
  * A refusal after the paste clears the composer unless a modal is showing.
+ * `refused` is asked again before Enter: a turn that ends during the settle
+ * leaves an idle prompt, where Enter starts a new turn instead of steering.
  */
 export async function steerText(
   text: string,
-  opts: { settleMs?: number; run?: LocalCommandRunner } = {}
+  opts: { settleMs?: number; run?: LocalCommandRunner; refused?: () => boolean } = {}
 ): Promise<boolean> {
   const target = paneTarget()
   if (!target) return false
@@ -278,7 +280,7 @@ export async function steerText(
   if (settleMs > 0) await sleep(settleMs)
   const after = readPane(target, run)
   if (after === undefined) return false
-  if (composerShowsPaste(after, text)) return sendKeys(["Enter"], run)
+  if (composerShowsPaste(after, text) && !opts.refused?.()) return sendKeys(["Enter"], run)
   // A refused steer is delivered with the next turn; text left in the composer
   // would submit it a second time. Keys sent into a modal would answer it.
   if (!claudePaneShowsModal(after)) sendKeys(["C-u"], run)

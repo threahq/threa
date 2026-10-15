@@ -45,6 +45,12 @@ import {
 } from "@threahq/remote-session"
 import { z } from "zod"
 import { CarryOnController } from "./carry-on"
+import {
+  readTranscriptTurn,
+  type StopHookListener,
+  type StopHookSignal,
+  type TranscriptTurn,
+} from "./stop-hook-listener"
 import { THINKING_LEVELS } from "./thinking-levels"
 import { formatClaudeStatusReport } from "./status"
 import { interrupt, steerText, submitLine, submitModelChange, tmuxAvailable } from "./tmux-control"
@@ -121,43 +127,59 @@ export function formatDelegationContent(task: ClaimedDelegation): string {
   ].join("\n")
 }
 
-/** Schemas help validating clients; runtime validation remains authoritative. */
-export const CHANNEL_TOOLS = [
-  {
-    name: "send",
-    description:
-      "Post a progress or intermediate message to the Threa scratchpad WITHOUT closing the request. Call as many times as you like during a turn; finish with `reply`.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        invocation_id: {
-          type: "string",
-          minLength: 1,
-          description: "The invocation_id from the <channel> event you are working on.",
-        },
-        text: { type: "string", minLength: 1, description: "The message to post, as markdown." },
-      },
-      required: ["invocation_id", "text"],
+function stopFailureNotice(signal: Extract<StopHookSignal, { event: "StopFailure" }>): string {
+  const detail = [signal.error, signal.message].filter(Boolean).join(": ")
+  return `⚠️ Claude Code stopped with an error before finishing this turn${detail ? `: ${detail}` : "."}`
+}
+
+const SEND_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    invocation_id: {
+      type: "string",
+      minLength: 1,
+      description: "The invocation_id from the <channel> event you are working on.",
     },
+    text: { type: "string", minLength: 1, description: "The message to post, as markdown." },
   },
-  {
-    name: "reply",
-    description:
-      "Post your final answer to the Threa scratchpad and close the request. Call once per invocation_id, last.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        invocation_id: {
-          type: "string",
-          minLength: 1,
-          description: "The invocation_id from the <channel> event you are answering.",
-        },
-        text: { type: "string", minLength: 1, description: "Your reply, as markdown." },
-      },
-      required: ["invocation_id", "text"],
+  required: ["invocation_id", "text"],
+}
+
+const REPLY_INPUT_SCHEMA = {
+  type: "object",
+  properties: {
+    invocation_id: {
+      type: "string",
+      minLength: 1,
+      description: "The invocation_id from the <channel> event you are answering.",
     },
+    text: { type: "string", minLength: 1, description: "Your reply, as markdown." },
   },
-] as const
+  required: ["invocation_id", "text"],
+}
+
+/**
+ * Schemas help validating clients; runtime validation remains authoritative.
+ * In hook mode Claude's own stop closes the request, so `reply` only posts.
+ */
+export function channelTools(hookMode: boolean) {
+  return [
+    {
+      name: "send",
+      description: hookMode
+        ? "Post a progress or intermediate message to the Threa scratchpad. The request closes by itself when you finish your turn."
+        : "Post a progress or intermediate message to the Threa scratchpad WITHOUT closing the request. Call as many times as you like during a turn; finish with `reply`.",
+      inputSchema: SEND_INPUT_SCHEMA,
+    },
+    {
+      name: "reply",
+      description: hookMode
+        ? "Post your answer to the Threa scratchpad. It does not close the request — that happens by itself when you finish your turn. For a delegation task, reply posts the result and completes the delegation."
+        : "Post your final answer to the Threa scratchpad and close the request. Call once per invocation_id, last.",
+      inputSchema: REPLY_INPUT_SCHEMA,
+    },
+  ]
+}
 
 const PERMISSION_PREVIEW_MAX_CHARS = 1500
 
@@ -196,7 +218,15 @@ const PermissionRequestSchema = z.object({
   }),
 })
 
-export function buildInstructions(permissionRelay: boolean, channelActive = true): string {
+export function buildInstructions({
+  permissionRelay,
+  channelActive = true,
+  hookMode = false,
+}: {
+  permissionRelay: boolean
+  channelActive?: boolean
+  hookMode?: boolean
+}): string {
   if (!channelActive) {
     return (
       `This Threa channel server is loaded as a plain MCP server — the current Claude session was not launched as a "${CHANNEL_SOURCE}" channel and is not linked to a Threa scratchpad. ` +
@@ -210,9 +240,18 @@ export function buildInstructions(permissionRelay: boolean, channelActive = true
     "",
     "For each such event:",
     "- Do the work it asks for in this session, against the real files.",
-    "- While you work, call the `send` tool to post progress or intermediate messages back to the scratchpad (passing the same `invocation_id`). It does NOT close the request, so you can call it as many times as you like — use it for partial answers, status on a long task, or anything worth surfacing before you're done. On a long task, send something periodically: it keeps the user informed and keeps the request from being closed for inactivity.",
-    "- When you are finished, call the `reply` tool exactly once with the `invocation_id` and your final answer. `reply` posts the message AND closes the request on Threa, so call it last. If you have nothing to add after your `send` messages, still call `reply` (a short 'Done.' is fine) to close cleanly.",
-    "- One `reply` per invocation_id. If several events arrive together, answer each by its own id.",
+    ...(hookMode
+      ? [
+          "- Post to the scratchpad with the `send` or `reply` tool (passing the same `invocation_id`); both only post. Use them for your answer, partial results, or status on a long task — on a long task, post something periodically so the user stays informed.",
+          "- The request closes by itself when you finish your turn. If you posted nothing, your final response text is posted as the answer, so end with the answer itself rather than a summary of messages you already posted.",
+          "- If work continues after your turn ends (background tasks or agents), post its result with `reply` and the same `invocation_id` when it finishes; the request has already closed by then.",
+          "- If several events arrive together, post to each by its own id.",
+        ]
+      : [
+          "- While you work, call the `send` tool to post progress or intermediate messages back to the scratchpad (passing the same `invocation_id`). It does NOT close the request, so you can call it as many times as you like — use it for partial answers, status on a long task, or anything worth surfacing before you're done. On a long task, send something periodically: it keeps the user informed and keeps the request from being closed for inactivity.",
+          "- When you are finished, call the `reply` tool exactly once with the `invocation_id` and your final answer. `reply` posts the message AND closes the request on Threa, so call it last. If you have nothing to add after your `send` messages, still call `reply` (a short 'Done.' is fine) to close cleanly.",
+          "- One `reply` per invocation_id. If several events arrive together, answer each by its own id.",
+        ]),
     "",
     "Attachments. If a message has attachments, the channel downloads them into the working directory and lists each local path under the event — read them from those paths. To send a local file back, add a line `THREA_ATTACH: path/to/file` to your reply text (one per file; paths resolve against the working directory); the channel uploads it and replaces the line with an attachment link.",
   ]
@@ -526,9 +565,10 @@ export function createClaudeSessionControl(
   reconnectReady?: () => boolean,
   activeStreamId?: () => string | undefined,
   spawnRuntimes: () => readonly SpawnRuntimeOption[] = defaultSpawnRuntimes,
-  pendingDecisionCount: () => number = () => 0
+  steerRefused?: () => boolean
 ): SessionControlActuator | undefined {
   if (!tmuxAvailable()) return undefined
+  const refused = steerRefused && (() => steerRefused() || (carryOn()?.awaitingResume ?? false))
   return {
     get commands() {
       return runtimeSessionId
@@ -567,13 +607,15 @@ export function createClaudeSessionControl(
     },
     // The prefix tells the model mid-turn text came from the scratchpad, so it
     // folds it into the open invocation's work rather than treating it as a
-    // side conversation at the terminal. An open permission dialog or menu
-    // would take the paste and its Enter as the answer, and a held session
-    // sits at a quota-dead prompt, so in either case the message waits.
-    steer: (text) =>
-      pendingDecisionCount() > 0 || carryOn()?.awaitingResume
-        ? false
-        : steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`),
+    // side conversation at the terminal. A held session sits at a quota-dead
+    // prompt, so the message waits for the next turn. No `steerRefused` means
+    // the session cannot steer at all: messages wait and edits restart the turn.
+    ...(refused && {
+      steer: (text: string) =>
+        refused()
+          ? false
+          : steerText(`[Steer from the Threa scratchpad — fold into the current work]\n${text}`, { refused }),
+    }),
     isHeld: () => carryOn()?.awaitingResume ?? false,
     runCommand: (name, args, context) =>
       runClaudeCommand(
@@ -633,14 +675,22 @@ export class ChannelServer {
   private currentTurnSealed = false
   /** Set only when harnessd revived this session; spent on the first turn delivered. */
   private wakeBrief: WakeBrief | undefined
+  /** Claude's Stop hook closes runtime turns, so `reply` only posts. */
+  private readonly hookMode: boolean
+  /** Stop signals still being handled: the turn they end is closing, so a steer would land in the next one. */
+  private stopsInFlight = 0
+  /** The in-flight invocation got a `send`/`reply` since its turn's last Stop: that Stop's final text is already posted. */
+  private postedSinceStop: string | undefined
 
   constructor(
     private readonly config: RemoteSessionConfig,
     client: ThreaClient,
     transport?: BotRuntimeTransport,
     channelActive = true,
-    delegationClient?: DelegationClient
+    delegationClient?: DelegationClient,
+    private readonly stopHooks?: StopHookListener
   ) {
+    this.hookMode = stopHooks !== undefined
     const capabilities: Record<string, unknown> = {
       experimental: { "claude/channel": {} },
       tools: {},
@@ -650,7 +700,14 @@ export class ChannelServer {
     }
     this.mcp = new Server(
       { name: CHANNEL_SOURCE, version: "0.1.0" },
-      { capabilities, instructions: buildInstructions(config.permissionRelay, channelActive) }
+      {
+        capabilities,
+        instructions: buildInstructions({
+          permissionRelay: config.permissionRelay,
+          channelActive,
+          hookMode: this.hookMode,
+        }),
+      }
     )
     // The runner races other connectors for workspace-wide tasks, so only an
     // explicitly opted-in channel runs one; the queue is claim-CAS-safe either way.
@@ -719,7 +776,12 @@ export class ChannelServer {
           () => !this.shuttingDown,
           () => this.session?.statusSnapshot.activeStreamId,
           undefined,
-          () => this.session.statusSnapshot.pendingDecisionCount
+          // Without the Stop hook, `reply` closes the turn, so a steer Claude takes
+          // after it lands in a turn with no invocation. An open permission dialog
+          // or menu would take the paste and its Enter as the answer.
+          this.hookMode
+            ? () => this.stopsInFlight > 0 || this.session.statusSnapshot.pendingDecisionCount > 0
+            : undefined
         ),
         // Record what this window owns so harnessd can reap it later: an archive
         // that lands while this process is dead has nothing else to go on.
@@ -761,6 +823,14 @@ export class ChannelServer {
       log,
     })
     this.wakeBrief = takeWakeBrief(config.runtimeSessionId)
+    stopHooks?.onSignal((signal) => {
+      this.stopsInFlight++
+      this.handleStopSignal(signal)
+        .catch((error) =>
+          log(`stop hook: handling ${signal.event} failed: ${error instanceof Error ? error.message : String(error)}`)
+        )
+        .finally(() => this.stopsInFlight--)
+    })
     this.registerHandlers()
   }
 
@@ -817,6 +887,7 @@ export class ChannelServer {
     this.shuttingDown = true
     this.tracer.stop()
     this.carryOn?.stop()
+    await this.stopHooks?.close()
     await this.delegations?.stop()
     // A never-started session has nothing linked — skipping its shutdown keeps
     // plain-MCP teardown from writing an offline-presence row for an instance
@@ -904,6 +975,7 @@ export class ChannelServer {
   private async deliverToClaude(turn: DeliveredTurn): Promise<void> {
     this.currentRuntimeInvocationId = turn.invocationId
     this.currentTurnSealed = turn.sealed
+    this.postedSinceStop = undefined
     // Window the transcript tail BEFORE the content is pushed, so the tracer's
     // start offset precedes the prompt echo it binds on.
     // A sealed turn's steps are ciphertext to the server, so the tracer may
@@ -928,7 +1000,9 @@ export class ChannelServer {
   // --- MCP tool surface --------------------------------------------------------
 
   private registerHandlers(): void {
-    this.mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: CHANNEL_TOOLS }))
+    this.mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: channelTools(this.hookMode),
+    }))
 
     this.mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (req.params.name !== "reply" && req.params.name !== "send") {
@@ -970,12 +1044,60 @@ export class ChannelServer {
       delegation.resolve(text)
       return { ok: true, message: "Delegation result posted to the Threa stream; the request is closed." }
     }
-    const result =
-      name === "send"
-        ? await this.session.sendInterim(invocationId, text)
-        : await this.session.reply(invocationId, text)
+    const closesTurn = name === "reply" && !this.hookMode
+    const result = closesTurn
+      ? await this.session.reply(invocationId, text)
+      : await this.session.sendInterim(invocationId, text)
+    if (this.hookMode && result.ok && invocationId === this.inflightRuntimeInvocationId())
+      this.postedSinceStop = invocationId
     this.applyTurnClose(invocationId, result)
     return result
+  }
+
+  /** Claude finished (or failed) a turn: close the runtime turn it was working on. */
+  async handleStopSignal(signal: StopHookSignal): Promise<void> {
+    const invocationId = this.inflightRuntimeInvocationId()
+    if (!invocationId) return
+    const turn = signal.transcriptPath ? await this.readTurn(signal.transcriptPath, invocationId) : undefined
+    if (turn && !turn.seen) {
+      log(`stop hook: ${signal.event} ended a turn that never saw ${invocationId}; leaving it open`)
+      return
+    }
+    // Each Claude turn's final text is an answer: a turn that ends with input
+    // still queued posts it now, or the turn that closes the invocation would
+    // replace it.
+    const finalText = signal.event === "Stop" ? signal.lastAssistantMessage : undefined
+    const unposted = this.postedSinceStop === invocationId ? undefined : finalText
+    this.postedSinceStop = undefined
+    if (turn?.pendingInput) {
+      if (unposted?.trim()) {
+        const posted = await this.session.sendInterim(invocationId, unposted)
+        if (!posted.ok) log(`stop hook: posting the answer of a turn on ${invocationId} failed: ${posted.message}`)
+      }
+      log(`stop hook: Claude still has queued input; ${invocationId} stays open for the turn that takes it`)
+      return
+    }
+    if (signal.event === "StopFailure" && this.carryOn) {
+      const providerText = signal.message ?? signal.error
+      if (providerText && this.carryOn.onApiError(invocationId, providerText)) return
+    }
+    const result =
+      signal.event === "Stop"
+        ? await this.session.endTurn(invocationId, unposted)
+        : await this.session.reply(invocationId, stopFailureNotice(signal))
+    this.applyTurnClose(invocationId, result)
+    if (!result.ok) log(`stop hook: closing ${invocationId} failed: ${result.message}`)
+  }
+
+  private async readTurn(transcriptPath: string, invocationId: string): Promise<TranscriptTurn> {
+    try {
+      return await readTranscriptTurn(transcriptPath, invocationId)
+    } catch (error) {
+      log(
+        `stop hook: transcript unreadable (${error instanceof Error ? error.message : String(error)}); closing ${invocationId} anyway`
+      )
+      return { seen: true, pendingInput: false }
+    }
   }
 
   // --- Permission relay -----------------------------------------------------

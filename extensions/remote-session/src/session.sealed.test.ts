@@ -787,6 +787,32 @@ describe("sealed output paths", () => {
     expect(await openSealed(body.reply as SealedReplyBody)).toContain("without sending a reply")
   })
 
+  test("endTurn seals the final assistant text as the reply when the turn posted nothing", async () => {
+    const { session, calls, openSealed } = await startSealedTurn()
+
+    const result = await session.endTurn("binv_sealed", "Refactor finished.")
+
+    expect({ ok: result.ok, plaintext: calls.complete.length, sealed: calls.completeSealed.length }).toEqual({
+      ok: true,
+      plaintext: 0,
+      sealed: 1,
+    })
+    expect(await openSealed(calls.completeSealed[0]!.body.reply as SealedReplyBody)).toBe("Refactor finished.")
+  })
+
+  test("endTurn closes a sealed turn that already posted without a reply body", async () => {
+    const { session, calls } = await startSealedTurn()
+    await session.sendInterim("binv_sealed", "Progress.")
+
+    const result = await session.endTurn("binv_sealed")
+
+    expect({ ok: result.ok, plaintext: calls.complete.length, body: calls.completeSealed[0]?.body }).toEqual({
+      ok: true,
+      plaintext: 0,
+      body: { noResponse: true, sourceRevision: 1 },
+    })
+  })
+
   test("should replay the exact sealed timeout body when the re-armed deadline fires", async () => {
     const { session, calls, control, completeSealedAttempts } = await startSealedTurn()
     control.failNextCompleteSealed = 1

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { channelActivation, isChannelLaunch, readParentCommand } from "./channel-detect"
+import { channelActivation, isChannelLaunch, launchedWithSettings, readParentCommand } from "./channel-detect"
 
 // Real launch shapes captured from running sessions (spawn.sh and harnessd).
 const SPAWN_SH_CMD =
@@ -58,6 +58,20 @@ describe("channelActivation", () => {
       active: false,
       reason: "flag-missing",
     })
+  })
+})
+
+describe("launchedWithSettings", () => {
+  test("matches only the exact settings path passed to --settings", () => {
+    const command =
+      "claude --mcp-config /m/s.json --settings /m/s.settings.json --dangerously-load-development-channels server:c"
+    expect([
+      launchedWithSettings(command, "/m/s.settings.json"),
+      launchedWithSettings(command, "/m/other.settings.json"),
+      launchedWithSettings("claude --mcp-config /m/s.json", "/m/s.settings.json"),
+      launchedWithSettings("claude --settings /home/a b/s.settings.json --verbose", "/home/a b/s.settings.json"),
+      launchedWithSettings(command, "/m/s.settings"),
+    ]).toEqual([true, false, false, true, false])
   })
 })
 

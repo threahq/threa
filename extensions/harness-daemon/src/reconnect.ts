@@ -70,10 +70,12 @@ export interface ReconnectDeps {
   claudeRegistry?: ClaudeRegistryDeps
   links?: () => HarnessLink[]
   identities?: () => MintedIdentity[]
-  mcpFile?: (path: string) => boolean
+  isRegularFile?: (path: string) => boolean
   sleep?: (ms: number) => Promise<void>
   claudeBoot?: Partial<ClaudeBootDeps>
 }
+
+const regularFile = (path: string): boolean => statSync(path).isFile()
 
 export function defaultReconnectDeps(): ReconnectDeps {
   return {
@@ -261,10 +263,17 @@ function resolveClaudeTarget(options: ReconnectOptions, deps: ReconnectDeps): Cl
   if (agent && (agent.runtimeSessionId !== runtimeSessionId || agent.instanceId !== instanceId)) {
     throw new Error("managed Claude identity does not match pane launch")
   }
+  const isRegularFile = deps.isRegularFile ?? regularFile
   if (launch.mcpConfig) {
     launch.mcpConfig = resolve(pane.cwd, launch.mcpConfig)
-    if (!(deps.mcpFile ?? ((path) => statSync(path).isFile()))(launch.mcpConfig)) {
+    if (!isRegularFile(launch.mcpConfig)) {
       throw new Error(`Claude MCP config is not an existing regular file: ${launch.mcpConfig}`)
+    }
+  }
+  if (launch.settings) {
+    launch.settings = resolve(pane.cwd, launch.settings)
+    if (!isRegularFile(launch.settings)) {
+      throw new Error(`Claude settings file is not an existing regular file: ${launch.settings}`)
     }
   }
   const native = resolveClaudeNativeSession(pane.panePid, pane.cwd, launch.name, options.force ?? false, registryDeps)
@@ -300,6 +309,7 @@ export function reconstructClaudeCommand(
   ]
   if (target.launch.name) words.push("--name", target.launch.name)
   if (target.launch.mcpConfig) words.push("--mcp-config", target.launch.mcpConfig)
+  if (target.launch.settings) words.push("--settings", target.launch.settings)
   words.push("--autocompact", target.launch.autocompact ?? CLAUDE_AUTOCOMPACT_WINDOW)
   words.push(...claudeModelArgs(target.launch.choice))
   words.push("--dangerously-load-development-channels", `server:${target.launch.channel}`)
@@ -351,8 +361,12 @@ export async function reconnectClaude(
     throw new Error("Claude launch resume UUID changed during reconnect preflight")
   }
 
-  if (target.launch.mcpConfig && !(deps.mcpFile ?? ((path) => statSync(path).isFile()))(target.launch.mcpConfig)) {
+  const isRegularFile = deps.isRegularFile ?? regularFile
+  if (target.launch.mcpConfig && !isRegularFile(target.launch.mcpConfig)) {
     throw new Error(`Claude MCP config changed before respawn: ${target.launch.mcpConfig}`)
+  }
+  if (target.launch.settings && !isRegularFile(target.launch.settings)) {
+    throw new Error(`Claude settings file changed before respawn: ${target.launch.settings}`)
   }
   deps.respawn(
     target.pane.paneId,

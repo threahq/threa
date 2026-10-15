@@ -93,7 +93,7 @@ function deps(overrides: Partial<ReconnectDeps> = {}): ReconnectDeps & { calls: 
         }),
     },
     preflight: async () => ({ status: "linked", rootStreamId: "stream_one" }),
-    mcpFile: () => true,
+    isRegularFile: () => true,
     respawn: (target, cwd, command) => calls.push([target, cwd, command]),
     sleep: async () => undefined,
     ...overrides,
@@ -153,6 +153,8 @@ describe("parseClaudeLaunch", () => {
       "claude --mcp-config={} --dangerously-load-development-channels server:x",
       "claude --mcp-config '[]' --dangerously-load-development-channels server:x",
       "claude --mcp-config /a --mcp-config /b --dangerously-load-development-channels server:x",
+      "claude --settings '{}' --dangerously-load-development-channels server:x",
+      "claude --settings /a --settings /b --dangerously-load-development-channels server:x",
       "claude prompt --dangerously-load-development-channels server:x",
       "claude --resume invalid --dangerously-load-development-channels server:x",
       `claude --resume ${NATIVE} --resume ${NATIVE} --dangerously-load-development-channels server:x`,
@@ -259,6 +261,48 @@ describe("reconnectClaude", () => {
       CWD,
       `'env' 'THREA_DISPLAY_NAME=Claude' 'THREA_INSTANCE_ID=cc-one' 'THREA_RUNTIME_SESSION_ID=${RUNTIME}' 'THREA_COLD_START_IF_ARCHIVED=wait' 'THREA_COLD_START_IF_MISSING=error' 'THREA_EXPECTED_ROOT_STREAM_ID=stream_one' '/opt/claude' '--resume' '${NATIVE}' '--name' 'threa.feature' '--mcp-config' '/tmp/threa.json' '--autocompact' '200k' '--dangerously-load-development-channels' 'server:threa-channel' '--dangerously-skip-permissions'`,
     ])
+  })
+
+  test("keeps the stop-hook settings the pane was launched with", async () => {
+    let paneReads = 0
+    const checked: string[] = []
+    const launched = COMMAND.replace(
+      "--mcp-config /tmp/threa.json",
+      "--mcp-config /tmp/threa.json --settings /tmp/threa.settings.json"
+    )
+    const d = deps({
+      panes: () =>
+        ++paneReads < 3
+          ? [pane({ startCommand: launched })]
+          : [pane({ panePid: 5678, startCommand: "claude --resume native" })],
+      isRegularFile: (path) => (checked.push(path), true),
+    })
+
+    await reconnectClaude({ runtimeSessionId: RUNTIME, rootStreamId: "stream_one" }, d)
+
+    expect({
+      settings: parseClaudeLaunch(d.calls[0]![2]!)?.settings,
+      checked: checked.filter((path) => path.endsWith(".settings.json")),
+    }).toEqual({
+      settings: "/tmp/threa.settings.json",
+      checked: ["/tmp/threa.settings.json", "/tmp/threa.settings.json"],
+    })
+  })
+
+  test("refuses to relaunch when the pane's stop-hook settings file is gone", async () => {
+    const launched = COMMAND.replace(
+      "--mcp-config /tmp/threa.json",
+      "--mcp-config /tmp/threa.json --settings /tmp/threa.settings.json"
+    )
+    const d = deps({
+      panes: () => [pane({ startCommand: launched })],
+      isRegularFile: (path) => !path.endsWith(".settings.json"),
+    })
+
+    await expect(reconnectClaude({ runtimeSessionId: RUNTIME, rootStreamId: "stream_one" }, d)).rejects.toThrow(
+      "Claude settings file is not an existing regular file: /tmp/threa.settings.json"
+    )
+    expect(d.calls).toEqual([])
   })
 
   test("resumes on the model and effort the pane was launched with", async () => {
@@ -380,7 +424,7 @@ describe("reconnectClaude", () => {
         return () =>
           ++reads < 3 ? [pane({ startCommand: COMMAND.replace("/tmp/threa.json", "config/mcp.json") })] : []
       })(),
-      mcpFile: (path) => (checked.push(path), true),
+      isRegularFile: (path) => (checked.push(path), true),
     })
     await expect(reconnectClaude({ runtimeSessionId: RUNTIME, rootStreamId: "stream_one" }, relative)).rejects.toThrow(
       "did not verify"
@@ -391,7 +435,7 @@ describe("reconnectClaude", () => {
     for (const value of ["/missing.json", "/config-dir"]) {
       const invalid = deps({
         panes: () => [pane({ startCommand: COMMAND.replace("/tmp/threa.json", value) })],
-        mcpFile: () => false,
+        isRegularFile: () => false,
       })
       await expect(reconnectClaude({ runtimeSessionId: RUNTIME, rootStreamId: "stream_one" }, invalid)).rejects.toThrow(
         "not an existing regular file"
@@ -400,7 +444,7 @@ describe("reconnectClaude", () => {
     }
 
     let checks = 0
-    const disappeared = deps({ mcpFile: () => ++checks === 1 })
+    const disappeared = deps({ isRegularFile: () => ++checks === 1 })
     await expect(
       reconnectClaude({ runtimeSessionId: RUNTIME, rootStreamId: "stream_one" }, disappeared)
     ).rejects.toThrow("changed before respawn")

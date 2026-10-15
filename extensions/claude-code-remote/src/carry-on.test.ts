@@ -100,25 +100,44 @@ describe("CarryOnController", () => {
     controller.stop()
   })
 
+  it("a second report of the same failure while held does not restart the hold", () => {
+    const { host, log, inflight } = makeHost()
+    const controller = new CarryOnController(host, FAST)
+    const id = startTurn(controller, inflight)
+
+    const taken = [controller.onApiError(id, SESSION_LIMIT), controller.onApiError(id, SESSION_LIMIT)]
+
+    expect({ taken, holds: log.holds.length, holding: controller.holding }).toEqual({
+      taken: [true, true],
+      holds: 1,
+      holding: true,
+    })
+    controller.stop()
+  })
+
   it("ignores API errors for a turn it is not tracking or that is no longer in flight", () => {
     const { host, log, inflight } = makeHost()
     const controller = new CarryOnController(host, FAST)
-    controller.onApiError("binv_unknown", SESSION_LIMIT)
-    expect(controller.holding).toBe(false)
-
+    const unknown = controller.onApiError("binv_unknown", SESSION_LIMIT)
     const id = startTurn(controller, inflight)
     inflight.delete(id)
-    controller.onApiError(id, SESSION_LIMIT)
-    expect(controller.holding).toBe(false)
-    expect(log.holds).toHaveLength(0)
+    const finished = controller.onApiError(id, SESSION_LIMIT)
+
+    expect({ taken: [unknown, finished], holding: controller.holding, holds: log.holds.length }).toEqual({
+      taken: [false, false],
+      holding: false,
+      holds: 0,
+    })
   })
 
   it("does not hold on non-retryable errors", () => {
     const { host, inflight } = makeHost()
     const controller = new CarryOnController(host, FAST)
     const id = startTurn(controller, inflight)
-    controller.onApiError(id, "Prompt is too long")
-    expect(controller.holding).toBe(false)
+    expect({ taken: controller.onApiError(id, "Prompt is too long"), holding: controller.holding }).toEqual({
+      taken: false,
+      holding: false,
+    })
   })
 
   it("resumes a transient failure by injecting the continuation", async () => {
@@ -170,6 +189,16 @@ describe("CarryOnController", () => {
     droppedController.onInterrupt()
 
     expect({ resumed: resumed.log.holdEnds, dropped: dropped.log.holdEnds }).toEqual({ resumed: 1, dropped: 1 })
+  })
+
+  it("leaves the claim to the closing turn when it gives up on a hold", async () => {
+    const { host, log, inflight } = makeHost({ injectOk: false })
+    const controller = new CarryOnController(host, FAST)
+    const id = startTurn(controller, inflight)
+    controller.onApiError(id, OVERLOADED)
+    await wait(40)
+
+    expect({ closes: log.closes.length, holdEnds: log.holdEnds }).toEqual({ closes: 1, holdEnds: 0 })
   })
 
   it("leaves a turn stopped during the resume inject alone, even when the inject fails", async () => {
@@ -238,6 +267,17 @@ describe("CarryOnController", () => {
     expect(log.closes[0]!.text).toContain("no reset time")
     expect(log.closes[0]!.text).toContain("monthly spend limit")
     expect(controller.holding).toBe(false)
+  })
+
+  it("owns a second report of a failure it already gave up on", async () => {
+    const { host, log, inflight } = makeHost()
+    const controller = new CarryOnController(host, FAST)
+    const id = startTurn(controller, inflight)
+
+    const taken = [controller.onApiError(id, MONTHLY_LIMIT), controller.onApiError(id, MONTHLY_LIMIT)]
+    await wait(10)
+
+    expect({ taken, closes: log.closes.length }).toEqual({ taken: [true, true], closes: 1 })
   })
 
   it("closes the turn when the resume cannot type into the session", async () => {
