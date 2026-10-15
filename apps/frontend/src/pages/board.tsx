@@ -39,10 +39,11 @@ import { SKELETON_DELAY_MS, useCoordinatedPhase } from "@/contexts/coordinated-l
 import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/components/composer"
 import { BoardCard, BoardCardSkeleton } from "@/components/board/board-card"
 import { BoardFeedList } from "@/components/board/board-feed-list"
+import { useNewPost } from "@/components/board/board-overlay-composer"
 import { FeedRowHoldContext, FeedRowKeyContext, useFeedRowHolds } from "@/components/board/feed-row-hold"
 import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
 import { BoardRemovedCard } from "@/components/board/board-removed-card"
-import { openCompose, registerComposeOnPosted } from "@/stores/compose-overlay-store"
+import { registerComposeOnPosted } from "@/stores/compose-overlay-store"
 import { setBoardFlash } from "@/stores/board-flash-store"
 import { useBoardBackfillPrimed } from "@/stores/conversation-messages-store"
 import { resetBoardUnreadLatches } from "@/stores/board-unread-latch-store"
@@ -195,6 +196,30 @@ export function BoardPage() {
   const lens = parseLensParam(new URLSearchParams(location.search).get(BOARD_LENS_PARAM))
   return <BoardPageInner workspaceId={workspaceId} lens={lens} />
 }
+
+/** Flat solid accent + a restrained warm shadow, per Threa's Button language (no gradient/gloss). */
+const NEW_POST_BUTTON_CLASS = cn(
+  "group absolute bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-5 z-20",
+  // Width is content-driven (min-w square when collapsed), so the
+  // expanded pill hugs its label + icon with no slack — the icon stays
+  // pinned right and the label slides in to its left.
+  "flex h-14 min-w-[56px] items-center justify-end overflow-hidden rounded-2xl pl-0 pr-[18px]",
+  "transition-[padding,gap,background-color] duration-200 ease-out",
+  "sm:hover:gap-2 sm:hover:pl-[18px]",
+  "bg-primary text-primary-foreground hover:bg-primary/90",
+  "shadow-[0_6px_16px_-6px_hsl(28_30%_22%/0.3),0_2px_5px_-2px_hsl(28_30%_22%/0.14)]",
+  "dark:shadow-[0_8px_20px_-8px_rgb(0_0_0/0.5),0_2px_6px_-2px_rgb(0_0_0/0.3)]"
+)
+
+/** On a pointer the pill expands to reveal its "New post" label. */
+const NEW_POST_BUTTON_CONTENT = (
+  <>
+    <span className="hidden max-w-0 whitespace-nowrap text-[13px] font-medium opacity-0 transition-[max-width,opacity] duration-200 group-hover:max-w-[96px] group-hover:opacity-100 sm:block">
+      New post
+    </span>
+    <PenLine className="h-5 w-5 shrink-0" />
+  </>
+)
 
 function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: BoardLens }) {
   // The board's filters live in the URL (INV-59) — six params, three dimensions
@@ -821,6 +846,8 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
     ]
   )
 
+  const newPost = useNewPost()
+
   // A card writing its draft in a pane stays mounted while the feed scrolls it away.
   const { held: heldRows, hold: holdFeedRow } = useFeedRowHolds()
   const keepMounted = useMemo(
@@ -959,31 +986,17 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
           </div>
         </FloatingComposerAnchorProvider>
         {/* Floating compose button — always reachable (doesn't scroll with the
-            feed), bottom-right. Flat solid accent + a restrained warm shadow, per
-            Threa's Button language (no gradient/gloss). On a pointer it expands to
-            reveal its "New post" label. Opens the same overlay as the command. */}
-        <button
-          type="button"
-          onClick={() => openCompose()}
-          aria-label="New post"
-          className={cn(
-            "group absolute bottom-[max(1.25rem,env(safe-area-inset-bottom))] right-5 z-20",
-            // Width is content-driven (min-w square when collapsed), so the
-            // expanded pill hugs its label + icon with no slack — the icon stays
-            // pinned right and the label slides in to its left.
-            "flex h-14 min-w-[56px] items-center justify-end overflow-hidden rounded-2xl pl-0 pr-[18px]",
-            "transition-[padding,gap,background-color] duration-200 ease-out",
-            "sm:hover:gap-2 sm:hover:pl-[18px]",
-            "bg-primary text-primary-foreground hover:bg-primary/90",
-            "shadow-[0_6px_16px_-6px_hsl(28_30%_22%/0.3),0_2px_5px_-2px_hsl(28_30%_22%/0.14)]",
-            "dark:shadow-[0_8px_20px_-8px_rgb(0_0_0/0.5),0_2px_6px_-2px_rgb(0_0_0/0.3)]"
-          )}
-        >
-          <span className="hidden max-w-0 whitespace-nowrap text-[13px] font-medium opacity-0 transition-[max-width,opacity] duration-200 group-hover:max-w-[96px] group-hover:opacity-100 sm:block">
-            New post
-          </span>
-          <PenLine className="h-5 w-5 shrink-0" />
-        </button>
+            feed), bottom-right. On desktop a link to the new post's pane, so it
+            drags like any pane link; on a phone it opens the overlay. */}
+        {newPost.href ? (
+          <Link to={newPost.href} aria-label="New post" className={NEW_POST_BUTTON_CLASS}>
+            {NEW_POST_BUTTON_CONTENT}
+          </Link>
+        ) : (
+          <button type="button" onClick={newPost.open} aria-label="New post" className={NEW_POST_BUTTON_CLASS}>
+            {NEW_POST_BUTTON_CONTENT}
+          </button>
+        )}
       </div>
     </div>
   )

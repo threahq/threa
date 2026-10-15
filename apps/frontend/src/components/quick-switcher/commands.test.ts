@@ -91,6 +91,7 @@ describe("commands", () => {
         createDraftScratchpad: vi.fn(async () => "draft_x"),
         createEncryptedScratchpad: vi.fn(async () => "stream_x"),
         openCreateChannel: vi.fn(),
+        openNewPost: vi.fn(),
         setMode: vi.fn(),
         openSearch: vi.fn(),
         requestInput: vi.fn(),

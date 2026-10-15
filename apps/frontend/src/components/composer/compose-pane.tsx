@@ -20,7 +20,6 @@ export interface ComposePane {
   slot: ComposeSlot | null
   close: () => void
   goTo: () => void
-  /** Links that open the pane in focus or beside, where the page lays panes out and nothing covers them. */
   expandHref: string | undefined
   sideHref: string | undefined
 }
@@ -39,10 +38,24 @@ export function useComposePaneDraftKeys(): ReadonlySet<string> {
   return useMemo(() => new Set<string>(JSON.parse(keys)), [keys])
 }
 
+/** Links that open `draftKey`'s pane in focus or beside, where the page lays panes out and nothing covers them. */
+export function useComposePaneLinks(
+  draftKey: string,
+  offer: boolean
+): { expandHref: string | undefined; sideHref: string | undefined } {
+  const { hasTabs, getPanelUrl, getFocusedPanelUrl } = usePanel()
+  const asideCoversPanes = useContext(AsideCoversPanesContext)
+  const id = createComposePanelId(draftKey)
+  const offered = offer && hasTabs && !asideCoversPanes
+  return {
+    expandHref: offered ? getFocusedPanelUrl(id) : undefined,
+    sideHref: offered ? getPanelUrl(id) : undefined,
+  }
+}
+
 /** `draftKey`'s draft in a pane of its own (`compose:<draftKey>`), for the composer that owns the draft. */
 export function useComposePane(draftKey: string, { claim, offer }: { claim: boolean; offer: boolean }): ComposePane {
-  const { hasTabs, getPanelUrl, getFocusedPanelUrl, closeTab, setCurrentPane } = usePanel()
-  const asideCoversPanes = useContext(AsideCoversPanesContext)
+  const { closeTab, setCurrentPane } = usePanel()
   const paneLanding = usePaneFocusLanding()
   const id = createComposePanelId(draftKey)
   const open = useComposePaneOpen(draftKey)
@@ -54,16 +67,7 @@ export function useComposePane(draftKey: string, { claim, offer }: { claim: bool
     setCurrentPane(id)
     landFocus(paneLanding, id)
   })
-  const offered = offer && hasTabs && !asideCoversPanes
-  return {
-    id,
-    open,
-    slot,
-    close,
-    goTo,
-    expandHref: offered ? getFocusedPanelUrl(id) : undefined,
-    sideHref: offered ? getPanelUrl(id) : undefined,
-  }
+  return { id, open, slot, close, goTo, ...useComposePaneLinks(draftKey, offer) }
 }
 
 /** Renders the composer into its draft's pane, reading pane state from there rather than from where it is mounted. */

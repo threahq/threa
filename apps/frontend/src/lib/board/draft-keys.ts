@@ -13,6 +13,9 @@ const REPLY_PREFIX = "board:reply:"
 const BRANCH_REPLY_PREFIX = "board:branch-reply:"
 const SUBTOPIC_PREFIX = "board:subtopic:"
 
+/** The one new post, written in the board's overlay or its pane from any entry point. */
+export const BOARD_NEW_POST_DRAFT_KEY = "board:new-post"
+
 /** The card/panel bottom "Write a reply…" composer, per conversation. */
 export function boardReplyDraftKey(conversationId: string): string {
   return `${REPLY_PREFIX}${conversationId}`

@@ -32,6 +32,7 @@ import { closePanelTab, followCurrentPanel, soleFirstPanelOf } from "@/lib/panel
 import { fitPanelTabs, splitVisibleTabs, TAB_ACTIONS_WIDTH, tabRowReserve, type PanelTabFit } from "@/lib/panel-tab-fit"
 import { cn } from "@/lib/utils"
 import { pageTitleOf } from "@/lib/page-panes"
+import { BOARD_NEW_POST_DRAFT_KEY } from "@/lib/board/draft-keys"
 import { usePaneCovered } from "./pane-host"
 import { PaneFocusContext } from "./pane-focus"
 import { endTabDrag, startTabDrag, useStripCaret, useStripDropZone } from "./pane-drop"
@@ -415,7 +416,9 @@ export function PanelTabTitle({ workspaceId, panelId }: { workspaceId: string; p
       </>
     )
   }
-  if (parseComposeDraft(panelId)) return <>Draft</>
+  const composeDraftKey = parseComposeDraft(panelId)
+  if (composeDraftKey === BOARD_NEW_POST_DRAFT_KEY) return <>New post</>
+  if (composeDraftKey) return <>Draft</>
   const conversationsStreamId = parseConversationsPanel(panelId)
   if (conversationsStreamId) {
     return (
