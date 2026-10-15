@@ -6,6 +6,7 @@ import { useScopeDraftPreview } from "@/hooks"
 import { CollapsedComposerBar } from "@/components/composer/collapsed-composer-bar"
 import { ComposerDisabledNotice } from "@/components/composer/composer-disabled-notice"
 import { InlineComposerForm, type InlineComposerSubmit } from "@/components/board/board-inline-composer"
+import { useComposePaneOpen } from "@/components/composer/compose-pane"
 import { boardReplyDraftKey } from "@/lib/board/draft-keys"
 import { subscribeShareHandoffOpener } from "@/stores/composer-handoff-store"
 import { cn } from "@/lib/utils"
@@ -100,6 +101,12 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
   const replyKey = boardReplyDraftKey(props.post.conversation.id)
   const scopeDraft = useScopeDraftPreview(props.workspaceId, replyKey)
   const restoreStashedId = scopeDraft && !scopeDraft.isCheckedOut ? scopeDraft.draftId : null
+  // The form writes the draft into its pane, so it stays mounted while that pane is open.
+  const inPane = useComposePaneOpen(replyKey)
+  // A pane opened while the form rests (a reload, a dragged link) leaves it open once the pane closes, for a send's refocus.
+  useEffect(() => {
+    if (inPane) setOpen(true)
+  }, [inPane])
 
   const { openReplySignal } = props
   useEffect(() => {
@@ -187,7 +194,7 @@ export function BoardReplyComposer(props: BoardReplyComposerProps) {
     )
   }
 
-  if (!open) {
+  if (!open && !inPane) {
     return (
       <CollapsedComposerBar
         buttonRef={buttonRef}

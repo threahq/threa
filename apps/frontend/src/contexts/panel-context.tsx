@@ -24,6 +24,7 @@ import { useCoverHistory, type CoverLanding } from "@/hooks/use-cover-close"
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { PANEL_COVER } from "@/lib/covers"
 import { isPagePane, isServerStreamId } from "@/lib/stream-ids"
+import { BOARD_DRAFT_SCOPE_PREFIX } from "@/lib/board/draft-keys"
 import { isPinnedPagePane, pagePaneAt, pagePathOf } from "@/lib/page-panes"
 import { flashPane } from "@/lib/pane-flash"
 import {
@@ -121,21 +122,37 @@ export function createConversationsPanelId(streamId: string): string {
   return `${CONVERSATIONS_PANEL_PREFIX}${streamId}`
 }
 
-/** A stream's draft, written in a pane of its own. One per stream: the stream's composer, shown there instead. */
+/** A draft, written in a pane of its own: `compose:<draftKey>`, the composer
+ *  owning that draft shown there instead. A stream's draft key is its id; a board
+ *  card's is its `board:` scope. */
 const COMPOSE_PANEL_PREFIX = "compose:"
 
 function isComposePanel(panelId: string): boolean {
   return panelId.startsWith(COMPOSE_PANEL_PREFIX)
 }
 
-/** The stream behind a `compose:<id>` panel, or null when it isn't one. */
-export function parseComposePanel(panelId: string): string | null {
+/** The layout's separators and marks, and the escape itself, escaped in a draft key (`board:branch-reply:…`). */
+const PANEL_ID_RESERVED = /[%.*-]/g
+
+/** The draft key behind a `compose:<draftKey>` panel, or null when it isn't one. */
+export function parseComposeDraft(panelId: string): string | null {
   if (!isComposePanel(panelId)) return null
-  return panelId.slice(COMPOSE_PANEL_PREFIX.length) || null
+  try {
+    return decodeURIComponent(panelId.slice(COMPOSE_PANEL_PREFIX.length)) || null
+  } catch {
+    return null
+  }
 }
 
-export function createComposePanelId(streamId: string): string {
-  return `${COMPOSE_PANEL_PREFIX}${streamId}`
+/** The stream behind a stream's `compose:<streamId>` panel, or null for any other pane, a board draft's included. */
+export function parseComposePanel(panelId: string): string | null {
+  const draftKey = parseComposeDraft(panelId)
+  return draftKey && !draftKey.startsWith(BOARD_DRAFT_SCOPE_PREFIX) ? draftKey : null
+}
+
+export function createComposePanelId(draftKey: string): string {
+  const escaped = draftKey.replace(PANEL_ID_RESERVED, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
+  return `${COMPOSE_PANEL_PREFIX}${escaped}`
 }
 
 /** The aside open on a stream, in a pane beside it. Which aside lives in the

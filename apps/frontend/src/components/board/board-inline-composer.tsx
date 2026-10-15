@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useId, useMemo, useRef } from "react"
 import { createPortal } from "react-dom"
 import { CornerDownRight, X } from "lucide-react"
 import { toast } from "sonner"
@@ -6,7 +6,6 @@ import { RESTORE_REFUSAL_MESSAGE } from "@/lib/drafts/restore-refusal"
 import {
   MessageComposer,
   FloatingComposerShell,
-  OverlayComposerShell,
   ConversationReplyStrip,
   ScheduledMessagesPicker,
   useFloatingComposerAnchor,
@@ -15,6 +14,8 @@ import {
 } from "@/components/composer"
 import { useComposerCommandSend } from "@/components/composer/use-composer-command-send"
 import { useComposerHandoffDrain } from "@/components/composer/use-composer-handoff-drain"
+import { ComposePanePortal, ComposingInPaneBar, useComposePane } from "@/components/composer/compose-pane"
+import { useHoldFeedRow } from "@/components/board/feed-row-hold"
 import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 import { useInputMode } from "@/hooks/use-input-mode"
 import { appendQuoteReplyNode, type QuoteReplyData } from "@/components/timeline/quote-reply-context"
@@ -24,11 +25,9 @@ import { relocateLoadedDraft } from "@/hooks/use-draft-message"
 import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { usePreferences } from "@/contexts"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
-import { useStreamName } from "@/hooks/use-stream-name"
 import { useWorkspaceStreams, type CachedStream } from "@/stores/workspace-store"
 import { peekShareHandoffBatch } from "@/stores/composer-handoff-store"
 import { useStreamFromStore } from "@/stores/stream-store"
-import { STREAM_ICONS } from "@/lib/streams"
 import { EMPTY_DOC, isEmptyContent } from "@/lib/prosemirror-utils"
 import { extractUploadedAttachments, materializePendingAttachmentReferences } from "@/components/timeline/message-input"
 import type { AttachmentSummary } from "@/hooks/create-optimistic-bootstrap"
@@ -296,14 +295,6 @@ export function InlineComposerForm({
 
   const canSubmit = composer.canSend
 
-  // Fullscreen expand — the same overlay shell the timeline and the New Post
-  // composer use, so a long reply gets the same full-document editor instead of
-  // being stuck in the compact card-reply box.
-  const [expanded, setExpanded] = useState(false)
-  const pendingRefocusRef = useRef(false)
-  const overlayStreamName = useStreamName(workspaceId, streamId ?? "")
-  const OverlayStreamGlyph = hostStream ? STREAM_ICONS[hostStream.type] : null
-
   const containerRef = useRef<HTMLDivElement>(null)
   const isEmptyRef = useRef(true)
   isEmptyRef.current = isEmptyContent(composer.content) && composer.pendingAttachments.length === 0
@@ -339,6 +330,14 @@ export function InlineComposerForm({
   // `null` renders immediately so the common single-open case doesn't flash a
   // frame of nothing while its own claim effect is still pending.
   const holdsFloatingSlot = floating && (claimantId === null || claimantId === formId)
+
+  // The draft can open as a pane of its own, to write a long reply in, except
+  // from the floating pill: phones have no panes beside the board.
+  const pane = useComposePane(draftKey, { claim: !floating, offer: !floating })
+  useHoldFeedRow(pane.open)
+  const paneOpenRef = useRef(pane.open)
+  paneOpenRef.current = pane.open
+  const pendingRefocusRef = useRef(false)
 
   useEffect(() => {
     if (!floating || !claim || !release) return
@@ -415,6 +414,8 @@ export function InlineComposerForm({
       const container = containerRef.current
       if (!container) return
       if (!document.hasFocus()) return
+      // Writing in the draft's pane takes focus out of this form without leaving the draft.
+      if (paneOpenRef.current) return
       const active = document.activeElement
       if (active && (container.contains(active) || active.closest(COMPOSER_POPOVER_SELECTOR))) return
       if (!isEmptyRef.current) return
@@ -428,9 +429,10 @@ export function InlineComposerForm({
   // Focus is only reclaimed if the user hasn't moved it out of this form.
   const staysOpenOnSend = (docked === true || keepOpenAfterSend === true) && !floating
   const finishSend = () => {
-    // The overlay is a presentation of this same form, not a separate one: with
-    // the form staying mounted, nothing else closes it after a send.
-    setExpanded(false)
+    // The pane shows this same form's draft, not a separate one: with the form
+    // staying mounted, nothing else closes it after a send.
+    const fromPane = pane.open
+    pane.close()
     if (!staysOpenOnSend) {
       onClose({ refocus: true, quiet: quietFocusOnSend })
       return
@@ -438,6 +440,11 @@ export function InlineComposerForm({
     // A finger-driven send keeps the keyboard-dismissing behavior — refocusing
     // the editor would re-raise the soft keyboard the tap just put away.
     if (quietFocusOnSend) return
+    // The in-place editor mounts again once the pane closes; focus it then.
+    if (fromPane) {
+      pendingRefocusRef.current = true
+      return
+    }
     const active = document.activeElement
     if (
       active &&
@@ -449,22 +456,14 @@ export function InlineComposerForm({
     ) {
       return
     }
-    // Both instances write `composerControlRef`, and MessageComposer.focus()
-    // defers a frame: focusing now would run against the overlay handle after
-    // the overlay has unmounted. Wait for `expanded === false` to commit, so the
-    // ref holds the surviving in-place editor.
-    if (expanded) {
-      pendingRefocusRef.current = true
-      return
-    }
     composerControlRef.current?.focus()
   }
 
   useEffect(() => {
-    if (expanded || !pendingRefocusRef.current) return
+    if (pane.open || !pendingRefocusRef.current) return
     pendingRefocusRef.current = false
     composerControlRef.current?.focus()
-  }, [expanded])
+  }, [pane.open])
 
   const handleSubmit = async (editorContent?: JSONContent) => {
     if (!composer.canSend) return
@@ -634,8 +633,9 @@ export function InlineComposerForm({
   const replyTargetNode = replyTarget ? (
     <ConversationReplyStrip title={replyTarget.title} onCancel={() => void handleCancelReplyTarget()} />
   ) : null
+  const headerNode = replyTargetNode ?? (contextChipNode && <div className="mb-1">{contextChipNode}</div>)
 
-  // Shared by the inline editor and the fullscreen one below — same draft,
+  // Shared by the inline editor and the one in the draft's pane — same draft,
   // same send path, same everything except layout.
   const sharedComposerProps = {
     content: composer.content,
@@ -680,13 +680,8 @@ export function InlineComposerForm({
       // collapsed⇄focused bar — timeline parity); the mount-and-focus floating
       // pill starts open.
       initialMobileChromeOpen={!docked}
-      // Gated on `floating`, not bare `isMobile`: the floating form's
-      // height-publish effect keys off its mount lifecycle (`holdsFloatingSlot`),
-      // which an `expanded` escape hatch would sidestep, leaving a stale
-      // reserved-space CSS var behind — so only the floating pill suppresses
-      // expand. In-place forms (desktop, and the docked panel footer on every
-      // device) keep it.
-      onExpandClick={floating ? undefined : () => setExpanded(true)}
+      expandHref={pane.expandHref}
+      sideHref={pane.sideHref}
       onEscapeBlur={async () => {
         // Awaited for the same reason as handleFloatingClose: a fast
         // type-then-Escape must not flash the bare placeholder while the
@@ -695,34 +690,6 @@ export function InlineComposerForm({
         onClose({ refocus: true })
       }}
     />
-  )
-
-  // Fullscreen expand — the same overlay shell the timeline and New Post use, so
-  // a reply gets the same full-document editor instead of being stuck in the
-  // compact card-reply box. Desktop only (see `editor` above); `OverlayComposerShell`
-  // no-ops (renders nothing) while `expanded` is false.
-  const fullscreenEditor = (
-    <OverlayComposerShell
-      open={expanded}
-      onOpenChange={setExpanded}
-      title="Message editor"
-      header={
-        <div className="inline-flex h-8 max-w-full items-center gap-1.5 rounded-full border bg-background px-3 text-sm font-medium">
-          {OverlayStreamGlyph && <OverlayStreamGlyph className="h-4 w-4 shrink-0 text-muted-foreground" />}
-          <span className="truncate">{overlayStreamName ?? "This conversation"}</span>
-        </div>
-      }
-    >
-      <div className="min-h-0 flex-1">
-        <MessageComposer
-          {...sharedComposerProps}
-          composerRef={composerControlRef}
-          expanded
-          onCollapse={() => setExpanded(false)}
-          autoFocus
-        />
-      </div>
-    </OverlayComposerShell>
   )
 
   if (floating && anchorEl) {
@@ -757,9 +724,28 @@ export function InlineComposerForm({
 
   return (
     <div ref={containerRef} className={docked ? undefined : "mt-3"} onBlur={handleBlur}>
-      {replyTargetNode ?? (contextChipNode && <div className="mb-1">{contextChipNode}</div>)}
-      {fullscreenEditor}
-      {!expanded && editor}
+      {pane.slot && (
+        <ComposePanePortal id={pane.id} slot={pane.slot}>
+          {headerNode}
+          <div className="min-h-0 flex-1">
+            <MessageComposer
+              {...sharedComposerProps}
+              composerRef={composerControlRef}
+              expanded
+              autoFocus
+              onCollapse={pane.close}
+            />
+          </div>
+        </ComposePanePortal>
+      )}
+      {pane.open ? (
+        <ComposingInPaneBar draft={composer.content} onGoTo={pane.goTo} onWriteHere={pane.close} />
+      ) : (
+        <>
+          {headerNode}
+          {editor}
+        </>
+      )}
     </div>
   )
 }

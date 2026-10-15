@@ -10,6 +10,7 @@ import {
   parseConversationPanel,
   parseAsidePanel,
   parseComposePanel,
+  parseComposeDraft,
   parseConversationsPanel,
   parseContextPanel,
   PERSONA_PANE,
@@ -414,6 +415,7 @@ export function PanelTabTitle({ workspaceId, panelId }: { workspaceId: string; p
       </>
     )
   }
+  if (parseComposeDraft(panelId)) return <>Draft</>
   const conversationsStreamId = parseConversationsPanel(panelId)
   if (conversationsStreamId) {
     return (

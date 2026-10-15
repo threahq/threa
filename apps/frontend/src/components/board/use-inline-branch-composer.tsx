@@ -11,6 +11,7 @@ import { CollapsedComposerBar } from "@/components/composer/collapsed-composer-b
 import { createDraftPanelId } from "@/contexts"
 import { collectBranchThreadStreamIds } from "@/hooks/use-conversation-graph"
 import { InlineComposerForm, type InlineComposerSubmit } from "@/components/board/board-inline-composer"
+import { useComposePaneDraftKeys } from "@/components/composer/compose-pane"
 import { boardBranchReplyDraftKey, boardSubtopicDraftKey } from "@/lib/board/draft-keys"
 import type { BranchConversationView } from "@/lib/board/branch-grouping"
 import type { ConversationGraph, StreamStructuralIndex } from "@/hooks/use-conversation-graph"
@@ -22,6 +23,15 @@ import type { RenderableMessage } from "@/components/message/message-item"
 export type OpenInlineComposer =
   | { kind: "new-subtopic"; streamId: string; messageId: string; restoreStashedId?: string | null }
   | { kind: "branch-reply"; conversationId: string; threadStreamId: string; restoreStashedId?: string | null }
+
+/** The host stream of the sub-topic draft under `messageId` open in a pane of its own, or null. */
+function subtopicStreamInPane(paneDraftKeys: ReadonlySet<string>, messageId: string): string | null {
+  for (const key of paneDraftKeys) {
+    const parsed = parseBoardDraftKey(key)
+    if (parsed?.kind === "subtopic" && parsed.messageId === messageId) return parsed.streamId
+  }
+  return null
+}
 
 const E2E_REPLY_MESSAGE = "Encrypted notes can't be replied to from the board yet — open the note to reply there."
 const E2E_SUBTOPIC_MESSAGE = "Can't start a sub-topic in an encrypted note here."
@@ -167,6 +177,8 @@ export function useInlineBranchComposer(params: {
   const [pendingSubtopics, setPendingSubtopics] = useState<Array<{ streamId: string; messageId: string }>>([])
 
   const closeComposer = useCallback(() => setOpenComposer(null), [])
+  // A draft open in a pane of its own keeps its form mounted here, whatever `openComposer` says: the pane shows that form.
+  const paneDraftKeys = useComposePaneDraftKeys()
 
   useEffect(() => {
     if (archived) setOpenComposer(null)
@@ -424,8 +436,10 @@ export function useInlineBranchComposer(params: {
 
   const renderAfterMessage = useCallback(
     (messageId: string): ReactNode => {
-      if (openComposer?.kind === "new-subtopic" && openComposer.messageId === messageId) {
-        const { streamId } = openComposer
+      const openHere =
+        openComposer?.kind === "new-subtopic" && openComposer.messageId === messageId ? openComposer : null
+      const streamId = openHere?.streamId ?? subtopicStreamInPane(paneDraftKeys, messageId)
+      if (streamId) {
         return (
           <InlineComposerForm
             workspaceId={workspaceId}
@@ -435,7 +449,7 @@ export function useInlineBranchComposer(params: {
             placeholder="Start a sub-topic…"
             rejectE2e={E2E_SUBTOPIC_MESSAGE}
             commandConversationId={conversationId}
-            restoreStashedIdOnMount={openComposer.restoreStashedId ?? null}
+            restoreStashedIdOnMount={openHere?.restoreStashedId ?? null}
             onSubmit={(sendInput) => submitNewSubtopic(streamId, messageId, sendInput)}
             onClose={closeComposer}
           />
@@ -458,7 +472,17 @@ export function useInlineBranchComposer(params: {
       }
       return null
     },
-    [openComposer, workspaceId, submitNewSubtopic, closeComposer, subtopicDraftIndex, openNewSubtopic, index, graph]
+    [
+      openComposer,
+      paneDraftKeys,
+      workspaceId,
+      submitNewSubtopic,
+      closeComposer,
+      subtopicDraftIndex,
+      openNewSubtopic,
+      index,
+      graph,
+    ]
   )
 
   const renderBranchTail = useCallback(
@@ -473,7 +497,11 @@ export function useInlineBranchComposer(params: {
       const tailDraftKey = pendingEntry
         ? boardSubtopicDraftKey(pendingEntry.streamId, pendingEntry.messageId)
         : boardBranchReplyDraftKey(branch.conversationId)
-      if (openComposer?.kind === "branch-reply" && openComposer.conversationId === branch.conversationId) {
+      const openHere =
+        openComposer?.kind === "branch-reply" && openComposer.conversationId === branch.conversationId
+          ? openComposer
+          : null
+      if (openHere || paneDraftKeys.has(tailDraftKey)) {
         // A pending branch's thread may not exist yet — host the composer on the
         // parent stream (mention context + E2E gate), like the opening gesture.
         const hostStreamId = pendingEntry?.streamId ?? branch.threadStreamId
@@ -498,7 +526,7 @@ export function useInlineBranchComposer(params: {
             // resolveBoardEventRows, which only the parent card/panel runs — a
             // child-stamped chip would land on no visible surface.
             commandConversationId={conversationId}
-            restoreStashedIdOnMount={openComposer.restoreStashedId ?? null}
+            restoreStashedIdOnMount={openHere?.restoreStashedId ?? null}
             onSubmit={(sendInput) => submitBranchReply(branch, sendInput)}
             onClose={closeComposer}
           />
@@ -522,7 +550,16 @@ export function useInlineBranchComposer(params: {
         />
       )
     },
-    [openComposer, workspaceId, submitBranchReply, closeComposer, openBranchReply, pendingEntryFor, onArmBranchReply]
+    [
+      openComposer,
+      paneDraftKeys,
+      workspaceId,
+      submitBranchReply,
+      closeComposer,
+      openBranchReply,
+      pendingEntryFor,
+      onArmBranchReply,
+    ]
   )
 
   return {

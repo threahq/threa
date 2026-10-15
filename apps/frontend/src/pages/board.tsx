@@ -39,6 +39,7 @@ import { SKELETON_DELAY_MS, useCoordinatedPhase } from "@/contexts/coordinated-l
 import { FloatingComposerAnchorProvider, FLOATING_COMPOSER_HEIGHT_VAR } from "@/components/composer"
 import { BoardCard, BoardCardSkeleton } from "@/components/board/board-card"
 import { BoardFeedList } from "@/components/board/board-feed-list"
+import { FeedRowHoldContext, FeedRowKeyContext, useFeedRowHolds } from "@/components/board/feed-row-hold"
 import { BoardNewPostsPill } from "@/components/board/board-new-posts-pill"
 import { BoardRemovedCard } from "@/components/board/board-removed-card"
 import { openCompose, registerComposeOnPosted } from "@/stores/compose-overlay-store"
@@ -788,18 +789,20 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
           )
         }
         return (
-          <div key={row.key} className="pb-3">
-            <BoardCard
-              workspaceId={workspaceId}
-              post={row.post}
-              contextLabel={contextLabel}
-              streamType={streamType}
-              dmPeerUserId={dmPeerUserId}
-              scrollerRef={scrollerRef}
-              listRef={listRef}
-              onClearUnread={unreadOnly ? () => clearUnreadCard(row.post.conversation.id) : undefined}
-            />
-          </div>
+          <FeedRowKeyContext.Provider key={row.key} value={row.key}>
+            <div className="pb-3">
+              <BoardCard
+                workspaceId={workspaceId}
+                post={row.post}
+                contextLabel={contextLabel}
+                streamType={streamType}
+                dmPeerUserId={dmPeerUserId}
+                scrollerRef={scrollerRef}
+                listRef={listRef}
+                onClearUnread={unreadOnly ? () => clearUnreadCard(row.post.conversation.id) : undefined}
+              />
+            </div>
+          </FeedRowKeyContext.Provider>
         )
       }),
     [
@@ -816,6 +819,13 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
       unreadOnly,
       clearUnreadCard,
     ]
+  )
+
+  // A card writing its draft in a pane stays mounted while the feed scrolls it away.
+  const { held: heldRows, hold: holdFeedRow } = useFeedRowHolds()
+  const keepMounted = useMemo(
+    () => feedRows.flatMap((row, index) => (heldRows.has(row.key) ? [index] : [])),
+    [feedRows, heldRows]
   )
 
   // Non-feed states (error / skeleton / empty) render as a single centered block
@@ -932,9 +942,16 @@ function BoardPageInner({ workspaceId, lens }: { workspaceId: string; lens: Boar
                   button below rather than an inline top trigger. */}
               <div ref={setComposerEl} className="pt-3" />
               {showFeed ? (
-                <BoardFeedList scrollRef={scrollerRef} listRef={listRef} startMargin={startMargin}>
-                  {renderedRows}
-                </BoardFeedList>
+                <FeedRowHoldContext.Provider value={holdFeedRow}>
+                  <BoardFeedList
+                    scrollRef={scrollerRef}
+                    listRef={listRef}
+                    startMargin={startMargin}
+                    keepMounted={keepMounted}
+                  >
+                    {renderedRows}
+                  </BoardFeedList>
+                </FeedRowHoldContext.Provider>
               ) : (
                 stateContent
               )}

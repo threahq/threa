@@ -1,5 +1,4 @@
-import { memo, useState, useCallback, useContext, useEffect, useMemo, useRef, type ComponentProps } from "react"
-import { createPortal } from "react-dom"
+import { memo, useState, useCallback, useEffect, useMemo, useRef, type ComponentProps } from "react"
 import { toast } from "sonner"
 import { useNavigate } from "react-router-dom"
 import { useStableCallback } from "@/hooks/use-stable-callback"
@@ -44,15 +43,8 @@ import { useConversationReply, type ConversationReplyData } from "./conversation
 import { useConversationBoardPost } from "@/hooks/use-conversations"
 import { boardPostLastActiveStreamId } from "@/lib/board/reply-plan"
 import { boardReplyDraftKey, parseBoardDraftKey } from "@/lib/board/draft-keys"
-import { usePanel, usePaneFocusLanding, createConversationPanelId, createComposePanelId } from "@/contexts"
-import { AsideCoversPanesContext } from "@/components/aside/aside-presentation"
-import { PaneFocusContext, useComposeSlot } from "@/components/panes"
-import { Button } from "@/components/ui/button"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-import { landFocus } from "@/components/layout/pane-shortcuts"
-import { collapsedComposerPreview } from "@/lib/drafts/collapsed-composer-preview"
-import { ArrowDownToLine, ArrowRight } from "lucide-react"
-import { panelIdsOf } from "@/lib/panel-tabs"
+import { usePanel, createConversationPanelId } from "@/contexts"
+import { ComposePanePortal, ComposingInPaneBar, useComposePane } from "@/components/composer/compose-pane"
 import { consumeSnippetRequest, subscribeSnippetRequest } from "@/stores/snippet-request-store"
 import { requestConversationReplyOpen } from "@/stores/conversation-reply-open-store"
 import { useComposerCommandSend } from "@/components/composer/use-composer-command-send"
@@ -419,7 +411,6 @@ function MessageInputComponent({
   // document editor — the pane is the surface. Those three slots stay off.
   const isAsideComposer = useStreamFromStore(workspaceId, streamId)?.type === StreamTypes.ASIDE
   const schedulingHidden = isAsideComposer || sharedCopy
-  const asideCoversPanes = useContext(AsideCoversPanesContext)
 
   // Stashed drafts — explicit "Save for later" pile scoped to this stream.
   // Active DraftMessage stays one-per-scope; this hook manages the sibling
@@ -483,7 +474,7 @@ function MessageInputComponent({
   // target in one local-first transaction. An empty composer with no row simply
   // opens the destination's existing draft, if any.
   const conversationReplyCtx = useConversationReply()
-  const { openPanel, layout, hasTabs, getPanelUrl, getFocusedPanelUrl, closeTab, setCurrentPane } = usePanel()
+  const { openPanel } = usePanel()
   useEffect(() => {
     if (!conversationReplyCtx) return
     return conversationReplyCtx.registerHandler((data: ConversationReplyData) => {
@@ -629,17 +620,10 @@ function MessageInputComponent({
 
   const [error, setError] = useState<string | null>(null)
   // Expanded is the stream's compose pane being open: the composer renders there, and a bar holds its place here.
-  const composeId = createComposePanelId(streamId)
-  const expanded = panelIdsOf(layout).includes(composeId)
-  const composeSlot = useComposeSlot(streamId, expanded && !(disabled && disabledReason))
-  const collapse = useStableCallback(() => {
-    if (expanded) closeTab(composeId)
-  })
-  const paneLanding = usePaneFocusLanding()
-  const goToPane = useStableCallback(() => {
-    setCurrentPane(composeId)
-    landFocus(paneLanding, composeId)
-  })
+  // The draft can open as a pane of its own, except an aside's: the aside's pane is its surface.
+  const composePane = useComposePane(streamId, { claim: !(disabled && disabledReason), offer: !isAsideComposer })
+  const expanded = composePane.open
+  const collapse = composePane.close
   const messageSendMode = preferences?.messageSendMode ?? "enter"
   const connectionState = useConnectionState()
   const isOffline = connectionState === "offline"
@@ -973,90 +957,33 @@ function MessageInputComponent({
     )
   }
 
-  // The draft can open as a pane of its own only where the page lays panes out and nothing covers them.
-  const paneable = hasTabs && !isAsideComposer && !asideCoversPanes
-
   return (
     <>
-      {composeSlot &&
-        createPortal(
-          // Read from the pane it shows in, not the pane this stream sits in.
-          <PaneFocusContext.Provider value={composeSlot.paneFocus}>
-            {/* Its events bubble through this stream's pane, which claims them first; the draft's pane takes them back. */}
-            <div
-              className="flex min-h-0 flex-1 flex-col"
-              onClickCapture={() => setCurrentPane(composeId)}
-              onFocusCapture={() => setCurrentPane(composeId)}
-            >
-              {conversationReplyStrip}
-              <div className="min-h-0 flex-1">
-                <MemoizedMessageComposer {...composerProps} expanded autoFocus onCollapse={collapse} />
-              </div>
-            </div>
-          </PaneFocusContext.Provider>,
-          composeSlot.node
-        )}
+      {composePane.slot && (
+        <ComposePanePortal id={composePane.id} slot={composePane.slot}>
+          {conversationReplyStrip}
+          <div className="min-h-0 flex-1">
+            <MemoizedMessageComposer {...composerProps} expanded autoFocus onCollapse={collapse} />
+          </div>
+        </ComposePanePortal>
+      )}
       <FloatingComposerShell ref={composerHeightRef} data-message-composer-root>
         <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={e2eEnabled} streamId={e2eRootStreamId} />
         {expanded ? (
-          <ComposingInPaneBar draft={composer.content} onGoTo={goToPane} onWriteHere={collapse} />
+          <ComposingInPaneBar draft={composer.content} onGoTo={composePane.goTo} onWriteHere={collapse} />
         ) : (
           <>
             {conversationReplyStrip}
             <MemoizedMessageComposer
               {...composerProps}
               autoFocus={autoFocus}
-              expandHref={paneable ? getFocusedPanelUrl(composeId) : undefined}
-              sideHref={paneable ? getPanelUrl(composeId) : undefined}
+              expandHref={composePane.expandHref}
+              sideHref={composePane.sideHref}
             />
           </>
         )}
         {error && <p className="mt-2 text-sm text-destructive">{error}</p>}
       </FloatingComposerShell>
     </>
-  )
-}
-
-/** Holds the composer's place while its draft is open in a pane: one line of the draft, leading to it. */
-function ComposingInPaneBar({
-  draft,
-  onGoTo,
-  onWriteHere,
-}: {
-  draft: JSONContent
-  onGoTo: () => void
-  onWriteHere: () => void
-}) {
-  const preview = useMemo(() => collapsedComposerPreview(draft), [draft])
-  return (
-    <div className="flex h-10 items-center gap-1 rounded-xl border border-input bg-card/75 pr-1 backdrop-blur-md">
-      <button
-        type="button"
-        aria-label="Go to draft"
-        className="flex min-w-0 flex-1 items-center gap-2 self-stretch rounded-l-xl pl-3 text-left text-sm text-muted-foreground hover:text-foreground"
-        onClick={onGoTo}
-      >
-        <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
-        <span className="min-w-0 flex-1 truncate">{preview}</span>
-        <ArrowRight className="h-4 w-4 shrink-0" />
-      </button>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0"
-            aria-label="Write here"
-            onClick={onWriteHere}
-          >
-            <ArrowDownToLine className="h-4 w-4" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="top" className="text-xs">
-          Write here
-        </TooltipContent>
-      </Tooltip>
-    </div>
   )
 }
