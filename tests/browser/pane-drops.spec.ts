@@ -349,7 +349,8 @@ test("should slide a divider in and out with the pane edge it marks", async ({ p
   await expect.poll(() => mainEdge(page)).toEqual({ main: alone, dividers: [] })
 
   await drag(page, sidebarRow(page, names.b), await settledAt(mainPane(page), 0.95, 0.4))
-  await drag(page, sidebarRow(page, names.c), await settledAt(tabPane(page, streamB), 0.5, 0.95))
+  // Below the composer's card, which takes its own drops.
+  await drag(page, sidebarRow(page, names.c), await settledAt(tabPane(page, streamB), 0.5, 0.99))
   await settled(tabPane(page, streamC))
   const under = (await topEdge(page, streamC)).top
   await holdGlides(page)
@@ -387,4 +388,20 @@ test("should leave a stream or its tab dropped on the composer to the composer, 
     stream: streamA,
     panel: `${streamB}.${streamC}`,
   })
+})
+
+test("should leave a stream dropped on the composer's card beside its text to the composer, as a link", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1600, height: 1200 })
+  const { names } = await seed(page)
+  const card = mainPane(page).locator("[data-message-composer-root] [data-composer-card]").first()
+  const box = (await card.boundingBox())!
+
+  // The card's top padding: on the card, above the editable text.
+  await drag(page, sidebarRow(page, names.c), { x: box.x + box.width / 2, y: box.y + 4 }, async () => {
+    await expect(page.getByTestId("pane-drop-indicator")).toHaveCount(0)
+  })
+  await expect(card.locator("[data-type='in-app-link-chip']")).toContainText(names.c)
+  expect(panelParam(page)).toBeNull()
 })
