@@ -69,6 +69,7 @@ import type { QuickSwitcherItem } from "./types"
 import { clamp } from "@/lib/math-utils"
 import { closePanelTab, followCurrentPanel, panelIdsOf } from "@/lib/panel-tabs"
 import { landFocus } from "@/components/layout/pane-shortcuts"
+import { useNewPost } from "@/components/board/board-overlay-composer"
 
 export type QuickSwitcherMode = "stream" | "command"
 
@@ -554,6 +555,8 @@ function QuickSwitcherBody({
   const { openSearch } = useSearchPanel()
   const handleOpenSearch = useCallback(() => openSearch(), [openSearch])
 
+  const { open: openNewPost } = useNewPost()
+
   const commandContext: CommandContext = useMemo(
     () => ({
       workspaceId,
@@ -562,6 +565,7 @@ function QuickSwitcherBody({
       createDraftScratchpad: createScratchpad,
       createEncryptedScratchpad,
       openCreateChannel,
+      openNewPost,
       setMode,
       openSearch: handleOpenSearch,
       requestInput,
@@ -585,6 +589,7 @@ function QuickSwitcherBody({
       closeAllPanes,
     }),
     [
+      openNewPost,
       closePane,
       closeOtherPanes,
       closeAllPanes,

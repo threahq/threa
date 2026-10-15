@@ -25,7 +25,6 @@ import {
   X,
 } from "lucide-react"
 import { toast } from "sonner"
-import { openCompose } from "@/stores/compose-overlay-store"
 import { SETTINGS_TABS, type SettingsTab, type WorkspaceSettingsTab } from "@threahq/types"
 import { SETTINGS_TAB_CONFIG } from "@/components/settings/tab-config"
 import type { ExplorerFilters } from "@/components/attachment-explorer"
@@ -57,6 +56,8 @@ export interface CommandContext {
    */
   createEncryptedScratchpad: (withAriadne: boolean) => Promise<string>
   openCreateChannel: () => void
+  /** Start a new board post: its pane on desktop, the overlay on a phone. */
+  openNewPost: () => void
   setMode?: (mode: "stream" | "command") => void
   /** Open the workspace search surface (sidebar panel on desktop, /search page on mobile). */
   openSearch: () => void
@@ -117,9 +118,9 @@ export const commands: Command[] = [
     label: "New Post",
     icon: PenSquare,
     keywords: ["compose", "write", "board", "post", "topic"],
-    action: ({ closeDialog }) => {
+    action: ({ closeDialog, openNewPost }) => {
       closeDialog()
-      openCompose()
+      openNewPost()
     },
   },
   {

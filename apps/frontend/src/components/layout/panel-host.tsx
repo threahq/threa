@@ -86,6 +86,8 @@ import { StreamPanel } from "@/components/thread"
 import { ConversationPanel } from "@/components/conversations/conversation-panel"
 import { ConversationsPane } from "@/components/conversations/conversations-pane"
 import { ComposePanel } from "@/components/composer/compose-panel"
+import { BoardNewPostPanel } from "@/components/board/board-overlay-composer"
+import { BOARD_NEW_POST_DRAFT_KEY } from "@/lib/board/draft-keys"
 import { AsidePanel } from "@/components/aside/aside-panel"
 import { StreamContextPane } from "@/components/stream-context"
 import { PersonaTestChatPane } from "@/components/persona-editor/persona-test-chat"
@@ -209,6 +211,9 @@ function PaneContent({ workspaceId, panelId, className }: PanelHostProps & { pan
   const asideHostId = panelId && parseAsidePanel(panelId)
   if (asideHostId) {
     return <AsidePanel key={panelId} workspaceId={workspaceId} hostStreamId={asideHostId} className={className} />
+  }
+  if (composeDraftKey === BOARD_NEW_POST_DRAFT_KEY) {
+    return <BoardNewPostPanel key={panelId} workspaceId={workspaceId} className={className} />
   }
   if (composeDraftKey) {
     return <ComposePanel key={panelId} workspaceId={workspaceId} draftKey={composeDraftKey} className={className} />

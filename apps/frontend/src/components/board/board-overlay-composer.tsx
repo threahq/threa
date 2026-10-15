@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 import { type JSONContent } from "@threahq/types"
 import { MessageComposer, StreamTargetPicker } from "@/components/composer"
 import { OverlayComposerShell } from "@/components/composer/overlay-composer-shell"
+import { useComposePaneLinks } from "@/components/composer/compose-pane"
+import { PaneHeader } from "@/components/panes"
+import { SidePanel, SidePanelContent } from "@/components/ui/side-panel"
+import { createComposePanelId, usePanel, useRevealReady } from "@/contexts"
 import { useDraftComposer } from "@/hooks"
 import { useMentionStreamContext } from "@/hooks/use-mentionables"
 import { useCreateBoardPost } from "@/hooks/use-conversations"
@@ -11,11 +16,10 @@ import { EMPTY_DOC } from "@/lib/prosemirror-utils"
 import { extractUploadedAttachments, materializePendingAttachmentReferences } from "@/components/timeline/message-input"
 import { isPostableStream, targetForValue, NEW_SCRATCHPAD, NEW_QUICK_NOTE } from "@/lib/board-post-target"
 import { readTargetMru, pushTargetMru, readDraftTarget, writeDraftTarget } from "@/lib/board-target-store"
-
-// One durable draft for the overlay composer body, shared across every entry
-// point (board button, global shortcut) so an in-progress post survives closing
-// and reopening the overlay from anywhere.
-const OVERLAY_DRAFT_KEY = "board:new-post"
+import { BOARD_NEW_POST_DRAFT_KEY } from "@/lib/board/draft-keys"
+import { notifyComposePosted, openCompose } from "@/stores/compose-overlay-store"
+import { useStableCallback } from "@/hooks/use-stable-callback"
+import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 
 export interface BoardOverlayComposerProps {
   workspaceId: string
@@ -34,7 +38,8 @@ export interface BoardOverlayComposerProps {
  * which declares a new-topic conversation). The timeline fullscreen editor is a
  * sibling host on the same shell — see step 4.
  *
- * Target state lives here (retained across close/reopen); the draft + post hooks
+ * Phones write a new post here, and desktops in {@link BoardNewPostPanel}. Target
+ * state lives at this level (retained across close/reopen); the draft + post hooks
  * live in the body, which the shell mounts only while open — so an unopened
  * overlay costs nothing and never runs the mutation/draft machinery.
  */
@@ -45,6 +50,36 @@ export function BoardOverlayComposer({
   onPosted,
   defaultTarget,
 }: BoardOverlayComposerProps) {
+  const { targetValue, changeTarget, recents, selectedStream } = useBoardPostTarget(workspaceId, open, defaultTarget)
+
+  return (
+    <OverlayComposerShell
+      open={open}
+      onOpenChange={onOpenChange}
+      title="New post"
+      header={
+        <StreamTargetPicker
+          workspaceId={workspaceId}
+          value={targetValue}
+          onChange={changeTarget}
+          includeNewOptions
+          recents={recents}
+        />
+      }
+    >
+      <BoardPostComposer
+        workspaceId={workspaceId}
+        targetValue={targetValue}
+        selectedStream={selectedStream}
+        onClose={() => onOpenChange(false)}
+        onPosted={onPosted}
+      />
+    </OverlayComposerShell>
+  )
+}
+
+/** Where the new post goes: persisted beside its draft, so a reload restores both. */
+function useBoardPostTarget(workspaceId: string, open: boolean, defaultTarget?: string) {
   const streams = useWorkspaceStreams(workspaceId)
 
   // Recents are stable while the overlay is open (the MRU only changes on send,
@@ -102,30 +137,7 @@ export function BoardOverlayComposer({
     [postableStreams, targetValue]
   )
 
-  return (
-    <OverlayComposerShell
-      open={open}
-      onOpenChange={onOpenChange}
-      title="New post"
-      header={
-        <StreamTargetPicker
-          workspaceId={workspaceId}
-          value={targetValue}
-          onChange={changeTarget}
-          includeNewOptions
-          recents={recents}
-        />
-      }
-    >
-      <BoardOverlayComposerBody
-        workspaceId={workspaceId}
-        targetValue={targetValue}
-        selectedStream={selectedStream}
-        onOpenChange={onOpenChange}
-        onPosted={onPosted}
-      />
-    </OverlayComposerShell>
-  )
+  return { targetValue, changeTarget, recents, selectedStream }
 }
 
 /**
@@ -134,22 +146,26 @@ export function BoardOverlayComposer({
  * mutation/draft hooks here means a closed overlay never subscribes to a draft or
  * constructs the post mutation.
  */
-function BoardOverlayComposerBody({
+function BoardPostComposer({
   workspaceId,
   targetValue,
   selectedStream,
-  onOpenChange,
+  onClose,
   onPosted,
 }: {
   workspaceId: string
   targetValue: string
   selectedStream: CachedStream | undefined
-  onOpenChange: (open: boolean) => void
+  onClose: () => void
   onPosted?: (conversationId?: string) => void
 }) {
   const createPost = useCreateBoardPost(workspaceId)
   const streamContext = useMentionStreamContext(workspaceId, selectedStream)
-  const composer = useDraftComposer({ workspaceId, draftKey: OVERLAY_DRAFT_KEY, scopeId: OVERLAY_DRAFT_KEY })
+  const composer = useDraftComposer({
+    workspaceId,
+    draftKey: BOARD_NEW_POST_DRAFT_KEY,
+    scopeId: BOARD_NEW_POST_DRAFT_KEY,
+  })
 
   const canPost = composer.canSend && !!targetValue && !createPost.isPending
 
@@ -181,7 +197,7 @@ function BoardOverlayComposerBody({
       // Only real streams enter Recents / seed the next default — a "New scratchpad"
       // sentinel shouldn't make minting-another the default on the next open.
       if (target.type === "stream") pushTargetMru(workspaceId, targetValue)
-      onOpenChange(false)
+      onClose()
       // Reveal + flash the just-posted card rather than letting it wait behind its
       // own "N new" pill — the viewer's own action should surface immediately.
       onPosted?.(postedConversationId)
@@ -195,7 +211,7 @@ function BoardOverlayComposerBody({
   return (
     <MessageComposer
       expanded
-      onCollapse={() => onOpenChange(false)}
+      onCollapse={onClose}
       content={composer.content}
       onContentChange={composer.handleContentChange}
       pendingAttachments={composer.pendingAttachments}
@@ -218,8 +234,60 @@ function BoardOverlayComposerBody({
       isSubmitting={composer.isSending}
       hasFailed={composer.hasFailed}
       placeholder={targetValue ? "Write a post…" : "Pick where to post, then write…"}
-      scopeId={OVERLAY_DRAFT_KEY}
+      scopeId={BOARD_NEW_POST_DRAFT_KEY}
       streamContext={streamContext}
     />
   )
+}
+
+/** The new post in a pane of its own (`compose:board:new-post`), its target picker in the pane's header. */
+export function BoardNewPostPanel({ workspaceId, className }: { workspaceId: string; className?: string }) {
+  const { closeTab } = usePanel()
+  const { targetValue, changeTarget, recents, selectedStream } = useBoardPostTarget(workspaceId, true)
+  useRevealReady(true)
+  // The board reveals the post once this pane has closed: revealed sooner, a board navigation would carry the pane's URL and reopen it.
+  const posted = useRef<{ conversationId?: string } | null>(null)
+  useEffect(
+    () => () => {
+      if (posted.current) notifyComposePosted(posted.current.conversationId)
+    },
+    []
+  )
+
+  return (
+    <SidePanel className={className} data-editor-zone="panel">
+      <PaneHeader
+        workspaceId={workspaceId}
+        name="New post"
+        title={<span className="truncate font-medium">New post</span>}
+      >
+        <StreamTargetPicker
+          workspaceId={workspaceId}
+          value={targetValue}
+          onChange={changeTarget}
+          includeNewOptions
+          recents={recents}
+        />
+      </PaneHeader>
+      <SidePanelContent className="flex flex-col">
+        <BoardPostComposer
+          workspaceId={workspaceId}
+          targetValue={targetValue}
+          selectedStream={selectedStream}
+          onClose={() => closeTab(createComposePanelId(BOARD_NEW_POST_DRAFT_KEY))}
+          onPosted={(conversationId) => {
+            posted.current = { conversationId }
+          }}
+        />
+      </SidePanelContent>
+    </SidePanel>
+  )
+}
+
+/** Where "New post" opens: its pane, in focus, on a desktop that lays panes out, and the overlay on a phone or touch device. */
+export function useNewPost(): { href: string | undefined; open: () => void } {
+  const { expandHref } = useComposePaneLinks(BOARD_NEW_POST_DRAFT_KEY, !useIsMobileOrCoarse())
+  const navigate = useNavigate()
+  const open = useStableCallback(() => (expandHref ? navigate(expandHref) : openCompose()))
+  return { href: expandHref, open }
 }
