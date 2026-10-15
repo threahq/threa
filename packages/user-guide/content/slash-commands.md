@@ -25,7 +25,7 @@ These two only appear in a top-level scratchpad that has a coding agent linked t
 - `/replies` chooses where the linked agent answers messages you post in the scratchpad. `/replies thread` answers in a thread on each message, and `/replies flat` answers in the scratchpad itself. Without an argument it reports the current setting.
 - `/thread` followed by a message sends that one message and has the agent answer in a thread. It is not offered in encrypted streams.
 
-While a linked session is live, it can add session-control commands to the list, such as `/stop`, `/status`, `/model`, `/compact` and `/steer`. Which ones appear depends on the agent. They are not covered here.
+While a linked session is live, it can add session-control commands to the list, such as `/stop`, `/status`, `/model` and `/compact`. Which ones appear depends on the agent, and they are not covered here. One of them, `/enqueue`, holds the message it is in until the agent finishes its current turn (see [Linking Claude Code, Pi or Hermes](/guide/linked-coding-agents)).
 
 ## Pickers you can use anywhere
 

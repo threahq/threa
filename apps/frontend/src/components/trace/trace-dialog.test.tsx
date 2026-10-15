@@ -10,15 +10,16 @@ import * as useAgentTraceModule from "@/hooks/use-agent-trace"
 import * as workspacesModule from "@/hooks/use-workspaces"
 import * as relativeTimeModule from "@/components/relative-time"
 import * as hooksModule from "@/hooks"
+import * as abortSessionModule from "@/hooks/use-abort-session"
 import { commandsApi } from "@/api"
 import { toast } from "sonner"
-import { consumeComposerCommandRequest } from "@/stores/composer-command-request-store"
 
 let mockSessionId = "session_1"
 let mockSessionIndex = 0
 let mockSteps: unknown[] = []
 let mockSession: AgentSession
 let mockRelatedSessions: AgentSession[]
+const mockCloseTraceModal = vi.fn()
 
 const relatedSessions: AgentSession[] = [
   {
@@ -53,12 +54,12 @@ const relatedSessions: AgentSession[] = [
   },
 ]
 
-function renderTrace(extra?: ReactNode) {
-  return render(
+function traceTree(extra?: ReactNode, open = true) {
+  return (
     <div data-editor-zone="main">
       <MemoryRouter initialEntries={["/w/ws_1"]}>
         <Routes>
-          <Route path="/w/:workspaceId" element={<TraceDialog />} />
+          <Route path="/w/:workspaceId" element={open ? <TraceDialog /> : null} />
         </Routes>
       </MemoryRouter>
       {extra}
@@ -66,9 +67,14 @@ function renderTrace(extra?: ReactNode) {
   )
 }
 
+function renderTrace(extra?: ReactNode) {
+  return render(traceTree(extra))
+}
+
 describe("TraceDialog", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    mockCloseTraceModal.mockReset()
     mockSessionId = "session_1"
     mockSessionIndex = 0
     mockSteps = []
@@ -79,7 +85,7 @@ describe("TraceDialog", () => {
       sessionId: mockSessionId,
       highlightMessageId: null,
       getTraceUrl: (id: string) => `/trace/${id}`,
-      closeTraceModal: vi.fn(),
+      closeTraceModal: mockCloseTraceModal,
     })) as unknown as typeof contextsModule.useTrace)
 
     vi.spyOn(useAgentTraceModule, "useAgentTrace").mockImplementation((() => ({
@@ -161,7 +167,7 @@ describe("TraceDialog", () => {
     expect(screen.getByText("3 steps • 1 message sent")).toBeInTheDocument()
   })
 
-  it("keeps Redirect visible for regular running agents and focuses the composer", async () => {
+  it("should close the trace and focus the composer on Redirect", async () => {
     const focusAtEnd = vi.spyOn(hooksModule, "focusAtEnd").mockImplementation(() => undefined)
     mockSessionId = "session_run"
     mockSession = {
@@ -184,7 +190,8 @@ describe("TraceDialog", () => {
       },
     ]
 
-    renderTrace(<div data-testid="zone-editor" contentEditable />)
+    const composer = <div data-testid="zone-editor" contentEditable />
+    const { rerender } = renderTrace(composer)
 
     const zoneEditor = screen.getByTestId("zone-editor")
     const rects = {
@@ -202,11 +209,20 @@ describe("TraceDialog", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
 
+    expect({ closed: mockCloseTraceModal.mock.calls.length, focused: focusAtEnd.mock.calls.length }).toEqual({
+      closed: 1,
+      focused: 0,
+    })
+
+    rerender(traceTree(composer, false))
+
     await waitFor(() => expect(focusAtEnd).toHaveBeenCalledWith(zoneEditor))
     expect(commandsApi.dispatch).not.toHaveBeenCalled()
   })
 
-  it("does not re-fetch runtime commands on Stop after an empty command list is loaded", async () => {
+  it("should stop locally when the stream advertises no runtime /stop", async () => {
+    const abortSession = vi.fn()
+    vi.spyOn(abortSessionModule, "useAbortSession").mockReturnValue(abortSession)
     mockSessionId = "session_run"
     mockSession = {
       id: "session_run",
@@ -229,16 +245,13 @@ describe("TraceDialog", () => {
     ]
 
     renderTrace()
-
-    await waitFor(() => expect(commandsApi.listForStream).toHaveBeenCalledTimes(1))
-
     fireEvent.click(screen.getByRole("button", { name: "Stop" }))
 
-    expect(commandsApi.listForStream).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(abortSession).toHaveBeenCalledWith({ sessionId: "session_run", workspaceId: "ws_1" }))
     expect(commandsApi.dispatch).not.toHaveBeenCalled()
   })
 
-  it("dispatches runtime stop and prepares the composer with advertised /steer", async () => {
+  it("should dispatch the runtime's /stop when the stream advertises it", async () => {
     mockSessionId = "session_run"
     mockSession = {
       id: "session_run",
@@ -260,18 +273,12 @@ describe("TraceDialog", () => {
       },
     ]
     vi.mocked(commandsApi.listForStream).mockResolvedValue([
-      { name: "steer", description: "Steer", kind: "bot-runtime", scope: "stream" },
       { name: "stop", description: "Stop", kind: "bot-runtime", scope: "stream" },
     ])
 
     renderTrace()
-
-    await waitFor(() => expect(screen.getByRole("button", { name: "Redirect" })).toBeInTheDocument())
-
-    fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
     fireEvent.click(screen.getByRole("button", { name: "Stop" }))
 
-    await waitFor(() => expect(consumeComposerCommandRequest("ws_1", "stream_1")).toBe("/steer "))
     await waitFor(() =>
       expect(commandsApi.dispatch).toHaveBeenCalledWith("ws_1", { streamId: "stream_1", command: "/stop" })
     )
@@ -279,7 +286,7 @@ describe("TraceDialog", () => {
 
   it("falls back to local Stop and surfaces a toast when advertised runtime stop fails", async () => {
     const abortSession = vi.fn()
-    vi.spyOn(hooksModule, "useAbortSession").mockReturnValue(abortSession)
+    vi.spyOn(abortSessionModule, "useAbortSession").mockReturnValue(abortSession)
     mockSessionId = "session_run"
     mockSession = {
       id: "session_run",
@@ -306,8 +313,6 @@ describe("TraceDialog", () => {
     vi.mocked(commandsApi.dispatch).mockRejectedValue(new Error("network down"))
 
     renderTrace()
-
-    await waitFor(() => expect(commandsApi.listForStream).toHaveBeenCalled())
     fireEvent.click(screen.getByRole("button", { name: "Stop" }))
 
     await waitFor(() => expect(abortSession).toHaveBeenCalledWith({ sessionId: "session_run", workspaceId: "ws_1" }))

@@ -370,8 +370,9 @@ async function loop() {
     <code>@threahq/bot-runtime-client</code> owns that socket and routes presence,
     claim renewals, and trace steps over it with an HTTP fallback;
     <code>@threahq/remote-session</code> builds the full scratchpad session loop
-    on top, including <code>/steer</code>, <code>/stop</code>, and session-control
-    commands like <code>/model</code>. Both ship a runnable example. Pi and the
+    on top: messages sent mid-turn reach the running turn, and the scratchpad
+    gets <code>/enqueue</code>, <code>/stop</code> and session-control commands
+    like <code>/model</code>. Both ship a runnable example. Pi and the
     Claude Code channel are built on the same packages
     (<code>extensions/</code> in the repo).
   </div>

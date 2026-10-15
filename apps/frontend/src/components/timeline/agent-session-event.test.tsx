@@ -1,6 +1,6 @@
 import { spyOnExport } from "@/test/spy"
 import { beforeEach, describe, expect, it, vi } from "vitest"
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen } from "@testing-library/react"
 import { MemoryRouter, Route, Routes } from "react-router-dom"
 import type { ActiveAgentSession, StreamEvent } from "@threahq/types"
 import * as contextsModule from "@/contexts"
@@ -304,19 +304,13 @@ describe("AgentSessionEvent", () => {
       expect(onStopSession).toHaveBeenCalledWith("session_run")
     })
 
-    it("Redirect prepares runtime steering before focusing the surface's composer", async () => {
+    it("should focus the zone's composer and show the hint when Redirect is clicked", () => {
       const focusAtEnd = vi.spyOn(hooksModule, "focusAtEnd").mockImplementation(() => undefined)
-      const onSteerSession = vi.fn()
 
       render(
         <div data-editor-zone="main">
           <MemoryRouter>
-            <AgentSessionEvent
-              workspaceId={WS}
-              events={runningEvents}
-              onStopSession={vi.fn()}
-              onSteerSession={onSteerSession}
-            />
+            <AgentSessionEvent workspaceId={WS} events={runningEvents} onStopSession={vi.fn()} />
           </MemoryRouter>
           <div data-testid="zone-editor" contentEditable />
         </div>
@@ -337,58 +331,29 @@ describe("AgentSessionEvent", () => {
         left: 0,
         right: 300,
       } as DOMRect)
-      vi.spyOn(zoneEditor, "getBoundingClientRect").mockReturnValue({
-        top: 100,
-        bottom: 140,
-        left: 0,
-        right: 300,
-      } as DOMRect)
 
       fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
 
-      expect(onSteerSession).toHaveBeenCalledTimes(1)
-      await waitFor(() => expect(focusAtEnd).toHaveBeenCalledWith(zoneEditor))
+      expect(focusAtEnd.mock.calls).toEqual([[zoneEditor]])
       expect(screen.getByText("Ariadne will fold your message into the current work")).toBeInTheDocument()
     })
 
-    it("keeps Redirect single-flight while preparing steering and allows a later redirect", async () => {
+    it("should hand focus to the surface's own composer when it supplies one", () => {
       const focusAtEnd = vi.spyOn(hooksModule, "focusAtEnd").mockImplementation(() => undefined)
       const onRedirect = vi.fn()
-      let finishSteer!: () => void
-      let steerCall = 0
-      const onSteerSession = vi.fn(() => {
-        steerCall += 1
-        if (steerCall > 1) return Promise.resolve()
-        return new Promise<void>((resolve) => {
-          finishSteer = resolve
-        })
-      })
 
       // No [data-editor-zone] in the tree — the board card has none; the surface
       // owns opening + focusing its own composer via onRedirect.
       renderEvent(
-        <AgentSessionEvent
-          workspaceId={WS}
-          events={runningEvents}
-          onStopSession={vi.fn()}
-          onRedirect={onRedirect}
-          onSteerSession={onSteerSession}
-        />
+        <AgentSessionEvent workspaceId={WS} events={runningEvents} onStopSession={vi.fn()} onRedirect={onRedirect} />
       )
 
-      const redirect = screen.getByRole("button", { name: "Redirect" })
-      fireEvent.click(redirect)
-      fireEvent.click(redirect)
+      fireEvent.click(screen.getByRole("button", { name: "Redirect" }))
 
-      expect(onSteerSession).toHaveBeenCalledTimes(1)
-      expect(onRedirect).not.toHaveBeenCalled()
-      finishSteer()
-      await waitFor(() => expect(onRedirect).toHaveBeenCalledTimes(1))
-
-      fireEvent.click(redirect)
-      await waitFor(() => expect(onSteerSession).toHaveBeenCalledTimes(2))
-      await waitFor(() => expect(onRedirect).toHaveBeenCalledTimes(2))
-      expect(focusAtEnd).not.toHaveBeenCalled()
+      expect({ redirected: onRedirect.mock.calls.length, zoneFocused: focusAtEnd.mock.calls.length }).toEqual({
+        redirected: 1,
+        zoneFocused: 0,
+      })
       expect(screen.getByText("Ariadne will fold your message into the current work")).toBeInTheDocument()
     })
 

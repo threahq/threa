@@ -36,7 +36,8 @@ import { GUEST_DM_CLOSED_REASON } from "@/lib/guest-dm-policy"
 import { MessageInput, materializePendingAttachmentReferences } from "./message-input"
 // eslint-disable-next-line no-restricted-imports -- clears the durable composer-target rows the composer reads
 import { db } from "@/db"
-import type { JSONContent } from "@threahq/types"
+import { ENQUEUE_COMMAND, type JSONContent } from "@threahq/types"
+import { EMPTY_ENQUEUE_ERROR } from "@/components/composer/use-composer-command-send"
 
 const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 const makeDoc = (text: string): JSONContent => ({
@@ -564,20 +565,22 @@ describe("MessageInput", () => {
       expect(mockSendMessage).toHaveBeenCalledWith(expect.objectContaining({ contentJson: helloContent, composeTrace }))
     })
 
-    it("sends an inline steer as an unchanged message with its attachments", async () => {
+    it("should send /enqueue mid-message as an enqueued message without the directive", async () => {
       const content = makeAttachmentDoc()
-      content.content![0].content![1].text = " I want option 2 /steer and also pizza"
+      content.content![0].content![1].text = " I want option 2 /enqueue and also pizza"
+      const sent = makeAttachmentDoc()
+      sent.content![0].content![1].text = " I want option 2 and also pizza"
       mockComposerState.canSend = true
       mockComposerState.content = content
       spyOnExport(streamCommandsModule, "useStreamCommands").mockReturnValue((() => [
-        { name: "steer", description: "Steer", kind: "bot-runtime", scope: "stream" },
+        { name: ENQUEUE_COMMAND, description: "Enqueue", kind: "bot-runtime", scope: "stream" },
       ]) as unknown as never)
 
       render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
       await userEvent.click(screen.getByRole("button", { name: /send/i }))
 
       expect(mockSendMessage).toHaveBeenCalledWith({
-        contentJson: content,
+        contentJson: sent,
         attachmentIds: ["attach_1"],
         attachments: [
           {
@@ -587,8 +590,25 @@ describe("MessageInput", () => {
             sizeBytes: 1234,
           },
         ],
-        steer: true,
+        enqueue: true,
       })
+    })
+
+    it("should keep the draft and say what's missing when /enqueue has no message", async () => {
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("/enqueue")
+      spyOnExport(streamCommandsModule, "useStreamCommands").mockReturnValue((() => [
+        { name: ENQUEUE_COMMAND, description: "Enqueue", kind: "bot-runtime", scope: "stream" },
+      ]) as unknown as never)
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      expect({
+        error: screen.getByText(EMPTY_ENQUEUE_ERROR).textContent,
+        sends: mockSendMessage.mock.calls.length,
+        cleared: mockSetContent.mock.calls.length,
+      }).toEqual({ error: EMPTY_ENQUEUE_ERROR, sends: 0, cleared: 0 })
     })
 
     it("should resolve the draft and clear attachments after sending", async () => {

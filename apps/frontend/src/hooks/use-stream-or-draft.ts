@@ -168,8 +168,8 @@ export interface SendMessageInput {
   attachmentIds?: string[]
   /** Full attachment info for optimistic UI - required when attachmentIds is provided */
   attachments?: AttachmentSummary[]
-  /** Persist the message first, then dispatch `/steer` in the same server transaction. */
-  steer?: true
+  /** Queue for the linked session's next turn instead of delivering now (`/enqueue`). */
+  enqueue?: true
   /**
    * Files the send into a conversation synchronously ("Reply in conversation",
    * Mechanism C). Only meaningful on real streams — draft paths ignore it, since
@@ -739,8 +739,6 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
         // The trace's own IndexedDB read finishes here, behind the published
         // row, never ahead of it.
         const composeTrace = await input.composeTrace
-        // A steered message stays one queue item so replay cannot dispatch the
-        // command before the message reaches the server.
         await db.transaction("rw", [db.pendingMessages, db.events], async () => {
           const [anchorSequence, allocatedSequence] = await Promise.all([
             getLatestPersistedSequence(workspaceId, streamId),
@@ -756,7 +754,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
             attachmentIds: input.attachmentIds,
             conversation: input.conversation,
             composeTrace,
-            steer: input.steer,
+            enqueue: input.enqueue,
             createdAt: Date.now(),
             retryCount: 0,
             ...(e2eFields ?? {}),

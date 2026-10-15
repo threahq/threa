@@ -74,7 +74,7 @@ describe("useScopeDraftPreview", () => {
           {
             type: "paragraph",
             content: [
-              { type: "slashCommand", attrs: { name: "steer", clientActionId: null } },
+              { type: "slashCommand", attrs: { name: "compact", clientActionId: null } },
               { type: "text", text: " focus on tests" },
             ],
           },
@@ -84,7 +84,7 @@ describe("useScopeDraftPreview", () => {
     )
 
     const { result } = renderHook(() => useScopeDraftPreview(workspaceId, scope))
-    await waitFor(() => expect(result.current?.preview).toBe("/steer focus on tests"))
+    await waitFor(() => expect(result.current?.preview).toBe("/compact focus on tests"))
   })
 
   it("throws on a non-board scope — the shared snapshot only covers board:* rows", () => {

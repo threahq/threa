@@ -389,7 +389,7 @@ describe("useStreamOrDraft real stream send", () => {
     expect(result.current.published).toEqual([])
   })
 
-  it("keeps steer on the same durable message queue item", async () => {
+  it("should store enqueue on the durable message queue item", async () => {
     const { result } = await mountRealStreamSend()
 
     await act(async () => {
@@ -398,13 +398,13 @@ describe("useStreamOrDraft real stream send", () => {
           type: "doc",
           content: [{ type: "paragraph", content: [{ type: "text", text: "I want option 2" }] }],
         },
-        steer: true,
+        enqueue: true,
       })
     })
 
     expect((await db.pendingMessages.toArray()).find((message) => message.content === "I want option 2")).toMatchObject(
       {
-        steer: true,
+        enqueue: true,
       }
     )
   })

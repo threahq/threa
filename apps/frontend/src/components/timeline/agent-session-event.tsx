@@ -39,8 +39,6 @@ interface AgentSessionEventProps {
    * `[data-editor-zone]` editor instead (timeline, thread panel).
    */
   onRedirect?: () => void
-  /** Route the next composed message through the runtime's /steer command when available. */
-  onSteerSession?: () => Promise<void>
 }
 
 type SessionStatus = "running" | "retrying" | "completed" | "failed" | "deleted"
@@ -339,7 +337,6 @@ export function AgentSessionEvent({
   sessionVersion,
   onStopSession,
   onRedirect,
-  onSteerSession,
 }: AgentSessionEventProps) {
   const { getTraceUrl } = useTrace()
   const {
@@ -394,7 +391,6 @@ export function AgentSessionEvent({
 
   const [redirectHintVisible, setRedirectHintVisible] = useState(false)
   const redirectHintTimer = useRef<number | null>(null)
-  const redirectInFlight = useRef(false)
   useEffect(
     () => () => {
       if (redirectHintTimer.current !== null) window.clearTimeout(redirectHintTimer.current)
@@ -404,25 +400,18 @@ export function AgentSessionEvent({
 
   if (!sessionId) return null
 
-  // Redirect focuses the composer. External runtimes prepend /steer to the
-  // next message; hosted agents keep their existing mid-run fold-in path.
-  const handleRedirect = async (e: React.MouseEvent<HTMLButtonElement>) => {
-    const editor = onRedirect ? null : findVisibleZoneEditor(e.currentTarget.closest<HTMLElement>("[data-editor-zone]"))
-    if (!onRedirect && !editor) return
-    if (redirectInFlight.current) return
-
-    redirectInFlight.current = true
-    try {
-      await onSteerSession?.()
-      if (onRedirect) onRedirect()
-      else if (editor) focusAtEnd(editor)
-
-      if (redirectHintTimer.current !== null) window.clearTimeout(redirectHintTimer.current)
-      setRedirectHintVisible(true)
-      redirectHintTimer.current = window.setTimeout(() => setRedirectHintVisible(false), REDIRECT_HINT_MS)
-    } finally {
-      redirectInFlight.current = false
+  const handleRedirect = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (onRedirect) {
+      onRedirect()
+    } else {
+      const editor = findVisibleZoneEditor(e.currentTarget.closest<HTMLElement>("[data-editor-zone]"))
+      if (!editor) return
+      focusAtEnd(editor)
     }
+
+    if (redirectHintTimer.current !== null) window.clearTimeout(redirectHintTimer.current)
+    setRedirectHintVisible(true)
+    redirectHintTimer.current = window.setTimeout(() => setRedirectHintVisible(false), REDIRECT_HINT_MS)
   }
 
   // Stop and Redirect are gated on "session running", not on which tool is

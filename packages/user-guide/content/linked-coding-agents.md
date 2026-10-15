@@ -32,7 +32,7 @@ The approval page, headed "Connect" followed by the name the terminal asked for,
 
 Choose **Connect** to approve, or **Not me, deny** to turn the request down. On approval Threa creates the bot with the Mentionable and Active scratchpad traits and an API key, and the key goes to the machine that asked. It is saved in `~/.threa/bot.json` and never passes through your clipboard. To take access back, archive the bot or revoke its key (see [Bot API keys and webhooks](/guide/bot-api-keys-and-webhooks)).
 
-`run` links a scratchpad for the directory you start it in and prints its URL. In that scratchpad, `/stop` stops the running command and `/steer` followed by text stops it and starts a new turn with that text.
+`run` links a scratchpad for the directory you start it in and prints its URL. In that scratchpad, `/stop` stops the running command. A message you send while the command runs waits until it finishes.
 
 ## Claude Code, Pi and Hermes
 
@@ -40,8 +40,14 @@ Each of these has its own package, set up in the terminal from its README in the
 
 - Claude Code: the `threa-channel` package, installed with `npm install -g @threahq/claude-code-remote`. It needs Claude Code 2.1.80 or later and a personal bot with the Active scratchpad trait.
 - Pi: `pi install npm:@threahq/pi-remote`.
-- Hermes: `npm install -g @threahq/hermes-remote`, started with `threa-hermes`. Its scratchpad also accepts `/stop`, `/steer`, `/status`, `/model` and `/clear`.
+- Hermes: `npm install -g @threahq/hermes-remote`, started with `threa-hermes`. Its scratchpad also accepts `/stop`, `/status`, `/model` and `/clear`.
 
 When Claude Code or Hermes needs permission to run a command, the request can appear in the scratchpad as a decision card that you answer there (see [Decision cards](/guide/decision-cards)). Claude Code's cards need a plaintext stream. An encrypted scratchpad works only after its owner invites the agent into it (see [Encrypted scratchpads](/guide/encrypted-scratchpads)).
+
+## Messages while the agent is working
+
+When Claude Code, Pi or Hermes is in the middle of a turn, a message you send in its scratchpad goes to the agent right away, and the agent reads it as part of the work in progress. If the agent can't take it at that moment, the message waits and starts the next turn.
+
+To hold a message until the agent finishes its turn, put `/enqueue` in it, for example `/enqueue run the tests again`. `/enqueue` can go anywhere in the message, and the agent receives the message without it. `/enqueue` with nothing else sends nothing. It needs the agent connected, and it can't be combined with another command.
 
 Protocol details, scopes and the other packages are on [threa.io/developers](https://threa.io/developers).

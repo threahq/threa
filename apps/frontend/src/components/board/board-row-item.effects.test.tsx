@@ -86,7 +86,7 @@ describe("BoardEventRowItem session effects", () => {
 
 // A RUNNING board session is the same live card the timeline mounts — same
 // component, live counts/substep read from the agent-activity store by session
-// id, same stop/steer affordances — not a board-only summary that only catches
+// id, same stop/redirect affordances — not a board-only summary that only catches
 // up at completion.
 describe("BoardEventRowItem running session", () => {
   const started = sessionEvent("agent_session:started", {
@@ -150,13 +150,12 @@ describe("BoardEventRowItem running session", () => {
     })
     const stop = vi.fn()
     vi.spyOn(hooksModule, "useStopAgentSession").mockReturnValue(stop as never)
-    vi.spyOn(hooksModule, "useSteerAgentSession").mockReturnValue(vi.fn() as never)
     mount()
 
     // Mid-run, off the socket rail — the terminal payload has not landed.
     expect(screen.getByText("Updating your notification settings")).toBeInTheDocument()
     expect(screen.getByText(/4 steps/)).toBeInTheDocument()
-    // And the run stays steerable from the board.
+    // And the run can still be stopped or redirected from the board.
     expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument()
     expect(screen.getByRole("button", { name: "Redirect" })).toBeInTheDocument()
   })
@@ -164,7 +163,6 @@ describe("BoardEventRowItem running session", () => {
   it("stops the running session through the board's own wiring", async () => {
     const stop = vi.fn()
     vi.spyOn(hooksModule, "useStopAgentSession").mockReturnValue(stop as never)
-    vi.spyOn(hooksModule, "useSteerAgentSession").mockReturnValue(vi.fn() as never)
     const onRedirect = vi.fn()
     mount(onRedirect)
 

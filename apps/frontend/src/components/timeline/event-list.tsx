@@ -13,7 +13,7 @@ import { getSessionId, getSessionSlotKey, getTriggerMessageId } from "./session-
 import { getCommandId, isOwnCommandEvent } from "./command-grouping"
 import type { SubagentThreadRun } from "@/lib/subagent-display"
 import { useSocket, useCoordinatedLoading } from "@/contexts"
-import { useSteerAgentSession, useStopAgentSession, useIsNewMessage, type NewMessageFlash } from "@/hooks"
+import { useStopAgentSession, useIsNewMessage, type NewMessageFlash } from "@/hooks"
 import { Loader2 } from "lucide-react"
 import { EventItem } from "./event-item"
 import type { RunFold, RunFoldStore } from "./run-fold"
@@ -898,8 +898,6 @@ export interface TimelineItemRenderContext {
   firstMessageId?: string
   /** Click handler for the session card's Stop button. */
   onStopSession?: (sessionId: string) => void
-  /** Prepare the composer to dispatch its next message through /steer when supported. */
-  onSteerSession?: () => Promise<void>
   /**
    * followUpIds that have a matching `agent:follow_up_cancelled` row in the
    * loaded window. Lets a scheduled follow-up card show its cancelled state
@@ -1050,7 +1048,6 @@ function TimelineItemContentImpl({ item, ctx, deferSecondaryHydration }: Timelin
             workspaceId={ctx.workspaceId}
             sessionVersion={item.sessionVersion}
             onStopSession={ctx.onStopSession}
-            onSteerSession={ctx.onSteerSession}
           />
         </div>
       )}
@@ -1350,7 +1347,6 @@ export function EventList({
   const phase = useCoordinatedLoading((loading) => loading.phase)
   const socket = useSocket()
   const stopAgentSession = useStopAgentSession(socket, workspaceId, streamId)
-  const steerAgentSession = useSteerAgentSession(workspaceId, streamId)
 
   const handleStopSession = useMemo(() => (sessionId: string) => stopAgentSession(sessionId), [stopAgentSession])
 
@@ -1416,7 +1412,6 @@ export function EventList({
     newMessageFlash,
     firstMessageId,
     onStopSession: handleStopSession,
-    onSteerSession: steerAgentSession,
     cancelledFollowUpIds,
     delegationStatusPatches,
     subagentStatusPatches,

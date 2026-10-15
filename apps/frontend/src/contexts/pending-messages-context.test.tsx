@@ -313,7 +313,7 @@ describe("PendingMessagesContext", () => {
 
       const newContent = { type: "doc" as const, content: [{ type: "paragraph" as const }] }
       await act(async () => {
-        await result.current.saveEditedMessage("temp_save", newContent)
+        await result.current.saveEditedMessage("temp_save", newContent, { enqueue: false })
       })
 
       expect(result.current.status).toBe("pending")
@@ -326,69 +326,33 @@ describe("PendingMessagesContext", () => {
           retryCount: 0,
           retryAfter: 0,
           terminalFailure: undefined,
-          steer: undefined,
+          enqueue: undefined,
         })
       )
     })
 
-    it.each([
-      {
-        name: "clears steer when the token is removed",
-        existingSteer: true,
-        contentJson: {
-          type: "doc" as const,
-          content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "plain edit" }] }],
-        },
-        steerAvailable: true,
-        expectedSteer: undefined,
-      },
-      {
-        name: "sets steer when mixed content adds the token",
-        existingSteer: undefined,
-        contentJson: {
-          type: "doc" as const,
-          content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "redirect this /steer" }] }],
-        },
-        steerAvailable: true,
-        expectedSteer: true,
-      },
-      {
-        name: "does not arm steer when the command is unavailable",
-        existingSteer: undefined,
-        contentJson: {
-          type: "doc" as const,
-          content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "mention /steer" }] }],
-        },
-        steerAvailable: false,
-        expectedSteer: undefined,
-      },
-      {
-        name: "does not turn a bare steer edit into a composite message",
-        existingSteer: undefined,
-        contentJson: {
-          type: "doc" as const,
-          content: [{ type: "paragraph" as const, content: [{ type: "text" as const, text: "/steer" }] }],
-        },
-        steerAvailable: true,
-        expectedSteer: undefined,
-      },
-    ])("$name", async ({ existingSteer, contentJson, steerAvailable, expectedSteer }) => {
-      mockGet.mockResolvedValue({ clientId: "temp_steer_edit", workspaceId: "ws_1", steer: existingSteer })
+    it("should remember a queued message's mode while it is edited and save the mode the edit leaves", async () => {
+      mockGet.mockResolvedValue({ clientId: "temp_enqueue_edit", workspaceId: "ws_1", enqueue: true })
       mockEventsGet.mockResolvedValue({
-        id: "temp_steer_edit",
+        id: "temp_enqueue_edit",
         payload: { contentMarkdown: "old" },
-        _status: "editing",
+        _status: "pending",
       })
-      const { result } = renderPending("temp_save")
+      const { result } = renderPending("temp_enqueue_edit")
+      const edited = { type: "doc" as const, content: [{ type: "paragraph" as const }] }
 
       await act(async () => {
-        await result.current.saveEditedMessage("temp_steer_edit", contentJson, { steerAvailable })
+        await result.current.markEditing("temp_enqueue_edit")
+      })
+      const enqueuedWhileEditing = result.current.isEditingEnqueued("temp_enqueue_edit")
+      await act(async () => {
+        await result.current.saveEditedMessage("temp_enqueue_edit", edited, { enqueue: false })
       })
 
-      expect(mockUpdate).toHaveBeenCalledWith(
-        "temp_steer_edit",
-        expect.objectContaining({ steer: expectedSteer, terminalFailure: undefined })
-      )
+      expect({ enqueuedWhileEditing, update: mockUpdate.mock.calls.at(-1) }).toEqual({
+        enqueuedWhileEditing: true,
+        update: ["temp_enqueue_edit", expect.objectContaining({ contentJson: edited, enqueue: undefined })],
+      })
     })
   })
 

@@ -66,7 +66,7 @@ interface TraceStepProps {
    * passes these while `status === "running"`.
    */
   onStopSession?: () => void
-  onSteerSession?: () => void
+  onRedirectSession?: () => void
 }
 
 export function TraceStep({
@@ -76,7 +76,7 @@ export function TraceStep({
   userId,
   liveSubsteps,
   onStopSession,
-  onSteerSession,
+  onRedirectSession,
 }: TraceStepProps) {
   const config = STEP_DISPLAY_CONFIG[step.stepType]
   const Icon = config.icon
@@ -127,7 +127,7 @@ export function TraceStep({
           <span className="text-muted-foreground">Running…</span>
         </>
       )}
-      {onSteerSession && <RedirectSessionButton onClick={onSteerSession} />}
+      {onRedirectSession && <RedirectSessionButton onClick={onRedirectSession} />}
       {onStopSession && <StopSessionButton onClick={onStopSession} />}
     </>
   ) : undefined

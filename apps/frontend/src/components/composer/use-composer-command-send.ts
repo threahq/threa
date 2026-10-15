@@ -2,7 +2,13 @@ import { useCallback, useMemo } from "react"
 import { toast } from "sonner"
 import { ASIDE_COMMAND, type CommandInfo, type JSONContent } from "@threahq/types"
 import { serializeToMarkdown } from "@threahq/prosemirror"
-import { extractCommandNode, extractCommandFromRawText, extractSteerDirective } from "@/lib/commands"
+import {
+  extractCommandNode,
+  extractCommandFromRawText,
+  extractEnqueueDirective,
+  offersEnqueue,
+  type EnqueueDirective,
+} from "@/lib/commands"
 import { useCommandDispatchQueue } from "@/hooks/use-command-dispatch-queue"
 import { useCommandFailureRestore } from "@/hooks/use-command-failure-restore"
 import { useOpenAside } from "@/hooks/use-open-aside"
@@ -16,13 +22,9 @@ export interface ComposerCommandPlan {
   commandMarkdown: string
 }
 
-/** `/steer` embedded in authored content: stays on the message path, flagged. */
-export interface ComposerSteerMessagePlan {
-  kind: "steer-message"
-  content: JSONContent
-}
+export type ComposerSendPlan = ComposerCommandPlan | EnqueueDirective | null
 
-export type ComposerSendPlan = ComposerCommandPlan | ComposerSteerMessagePlan | null
+export const EMPTY_ENQUEUE_ERROR = "Write a message to go with /enqueue."
 
 /**
  * Send-time command routing, shared by every composer that can dispatch (the
@@ -56,18 +58,16 @@ export function useComposerCommandSend(
   }, [availableCommands])
 
   /**
-   * Classify a composed doc: a command dispatch, a steer-flagged message, or
-   * `null` for an ordinary message. Dispatch covers both a materialized
-   * `slashCommand` node and raw text matching an available command (e.g.
-   * `/model ` typed with a trailing space, which never became a node).
+   * Classify a composed doc: a command dispatch, an enqueued message, an
+   * `/enqueue` with nothing to send, or `null` for an ordinary message.
+   * Dispatch covers both a materialized `slashCommand` node and raw text
+   * matching an available command (e.g. `/model ` typed with a trailing space,
+   * which never became a node).
    */
   const planSend = useCallback(
     (content: JSONContent): ComposerSendPlan => {
-      const steerDirective = availableCommandByName.has("steer") ? extractSteerDirective(content) : null
-      if (steerDirective?.hasMessageContent) return { kind: "steer-message", content: steerDirective.content }
-      if (steerDirective) {
-        return { kind: "command", commandName: "steer", clientActionId: null, commandMarkdown: "/steer" }
-      }
+      const enqueue = extractEnqueueDirective(content, { typed: offersEnqueue(availableCommands) })
+      if (enqueue) return enqueue
 
       const commandNode = extractCommandNode(content)
       const rawTextCommand = commandNode === null ? extractCommandFromRawText(content) : null
@@ -85,7 +85,7 @@ export function useComposerCommandSend(
           : serializeToMarkdown(content).trim(),
       }
     },
-    [availableCommandByName]
+    [availableCommandByName, availableCommands]
   )
 
   /**

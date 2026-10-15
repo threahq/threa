@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef } from "react"
 import { useParams } from "react-router-dom"
 import type { Editor } from "@tiptap/react"
-import { ASIDE_COMMAND } from "@threahq/types"
+import { ASIDE_COMMAND, ENQUEUE_COMMAND } from "@threahq/types"
 import type { CommandItem } from "./types"
 import { CommandList } from "./command-list"
 import {
@@ -180,7 +180,7 @@ export function useCommandSuggestion({
         scope: cmd.scope,
         args: cmd.args,
         clientActionId: cmd.clientActionId,
-        ...(cmd.name === "steer" && { placement: "inline" as const }),
+        ...(cmd.name === ENQUEUE_COMMAND && { placement: "inline" as const }),
       }))
     return [
       ...(includeMemoSearch ? [MEMO_SLASH_ITEM] : []),

@@ -12,6 +12,7 @@ import { reconcileOptimisticBoardPost } from "@/stores/board-store"
 import { rescopeScopeDrafts } from "./use-draft-message"
 import { workspaceKeys } from "./use-workspaces"
 import {
+  MessageErrorCodes,
   MessageReferenceErrorCodes,
   ShareErrorCodes,
   StreamConnectionErrorCodes,
@@ -34,10 +35,12 @@ import { recordConnectivityEvent } from "@/lib/connectivity-diagnostics/facade"
 
 const REFERENCE_FAILURE_CODES: ReadonlySet<string> = new Set(Object.values(MessageReferenceErrorCodes))
 
-/** A send into a shared channel's copy that the host or the copy's rules will never take, however often it is retried. */
-const SHARED_CHANNEL_REFUSALS: ReadonlyMap<string, string> = new Map([
+/** A send the server will refuse however often it is retried, with what the author is told. */
+const SEND_REFUSALS: ReadonlyMap<string, string> = new Map([
   [StreamConnectionErrorCodes.WRITE_REFUSED, "The shared channel's host workspace didn't accept that message."],
   [StreamConnectionErrorCodes.COPY_WRITE_UNSUPPORTED, "That kind of message can't be sent in a shared channel yet."],
+  [MessageErrorCodes.ENQUEUE_UNAVAILABLE, "Couldn't queue that message for the session's next turn."],
+  [MessageErrorCodes.COMMAND_NOT_ENQUEUEABLE, "A command can't wait for the next turn. Send it on its own."],
 ])
 
 /** Whether a body carries a node of the given type, at any depth. */
@@ -347,7 +350,7 @@ export function useMessageQueue(workspaceId: string): void {
               attachmentIds: next.attachmentIds,
               clientMessageId: next.clientId,
               composeTrace: next.composeTrace,
-              ...(next.steer && { steer: true }),
+              ...(next.enqueue && { enqueue: true }),
             })
           } else {
             const contentJson = next.contentJson ?? parseMarkdown(next.content)
@@ -358,7 +361,7 @@ export function useMessageQueue(workspaceId: string): void {
               clientMessageId: next.clientId,
               confirmedPrivacyWarning: next.confirmedPrivacyWarning,
               composeTrace: next.composeTrace,
-              ...(next.steer && { steer: true }),
+              ...(next.enqueue && { enqueue: true }),
               // A board reply declares its conversation so the send attaches it
               // synchronously (in the message's transaction) instead of waiting on
               // the async extractor; omitted on ordinary sends.
@@ -460,13 +463,11 @@ export function useMessageQueue(workspaceId: string): void {
           // re-sends the same unresolvable reference, so the row stops retrying
           // and waits for the author to edit or drop it.
           const referenceFailed = ApiError.isApiError(err) && REFERENCE_FAILURE_CODES.has(err.code ?? "")
-          const sharedChannelRefusal = ApiError.isApiError(err)
-            ? SHARED_CHANNEL_REFUSALS.get(err.code ?? "")
-            : undefined
+          const refusal = ApiError.isApiError(err) ? SEND_REFUSALS.get(err.code ?? "") : undefined
 
-          if (referenceFailed || sharedChannelRefusal) {
-            if (sharedChannelRefusal) {
-              toast.error(sharedChannelRefusal, { id: `shared-channel-refusal-${next.clientId}` })
+          if (referenceFailed || refusal) {
+            if (refusal) {
+              toast.error(refusal, { id: `send-refused-${next.clientId}` })
             }
             if (referenceFailed) {
               toast.error(

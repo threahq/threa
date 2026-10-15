@@ -8,7 +8,7 @@ import * as workspaceStoreModule from "@/stores/workspace-store"
 import { useStreamCommands, commandKeys } from "./use-stream-commands"
 
 const workspaceCommand = { name: "invite", description: "Invite someone" } as unknown as CommandInfo
-const runtimeCommand = { name: "steer", description: "Steer the agent" } as unknown as CommandInfo
+const runtimeCommand = { name: "compact", description: "Compact the session" } as unknown as CommandInfo
 
 let listForStream: ReturnType<typeof vi.spyOn>
 

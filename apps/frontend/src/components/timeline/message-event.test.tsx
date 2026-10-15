@@ -8,6 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { PanelProvider, ServicesProvider, type SavedService } from "@/contexts"
 import { MessageEvent } from "./message-event"
+import { EMPTY_ENQUEUE_ERROR } from "@/components/composer/use-composer-command-send"
 import { TimelineItemContent, type TimelineItemRenderContext } from "./event-list"
 import { resolveSubagentThreadRun, type SubagentThreadRun } from "@/lib/subagent-display"
 import {
@@ -38,6 +39,7 @@ import * as connectionStatusModule from "@/components/layout/connection-status"
 import userEvent from "@testing-library/user-event"
 import type { StreamEvent } from "@threahq/types"
 import type { JSONContent } from "@threahq/types"
+import { toast } from "sonner"
 
 // Configurable mock state for usePendingMessages — tests can override per-describe
 let mockGetStatus: (id: string) => string | null = () => null
@@ -46,6 +48,7 @@ const mockMarkEditing = vi.fn()
 const mockDeleteMessage = vi.fn()
 const mockSaveEditedMessage = vi.fn()
 const mockCancelEditing = vi.fn()
+let mockEditingEnqueued = false
 
 const createMessageEvent = (messageId: string, contentMarkdown: string): StreamEvent => ({
   id: `event_${messageId}`,
@@ -100,6 +103,7 @@ function installDefaultSpies() {
     markSent: vi.fn(),
     markEditing: mockMarkEditing,
     saveEditedMessage: mockSaveEditedMessage,
+    isEditingEnqueued: () => mockEditingEnqueued,
     cancelEditing: mockCancelEditing,
     retryMessage: mockRetryMessage,
     deleteMessage: mockDeleteMessage,
@@ -171,6 +175,7 @@ beforeEach(() => {
   mockDeleteMessage.mockReset()
   mockSaveEditedMessage.mockReset()
   mockCancelEditing.mockReset()
+  mockEditingEnqueued = false
   installDefaultSpies()
 })
 
@@ -725,6 +730,43 @@ describe("MessageEvent", () => {
       render(<MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />, { wrapper: Wrapper })
 
       expect(screen.getByText("Editing unsent message")).toBeInTheDocument()
+    })
+
+    it("should open a queued message with its /enqueue and save the mode the edit leaves", async () => {
+      mockGetStatus = () => "editing"
+      mockEditingEnqueued = true
+      const toastError = vi.spyOn(toast, "error").mockReturnValue("" as ReturnType<typeof toast.error>)
+      let editor: { value: JSONContent; onChange: (content: JSONContent) => void; onSubmit: () => void } | null = null
+      spyOnExport(editorModule, "RichEditor").mockReturnValue(((props: NonNullable<typeof editor>) => {
+        editor = props
+        return null
+      }) as unknown as typeof editorModule.RichEditor)
+      const enqueue: JSONContent = { type: "slashCommand", attrs: { name: "enqueue" } }
+      const doc = (...content: JSONContent[]): JSONContent => ({
+        type: "doc",
+        content: [{ type: "paragraph", content }],
+      })
+      const event = createMessageEvent("msg_queued", "Wait for it")
+      event.payload = { ...(event.payload as object), contentJson: doc({ type: "text", text: "Wait for it" }) }
+
+      render(<MessageEvent event={event} workspaceId={workspaceId} streamId={streamId} />, { wrapper: Wrapper })
+      const seeded = editor!.value
+      const submit = async (content: JSONContent) => {
+        act(() => editor!.onChange(content))
+        await act(async () => editor!.onSubmit())
+      }
+      await submit(doc(enqueue))
+      await submit(doc({ type: "text", text: "Now instead" }))
+
+      expect({
+        seeded,
+        toasts: toastError.mock.calls.map(([message]) => message),
+        saved: mockSaveEditedMessage.mock.calls,
+      }).toEqual({
+        seeded: doc(enqueue, { type: "text", text: " " }, { type: "text", text: "Wait for it" }),
+        toasts: [EMPTY_ENQUEUE_ERROR],
+        saved: [[event.id, doc({ type: "text", text: "Now instead" }), { enqueue: false }]],
+      })
     })
   })
 })

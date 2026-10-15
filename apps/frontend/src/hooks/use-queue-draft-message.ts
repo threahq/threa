@@ -35,8 +35,8 @@ export interface QueueDraftMessageInput {
   attachments?: AttachmentSummary[]
   /** Compose-session provenance for this send (see {@link ComposeTrace}). */
   composeTrace?: ComposeTraceInput
-  /** Persist first, then dispatch `/steer` in the same server transaction. */
-  steer?: true
+  /** Queue for the linked session's next turn instead of delivering now (`/enqueue`). */
+  enqueue?: true
 }
 
 export interface QueueDraftMessageParams {
@@ -223,7 +223,7 @@ export function useQueueDraftMessage(workspaceId: string) {
             contentJson: input.contentJson,
             attachmentIds: input.attachmentIds,
             composeTrace,
-            steer: input.steer,
+            enqueue: input.enqueue,
             createdAt: Date.now(),
             retryCount: 0,
             streamCreation: params.streamCreation,

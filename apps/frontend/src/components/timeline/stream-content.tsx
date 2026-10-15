@@ -25,7 +25,6 @@ import {
   useIsMobile,
   useNewMessageIndicator,
   type NewMessageFlash,
-  useSteerAgentSession,
   useStopAgentSession,
   useEditLastMessageTrigger,
   useKeyboardShortcuts,
@@ -3338,7 +3337,6 @@ const TimelineMessageList = memo(function TimelineMessageList({
   const phase = useCoordinatedLoading((loading) => loading.phase)
   const socket = useSocket()
   const stopAgentSession = useStopAgentSession(socket, workspaceId, streamId)
-  const steerAgentSession = useSteerAgentSession(workspaceId, streamId)
 
   // A promoted draft's timeline mounts with the rows the user is already
   // looking at, so its settle mask carries those rows instead of a skeleton:
@@ -3381,7 +3379,6 @@ const TimelineMessageList = memo(function TimelineMessageList({
       newMessageFlash,
       firstMessageId,
       onStopSession: handleStopSession,
-      onSteerSession: steerAgentSession,
       cancelledFollowUpIds,
       delegationStatusPatches,
       subagentStatusPatches,
@@ -3404,7 +3401,6 @@ const TimelineMessageList = memo(function TimelineMessageList({
       newMessageFlash,
       firstMessageId,
       handleStopSession,
-      steerAgentSession,
       cancelledFollowUpIds,
       delegationStatusPatches,
       subagentStatusPatches,
