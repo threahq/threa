@@ -2289,7 +2289,10 @@
                   "supportedCapabilities": {
                     "minItems": 1,
                     "type": "array",
-                    "items": { "type": "string", "enum": ["mentionable", "active-scratchpad", "session-control"] }
+                    "items": {
+                      "type": "string",
+                      "enum": ["mentionable", "active-scratchpad", "session-control", "queued-message"]
+                    }
                   },
                   "claimTtlSeconds": { "default": 60, "type": "integer", "minimum": 15, "maximum": 300 },
                   "responseStreamId": { "type": "string", "minLength": 1, "maxLength": 64 },
@@ -2342,7 +2345,7 @@
                             },
                             "requiredCapability": {
                               "type": "string",
-                              "enum": ["mentionable", "active-scratchpad", "session-control"]
+                              "enum": ["mentionable", "active-scratchpad", "session-control", "queued-message"]
                             },
                             "promptMarkdown": { "type": "string" },
                             "sourceRevision": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
