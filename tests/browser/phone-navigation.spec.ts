@@ -68,12 +68,23 @@ async function openSidebar(page: Page) {
   await expect(sidebar(page).getByLabel("Collapse sidebar")).toBeInViewport()
 }
 
-/** Scrolls the nearest scroller holding `inside` to its end. */
-const scrollToEnd = (inside: Locator) =>
+/**
+ * Swipes the nearest scroller holding `inside` to its end. The touches make it a
+ * reader's gesture: a bare `scrollTop` write is snapped back by a jump's refine loop.
+ */
+const swipeToEnd = (inside: Locator) =>
   inside.evaluate((element) => {
     for (let node = element.parentElement; node; node = node.parentElement) {
       if (node.scrollHeight <= node.clientHeight + 1 || getComputedStyle(node).overflowY === "visible") continue
+      const touch = (type: string, y: number) => {
+        const point = new Touch({ identifier: 1, target: node, clientX: 200, clientY: y })
+        const touches = type === "touchend" ? [] : [point]
+        node.dispatchEvent(new TouchEvent(type, { touches, changedTouches: [point], bubbles: true, cancelable: true }))
+      }
+      touch("touchstart", 600)
+      touch("touchmove", 300)
       node.scrollTop = node.scrollHeight
+      touch("touchend", 300)
       return
     }
   })
@@ -135,7 +146,7 @@ test("should jump to a message its link names, in the stream on show or by going
   await expect(linked).toBeInViewport({ timeout: 30_000 })
   expect(new URL(page.url()).searchParams.get("m")).toBe(target)
 
-  await scrollToEnd(linked)
+  await swipeToEnd(linked)
   await expect(linked).not.toBeInViewport()
   await chipIn(streamA).click()
   await expect(linked).toBeInViewport({ timeout: 30_000 })
