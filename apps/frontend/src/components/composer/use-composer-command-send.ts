@@ -25,6 +25,7 @@ export interface ComposerCommandPlan {
 export type ComposerSendPlan = ComposerCommandPlan | EnqueueDirective | null
 
 export const EMPTY_ENQUEUE_ERROR = "Write a message to go with /enqueue."
+export const SCHEDULED_ENQUEUE_ERROR = "Scheduled messages can't use /enqueue."
 
 /**
  * Send-time command routing, shared by every composer that can dispatch (the

@@ -47,7 +47,11 @@ import { usePanel, createConversationPanelId } from "@/contexts"
 import { ComposePanePortal, ComposingInPaneBar, useComposePane } from "@/components/composer/compose-pane"
 import { consumeSnippetRequest, subscribeSnippetRequest } from "@/stores/snippet-request-store"
 import { requestConversationReplyOpen } from "@/stores/conversation-reply-open-store"
-import { EMPTY_ENQUEUE_ERROR, useComposerCommandSend } from "@/components/composer/use-composer-command-send"
+import {
+  EMPTY_ENQUEUE_ERROR,
+  SCHEDULED_ENQUEUE_ERROR,
+  useComposerCommandSend,
+} from "@/components/composer/use-composer-command-send"
 import { useComposerHandoffDrain } from "@/components/composer/use-composer-handoff-drain"
 import { StreamTypes, type JSONContent } from "@threahq/types"
 import { useStreamFromStore } from "@/stores/stream-store"
@@ -747,6 +751,12 @@ function MessageInputComponent({
    */
   const handleSchedule = useStableCallback(async (when: Date) => {
     if (!composer.canSend) return
+    // A scheduled row carries no enqueue intent; firing it would steer, the opposite of what /enqueue asked for.
+    const plan = planSend(composer.content)
+    if (plan && plan.kind !== "command") {
+      setError(SCHEDULED_ENQUEUE_ERROR)
+      return
+    }
 
     composer.setIsSending(true)
     setError(null)

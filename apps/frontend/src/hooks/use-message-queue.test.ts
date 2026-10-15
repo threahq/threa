@@ -672,7 +672,7 @@ describe("useMessageQueue", () => {
     {
       code: MessageErrorCodes.ENQUEUE_UNAVAILABLE,
       status: 409,
-      message: "Couldn't queue that message for the session's next turn.",
+      message: "Couldn't queue that message for the session's next turn. Edit it to send it now.",
       enqueue: true as const,
     },
     {

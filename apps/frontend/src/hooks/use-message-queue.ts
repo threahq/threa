@@ -39,7 +39,10 @@ const REFERENCE_FAILURE_CODES: ReadonlySet<string> = new Set(Object.values(Messa
 const SEND_REFUSALS: ReadonlyMap<string, string> = new Map([
   [StreamConnectionErrorCodes.WRITE_REFUSED, "The shared channel's host workspace didn't accept that message."],
   [StreamConnectionErrorCodes.COPY_WRITE_UNSUPPORTED, "That kind of message can't be sent in a shared channel yet."],
-  [MessageErrorCodes.ENQUEUE_UNAVAILABLE, "Couldn't queue that message for the session's next turn."],
+  [
+    MessageErrorCodes.ENQUEUE_UNAVAILABLE,
+    "Couldn't queue that message for the session's next turn. Edit it to send it now.",
+  ],
   [MessageErrorCodes.COMMAND_NOT_ENQUEUEABLE, "A command can't wait for the next turn. Send it on its own."],
 ])
 

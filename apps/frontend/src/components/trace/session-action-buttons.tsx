@@ -103,7 +103,7 @@ export function RedirectSessionButton({ onClick, stopPropagation }: SessionActio
       onClick={onClick}
       stopPropagation={stopPropagation}
       hover={REDIRECT_HOVER}
-      title="Steer this session — your next message is folded into the current work"
+      title="Steer this session with your next message"
       label="Redirect"
       icon={<MessageSquarePlus className="h-3.5 w-3.5" />}
     />

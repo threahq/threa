@@ -37,7 +37,7 @@ import { MessageInput, materializePendingAttachmentReferences } from "./message-
 // eslint-disable-next-line no-restricted-imports -- clears the durable composer-target rows the composer reads
 import { db } from "@/db"
 import { ENQUEUE_COMMAND, type JSONContent } from "@threahq/types"
-import { EMPTY_ENQUEUE_ERROR } from "@/components/composer/use-composer-command-send"
+import { EMPTY_ENQUEUE_ERROR, SCHEDULED_ENQUEUE_ERROR } from "@/components/composer/use-composer-command-send"
 
 const EMPTY_DOC: JSONContent = { type: "doc", content: [{ type: "paragraph" }] }
 const makeDoc = (text: string): JSONContent => ({
@@ -609,6 +609,25 @@ describe("MessageInput", () => {
         sends: mockSendMessage.mock.calls.length,
         cleared: mockSetContent.mock.calls.length,
       }).toEqual({ error: EMPTY_ENQUEUE_ERROR, sends: 0, cleared: 0 })
+    })
+
+    it("should refuse to schedule an /enqueue and keep the draft", async () => {
+      mockComposerState.canSend = true
+      mockComposerState.content = makeDoc("/enqueue after this")
+      spyOnExport(streamCommandsModule, "useStreamCommands").mockReturnValue((() => [
+        { name: ENQUEUE_COMMAND, description: "Enqueue", kind: "bot-runtime", scope: "stream" },
+      ]) as unknown as never)
+
+      render$(<MessageInput workspaceId={workspaceId} streamId={streamId} />)
+      await act(async () => {
+        await capturedOnSchedule?.(new Date("2099-01-01T00:00:00.000Z"))
+      })
+
+      expect({
+        error: screen.getByText(SCHEDULED_ENQUEUE_ERROR).textContent,
+        schedules: mockScheduleMutateAsync.mock.calls.length,
+        cleared: mockSetContent.mock.calls.length,
+      }).toEqual({ error: SCHEDULED_ENQUEUE_ERROR, schedules: 0, cleared: 0 })
     })
 
     it("should resolve the draft and clear attachments after sending", async () => {

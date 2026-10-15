@@ -12,7 +12,11 @@ import {
   useFloatingComposerHeight,
   type ComposerControlHandle,
 } from "@/components/composer"
-import { EMPTY_ENQUEUE_ERROR, useComposerCommandSend } from "@/components/composer/use-composer-command-send"
+import {
+  EMPTY_ENQUEUE_ERROR,
+  SCHEDULED_ENQUEUE_ERROR,
+  useComposerCommandSend,
+} from "@/components/composer/use-composer-command-send"
 import { useComposerHandoffDrain } from "@/components/composer/use-composer-handoff-drain"
 import { ComposePanePortal, ComposingInPaneBar, useComposePane } from "@/components/composer/compose-pane"
 import { useHoldFeedRow } from "@/components/board/feed-row-hold"
@@ -545,6 +549,12 @@ export function InlineComposerForm({
 
     if (rejectE2e && hostIsE2e) {
       toast.error(rejectE2e)
+      return
+    }
+    // A scheduled row carries no enqueue intent; firing it would steer, the opposite of what /enqueue asked for.
+    const plan = planSend(composer.content)
+    if (plan && plan.kind !== "command") {
+      toast.error(SCHEDULED_ENQUEUE_ERROR)
       return
     }
 
