@@ -68,7 +68,7 @@ export type ResolvedCommand =
 
 export interface RuntimeCommandTarget {
   botId: string
-  /** The live runtime's kind — drives kind-specific invocation routing (e.g. steer/stop capability). */
+  /** The live runtime's kind — drives kind-specific invocation routing (e.g. stop/reconnect capability). */
   runtimeKind: BotRuntimeKind
   rootStreamId: string
   activeStreamId: string

@@ -1266,6 +1266,28 @@ export const BotInvocationRepository = {
     return result.rows.map(mapInvocation)
   },
 
+  /**
+   * Moves a session's open rows to the instance that now hosts it. An expired
+   * claim is reclaimed in place, so claimed rows move too; the claim token
+   * still fences the old instance's writes.
+   */
+  async retargetSessionInstance(
+    db: Querier,
+    params: { workspaceId: string; botId: string; runtimeSessionId: string; instanceId: string }
+  ): Promise<BotInvocation[]> {
+    const result = await db.query<BotInvocationRow>(sql`
+      UPDATE bot_invocations
+      SET target_instance_id = ${params.instanceId}, updated_at = NOW()
+      WHERE workspace_id = ${params.workspaceId}
+        AND actor_type = 'bot' AND actor_id = ${params.botId}
+        AND status IN ('pending', 'claimed')
+        AND target_runtime_session_id = ${params.runtimeSessionId}
+        AND target_instance_id <> ${params.instanceId}
+      RETURNING *
+    `)
+    return result.rows.map(mapInvocation)
+  },
+
   async cancelActiveBySource(
     db: Querier,
     params: { workspaceId: string; sourceMessageId: string; reason: string },
@@ -1531,8 +1553,7 @@ export const BotInvocationRepository = {
       invocationId?: string
     }
   ): Promise<BotInvocation | null> {
-    // A composite message + steer shares one transaction timestamp; put the
-    // message invocation first when both capabilities are claimable.
+    // Rows sharing a transaction timestamp: messages before session-control.
     const result = await db.query<BotInvocationRow>(composeSql`WITH candidate AS (
         SELECT i.id FROM bot_invocations i
         WHERE i.workspace_id = ${params.workspaceId}
@@ -1905,7 +1926,7 @@ export const BotInvocationRepository = {
     ownedClaims: BotInvocation[]
     recentCancellations: BotInvocationCancellation[]
   }> {
-    // Bootstrap order must match claimOne for same-timestamp message + steer rows.
+    // Bootstrap order must match claimOne.
     const availableResult = await db.query<BotInvocationRow>(composeSql`SELECT i.* FROM bot_invocations i
         WHERE i.workspace_id = ${params.workspaceId}
           AND i.actor_type = 'bot'

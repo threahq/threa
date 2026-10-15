@@ -57,7 +57,7 @@ export type {
 } from "./event-service"
 
 export { createMessageHandlers } from "./handlers"
-export { SteeredMessageService } from "./steered-message-service"
+export { EnqueuedMessageService } from "./enqueued-message-service"
 export {
   createMessageSchema,
   updateMessageSchema,

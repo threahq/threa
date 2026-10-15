@@ -863,6 +863,10 @@ export {
 // Open-an-aside client-action id (single source of truth)
 export const ASIDE_COMMAND = "aside" as const
 
+// Listed with the session-control commands so a runtime opts in by advertising
+// it, but never dispatched: the composer sends it as a message's `enqueue` flag.
+export const ENQUEUE_COMMAND = "enqueue" as const
+
 /**
  * Persona slug for Ariadne — the workspace-companion persona that backs
  * "Discuss with Ariadne" scratchpads. Single source of truth (INV-33) so

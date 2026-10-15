@@ -44,7 +44,7 @@ export const StreamConnectionErrorCodes = {
   WRITE_REFUSED: "STREAM_CONNECTION_WRITE_REFUSED",
   /** The host's region didn't answer a partner's write, so it was not applied. */
   HOST_UNREACHABLE: "STREAM_CONNECTION_HOST_UNREACHABLE",
-  /** A write into a shared channel's copy that can't cross to the host as sent: files, steering, or a send with no client message id. */
+  /** A write into a shared channel's copy that can't cross to the host as sent: files, enqueueing, or a send with no client message id. */
   COPY_WRITE_UNSUPPORTED: "STREAM_CONNECTION_COPY_WRITE_UNSUPPORTED",
   /** A file the other side of a shared channel sent, refused while that share is disconnected. */
   SHARE_ENDED: "STREAM_CONNECTION_SHARE_ENDED",

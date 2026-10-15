@@ -2587,7 +2587,7 @@ export function createPublicApiHandlers({
           // the sealed timeline (sealed replies go to /sealed-complete instead),
           // so reject it loudly — but only when there is content to persist. A
           // `noResponse` completion writes no message row and must work on E2E
-          // streams: session-control invocations (e.g. /model, /steer acks) are
+          // streams: session-control invocations (e.g. /model acks) are
           // dispatched there with plaintext claims, and blocking their close
           // would strand every one of them in a TTL-recycle loop.
           if (contentMarkdown) await assertNotE2eStream(req.workspaceId!, claim.responseStreamId)

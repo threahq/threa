@@ -14,6 +14,7 @@ import {
   type ComposeTrace,
   type ConversationDirective,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
+  MessageErrorCodes,
   StreamConnectionErrorCodes,
 } from "@threahq/types"
 import { serializeBigInt, HttpError } from "@threahq/backend-common"
@@ -26,7 +27,7 @@ import { deriveContentMarkdown } from "./content"
 import type { JSONContent } from "@threahq/types"
 import { messageMetadataSchema } from "./metadata-schema"
 import { e2eEnvelopeSchema, MAX_E2E_CIPHERTEXT_BASE64_BYTES } from "./e2e-schema"
-import type { SteeredMessageService } from "./steered-message-service"
+import type { EnqueuedMessageService } from "./enqueued-message-service"
 
 // Fields shared by every create/update variant. Defining once keeps the
 // six schemas from drifting when a per-message option is added.
@@ -97,7 +98,7 @@ const contentJsonSchema = z.object({
 const createMessageJsonToStreamSchema = z.object({
   streamId: z.string().min(1, "streamId is required"),
   contentJson: contentJsonSchema,
-  steer: z.literal(true).optional(),
+  enqueue: z.literal(true).optional(),
   ...commonMessageOptionsSchema,
 })
 
@@ -105,7 +106,7 @@ const createMessageJsonToStreamSchema = z.object({
 const createMessageMarkdownToStreamSchema = z.object({
   streamId: z.string().min(1, "streamId is required"),
   content: z.string().min(1, "content is required"),
-  steer: z.literal(true).optional(),
+  enqueue: z.literal(true).optional(),
   ...commonMessageOptionsSchema,
 })
 
@@ -142,7 +143,7 @@ const createMessageE2eToStreamSchema = z.object({
   // the wire so the rows can be attached to the message.
   attachmentIds: z.array(z.string()).optional(),
   clientMessageId: z.string().min(1).optional(),
-  steer: z.literal(true).optional(),
+  enqueue: z.literal(true).optional(),
   composeTrace: composeTraceSchema.optional(),
 })
 
@@ -271,7 +272,7 @@ interface Dependencies {
   eventService: EventService
   streamService: StreamService
   commandRegistry: CommandRegistry
-  steeredMessageService: SteeredMessageService
+  enqueuedMessageService: EnqueuedMessageService
   /** Absent when this deployment has no bridge to other regions, so a shared channel's host can't be reached. */
   streamConnectionForwardService: StreamConnectionForwardService | null
 }
@@ -281,7 +282,7 @@ export function createMessageHandlers({
   eventService,
   streamService,
   commandRegistry,
-  steeredMessageService,
+  enqueuedMessageService,
   streamConnectionForwardService,
 }: Dependencies) {
   function requireForwardService(): StreamConnectionForwardService {
@@ -323,10 +324,10 @@ export function createMessageHandlers({
       })
       const stream = target.stream
       const streamId = stream.id
-      const insertSteeredInvocations =
-        "steer" in data && data.steer
+      const insertEnqueuedInvocation =
+        "enqueue" in data && data.enqueue
           ? (client: PoolClient, message: Message) =>
-              steeredMessageService.dispatchInTransaction(client, { workspaceId, streamId, userId, message })
+              enqueuedMessageService.enqueueInTransaction(client, { workspaceId, streamId, userId, message })
           : undefined
 
       // INV-E1: a plaintext request must not land in an E2E stream and an E2E
@@ -370,7 +371,7 @@ export function createMessageHandlers({
             clientMessageId: data.clientMessageId,
             composeTrace: data.composeTrace,
           },
-          insertSteeredInvocations
+          insertEnqueuedInvocation
         )
         return res.status(201).json({ message: serializeMessage(message) })
       }
@@ -382,7 +383,9 @@ export function createMessageHandlers({
       if (target.kind === "copy") {
         // The host dedupes a send by this id, which is what makes a retry across regions safe.
         if (!data.clientMessageId) throw copyWriteUnsupported("A send into a shared channel needs a clientMessageId")
-        if ("steer" in data && data.steer) throw copyWriteUnsupported("Steering isn't available in a shared channel")
+        if ("enqueue" in data && data.enqueue) {
+          throw copyWriteUnsupported("Enqueueing isn't available in a shared channel")
+        }
         if (data.metadata || data.conversation) {
           throw copyWriteUnsupported("Metadata and conversation directives aren't available in a shared channel")
         }
@@ -410,6 +413,12 @@ export function createMessageHandlers({
       const explicitAttachmentIds = data.attachmentIds ?? []
 
       if (detectedCommand && commandRegistry.has(detectedCommand.name)) {
+        if (insertEnqueuedInvocation) {
+          throw new HttpError("A command can't be enqueued", {
+            status: 400,
+            code: MessageErrorCodes.COMMAND_NOT_ENQUEUEABLE,
+          })
+        }
         const cmdId = generateCommandId()
         const evtId = eventId()
 
@@ -477,7 +486,7 @@ export function createMessageHandlers({
           composeTrace: data.composeTrace,
           confirmedPrivacyWarning: data.confirmedPrivacyWarning,
         },
-        insertSteeredInvocations
+        insertEnqueuedInvocation
       )
 
       res.status(201).json({ message: serializeMessage(message), ...(conversationId && { conversationId }) })

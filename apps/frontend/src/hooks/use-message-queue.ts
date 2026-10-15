@@ -12,7 +12,6 @@ import { reconcileOptimisticBoardPost } from "@/stores/board-store"
 import { rescopeScopeDrafts } from "./use-draft-message"
 import { workspaceKeys } from "./use-workspaces"
 import {
-  MessageErrorCodes,
   MessageReferenceErrorCodes,
   ShareErrorCodes,
   StreamConnectionErrorCodes,
@@ -459,18 +458,13 @@ export function useMessageQueue(workspaceId: string): void {
           // A reference the server can't pin: the source is gone, the pinned
           // revision doesn't exist, or the span doesn't resolve. A blind retry
           // re-sends the same unresolvable reference, so the row stops retrying
-          // and waits for the author to edit or drop it — same shape as an
-          // unavailable steer target.
+          // and waits for the author to edit or drop it.
           const referenceFailed = ApiError.isApiError(err) && REFERENCE_FAILURE_CODES.has(err.code ?? "")
           const sharedChannelRefusal = ApiError.isApiError(err)
             ? SHARED_CHANNEL_REFUSALS.get(err.code ?? "")
             : undefined
 
-          if (
-            referenceFailed ||
-            sharedChannelRefusal ||
-            (ApiError.isApiError(err) && err.code === MessageErrorCodes.STEER_UNAVAILABLE)
-          ) {
+          if (referenceFailed || sharedChannelRefusal) {
             if (sharedChannelRefusal) {
               toast.error(sharedChannelRefusal, { id: `shared-channel-refusal-${next.clientId}` })
             }

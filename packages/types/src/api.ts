@@ -504,8 +504,8 @@ export interface CreateMessageInputJson {
   attachmentIds?: string[]
   /** Client-generated idempotency key to prevent duplicate sends on retry */
   clientMessageId?: string
-  /** Persist this message first, then dispatch `/steer` in the same transaction. */
-  steer?: true
+  /** Store this message for the linked session to pick up once it is idle. */
+  enqueue?: true
   /** External references as a flat string->string map. Keys under `threa.*` are reserved. */
   metadata?: Record<string, string>
   /** Declare the message's conversation (see {@link ConversationDirective}); omit to let the extractor infer. */
@@ -549,8 +549,8 @@ export interface CreateMessageInputMarkdown {
   attachmentIds?: string[]
   /** Client-generated idempotency key to prevent duplicate sends on retry */
   clientMessageId?: string
-  /** Persist this message first, then dispatch `/steer` in the same transaction. */
-  steer?: true
+  /** Store this message for the linked session to pick up once it is idle. */
+  enqueue?: true
   /** External references as a flat string->string map. Keys under `threa.*` are reserved. */
   metadata?: Record<string, string>
   /** Compose-session provenance for this send (see {@link ComposeTrace}); omitted by clients that don't capture it. */
@@ -592,8 +592,8 @@ export interface CreateMessageInputE2e {
   attachmentIds?: string[]
   /** Client-generated idempotency key to prevent duplicate sends on retry */
   clientMessageId?: string
-  /** Persist this message first, then dispatch `/steer` in the same transaction. */
-  steer?: true
+  /** Store this message for the linked session to pick up once it is idle. */
+  enqueue?: true
   /** Compose-session provenance for this send (see {@link ComposeTrace}); omitted by clients that don't capture it. */
   composeTrace?: ComposeTrace
 }

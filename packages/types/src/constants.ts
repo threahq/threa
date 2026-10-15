@@ -1358,7 +1358,8 @@ export const MessageReferenceErrorCodes = {
 } as const
 
 export const MessageErrorCodes = {
-  STEER_UNAVAILABLE: "STEER_UNAVAILABLE",
+  ENQUEUE_UNAVAILABLE: "ENQUEUE_UNAVAILABLE",
+  COMMAND_NOT_ENQUEUEABLE: "COMMAND_NOT_ENQUEUEABLE",
 } as const
 
 // Inter-service authentication header (control-plane ↔ regional backend ↔ workspace-router)
@@ -1629,13 +1630,19 @@ export const BotInvocationTriggers = {
  */
 export const UNROUTED_BOT_INVOCATION_TRIGGERS: readonly BotInvocationTrigger[] = ["session-control", "brief"]
 
-export const BOT_INVOCATION_CAPABILITIES = ["mentionable", "active-scratchpad", "session-control"] as const
+export const BOT_INVOCATION_CAPABILITIES = [
+  "mentionable",
+  "active-scratchpad",
+  "session-control",
+  "queued-message",
+] as const
 export type BotInvocationCapability = (typeof BOT_INVOCATION_CAPABILITIES)[number]
 
 export const BotInvocationCapabilities = {
   MENTIONABLE: "mentionable",
   ACTIVE_SCRATCHPAD: "active-scratchpad",
   SESSION_CONTROL: "session-control",
+  QUEUED_MESSAGE: "queued-message",
 } as const satisfies Record<string, BotInvocationCapability>
 
 export function botHasCapability(
