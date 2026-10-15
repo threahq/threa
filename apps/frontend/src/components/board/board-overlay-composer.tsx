@@ -19,7 +19,7 @@ import { readTargetMru, pushTargetMru, readDraftTarget, writeDraftTarget } from 
 import { BOARD_NEW_POST_DRAFT_KEY } from "@/lib/board/draft-keys"
 import { notifyComposePosted, openCompose } from "@/stores/compose-overlay-store"
 import { useStableCallback } from "@/hooks/use-stable-callback"
-import { useIsMobile } from "@/hooks/use-mobile"
+import { useIsMobileOrCoarse } from "@/hooks/use-pointer"
 
 export interface BoardOverlayComposerProps {
   workspaceId: string
@@ -245,6 +245,14 @@ export function BoardNewPostPanel({ workspaceId, className }: { workspaceId: str
   const { closeTab } = usePanel()
   const { targetValue, changeTarget, recents, selectedStream } = useBoardPostTarget(workspaceId, true)
   useRevealReady(true)
+  // The board reveals the post once this pane has closed: revealed sooner, a board navigation would carry the pane's URL and reopen it.
+  const posted = useRef<{ conversationId?: string } | null>(null)
+  useEffect(
+    () => () => {
+      if (posted.current) notifyComposePosted(posted.current.conversationId)
+    },
+    []
+  )
 
   return (
     <SidePanel className={className} data-editor-zone="panel">
@@ -267,16 +275,18 @@ export function BoardNewPostPanel({ workspaceId, className }: { workspaceId: str
           targetValue={targetValue}
           selectedStream={selectedStream}
           onClose={() => closeTab(createComposePanelId(BOARD_NEW_POST_DRAFT_KEY))}
-          onPosted={notifyComposePosted}
+          onPosted={(conversationId) => {
+            posted.current = { conversationId }
+          }}
         />
       </SidePanelContent>
     </SidePanel>
   )
 }
 
-/** Where "New post" opens: its pane, in focus, on a desktop that lays panes out, and the overlay on a phone. */
+/** Where "New post" opens: its pane, in focus, on a desktop that lays panes out, and the overlay on a phone or touch device. */
 export function useNewPost(): { href: string | undefined; open: () => void } {
-  const { expandHref } = useComposePaneLinks(BOARD_NEW_POST_DRAFT_KEY, !useIsMobile())
+  const { expandHref } = useComposePaneLinks(BOARD_NEW_POST_DRAFT_KEY, !useIsMobileOrCoarse())
   const navigate = useNavigate()
   const open = useStableCallback(() => (expandHref ? navigate(expandHref) : openCompose()))
   return { href: expandHref, open }
