@@ -59,10 +59,8 @@ export const STREAM_TRIGGERS: TriggerType[] = ["statusFilter", "filterType"]
 export interface RichInputProps {
   value: string
   onChange: (value: string) => void
-  /** Called when Enter is pressed and no suggestion popover is open.
-   *  withModifier is true if Cmd/Ctrl was held (for "open in new tab" behavior).
-   */
-  onSubmit?: (withModifier: boolean) => void
+  /** Called when Enter is pressed and no suggestion popover is open. */
+  onSubmit?: (event: KeyboardEvent) => void
   onPopoverActiveChange?: (active: boolean) => void
   /** Which triggers to enable. Empty or undefined means no triggers (plain input). */
   triggers?: TriggerType[]
@@ -282,7 +280,7 @@ export const RichInput = forwardRef<RichInputRef, RichInputProps>(function RichI
         // Check ref because this callback captures stale closure
         if (event.key === "Enter" && !event.isComposing && !isPopoverActiveRef.current) {
           event.preventDefault()
-          onSubmit?.(event.metaKey || event.ctrlKey)
+          onSubmit?.(event)
           return true
         }
         return false

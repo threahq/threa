@@ -27,6 +27,7 @@ import { streamKeys } from "@/hooks/use-streams"
 import { workspaceKeys } from "@/hooks/use-workspaces"
 import * as contextsModule from "@/contexts"
 import * as streamSettingsModule from "@/components/stream-settings/use-stream-settings"
+import * as deviceModule from "@/lib/device"
 
 // Note: DOM polyfills (ResizeObserver, Range, Element.getClientRects, etc.)
 // are in src/test/setup.ts which runs before tests via vitest config
@@ -83,9 +84,12 @@ function toPathString(to: { pathname: string; search?: string; hash?: string }):
   return `${to.pathname}${to.search ?? ""}${to.hash ?? ""}`
 }
 
+// The page the switcher opens over; a stream page lays panes out beside its stream.
+let routerPathname = "/"
+
 function RouterWrapper({ children }: { children: React.ReactNode }) {
   const [location] = useState(() => ({
-    pathname: "/",
+    pathname: routerPathname,
     search: "",
     hash: "",
     state: null,
@@ -326,6 +330,7 @@ describe("QuickSwitcher Integration Tests", () => {
   beforeEach(() => {
     vi.restoreAllMocks()
     mockNavigate.mockReset()
+    routerPathname = "/"
     // Reset configurable state that spies read from
     mockSearchState.results = []
     mockSearchState.isLoading = false
@@ -1043,6 +1048,91 @@ describe("QuickSwitcher Integration Tests", () => {
       expect(item).toHaveAttribute("href", "/w/workspace_1/s/stream_channel1")
 
       windowOpenSpy.mockRestore()
+    })
+
+    // `?panel=` lists the page's columns left to right; a stream worked in becomes the route's stream, a page pane
+    // opens beside the route's stream and leaves it the route.
+    describe("Ctrl+Enter", () => {
+      const pickGeneral = async (keys: string, onOpenChange = vi.fn()) => {
+        const user = userEvent.setup()
+        renderWithProviders(<QuickSwitcher {...defaultProps} onOpenChange={onOpenChange} />)
+        await waitFor(() => {
+          expect(screen.getByText("#general")).toBeInTheDocument()
+        })
+        await user.keyboard(keys)
+      }
+
+      describe("in the installed app", () => {
+        beforeEach(() => {
+          vi.spyOn(deviceModule, "isStandaloneApp").mockReturnValue(true)
+        })
+
+        it("should open a stream to the side when the page has panes", async () => {
+          routerPathname = "/w/workspace_1/s/stream_scratchpad1"
+          const windowOpenSpy = vi.spyOn(window, "open").mockImplementation(() => null)
+          const onOpenChange = vi.fn()
+          await pickGeneral("{Control>}{Enter}{/Control}", onOpenChange)
+
+          expect({
+            navigated: mockNavigate.mock.calls,
+            closed: onOpenChange.mock.calls,
+            newWindow: windowOpenSpy.mock.calls,
+          }).toEqual({
+            navigated: [["/w/workspace_1/s/stream_channel1?panel=stream_scratchpad1-stream_channel1"]],
+            closed: [[false]],
+            newWindow: [],
+          })
+        })
+
+        it("should open a page command to the side when the page has panes", async () => {
+          routerPathname = "/w/workspace_1/s/stream_scratchpad1"
+          const user = userEvent.setup({ pointerEventsCheck: 0 })
+          renderWithProviders(<QuickSwitcher {...defaultProps} initialMode="command" />)
+
+          const input = screen.getByLabelText("Quick switcher input")
+          await user.click(input)
+          await user.type(input, "view board")
+          await waitFor(() => {
+            expect(screen.getByText("View Board")).toBeInTheDocument()
+          })
+          await user.keyboard("{Control>}{Enter}{/Control}")
+
+          expect(mockNavigate.mock.calls).toEqual([["/w/workspace_1/s/stream_scratchpad1?panel=page:board"]])
+        })
+
+        it("should open a new window with Ctrl+Shift+Enter", async () => {
+          routerPathname = "/w/workspace_1/s/stream_scratchpad1"
+          const windowOpenSpy = vi.spyOn(window, "open").mockImplementation(() => null)
+          await pickGeneral("{Control>}{Shift>}{Enter}{/Shift}{/Control}")
+
+          expect({ newWindow: windowOpenSpy.mock.calls, navigated: mockNavigate.mock.calls }).toEqual({
+            newWindow: [["/w/workspace_1/s/stream_channel1", "_blank"]],
+            navigated: [],
+          })
+        })
+
+        it("should open a new window when the page has no panes", async () => {
+          const windowOpenSpy = vi.spyOn(window, "open").mockImplementation(() => null)
+          await pickGeneral("{Control>}{Enter}{/Control}")
+
+          expect({ newWindow: windowOpenSpy.mock.calls, navigated: mockNavigate.mock.calls }).toEqual({
+            newWindow: [["/w/workspace_1/s/stream_channel1", "_blank"]],
+            navigated: [],
+          })
+        })
+      })
+
+      it("should open a new browser tab outside the installed app, even beside panes", async () => {
+        routerPathname = "/w/workspace_1/s/stream_scratchpad1"
+        vi.spyOn(deviceModule, "isStandaloneApp").mockReturnValue(false)
+        const windowOpenSpy = vi.spyOn(window, "open").mockImplementation(() => null)
+        await pickGeneral("{Control>}{Enter}{/Control}")
+
+        expect({ newTab: windowOpenSpy.mock.calls, navigated: mockNavigate.mock.calls }).toEqual({
+          newTab: [["/w/workspace_1/s/stream_channel1", "_blank"]],
+          navigated: [],
+        })
+      })
     })
 
     it("should close dialog after selection via Enter", async () => {

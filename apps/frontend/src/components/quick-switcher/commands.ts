@@ -109,7 +109,19 @@ export interface Command {
   label: string
   icon: React.ComponentType<{ className?: string }>
   keywords?: string[]
+  /** Workspace-relative page the command shows, for opening it to the side. */
+  path?: string
   action: (context: CommandContext) => void | Promise<void>
+}
+
+function page(path: string): Pick<Command, "path" | "action"> {
+  return {
+    path,
+    action: ({ workspaceId, navigate, closeDialog }) => {
+      closeDialog()
+      navigate(`/w/${workspaceId}${path}`)
+    },
+  }
 }
 
 export const commands: Command[] = [
@@ -256,46 +268,35 @@ export const commands: Command[] = [
     label: "View Board",
     icon: LayoutGrid,
     keywords: ["board", "posts", "topics", "conversations", "overview"],
-    action: ({ workspaceId, navigate, closeDialog }) => {
-      closeDialog()
-      navigate(`/w/${workspaceId}/board`)
-    },
+    ...page("/board"),
   },
   {
     id: "view-drafts",
     label: "View Drafts",
     icon: FileEdit,
     keywords: ["draft", "unsent", "pending"],
-    action: ({ workspaceId, navigate, closeDialog }) => {
-      closeDialog()
-      navigate(`/w/${workspaceId}/drafts`)
-    },
+    ...page("/drafts"),
   },
   {
     id: "view-saved",
     label: "View Saved",
     icon: Bookmark,
     keywords: ["bookmark", "bookmarks", "starred", "later", "read later"],
-    action: ({ workspaceId, navigate, closeDialog }) => {
-      closeDialog()
-      navigate(`/w/${workspaceId}/saved`)
-    },
+    ...page("/saved"),
   },
   {
     id: "browse-streams",
     label: "Browse Streams",
     icon: Compass,
     keywords: ["channels", "join", "explore", "directory", "archived", "threads"],
-    action: ({ workspaceId, navigate, closeDialog }) => {
-      closeDialog()
-      navigate(`/w/${workspaceId}/streams`)
-    },
+    ...page("/streams"),
   },
   {
     id: "browse-files",
     label: "Browse files",
     icon: Paperclip,
     keywords: ["attachments", "uploads", "media", "files", "explorer"],
+    path: "/files",
     action: ({ closeDialog, openExplorer }) => {
       closeDialog()
       openExplorer({ streamIds: [] })
@@ -306,6 +307,7 @@ export const commands: Command[] = [
     label: "View Agent Agenda",
     icon: ListChecks,
     keywords: ["follow-up", "follow ups", "delegation", "delegated", "agent", "tasks", "agenda", "outcomes"],
+    path: "/agenda",
     action: ({ closeDialog, openOutcomes }) => {
       closeDialog()
       openOutcomes({ streamIds: [] })
@@ -316,40 +318,28 @@ export const commands: Command[] = [
     label: "View Scheduled",
     icon: CalendarClock,
     keywords: ["schedule", "later", "send later", "queued", "upcoming"],
-    action: ({ workspaceId, navigate, closeDialog }) => {
-      closeDialog()
-      navigate(`/w/${workspaceId}/scheduled`)
-    },
+    ...page("/scheduled"),
   },
   {
     id: "open-memory",
     label: "Open Memory",
     icon: Brain,
     keywords: ["knowledge", "memo", "memos", "workspace memory"],
-    action: ({ workspaceId, navigate, closeDialog }) => {
-      closeDialog()
-      navigate(`/w/${workspaceId}/memory`)
-    },
+    ...page("/memory"),
   },
   {
     id: "view-labels",
     label: "View Labels",
     icon: Tag,
     keywords: ["tag", "tags", "categories", "organize"],
-    action: ({ workspaceId, navigate, closeDialog }) => {
-      closeDialog()
-      navigate(`/w/${workspaceId}/labels`)
-    },
+    ...page("/labels"),
   },
   {
     id: "view-activity",
     label: "View Activity",
     icon: Bell,
     keywords: ["notifications", "feed", "mentions", "updates", "inbox"],
-    action: ({ workspaceId, navigate, closeDialog }) => {
-      closeDialog()
-      navigate(`/w/${workspaceId}/activity`)
-    },
+    ...page("/activity"),
   },
   {
     id: "open-settings",
