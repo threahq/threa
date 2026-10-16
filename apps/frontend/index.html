@@ -68,6 +68,86 @@
          without a round-trip. OpenDyslexic is fetched by the browser only when the
          accessibility font preference applies it. -->
     <link rel="preload" href="/fonts/switzer.woff2" as="font" type="font/woff2" crossorigin />
+    <style id="entry-failure-style">
+      /* Entry-load failure card. Lives outside #root and uses no bundle CSS, since
+         it only shows when the bundle never ran; the @font-face repeats index.css's
+         so the preloaded Switzer applies. Sizes and colors mirror the error
+         boundary's Empty + Button, from index.css's light and .dark tokens. */
+      @font-face {
+        font-family: "Switzer";
+        src: url("/fonts/switzer.woff2") format("woff2");
+        font-weight: 100 900;
+        font-display: swap;
+      }
+      #entry-failure {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        --background: hsl(40 20% 98%);
+        --foreground: hsl(30 10% 12%);
+        --muted-foreground: hsl(30 8% 45%);
+        --primary: hsl(38 65% 50%);
+        --primary-foreground: hsl(40 20% 98%);
+        background: var(--background);
+        color: var(--foreground);
+        font-family:
+          "Switzer",
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+        text-align: center;
+      }
+      #entry-failure[hidden] {
+        display: none;
+      }
+      .dark #entry-failure {
+        --background: hsl(30 15% 8%);
+        --foreground: hsl(35 15% 92%);
+        --muted-foreground: hsl(35 10% 55%);
+        --primary: hsl(40 55% 55%);
+        --primary-foreground: hsl(30 15% 8%);
+      }
+      #entry-failure > div {
+        max-width: 384px;
+      }
+      #entry-failure h1 {
+        margin: 0 0 8px;
+        font-size: 18px;
+        line-height: 28px;
+        font-weight: 500;
+        letter-spacing: -0.025em;
+      }
+      #entry-failure p {
+        margin: 0 0 16px;
+        font-size: 14px;
+        line-height: 1.625;
+        color: var(--muted-foreground);
+      }
+      #entry-failure button {
+        height: 40px;
+        padding: 0 16px;
+        border: 0;
+        border-radius: 10px;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 500;
+        background: var(--primary);
+        color: var(--primary-foreground);
+        cursor: pointer;
+      }
+      #entry-failure a {
+        display: block;
+        margin-top: 16px;
+        font-size: 14px;
+        color: var(--muted-foreground);
+        text-underline-offset: 4px;
+      }
+    </style>
     <script>
       ;(function () {
         var root = document.documentElement
@@ -119,9 +199,97 @@
           })
       })()
     </script>
+    <script>
+      // Entry-load failure card: a module script that 404s or never arrives
+      // otherwise leaves a blank page, since the CSS watchdog only reacts to
+      // missing styles and crash recovery lives in the bundle that never ran.
+      // Manual reload only, so it can't loop against the sw-recovery cap.
+      // src/main.tsx calls __threaEntryLoaded as its first statement; a throw
+      // while its imports evaluate lands on the timeout.
+      ;(function () {
+        var ENTRY_LOAD_TIMEOUT_MS = 30000
+        var REPORT_INTERVAL_MS = 6 * 60 * 60 * 1000
+
+        // Only with a consent-backed analytics scope persisted by
+        // src/lib/analytics/posthog.ts: same project, same person, same consent
+        // as in-app capture.
+        var reportEntryFailure = function (trigger, url) {
+          try {
+            var scope = JSON.parse(localStorage.getItem("threa-analytics") || "null")
+            if (!scope || !scope.token || !scope.host || !scope.distinctId) return
+
+            var reportedAt = parseInt(localStorage.getItem("threa-entry-failure-reported-at") || "0", 10)
+            if (reportedAt && Date.now() - reportedAt < REPORT_INTERVAL_MS) return
+
+            var connection = navigator.connection || {}
+            var event = {
+              api_key: scope.token,
+              event: "app_entry_load_failed",
+              distinct_id: scope.distinctId,
+              timestamp: new Date().toISOString(),
+              properties: {
+                $lib: "threa-shell",
+                trigger: trigger,
+                asset_url: url,
+                online: navigator.onLine,
+                effective_type: connection.effectiveType,
+                downlink: connection.downlink,
+                standalone: navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches,
+              },
+            }
+
+            // posthog-js's own beacon encoding: form body with base64 JSON, a
+            // CORS-safelisted content type so sendBeacon needs no preflight.
+            var data = btoa(unescape(encodeURIComponent(JSON.stringify(event))))
+            var queued = navigator.sendBeacon(
+              scope.host + "/e/?compression=base64",
+              new Blob(["data=" + encodeURIComponent(data)], { type: "application/x-www-form-urlencoded" })
+            )
+            if (queued) localStorage.setItem("threa-entry-failure-reported-at", String(Date.now()))
+          } catch (e) {
+            // Storage denied or no beacon support: the card still shows.
+          }
+        }
+
+        var showEntryFailure = function (trigger, url) {
+          var card = document.getElementById("entry-failure")
+          if (!card || !card.hidden) return
+          card.hidden = false
+          reportEntryFailure(trigger, url)
+        }
+
+        // A module script's error event also covers a failed dependency fetch
+        // anywhere in its graph, so the entry script alone suffices.
+        var onScriptError = function (event) {
+          var target = event.target
+          if (target && target.tagName === "SCRIPT" && target.type === "module") {
+            showEntryFailure("script-error", target.src)
+          }
+        }
+
+        var entryLoadTimer = setTimeout(function () {
+          showEntryFailure("timeout")
+        }, ENTRY_LOAD_TIMEOUT_MS)
+        window.addEventListener("error", onScriptError, true)
+        window.__threaEntryLoaded = function () {
+          clearTimeout(entryLoadTimer)
+          window.removeEventListener("error", onScriptError, true)
+          var card = document.getElementById("entry-failure")
+          if (card) card.remove()
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>
+    <div id="entry-failure" hidden role="alert">
+      <div>
+        <h1>Threa didn't load</h1>
+        <p>Check your connection, then try again.</p>
+        <button type="button" onclick="location.reload()">Reload</button>
+        <a href="/recover.html">Still stuck? Reset the app</a>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
       // CSS watchdog: capped plain reload when no same-origin stylesheet has
@@ -142,6 +310,8 @@
           var hasStyles = false
           var sheets = document.styleSheets
           for (var i = 0; i < sheets.length; i++) {
+            // The entry-failure card's inline sheet always has rules.
+            if (sheets[i].ownerNode && sheets[i].ownerNode.id === "entry-failure-style") continue
             try {
               if (sheets[i].cssRules && sheets[i].cssRules.length > 0) {
                 hasStyles = true

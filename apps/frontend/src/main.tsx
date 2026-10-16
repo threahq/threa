@@ -14,6 +14,16 @@ import { currentAppInstalledAt } from "./lib/app-build"
 import "./hooks/use-input-mode"
 import "./index.css"
 
+declare global {
+  interface Window {
+    __threaEntryLoaded?: () => void
+  }
+}
+
+// index.html shows a load-failure card unless this runs; first statement so a
+// later startup throw is the crash recovery's problem, not a "didn't load".
+window.__threaEntryLoaded?.()
+
 // Record at bundle startup rather than when App status opens, so this is the
 // first time the installed build actually ran on the device.
 currentAppInstalledAt()

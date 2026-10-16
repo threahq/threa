@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { CapturedNetworkRequest } from "posthog-js"
 import {
+  ANALYTICS_SCOPE_STORAGE_KEY,
   beforeSend,
   capture,
   captureException,
@@ -130,6 +131,31 @@ describe("analytics client lifecycle", () => {
     captureException(error, { streamId: "stream_1" })
 
     expect(root.instances.get("threa_tok_1")!.captureException).toHaveBeenCalledWith(error, { streamId: "stream_1" })
+  })
+
+  it("should persist the consented scope for the index.html beacon and clear it on stop", async () => {
+    await startAnalytics(params, createFakeRoot())
+
+    expect(JSON.parse(localStorage.getItem(ANALYTICS_SCOPE_STORAGE_KEY) ?? "null")).toEqual({
+      token: "tok_1",
+      host: "https://eu.example.com",
+      distinctId: "usr_1",
+    })
+
+    stopAnalytics()
+
+    expect(localStorage.getItem(ANALYTICS_SCOPE_STORAGE_KEY)).toBeNull()
+  })
+
+  it("should clear a scope left by a previous page load when stopping with nothing active", () => {
+    localStorage.setItem(
+      ANALYTICS_SCOPE_STORAGE_KEY,
+      JSON.stringify({ token: "tok_1", host: "h", distinctId: "usr_1" })
+    )
+
+    stopAnalytics()
+
+    expect(localStorage.getItem(ANALYTICS_SCOPE_STORAGE_KEY)).toBeNull()
   })
 
   it("should reset and opt out on stop and ignore captures after", async () => {

@@ -14,6 +14,7 @@ import {
 import { clearAllLastWorkspaceIds, clearLastWorkspaceId } from "@/lib/last-workspace"
 import { PUSH_BOOTSTRAP_CACHE } from "@/lib/sw-bootstrap-prefetch"
 import { suspendConnectivityDiagnostics } from "@/lib/connectivity-diagnostics/facade"
+import { stopAnalytics } from "@/lib/analytics/posthog"
 import type { AuthState, User } from "./types"
 
 declare global {
@@ -372,6 +373,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const logout = useCallback(async (opts?: { scope?: "current" | "all" }) => {
     const scope = opts?.scope ?? "all"
     suspendConnectivityDiagnostics()
+    stopAnalytics()
     // Clean up push subscriptions on logout:
     // 1. Tell backend to remove all records for this browser's endpoint (cross-workspace)
     // 2. Unsubscribe from the browser push service to prevent post-logout notifications
