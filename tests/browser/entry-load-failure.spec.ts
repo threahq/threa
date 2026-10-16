@@ -67,6 +67,7 @@ test("should keep the CSS watchdog reloading when the only stylesheet with rules
     const response = await route.fetch()
     const html = (await response.text())
       .replace(/<script type="module"[^>]*>[^<]*<\/script>/g, "")
+      .replace(/<link rel="stylesheet"[^>]*>/g, "")
       .replace("</head>", '<link rel="stylesheet" href="/empty-entry-test.css" /></head>')
     await route.fulfill({ response, body: html })
   })
