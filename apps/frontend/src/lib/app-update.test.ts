@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
+  AppUpdateApplyFailureReport,
   AppUpdateController,
   AppUpdateLifecycle,
   APP_UPDATE_APPLY_TIMEOUT_MS,
+  APP_UPDATE_HARD_RELOAD_CONFIRM_TIMEOUT_MS,
   APP_UPDATE_RELOAD_CONFIRM_TIMEOUT_MS,
   createBrowserAppUpdateLifecycle,
   fetchLatestVersion,
@@ -111,6 +113,8 @@ describe("AppUpdateController", () => {
   let registration: FakeServiceWorkerRegistration
   let lifecycle: ReturnType<typeof createTestLifecycle>
   let reload: () => void
+  let hardReload: ReturnType<typeof vi.fn<() => Promise<unknown>>>
+  let reportApplyFailure: ReturnType<typeof vi.fn<(report: AppUpdateApplyFailureReport) => void>>
   let controller: AppUpdateController
 
   beforeEach(() => {
@@ -119,6 +123,8 @@ describe("AppUpdateController", () => {
     container = new FakeServiceWorkerContainer(registration)
     lifecycle = createTestLifecycle()
     reload = vi.fn() as () => void
+    hardReload = vi.fn(async () => {})
+    reportApplyFailure = vi.fn()
   })
 
   afterEach(() => {
@@ -140,6 +146,8 @@ describe("AppUpdateController", () => {
       pollIntervalMs: 300_000,
       lifecycle,
       reload,
+      hardReload,
+      reportApplyFailure,
     })
     return controller
   }
@@ -187,6 +195,29 @@ describe("AppUpdateController", () => {
     await retry
   })
 
+  it("should retarget instead of resetting when a newer build is waiting and the server answers", async () => {
+    vi.useFakeTimers()
+    const active = new FakeWorker("activated", () => ({ version: "A", buildId: "A", ready: true }))
+    const b = new FakeWorker("installed", () => ({ version: "B", buildId: "B", ready: true }))
+    const c = new FakeWorker("installing", () => ({ version: "C", buildId: "C", ready: true }))
+    registration.active = container.controller = active
+    registration.waiting = b
+    makeController({ fetchLatestVersion: async () => "C" })
+    await controller.start()
+    const applying = controller.apply()
+    registration.installing = c
+    registration.dispatchEvent(new Event("updatefound"))
+    b.state = "redundant"
+    c.state = "installed"
+    registration.waiting = c
+    registration.installing = null
+    c.dispatchEvent(new Event("statechange"))
+    await applying
+    expect(hardReload).not.toHaveBeenCalled()
+    expect(stateSnapshot()).toMatchObject({ phase: "failed", failure: "activation-failed", readyBuildId: "C" })
+    expect(reportApplyFailure.mock.calls.map(([report]) => report.recovery)).toEqual(["retarget"])
+  })
+
   it("should not claim current after the worker check fails for a same-version rebuild", async () => {
     registration.update = vi.fn(async () => {
       throw new Error("offline worker endpoint")
@@ -199,6 +230,8 @@ describe("AppUpdateController", () => {
       pollIntervalMs: 300_000,
       lifecycle,
       reload,
+      hardReload,
+      reportApplyFailure,
     })
     await controller.check()
     expect(stateSnapshot()).toMatchObject({ phase: "unavailable", failure: "check-failed", readyBuildId: null })
@@ -445,6 +478,84 @@ describe("AppUpdateController", () => {
     expect(stateSnapshot().phase).toBe("failed")
     expect(stateSnapshot().failure).toBe("activation-timeout")
     expect(reload).not.toHaveBeenCalled()
+    // Offline, a reset would leave nothing to boot from: the running build stays.
+    expect(hardReload).not.toHaveBeenCalled()
+    expect(reportApplyFailure.mock.calls).toEqual([
+      [{ failure: "activation-timeout", stage: "activation-wait", workerState: "installed", recovery: "none" }],
+    ])
+  })
+
+  it("apply falls back to a hard reload when the worker never activates and the server answers", async () => {
+    vi.useFakeTimers()
+    // A reset that never gets as far as navigating must still end the apply.
+    hardReload.mockImplementation(() => new Promise(() => {}))
+    const worker = new FakeWorker("installed", () => ({ version: "B", buildId: "B", ready: true }))
+    registration.waiting = worker
+    makeController({ fetchLatestVersion: async () => "B" })
+    await controller.start()
+    await controller.check()
+    const promise = controller.apply()
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_APPLY_TIMEOUT_MS + 500)
+    expect(hardReload).toHaveBeenCalledOnce()
+    expect(reload).not.toHaveBeenCalled()
+    expect(stateSnapshot().phase).toBe("applying")
+
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_HARD_RELOAD_CONFIRM_TIMEOUT_MS)
+    await promise
+    // The worker is gone by now, so the build the user asked for stays offered for a retry.
+    expect(stateSnapshot()).toMatchObject({ phase: "failed", failure: "activation-timeout", readyBuildId: "B" })
+    expect(reportApplyFailure.mock.calls).toEqual([
+      [{ failure: "activation-timeout", stage: "activation-wait", workerState: "installed", recovery: "hard-reload" }],
+      [{ failure: "activation-timeout", stage: "reload-unconfirmed", workerState: "none", recovery: "hard-reload" }],
+    ])
+  })
+
+  it("apply falls back to a hard reload when the target worker becomes redundant and the server answers", async () => {
+    vi.useFakeTimers()
+    const worker = new FakeWorker("installed", () => ({ version: "B", buildId: "B", ready: true }))
+    registration.waiting = worker
+    makeController({ fetchLatestVersion: async () => "C" })
+    await controller.start()
+    await controller.check()
+    const promise = controller.apply()
+    await vi.advanceTimersByTimeAsync(1000)
+    worker.state = "redundant"
+    registration.waiting = null
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(hardReload).toHaveBeenCalledOnce()
+    expect(reportApplyFailure.mock.calls).toEqual([
+      [{ failure: "activation-failed", stage: "worker-redundant", workerState: "redundant", recovery: "hard-reload" }],
+    ])
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_HARD_RELOAD_CONFIRM_TIMEOUT_MS)
+    await promise
+  })
+
+  it("apply keeps the plain reload when the target activates while the server is being probed", async () => {
+    vi.useFakeTimers()
+    let probe: Promise<string | null> | null = null
+    let answerProbe: (version: string) => void = () => {}
+    const oldWorker = new FakeWorker("activated", () => ({ version: "A", buildId: "A", ready: true }))
+    const worker = new FakeWorker("installed", () => ({ version: "B", buildId: "B", ready: true }))
+    container.controller = registration.active = oldWorker
+    registration.waiting = worker
+    makeController({ fetchLatestVersion: () => probe ?? Promise.resolve("B") })
+    await controller.start()
+    await controller.check()
+    probe = new Promise((resolve) => (answerProbe = resolve))
+    const promise = controller.apply()
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_APPLY_TIMEOUT_MS + 500)
+
+    worker.state = "activated"
+    registration.active = container.controller = worker
+    registration.waiting = null
+    container.dispatchEvent(new Event("controllerchange"))
+    await vi.advanceTimersByTimeAsync(100)
+    answerProbe("B")
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_RELOAD_CONFIRM_TIMEOUT_MS + 100)
+    await promise
+    expect(reload).toHaveBeenCalledOnce()
+    expect(hardReload).not.toHaveBeenCalled()
+    expect(reportApplyFailure.mock.calls.map(([report]) => report.stage)).toEqual(["reload-unconfirmed"])
   })
 
   it("apply waits for a late activation without messaging the outgoing worker", async () => {

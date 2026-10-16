@@ -40,6 +40,8 @@ describe("AppUpdateProvider + useAppUpdate", () => {
       pollIntervalMs: 300_000,
       lifecycle: createLifecycle(),
       reload,
+      hardReload: async () => {},
+      reportApplyFailure: () => {},
     })
   })
 
@@ -70,6 +72,8 @@ describe("AppUpdateProvider + useAppUpdate", () => {
       pollIntervalMs: 300_000,
       lifecycle: createLifecycle(),
       reload,
+      hardReload: async () => {},
+      reportApplyFailure: () => {},
     })
     render(
       <AppUpdateProvider controller={devController}>
