@@ -120,6 +120,23 @@ interface ActiveAnalytics extends StartAnalyticsParams {
 
 let active: ActiveAnalytics | null = null
 
+/**
+ * index.html reads this to report an entry-load failure before any bundle code
+ * exists. It holds exactly what in-app capture was consented to, so the beacon
+ * lands in the same project under the same person, and it is gone whenever
+ * capture is off.
+ */
+export const ANALYTICS_SCOPE_STORAGE_KEY = "threa-analytics"
+
+function persistScope(scope: { token: string; host: string; distinctId: string } | null): void {
+  try {
+    if (scope) localStorage.setItem(ANALYTICS_SCOPE_STORAGE_KEY, JSON.stringify(scope))
+    else localStorage.removeItem(ANALYTICS_SCOPE_STORAGE_KEY)
+  } catch {
+    // Storage denied: in-app capture still works, the shell beacon stays off.
+  }
+}
+
 // Counts consent decisions, so a start that is still fetching the SDK can tell
 // that consent was withdrawn underneath it and drop itself instead of arming
 // capture afterwards.
@@ -213,6 +230,7 @@ export async function startAnalytics(
     client.group("workspace", params.workspaceId)
 
     active = { ...params, client }
+    persistScope({ token: params.token, host: params.host, distinctId: params.distinctId })
   })
 }
 
@@ -220,6 +238,7 @@ function deactivate(): void {
   if (!active) return
   const { client } = active
   active = null
+  persistScope(null)
   guard("stop", () => {
     client.reset()
     client.opt_out_capturing()

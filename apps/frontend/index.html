@@ -70,6 +70,63 @@
          without a round-trip. OpenDyslexic is fetched by the browser only when the
          accessibility font preference applies it. -->
     <link rel="preload" href="/fonts/switzer.woff2" as="font" type="font/woff2" crossorigin />
+    <style>
+      /* Entry-load failure card. Lives outside #root and uses no bundle CSS, since
+         it only shows when the bundle never ran. Colors mirror index.css's
+         --background/--foreground for both themes. */
+      #entry-failure {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: #ffffff;
+        color: #171717;
+        font:
+          15px/1.5 system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+      }
+      #entry-failure[hidden] {
+        display: none;
+      }
+      .dark #entry-failure {
+        background: #0a0a0a;
+        color: #ededed;
+      }
+      #entry-failure > div {
+        max-width: 360px;
+        text-align: center;
+      }
+      #entry-failure h1 {
+        margin: 0 0 8px;
+        font-size: 18px;
+        font-weight: 600;
+      }
+      #entry-failure p {
+        margin: 0 0 20px;
+        opacity: 0.75;
+      }
+      #entry-failure button {
+        font: inherit;
+        font-weight: 600;
+        padding: 10px 20px;
+        border: 0;
+        border-radius: 8px;
+        background: #c8a055;
+        color: #1a1a1a;
+        cursor: pointer;
+      }
+      #entry-failure a {
+        display: block;
+        margin-top: 16px;
+        font-size: 13px;
+        color: inherit;
+        opacity: 0.6;
+      }
+    </style>
     <script>
       ;(function () {
         var root = document.documentElement
@@ -94,6 +151,78 @@
 
         // Message display
         if (prefs.messageDisplay) root.dataset.messageDisplay = prefs.messageDisplay
+
+        // Entry-load failure card: a module script that 404s or never arrives
+        // otherwise leaves a blank page, since the CSS watchdog only reacts to
+        // missing styles and crash recovery lives in the bundle that never ran.
+        // Manual reload only, so it can't loop against the sw-recovery cap.
+        // src/main.tsx calls __threaEntryLoaded as its first statement, which
+        // removes the card and with it every later show.
+        var ENTRY_LOAD_TIMEOUT_MS = 30000
+        var reportEntryFailure = function (trigger, url) {
+          // Only with a consent-backed analytics scope persisted by
+          // src/lib/analytics/posthog.ts: same project, same person, same
+          // consent as in-app capture. Rate-limited so a device that never
+          // loads doesn't report on every retry.
+          try {
+            var scope = JSON.parse(localStorage.getItem("threa-analytics") || "null")
+            if (!scope || !scope.token || !scope.host || !scope.distinctId) return
+            var reportedAt = parseInt(localStorage.getItem("threa-entry-failure-reported-at") || "0", 10)
+            if (reportedAt && Date.now() - reportedAt < 6 * 60 * 60 * 1000) return
+            localStorage.setItem("threa-entry-failure-reported-at", String(Date.now()))
+            var connection = navigator.connection || {}
+            var event = {
+              api_key: scope.token,
+              event: "app_entry_load_failed",
+              distinct_id: scope.distinctId,
+              timestamp: new Date().toISOString(),
+              properties: {
+                $lib: "threa-shell",
+                trigger: trigger,
+                asset_url: url,
+                online: navigator.onLine,
+                effective_type: connection.effectiveType,
+                downlink: connection.downlink,
+                standalone: navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches,
+              },
+            }
+            // posthog-js's own beacon encoding: form body with base64 JSON, a
+            // CORS-safelisted content type so sendBeacon needs no preflight.
+            var data = btoa(unescape(encodeURIComponent(JSON.stringify(event))))
+            navigator.sendBeacon(
+              scope.host + "/e/?ip=1&_=" + Date.now() + "&compression=base64",
+              new Blob(["data=" + encodeURIComponent(data)], { type: "application/x-www-form-urlencoded" })
+            )
+          } catch (e) {
+            // Storage denied or no beacon support: the card still shows.
+          }
+        }
+        var showEntryFailure = function (trigger, url) {
+          var card = document.getElementById("entry-failure")
+          if (!card || !card.hidden) return
+          card.hidden = false
+          reportEntryFailure(trigger, url)
+        }
+        var entryLoadTimer = setTimeout(function () {
+          showEntryFailure("timeout", "")
+        }, ENTRY_LOAD_TIMEOUT_MS)
+        window.addEventListener(
+          "error",
+          function (event) {
+            // A module script's error event also covers a failed dependency
+            // fetch anywhere in its graph, so the entry script alone suffices.
+            var target = event.target
+            if (target && target.tagName === "SCRIPT" && target.type === "module") {
+              showEntryFailure("script-error", target.src || "")
+            }
+          },
+          true
+        )
+        window.__threaEntryLoaded = function () {
+          clearTimeout(entryLoadTimer)
+          var card = document.getElementById("entry-failure")
+          if (card) card.remove()
+        }
 
         // Eager auth fetch — start before the JS bundle loads so the network
         // round-trip overlaps with script parse/eval instead of running after it.
@@ -124,6 +253,14 @@
   </head>
   <body>
     <div id="root"></div>
+    <div id="entry-failure" hidden role="alert">
+      <div>
+        <h1>Threa didn't load</h1>
+        <p>Check your connection, then try again.</p>
+        <button type="button" onclick="location.reload()">Reload</button>
+        <a href="/recover.html">Still stuck? Reset the app</a>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
       // CSS watchdog: capped plain reload when no same-origin stylesheet has
