@@ -241,6 +241,35 @@ describe("message reference resolution", () => {
       expect(await quoteWithSnippet("second body")).toMatchObject({ version: 2, range: null })
     })
 
+    test("a whole-message quote of a body with a raw emoji stays whole", async () => {
+      const src = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: source,
+        authorId: author,
+        authorType: "user",
+        contentJson: docOf("hah, ibland alltså 😆"),
+        contentMarkdown: "hah, ibland alltså :laughing:",
+      })
+      const quoting = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: source,
+        authorId: author,
+        authorType: "user",
+        contentJson: {
+          type: "doc",
+          content: [quoteNode({ messageId: src.id, streamId: source, version: 1, snippet: src.contentMarkdown })],
+        },
+        contentMarkdown: `> ${src.contentMarkdown}`,
+      })
+
+      const stored = await MessageRepository.findById(pool, testWorkspaceId, quoting.id)
+      expect(quoteAttrs(stored!)).toMatchObject({
+        snippet: "hah, ibland alltså :laughing:",
+        version: 1,
+        range: null,
+      })
+    })
+
     test("text that is nowhere in the message is rejected", async () => {
       const src = await seedEditedSource()
       await expectReferenceError(
