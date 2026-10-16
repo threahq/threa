@@ -39,12 +39,12 @@ export function normalizeText(text: string): string {
  */
 export function locateSnippetRange(pinnedDoc: JSONContent, snippet: unknown): { range: ContentRange | null } | null {
   if (typeof snippet !== "string") return { range: null }
-  // A whole-message quote sends the source's stored markdown, which folds emoji
-  // to shortcodes (`:shrug:`) that the document's own text never contains.
-  if (normalizeText(snippet) === normalizeText(deriveContentMarkdown(pinnedDoc))) return { range: null }
   const wanted = normalizeText(docToPlainText(parseMarkdown(snippet)))
   if (wanted.length === 0) return { range: null }
   if (wanted === normalizeText(docToPlainText(pinnedDoc))) return { range: null }
+  // A whole-message quote sends the source's stored markdown, which folds emoji
+  // to shortcodes (`:shrug:`) that the document's own text never contains.
+  if (normalizeText(snippet) === normalizeText(deriveContentMarkdown(pinnedDoc))) return { range: null }
 
   const located = resolveSelectionRange(pinnedDoc, { text: wanted })
   if (!located) return null

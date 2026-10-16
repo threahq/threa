@@ -220,8 +220,8 @@ describe("message reference resolution", () => {
   })
 
   describe("(e) a rangeless quote is located from its snippet", () => {
-    async function quoteWithSnippet(snippet: string) {
-      const src = await seedEditedSource()
+    async function quoteWithSnippet(snippet: string, quoted?: { id: string }) {
+      const src = quoted ?? (await seedEditedSource())
       const quoting = await eventService.createMessage({
         workspaceId: testWorkspaceId,
         streamId: source,
@@ -250,20 +250,8 @@ describe("message reference resolution", () => {
         contentJson: docOf("hah, ibland alltså 😆"),
         contentMarkdown: "hah, ibland alltså :laughing:",
       })
-      const quoting = await eventService.createMessage({
-        workspaceId: testWorkspaceId,
-        streamId: source,
-        authorId: author,
-        authorType: "user",
-        contentJson: {
-          type: "doc",
-          content: [quoteNode({ messageId: src.id, streamId: source, version: 1, snippet: src.contentMarkdown })],
-        },
-        contentMarkdown: `> ${src.contentMarkdown}`,
-      })
 
-      const stored = await MessageRepository.findById(pool, testWorkspaceId, quoting.id)
-      expect(quoteAttrs(stored!)).toMatchObject({
+      expect(await quoteWithSnippet(src.contentMarkdown, src)).toMatchObject({
         snippet: "hah, ibland alltså :laughing:",
         version: 1,
         range: null,
