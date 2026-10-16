@@ -1,4 +1,6 @@
 import { currentAppBuildId, currentAppVersion } from "@/lib/app-build"
+import { capture } from "@/lib/analytics/posthog"
+import { runSwRecovery } from "@/lib/sw-recovery"
 import { SW_MSG_APPLY_UPDATE, SW_MSG_QUERY_STATUS, SW_MSG_STATUS_REPLY, SW_MSG_RUN_GC } from "@/lib/sw-messages"
 
 export type AppUpdatePhase =
@@ -43,6 +45,22 @@ export interface AppUpdateLifecycle {
   onPageshow: (callback: (event: PageTransitionEvent) => void) => () => void
 }
 
+/** Where an apply attempt broke down; the PostHog event carries it so the dominant cause is countable. */
+export type AppUpdateApplyStage =
+  | "no-registration"
+  | "worker-missing"
+  | "message-failed"
+  | "worker-redundant"
+  | "activation-wait"
+  | "reload-unconfirmed"
+
+export interface AppUpdateApplyFailureReport {
+  failure: AppUpdateFailure
+  stage: AppUpdateApplyStage
+  workerState: ServiceWorkerState | "none"
+  recovery: "hard-reload" | "none"
+}
+
 export interface AppUpdateControllerDeps {
   serviceWorker: ServiceWorkerContainer | undefined
   fetchLatestVersion: () => Promise<string | null>
@@ -51,6 +69,9 @@ export interface AppUpdateControllerDeps {
   pollIntervalMs: number
   lifecycle: AppUpdateLifecycle
   reload: () => void
+  /** Unregisters the worker, drops its caches and reloads — what `/recover` does. */
+  hardReload: () => Promise<unknown>
+  reportApplyFailure: (report: AppUpdateApplyFailureReport) => void
 }
 
 export const APP_UPDATE_CHECK_TIMEOUT_MS = 10_000
@@ -632,7 +653,7 @@ export class AppUpdateController {
     const registration = await this.getRegistration()
     if (superseded()) return
     if (!registration) {
-      await this.failApply(null, generation, "activation-failed")
+      await this.recoverApply(null, null, generation, attempt, "activation-failed", "no-registration")
       return
     }
 
@@ -652,14 +673,14 @@ export class AppUpdateController {
         // skipWaiting from another tab) — just confirm the navigation.
         return this.requestReload()
       }
-      await this.failApply(registration, generation, "activation-failed")
+      await this.recoverApply(registration, null, generation, attempt, "activation-failed", "worker-missing")
       return
     }
 
     try {
       targetWorker.postMessage({ type: SW_MSG_APPLY_UPDATE, buildId: targetBuildId })
     } catch {
-      await this.failApply(registration, generation, "activation-failed")
+      await this.recoverApply(registration, targetWorker, generation, attempt, "activation-failed", "message-failed")
       return
     }
 
@@ -672,7 +693,14 @@ export class AppUpdateController {
       if (this.reloadPromise) return this.reloadPromise
       if (superseded()) return
       if (targetWorker.state === "redundant") {
-        await this.failApply(registration, generation, "activation-failed")
+        await this.recoverApply(
+          registration,
+          targetWorker,
+          generation,
+          attempt,
+          "activation-failed",
+          "worker-redundant"
+        )
         return
       }
       if (targetWorker.state === "activated" && this.deps.serviceWorker?.controller === targetWorker) {
@@ -683,7 +711,34 @@ export class AppUpdateController {
 
     if (this.reloadPromise) return this.reloadPromise
     if (superseded()) return
-    await this.failApply(registration, generation, "activation-timeout")
+    await this.recoverApply(registration, targetWorker, generation, attempt, "activation-timeout", "activation-wait")
+  }
+
+  /**
+   * The soft swap depends on the outgoing worker letting go, which Chromium can
+   * hold off for minutes and a refusing worker never does. The user already
+   * asked for a reload, so a reachable server gets the `/recover` reset instead
+   * of a retry that would stall the same way. Offline, that reset would leave
+   * nothing to boot from, so the running build stays and the notice offers a retry.
+   */
+  private async recoverApply(
+    registration: ServiceWorkerRegistration | null,
+    worker: ServiceWorker | null,
+    generation: number,
+    attempt: ApplyAttempt,
+    failure: AppUpdateFailure,
+    stage: AppUpdateApplyStage
+  ): Promise<void> {
+    const reachable = (await this.deps.fetchLatestVersion()) !== null
+    if (this.applyAttempt !== attempt) return
+    this.deps.reportApplyFailure({
+      failure,
+      stage,
+      workerState: worker?.state ?? "none",
+      recovery: reachable ? "hard-reload" : "none",
+    })
+    if (reachable) return this.requestReload(this.deps.hardReload)
+    await this.failApply(registration, generation, failure)
   }
 
   private async failApply(
@@ -712,18 +767,30 @@ export class AppUpdateController {
    * cancelled, at which point the failure is surfaced and the guards reset so
    * a retry can call reload() again.
    */
-  private requestReload(): Promise<void> {
+  private requestReload(reload: () => unknown = this.deps.reload): Promise<void> {
     if (this.reloadPromise) return this.reloadPromise
     const pending = new Promise<void>((resolve) => {
       this.reloadResolve = resolve
-      this.reloadTimer = setTimeout(() => this.failReload(), APP_UPDATE_RELOAD_CONFIRM_TIMEOUT_MS)
     })
     this.reloadPromise = pending
+    let started: unknown
     try {
-      this.deps.reload()
+      started = reload()
     } catch {
       this.failReload()
+      return pending
     }
+    // The confirm window starts once the reload is requested: a hard reload
+    // unregisters and clears caches first, which must not eat into it.
+    void Promise.resolve(started).then(
+      () => {
+        if (this.reloadPromise !== pending) return
+        this.reloadTimer = setTimeout(() => this.failReload(), APP_UPDATE_RELOAD_CONFIRM_TIMEOUT_MS)
+      },
+      () => {
+        if (this.reloadPromise === pending) this.failReload()
+      }
+    )
     return pending
   }
 
@@ -737,6 +804,12 @@ export class AppUpdateController {
     this.reloadPromise = null
     this.applyPromise = null
     this.applyAttempt = null
+    this.deps.reportApplyFailure({
+      failure: "activation-timeout",
+      stage: "reload-unconfirmed",
+      workerState: "none",
+      recovery: "none",
+    })
     const generation = this.nextGeneration()
     this.setState({
       phase: "failed",
@@ -843,6 +916,8 @@ export function createBrowserAppUpdateController(pollIntervalMs: number): AppUpd
     pollIntervalMs,
     lifecycle: createBrowserAppUpdateLifecycle(),
     reload: () => window.location.reload(),
+    hardReload: () => runSwRecovery({ force: true }),
+    reportApplyFailure: (report) => capture("app_update_failed", { ...report }),
   })
 }
 

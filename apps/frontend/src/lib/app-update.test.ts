@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
+  AppUpdateApplyFailureReport,
   AppUpdateController,
   AppUpdateLifecycle,
   APP_UPDATE_APPLY_TIMEOUT_MS,
@@ -111,6 +112,8 @@ describe("AppUpdateController", () => {
   let registration: FakeServiceWorkerRegistration
   let lifecycle: ReturnType<typeof createTestLifecycle>
   let reload: () => void
+  let hardReload: ReturnType<typeof vi.fn<() => Promise<unknown>>>
+  let reportApplyFailure: ReturnType<typeof vi.fn<(report: AppUpdateApplyFailureReport) => void>>
   let controller: AppUpdateController
 
   beforeEach(() => {
@@ -119,6 +122,8 @@ describe("AppUpdateController", () => {
     container = new FakeServiceWorkerContainer(registration)
     lifecycle = createTestLifecycle()
     reload = vi.fn() as () => void
+    hardReload = vi.fn(async () => {})
+    reportApplyFailure = vi.fn()
   })
 
   afterEach(() => {
@@ -140,6 +145,8 @@ describe("AppUpdateController", () => {
       pollIntervalMs: 300_000,
       lifecycle,
       reload,
+      hardReload,
+      reportApplyFailure,
     })
     return controller
   }
@@ -199,6 +206,8 @@ describe("AppUpdateController", () => {
       pollIntervalMs: 300_000,
       lifecycle,
       reload,
+      hardReload,
+      reportApplyFailure,
     })
     await controller.check()
     expect(stateSnapshot()).toMatchObject({ phase: "unavailable", failure: "check-failed", readyBuildId: null })
@@ -445,6 +454,53 @@ describe("AppUpdateController", () => {
     expect(stateSnapshot().phase).toBe("failed")
     expect(stateSnapshot().failure).toBe("activation-timeout")
     expect(reload).not.toHaveBeenCalled()
+    // Offline, a reset would leave nothing to boot from: the running build stays.
+    expect(hardReload).not.toHaveBeenCalled()
+    expect(reportApplyFailure.mock.calls).toEqual([
+      [{ failure: "activation-timeout", stage: "activation-wait", workerState: "installed", recovery: "none" }],
+    ])
+  })
+
+  it("apply falls back to a hard reload when the worker never activates and the server answers", async () => {
+    vi.useFakeTimers()
+    const worker = new FakeWorker("installed", () => ({ version: "B", buildId: "B", ready: true }))
+    registration.waiting = worker
+    makeController({ fetchLatestVersion: async () => "B" })
+    await controller.start()
+    await controller.check()
+    const promise = controller.apply()
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_APPLY_TIMEOUT_MS + 500)
+    expect(hardReload).toHaveBeenCalledOnce()
+    expect(reload).not.toHaveBeenCalled()
+    expect(stateSnapshot().phase).toBe("applying")
+    expect(reportApplyFailure.mock.calls).toEqual([
+      [{ failure: "activation-timeout", stage: "activation-wait", workerState: "installed", recovery: "hard-reload" }],
+    ])
+
+    // The hard reload's navigation never confirms either: surface it instead of spinning.
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_RELOAD_CONFIRM_TIMEOUT_MS + 100)
+    await promise
+    expect(stateSnapshot()).toMatchObject({ phase: "failed", failure: "activation-timeout" })
+  })
+
+  it("apply falls back to a hard reload when the target worker becomes redundant and the server answers", async () => {
+    vi.useFakeTimers()
+    const worker = new FakeWorker("installed", () => ({ version: "B", buildId: "B", ready: true }))
+    registration.waiting = worker
+    makeController({ fetchLatestVersion: async () => "C" })
+    await controller.start()
+    await controller.check()
+    const promise = controller.apply()
+    await vi.advanceTimersByTimeAsync(1000)
+    worker.state = "redundant"
+    registration.waiting = null
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(hardReload).toHaveBeenCalledOnce()
+    expect(reportApplyFailure.mock.calls).toEqual([
+      [{ failure: "activation-failed", stage: "worker-redundant", workerState: "redundant", recovery: "hard-reload" }],
+    ])
+    await vi.advanceTimersByTimeAsync(APP_UPDATE_RELOAD_CONFIRM_TIMEOUT_MS + 100)
+    await promise
   })
 
   it("apply waits for a late activation without messaging the outgoing worker", async () => {
