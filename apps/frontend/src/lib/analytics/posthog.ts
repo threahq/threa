@@ -128,7 +128,7 @@ let active: ActiveAnalytics | null = null
  */
 export const ANALYTICS_SCOPE_STORAGE_KEY = "threa-analytics"
 
-function persistScope(scope: { token: string; host: string; distinctId: string } | null): void {
+function persistScope(scope: Pick<StartAnalyticsParams, "token" | "host" | "distinctId"> | null): void {
   try {
     if (scope) localStorage.setItem(ANALYTICS_SCOPE_STORAGE_KEY, JSON.stringify(scope))
     else localStorage.removeItem(ANALYTICS_SCOPE_STORAGE_KEY)
@@ -238,7 +238,6 @@ function deactivate(): void {
   if (!active) return
   const { client } = active
   active = null
-  persistScope(null)
   guard("stop", () => {
     client.reset()
     client.opt_out_capturing()
@@ -247,6 +246,9 @@ function deactivate(): void {
 
 export function stopAnalytics(): void {
   consentGeneration++
+  // Unconditional: a fresh page load has nothing active but may still hold the
+  // scope a previous session persisted.
+  persistScope(null)
   deactivate()
 }
 

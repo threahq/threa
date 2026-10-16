@@ -134,8 +134,8 @@ describe("analytics client lifecycle", () => {
   })
 
   it("should persist the consented scope for the index.html beacon and clear it on stop", async () => {
-    const root = createFakeRoot()
-    await startAnalytics(params, root)
+    await startAnalytics(params, createFakeRoot())
+
     expect(JSON.parse(localStorage.getItem(ANALYTICS_SCOPE_STORAGE_KEY) ?? "null")).toEqual({
       token: "tok_1",
       host: "https://eu.example.com",
@@ -143,6 +143,18 @@ describe("analytics client lifecycle", () => {
     })
 
     stopAnalytics()
+
+    expect(localStorage.getItem(ANALYTICS_SCOPE_STORAGE_KEY)).toBeNull()
+  })
+
+  it("should clear a scope left by a previous page load when stopping with nothing active", () => {
+    localStorage.setItem(
+      ANALYTICS_SCOPE_STORAGE_KEY,
+      JSON.stringify({ token: "tok_1", host: "h", distinctId: "usr_1" })
+    )
+
+    stopAnalytics()
+
     expect(localStorage.getItem(ANALYTICS_SCOPE_STORAGE_KEY)).toBeNull()
   })
 
