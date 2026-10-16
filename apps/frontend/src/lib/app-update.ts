@@ -58,7 +58,7 @@ export interface AppUpdateApplyFailureReport {
   failure: AppUpdateFailure
   stage: AppUpdateApplyStage
   workerState: ServiceWorkerState | "none"
-  recovery: "hard-reload" | "none"
+  recovery: "hard-reload" | "retarget" | "none"
 }
 
 export interface AppUpdateControllerDeps {
@@ -77,6 +77,8 @@ export interface AppUpdateControllerDeps {
 export const APP_UPDATE_CHECK_TIMEOUT_MS = 10_000
 /** Bound on "did the reload we requested actually start navigating". */
 export const APP_UPDATE_RELOAD_CONFIRM_TIMEOUT_MS = 5_000
+/** The hard reload busts the shell (10s bound) before navigating, and that navigation goes to the network. */
+export const APP_UPDATE_HARD_RELOAD_CONFIRM_TIMEOUT_MS = 30_000
 /**
  * Chromium activates a skipWaiting worker only once the outgoing worker has no
  * in-flight events (fetch responses, waitUntil work), and waits up to five
@@ -175,6 +177,7 @@ export class AppUpdateController {
   private reloadPromise: Promise<void> | null = null
   private reloadResolve: (() => void) | null = null
   private reloadTimer: ReturnType<typeof setTimeout> | null = null
+  private reloadIsHard = false
   private pollTimer: ReturnType<typeof setInterval> | null = null
   private startupCheckTimer: ReturnType<typeof setTimeout> | null = null
   private trackedInstallingWorkers = new WeakSet<ServiceWorker>()
@@ -718,8 +721,9 @@ export class AppUpdateController {
    * The soft swap depends on the outgoing worker letting go, which Chromium can
    * hold off for minutes and a refusing worker never does. The user already
    * asked for a reload, so a reachable server gets the `/recover` reset instead
-   * of a retry that would stall the same way. Offline, that reset would leave
-   * nothing to boot from, so the running build stays and the notice offers a retry.
+   * of a retry that would stall the same way. Two cases keep the soft path: a
+   * newer build already waiting (retrying onto it is a normal swap), and no
+   * server (the reset would leave nothing to boot from).
    */
   private async recoverApply(
     registration: ServiceWorkerRegistration | null,
@@ -729,15 +733,18 @@ export class AppUpdateController {
     failure: AppUpdateFailure,
     stage: AppUpdateApplyStage
   ): Promise<void> {
-    const reachable = (await this.deps.fetchLatestVersion()) !== null
+    const waiting = registration?.waiting
+    const alternative = waiting && waiting !== worker ? await this.queryWorkerStatus(waiting) : null
+    const retarget = alternative !== null && alternative.buildId !== this.deps.buildInfo.buildId
+    const reachable = !retarget && (await safeAsync(() => this.deps.fetchLatestVersion(), null)) !== null
     if (this.applyAttempt !== attempt) return
-    this.deps.reportApplyFailure({
-      failure,
-      stage,
-      workerState: worker?.state ?? "none",
-      recovery: reachable ? "hard-reload" : "none",
-    })
-    if (reachable) return this.requestReload(this.deps.hardReload)
+    // The target can still activate during the probe; that reload is already on its way.
+    if (this.reloadPromise) return this.reloadPromise
+    let recovery: AppUpdateApplyFailureReport["recovery"] = "none"
+    if (retarget) recovery = "retarget"
+    else if (reachable) recovery = "hard-reload"
+    this.deps.reportApplyFailure({ failure, stage, workerState: worker?.state ?? "none", recovery })
+    if (recovery === "hard-reload") return this.requestReload(true)
     await this.failApply(registration, generation, failure)
   }
 
@@ -767,30 +774,28 @@ export class AppUpdateController {
    * cancelled, at which point the failure is surfaced and the guards reset so
    * a retry can call reload() again.
    */
-  private requestReload(reload: () => unknown = this.deps.reload): Promise<void> {
+  private requestReload(hard = false): Promise<void> {
     if (this.reloadPromise) return this.reloadPromise
     const pending = new Promise<void>((resolve) => {
       this.reloadResolve = resolve
+      this.reloadTimer = setTimeout(
+        () => this.failReload(),
+        hard ? APP_UPDATE_HARD_RELOAD_CONFIRM_TIMEOUT_MS : APP_UPDATE_RELOAD_CONFIRM_TIMEOUT_MS
+      )
     })
     this.reloadPromise = pending
-    let started: unknown
+    this.reloadIsHard = hard
     try {
-      started = reload()
+      if (hard) {
+        void this.deps.hardReload().catch(() => {
+          if (this.reloadPromise === pending) this.failReload()
+        })
+      } else {
+        this.deps.reload()
+      }
     } catch {
       this.failReload()
-      return pending
     }
-    // The confirm window starts once the reload is requested: a hard reload
-    // unregisters and clears caches first, which must not eat into it.
-    void Promise.resolve(started).then(
-      () => {
-        if (this.reloadPromise !== pending) return
-        this.reloadTimer = setTimeout(() => this.failReload(), APP_UPDATE_RELOAD_CONFIRM_TIMEOUT_MS)
-      },
-      () => {
-        if (this.reloadPromise === pending) this.failReload()
-      }
-    )
     return pending
   }
 
@@ -800,17 +805,29 @@ export class AppUpdateController {
       this.reloadTimer = null
     }
     const resolve = this.reloadResolve
+    const requested = this.reloadPromise !== null
+    const hard = this.reloadIsHard
     this.reloadResolve = null
     this.reloadPromise = null
+    this.reloadIsHard = false
     this.applyPromise = null
     this.applyAttempt = null
-    this.deps.reportApplyFailure({
-      failure: "activation-timeout",
-      stage: "reload-unconfirmed",
-      workerState: "none",
-      recovery: "none",
-    })
+    if (requested) {
+      this.deps.reportApplyFailure({
+        failure: "activation-timeout",
+        stage: "reload-unconfirmed",
+        workerState: "none",
+        recovery: hard ? "hard-reload" : "none",
+      })
+    }
     const generation = this.nextGeneration()
+    // The reset has already unregistered the worker, so no worker can say what
+    // is ready; the build the user asked for stays offered and a retry resets again.
+    if (hard) {
+      this.setState({ phase: "failed", failure: "activation-timeout", _generation: generation })
+      resolve?.()
+      return
+    }
     this.setState({
       phase: "failed",
       failure: "activation-timeout",

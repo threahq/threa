@@ -60,6 +60,7 @@ test("baseline offline reload keeps build A", async ({ page, context }) => {
 })
 
 test("ready build B applies in one reload", async ({ page }) => {
+  await createDomainCacheSentinel(page, "threa-test-domain", "/__domain-sentinel")
   await installWaiting(page, "B")
   const button = page.getByRole("button", { name: /reload and update/i })
   await button.waitFor()
@@ -69,9 +70,12 @@ test("ready build B applies in one reload", async ({ page }) => {
   await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded" }), button.click()])
   await expect.poll(() => fixtureVersion(page), { timeout: SW_SETTLE_TIMEOUT }).toBe("B")
   expect(reloads).toHaveLength(1)
+  // A hard-reset fallback also lands on B, but it deletes every cache.
+  expect(await hasCustomCache(page, "threa-test-domain")).toBe(true)
 })
 
 test("ready build B applies while the outgoing worker still holds an in-flight response", async ({ page }) => {
+  await createDomainCacheSentinel(page, "threa-test-domain", "/__domain-sentinel")
   await installWaiting(page, "B")
   // Chromium defers a skipWaiting activation until the outgoing worker has no
   // in-flight events; a bootstrap response it is proxying is exactly that, and
@@ -89,6 +93,7 @@ test("ready build B applies while the outgoing worker still holds an in-flight r
   await Promise.all([page.waitForNavigation({ waitUntil: "domcontentloaded", timeout: 40_000 }), button.click()])
   await expect.poll(() => fixtureVersion(page), { timeout: SW_SETTLE_TIMEOUT }).toBe("B")
   expect(reloads).toHaveLength(1)
+  expect(await hasCustomCache(page, "threa-test-domain")).toBe(true)
 })
 
 test("ready build B applies offline in one reload without clearing domain data", async ({ page, context }) => {
@@ -123,6 +128,7 @@ test("should keep update controls usable on a narrow screen", async ({ page, con
 })
 
 test("toast shows busy while applying from AppStatus", async ({ page }) => {
+  await createDomainCacheSentinel(page, "threa-test-domain", "/__domain-sentinel")
   await installWaiting(page, "B")
   const toastAction = page.locator("[data-sonner-toast]").getByRole("button")
   const pageButton = page.getByRole("button", { name: /reload and update/i })
@@ -133,9 +139,11 @@ test("toast shows busy while applying from AppStatus", async ({ page }) => {
   expect(await clickAndReadPhase(pageButton)).toBe("applying")
   await navigated
   await expect.poll(() => fixtureVersion(page)).toBe("B")
+  expect(await hasCustomCache(page, "threa-test-domain")).toBe(true)
 })
 
 test("duplicate apply clicks are unavailable across AppStatus and AppToastHost", async ({ page }) => {
+  await createDomainCacheSentinel(page, "threa-test-domain", "/__domain-sentinel")
   await installWaiting(page, "B")
   const pageButton = page.getByRole("button", { name: /reload and update/i })
   await expect(pageButton).toBeEnabled()
@@ -145,6 +153,7 @@ test("duplicate apply clicks are unavailable across AppStatus and AppToastHost",
   expect(await clickAndReadApplyState(pageButton)).toEqual({ phase: "applying", toastActionPresent: false })
   await navigated
   await expect.poll(() => fixtureVersion(page)).toBe("B")
+  expect(await hasCustomCache(page, "threa-test-domain")).toBe(true)
 })
 
 test("old A tab imports its precached lazy chunk offline after B activates", async ({ page, context }) => {
