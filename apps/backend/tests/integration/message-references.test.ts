@@ -220,8 +220,8 @@ describe("message reference resolution", () => {
   })
 
   describe("(e) a rangeless quote is located from its snippet", () => {
-    async function quoteWithSnippet(snippet: string) {
-      const src = await seedEditedSource()
+    async function quoteWithSnippet(snippet: string, quoted?: { id: string }) {
+      const src = quoted ?? (await seedEditedSource())
       const quoting = await eventService.createMessage({
         workspaceId: testWorkspaceId,
         streamId: source,
@@ -239,6 +239,23 @@ describe("message reference resolution", () => {
 
     test("a snippet covering the whole message stays whole", async () => {
       expect(await quoteWithSnippet("second body")).toMatchObject({ version: 2, range: null })
+    })
+
+    test("a whole-message quote of a body with a raw emoji stays whole", async () => {
+      const src = await eventService.createMessage({
+        workspaceId: testWorkspaceId,
+        streamId: source,
+        authorId: author,
+        authorType: "user",
+        contentJson: docOf("hah, ibland alltså 😆"),
+        contentMarkdown: "hah, ibland alltså :laughing:",
+      })
+
+      expect(await quoteWithSnippet(src.contentMarkdown, src)).toMatchObject({
+        snippet: "hah, ibland alltså :laughing:",
+        version: 1,
+        range: null,
+      })
     })
 
     test("text that is nowhere in the message is rejected", async () => {
