@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react"
 import { CircleCheck, Info, LoaderCircle, OctagonX, TriangleAlert } from "lucide-react"
 import { SonnerRoot as Sonner, toast, useSonner, type ToastT } from "@/lib/sonner-module"
-import { usePreferences } from "@/contexts"
+import { usePreferencesOptional } from "@/contexts"
 import { useIsMobile } from "@/hooks/use-mobile"
 
 type ToasterProps = React.ComponentProps<typeof Sonner>
@@ -28,7 +28,9 @@ function groupToastsByPosition(toasts: SonnerToast[], defaultPosition: ToastPosi
 }
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { resolvedTheme } = usePreferences()
+  // Outside a workspace there is no provider; index.html already applied the cached appearance to <html>.
+  const resolvedTheme =
+    usePreferencesOptional()?.resolvedTheme ?? (document.documentElement.classList.contains("dark") ? "dark" : "light")
   const isMobile = useIsMobile()
   const { toasts } = useSonner()
   const toasterRef = useRef<HTMLElement | null>(null)

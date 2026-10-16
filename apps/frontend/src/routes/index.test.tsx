@@ -1,14 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
-import { render, screen } from "@testing-library/react"
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
+import { act, render, screen } from "@testing-library/react"
+import { matchRoutes, MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import type { DelegationSummary } from "@threahq/types"
-import { DelegationRedirect, GoRedirect, LegacyMemoRedirect, RootRedirect, WorkspaceHome } from "./index"
+import {
+  DelegationRedirect,
+  GoRedirect,
+  LegacyMemoRedirect,
+  RootRedirect,
+  StandaloneLayout,
+  WorkspaceHome,
+  router,
+} from "./index"
 import { ApiError, delegationsApi } from "@/api"
 import * as useLastLocationModule from "@/hooks/use-last-location"
 import * as sidebarContextModule from "@/contexts/sidebar-context"
 import { AuthProvider, AccountScopeProvider } from "@/auth"
 import { setLastWorkspaceId } from "@/lib/last-workspace"
+import { AppUpdateProvider } from "@/hooks/use-app-update"
+import { TestAppUpdateController, asAppUpdateController } from "@/test/app-update-controller"
 
 const mockUseLastLocation = vi.fn()
 const mockTogglePinned = vi.fn()
@@ -43,6 +53,52 @@ function makeDelegationSummary(overrides: Partial<DelegationSummary> = {}): Dele
     ...overrides,
   }
 }
+
+describe("toast host placement", () => {
+  // WorkspaceLayout mounts its own host; two hosts on one page would double every toast.
+  function mountsStandaloneHost(path: string) {
+    return (matchRoutes(router.routes, path) ?? []).some((match) => {
+      const element = match.route.element as { type?: unknown } | null | undefined
+      return element?.type === StandaloneLayout
+    })
+  }
+
+  it("offers app updates on every page outside a workspace", () => {
+    const paths = ["/", "/login", "/workspaces", "/join/tok_1", "/connect", "/w/ws_1/setup"]
+    expect(paths.filter((path) => !mountsStandaloneHost(path))).toEqual([])
+  })
+
+  it("puts every top-level route under either the standalone layout or the workspace layout", () => {
+    const outside = (router.routes[0]?.children ?? []).filter((route) => {
+      const element = route.element as { type?: unknown } | null | undefined
+      return element?.type !== StandaloneLayout && route.path !== "/w/:workspaceId"
+    })
+    expect(outside).toEqual([])
+  })
+
+  it("leaves workspace pages to WorkspaceLayout's own host", () => {
+    expect(mountsStandaloneHost("/w/ws_1/s/stream_1")).toBe(false)
+  })
+
+  it("announces a parked build over a page outside any workspace", async () => {
+    const controller = new TestAppUpdateController({ phase: "ready", readyBuildId: "def5678-1" })
+    render(
+      <AppUpdateProvider controller={asAppUpdateController(controller)}>
+        <MemoryRouter initialEntries={["/workspaces"]}>
+          <Routes>
+            <Route element={<StandaloneLayout />}>
+              <Route path="/workspaces" element={<div>Workspace picker</div>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </AppUpdateProvider>
+    )
+
+    expect(screen.getByText("Workspace picker")).toBeInTheDocument()
+    expect(await screen.findByText("A new version of Threa is ready")).toBeInTheDocument()
+    act(() => toast.dismiss())
+  })
+})
 
 describe("RootRedirect", () => {
   // Real AuthProvider + AccountScopeProvider: the entry route resolves the
