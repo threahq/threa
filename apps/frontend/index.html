@@ -222,7 +222,6 @@
 
             var reportedAt = parseInt(localStorage.getItem("threa-entry-failure-reported-at") || "0", 10)
             if (reportedAt && Date.now() - reportedAt < REPORT_INTERVAL_MS) return
-            localStorage.setItem("threa-entry-failure-reported-at", String(Date.now()))
 
             var connection = navigator.connection || {}
             var event = {
@@ -244,10 +243,11 @@
             // posthog-js's own beacon encoding: form body with base64 JSON, a
             // CORS-safelisted content type so sendBeacon needs no preflight.
             var data = btoa(unescape(encodeURIComponent(JSON.stringify(event))))
-            navigator.sendBeacon(
+            var queued = navigator.sendBeacon(
               scope.host + "/e/?compression=base64",
               new Blob(["data=" + encodeURIComponent(data)], { type: "application/x-www-form-urlencoded" })
             )
+            if (queued) localStorage.setItem("threa-entry-failure-reported-at", String(Date.now()))
           } catch (e) {
             // Storage denied or no beacon support: the card still shows.
           }
