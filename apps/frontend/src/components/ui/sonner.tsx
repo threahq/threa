@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react"
 import { CircleCheck, Info, LoaderCircle, OctagonX, TriangleAlert } from "lucide-react"
 import { SonnerRoot as Sonner, toast, useSonner, type ToastT } from "@/lib/sonner-module"
-import { usePreferences } from "@/contexts"
+import { usePreferencesOptional } from "@/contexts"
 import { useIsMobile } from "@/hooks/use-mobile"
 
 type ToasterProps = React.ComponentProps<typeof Sonner>
@@ -28,7 +28,7 @@ function groupToastsByPosition(toasts: SonnerToast[], defaultPosition: ToastPosi
 }
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { resolvedTheme } = usePreferences()
+  const resolvedTheme = usePreferencesOptional()?.resolvedTheme ?? "system"
   const isMobile = useIsMobile()
   const { toasts } = useSonner()
   const toasterRef = useRef<HTMLElement | null>(null)

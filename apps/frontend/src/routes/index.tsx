@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react"
-import { createBrowserRouter, Navigate, useLocation, useNavigate, useParams } from "react-router-dom"
+import { createBrowserRouter, Navigate, Outlet, useLocation, useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
+import { AppToastHost } from "@/components/app-update-toast"
 import { ErrorBoundary } from "@/components/error-boundary"
 import { FallbackLoader } from "@/components/fallback-loader"
 import { attachOverlayHistoryRouter } from "@/components/ui/history-back-close"
@@ -26,76 +27,81 @@ export const router = createBrowserRouter([
     errorElement: <ErrorBoundary />,
     children: [
       {
-        path: "/",
-        element: <RootRedirect />,
-        errorElement: <ErrorBoundary />,
-      },
-      {
-        path: `${APP_LINK_GO_ROUTE}/*`,
-        element: <GoRedirect />,
-        errorElement: <ErrorBoundary />,
-      },
-      {
-        path: "/login",
-        HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/login")).LoginPage }),
-        errorElement: <ErrorBoundary />,
-      },
-      {
-        path: "/workspaces",
-        HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/workspace-select")).WorkspaceSelectPage }),
-        errorElement: <ErrorBoundary />,
-      },
-      {
-        // Custom add-account picker. Sits in front of `/api/auth/login?intent=add`
-        // because AuthKit's hosted UI silent-refreshes and can't reliably show an
-        // account picker. Buttons hit provider-direct social URLs or the magic
-        // auth endpoints — see apps/control-plane/src/features/auth/handlers.ts.
-        path: "/add-account",
-        HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/add-account")).AddAccountPage }),
-        errorElement: <ErrorBoundary />,
-      },
-      {
-        path: "/share",
-        HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/share-target")).ShareTargetPage }),
-        errorElement: <ErrorBoundary />,
-      },
-      {
-        // Public, unauthenticated. The recipient enters their email to claim the
-        // invitation — no workspace bootstrap needed, lives outside WorkspaceLayout.
-        path: "/join/:token",
-        HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/join")).JoinPage }),
-        errorElement: <ErrorBoundary />,
-      },
-      {
-        // `threa-bot connect` approval. Needs a session but no workspace
-        // bootstrap: it lists workspaces and mints a bot key in the chosen one.
-        path: "/connect",
-        HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/connect")).ConnectPage }),
-        errorElement: <ErrorBoundary />,
-      },
-      {
-        // Shared-channel invite. Needs a session but no workspace bootstrap:
-        // the partner admin picks which of their workspaces accepts.
-        path: "/connections/:token",
-        HydrateFallback: FallbackLoader,
-        lazy: async () => ({
-          Component: (await import("@/pages/stream-connection-accept")).StreamConnectionAcceptPage,
-        }),
-        errorElement: <ErrorBoundary />,
-      },
-      {
-        // Setup page lives outside WorkspaceLayout — it's a lightweight form that
-        // doesn't need the full workspace bootstrap (socket, sidebar, etc.)
-        path: "/w/:workspaceId/setup",
-        HydrateFallback: FallbackLoader,
-        lazy: async () => ({ Component: (await import("@/pages/user-setup")).UserSetupPage }),
-        errorElement: <ErrorBoundary />,
+        element: <StandaloneLayout />,
+        children: [
+          {
+            path: "/",
+            element: <RootRedirect />,
+            errorElement: <ErrorBoundary />,
+          },
+          {
+            path: `${APP_LINK_GO_ROUTE}/*`,
+            element: <GoRedirect />,
+            errorElement: <ErrorBoundary />,
+          },
+          {
+            path: "/login",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/login")).LoginPage }),
+            errorElement: <ErrorBoundary />,
+          },
+          {
+            path: "/workspaces",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/workspace-select")).WorkspaceSelectPage }),
+            errorElement: <ErrorBoundary />,
+          },
+          {
+            // Custom add-account picker. Sits in front of `/api/auth/login?intent=add`
+            // because AuthKit's hosted UI silent-refreshes and can't reliably show an
+            // account picker. Buttons hit provider-direct social URLs or the magic
+            // auth endpoints — see apps/control-plane/src/features/auth/handlers.ts.
+            path: "/add-account",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/add-account")).AddAccountPage }),
+            errorElement: <ErrorBoundary />,
+          },
+          {
+            path: "/share",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/share-target")).ShareTargetPage }),
+            errorElement: <ErrorBoundary />,
+          },
+          {
+            // Public, unauthenticated. The recipient enters their email to claim the
+            // invitation — no workspace bootstrap needed, lives outside WorkspaceLayout.
+            path: "/join/:token",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/join")).JoinPage }),
+            errorElement: <ErrorBoundary />,
+          },
+          {
+            // `threa-bot connect` approval. Needs a session but no workspace
+            // bootstrap: it lists workspaces and mints a bot key in the chosen one.
+            path: "/connect",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/connect")).ConnectPage }),
+            errorElement: <ErrorBoundary />,
+          },
+          {
+            // Shared-channel invite. Needs a session but no workspace bootstrap:
+            // the partner admin picks which of their workspaces accepts.
+            path: "/connections/:token",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({
+              Component: (await import("@/pages/stream-connection-accept")).StreamConnectionAcceptPage,
+            }),
+            errorElement: <ErrorBoundary />,
+          },
+          {
+            // Setup page lives outside WorkspaceLayout — it's a lightweight form that
+            // doesn't need the full workspace bootstrap (socket, sidebar, etc.)
+            path: "/w/:workspaceId/setup",
+            HydrateFallback: FallbackLoader,
+            lazy: async () => ({ Component: (await import("@/pages/user-setup")).UserSetupPage }),
+            errorElement: <ErrorBoundary />,
+          },
+        ],
       },
       {
         path: "/w/:workspaceId",
@@ -151,6 +157,18 @@ export const router = createBrowserRouter([
 // React-committed location — see history-back-close.tsx).
 attachOverlayHistoryRouter(router)
 keepPanelParamReadable(router)
+
+// WorkspaceLayout mounts its own toast host inside the workspace's PreferencesProvider.
+// Every other page needs this one, or a parked build is never offered and a user who
+// can't reach a workspace stays on the old bundle.
+export function StandaloneLayout() {
+  return (
+    <>
+      <Outlet />
+      <AppToastHost />
+    </>
+  )
+}
 
 // PWA `start_url` is `/`. A returning user almost always wants the workspace
 // they last had open, which renders instantly from IndexedDB — so jump

@@ -1,9 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen } from "@testing-library/react"
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
+import { matchRoutes, MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 import { toast } from "sonner"
 import type { DelegationSummary } from "@threahq/types"
-import { DelegationRedirect, GoRedirect, LegacyMemoRedirect, RootRedirect, WorkspaceHome } from "./index"
+import {
+  DelegationRedirect,
+  GoRedirect,
+  LegacyMemoRedirect,
+  RootRedirect,
+  StandaloneLayout,
+  WorkspaceHome,
+  router,
+} from "./index"
 import { ApiError, delegationsApi } from "@/api"
 import * as useLastLocationModule from "@/hooks/use-last-location"
 import * as sidebarContextModule from "@/contexts/sidebar-context"
@@ -43,6 +51,25 @@ function makeDelegationSummary(overrides: Partial<DelegationSummary> = {}): Dele
     ...overrides,
   }
 }
+
+describe("toast host placement", () => {
+  // WorkspaceLayout mounts its own host; two hosts on one page would double every toast.
+  function mountsStandaloneHost(path: string) {
+    return (matchRoutes(router.routes, path) ?? []).some((match) => {
+      const element = match.route.element as { type?: unknown } | null | undefined
+      return element?.type === StandaloneLayout
+    })
+  }
+
+  it("offers app updates on every page outside a workspace", () => {
+    const paths = ["/", "/login", "/workspaces", "/join/tok_1", "/connect", "/w/ws_1/setup"]
+    expect(paths.filter((path) => !mountsStandaloneHost(path))).toEqual([])
+  })
+
+  it("leaves workspace pages to WorkspaceLayout's own host", () => {
+    expect(mountsStandaloneHost("/w/ws_1/s/stream_1")).toBe(false)
+  })
+})
 
 describe("RootRedirect", () => {
   // Real AuthProvider + AccountScopeProvider: the entry route resolves the
