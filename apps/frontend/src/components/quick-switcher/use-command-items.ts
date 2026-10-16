@@ -60,6 +60,7 @@ export function useCommandItems({ query, commandContext }: UseCommandItemsParams
       label: command.label,
       icon: command.icon,
       group,
+      href: command.path && `/w/${commandContext.workspaceId}${command.path}`,
       onSelect: () => {
         command.action(commandContext)
       },

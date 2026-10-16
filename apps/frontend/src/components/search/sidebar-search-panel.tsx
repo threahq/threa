@@ -191,7 +191,7 @@ export function SidebarSearchPanel({ workspaceId }: { workspaceId: string }) {
                 ref={inputRef}
                 value={query}
                 onChange={setQuery}
-                onSubmit={openActiveResult}
+                onSubmit={(event) => openActiveResult(event.metaKey || event.ctrlKey)}
                 onPopoverActiveChange={(active) => {
                   isPopoverActiveRef.current = active
                 }}

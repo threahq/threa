@@ -69,6 +69,7 @@ import type { QuickSwitcherItem } from "./types"
 import { clamp } from "@/lib/math-utils"
 import { closePanelTab, followCurrentPanel, panelIdsOf } from "@/lib/panel-tabs"
 import { landFocus } from "@/components/layout/pane-shortcuts"
+import { isStandaloneApp } from "@/lib/device"
 import { useNewPost } from "@/components/board/board-overlay-composer"
 
 export type QuickSwitcherMode = "stream" | "command"
@@ -283,6 +284,14 @@ interface QuickSwitcherBodyProps {
   closeFocusRef: MutableRefObject<(() => void) | null>
 }
 
+/** Where Enter opens the selected item: in place, with Cmd/Ctrl to the side, with Cmd/Ctrl+Shift in a new window. */
+type Opening = "here" | "side" | "window"
+
+function openingOf(event: { metaKey: boolean; ctrlKey: boolean; shiftKey: boolean }): Opening {
+  if (!event.metaKey && !event.ctrlKey) return "here"
+  return event.shiftKey ? "window" : "side"
+}
+
 // Mounted only while the dialog content is, so its store subscriptions stop
 // when the palette is closed.
 function QuickSwitcherBody({
@@ -387,7 +396,13 @@ function QuickSwitcherBody({
   const isTouchInput = useInputMode() === "touch"
   const richInputRef = useRef<RichInputRef>(null)
 
-  const { layout, closeTabs, canCloseTab } = usePanel()
+  const { layout, closeTabs, canCloseTab, hasTabs, linkPane, openPanel } = usePanel()
+  // An installed app has no browser tabs, so Cmd/Ctrl+Enter opens beside the pane worked in instead.
+  const installed = isStandaloneApp()
+  const opensToTheSide = installed && hasTabs
+  const modKey = navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"
+  const newOpening = installed ? "New window" : "New tab"
+  const modEnterHint = opensToTheSide ? "Open to the side" : newOpening
   const currentPane = useCurrentPane()
   const paneLanding = usePaneFocusLanding()
   const { closePane, closeOtherPanes, closeAllPanes } = useMemo(() => {
@@ -644,14 +659,22 @@ function QuickSwitcherBody({
   const currentResult = resultByMode[mode]
   const items = currentResult.items
 
-  // Single source of truth for item selection (used by both Enter key and click)
-  const handleSelectItem = useCallback((item: QuickSwitcherItem, withModifier: boolean) => {
-    if (withModifier && item.href) {
-      window.open(item.href, "_blank")
-    } else {
-      item.onSelect()
-    }
-  }, [])
+  // A click with Cmd/Ctrl on a row with a link is the browser's own; Enter goes through here.
+  const handleSelectItem = useCallback(
+    (item: QuickSwitcherItem, opening: Opening) => {
+      if (opening === "here" || !item.href) return item.onSelect()
+      const pane =
+        opening === "side" && opensToTheSide ? linkPane(new URL(item.href, window.location.origin).href) : null
+      if (pane === null) {
+        window.open(item.href, "_blank")
+        return
+      }
+      if (!isTouchInput) closeFocusRef.current = () => landFocus(paneLanding, pane)
+      handleClose()
+      openPanel(pane, { beside: currentPane ?? undefined })
+    },
+    [opensToTheSide, linkPane, openPanel, currentPane, isTouchInput, paneLanding, closeFocusRef, handleClose]
+  )
 
   useEffect(() => {
     setSelectedIndex(0)
@@ -756,7 +779,6 @@ function QuickSwitcherBody({
       // If TipTap already handled this event (e.g., popover keyboard nav), don't interfere
       if (e.defaultPrevented) return
 
-      const isMod = e.metaKey || e.ctrlKey
       // Use ref for synchronous access (state updates are batched)
       // When suggestion popover is open, let TipTap handle keyboard events
       if (isSuggestionPopoverActiveRef.current) return
@@ -782,7 +804,7 @@ function QuickSwitcherBody({
           e.preventDefault()
           const item = items[selectedIndex]
           if (!item) return
-          handleSelectItem(item, isMod)
+          handleSelectItem(item, openingOf(e))
           break
       }
     },
@@ -828,11 +850,11 @@ function QuickSwitcherBody({
                 setQuery(normalized)
                 setSelectedIndex(0)
               }}
-              onSubmit={(withModifier) => {
+              onSubmit={(event) => {
                 // Enter pressed with no popover open - select current item
                 const item = items[selectedIndex]
                 if (item) {
-                  handleSelectItem(item, withModifier)
+                  handleSelectItem(item, openingOf(event))
                 }
               }}
               onPopoverActiveChange={handlePopoverActiveChange}
@@ -867,7 +889,7 @@ function QuickSwitcherBody({
           items={items}
           selectedIndex={selectedIndex}
           onSelectIndex={setSelectedIndex}
-          onSelectItem={handleSelectItem}
+          onSelectItem={(item) => item.onSelect()}
           isLoading={currentResult.isLoading}
           emptyMessage={currentResult.emptyMessage}
         />
@@ -885,8 +907,13 @@ function QuickSwitcherBody({
               <kbd className="kbd-hint">↵</kbd> Open
             </span>
             <span>
-              <kbd className="kbd-hint">{navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}↵</kbd> New tab
+              <kbd className="kbd-hint">{modKey}↵</kbd> {modEnterHint}
             </span>
+            {opensToTheSide && (
+              <span>
+                <kbd className="kbd-hint">{modKey}⇧↵</kbd> New window
+              </span>
+            )}
           </div>
           <span>
             <kbd className="kbd-hint">esc</kbd> Close
