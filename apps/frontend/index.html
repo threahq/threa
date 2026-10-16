@@ -72,59 +72,80 @@
     <link rel="preload" href="/fonts/switzer.woff2" as="font" type="font/woff2" crossorigin />
     <style>
       /* Entry-load failure card. Lives outside #root and uses no bundle CSS, since
-         it only shows when the bundle never ran. Colors mirror index.css's
-         --background/--foreground for both themes. */
+         it only shows when the bundle never ran; the @font-face repeats index.css's
+         so the preloaded Switzer applies. Sizes and colors mirror the error
+         boundary's Empty + Button, from index.css's light and .dark tokens. */
+      @font-face {
+        font-family: "Switzer";
+        src: url("/fonts/switzer.woff2") format("woff2");
+        font-weight: 100 900;
+        font-display: swap;
+      }
       #entry-failure {
         position: fixed;
         inset: 0;
         display: flex;
         align-items: center;
         justify-content: center;
-        padding: 24px;
-        background: #ffffff;
-        color: #171717;
-        font:
-          15px/1.5 system-ui,
+        padding: 16px;
+        background: hsl(40 20% 98%);
+        color: hsl(30 10% 12%);
+        font-family:
+          "Switzer",
+          system-ui,
           -apple-system,
+          BlinkMacSystemFont,
           "Segoe UI",
           sans-serif;
+        text-align: center;
+        --muted: hsl(30 8% 45%);
+        --primary: hsl(38 65% 50%);
+        --primary-foreground: hsl(40 20% 98%);
       }
       #entry-failure[hidden] {
         display: none;
       }
       .dark #entry-failure {
-        background: #0a0a0a;
-        color: #ededed;
+        background: hsl(30 15% 8%);
+        color: hsl(35 15% 92%);
+        --muted: hsl(35 10% 55%);
+        --primary: hsl(40 55% 55%);
+        --primary-foreground: hsl(30 15% 8%);
       }
       #entry-failure > div {
-        max-width: 360px;
-        text-align: center;
+        max-width: 384px;
       }
       #entry-failure h1 {
         margin: 0 0 8px;
         font-size: 18px;
-        font-weight: 600;
+        line-height: 28px;
+        font-weight: 500;
+        letter-spacing: -0.025em;
       }
       #entry-failure p {
-        margin: 0 0 20px;
-        opacity: 0.75;
+        margin: 0 0 16px;
+        font-size: 14px;
+        line-height: 1.625;
+        color: var(--muted);
       }
       #entry-failure button {
-        font: inherit;
-        font-weight: 600;
-        padding: 10px 20px;
+        height: 40px;
+        padding: 0 16px;
         border: 0;
-        border-radius: 8px;
-        background: #c8a055;
-        color: #1a1a1a;
+        border-radius: 10px;
+        font: inherit;
+        font-size: 14px;
+        font-weight: 500;
+        background: var(--primary);
+        color: var(--primary-foreground);
         cursor: pointer;
       }
       #entry-failure a {
         display: block;
         margin-top: 16px;
-        font-size: 13px;
-        color: inherit;
-        opacity: 0.6;
+        font-size: 14px;
+        color: var(--muted);
+        text-underline-offset: 4px;
       }
     </style>
     <script>
