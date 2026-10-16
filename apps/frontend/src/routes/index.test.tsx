@@ -68,6 +68,14 @@ describe("toast host placement", () => {
     expect(paths.filter((path) => !mountsStandaloneHost(path))).toEqual([])
   })
 
+  it("puts every top-level route under either the standalone layout or the workspace layout", () => {
+    const outside = (router.routes[0]?.children ?? []).filter((route) => {
+      const element = route.element as { type?: unknown } | null | undefined
+      return element?.type !== StandaloneLayout && route.path !== "/w/:workspaceId"
+    })
+    expect(outside).toEqual([])
+  })
+
   it("leaves workspace pages to WorkspaceLayout's own host", () => {
     expect(mountsStandaloneHost("/w/ws_1/s/stream_1")).toBe(false)
   })

@@ -28,7 +28,9 @@ function groupToastsByPosition(toasts: SonnerToast[], defaultPosition: ToastPosi
 }
 
 const Toaster = ({ ...props }: ToasterProps) => {
-  const resolvedTheme = usePreferencesOptional()?.resolvedTheme ?? "system"
+  // Outside a workspace there is no provider; index.html already applied the cached appearance to <html>.
+  const resolvedTheme =
+    usePreferencesOptional()?.resolvedTheme ?? (document.documentElement.classList.contains("dark") ? "dark" : "light")
   const isMobile = useIsMobile()
   const { toasts } = useSonner()
   const toasterRef = useRef<HTMLElement | null>(null)
