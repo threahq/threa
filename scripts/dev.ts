@@ -28,10 +28,8 @@ function resolveFrontendPort(): string {
 
 const POSTGRES_PORT = 5454
 const MINIO_HOST = "localhost"
-// Host-side port; docker-compose maps it to MinIO's own 9000 inside the container,
-// which is what the `docker exec mc` calls below address.
+// Host-side port; docker-compose maps it to the S3 port 9000 inside the container.
 const MINIO_PORT = 9099
-const MINIO_BUCKET = "threa-uploads"
 
 function loadEnvFile(filePath: string): Record<string, string> {
   const env: Record<string, string> = {}
@@ -287,7 +285,7 @@ async function waitForPostgres(maxAttempts = 30): Promise<boolean> {
 
 async function isMinioReachable(): Promise<boolean> {
   try {
-    const response = await fetch(`http://${MINIO_HOST}:${MINIO_PORT}/minio/health/live`)
+    const response = await fetch(`http://${MINIO_HOST}:${MINIO_PORT}/healthz`)
     return response.ok
   } catch {
     return false
@@ -304,28 +302,6 @@ async function waitForMinio(maxAttempts = 30): Promise<boolean> {
   return false
 }
 
-async function ensureMinioBucket(): Promise<void> {
-  const aliasResult = await $`docker exec threa-minio-1 mc alias set local http://localhost:9000 minioadmin minioadmin`
-    .quiet()
-    .nothrow()
-
-  if (aliasResult.exitCode !== 0) {
-    console.warn("Could not set up MinIO alias - bucket creation may fail")
-    return
-  }
-
-  const lsResult = await $`docker exec threa-minio-1 mc ls local/${MINIO_BUCKET}`.quiet().nothrow()
-
-  if (lsResult.exitCode !== 0) {
-    const mbResult = await $`docker exec threa-minio-1 mc mb local/${MINIO_BUCKET}`.quiet().nothrow()
-    if (mbResult.exitCode === 0) {
-      console.log(`Created MinIO bucket: ${MINIO_BUCKET}`)
-    } else {
-      console.warn(`Could not create MinIO bucket: ${MINIO_BUCKET}`)
-    }
-  }
-}
-
 async function main() {
   // Check if postgres is already running (e.g., started from main worktree)
   const postgresRunning = await isPostgresReachable()
@@ -334,7 +310,6 @@ async function main() {
   if (postgresRunning && minioRunning) {
     console.log("PostgreSQL and MinIO are already running")
     await ensureWorktreeEnv()
-    await ensureMinioBucket()
   } else {
     if (!postgresRunning) {
       console.log("Starting PostgreSQL...")
@@ -373,7 +348,6 @@ async function main() {
     }
 
     await ensureWorktreeEnv()
-    await ensureMinioBucket()
   }
 
   console.log("Starting control-plane, workspace-router, backend, enclave and frontend...")
