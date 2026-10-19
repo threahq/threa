@@ -52,6 +52,10 @@ describe("MessageVersionRepository and messaging backfill workspace scope (INV-8
   let streamA: string
   let streamB: string
 
+  // The preloaded server's workers call the same repository for other files' workspaces mid-test.
+  const scopedLookups = (calls: Parameters<typeof MessageRepository.findByIds>[]) =>
+    calls.filter(([, wid]) => wid === wsA || wid === wsB).map(([, wid, ids]) => ({ workspaceId: wid, ids }))
+
   let source: string
   let bOnlySource: string
   let bHost: string
@@ -270,7 +274,7 @@ describe("MessageVersionRepository and messaging backfill workspace scope (INV-8
       pinned: quoteAttrs(await storedContent("messages", quoteHolder)),
       unlocatable: await storedContent("messages", quoteHolderWithDecoy),
       foreign: await storedContent("messages", bLegacyInA),
-      lookups: findByIds.mock.calls.map(([, wid, ids]) => ({ workspaceId: wid, ids })),
+      lookups: scopedLookups(findByIds.mock.calls),
     }).toEqual({
       result: { processed: 1 },
       pinned: {
@@ -304,7 +308,7 @@ describe("MessageVersionRepository and messaging backfill workspace scope (INV-8
       pinned: quoteAttrs(await storedContent("message_versions", versionQuoteHolder)),
       foreignCopy: await storedContent("message_versions", versionIds.bDecoy7),
       orphan: await storedContent("message_versions", versionIds.aUnderB),
-      lookups: findByIds.mock.calls.map(([, wid, ids]) => ({ workspaceId: wid, ids })),
+      lookups: scopedLookups(findByIds.mock.calls),
     }).toEqual({
       result: { processed: 1 },
       pinned: {
@@ -333,7 +337,7 @@ describe("MessageVersionRepository and messaging backfill workspace scope (INV-8
       result,
       pinned: quoteAttrs(await storedContent(table, own)),
       foreign: await storedContent(table, foreign),
-      lookups: findByIds.mock.calls.map(([, wid, ids]) => ({ workspaceId: wid, ids })),
+      lookups: scopedLookups(findByIds.mock.calls),
     }).toEqual({
       result: { processed: 1 },
       pinned: {
