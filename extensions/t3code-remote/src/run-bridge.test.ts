@@ -11,6 +11,7 @@ function setup(options: { state?: ThreadState; sealedFullTrace?: boolean; projec
   const t3 = fakeT3()
   const session = fakeSession()
   const saved: ThreadState[] = []
+  const logs: string[] = []
   const runner = new T3TurnRunner({
     client: t3.client,
     session: session.session,
@@ -20,11 +21,17 @@ function setup(options: { state?: ThreadState; sealedFullTrace?: boolean; projec
     ...(options.projectId === undefined ? {} : { projectId: options.projectId }),
     threadStore: { load: () => options.state ?? { threads: {} }, save: (state) => saved.push(state) },
     sleep: async () => {},
+    log: (message) => logs.push(message),
   })
-  return { t3, session, saved, runner }
+  return { t3, session, saved, logs, runner }
 }
 
-function downloaded(filename: string, mimeType: string, content: string | { sizeBytes: number }): DownloadedAttachment {
+function downloaded(
+  filename: string,
+  mimeType: string,
+  content: string | { sizeBytes: number },
+  isSource = true
+): DownloadedAttachment {
   const localPath = join(mkdtempSync(join(tmpdir(), "t3-attachment-")), filename)
   if (typeof content === "string") writeFileSync(localPath, content)
   else {
@@ -34,8 +41,8 @@ function downloaded(filename: string, mimeType: string, content: string | { size
   const sizeBytes = typeof content === "string" ? content.length : content.sizeBytes
   return {
     attachment: { id: `att_${filename}`, filename, mimeType, sizeBytes },
-    messageId: "msg_1",
-    isSource: true,
+    messageId: isSource ? "msg_1" : "msg_0",
+    isSource,
     localPath,
   }
 }
@@ -111,14 +118,18 @@ describe("T3TurnRunner", () => {
   })
 
   test("uploads the images T3 takes natively and launches with them", async () => {
-    const { t3, session, runner } = setup()
+    const { t3, session, logs, runner } = setup()
     t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "A cat." })] }])
+    const cat = downloaded("cat.png", "image/png", "png-bytes")
 
     await runner.deliverTurn(
       turn({
         attachments: [
-          downloaded("cat.png", "image/png", "png-bytes"),
+          downloaded("earlier.png", "image/png", "context-bytes", false),
+          cat,
+          cat,
           downloaded("notes.pdf", "application/pdf", "pdf-bytes"),
+          downloaded("empty.gif", "image/gif", ""),
           downloaded("huge.webp", "image/webp", { sizeBytes: 10 * 1024 * 1024 + 1 }),
         ],
       })
@@ -129,10 +140,12 @@ describe("T3TurnRunner", () => {
       prepared: t3.callsOf("t3_attachment_prepare_upload"),
       uploads: t3.uploads,
       launched: t3.callsOf("t3_thread_launch").map((call) => call.attachments),
+      logs,
     }).toEqual({
       prepared: [{ upload: { type: "image", name: "cat.png", mimeType: "image/png", sizeBytes: 9 } }],
       uploads: [{ relativeUrl: "/api/attachments/upload/tok_1", bytes: "png-bytes" }],
       launched: [[{ type: "image", id: "t3att_1", name: "cat.png", mimeType: "image/png", sizeBytes: 9 }]],
+      logs: ["empty.gif reaches T3 only by path: it is empty", "huge.webp reaches T3 only by path: it is over 10 MiB"],
     })
   })
 
@@ -424,6 +437,23 @@ describe("T3TurnRunner", () => {
     ])
     expect(runner.hasOpenTurns()).toBe(false)
     expect({ replies: session.replies, fails: session.fails }).toEqual({ replies: [], fails: [] })
+  })
+
+  test("/stop also interrupts a steer T3 queued as its own run", async () => {
+    const { t3, runner } = setup()
+    t3.script("run_1", [{ status: "running" }])
+    await runner.deliverTurn(turn())
+    await idle()
+    t3.steerAs("queued")
+    await runner.steer("also the docs", "stream_root", [])
+
+    runner.interrupt("stream_root")
+    await idle()
+
+    expect(t3.callsOf("t3_thread_interrupt")).toEqual([
+      { threadId: "thread_1", runId: "run_1", reason: "Stopped from Threa" },
+      { threadId: "thread_1", runId: "run_2", reason: "Stopped from Threa" },
+    ])
   })
 
   test("/stop during admission stops the run once T3 names it", async () => {

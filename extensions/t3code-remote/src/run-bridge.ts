@@ -314,7 +314,7 @@ export class T3TurnRunner {
       if (!inScope(run.streamId)) continue
       run.abort.abort()
       this.runs.delete(invocationId)
-      this.stopRun(run.threadId, run.runId)
+      this.stopChain(run)
     }
     return true
   }
@@ -407,13 +407,24 @@ export class T3TurnRunner {
     return { threadId, runId: sent.runId }
   }
 
-  /** Uploads the images T3 can take natively; the manifest in the message still lists every file by path. */
+  /**
+   * Uploads the images on the messages being sent, which T3 takes natively; context
+   * messages' images were sent with their own turn. The manifest still lists every file by path.
+   */
   private async uploadImages(attachments: DownloadedAttachment[]): Promise<ImageAttachment[]> {
     const uploaded: ImageAttachment[] = []
-    for (const { attachment, localPath } of attachments) {
-      if (uploaded.length === MAX_IMAGES_PER_MESSAGE) break
-      if (!IMAGE_MIME_TYPES.has(attachment.mimeType)) continue
-      if ((await stat(localPath)).size > MAX_IMAGE_BYTES) continue
+    const seen = new Set<string>()
+    for (const { attachment, localPath, isSource } of attachments) {
+      if (!isSource || !IMAGE_MIME_TYPES.has(attachment.mimeType) || seen.has(attachment.id)) continue
+      seen.add(attachment.id)
+      const skipped =
+        uploaded.length === MAX_IMAGES_PER_MESSAGE
+          ? `T3 takes ${MAX_IMAGES_PER_MESSAGE} per message`
+          : imageSizeProblem((await stat(localPath)).size)
+      if (skipped) {
+        this.log(`${attachment.filename} reaches T3 only by path: ${skipped}`)
+        continue
+      }
       const bytes = await readFile(localPath)
       const upload = {
         type: "image" as const,
@@ -432,6 +443,11 @@ export class T3TurnRunner {
     void this.client.call("t3_thread_interrupt", { threadId, runId, reason: "Stopped from Threa" }).catch((error) => {
       this.log(`run ${runId} stop failed: ${errorText(error)}`)
     })
+  }
+
+  /** A steer T3 queued as its own run is still part of the turn, and interrupting a finished run is a no-op. */
+  private stopChain(run: OpenRun): void {
+    for (const runId of run.trace.runIds) this.stopRun(run.threadId, runId)
   }
 
   private async follow(invocationId: string, run: OpenRun): Promise<void> {
@@ -477,7 +493,7 @@ export class T3TurnRunner {
     }
     if (signal.aborted) return
     if (trace.blockedOn) {
-      this.stopRun(run.threadId, run.runId)
+      this.stopChain(run)
       await this.session.failTurn(
         invocationId,
         `T3 Code stopped to ask for ${BLOCKING_LABELS[trace.blockedOn]}, which Threa can't answer yet. Give the connector full-access (t3Access) so runs never wait on one.`
@@ -551,6 +567,12 @@ export class T3TurnRunner {
     this.options.threadStore?.save(next)
     this.state = next
   }
+}
+
+function imageSizeProblem(size: number): string | undefined {
+  if (size === 0) return "it is empty"
+  if (size > MAX_IMAGE_BYTES) return "it is over 10 MiB"
+  return undefined
 }
 
 function adopt(run: OpenRun, runId: string): void {
