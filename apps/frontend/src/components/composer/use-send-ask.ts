@@ -42,7 +42,7 @@ function exposedAfterAlternative({ tone, exposed, convertibleStreamIds }: SendWa
   if (tone === "reveal") {
     return {
       reveal: exposed.reveal.filter((id) => !converted.has(id)),
-      unreachable: [...new Set([...exposed.unreachable, ...convertibleStreamIds])],
+      unreachable: convertibleStreamIds,
     }
   }
   return { reveal: convertibleStreamIds, unreachable: exposed.unreachable }
@@ -75,8 +75,8 @@ export function useSendAsk({
   const [asked, setAsked] = useState<{ key: string; signature: string } | null>(null)
   const consented = useRef(new Set<string>())
   const waiting = useRef(false)
-  const contentRef = useRef(content)
-  contentRef.current = content
+  const latest = useRef({ content, sendWarning, awaitSendWarning })
+  latest.current = { content, sendWarning, awaitSendWarning }
 
   const contentIsEmpty = isEmptyContent(content)
   useEffect(() => {
@@ -110,14 +110,11 @@ export function useSendAsk({
     (decided: ComposerSendWarning | null, send: Send) => {
       const unanswered =
         decided && consentKeys(decided.targetKey, decided.warning.exposed).some((key) => !consented.current.has(key))
-      if (unanswered) setAsked({ key: askKeyOf(decided), signature: contentSignature(contentRef.current) })
+      if (unanswered) setAsked({ key: askKeyOf(decided), signature: contentSignature(latest.current.content) })
       else sendAndRecord(decided, send)
     },
     [sendAndRecord]
   )
-
-  const latest = useRef({ sendWarning, awaitSendWarning })
-  latest.current = { sendWarning, awaitSendWarning }
 
   const settleThenDecide = useCallback(
     async (send: Send): Promise<void> => {
@@ -127,11 +124,10 @@ export function useSendAsk({
         return
       }
       // A link pasted a moment ago has no answer yet; asking from the old one would skip it.
-      const before = contentSignature(contentRef.current)
+      const before = contentSignature(latest.current.content)
       const settled = await awaitSettled()
-      // The answer is about the content Send was pressed on; anything typed since is decided afresh.
-      if (contentSignature(contentRef.current) === before) decide(settled, send)
-      else await settleThenDecide(send)
+      // The answer is about the content Send was pressed on; a draft typed into since waits for the next Send.
+      if (contentSignature(latest.current.content) === before) decide(settled, send)
     },
     [decide]
   )

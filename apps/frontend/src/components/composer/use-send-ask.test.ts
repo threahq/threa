@@ -133,7 +133,7 @@ describe("useSendAsk", () => {
     }).toEqual({ askedSend: [], asked: "reveal", timedOutSend: [[undefined]] })
   })
 
-  it("re-decides a waiting send against the draft the author kept typing into", async () => {
+  it("drops a waiting send once the author keeps typing, leaving the draft for the next Send", async () => {
     let settle: (value: ComposerSendWarning | null) => void = () => {}
     const awaitSendWarning = () => new Promise<ComposerSendWarning | null>((resolve) => (settle = resolve))
     const { result, rerender } = renderAsk({ sendWarning: null, content: DRAFT, awaitSendWarning })
@@ -143,13 +143,13 @@ describe("useSendAsk", () => {
     act(() => {
       pending = result.current.submit(send)
     })
-    rerender({ sendWarning: warning(), content: doc("something else"), awaitSendWarning: null })
+    rerender({ sendWarning: warning(), content: doc("something else"), awaitSendWarning })
     await act(async () => {
-      settle(null)
+      settle(warning())
       await pending
     })
 
-    expect({ sent: send.mock.calls, asked: result.current.question?.tone }).toEqual({ sent: [], asked: "reveal" })
+    expect({ sent: send.mock.calls, asked: result.current.question }).toEqual({ sent: [], asked: null })
   })
 
   it("still asks or sends when a display stamp lands while the answer is awaited", async () => {
@@ -234,6 +234,23 @@ describe("useSendAsk", () => {
         sentAnyway: [[undefined]],
         sharedBSend: [],
         asked: "reveal",
+      })
+    })
+
+    it("Use link answers only for the links it made, not another link the question never named", async () => {
+      const { result, rerender } = renderAsk({
+        sendWarning: exposing({ reveal: ["stream_a"], unreachable: ["stream_b"] }, ["stream_a"]),
+        content: DRAFT,
+      })
+      await submit(result)
+      act(() => result.current.recordAlternative())
+
+      rerender({ sendWarning: exposing({ unreachable: ["stream_a", "stream_b"] }, ["stream_a"]), content: DRAFT })
+      const linkSend = await submit(result)
+
+      expect({ linkSend: linkSend.mock.calls, asked: result.current.question?.tone }).toEqual({
+        linkSend: [],
+        asked: "unreachable",
       })
     })
 

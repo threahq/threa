@@ -18,8 +18,6 @@ export function MemoEmbedView({ node, editor, getPos }: NodeViewProps) {
 
   const resolvedTitle = source.status === "resolved" ? source.title : null
 
-  // Stamp the resolved title onto the node only when it was inserted without
-  // one (pasted memo link). A user-cached title is left as-is.
   useEffect(() => {
     if (resolvedTitle && !attrs.title) stampNodeAttrs({ editor, getPos }, "memoEmbed", { title: resolvedTitle })
   }, [resolvedTitle, attrs.title, editor, getPos])
