@@ -145,6 +145,7 @@ export const ACCESS_LOG_OPERATIONS = [
   // Messages
   "messages.create",
   "messages.validate_move_to_thread",
+  "messages.reference_audience",
   "messages.move_to_thread",
   "messages.update",
   "messages.delete",

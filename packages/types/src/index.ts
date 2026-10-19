@@ -669,6 +669,10 @@ export type {
   MoveMessagesToThreadResponse,
   ValidateMoveMessagesToThreadInput,
   ValidateMoveMessagesToThreadResponse,
+  ReferenceAudienceInput,
+  ReferenceAudienceTarget,
+  ReferenceAudience,
+  ReferenceAudienceResponse,
   MovedMessagePreview,
   MessagesMovedEventPayload,
   MovedFromProvenance,
@@ -824,7 +828,7 @@ export type { Slot, SharedMessageSlot, SlotMap, SharedMessageRef } from "./slots
 export { sharedMessageSlotKey, parseSharedMessageSlotKey } from "./slots"
 
 // Push Notifications
-export { DEVICE_KEY_LENGTH, STREAM_PREVIEW_HISTORY_MAX_STREAMS } from "./api"
+export { DEVICE_KEY_LENGTH, REFERENCE_AUDIENCE_MAX_STREAM_IDS, STREAM_PREVIEW_HISTORY_MAX_STREAMS } from "./api"
 
 // AI usage category constants
 export {

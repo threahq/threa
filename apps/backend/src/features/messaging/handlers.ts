@@ -15,6 +15,7 @@ import {
   type ConversationDirective,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
   MessageErrorCodes,
+  REFERENCE_AUDIENCE_MAX_STREAM_IDS,
   StreamConnectionErrorCodes,
 } from "@threahq/types"
 import { serializeBigInt, HttpError } from "@threahq/backend-common"
@@ -24,10 +25,11 @@ import { eventId, commandId as generateCommandId } from "../../lib/id"
 import { toShortcode, normalizeMessage, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
 import { deriveContentMarkdown } from "./content"
-import type { JSONContent } from "@threahq/types"
+import type { JSONContent, ReferenceAudienceInput, ReferenceAudienceResponse } from "@threahq/types"
 import { messageMetadataSchema } from "./metadata-schema"
 import { e2eEnvelopeSchema, MAX_E2E_CIPHERTEXT_BASE64_BYTES } from "./e2e-schema"
 import type { EnqueuedMessageService } from "./enqueued-message-service"
+import { ShareService } from "./sharing"
 
 // Fields shared by every create/update variant. Defining once keeps the
 // six schemas from drifting when a per-message option is added.
@@ -193,6 +195,16 @@ const moveMessagesToThreadSchema = z.object({
 
 const validateMoveMessagesToThreadSchema = moveMessagesToThreadSchema.omit({ leaseKey: true })
 
+const referenceAudienceStreamIds = z.array(z.string().min(1)).min(1).max(REFERENCE_AUDIENCE_MAX_STREAM_IDS)
+const referenceAudienceSchema = z.union([
+  z.object({ streamId: z.string().min(1), streamIds: referenceAudienceStreamIds }),
+  z.object({ dmUserId: z.string().min(1), streamIds: referenceAudienceStreamIds }),
+])
+const _audienceSchemaToType = (d: z.infer<typeof referenceAudienceSchema>): ReferenceAudienceInput => d
+const _audienceTypeToSchema = (d: ReferenceAudienceInput): z.infer<typeof referenceAudienceSchema> => d
+void _audienceSchemaToType
+void _audienceTypeToSchema
+
 export {
   createMessageSchema,
   updateMessageSchema,
@@ -310,12 +322,26 @@ export function createMessageHandlers({
     return { stream, forward: requireForwardService() }
   }
 
+  async function assertDmSharesConfirmed(
+    workspaceId: string,
+    userId: string,
+    data: z.infer<typeof createMessageJsonToDmSchema> | z.infer<typeof createMessageMarkdownToDmSchema>
+  ) {
+    await ShareService.assertNewDmSharesConfirmed({
+      contentJson: normalizeContent(data).contentJson,
+      confirmedPrivacyWarning: data.confirmedPrivacyWarning,
+      listAudiences: (streamIds) =>
+        streamService.listReferenceAudiences({ workspaceId, userId, target: { dmUserId: data.dmUserId }, streamIds }),
+    })
+  }
+
   return {
     async create(req: Request, res: Response) {
       const userId = req.user!.id
       const workspaceId = req.workspaceId!
 
       const data = validateRequest(createMessageSchema, req.body)
+      if ("dmUserId" in data) await assertDmSharesConfirmed(workspaceId, userId, data)
 
       const target = await streamService.resolveMessageWriteTarget({
         workspaceId,
@@ -616,6 +642,18 @@ export function createMessageHandlers({
       })
 
       res.json(validation)
+    },
+
+    async referenceAudience(req: Request, res: Response) {
+      const data = validateRequest(referenceAudienceSchema, req.body)
+      const audiences = await streamService.listReferenceAudiences({
+        workspaceId: req.workspaceId!,
+        userId: req.user!.id,
+        target: "dmUserId" in data ? { dmUserId: data.dmUserId } : { streamId: data.streamId },
+        streamIds: data.streamIds,
+      })
+      const response: ReferenceAudienceResponse = { audiences }
+      res.json(response)
     },
 
     async delete(req: Request, res: Response) {

@@ -121,7 +121,7 @@ describe("ShareService.validateAndRecordShares", () => {
     spyOn(MessageRepository, "findByIds").mockResolvedValue(new Map([[sourceMessage.id, sourceMessage]]))
     spyOn(SharedMessageRepository, "insert").mockResolvedValue({} as any)
     spyOn(SharedMessageRepository, "deleteByShareMessageId").mockResolvedValue(new Set())
-    spyOn(streams, "countReadersWithoutAccess").mockResolvedValue(new Map())
+    spyOn(streams, "findReadersWithoutAccess").mockResolvedValue(new Map())
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
   })
 
@@ -161,7 +161,9 @@ describe("ShareService.validateAndRecordShares", () => {
   })
 
   it("rejects shares that cross a privacy boundary without confirmation", async () => {
-    spyOn(streams, "countReadersWithoutAccess").mockResolvedValue(new Map([["stream_source", 2]]))
+    spyOn(streams, "findReadersWithoutAccess").mockResolvedValue(
+      new Map([["stream_source", { count: 2, sampleUserIds: [] }]])
+    )
 
     await expect(ShareService.validateAndRecordShares(baseParams())).rejects.toMatchObject({
       status: 409,
@@ -172,7 +174,9 @@ describe("ShareService.validateAndRecordShares", () => {
   })
 
   it("accepts privacy-crossing shares when the sharer confirmed", async () => {
-    spyOn(streams, "countReadersWithoutAccess").mockResolvedValue(new Map([["stream_source", 2]]))
+    spyOn(streams, "findReadersWithoutAccess").mockResolvedValue(
+      new Map([["stream_source", { count: 2, sampleUserIds: [] }]])
+    )
     await ShareService.validateAndRecordShares(baseParams({ confirmedPrivacyWarning: true }))
     expect(SharedMessageRepository.insert).toHaveBeenCalledTimes(1)
   })
@@ -223,10 +227,13 @@ describe("ShareService.validateAndRecordShares", () => {
 
     expect(findStream).toHaveBeenCalledTimes(1)
     expect(canReadStream).toHaveBeenCalledTimes(1)
-    expect(streams.countReadersWithoutAccess).toHaveBeenCalledTimes(1)
-    expect(streams.countReadersWithoutAccess).toHaveBeenCalledWith(expect.anything(), "ws_1", "stream_target", [
-      "stream_source",
-    ])
+    expect(streams.findReadersWithoutAccess).toHaveBeenCalledTimes(1)
+    expect(streams.findReadersWithoutAccess).toHaveBeenCalledWith(
+      expect.anything(),
+      "ws_1",
+      { streamId: "stream_target" },
+      ["stream_source"]
+    )
     expect(MessageRepository.findByIds).toHaveBeenCalledTimes(1)
     expect(MessageRepository.findByIds).toHaveBeenCalledWith(expect.anything(), "ws_1", [sourceMessage.id])
     expect(SharedMessageRepository.insert).toHaveBeenCalledTimes(2)

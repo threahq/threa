@@ -12,7 +12,12 @@ import { ShareErrorCodes, type JSONContent } from "@threahq/types"
 
 import { setupTestDatabase, withTransaction, addTestMember } from "./setup"
 import { WorkspaceRepository } from "../../src/features/workspaces"
-import { StreamRepository, StreamMemberRepository, countReadersWithoutAccess } from "../../src/features/streams"
+import {
+  StreamRepository,
+  StreamMemberRepository,
+  StreamService,
+  findReadersWithoutAccess,
+} from "../../src/features/streams"
 import { EventService, SharedMessageRepository } from "../../src/features/messaging"
 import { userId, workspaceId, streamId } from "../../src/lib/id"
 
@@ -58,13 +63,14 @@ describe("share privacy boundary", () => {
   async function seedStream(
     visibility: "public" | "private" | "guest_public",
     members: string[],
-    thread?: { rootStreamId: string }
+    thread?: { rootStreamId: string },
+    workspace = ws
   ): Promise<string> {
     const id = streamId()
     await withTransaction(pool, async (client) => {
       await StreamRepository.insert(client, {
         id,
-        workspaceId: ws,
+        workspaceId: workspace,
         type: thread ? "thread" : "channel",
         visibility,
         ...(thread ? { parentStreamId: thread.rootStreamId, rootStreamId: thread.rootStreamId } : {}),
@@ -72,7 +78,7 @@ describe("share privacy boundary", () => {
         createdBy: alice,
       })
       for (const member of members) {
-        await StreamMemberRepository.insert(client, ws, id, member)
+        await StreamMemberRepository.insert(client, workspace, id, member)
       }
     })
     return id
@@ -236,13 +242,108 @@ describe("share privacy boundary", () => {
     await expectConfirmationRequired(shareInto(lobby, pointerTo(leadership, source.id)))
   })
 
-  test("countReadersWithoutAccess counts per source, resolving a thread target through its root", async () => {
+  test("findReadersWithoutAccess counts per source for a stream or user scope, sampling only when asked", async () => {
     const leadership = await seedStream("private", [alice])
     const wide = await seedStream("private", [alice, bob])
     const product = await seedStream("private", [alice, bob])
     const thread = await seedStream("private", [alice], { rootStreamId: product })
+    const sample = { size: 3, viewerId: alice }
 
-    expect(await countReadersWithoutAccess(pool, ws, thread, [leadership, wide])).toEqual(new Map([[leadership, 1]]))
-    expect(await countReadersWithoutAccess(pool, ws, thread, [])).toEqual(new Map())
+    expect({
+      thread: await findReadersWithoutAccess(pool, ws, { streamId: thread }, [leadership, wide], sample),
+      users: await findReadersWithoutAccess(pool, ws, { userIds: [bob, alice] }, [leadership, wide], sample),
+      noSample: await findReadersWithoutAccess(pool, ws, { streamId: thread }, [leadership]),
+      empty: await findReadersWithoutAccess(pool, ws, { streamId: thread }, [], sample),
+    }).toEqual({
+      thread: new Map([[leadership, { count: 1, sampleUserIds: [bob] }]]),
+      users: new Map([[leadership, { count: 1, sampleUserIds: [bob] }]]),
+      noSample: new Map([[leadership, { count: 1, sampleUserIds: [] }]]),
+      empty: new Map(),
+    })
+  })
+
+  describe("StreamService.listReferenceAudiences", () => {
+    const streamService = () => new StreamService(pool)
+
+    test("answers only readable refs in request order, per target kind, with a name-ordered sample capped at 3", async () => {
+      const tag = streamId().slice(-6).toLowerCase()
+      const reader = await withTransaction(pool, async (client) => {
+        const ids: Record<string, string> = {}
+        for (const letter of ["d", "b", "a", "c"]) {
+          ids[letter] = (await addTestMember(client, ws, `wos_${tag}_reader-${letter}`)).id
+        }
+        return ids
+      })
+      const leadership = await seedStream("private", [alice])
+      const hidden = await seedStream("private", [bob])
+      const product = await seedStream("private", [alice, ...Object.values(reader)])
+      const thread = await seedStream("private", [alice], { rootStreamId: product })
+
+      const ask = (target: { streamId: string } | { dmUserId: string }) =>
+        streamService().listReferenceAudiences({
+          workspaceId: ws,
+          userId: alice,
+          target,
+          streamIds: [product, leadership, leadership, hidden],
+        })
+
+      expect({
+        thread: await ask({ streamId: thread }),
+        dmToReader: await ask({ dmUserId: reader.c }),
+        dmToBob: await ask({ dmUserId: bob }),
+      }).toEqual({
+        thread: [{ streamId: leadership, count: 4, sampleUserIds: [reader.a, reader.b, reader.c] }],
+        dmToReader: [{ streamId: leadership, count: 1, sampleUserIds: [reader.c] }],
+        dmToBob: [
+          { streamId: product, count: 1, sampleUserIds: [bob] },
+          { streamId: leadership, count: 1, sampleUserIds: [bob] },
+        ],
+      })
+    })
+
+    test("a guest's sample names only people the guest can see, while the count covers every reader", async () => {
+      const guestWs = workspaceId()
+      const tag = guestWs.slice(-6).toLowerCase()
+      const people = await withTransaction(pool, async (client) => {
+        await WorkspaceRepository.insert(client, {
+          id: guestWs,
+          name: "Share Privacy Guest",
+          slug: `share-privacy-guest-${guestWs}`,
+          createdBy: userId(),
+        })
+        return {
+          guest: (await addTestMember(client, guestWs, `wos_${tag}_guest`, "guest")).id,
+          seen: (await addTestMember(client, guestWs, `wos_${tag}_seen`)).id,
+          unseen: (await addTestMember(client, guestWs, `wos_${tag}_unseen`)).id,
+          sourceMember: (await addTestMember(client, guestWs, `wos_${tag}_source`)).id,
+        }
+      })
+      const lobby = await seedStream("guest_public", [people.guest, people.seen], undefined, guestWs)
+      const source = await seedStream("private", [people.guest, people.sourceMember], undefined, guestWs)
+
+      expect(
+        await streamService().listReferenceAudiences({
+          workspaceId: guestWs,
+          userId: people.guest,
+          target: { streamId: lobby },
+          streamIds: [source],
+        })
+      ).toEqual([{ streamId: source, count: 2, sampleUserIds: [people.seen] }])
+    })
+
+    test("an unreadable target, a self DM, or an unknown DM user is refused", async () => {
+      const hidden = await seedStream("private", [bob])
+      const leadership = await seedStream("private", [alice])
+      const ask = (target: { streamId: string } | { dmUserId: string }) =>
+        streamService()
+          .listReferenceAudiences({ workspaceId: ws, userId: alice, target, streamIds: [leadership] })
+          .catch((err) => err.code)
+
+      expect({
+        stream: await ask({ streamId: hidden }),
+        self: await ask({ dmUserId: alice }),
+        unknown: await ask({ dmUserId: userId() }),
+      }).toEqual({ stream: "STREAM_NOT_FOUND", self: "DM_SELF_NOT_ALLOWED", unknown: "MEMBER_NOT_FOUND" })
+    })
   })
 })

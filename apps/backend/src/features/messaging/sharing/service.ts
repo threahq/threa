@@ -6,7 +6,7 @@ import { MessageRepository } from "../repository"
 import type { CanReadStream, FindStreamForSharing } from "./access-check"
 import { SharedMessageRepository } from "./repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
-import { countReadersWithoutAccess } from "../../streams"
+import { findReadersWithoutAccess } from "../../streams"
 
 /**
  * A share-node extracted from a message's contentJson during scanning.
@@ -56,6 +56,13 @@ export function collectShareReferences(content: JSONContent, targetStreamId: str
       }
     }
   }
+}
+
+export function privacyConfirmationRequired(): HttpError {
+  return new HttpError("Privacy confirmation required to share this message", {
+    status: 409,
+    code: ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED,
+  })
 }
 
 export interface ValidateAndRecordSharesParams {
@@ -119,6 +126,22 @@ export interface ValidateAndRecordSharesParams {
  * connections can't multiplex; the win is dedup, not concurrency.
  */
 export const ShareService = {
+  /**
+   * A first DM message creates the DM, so its shares are checked against the peer before that write:
+   * a 409 must not leave behind a DM the author never sent anything to.
+   */
+  async assertNewDmSharesConfirmed(params: {
+    contentJson: JSONContent
+    confirmedPrivacyWarning?: boolean
+    listAudiences: (streamIds: string[]) => Promise<{ count: number }[]>
+  }): Promise<void> {
+    if (params.confirmedPrivacyWarning) return
+    const references = collectShareReferences(params.contentJson, "")
+    if (references.length === 0) return
+    const audiences = await params.listAudiences(references.map((ref) => ref.sourceStreamId))
+    if (audiences.some((audience) => audience.count > 0)) throw privacyConfirmationRequired()
+  },
+
   async validateAndRecordShares(params: ValidateAndRecordSharesParams): Promise<void> {
     const references = collectShareReferences(params.contentJson, params.targetStreamId)
 
@@ -145,10 +168,10 @@ export const ShareService = {
       params.workspaceId,
       uniqueSourceMessageIds
     )
-    const exposedReaders = await countReadersWithoutAccess(
+    const exposedReaders = await findReadersWithoutAccess(
       params.client,
       params.workspaceId,
-      params.targetStreamId,
+      { streamId: params.targetStreamId },
       uniqueSourceStreamIds
     )
 
@@ -228,14 +251,11 @@ export const ShareService = {
       // reference this message already recorded was accepted when it was
       // added, so an edit that keeps it doesn't ask again.
       if (
-        (exposedReaders.get(ref.sourceStreamId) ?? 0) > 0 &&
+        (exposedReaders.get(ref.sourceStreamId)?.count ?? 0) > 0 &&
         !params.confirmedPrivacyWarning &&
         !recordedSourceMessageIds.has(ref.sourceMessageId)
       ) {
-        throw new HttpError("Privacy confirmation required to share this message", {
-          status: 409,
-          code: ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED,
-        })
+        throw privacyConfirmationRequired()
       }
 
       await SharedMessageRepository.insert(params.client, {

@@ -11,7 +11,7 @@ export { syncUserCopies } from "./user-copies"
 export { ActorCopyRepository } from "./actor-copy-repository"
 export { syncActorCopies } from "./actor-copies"
 export type { User, ClaimedUser, InsertUserParams, CopyProfileUpdate } from "./user-repository"
-export { PeoplePurposes, listGuestViewers, peopleViewerForActor } from "./people"
+export { PeoplePurposes, listGuestViewers, peopleScopeSql, peopleViewerForActor } from "./people"
 export type { PeopleScope, PeopleViewer } from "./people"
 export {
   anyUserLacksBrowseSql,

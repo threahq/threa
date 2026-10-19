@@ -21,7 +21,7 @@ export { findMemoryModeStream, isMemoryAutomationOn } from "./memory-mode"
 // Canonical "can this user read this stream?" check (INV-8)
 export {
   checkStreamAccess,
-  countReadersWithoutAccess,
+  findReadersWithoutAccess,
   isRoomShared,
   listAccessibleStreamIds,
   listRoomReadableStreamIds,

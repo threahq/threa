@@ -11,6 +11,7 @@ export interface RateLimiterSet {
   search: RequestHandler
   upload: RequestHandler
   messageCreate: RequestHandler
+  referenceAudience: RequestHandler
   commandDispatch: RequestHandler
   pushTest: RequestHandler
   pushReceipt: RequestHandler
@@ -104,6 +105,13 @@ export function createRateLimiters(config: RateLimiterConfig): RateLimiterSet {
       name: "message-create",
       windowMs: 60_000,
       max: 120,
+      key: userScopeKey,
+    }),
+
+    referenceAudience: createRateLimit({
+      name: "reference-audience",
+      windowMs: 60_000,
+      max: 60,
       key: userScopeKey,
     }),
 
