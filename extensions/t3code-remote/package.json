@@ -1,0 +1,41 @@
+{
+  "name": "@threahq/t3code-remote",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A T3 Code connector that bridges a local T3 Code server to a Threa scratchpad: each Threa turn becomes one T3 thread run, with its activity traced back as steps.",
+  "keywords": [
+    "threa",
+    "t3code",
+    "agent",
+    "connector"
+  ],
+  "license": "MIT",
+  "homepage": "https://threa.io/developers",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/threahq/threa.git",
+    "directory": "extensions/t3code-remote"
+  },
+  "bugs": {
+    "url": "https://github.com/threahq/threa/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "threa-t3code": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun run ./src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@threahq/remote-session": "file:../remote-session"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.9.3"
+  }
+}

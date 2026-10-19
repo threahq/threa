@@ -230,6 +230,7 @@ jobs:
           bun install --cwd extensions/harness-daemon
           bun install --cwd extensions/threa-bot
           bun install --cwd extensions/hermes-remote
+          bun install --cwd extensions/t3code-remote
 
       - name: Typecheck extensions
         if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
@@ -241,6 +242,7 @@ jobs:
           bun run --cwd extensions/harness-daemon typecheck
           bun run --cwd extensions/threa-bot typecheck
           bun run --cwd extensions/hermes-remote typecheck
+          bun run --cwd extensions/t3code-remote typecheck
 
       - name: Run extension tests
         if: github.event_name == 'push' || steps.filter.outputs.extensions == 'true'
@@ -253,6 +255,7 @@ jobs:
           bun run --cwd extensions/harness-daemon test
           bun run --cwd extensions/threa-bot test
           bun run --cwd extensions/hermes-remote test
+          bun run --cwd extensions/t3code-remote test
 
   public-site-build:
     name: Public Site Build
