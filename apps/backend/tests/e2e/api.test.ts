@@ -23,6 +23,7 @@ import {
   deleteMessage,
   getWorkspaceBootstrap,
   getUserId,
+  joinWorkspace,
 } from "../client"
 
 // Generate unique identifier for this test run to avoid collisions
@@ -842,6 +843,43 @@ describe("API E2E Tests", () => {
       const editPayload = editEvents[0].payload as { messageId: string; contentMarkdown: string }
       expect(editPayload.messageId).toBe(m2.id)
       expect(editPayload.contentMarkdown).toBe("First step: talk to potential customers")
+    })
+  })
+
+  describe("Reference audience", () => {
+    test("lists destination readers who can't read a referenced stream", async () => {
+      const owner = new TestClient()
+      await loginAs(owner, testEmail("ref-audience-owner"), "Ref Audience Owner")
+      const workspace = await createWorkspace(owner, `Ref Audience WS ${testRunId}`)
+      const scratchpad = await createScratchpad(owner, workspace.id, "off")
+      const lobby = await createChannel(owner, workspace.id, `ref-audience-${testRunId}`, "public")
+      const reader = new TestClient()
+      await loginAs(reader, testEmail("ref-audience-reader"), "Ref Audience Reader")
+      const readerUser = await joinWorkspace(reader, workspace.id)
+
+      const { status, data } = await owner.post(`/api/workspaces/${workspace.id}/messages/reference-audience`, {
+        streamId: lobby.id,
+        streamIds: [scratchpad.id, lobby.id],
+      })
+
+      expect({ status, data }).toEqual({
+        status: 200,
+        data: { audiences: [{ streamId: scratchpad.id, count: 1, sampleUserIds: [readerUser.id] }] },
+      })
+    })
+
+    test("rejects a request without referenced streams", async () => {
+      const client = new TestClient()
+      await loginAs(client, testEmail("ref-audience-invalid"), "Ref Audience Invalid")
+      const workspace = await createWorkspace(client, `Ref Audience Invalid WS ${testRunId}`)
+      const scratchpad = await createScratchpad(client, workspace.id, "off")
+
+      const { status } = await client.post(`/api/workspaces/${workspace.id}/messages/reference-audience`, {
+        streamId: scratchpad.id,
+        streamIds: [],
+      })
+
+      expect(status).toBe(400)
     })
   })
 })

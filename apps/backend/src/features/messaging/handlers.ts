@@ -24,7 +24,7 @@ import { eventId, commandId as generateCommandId } from "../../lib/id"
 import { toShortcode, normalizeMessage, toEmoji } from "../emoji"
 import { collectAttachmentReferenceIds, parseMarkdown } from "@threahq/prosemirror"
 import { deriveContentMarkdown } from "./content"
-import type { JSONContent } from "@threahq/types"
+import type { JSONContent, ReferenceAudienceInput, ReferenceAudienceResponse } from "@threahq/types"
 import { messageMetadataSchema } from "./metadata-schema"
 import { e2eEnvelopeSchema, MAX_E2E_CIPHERTEXT_BASE64_BYTES } from "./e2e-schema"
 import type { EnqueuedMessageService } from "./enqueued-message-service"
@@ -192,6 +192,16 @@ const moveMessagesToThreadSchema = z.object({
 })
 
 const validateMoveMessagesToThreadSchema = moveMessagesToThreadSchema.omit({ leaseKey: true })
+
+const referenceAudienceStreamIds = z.array(z.string().min(1)).min(1).max(50)
+const referenceAudienceSchema = z.union([
+  z.object({ streamId: z.string().min(1), streamIds: referenceAudienceStreamIds }),
+  z.object({ dmUserId: z.string().min(1), streamIds: referenceAudienceStreamIds }),
+])
+const _audienceSchemaToType = (d: z.infer<typeof referenceAudienceSchema>): ReferenceAudienceInput => d
+const _audienceTypeToSchema = (d: ReferenceAudienceInput): z.infer<typeof referenceAudienceSchema> => d
+void _audienceSchemaToType
+void _audienceTypeToSchema
 
 export {
   createMessageSchema,
@@ -616,6 +626,18 @@ export function createMessageHandlers({
       })
 
       res.json(validation)
+    },
+
+    async referenceAudience(req: Request, res: Response) {
+      const data = validateRequest(referenceAudienceSchema, req.body)
+      const audiences = await streamService.listReferenceAudiences({
+        workspaceId: req.workspaceId!,
+        userId: req.user!.id,
+        target: "dmUserId" in data ? { dmUserId: data.dmUserId } : { streamId: data.streamId },
+        streamIds: data.streamIds,
+      })
+      const response: ReferenceAudienceResponse = { audiences }
+      res.json(response)
     },
 
     async delete(req: Request, res: Response) {

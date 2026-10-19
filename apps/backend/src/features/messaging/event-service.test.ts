@@ -1708,7 +1708,7 @@ describe("EventService sharedMessages wire enrichment", () => {
       ]) as any
     )
     spyOn(E2eStreamsRepository, "isE2eStream").mockResolvedValue(false)
-    spyOn(streamsModule, "countReadersWithoutAccess").mockResolvedValue(new Map())
+    spyOn(streamsModule, "findReadersWithoutAccess").mockResolvedValue(new Map())
     // Hydration itself is covered in sharing/hydration.test.ts — stub the
     // wire entry and assert what rides the outbox payload.
     spyOn(sharing, "hydrateSharedMessageRefsForRoom").mockResolvedValue({

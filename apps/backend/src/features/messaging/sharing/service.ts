@@ -6,7 +6,7 @@ import { MessageRepository } from "../repository"
 import type { CanReadStream, FindStreamForSharing } from "./access-check"
 import { SharedMessageRepository } from "./repository"
 import { E2eStreamsRepository } from "../../e2e-streams"
-import { countReadersWithoutAccess } from "../../streams"
+import { findReadersWithoutAccess } from "../../streams"
 
 /**
  * A share-node extracted from a message's contentJson during scanning.
@@ -145,10 +145,10 @@ export const ShareService = {
       params.workspaceId,
       uniqueSourceMessageIds
     )
-    const exposedReaders = await countReadersWithoutAccess(
+    const exposedReaders = await findReadersWithoutAccess(
       params.client,
       params.workspaceId,
-      params.targetStreamId,
+      { streamId: params.targetStreamId },
       uniqueSourceStreamIds
     )
 
@@ -228,7 +228,7 @@ export const ShareService = {
       // reference this message already recorded was accepted when it was
       // added, so an edit that keeps it doesn't ask again.
       if (
-        (exposedReaders.get(ref.sourceStreamId) ?? 0) > 0 &&
+        (exposedReaders.get(ref.sourceStreamId)?.count ?? 0) > 0 &&
         !params.confirmedPrivacyWarning &&
         !recordedSourceMessageIds.has(ref.sourceMessageId)
       ) {

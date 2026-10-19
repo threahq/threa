@@ -2,7 +2,13 @@ import type { QueryConfig } from "pg"
 import type { Querier } from "../../db"
 import { sql, composeSql } from "../../db"
 import { Visibilities, type Visibility } from "@threahq/types"
-import { anyUserLacksBrowseSql, findUserIdsWithoutBrowse, viewerLacksBrowseSql } from "../workspaces"
+import {
+  PeoplePurposes,
+  anyUserLacksBrowseSql,
+  findUserIdsWithoutBrowse,
+  peopleScopeSql,
+  viewerLacksBrowseSql,
+} from "../workspaces"
 import { StreamRepository, type Stream } from "./repository"
 
 /**
@@ -356,32 +362,60 @@ export async function usersReadingWithoutMembership(
   }
 }
 
+export type ReaderScope = { streamId: string } | { userIds: readonly string[] }
+
 /**
- * Per source stream, how many workspace users can read `targetStreamId` but not that source — the
- * readers a share into the target would newly expose it to. Both sides run
- * {@link streamAccessPredicateSql}, so thread → root and open-channel readers without a
- * `stream_members` row count. Sources nobody is exposed to are absent; empty input → empty Map.
- * A missing or cross-workspace source is readable by no one, so it counts every target reader;
- * pass distinct ids.
+ * Per source stream, which readers lack access to it: the readers of `scope.streamId`, or the
+ * given `scope.userIds`. Both sides run {@link streamAccessPredicateSql}, so thread → root and
+ * open-channel readers without a `stream_members` row count. `count` covers every exposed reader;
+ * with `sample`, `sampleUserIds` holds up to `sample.size` of them visible to `sample.viewerId`,
+ * ordered by name, else it is empty. Sources nobody is exposed to are absent; empty input → empty
+ * Map. A missing or cross-workspace source is readable by no one, so it counts every reader; pass
+ * distinct ids.
  */
-export async function countReadersWithoutAccess(
+export async function findReadersWithoutAccess(
   db: Querier,
   workspaceId: string,
-  targetStreamId: string,
-  sourceStreamIds: readonly string[]
-): Promise<Map<string, number>> {
+  scope: ReaderScope,
+  sourceStreamIds: readonly string[],
+  sample?: { size: number; viewerId: string }
+): Promise<Map<string, { count: number; sampleUserIds: string[] }>> {
   if (sourceStreamIds.length === 0) return new Map()
   const reader = sql`reader.id`
-  const result = await db.query<{ stream_id: string; count: number }>(composeSql`
-    SELECT src.id AS stream_id, COUNT(*)::int AS count
-    FROM streams tgt
-    CROSS JOIN unnest(${sourceStreamIds as string[]}::text[]) AS src(id)
-    JOIN users reader ON reader.workspace_id = tgt.workspace_id
-    WHERE tgt.workspace_id = ${workspaceId}
-      AND tgt.id = ${targetStreamId}
-      AND ${streamAccessPredicateSql(workspaceId, reader, "tgt.id")}
-      AND NOT ${streamAccessPredicateSql(workspaceId, reader, "src.id")}
+  const readerFilter =
+    "streamId" in scope
+      ? composeSql`EXISTS (
+          SELECT 1 FROM streams tgt
+          WHERE tgt.workspace_id = ${workspaceId}
+            AND tgt.id = ${scope.streamId}
+            AND ${streamAccessPredicateSql(workspaceId, reader, "tgt.id")}
+        )`
+      : composeSql`reader.id = ANY(${scope.userIds as string[]})`
+  const visibleSql = sample
+    ? composeSql`EXISTS (
+        SELECT 1 FROM users u
+        WHERE u.workspace_id = ${workspaceId}
+          AND u.id = reader.id
+          AND ${peopleScopeSql(workspaceId, {
+            viewer: { kind: "user", userId: sample.viewerId },
+            purpose: PeoplePurposes.VISIBLE,
+          })}
+      )`
+    : sql`FALSE`
+  const result = await db.query<{ stream_id: string; count: number; sample_user_ids: string[] }>(composeSql`
+    WITH scoped AS (
+      SELECT reader.id, reader.name, ${visibleSql} AS visible FROM users reader
+      WHERE reader.workspace_id = ${workspaceId} AND ${readerFilter}
+    )
+    SELECT src.id AS stream_id, COUNT(*)::int AS count,
+      COALESCE(
+        (array_agg(reader.id ORDER BY reader.name, reader.id) FILTER (WHERE reader.visible))[1:${sample?.size ?? 0}::int],
+        '{}'
+      ) AS sample_user_ids
+    FROM unnest(${sourceStreamIds as string[]}::text[]) AS src(id)
+    CROSS JOIN scoped reader
+    WHERE NOT ${streamAccessPredicateSql(workspaceId, reader, "src.id")}
     GROUP BY src.id
   `)
-  return new Map(result.rows.map((row) => [row.stream_id, row.count]))
+  return new Map(result.rows.map((row) => [row.stream_id, { count: row.count, sampleUserIds: row.sample_user_ids }]))
 }

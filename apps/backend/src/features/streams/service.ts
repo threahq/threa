@@ -29,7 +29,13 @@ import {
   isUniqueViolation,
 } from "../../lib/errors"
 import { formatParticipantNames } from "./display-name"
-import { checkStreamAccess, listAccessibleStreamIds, usersReadingWithoutMembership } from "./access"
+import {
+  checkStreamAccess,
+  findReadersWithoutAccess,
+  listAccessibleStreamIds,
+  usersReadingWithoutMembership,
+  type ReaderScope,
+} from "./access"
 import { findGuestPolicyClosedDmIds, isGuestDmOpenForUsers } from "./guest-dm-policy"
 import { resolveInboxClearMode } from "./inbox-clear-mode"
 import { releaseInboxHold } from "./inbox-release"
@@ -81,6 +87,7 @@ import {
   StreamReadOnlyReasons,
   isOpenVisibility,
   type StreamDirectoryStats,
+  type ReferenceAudience,
 } from "@threahq/types"
 import { ContextBagRepository, PersonaRepository, assertAssignablePersona } from "../agents"
 import { draftStreamUniquenessKey } from "../drafts"
@@ -280,10 +287,34 @@ interface FindOrCreateDmParams {
   userTwoId: string
 }
 
+type MessageTargetInput = { streamId: string } | { dmUserId: string }
+
+const REFERENCE_AUDIENCE_SAMPLE_SIZE = 3
+
+async function assertDmPairAllowed(db: Querier, workspaceId: string, userOneId: string, userTwoId: string) {
+  if (userOneId === userTwoId) {
+    throw new HttpError("Cannot create a DM with yourself", { status: 400, code: "DM_SELF_NOT_ALLOWED" })
+  }
+  const users = await UserRepository.findByIds(db, workspaceId, [userOneId, userTwoId], {
+    viewer: { kind: "user", userId: userOneId },
+    purpose: PeoplePurposes.TARGETABLE,
+  })
+  const workspaceUserIds = new Set(users.filter((user) => user.workspaceId === workspaceId).map((user) => user.id))
+  if (!workspaceUserIds.has(userOneId) || !workspaceUserIds.has(userTwoId)) {
+    throw new HttpError("Both users must belong to this workspace", {
+      status: 404,
+      code: "MEMBER_NOT_FOUND",
+    })
+  }
+  if (!(await isGuestDmOpenForUsers(db, workspaceId, [userOneId, userTwoId]))) {
+    throw createStreamReadOnlyError(StreamReadOnlyReasons.GUEST_DM_POLICY)
+  }
+}
+
 interface ResolveWritableMessageStreamParams {
   workspaceId: string
   userId: string
-  target: { streamId: string } | { dmUserId: string }
+  target: MessageTargetInput
 }
 
 /** Where a user's message write lands: in this workspace's own stream, or through the host of a shared channel's copy. */
@@ -488,6 +519,34 @@ export class StreamService {
     return StreamRepository.listDmPeersForMember(this.pool, workspaceId, userId)
   }
 
+  async listReferenceAudiences(params: {
+    workspaceId: string
+    userId: string
+    target: MessageTargetInput
+    streamIds: readonly string[]
+  }): Promise<ReferenceAudience[]> {
+    const { workspaceId, userId, target } = params
+    let scope: ReaderScope
+    if ("dmUserId" in target) {
+      await assertDmPairAllowed(this.pool, workspaceId, userId, target.dmUserId)
+      scope = { userIds: [target.dmUserId] }
+    } else {
+      if (!(await this.checkAccess(target.streamId, workspaceId, userId))) throw new StreamNotFoundError()
+      scope = { streamId: target.streamId }
+    }
+    const requested = [...new Set(params.streamIds)]
+    const readable = await listAccessibleStreamIds(this.pool, workspaceId, userId, requested)
+    const readableIds = requested.filter((id) => readable.has(id))
+    const exposed = await findReadersWithoutAccess(this.pool, workspaceId, scope, readableIds, {
+      size: REFERENCE_AUDIENCE_SAMPLE_SIZE,
+      viewerId: userId,
+    })
+    return readableIds.flatMap((streamId) => {
+      const audience = exposed.get(streamId)
+      return audience ? [{ streamId, ...audience }] : []
+    })
+  }
+
   async resolveWritableMessageStream(params: ResolveWritableMessageStreamParams): Promise<Stream> {
     const { stream, state } = await this.resolveMessageStreamState(params)
     assertViewerStreamWritable(state)
@@ -546,30 +605,11 @@ export class StreamService {
   }
 
   async findOrCreateDm(params: FindOrCreateDmParams): Promise<Stream> {
-    if (params.userOneId === params.userTwoId) {
-      throw new HttpError("Cannot create a DM with yourself", { status: 400, code: "DM_SELF_NOT_ALLOWED" })
-    }
-
     const { userAId, userBId } = normalizeDmUserPair(params.userOneId, params.userTwoId)
     const uniquenessKey = buildDmUniquenessKey(userAId, userBId)
 
     return withTransaction(this.pool, async (client) => {
-      const users = await UserRepository.findByIds(client, params.workspaceId, [userAId, userBId], {
-        viewer: { kind: "user", userId: params.userOneId },
-        purpose: PeoplePurposes.TARGETABLE,
-      })
-      const workspaceUserIds = new Set(
-        users.filter((user) => user.workspaceId === params.workspaceId).map((user) => user.id)
-      )
-      if (!workspaceUserIds.has(userAId) || !workspaceUserIds.has(userBId)) {
-        throw new HttpError("Both users must belong to this workspace", {
-          status: 404,
-          code: "MEMBER_NOT_FOUND",
-        })
-      }
-      if (!(await isGuestDmOpenForUsers(client, params.workspaceId, [userAId, userBId]))) {
-        throw createStreamReadOnlyError(StreamReadOnlyReasons.GUEST_DM_POLICY)
-      }
+      await assertDmPairAllowed(client, params.workspaceId, params.userOneId, params.userTwoId)
 
       const { stream, created } = await StreamRepository.insertOrFindByUniquenessKey(client, {
         id: streamId(),

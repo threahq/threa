@@ -1161,6 +1161,13 @@ export function registerRoutes(app: Express, deps: Dependencies) {
     message.validateMoveToThread
   )
   app.post(
+    "/api/workspaces/:workspaceId/messages/reference-audience",
+    ...authed,
+    audit("messages.reference_audience", "read"),
+    rateLimits.referenceAudience,
+    message.referenceAudience
+  )
+  app.post(
     "/api/workspaces/:workspaceId/messages/move-to-thread",
     ...authed,
     audit("messages.move_to_thread", "write"),
