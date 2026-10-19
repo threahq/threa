@@ -75,11 +75,15 @@ export function str(value: unknown): string | undefined {
 /** A state file this connector wrote: absent is undefined, and a damaged one throws rather than reading as empty. */
 export function readJsonFile(path: string): Record<string, unknown> | undefined {
   if (!existsSync(path)) return undefined
+  let parsed: unknown
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>
+    parsed = JSON.parse(readFileSync(path, "utf8"))
   } catch (error) {
     throw new Error(`Could not read ${path}: ${error instanceof Error ? error.message : String(error)}`)
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
+    throw new Error(`Could not read ${path}: expected a JSON object`)
+  return parsed as Record<string, unknown>
 }
 
 export function parseAccess(value: unknown): T3Access | undefined {

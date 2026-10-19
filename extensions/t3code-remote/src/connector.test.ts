@@ -17,10 +17,13 @@ describe("createFileThreadStore", () => {
     })
   })
 
-  test("a damaged file throws rather than reading as no links", () => {
-    const path = join(mkdtempSync(join(tmpdir(), "t3threads-")), "threads.json")
-    writeFileSync(path, '{"threads": {"stream_root": "thr')
+  test.each(['{"threads": {"stream_root": "thr', "[]", "null"])(
+    "a damaged file throws rather than reading as no links: %p",
+    (content) => {
+      const path = join(mkdtempSync(join(tmpdir(), "t3threads-")), "threads.json")
+      writeFileSync(path, content)
 
-    expect(() => createFileThreadStore(path).load()).toThrow(`Could not read ${path}`)
-  })
+      expect(() => createFileThreadStore(path).load()).toThrow(`Could not read ${path}`)
+    }
+  )
 })
