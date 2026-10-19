@@ -353,6 +353,50 @@ describe("useQueueDraftMessage", () => {
     expect(mockNotifyQueue).toHaveBeenCalledTimes(1)
   })
 
+  it("carries share-privacy consent onto the pending draft row", async () => {
+    mockUnlockedSession()
+
+    const { result } = setup()
+    let clientId = ""
+    await act(async () => {
+      ;({ clientId } = await result.current.queueDraftMessage(
+        { contentJson: CONTENT, confirmedPrivacyWarning: true },
+        {
+          workspaceId: WORKSPACE_ID,
+          streamId: PANEL_ID,
+          streamCreation: threadCreation,
+          draftId: PANEL_ID,
+          e2e: { rootStreamId: ROOT_STREAM_ID, hasActors: false },
+        }
+      ))
+    })
+
+    expect(mockPendingAdd.mock.calls).toEqual([
+      [
+        {
+          clientId,
+          workspaceId: WORKSPACE_ID,
+          streamId: PANEL_ID,
+          content: "hi",
+          contentFormat: "markdown",
+          contentJson: CONTENT,
+          attachmentIds: undefined,
+          composeTrace: undefined,
+          enqueue: undefined,
+          confirmedPrivacyWarning: true,
+          createdAt: expect.any(Number),
+          retryCount: 0,
+          streamCreation: threadCreation,
+          conversation: undefined,
+          draftId: PANEL_ID,
+          ciphertext: "CT",
+          envelope: { v: 2, keyGeneration: 3, iv: "iv", aad: "aad" },
+          e2eVersion: 2,
+        },
+      ],
+    ])
+  })
+
   it("allocates both optimistic sequences from the composing account's database", async () => {
     mockUnlockedSession()
     const captured = dbModule.getActiveDb()

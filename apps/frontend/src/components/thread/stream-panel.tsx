@@ -31,12 +31,14 @@ import {
 import { AsideCoversPanesContext } from "@/components/aside/aside-presentation"
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from "@/components/ui/empty"
 import { FloatingComposerShell, MessageComposer } from "@/components/composer"
+import type { ComposerSubmitOptions, MessageComposerProps } from "@/components/composer"
 import { ComposerEncryptionNotice } from "@/components/encryption/stream-encryption-affordance"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
+import { referenceAudienceTargetFor, useReferenceAudience } from "@/hooks/use-reference-audience"
 import { ThreadParentEvent } from "./thread-parent-event"
 import { matchesDeepLinkTarget } from "@/lib/stream-links"
 import { ResponsiveBreadcrumbs } from "./responsive-breadcrumbs"
-import { StreamTypes } from "@threahq/types"
+import { StreamTypes, type JSONContent } from "@threahq/types"
 import { useMentionStreamContext, type MentionStreamContext } from "@/hooks/use-mentionables"
 import { PaneHeader, usePaneCovered } from "@/components/panes"
 import { StreamPane } from "@/components/panes/stream-pane"
@@ -186,6 +188,13 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
     scopeId: draftInfo?.anchorId ?? "",
     e2eStreamId: e2eRoot,
   })
+  // A draft thread's readers are its parent's.
+  const audienceTarget = draftInfo ? referenceAudienceTargetFor(draftInfo.parentStreamId, parentStream) : null
+  const { sendWarning, audienceByStreamId, awaitSendWarning } = useReferenceAudience({
+    workspaceId,
+    target: audienceTarget,
+    content: composer.content,
+  })
   useExternalThreadDraftPromotion({
     workspaceId,
     isDraft: true,
@@ -325,81 +334,85 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
   }, [panelId, workspaceId, onPromoted])
 
   // Handle draft thread submission
-  const handleSubmit = useCallback(async () => {
-    if (!draftInfo || !composer.canSend || !currentUserId) return
-    // Fail closed: until the parent resolves we can't tell whether this thread
-    // inherits an encrypted root, and queuing a plaintext reply into a stream
-    // the server seals would jam the outbox on INV-E1 (400, retried forever).
-    // The parent loads from cache almost immediately; the user just retries.
-    if (!parentStream) return
+  const handleSubmit = useCallback(
+    async (_content?: JSONContent, options?: ComposerSubmitOptions) => {
+      if (!draftInfo || !composer.canSend || !currentUserId) return
+      // Fail closed: until the parent resolves we can't tell whether this thread
+      // inherits an encrypted root, and queuing a plaintext reply into a stream
+      // the server seals would jam the outbox on INV-E1 (400, retried forever).
+      // The parent loads from cache almost immediately; the user just retries.
+      if (!parentStream) return
 
-    composer.setIsSending(true)
-    const pendingAttachments = composer.getPendingAttachmentsSnapshot()
+      composer.setIsSending(true)
+      const pendingAttachments = composer.getPendingAttachmentsSnapshot()
 
-    // Materialize temp attachment IDs → uploaded IDs at the JSONContent level
-    const contentJson = materializePendingAttachmentReferences(composer.content, pendingAttachments)
+      // Materialize temp attachment IDs → uploaded IDs at the JSONContent level
+      const contentJson = materializePendingAttachmentReferences(composer.content, pendingAttachments)
 
-    // Extract attachment info from the materialized content
-    const attachments = extractUploadedAttachments(contentJson)
-    const attachmentIds = attachments.map((a) => a.id)
+      // Extract attachment info from the materialized content
+      const attachments = extractUploadedAttachments(contentJson)
+      const attachmentIds = attachments.map((a) => a.id)
 
-    setDraftExpanded(false)
-    setOwnReplyQueued(true)
+      setDraftExpanded(false)
+      setOwnReplyQueued(true)
 
-    try {
-      // Clear input optimistically inside try so we can restore on failure
-      composer.setContent(EMPTY_DOC)
-      composer.clearAttachments()
-
-      // Seal the reply under the encrypted root when the parent is E2E — the
-      // promoted thread inherits the root's SSK, so a plaintext send would be
-      // rejected by the backend's INV-E1 gate. The root is the parent's root
-      // (or the parent itself when it is the root).
-      const rootStreamId = parentStream.rootStreamId ?? parentStream.id
-      const e2e =
-        parentStream.e2eEnabled === true
-          ? { rootStreamId, hasActors: (parentStream.e2eActors?.length ?? 0) > 0 }
-          : undefined
-
-      await queueDraftMessage(
-        {
-          contentJson,
-          attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
-          attachments: attachments.length > 0 ? attachments : undefined,
-        },
-        {
-          workspaceId,
-          streamId: panelId,
-          streamCreation: {
-            type: StreamTypes.THREAD,
-            parentStreamId: draftInfo.parentStreamId,
-            parentAnchorId: draftInfo.anchorId,
-          },
-          draftId: panelId,
-          e2e,
-        }
-      )
-
-      // AFTER the queue write, never before: the anchor's thread slot indicates
-      // this draft, and `queueDraftMessage` is what bumps the anchor's
-      // replyCount — resolving first leaves a frame with neither, collapsing the
-      // slot and replaying its grow-in on the way back. Failure is handled
-      // apart from the queue's: the reply IS queued at this point, so the
-      // composer must stay cleared and no retry prompt is warranted — the only
-      // symptom is a stale draft row.
       try {
-        await composer.resolveDraft()
-      } catch (err) {
-        console.error("Failed to resolve draft after queueing thread reply", err)
+        // Clear input optimistically inside try so we can restore on failure
+        composer.setContent(EMPTY_DOC)
+        composer.clearAttachments()
+
+        // Seal the reply under the encrypted root when the parent is E2E — the
+        // promoted thread inherits the root's SSK, so a plaintext send would be
+        // rejected by the backend's INV-E1 gate. The root is the parent's root
+        // (or the parent itself when it is the root).
+        const rootStreamId = parentStream.rootStreamId ?? parentStream.id
+        const e2e =
+          parentStream.e2eEnabled === true
+            ? { rootStreamId, hasActors: (parentStream.e2eActors?.length ?? 0) > 0 }
+            : undefined
+
+        await queueDraftMessage(
+          {
+            contentJson,
+            attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+            attachments: attachments.length > 0 ? attachments : undefined,
+            confirmedPrivacyWarning: options?.confirmedPrivacyWarning,
+          },
+          {
+            workspaceId,
+            streamId: panelId,
+            streamCreation: {
+              type: StreamTypes.THREAD,
+              parentStreamId: draftInfo.parentStreamId,
+              parentAnchorId: draftInfo.anchorId,
+            },
+            draftId: panelId,
+            e2e,
+          }
+        )
+
+        // AFTER the queue write, never before: the anchor's thread slot indicates
+        // this draft, and `queueDraftMessage` is what bumps the anchor's
+        // replyCount — resolving first leaves a frame with neither, collapsing the
+        // slot and replaying its grow-in on the way back. Failure is handled
+        // apart from the queue's: the reply IS queued at this point, so the
+        // composer must stay cleared and no retry prompt is warranted — the only
+        // symptom is a stale draft row.
+        try {
+          await composer.resolveDraft()
+        } catch (err) {
+          console.error("Failed to resolve draft after queueing thread reply", err)
+        }
+      } catch {
+        // Restore content so the user can retry
+        composer.setContent(contentJson)
+        setOwnReplyQueued(false)
+      } finally {
+        composer.setIsSending(false)
       }
-    } catch {
-      // Restore content so the user can retry
-      composer.setContent(contentJson)
-      setOwnReplyQueued(false)
-    } finally {
-      composer.setIsSending(false)
-    }
-  }, [draftInfo, composer, currentUserId, panelId, workspaceId, queueDraftMessage, parentStream])
+    },
+    [draftInfo, composer, currentUserId, panelId, workspaceId, queueDraftMessage, parentStream]
+  )
 
   // Build the full ancestor chain for draft breadcrumbs: hook ancestors + parent stream
   const fullChain = useMemo(() => {
@@ -417,6 +430,34 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
   }, [ancestors, draftInfo, parentStream])
 
   if (!draftInfo) return null
+
+  const draftComposerProps = {
+    content: composer.content,
+    sendWarning,
+    audienceByStreamId,
+    awaitSendWarning,
+    onContentChange: composer.handleContentChange,
+    pendingAttachments: composer.pendingAttachments,
+    onRemoveAttachment: composer.handleRemoveAttachment,
+    onCancelAttachmentUpload: composer.handleCancelAttachmentUpload,
+    fileInputRef: composer.fileInputRef,
+    onFileSelect: composer.handleFileSelect,
+    onFileUpload: composer.uploadFile,
+    imageCount: composer.imageCount,
+    onSubmit: handleSubmit,
+    canSubmit: composer.canSend,
+    isSubmitting: composer.isSending,
+    hasFailed: composer.hasFailed,
+    submitLabel: "Reply",
+    submittingLabel: "Creating...",
+    placeholder: replyPlaceholder,
+    workspaceId,
+    scopeId: panelId,
+    memoAnchorStreamId: draftInfo.parentStreamId,
+    streamContext: draftStreamContext,
+    onStashDraft: stash.handleStashDraft,
+    stashedDrafts,
+  } satisfies Partial<MessageComposerProps>
 
   return (
     <SidePanel className={className} data-editor-zone="panel">
@@ -444,33 +485,7 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
           draftPortalTargetRef.current &&
           createPortal(
             <div ref={draftExpandedRef} className="absolute inset-0 z-30 bg-background">
-              <MessageComposer
-                content={composer.content}
-                onContentChange={composer.handleContentChange}
-                pendingAttachments={composer.pendingAttachments}
-                onRemoveAttachment={composer.handleRemoveAttachment}
-                onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
-                fileInputRef={composer.fileInputRef}
-                onFileSelect={composer.handleFileSelect}
-                onFileUpload={composer.uploadFile}
-                imageCount={composer.imageCount}
-                onSubmit={handleSubmit}
-                canSubmit={composer.canSend}
-                isSubmitting={composer.isSending}
-                hasFailed={composer.hasFailed}
-                submitLabel="Reply"
-                submittingLabel="Creating..."
-                placeholder={replyPlaceholder}
-                workspaceId={workspaceId}
-                scopeId={panelId}
-                memoAnchorStreamId={draftInfo.parentStreamId}
-                expanded
-                onCollapse={handleDraftCollapse}
-                autoFocus
-                streamContext={draftStreamContext}
-                onStashDraft={stash.handleStashDraft}
-                stashedDrafts={stashedDrafts}
-              />
+              <MessageComposer {...draftComposerProps} expanded onCollapse={handleDraftCollapse} autoFocus />
             </div>,
             draftPortalTargetRef.current
           )}
@@ -517,32 +532,7 @@ function DraftThreadPanel({ workspaceId, panelId, onPromoted, className }: Draft
         <FloatingComposerShell ref={draftComposerRef} hidden={draftExpanded}>
           <ComposerEncryptionNotice workspaceId={workspaceId} encrypted={!!e2eRoot} streamId={e2eRoot} />
           {!draftExpanded && (
-            <MessageComposer
-              content={composer.content}
-              onContentChange={composer.handleContentChange}
-              pendingAttachments={composer.pendingAttachments}
-              onRemoveAttachment={composer.handleRemoveAttachment}
-              onCancelAttachmentUpload={composer.handleCancelAttachmentUpload}
-              fileInputRef={composer.fileInputRef}
-              onFileSelect={composer.handleFileSelect}
-              onFileUpload={composer.uploadFile}
-              imageCount={composer.imageCount}
-              onSubmit={handleSubmit}
-              canSubmit={composer.canSend}
-              isSubmitting={composer.isSending}
-              hasFailed={composer.hasFailed}
-              submitLabel="Reply"
-              submittingLabel="Creating..."
-              placeholder={replyPlaceholder}
-              autoFocus={!isMobile}
-              workspaceId={workspaceId}
-              scopeId={panelId}
-              memoAnchorStreamId={draftInfo.parentStreamId}
-              onExpandClick={handleDraftExpand}
-              streamContext={draftStreamContext}
-              onStashDraft={stash.handleStashDraft}
-              stashedDrafts={stashedDrafts}
-            />
+            <MessageComposer {...draftComposerProps} autoFocus={!isMobile} onExpandClick={handleDraftExpand} />
           )}
         </FloatingComposerShell>
       </SidePanelContent>

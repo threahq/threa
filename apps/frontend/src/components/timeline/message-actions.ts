@@ -26,7 +26,7 @@ import {
 } from "lucide-react"
 import { toast } from "sonner"
 import type { QuoteSelection } from "@/lib/quote-selection"
-import { buildStreamLink, buildConversationLink } from "@/lib/stream-links"
+import { buildMessageLink, buildConversationLink } from "@/lib/stream-links"
 import {
   type ActionDefinition,
   type GroupedAction,
@@ -521,7 +521,7 @@ export const messageActions: MessageAction[] = [
         // builders so each route shape lives in one place (stream-links.ts).
         const url = ctx.conversationId
           ? buildConversationLink(ctx.workspaceId!, ctx.conversationId, ctx.messageId)
-          : `${buildStreamLink(ctx.workspaceId!, ctx.streamId!)}?m=${ctx.messageId}`
+          : buildMessageLink(ctx.workspaceId!, ctx.streamId!, ctx.messageId!)
         await copyToClipboard(url)
         toast.success("Link copied") // INV-63-allow: clipboard copy from a closing menu has no inline anchor
       } catch {

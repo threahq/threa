@@ -9,6 +9,8 @@ import type {
   MoveMessagesToThreadResponse,
   ValidateMoveMessagesToThreadInput,
   ValidateMoveMessagesToThreadResponse,
+  ReferenceAudienceInput,
+  ReferenceAudienceResponse,
 } from "@threahq/types"
 
 export type { CreateMessageInput, CreateDmMessageInput, UpdateMessageInput, MoveMessagesToThreadInput }
@@ -61,6 +63,10 @@ export const messagesApi = {
     data: ValidateMoveMessagesToThreadInput
   ): Promise<ValidateMoveMessagesToThreadResponse> {
     return api.post(`/api/workspaces/${workspaceId}/messages/move-to-thread/validate`, data)
+  },
+
+  referenceAudience(workspaceId: string, input: ReferenceAudienceInput): Promise<ReferenceAudienceResponse> {
+    return api.post(`/api/workspaces/${workspaceId}/messages/reference-audience`, input)
   },
 
   addReaction(workspaceId: string, messageId: string, emoji: string): Promise<void> {

@@ -23,6 +23,8 @@ import { useOptionalSyncEngine } from "@/sync/sync-engine"
 import { useComposeTrace } from "@/lib/compose-trace"
 import { getDraftPromotionSource } from "@/lib/draft-promotions"
 import { GUEST_DM_CLOSED_REASON, isGuestDmPolicyError } from "@/lib/guest-dm-policy"
+import { isPrivacyConfirmationError } from "@/lib/share-privacy-toast"
+import { useSharePrivacyConfirm } from "@/hooks/use-share-privacy-confirm"
 import { usePreferences } from "@/contexts"
 import { useConnectionState } from "@/components/layout/connection-status"
 import {
@@ -33,9 +35,10 @@ import {
   MessageComposer,
   ScheduledMessagesPicker,
 } from "@/components/composer"
-import type { ComposerControlHandle } from "@/components/composer"
+import type { ComposerControlHandle, ComposerSubmitOptions } from "@/components/composer"
 import { useScheduleMessage } from "@/hooks"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
+import { referenceAudienceTargetFor, useReferenceAudience } from "@/hooks/use-reference-audience"
 import { buildImageIndexByAttachment, isMaterializableAttachment } from "./attachment-image-index"
 import { useEditLastMessage } from "./edit-last-message-context"
 import { useQuoteReply, appendQuoteReplyNode, type QuoteReplyData } from "./quote-reply-context"
@@ -409,6 +412,12 @@ function MessageInputComponent({
     scopeId: composerScopeId,
     e2eStreamId: e2eRootStreamId,
   })
+  const audienceTarget = referenceAudienceTargetFor(streamId, stream)
+  const { sendWarning, audienceByStreamId, awaitSendWarning } = useReferenceAudience({
+    workspaceId,
+    target: audienceTarget,
+    content: composer.content,
+  })
   const quoteReplyCtx = useQuoteReply()
   // An aside's composer is a private thinking surface: nothing to schedule,
   // no stash pile (its drafts live in the aside's own dock), no fullscreen
@@ -640,8 +649,17 @@ function MessageInputComponent({
     setPreserveConversationStripSpace(false)
   }, [streamId])
 
-  const handleSubmit = useStableCallback(async (editorContent?: JSONContent) => {
+  // A refused draft promotion (the first send of a new DM) asks consent for the restored content.
+  const { block: blockOnPrivacy, clear: clearPrivacyBlock } = useSharePrivacyConfirm({
+    toastId: `share-privacy-draft-${streamId}`,
+    content: composer.content,
+    confirmLabel: "Share anyway",
+    onConfirm: () => void handleSubmit(undefined, { confirmedPrivacyWarning: true }),
+  })
+
+  const handleSubmit = useStableCallback(async (editorContent?: JSONContent, options?: ComposerSubmitOptions) => {
     if (!composer.canSend) return
+    clearPrivacyBlock()
 
     const pendingAttachments = composer.getPendingAttachmentsSnapshot()
     const liveContent = editorContent ?? composer.content
@@ -716,6 +734,7 @@ function MessageInputComponent({
         attachments: attachments.length > 0 ? attachments : undefined,
         ...(enqueuePlan && { enqueue: true as const }),
         composeTrace,
+        confirmedPrivacyWarning: options?.confirmedPrivacyWarning,
         // Armed by "Reply in conversation": file this send into the
         // conversation synchronously (Mechanism C). Cleared only on success —
         // a failed send keeps the filing armed alongside the restored content.
@@ -735,7 +754,9 @@ function MessageInputComponent({
       // so this is a failed draft promotion.
       if (!(error instanceof Error && error.name === "AbortError")) {
         composer.setContent(liveContent)
-        setError(isGuestDmPolicyError(error) ? GUEST_DM_CLOSED_REASON : "Failed to create stream. Please try again.")
+        if (isPrivacyConfirmationError(error)) blockOnPrivacy(liveContent)
+        else
+          setError(isGuestDmPolicyError(error) ? GUEST_DM_CLOSED_REASON : "Failed to create stream. Please try again.")
       }
     } finally {
       composer.setIsSending(false)
@@ -922,6 +943,9 @@ function MessageInputComponent({
   // Shared composer props used by both inline and expanded layouts
   const composerProps = {
     content: composer.content,
+    sendWarning,
+    audienceByStreamId,
+    awaitSendWarning,
     onContentChange: composer.handleContentChange,
     pendingAttachments: composer.pendingAttachments,
     onRemoveAttachment: composer.handleRemoveAttachment,

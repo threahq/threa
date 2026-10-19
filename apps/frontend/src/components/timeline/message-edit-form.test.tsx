@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { spyOnExport } from "@/test/spy"
-import { render, screen, fireEvent, waitFor } from "@testing-library/react"
+import { cleanup, render, screen, fireEvent, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -17,9 +17,16 @@ import { db } from "@/db"
 import type { MentionStreamContext } from "@/hooks/use-mentionables"
 import { clearStreams, seedStream } from "@/test/workspace-rows"
 import { MessageEditForm } from "./message-edit-form"
-import { StreamConnectionErrorCodes, type JSONContent } from "@threahq/types"
+import { ShareErrorCodes, StreamConnectionErrorCodes, type JSONContent } from "@threahq/types"
+import { SHARE_PRIVACY_WARNING_MESSAGE } from "@/lib/share-privacy-toast"
+
+type ToastOptions = {
+  action?: { label: string; onClick?: (event: never) => void }
+  cancel?: { label: string; onClick?: (event: never) => void }
+}
 
 let inputModeMockValue: inputModeModule.InputMode = "mouse"
+let drawerPointerDownOutside: ((event: { target: EventTarget; preventDefault: () => void }) => void) | undefined
 let editorStreamContext: MentionStreamContext | undefined
 
 beforeEach(() => {
@@ -35,14 +42,19 @@ beforeEach(() => {
   spyOnExport(drawerModule, "DrawerContent").mockReturnValue((({
     children,
     className,
+    onPointerDownOutside,
   }: {
     children: React.ReactNode
     className?: string
-  }) => (
-    <div data-testid="drawer-content" className={className}>
-      {children}
-    </div>
-  )) as unknown as typeof drawerModule.DrawerContent)
+    onPointerDownOutside?: typeof drawerPointerDownOutside
+  }) => {
+    drawerPointerDownOutside = onPointerDownOutside
+    return (
+      <div data-testid="drawer-content" className={className}>
+        {children}
+      </div>
+    )
+  }) as unknown as typeof drawerModule.DrawerContent)
   spyOnExport(drawerModule, "DrawerTitle").mockReturnValue((({
     children,
     className,
@@ -274,6 +286,125 @@ describe("MessageEditForm saving", () => {
     }).toEqual({ errors: [["Couldn't save your edit."]], infos: [], saved: [], queued: [] })
   })
 
+  it("should warn before an edit exposes a share and save it with consent on Save anyway", async () => {
+    const warningToast = vi.spyOn(toast, "warning").mockReturnValue("w1")
+    const update = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError(409, ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED, "Confirm"))
+      .mockResolvedValueOnce({})
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update,
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+    const onSave = vi.fn()
+
+    await submitEdit(onSave)
+
+    await waitFor(() => expect(warningToast).toHaveBeenCalled())
+    const [message, options] = warningToast.mock.calls[0] as [string, ToastOptions]
+    expect({ message, action: options.action?.label, cancel: options.cancel?.label, saved: onSave.mock.calls }).toEqual(
+      { message: SHARE_PRIVACY_WARNING_MESSAGE, action: "Save anyway", cancel: "Cancel", saved: [] }
+    )
+
+    options.action?.onClick?.({} as never)
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled())
+    expect(update.mock.calls).toEqual([
+      ["ws_1", "msg_1", { contentJson: editedContent }],
+      ["ws_1", "msg_1", { contentJson: editedContent, confirmedPrivacyWarning: true }],
+    ])
+  })
+
+  it("should withdraw the Save anyway question once the user changes the edit", async () => {
+    vi.spyOn(toast, "warning").mockReturnValue("w2")
+    const dismiss = vi.spyOn(toast, "dismiss").mockReturnValue("w2")
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update: vi.fn().mockRejectedValue(new ApiError(409, ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED, "Confirm")),
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+
+    await submitEdit(vi.fn())
+    await waitFor(() => expect(toast.warning).toHaveBeenCalled())
+    expect(dismiss).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+      target: {
+        value: JSON.stringify({
+          type: "doc",
+          content: [{ type: "paragraph", content: [{ type: "text", text: "More" }] }],
+        }),
+      },
+    })
+
+    await waitFor(() => expect(dismiss.mock.calls).toEqual([["share-privacy-edit-msg_1"]]))
+  })
+
+  function refuseForPrivacy() {
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update: vi.fn().mockRejectedValue(new ApiError(409, ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED, "Confirm")),
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+  }
+
+  it("should ask again on the next Save after the Save anyway toast was swiped away", async () => {
+    const warningToast = vi.spyOn(toast, "warning").mockReturnValue("w4")
+    refuseForPrivacy()
+
+    await submitEdit(vi.fn())
+    await waitFor(() => expect(warningToast).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    await waitFor(() => expect(warningToast).toHaveBeenCalledTimes(2))
+  })
+
+  it("should withdraw the Save anyway question when the edit form closes", async () => {
+    vi.spyOn(toast, "warning").mockReturnValue("w5")
+    const dismiss = vi.spyOn(toast, "dismiss").mockReturnValue("w5")
+    refuseForPrivacy()
+
+    await submitEdit(vi.fn())
+    await waitFor(() => expect(toast.warning).toHaveBeenCalled())
+    cleanup()
+
+    expect(dismiss.mock.calls).toEqual([["share-privacy-edit-msg_1"]])
+  })
+
+  it("should keep the mobile edit drawer open when the Save anyway toast is pressed", () => {
+    inputModeMockValue = "touch"
+    renderForm()
+    const toaster = document.createElement("section")
+    toaster.setAttribute("data-sonner-toaster", "")
+    const toastButton = toaster.appendChild(document.createElement("button"))
+    const outside = document.createElement("button")
+    const toastPress = { target: toastButton, preventDefault: vi.fn() }
+    const outsidePress = { target: outside, preventDefault: vi.fn() }
+
+    drawerPointerDownOutside?.(toastPress)
+    drawerPointerDownOutside?.(outsidePress)
+
+    expect({
+      toast: toastPress.preventDefault.mock.calls.length,
+      outside: outsidePress.preventDefault.mock.calls.length,
+    }).toEqual({ toast: 1, outside: 0 })
+  })
+
+  it("should keep consent on an edit queued after Save anyway fails without a server verdict", async () => {
+    const warningToast = vi.spyOn(toast, "warning").mockReturnValue("w3")
+    vi.spyOn(toast, "info").mockReturnValue("i3")
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update: vi
+        .fn()
+        .mockRejectedValueOnce(new ApiError(409, ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED, "Confirm"))
+        .mockRejectedValueOnce(new TypeError("Failed to fetch")),
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+    const onSave = vi.fn()
+
+    await submitEdit(onSave)
+    await waitFor(() => expect(warningToast).toHaveBeenCalled())
+    ;(warningToast.mock.calls[0][1] as ToastOptions).action?.onClick?.({} as never)
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce())
+    expect((await db.pendingOperations.toArray()).map(({ payload }) => payload)).toEqual([
+      { messageId: "msg_1", contentJson: editedContent, confirmedPrivacyWarning: true },
+    ])
+  })
+
   it("should keep what the user typed while the save was in flight when the server refuses it", async () => {
     vi.spyOn(toast, "error").mockReturnValue("e3")
     const typedLater: JSONContent = {
@@ -307,6 +438,98 @@ describe("MessageEditForm saving", () => {
     expect(update.mock.calls.map(([, , body]) => body)).toEqual([
       { contentJson: editedContent },
       { contentJson: typedLater },
+    ])
+  })
+
+  const withShare = (authorName: string): JSONContent => ({
+    type: "doc",
+    content: [
+      { type: "paragraph", content: [{ type: "text", text: "Edited" }] },
+      {
+        type: "sharedMessage",
+        attrs: {
+          messageId: "msg_src",
+          streamId: "stream_src",
+          authorName,
+          authorId: authorName ? "usr_ada" : "",
+          actorType: "user",
+        },
+      },
+    ],
+  })
+  const stampAuthor = () =>
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+      target: { value: JSON.stringify(withShare("Ada")) },
+    })
+
+  it("should close an edit the form only stamped a share's author onto without saving it", async () => {
+    vi.mocked(prosemirrorModule.serializeToMarkdown).mockRestore()
+    const update = vi.fn().mockResolvedValue({})
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update,
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+    const onCancel = vi.fn()
+    renderForm({ onCancel, initialContentJson: withShare("") })
+
+    stampAuthor()
+    await userEvent.click(screen.getByRole("button", { name: "Save" }))
+
+    expect({ cancelled: onCancel.mock.calls.length, updates: update.mock.calls }).toEqual({ cancelled: 1, updates: [] })
+  })
+
+  it("should keep the Save anyway question when only a share's author gets stamped", async () => {
+    vi.spyOn(toast, "warning").mockReturnValue("w6")
+    const dismiss = vi.spyOn(toast, "dismiss").mockReturnValue("w6")
+    refuseForPrivacy()
+    const user = userEvent.setup()
+    renderForm()
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+      target: { value: JSON.stringify(withShare("")) },
+    })
+    await user.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(toast.warning).toHaveBeenCalled())
+
+    stampAuthor()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(dismiss).not.toHaveBeenCalled()
+  })
+
+  it("should ask about what the form shows when the server refuses a save the user kept typing over", async () => {
+    const warningToast = vi.spyOn(toast, "warning").mockReturnValue("w7")
+    const dismiss = vi.spyOn(toast, "dismiss").mockReturnValue("w7")
+    const typedLater: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "Edited again" }] }],
+    }
+    let refuse = () => {}
+    const update = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            refuse = () => reject(new ApiError(409, ShareErrorCodes.PRIVACY_CONFIRMATION_REQUIRED, "Confirm"))
+          })
+      )
+      .mockResolvedValue({})
+    vi.spyOn(contextsModule, "useMessageService").mockReturnValue({
+      update,
+    } as unknown as ReturnType<typeof contextsModule.useMessageService>)
+    const onSave = vi.fn()
+
+    await submitEdit(onSave)
+    fireEvent.change(screen.getByRole("textbox", { name: "Edit message" }), {
+      target: { value: JSON.stringify(typedLater) },
+    })
+    refuse()
+    await waitFor(() => expect(warningToast).toHaveBeenCalled())
+    expect(dismiss).not.toHaveBeenCalled()
+    ;(warningToast.mock.calls[0][1] as ToastOptions).action?.onClick?.({} as never)
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledOnce())
+    expect(update.mock.calls.map(([, , body]) => body)).toEqual([
+      { contentJson: editedContent },
+      { contentJson: typedLater, confirmedPrivacyWarning: true },
     ])
   })
 

@@ -32,11 +32,17 @@ import type { AttachmentSummary } from "./create-optimistic-bootstrap"
 export interface QueueDraftMessageInput {
   contentJson: JSONContent
   attachmentIds?: string[]
+  /** Full attachment info for optimistic UI - required when attachmentIds is provided */
   attachments?: AttachmentSummary[]
-  /** Compose-session provenance for this send (see {@link ComposeTrace}). */
+  /**
+   * Compose-session provenance for this send (see {@link ComposeTrace}).
+   * Omitted when the workspace isn't capturing, and by every send the author
+   * didn't compose live (scheduled sends, retries, slash-command dispatch).
+   */
   composeTrace?: ComposeTraceInput
   /** Queue for the linked session's next turn instead of delivering now (`/enqueue`). */
   enqueue?: true
+  confirmedPrivacyWarning?: boolean
 }
 
 export interface QueueDraftMessageParams {
@@ -224,6 +230,7 @@ export function useQueueDraftMessage(workspaceId: string) {
             attachmentIds: input.attachmentIds,
             composeTrace,
             enqueue: input.enqueue,
+            confirmedPrivacyWarning: input.confirmedPrivacyWarning,
             createdAt: Date.now(),
             retryCount: 0,
             streamCreation: params.streamCreation,

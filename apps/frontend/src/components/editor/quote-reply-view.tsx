@@ -8,6 +8,8 @@ import { useUserProfile } from "@/components/user-profile"
 import { PersonaAvatar } from "@/components/persona-avatar"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import type { QuoteReplyAttrs } from "./quote-reply-extension"
+import { useReferenceExposed } from "./reference-audience-context"
+import { AUDIENCE_TONE } from "./reference-audience-tone"
 import type { AuthorType } from "@threahq/types"
 
 export function QuoteReplyView({ node, deleteNode, selected }: NodeViewProps) {
@@ -17,17 +19,24 @@ export function QuoteReplyView({ node, deleteNode, selected }: NodeViewProps) {
   const displaySnippet = truncateInline(stripMarkdownToInline(attrs.snippet), 200)
 
   const { workspaceId } = useParams<{ workspaceId: string }>()
+  const exposed = useReferenceExposed(attrs.streamId)
+  const tone = AUDIENCE_TONE.reveal
+  const Icon = exposed ? tone.icon : Quote
 
   return (
     <NodeViewWrapper
       className={cn(
         "my-1 flex items-start gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-2 text-sm select-none",
         "group/quote-reply reveal-host",
+        exposed && tone.surface,
         selected && "ring-2 ring-primary/30"
       )}
       data-type="quote-reply"
     >
-      <Quote className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+      <Icon
+        className={cn("mt-0.5 h-4 w-4 shrink-0", exposed ? tone.text : "text-muted-foreground")}
+        aria-hidden="true"
+      />
       <div className="min-w-0 flex-1">
         {workspaceId && attrs.authorId ? (
           <QuoteAuthor

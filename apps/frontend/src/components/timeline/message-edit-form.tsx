@@ -3,6 +3,8 @@ import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { enqueueOperation } from "@/sync/operation-queue"
 import { isPermanentApiError } from "@/api"
+import { isPrivacyConfirmationError } from "@/lib/share-privacy-toast"
+import { useSharePrivacyConfirm } from "@/hooks/use-share-privacy-confirm"
 import { Expand } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
@@ -19,6 +21,7 @@ import { serializeToMarkdown, parseMarkdown } from "@threahq/prosemirror"
 import type { JSONContent } from "@threahq/types"
 import type { Editor } from "@tiptap/react"
 import { EMPTY_DOC } from "@/lib/prosemirror-utils"
+import { unstampedMarkdown } from "@/lib/display-stamps"
 import { useStreamFromStore } from "@/stores/stream-store"
 
 const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Command" : "Control"
@@ -57,14 +60,16 @@ export function MessageEditForm({
   // through the body-level inline-edit presence attribute.
   // Re-chip in-app stream/message links the composer once chipped: the stored
   // body carries them as plain link marks, so without this an edit shows raw
-  // links instead of the chips the message renders. The undo-diff baseline stays
-  // the untransformed original (the chip round-trips to the same markdown).
+  // links instead of the chips the message renders.
   const [contentJson, setContentJson] = useState<JSONContent>(() =>
     inAppLinkMarksToNodes(initialContentJson ?? EMPTY_DOC)
   )
+  const contentRef = useRef(contentJson)
+  contentRef.current = contentJson
   const [isSaving, setIsSaving] = useState(false)
   const [docEditorOpen, setDocEditorOpen] = useState(false)
-  const [initialMarkdown] = useState(() => serializeToMarkdown(initialContentJson ?? EMPTY_DOC).trim())
+  // Chips stamp their resolved labels in on mount; an untouched edit must still read as unchanged.
+  const [initialMarkdown] = useState(() => unstampedMarkdown(contentJson))
 
   const [formatOpen, setFormatOpen] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
@@ -96,36 +101,54 @@ export function MessageEditForm({
     setMobileToolbarEditor((currentEditor) => (currentEditor === nextEditor ? currentEditor : nextEditor))
   }, [])
 
+  const { clear: clearPrivacyBlock, block: blockOnPrivacy } = useSharePrivacyConfirm({
+    toastId: `share-privacy-edit-${messageId}`,
+    content: contentJson,
+    confirmLabel: "Save anyway",
+    onConfirm: () => void saveEdit(contentRef.current, true),
+  })
+
   const saveEdit = useCallback(
-    async (json: JSONContent) => {
+    async (json: JSONContent, confirmedPrivacyWarning?: boolean): Promise<void> => {
+      clearPrivacyBlock()
       setIsSaving(true)
       try {
-        await messageService.update(workspaceId, messageId, { contentJson: json })
+        await messageService.update(workspaceId, messageId, {
+          contentJson: json,
+          confirmedPrivacyWarning,
+        })
         queryClient.invalidateQueries({ queryKey: messageKeys.versions(workspaceId, messageId) })
         onSave()
       } catch (err) {
+        // Typing during the save moved the form on; the toast asks about what it shows now.
+        if (isPrivacyConfirmationError(err)) {
+          blockOnPrivacy(contentRef.current)
+          return
+        }
         if (isPermanentApiError(err)) {
           toast.error("Couldn't save your edit.")
           return
         }
-        await enqueueOperation(workspaceId, "edit_message", { messageId, contentJson: json })
+        await enqueueOperation(workspaceId, "edit_message", {
+          messageId,
+          contentJson: json,
+          confirmedPrivacyWarning,
+        })
         onSave() // Close the edit form — the edit will be retried
         toast.info("Edit queued — will be saved when back online")
       } finally {
         setIsSaving(false)
       }
     },
-    [workspaceId, messageId, onSave, queryClient, messageService]
+    [workspaceId, messageId, onSave, queryClient, messageService, clearPrivacyBlock, blockOnPrivacy]
   )
 
   const handleSubmit = useCallback(async () => {
-    const contentMarkdown = serializeToMarkdown(contentJson)
-    const trimmed = contentMarkdown.trim()
-    if (!trimmed) {
+    if (!serializeToMarkdown(contentJson).trim()) {
       onDelete?.()
       return
     }
-    if (trimmed === initialMarkdown) {
+    if (unstampedMarkdown(contentJson) === initialMarkdown) {
       onCancel()
       return
     }
@@ -143,16 +166,15 @@ export function MessageEditForm({
         onDelete?.()
         return
       }
-      if (trimmed === initialMarkdown) {
-        setDocEditorOpen(false)
+      const content = inAppLinkMarksToNodes(parseMarkdown(trimmed))
+      setDocEditorOpen(false)
+      if (unstampedMarkdown(content) === initialMarkdown) {
         onCancel()
         return
       }
-      const json = parseMarkdown(trimmed)
-      setDocEditorOpen(false)
       // A refused save keeps the form open, so it must hold what the full editor sent.
-      setContentJson(inAppLinkMarksToNodes(json))
-      await saveEdit(json)
+      setContentJson(content)
+      await saveEdit(content)
     },
     [saveEdit, initialMarkdown, onCancel, onDelete]
   )
@@ -218,6 +240,10 @@ export function MessageEditForm({
       >
         <DrawerContent
           ref={drawerContentRef}
+          onPointerDownOutside={(e) => {
+            // The "Save anyway" toast lives outside the drawer; pressing it must not close the edit.
+            if ((e.target as HTMLElement).closest("[data-sonner-toaster]")) e.preventDefault()
+          }}
           className={mobileExpanded ? "!h-[100dvh] rounded-t-none" : "max-h-[85dvh]"}
         >
           <DrawerTitle className="sr-only">Edit message</DrawerTitle>

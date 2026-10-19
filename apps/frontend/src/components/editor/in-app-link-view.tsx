@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useCallback, useEffect } from "react"
 import { MessageSquare, MessagesSquare, Globe, Lock } from "lucide-react"
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react"
 import { useParams } from "react-router-dom"
@@ -7,7 +7,11 @@ import { useInAppLinkChip } from "@/hooks/use-in-app-link-chip"
 import { useResolvedInAppLink } from "@/components/timeline/in-app-link-preview-card"
 import { useConversationTitleDetails } from "@/hooks/use-conversation-title"
 import type { InAppLinkAttrs } from "./in-app-link-extension"
+import { cn } from "@/lib/utils"
 import { conversationChipLabel } from "./conversation-chip-label"
+import { useReferenceExposed } from "./reference-audience-context"
+import { AUDIENCE_TONE } from "./reference-audience-tone"
+import { stampNodeAttrs } from "./stamp-node-attrs"
 
 /**
  * In-composer chip for an in-app link (TipTap NodeView). A conversation link has
@@ -17,14 +21,18 @@ import { conversationChipLabel } from "./conversation-chip-label"
  * hook its kind needs (a NodeView can't branch its hooks) — the dispatcher picks
  * by the presence of `streamId`.
  */
-export function InAppLinkView({ node, updateAttributes }: NodeViewProps) {
+export function InAppLinkView({ node, editor, getPos }: NodeViewProps) {
   const attrs = node.attrs as InAppLinkAttrs
   const { workspaceId } = useParams<{ workspaceId: string }>()
+  const stampName = useCallback(
+    (name: string) => stampNodeAttrs({ editor, getPos }, "inAppLink", { name }),
+    [editor, getPos]
+  )
 
   if (!attrs.streamId) {
-    return <ConversationChipView attrs={attrs} workspaceId={workspaceId ?? ""} updateAttributes={updateAttributes} />
+    return <ConversationChipView attrs={attrs} workspaceId={workspaceId ?? ""} stampName={stampName} />
   }
-  return <StreamMessageChipView attrs={attrs} workspaceId={workspaceId ?? ""} updateAttributes={updateAttributes} />
+  return <StreamMessageChipView attrs={attrs} workspaceId={workspaceId ?? ""} stampName={stampName} />
 }
 
 /**
@@ -36,11 +44,11 @@ export function InAppLinkView({ node, updateAttributes }: NodeViewProps) {
 function StreamMessageChipView({
   attrs,
   workspaceId,
-  updateAttributes,
+  stampName,
 }: {
   attrs: InAppLinkAttrs
   workspaceId: string
-  updateAttributes: (attrs: Record<string, unknown>) => void
+  stampName: (name: string) => void
 }) {
   const state = useInAppLinkChip({
     workspaceId,
@@ -53,22 +61,28 @@ function StreamMessageChipView({
   const resolvedName = state.status === "resolved" ? state.label : null
 
   // Stamp the resolved name onto the node only when it was inserted without one
-  // (pasted link). A user/compose-cached name is left as-is so the write-back
-  // doesn't churn the undo history on every render.
+  // (pasted link). A user/compose-cached name is left as-is.
   useEffect(() => {
-    if (resolvedName && !attrs.name) {
-      updateAttributes({ name: resolvedName })
-    }
-  }, [resolvedName, attrs.name, updateAttributes])
+    if (resolvedName && !attrs.name) stampName(resolvedName)
+  }, [resolvedName, attrs.name, stampName])
 
+  const exposed = useReferenceExposed(attrs.streamId)
   const pendingIcon = attrs.messageId ? MessageSquare : undefined
   const icon = state.status === "pending" ? pendingIcon : state.icon
   const label = state.status === "pending" ? attrs.name || "Link" : state.label
   const prefix = state.status === "resolved" ? state.prefix : undefined
+  // The lock takes the place of the chip's own glyph (icon or `#`), so the chip keeps its size.
+  const tone = AUDIENCE_TONE.unreachable
+  const exposedPrefix = prefix && <tone.icon aria-hidden="true" className="inline h-3 w-3 align-[-0.1em]" />
 
   return (
     <NodeViewWrapper as="span" data-type="in-app-link">
-      <InAppLinkChip icon={icon} prefix={prefix} label={label} />
+      <InAppLinkChip
+        icon={exposed ? tone.icon : icon}
+        prefix={exposed ? exposedPrefix : prefix}
+        label={label}
+        className={exposed ? cn(tone.surface, tone.text) : undefined}
+      />
     </NodeViewWrapper>
   )
 }
@@ -82,11 +96,11 @@ function StreamMessageChipView({
 function ConversationChipView({
   attrs,
   workspaceId,
-  updateAttributes,
+  stampName,
 }: {
   attrs: InAppLinkAttrs
   workspaceId: string
-  updateAttributes: (attrs: Record<string, unknown>) => void
+  stampName: (name: string) => void
 }) {
   const { data } = useResolvedInAppLink(workspaceId, undefined, attrs.url, true)
   const conversation = data?.kind === "conversation" ? data : null
@@ -97,10 +111,8 @@ function ConversationChipView({
   const resolvedName = conversation?.accessTier === "full" ? titleDetails.title : null
 
   useEffect(() => {
-    if (resolvedName && !attrs.name) {
-      updateAttributes({ name: resolvedName })
-    }
-  }, [resolvedName, attrs.name, updateAttributes])
+    if (resolvedName && !attrs.name) stampName(resolvedName)
+  }, [resolvedName, attrs.name, stampName])
 
   let icon = MessagesSquare
   if (data?.accessTier === "cross_workspace") icon = Globe

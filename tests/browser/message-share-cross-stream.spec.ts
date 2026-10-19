@@ -1,4 +1,4 @@
-import { test, expect, type Locator, type Page } from "@playwright/test"
+import { test, expect, type Browser, type Locator, type Page } from "@playwright/test"
 import { createChannel, expectApiOk, generateTestId, loginAndCreateWorkspace, loginInNewContext } from "./helpers"
 
 /**
@@ -13,25 +13,16 @@ import { createChannel, expectApiOk, generateTestId, loginAndCreateWorkspace, lo
  * 2. **Same-stream share.** Share a message into the stream it lives in.
  *    Plan D5 says this is allowed; the hand-off lands in the current
  *    composer and the user can send a duplicate pointer back.
- * 3. **Private → public, blocked then confirmed.** Two-user scenario where
- *    sharing from a private channel into a public one User B can read
- *    exposes the source to a new reader. The first send must fail with the
- *    `blocked-privacy` status, surface the toast, and only after the user
- *    explicitly clicks "Share anyway" should the pointer reach the public
- *    timeline. **The whole point of this test is to prove a share never
- *    leaves the device without a deliberate user click.**
- * 4. **Private → public, blocked then cancelled.** Same setup, but Cancel
- *    on the toast must drop the pending row and never deliver the share.
+ * 3. **Private → public, asked before send.** A second describe block covers
+ *    the composer's in-place question: nothing reaches User B (in the public
+ *    channel, not the private source) until User A answers it.
  *
  * The recursive private-placeholder rechain scenario from the plan
  * (E2E-share-rechain-private-placeholder) is covered exhaustively at
  * unit-test level in `hydration.test.ts` and `card-body.test.tsx`.
  */
 
-async function sendChannelMessageViaApi(page: Page, text: string): Promise<string> {
-  const match = page.url().match(/\/w\/([^/]+)\/s\/([^/?]+)/)
-  expect(match).toBeTruthy()
-  const [, workspaceId, streamId] = match!
+async function postMessageViaApi(page: Page, workspaceId: string, streamId: string, text: string): Promise<string> {
   const response = await page.request.post(`/api/workspaces/${workspaceId}/messages`, {
     data: {
       streamId,
@@ -42,6 +33,13 @@ async function sendChannelMessageViaApi(page: Page, text: string): Promise<strin
   await expectApiOk(response, `Create stream message: ${text}`)
   const body = (await response.json()) as { message?: { id: string } }
   return body.message?.id ?? ""
+}
+
+async function sendChannelMessageViaApi(page: Page, text: string): Promise<string> {
+  const match = page.url().match(/\/w\/([^/]+)\/s\/([^/?]+)/)
+  expect(match).toBeTruthy()
+  const [, workspaceId, streamId] = match!
+  return postMessageViaApi(page, workspaceId, streamId, text)
 }
 
 /**
@@ -209,202 +207,274 @@ test.describe("Message share — cross-stream picker modal (Slice 2)", () => {
       timeout: 5000,
     })
   })
+})
 
-  test("blocks a private→public share until the user explicitly confirms 'Share anyway'", async ({ browser, page }) => {
-    // ---- Setup: two users, one workspace, two channels --------------------
-    // User A owns the workspace and is the only member of the private source.
-    // User B joins the workspace and the public target, so the backend's
-    // exposure count is > 0 (User B reads `pub` but NOT `priv` — exactly the
-    // case the privacy check is meant to catch).
-    const { testId, workspaceId } = await loginAndCreateWorkspace(page, "share-priv-confirm").then((r) => ({
-      testId: r.testId,
-      workspaceId: page.url().match(/\/w\/([^/]+)/)?.[1] ?? "",
-    }))
-    expect(workspaceId).not.toBe("")
+const PHONE = { width: 390, height: 780 }
 
-    const pubSlug = `pub-${testId}`
-    const privSlug = `priv-${testId}`
-    const pubStreamId = await createChannelViaApi(page, workspaceId, pubSlug, "public")
-    const privStreamId = await createChannelViaApi(page, workspaceId, privSlug, "private")
+/**
+ * User A owns the workspace and is the only member of a private channel; User B
+ * joins the workspace and a public channel. Anything from the private channel
+ * that A puts into the public channel's composer reaches a reader who can't open
+ * its source — the case the composer asks about before it sends.
+ */
+async function setupPrivateToPublic(browser: Browser, page: Page, prefix: string) {
+  const { testId } = await loginAndCreateWorkspace(page, prefix)
+  const workspaceId = page.url().match(/\/w\/([^/]+)/)?.[1] ?? ""
+  expect(workspaceId).not.toBe("")
 
-    const memberEmail = `share-priv-other-${testId}@example.com`
-    const otherUser = await loginInNewContext(browser, memberEmail, `Share Priv Other ${testId}`)
-    try {
-      await expectApiOk(
-        await otherUser.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, { data: { role: "member" } }),
-        "User B join workspace"
-      )
-      const memberId = await getWorkspaceUserIdByEmail(page, workspaceId, memberEmail)
-      // Admin-add User B to the public channel. A drive-by `joinChannel` from
-      // User B's session would also work, but going through the owner keeps
-      // the test independent of User B's UI state.
-      await expectApiOk(
-        await page.request.post(`/api/workspaces/${workspaceId}/streams/${pubStreamId}/members`, {
-          data: { memberId },
-        }),
-        "Add User B to public channel"
-      )
+  const pubSlug = `pub-${testId}`
+  const privSlug = `priv-${testId}`
+  const pubStreamId = await createChannelViaApi(page, workspaceId, pubSlug, "public")
+  const privStreamId = await createChannelViaApi(page, workspaceId, privSlug, "private")
 
-      // ---- Act: User A sends a private message, opens picker, selects pub.
-      await page.goto(`/w/${workspaceId}/s/${privStreamId}`)
-      await expect(page.getByRole("heading", { name: `#${privSlug}`, level: 1 })).toBeVisible({ timeout: 10000 })
+  const otherName = `Reader ${testId}`
+  const otherEmail = `${prefix}-other-${testId}@example.com`
+  const other = await loginInNewContext(browser, otherEmail, otherName)
+  try {
+    await expectApiOk(
+      await other.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, {
+        data: { role: "member", name: otherName },
+      }),
+      "User B join workspace"
+    )
+    const memberId = await getWorkspaceUserIdByEmail(page, workspaceId, otherEmail)
+    await expectApiOk(
+      await page.request.post(`/api/workspaces/${workspaceId}/streams/${pubStreamId}/members`, { data: { memberId } }),
+      "Add User B to public channel"
+    )
 
-      const sourceText = `secret-${testId}`
-      await sendChannelMessageViaApi(page, sourceText)
-      await expect(mainMessageRow(page, sourceText)).toBeVisible({ timeout: 5000 })
+    await page.goto(`/w/${workspaceId}/s/${privStreamId}`)
+    await expect(page.getByRole("heading", { name: `#${privSlug}`, level: 1 })).toBeVisible({ timeout: 10000 })
+    const sourceText = `secret-${testId}`
+    const sourceMessageId = await sendChannelMessageViaApi(page, sourceText)
+    await expect(mainMessageRow(page, sourceText)).toBeVisible({ timeout: 5000 })
 
-      await openMessageContextMenu(page, sourceText)
-      await page.getByRole("menuitem", { name: /^share message$/i }).click()
+    return { workspaceId, pubSlug, pubStreamId, privStreamId, other, otherName, sourceText, sourceMessageId }
+  } catch (error) {
+    await other.context.close()
+    throw error
+  }
+}
 
-      const dialog = page.getByRole("dialog", { name: /share message/i })
-      await expect(dialog).toBeVisible()
-      const pubItem = dialog
-        .locator("[cmdk-item][data-value]")
-        .filter({ hasText: new RegExp(pubSlug, "i") })
-        .first()
-      await expect(pubItem).toBeVisible()
-      await pubItem.click()
+type PrivateToPublic = Awaited<ReturnType<typeof setupPrivateToPublic>>
 
-      // Modal closes, navigation lands on `pub`, composer receives the share.
-      await expect(dialog).not.toBeVisible()
-      await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/s/${pubStreamId}`), { timeout: 10000 })
-      const composer = page.locator("[contenteditable='true']").first()
-      await expect(composer.locator("[data-type='shared-message']")).toHaveCount(1, { timeout: 5000 })
-      await composer.focus()
-      await page.keyboard.press("Enter")
+/** Share the private source into the public channel through the picker; returns the public pane. */
+async function shareIntoPublic(page: Page, setup: PrivateToPublic): Promise<Locator> {
+  await openMessageContextMenu(page, setup.sourceText)
+  await page.getByRole("menuitem", { name: /^share message$/i }).click()
+  const dialog = page.getByRole("dialog", { name: /share message/i })
+  await dialog
+    .locator("[cmdk-item][data-value]")
+    .filter({ hasText: new RegExp(setup.pubSlug, "i") })
+    .first()
+    .click()
+  await expect(dialog).not.toBeVisible()
+  const pane = page.locator(`[data-panel-tab="${setup.pubStreamId}"]`)
+  await expect(pane.locator("[contenteditable='true'] [data-type='shared-message']")).toHaveCount(1, { timeout: 5000 })
+  return pane
+}
 
-      // ---- Assert: NOT delivered. Toast appears asking for confirmation.
-      // The toast is the only thing standing between an accidental click and
-      // the source content reaching User B — its presence is the contract.
-      const toast = page.getByText(/expose the source to people outside the source stream/i)
-      await expect(toast).toBeVisible({ timeout: 10000 })
+/**
+ * User B's view of the public channel: the timeline's share pointers and link chips. B posts a sentinel first and
+ * waits for it, so a count of 0 means the timeline loaded past anything sent earlier, not that it hasn't loaded.
+ */
+async function openAsOtherReader(setup: PrivateToPublic) {
+  const page = setup.other.page
+  const sentinel = `loaded-${generateTestId()}`
+  await postMessageViaApi(page, setup.workspaceId, setup.pubStreamId, sentinel)
+  await page.goto(`/w/${setup.workspaceId}/s/${setup.pubStreamId}`)
+  await expect(page.getByRole("heading", { name: `#${setup.pubSlug}`, level: 1 })).toBeVisible({ timeout: 10000 })
+  await expect(mainMessageRow(page, sentinel)).toBeVisible({ timeout: 10000 })
+  const timeline = page.getByRole("main").locator("[data-message-id]")
+  return {
+    pointers: timeline.locator("[data-type='shared-message']").filter({ hasText: setup.sourceText }),
+    chips: timeline.locator("[data-type='in-app-link-chip']"),
+  }
+}
 
-      // The real privacy contract is about the *recipient*. A rejected send
-      // still renders locally for the sender as an optimistic "Failed to send"
-      // bubble (with Retry) in their own timeline — that's a device-local UI
-      // state, not a leak. What must hold is that User B, who is in `pub` but
-      // not in the private source, never receives the pointer before User A
-      // explicitly confirms. Verify that from User B's own session.
-      const otherPointer = otherUser.page
-        .getByRole("main")
-        .locator("[data-type='shared-message']")
-        .filter({ hasText: new RegExp(sourceText) })
-      await otherUser.page.goto(`/w/${workspaceId}/s/${pubStreamId}`)
-      await expect(otherUser.page.getByRole("heading", { name: `#${pubSlug}`, level: 1 })).toBeVisible({
-        timeout: 10000,
-      })
-      await expect(otherPointer).toHaveCount(0)
+async function pasteIntoFocusedComposer(page: Page, text: string): Promise<void> {
+  await page.evaluate((value) => {
+    const editor = document.activeElement
+    if (!(editor instanceof HTMLElement) || !editor.isContentEditable) throw new Error("No focused composer")
+    const clipboardData = new DataTransfer()
+    clipboardData.setData("text/plain", value)
+    editor.dispatchEvent(new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }))
+  }, text)
+}
 
-      // ---- Confirm: click "Share anyway" → re-enqueue with the flag set.
-      await page.getByRole("button", { name: /share anyway/i }).click()
+test.describe("Composer asks before a reference reaches readers who can't open it", () => {
+  let setup: PrivateToPublic | undefined
+  const current = (): PrivateToPublic => {
+    if (!setup) throw new Error("setupPrivateToPublic did not run")
+    return setup
+  }
 
-      // Now — and only now — the pointer is delivered. User A's failed bubble
-      // settles into a delivered pointer, and User B receives it over the
-      // socket into the already-open `pub` timeline.
-      const publishedPointer = page
-        .getByRole("main")
-        .locator("[data-type='shared-message']")
-        .filter({ hasText: new RegExp(sourceText) })
-      await expect(publishedPointer).toBeVisible({ timeout: 10000 })
-      await expect(otherPointer).toBeVisible({ timeout: 10000 })
-
-      // The toast should be dismissed once the retry is in flight.
-      await expect(toast).not.toBeVisible({ timeout: 5000 })
-    } finally {
-      await otherUser.context.close()
-    }
+  test.beforeEach(async ({ browser, page }) => {
+    setup = undefined
+    setup = await setupPrivateToPublic(browser, page, "ask")
   })
 
-  test("blocks a private→public share and discards it cleanly when the user clicks 'Cancel'", async ({
-    browser,
-    page,
-  }) => {
-    // Mirrors the confirm test up to the toast — then asserts the cancel path
-    // tears down the optimistic state without ever hitting the server.
-    const { testId, workspaceId } = await loginAndCreateWorkspace(page, "share-priv-cancel").then((r) => ({
-      testId: r.testId,
-      workspaceId: page.url().match(/\/w\/([^/]+)/)?.[1] ?? "",
-    }))
-    expect(workspaceId).not.toBe("")
+  test.afterEach(async () => {
+    await setup?.other.context.close()
+  })
 
-    const pubSlug = `pub-${testId}`
-    const privSlug = `priv-${testId}`
-    const pubStreamId = await createChannelViaApi(page, workspaceId, pubSlug, "public")
-    const privStreamId = await createChannelViaApi(page, workspaceId, privSlug, "private")
+  test("a share asks in place and only goes out after the second Send", async ({ page }) => {
+    const setup = current()
+    const pane = await shareIntoPublic(page, setup)
+    await expect(pane.getByTestId("send-warning-badge").filter({ visible: true })).toHaveAttribute(
+      "data-tone",
+      "reveal"
+    )
 
-    const memberEmail = `share-priv-cancel-other-${testId}@example.com`
-    const otherUser = await loginInNewContext(browser, memberEmail, `Share Priv Cancel ${testId}`)
-    try {
-      await expectApiOk(
-        await otherUser.page.request.post(`/api/dev/workspaces/${workspaceId}/join`, { data: { role: "member" } }),
-        "User B join workspace"
-      )
-      const memberId = await getWorkspaceUserIdByEmail(page, workspaceId, memberEmail)
-      await expectApiOk(
-        await page.request.post(`/api/workspaces/${workspaceId}/streams/${pubStreamId}/members`, {
-          data: { memberId },
-        }),
-        "Add User B to public channel"
-      )
+    await pane.locator("[contenteditable='true']").focus()
+    await page.keyboard.press("Enter")
+    const ask = pane.getByTestId("send-ask")
+    await expect(ask).toContainText(`${setup.otherName} will see this message`)
 
-      await page.goto(`/w/${workspaceId}/s/${privStreamId}`)
-      await expect(page.getByRole("heading", { name: `#${privSlug}`, level: 1 })).toBeVisible({ timeout: 10000 })
+    const reader = await openAsOtherReader(setup)
+    await expect(reader.pointers).toHaveCount(0)
 
-      const sourceText = `do-not-leak-${testId}`
-      await sendChannelMessageViaApi(page, sourceText)
-      await expect(mainMessageRow(page, sourceText)).toBeVisible({ timeout: 5000 })
+    // The question's Send holds focus, so a second Enter is the deliberate confirm.
+    await page.keyboard.press("Enter")
+    await expect(ask).toHaveCount(0)
+    await expect(reader.pointers).toBeVisible({ timeout: 10000 })
+  })
 
-      await openMessageContextMenu(page, sourceText)
-      await page.getByRole("menuitem", { name: /^share message$/i }).click()
+  test("when the audience lookup fails, the server still stops the share until Share anyway", async ({ page }) => {
+    const setup = current()
+    await page.route("**/messages/reference-audience", (route) => route.fulfill({ status: 500, body: "{}" }))
+    const pane = await shareIntoPublic(page, setup)
+    await pane.locator("[contenteditable='true']").focus()
+    await page.keyboard.press("Enter")
+    await expect(pane.getByTestId("send-ask")).toHaveCount(0)
 
-      const dialog = page.getByRole("dialog", { name: /share message/i })
-      await expect(dialog).toBeVisible()
-      const pubItem = dialog
-        .locator("[cmdk-item][data-value]")
-        .filter({ hasText: new RegExp(pubSlug, "i") })
-        .first()
-      await expect(pubItem).toBeVisible()
-      await pubItem.click()
-      await expect(dialog).not.toBeVisible()
-      await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/s/${pubStreamId}`), { timeout: 10000 })
+    const shareAnyway = page.getByRole("button", { name: "Share anyway" })
+    await expect(shareAnyway).toBeVisible({ timeout: 10000 })
+    const reader = await openAsOtherReader(setup)
+    await expect(reader.pointers).toHaveCount(0)
 
-      const composer = page.locator("[contenteditable='true']").first()
-      await expect(composer.locator("[data-type='shared-message']")).toHaveCount(1, { timeout: 5000 })
-      await composer.focus()
-      await page.keyboard.press("Enter")
+    await shareAnyway.click()
+    await expect(reader.pointers).toBeVisible({ timeout: 10000 })
+  })
 
-      const toast = page.getByText(/expose the source to people outside the source stream/i)
-      await expect(toast).toBeVisible({ timeout: 10000 })
+  test("when the audience lookup fails, Cancel on the server's question drops the share unsent", async ({ page }) => {
+    const setup = current()
+    await page.route("**/messages/reference-audience", (route) => route.fulfill({ status: 500, body: "{}" }))
+    const pane = await shareIntoPublic(page, setup)
+    await pane.locator("[contenteditable='true']").focus()
+    await page.keyboard.press("Enter")
 
-      await page.getByRole("button", { name: /^cancel$/i }).click()
+    const toast = page
+      .locator("[data-sonner-toast]")
+      .filter({ has: page.getByRole("button", { name: "Share anyway" }) })
+    await expect(toast).toBeVisible({ timeout: 10000 })
+    const pendingShare = pane.locator("[data-message-id] [data-type='shared-message']")
+    await expect(pendingShare).toHaveCount(1)
 
-      // Toast dismisses; pointer never appears in the public timeline. We
-      // wait long enough for any (hypothetical) deferred retry to drain so
-      // the absence assertion is meaningful, not just a race.
-      await expect(toast).not.toBeVisible({ timeout: 5000 })
-      await page.waitForTimeout(2000)
-      const publishedPointer = page
-        .getByRole("main")
-        .locator("[data-type='shared-message']")
-        .filter({ hasText: new RegExp(sourceText) })
-      await expect(publishedPointer).toHaveCount(0)
+    await toast.getByRole("button", { name: "Cancel" }).click()
+    await expect(toast).toHaveCount(0)
+    await expect(pendingShare).toHaveCount(0)
+    const reader = await openAsOtherReader(setup)
+    await expect(reader.pointers).toHaveCount(0)
+  })
 
-      // Independent verification from User B's perspective: User B is in `pub`
-      // and would see any leaked share. Bootstrap the public channel as User B
-      // and assert no share-pointer messages exist for the source text. This
-      // closes the loop between "frontend optimistic state cleared" and
-      // "backend never accepted the write".
-      await otherUser.page.goto(`/w/${workspaceId}/s/${pubStreamId}`)
-      await expect(otherUser.page.getByRole("heading", { name: `#${pubSlug}`, level: 1 })).toBeVisible({
-        timeout: 10000,
-      })
-      const otherPointer = otherUser.page
-        .getByRole("main")
-        .locator("[data-type='shared-message']")
-        .filter({ hasText: new RegExp(sourceText) })
-      await expect(otherPointer).toHaveCount(0)
-    } finally {
-      await otherUser.context.close()
-    }
+  test("Escape drops the question and the share stays in the draft, unsent", async ({ page }) => {
+    const setup = current()
+    const pane = await shareIntoPublic(page, setup)
+    const editor = pane.locator("[contenteditable='true']")
+    await editor.focus()
+    await page.keyboard.press("Enter")
+    await expect(pane.getByTestId("send-ask")).toBeVisible()
+
+    await page.keyboard.press("Escape")
+    await expect(pane.getByTestId("send-ask")).toHaveCount(0)
+    await expect(editor.locator("[data-type='shared-message']")).toHaveCount(1)
+
+    // Long enough for a send that had slipped through to land.
+    await page.waitForTimeout(2000)
+    const reader = await openAsOtherReader(setup)
+    await expect(reader.pointers).toHaveCount(0)
+  })
+
+  test("Use link swaps the share for a link and the next Send doesn't ask again", async ({ page }) => {
+    const setup = current()
+    const pane = await shareIntoPublic(page, setup)
+    const editor = pane.locator("[contenteditable='true']")
+    await editor.focus()
+    await page.keyboard.press("Enter")
+    await pane
+      .getByTestId("send-ask")
+      // The shared target opens as a narrow split pane, where a container query swaps in the short "Link" copy.
+      .getByRole("button", { name: /^(Use )?link$/i })
+      .click()
+
+    await expect(editor.locator("[data-type='shared-message']")).toHaveCount(0)
+    await expect(editor.locator("[data-type='in-app-link-chip'] .lucide-lock")).toBeVisible({ timeout: 5000 })
+    await expect(pane.getByTestId("send-warning-badge").filter({ visible: true })).toHaveAttribute(
+      "data-tone",
+      "unreachable"
+    )
+
+    await expect(editor).toBeFocused()
+    await page.keyboard.press("Enter")
+    await expect(pane.getByTestId("send-ask")).toHaveCount(0)
+
+    const reader = await openAsOtherReader(setup)
+    await expect(reader.chips).toHaveCount(1, { timeout: 10000 })
+    await expect(reader.pointers).toHaveCount(0)
+  })
+
+  test("on a phone, a link someone can't open offers Share, and the share then sends", async ({ page }) => {
+    const setup = current()
+    await page.setViewportSize(PHONE)
+    await page.goto(`/w/${setup.workspaceId}/s/${setup.pubStreamId}`)
+    const main = page.getByRole("main")
+    // At rest the phone composer's editor is a hairline; the card is the tap target.
+    const card = main.locator("[data-composer-card]").last()
+    const box = await card.boundingBox()
+    expect(box).not.toBeNull()
+    await page.mouse.click(box!.x + box!.width / 2, box!.y + 18)
+    const editor = main.locator("[data-editor-zone='main'] [contenteditable='true']").first()
+    await expect(editor).toBeFocused()
+    const origin = new URL(page.url()).origin
+    await pasteIntoFocusedComposer(
+      page,
+      `${origin}/w/${setup.workspaceId}/s/${setup.privStreamId}?m=${setup.sourceMessageId}`
+    )
+    await expect(editor.locator("[data-type='in-app-link-chip'] .lucide-lock")).toBeVisible({ timeout: 5000 })
+
+    const send = main.getByRole("button", { name: `Send — ${setup.otherName} can't open it` })
+    await send.click()
+    const ask = main.getByTestId("send-ask")
+    await expect(ask).toContainText(`${setup.otherName} can't open it`)
+
+    await ask.getByRole("button", { name: "Share", exact: true }).click()
+    await expect(editor.locator("[data-type='shared-message']")).toHaveCount(1)
+    await expect(ask).toHaveCount(0)
+
+    // Choosing Share answered the question; the send goes out confirmed.
+    await main.getByRole("button", { name: /^Send\b/ }).click()
+    await expect(ask).toHaveCount(0)
+    const reader = await openAsOtherReader(setup)
+    await expect(reader.pointers).toBeVisible({ timeout: 10000 })
+  })
+
+  test("the expanded compose pane shows the question at full width", async ({ page }) => {
+    const setup = current()
+    await page.setViewportSize({ width: 1600, height: 900 })
+    const pane = await shareIntoPublic(page, setup)
+    await pane.getByRole("link", { name: "Expand editor into a pane" }).click()
+
+    const composePane = page.locator(`[data-panel-tab="compose:${setup.pubStreamId}"]`)
+    const editor = composePane.getByRole("textbox", { name: "Expanded message editor" })
+    await expect(editor.locator("[data-type='shared-message']")).toHaveCount(1, { timeout: 5000 })
+    await editor.focus()
+    await page.keyboard.press("ControlOrMeta+Enter")
+
+    const ask = composePane.getByTestId("send-ask")
+    await expect(ask).toContainText(`${setup.otherName} will see this message`)
+    await expect(ask.getByRole("button", { name: "Send", exact: true })).toBeVisible()
+    const box = await ask.boundingBox()
+    expect(box?.width ?? 0).toBeGreaterThan(200)
   })
 })

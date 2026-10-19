@@ -26,7 +26,7 @@ import { usePreferencesOptional } from "@/contexts"
 import { getEffectiveKeyBinding, matchesKeyBinding } from "@/lib/keyboard-shortcuts"
 import { RichEditor, EditorToolbar, EditorActionBar } from "@/components/editor"
 import { getDictationMarkdownContext } from "@/components/editor/dictation-markdown"
-import { VOICE_DRAFT_CONTEXT_MAX_CHARS } from "@threahq/types"
+import { VOICE_DRAFT_CONTEXT_MAX_CHARS, type ReferenceAudience } from "@threahq/types"
 import type { RichEditorHandle } from "@/components/editor"
 import { handleMobileInlineAttachmentPicker } from "@/components/editor/mobile-inline-attachment-picker"
 import { Button } from "@/components/ui/button"
@@ -34,12 +34,16 @@ import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/comp
 import { PendingAttachments } from "@/components/timeline/pending-attachments"
 import { countAttachmentReferences } from "@/components/editor/attachment-reference-counts"
 import { ComposerPillDndHost } from "@/components/editor/composer-pill-dnd"
+import { linksToShares, sharesToLinks } from "@/components/editor/reference-conversions"
 import { MicButton, type MicButtonHandle } from "./mic-button"
 import { StashedDraftsComposerBridgeContext, type StashedDraftsComposerBridge } from "./stashed-drafts-open-context"
 import { ComposerActionBar } from "./composer-action-bar"
 import { ComposerLinkPreviews } from "./composer-link-previews"
 import { StashedDraftsPicker, type StashedDraftsPickerProps } from "./stashed-drafts-picker"
 import { ContextRefStrip } from "./context-ref-strip"
+import { SendAskRow, SendWarningBadge } from "./send-ask"
+import type { ComposerSendWarning } from "@/lib/reference-audience"
+import { useSendAsk } from "./use-send-ask"
 import type { DraftContextRef } from "@/lib/context-bag/types"
 import { cn } from "@/lib/utils"
 import { COLLAPSED_COMPOSER_ROW, COLLAPSED_COMPOSER_SHADOW } from "@/components/composer/collapsed-composer-bar"
@@ -117,12 +121,27 @@ const MOD_KEY_NAME = navigator.platform?.toLowerCase().includes("mac") ? "Comman
  */
 const KEYBOARD_RESIZE_WAIT_MS = 300
 
+function AskOverlay({ askRow, children }: { askRow: ReactNode; children: ReactNode }) {
+  return (
+    <>
+      <div className={cn(askRow && "invisible")} aria-hidden={askRow ? true : undefined}>
+        {children}
+      </div>
+      {askRow && <div className="absolute inset-0 flex items-center">{askRow}</div>}
+    </>
+  )
+}
+
 export interface ComposerControlHandle {
   focus(): void
   focusAfterQuoteReply(): void
   getEditor(): Editor | null
   /** Open the snippet editor in this composer (e.g. from the command palette). */
   openSnippetEditor(): void
+}
+
+export interface ComposerSubmitOptions {
+  confirmedPrivacyWarning?: boolean
 }
 
 export interface MessageComposerProps {
@@ -168,7 +187,7 @@ export interface MessageComposerProps {
   /** Current count of images for sequential naming of pasted images */
   imageCount?: number
 
-  onSubmit: (content?: JSONContent) => void
+  onSubmit: (content?: JSONContent, options?: ComposerSubmitOptions) => void
   canSubmit: boolean
   submitLabel?: string
   submittingLabel?: string
@@ -262,6 +281,13 @@ export interface MessageComposerProps {
 
   /** Phone foot only: the aside button beside Attach (the `/aside` command by another handle). */
   onOpenAside?: () => void
+
+  /** Readers the draft's references would expose; Send asks once per exposing source before sending. */
+  sendWarning?: ComposerSendWarning | null
+  /** Present while the warning for the current refs is still loading; Send waits on it briefly. */
+  awaitSendWarning?: (() => Promise<ComposerSendWarning | null>) | null
+  /** Exposing source streams by id; tints the editor's references to them. */
+  audienceByStreamId?: ReadonlyMap<string, ReferenceAudience>
 }
 
 export function MessageComposer({
@@ -310,6 +336,9 @@ export function MessageComposer({
   scheduledMessagesTrigger,
   scheduledMessagesTriggerFab,
   onOpenAside,
+  sendWarning = null,
+  awaitSendWarning,
+  audienceByStreamId,
 }: MessageComposerProps) {
   // Controls (buttons, file input) are disabled during both external disable and sending.
   // The editor itself stays editable during sending so mobile keyboards don't close/reopen.
@@ -981,17 +1010,53 @@ export function MessageComposer({
   const insertMention = useCallback(() => richEditorRef.current?.insertMention(), [])
   const insertSlash = useCallback(() => richEditorRef.current?.insertSlash(), [])
 
+  const {
+    copy: askCopy,
+    question,
+    submit: submitAsking,
+    dismiss: dismissQuestion,
+    recordAlternative,
+  } = useSendAsk({ sendWarning, awaitSendWarning, content })
+
+  // Desktop moved focus to the question's button, which unmounts once it is answered.
+  const refocusEditor = useCallback(() => {
+    if (!isMobile) richEditorRef.current?.focus()
+  }, [isMobile])
+
+  const closeQuestion = useCallback(() => {
+    dismissQuestion()
+    refocusEditor()
+  }, [dismissQuestion, refocusEditor])
+
   const handleSubmit = useCallback(() => {
     if (!canSubmit) return
-    setFormatOpen(false)
-    resetMobileComposerSize()
-    setMobileLinkPopoverOpen(false)
-    // End any in-flight take first: this flushes the live hypothesis into the
-    // editor (so the tail lands in the message) and drops the polish toggle +
-    // warnings before we snapshot the content below.
-    micRef.current?.prepareSendAsIs()
-    onSubmit(richEditorRef.current?.getEditor()?.getJSON() as JSONContent | undefined)
-  }, [canSubmit, onSubmit, resetMobileComposerSize])
+    const wasAsking = question !== null
+    void submitAsking((options) => {
+      setFormatOpen(false)
+      resetMobileComposerSize()
+      setMobileLinkPopoverOpen(false)
+      // End any in-flight take first: this flushes the live hypothesis into the
+      // editor (so the tail lands in the message) and drops the polish toggle +
+      // warnings before we snapshot the content below.
+      micRef.current?.prepareSendAsIs()
+      onSubmit(richEditorRef.current?.getEditor()?.getJSON() as JSONContent | undefined, options)
+      if (wasAsking) refocusEditor()
+    })
+  }, [canSubmit, question, submitAsking, onSubmit, resetMobileComposerSize, refocusEditor])
+
+  const handleAlternative = useCallback(() => {
+    const editor = richEditorRef.current?.getEditor()
+    if (!editor || !workspaceId || !question) return
+    if (question.tone === "reveal") sharesToLinks(editor, workspaceId, question.convertibleStreamIds)
+    else linksToShares(editor, question.convertibleStreamIds)
+    recordAlternative()
+    refocusEditor()
+  }, [workspaceId, question, recordAlternative, refocusEditor])
+
+  const handleEditorFocus = useCallback(() => {
+    dismissQuestion()
+    handleComposerFocus()
+  }, [dismissQuestion, handleComposerFocus])
 
   // Stable ref so TipTap's captured closure always invokes the current handler
   // without needing to re-register on every render.
@@ -1076,8 +1141,16 @@ export function MessageComposer({
   )
   const composerEmpty = isEmptyContent(content) && pendingAttachments.length === 0
 
-  const handleStashKeyDown = useCallback(
+  const handleComposerKeyDownCapture = useCallback(
     (event: ReactKeyboardEvent<HTMLDivElement>) => {
+      // Capture phase, ahead of the editor's own Escape (blur) and the expanded
+      // shell's (collapse): the first Escape only takes the question away.
+      if (question && event.key === "Escape") {
+        event.preventDefault()
+        event.stopPropagation()
+        closeQuestion()
+        return
+      }
       if (!stashBinding) return
       if (!matchesKeyBinding(event.nativeEvent, stashBinding)) return
 
@@ -1089,7 +1162,7 @@ export function MessageComposer({
       }
       onStashDraft?.()
     },
-    [onStashDraft, stashBinding, composerEmpty]
+    [onStashDraft, stashBinding, composerEmpty, question, closeQuestion]
   )
 
   // Chip state is a view of the document: how many references each attachment
@@ -1139,18 +1212,33 @@ export function MessageComposer({
       onEditLastMessage={onEditLastMessage}
       onHistoryStep={stepBrowserHistory}
       onEscapeBlur={onEscapeBlur}
-      onFocus={handleComposerFocus}
+      onFocus={handleEditorFocus}
       ariaLabel="Message input"
       ariaDescribedBy={instructionsId}
       blurOnEscape
       streamContext={streamContext}
       memoAnchorStreamId={memoAnchorStreamId}
+      audienceByStreamId={audienceByStreamId}
       commandStreamId={commandStreamId}
       includeStreamCommands={includeStreamCommands}
       trayAttachments={pendingAttachments}
       onRequestFileUpload={handleRequestInlineUpload}
     />
   )
+
+  const sendAriaLabel = `${isSubmitting ? submittingLabel : submitLabel}${askCopy ? ` — ${askCopy.short}` : ""}`
+  const sendBadge = sendWarning ? <SendWarningBadge tone={sendWarning.warning.tone} /> : null
+  const askRow = question ? (
+    <SendAskRow
+      tone={question.tone}
+      copy={question.copy}
+      compact={isMobile}
+      onPrimary={handleSubmit}
+      onAlternative={workspaceId ? handleAlternative : undefined}
+      mirrored={mirrored}
+      className="w-full"
+    />
+  ) : null
 
   const sendButton = hasFailed ? (
     <Tooltip>
@@ -1174,10 +1262,11 @@ export function MessageComposer({
       type="button"
       onClick={handleSubmit}
       disabled={!canSubmit}
-      aria-label={isSubmitting ? submittingLabel : submitLabel}
-      className="h-[30px] w-[30px] shrink-0 p-0 rounded-md"
+      aria-label={sendAriaLabel}
+      className="relative h-[30px] w-[30px] shrink-0 p-0 rounded-md"
     >
       <ArrowUp className="h-4 w-4" />
+      {sendBadge}
     </Button>
   )
 
@@ -1275,7 +1364,7 @@ export function MessageComposer({
             className={cn("relative flex flex-col h-full bg-background", className)}
             tabIndex={-1}
             onKeyDown={handleExpandedShellKeyDown}
-            onKeyDownCapture={handleStashKeyDown}
+            onKeyDownCapture={handleComposerKeyDownCapture}
           >
             <p id={instructionsId} className="sr-only">
               {screenReaderInstructions}
@@ -1302,6 +1391,7 @@ export function MessageComposer({
                 // scrolls when the text itself needs it.
                 !isMobile && "[&_.tiptap]:min-h-[200px]"
               )}
+              onPointerDownCapture={dismissQuestion}
               onClick={(e) => {
                 if ((e.target as HTMLElement).closest("button,a,input,textarea,[contenteditable],[role='button']"))
                   return
@@ -1324,13 +1414,14 @@ export function MessageComposer({
                 disableSelectionToolbar
                 onEditLastMessage={onEditLastMessage}
                 onHistoryStep={stepBrowserHistory}
-                onFocus={handleComposerFocus}
+                onFocus={handleEditorFocus}
                 ariaLabel="Expanded message editor"
                 ariaDescribedBy={instructionsId}
                 blurOnEscape
                 onEscapeBlur={focusExpandedShell}
                 streamContext={streamContext}
                 memoAnchorStreamId={memoAnchorStreamId}
+                audienceByStreamId={audienceByStreamId}
                 commandStreamId={commandStreamId}
                 includeStreamCommands={includeStreamCommands}
                 trayAttachments={pendingAttachments}
@@ -1350,29 +1441,32 @@ export function MessageComposer({
                     hosts the link editor's URL input, which needs native focus. */}
                 <div
                   ref={actionBarWrapperRef}
+                  className="relative"
                   onMouseDown={(e) => {
                     if (!actionBarWrapperRef.current?.contains(e.target as Node)) return
                     e.preventDefault()
                   }}
                 >
-                  <EditorActionBar
-                    editorHandle={richEditorRef.current}
-                    disabled={controlsDisabled}
-                    formatOpen={formatOpen}
-                    onFormatOpenChange={setFormatOpen}
-                    showExpand={false}
-                    showAttach
-                    onAttachClick={handleAttachClick}
-                    side={actionSide}
-                    trailingContent={
-                      <div className={cn("flex items-center gap-1", mirrored && "flex-row-reverse")}>
-                        {micButton}
-                        {stashedDraftsTrigger}
-                        {scheduledMessagesTrigger}
-                        {sendButton}
-                      </div>
-                    }
-                  />
+                  <AskOverlay askRow={askRow}>
+                    <EditorActionBar
+                      editorHandle={richEditorRef.current}
+                      disabled={controlsDisabled}
+                      formatOpen={formatOpen}
+                      onFormatOpenChange={setFormatOpen}
+                      showExpand={false}
+                      showAttach
+                      onAttachClick={handleAttachClick}
+                      side={actionSide}
+                      trailingContent={
+                        <div className={cn("flex items-center gap-1", mirrored && "flex-row-reverse")}>
+                          {micButton}
+                          {stashedDraftsTrigger}
+                          {scheduledMessagesTrigger}
+                          {sendButton}
+                        </div>
+                      }
+                    />
+                  </AskOverlay>
                 </div>
                 {formatOpen && (
                   <div data-testid="composer-format-toolbar">
@@ -1390,9 +1484,11 @@ export function MessageComposer({
               </div>
             ) : (
               <div
+                aria-hidden={askRow ? true : undefined}
                 className={cn(
                   "absolute bottom-[max(1rem,env(safe-area-inset-bottom))] z-10 flex items-center gap-1.5",
-                  mirrored ? "left-4 flex-row-reverse" : "right-4"
+                  mirrored ? "left-4 flex-row-reverse" : "right-4",
+                  askRow && "invisible"
                 )}
               >
                 <div className={cn("flex items-center gap-1", mirrored && "flex-row-reverse")}>
@@ -1506,10 +1602,11 @@ export function MessageComposer({
                         onPointerDown={(e) => e.preventDefault()}
                         onClick={handleSubmit}
                         disabled={!canSubmit}
-                        aria-label={isSubmitting ? submittingLabel : submitLabel}
-                        className="h-[30px] w-[30px] shrink-0 p-0 rounded-md shadow-md"
+                        aria-label={sendAriaLabel}
+                        className="relative h-[30px] w-[30px] shrink-0 p-0 rounded-md shadow-md"
                       >
                         <ArrowUp className="h-4 w-4" />
+                        {sendBadge}
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent side={mirrored ? "right" : "left"} className="text-xs">
@@ -1517,6 +1614,16 @@ export function MessageComposer({
                     </TooltipContent>
                   </Tooltip>
                 )}
+              </div>
+            )}
+            {!isMobile && askRow && (
+              <div
+                className={cn(
+                  "absolute inset-x-4 bottom-[max(1rem,env(safe-area-inset-bottom))] z-10 rounded-[10px] border bg-background p-1 pl-2.5 shadow-md -mb-1",
+                  mirrored ? "-ml-1" : "-mr-1"
+                )}
+              >
+                {askRow}
               </div>
             )}
           </div>
@@ -1571,7 +1678,7 @@ export function MessageComposer({
           style={mobileRootStyle}
           onFocusCapture={isMobile ? handleFocusCapture : undefined}
           onBlurCapture={isMobile ? handleBlurCapture : undefined}
-          onKeyDownCapture={handleStashKeyDown}
+          onKeyDownCapture={handleComposerKeyDownCapture}
         >
           <p id={instructionsId} className="sr-only">
             {screenReaderInstructions}
@@ -1671,8 +1778,20 @@ export function MessageComposer({
                       mirrored && "flex-row-reverse"
                     )}
                   >
-                    <span className="flex-1 min-w-0 truncate text-muted-foreground">{previewText || placeholder}</span>
-                    <div className="pointer-events-auto">{sendButton}</div>
+                    {askRow ? (
+                      <div className="pointer-events-auto min-w-0 flex-1">{askRow}</div>
+                    ) : (
+                      <>
+                        <span className="flex-1 min-w-0 truncate text-muted-foreground">
+                          {previewText || placeholder}
+                        </span>
+                        {/* Focusing Send would open the chrome and unmount this row's
+                            button before mouseup, so the tap's click never fires. */}
+                        <div className="pointer-events-auto" onMouseDown={(e) => e.preventDefault()}>
+                          {sendButton}
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -1697,6 +1816,7 @@ export function MessageComposer({
                 <div
                   ref={mobileEditorScrollRef}
                   data-testid="composer-editor-scroll"
+                  onPointerDownCapture={dismissQuestion}
                   className={cn(
                     isMobile && !mobileChromeOpen ? "h-0 overflow-hidden" : "flex-1 min-h-0",
                     !isMobile && "flex flex-col",
@@ -1728,6 +1848,7 @@ export function MessageComposer({
                 {(!isMobile || mobileChromeOpen) && (
                   <div
                     ref={actionBarWrapperRef}
+                    className="relative"
                     onMouseDown={(e) => {
                       if (!actionBarWrapperRef.current?.contains(e.target as Node)) return
                       // Cancelling mousedown also cancels a drag, and a link here drags out as a pane.
@@ -1735,60 +1856,64 @@ export function MessageComposer({
                       e.preventDefault()
                     }}
                   >
-                    {isMobile ? (
-                      <EditorActionBar
-                        editorHandle={richEditorRef.current}
-                        disabled={controlsDisabled}
-                        formatOpen={formatOpen}
-                        onFormatOpenChange={setFormatOpen}
-                        mobileExpanded={mobileExpanded}
-                        onMobileExpandedChange={handleMobileExpandedChange}
-                        formatFoot={{
-                          chromeId,
-                          editor: mobileToolbarEditor,
-                          linkPopoverOpen: mobileLinkPopoverOpen,
-                          onLinkPopoverOpenChange: setMobileLinkPopoverOpen,
-                          sendButton,
-                        }}
-                        footMenu={{
-                          onAttach: handleAttachClick,
-                          onOpenAside,
-                          onSchedule: scheduledMessagesTrigger ? () => scheduledMessagesOpenRef.current?.() : undefined,
-                          scheduledCount,
-                          onOpenDrafts: stashedDraftsTrigger ? () => stashedDraftsOpenRef.current?.() : undefined,
-                          draftCount: stashedDrafts?.drafts.length ?? 0,
-                        }}
-                        side={actionSide}
-                        trailingContent={
-                          <>
-                            {micButton}
-                            {/* Drafts and Schedule are rows in the + menu on a phone; the
+                    <AskOverlay askRow={askRow}>
+                      {isMobile ? (
+                        <EditorActionBar
+                          editorHandle={richEditorRef.current}
+                          disabled={controlsDisabled}
+                          formatOpen={formatOpen}
+                          onFormatOpenChange={setFormatOpen}
+                          mobileExpanded={mobileExpanded}
+                          onMobileExpandedChange={handleMobileExpandedChange}
+                          formatFoot={{
+                            chromeId,
+                            editor: mobileToolbarEditor,
+                            linkPopoverOpen: mobileLinkPopoverOpen,
+                            onLinkPopoverOpenChange: setMobileLinkPopoverOpen,
+                            sendButton,
+                          }}
+                          footMenu={{
+                            onAttach: handleAttachClick,
+                            onOpenAside,
+                            onSchedule: scheduledMessagesTrigger
+                              ? () => scheduledMessagesOpenRef.current?.()
+                              : undefined,
+                            scheduledCount,
+                            onOpenDrafts: stashedDraftsTrigger ? () => stashedDraftsOpenRef.current?.() : undefined,
+                            draftCount: stashedDrafts?.drafts.length ?? 0,
+                          }}
+                          side={actionSide}
+                          trailingContent={
+                            <>
+                              {micButton}
+                              {/* Drafts and Schedule are rows in the + menu on a phone; the
                                 pickers stay mounted (hidden) so their popovers and open
                                 bridges survive, the same way the desktop overflow keeps them. */}
-                            {stashedDraftsTrigger && <div hidden>{stashedDraftsTrigger}</div>}
-                            {scheduledMessagesTrigger && <div hidden>{scheduledMessagesTrigger}</div>}
-                          </>
-                        }
-                      />
-                    ) : (
-                      <ComposerActionBar
-                        side={actionSide}
-                        disabled={controlsDisabled}
-                        formatOpen={formatOpen}
-                        onToggleFormat={() => setFormatOpen((v) => !v)}
-                        onInsertEmoji={insertEmoji}
-                        onInsertMention={insertMention}
-                        onInsertCommand={insertSlash}
-                        onAttachClick={handleAttachClick}
-                        onExpandClick={onExpandClick}
-                        expandHref={expandHref}
-                        sideHref={sideHref}
-                        micButton={micButton}
-                        stashedDraftsTrigger={stashedDraftsTrigger}
-                        scheduledMessagesTrigger={scheduledMessagesTrigger}
-                        sendButton={sendButton}
-                      />
-                    )}
+                              {stashedDraftsTrigger && <div hidden>{stashedDraftsTrigger}</div>}
+                              {scheduledMessagesTrigger && <div hidden>{scheduledMessagesTrigger}</div>}
+                            </>
+                          }
+                        />
+                      ) : (
+                        <ComposerActionBar
+                          side={actionSide}
+                          disabled={controlsDisabled}
+                          formatOpen={formatOpen}
+                          onToggleFormat={() => setFormatOpen((v) => !v)}
+                          onInsertEmoji={insertEmoji}
+                          onInsertMention={insertMention}
+                          onInsertCommand={insertSlash}
+                          onAttachClick={handleAttachClick}
+                          onExpandClick={onExpandClick}
+                          expandHref={expandHref}
+                          sideHref={sideHref}
+                          micButton={micButton}
+                          stashedDraftsTrigger={stashedDraftsTrigger}
+                          scheduledMessagesTrigger={scheduledMessagesTrigger}
+                          sendButton={sendButton}
+                        />
+                      )}
+                    </AskOverlay>
                   </div>
                 )}
               </div>

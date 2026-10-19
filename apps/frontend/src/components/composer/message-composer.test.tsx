@@ -16,6 +16,9 @@ import * as micButtonModule from "./mic-button"
 import * as pendingAttachmentsModule from "@/components/timeline/pending-attachments"
 import * as analyticsModule from "@/lib/analytics/posthog"
 import { useReportScheduledCount } from "./stashed-drafts-open-context"
+import type { ComposerSendWarning, SendWarning } from "@/lib/reference-audience"
+import { Editor } from "@tiptap/core"
+import { createEditorExtensions } from "@/components/editor/editor-extensions"
 
 let isMobileMockValue = false
 let actionBarSpy: ReturnType<typeof spyOnExport<typeof editorModule, "EditorActionBar">>
@@ -26,6 +29,8 @@ const mockInsertTranscribedText = vi.fn()
 let capturedRequestFileUpload: (() => void) | undefined
 const mockInsertDictationChunk = vi.fn()
 const mockCancelPendingInlineUpload = vi.fn()
+// A real TipTap editor for tests that need the document itself to change.
+let realEditor: Editor | null = null
 
 type MockEditorInstance = {
   id: string
@@ -94,7 +99,7 @@ const MockRichEditor = forwardRef<
       cancelPendingInlineUpload: mockCancelPendingInlineUpload,
       insertTranscribedText: mockInsertTranscribedText,
       insertDictationChunk: mockInsertDictationChunk,
-      getEditor: () => editorInstance,
+      getEditor: () => (realEditor as unknown as MockEditorInstance | null) ?? editorInstance,
     }),
     [editorInstance]
   )
@@ -207,6 +212,8 @@ describe("MessageComposer", () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    realEditor?.destroy()
+    realEditor = null
   })
 
   const defaultProps = {
@@ -662,6 +669,16 @@ describe("MessageComposer", () => {
   })
 
   describe("mobile state handling", () => {
+    it("sends from the collapsed preview's Send", async () => {
+      isMobileMockValue = true
+      const onSubmit = vi.fn()
+      render(<MessageComposer {...defaultProps} onSubmit={onSubmit} canSubmit={true} />)
+
+      await userEvent.click(screen.getByRole("button", { name: /send/i }))
+
+      expect(onSubmit).toHaveBeenCalled()
+    })
+
     it("shows a slash command in the collapsed preview", () => {
       isMobileMockValue = true
 
@@ -1455,6 +1472,172 @@ describe("MessageComposer", () => {
     it("shows the handle only while the mobile chrome is open", () => {
       render(<MessageComposer {...defaultProps} workspaceId="ws_1" />)
       expect(screen.queryByTestId("composer-resize-handle")).not.toBeInTheDocument()
+    })
+  })
+
+  describe("send audience question", () => {
+    const DRAFT: JSONContent = {
+      type: "doc",
+      content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }],
+    }
+
+    function sendWarning(tone: SendWarning["tone"], exposed = ["stream_src"], settled = true): ComposerSendWarning {
+      return {
+        warning: {
+          tone,
+          lead: { streamId: exposed[0], count: 3, sampleUserIds: ["usr_a"] },
+          exposed: { reveal: tone === "reveal" ? exposed : [], unreachable: tone === "unreachable" ? exposed : [] },
+          convertibleStreamIds: tone === "reveal" ? exposed : [],
+        },
+        names: ["Ada"],
+        settled,
+        targetKey: "stream:stream_dest",
+      }
+    }
+
+    async function renderAsking(tone: SendWarning["tone"], warning = sendWarning(tone)) {
+      const onSubmit = vi.fn()
+      const view = render(
+        <MessageComposer {...defaultProps} content={DRAFT} canSubmit onSubmit={onSubmit} sendWarning={warning} />
+      )
+      await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+      fireEvent.keyDown(screen.getByTestId("rich-editor"), { key: "Enter", metaKey: true })
+      return { onSubmit, ...view }
+    }
+
+    it("asks on the first Enter instead of sending", async () => {
+      const { onSubmit } = await renderAsking("reveal")
+      expect({ submitted: onSubmit.mock.calls.length, tone: screen.getByTestId("send-ask").dataset.tone }).toEqual({
+        submitted: 0,
+        tone: "reveal",
+      })
+    })
+
+    it("sends once with the confirmation flag on the second Enter", async () => {
+      const { onSubmit } = await renderAsking("reveal")
+      const primary = within(screen.getByTestId("send-ask")).getByRole("button", { name: /send/i })
+      expect(primary).toHaveFocus()
+      fireEvent.keyDown(primary, { key: "Enter" })
+      expect(onSubmit.mock.calls).toEqual([[DRAFT, { confirmedPrivacyWarning: true }]])
+      expect(screen.queryByTestId("send-ask")).not.toBeInTheDocument()
+    })
+
+    it("still asks but leaves consent to the server while the answer is stale", async () => {
+      const { onSubmit } = await renderAsking("reveal", sendWarning("reveal", ["stream_src"], false))
+      fireEvent.click(within(screen.getByTestId("send-ask")).getByRole("button", { name: /send/i }))
+      expect(onSubmit.mock.calls).toEqual([[DRAFT, undefined]])
+    })
+
+    it("dismisses the question when the editor is clicked", async () => {
+      await renderAsking("reveal")
+      await userEvent.click(screen.getByTestId("rich-editor"))
+      expect(screen.queryByTestId("send-ask")).not.toBeInTheDocument()
+    })
+
+    it("dismisses the question on Escape", async () => {
+      const { onSubmit } = await renderAsking("reveal")
+      fireEvent.keyDown(within(screen.getByTestId("send-ask")).getByRole("button", { name: /send/i }), {
+        key: "Escape",
+      })
+      expect(screen.queryByTestId("send-ask")).not.toBeInTheDocument()
+      expect(onSubmit).not.toHaveBeenCalled()
+    })
+
+    it("does not ask again for sources already consented to", async () => {
+      const { onSubmit } = await renderAsking("reveal")
+      fireEvent.keyDown(screen.getByTestId("rich-editor"), { key: "Enter", metaKey: true })
+      fireEvent.keyDown(screen.getByTestId("rich-editor"), { key: "Enter", metaKey: true })
+      expect({ calls: onSubmit.mock.calls, asking: screen.queryByTestId("send-ask") }).toEqual({
+        calls: [
+          [DRAFT, { confirmedPrivacyWarning: true }],
+          [DRAFT, { confirmedPrivacyWarning: true }],
+        ],
+        asking: null,
+      })
+    })
+
+    function mountRealEditor(content: JSONContent[]): Editor {
+      // Conversions need a workspace, which also mounts the mic; dictation is out of scope here.
+      spyOnExport(micButtonModule, "MicButton").mockReturnValue(
+        (() => null) as unknown as typeof micButtonModule.MicButton
+      )
+      realEditor = new Editor({
+        element: document.createElement("div"),
+        extensions: createEditorExtensions({ placeholder: "" }),
+        content: { type: "doc", content },
+      })
+      return realEditor
+    }
+
+    const linkChip = (streamId: string, messageId: string): JSONContent => ({
+      type: "inAppLink",
+      attrs: { url: `${window.location.origin}/w/ws_1/s/${streamId}?m=${messageId}`, streamId, messageId, name: "" },
+    })
+
+    it("Use link turns the share into a link chip and the next Send goes out without asking", async () => {
+      const editor = mountRealEditor([
+        { type: "paragraph", content: [{ type: "text", text: "see" }] },
+        { type: "sharedMessage", attrs: { streamId: "stream_src", messageId: "msg_1" } },
+      ])
+      const onSubmit = vi.fn()
+      const props = { ...defaultProps, workspaceId: "ws_1", canSubmit: true, onSubmit }
+      const { rerender } = render(
+        <MessageComposer {...props} content={editor.getJSON()} sendWarning={sendWarning("reveal")} />
+      )
+      fireEvent.keyDown(screen.getByTestId("rich-editor"), { key: "Enter", metaKey: true })
+      await userEvent.click(within(screen.getByTestId("send-ask")).getByRole("button", { name: /^Use link/ }))
+      expect({
+        submitted: onSubmit.mock.calls.length,
+        asking: screen.queryByTestId("send-ask"),
+        doc: editor.getJSON().content?.map((node) => node.content?.[0]?.type ?? node.type),
+      }).toEqual({ submitted: 0, asking: null, doc: ["text", "inAppLink"] })
+
+      // The host recomputes the warning from the converted draft: the same source, now an unreachable link.
+      rerender(<MessageComposer {...props} content={editor.getJSON()} sendWarning={sendWarning("unreachable")} />)
+      fireEvent.keyDown(screen.getByTestId("rich-editor"), { key: "Enter", metaKey: true })
+      expect({ calls: onSubmit.mock.calls, asking: screen.queryByTestId("send-ask") }).toEqual({
+        calls: [[editor.getJSON(), undefined]],
+        asking: null,
+      })
+    })
+
+    it("Share instead turns the link into a share and the next Send goes out confirmed", async () => {
+      const editor = mountRealEditor([
+        { type: "paragraph", content: [{ type: "text", text: "see " }, linkChip("stream_src", "msg_1")] },
+      ])
+      const onSubmit = vi.fn()
+      const unreachable: ComposerSendWarning = {
+        warning: {
+          tone: "unreachable",
+          lead: { streamId: "stream_src", count: 2, sampleUserIds: [] },
+          exposed: { reveal: [], unreachable: ["stream_src"] },
+          convertibleStreamIds: ["stream_src"],
+        },
+        names: [],
+        settled: true,
+        targetKey: "stream:stream_dest",
+      }
+      const props = { ...defaultProps, workspaceId: "ws_1", canSubmit: true, onSubmit }
+      const { rerender } = render(<MessageComposer {...props} content={editor.getJSON()} sendWarning={unreachable} />)
+      fireEvent.keyDown(screen.getByTestId("rich-editor"), { key: "Enter", metaKey: true })
+      await userEvent.click(within(screen.getByTestId("send-ask")).getByRole("button", { name: /^Share instead/ }))
+      expect(editor.getJSON().content?.map((node) => node.type)).toEqual(["paragraph", "sharedMessage"])
+      expect(onSubmit).not.toHaveBeenCalled()
+
+      // The host recomputes the warning from the converted draft: the same source, now a share.
+      rerender(<MessageComposer {...props} content={editor.getJSON()} sendWarning={sendWarning("reveal")} />)
+      fireEvent.keyDown(screen.getByTestId("rich-editor"), { key: "Enter", metaKey: true })
+      expect({ calls: onSubmit.mock.calls, asking: screen.queryByTestId("send-ask") }).toEqual({
+        calls: [[editor.getJSON(), { confirmedPrivacyWarning: true }]],
+        asking: null,
+      })
+    })
+
+    it("sends an unreachable warning without the flag after the second Enter", async () => {
+      const { onSubmit } = await renderAsking("unreachable")
+      expect(screen.getByTestId("send-ask").dataset.tone).toBe("unreachable")
+      fireEvent.keyDown(screen.getByTestId("rich-editor"), { key: "Enter", metaKey: true })
+      expect(onSubmit.mock.calls).toEqual([[DRAFT, undefined]])
     })
   })
 })

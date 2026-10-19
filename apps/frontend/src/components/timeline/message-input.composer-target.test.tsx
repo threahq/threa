@@ -10,6 +10,7 @@ import { toast } from "sonner"
 import * as contextsModule from "@/contexts"
 import { PendingMessagesProvider } from "@/contexts"
 import * as hooksModule from "@/hooks"
+import * as referenceAudienceModule from "@/hooks/use-reference-audience"
 import * as useAttachmentsModule from "@/hooks/use-attachments"
 import * as currentUserHook from "@/hooks/use-current-workspace-user-id"
 import * as workspaceStoreModule from "@/stores/workspace-store"
@@ -152,6 +153,11 @@ beforeEach(async () => {
         sendMessage: vi.fn().mockResolvedValue({}),
       }) as unknown as ReturnType<typeof hooksModule.useStreamOrDraft>
   )
+  spyOnExport(referenceAudienceModule, "useReferenceAudience").mockReturnValue(() => ({
+    sendWarning: null,
+    audienceByStreamId: new Map(),
+    awaitSendWarning: null,
+  }))
   vi.spyOn(hooksModule, "useScheduleMessage").mockReturnValue({
     mutateAsync: vi.fn(),
     mutate: vi.fn(),

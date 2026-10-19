@@ -10,13 +10,12 @@ import { sealOutgoingMessage } from "@/lib/crypto/seal-send"
 import { useStreamBootstrap, streamKeys } from "./use-streams"
 import { workspaceKeys } from "./use-workspaces"
 import { useDraftScratchpads } from "./use-draft-scratchpads"
-import { useQueueDraftMessage, conversationTag } from "./use-queue-draft-message"
+import { useQueueDraftMessage, conversationTag, type QueueDraftMessageInput } from "./use-queue-draft-message"
 import { useWorkspaceUsers, useWorkspaceStream, useWorkspaceDmPeers } from "@/stores/workspace-store"
 import { useSyncEngine } from "@/sync/sync-engine"
 import { getLatestPersistedSequence, type CachedStreamBootstrap } from "@/sync/stream-sync"
 import { hasSeededDraftCache } from "@/stores/draft-store"
 import { getDraftMessageKey, purgeScopeDrafts, upsertLoadedDraft } from "./use-draft-message"
-import { type AttachmentSummary } from "./create-optimistic-bootstrap"
 import { resolveDmDisplayName } from "@/lib/streams"
 import { useShared } from "@/lib/structural-sharing"
 import { serializeToMarkdown } from "@threahq/prosemirror"
@@ -31,17 +30,14 @@ import type {
   StreamMember,
   StreamType,
   CompanionMode,
-  ComposeTrace,
   ConversationDirective,
   StreamEvent,
-  JSONContent,
   WorkspaceBootstrap,
   StreamWithPreview,
   E2eActor,
   ToolPrivacyPolicy,
 } from "@threahq/types"
 import { StreamTypes, Visibilities, CompanionModes } from "@threahq/types"
-import type { ComposeTraceInput } from "@/lib/compose-trace"
 import { nextOptimisticSequence } from "@/lib/optimistic-sequence"
 import { useRenameStream } from "./use-rename-stream"
 
@@ -163,25 +159,13 @@ export interface VirtualStream {
   allowedToolCategories?: ToolPrivacyPolicy
 }
 
-export interface SendMessageInput {
-  contentJson: JSONContent
-  attachmentIds?: string[]
-  /** Full attachment info for optimistic UI - required when attachmentIds is provided */
-  attachments?: AttachmentSummary[]
-  /** Queue for the linked session's next turn instead of delivering now (`/enqueue`). */
-  enqueue?: true
+export interface SendMessageInput extends QueueDraftMessageInput {
   /**
    * Files the send into a conversation synchronously ("Reply in conversation",
    * Mechanism C). Only meaningful on real streams — draft paths ignore it, since
    * a stream that doesn't exist yet has no conversations to reply into.
    */
   conversation?: ConversationDirective
-  /**
-   * Compose-session provenance for this send (see {@link ComposeTrace}).
-   * Omitted when the workspace isn't capturing, and by every send the author
-   * didn't compose live (scheduled sends, retries, slash-command dispatch).
-   */
-  composeTrace?: ComposeTraceInput
 }
 
 export interface UseStreamOrDraftReturn {
@@ -421,6 +405,7 @@ function useDraftDmStream(workspaceId: string, streamId: string, enabled: boolea
         dmUserId: targetUserId,
         contentJson: input.contentJson,
         attachmentIds: input.attachmentIds,
+        confirmedPrivacyWarning: input.confirmedPrivacyWarning,
       })
 
       const now = Date.now()
@@ -755,6 +740,7 @@ function useRealStream(workspaceId: string, streamId: string, enabled: boolean):
             conversation: input.conversation,
             composeTrace,
             enqueue: input.enqueue,
+            confirmedPrivacyWarning: input.confirmedPrivacyWarning,
             createdAt: Date.now(),
             retryCount: 0,
             ...(e2eFields ?? {}),

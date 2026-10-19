@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef, type ReactNode } from "react"
 import { db, type CachedEvent } from "@/db"
 import { serializeToMarkdown } from "@threahq/prosemirror"
+import { unstampedMarkdown } from "@/lib/display-stamps"
 import { ConversationIntents, type JSONContent } from "@threahq/types"
 import { deleteOptimisticBoardPost } from "@/stores/board-store"
 import { revokeOptimisticRailEvent } from "@/hooks/use-board-card-messages"
@@ -292,6 +293,11 @@ export function PendingMessagesProvider({ children }: PendingMessagesProviderPro
           retryAfter: 0,
           terminalFailure: undefined,
           enqueue: enqueue || undefined,
+          // Consent covered the body it was given for; new content must ask again.
+          ...(unstampedMarkdown(contentJson) !==
+            (existing.contentJson ? unstampedMarkdown(existing.contentJson) : existing.content.trim()) && {
+            confirmedPrivacyWarning: undefined,
+          }),
         })
 
         // Update the optimistic event's payload so the timeline reflects the edit
