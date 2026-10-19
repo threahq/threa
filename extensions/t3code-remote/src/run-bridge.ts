@@ -21,6 +21,7 @@ import {
   type ModelSelection,
   type RunStatus,
   type T3Client,
+  type T3Tools,
   type ThreadItem,
   type ThreadSummary,
 } from "./t3-client"
@@ -409,13 +410,26 @@ export class T3TurnRunner {
       title: titleFor(turn.content),
       message: `${PREAMBLE}\n\n${turn.content}`,
       runtimeMode: this.options.access,
-      ...(projectId === undefined ? { scratch: true } : { projectId }),
+      ...(projectId === undefined ? { scratch: true } : { projectId, ...(await this.workspaceFor(projectId)) }),
       ...(this.state.model ? { modelSelection: this.state.model } : {}),
       ...(images.length ? { attachments: images } : {}),
     })
     this.saveState({ ...this.state, threads: { ...this.state.threads, [turn.streamId]: launched.threadId } })
     if (!launched.runId) throw new Error("T3 Code created the thread but started no run.")
     return { threadId: launched.threadId, runId: launched.runId }
+  }
+
+  /** A project thread gets a T3-made worktree when T3's own default says so: the project's mode, else the environment's. */
+  private async workspaceFor(
+    projectId: string
+  ): Promise<Pick<T3Tools["t3_thread_launch"]["args"], "workspaceStrategy">> {
+    const [project, environment] = await Promise.all([
+      this.client.call("t3_project_read", { projectId }),
+      this.client.call("t3_environment_read", {}),
+    ])
+    const { defaultThreadEnvMode, newWorktreesStartFromOrigin } = environment.preferences
+    if ((project.defaultThreadEnvMode ?? defaultThreadEnvMode) !== "worktree") return {}
+    return { workspaceStrategy: { type: "worktree", baseRef: "HEAD", startFromOrigin: newWorktreesStartFromOrigin } }
   }
 
   /** Images go through T3's attachment send, which has no queue mode or retry key: it steers a steerable run, else starts one. */

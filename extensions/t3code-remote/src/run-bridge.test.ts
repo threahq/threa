@@ -125,6 +125,35 @@ describe("T3TurnRunner", () => {
     expect(saved.at(-1)).toEqual({ threads: { stream_root: "thread_1" }, model: MODEL })
   })
 
+  test.each([
+    { project: "worktree", environment: undefined, worktree: true },
+    { project: null, environment: "worktree", worktree: true },
+    { project: "local", environment: "worktree", worktree: false },
+    { project: null, environment: undefined, worktree: false },
+  ] as const)(
+    "a project thread gets a T3 worktree when T3's default says so: project $project, environment $environment",
+    async ({ project, environment, worktree }) => {
+      const { t3, session, runner } = setup({ projectId: "project_1" })
+      t3.envModes({ project, environment })
+      t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Hi" })] }])
+
+      await runner.deliverTurn(turn())
+      await session.settled()
+
+      expect(t3.callsOf("t3_thread_launch")[0]?.workspaceStrategy).toEqual(
+        worktree ? { type: "worktree", baseRef: "HEAD", startFromOrigin: true } : undefined
+      )
+    }
+  )
+
+  test("a project thread whose T3 defaults can't be read fails its turn instead of launching", async () => {
+    const { t3, runner } = setup({ projectId: "project_1" })
+    t3.failNext("t3_environment_read", new Error("T3 is down"))
+
+    await expect(runner.deliverTurn(turn())).rejects.toThrow("T3 is down")
+    expect(t3.callsOf("t3_thread_launch")).toEqual([])
+  })
+
   test("a model picked in T3 itself becomes the one new threads launch on", async () => {
     const { t3, session, saved, runner } = setup({
       state: {

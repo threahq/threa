@@ -1,6 +1,13 @@
 import type { DeliveredTurn, StepFrame } from "@threahq/remote-session"
 import type { BridgeSession } from "./run-bridge"
-import { T3ToolError, type T3Client, type T3ToolName, type T3Tools, type ThreadItem } from "./t3-client"
+import {
+  T3ToolError,
+  type T3Client,
+  type T3ToolName,
+  type T3Tools,
+  type ThreadEnvMode,
+  type ThreadItem,
+} from "./t3-client"
 
 interface ScriptStep {
   status: string
@@ -45,6 +52,7 @@ export function fakeT3() {
   let runs = 0
   let prepared = 0
   let steerDelivery: "steered" | "started" | "queued" = "steered"
+  let envModes: { project: ThreadEnvMode | null; environment?: ThreadEnvMode } = { project: null }
 
   const startRun = () => `run_${++runs}`
   const steerRun = () => (steerDelivery === "steered" ? `run_${runs}` : startRun())
@@ -136,6 +144,13 @@ export function fakeT3() {
         { providerInstanceId: "claudeAgent", displayName: "Claude", models: [{ id: "claude-opus-5-5" }] },
       ],
     }),
+    t3_project_read: () => ({ defaultThreadEnvMode: envModes.project }),
+    t3_environment_read: () => ({
+      preferences: {
+        ...(envModes.environment ? { defaultThreadEnvMode: envModes.environment } : {}),
+        newWorktreesStartFromOrigin: true,
+      },
+    }),
   }
 
   const client = {
@@ -173,6 +188,8 @@ export function fakeT3() {
     continueText: (itemId: string, fullText: string) => continuations.set(itemId, fullText),
     /** How T3 answers the next steers: folded into the run, or started or queued as their own run. */
     steerAs: (delivery: typeof steerDelivery) => (steerDelivery = delivery),
+    /** T3's new-thread env mode, set on the project and in the environment's preferences. */
+    envModes: (modes: typeof envModes) => (envModes = modes),
   }
 }
 
