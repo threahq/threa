@@ -1283,7 +1283,7 @@
                 "properties": {
                   "runtimeKind": {
                     "type": "string",
-                    "enum": ["pi-local", "hermes", "openclaw", "claude-code-channel", "custom"]
+                    "enum": ["pi-local", "hermes", "openclaw", "claude-code-channel", "t3code", "custom"]
                   },
                   "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
                   "runtimeSessionId": { "type": "string", "minLength": 1, "maxLength": 256 },
@@ -1375,7 +1375,7 @@
                         "botId": { "type": "string" },
                         "runtimeKind": {
                           "type": "string",
-                          "enum": ["pi-local", "hermes", "openclaw", "claude-code-channel", "custom"]
+                          "enum": ["pi-local", "hermes", "openclaw", "claude-code-channel", "t3code", "custom"]
                         },
                         "instanceId": { "type": "string" },
                         "displayName": { "anyOf": [{ "type": "string" }, { "type": "null" }] },
@@ -1470,7 +1470,10 @@
                 "$schema": "https://json-schema.org/draft/2020-12/schema",
                 "type": "object",
                 "properties": {
-                  "runtimeKind": { "type": "string", "enum": ["pi-local", "claude-code-channel", "hermes", "custom"] },
+                  "runtimeKind": {
+                    "type": "string",
+                    "enum": ["pi-local", "claude-code-channel", "hermes", "t3code", "custom"]
+                  },
                   "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
                   "runtimeSessionId": { "type": "string", "minLength": 1, "maxLength": 256 },
                   "displayName": { "type": "string", "minLength": 1, "maxLength": 100 },
@@ -2282,7 +2285,7 @@
                 "properties": {
                   "runtimeKind": {
                     "type": "string",
-                    "enum": ["pi-local", "hermes", "openclaw", "claude-code-channel", "custom"]
+                    "enum": ["pi-local", "hermes", "openclaw", "claude-code-channel", "t3code", "custom"]
                   },
                   "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
                   "runtimeSessionId": { "type": "string", "minLength": 1, "maxLength": 256 },

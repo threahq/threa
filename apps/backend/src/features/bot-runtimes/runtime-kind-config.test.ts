@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test"
 import { resolveRuntimeKindConfig } from "./runtime-kind-config"
 
 describe("resolveRuntimeKindConfig", () => {
-  it("requires a session link for pi-local, the Claude Code channel and hermes", () => {
+  it("requires a session link for pi-local, the Claude Code channel, hermes and t3code", () => {
     const pi = resolveRuntimeKindConfig("pi-local")
     const cc = resolveRuntimeKindConfig("claude-code-channel")
     expect(pi.sessionLinking).toBe("required")
@@ -19,6 +19,14 @@ describe("resolveRuntimeKindConfig", () => {
       const notice = hermes.missingSessionLinkNotice("Hermes bot")
       expect(notice).toContain("Hermes bot")
       expect(notice).toContain("Hermes connector")
+    }
+
+    const t3 = resolveRuntimeKindConfig("t3code")
+    expect(t3.sessionLinking).toBe("required")
+    if (t3.sessionLinking === "required") {
+      const notice = t3.missingSessionLinkNotice("T3 bot")
+      expect(notice).toContain("T3 bot")
+      expect(notice).toContain("T3 Code connector")
     }
   })
 
