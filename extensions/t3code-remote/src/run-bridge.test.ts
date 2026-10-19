@@ -153,14 +153,13 @@ describe("T3TurnRunner", () => {
     expect(t3.callsOf("t3_thread_launch")).toEqual([])
   })
 
-  test("a model picked in T3 itself becomes the one new threads launch on", async () => {
-    const { t3, session, saved, runner } = setup({
-      state: {
-        threads: { stream_root: "thread_root" },
-        model: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
-      },
-    })
-    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Hi" })] }])
+  test("a model the thread is switched to in T3 itself becomes the one new threads launch on", async () => {
+    const opus = { instanceId: "claudeAgent", model: "claude-opus-5-5" }
+    const { t3, session, saved, runner } = setup({ state: { threads: { stream_root: "thread_root" }, model: opus } })
+    t3.script("run_1", [
+      { status: "running", model: opus },
+      { status: "completed", model: MODEL, items: [item(1, "assistant_message", { text: "Hi" })] },
+    ])
 
     await runner.deliverTurn(turn())
     await session.settled()
@@ -169,6 +168,20 @@ describe("T3TurnRunner", () => {
       model: MODEL,
       saved: { threads: { stream_root: "thread_root" }, model: MODEL },
     })
+  })
+
+  test("a thread that keeps its old model doesn't undo a /model T3 couldn't apply to it", async () => {
+    const opus = { instanceId: "claudeAgent", model: "claude-opus-5-5" }
+    const { t3, session, runner } = setup({ state: { threads: { stream_root: "thread_root" }, model: MODEL } })
+    t3.script("run_1", [{ status: "running", model: MODEL }])
+
+    await runner.deliverTurn(turn())
+    while (t3.callsOf("t3_thread_read").length === 0) await idle()
+    runner.setModel(opus)
+    t3.script("run_1", [{ status: "completed", items: [item(1, "assistant_message", { text: "Hi" })] }])
+    await session.settled()
+
+    expect(runner.model).toEqual(opus)
   })
 
   test("uploads the images T3 takes natively and launches with them", async () => {

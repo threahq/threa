@@ -244,6 +244,8 @@ export class T3TurnRunner {
   private state: ThreadState
   // Per thread, where the next run's read starts; lost on restart, which only costs one full re-read.
   private readonly cursors = new Map<string, number>()
+  // Per thread, the `instance::model` last read, so only a switch in T3 moves the model new threads launch on.
+  private readonly threadModels = new Map<string, string>()
   // Turns inside admission: an interrupt that lands meanwhile stops the run once T3 returns its id.
   private readonly admitting = new Map<string, { abort: AbortController; streamId: string }>()
   readonly runs = new Map<string, OpenRun>()
@@ -269,8 +271,15 @@ export class T3TurnRunner {
     this.saveState({ ...this.state, model })
   }
 
-  /** New threads launch on the model the last run used, including one picked in T3 itself. */
-  private rememberModel({ providerInstanceId: instanceId, model }: ThreadSummary): void {
+  /**
+   * New threads launch on a model a thread is switched to in T3, or on the first one seen when none is set. A thread
+   * that merely keeps its model, like a running one /model couldn't move, never overrides the pick.
+   */
+  private noteModel({ threadId, providerInstanceId: instanceId, model }: ThreadSummary): void {
+    const key = `${instanceId}::${model}`
+    const seen = this.threadModels.get(threadId)
+    this.threadModels.set(threadId, key)
+    if (seen === key || (seen === undefined && this.state.model)) return
     if (this.state.model?.instanceId === instanceId && this.state.model.model === model) return
     this.saveState({ ...this.state, model: { instanceId, model } })
   }
@@ -405,12 +414,13 @@ export class T3TurnRunner {
     if (projectId === undefined && !this.state.model) {
       throw new Error("T3 Code needs a model for new threads: pick one with /model.")
     }
+    const place = projectId === undefined ? { scratch: true } : { projectId, ...(await this.workspaceFor()) }
     const images = await this.uploadImages(turn.attachments)
     const launched = await this.client.call("t3_thread_launch", {
       title: titleFor(turn.content),
       message: `${PREAMBLE}\n\n${turn.content}`,
       runtimeMode: this.options.access,
-      ...(projectId === undefined ? { scratch: true } : { projectId, ...(await this.workspaceFor()) }),
+      ...place,
       ...(this.state.model ? { modelSelection: this.state.model } : {}),
       ...(images.length ? { attachments: images } : {}),
     })
@@ -575,7 +585,7 @@ export class T3TurnRunner {
         maxCharsPerItem: MAX_CHARS_PER_ITEM,
         ...(after === undefined ? {} : { afterPosition: after }),
       })
-      this.rememberModel(page.thread)
+      this.noteModel(page.thread)
       for (const item of page.items) {
         for (const frame of trace.observe(item)) {
           if (frame.phase === "started") void batcher.addNow(frame)
