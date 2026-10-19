@@ -32,9 +32,11 @@ async function main(): Promise<void> {
   if (command === "login") return login(args[0], file)
   if (command !== undefined) fail(`Unknown command "${command}". Usage: threa-t3code [login [pairing-code]]`)
 
-  const result = loadT3Config({ env: process.env, cwd: process.cwd(), hostname: hostname(), install, file })
-  if ("error" in result) fail(result.error)
+  // The identity and downloaded attachments both follow the cwd, so a manual run and the service share one scratchpad.
   mkdirSync(install.workDir, { recursive: true, mode: 0o700 })
+  process.chdir(install.workDir)
+  const result = loadT3Config({ env: process.env, cwd: install.workDir, hostname: hostname(), install, file })
+  if ("error" in result) fail(result.error)
   const connector = createT3Connector(result.config, {
     log: (message) => process.stderr.write(`${LOG_PREFIX} ${message}\n`),
   })

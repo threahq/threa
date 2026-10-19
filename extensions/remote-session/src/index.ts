@@ -67,6 +67,7 @@ export {
 } from "./attachments"
 export { StepBatcher, type StepRecorder } from "./step-batcher"
 export { NO_RESPONSE_SENTINEL, isNoResponse } from "./no-response"
+export { renderUserUnit, userUnitCommands, connectorEntry, type UserUnitInput } from "./systemd"
 export { wireLifecycle, type LifecycleOptions, type LifecycleProcess } from "./lifecycle"
 export {
   DelegationClient,
