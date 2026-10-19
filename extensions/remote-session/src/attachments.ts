@@ -38,6 +38,11 @@ export function extractAttachmentDirectives(markdown: string): { markdown: strin
   return { markdown: lines.join("\n").trim(), paths }
 }
 
+/** A directive line names a local path; trace text shows that a file was attached, never where it lives. */
+export function redactAttachDirectives(text: string): string {
+  return text.replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]")
+}
+
 export function guessMimeType(path: string): string {
   const lower = path.toLowerCase()
   if (lower.endsWith(".png")) return "image/png"

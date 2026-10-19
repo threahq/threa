@@ -1,6 +1,7 @@
 import { closeSync, openSync, readSync, readdirSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, join } from "node:path"
+import { redactAttachDirectives } from "@threahq/remote-session"
 
 /**
  * Trace steps for a Claude Code turn, sourced from the session transcript.
@@ -263,11 +264,6 @@ function withheldThinking(length: number): string {
   return `Thinking content omitted for safety. Captured locally: ${length} characters.`
 }
 
-/** Ported from pi-remote's sanitizeTraceText: a THREA_ATTACH directive carries a local filesystem path. */
-function sanitizeNarration(text: string): string {
-  return text.replace(/^THREA_ATTACH:\s*.+$/gm, "THREA_ATTACH: [local path omitted]")
-}
-
 /** The channel's own MCP tools — their payloads land in the stream as real messages, so trace rows would be noise. */
 const OWN_TOOL_RE = /^mcp__threa__(send|reply)$/i
 
@@ -407,7 +403,7 @@ export function mapTranscriptLine(raw: string, ctx: MapContext): MappedStep[] {
       // Narration ships unredacted in both modes (see the privacy model above).
       steps.push({
         stepType: "thinking",
-        content: truncateForTrace(sanitizeNarration(text)),
+        content: truncateForTrace(redactAttachDirectives(text)),
         statusText: "Composing response…",
       })
     } else if (type === "assistant" && part.type === "tool_use") {
