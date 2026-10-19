@@ -52,9 +52,12 @@ describe("MessageVersionRepository and messaging backfill workspace scope (INV-8
   let streamA: string
   let streamB: string
 
-  // The preloaded server's workers call the same repository for other files' workspaces mid-test.
+  // The preloaded server's workers call the same repository for other files' messages mid-test, so only
+  // lookups naming this file's quote sources count, in whichever workspace they ran.
   const scopedLookups = (calls: Parameters<typeof MessageRepository.findByIds>[]) =>
-    calls.filter(([, wid]) => wid === wsA || wid === wsB).map(([, wid, ids]) => ({ workspaceId: wid, ids }))
+    calls
+      .filter(([, , ids]) => ids.some((id) => id === source || id === bOnlySource))
+      .map(([, wid, ids]) => ({ workspaceId: wid, ids }))
 
   let source: string
   let bOnlySource: string
