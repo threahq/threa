@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join } from "node:path"
-import { fileURLToPath } from "node:url"
+import { connectorEntry, renderUserUnit, userUnitCommands } from "@threahq/remote-session"
 import { hermesInstall, type HermesInstall } from "./config"
 
 export interface SystemdUnitInput {
@@ -16,39 +16,18 @@ export interface SystemdUnitInput {
   profile?: string
 }
 
-/** The unit text, modelled on the harnessd user unit: absolute paths, restart always, appended logs. */
 export function renderSystemdUnit(input: SystemdUnitInput): string {
-  for (const path of [input.runtimePath, input.entryPath, input.packageDir, input.logDir, input.envFile]) {
-    if (/[\s\\\0]/.test(path)) {
-      throw new Error(
-        `Cannot write a systemd unit for ${JSON.stringify(path)}: whitespace and backslashes need escaping systemd does not apply to every directive.`
-      )
-    }
-  }
-  return [
-    "[Unit]",
-    `Description=Threa Hermes connector${input.profile ? ` (${input.profile})` : ""}`,
-    "After=network-online.target hermes-gateway.service",
-    "Wants=hermes-gateway.service",
-    "",
-    "[Service]",
-    "Type=simple",
-    `Environment=PATH=${dirname(input.runtimePath)}:/usr/local/bin:/usr/bin:/bin`,
-    `EnvironmentFile=-${input.envFile}`,
-    // After the env file on purpose: the profile is what this unit IS, and an
-    // env file shared between agents must not be able to repoint it.
-    ...(input.profile ? [`Environment=THREA_HERMES_PROFILE=${input.profile}`] : []),
-    `WorkingDirectory=${input.packageDir}`,
-    `ExecStart=${input.runtimePath} ${input.entryPath}`,
-    "Restart=always",
-    "RestartSec=10",
-    `StandardOutput=append:${join(input.logDir, "connector.log")}`,
-    `StandardError=append:${join(input.logDir, "connector.error.log")}`,
-    "",
-    "[Install]",
-    "WantedBy=default.target",
-    "",
-  ].join("\n")
+  return renderUserUnit({
+    description: `Threa Hermes connector${input.profile ? ` (${input.profile})` : ""}`,
+    runtimePath: input.runtimePath,
+    entryPath: input.entryPath,
+    workingDirectory: input.packageDir,
+    logDir: input.logDir,
+    envFile: input.envFile,
+    wants: ["hermes-gateway.service"],
+    // The profile is what this unit IS, so an env file shared between agents must not repoint it.
+    ...(input.profile ? { pinnedEnvironment: { THREA_HERMES_PROFILE: input.profile } } : {}),
+  })
 }
 
 export interface InstallOptions {
@@ -130,11 +109,6 @@ export function planInstall(options: InstallOptions): InstallPlan {
     envFile: install.envFile,
     ...(install.profile === undefined ? {} : { profile: install.profile }),
   })
-  const commands: string[][] = [
-    ["systemctl", "--user", "daemon-reload"],
-    ["systemctl", "--user", "enable", install.serviceName],
-  ]
-  if (options.start) commands.push(["systemctl", "--user", "restart", install.serviceName])
   return {
     unitPath: install.unitPath,
     unit,
@@ -142,7 +116,7 @@ export function planInstall(options: InstallOptions): InstallPlan {
     writes: installFiles(options, unit).map((file) =>
       file.ifExists && existsSync(file.path) ? { path: file.path, skipped: file.ifExists.reason } : { path: file.path }
     ),
-    commands,
+    commands: userUnitCommands(install.serviceName, options.start ?? false),
   }
 }
 
@@ -245,24 +219,14 @@ function main(): void {
     )
     process.exit(1)
   }
-  // From a checkout this file is src/install.ts beside src/index.ts; the npm
-  // package bundles both to its root as .js.
-  const here = dirname(fileURLToPath(import.meta.url))
-  const fromSource = import.meta.url.endsWith(".ts")
-  const entryPath = join(here, fromSource ? "index.ts" : "index.js")
-  if (entryPath.includes("/_npx/")) {
-    process.stderr.write(
-      "threa-hermes-install is running from npx's cache, which npm clears, and the unit would point into it. Install the package first: npm install -g @threahq/hermes-remote\n"
-    )
-    process.exit(1)
-  }
+  const { entryPath, packageDir } = connectorEntry(import.meta.url, "@threahq/hermes-remote")
   const install = hermesInstall({
     homeDir: homedir(),
     ...(args.profile === undefined ? {} : { profile: args.profile }),
   })
   runInstall({
     install,
-    packageDir: fromSource ? dirname(here) : here,
+    packageDir,
     entryPath,
     runtimePath: process.execPath,
     force: args.force,

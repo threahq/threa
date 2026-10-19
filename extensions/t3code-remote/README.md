@@ -34,6 +34,21 @@ Environment:
 The same keys can live in `~/.threa/t3code-remote/config.json`, the T3 ones as `t3Url`, `t3Access`, `t3ProjectId`
 and `t3AutoLogin`. Environment variables win.
 
+## Running it as a service
+
+On Linux, `bun run install-service --start` writes a systemd user unit that runs the connector from this checkout
+with the bun that ran the installer, then enables and starts it.
+
+It writes `~/.config/systemd/user/threa-t3code-remote.service` (refusing to overwrite an existing one without
+`--force`) and creates `~/.threa/t3code-remote/log/`, where the connector's output lands. `--dry-run` prints the
+plan and touches nothing. The unit reads its environment from `~/.config/threa/t3code-remote.env`, one `KEY=value`
+per line. With auto-login on, the connector runs `t3`, so put a `PATH` that reaches it in that file: a `PATH` there
+replaces the unit's own, so include bun's directory too.
+
+The connector changes into `~/.threa/t3code-remote/work` wherever it is started, and downloads attachments there.
+Its scratchpad identity comes from the host name and that directory, so the service and a manual `bun run start`
+link to the same scratchpad.
+
 ## Logging in to T3 Code
 
 The connector needs an MCP token from the T3 server. T3 issues one in exchange for a pairing code, and the token

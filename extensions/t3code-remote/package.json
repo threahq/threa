@@ -24,10 +24,12 @@
     "node": ">=20"
   },
   "bin": {
-    "threa-t3code": "./src/index.ts"
+    "threa-t3code": "./src/index.ts",
+    "threa-t3code-install": "./src/install.ts"
   },
   "scripts": {
     "start": "bun run ./src/index.ts",
+    "install-service": "bun run ./src/install.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },

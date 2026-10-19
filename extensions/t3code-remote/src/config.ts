@@ -19,17 +19,26 @@ export interface T3Install {
   configDir: string
   configPath: string
   workDir: string
+  logDir: string
   tokenPath: string
+  serviceName: string
+  unitPath: string
+  envFile: string
   identity: ConnectorIdentity
 }
 
 export function t3Install(homeDir: string = homedir()): T3Install {
   const configDir = join(homeDir, ".threa", "t3code-remote")
+  const serviceName = "threa-t3code-remote.service"
   return {
     configDir,
     configPath: join(configDir, "config.json"),
     workDir: join(configDir, "work"),
+    logDir: join(configDir, "log"),
     tokenPath: join(configDir, "token.json"),
+    serviceName,
+    unitPath: join(homeDir, ".config", "systemd", "user", serviceName),
+    envFile: join(homeDir, ".config", "threa", "t3code-remote.env"),
     identity: {
       idPrefix: "t3",
       sessionIdPrefix: "t3s",

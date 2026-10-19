@@ -58,7 +58,7 @@ describe("renderSystemdUnit", () => {
     )
   })
 
-  test("a profile names the unit's identity, after the env file so it cannot be repointed", () => {
+  test("a profile names the unit's identity, pinned on the command line so the env file cannot repoint it", () => {
     const lines = renderSystemdUnit({
       runtimePath: "/home/u/.bun/bin/bun",
       entryPath: "/srv/threa/extensions/hermes-remote/src/index.ts",
@@ -70,13 +70,12 @@ describe("renderSystemdUnit", () => {
 
     expect({
       description: lines[1],
-      afterEnvFile:
-        lines.indexOf("Environment=THREA_HERMES_PROFILE=muse") >
-        lines.indexOf("EnvironmentFile=-/home/u/.config/threa/hermes-muse.env"),
+      execStart: lines.find((line) => line.startsWith("ExecStart=")),
       log: lines.find((line) => line.startsWith("StandardOutput=")),
     }).toEqual({
       description: "Description=Threa Hermes connector (muse)",
-      afterEnvFile: true,
+      execStart:
+        "ExecStart=/usr/bin/env THREA_HERMES_PROFILE=muse /home/u/.bun/bin/bun /srv/threa/extensions/hermes-remote/src/index.ts",
       log: "StandardOutput=append:/home/u/.threa/hermes-muse/log/connector.log",
     })
   })
@@ -177,7 +176,7 @@ describe("runInstall", () => {
 
     const unitPath = join(home, ".config", "systemd", "user", "threa-hermes-muse.service")
     expect({
-      unit: readFileSync(unitPath, "utf8").includes("Environment=THREA_HERMES_PROFILE=muse"),
+      unit: readFileSync(unitPath, "utf8").includes("/usr/bin/env THREA_HERMES_PROFILE=muse "),
       skill: readFileSync(join(home, ".hermes", "profiles", "muse", "skills", "threa", "SKILL.md"), "utf8").includes(
         "~/.threa/hermes-muse/work"
       ),
