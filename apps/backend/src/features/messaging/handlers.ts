@@ -15,6 +15,7 @@ import {
   type ConversationDirective,
   E2E_PLACEHOLDER_CONTENT_MARKDOWN,
   MessageErrorCodes,
+  REFERENCE_AUDIENCE_MAX_STREAM_IDS,
   StreamConnectionErrorCodes,
 } from "@threahq/types"
 import { serializeBigInt, HttpError } from "@threahq/backend-common"
@@ -193,7 +194,7 @@ const moveMessagesToThreadSchema = z.object({
 
 const validateMoveMessagesToThreadSchema = moveMessagesToThreadSchema.omit({ leaseKey: true })
 
-const referenceAudienceStreamIds = z.array(z.string().min(1)).min(1).max(50)
+const referenceAudienceStreamIds = z.array(z.string().min(1)).min(1).max(REFERENCE_AUDIENCE_MAX_STREAM_IDS)
 const referenceAudienceSchema = z.union([
   z.object({ streamId: z.string().min(1), streamIds: referenceAudienceStreamIds }),
   z.object({ dmUserId: z.string().min(1), streamIds: referenceAudienceStreamIds }),
